@@ -1,82 +1,197 @@
 <template>
   <div class="app-container">
-    <el-container>
-      <el-aside width="200px">
-        <el-menu
-          router
-          :default-active="$route.path"
-          class="el-menu-vertical"
-          background-color="#304156"
-          text-color="#bfcbd9"
-          active-text-color="#409EFF">
-          <el-menu-item index="/">
-            <el-icon><el-icon-menu /></el-icon>
-            <span>首页</span>
-          </el-menu-item>
-          <el-sub-menu index="/config">
-            <template #title>
-              <el-icon><el-icon-setting /></el-icon>
-              <span>配置管理</span>
+    <!-- 左侧导航栏 -->
+    <div class="sidebar">
+      <div class="logo">
+        <img :src="logoSrc" alt="EMS Logo" />
+      </div>
+      <el-menu
+        router
+        :default-active="$route.path"
+        class="el-menu-vertical"
+        background-color="#3a4654"
+        text-color="#bfcbd9"
+        active-text-color="#409EFF">
+        
+        <el-menu-item index="/">
+          <el-icon><el-icon-house /></el-icon>
+          <span>Home</span>
+        </el-menu-item>
+        
+        <el-menu-item index="/system">
+          <el-icon><el-icon-setting /></el-icon>
+          <span>System</span>
+        </el-menu-item>
+        
+        <el-menu-item index="/activity">
+          <el-icon><el-icon-data-line /></el-icon>
+          <span>Activity</span>
+        </el-menu-item>
+      </el-menu>
+      
+      <div class="sidebar-footer">
+        <p>©2025 VOLTAGE, LLC. All Rights Reserved.</p>
+      </div>
+    </div>
+    
+    <!-- 主要内容区域 -->
+    <div class="main-container">
+      <!-- 顶部标题栏 -->
+      <header class="main-header">
+        <div class="header-left">
+          <el-icon class="menu-toggle"><el-icon-menu /></el-icon>
+          <h2>{{ pageTitle }}</h2>
+        </div>
+        <div class="header-right">
+          <el-dropdown>
+            <span class="user-info">
+              <el-icon><el-icon-user /></el-icon>
+              User: Voltage <el-icon><el-icon-arrow-down /></el-icon>
+            </span>
+            <template #dropdown>
+              <el-dropdown-menu>
+                <el-dropdown-item>账户设置</el-dropdown-item>
+                <el-dropdown-item>退出登录</el-dropdown-item>
+              </el-dropdown-menu>
             </template>
-            <el-menu-item index="/config/modsrv">modsrv 配置</el-menu-item>
-            <el-menu-item index="/config/netsrv">netsrv 配置</el-menu-item>
-            <el-menu-item index="/config/comsrv">comsrv 配置</el-menu-item>
-            <el-menu-item index="/config/hissrv">hissrv 配置</el-menu-item>
-            <el-menu-item index="/config/mosquitto">Mosquitto 配置</el-menu-item>
-          </el-sub-menu>
-          <el-menu-item index="/dashboard">
-            <el-icon><el-icon-data-line /></el-icon>
-            <span>数据看板</span>
-          </el-menu-item>
-        </el-menu>
-      </el-aside>
-      <el-container>
-        <el-header>
-          <h2>能源管理系统 (EMS) 配置管理平台</h2>
-        </el-header>
-        <el-main>
-          <router-view />
-        </el-main>
-        <el-footer>
-          <p>© 2025 Voltage, LLC. All rights reserved.</p>
-        </el-footer>
-      </el-container>
-    </el-container>
+          </el-dropdown>
+        </div>
+      </header>
+      
+      <!-- 内容区域 -->
+      <main class="main-content">
+        <router-view />
+      </main>
+    </div>
   </div>
 </template>
 
 <script>
+import { logoBase64 } from './assets/logo'
+
 export default {
-  name: 'App'
+  name: 'App',
+  data() {
+    return {
+      pageTitle: 'Home',
+      logoSrc: logoBase64
+    }
+  },
+  watch: {
+    $route(to) {
+      // 根据路由更新页面标题
+      const routeMap = {
+        '/': 'Home',
+        '/system': 'System',
+        '/activity': 'Activity'
+      };
+      
+      if (to.path.startsWith('/system/')) {
+        this.pageTitle = 'System';
+      } else {
+        this.pageTitle = routeMap[to.path] || 'Home';
+      }
+    }
+  }
 }
 </script>
 
 <style>
-.app-container {
-  height: 100vh;
-  width: 100vw;
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
 }
 
-.el-header {
-  background-color: #409EFF;
-  color: white;
+body {
+  font-family: Arial, sans-serif;
+}
+
+.app-container {
+  display: flex;
+  height: 100vh;
+  width: 100vw;
+  overflow: hidden;
+}
+
+/* 侧边栏样式 */
+.sidebar {
+  width: 200px;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  background-color: #3a4654;
+  color: #bfcbd9;
+}
+
+.logo {
+  padding: 20px;
+  text-align: center;
+}
+
+.logo img {
+  width: 80px;
+  height: auto;
+}
+
+.el-menu-vertical {
+  border-right: none;
+  flex: 1;
+}
+
+.sidebar-footer {
+  padding: 10px;
+  font-size: 12px;
+  text-align: center;
+  color: #6c7983;
+}
+
+/* 主要内容区样式 */
+.main-container {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  background-color: #f5f7fa;
+}
+
+.main-header {
+  height: 60px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0 20px;
+  background-color: #fff;
+  box-shadow: 0 1px 4px rgba(0, 21, 41, 0.08);
+}
+
+.header-left {
   display: flex;
   align-items: center;
 }
 
-.el-footer {
-  background-color: #f5f7fa;
+.header-left h2 {
+  margin-left: 15px;
+  font-size: 18px;
+  font-weight: 500;
+  color: #303133;
+}
+
+.menu-toggle {
+  font-size: 20px;
+  cursor: pointer;
   color: #606266;
-  text-align: center;
 }
 
-.el-aside {
-  background-color: #304156;
-  color: #bfcbd9;
+.user-info {
+  display: flex;
+  align-items: center;
+  cursor: pointer;
+  color: #606266;
 }
 
-.el-menu-vertical {
-  height: 100%;
-  border-right: none;
+.main-content {
+  flex: 1;
+  padding: 20px;
+  overflow-y: auto;
 }
 </style> 

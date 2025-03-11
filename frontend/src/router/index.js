@@ -7,34 +7,26 @@ const routes = [
     component: () => import('../views/Home.vue')
   },
   {
-    path: '/config/modsrv',
-    name: 'ModsrvConfig',
-    component: () => import('../views/config/ModsrvConfig.vue')
+    path: '/system',
+    name: 'System',
+    component: () => import('../views/System.vue')
   },
   {
-    path: '/config/netsrv',
-    name: 'NetsrvConfig',
-    component: () => import('../views/config/NetsrvConfig.vue')
+    path: '/activity',
+    name: 'Activity',
+    component: () => import('../views/Activity.vue')
   },
+  // 重定向旧的配置页面路由到系统页面
   {
-    path: '/config/comsrv',
-    name: 'ComsrvConfig',
-    component: () => import('../views/config/ComsrvConfig.vue')
+    path: '/config/:service',
+    redirect: to => {
+      return { path: '/system', query: { service: to.params.service } }
+    }
   },
-  {
-    path: '/config/hissrv',
-    name: 'HissrvConfig',
-    component: () => import('../views/config/HissrvConfig.vue')
-  },
-  {
-    path: '/config/mosquitto',
-    name: 'MosquittoConfig',
-    component: () => import('../views/config/MosquittoConfig.vue')
-  },
+  // 兼容旧路由
   {
     path: '/dashboard',
-    name: 'Dashboard',
-    component: () => import('../views/Dashboard.vue')
+    redirect: '/'
   }
 ]
 
