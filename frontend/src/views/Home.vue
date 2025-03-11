@@ -17,25 +17,6 @@
       </div>
     </div>
 
-    <!-- Alert Preview -->
-    <el-card class="alert-card" v-if="currentAlerts.length > 0">
-      <template #header>
-        <div class="alert-header">
-          <span>Current Alerts</span>
-          <el-tag type="danger">{{ currentAlerts.length }}</el-tag>
-        </div>
-      </template>
-      <el-table :data="currentAlerts" stripe style="width: 100%">
-        <el-table-column prop="time" label="Time" width="180" />
-        <el-table-column prop="type" label="Type" width="150">
-          <template #default="scope">
-            <el-tag :type="getAlertType(scope.row.type)">{{ scope.row.type }}</el-tag>
-          </template>
-        </el-table-column>
-        <el-table-column prop="message" label="Message" />
-      </el-table>
-    </el-card>
-
     <!-- Project Selector -->
     <div class="project-selector">
       <div class="selector-left">
@@ -54,181 +35,151 @@
       </div>
     </div>
 
-    <!-- Dashboard Cards -->
-    <div class="dashboard-cards">
-      <div class="card-row">
-        <!-- Power Bar -->
-        <el-card class="dashboard-card">
-          <div class="bar-container">
-            <h3 class="bar-title">Power</h3>
-            <div class="power-bars">
-              <div class="bar-item">
-                <div class="bar-label">Charge</div>
-                <div class="bar-track">
-                  <div class="bar-fill charge" :style="{ width: getPowerPercentage(chargePower) + '%' }"></div>
-                </div>
-                <div class="bar-value">{{ chargePower }} kW</div>
+    <!-- Main Dashboard Content -->
+    <div class="main-dashboard-container">
+      <!-- Center: System Topology Diagram -->
+      <el-card class="topology-card">
+        <div class="topology-header">
+          <h3>System Topology with Real-time Data</h3>
+        </div>
+        <div class="topology-diagram">
+          <div class="topology-grid">
+            <div class="topology-node pv">
+              <div class="node-icon">
+                <el-icon><el-icon-sunny /></el-icon>
               </div>
-              <div class="bar-item">
-                <div class="bar-label">Discharge</div>
-                <div class="bar-track">
-                  <div class="bar-fill discharge" :style="{ width: getPowerPercentage(dischargePower) + '%' }"></div>
-                </div>
-                <div class="bar-value">{{ dischargePower }} kW</div>
+              <div class="node-label">PV</div>
+              <div class="node-data">{{ pvData.power }} kW</div>
+            </div>
+
+            <div class="topology-connection h-line"></div>
+
+            <div class="topology-node converter">
+              <div class="node-icon">
+                <el-icon><el-icon-set-up /></el-icon>
               </div>
+              <div class="node-label">Converter</div>
+              <div class="node-data">{{ converterData.efficiency }}% eff</div>
+            </div>
+
+            <div class="topology-connection h-line"></div>
+
+            <div class="topology-node battery">
+              <div class="node-icon">
+                <el-icon><el-icon-lightning /></el-icon>
+              </div>
+              <div class="node-label">Battery</div>
+              <div class="node-data">{{ socValue }}% SOC</div>
+            </div>
+
+            <div class="topology-connection down-line"></div>
+
+            <div class="topology-node load">
+              <div class="node-icon">
+                <el-icon><el-icon-house /></el-icon>
+              </div>
+              <div class="node-label">Load</div>
+              <div class="node-data">{{ loadData.power }} kW</div>
+            </div>
+
+            <div class="topology-connection h-line"></div>
+
+            <div class="topology-node grid">
+              <div class="node-icon">
+                <el-icon><el-icon-grid /></el-icon>
+              </div>
+              <div class="node-label">Grid</div>
+              <div class="node-data status">{{ gridData.status }}</div>
+              <div class="node-data">{{ gridData.power }} kW</div>
             </div>
           </div>
-        </el-card>
+        </div>
+      </el-card>
 
-        <!-- SOC Bar -->
-        <el-card class="dashboard-card">
-          <div class="bar-container">
-            <h3 class="bar-title">State of Charge</h3>
-            <div class="soc-bar">
-              <div class="soc-track">
-                <div 
-                  class="soc-fill" 
-                  :class="getSocClass(socValue)" 
-                  :style="{ width: socValue + '%' }"
-                ></div>
-              </div>
-              <div class="soc-value">{{ socValue }}%</div>
-            </div>
-            <div class="soc-legend">
-              <div class="legend-item">
-                <div class="legend-color green"></div>
-                <div class="legend-label">Normal</div>
-              </div>
-              <div class="legend-item">
-                <div class="legend-color yellow"></div>
-                <div class="legend-label">Low (≤ 10%)</div>
-              </div>
-              <div class="legend-item">
-                <div class="legend-color red"></div>
-                <div class="legend-label">Critical (≤ 5%)</div>
-              </div>
-            </div>
-          </div>
-        </el-card>
-
-        <!-- Temperature Display -->
-        <el-card class="dashboard-card">
-          <div class="temperature-container">
-            <div class="thermometer">
-              <div class="thermometer-tube">
-                <div class="thermometer-fill" :style="{ height: getTemperatureHeight() + '%' }"></div>
-              </div>
-              <div class="thermometer-bulb"></div>
-            </div>
-            <div class="temperature-details">
-              <div class="temp-header">Temperature Details</div>
-              <div class="temp-values">
-                <div class="temp-row">
-                  <span class="temp-label max">Max</span>
-                  <span class="temp-value">{{ maxTemp }}°C</span>
+      <div class="bottom-row">
+        <!-- Bottom Left: Power and SOC -->
+        <div class="bottom-left">
+          <!-- Power Bar -->
+          <el-card class="dashboard-card">
+            <div class="bar-container">
+              <h3 class="bar-title">Power</h3>
+              <div class="power-bars">
+                <div class="bar-item">
+                  <div class="bar-label">Charge</div>
+                  <div class="bar-track">
+                    <div class="bar-fill charge" :style="{ width: getPowerPercentage(chargePower) + '%' }"></div>
+                  </div>
+                  <div class="bar-value">{{ chargePower }} kW</div>
                 </div>
-                <div class="temp-row">
-                  <span class="temp-label min">Min</span>
-                  <span class="temp-value">{{ minTemp }}°C</span>
-                </div>
-                <div class="temp-row">
-                  <span class="temp-label current">Current</span>
-                  <span class="temp-value">{{ currentTemp }}°C</span>
+                <div class="bar-item">
+                  <div class="bar-label">Discharge</div>
+                  <div class="bar-track">
+                    <div class="bar-fill discharge" :style="{ width: getPowerPercentage(dischargePower) + '%' }"></div>
+                  </div>
+                  <div class="bar-value">{{ dischargePower }} kW</div>
                 </div>
               </div>
             </div>
-          </div>
-        </el-card>
-      </div>
+          </el-card>
 
-      <div class="main-content-row">
-        <!-- Topology Diagram -->
-        <el-card class="topology-card">
-          <div class="topology-header">
-            <h3>System Topology with Real-time Data</h3>
-          </div>
-          <div class="topology-diagram">
-            <div class="topology-grid">
-              <div class="topology-node pv">
-                <div class="node-icon">
-                  <el-icon><el-icon-sunny /></el-icon>
+          <!-- SOC Bar -->
+          <el-card class="dashboard-card">
+            <div class="bar-container">
+              <h3 class="bar-title">State of Charge</h3>
+              <div class="soc-bar">
+                <div class="soc-track">
+                  <div 
+                    class="soc-fill" 
+                    :class="getSocClass(socValue)" 
+                    :style="{ width: socValue + '%' }"
+                  ></div>
                 </div>
-                <div class="node-label">PV</div>
-                <div class="node-data">{{ pvData.power }} kW</div>
+                <div class="soc-value">{{ socValue }}%</div>
               </div>
-
-              <div class="topology-connection h-line"></div>
-
-              <div class="topology-node converter">
-                <div class="node-icon">
-                  <el-icon><el-icon-set-up /></el-icon>
+              <div class="soc-legend">
+                <div class="legend-item">
+                  <div class="legend-color green"></div>
+                  <div class="legend-label">Normal</div>
                 </div>
-                <div class="node-label">Converter</div>
-                <div class="node-data">{{ converterData.efficiency }}% eff</div>
-              </div>
-
-              <div class="topology-connection h-line"></div>
-
-              <div class="topology-node battery">
-                <div class="node-icon">
-                  <el-icon><el-icon-lightning /></el-icon>
+                <div class="legend-item">
+                  <div class="legend-color yellow"></div>
+                  <div class="legend-label">Low (≤ 10%)</div>
                 </div>
-                <div class="node-label">Battery</div>
-                <div class="node-data">{{ socValue }}% SOC</div>
-              </div>
-
-              <div class="topology-connection down-line"></div>
-
-              <div class="topology-node load">
-                <div class="node-icon">
-                  <el-icon><el-icon-house /></el-icon>
-                </div>
-                <div class="node-label">Load</div>
-                <div class="node-data">{{ loadData.power }} kW</div>
-              </div>
-
-              <div class="topology-connection h-line"></div>
-
-              <div class="topology-node grid">
-                <div class="node-icon">
-                  <el-icon><el-icon-grid /></el-icon>
-                </div>
-                <div class="node-label">Grid</div>
-                <div class="node-data status">{{ gridData.status }}</div>
-                <div class="node-data">{{ gridData.power }} kW</div>
-              </div>
-            </div>
-          </div>
-        </el-card>
-
-        <!-- Charts -->
-        <el-card class="charts-card">
-          <div class="charts-header">
-            <h3>Daily Energy & SOC Trends</h3>
-          </div>
-          <div class="charts-container">
-            <div class="chart power-chart">
-              <div class="chart-title">Power (24h)</div>
-              <div class="chart-placeholder">
-                <!-- In real implementation, replace with actual chart component -->
-                <div class="chart-mock">
-                  <div class="chart-line" v-for="i in 10" :key="i" 
-                    :style="{ height: Math.random() * 70 + 10 + '%', left: (i-1) * 10 + '%' }"></div>
+                <div class="legend-item">
+                  <div class="legend-color red"></div>
+                  <div class="legend-label">Critical (≤ 5%)</div>
                 </div>
               </div>
             </div>
-            <div class="chart soc-chart">
-              <div class="chart-title">SOC (24h)</div>
-              <div class="chart-placeholder">
-                <!-- In real implementation, replace with actual chart component -->
-                <div class="chart-mock">
-                  <div class="chart-line soc" v-for="i in 10" :key="i" 
-                    :style="{ height: 60 + Math.random() * 30 + '%', left: (i-1) * 10 + '%' }"></div>
-                </div>
+          </el-card>
+        </div>
+
+        <!-- Bottom Right: Current Alerts -->
+        <div class="bottom-right">
+          <el-card class="alert-card">
+            <template #header>
+              <div class="alert-header">
+                <span>Current Alerts</span>
+                <el-tag type="danger" v-if="currentAlerts.length > 0">{{ currentAlerts.length }}</el-tag>
               </div>
+            </template>
+            <div v-if="currentAlerts.length > 0">
+              <el-table :data="currentAlerts" stripe style="width: 100%">
+                <el-table-column prop="time" label="Time" width="180" />
+                <el-table-column prop="type" label="Type" width="100">
+                  <template #default="scope">
+                    <el-tag :type="getAlertType(scope.row.type)">{{ scope.row.type }}</el-tag>
+                  </template>
+                </el-table-column>
+                <el-table-column prop="message" label="Message" show-overflow-tooltip />
+              </el-table>
             </div>
-          </div>
-        </el-card>
+            <div v-else class="no-alerts">
+              <el-icon><el-icon-check /></el-icon>
+              <span>No active alerts</span>
+            </div>
+          </el-card>
+        </div>
       </div>
 
       <!-- System Status Table -->
@@ -254,6 +205,35 @@
           <el-table-column prop="cumulateDischarge" label="Cumulate Discharge" align="center" />
         </el-table>
       </el-card>
+
+      <!-- Energy & SOC Trends -->
+      <el-card class="charts-card">
+        <div class="charts-header">
+          <h3>Daily Energy & SOC Trends</h3>
+        </div>
+        <div class="charts-container">
+          <div class="chart power-chart">
+            <div class="chart-title">Power (24h)</div>
+            <div class="chart-placeholder">
+              <!-- In real implementation, replace with actual chart component -->
+              <div class="chart-mock">
+                <div class="chart-line" v-for="i in 10" :key="i" 
+                  :style="{ height: Math.random() * 70 + 10 + '%', left: (i-1) * 10 + '%' }"></div>
+              </div>
+            </div>
+          </div>
+          <div class="chart soc-chart">
+            <div class="chart-title">SOC (24h)</div>
+            <div class="chart-placeholder">
+              <!-- In real implementation, replace with actual chart component -->
+              <div class="chart-mock">
+                <div class="chart-line soc" v-for="i in 10" :key="i" 
+                  :style="{ height: 60 + Math.random() * 30 + '%', left: (i-1) * 10 + '%' }"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </el-card>
     </div>
   </div>
 </template>
@@ -272,10 +252,6 @@ export default {
       maxPower: 100, // 100kW system
       // SOC data
       socValue: 88,
-      // Temperature data
-      currentTemp: 25,
-      minTemp: 17,
-      maxTemp: 30,
       // System state
       systemState: 'Discharging',
       // Topology data
@@ -357,11 +333,6 @@ export default {
       if (soc <= 10) return 'warning';
       return 'normal';
     },
-    getTemperatureHeight() {
-      // Calculate height percentage based on min, max, and current temperature
-      const range = this.maxTemp - this.minTemp;
-      return Math.max(0, Math.min(100, ((this.currentTemp - this.minTemp) / range) * 100));
-    },
     getAlertType(type) {
       const typeMap = {
         'INFO': 'info',
@@ -412,17 +383,6 @@ export default {
   font-size: 14px;
 }
 
-/* Alert Card */
-.alert-card {
-  margin-bottom: 15px;
-}
-
-.alert-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-}
-
 /* Project Selector */
 .project-selector {
   display: flex;
@@ -462,20 +422,34 @@ export default {
   color: #333;
 }
 
-/* Dashboard Cards */
-.dashboard-cards {
-  margin-bottom: 20px;
+/* Main Dashboard Container */
+.main-dashboard-container {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
 }
 
-.card-row {
+/* Bottom Row Layout */
+.bottom-row {
   display: flex;
   gap: 20px;
   margin-bottom: 20px;
 }
 
-.dashboard-card {
+.bottom-left {
   flex: 1;
-  height: 200px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.bottom-right {
+  flex: 1;
+}
+
+/* Dashboard Cards */
+.dashboard-card {
+  height: 180px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -491,7 +465,7 @@ export default {
 }
 
 .bar-title {
-  margin-bottom: 20px;
+  margin-bottom: 15px;
   text-align: center;
 }
 
@@ -545,7 +519,7 @@ export default {
 .soc-bar {
   display: flex;
   align-items: center;
-  margin: 30px 0;
+  margin: 20px 0;
 }
 
 .soc-track {
@@ -615,102 +589,35 @@ export default {
   font-size: 0.8rem;
 }
 
-/* Temperature Styles */
-.temperature-container {
-  display: flex;
-  width: 100%;
+/* Alert Card */
+.alert-card {
   height: 100%;
-  align-items: center;
-  justify-content: space-around;
 }
 
-.thermometer {
-  width: 60px;
-  height: 160px;
-  position: relative;
-}
-
-.thermometer-tube {
-  position: absolute;
-  top: 0;
-  left: 50%;
-  transform: translateX(-50%);
-  width: 16px;
-  height: 130px;
-  background: white;
-  border-radius: 10px;
-  overflow: hidden;
-  border: 2px solid #ddd;
-}
-
-.thermometer-fill {
-  position: absolute;
-  bottom: 0;
-  width: 100%;
-  height: 60%;
-  background: linear-gradient(to top, #F56C6C, #67C23A);
-  transition: height 0.5s ease-in-out;
-}
-
-.thermometer-bulb {
-  position: absolute;
-  bottom: 0;
-  left: 50%;
-  transform: translateX(-50%);
-  width: 40px;
-  height: 40px;
-  background: #F56C6C;
-  border-radius: 50%;
-  border: 2px solid #ddd;
-}
-
-.temperature-details {
-  width: 120px;
-}
-
-.temp-header {
-  font-weight: bold;
-  margin-bottom: 15px;
-  text-align: center;
-}
-
-.temp-values {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-
-.temp-row {
+.alert-header {
   display: flex;
   justify-content: space-between;
+  align-items: center;
 }
 
-.temp-label {
-  font-weight: bold;
-}
-
-.temp-label.max {
-  color: #F56C6C;
-}
-
-.temp-label.min {
-  color: #67C23A;
-}
-
-.temp-label.current {
-  color: #409EFF;
-}
-
-/* Main Content Row */
-.main-content-row {
+.no-alerts {
   display: flex;
-  gap: 20px;
-  margin-bottom: 20px;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 150px;
+  color: #67C23A;
+  font-size: 16px;
+}
+
+.no-alerts .el-icon {
+  font-size: 40px;
+  margin-bottom: 10px;
 }
 
 /* Topology Diagram */
 .topology-card {
-  flex: 1.5;
+  width: 100%;
   min-height: 400px;
 }
 
@@ -821,66 +728,10 @@ export default {
   background-color: #ddd;
 }
 
-/* Charts Card */
-.charts-card {
-  flex: 1;
-  min-height: 400px;
-}
-
-.charts-header {
-  margin-bottom: 20px;
-  text-align: center;
-}
-
-.charts-container {
-  display: flex;
-  flex-direction: column;
-  height: 320px;
-  gap: 20px;
-}
-
-.chart {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-}
-
-.chart-title {
-  font-weight: bold;
-  margin-bottom: 10px;
-  text-align: center;
-}
-
-.chart-placeholder {
-  flex: 1;
-  background-color: #f9f9f9;
-  border-radius: 4px;
-  border: 1px solid #eee;
-  position: relative;
-}
-
-/* Mock chart for demonstration */
-.chart-mock {
-  position: relative;
-  width: 100%;
-  height: 100%;
-}
-
-.chart-line {
-  position: absolute;
-  bottom: 0;
-  width: 6px;
-  background-color: #409EFF;
-  border-radius: 3px 3px 0 0;
-}
-
-.chart-line.soc {
-  background-color: #67C23A;
-}
-
 /* Status Table */
 .status-table-card {
   width: 100%;
+  margin-bottom: 20px;
 }
 
 .status-header {
@@ -935,5 +786,61 @@ export default {
 .condition-tag.idle {
   background: #909399;
   color: white;
+}
+
+/* Charts Card */
+.charts-card {
+  width: 100%;
+}
+
+.charts-header {
+  margin-bottom: 20px;
+  text-align: center;
+}
+
+.charts-container {
+  display: flex;
+  flex-direction: column;
+  height: 320px;
+  gap: 20px;
+}
+
+.chart {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+
+.chart-title {
+  font-weight: bold;
+  margin-bottom: 10px;
+  text-align: center;
+}
+
+.chart-placeholder {
+  flex: 1;
+  background-color: #f9f9f9;
+  border-radius: 4px;
+  border: 1px solid #eee;
+  position: relative;
+}
+
+/* Mock chart for demonstration */
+.chart-mock {
+  position: relative;
+  width: 100%;
+  height: 100%;
+}
+
+.chart-line {
+  position: absolute;
+  bottom: 0;
+  width: 6px;
+  background-color: #409EFF;
+  border-radius: 3px 3px 0 0;
+}
+
+.chart-line.soc {
+  background-color: #67C23A;
 }
 </style> 
