@@ -1,0 +1,13 @@
+[package]
+name = "model-config-scripts"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "create_model_config"
+path = "create_model_config.rs"
+
+[dependencies]
+redis = "0.22.1"
+serde = { version = "1.0.152", features = ["derive"] }
+serde_json = "1.0.93" 

@@ -1,0 +1,41 @@
+# Rust
+**/target/
+**/*.rs.bk
+**/Cargo.lock
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Logs
+*.log
+logs/
+
+# Environment
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# Build
+**/build/
+**/dist/
+
+# Dependencies
+**/node_modules/
+
+# Docker
+.docker/
+
+# Certificates
+**/certs/
+**/*.pem
+**/*.key
+**/*.crt
+
+# Misc
+.DS_Store
+Thumbs.db 

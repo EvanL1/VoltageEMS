@@ -1,0 +1,94 @@
+{
+  "redis": {
+    "host": "localhost",
+    "port": 6379,
+    "password": "",
+    "socket": "",
+    "prefix": "ems:",
+    "data_keys": [
+      "ems:model:output:*",
+      "ems:data:*"
+    ],
+    "poll_interval_ms": 1000
+  },
+  "logging": {
+    "level": "info",
+    "file": "/var/log/ems/netsrv.log",
+    "console": true
+  },
+  "networks": [
+    {
+      "name": "Local MQTT",
+      "enabled": true,
+      "network_type": "mqtt",
+      "format_type": "json",
+      "mqtt_config": {
+        "broker_url": "localhost",
+        "port": 1883,
+        "client_id": "ems-netsrv",
+        "username": null,
+        "password": null,
+        "topic": "ems/data",
+        "qos": 0,
+        "use_ssl": false,
+        "ca_cert_path": null,
+        "client_cert_path": null,
+        "client_key_path": null
+      },
+      "data_filter": null
+    },
+    {
+      "name": "Cloud HTTP",
+      "enabled": false,
+      "network_type": "http",
+      "format_type": "json",
+      "http_config": {
+        "url": "https://api.example.com/data",
+        "method": "POST",
+        "headers": {
+          "Content-Type": "application/json",
+          "X-API-Key": "your-api-key"
+        },
+        "auth_type": null,
+        "username": null,
+        "password": null,
+        "token": null,
+        "timeout_ms": 5000
+      },
+      "data_filter": ["model:output:battery", "model:output:power_flow"]
+    },
+    {
+      "name": "AWS IoT",
+      "enabled": false,
+      "network_type": "awsiot",
+      "format_type": "json",
+      "aws_iot_config": {
+        "endpoint": "xxxxxxxxxxxxxxx-ats.iot.us-east-1.amazonaws.com",
+        "region": "us-east-1",
+        "topic": "ems/data",
+        "thing_name": "ems-gateway",
+        "client_id": "ems-netsrv",
+        "cert_path": "/etc/ems/certs/certificate.pem.crt",
+        "key_path": "/etc/ems/certs/private.pem.key",
+        "ca_path": "/etc/ems/certs/AmazonRootCA1.pem",
+        "qos": 1
+      },
+      "data_filter": null
+    },
+    {
+      "name": "Aliyun IoT",
+      "enabled": false,
+      "network_type": "aliyuniot",
+      "format_type": "json",
+      "aliyun_iot_config": {
+        "product_key": "your-product-key",
+        "device_name": "your-device-name",
+        "device_secret": "your-device-secret",
+        "region_id": "cn-shanghai",
+        "topic": "thing/event/property/post",
+        "qos": 1
+      },
+      "data_filter": null
+    }
+  ]
+} 

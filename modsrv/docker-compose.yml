@@ -1,0 +1,68 @@
+version: '3.8'
+
+services:
+  redis:
+    image: redis:6.2-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    command: redis-server --appendonly yes
+    networks:
+      - ems-network
+
+  influxdb:
+    image: influxdb:2.0
+    ports:
+      - "8086:8086"
+    volumes:
+      - influxdb-data:/var/lib/influxdb2
+    environment:
+      - DOCKER_INFLUXDB_INIT_MODE=setup
+      - DOCKER_INFLUXDB_INIT_USERNAME=admin
+      - DOCKER_INFLUXDB_INIT_PASSWORD=password
+      - DOCKER_INFLUXDB_INIT_ORG=voltage
+      - DOCKER_INFLUXDB_INIT_BUCKET=ems
+    networks:
+      - ems-network
+
+  comsrv:
+    build:
+      context: ../Comsrv
+      dockerfile: Dockerfile
+    depends_on:
+      - redis
+    volumes:
+      - ../Comsrv/config:/etc/comsrv/config
+    networks:
+      - ems-network
+
+  hissrv:
+    build:
+      context: ../Hissrv/hissrv-rust
+      dockerfile: Dockerfile
+    depends_on:
+      - redis
+      - influxdb
+    networks:
+      - ems-network
+
+  modsrv:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    depends_on:
+      - redis
+      - comsrv
+    volumes:
+      - ./modsrv.toml:/etc/modsrv.toml
+    networks:
+      - ems-network
+
+networks:
+  ems-network:
+    driver: bridge
+
+volumes:
+  redis-data:
+  influxdb-data: 
