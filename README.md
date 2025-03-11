@@ -64,9 +64,16 @@ docker-compose down
 
 ## 配置
 
-- **Comsrv**: `Comsrv/config/`
-- **modsrv**: `modsrv/modsrv.toml`
-- **netsrv**: `netsrv/netsrv.json`
+所有服务的配置文件统一存放在 `config` 目录下，按服务名称分类：
+
+- **Comsrv**: `config/comsrv/`
+- **Hissrv**: `config/hissrv/`
+- **modsrv**: `config/modsrv/modsrv.toml`
+- **netsrv**: `config/netsrv/netsrv.json`
+- **Mosquitto**: `config/mosquitto/mosquitto.conf`
+- **证书**: `config/certs/`
+
+这种集中管理配置文件的方式使得系统配置更加清晰和易于维护。
 
 ## 许可证
 

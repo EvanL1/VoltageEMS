@@ -33,7 +33,7 @@ services:
     depends_on:
       - redis
     volumes:
-      - ../Comsrv/config:/etc/comsrv/config
+      - ../config/comsrv:/etc/comsrv/config
     networks:
       - ems-network
 
@@ -44,6 +44,8 @@ services:
     depends_on:
       - redis
       - influxdb
+    volumes:
+      - ../config/hissrv:/etc/hissrv
     networks:
       - ems-network
 
@@ -55,7 +57,7 @@ services:
       - redis
       - comsrv
     volumes:
-      - ./modsrv.toml:/etc/modsrv.toml
+      - ../config/modsrv/modsrv.toml:/etc/modsrv.toml
     networks:
       - ems-network
 

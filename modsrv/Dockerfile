@@ -20,7 +20,6 @@ RUN mkdir -p /var/log/ems
 
 # Copy the binary from the builder stage
 COPY --from=builder /usr/src/modsrv/target/release/modsrv /usr/local/bin/modsrv
-COPY modsrv.toml /etc/modsrv.toml
 
 # Set the entrypoint
 ENTRYPOINT ["/usr/local/bin/modsrv", "--config", "/etc/modsrv.toml"] 
