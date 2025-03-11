@@ -86,6 +86,46 @@ services:
     networks:
       - ems-network
 
+  grafana:
+    image: grafana/grafana:9.3.6
+    ports:
+      - "3000:3000"
+    volumes:
+      - grafana-data:/var/lib/grafana
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_INSTALL_PLUGINS=grafana-clock-panel,grafana-simple-json-datasource
+    networks:
+      - ems-network
+    depends_on:
+      - influxdb
+
+  api:
+    build:
+      context: ./api
+      dockerfile: Dockerfile
+    ports:
+      - "3001:3001"
+    volumes:
+      - ./config:/app/config
+    networks:
+      - ems-network
+    depends_on:
+      - redis
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    ports:
+      - "8080:80"
+    networks:
+      - ems-network
+    depends_on:
+      - api
+      - grafana
+
 networks:
   ems-network:
     driver: bridge
@@ -94,4 +134,5 @@ volumes:
   redis-data:
   influxdb-data:
   mosquitto-data:
-  mosquitto-log: 
+  mosquitto-log:
+  grafana-data: 
