@@ -1,0 +1,10 @@
+property_id,name,unit,description
+1,Rated Capacity,kWh,额定容量
+2,Rated Voltage,V,额定电压
+3,Max Voltage,V,最大电压
+4,Min Voltage,V,最小电压
+5,Max Charge Current,A,最大充电电流
+6,Max Discharge Current,A,最大放电电流
+7,Battery Type,,电池类型
+8,Cluster Count,,簇数量
+9,Design Life,years,设计寿命

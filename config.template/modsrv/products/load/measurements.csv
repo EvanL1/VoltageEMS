@@ -1,0 +1,13 @@
+measurement_id,name,unit,description
+1,Active Power,kW,
+2,Reactive Power,kVar,
+3,Apparent Power,kVA,
+4,Power Factor,,
+5,Voltage,V,
+6,Current,A,
+7,Frequency,Hz,
+8,Energy Consumption,kWh,
+9,Load Rate,%,
+10,THD Voltage,%,
+11,THD Current,%,
+12,Operating Status,,

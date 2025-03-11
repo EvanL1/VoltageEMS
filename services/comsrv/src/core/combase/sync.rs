@@ -1,0 +1,391 @@
+//! Telemetry synchronization module
+//!
+//! Handles background synchronization of telemetry data to Redis
+
+use std::sync::Arc;
+use tokio::sync::{mpsc, Mutex, RwLock};
+use tokio::task::JoinHandle;
+use tracing::{debug, error, info};
+
+use super::point_config::RuntimeConfigProvider;
+use super::point_transformer::TransformDirection;
+use crate::core::combase::traits::TelemetryBatch;
+use crate::utils::error::{ComSrvError, Result};
+use voltage_config::common::FourRemote;
+
+/// Transform telemetry batch using provided config provider
+///
+/// Internal helper function for code reuse between public API and async task
+fn transform_telemetry_batch(
+    config_provider: &Arc<RuntimeConfigProvider>,
+    telemetry_batch: TelemetryBatch,
+) -> Vec<crate::common::PluginPointUpdate> {
+    let channel_id = telemetry_batch.channel_id;
+    let mut updates = Vec::new();
+
+    // Process telemetry data with linear transformation
+    for (point_id, raw_value, _timestamp) in telemetry_batch.telemetry {
+        let transformer =
+            config_provider.get_transformer(channel_id, &FourRemote::Telemetry, point_id);
+
+        let processed_value = transformer.transform(raw_value, TransformDirection::DeviceToSystem);
+
+        // Debug log: show raw → value transformation
+        debug!(
+            "[T] Point {}: raw={:.2} → value={:.2}",
+            point_id, raw_value, processed_value
+        );
+
+        let update = crate::common::PluginPointUpdate {
+            telemetry_type: crate::core::config::FourRemote::Telemetry,
+            point_id,
+            value: processed_value,
+            raw_value: Some(raw_value),
+        };
+        updates.push(update);
+    }
+
+    // Process signal data with boolean transformation
+    for (point_id, raw_value, _timestamp) in telemetry_batch.signal {
+        let transformer =
+            config_provider.get_transformer(channel_id, &FourRemote::Signal, point_id);
+
+        let processed_value = transformer.transform(raw_value, TransformDirection::DeviceToSystem);
+
+        // Debug log: show raw → value transformation
+        debug!(
+            "[S] Point {}: raw={:.2} → value={:.2}",
+            point_id, raw_value, processed_value
+        );
+
+        let update = crate::common::PluginPointUpdate {
+            telemetry_type: crate::core::config::FourRemote::Signal,
+            point_id,
+            value: processed_value,
+            raw_value: Some(raw_value),
+        };
+        updates.push(update);
+    }
+
+    updates
+}
+
+/// Telemetry sync manager
+pub struct TelemetrySync {
+    rtdb: Arc<dyn voltage_rtdb::Rtdb>,
+    routing_cache: Arc<voltage_config::RoutingCache>,
+    sync_task_handle: Arc<RwLock<Option<JoinHandle<()>>>>,
+    data_receiver: Arc<Mutex<Option<mpsc::Receiver<TelemetryBatch>>>>,
+    data_sender: mpsc::Sender<TelemetryBatch>,
+    /// Point configuration provider for data transformation
+    config_provider: Arc<RuntimeConfigProvider>,
+}
+
+impl TelemetrySync {
+    /// Create new telemetry sync manager with configuration provider and routing cache
+    pub fn new(
+        rtdb: Arc<dyn voltage_rtdb::Rtdb>,
+        routing_cache: Arc<voltage_config::RoutingCache>,
+        config_provider: Arc<RuntimeConfigProvider>,
+    ) -> Self {
+        let (data_sender, data_receiver) = mpsc::channel(1000);
+
+        Self {
+            rtdb,
+            routing_cache,
+            sync_task_handle: Arc::new(RwLock::new(None)),
+            data_receiver: Arc::new(Mutex::new(Some(data_receiver))),
+            data_sender,
+            config_provider,
+        }
+    }
+
+    /// Get the data sender for protocols to use
+    pub fn get_sender(&self) -> mpsc::Sender<TelemetryBatch> {
+        self.data_sender.clone()
+    }
+
+    /// Get the sync task handle
+    pub fn get_handle(&self) -> Arc<RwLock<Option<JoinHandle<()>>>> {
+        self.sync_task_handle.clone()
+    }
+
+    /// Transform telemetry batch to plugin point updates
+    ///
+    /// This method applies configured transformations (scale/offset/reverse) to raw data.
+    /// Extracted for reusability and testing.
+    pub fn transform_batch(
+        &self,
+        telemetry_batch: TelemetryBatch,
+    ) -> Vec<crate::common::PluginPointUpdate> {
+        transform_telemetry_batch(&self.config_provider, telemetry_batch)
+    }
+
+    /// Start telemetry sync task
+    pub async fn start_telemetry_sync_task(&self) -> Result<()> {
+        info!("Starting telemetry sync task...");
+
+        // Take the receiver from the manager
+        let receiver = {
+            let mut receiver_opt = self.data_receiver.lock().await;
+            receiver_opt.take()
+        };
+
+        let Some(mut receiver) = receiver else {
+            return Err(ComSrvError::InvalidOperation(
+                "Data receiver already taken".to_string(),
+            ));
+        };
+
+        // Clone necessary references for the task
+        let rtdb = Arc::clone(&self.rtdb);
+        let routing_cache = Arc::clone(&self.routing_cache);
+        let sync_handle = self.sync_task_handle.clone();
+        let config_provider = Arc::clone(&self.config_provider);
+
+        // Spawn the telemetry sync task
+        let task_handle = tokio::spawn(async move {
+            info!("Telemetry sync task started with data transformation enabled");
+
+            // Create storage manager from existing rtdb and routing cache
+            let storage = crate::storage::StorageManager::from_rtdb(rtdb, routing_cache);
+
+            while let Some(telemetry_batch) = receiver.recv().await {
+                let channel_id = telemetry_batch.channel_id;
+
+                // Transform batch using shared logic
+                let updates = transform_telemetry_batch(&config_provider, telemetry_batch);
+
+                // Batch update if there are updates
+                if !updates.is_empty() {
+                    if let Err(e) = storage.batch_update_and_publish(channel_id, updates).await {
+                        error!("Failed to sync data for channel {}: {}", channel_id, e);
+                    }
+                }
+            }
+
+            info!("Telemetry sync task stopped");
+        });
+
+        // Store the task handle
+        let mut handle = sync_handle.write().await;
+        *handle = Some(task_handle);
+
+        info!("Telemetry sync task started successfully");
+
+        Ok(())
+    }
+
+    /// Stop telemetry sync task
+    pub async fn stop_telemetry_sync_task(&self) -> Result<()> {
+        let mut handle = self.sync_task_handle.write().await;
+        if let Some(task_handle) = handle.take() {
+            info!("Stopping telemetry sync task...");
+            task_handle.abort();
+            info!("Telemetry sync task stopped");
+        }
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::disallowed_methods)] // Test code - unwrap is acceptable
+mod tests {
+    use super::*;
+    use crate::core::combase::point_config::RuntimeConfigProvider;
+    use crate::core::config::types::{Point, SignalPoint, TelemetryPoint};
+    use crate::core::config::RuntimeChannelConfig;
+    use std::collections::HashMap;
+    use voltage_config::comsrv::ChannelConfig;
+
+    /// Create test RTDB for unit tests (no external dependencies)
+    fn create_test_rtdb() -> Arc<dyn voltage_rtdb::Rtdb> {
+        Arc::new(voltage_rtdb::MemoryRtdb::new())
+    }
+
+    fn create_test_runtime_config() -> RuntimeChannelConfig {
+        let base_config = ChannelConfig {
+            core: voltage_config::comsrv::ChannelCore {
+                id: 1001,
+                name: "Test Channel".to_string(),
+                description: None,
+                protocol: "modbus_tcp".to_string(),
+                enabled: true,
+            },
+            parameters: HashMap::new(),
+            logging: Default::default(),
+        };
+
+        let mut runtime_config = RuntimeChannelConfig::from_base(base_config);
+
+        // Add telemetry point: scale=0.1, offset=0.0
+        runtime_config.telemetry_points.push(TelemetryPoint {
+            base: Point {
+                point_id: 1,
+                signal_name: "Temperature".to_string(),
+                description: None,
+                unit: Some("°C".to_string()),
+            },
+            scale: 0.1,
+            offset: 0.0,
+            data_type: "float32".to_string(),
+            reverse: false,
+        });
+
+        // Add signal point: reverse=true
+        runtime_config.signal_points.push(SignalPoint {
+            base: Point {
+                point_id: 2,
+                signal_name: "Status".to_string(),
+                description: None,
+                unit: None,
+            },
+            reverse: true,
+        });
+
+        runtime_config
+    }
+
+    #[tokio::test]
+    async fn test_transform_telemetry_linear() {
+        // Setup
+        let config_provider = Arc::new(RuntimeConfigProvider::new());
+        let runtime_config = create_test_runtime_config();
+        config_provider.load_channel_config(&runtime_config).await;
+
+        let rtdb = create_test_rtdb();
+        let routing_cache = Arc::new(voltage_config::RoutingCache::new());
+        let sync = TelemetrySync::new(rtdb, routing_cache, config_provider);
+
+        // Create test batch with raw value
+        let batch = TelemetryBatch {
+            channel_id: 1001,
+            telemetry: vec![(1, 6693.0, 0)],
+            signal: vec![],
+        };
+
+        // Transform (calls real code)
+        let updates = sync.transform_batch(batch);
+
+        // Verify transformation
+        assert_eq!(updates.len(), 1);
+        assert_eq!(updates[0].point_id, 1);
+        assert!((updates[0].value - 669.3).abs() < 0.0001); // 6693.0 * 0.1 (floating point)
+        assert_eq!(updates[0].raw_value, Some(6693.0));
+    }
+
+    #[tokio::test]
+    async fn test_transform_signal_reverse() {
+        // Setup
+        let config_provider = Arc::new(RuntimeConfigProvider::new());
+        let runtime_config = create_test_runtime_config();
+        config_provider.load_channel_config(&runtime_config).await;
+
+        let rtdb = create_test_rtdb();
+        let routing_cache = Arc::new(voltage_config::RoutingCache::new());
+        let sync = TelemetrySync::new(rtdb, routing_cache, config_provider);
+
+        // Create test batch with signal data
+        let batch = TelemetryBatch {
+            channel_id: 1001,
+            telemetry: vec![],
+            signal: vec![(2, 0.0, 0)], // raw = 0, reverse=true
+        };
+
+        // Transform
+        let updates = sync.transform_batch(batch);
+
+        // Verify boolean reversal
+        assert_eq!(updates.len(), 1);
+        assert_eq!(updates[0].value, 1.0); // reversed from 0
+        assert_eq!(updates[0].raw_value, Some(0.0));
+    }
+
+    #[tokio::test]
+    async fn test_transform_batch_mixed() {
+        // Setup
+        let config_provider = Arc::new(RuntimeConfigProvider::new());
+        let runtime_config = create_test_runtime_config();
+        config_provider.load_channel_config(&runtime_config).await;
+
+        let rtdb = create_test_rtdb();
+        let routing_cache = Arc::new(voltage_config::RoutingCache::new());
+        let sync = TelemetrySync::new(rtdb, routing_cache, config_provider);
+
+        // Create batch with both telemetry and signal
+        let batch = TelemetryBatch {
+            channel_id: 1001,
+            telemetry: vec![(1, 5000.0, 0)], // → 500.0
+            signal: vec![(2, 1.0, 0)],       // → 0.0 (reversed)
+        };
+
+        // Transform
+        let updates = sync.transform_batch(batch);
+
+        // Verify both types processed correctly
+        assert_eq!(updates.len(), 2);
+
+        // Verify telemetry
+        let telemetry_update = &updates[0];
+        assert_eq!(telemetry_update.value, 500.0);
+        assert_eq!(telemetry_update.raw_value, Some(5000.0));
+
+        // Verify signal
+        let signal_update = &updates[1];
+        assert_eq!(signal_update.value, 0.0);
+        assert_eq!(signal_update.raw_value, Some(1.0));
+    }
+
+    #[tokio::test]
+    async fn test_transform_with_offset() {
+        // Setup with scale=0.1, offset=10.0
+        let config_provider = Arc::new(RuntimeConfigProvider::new());
+
+        let base_config = ChannelConfig {
+            core: voltage_config::comsrv::ChannelCore {
+                id: 1002,
+                name: "Test Channel 2".to_string(),
+                description: None,
+                protocol: "modbus_tcp".to_string(),
+                enabled: true,
+            },
+            parameters: HashMap::new(),
+            logging: Default::default(),
+        };
+
+        let mut runtime_config = RuntimeChannelConfig::from_base(base_config);
+        runtime_config.telemetry_points.push(TelemetryPoint {
+            base: Point {
+                point_id: 1,
+                signal_name: "Pressure".to_string(),
+                description: None,
+                unit: Some("kPa".to_string()),
+            },
+            scale: 0.1,
+            offset: 10.0, // with offset
+            data_type: "float32".to_string(),
+            reverse: false,
+        });
+
+        config_provider.load_channel_config(&runtime_config).await;
+
+        let rtdb = create_test_rtdb();
+        let routing_cache = Arc::new(voltage_config::RoutingCache::new());
+        let sync = TelemetrySync::new(rtdb, routing_cache, config_provider);
+
+        // Create test batch
+        let batch = TelemetryBatch {
+            channel_id: 1002,
+            telemetry: vec![(1, 1000.0, 0)],
+            signal: vec![],
+        };
+
+        // Transform
+        let updates = sync.transform_batch(batch);
+
+        // Verify: 1000 * 0.1 + 10 = 110.0
+        assert_eq!(updates.len(), 1);
+        assert_eq!(updates[0].value, 110.0);
+        assert_eq!(updates[0].raw_value, Some(1000.0));
+    }
+}

@@ -1,0 +1,10 @@
+property_id,name,unit,description
+1,Rated Power,kW,额定功率
+2,Rated Voltage,V,额定电压
+3,Rated Frequency,Hz,额定频率
+4,Fuel Tank Capacity,L,油箱容量
+5,Engine Model,,发动机型号
+6,Engine Speed,RPM,额定转速
+7,Fuel Type,,燃料类型
+8,Cooling Type,,冷却方式
+9,Start Type,,启动方式

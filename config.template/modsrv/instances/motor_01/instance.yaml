@@ -1,0 +1,134 @@
+# Motor Controller Instance Configuration
+instance:
+  id: motor_01
+  name: "Main Drive Motor"
+  product_name: motor_controller
+  description: "Primary conveyor drive motor with encoder feedback"
+  enabled: true
+
+  # Motor specifications
+  properties:
+    rated_power: 15.0  # kW
+    rated_speed: 1500  # rpm
+    rated_voltage: 400  # V
+    rated_current: 32.0  # A
+    rated_torque: 95.5  # Nm
+    rated_frequency: 50  # Hz
+    pole_pairs: 2
+    encoder_resolution: 4096  # pulses per revolution
+    max_speed: 3000  # rpm
+    max_current: 48.0  # A
+    max_torque: 143.0  # Nm
+    inertia: 0.05  # kg.m²
+    motor_type: "AC Induction"
+    cooling_method: "Fan Cooled"
+    insulation_class: "F"
+    protection_class: "IP55"
+    mounting_type: "B3 Foot Mounted"
+    brake_type: "Electromagnetic"
+    brake_torque: 100.0  # Nm
+    brake_voltage: 24  # V
+
+  # Operating limits
+  limits:
+    velocity:
+      positive: 3000  # rpm
+      negative: -3000  # rpm
+      acceleration: 1000  # rpm/s
+      deceleration: 1000  # rpm/s
+      quick_stop_deceleration: 5000  # rpm/s
+
+    position:
+      min: -1000000  # counts
+      max: 1000000  # counts
+      following_error_window: 1000  # counts
+      window: 100  # counts
+
+    torque:
+      limit: 100  # %
+      max: 150  # %
+
+    current:
+      limit: 100  # %
+      max: 150  # %
+
+    temperature:
+      warning: 80  # °C
+      fault: 90  # °C
+
+  # Motion profiles
+  profiles:
+    velocity:
+      default: 1000  # rpm
+      jog: 100  # rpm
+      high_speed: 2500  # rpm
+
+    acceleration:
+      normal: 500  # rpm/s
+      gentle: 200  # rpm/s
+      rapid: 1500  # rpm/s
+
+    position:
+      velocity: 1000  # rpm
+      acceleration: 500  # rpm/s
+      deceleration: 500  # rpm/s
+
+  # Homing configuration
+  homing:
+    method: 17  # Homing on negative limit switch
+    speed_switch: 100  # rpm
+    speed_zero: 10  # rpm
+    acceleration: 500  # rpm/s
+    offset: 0  # counts
+
+  # Communication settings
+  communication:
+    heartbeat_time: 1000  # ms
+    timeout: 5000  # ms
+    retry_count: 3
+
+  # Alarm thresholds
+  alarms:
+    overcurrent:
+      threshold: 110  # % of rated current
+      delay: 100  # ms
+      severity: critical
+
+    overtemperature:
+      motor_warning: 75  # °C
+      motor_fault: 85  # °C
+      driver_warning: 70  # °C
+      driver_fault: 80  # °C
+      severity: critical
+
+    following_error:
+      threshold: 1000  # counts
+      timeout: 100  # ms
+      severity: warning
+
+    velocity_error:
+      threshold: 50  # rpm
+      timeout: 100  # ms
+      severity: warning
+
+    communication:
+      error_count: 10
+      severity: warning
+
+  # Virtual calculations
+  calculations:
+    motor_power:
+      formula: "M8 * M12 / 1000"  # current * voltage / 1000
+      description: "Calculated motor power in kW"
+
+    motor_efficiency:
+      formula: "M14 / M13 * 100"  # output_power / input_power * 100
+      description: "Motor efficiency percentage"
+
+    speed_percentage:
+      formula: "M5 / P9 * 100"  # actual_velocity / max_speed * 100
+      description: "Speed as percentage of maximum"
+
+    load_percentage:
+      formula: "M7 / A24 * 100"  # actual_torque / torque_limit * 100
+      description: "Load as percentage of limit"

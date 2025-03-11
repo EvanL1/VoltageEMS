@@ -1,0 +1,7 @@
+property_id,name,unit,description
+1,Rated Capacity,kWh,额定容量
+2,Rated Voltage,V,额定电压
+3,Cell Count,,单体数量
+4,Cell Type,,电池类型
+5,Nominal Cell Voltage,V,标称单体电压
+6,Cell Capacity,Ah,单体容量

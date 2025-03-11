@@ -1,0 +1,11 @@
+property_id,name,unit,description
+1,Peak Power,kWp,组串峰值功率
+2,Module Count,,组件数量
+3,Module Type,,组件类型
+4,Module Power,Wp,单块组件功率
+5,String Voltage,V,组串电压
+6,Short Circuit Current,A,短路电流
+7,Open Circuit Voltage,V,开路电压
+8,Temperature Coefficient,%/°C,温度系数
+9,Installation Date,,安装日期
+10,Manufacturer,,制造商

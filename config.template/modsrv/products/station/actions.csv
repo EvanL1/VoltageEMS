@@ -1,0 +1,9 @@
+action_id,name,unit,description
+1,Emergency Stop,,
+2,System Reset,,
+3,Mode Switch,,
+4,Load Shedding,,
+5,Generation Curtail,%,
+6,Grid Connect,,
+7,Grid Disconnect,,
+8,Black Start,,

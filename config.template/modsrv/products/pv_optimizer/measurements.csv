@@ -1,0 +1,11 @@
+measurement_id,name,unit,description
+1,Input Voltage,V,
+2,Input Current,A,
+3,Input Power,W,
+4,Output Voltage,V,
+5,Output Current,A,
+6,Output Power,W,
+7,MPPT Efficiency,%,
+8,Device Temperature,°C,
+9,Energy Harvested,kWh,
+10,Communication Status,,

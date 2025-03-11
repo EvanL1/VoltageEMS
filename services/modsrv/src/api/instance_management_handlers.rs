@@ -1,0 +1,433 @@
+//! Instance Management API Handlers
+//!
+//! Handles CRUD operations and synchronization for model instances.
+
+#![allow(clippy::disallowed_methods)] // json! macro used in multiple functions
+
+use axum::{
+    extract::{Path, State},
+    response::Json,
+};
+use serde_json::json;
+use std::collections::HashMap;
+use std::sync::Arc;
+use tracing::{error, info, warn};
+use voltage_config::api::SuccessResponse;
+use voltage_config::modsrv::CreateInstanceRequest;
+
+use crate::app_state::AppState;
+use crate::dto::{CreateInstanceDto, UpdateInstanceDto};
+use crate::error::ModSrvError;
+
+/// Create a new model instance
+///
+/// Creates an instance from a product template with optional property overrides.
+///
+/// @route POST /api/instances
+/// @input Json(dto): CreateInstanceDto - Instance configuration
+/// @output Result<Json<SuccessResponse<serde_json::Value>>, AppError> - Created instance details
+/// @status 200 - Success with instance data
+/// @status 400 - Invalid product_name or duplicate instance_name
+/// @status 500 - Database error
+/// @side-effects Creates instance in database and initializes Redis keys
+#[utoipa::path(
+    post,
+    path = "/api/instances",
+    request_body = crate::dto::CreateInstanceDto,
+    responses(
+        (status = 200, description = "Instance created", body = serde_json::Value,
+            example = json!({
+                "instance": {
+                    "instance_id": 1,
+                    "instance_name": "pv_inverter_01",
+                    "product_name": "pv_inverter",
+                    "properties": {
+                        "rated_power": 5000.0,
+                        "manufacturer": "Huawei",
+                        "model": "SUN2000-5KTL-L1"
+                    },
+                    "created_at": "2025-10-15T10:30:00Z",
+                    "updated_at": "2025-10-15T10:30:00Z"
+                }
+            })
+        )
+    ),
+    tag = "modsrv"
+)]
+pub async fn create_instance(
+    State(state): State<Arc<AppState>>,
+    Json(dto): Json<CreateInstanceDto>,
+) -> Result<Json<SuccessResponse<serde_json::Value>>, ModSrvError> {
+    // Auto-generate instance_id if not provided
+    let instance_id = if let Some(id) = dto.instance_id {
+        id
+    } else {
+        // Get next available ID from database
+        match state.instance_manager.get_next_instance_id().await {
+            Ok(id) => id,
+            Err(e) => {
+                return Err(ModSrvError::InternalError(format!(
+                    "Failed to generate instance ID: {}",
+                    e
+                )));
+            },
+        }
+    };
+
+    let req = CreateInstanceRequest {
+        instance_id,
+        instance_name: dto.instance_name,
+        product_name: dto.product_name,
+        properties: dto.properties.unwrap_or_default(),
+    };
+
+    match state.instance_manager.create_instance(req).await {
+        Ok(instance) => Ok(Json(SuccessResponse::new(json!({
+            "instance": instance
+        })))),
+        Err(e) => {
+            // Check for specific error types with improved messages
+            let error_msg = e.to_string();
+            if error_msg.contains("already exists") {
+                // Extract instance name from error message if possible
+                let instance_name = error_msg.split('\'').nth(1).unwrap_or("unknown");
+                Err(ModSrvError::InstanceExists(format!(
+                    "Instance name '{}' is already in use. Please choose a different name.",
+                    instance_name
+                )))
+            } else if error_msg.contains("UNIQUE constraint failed: instances.instance_name") {
+                // Database-level unique constraint violation
+                Err(ModSrvError::InstanceExists(
+                    "Instance name must be unique. This name is already taken.".to_string(),
+                ))
+            } else if error_msg.contains("product") && error_msg.contains("not found") {
+                Err(ModSrvError::InvalidData(format!(
+                    "Invalid product_name: {}",
+                    e
+                )))
+            } else {
+                Err(ModSrvError::InternalError(format!(
+                    "Failed to create instance: {}",
+                    e
+                )))
+            }
+        },
+    }
+}
+
+/// Update instance properties
+///
+/// Updates the properties of an existing instance.
+/// Note: instance_name is the unique identifier and cannot be changed.
+/// Only the properties field can be updated through this endpoint.
+///
+/// @route PUT /api/instances/{instance_name}
+/// @input Path(instance_name): String - Instance name (unique identifier)
+/// @input Json(dto): UpdateInstanceDto - Properties to update
+/// @output Result<Json<SuccessResponse<serde_json::Value>>, AppError> - Updated instance
+/// @status 200 - Success with updated instance details
+/// @status 404 - Instance not found
+/// @status 500 - Database or Redis error
+#[utoipa::path(
+    put,
+    path = "/api/instances/{instance_name}",
+    params(
+        ("instance_name" = String, Path, description = "Instance name (unique identifier)")
+    ),
+    request_body = UpdateInstanceDto,
+    responses(
+        (status = 200, description = "Instance updated successfully", body = serde_json::Value,
+            example = json!({
+                "instance": {
+                    "instance_id": 1,
+                    "instance_name": "pv_inverter_01",
+                    "product_name": "pv_inverter",
+                    "properties": {
+                        "rated_power": 5000.0,
+                        "manufacturer": "Huawei",
+                        "model": "SUN2000-5KTL-L1"
+                    },
+                    "created_at": "2025-10-15T10:30:00Z",
+                    "updated_at": "2025-10-20T14:25:00Z"
+                }
+            })
+        ),
+        (status = 404, description = "Instance not found"),
+        (status = 500, description = "Database or Redis error")
+    ),
+    tag = "modsrv"
+)]
+pub async fn update_instance(
+    State(state): State<Arc<AppState>>,
+    Path(instance_name): Path<String>,
+    Json(dto): Json<UpdateInstanceDto>,
+) -> Result<Json<SuccessResponse<serde_json::Value>>, ModSrvError> {
+    // Serialize properties for SQLite
+    let properties_json = match serde_json::to_string(&dto.properties) {
+        Ok(j) => j,
+        Err(e) => {
+            return Err(ModSrvError::InternalError(format!(
+                "Failed to serialize properties: {}",
+                e
+            )));
+        },
+    };
+
+    // Get the pool from instance_manager
+    let pool = &state.instance_manager.pool;
+
+    // Begin transaction for atomic update
+    let mut tx = match pool.begin().await {
+        Ok(tx) => tx,
+        Err(e) => {
+            error!(
+                "Failed to begin transaction for instance {}: {}",
+                instance_name, e
+            );
+            return Err(ModSrvError::InternalError(format!(
+                "Database transaction failed: {}",
+                e
+            )));
+        },
+    };
+
+    // Update in SQLite within transaction
+    let result = sqlx::query(
+        r#"
+        UPDATE instances
+        SET properties = ?, updated_at = CURRENT_TIMESTAMP
+        WHERE instance_name = ?
+        "#,
+    )
+    .bind(&properties_json)
+    .bind(&instance_name)
+    .execute(&mut *tx)
+    .await;
+
+    match result {
+        Ok(res) => {
+            if res.rows_affected() == 0 {
+                // Rollback transaction
+                let _ = tx.rollback().await;
+                return Err(ModSrvError::InstanceNotFound(instance_name.to_string()));
+            }
+
+            // Commit transaction first (ensure database persistence)
+            if let Err(e) = tx.commit().await {
+                error!(
+                    "Failed to commit transaction for instance {}: {}",
+                    instance_name, e
+                );
+                return Err(ModSrvError::InternalError(format!(
+                    "Database transaction commit failed: {}",
+                    e
+                )));
+            }
+
+            // Best effort sync to Redis (after commit, allow failure)
+            if let Err(e) = state
+                .instance_manager
+                .sync_instance_to_redis_internal(&instance_name, &dto.properties)
+                .await
+            {
+                warn!(
+                    "Instance {} updated in SQLite but Redis sync failed: {}. Will sync on next reload.",
+                    instance_name, e
+                );
+            } else {
+                info!(
+                    "Successfully synced instance {} to Redis after update",
+                    instance_name
+                );
+            }
+
+            // Query and return updated instance
+            match state.instance_manager.get_instance(&instance_name).await {
+                Ok(instance) => Ok(Json(SuccessResponse::new(json!({
+                    "instance": instance
+                })))),
+                Err(e) => {
+                    error!("Failed to query updated instance {}: {}", instance_name, e);
+                    // Update succeeded but query failed - return instance_name as fallback
+                    Ok(Json(SuccessResponse::new(json!({
+                        "instance_name": instance_name,
+                        "message": "Instance updated successfully but failed to retrieve details"
+                    }))))
+                },
+            }
+        },
+        Err(e) => {
+            error!("Failed to update instance {}: {}", instance_name, e);
+            // Rollback transaction
+            let _ = tx.rollback().await;
+            Err(ModSrvError::InternalError(format!(
+                "Database update failed: {}",
+                e
+            )))
+        },
+    }
+}
+
+/// Delete an instance
+///
+/// Removes an instance from both SQLite and Redis.
+///
+/// @route DELETE /api/instances/{id}
+/// @input Path(id): String - Instance identifier
+/// @output Result<Json<SuccessResponse<serde_json::Value>>, AppError> - Deletion result
+/// @status 200 - Success with deletion confirmation
+/// @status 404 - Instance not found
+/// @status 500 - Database error
+#[utoipa::path(
+    delete,
+    path = "/api/instances/{id}",
+    params(
+        ("id" = String, Path, description = "Instance identifier")
+    ),
+    responses(
+        (status = 200, description = "Instance deleted", body = serde_json::Value,
+            example = json!({
+                "message": "Instance pv_inverter_01 deleted"
+            })
+        )
+    ),
+    tag = "modsrv"
+)]
+pub async fn delete_instance(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> Result<Json<SuccessResponse<serde_json::Value>>, ModSrvError> {
+    match state.instance_manager.delete_instance(&id).await {
+        Ok(_) => Ok(Json(SuccessResponse::new(json!({
+            "message": format!("Instance {} deleted", id)
+        })))),
+        Err(e) => {
+            let error_msg = e.to_string();
+            if error_msg.contains("not found") {
+                Err(ModSrvError::InstanceNotFound(id.to_string()))
+            } else {
+                Err(ModSrvError::InternalError(format!(
+                    "Failed to delete instance: {}",
+                    e
+                )))
+            }
+        },
+    }
+}
+
+/// Sync measurement data to an instance
+///
+/// Updates measurement point values in Redis for the instance.
+///
+/// @route POST /api/instances/{id}/sync
+/// @input Path(id): String - Instance identifier
+/// @input Json(data): HashMap - Measurement point values
+/// @output Result<Json<SuccessResponse<serde_json::Value>>, AppError> - Sync result
+/// @status 200 - Success confirmation
+/// @status 404 - Instance not found
+/// @status 500 - Database error
+/// @side-effects Updates Redis measurement keys
+#[utoipa::path(
+    post,
+    path = "/api/instances/{id}/sync",
+    params(
+        ("id" = String, Path, description = "Instance identifier")
+    ),
+    request_body = std::collections::HashMap<String, serde_json::Value>,
+    responses(
+        (status = 200, description = "Measurement synced", body = serde_json::Value,
+            example = json!({
+                "message": "Measurement synced"
+            })
+        )
+    ),
+    tag = "modsrv"
+)]
+pub async fn sync_instance_measurement(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+    Json(data): Json<HashMap<String, serde_json::Value>>,
+) -> Result<Json<SuccessResponse<serde_json::Value>>, ModSrvError> {
+    match state.instance_manager.sync_measurement(&id, data).await {
+        Ok(_) => Ok(Json(SuccessResponse::new(json!({
+            "message": "Measurement synced"
+        })))),
+        Err(e) => {
+            let error_msg = e.to_string();
+            if error_msg.contains("not found") {
+                Err(ModSrvError::InstanceNotFound(id.to_string()))
+            } else {
+                Err(ModSrvError::InternalError(format!(
+                    "Failed to sync measurement: {}",
+                    e
+                )))
+            }
+        },
+    }
+}
+
+/// Sync all instances to Redis
+///
+/// Reloads all instance configurations from SQLite to Redis.
+///
+/// @route POST /api/instances/sync/all
+/// @output Result<Json<SuccessResponse<serde_json::Value>>, AppError> - Sync result
+/// @status 200 - Success confirmation
+/// @status 500 - Sync error
+/// @side-effects Overwrites all instance keys in Redis
+pub async fn sync_all_instances(
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<SuccessResponse<serde_json::Value>>, ModSrvError> {
+    match state.instance_manager.sync_instances_to_redis().await {
+        Ok(_) => Ok(Json(SuccessResponse::new(json!({
+            "message": "All instances synced to Redis"
+        })))),
+        Err(e) => Err(ModSrvError::InternalError(format!(
+            "Failed to sync instances: {}",
+            e
+        ))),
+    }
+}
+
+/// Reload instances from database
+///
+/// Forces a reload of all instances from SQLite to Redis.
+/// Useful after manual database updates.
+///
+/// @route POST /api/instances/reload
+/// @output Result<Json<SuccessResponse<serde_json::Value>>, AppError> - Reload result
+/// @status 200 - Success confirmation
+/// @status 500 - Database error
+pub async fn reload_instances_from_db(
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<SuccessResponse<serde_json::Value>>, ModSrvError> {
+    // Use unified ReloadableService interface for incremental sync
+    use voltage_config::ReloadableService;
+    match ReloadableService::reload_from_database(
+        &*state.instance_manager,
+        &state.instance_manager.pool,
+    )
+    .await
+    {
+        Ok(result) => {
+            info!(
+                "Instances reloaded: {} added, {} updated, {} removed, {} errors",
+                result.added.len(),
+                result.updated.len(),
+                result.removed.len(),
+                result.errors.len()
+            );
+            Ok(Json(SuccessResponse::new(json!({
+                "message": "Instances reloaded successfully",
+                "result": result
+            }))))
+        },
+        Err(e) => {
+            error!("Failed to reload instances: {}", e);
+            Err(ModSrvError::InternalError(format!(
+                "Failed to reload instances: {}",
+                e
+            )))
+        },
+    }
+}

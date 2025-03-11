@@ -1,0 +1,11 @@
+measurement_id,name,unit,description
+1,DC Voltage,V,
+2,DC Current,A,
+3,DC Power,kW,
+4,String Temperature,°C,
+5,Insulation Resistance,MΩ,
+6,Ground Fault Current,mA,
+7,Arc Fault Detection,,
+8,Module Mismatch Loss,%,
+9,String Energy,kWh,
+10,Operating Hours,h,

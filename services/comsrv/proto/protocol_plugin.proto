@@ -1,0 +1,93 @@
+syntax = "proto3";
+
+package comsrv.plugin.v1;
+
+// Plugin service interface
+service ProtocolPlugin {
+  // Get plugin info
+  rpc GetInfo(Empty) returns (PluginInfo);
+  
+  // Parse raw data
+  rpc ParseData(ParseRequest) returns (ParseResponse);
+  
+  // Encode control command
+  rpc EncodeCommand(EncodeRequest) returns (EncodeResponse);
+  
+  // Batch read (active polling)
+  rpc BatchRead(BatchReadRequest) returns (BatchReadResponse);
+  
+  // Health check
+  rpc HealthCheck(Empty) returns (HealthStatus);
+}
+
+// Base message definitions
+message Empty {}
+
+message PluginInfo {
+  string name = 1;
+  string version = 2;
+  string protocol_type = 3;
+  repeated string supported_features = 4;
+  map<string, string> metadata = 5;
+}
+
+message ParseRequest {
+  bytes raw_data = 1;
+  map<string, string> context = 2;  // Channel configuration and context
+}
+
+message ParseResponse {
+  repeated PointData points = 1;
+  string error = 2;
+}
+
+message PointData {
+  uint32 point_id = 1;
+  oneof value {
+    double float_value = 2;
+    int64 int_value = 3;
+    bool bool_value = 4;
+    string string_value = 5;
+  }
+  int64 timestamp = 6;
+  uint32 quality = 7;  // Data quality flags
+}
+
+message CommandValue {
+  oneof value {
+    double float_value = 1;
+    int64 int_value = 2;
+    bool bool_value = 3;
+    string string_value = 4;
+  }
+}
+
+message EncodeRequest {
+  uint32 channel_id = 1;
+  uint32 point_id = 2;
+  CommandValue value = 3;
+  map<string, string> context = 4;
+}
+
+message EncodeResponse {
+  bytes encoded_data = 1;
+  string error = 2;
+}
+
+message BatchReadRequest {
+  uint32 channel_id = 1;                     // Channel ID
+  repeated uint32 point_ids = 2;             // Point IDs to read
+  map<string, string> connection_params = 3; // Connection parameters
+  map<string, string> read_params = 4;       // Read parameters
+}
+
+message BatchReadResponse {
+  repeated PointData points = 1;
+  string error = 2;
+}
+
+message HealthStatus {
+  bool healthy = 1;
+  string message = 2;
+  map<string, string> details = 3;
+}

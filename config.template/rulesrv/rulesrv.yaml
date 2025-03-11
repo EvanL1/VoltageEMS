@@ -1,0 +1,13 @@
+service:
+  name: rulesrv
+  port: 6003
+
+redis:
+  url: unix:///run/redis/redis.sock
+
+execution:
+  interval_seconds: 5
+  batch_size: 100
+
+logging:
+  level: debug

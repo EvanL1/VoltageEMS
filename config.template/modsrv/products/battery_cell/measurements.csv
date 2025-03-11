@@ -1,0 +1,9 @@
+measurement_id,name,unit,description
+1,Cell Voltage,V,
+2,Cell Temperature,°C,
+3,Internal Resistance,mΩ,
+4,SOC,%,
+5,SOH,%,
+6,Charge Cycles,,
+7,Cell Imbalance,mV,
+8,Capacity Fade,%,

@@ -1,0 +1,120 @@
+// 弹窗主体样式（包含表单弹窗样式）
+.voltage-class {
+  // 弹窗遮罩层
+  .el-overlay {
+    height: calc(100% + 40px);
+    width: calc(100% + 40px);
+    position: absolute;
+    top: -20px;
+    left: -20px;
+    background-color: rgba(0, 0, 0, 0.5);
+    backdrop-filter: blur(4px);
+    transition: all 0.3s ease;
+
+    .el-dialog {
+      padding: 16px;
+      margin: 0 !important;
+      border-radius: 0;
+      box-shadow: 0px 4px 10px 0px rgba(0, 0, 0, 0.25);
+      backdrop-filter: blur(20px);
+      background: #212c49;
+      border: 1px solid;
+      border-image: linear-gradient(
+          118.59deg,
+          rgba(148, 166, 197, 0.3) 2.74%,
+          rgba(148, 166, 197, 0) 31.8%,
+          rgba(148, 166, 197, 0.103266) 71.77%,
+          rgba(148, 166, 197, 0.3) 97.88%
+        )
+        1;
+      overflow: hidden;
+      position: absolute;
+      left: 50%;
+      top: 50%;
+      transform: translate(-50%, -50%);
+
+      // 弹窗头部
+      .el-dialog__header {
+        background: transparent;
+        padding: 20px 24px;
+        border-bottom: none;
+        position: relative;
+
+        .el-dialog__title {
+          color: #ffffff;
+          font-size: 18px;
+          font-weight: 600;
+          line-height: 1.4;
+          margin: 0;
+        }
+
+        // 关闭按钮
+        .el-dialog__headerbtn {
+          // position: absolute;
+          top: 5px;
+          right: 15px;
+          // width: 32px;
+          // height: 32px;
+          // background: rgba(255, 255, 255, 0.2);
+          // border-radius: 50%;
+          height: 48px;
+          width: 48px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          transition: all 0.2s ease;
+
+          // &:hover {
+          //   background: rgba(255, 255, 255, 0.3);
+          //   transform: rotate(90deg);
+          // }
+
+          .el-dialog__close {
+            color: #ffffff;
+            font-size: 16px;
+            font-weight: bold;
+          }
+        }
+      }
+      .el-dialog__body {
+        padding: 20px 20px 0 20px;
+        background: transparent;
+        min-height: 100px;
+
+        // 针对表单弹窗的特殊内边距
+        .el-dialog--form & {
+          padding: 24px 24px 12px;
+        }
+
+        // 滚动条样式
+        &::-webkit-scrollbar {
+          width: 6px;
+        }
+
+        &::-webkit-scrollbar-track {
+          background: #f1f1f1;
+          border-radius: 3px;
+        }
+
+        &::-webkit-scrollbar-thumb {
+          background: #c1c1c1;
+          border-radius: 3px;
+
+          &:hover {
+            background: #a8a8a8;
+          }
+        }
+      }
+
+      // 弹窗底部
+      .el-dialog__footer {
+        padding: 40px 0 20px 0;
+        margin: 0 20px;
+        background: transparent;
+        border-top: 1px solid rgba(255, 255, 255, 0.1);
+        display: flex;
+        justify-content: flex-end;
+      }
+    }
+  }
+}

@@ -1,0 +1,23 @@
+#!/bin/bash
+
+# Pre-commit hook for comsrv configuration validation
+# Automatically validate when comsrv config files are committed
+
+# Check if comsrv config files were modified
+if git diff --cached --name-only | grep -q "services/comsrv/config/.*\.csv"; then
+    echo "Detected comsrv config changes, running validation..."
+    
+    # Run validation script
+    ./scripts/validate-comsrv-config.sh
+    
+    if [ $? -ne 0 ]; then
+        echo ""
+        echo "❌ Comsrv config validation failed. Please fix errors and commit again."
+        echo "Tip: run ./scripts/validate-comsrv-config.sh for details"
+        exit 1
+    fi
+    
+    echo "✅ Comsrv config validation passed"
+fi
+
+exit 0

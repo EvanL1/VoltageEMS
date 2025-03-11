@@ -1,0 +1,12 @@
+action_id,name,unit,description
+1,Start PCS,,
+2,Stop PCS,,
+3,Set Charge Mode,,
+4,Set Discharge Mode,,
+5,Set Standby Mode,,
+6,Reset PCS,,
+7,Clear Fault,,
+8,Power Setpoint,kW,
+9,Power Factor Setting,,
+10,Charge Power Limit,kW,
+11,Discharge Power Limit,kW,

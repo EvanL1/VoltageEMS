@@ -1,0 +1,50 @@
+[package]
+name = "common"
+version = "0.0.1"
+edition = "2021"
+
+[features]
+default = ["redis", "sqlite"]
+redis = ["dep:redis", "dep:bb8", "dep:bb8-redis"]
+sqlite = ["dep:sqlx"]
+cli = ["dep:clap", "dep:reqwest"]
+
+[dependencies]
+voltage-config = { path = "../voltage-config" }
+tokio = { workspace = true, features = ["full"] }
+tokio-util = { workspace = true }
+async-trait = { workspace = true }
+thiserror = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+serde_yaml = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true, features = [
+    "env-filter",
+    "json",
+    "fmt",
+] }
+tracing-appender = { workspace = true }
+chrono = { workspace = true, features = ["serde"] }
+anyhow = { workspace = true }
+flate2 = { workspace = true }
+csv = { workspace = true }
+futures = { workspace = true }
+axum = { workspace = true }
+
+# CLI dependencies  
+clap = { workspace = true, features = ["derive", "env", "cargo"], optional = true }
+reqwest = { workspace = true, features = ["json"], optional = true }
+
+# Redis
+redis = { workspace = true, optional = true }
+bb8 = { workspace = true, optional = true }
+bb8-redis = { workspace = true, optional = true }
+
+# SQLite
+sqlx = { workspace = true, optional = true }
+
+[dev-dependencies]
+tokio-test = "0.4"
+tempfile = { workspace = true }
+rand = { workspace = true }

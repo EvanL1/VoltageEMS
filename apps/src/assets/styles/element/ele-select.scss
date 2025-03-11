@@ -1,0 +1,301 @@
+/* Element Plus Select 组件样式 */
+
+@use './theme-vars.scss' as *;
+
+// 公共变量
+$popper-border-image: linear-gradient(
+    117.64deg,
+    rgba(148, 166, 197, 0.3) 2.73%,
+    rgba(148, 166, 197, 0) 25.27%,
+    rgba(148, 166, 197, 0.3) 41.05%,
+    rgba(148, 166, 197, 0.103266) 61.63%,
+    rgba(148, 166, 197, 0.3) 97.67%
+  )
+  1;
+
+$popper-shadow: 0px 4px 10px 0px rgba(0, 0, 0, 0.25);
+$popper-backdrop: blur(20px);
+$hover-bg: rgba(30, 47, 80, 0.3);
+
+.voltage-class {
+  // Select 基础样式
+  .el-select {
+    width: 240px;
+
+    .el-select__wrapper {
+      padding: 0 12px;
+      height: 32px;
+      background-color: $bg-color-input;
+      border: 1px solid $border-color-base;
+      border-radius: 0;
+      box-shadow: none;
+      outline: none;
+      transition: none;
+      line-height: 32px;
+      font-size: 14px;
+      min-height: unset;
+      .el-select__input {
+        height: 32px;
+      }
+    }
+
+    &__placeholder {
+      color: #fff;
+    }
+    .el-select__suffix {
+      .el-icon {
+        height: 10px;
+        width: 10px;
+      }
+    }
+    .is-hovering:not(.is-focused) {
+      box-shadow: none;
+    }
+    // 清除按钮
+    .el-select__close {
+      color: $text-color-secondary;
+      cursor: pointer;
+      transition: color $transition-fast;
+      margin-left: $spacing-xs;
+
+      &:hover {
+        color: $text-color-regular;
+      }
+    }
+
+    // 可过滤和远程搜索样式
+    &.el-select--filterable,
+    &.el-select--remote {
+      .el-input__inner,
+      .el-input__wrapper {
+        cursor: text;
+      }
+    }
+  }
+
+  // 滚动条样式
+  .el-select-dropdown {
+    border-radius: 0;
+    &::-webkit-scrollbar {
+      width: 6px;
+    }
+
+    &::-webkit-scrollbar-track {
+      background: transparent;
+    }
+
+    &::-webkit-scrollbar-thumb {
+      background-color: rgba(148, 166, 197, 0.3);
+      border-radius: 3px;
+
+      &:hover {
+        background-color: rgba(148, 166, 197, 0.5);
+      }
+    }
+  }
+}
+
+// 公共下拉菜单基础样式
+%popper-base {
+  border: 1px solid !important;
+  border-image: $popper-border-image !important;
+  box-shadow: $popper-shadow !important;
+  backdrop-filter: $popper-backdrop !important;
+}
+
+%menu-item-base {
+  height: 32px;
+  line-height: 32px;
+  font-weight: 300;
+  color: $text-color-primary;
+  font-size: $font-size-base;
+  padding: 0 12px;
+  cursor: pointer;
+  background-color: transparent;
+
+  &:hover {
+    background-color: $hover-bg;
+  }
+
+  &.is-disabled {
+    color: $text-color-disabled;
+    cursor: not-allowed;
+    background-color: transparent;
+
+    &:hover {
+      background-color: transparent;
+      color: $text-color-disabled;
+    }
+  }
+}
+
+%empty-loading-base {
+  color: $text-color-secondary;
+  font-size: $font-size-small;
+  text-align: center;
+  padding: $spacing-lg;
+}
+
+%group-title-base {
+  color: $text-color-secondary;
+  font-size: $font-size-small;
+  font-weight: $font-weight-medium;
+  padding: $spacing-sm $spacing-md;
+  background-color: rgba(84, 98, 140, 0.1);
+  border-bottom: 1px solid $border-color-base;
+}
+
+// Select 下拉菜单样式
+.el-select__popper.el-popper {
+  @extend %popper-base;
+  // inset: 210px auto auto 396px !important;
+  // top: 210px !important;
+  .el-select-dropdown {
+    padding: 0;
+    overflow-y: auto;
+    box-shadow: none;
+
+    .el-select-dropdown__list {
+      margin: 0;
+      padding: 0;
+
+      .el-select-dropdown__item {
+        @extend %menu-item-base;
+
+        &.selected {
+          background-color: $hover-bg !important;
+          color: $text-color-primary;
+        }
+      }
+    }
+
+    .el-select-dropdown__empty,
+    .el-select-dropdown__loading {
+      @extend %empty-loading-base;
+    }
+
+    .el-select-group__wrap {
+      .el-select-group__title {
+        @extend %group-title-base;
+      }
+
+      .el-select-group__list {
+        margin: 0;
+        padding: 0;
+        list-style: none;
+      }
+    }
+  }
+}
+
+// Dropdown 下拉菜单样式
+.el-dropdown__popper.el-popper {
+  @extend %popper-base;
+  background-color: rgba(84, 98, 140, 0.2) !important;
+  // inset: 78px auto auto 1655px !important;
+  top: 78px !important;
+  .el-dropdown__list {
+    padding: 0;
+    margin: 0;
+    box-shadow: none !important;
+
+    .el-dropdown-menu {
+      min-width: 150px;
+      padding: 20px 0;
+      overflow-y: auto;
+      border-radius: 0 !important;
+      background-color: transparent;
+      box-shadow: none !important;
+
+      .el-dropdown-menu__item {
+        display: flex;
+        align-items: center;
+        padding: 0 20px;
+        height: 32px;
+        font-family: Arimo;
+        font-weight: 500;
+        font-style: Medium;
+        font-size: 14px;
+        line-height: 100%;
+        letter-spacing: 0%;
+        color: #ffffff;
+        background-color: transparent;
+
+        &:hover {
+          background-color: $hover-bg !important;
+        }
+
+        &.selected,
+        &.is-active {
+          background-color: $hover-bg !important;
+          color: $text-color-primary;
+        }
+
+        &.is-disabled {
+          color: $text-color-disabled;
+          cursor: not-allowed;
+          background-color: transparent;
+
+          &:hover {
+            background-color: transparent;
+            color: $text-color-disabled;
+          }
+        }
+      }
+
+      .el-dropdown-menu__empty,
+      .el-dropdown-menu__loading {
+        @extend %empty-loading-base;
+      }
+
+      .el-dropdown-group__wrap {
+        .el-dropdown-group__title {
+          @extend %group-title-base;
+        }
+
+        .el-dropdown-group__list {
+          margin: 0;
+          padding: 0;
+          list-style: none;
+        }
+      }
+    }
+  }
+
+  &.is-light {
+    background-color: transparent !important;
+    & > .el-popper__arrow {
+      top: -5px !important;
+    }
+    & > .el-popper__arrow:before {
+      background-color: #12274a !important;
+      border-color: rgba(255, 255, 255, 0.2) !important;
+      border-bottom: none;
+      border-radius: 0 !important;
+      border-right: none;
+      z-index: 999;
+    }
+  }
+}
+
+// 通用 Popper 样式
+.el-popper.is-light {
+  border-radius: 0 !important;
+  background-color: transparent !important;
+  & > .el-popper__arrow:before {
+    background-color: #253c67 !important;
+    border-radius: 0 !important;
+    border-color: rgba(255, 255, 255, 0.2) !important;
+    z-index: 999;
+  }
+  .el-popper__arrow {
+    top: -5px !important;
+  }
+  .el-popper__arrow,
+  .el-popper__arrow::before {
+    height: 10px;
+    width: 10px;
+    border-radius: 0 !important;
+    border-width: 1px !important;
+  }
+}

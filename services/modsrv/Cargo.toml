@@ -1,0 +1,64 @@
+[package]
+name = "modsrv"
+version = "0.0.1"
+edition = "2021"
+authors = ["Your Name <your.email@voltageenergy.com>"]
+description = "Real-time model execution service"
+
+[lib]
+name = "modsrv"
+path = "src/lib.rs"
+
+[[bin]]
+name = "modsrv"
+path = "src/main.rs"
+test = false
+
+[dependencies]
+# Local dependencies
+common = { path = "../../libs/common", default-features = false, features = ["redis", "sqlite"] }
+voltage-config = { path = "../../libs/voltage-config", features = ["axum-support"] }
+voltage-rtdb = { path = "../../libs/voltage-rtdb" }
+
+# Core dependencies (use voltage-common where possible)
+tokio = { workspace = true }
+redis = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde_yaml = { workspace = true }
+clap = { workspace = true }
+reqwest = { workspace = true }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+chrono = { workspace = true }
+bytes = { workspace = true }
+async-trait = { workspace = true }
+futures = { workspace = true }
+uuid = { workspace = true }
+regex = { workspace = true }
+axum = { workspace = true }
+utoipa = { workspace = true }
+utoipa-swagger-ui = { workspace = true, optional = true }
+tokio-util = { workspace = true }
+sqlx = { workspace = true }
+csv = { workspace = true }  # For loading product CSV files
+cron = { workspace = true }  # For time series scheduling
+sha2 = { workspace = true }  # For hash calculations
+evalexpr = { workspace = true }  # For expression evaluation
+dashmap = { workspace = true }  # For high-performance concurrent name→id cache
+
+[dev-dependencies]
+criterion = { workspace = true }
+futures = { workspace = true }
+tempfile = { workspace = true }
+tower = { workspace = true }
+http-body-util = "0.1"
+
+[features]
+default = ["redis", "sqlite", "swagger-ui"]
+redis = []
+sqlite = []
+virtual-points = []
+swagger-ui = ["utoipa-swagger-ui", "voltage-config/openapi"]  # Swagger UI documentation (enabled by default for development)

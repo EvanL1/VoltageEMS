@@ -1,0 +1,10 @@
+action_id,name,unit,description
+1,Enable Stack,,
+2,Disable Stack,,
+3,Reset Protection,,
+4,Clear Alarms,,
+5,Force Balancing,,
+6,Charge Current Limit,A,
+7,Discharge Current Limit,A,
+8,Max Voltage Limit,V,
+9,Min Voltage Limit,V,

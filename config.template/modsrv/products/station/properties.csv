@@ -1,0 +1,11 @@
+property_id,name,unit,description
+1,Total Capacity,MW,总装机容量
+2,PV Capacity,MW,光伏装机容量
+3,Storage Capacity,MWh,储能容量
+4,Storage Power,MW,储能功率
+5,Grid Connection Capacity,MW,并网容量
+6,Location,,站点位置
+7,Commissioning Date,,投运日期
+8,Altitude,m,海拔高度
+9,Coordinates,,GPS坐标
+10,Operating Voltage,kV,运行电压等级

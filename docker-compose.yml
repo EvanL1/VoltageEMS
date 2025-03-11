@@ -1,0 +1,133 @@
+services:
+  # Nginx - Unified API gateway on port 80
+  nginx:
+    image: nginx:latest
+    container_name: voltageems-nginx
+    network_mode: host
+    user: "${HOST_UID:-1000}:${HOST_GID:-1000}" # Run as host user
+    environment:
+      - NO_PROXY="*"
+      - no_proxy="*"
+    depends_on:
+      - comsrv
+      - modsrv
+      - rulesrv
+    volumes:
+      - ./docker/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - nginx-logs:/var/log/nginx
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  # Redis - High-performance data store (official Redis 8)
+  voltage-redis:
+    image: redis:8-alpine
+    container_name: voltage-redis
+    network_mode: host
+    labels:
+      - "voltageems.role=infrastructure"
+      - "voltageems.protected=true"
+      - "voltageems.description=Redis data store - avoid unnecessary restarts"
+    volumes:
+      - redis-data:/data
+      - redis-socket:/run/redis:rw # Unix socket directory for better performance
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes", "--save", "60", "1"]
+    environment:
+      - NO_PROXY="*"
+      - no_proxy="*"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Communication service with full hardware access (Linux production)
+  comsrv:
+    image: voltageems:latest
+    container_name: voltageems-comsrv
+    command: ["comsrv"]
+    network_mode: host
+    privileged: true # Full privileged mode for device access
+    # Complete /dev access for all industrial devices (serial, CAN, GPIO, I2C, SPI, etc.)
+    volumes:
+      - /dev:/dev:rw # Mount entire /dev directory with read-write access
+      - /opt/MonarchEdge/config/comsrv:/app/config/comsrv:ro
+      - /opt/MonarchEdge/data:/app/data:rw
+      - /opt/MonarchEdge/logs:/app/logs
+      - redis-socket:/run/redis:ro
+    environment:
+      - SERVICE_NAME=comsrv
+      - SERVICE_PORT=6001
+      - RUST_LOG=info
+      - REDIS_URL=redis://voltage-redis:6379
+      - VOLTAGE_DB_PATH=/app/data/voltage.db
+      - CSV_BASE_PATH=/app/config/comsrv
+      - CONFIG_BASE_PATH=/app/config/comsrv
+      - LOG_DIR=/app/logs
+      - NO_PROXY="*"
+      - no_proxy="*"
+    depends_on:
+      voltage-redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # Model service
+  modsrv:
+    image: voltageems:latest
+    container_name: voltageems-modsrv
+    command: ["modsrv"]
+    network_mode: host
+    user: "${HOST_UID:-1000}:${HOST_GID:-1000}" # Run as host user
+    environment:
+      - SERVICE_NAME=modsrv
+      - SERVICE_PORT=6002
+      - RUST_LOG=info
+      - REDIS_URL=redis://voltage-redis:6379
+      - VOLTAGE_DB_PATH=/app/data/voltage.db
+      - LOG_DIR=/app/logs
+      - NO_PROXY="*"
+      - no_proxy="*"
+    depends_on:
+      voltage-redis:
+        condition: service_healthy
+    volumes:
+      - /opt/MonarchEdge/config:/app/config:ro
+      - /opt/MonarchEdge/data:/app/data:rw
+      - /opt/MonarchEdge/logs:/app/logs
+      - redis-socket:/run/redis:ro # Read-only access to Unix socket
+    restart: unless-stopped
+
+  # Rule engine service
+  rulesrv:
+    image: voltageems:latest
+    container_name: voltageems-rulesrv
+    command: ["rulesrv"]
+    network_mode: host
+    user: "${HOST_UID:-1000}:${HOST_GID:-1000}" # Run as host user
+    environment:
+      - SERVICE_NAME=rulesrv
+      - SERVICE_PORT=6003
+      - RUST_LOG=info
+      - REDIS_URL=redis://voltage-redis:6379
+      - VOLTAGE_DB_PATH=/app/data/voltage.db
+      - LOG_DIR=/app/logs
+      - NO_PROXY="*"
+      - no_proxy="*"
+    depends_on:
+      voltage-redis:
+        condition: service_healthy
+    volumes:
+      - /opt/MonarchEdge/config/rulesrv:/app/config:ro
+      - /opt/MonarchEdge/data:/app/data:rw
+      - /opt/MonarchEdge/logs:/app/logs
+      - redis-socket:/run/redis:ro # Read-only access to Unix socket
+    restart: unless-stopped
+
+volumes:
+  redis-data:
+  redis-socket: # Shared Unix socket volume for better performance
+  nginx-logs: # Nginx access and error logs

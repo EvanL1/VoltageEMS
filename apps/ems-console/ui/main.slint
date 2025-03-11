@@ -1,0 +1,177 @@
+import { VerticalBox, HorizontalBox, ScrollView, Button } from "std-widgets.slint";
+
+export struct ChannelRow { id: int, name: string, protocol: string, enabled: bool, address: string }
+export struct PointRow { point_id: int, name: string, scale: float, offset: float, value: string, unit: string, ts: string }
+export struct InstanceRow { id: int, name: string, product: string }
+export struct ProductRow { name: string, parent: string }
+
+export component AppWindow inherits Window {
+    preferred-width: 1200px;
+    preferred-height: 800px;
+    min-width: 800px;
+    min-height: 500px;
+
+    in property <[ChannelRow]> channels;
+    in property <[PointRow]> channel_points;
+    in property <[InstanceRow]> instances;
+    in property <[PointRow]> instance_points;
+    in property <[ProductRow]> products;
+    // 运行时状态（底栏展示）
+    in property <string> last_update_time: "";
+    in property <int> error_count: 0;
+
+    callback channel_selected(id: int);
+    callback four_remote_selected(typ: string);
+    callback instance_selected(id: int);
+    callback instance_four_selected(typ: string);
+
+    in-out property <int> current_index: 0;
+    in-out property <int> selected_channel_id: 0;
+    in-out property <string> selected_four_remote: "T";
+    in-out property <int> selected_instance_id: 0;
+    in-out property <string> selected_instance_four: "M";
+
+    in-out property <int> channel_current_page: 1;
+    property <int> channel_page_size: 15;
+    property <int> channel_total_pages: Math.max(1, Math.ceil(channel_points.length / channel_page_size));
+
+    in-out property <length> left_panel_width: 320px;
+
+    VerticalBox {
+        spacing: 0px;
+
+        // 顶栏
+        Rectangle { height: 40px; background: #263238;
+            HorizontalBox { padding-left: 16px;
+                Text { text: "VoltageEMS Console v0.1.0"; color: #eceff1; font-weight: 600; vertical-alignment: center; }
+            }
+        }
+
+        // 标签栏（可简化为占位）
+        Rectangle { height: 44px; background: #37474f; }
+
+        // 内容区
+        Rectangle {
+            vertical-stretch: 1;
+            background: #f5f5f5;
+
+            HorizontalBox {
+                spacing: 8px; padding: 8px;
+
+                // 左侧菜单：固定宽度
+                Rectangle { width: left_panel_width; vertical-stretch: 1; background: #eceff1; border-radius: 4px; clip: true;
+                    VerticalBox { spacing: 8px; padding: 8px;
+                        Rectangle { height: 40px; background: #37474f; border-radius: 4px;
+                            HorizontalBox { padding-left: 12px; padding-top: 4px; padding-bottom: 4px;
+                                Text { text: "CHANNELS (" + channels.length + ")"; color: #eceff1; font-weight: 700; vertical-alignment: center; }
+                            }
+                        }
+                        Rectangle { vertical-stretch: 1; background: #eceff1; border-radius: 4px; clip: true;
+                            ScrollView {
+                                VerticalBox { spacing: 4px; padding: 6px;
+                                    for c in channels: Rectangle {
+                                        height: 60px; background: c.id == root.selected_channel_id ? #e3f2fd : #ffffff; border-width: 1px; border-color: #cfd8dc; border-radius: 4px;
+                                        VerticalBox { padding: 8px; spacing: 4px;
+                                            HorizontalBox { spacing: 6px;
+                                                Text { text: c.enabled ? "●" : "○"; color: c.enabled ? #4caf50 : #9e9e9e; }
+                                                Text { text: c.name; horizontal-stretch: 1; overflow: elide; }
+                                                Text { text: c.id; color: #78909c; }
+                                            }
+                                            Text { text: c.protocol; color: #607d8b; font-size: 11px; }
+                                        }
+                                        TouchArea { clicked => { root.selected_channel_id = c.id; root.channel_selected(c.id); } }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // 右侧监控：占满剩余空间
+                table := Rectangle { horizontal-stretch: 1; vertical-stretch: 1;
+                    // 列权重：用 stretch 而非固定像素，避免布局环
+                    in property <int> r_id: 6;
+                    in property <int> r_name: 34;
+                    in property <int> r_scale: 10;
+                    in property <int> r_offset: 10;
+                    in property <int> r_value: 12;
+                    in property <int> r_unit: 8;
+                    in property <int> r_ts: 20;
+                    VerticalBox { spacing: 8px;
+                        // 头部（标题 + 类型切换）
+                        Rectangle { height: 44px; background: #37474f; border-radius: 4px;
+                            HorizontalBox { padding-left: 12px; spacing: 12px;
+                                Text { text: "CHANNEL POINTS (" + channel_points.length + ")"; color: #eceff1; font-weight: 700; vertical-alignment: center; }
+                                Rectangle { horizontal-stretch: 1; }
+                                Text { text: "TYPE:"; color: #b0bec5; font-size: 11px; vertical-alignment: center; }
+                                for t in ["T","S","C","A"]: Rectangle {
+                                    width: 28px; height: 24px; border-radius: 3px; background: root.selected_four_remote == t ? #2196f3 : #546e7a;
+                                    Text { text: t; color: #ffffff; horizontal-alignment: center; vertical-alignment: center; font-size: 11px; font-weight: 600; }
+                                    TouchArea { clicked => { root.selected_four_remote = t; root.four_remote_selected(t); } }
+                                }
+                            }
+                        }
+
+                        // 表头（固定列宽，以容器宽度按比例计算）
+                        Rectangle { height: 36px; background: transparent;
+                            HorizontalBox { spacing: 0px;
+                                Rectangle { horizontal-stretch: table.r_id;    height: 36px; background: #455a64; Text { x: 8px; text: "ID";        color: #eceff1; font-size: 12px; font-weight: 700; vertical-alignment: center; horizontal-alignment: left; } }
+                                Rectangle { horizontal-stretch: table.r_name;  height: 36px; background: #455a64; Text { x: 8px; text: "Name";      color: #eceff1; font-size: 12px; font-weight: 700; vertical-alignment: center; horizontal-alignment: left; } }
+                                Rectangle { horizontal-stretch: table.r_scale; height: 36px; background: #455a64; Text { x: 8px; text: "Scale";     color: #eceff1; font-size: 12px; font-weight: 700; vertical-alignment: center; horizontal-alignment: left; } }
+                                Rectangle { horizontal-stretch: table.r_offset;height: 36px; background: #455a64; Text { x: 8px; text: "Offset";    color: #eceff1; font-size: 12px; font-weight: 700; vertical-alignment: center; horizontal-alignment: left; } }
+                                Rectangle { horizontal-stretch: table.r_value; height: 36px; background: #455a64; Text { x: 8px; text: "Value";     color: #eceff1; font-size: 12px; font-weight: 700; vertical-alignment: center; horizontal-alignment: left; } }
+                                Rectangle { horizontal-stretch: table.r_unit;  height: 36px; background: #455a64; Text { x: 8px; text: "Unit";      color: #eceff1; font-size: 12px; font-weight: 700; vertical-alignment: center; horizontal-alignment: left; } }
+                                Rectangle { horizontal-stretch: table.r_ts;    height: 36px; background: #455a64; Text { x: 8px; text: "Timestamp"; color: #eceff1; font-size: 12px; font-weight: 700; vertical-alignment: center; horizontal-alignment: left; } }
+                            }
+                        }
+
+                        // 数据区（分页 + 栅格行）
+                        Rectangle { vertical-stretch: 1; background: #ffffff; border-radius: 4px; clip: true;
+                            ScrollView {
+                                VerticalBox { spacing: 0px; padding: 0px;
+                                    if channel_points.length == 0: Rectangle { height: 48px; Text { text: "No points available"; color: #90a4ae; x: 12px; y: 12px; } }
+
+                                    for row[idx] in channel_points: Rectangle {
+                                        visible: idx >= (channel_current_page - 1) * channel_page_size && idx < channel_current_page * channel_page_size;
+                                        height: self.visible ? 30px : 0px;
+                                        HorizontalBox { spacing: 0px;
+                                            Rectangle { horizontal-stretch: table.r_id;    height: 30px; background: #ffffff; Text { x: 8px; text: row.point_id; color: #546e7a; font-size: 12px; vertical-alignment: center; horizontal-alignment: left; } }
+                                            Rectangle { horizontal-stretch: table.r_name;  height: 30px; background: #ffffff; Text { x: 8px; text: row.name;     color: #263238; font-size: 12px; vertical-alignment: center; horizontal-alignment: left; overflow: elide; } }
+                                            Rectangle { horizontal-stretch: table.r_scale; height: 30px; background: #ffffff; Text { x: 8px; text: row.scale;    color: #607d8b; font-size: 12px; vertical-alignment: center; horizontal-alignment: left; } }
+                                            Rectangle { horizontal-stretch: table.r_offset;height: 30px; background: #ffffff; Text { x: 8px; text: row.offset;   color: #607d8b; font-size: 12px; vertical-alignment: center; horizontal-alignment: left; } }
+                                            Rectangle { horizontal-stretch: table.r_value; height: 30px; background: #ffffff; Text { x: 8px; text: row.value;    color: #1976d2; font-size: 12px; font-weight: 600; vertical-alignment: center; horizontal-alignment: left; } }
+                                            Rectangle { horizontal-stretch: table.r_unit;  height: 30px; background: #ffffff; Text { x: 8px; text: row.unit;     color: #78909c; font-size: 11px; vertical-alignment: center; horizontal-alignment: left; } }
+                                            Rectangle { horizontal-stretch: table.r_ts;    height: 30px; background: #ffffff; Text { x: 8px; text: row.ts;       color: #90a4ae; font-size: 11px; vertical-alignment: center; horizontal-alignment: left; overflow: elide; } }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        // 分页栏
+                        Rectangle { height: 40px; background: #37474f;
+                            HorizontalBox { padding-left: 12px; padding-right: 12px; spacing: 12px;
+                                Text { text: "Total: " + channel_points.length + " items"; color: #b0bec5; font-size: 11px; vertical-alignment: center; }
+                                Rectangle { horizontal-stretch: 1; }
+                                Button { text: "◀ Prev"; enabled: channel_current_page > 1; clicked => { if channel_current_page > 1 { channel_current_page -= 1; } } }
+                                Text { text: "Page " + channel_current_page + " / " + Math.max(1, Math.ceil(channel_points.length / channel_page_size)); color: #eceff1; font-size: 12px; font-weight: 600; vertical-alignment: center; }
+                                Button { text: "Next ▶"; enabled: channel_current_page * channel_page_size < channel_points.length; clicked => { if channel_current_page * channel_page_size < channel_points.length { channel_current_page += 1; } } }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // 底栏
+        Rectangle { height: 36px; background: #263238;
+            HorizontalBox { padding-left: 16px; padding-right: 16px; padding-top: 4px; padding-bottom: 4px; spacing: 12px;
+                Text { text: "Last Update:"; color: #78909c; font-size: 11px; vertical-alignment: center; }
+                Text { text: root.last_update_time; color: #b0bec5; font-size: 11px; vertical-alignment: center; }
+                Rectangle { horizontal-stretch: 1; }
+                // 仅显示指示符（避免字符串拼接带来的类型转换问题）
+                if root.error_count > 0: Text { text: "⚠"; color: #ffa726; font-size: 11px; font-weight: 600; vertical-alignment: center; }
+            }
+        }
+    }
+}

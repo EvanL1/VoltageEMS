@@ -1,0 +1,141 @@
+# Rust
+**/target/
+**/*.rs.bk
+# Workspace Cargo.lock should be committed; ignore subprojects only
+**/Cargo.lock
+!/Cargo.lock
+.luacheckrc
+edgelink
+benchmarks
+
+# IDE
+.idea/
+.vscode/
+.cursor/
+*.swp
+*.swo
+
+# backup
+* bac
+# DOC
+docs/
+
+# Claude and dot files
+CLAUDE.md
+AGENTS.md
+.claude/
+.*
+!.env
+!.gitignore
+!.github/
+!.dockerignore
+!.prettierrc.json
+
+# Logs
+*.log
+logs/
+**/logs/
+**/*.log
+fixlog*
+**/fixlog/
+**/fixlog.md
+**/fixlog_*.md
+
+# Environment
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+.env.staging
+.venv/
+
+# Docker local overrides (for macOS development)
+docker-compose.override.yml
+
+# Build
+**/build/
+**/dist/
+release/
+bin/
+
+# Offline deployment packages and installers
+offline-bundle/
+voltageems-installer.sh
+voltageems-installer-*.sh
+*.tar.gz
+*.tar.xz
+docker-images/
+docker-images-*.tar
+voltage-redis-*.tar
+voltage-redis-latest.tar
+
+# Test
+*.PID
+**/test_*.yml
+**/test_*.yaml
+**/simple_test.*
+**/*_old.rs
+test-logs/
+
+# Dependencies
+**/node_modules/
+
+# Frontend build outputs
+apps/*/dist/
+apps/*/build/
+apps/*/.next/
+apps/*/.nuxt/
+apps/*/.output/
+apps/*/.cache/
+
+# Docker
+.docker/
+
+# Certificates
+**/certs/
+**/*.pem
+**/*.key
+**/*.crt
+
+# Misc
+.DS_Store
+Thumbs.db
+.serena/
+*.csv
+**/*-demo.*
+**/*_demo.*
+**/demo-*
+**/demo_*
+
+# Config - ignore actual config files but keep directory structure
+/config/
+
+# Data - ignore all data files but keep directory structure
+data/*.db
+data/*.db-*
+data/*.sql
+data/*.backup
+!data/.gitkeep
+
+# Models and products (only top-level directories)
+/models/
+/products/
+
+# examples
+examples/
+figment_demo/
+
+# Temporary files and documentation
+services/*/docs/
+services/*/*.md
+*.md.backup
+*_old.*
+*_test.*
+# Python files (project is pure Rust)
+**/*.py
+**/*.pyc
+**/__pycache__/
+.python-version
+.venv/
+venv/
+env/

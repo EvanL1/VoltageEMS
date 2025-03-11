@@ -1,0 +1,9 @@
+property_id,name,unit,description
+1,Max Power,W,最大功率
+2,MPPT Voltage Range,V,MPPT电压范围
+3,Max Input Voltage,V,最大输入电压
+4,Max Input Current,A,最大输入电流
+5,Conversion Efficiency,%,转换效率
+6,Operating Temperature,°C,工作温度范围
+7,Module Compatibility,,兼容组件类型
+8,Communication Type,,通信方式

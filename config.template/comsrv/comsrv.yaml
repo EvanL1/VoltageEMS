@@ -1,0 +1,70 @@
+channels:
+  # Test Channel
+  - id: 1
+    name: "test_channel"
+    protocol: "modbus_tcp"
+    parameters:
+      host: "localhost"
+      port: 502
+      timeout_secs: 5
+      polling_interval_ms: 1000
+
+  # PV Inverter Channel
+  - id: 2
+    name: "pv_inverter_channel"
+    protocol: "modbus_tcp"
+    parameters:
+      host: "voltageems-modbus-sim"
+      port: 502
+      timeout_secs: 5
+      polling_interval_ms: 1000
+
+  # PCS (Power Conversion System) Channel
+  - id: 3
+    name: "pcs_channel"
+    protocol: "modbus_tcp"
+    parameters:
+      host: "voltageems-modbus-sim"
+      port: 503
+      timeout_secs: 5
+      polling_interval_ms: 1000
+
+  # Virtual Channel for Calculations
+  - id: 4
+    name: "virtual_channel"
+    protocol: "virt"
+    parameters:
+      polling_interval_ms: 1000
+
+  # BMS (Battery Management System) Channel - Modbus RTU
+  - id: 5
+    name: "bms_channel"
+    protocol: "modbus_rtu"
+    parameters:
+      device: "/dev/ttyUSB0"
+      baud_rate: 9600
+      data_bits: 8
+      parity: "None"
+      stop_bits: 1
+      timeout_secs: 5
+      polling_interval_ms: 2000
+
+  # Diesel Generator Channel
+  - id: 6
+    name: "diesel_generator_channel"
+    protocol: "modbus_tcp"
+    parameters:
+      host: "voltageems-modbus-sim"
+      port: 504
+      timeout_secs: 5
+      polling_interval_ms: 5000
+
+  # Motor Controller Channel
+  - id: 7
+    name: "motor_controller_channel"
+    protocol: "modbus_tcp"
+    parameters:
+      host: "voltageems-modbus-sim"
+      port: 505
+      timeout_secs: 5
+      polling_interval_ms: 100 # Fast polling for motion control

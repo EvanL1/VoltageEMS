@@ -1,0 +1,13 @@
+measurement_id,name,unit,description
+1,Module Voltage,V,
+2,Module Current,A,
+3,Module Temperature,°C,
+4,SOC,%,
+5,SOH,%,
+6,Cell Voltage Max,V,
+7,Cell Voltage Min,V,
+8,Cell Temperature Max,°C,
+9,Cell Temperature Min,°C,
+10,Balancing Status,,
+11,Insulation Resistance,MΩ,
+12,Module Energy,kWh,

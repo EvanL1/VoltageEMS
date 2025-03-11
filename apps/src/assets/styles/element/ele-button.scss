@@ -1,0 +1,303 @@
+/* Element Plus Button 组件样式重写 */
+
+// 引入主题变量
+@use './theme-vars.scss' as *;
+
+.voltage-class {
+  // 基础按钮样式
+  .el-button {
+    // 重置默认样式
+    height: 32px;
+    font-size: 14px;
+    padding: 5px 16px;
+    border: none;
+    outline: none;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    border-radius: 0px;
+    position: relative;
+    overflow: hidden;
+    font-family: Arimo, sans-serif;
+    font-weight: 400;
+    vertical-align: middle;
+
+    // 基础尺寸
+    &.el-button--default {
+      height: 32px;
+      padding: 0 16px;
+      font-size: 14px;
+      line-height: 22px;
+    }
+
+    // 主要按钮
+    &.el-button--primary {
+      background: rgba(255, 105, 0, 1);
+      color: rgba(255, 255, 255, 1);
+
+      &:hover {
+        background: rgba(255, 105, 0, 1);
+        color: rgba(255, 255, 255, 1);
+      }
+
+      &:active {
+        background: rgba(255, 105, 0, 1);
+        color: rgba(255, 255, 255, 1);
+      }
+
+      &:focus {
+        box-shadow: 0 0 0 2px rgba(102, 126, 234, 0.2);
+      }
+
+      &.is-disabled {
+        background: $bg-color-page;
+        color: $text-color-disabled;
+        box-shadow: none;
+        cursor: not-allowed;
+
+        &:hover {
+          background: $bg-color-page;
+          transform: none;
+          box-shadow: none;
+        }
+      }
+    }
+    // 警告按钮
+    &.el-button--warning {
+      background: rgba(255, 255, 255, 0.1);
+      color: #ffffff;
+
+      &:hover {
+        background: rgba(255, 255, 255, 0.1);
+      }
+
+      &:active {
+        background: rgba(255, 255, 255, 0.1);
+      }
+
+      &:focus {
+        box-shadow: 0 0 0 2px rgba(250, 173, 20, 0.2);
+      }
+    }
+    // 成功按钮
+    &.el-button--success {
+      background: linear-gradient(135deg, $success-color 0%, #389e0d 100%);
+      color: #ffffff;
+      box-shadow: 0 2px 8px rgba(82, 196, 26, 0.3);
+
+      &:hover {
+        background: linear-gradient(135deg, $success-color-hover 0%, #2f7a0b 100%);
+        box-shadow: 0 4px 12px rgba(82, 196, 26, 0.4);
+        transform: translateY(-1px);
+      }
+
+      &:active {
+        background: linear-gradient(135deg, $success-color-active 0%, #265609 100%);
+        box-shadow: 0 2px 4px rgba(82, 196, 26, 0.3);
+        transform: translateY(0);
+      }
+
+      &:focus {
+        box-shadow: 0 0 0 2px rgba(82, 196, 26, 0.2);
+      }
+    }
+
+    // 危险按钮
+    &.el-button--danger {
+      background: linear-gradient(135deg, $danger-color 0%, #cf1322 100%);
+      color: #ffffff;
+      box-shadow: 0 2px 8px rgba(255, 77, 79, 0.3);
+
+      &:hover {
+        background: linear-gradient(135deg, $danger-color-hover 0%, #b91d1e 100%);
+        box-shadow: 0 4px 12px rgba(255, 77, 79, 0.4);
+        transform: translateY(-1px);
+      }
+
+      &:active {
+        background: linear-gradient(135deg, $danger-color-active 0%, #a31a1a 100%);
+        box-shadow: 0 2px 4px rgba(255, 77, 79, 0.3);
+        transform: translateY(0);
+      }
+
+      &:focus {
+        box-shadow: 0 0 0 2px rgba(255, 77, 79, 0.2);
+      }
+    }
+
+    // 信息按钮
+    &.el-button--info {
+      background: linear-gradient(135deg, $info-color 0%, #595959 100%);
+      color: #ffffff;
+      box-shadow: 0 2px 8px rgba(140, 140, 140, 0.3);
+
+      &:hover {
+        background: linear-gradient(135deg, $info-color-hover 0%, #4d4d4d 100%);
+        box-shadow: 0 4px 12px rgba(140, 140, 140, 0.4);
+        transform: translateY(-1px);
+      }
+
+      &:active {
+        background: linear-gradient(135deg, $info-color-active 0%, #404040 100%);
+        box-shadow: 0 2px 4px rgba(140, 140, 140, 0.3);
+        transform: translateY(0);
+      }
+
+      &:focus {
+        box-shadow: 0 0 0 2px rgba(140, 140, 140, 0.2);
+      }
+    }
+
+    // 默认按钮
+    &.el-button--default {
+      color: $text-color-primary;
+      box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+
+      &:hover {
+        border-color: #40a9ff;
+        color: #40a9ff;
+        box-shadow: 0 4px 8px rgba(0, 0, 0, 0.15);
+        transform: translateY(-1px);
+      }
+
+      &:active {
+        border-color: #096dd9;
+        color: #096dd9;
+        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+        transform: translateY(0);
+      }
+
+      &:focus {
+        border-color: #40a9ff;
+        box-shadow: 0 0 0 2px rgba(24, 144, 255, 0.2);
+      }
+    }
+
+    // 文本按钮
+    &.el-button--text {
+      background: transparent;
+      color: #1890ff;
+      border: none;
+      box-shadow: none;
+
+      &:hover {
+        color: #40a9ff;
+        transform: none;
+      }
+
+      &:active {
+        color: #096dd9;
+      }
+
+      &:focus {
+        box-shadow: 0 0 0 2px rgba(24, 144, 255, 0.2);
+      }
+    }
+
+    // 链接按钮
+    &.el-button--link {
+      background: transparent;
+      color: #1890ff;
+      border: none;
+      box-shadow: none;
+      text-decoration: underline;
+
+      &:hover {
+        color: #40a9ff;
+        text-decoration: none;
+        transform: none;
+      }
+
+      &:active {
+        color: #096dd9;
+      }
+
+      &:focus {
+        box-shadow: 0 0 0 2px rgba(24, 144, 255, 0.2);
+      }
+    }
+
+    // 圆形按钮
+    &.is-circle {
+      border-radius: $border-radius-circle;
+      padding: 0;
+
+      &.el-button--default {
+        width: $button-height-base;
+        height: $button-height-base;
+      }
+
+      &.el-button--small {
+        width: $button-height-small;
+        height: $button-height-small;
+      }
+
+      &.el-button--large {
+        width: $button-height-large;
+        height: $button-height-large;
+      }
+    }
+
+    // 圆角按钮
+    &.is-round {
+      border-radius: $border-radius-round;
+    }
+
+    // 加载状态
+    &.is-loading {
+      pointer-events: none;
+      opacity: $opacity-loading;
+
+      .el-icon {
+        animation: rotating 2s linear infinite;
+      }
+    }
+
+    // 禁用状态
+    &.is-disabled {
+      cursor: not-allowed;
+      opacity: $opacity-disabled;
+
+      &:hover {
+        transform: none;
+        box-shadow: none;
+      }
+    }
+
+    // 按钮组
+    & + .el-button {
+      margin-left: $spacing-sm;
+    }
+  }
+
+  // 按钮组样式
+  .el-button-group {
+    display: inline-flex;
+
+    .el-button {
+      border-radius: 0;
+      margin-left: 0;
+
+      &:first-child {
+        border-top-left-radius: $border-radius-base;
+        border-bottom-left-radius: $border-radius-base;
+      }
+
+      &:last-child {
+        border-top-right-radius: $border-radius-base;
+        border-bottom-right-radius: $border-radius-base;
+      }
+
+      &:not(:first-child) {
+        margin-left: -1px;
+      }
+
+      &:hover {
+        z-index: 1;
+      }
+
+      &:focus {
+        z-index: 1;
+      }
+    }
+  }
+}

@@ -1,0 +1,14 @@
+property_id,name,unit,description
+1,Model,,网关型号
+2,Firmware Version,,固件版本
+3,MAC Address,,MAC地址
+4,IP Address,,IP地址
+5,Protocol Support,,支持协议列表
+6,Max Devices,,最大设备连接数
+7,Storage Capacity,GB,存储容量
+8,CPU Type,,处理器型号
+9,Memory Size,GB,内存大小
+10,Installation Date,,安装日期
+11,Serial Number,,序列号
+12,Network Interfaces,,网络接口数量
+13,Operating System,,操作系统

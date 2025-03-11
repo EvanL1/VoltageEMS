@@ -1,0 +1,254 @@
+/* Element Plus Radio 和 RadioGroup 组件样式 */
+
+@use './theme-vars.scss' as *;
+
+.voltage-class {
+  // Radio 基础样式
+  .el-radio {
+    color: rgba(255, 255, 255, 0.6);
+    height: 0.32rem;
+    font-size: $font-size-base;
+    font-weight: $font-weight-normal;
+    line-height: $line-height-normal;
+    cursor: pointer;
+    margin-right: $spacing-md;
+    display: inline-flex;
+    align-items: center;
+    white-space: nowrap;
+    user-select: none;
+
+    &:last-child {
+      margin-right: 0;
+    }
+
+    // 禁用状态
+    &.is-disabled {
+      color: $text-color-disabled;
+      cursor: not-allowed;
+      opacity: $opacity-disabled;
+
+      .el-radio__input {
+        cursor: not-allowed;
+      }
+
+      .el-radio__label {
+        cursor: not-allowed;
+      }
+    }
+
+    // 选中状态
+    &.is-checked {
+      .el-radio__inner {
+        background-color: $primary-color;
+        border-color: $primary-color;
+
+        &::after {
+          transform: translate(-50%, -50%) scale(1);
+        }
+      }
+
+      .el-radio__label {
+        color: rgba(255, 255, 255, 0.6);
+      }
+
+      // 禁用且选中状态
+      &.is-disabled {
+        .el-radio__inner {
+          background-color: $text-color-disabled;
+          border-color: $text-color-disabled;
+        }
+
+        .el-radio__label {
+          color: $text-color-disabled;
+        }
+      }
+    }
+
+    // 聚焦状态
+    &.is-focus {
+      .el-radio__inner {
+        border-color: $primary-color;
+        box-shadow: 0 0 0 2px rgba(255, 105, 0, 0.2);
+      }
+    }
+
+    // 悬停状态
+    &:hover:not(.is-disabled) {
+      .el-radio__inner {
+        border-color: none;
+      }
+
+      &:not(.is-checked) {
+        .el-radio__label {
+          color: rgba(255, 255, 255, 0.6);
+        }
+      }
+    }
+  }
+
+  // Radio 输入框样式
+  .el-radio__input {
+    white-space: nowrap;
+    cursor: pointer;
+    outline: none;
+    display: inline-flex;
+    position: relative;
+    line-height: 1;
+    vertical-align: middle;
+    margin-right: $spacing-xs;
+
+    // 隐藏原生 input
+    .el-radio__original {
+      opacity: 0;
+      outline: none;
+      position: absolute;
+      z-index: -1;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      margin: 0;
+    }
+  }
+
+  // Radio 圆形按钮样式
+  .el-radio__inner {
+    border: 1px solid rgba(148, 166, 197, 0.3);
+    border-radius: 50%;
+    width: 12px;
+    height: 12px;
+    background-color: transparent;
+    position: relative;
+    cursor: pointer;
+    display: inline-block;
+    box-sizing: border-box;
+    transition: all $transition-fast;
+
+    // 选中状态的内部圆点
+    &::after {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background-color: #ffffff;
+      content: '';
+      position: absolute;
+      left: 50%;
+      top: 50%;
+      transform: translate(-50%, -50%) scale(0);
+      transition: transform $transition-fast;
+    }
+
+    // 悬停效果
+    &:hover {
+      border: 1px solid rgba(148, 166, 197, 0.3);
+    }
+  }
+
+  // Radio 标签样式
+  .el-radio__label {
+    font-size: $font-size-base;
+    padding-left: $spacing-xs;
+    color: rgba(255, 255, 255, 0.6);
+    transition: color $transition-fast;
+    user-select: none;
+  }
+  // RadioGroup 样式
+  .el-radio-group {
+    display: inline-flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: $spacing-sm;
+    font-size: 0;
+
+    // 垂直布局
+    &--vertical {
+      flex-direction: column;
+      align-items: flex-start;
+      gap: $spacing-sm;
+
+      .el-radio {
+        margin-right: 0;
+        margin-bottom: $spacing-sm;
+
+        &:last-child {
+          margin-bottom: 0;
+        }
+      }
+    }
+
+    // 按钮样式的 RadioGroup
+    &--button {
+      display: inline-flex;
+      gap: 0;
+
+      .el-radio {
+        margin-right: 0;
+        border: 1px solid $border-color-base;
+        background-color: transparent;
+        padding: $spacing-xs $spacing-md;
+        border-radius: 0;
+        transition: all $transition-fast;
+
+        &:first-child {
+          border-top-left-radius: $border-radius-small;
+          border-bottom-left-radius: $border-radius-small;
+        }
+
+        &:last-child {
+          border-top-right-radius: $border-radius-small;
+          border-bottom-right-radius: $border-radius-small;
+        }
+
+        &:not(:first-child) {
+          border-left: none;
+        }
+
+        // 隐藏原生样式
+        .el-radio__input {
+          display: none;
+        }
+
+        .el-radio__label {
+          padding-left: 0;
+          color: $text-color-primary;
+        }
+
+        // 悬停状态
+        &:hover:not(.is-disabled) {
+          background-color: rgba(255, 105, 0, 0.1);
+          border-color: $primary-color;
+          z-index: 1;
+        }
+
+        // 选中状态
+        &.is-checked {
+          background-color: $primary-color;
+          border-color: $primary-color;
+          color: #ffffff;
+          z-index: 2;
+
+          .el-radio__label {
+            color: #ffffff;
+          }
+        }
+
+        // 禁用状态
+        &.is-disabled {
+          background-color: rgba(84, 98, 140, 0.1);
+          border-color: $border-color-base;
+          cursor: not-allowed;
+          opacity: $opacity-disabled;
+
+          .el-radio__label {
+            color: $text-color-disabled;
+          }
+
+          &.is-checked {
+            background-color: $text-color-disabled;
+            border-color: $text-color-disabled;
+          }
+        }
+      }
+    }
+  }
+}

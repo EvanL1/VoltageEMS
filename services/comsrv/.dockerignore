@@ -1,0 +1,49 @@
+# Git files
+.git
+.gitignore
+
+# Build artifacts
+target/
+Cargo.lock
+
+# IDE files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Test results
+test-results/
+coverage/
+*.profraw
+*.profdata
+
+# Logs
+logs/
+*.log
+
+# Documentation
+docs/
+*.md
+
+# Docker files
+Dockerfile
+docker-compose*.yml
+.dockerignore
+
+# Development files
+.env
+.env.local
+.env.*.local
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+*.temp
+EOF < /dev/null

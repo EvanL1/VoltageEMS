@@ -1,0 +1,36 @@
+[package]
+name = "voltage-rtdb"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["rlib"]
+
+[dependencies]
+async-trait = "0.1"
+bytes = "1.5"
+anyhow = "1.0"
+thiserror = "1.0"
+dashmap = "5.5"
+parking_lot = "0.12"
+regex = "1.10"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tracing = "0.1"
+uuid = { version = "1.0", features = ["v4"] }
+chrono = "0.4"
+tokio = { workspace = true }
+
+# Optional dependencies
+common = { path = "../common", optional = true }
+voltage-config = { path = "../voltage-config" }
+redis = { workspace = true, optional = true }
+
+[features]
+default = ["redis-backend", "memory-backend"]
+redis-backend = ["common", "redis"]
+memory-backend = []
+
+[dev-dependencies]
+tokio = { workspace = true }
+serial_test = "3.0"

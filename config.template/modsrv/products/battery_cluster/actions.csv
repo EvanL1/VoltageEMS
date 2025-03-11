@@ -1,0 +1,6 @@
+action_id,name,unit,description
+1,Enable Cluster,,
+2,Disable Cluster,,
+3,Start Balancing,,
+4,Stop Balancing,,
+5,Reset Protection,,

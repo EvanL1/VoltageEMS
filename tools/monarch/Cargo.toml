@@ -1,0 +1,56 @@
+[package]
+name = "monarch"
+version = "0.0.1"
+edition = "2021"
+
+[dependencies]
+voltage-config = { path = "../../libs/voltage-config" }
+voltage-rtdb = { path = "../../libs/voltage-rtdb" }
+common = { path = "../../libs/common" }
+
+# Service libraries (lib mode)
+comsrv = { path = "../../services/comsrv", default-features = false, optional = true }
+modsrv = { path = "../../services/modsrv", default-features = false, optional = true }
+rulesrv = { path = "../../services/rulesrv", default-features = false, optional = true }
+
+# CLI
+clap = { workspace = true }
+
+# Async runtime
+tokio = { workspace = true }
+
+# Database
+# Use sqlx with SQLite only and rustls runtime to avoid OpenSSL for MUSL builds
+sqlx = { workspace = true, default-features = false, features = [
+    "sqlite", "chrono", "json", "uuid", "macros", "runtime-tokio-rustls"
+] }
+
+# Serialization
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde_yaml = { workspace = true }
+csv = { workspace = true }
+
+# Error handling
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+
+# Logging
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+
+# File system
+tempfile = { workspace = true }
+walkdir = "2"
+path-clean = "1.0"
+
+# Output formatting
+colored = { workspace = true }
+indicatif = { workspace = true }
+
+# HTTP client
+reqwest = { workspace = true }
+
+[features]
+default = ["lib-mode"]
+lib-mode = ["comsrv", "modsrv", "rulesrv"]

@@ -1,0 +1,9 @@
+property_id,name,unit,description
+1,Module Capacity,kWh,模组容量
+2,Cell Count,,电芯数量
+3,Series Count,,串联数
+4,Parallel Count,,并联数
+5,Nominal Voltage,V,标称电压
+6,BMS Type,,BMS类型
+7,Balancing Current,A,均衡电流
+8,Module Weight,kg,模组重量
