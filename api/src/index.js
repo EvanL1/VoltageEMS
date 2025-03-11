@@ -1,152 +1,118 @@
 const express = require('express');
 const cors = require('cors');
-const morgan = require('morgan');
-const path = require('path');
-const fs = require('fs-extra');
-const winston = require('winston');
+const mqtt = require('mqtt');
+const moment = require('moment');
 
-// 创建 logger
-const logger = winston.createLogger({
-  level: 'info',
-  format: winston.format.combine(
-    winston.format.timestamp(),
-    winston.format.json()
-  ),
-  transports: [
-    new winston.transports.Console(),
-    new winston.transports.File({ filename: 'api.log' })
-  ]
-});
-
-// 创建 Express 应用
+// Create Express app
 const app = express();
-const PORT = process.env.PORT || 3001;
+const port = process.env.PORT || 3000;
 
-// 中间件
+// Middleware
 app.use(cors());
-app.use(morgan('dev'));
-app.use(express.json({ limit: '10mb' }));
-app.use(express.urlencoded({ extended: true }));
+app.use(express.json());
 
-// 配置文件根目录
-const CONFIG_ROOT = path.resolve(__dirname, '../../config');
-
-// 确保配置目录存在
-fs.ensureDirSync(CONFIG_ROOT);
-
-// 路由
-app.get('/api/config/:service', async (req, res) => {
-  try {
-    const { service } = req.params;
-    let configPath;
-    let configContent;
-
-    // 根据服务类型确定配置文件路径
-    switch (service) {
-      case 'modsrv':
-        configPath = path.join(CONFIG_ROOT, 'modsrv', 'modsrv.toml');
-        break;
-      case 'netsrv':
-        configPath = path.join(CONFIG_ROOT, 'netsrv', 'netsrv.json');
-        break;
-      case 'comsrv':
-        // comsrv 可能有多个配置文件，这里简化处理
-        configPath = path.join(CONFIG_ROOT, 'comsrv');
-        break;
-      case 'hissrv':
-        configPath = path.join(CONFIG_ROOT, 'hissrv');
-        break;
-      case 'mosquitto':
-        configPath = path.join(CONFIG_ROOT, 'mosquitto', 'mosquitto.conf');
-        break;
-      default:
-        return res.status(404).json({ error: '未知的服务类型' });
-    }
-
-    // 检查文件是否存在
-    if (!await fs.pathExists(configPath)) {
-      return res.status(404).json({ error: '配置文件不存在' });
-    }
-
-    // 读取配置文件
-    if (service === 'comsrv' || service === 'hissrv') {
-      // 目录类型的配置，返回目录下所有文件
-      const files = await fs.readdir(configPath);
-      const configs = {};
-      
-      for (const file of files) {
-        const filePath = path.join(configPath, file);
-        const stat = await fs.stat(filePath);
-        
-        if (stat.isFile()) {
-          configs[file] = await fs.readFile(filePath, 'utf8');
-        }
-      }
-      
-      configContent = configs;
-    } else {
-      // 单文件类型的配置
-      configContent = await fs.readFile(configPath, 'utf8');
-    }
-
-    res.json(configContent);
-  } catch (error) {
-    logger.error('获取配置文件失败', { error: error.message, stack: error.stack });
-    res.status(500).json({ error: '获取配置文件失败', details: error.message });
-  }
+// MQTT client (uncomment and configure when MQTT broker is available)
+/*
+const mqttClient = mqtt.connect('mqtt://mosquitto:1883', {
+  clientId: `api-server-${Math.random().toString(16).slice(2, 8)}`,
+  clean: true,
+  connectTimeout: 4000,
+  reconnectPeriod: 1000
 });
 
-app.post('/api/config/:service', async (req, res) => {
-  try {
-    const { service } = req.params;
-    const { config } = req.body;
-    let configPath;
-
-    // 根据服务类型确定配置文件路径
-    switch (service) {
-      case 'modsrv':
-        configPath = path.join(CONFIG_ROOT, 'modsrv', 'modsrv.toml');
-        break;
-      case 'netsrv':
-        configPath = path.join(CONFIG_ROOT, 'netsrv', 'netsrv.json');
-        break;
-      case 'comsrv':
-        configPath = path.join(CONFIG_ROOT, 'comsrv');
-        break;
-      case 'hissrv':
-        configPath = path.join(CONFIG_ROOT, 'hissrv');
-        break;
-      case 'mosquitto':
-        configPath = path.join(CONFIG_ROOT, 'mosquitto', 'mosquitto.conf');
-        break;
-      default:
-        return res.status(404).json({ error: '未知的服务类型' });
+mqttClient.on('connect', () => {
+  console.log('Connected to MQTT broker');
+  mqttClient.subscribe('voltage/+/data', (err) => {
+    if (!err) {
+      console.log('Subscribed to device data topics');
     }
-
-    // 确保目录存在
-    await fs.ensureDir(path.dirname(configPath));
-
-    // 写入配置文件
-    if (service === 'comsrv' || service === 'hissrv') {
-      // 目录类型的配置，写入多个文件
-      for (const [file, content] of Object.entries(config)) {
-        const filePath = path.join(configPath, file);
-        await fs.writeFile(filePath, content);
-      }
-    } else {
-      // 单文件类型的配置
-      await fs.writeFile(configPath, config);
-    }
-
-    res.json({ success: true, message: '配置保存成功' });
-  } catch (error) {
-    logger.error('保存配置文件失败', { error: error.message, stack: error.stack });
-    res.status(500).json({ error: '保存配置文件失败', details: error.message });
-  }
+  });
 });
 
-// 启动服务器
-app.listen(PORT, () => {
-  logger.info(`API 服务已启动，监听端口 ${PORT}`);
-  console.log(`API 服务已启动，监听端口 ${PORT}`);
+mqttClient.on('message', (topic, message) => {
+  // Handle incoming messages
+  console.log(`Received message from ${topic}: ${message.toString()}`);
+});
+*/
+
+// Simulated data for demonstration
+const systemData = {
+  power: {
+    charge: 0,
+    discharge: 2.3
+  },
+  soc: 88,
+  temperature: {
+    current: 25,
+    min: 17,
+    max: 30
+  },
+  devices: {
+    pv: { power: 15.4 },
+    converter: { efficiency: 98.5 },
+    battery: { soc: 88 },
+    load: { power: 18.7 },
+    grid: { status: 'Connected', power: 1.2 }
+  },
+  alerts: [
+    {
+      id: 1,
+      time: '2025-03-15 09:23:45',
+      type: 'WARNING',
+      message: 'Grid frequency fluctuation detected'
+    },
+    {
+      id: 2,
+      time: '2025-03-15 08:17:32',
+      type: 'INFO',
+      message: 'Battery cooling system activated'
+    }
+  ],
+  history: {
+    power: generateRandomData(24),
+    soc: generateRandomData(24, 60, 90)
+  }
+};
+
+// Generate random data points for charts
+function generateRandomData(count, min = 0, max = 100) {
+  const data = [];
+  const now = moment();
+  
+  for (let i = 0; i < count; i++) {
+    data.push({
+      time: moment(now).subtract(i, 'hours').format('YYYY-MM-DD HH:mm:ss'),
+      value: min + Math.random() * (max - min)
+    });
+  }
+  
+  return data.reverse();
+}
+
+// API Routes
+app.get('/system/status', (req, res) => {
+  res.json(systemData);
+});
+
+app.get('/system/alerts', (req, res) => {
+  res.json(systemData.alerts);
+});
+
+app.get('/system/history', (req, res) => {
+  res.json(systemData.history);
+});
+
+// Configuration related endpoints
+app.get('/config/:service', (req, res) => {
+  const { service } = req.params;
+  res.json({
+    service,
+    status: 'active',
+    configPath: `/etc/${service.toLowerCase()}`
+  });
+});
+
+// Start the server
+app.listen(port, () => {
+  console.log(`API server running on port ${port}`);
 }); 

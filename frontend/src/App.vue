@@ -1,9 +1,9 @@
 <template>
   <div class="app-container">
-    <!-- 左侧导航栏 -->
+    <!-- Left Navigation Sidebar -->
     <div class="sidebar">
       <div class="logo">
-        <img :src="logoSrc" alt="EMS Logo" />
+        <img :src="logoSrc" alt="Voltage Logo" />
       </div>
       <el-menu
         router
@@ -30,13 +30,13 @@
       </el-menu>
       
       <div class="sidebar-footer">
-        <p>©2025 VOLTAGE, LLC. All Rights Reserved.</p>
+        <p>Voltage, LLC. © 2025 - All Rights Reserved.</p>
       </div>
     </div>
     
-    <!-- 主要内容区域 -->
+    <!-- Main Content Area -->
     <div class="main-container">
-      <!-- 顶部标题栏 -->
+      <!-- Header Title Bar -->
       <header class="main-header">
         <div class="header-left">
           <el-icon class="menu-toggle"><el-icon-menu /></el-icon>
@@ -58,7 +58,7 @@
         </div>
       </header>
       
-      <!-- 内容区域 -->
+      <!-- Content Area -->
       <main class="main-content">
         <router-view />
       </main>

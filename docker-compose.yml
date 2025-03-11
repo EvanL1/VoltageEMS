@@ -35,56 +35,56 @@ services:
       - ./config/mosquitto:/mosquitto/config
       - mosquitto-data:/mosquitto/data
       - mosquitto-log:/mosquitto/log
+    restart: unless-stopped
     networks:
       - ems-network
 
   comsrv:
-    build:
-      context: ./Comsrv
-      dockerfile: Dockerfile
-    depends_on:
-      - redis
+    build: ./Comsrv
     volumes:
       - ./config/comsrv:/etc/comsrv/config
-    networks:
-      - ems-network
+    depends_on:
+      - mosquitto
+    restart: unless-stopped
+    environment:
+      - TZ=Asia/Shanghai
 
   hissrv:
-    build:
-      context: ./Hissrv/hissrv-rust
-      dockerfile: Dockerfile
-    depends_on:
-      - redis
-      - influxdb
+    build: ./hissrv
     volumes:
       - ./config/hissrv:/etc/hissrv
-    networks:
-      - ems-network
+      - hissrv-data:/var/lib/hissrv
+    depends_on:
+      - mosquitto
+    restart: unless-stopped
+    environment:
+      - TZ=Asia/Shanghai
 
   modsrv:
-    build:
-      context: ./modsrv
-      dockerfile: Dockerfile
-    depends_on:
-      - redis
-      - comsrv
+    build: ./modsrv
     volumes:
       - ./config/modsrv/modsrv.toml:/etc/modsrv.toml
-    networks:
-      - ems-network
+    depends_on:
+      - mosquitto
+      - comsrv
+    restart: unless-stopped
+    environment:
+      - TZ=Asia/Shanghai
 
   netsrv:
-    build:
-      context: ./netsrv
-      dockerfile: Dockerfile
-    depends_on:
-      - redis
-      - mosquitto
+    build: ./netsrv
+    ports:
+      - "443:443"
     volumes:
       - ./config/netsrv/netsrv.json:/etc/netsrv.json
-      - ./config/certs:/etc/ems/certs
-    networks:
-      - ems-network
+      - ./config/certs:/etc/netsrv/certs
+    depends_on:
+      - mosquitto
+      - comsrv
+      - modsrv
+    restart: unless-stopped
+    environment:
+      - TZ=Asia/Shanghai
 
   grafana:
     image: grafana/grafana:9.3.6
@@ -102,29 +102,32 @@ services:
       - influxdb
 
   api:
-    build:
-      context: ./api
-      dockerfile: Dockerfile
+    build: ./api
     ports:
-      - "3001:3001"
+      - "3000:3000"
     volumes:
       - ./config:/app/config
     networks:
       - ems-network
     depends_on:
-      - redis
+      - mosquitto
+      - comsrv
+      - modsrv
+      - hissrv
+    restart: unless-stopped
+    environment:
+      - TZ=Asia/Shanghai
+      - NODE_ENV=production
 
   frontend:
-    build:
-      context: ./frontend
-      dockerfile: Dockerfile
+    build: ./frontend
     ports:
-      - "8080:80"
+      - "80:80"
     networks:
       - ems-network
     depends_on:
       - api
-      - grafana
+    restart: unless-stopped
 
 networks:
   ems-network:
@@ -135,4 +138,5 @@ volumes:
   influxdb-data:
   mosquitto-data:
   mosquitto-log:
-  grafana-data: 
+  grafana-data:
+  hissrv-data: 
