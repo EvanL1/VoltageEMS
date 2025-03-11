@@ -97,13 +97,13 @@
 
             <div class="topology-connection h-line"></div>
 
-            <div class="topology-node grid">
+            <div class="topology-node generator">
               <div class="node-icon">
-                <el-icon><el-icon-grid /></el-icon>
+                <el-icon><el-icon-cpu /></el-icon>
               </div>
-              <div class="node-label">Grid</div>
-              <div class="node-data status">{{ gridData.status }}</div>
-              <div class="node-data">{{ gridData.power }} kW</div>
+              <div class="node-label">Diesel Generator</div>
+              <div class="node-data status">{{ generatorData.status }}</div>
+              <div class="node-data">{{ generatorData.power }} kW</div>
             </div>
           </div>
         </div>
@@ -193,9 +193,9 @@ export default {
       loadData: {
         power: 18.7
       },
-      gridData: {
-        status: 'Connected',
-        power: 1.2
+      generatorData: {
+        status: 'Standby',
+        power: 0
       },
       // Current alerts
       currentAlerts: [
@@ -338,18 +338,24 @@ export default {
 
 /* Topology Section */
 .topology-section {
-  padding: 15px;
+  padding: 10px;
   background-color: white;
   border-bottom: 1px solid #eee;
+  height: 280px; /* Reduced height */
 }
 
 .topology-header {
-  margin-bottom: 10px;
+  margin-bottom: 5px;
   text-align: center;
 }
 
+.topology-header h3 {
+  margin: 0;
+  font-size: 16px;
+}
+
 .topology-diagram {
-  height: 380px;
+  height: 230px; /* Reduced height */
   display: flex;
   justify-content: center;
   align-items: center;
@@ -362,7 +368,7 @@ export default {
   gap: 5px;
   width: 100%;
   height: 100%;
-  padding: 10px;
+  padding: 5px;
 }
 
 /* Bottom Row Layout */
@@ -480,24 +486,26 @@ export default {
   justify-content: center;
   border: 2px solid #ddd;
   border-radius: 8px;
-  padding: 10px;
+  padding: 8px;
   background-color: #f9f9f9;
+  font-size: 0.9rem;
 }
 
 .node-icon {
-  font-size: 2rem;
-  margin-bottom: 5px;
+  font-size: 1.6rem;
+  margin-bottom: 3px;
 }
 
 .node-label {
   font-weight: bold;
-  margin-bottom: 5px;
+  margin-bottom: 3px;
+  font-size: 0.85rem;
 }
 
 .node-data {
-  font-size: 0.9rem;
+  font-size: 0.8rem;
   color: #555;
-  margin-bottom: 3px;
+  margin-bottom: 2px;
 }
 
 .node-data.status {
@@ -507,7 +515,7 @@ export default {
 
 .node-data.soc {
   font-weight: bold;
-  font-size: 1.1rem;
+  font-size: 0.95rem;
 }
 
 .node-data.soc.normal {
@@ -526,7 +534,7 @@ export default {
   display: flex;
   flex-direction: column;
   align-items: center;
-  margin-top: 5px;
+  margin-top: 3px;
   width: 100%;
 }
 
@@ -534,7 +542,7 @@ export default {
   display: flex;
   justify-content: space-between;
   width: 100%;
-  margin-bottom: 3px;
+  margin-bottom: 2px;
 }
 
 .power-label {
@@ -574,7 +582,7 @@ export default {
   grid-column: 5;
   grid-row: 1;
   color: #67C23A;
-  padding: 15px;
+  padding: 10px;
 }
 
 .topology-node.load {
@@ -583,10 +591,10 @@ export default {
   color: #F56C6C;
 }
 
-.topology-node.grid {
+.topology-node.generator {
   grid-column: 5;
   grid-row: 3;
-  color: #909399;
+  color: #606266;
 }
 
 .topology-connection {
