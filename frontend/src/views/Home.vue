@@ -54,12 +54,12 @@
 
             <div class="topology-connection h-line"></div>
 
-            <div class="topology-node converter">
+            <div class="topology-node pcs">
               <div class="node-icon">
                 <el-icon><el-icon-set-up /></el-icon>
               </div>
-              <div class="node-label">Converter</div>
-              <div class="node-data">{{ converterData.efficiency }}% eff</div>
+              <div class="node-label">PCS</div>
+              <div class="node-data">{{ pcsData.efficiency }}% eff</div>
             </div>
 
             <div class="topology-connection h-line"></div>
@@ -69,7 +69,20 @@
                 <el-icon><el-icon-lightning /></el-icon>
               </div>
               <div class="node-label">Battery</div>
-              <div class="node-data">{{ socValue }}% SOC</div>
+              <div class="node-data soc" :class="getSocClass(socValue)">SOC: {{ socValue }}%</div>
+              <div class="node-data power-data">
+                <div class="power-item" v-if="chargePower > 0">
+                  <span class="power-label charge">Charge:</span>
+                  <span class="power-value">{{ chargePower }} kW</span>
+                </div>
+                <div class="power-item" v-if="dischargePower > 0">
+                  <span class="power-label discharge">Discharge:</span>
+                  <span class="power-value">{{ dischargePower }} kW</span>
+                </div>
+                <div class="power-item" v-if="chargePower === 0 && dischargePower === 0">
+                  <span class="power-label idle">Idle</span>
+                </div>
+              </div>
             </div>
 
             <div class="topology-connection down-line"></div>
@@ -97,89 +110,30 @@
       </el-card>
 
       <div class="bottom-row">
-        <!-- Bottom Left: Power and SOC -->
-        <div class="bottom-left">
-          <!-- Power Bar -->
-          <el-card class="dashboard-card">
-            <div class="bar-container">
-              <h3 class="bar-title">Power</h3>
-              <div class="power-bars">
-                <div class="bar-item">
-                  <div class="bar-label">Charge</div>
-                  <div class="bar-track">
-                    <div class="bar-fill charge" :style="{ width: getPowerPercentage(chargePower) + '%' }"></div>
-                  </div>
-                  <div class="bar-value">{{ chargePower }} kW</div>
-                </div>
-                <div class="bar-item">
-                  <div class="bar-label">Discharge</div>
-                  <div class="bar-track">
-                    <div class="bar-fill discharge" :style="{ width: getPowerPercentage(dischargePower) + '%' }"></div>
-                  </div>
-                  <div class="bar-value">{{ dischargePower }} kW</div>
-                </div>
-              </div>
+        <!-- Current Alerts -->
+        <el-card class="alert-card">
+          <template #header>
+            <div class="alert-header">
+              <span>Current Alerts</span>
+              <el-tag type="danger" v-if="currentAlerts.length > 0">{{ currentAlerts.length }}</el-tag>
             </div>
-          </el-card>
-
-          <!-- SOC Bar -->
-          <el-card class="dashboard-card">
-            <div class="bar-container">
-              <h3 class="bar-title">State of Charge</h3>
-              <div class="soc-bar">
-                <div class="soc-track">
-                  <div 
-                    class="soc-fill" 
-                    :class="getSocClass(socValue)" 
-                    :style="{ width: socValue + '%' }"
-                  ></div>
-                </div>
-                <div class="soc-value">{{ socValue }}%</div>
-              </div>
-              <div class="soc-legend">
-                <div class="legend-item">
-                  <div class="legend-color green"></div>
-                  <div class="legend-label">Normal</div>
-                </div>
-                <div class="legend-item">
-                  <div class="legend-color yellow"></div>
-                  <div class="legend-label">Low (≤ 10%)</div>
-                </div>
-                <div class="legend-item">
-                  <div class="legend-color red"></div>
-                  <div class="legend-label">Critical (≤ 5%)</div>
-                </div>
-              </div>
-            </div>
-          </el-card>
-        </div>
-
-        <!-- Bottom Right: Current Alerts -->
-        <div class="bottom-right">
-          <el-card class="alert-card">
-            <template #header>
-              <div class="alert-header">
-                <span>Current Alerts</span>
-                <el-tag type="danger" v-if="currentAlerts.length > 0">{{ currentAlerts.length }}</el-tag>
-              </div>
-            </template>
-            <div v-if="currentAlerts.length > 0">
-              <el-table :data="currentAlerts" stripe style="width: 100%">
-                <el-table-column prop="time" label="Time" width="180" />
-                <el-table-column prop="type" label="Type" width="100">
-                  <template #default="scope">
-                    <el-tag :type="getAlertType(scope.row.type)">{{ scope.row.type }}</el-tag>
-                  </template>
-                </el-table-column>
-                <el-table-column prop="message" label="Message" show-overflow-tooltip />
-              </el-table>
-            </div>
-            <div v-else class="no-alerts">
-              <el-icon><el-icon-check /></el-icon>
-              <span>No active alerts</span>
-            </div>
-          </el-card>
-        </div>
+          </template>
+          <div v-if="currentAlerts.length > 0">
+            <el-table :data="currentAlerts" stripe style="width: 100%">
+              <el-table-column prop="time" label="Time" width="180" />
+              <el-table-column prop="type" label="Type" width="100">
+                <template #default="scope">
+                  <el-tag :type="getAlertType(scope.row.type)">{{ scope.row.type }}</el-tag>
+                </template>
+              </el-table-column>
+              <el-table-column prop="message" label="Message" show-overflow-tooltip />
+            </el-table>
+          </div>
+          <div v-else class="no-alerts">
+            <el-icon><el-icon-check /></el-icon>
+            <span>No active alerts</span>
+          </div>
+        </el-card>
       </div>
 
       <!-- System Status Table -->
@@ -258,7 +212,7 @@ export default {
       pvData: {
         power: 15.4
       },
-      converterData: {
+      pcsData: {
         efficiency: 98.5
       },
       loadData: {
@@ -432,165 +386,12 @@ export default {
 /* Bottom Row Layout */
 .bottom-row {
   display: flex;
-  gap: 20px;
   margin-bottom: 20px;
-}
-
-.bottom-left {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  gap: 20px;
-}
-
-.bottom-right {
-  flex: 1;
-}
-
-/* Dashboard Cards */
-.dashboard-card {
-  height: 180px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-/* Bar Styles */
-.bar-container {
-  width: 100%;
-  height: 100%;
-  display: flex;
-  flex-direction: column;
-  padding: 10px;
-}
-
-.bar-title {
-  margin-bottom: 15px;
-  text-align: center;
-}
-
-.power-bars {
-  display: flex;
-  flex-direction: column;
-  height: 100%;
-  justify-content: space-around;
-}
-
-.bar-item {
-  display: flex;
-  align-items: center;
-  margin-bottom: 15px;
-}
-
-.bar-label {
-  width: 100px;
-  font-weight: bold;
-}
-
-.bar-track {
-  flex-grow: 1;
-  height: 25px;
-  background-color: #eee;
-  border-radius: 4px;
-  overflow: hidden;
-  margin: 0 10px;
-}
-
-.bar-fill {
-  height: 100%;
-  transition: width 0.5s ease-in-out;
-}
-
-.bar-fill.charge {
-  background-color: #409EFF;
-}
-
-.bar-fill.discharge {
-  background-color: #F56C6C;
-}
-
-.bar-value {
-  width: 60px;
-  text-align: right;
-  font-weight: bold;
-}
-
-/* SOC Bar */
-.soc-bar {
-  display: flex;
-  align-items: center;
-  margin: 20px 0;
-}
-
-.soc-track {
-  flex-grow: 1;
-  height: 40px;
-  background-color: #eee;
-  border-radius: 4px;
-  overflow: hidden;
-  margin-right: 15px;
-}
-
-.soc-fill {
-  height: 100%;
-  transition: width 0.5s ease-in-out;
-}
-
-.soc-fill.normal {
-  background-color: #67C23A;
-}
-
-.soc-fill.warning {
-  background-color: #E6A23C;
-}
-
-.soc-fill.critical {
-  background-color: #F56C6C;
-}
-
-.soc-value {
-  width: 60px;
-  text-align: right;
-  font-weight: bold;
-  font-size: 1.2rem;
-}
-
-.soc-legend {
-  display: flex;
-  justify-content: space-around;
-  margin-top: 15px;
-}
-
-.legend-item {
-  display: flex;
-  align-items: center;
-}
-
-.legend-color {
-  width: 15px;
-  height: 15px;
-  border-radius: 3px;
-  margin-right: 5px;
-}
-
-.legend-color.green {
-  background-color: #67C23A;
-}
-
-.legend-color.yellow {
-  background-color: #E6A23C;
-}
-
-.legend-color.red {
-  background-color: #F56C6C;
-}
-
-.legend-label {
-  font-size: 0.8rem;
 }
 
 /* Alert Card */
 .alert-card {
+  flex: 1;
   height: 100%;
 }
 
@@ -618,7 +419,7 @@ export default {
 /* Topology Diagram */
 .topology-card {
   width: 100%;
-  min-height: 400px;
+  min-height: 450px;
 }
 
 .topology-header {
@@ -627,7 +428,7 @@ export default {
 }
 
 .topology-diagram {
-  height: 350px;
+  height: 400px;
   display: flex;
   justify-content: center;
   align-items: center;
@@ -667,10 +468,64 @@ export default {
 .node-data {
   font-size: 0.9rem;
   color: #555;
+  margin-bottom: 3px;
 }
 
 .node-data.status {
   color: #67C23A;
+  font-weight: bold;
+}
+
+.node-data.soc {
+  font-weight: bold;
+  font-size: 1.1rem;
+}
+
+.node-data.soc.normal {
+  color: #67C23A;
+}
+
+.node-data.soc.warning {
+  color: #E6A23C;
+}
+
+.node-data.soc.critical {
+  color: #F56C6C;
+}
+
+.power-data {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  margin-top: 5px;
+  width: 100%;
+}
+
+.power-item {
+  display: flex;
+  justify-content: space-between;
+  width: 100%;
+  margin-bottom: 3px;
+}
+
+.power-label {
+  font-weight: 500;
+  margin-right: 5px;
+}
+
+.power-label.charge {
+  color: #409EFF;
+}
+
+.power-label.discharge {
+  color: #F56C6C;
+}
+
+.power-label.idle {
+  color: #909399;
+}
+
+.power-value {
   font-weight: bold;
 }
 
@@ -680,7 +535,7 @@ export default {
   color: #E6A23C;
 }
 
-.topology-node.converter {
+.topology-node.pcs {
   grid-column: 3;
   grid-row: 1;
   color: #409EFF;
@@ -690,6 +545,7 @@ export default {
   grid-column: 5;
   grid-row: 1;
   color: #67C23A;
+  padding: 15px;
 }
 
 .topology-node.load {
