@@ -50,8 +50,8 @@
             </span>
             <template #dropdown>
               <el-dropdown-menu>
-                <el-dropdown-item>账户设置</el-dropdown-item>
-                <el-dropdown-item>退出登录</el-dropdown-item>
+                <el-dropdown-item>Account Settings</el-dropdown-item>
+                <el-dropdown-item>Logout</el-dropdown-item>
               </el-dropdown-menu>
             </template>
           </el-dropdown>
@@ -114,7 +114,7 @@ body {
   overflow: hidden;
 }
 
-/* 侧边栏样式 */
+/* Sidebar Styles */
 .sidebar {
   width: 200px;
   height: 100%;
@@ -146,7 +146,7 @@ body {
   color: #6c7983;
 }
 
-/* 主要内容区样式 */
+/* Main Content Area Styles */
 .main-container {
   flex: 1;
   display: flex;
@@ -193,5 +193,19 @@ body {
   flex: 1;
   padding: 20px;
   overflow-y: auto;
+}
+
+/* Global dropdown style fix to ensure text is fully visible */
+.el-select-dropdown__item {
+  white-space: normal !important;
+  height: auto !important;
+  padding: 8px 20px !important;
+  line-height: 1.5 !important;
+}
+
+.el-dropdown-menu__item {
+  white-space: normal !important;
+  line-height: 1.5 !important;
+  padding: 8px 20px !important;
 }
 </style> 

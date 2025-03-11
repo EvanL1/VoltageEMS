@@ -1,6 +1,6 @@
 <template>
   <div class="system-page">
-    <!-- 配置导航栏 -->
+    <!-- Configuration Navigation -->
     <div class="config-nav">
       <el-tabs tab-position="left" v-model="activeTab" class="config-tabs">
         <el-tab-pane name="modsrv" label="modsrv">

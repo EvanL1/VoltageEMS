@@ -3,10 +3,10 @@
     <el-card class="activity-card">
       <template #header>
         <div class="card-header">
-          <h2>系统活动记录</h2>
+          <h2>System Activity Logs</h2>
           <div class="header-actions">
-            <el-button type="primary" size="small" @click="refreshLogs">刷新</el-button>
-            <el-button type="info" size="small" @click="exportLogs">导出</el-button>
+            <el-button type="primary" size="small" @click="refreshLogs">Refresh</el-button>
+            <el-button type="info" size="small" @click="exportLogs">Export</el-button>
           </div>
         </div>
       </template>
@@ -14,8 +14,8 @@
       <div class="filter-bar">
         <el-row :gutter="20">
           <el-col :span="6">
-            <el-select v-model="filter.service" placeholder="选择服务" clearable>
-              <el-option label="所有服务" value="" />
+            <el-select v-model="filter.service" placeholder="Select Service" clearable style="width: 100%">
+              <el-option label="All Services" value="" />
               <el-option label="modsrv" value="modsrv" />
               <el-option label="netsrv" value="netsrv" />
               <el-option label="comsrv" value="comsrv" />
@@ -24,8 +24,8 @@
             </el-select>
           </el-col>
           <el-col :span="6">
-            <el-select v-model="filter.level" placeholder="日志级别" clearable>
-              <el-option label="所有级别" value="" />
+            <el-select v-model="filter.level" placeholder="Log Level" clearable style="width: 100%">
+              <el-option label="All Levels" value="" />
               <el-option label="INFO" value="info" />
               <el-option label="WARNING" value="warning" />
               <el-option label="ERROR" value="error" />
@@ -35,9 +35,9 @@
             <el-date-picker
               v-model="filter.timeRange"
               type="datetimerange"
-              range-separator="至"
-              start-placeholder="开始时间"
-              end-placeholder="结束时间"
+              range-separator="to"
+              start-placeholder="Start Time"
+              end-placeholder="End Time"
               format="YYYY-MM-DD HH:mm:ss"
               value-format="YYYY-MM-DD HH:mm:ss"
               style="width: 100%"
@@ -47,15 +47,15 @@
       </div>
       
       <el-table :data="filteredLogs" style="width: 100%" max-height="500">
-        <el-table-column prop="timestamp" label="时间" width="180" sortable />
-        <el-table-column prop="service" label="服务" width="120" />
-        <el-table-column prop="level" label="级别" width="100">
+        <el-table-column prop="timestamp" label="Time" width="180" sortable />
+        <el-table-column prop="service" label="Service" width="120" />
+        <el-table-column prop="level" label="Level" width="100">
           <template #default="scope">
             <el-tag :type="getLogLevelType(scope.row.level)">{{ scope.row.level }}</el-tag>
           </template>
         </el-table-column>
-        <el-table-column prop="message" label="消息" show-overflow-tooltip />
-        <el-table-column prop="user" label="操作员" width="120" />
+        <el-table-column prop="message" label="Message" show-overflow-tooltip />
+        <el-table-column prop="user" label="Operator" width="120" />
       </el-table>
       
       <div class="pagination-container">
@@ -91,49 +91,49 @@ export default {
           timestamp: '2025-03-11 13:25:30',
           service: 'modsrv',
           level: 'INFO',
-          message: '系统启动成功',
+          message: 'System started successfully',
           user: 'system'
         },
         {
           timestamp: '2025-03-11 13:26:45',
           service: 'netsrv',
           level: 'INFO',
-          message: '连接到 MQTT 服务器',
+          message: 'Connected to MQTT server',
           user: 'system'
         },
         {
           timestamp: '2025-03-11 13:30:22',
           service: 'comsrv',
           level: 'WARNING',
-          message: '设备 DEV001 连接超时',
+          message: 'Device DEV001 connection timeout',
           user: 'system'
         },
         {
           timestamp: '2025-03-11 13:45:11',
           service: 'hissrv',
           level: 'INFO',
-          message: '历史数据存储成功',
+          message: 'Historical data stored successfully',
           user: 'system'
         },
         {
           timestamp: '2025-03-11 14:01:34',
           service: 'mosquitto',
           level: 'ERROR',
-          message: '客户端认证失败',
+          message: 'Client authentication failed',
           user: 'system'
         },
         {
           timestamp: '2025-03-11 14:15:27',
           service: 'modsrv',
           level: 'INFO',
-          message: '配置文件已更新',
+          message: 'Configuration file updated',
           user: 'admin'
         },
         {
           timestamp: '2025-03-11 14:30:56',
           service: 'netsrv',
           level: 'INFO',
-          message: '发送数据到外部系统成功',
+          message: 'Data sent to external system successfully',
           user: 'system'
         }
       ]
@@ -143,17 +143,17 @@ export default {
     filteredLogs() {
       let result = [...this.logs];
       
-      // 过滤服务
+      // Filter by service
       if (this.filter.service) {
         result = result.filter(log => log.service === this.filter.service);
       }
       
-      // 过滤日志级别
+      // Filter by log level
       if (this.filter.level) {
         result = result.filter(log => log.level.toLowerCase() === this.filter.level);
       }
       
-      // 过滤时间范围
+      // Filter by time range
       if (this.filter.timeRange && this.filter.timeRange.length === 2) {
         const [start, end] = this.filter.timeRange;
         result = result.filter(log => {
@@ -175,12 +175,12 @@ export default {
       return map[level] || '';
     },
     refreshLogs() {
-      // 在实际应用中，这里会从服务器获取最新日志
-      this.$message.success('日志已刷新');
+      // In a real application, this would fetch the latest logs from the server
+      this.$message.success('Logs refreshed');
     },
     exportLogs() {
-      // 在实际应用中，这里会导出日志
-      this.$message.success('日志导出成功');
+      // In a real application, this would export the logs
+      this.$message.success('Logs exported successfully');
     },
     handleSizeChange(val) {
       this.pageSize = val;

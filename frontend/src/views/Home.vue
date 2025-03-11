@@ -1,10 +1,10 @@
 <template>
   <div class="dashboard">
-    <!-- 顶部操作栏 -->
+    <!-- Top Operation Bar -->
     <div class="dashboard-header">
       <div class="header-left">
         <span class="view-label">View by:</span>
-        <el-select v-model="viewType" placeholder="选择视图" size="default">
+        <el-select v-model="viewType" placeholder="Select View" size="default" style="width: 120px">
           <el-option label="Overview" value="overview" />
           <el-option label="Detail" value="detail" />
         </el-select>
@@ -17,11 +17,11 @@
       </div>
     </div>
 
-    <!-- 项目选择 -->
+    <!-- Project Selector -->
     <div class="project-selector">
       <div class="selector-left">
         <span>Select Project:</span>
-        <el-select v-model="selectedProject" placeholder="选择项目" size="default">
+        <el-select v-model="selectedProject" placeholder="Select Project" size="default" style="width: 160px">
           <el-option label="Voltage-SYS" value="voltage-sys" />
           <el-option label="EMS Project" value="ems-project" />
         </el-select>
