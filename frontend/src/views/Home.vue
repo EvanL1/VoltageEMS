@@ -109,6 +109,7 @@
         </div>
       </el-card>
 
+      <!-- Alerts and Charts Row -->
       <div class="bottom-row">
         <!-- Current Alerts -->
         <el-card class="alert-card">
@@ -134,60 +135,36 @@
             <span>No active alerts</span>
           </div>
         </el-card>
+
+        <!-- Energy & SOC Trends -->
+        <el-card class="charts-card">
+          <div class="charts-header">
+            <h3>Daily Energy & SOC Trends</h3>
+          </div>
+          <div class="charts-container">
+            <div class="chart power-chart">
+              <div class="chart-title">Power (24h)</div>
+              <div class="chart-placeholder">
+                <!-- In real implementation, replace with actual chart component -->
+                <div class="chart-mock">
+                  <div class="chart-line" v-for="i in 10" :key="i" 
+                    :style="{ height: Math.random() * 70 + 10 + '%', left: (i-1) * 10 + '%' }"></div>
+                </div>
+              </div>
+            </div>
+            <div class="chart soc-chart">
+              <div class="chart-title">SOC (24h)</div>
+              <div class="chart-placeholder">
+                <!-- In real implementation, replace with actual chart component -->
+                <div class="chart-mock">
+                  <div class="chart-line soc" v-for="i in 10" :key="i" 
+                    :style="{ height: 60 + Math.random() * 30 + '%', left: (i-1) * 10 + '%' }"></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </el-card>
       </div>
-
-      <!-- System Status Table -->
-      <el-card class="status-table-card">
-        <div class="status-header">
-          <div class="system-icon">
-            <el-icon class="grid-icon"><el-icon-grid /></el-icon>
-            <div class="system-type">Grid</div>
-          </div>
-          <div class="system-icon active">
-            <el-icon class="container-icon"><el-icon-box /></el-icon>
-            <div class="system-type">Container</div>
-          </div>
-          <div class="system-condition">
-            <span class="condition-tag" :class="systemState.toLowerCase()">{{ systemState }}</span>
-            <span class="condition-tag">System Condition</span>
-          </div>
-        </div>
-        <el-table :data="systemData" style="width: 100%" size="large">
-          <el-table-column prop="name" label="Parameter" width="220" />
-          <el-table-column prop="value" label="Value" width="120" align="right" />
-          <el-table-column prop="cumulateCharge" label="Cumulate Charge" align="center" />
-          <el-table-column prop="cumulateDischarge" label="Cumulate Discharge" align="center" />
-        </el-table>
-      </el-card>
-
-      <!-- Energy & SOC Trends -->
-      <el-card class="charts-card">
-        <div class="charts-header">
-          <h3>Daily Energy & SOC Trends</h3>
-        </div>
-        <div class="charts-container">
-          <div class="chart power-chart">
-            <div class="chart-title">Power (24h)</div>
-            <div class="chart-placeholder">
-              <!-- In real implementation, replace with actual chart component -->
-              <div class="chart-mock">
-                <div class="chart-line" v-for="i in 10" :key="i" 
-                  :style="{ height: Math.random() * 70 + 10 + '%', left: (i-1) * 10 + '%' }"></div>
-              </div>
-            </div>
-          </div>
-          <div class="chart soc-chart">
-            <div class="chart-title">SOC (24h)</div>
-            <div class="chart-placeholder">
-              <!-- In real implementation, replace with actual chart component -->
-              <div class="chart-mock">
-                <div class="chart-line soc" v-for="i in 10" :key="i" 
-                  :style="{ height: 60 + Math.random() * 30 + '%', left: (i-1) * 10 + '%' }"></div>
-              </div>
-            </div>
-          </div>
-        </div>
-      </el-card>
     </div>
   </div>
 </template>
@@ -233,33 +210,6 @@ export default {
           time: '2025-03-15 08:17:32',
           type: 'INFO',
           message: 'Battery cooling system activated'
-        }
-      ],
-      // System data table
-      systemData: [
-        {
-          name: 'Charge power',
-          value: '0 kW',
-          cumulateCharge: '',
-          cumulateDischarge: ''
-        },
-        {
-          name: 'Discharge power',
-          value: '2.3 kW',
-          cumulateCharge: '',
-          cumulateDischarge: ''
-        },
-        {
-          name: 'Charge current',
-          value: '0 A',
-          cumulateCharge: '2.47 MWh',
-          cumulateDischarge: ''
-        },
-        {
-          name: 'Discharge current',
-          value: '3.3 A',
-          cumulateCharge: '',
-          cumulateDischarge: '2.18 MWh'
         }
       ]
     }
@@ -386,6 +336,7 @@ export default {
 /* Bottom Row Layout */
 .bottom-row {
   display: flex;
+  gap: 20px;
   margin-bottom: 20px;
 }
 
@@ -393,6 +344,7 @@ export default {
 .alert-card {
   flex: 1;
   height: 100%;
+  min-height: 320px;
 }
 
 .alert-header {
@@ -584,69 +536,10 @@ export default {
   background-color: #ddd;
 }
 
-/* Status Table */
-.status-table-card {
-  width: 100%;
-  margin-bottom: 20px;
-}
-
-.status-header {
-  display: flex;
-  margin-bottom: 20px;
-  border-bottom: 1px solid #eee;
-  padding-bottom: 10px;
-}
-
-.system-icon {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  margin-right: 40px;
-  opacity: 0.5;
-  cursor: pointer;
-}
-
-.system-icon.active {
-  opacity: 1;
-  color: #409EFF;
-}
-
-.grid-icon, .container-icon {
-  font-size: 40px;
-  margin-bottom: 5px;
-}
-
-.system-condition {
-  margin-left: auto;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-
-.condition-tag {
-  padding: 5px 15px;
-  border-radius: 4px;
-  background: #eee;
-}
-
-.condition-tag.discharging {
-  background: #67C23A;
-  color: white;
-}
-
-.condition-tag.charging {
-  background: #409EFF;
-  color: white;
-}
-
-.condition-tag.idle {
-  background: #909399;
-  color: white;
-}
-
 /* Charts Card */
 .charts-card {
-  width: 100%;
+  flex: 1;
+  min-height: 320px;
 }
 
 .charts-header {
@@ -657,7 +550,7 @@ export default {
 .charts-container {
   display: flex;
   flex-direction: column;
-  height: 320px;
+  height: 250px;
   gap: 20px;
 }
 
