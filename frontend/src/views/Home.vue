@@ -38,7 +38,7 @@
     <!-- Main Dashboard Content -->
     <div class="main-dashboard-container">
       <!-- Center: System Topology Diagram -->
-      <el-card class="topology-card">
+      <div class="topology-section">
         <div class="topology-header">
           <h3>System Topology with Real-time Data</h3>
         </div>
@@ -107,19 +107,17 @@
             </div>
           </div>
         </div>
-      </el-card>
+      </div>
 
       <!-- Alerts and Charts Row -->
       <div class="bottom-row">
         <!-- Current Alerts -->
-        <el-card class="alert-card">
-          <template #header>
-            <div class="alert-header">
-              <span>Current Alerts</span>
-              <el-tag type="danger" v-if="currentAlerts.length > 0">{{ currentAlerts.length }}</el-tag>
-            </div>
-          </template>
-          <div v-if="currentAlerts.length > 0">
+        <div class="alert-section">
+          <div class="alert-header">
+            <span>Current Alerts</span>
+            <el-tag type="danger" v-if="currentAlerts.length > 0">{{ currentAlerts.length }}</el-tag>
+          </div>
+          <div v-if="currentAlerts.length > 0" class="alert-content">
             <el-table :data="currentAlerts" stripe style="width: 100%">
               <el-table-column prop="time" label="Time" width="180" />
               <el-table-column prop="type" label="Type" width="100">
@@ -134,10 +132,10 @@
             <el-icon><el-icon-check /></el-icon>
             <span>No active alerts</span>
           </div>
-        </el-card>
+        </div>
 
         <!-- Energy & SOC Trends -->
-        <el-card class="charts-card">
+        <div class="charts-section">
           <div class="charts-header">
             <h3>Daily Energy & SOC Trends</h3>
           </div>
@@ -163,7 +161,7 @@
               </div>
             </div>
           </div>
-        </el-card>
+        </div>
       </div>
     </div>
   </div>
@@ -261,6 +259,10 @@ export default {
 <style scoped>
 .dashboard {
   padding: 0;
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  overflow: hidden;
 }
 
 /* Top Operation Bar */
@@ -270,8 +272,8 @@ export default {
   align-items: center;
   padding: 10px;
   background-color: #f9f9f9;
-  border-radius: 4px;
-  margin-bottom: 15px;
+  margin-bottom: 0;
+  border-bottom: 1px solid #eee;
 }
 
 .view-label {
@@ -294,8 +296,8 @@ export default {
   align-items: center;
   padding: 10px;
   background-color: #f6f8e8;
-  border-radius: 4px;
-  margin-bottom: 20px;
+  margin-bottom: 0;
+  border-bottom: 1px solid #e8ecd0;
 }
 
 .selector-left {
@@ -330,27 +332,69 @@ export default {
 .main-dashboard-container {
   display: flex;
   flex-direction: column;
-  gap: 20px;
+  flex: 1;
+  overflow: hidden;
+}
+
+/* Topology Section */
+.topology-section {
+  padding: 15px;
+  background-color: white;
+  border-bottom: 1px solid #eee;
+}
+
+.topology-header {
+  margin-bottom: 10px;
+  text-align: center;
+}
+
+.topology-diagram {
+  height: 380px;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
+.topology-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr 1fr 1fr;
+  grid-template-rows: 1fr 1fr 1fr;
+  gap: 5px;
+  width: 100%;
+  height: 100%;
+  padding: 10px;
 }
 
 /* Bottom Row Layout */
 .bottom-row {
   display: flex;
-  gap: 20px;
-  margin-bottom: 20px;
+  flex: 1;
+  overflow: hidden;
 }
 
-/* Alert Card */
-.alert-card {
+/* Alert Section */
+.alert-section {
   flex: 1;
-  height: 100%;
-  min-height: 320px;
+  padding: 15px;
+  background-color: white;
+  border-right: 1px solid #eee;
+  display: flex;
+  flex-direction: column;
 }
 
 .alert-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  padding-bottom: 10px;
+  border-bottom: 1px solid #eee;
+  font-weight: bold;
+  font-size: 16px;
+}
+
+.alert-content {
+  flex: 1;
+  overflow: auto;
 }
 
 .no-alerts {
@@ -368,34 +412,67 @@ export default {
   margin-bottom: 10px;
 }
 
-/* Topology Diagram */
-.topology-card {
-  width: 100%;
-  min-height: 450px;
+/* Charts Section */
+.charts-section {
+  flex: 1;
+  padding: 15px;
+  background-color: white;
+  display: flex;
+  flex-direction: column;
 }
 
-.topology-header {
-  margin-bottom: 20px;
+.charts-header {
+  margin-bottom: 10px;
+  text-align: center;
+  padding-bottom: 10px;
+  border-bottom: 1px solid #eee;
+}
+
+.charts-container {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  gap: 15px;
+}
+
+.chart {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+
+.chart-title {
+  font-weight: bold;
+  margin-bottom: 5px;
   text-align: center;
 }
 
-.topology-diagram {
-  height: 400px;
-  display: flex;
-  justify-content: center;
-  align-items: center;
+.chart-placeholder {
+  flex: 1;
+  background-color: #f9f9f9;
+  position: relative;
 }
 
-.topology-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr 1fr 1fr 1fr;
-  grid-template-rows: 1fr 1fr 1fr;
-  gap: 5px;
+/* Mock chart for demonstration */
+.chart-mock {
+  position: relative;
   width: 100%;
   height: 100%;
-  padding: 20px;
 }
 
+.chart-line {
+  position: absolute;
+  bottom: 0;
+  width: 6px;
+  background-color: #409EFF;
+  border-radius: 3px 3px 0 0;
+}
+
+.chart-line.soc {
+  background-color: #67C23A;
+}
+
+/* Topology Node Styles - Keep existing styles */
 .topology-node {
   display: flex;
   flex-direction: column;
@@ -534,62 +611,5 @@ export default {
   width: 2px;
   height: 100%;
   background-color: #ddd;
-}
-
-/* Charts Card */
-.charts-card {
-  flex: 1;
-  min-height: 320px;
-}
-
-.charts-header {
-  margin-bottom: 20px;
-  text-align: center;
-}
-
-.charts-container {
-  display: flex;
-  flex-direction: column;
-  height: 250px;
-  gap: 20px;
-}
-
-.chart {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-}
-
-.chart-title {
-  font-weight: bold;
-  margin-bottom: 10px;
-  text-align: center;
-}
-
-.chart-placeholder {
-  flex: 1;
-  background-color: #f9f9f9;
-  border-radius: 4px;
-  border: 1px solid #eee;
-  position: relative;
-}
-
-/* Mock chart for demonstration */
-.chart-mock {
-  position: relative;
-  width: 100%;
-  height: 100%;
-}
-
-.chart-line {
-  position: absolute;
-  bottom: 0;
-  width: 6px;
-  background-color: #409EFF;
-  border-radius: 3px 3px 0 0;
-}
-
-.chart-line.soc {
-  background-color: #67C23A;
 }
 </style> 
