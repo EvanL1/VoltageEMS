@@ -16,6 +16,11 @@ const routes = [
     name: 'Activity',
     component: () => import('../views/Activity.vue')
   },
+  {
+    path: '/template-builder',
+    name: 'TemplateBuilder',
+    component: () => import('../views/TemplateBuilder.vue')
+  },
   // 重定向旧的配置页面路由到系统页面
   {
     path: '/config/:service',
