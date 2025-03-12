@@ -22,6 +22,9 @@ pub enum ModelSrvError {
 
     #[error("Data mapping error: {0}")]
     DataMappingError(String),
+    
+    #[error("Invalid operation: {0}")]
+    InvalidOperation(String),
 }
 
 pub type Result<T> = std::result::Result<T, ModelSrvError>; 

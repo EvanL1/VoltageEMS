@@ -1,0 +1,44 @@
+{
+  "id": "grid_peak_shaving",
+  "name": "电网削峰控制",
+  "description": "当电网功率超过阈值时，控制PCS放电以削峰",
+  "operation_type": "Adjust",
+  "target_type": "Device",
+  "target_id": "pcs",
+  "parameters": [
+    {
+      "name": "point",
+      "value": "active_power_setpoint",
+      "description": "有功功率设定点"
+    },
+    {
+      "name": "value",
+      "value": "-500",
+      "description": "放电功率值（kW）"
+    }
+  ],
+  "conditions": [
+    {
+      "id": "grid_power_high",
+      "description": "电网功率超过阈值",
+      "source_key": "ems:data:grid",
+      "field": "active_power",
+      "operator": ">",
+      "value": "800",
+      "duration_ms": 10000
+    },
+    {
+      "id": "battery_soc_sufficient",
+      "description": "电池SOC足够",
+      "source_key": "ems:data:battery",
+      "field": "soc",
+      "operator": ">",
+      "value": "30",
+      "duration_ms": null
+    }
+  ],
+  "priority": 2,
+  "enabled": true,
+  "cooldown_ms": 60000,
+  "last_executed_at": null
+} 

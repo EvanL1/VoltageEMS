@@ -28,10 +28,17 @@ pub struct ModelConfig {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct ControlConfig {
+    pub operation_key_pattern: String,
+    pub enabled: bool,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Config {
     pub redis: RedisConfig,
     pub logging: LoggingConfig,
     pub model: ModelConfig,
+    pub control: ControlConfig,
 }
 
 impl Config {
@@ -68,6 +75,10 @@ impl Config {
                 config_key_pattern: "ems:model:config:*".to_string(),
                 data_key_pattern: "ems:data:*".to_string(),
                 output_key_pattern: "ems:model:output:*".to_string(),
+            },
+            control: ControlConfig {
+                operation_key_pattern: "ems:control:operation:*".to_string(),
+                enabled: true,
             },
         }
     }

@@ -1,0 +1,30 @@
+{
+  "id": "battery_low_soc_start_diesel",
+  "name": "启动柴油发电机（电池SOC低）",
+  "description": "当电池SOC低于20%时，自动启动柴油发电机",
+  "operation_type": "Start",
+  "target_type": "Device",
+  "target_id": "diesel",
+  "parameters": [
+    {
+      "name": "value",
+      "value": "true",
+      "description": "启动命令值"
+    }
+  ],
+  "conditions": [
+    {
+      "id": "battery_low_soc",
+      "description": "电池SOC低于20%",
+      "source_key": "ems:data:battery",
+      "field": "soc",
+      "operator": "<",
+      "value": "20",
+      "duration_ms": 30000
+    }
+  ],
+  "priority": 1,
+  "enabled": true,
+  "cooldown_ms": 300000,
+  "last_executed_at": null
+} 

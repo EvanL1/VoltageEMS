@@ -16,4 +16,8 @@ console = true
 update_interval_ms = 1000
 config_key_pattern = "ems:model:config:*"
 data_key_pattern = "ems:data:*"
-output_key_pattern = "ems:model:output:" 
+output_key_pattern = "ems:model:output:"
+
+[control]
+operation_key_pattern = "ems:control:operation:*"
+enabled = true 

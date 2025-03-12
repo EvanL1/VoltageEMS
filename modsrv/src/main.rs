@@ -3,12 +3,14 @@ mod error;
 mod model;
 mod redis_handler;
 mod comsrv_handler;
+mod control;
 
 use crate::config::Config;
 use crate::error::Result;
 use crate::model::ModelEngine;
 use crate::redis_handler::RedisConnection;
 use crate::comsrv_handler::ComsrvHandler;
+use crate::control::ControlManager;
 use clap::Parser;
 use log::{error, info};
 use std::path::PathBuf;
@@ -52,6 +54,9 @@ async fn main() -> Result<()> {
     // Initialize model engine
     let mut model_engine = ModelEngine::new();
 
+    // Initialize control manager
+    let mut control_manager = ControlManager::new(&config.redis.prefix);
+
     // Initialize Comsrv handler
     let comsrv_handler = ComsrvHandler::new(&config.redis.prefix);
 
@@ -68,9 +73,23 @@ async fn main() -> Result<()> {
             continue;
         }
 
+        // Load control operations if enabled
+        if config.control.enabled {
+            if let Err(e) = control_manager.load_operations(&mut redis, &config.control.operation_key_pattern) {
+                error!("Failed to load control operations: {}", e);
+            }
+        }
+
         // Execute models
         if let Err(e) = model_engine.execute_models(&mut redis) {
             error!("Failed to execute models: {}", e);
+        }
+
+        // Check and execute control operations if enabled
+        if config.control.enabled {
+            if let Err(e) = control_manager.check_and_execute_operations(&mut redis) {
+                error!("Failed to execute control operations: {}", e);
+            }
         }
     }
 }
