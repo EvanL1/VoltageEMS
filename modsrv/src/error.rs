@@ -25,6 +25,9 @@ pub enum ModelSrvError {
     
     #[error("Invalid operation: {0}")]
     InvalidOperation(String),
+    
+    #[error("Template error: {0}")]
+    TemplateError(String),
 }
 
 pub type Result<T> = std::result::Result<T, ModelSrvError>; 
