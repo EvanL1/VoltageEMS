@@ -16,14 +16,14 @@ const routes = [
     name: 'Activity',
     component: () => import('../views/Activity.vue')
   },
-  // 重定向旧的配置页面路由到系统页面
+  // Redirect old configuration page routes to system page
   {
     path: '/config/:service',
     redirect: to => {
       return { path: '/system', query: { service: to.params.service } }
     }
   },
-  // 兼容旧路由
+  // Compatible with old routes
   {
     path: '/dashboard',
     redirect: '/'

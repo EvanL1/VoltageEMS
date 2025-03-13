@@ -79,7 +79,7 @@ export default {
   },
   watch: {
     $route(to) {
-      // 根据路由更新页面标题
+      // Update page title based on route
       const routeMap = {
         '/': 'Home',
         '/system': 'System',
