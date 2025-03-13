@@ -1,0 +1,145 @@
+{
+  "id": "diesel_generator_model",
+  "name": "柴油发电机模型",
+  "description": "柴油发电机实时状态监控和控制模型",
+  "input_mappings": [
+    {
+      "source_key": "ems:data:diesel",
+      "source_field": "status",
+      "target_field": "status",
+      "transform": null
+    },
+    {
+      "source_key": "ems:data:diesel",
+      "source_field": "power",
+      "target_field": "power",
+      "transform": null
+    },
+    {
+      "source_key": "ems:data:diesel",
+      "source_field": "frequency",
+      "target_field": "frequency",
+      "transform": null
+    },
+    {
+      "source_key": "ems:data:diesel",
+      "source_field": "voltage",
+      "target_field": "voltage",
+      "transform": null
+    },
+    {
+      "source_key": "ems:data:diesel",
+      "source_field": "current",
+      "target_field": "current",
+      "transform": null
+    },
+    {
+      "source_key": "ems:data:diesel",
+      "source_field": "fuel_level",
+      "target_field": "fuel_level",
+      "transform": null
+    },
+    {
+      "source_key": "ems:data:diesel",
+      "source_field": "temperature",
+      "target_field": "temperature",
+      "transform": null
+    },
+    {
+      "source_key": "ems:data:diesel",
+      "source_field": "runtime_hours",
+      "target_field": "runtime_hours",
+      "transform": null
+    },
+    {
+      "source_key": "ems:data:diesel",
+      "source_field": "maintenance_due",
+      "target_field": "maintenance_due",
+      "transform": null
+    }
+  ],
+  "output_key": "ems:model:output:diesel",
+  "enabled": true,
+  "actions": [
+    {
+      "id": "diesel_start",
+      "name": "启动柴油发电机",
+      "action_type": "RemoteControl",
+      "channel": "Diesel_Serial",
+      "point": "start_command",
+      "value": "1",
+      "conditions": [
+        {
+          "field": "status",
+          "operator": "==",
+          "value": "standby"
+        }
+      ],
+      "enabled": true
+    },
+    {
+      "id": "diesel_stop",
+      "name": "停止柴油发电机",
+      "action_type": "RemoteControl",
+      "channel": "Diesel_Serial",
+      "point": "stop_command",
+      "value": "1",
+      "conditions": [
+        {
+          "field": "status",
+          "operator": "==",
+          "value": "running"
+        }
+      ],
+      "enabled": true
+    },
+    {
+      "id": "diesel_low_fuel_alert",
+      "name": "燃油不足告警",
+      "action_type": "RemoteControl",
+      "channel": "Alarm_System",
+      "point": "low_fuel_alarm",
+      "value": "1",
+      "conditions": [
+        {
+          "field": "fuel_level",
+          "operator": "<",
+          "value": "20"
+        }
+      ],
+      "enabled": true
+    },
+    {
+      "id": "diesel_high_temperature_alert",
+      "name": "温度过高告警",
+      "action_type": "RemoteControl",
+      "channel": "Alarm_System",
+      "point": "high_temp_alarm",
+      "value": "1",
+      "conditions": [
+        {
+          "field": "temperature",
+          "operator": ">",
+          "value": "90"
+        }
+      ],
+      "enabled": true
+    },
+    {
+      "id": "diesel_maintenance_alert",
+      "name": "维护提醒",
+      "action_type": "RemoteControl",
+      "channel": "Alarm_System",
+      "point": "maintenance_alarm",
+      "value": "1",
+      "conditions": [
+        {
+          "field": "maintenance_due",
+          "operator": "==",
+          "value": "true"
+        }
+      ],
+      "enabled": true
+    }
+  ]
+} 
