@@ -55,7 +55,7 @@ export default {
     }
   },
   watch: {
-    // 监听路由参数，切换对应的标签页
+    // Watch route parameters to switch to the corresponding tab
     '$route.params.service': {
       immediate: true,
       handler(service) {
