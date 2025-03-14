@@ -1,0 +1,20 @@
+[package]
+name = "hissrv-rust"
+version = "0.1.0"
+edition = "2021"
+authors = ["Evan Liu <Evan.Liu@voltageenergy.com>"]
+description = "Redis to InfluxDB data transfer service"
+
+[dependencies]
+redis = { version = "0.22.1", features = ["tokio-comp"] }
+influxdb = { version = "0.5.2", features = ["derive"] }
+tokio = { version = "1.24.2", features = ["full"] }
+clap = { version = "4.1.8", features = ["derive"] }
+regex = "1.7.1"
+serde = { version = "1.0.152", features = ["derive"] }
+serde_json = "1.0.93"
+chrono = "0.4.23"
+anyhow = "1.0.69"
+thiserror = "1.0.38"
+log = "0.4.17"
+env_logger = "0.10.0" 

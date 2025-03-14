@@ -1,0 +1,31 @@
+id: default_model
+name: Default Model
+description: Default model template
+file_path: templates/default_model.yaml
+model:
+  id: "{{id}}"
+  name: "{{name}}"
+  description: Default model instance
+  input_mappings:
+    - source_key: "modsrv:data:{{id}}"
+      source_field: temperature
+      target_field: temp
+      transform: null
+    - source_key: "modsrv:data:{{id}}"
+      source_field: humidity
+      target_field: hum
+      transform: null
+  output_key: "modsrv:model:output:{{id}}"
+  enabled: true
+actions:
+  - id: action1
+    name: Temperature Alert
+    action_type: RemoteControl
+    channel: "{{id}}_Control"
+    point: alert
+    value: "true"
+    conditions:
+      - field: temp
+        operator: ">"
+        value: "30"
+    enabled: true 

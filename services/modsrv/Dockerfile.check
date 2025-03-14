@@ -1,0 +1,21 @@
+FROM rust:1.67-slim
+
+# Install build dependencies
+RUN apt-get update && apt-get install -y \
+    pkg-config \
+    libx11-dev \
+    libxcb1-dev \
+    libxcb-render0-dev \
+    libxcb-shape0-dev \
+    libxcb-xfixes0-dev \
+    libxkbcommon-dev \
+    libssl-dev \
+    libfontconfig1-dev \
+    libfreetype6-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /usr/src/modsrv
+COPY . .
+
+# Check for compilation errors
+CMD ["cargo", "check", "--verbose"] 

@@ -1,0 +1,67 @@
+version: '3.8'
+
+services:
+  redis:
+    image: redis:6.2-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    command: redis-server --appendonly yes
+    networks:
+      - ems-network
+
+  mosquitto:
+    image: eclipse-mosquitto:2.0
+    ports:
+      - "1883:1883"
+      - "9001:9001"
+    volumes:
+      - ./mosquitto/config:/mosquitto/config
+      - ./mosquitto/data:/mosquitto/data
+      - ./mosquitto/log:/mosquitto/log
+    networks:
+      - ems-network
+
+  comsrv:
+    build:
+      context: ../Comsrv
+      dockerfile: Dockerfile
+    depends_on:
+      - redis
+    volumes:
+      - ../Comsrv/config:/etc/comsrv/config
+    networks:
+      - ems-network
+
+  modelsrv:
+    build:
+      context: ../Modelsrv
+      dockerfile: Dockerfile
+    depends_on:
+      - redis
+      - comsrv
+    volumes:
+      - ../Modelsrv/modelsrv.toml:/etc/modelsrv.toml
+    networks:
+      - ems-network
+
+  netsrv:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    depends_on:
+      - redis
+      - mosquitto
+    volumes:
+      - ./netsrv.json:/etc/netsrv.json
+      - ./certs:/etc/ems/certs
+    networks:
+      - ems-network
+
+networks:
+  ems-network:
+    driver: bridge
+
+volumes:
+  redis-data: 

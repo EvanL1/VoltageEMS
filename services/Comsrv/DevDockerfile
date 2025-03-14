@@ -1,0 +1,66 @@
+FROM ubuntu:22.04
+
+# 设置时区
+ENV TZ=Asia/Shanghai
+RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
+
+# 避免安装过程中的用户交互
+ENV DEBIAN_FRONTEND=noninteractive
+
+# 安装构建依赖
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    cmake \
+    pkg-config \
+    libmodbus-dev \
+    libhiredis-dev \
+    libjsoncpp-dev \
+    git \
+    vim \
+    gdb \
+    valgrind \
+    clang-format \
+    clang-tidy \
+    cppcheck \
+    curl \
+    htop \
+    iputils-ping \
+    net-tools \
+    redis-tools \
+    socat \
+    strace \
+    lcov \
+    gcovr \
+    doxygen \
+    graphviz \
+    && rm -rf /var/lib/apt/lists/*
+
+# 设置工作目录
+WORKDIR /workspace
+
+# 创建应用程序预期的目录
+RUN mkdir -p /etc/comsrv /var/log/comsrv
+
+# 创建快捷命令
+RUN echo 'alias ll="ls -la"' >> /root/.bashrc && \
+    echo 'alias ..="cd .."' >> /root/.bashrc && \
+    echo 'alias ...="cd ../.."' >> /root/.bashrc && \
+    echo 'alias build="mkdir -p build && cd build && cmake .. && make -j$(nproc)"' >> /root/.bashrc && \
+    echo 'alias clean="rm -rf build/*"' >> /root/.bashrc && \
+    echo 'alias run="./build/bin/comsrv"' >> /root/.bashrc
+
+# 设置环境变量以便于配置
+ENV CONFIG_PATH=/etc/comsrv
+ENV LOG_PATH=/var/log/comsrv
+
+# 添加开发信息
+RUN echo "Comsrv Development Environment" > /etc/motd && \
+    echo "-----------------------------" >> /etc/motd && \
+    echo "Type 'build' to compile the project" >> /etc/motd && \
+    echo "Type 'run' to run the application" >> /etc/motd && \
+    echo "-----------------------------" >> /etc/motd && \
+    echo "cat /etc/motd" >> /root/.bashrc
+
+# 保持容器运行
+CMD ["tail", "-f", "/dev/null"]
+

@@ -1,0 +1,24 @@
+# Model Service Configuration
+
+[redis]
+host = "redis"
+port = 6379
+password = ""
+socket = ""
+key_prefix = "ems:"
+
+[logging]
+level = "info"
+file = "/var/log/ems/modsrv.log"
+console = true
+
+[model]
+update_interval_ms = 1000
+config_key_pattern = "ems:model:config:*"
+data_key_pattern = "ems:data:*"
+output_key_pattern = "ems:model:output:*"
+templates_dir = "/templates"
+
+[control]
+operation_key_pattern = "ems:control:operation:*"
+enabled = true 

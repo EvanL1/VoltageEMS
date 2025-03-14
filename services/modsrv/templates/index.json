@@ -1,0 +1,26 @@
+{
+  "id": "template_index_json",
+  "name": "Template Index JSON",
+  "description": "Index of all available templates in JSON format",
+  "file_path": "templates/index.json",
+  "templates": [
+    {
+      "id": "battery",
+      "name": "Battery Model",
+      "description": "A simple battery model with SOC calculation",
+      "file_path": "templates/battery.json"
+    },
+    {
+      "id": "pcs",
+      "name": "PCS Model",
+      "description": "Power Conversion System model with efficiency calculation",
+      "file_path": "templates/pcs.json"
+    },
+    {
+      "id": "system",
+      "name": "System Model",
+      "description": "Complete energy system model with multiple components",
+      "file_path": "templates/system.json"
+    }
+  ]
+} 

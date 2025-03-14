@@ -1,0 +1,36 @@
+version: '3.8'
+
+services:
+  redis:
+    image: redis:latest
+    container_name: comsrv-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+
+  comsrv:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: comsrv
+    restart: unless-stopped
+    privileged: true  # 需要访问串口设备
+    depends_on:
+      - redis
+    volumes:
+      - ./config:/etc/comsrv  # 映射配置文件
+      - ./logs:/var/log/comsrv  # 映射日志目录
+      - /dev:/dev  # 映射设备目录
+    ports:
+      - "502:502"  # Modbus TCP端口
+    environment:
+      - TZ=Asia/Shanghai
+      - REDIS_HOST=redis
+    devices:
+      - "/dev/ttyUSB0:/dev/ttyUSB0"  # 映射串口设备
+      - "/dev/ttyUSB1:/dev/ttyUSB1"
+
+volumes:
+  redis-data: 

@@ -1,0 +1,62 @@
+{
+  "id": "battery_template",
+  "name": "Battery Template",
+  "description": "A template for battery models with SOC calculation",
+  "file_path": "templates/battery.json",
+  "model": {
+    "id": "battery_template",
+    "name": "Battery Model Template",
+    "description": "A template for battery models with SOC calculation",
+    "input_mappings": [
+      {
+        "field": "voltage",
+        "source_key": "ems:data:battery",
+        "source_field": "voltage"
+      },
+      {
+        "field": "current",
+        "source_key": "ems:data:battery",
+        "source_field": "current"
+      },
+      {
+        "field": "temperature",
+        "source_key": "ems:data:battery",
+        "source_field": "temperature"
+      }
+    ],
+    "output_key": "ems:model:output:battery",
+    "calculation": "function calculate(inputs) {\n  const voltage = inputs.voltage || 0;\n  const current = inputs.current || 0;\n  const temperature = inputs.temperature || 25;\n  \n  // Calculate power\n  const power = voltage * current;\n  \n  // Simple SOC calculation (just an example)\n  const soc = Math.min(100, Math.max(0, 50 + current * 0.1));\n  \n  // Temperature compensation\n  const tempFactor = 1 - (Math.abs(temperature - 25) * 0.01);\n  \n  return {\n    power: power,\n    soc: soc,\n    health: soc * tempFactor,\n    status: soc > 20 ? 'normal' : 'low'\n  };\n}"
+  },
+  "actions": [
+    {
+      "id": "battery_charge",
+      "name": "Start Charging",
+      "description": "Start battery charging process",
+      "channel": "Battery_Control",
+      "command": "charge",
+      "parameters": {
+        "value": 1
+      }
+    },
+    {
+      "id": "battery_discharge",
+      "name": "Start Discharging",
+      "description": "Start battery discharging process",
+      "channel": "Battery_Control",
+      "command": "discharge",
+      "parameters": {
+        "value": 1
+      }
+    },
+    {
+      "id": "battery_stop",
+      "name": "Stop Battery",
+      "description": "Stop all battery operations",
+      "channel": "Battery_Control",
+      "command": "stop",
+      "parameters": {
+        "value": 1
+      }
+    }
+  ]
+} 
