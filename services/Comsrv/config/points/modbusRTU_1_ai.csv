@@ -1,0 +1,3 @@
+address,name,dataType,byteOrder,coefficiency,offset,unit
+0,温度1,FLOAT32,ABCD,0.1,0.0,°C
+2,湿度1,UINT16,AB,0.1,0.0,%RH 
