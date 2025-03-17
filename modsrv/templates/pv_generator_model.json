@@ -1,0 +1,140 @@
+{
+  "id": "pv_generator_model",
+  "name": "光伏发电机模型",
+  "description": "光伏发电系统实时状态监控和控制模型",
+  "input_mappings": [
+    {
+      "source_key": "ems:data:pv",
+      "source_field": "status",
+      "target_field": "status",
+      "transform": null
+    },
+    {
+      "source_key": "ems:data:pv",
+      "source_field": "power",
+      "target_field": "power",
+      "transform": null
+    },
+    {
+      "source_key": "ems:data:pv",
+      "source_field": "voltage",
+      "target_field": "voltage",
+      "transform": null
+    },
+    {
+      "source_key": "ems:data:pv",
+      "source_field": "current",
+      "target_field": "current",
+      "transform": null
+    },
+    {
+      "source_key": "ems:data:pv",
+      "source_field": "temperature",
+      "target_field": "temperature",
+      "transform": null
+    },
+    {
+      "source_key": "ems:data:pv",
+      "source_field": "irradiance",
+      "target_field": "irradiance",
+      "transform": null
+    },
+    {
+      "source_key": "ems:data:pv",
+      "source_field": "daily_energy",
+      "target_field": "daily_energy",
+      "transform": null
+    },
+    {
+      "source_key": "ems:data:pv",
+      "source_field": "total_energy",
+      "target_field": "total_energy",
+      "transform": null
+    },
+    {
+      "source_key": "ems:data:pv",
+      "source_field": "efficiency",
+      "target_field": "efficiency",
+      "transform": null
+    },
+    {
+      "source_key": "ems:data:weather",
+      "source_field": "cloud_cover",
+      "target_field": "cloud_cover",
+      "transform": null
+    }
+  ],
+  "output_key": "ems:model:output:pv",
+  "enabled": true,
+  "actions": [
+    {
+      "id": "pv_disconnect",
+      "name": "断开光伏连接",
+      "action_type": "RemoteControl",
+      "channel": "PV_Control",
+      "point": "disconnect_command",
+      "value": "1",
+      "conditions": [
+        {
+          "field": "voltage",
+          "operator": ">",
+          "value": "1000"
+        }
+      ],
+      "enabled": true
+    },
+    {
+      "id": "pv_connect",
+      "name": "连接光伏",
+      "action_type": "RemoteControl",
+      "channel": "PV_Control",
+      "point": "connect_command",
+      "value": "1",
+      "conditions": [
+        {
+          "field": "status",
+          "operator": "==",
+          "value": "disconnected"
+        },
+        {
+          "field": "voltage",
+          "operator": "<",
+          "value": "900"
+        }
+      ],
+      "enabled": true
+    },
+    {
+      "id": "pv_high_temperature_alert",
+      "name": "温度过高告警",
+      "action_type": "RemoteControl",
+      "channel": "Alarm_System",
+      "point": "pv_high_temp_alarm",
+      "value": "1",
+      "conditions": [
+        {
+          "field": "temperature",
+          "operator": ">",
+          "value": "70"
+        }
+      ],
+      "enabled": true
+    },
+    {
+      "id": "pv_production_forecast",
+      "name": "光伏发电预测",
+      "action_type": "RemoteAdjust",
+      "channel": "Forecast_System",
+      "point": "pv_forecast",
+      "value": "calculated_value",
+      "conditions": [
+        {
+          "field": "irradiance",
+          "operator": ">",
+          "value": "0"
+        }
+      ],
+      "enabled": true
+    }
+  ]
+} 

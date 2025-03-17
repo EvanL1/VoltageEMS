@@ -25,6 +25,18 @@ pub struct ModelConfig {
     pub config_key_pattern: String,
     pub data_key_pattern: String,
     pub output_key_pattern: String,
+    #[serde(default = "default_templates_dir")]
+    pub templates_dir: String,
+}
+
+fn default_templates_dir() -> String {
+    "templates".to_string()
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct ControlConfig {
+    pub operation_key_pattern: String,
+    pub enabled: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -32,6 +44,7 @@ pub struct Config {
     pub redis: RedisConfig,
     pub logging: LoggingConfig,
     pub model: ModelConfig,
+    pub control: ControlConfig,
 }
 
 impl Config {
@@ -68,6 +81,11 @@ impl Config {
                 config_key_pattern: "ems:model:config:*".to_string(),
                 data_key_pattern: "ems:data:*".to_string(),
                 output_key_pattern: "ems:model:output:*".to_string(),
+                templates_dir: default_templates_dir(),
+            },
+            control: ControlConfig {
+                operation_key_pattern: "ems:control:operation:*".to_string(),
+                enabled: true,
             },
         }
     }

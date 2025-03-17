@@ -27,6 +27,11 @@
           <el-icon><el-icon-data-line /></el-icon>
           <span>Activity</span>
         </el-menu-item>
+        
+        <el-menu-item index="/template-builder">
+          <el-icon><el-icon-edit /></el-icon>
+          <span>Template Builder</span>
+        </el-menu-item>
       </el-menu>
       
       <div class="sidebar-footer">
@@ -79,11 +84,12 @@ export default {
   },
   watch: {
     $route(to) {
-      // 根据路由更新页面标题
+      // Update page title based on route
       const routeMap = {
         '/': 'Home',
         '/system': 'System',
-        '/activity': 'Activity'
+        '/activity': 'Activity',
+        '/template-builder': 'Template Builder'
       };
       
       if (to.path.startsWith('/system/')) {
