@@ -1,92 +1,91 @@
 cmake_minimum_required(VERSION 3.10)
-project(comsrv VERSION 1.0)
+project(comsrv)
 
-# 设置C++标准
+# Set C++ standard
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-# 设置输出目录
-set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
-set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
+# Add prometheus-cpp
+include(FetchContent)
+FetchContent_Declare(
+    prometheus-cpp
+    GIT_REPOSITORY https://github.com/jupp0r/prometheus-cpp.git
+    GIT_TAG v1.1.0
+)
+FetchContent_MakeAvailable(prometheus-cpp)
+
+# Add yaml-cpp
+FetchContent_Declare(
+    yaml-cpp
+    GIT_REPOSITORY https://github.com/jbeder/yaml-cpp.git
+    GIT_TAG yaml-cpp-0.7.0
+)
+FetchContent_MakeAvailable(yaml-cpp)
+
+# Add spdlog
+FetchContent_Declare(
+    spdlog
+    GIT_REPOSITORY https://github.com/gabime/spdlog.git
+    GIT_TAG v1.12.0
+)
+FetchContent_MakeAvailable(spdlog)
+
+# Add source files
+file(GLOB_RECURSE SOURCES 
+    "src/*.cpp"
+)
+
+# Add header files
+file(GLOB_RECURSE HEADERS 
+    "include/*.h"
+)
+
+# Create executable
+add_executable(comsrv ${SOURCES} ${HEADERS})
+
+# Add include directories
+target_include_directories(comsrv PRIVATE 
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+)
+
+# Link libraries
+target_link_libraries(comsrv PRIVATE
+    prometheus-cpp::core
+    prometheus-cpp::pull
+    yaml-cpp
+    spdlog::spdlog
+)
+
+# Install targets
+install(TARGETS comsrv
+    RUNTIME DESTINATION bin
+)
+
+# Install configuration files
+install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/config/
+    DESTINATION etc/comsrv
+    FILES_MATCHING PATTERN "*.yaml"
+    PATTERN "*.csv"
+)
+
+# Set compilation options
+if(MSVC)
+    target_compile_options(comsrv PRIVATE /W4)
+else()
+    target_compile_options(comsrv PRIVATE -Wall -Wextra -pedantic)
+endif()
+
+# Set output directory
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 
-# 查找依赖包
-find_package(PkgConfig REQUIRED)
-pkg_check_modules(LIBMODBUS REQUIRED libmodbus)
-pkg_check_modules(HIREDIS REQUIRED hiredis)
-pkg_check_modules(JSONCPP REQUIRED jsoncpp)
+# Add tests directory
+if(EXISTS ${PROJECT_SOURCE_DIR}/tests)
+    enable_testing()
+    add_subdirectory(tests)
+endif()
 
-# 添加编译选项
-add_compile_options(-Wall -Wextra)
-
-# 添加头文件路径
-include_directories(
-    ${PROJECT_SOURCE_DIR}/include
-    ${PROJECT_SOURCE_DIR}/include/core
-    ${PROJECT_SOURCE_DIR}/include/core/protocols
-    ${PROJECT_SOURCE_DIR}/include/core/protocols/modbus
-    ${LIBMODBUS_INCLUDE_DIRS}
-    ${HIREDIS_INCLUDE_DIRS}
-    ${JSONCPP_INCLUDE_DIRS}
-)
-
-# 递归查找所有源文件
-file(GLOB_RECURSE SOURCES
-    "src/core/*.cpp"
-)
-
-# 创建可执行文件
-add_executable(${PROJECT_NAME} ${SOURCES})
-
-# 链接库
-target_link_libraries(${PROJECT_NAME}
-    ${LIBMODBUS_LIBRARIES}
-    ${HIREDIS_LIBRARIES}
-    ${JSONCPP_LIBRARIES}
-    pthread
-)
-
-# 创建共享库
-add_library(lib${PROJECT_NAME} SHARED ${SOURCES})
-set_target_properties(lib${PROJECT_NAME} PROPERTIES 
-    OUTPUT_NAME ${PROJECT_NAME}
-    VERSION ${PROJECT_VERSION}
-    SOVERSION ${PROJECT_VERSION_MAJOR}
-)
-
-# 链接共享库
-target_link_libraries(lib${PROJECT_NAME}
-    ${LIBMODBUS_LIBRARIES}
-    ${HIREDIS_LIBRARIES}
-    ${JSONCPP_LIBRARIES}
-    pthread
-)
-
-# 安装目标
-install(TARGETS ${PROJECT_NAME} lib${PROJECT_NAME}
-    RUNTIME DESTINATION bin
-    LIBRARY DESTINATION lib
-    ARCHIVE DESTINATION lib
-)
-
-# 安装头文件
-install(DIRECTORY ${PROJECT_SOURCE_DIR}/include/
-    DESTINATION include/${PROJECT_NAME}
-    FILES_MATCHING PATTERN "*.h"
-)
-
-# 安装配置文件
-install(DIRECTORY config/
-    DESTINATION /etc/${PROJECT_NAME}
-    FILES_MATCHING PATTERN "*.json" PATTERN "*.csv"
-)
-
-# 添加测试支持
-enable_testing()
-
-# 打印配置信息
+# Print configuration information
 message(STATUS "Build type: ${CMAKE_BUILD_TYPE}")
 message(STATUS "C++ standard: ${CMAKE_CXX_STANDARD}")
-message(STATUS "Modbus library: ${LIBMODBUS_LIBRARIES}")
-message(STATUS "Redis library: ${HIREDIS_LIBRARIES}")
-message(STATUS "JSON library: ${JSONCPP_LIBRARIES}") 
+message(STATUS "Compiler: ${CMAKE_CXX_COMPILER_ID} ${CMAKE_CXX_COMPILER_VERSION}")
+message(STATUS "Output directory: ${CMAKE_RUNTIME_OUTPUT_DIRECTORY}") 

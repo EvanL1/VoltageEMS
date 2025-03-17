@@ -1,255 +1,202 @@
-#include "logger.h"
-#include <iostream>
-#include <chrono>
+#include "core/logger.h"
+#include <filesystem>
 #include <iomanip>
 #include <sstream>
-#include <cstring>
 
-Logger& Logger::getInstance() {
+namespace voltage {
+namespace comsrv {
+
+Logger& Logger::instance() {
     static Logger instance;
     return instance;
 }
 
-Logger::Logger() : redisCtx_(nullptr) {}
+void Logger::initServiceLogger(const std::string& filename,
+                             size_t max_size,
+                             size_t max_files,
+                             bool console_output,
+                             const std::string& format,
+                             LogLevel level) {
+    try {
+        // Create directory if it doesn't exist
+        std::filesystem::path log_path(filename);
+        std::filesystem::create_directories(log_path.parent_path());
 
-Logger::~Logger() {
-    disconnectFromRedis();
-}
-
-bool Logger::connectToRedis(const std::string& host, int port) {
-    redisCtx_ = redisConnect(host.c_str(), port);
-    if (redisCtx_ == nullptr || redisCtx_->err) {
-        if (redisCtx_) {
-            std::cerr << "Redis connection error: " << redisCtx_->errstr << std::endl;
-            redisFree(redisCtx_);
-        } else {
-            std::cerr << "Redis connection error: can't allocate redis context" << std::endl;
-        }
-        return false;
-    }
-    return true;
-}
-
-void Logger::disconnectFromRedis() {
-    if (redisCtx_) {
-        redisFree(redisCtx_);
-        redisCtx_ = nullptr;
-    }
-}
-
-void Logger::log(const std::string& channelId, LogLevel level, 
-                const std::string& message, const std::string& details) {
-    if (!isLogLevelEnabled(level)) {
-        return;
-    }
-
-    LogEntry entry{
-        getCurrentTimestamp(),
-        channelId,
-        level,
-        message,
-        details
-    };
-
-    // Thread-safe logging
-    std::lock_guard<std::mutex> lock(logMutex_);
-
-    // Add to in-memory storage
-    inMemoryLogs_.push_back(entry);
-    if (inMemoryLogs_.size() > maxLogEntries_) {
-        inMemoryLogs_.pop_front();
-    }
-
-    // Write to Redis if enabled
-    if (logToRedis_) {
-        writeLogToRedis(entry);
-    }
-
-    // Write to file if enabled
-    if (logToFile_) {
-        writeLogToFile(entry);
-    }
-
-    // Cleanup old logs periodically
-    static int cleanupCounter = 0;
-    if (++cleanupCounter >= 1000) {
-        cleanupOldLogs();
-        cleanupCounter = 0;
-    }
-}
-
-void Logger::logDebug(const std::string& channelId, const std::string& message, 
-                     const std::string& details) {
-    log(channelId, LogLevel::DEBUG, message, details);
-}
-
-void Logger::logInfo(const std::string& channelId, const std::string& message, 
-                    const std::string& details) {
-    log(channelId, LogLevel::INFO, message, details);
-}
-
-void Logger::logWarning(const std::string& channelId, const std::string& message, 
-                       const std::string& details) {
-    log(channelId, LogLevel::WARNING, message, details);
-}
-
-void Logger::logError(const std::string& channelId, const std::string& message, 
-                     const std::string& details) {
-    log(channelId, LogLevel::ERROR, message, details);
-}
-
-void Logger::logCritical(const std::string& channelId, const std::string& message, 
-                        const std::string& details) {
-    log(channelId, LogLevel::CRITICAL, message, details);
-}
-
-std::vector<LogEntry> Logger::getLogEntries(const std::string& channelId, 
-                                          const std::string& startTime,
-                                          const std::string& endTime,
-                                          LogLevel minLevel,
-                                          int maxEntries) {
-    std::vector<LogEntry> result;
-    std::lock_guard<std::mutex> lock(logMutex_);
-
-    for (const auto& entry : inMemoryLogs_) {
-        // Filter by channel
-        if (!channelId.empty() && entry.channelId != channelId) {
-            continue;
-        }
-
-        // Filter by level
-        if (entry.level < minLevel) {
-            continue;
-        }
-
-        // Filter by time range
-        if (!startTime.empty() && entry.timestamp < startTime) {
-            continue;
-        }
-        if (!endTime.empty() && entry.timestamp > endTime) {
-            continue;
-        }
-
-        result.push_back(entry);
-
-        // Limit number of entries
-        if (result.size() >= static_cast<size_t>(maxEntries)) {
-            break;
-        }
-    }
-
-    return result;
-}
-
-void Logger::enableLogToFile(bool enable, const std::string& path) {
-    std::lock_guard<std::mutex> lock(logMutex_);
-    
-    if (enable && !path.empty()) {
-        logFilePath_ = path;
-        if (logFile_.is_open()) {
-            logFile_.close();
-        }
-        logFile_.open(path, std::ios::app);
-        logToFile_ = logFile_.is_open();
-    } else {
-        logToFile_ = false;
-        if (logFile_.is_open()) {
-            logFile_.close();
-        }
-    }
-}
-
-void Logger::writeLogToRedis(const LogEntry& entry) {
-    if (!redisCtx_) {
-        return;
-    }
-
-    std::string key = "log:" + entry.channelId + ":" + entry.timestamp;
-    std::string value = formatLogEntry(entry);
-    
-    redisReply* reply = (redisReply*)redisCommand(redisCtx_, "SET %s %s", 
-                                                 key.c_str(), value.c_str());
-    if (reply) {
-        freeReplyObject(reply);
-    }
-
-    // Set expiration time based on retention policy
-    std::string expireCmd = "EXPIRE " + key + " " + 
-                           std::to_string(logRetentionDays_ * 24 * 3600);
-    reply = (redisReply*)redisCommand(redisCtx_, expireCmd.c_str());
-    if (reply) {
-        freeReplyObject(reply);
-    }
-}
-
-void Logger::writeLogToFile(const LogEntry& entry) {
-    if (!logFile_.is_open()) {
-        return;
-    }
-
-    logFile_ << formatLogEntry(entry) << std::endl;
-    logFile_.flush();
-}
-
-void Logger::cleanupOldLogs() {
-    if (inMemoryLogs_.empty()) {
-        return;
-    }
-
-    auto now = std::chrono::system_clock::now();
-    auto retention = std::chrono::hours(logRetentionDays_ * 24);
-    auto cutoff = std::chrono::system_clock::to_time_t(now - retention);
-    
-    while (!inMemoryLogs_.empty()) {
-        const auto& entry = inMemoryLogs_.front();
-        std::tm tm = {};
-        std::istringstream ss(entry.timestamp);
-        ss >> std::get_time(&tm, "%Y-%m-%d %H:%M:%S");
+        // Create sinks
+        std::vector<spdlog::sink_ptr> sinks;
         
-        if (std::mktime(&tm) < cutoff) {
-            inMemoryLogs_.pop_front();
-        } else {
-            break;
+        // Add rotating file sink
+        auto file_sink = std::make_shared<spdlog::sinks::rotating_file_sink_mt>(
+            filename, max_size, max_files);
+        sinks.push_back(file_sink);
+
+        // Add console sink if requested
+        if (console_output) {
+            auto console_sink = std::make_shared<spdlog::sinks::stdout_color_sink_mt>();
+            sinks.push_back(console_sink);
         }
+
+        // Create logger with all sinks
+        service_logger_ = std::make_shared<spdlog::logger>("service", sinks.begin(), sinks.end());
+        
+        // Set pattern
+        service_logger_->set_pattern(format);
+
+        // Set level
+        switch (level) {
+            case LogLevel::TRACE: service_logger_->set_level(spdlog::level::trace); break;
+            case LogLevel::DEBUG: service_logger_->set_level(spdlog::level::debug); break;
+            case LogLevel::INFO: service_logger_->set_level(spdlog::level::info); break;
+            case LogLevel::WARN: service_logger_->set_level(spdlog::level::warn); break;
+            case LogLevel::ERROR: service_logger_->set_level(spdlog::level::err); break;
+            case LogLevel::CRITICAL: service_logger_->set_level(spdlog::level::critical); break;
+        }
+
+        // Register as default logger
+        spdlog::set_default_logger(service_logger_);
+
+        serviceInfo("Service logger initialized");
+    } catch (const spdlog::spdlog_ex& ex) {
+        std::cerr << "Service logger initialization failed: " << ex.what() << std::endl;
+        throw;
     }
 }
 
-std::string Logger::formatLogEntry(const LogEntry& entry) {
-    std::stringstream ss;
-    ss << "{"
-       << "\"timestamp\":\"" << entry.timestamp << "\","
-       << "\"channel\":\"" << entry.channelId << "\","
-       << "\"level\":\"" << logLevelToString(entry.level) << "\","
-       << "\"message\":\"" << entry.message << "\"";
-    
-    if (!entry.details.empty()) {
-        ss << ",\"details\":" << entry.details;
+std::shared_ptr<spdlog::logger> Logger::createChannelLogger(
+    const std::string& channel_id,
+    const std::string& base_path,
+    size_t max_size,
+    size_t max_files,
+    const std::string& format,
+    LogLevel level) {
+    try {
+        // Create directory if it doesn't exist
+        std::filesystem::path log_dir(base_path);
+        std::filesystem::create_directories(log_dir);
+
+        // Create log filename
+        std::string filename = (log_dir / (channel_id + ".log")).string();
+
+        // Create rotating file sink
+        auto file_sink = std::make_shared<spdlog::sinks::rotating_file_sink_mt>(
+            filename, max_size, max_files);
+
+        // Create logger
+        auto logger = std::make_shared<spdlog::logger>(channel_id, file_sink);
+        
+        // Set pattern
+        logger->set_pattern(format);
+
+        // Set level
+        switch (level) {
+            case LogLevel::TRACE: logger->set_level(spdlog::level::trace); break;
+            case LogLevel::DEBUG: logger->set_level(spdlog::level::debug); break;
+            case LogLevel::INFO: logger->set_level(spdlog::level::info); break;
+            case LogLevel::WARN: logger->set_level(spdlog::level::warn); break;
+            case LogLevel::ERROR: logger->set_level(spdlog::level::err); break;
+            case LogLevel::CRITICAL: logger->set_level(spdlog::level::critical); break;
+        }
+
+        // Store logger
+        channel_loggers_[channel_id] = logger;
+
+        serviceInfo("Channel logger created for " + channel_id);
+        return logger;
+    } catch (const spdlog::spdlog_ex& ex) {
+        serviceError("Channel logger creation failed for " + channel_id + ": " + ex.what());
+        throw;
     }
-    
-    ss << "}";
-    return ss.str();
 }
 
-std::string Logger::getCurrentTimestamp() {
-    auto now = std::chrono::system_clock::now();
-    auto now_c = std::chrono::system_clock::to_time_t(now);
-    auto now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-        now.time_since_epoch()) % 1000;
-    
-    std::stringstream ss;
-    ss << std::put_time(std::localtime(&now_c), "%Y-%m-%d %H:%M:%S")
-       << '.' << std::setfill('0') << std::setw(3) << now_ms.count();
-    
-    return ss.str();
+// Service logging methods
+void Logger::serviceTrace(const std::string& message) {
+    if (service_logger_) service_logger_->trace(message);
 }
 
-std::string Logger::logLevelToString(LogLevel level) const {
-    switch (level) {
-        case LogLevel::DEBUG:    return "DEBUG";
-        case LogLevel::INFO:     return "INFO";
-        case LogLevel::WARNING:  return "WARNING";
-        case LogLevel::ERROR:    return "ERROR";
-        case LogLevel::CRITICAL: return "CRITICAL";
-        default:                 return "UNKNOWN";
+void Logger::serviceDebug(const std::string& message) {
+    if (service_logger_) service_logger_->debug(message);
+}
+
+void Logger::serviceInfo(const std::string& message) {
+    if (service_logger_) service_logger_->info(message);
+}
+
+void Logger::serviceWarn(const std::string& message) {
+    if (service_logger_) service_logger_->warn(message);
+}
+
+void Logger::serviceError(const std::string& message) {
+    if (service_logger_) service_logger_->error(message);
+}
+
+void Logger::serviceCritical(const std::string& message) {
+    if (service_logger_) service_logger_->critical(message);
+}
+
+// Channel logging methods
+void Logger::channelTrace(const std::string& channel_id, const std::string& message) {
+    auto it = channel_loggers_.find(channel_id);
+    if (it != channel_loggers_.end()) it->second->trace(message);
+}
+
+void Logger::channelDebug(const std::string& channel_id, const std::string& message) {
+    auto it = channel_loggers_.find(channel_id);
+    if (it != channel_loggers_.end()) it->second->debug(message);
+}
+
+void Logger::channelInfo(const std::string& channel_id, const std::string& message) {
+    auto it = channel_loggers_.find(channel_id);
+    if (it != channel_loggers_.end()) it->second->info(message);
+}
+
+void Logger::channelWarn(const std::string& channel_id, const std::string& message) {
+    auto it = channel_loggers_.find(channel_id);
+    if (it != channel_loggers_.end()) it->second->warn(message);
+}
+
+void Logger::channelError(const std::string& channel_id, const std::string& message) {
+    auto it = channel_loggers_.find(channel_id);
+    if (it != channel_loggers_.end()) it->second->error(message);
+}
+
+void Logger::channelCritical(const std::string& channel_id, const std::string& message) {
+    auto it = channel_loggers_.find(channel_id);
+    if (it != channel_loggers_.end()) it->second->critical(message);
+}
+
+// Raw data logging methods
+void Logger::logRawData(const std::string& channel_id,
+                       const std::string& direction,
+                       const uint8_t* data,
+                       size_t length) {
+    auto it = channel_loggers_.find(channel_id);
+    if (it != channel_loggers_.end()) {
+        std::stringstream ss;
+        ss << direction << " [";
+        for (size_t i = 0; i < length; ++i) {
+            if (i > 0) ss << " ";
+            ss << std::hex << std::setw(2) << std::setfill('0') 
+               << static_cast<int>(data[i]);
+        }
+        ss << "]";
+        it->second->info(ss.str());
     }
-} 
+}
+
+// Parse detail logging methods
+void Logger::logParseDetail(const std::string& channel_id,
+                          const std::string& point_type,
+                          const std::string& point_name,
+                          const std::string& value,
+                          const std::string& detail) {
+    auto it = channel_loggers_.find(channel_id);
+    if (it != channel_loggers_.end()) {
+        std::stringstream ss;
+        ss << "Parse " << point_type << " [" << point_name << "] = " 
+           << value << " (" << detail << ")";
+        it->second->debug(ss.str());
+    }
+}
+
+} // namespace comsrv
+} // namespace voltage 

@@ -1,152 +1,267 @@
 #ifndef MODBUS_MASTER_H
 #define MODBUS_MASTER_H
 
-#include "comBase.h"
+#include "core/comBase.h"
 #include <string>
 #include <vector>
-#include <memory>
-#include <modbus/modbus.h>
-#include <hiredis/hiredis.h>
+#include <map>
+#include <mutex>
+#include <atomic>
+#include <thread>
+#include <functional>
 
-// Communication mode enumeration
-enum class ComMode {
-    TCP,
-    RTU
+/**
+ * @brief Modbus function codes
+ */
+enum class ModbusFunction {
+    READ_COILS = 0x01,
+    READ_DISCRETE_INPUTS = 0x02,
+    READ_HOLDING_REGISTERS = 0x03,
+    READ_INPUT_REGISTERS = 0x04,
+    WRITE_SINGLE_COIL = 0x05,
+    WRITE_SINGLE_REGISTER = 0x06,
+    WRITE_MULTIPLE_COILS = 0x0F,
+    WRITE_MULTIPLE_REGISTERS = 0x10
 };
 
-// Modbus function codes enumeration
-enum class ModbusFunctionCode {
-    READ_COILS = 0x01,                // Read Coils
-    READ_DISCRETE_INPUTS = 0x02,      // Read Discrete Inputs
-    READ_HOLDING_REGISTERS = 0x03,    // Read Holding Registers
-    READ_INPUT_REGISTERS = 0x04,      // Read Input Registers
-    WRITE_SINGLE_COIL = 0x05,         // Write Single Coil
-    WRITE_SINGLE_REGISTER = 0x06,     // Write Single Register
-    WRITE_MULTIPLE_COILS = 0x0F,      // Write Multiple Coils
-    WRITE_MULTIPLE_REGISTERS = 0x10,  // Write Multiple Registers
+/**
+ * @brief Modbus data types
+ */
+enum class ModbusDataType {
+    COIL,
+    DISCRETE_INPUT,
+    HOLDING_REGISTER,
+    INPUT_REGISTER
 };
 
-// Address range structure used for optimized reading
-struct AddressRange {
-    int startAddress;  // Starting address
-    int quantity;      // Number of registers/coils to read
-    int functionCode;  // Modbus function code to use
-    std::vector<std::string> pointIds;  // IDs of points in this range
+/**
+ * @brief Modbus register data types
+ */
+enum class ModbusRegisterType {
+    UINT16,
+    INT16,
+    UINT32,
+    INT32,
+    FLOAT32,
+    FLOAT64
 };
 
-// Modbus master class
+/**
+ * @brief Modbus endianness
+ */
+enum class ModbusEndian {
+    BIG_ENDIAN,
+    LITTLE_ENDIAN,
+    BIG_ENDIAN_BYTE_SWAP,
+    LITTLE_ENDIAN_BYTE_SWAP
+};
+
+/**
+ * @brief Base class for Modbus master devices
+ */
 class ModbusMaster : public ComBase {
 public:
-    ModbusMaster();
+    /**
+     * @brief Constructor
+     * 
+     * @param name Name of the Modbus master
+     */
+    ModbusMaster(const std::string& name);
+    
+    /**
+     * @brief Destructor
+     */
     virtual ~ModbusMaster();
     
-    // ComBase interface implementations
-    bool init(const std::string& config) override = 0;
-    std::string getStatus() const override = 0;
-    std::string getStatistics() const override = 0;
-
-    // Protocol identification
-    ProtocolType getProtocolType() const override { return ProtocolType::MODBUS; }
-    DeviceRole getDeviceRole() const override { return DeviceRole::MASTER; }
+    /**
+     * @brief Read coils from a slave device
+     * 
+     * @param slaveId Slave ID
+     * @param startAddress Start address
+     * @param count Number of coils to read
+     * @param[out] values Vector to store the read values
+     * @return true if successful, false otherwise
+     */
+    virtual bool readCoils(uint8_t slaveId, uint16_t startAddress, uint16_t count, std::vector<bool>& values) = 0;
     
-    // Physical interface accessor
-    PhysicalInterfaceType getPhysicalInterfaceType() const { return physicalInterface_; }
-    void setPhysicalInterfaceType(PhysicalInterfaceType type) { physicalInterface_ = type; }
-
-    // Common Modbus functions
-    // Reads coils from the specified slave device -> 0x01
-    bool readCoils(int slaveId, int address, int quantity, std::vector<bool>& values);
-
-    // Reads discrete inputs from the specified slave device -> 0x02
-    bool readDiscreteInputs(int slaveId, int address, int quantity, std::vector<bool>& values);
-
-    // Reads holding registers from the specified slave device -> 0x03
-    bool readHoldingRegisters(int slaveId, int address, int quantity, std::vector<uint16_t>& values);
-
-    // Reads input registers from the specified slave device -> 0x04
-    bool readInputRegisters(int slaveId, int address, int quantity, std::vector<uint16_t>& values);
+    /**
+     * @brief Read discrete inputs from a slave device
+     * 
+     * @param slaveId Slave ID
+     * @param startAddress Start address
+     * @param count Number of discrete inputs to read
+     * @param[out] values Vector to store the read values
+     * @return true if successful, false otherwise
+     */
+    virtual bool readDiscreteInputs(uint8_t slaveId, uint16_t startAddress, uint16_t count, std::vector<bool>& values) = 0;
     
-    // Writes a single coil to the specified slave device -> 0x05
-    bool writeSingleCoil(int slaveId, int address, bool value);
-
-    // Writes a single register to the specified slave device -> 0x06
-    bool writeSingleRegister(int slaveId, int address, uint16_t value);
-
-    // Writes multiple coils to the specified slave device -> 0x0F
-    bool writeMultipleCoils(int slaveId, int address, const std::vector<bool>& values);
-
-    // Writes multiple registers to the specified slave device -> 0x10
-    bool writeMultipleRegisters(int slaveId, int address, const std::vector<uint16_t>& values);
-
-    // Modbus specific settings
-    // Sets the slave ID for communication
-    bool setSlaveId(int id);
-
-    // Sets the timeout for communication
-    bool setTimeout(int ms);
-
-    // Enables or disables debug mode
-    bool setDebug(bool enable);
-
-    // Configuration interface
-    // Sets the response timeout for communication
-    void setResponseTimeout(uint32_t sec, uint32_t usec);
-
-    // Sets whether to enable broadcast mode
-    void setBroadcast(bool broadcast);
-
-    // Gets the current slave ID
-    int getSlaveId() const;
+    /**
+     * @brief Read holding registers from a slave device
+     * 
+     * @param slaveId Slave ID
+     * @param startAddress Start address
+     * @param count Number of registers to read
+     * @param[out] values Vector to store the read values
+     * @return true if successful, false otherwise
+     */
+    virtual bool readHoldingRegisters(uint8_t slaveId, uint16_t startAddress, uint16_t count, std::vector<uint16_t>& values) = 0;
     
-    // Error handling
-    // Gets the last error code
-    int getLastErrorCode() const;
-
-    // Gets the last error message
-    std::string getLastError() const;
-
+    /**
+     * @brief Read input registers from a slave device
+     * 
+     * @param slaveId Slave ID
+     * @param startAddress Start address
+     * @param count Number of registers to read
+     * @param[out] values Vector to store the read values
+     * @return true if successful, false otherwise
+     */
+    virtual bool readInputRegisters(uint8_t slaveId, uint16_t startAddress, uint16_t count, std::vector<uint16_t>& values) = 0;
+    
+    /**
+     * @brief Write single coil to a slave device
+     * 
+     * @param slaveId Slave ID
+     * @param address Coil address
+     * @param value Value to write
+     * @return true if successful, false otherwise
+     */
+    virtual bool writeSingleCoil(uint8_t slaveId, uint16_t address, bool value) = 0;
+    
+    /**
+     * @brief Write single register to a slave device
+     * 
+     * @param slaveId Slave ID
+     * @param address Register address
+     * @param value Value to write
+     * @return true if successful, false otherwise
+     */
+    virtual bool writeSingleRegister(uint8_t slaveId, uint16_t address, uint16_t value) = 0;
+    
+    /**
+     * @brief Write multiple coils to a slave device
+     * 
+     * @param slaveId Slave ID
+     * @param startAddress Start address
+     * @param values Values to write
+     * @return true if successful, false otherwise
+     */
+    virtual bool writeMultipleCoils(uint8_t slaveId, uint16_t startAddress, const std::vector<bool>& values) = 0;
+    
+    /**
+     * @brief Write multiple registers to a slave device
+     * 
+     * @param slaveId Slave ID
+     * @param startAddress Start address
+     * @param values Values to write
+     * @return true if successful, false otherwise
+     */
+    virtual bool writeMultipleRegisters(uint8_t slaveId, uint16_t startAddress, const std::vector<uint16_t>& values) = 0;
+    
+    /**
+     * @brief Read a value with a specific data type
+     * 
+     * @param slaveId Slave ID
+     * @param address Register address
+     * @param type Register type
+     * @param registerType Register data type
+     * @param endian Endianness
+     * @param[out] value Value to store the read value
+     * @return true if successful, false otherwise
+     */
+    template<typename T>
+    bool readValue(uint8_t slaveId, uint16_t address, ModbusDataType type, ModbusRegisterType registerType, 
+                  ModbusEndian endian, T& value);
+    
+    /**
+     * @brief Write a value with a specific data type
+     * 
+     * @param slaveId Slave ID
+     * @param address Register address
+     * @param type Register type
+     * @param registerType Register data type
+     * @param endian Endianness
+     * @param value Value to write
+     * @return true if successful, false otherwise
+     */
+    template<typename T>
+    bool writeValue(uint8_t slaveId, uint16_t address, ModbusDataType type, ModbusRegisterType registerType, 
+                   ModbusEndian endian, T value);
+    
+    /**
+     * @brief Set a polling function for a specific register
+     * 
+     * @param slaveId Slave ID
+     * @param address Register address
+     * @param type Register type
+     * @param interval Polling interval in milliseconds
+     * @param callback Callback function when value changes
+     * @return Polling ID for removing the polling
+     */
+    int addPolling(uint8_t slaveId, uint16_t address, ModbusDataType type, uint16_t count, 
+                  ModbusRegisterType registerType, ModbusEndian endian, 
+                  uint32_t interval, std::function<void(const std::vector<uint16_t>&)> callback);
+    
+    /**
+     * @brief Remove a polling
+     * 
+     * @param pollingId Polling ID returned by addPolling
+     */
+    void removePolling(int pollingId);
+    
 protected:
-    // Override base class's channelThreadFunc for Modbus-specific behavior
-    void channelThreadFunc(int channelIndex) override;
-
-    modbus_t* ctx_;                    // Modbus context
-    int slaveId_;                      // Slave ID
-    int timeout_;                      // Timeout duration
-    bool debug_;                       // Debug mode status
-    bool connected_;                   // Connection status
-    std::string lastError_;            // Last error message
-    int lastErrorCode_ = 0;            // Last error code
-    // Log callback related
-    using LogCallback = std::function<void(const std::string& message)>;
-    LogCallback logCallback_;
-    static std::string formatMessage(const uint8_t* data, int len);
-    static void modbusPreSendCallback(modbus_t* ctx, uint8_t* req, int req_len);
-    static void modbusPostRecvCallback(modbus_t* ctx, uint8_t* rsp, int rsp_len);
-    static ModbusMaster* instance;      // Instance pointer for callbacks
-
-    int maxRead_ = 120;  // Default maximum read quantity
-
-    // Functions related to segmented polling
-    std::vector<AddressRange> analyzeAddressRanges(
-        const std::map<std::string, DataPointConfig>& points, int maxRead);
+    /**
+     * @brief Convert raw register values to a specific data type
+     * 
+     * @param registers Raw register values
+     * @param registerType Register data type
+     * @param endian Endianness
+     * @param[out] value Value to store the converted value
+     * @return true if successful, false otherwise
+     */
+    template<typename T>
+    bool convertRegisters(const std::vector<uint16_t>& registers, ModbusRegisterType registerType, 
+                         ModbusEndian endian, T& value);
     
-    // Gets the size of the data point based on its type
-    int getPointSize(DataType type);
-
-    // Reads all points
-    void readAllPoints();
-
-    // Reads points by type
-    void readPointsByType(const std::map<std::string, DataPointConfig>& points, 
-                         PointType type);
-
-    // Processes the data for a given address range
-    void processRangeData(const AddressRange& range, 
-                         const std::vector<uint16_t>& values,
-                         const std::map<std::string, DataPointConfig>& points);
+    /**
+     * @brief Convert a specific data type to raw register values
+     * 
+     * @param value Value to convert
+     * @param registerType Register data type
+     * @param endian Endianness
+     * @param[out] registers Vector to store the converted register values
+     * @return true if successful, false otherwise
+     */
+    template<typename T>
+    bool convertToRegisters(T value, ModbusRegisterType registerType, 
+                           ModbusEndian endian, std::vector<uint16_t>& registers);
+    
+    /**
+     * @brief Polling thread function
+     */
+    void pollingThread();
+    
+    /**
+     * @brief Struct for polling information
+     */
+    struct PollingInfo {
+        uint8_t slaveId;
+        uint16_t address;
+        uint16_t count;
+        ModbusDataType type;
+        ModbusRegisterType registerType;
+        ModbusEndian endian;
+        uint32_t interval;
+        std::function<void(const std::vector<uint16_t>&)> callback;
+        std::chrono::steady_clock::time_point lastPoll;
+    };
+    
+    std::map<int, PollingInfo> m_pollingInfo;
+    int m_nextPollingId;
+    std::thread m_pollingThread;
+    std::atomic<bool> m_pollingRunning;
+    std::mutex m_pollingMutex;
 };
 
-// Factory function for creating Modbus masters based on physical interface type
-std::unique_ptr<ModbusMaster> createModbusMaster(PhysicalInterfaceType interfaceType);
+// Template implementations will be in a separate header file
 
 #endif // MODBUS_MASTER_H 

@@ -2,93 +2,84 @@
 #define LOGGER_H
 
 #include <string>
-#include <deque>
-#include <mutex>
-#include <fstream>
 #include <memory>
-#include <vector>
-#include <hiredis/hiredis.h>
+#include <spdlog/spdlog.h>
+#include <spdlog/sinks/rotating_file_sink.h>
+#include <spdlog/sinks/stdout_color_sinks.h>
 
-// Log level enumeration
+namespace voltage {
+namespace comsrv {
+
 enum class LogLevel {
-    DEBUG,      // Detailed information for debugging
-    INFO,       // General operational information
-    WARNING,    // Warning messages for potential issues
-    ERROR,      // Error messages for actual problems
-    CRITICAL    // Critical errors that may cause system failure
-};
-
-// Log entry structure
-struct LogEntry {
-    std::string timestamp;    // Time of the event
-    std::string channelId;    // Channel/Device identifier
-    LogLevel level;           // Log level
-    std::string message;      // Log message
-    std::string details;      // Additional details (JSON format)
+    TRACE,
+    DEBUG,
+    INFO,
+    WARN,
+    ERROR,
+    CRITICAL
 };
 
 class Logger {
 public:
-    static Logger& getInstance();
+    static Logger& instance();
 
-    // Logging interface
-    void log(const std::string& channelId, LogLevel level, 
-             const std::string& message, const std::string& details = "");
-    void logDebug(const std::string& channelId, const std::string& message, 
-                  const std::string& details = "");
-    void logInfo(const std::string& channelId, const std::string& message, 
-                 const std::string& details = "");
-    void logWarning(const std::string& channelId, const std::string& message, 
-                   const std::string& details = "");
-    void logError(const std::string& channelId, const std::string& message, 
-                  const std::string& details = "");
-    void logCritical(const std::string& channelId, const std::string& message, 
-                    const std::string& details = "");
+    // Initialize service logger
+    void initServiceLogger(const std::string& filename,
+                          size_t max_size,
+                          size_t max_files,
+                          bool console_output,
+                          const std::string& format,
+                          LogLevel level);
 
-    // Log retrieval interface
-    std::vector<LogEntry> getLogEntries(const std::string& channelId = "", 
-                                       const std::string& startTime = "",
-                                       const std::string& endTime = "",
-                                       LogLevel minLevel = LogLevel::DEBUG,
-                                       int maxEntries = 100);
-    
-    // Log configuration
-    void setLogLevel(LogLevel level) { logLevel_ = level; }
-    void setLogRetention(int days) { logRetentionDays_ = days; }
-    void setMaxLogEntries(int maxEntries) { maxLogEntries_ = maxEntries; }
-    void enableLogToRedis(bool enable) { logToRedis_ = enable; }
-    void enableLogToFile(bool enable, const std::string& path = "");
-    bool connectToRedis(const std::string& host, int port);
-    void disconnectFromRedis();
+    // Initialize channel logger
+    std::shared_ptr<spdlog::logger> createChannelLogger(
+        const std::string& channel_id,
+        const std::string& base_path,
+        size_t max_size,
+        size_t max_files,
+        const std::string& format,
+        LogLevel level);
+
+    // Service logging methods
+    void serviceTrace(const std::string& message);
+    void serviceDebug(const std::string& message);
+    void serviceInfo(const std::string& message);
+    void serviceWarn(const std::string& message);
+    void serviceError(const std::string& message);
+    void serviceCritical(const std::string& message);
+
+    // Channel logging methods
+    void channelTrace(const std::string& channel_id, const std::string& message);
+    void channelDebug(const std::string& channel_id, const std::string& message);
+    void channelInfo(const std::string& channel_id, const std::string& message);
+    void channelWarn(const std::string& channel_id, const std::string& message);
+    void channelError(const std::string& channel_id, const std::string& message);
+    void channelCritical(const std::string& channel_id, const std::string& message);
+
+    // Raw data logging methods
+    void logRawData(const std::string& channel_id,
+                    const std::string& direction,
+                    const uint8_t* data,
+                    size_t length);
+
+    // Parse detail logging methods
+    void logParseDetail(const std::string& channel_id,
+                       const std::string& point_type,
+                       const std::string& point_name,
+                       const std::string& value,
+                       const std::string& detail);
 
 private:
-    Logger();  // Private constructor for singleton
-    ~Logger();
+    Logger() = default;
+    ~Logger() = default;
     Logger(const Logger&) = delete;
     Logger& operator=(const Logger&) = delete;
 
-    // Logging helpers
-    void writeLogToRedis(const LogEntry& entry);
-    void writeLogToFile(const LogEntry& entry);
-    void cleanupOldLogs();
-    std::string formatLogEntry(const LogEntry& entry);
-    bool isLogLevelEnabled(LogLevel level) const { return level >= logLevel_; }
-    std::string logLevelToString(LogLevel level) const;
-    std::string getCurrentTimestamp();
-
-    // Logging configuration
-    LogLevel logLevel_ = LogLevel::INFO;
-    int logRetentionDays_ = 30;
-    int maxLogEntries_ = 10000;
-    bool logToRedis_ = true;
-    bool logToFile_ = false;
-    std::string logFilePath_;
-    std::ofstream logFile_;
-    redisContext* redisCtx_ = nullptr;
-
-    // Log storage
-    std::deque<LogEntry> inMemoryLogs_;
-    std::mutex logMutex_;
+    std::shared_ptr<spdlog::logger> service_logger_;
+    std::map<std::string, std::shared_ptr<spdlog::logger>> channel_loggers_;
 };
+
+} // namespace comsrv
+} // namespace voltage
 
 #endif // LOGGER_H 

@@ -39,3 +39,6 @@ logs/
 # Misc
 .DS_Store
 Thumbs.db 
+
+# Config
+services/Comsrv/config/
