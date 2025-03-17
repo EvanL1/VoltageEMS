@@ -1,249 +1,227 @@
-# Comsrv: Communication Server for Energy Management Systems
+# Comsrv - Highly Configurable Communication Service
 
-[![C++](https://img.shields.io/badge/language-C%2B%2B-blue.svg)](https://isocpp.org/)
-[![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-0.4.0-orange.svg)](CHANGELOG.md)
-
-Comsrv is a flexible, high-performance communication server designed for energy management systems. It provides a unified interface for various industrial communication protocols, focusing on Modbus TCP and Modbus RTU implementations.
+Comsrv is a highly configurable communication service for connecting and managing various industrial devices and protocols. It provides a unified interface for handling different communication protocols such as Modbus RTU, Modbus TCP, etc.
 
 ## Features
 
-- **Multi-Protocol Support**
-  - Modbus TCP (Client and Server)
-  - Modbus RTU (Master and Slave)
-  - Extensible architecture for adding more protocols
+- Support for multiple industrial communication protocols
+  - Modbus RTU master/slave
+  - Modbus TCP master/slave
+  - Extensible for more protocols
+- Configuration-based device management
+- Flexible data polling and processing
+- Data export to Redis and MQTT
+- Real-time data processing and monitoring
+- Thread-safe design
+- High performance and low latency
+- Prometheus metrics integration
 
-- **Flexible Configuration**
-  - JSON-based channel configuration
-  - CSV-based point table definitions
-  - Hot-reload of configuration files
+## Architecture
 
-- **High Performance**
-  - Optimized polling strategies
-  - Grouped register reads/writes
-  - Multi-threaded communication channels
+Comsrv adopts a modular architecture design, including the following components:
 
-- **Robust Error Handling**
-  - Automatic reconnection mechanisms
-  - Detailed error logging
-  - Graceful failure recovery
+1. **Core Framework**: Provides infrastructure such as configuration management, thread pool, logging, etc.
+2. **Communication Interface**: Defines basic interfaces and abstract classes for communication protocols.
+3. **Protocol Implementation**: Concrete implementations of various communication protocols.
+4. **Data Processing**: Components for processing and transforming data.
+5. **Data Export**: Components for exporting data to external systems like Redis, MQTT.
+6. **Metrics**: Prometheus metrics for monitoring system performance and status.
 
-- **Data Exchange**
-  - Redis integration for data publishing
-  - Standardized data point format
-  - Support for various data types
-
-## Project Structure
+### Architecture Diagram
 
 ```
-comsrv/
-├── config/                 # Configuration files
-│   ├── channels.json       # Channel configuration
-│   └── points/             # Point table CSV files
-│       ├── pcs_di.csv
-│       ├── pcs_ai.csv
-│       └── ...
-├── include/                # Header files
-│   ├── core/               # Core functionality
-│   └── protocols/          # Protocol implementations
-│       ├── modbus/         # Modbus protocol
-│       └── ...
-├── src/                    # Source files
-│   ├── core/               # Core implementation
-│   └── protocols/          # Protocol implementations
-├── logs/                   # Log files
-├── CMakeLists.txt          # CMake build configuration
-├── Dockerfile              # Production Docker configuration
-├── DevDockerfile           # Development Docker configuration
-├── docker-compose.yml      # Docker Compose configuration
-└── start.sh                # Startup script
-```
-
-## Prerequisites
-
-- CMake 3.10 or higher
-- C++17 compatible compiler
-- Required libraries:
-  - libmodbus (≥ 3.1.4)
-  - hiredis (≥ 0.14.0)
-  - jsoncpp (≥ 1.7.4)
-- (Optional) Docker and Docker Compose for containerized deployment
-
-## Building from Source
-
-### Using CMake
-
-```bash
-# Clone the repository
-git clone https://github.com/yourusername/comsrv.git
-cd comsrv
-
-# Create a build directory
-mkdir build && cd build
-
-# Configure and build
-cmake ..
-make
-
-# Install (optional)
-sudo make install
-```
-
-### Using Docker (Recommended)
-
-```bash
-# Clone the repository
-git clone https://github.com/yourusername/comsrv.git
-cd comsrv
-
-# Build and run using the provided script
-./start.sh
++------------------+     +------------------+
+|  Config Manager  |     |  Metrics Manager |
++------------------+     +------------------+
+        |                       |
++------------------+           |
+| Protocol Factory |           |
++------------------+           |
+        |                     |
+        v                     v
++------------------+     +------------------+
+|  ComBase Class   | --> |  Metrics Export  |
++------------------+     +------------------+
+        |                       |
+        v                       v
++------------------+     +------------------+
+| Data Processing  | --> |   Prometheus    |
++------------------+     +------------------+
 ```
 
 ## Configuration
 
-### Channel Configuration (channels.json)
+Comsrv uses YAML format configuration files to define communication devices and parameters. Here's an example:
 
-The `channels.json` file defines communication channels and global settings:
+```yaml
+version: "1.0"
+service:
+  name: "comsrv"
+  description: "Communication Service"
+  metrics:
+    enabled: true
+    bind_address: "0.0.0.0:9100"
+  logging:
+    level: "info"
+    file: "/var/log/comsrv/comsrv.log"
+    max_size: 10485760  # 10MB
+    max_files: 5
+    console: true
 
-```json
-{
-  "version": "2.0",
-  "title": "Channel Configuration for Energy Management System",
-  "logging": {
-    "level": "INFO",
-    "file": "logs/comsrv.log",
-    "maxSize": 10485760,
-    "maxFiles": 10
-  },
-  "redis": {
-    "host": "redis",
-    "port": 6379,
-    "db": 0,
-    "password": "",
-    "keyPrefix": "comsrv:"
-  },
-  "channels": [
-    {
-      "index": 1,
-      "name": "PCS",
-      "description": "Power Conversion System",
-      "enabled": true,
-      "protocolType": 1,
-      "physicalInterfaceType": 1,
-      "deviceRole": 1,
-      "protocol": {
-        "type": "ModbusTCP",
-        "host": "192.168.1.100",
-        "port": 502,
-        "timeout": 1000,
-        "maxRead": 125
-      },
-      "pointTables": {
-        "di": "points/pcs_di.csv",
-        "ai": "points/pcs_ai.csv",
-        "do": "points/pcs_do.csv",
-        "ao": "points/pcs_ao.csv"
-      },
-      "pollRate": 1000
-    }
-  ]
-}
+channels:
+  - id: "pcs1"
+    name: "PCS Controller 1"
+    description: "Power Conversion System"
+    protocol: "modbus_tcp"
+    parameters:
+      host: "192.168.1.10"
+      port: 502
+      timeout: 1000
+      max_retries: 3
+      point_tables:
+        di: "points/pcs_di.csv"
+        ai: "points/pcs_ai.csv"
+        do: "points/pcs_do.csv"
+        ao: "points/pcs_ao.csv"
+      poll_rate: 1000
 ```
 
-### Point Table Format (CSV)
+## Building and Installation
 
-Point tables use CSV format with headers. Example for a digital input (DI) point table:
+### Dependencies
 
-```csv
-name,address,slaveId,description,dataType,byteOrder,bitOffset,scale,offset,units,readOnly
-BatteryFault,1001,1,Battery fault status,UINT16,AB,0,1,0,,true
-ACContactorStatus,1002,1,AC contactor status,UINT16,AB,0,1,0,,true
-```
+- C++17 compatible compiler
+- CMake 3.10 or higher
+- yaml-cpp library (automatically downloaded)
+- prometheus-cpp library (automatically downloaded)
+- spdlog library (automatically downloaded)
 
-Available data types:
-- `UINT16`: 16-bit unsigned integer
-- `INT16`: 16-bit signed integer
-- `UINT32`: 32-bit unsigned integer
-- `INT32`: 32-bit signed integer
-- `FLOAT32`: 32-bit floating point
-- `UINT64`: 64-bit unsigned integer
-- `INT64`: 64-bit signed integer
-- `FLOAT64`: 64-bit floating point
-
-Byte orders:
-- `AB`: Big-endian 16-bit (default)
-- `BA`: Little-endian 16-bit
-- `ABCD`: Big-endian 32-bit
-- `CDAB`: Little-endian 32-bit swapped
-- `BADC`: Big-endian 16-bit swapped
-- `DCBA`: Little-endian 32-bit
-
-## Running the Application
-
-### Command Line Options
-
-```
-Usage: comsrv [OPTIONS]
-
-Options:
-  -c, --config DIR    Configuration directory (default: ./config)
-  -l, --logs DIR      Log directory (default: ./logs)
-  -v, --verbose       Enable verbose output
-  -d, --daemon        Run as daemon
-  -h, --help          Show this help message
-```
-
-### Example
+### Build Steps
 
 ```bash
-# Run with default settings
-./comsrv
-
-# Run with custom configuration directory
-./comsrv -c /path/to/config -l /path/to/logs
-
-# Run in verbose mode
-./comsrv -v
-
-# Run as daemon
-./comsrv -d
+mkdir build
+cd build
+cmake ..
+make
 ```
 
-## Data Access
+### Installation
 
-When Redis integration is enabled, all data points are published to Redis with keys following this pattern:
-
-```
-{keyPrefix}:{channelName}:{pointType}:{pointName}
+```bash
+sudo make install
 ```
 
-For example:
+## Usage
 
+### Running the Service
+
+```bash
+comsrv /path/to/config.yaml
 ```
-comsrv:PCS:di:BatteryFault
+
+### Using Docker
+
+```bash
+docker build -t comsrv .
+docker run -v /path/to/config.yaml:/etc/comsrv/comsrv.yaml -d comsrv
 ```
+
+### Monitoring
+
+Comsrv exposes Prometheus metrics at `http://<host>:9100/metrics`. Available metrics include:
+
+- Communication metrics:
+  - `comsrv_bytes_total`: Total number of bytes sent/received
+  - `comsrv_packets_total`: Total number of packets sent/received
+  - `comsrv_packet_errors_total`: Total number of packet errors by type
+  - `comsrv_packet_processing_duration_seconds`: Packet processing duration
+
+- Channel metrics:
+  - `comsrv_channel_status`: Channel connection status
+  - `comsrv_channel_response_time_seconds`: Channel response time
+  - `comsrv_channel_errors_total`: Channel errors by type
+
+- Protocol metrics:
+  - `comsrv_protocol_status`: Protocol status
+  - `comsrv_protocol_errors_total`: Protocol errors by type
+
+- Service metrics:
+  - `comsrv_service_status`: Service status
+  - `comsrv_service_uptime_seconds`: Service uptime
+  - `comsrv_service_errors_total`: Service errors by type
+
+### Logging
+
+Comsrv provides comprehensive logging at both service and channel levels:
+
+- Service log (`/var/log/ems/comsrv.log`):
+  - Service startup/shutdown events
+  - Channel configuration and status changes
+  - System-wide events and errors
+
+- Channel logs (`/var/log/ems/channels/<channel_id>.log`):
+  - Channel connection status
+  - Raw communication data (INFO level)
+  - Data parsing details (DEBUG level)
+  - Channel-specific errors and warnings
 
 ## Development
 
-A development environment is provided through `DevDockerfile`:
+### Adding a New Protocol
 
-```bash
-# Build and run the development container
-docker build -t comsrv-dev -f DevDockerfile .
-docker run -it --name comsrv-dev -v $(pwd):/workspace comsrv-dev
+1. Create a new protocol class inheriting from ComBase
+2. Implement all required virtual functions
+3. Register the new protocol type in ProtocolFactory
+
+Example:
+
+```cpp
+class NewProtocol : public ComBase {
+public:
+    NewProtocol(const std::string& name);
+    virtual ~NewProtocol();
+    
+    bool start() override;
+    bool stop() override;
+    
+    // Protocol specific methods...
+};
+
+// Register in ProtocolFactory
+factory.registerProtocol("new_protocol", 
+    [](const std::map<std::string, ConfigManager::ConfigValue>& config) -> std::unique_ptr<ComBase> {
+        return std::make_unique<NewProtocol>(config.at("name").get<std::string>());
+    });
 ```
 
-## License
+### Adding New Metrics
 
-This project is licensed under the MIT License - see the LICENSE file for details.
+1. Define new metric in the Metrics class
+2. Initialize the metric in the constructor
+3. Add methods to update the metric
+4. Use the metric in your protocol implementation
+
+Example:
+
+```cpp
+// In metrics.h
+prometheus::Counter& my_new_metric_;
+
+// In metrics.cpp
+my_new_metric_(prometheus::BuildCounter()
+    .Name("comsrv_my_new_metric_total")
+    .Help("Description of my new metric")
+    .Labels({{"service", "comsrv"}})
+    .Register(*registry_))
+
+// Usage
+Metrics::instance().incrementMyNewMetric();
+```
 
 ## Contributing
 
-Contributions are welcome! Please feel free to submit a Pull Request.
+Pull requests and issues are welcome.
 
-1. Fork the repository
-2. Create your feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add some amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
+## License
+
+MIT License 
