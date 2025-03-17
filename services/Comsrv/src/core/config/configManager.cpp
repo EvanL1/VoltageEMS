@@ -1,10 +1,7 @@
 #include "core/config/configManager.h"
 #include <fstream>
 #include <iostream>
-#include <nlohmann/json.hpp>
-
-// For convenience
-using json = nlohmann::json;
+#include <yaml-cpp/yaml.h>
 
 // Singleton instance
 ConfigManager& ConfigManager::getInstance() {
@@ -21,42 +18,55 @@ ConfigManager::~ConfigManager() {
 }
 
 bool ConfigManager::loadFromFile(const std::string& filename) {
-    std::ifstream file(filename);
-    if (!file.is_open()) {
-        std::cerr << "Failed to open config file: " << filename << std::endl;
-        return false;
-    }
-
     try {
-        json j;
-        file >> j;
+        YAML::Node config = YAML::LoadFile(filename);
         
         std::lock_guard<std::mutex> lock(m_mutex);
         
         // Clear existing config
         m_config.clear();
         
-        // Parse JSON into our config structure
-        for (auto& [section, sectionData] : j.items()) {
-            for (auto& [key, value] : sectionData.items()) {
-                if (value.is_number_integer()) {
-                    m_config[section][key] = value.get<int>();
-                } else if (value.is_number_float()) {
-                    m_config[section][key] = value.get<double>();
-                } else if (value.is_boolean()) {
-                    m_config[section][key] = value.get<bool>();
-                } else if (value.is_string()) {
-                    m_config[section][key] = value.get<std::string>();
-                } else if (value.is_array()) {
-                    if (value.size() > 0) {
-                        if (value[0].is_number_integer()) {
-                            m_config[section][key] = value.get<std::vector<int>>();
-                        } else if (value[0].is_number_float()) {
-                            m_config[section][key] = value.get<std::vector<double>>();
-                        } else if (value[0].is_boolean()) {
-                            m_config[section][key] = value.get<std::vector<bool>>();
-                        } else if (value[0].is_string()) {
-                            m_config[section][key] = value.get<std::vector<std::string>>();
+        // Parse YAML into our config structure
+        for (const auto& section : config) {
+            std::string sectionName = section.first.as<std::string>();
+            const YAML::Node& sectionData = section.second;
+            
+            if (sectionData.IsMap()) {
+                for (const auto& item : sectionData) {
+                    std::string key = item.first.as<std::string>();
+                    const YAML::Node& value = item.second;
+                    
+                    if (value.IsScalar()) {
+                        // Try to determine the type of scalar
+                        try {
+                            m_config[sectionName][key] = value.as<int>();
+                        } catch (...) {
+                            try {
+                                m_config[sectionName][key] = value.as<double>();
+                            } catch (...) {
+                                try {
+                                    m_config[sectionName][key] = value.as<bool>();
+                                } catch (...) {
+                                    m_config[sectionName][key] = value.as<std::string>();
+                                }
+                            }
+                        }
+                    } else if (value.IsSequence()) {
+                        if (!value.empty()) {
+                            // Try to determine the type of sequence
+                            try {
+                                m_config[sectionName][key] = value.as<std::vector<int>>();
+                            } catch (...) {
+                                try {
+                                    m_config[sectionName][key] = value.as<std::vector<double>>();
+                                } catch (...) {
+                                    try {
+                                        m_config[sectionName][key] = value.as<std::vector<bool>>();
+                                    } catch (...) {
+                                        m_config[sectionName][key] = value.as<std::vector<std::string>>();
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -64,8 +74,8 @@ bool ConfigManager::loadFromFile(const std::string& filename) {
         }
         
         return true;
-    } catch (const json::exception& e) {
-        std::cerr << "JSON parsing error: " << e.what() << std::endl;
+    } catch (const YAML::Exception& e) {
+        std::cerr << "YAML parsing error: " << e.what() << std::endl;
         return false;
     } catch (const std::exception& e) {
         std::cerr << "Error loading config: " << e.what() << std::endl;
@@ -77,15 +87,17 @@ bool ConfigManager::saveToFile(const std::string& filename) {
     try {
         std::lock_guard<std::mutex> lock(m_mutex);
         
-        json j;
+        YAML::Node root;
         
-        // Convert our config structure to JSON
+        // Convert our config structure to YAML
         for (const auto& [section, sectionData] : m_config) {
+            YAML::Node sectionNode;
             for (const auto& [key, value] : sectionData) {
-                std::visit([&j, &section, &key](const auto& v) {
-                    j[section][key] = v;
+                std::visit([&sectionNode, &key](const auto& v) {
+                    sectionNode[key] = v;
                 }, value);
             }
+            root[section] = sectionNode;
         }
         
         // Write to file
@@ -95,10 +107,10 @@ bool ConfigManager::saveToFile(const std::string& filename) {
             return false;
         }
         
-        file << j.dump(4); // Pretty print with 4 spaces
+        file << YAML::Dump(root);
         return true;
-    } catch (const json::exception& e) {
-        std::cerr << "JSON serialization error: " << e.what() << std::endl;
+    } catch (const YAML::Exception& e) {
+        std::cerr << "YAML serialization error: " << e.what() << std::endl;
         return false;
     } catch (const std::exception& e) {
         std::cerr << "Error saving config: " << e.what() << std::endl;

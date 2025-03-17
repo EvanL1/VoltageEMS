@@ -1,95 +1,102 @@
-# Comsrv - 高度可配置的通信服务
+# Comsrv - Highly Configurable Communication Service
 
-Comsrv是一个高度可配置的通信服务，用于连接和管理各种工业设备和协议。它提供了一个统一的接口来处理不同的通信协议，如Modbus RTU、Modbus TCP等。
+Comsrv is a highly configurable communication service for connecting and managing various industrial devices and protocols. It provides a unified interface for handling different communication protocols such as Modbus RTU, Modbus TCP, etc.
 
-## 特性
+## Features
 
-- 支持多种工业通信协议
-  - Modbus RTU主站/从站
-  - Modbus TCP主站/从站
-  - 未来可扩展更多协议
-- 基于配置文件的设备管理
-- 灵活的数据轮询和处理机制
-- 数据导出到Redis和MQTT
-- 实时数据处理和监控
-- 线程安全的设计
-- 高性能和低延迟
+- Support for multiple industrial communication protocols
+  - Modbus RTU master/slave
+  - Modbus TCP master/slave
+  - Extensible for more protocols
+- Configuration-based device management
+- Flexible data polling and processing
+- Data export to Redis and MQTT
+- Real-time data processing and monitoring
+- Thread-safe design
+- High performance and low latency
+- Prometheus metrics integration
 
-## 架构设计
+## Architecture
 
-Comsrv采用了模块化的架构设计，主要包括以下组件：
+Comsrv adopts a modular architecture design, including the following components:
 
-1. **核心框架**：提供基础设施，如配置管理、线程池、日志记录等。
-2. **通信接口**：定义通信协议的基本接口和抽象类。
-3. **协议实现**：各种通信协议的具体实现。
-4. **数据处理**：处理和转换数据的组件。
-5. **数据导出**：将数据导出到Redis、MQTT等外部系统的组件。
+1. **Core Framework**: Provides infrastructure such as configuration management, thread pool, logging, etc.
+2. **Communication Interface**: Defines basic interfaces and abstract classes for communication protocols.
+3. **Protocol Implementation**: Concrete implementations of various communication protocols.
+4. **Data Processing**: Components for processing and transforming data.
+5. **Data Export**: Components for exporting data to external systems like Redis, MQTT.
+6. **Metrics**: Prometheus metrics for monitoring system performance and status.
 
-### 架构图
+### Architecture Diagram
 
 ```
-+------------------+
-|   配置管理        |
-+------------------+
-        |
-+------------------+
-|   协议工厂        |
-+------------------+
-        |
-        v
 +------------------+     +------------------+
-|   通信基类        | <-- |   协议实现        |
+|  Config Manager  |     |  Metrics Manager |
++------------------+     +------------------+
+        |                       |
++------------------+           |
+| Protocol Factory |           |
++------------------+           |
+        |                     |
+        v                     v
++------------------+     +------------------+
+|  ComBase Class   | --> |  Metrics Export  |
 +------------------+     +------------------+
         |                       |
         v                       v
 +------------------+     +------------------+
-|   数据处理        | --> |   数据导出        |
+| Data Processing  | --> |   Prometheus    |
 +------------------+     +------------------+
 ```
 
-## 配置文件
+## Configuration
 
-Comsrv使用JSON格式的配置文件来定义通信设备和参数。以下是配置文件的示例：
+Comsrv uses YAML format configuration files to define communication devices and parameters. Here's an example:
 
-```json
-{
-    "protocols": [
-        {
-            "type": "modbus_rtu_master",
-            "name": "RTU Master 1",
-            "port": "/dev/ttyUSB0",
-            "baudrate": 9600,
-            "databits": 8,
-            "parity": "none",
-            "stopbits": 1,
-            "timeout": 1000,
-            "polling": [
-                {
-                    "slave_id": 1,
-                    "address": 100,
-                    "type": "holding_register",
-                    "count": 10,
-                    "register_type": "uint16",
-                    "endian": "big_endian",
-                    "interval": 1000,
-                    "tag": "device1.registers"
-                }
-            ]
-        }
-    ]
-}
+```yaml
+version: "1.0"
+service:
+  name: "comsrv"
+  description: "Communication Service"
+  metrics:
+    enabled: true
+    bind_address: "0.0.0.0:9100"
+  logging:
+    level: "info"
+    file: "/var/log/comsrv/comsrv.log"
+    max_size: 10485760  # 10MB
+    max_files: 5
+    console: true
+
+channels:
+  - id: "pcs1"
+    name: "PCS Controller 1"
+    description: "Power Conversion System"
+    protocol: "modbus_tcp"
+    parameters:
+      host: "192.168.1.10"
+      port: 502
+      timeout: 1000
+      max_retries: 3
+      point_tables:
+        di: "points/pcs_di.csv"
+        ai: "points/pcs_ai.csv"
+        do: "points/pcs_do.csv"
+        ao: "points/pcs_ao.csv"
+      poll_rate: 1000
 ```
 
-## 编译和安装
+## Building and Installation
 
-### 依赖项
+### Dependencies
 
-- C++17兼容的编译器
-- CMake 3.10或更高版本
-- nlohmann/json库
-- 线程库
+- C++17 compatible compiler
+- CMake 3.10 or higher
+- yaml-cpp library (automatically downloaded)
+- prometheus-cpp library (automatically downloaded)
+- spdlog library (automatically downloaded)
 
-### 编译步骤
+### Build Steps
 
 ```bash
 mkdir build
@@ -98,36 +105,75 @@ cmake ..
 make
 ```
 
-### 安装
+### Installation
 
 ```bash
 sudo make install
 ```
 
-## 使用方法
+## Usage
 
-### 运行服务
+### Running the Service
 
 ```bash
-comsrv /path/to/config.json
+comsrv /path/to/config.yaml
 ```
 
-### 使用Docker
+### Using Docker
 
 ```bash
 docker build -t comsrv .
-docker run -v /path/to/config.json:/etc/comsrv/comsrv.json -d comsrv
+docker run -v /path/to/config.yaml:/etc/comsrv/comsrv.yaml -d comsrv
 ```
 
-## 扩展开发
+### Monitoring
 
-### 添加新的协议
+Comsrv exposes Prometheus metrics at `http://<host>:9100/metrics`. Available metrics include:
 
-1. 创建新的协议类，继承自ComBase类
-2. 实现所有必要的虚函数
-3. 在ProtocolFactory中注册新的协议类型
+- Communication metrics:
+  - `comsrv_bytes_total`: Total number of bytes sent/received
+  - `comsrv_packets_total`: Total number of packets sent/received
+  - `comsrv_packet_errors_total`: Total number of packet errors by type
+  - `comsrv_packet_processing_duration_seconds`: Packet processing duration
 
-示例：
+- Channel metrics:
+  - `comsrv_channel_status`: Channel connection status
+  - `comsrv_channel_response_time_seconds`: Channel response time
+  - `comsrv_channel_errors_total`: Channel errors by type
+
+- Protocol metrics:
+  - `comsrv_protocol_status`: Protocol status
+  - `comsrv_protocol_errors_total`: Protocol errors by type
+
+- Service metrics:
+  - `comsrv_service_status`: Service status
+  - `comsrv_service_uptime_seconds`: Service uptime
+  - `comsrv_service_errors_total`: Service errors by type
+
+### Logging
+
+Comsrv provides comprehensive logging at both service and channel levels:
+
+- Service log (`/var/log/ems/comsrv.log`):
+  - Service startup/shutdown events
+  - Channel configuration and status changes
+  - System-wide events and errors
+
+- Channel logs (`/var/log/ems/channels/<channel_id>.log`):
+  - Channel connection status
+  - Raw communication data (INFO level)
+  - Data parsing details (DEBUG level)
+  - Channel-specific errors and warnings
+
+## Development
+
+### Adding a New Protocol
+
+1. Create a new protocol class inheriting from ComBase
+2. Implement all required virtual functions
+3. Register the new protocol type in ProtocolFactory
+
+Example:
 
 ```cpp
 class NewProtocol : public ComBase {
@@ -138,20 +184,44 @@ public:
     bool start() override;
     bool stop() override;
     
-    // 协议特定的方法...
+    // Protocol specific methods...
 };
 
-// 在ProtocolFactory中注册
-factory.registerProtocol("new_protocol", [](const std::map<std::string, ConfigManager::ConfigValue>& config) -> std::unique_ptr<ComBase> {
-    // 创建新协议实例...
-    return std::make_unique<NewProtocol>(name);
-});
+// Register in ProtocolFactory
+factory.registerProtocol("new_protocol", 
+    [](const std::map<std::string, ConfigManager::ConfigValue>& config) -> std::unique_ptr<ComBase> {
+        return std::make_unique<NewProtocol>(config.at("name").get<std::string>());
+    });
 ```
 
-## 贡献
+### Adding New Metrics
 
-欢迎提交Pull Request或Issue。
+1. Define new metric in the Metrics class
+2. Initialize the metric in the constructor
+3. Add methods to update the metric
+4. Use the metric in your protocol implementation
 
-## 许可证
+Example:
+
+```cpp
+// In metrics.h
+prometheus::Counter& my_new_metric_;
+
+// In metrics.cpp
+my_new_metric_(prometheus::BuildCounter()
+    .Name("comsrv_my_new_metric_total")
+    .Help("Description of my new metric")
+    .Labels({{"service", "comsrv"}})
+    .Register(*registry_))
+
+// Usage
+Metrics::instance().incrementMyNewMetric();
+```
+
+## Contributing
+
+Pull requests and issues are welcome.
+
+## License
 
 MIT License 

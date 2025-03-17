@@ -1,13 +1,19 @@
-#ifndef PROTOCOL_FACTORY_H
-#define PROTOCOL_FACTORY_H
+#pragma once
 
 #include <string>
 #include <map>
 #include <memory>
 #include <functional>
 #include <mutex>
+#include <vector>
 #include "core/comBase.h"
 #include "core/config/configManager.h"
+
+// Type alias for protocol configuration
+using ProtocolConfig = std::map<std::string, std::string>;
+
+// Type alias for protocol creator function
+using ProtocolCreator = std::function<std::unique_ptr<ComBase>(const ProtocolConfig&)>;
 
 /**
  * @brief Protocol Factory class
@@ -52,6 +58,16 @@ public:
      */
     std::vector<std::unique_ptr<ComBase>> createProtocolsFromConfig(const std::string& configFile);
 
+    /**
+     * @brief Register all supported protocol types
+     * 
+     * This method registers all protocol types supported by the system.
+     * It should be called once at program startup.
+     * 
+     * @return Number of registered protocol types
+     */
+    int registerSupportedProtocols();
+
 private:
     // Private constructor for singleton
     ProtocolFactory();
@@ -68,6 +84,4 @@ private:
 
     // Thread safety
     std::mutex m_mutex;
-};
-
-#endif // PROTOCOL_FACTORY_H 
+}; 
