@@ -1,0 +1,40 @@
+{
+  "templates": [
+    {
+      "id": "battery_model",
+      "name": "储能电池模型",
+      "description": "储能电池实时状态监控和控制模型",
+      "file": "battery_model.json"
+    },
+    {
+      "id": "diesel_generator_model",
+      "name": "柴油发电机模型",
+      "description": "柴油发电机实时状态监控和控制模型",
+      "file": "diesel_generator_model.json"
+    },
+    {
+      "id": "pv_generator_model",
+      "name": "光伏发电机模型",
+      "description": "光伏发电系统实时状态监控和控制模型",
+      "file": "pv_generator_model.json"
+    },
+    {
+      "id": "load_model",
+      "name": "负载模型",
+      "description": "负载实时状态监控和控制模型",
+      "file": "load_model.json"
+    },
+    {
+      "id": "meter_model",
+      "name": "电表模型",
+      "description": "电表实时状态监控和数据采集模型",
+      "file": "meter_model.json"
+    },
+    {
+      "id": "stepper_motor_model",
+      "name": "步进电机模型",
+      "description": "步进电机实时状态监控和控制模型",
+      "file": "stepper_motor_model.json"
+    }
+  ]
+} 

@@ -27,6 +27,11 @@
           <el-icon><el-icon-data-line /></el-icon>
           <span>Activity</span>
         </el-menu-item>
+        
+        <el-menu-item index="/template-builder">
+          <el-icon><el-icon-edit /></el-icon>
+          <span>Template Builder</span>
+        </el-menu-item>
       </el-menu>
       
       <div class="sidebar-footer">
@@ -83,7 +88,8 @@ export default {
       const routeMap = {
         '/': 'Home',
         '/system': 'System',
-        '/activity': 'Activity'
+        '/activity': 'Activity',
+        '/template-builder': 'Template Builder'
       };
       
       if (to.path.startsWith('/system/')) {
