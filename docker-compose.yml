@@ -61,7 +61,7 @@ services:
       - TZ=Asia/Shanghai
 
   modsrv:
-    build: ./modsrv
+    build: ./services/modsrv
     volumes:
       - ./config/modsrv/modsrv.toml:/etc/modsrv.toml
     depends_on:
