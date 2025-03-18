@@ -1,50 +1,36 @@
-FROM rust:1.81-slim as builder
-
-# Install build dependencies
-RUN apt-get update && apt-get install -y \
-    pkg-config \
-    libx11-dev \
-    libxcb1-dev \
-    libxcb-render0-dev \
-    libxcb-shape0-dev \
-    libxcb-xfixes0-dev \
-    libxkbcommon-dev \
-    libssl-dev \
-    libfontconfig1-dev \
-    libfreetype6-dev \
-    && rm -rf /var/lib/apt/lists/*
+FROM rust:1.81-slim-bullseye as builder
 
 WORKDIR /usr/src/modsrv
 COPY . .
 
-# Build the application with release profile
-RUN cargo build --release
+RUN apt-get update && \
+    apt-get install -y pkg-config libssl-dev && \
+    cargo build --release
 
-# Runtime stage
 FROM debian:bullseye-slim
 
-# Install runtime dependencies
-RUN apt-get update && apt-get install -y \
-    libssl-dev \
-    ca-certificates \
-    libx11-6 \
-    libxcb1 \
-    libxcb-render0 \
-    libxcb-shape0 \
-    libxcb-xfixes0 \
-    libxkbcommon0 \
-    libfontconfig1 \
-    libfreetype6 \
-    && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && \
+    apt-get install -y ca-certificates && \
+    rm -rf /var/lib/apt/lists/*
 
-# Create log directory
-RUN mkdir -p /var/log/ems
+# Create necessary directories
+RUN mkdir -p /opt/voltageems/modsrv/templates && \
+    mkdir -p /etc/voltageems/config/modsrv
 
-# Copy the binary from the builder stage
-COPY --from=builder /usr/src/modsrv/target/release/modsrv /usr/local/bin/modsrv
+# Copy the built binary from the builder stage
+COPY --from=builder /usr/src/modsrv/target/release/modsrv /opt/voltageems/modsrv/modsrv
 
-# Copy templates directory
-COPY --from=builder /usr/src/modsrv/templates /templates
+# Copy templates to the appropriate location
+COPY templates /opt/voltageems/modsrv/templates/
 
-# Set the entrypoint
-ENTRYPOINT ["/usr/local/bin/modsrv", "--config", "/etc/modsrv.toml"] 
+# Set the working directory
+WORKDIR /opt/voltageems/modsrv
+
+# Volume for external configuration
+VOLUME /etc/voltageems/config/modsrv
+
+# Expose port for API
+EXPOSE 8000
+
+# Set the entry point
+ENTRYPOINT ["/opt/voltageems/modsrv/modsrv"] 

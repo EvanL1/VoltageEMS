@@ -1,0 +1,29 @@
+redis:
+  host: "localhost"
+  port: 6379
+  password: ""
+  socket: ""
+  key_prefix: "ems:"
+  db: 0
+
+logging:
+  level: "debug"
+  file: ""
+  console: true
+
+model:
+  update_interval_ms: 1000
+  config_key_pattern: "ems:model:config:*"
+  data_key_pattern: "ems:data:*"
+  output_key_pattern: "ems:model:output:*"
+  templates_dir: "/opt/voltageems/modsrv/templates"
+
+control:
+  operation_key_pattern: "ems:control:operation:*"
+  enabled: true
+
+use_redis: true
+storage_mode: "hybrid"
+sync_interval_secs: 60
+templates_dir: "/opt/voltageems/modsrv/templates"
+log_level: "debug"

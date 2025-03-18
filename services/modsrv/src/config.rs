@@ -80,11 +80,11 @@ impl Config {
             return Err(ConfigError::NotFound(config_file.to_string()).into());
         }
 
-        // 根据文件扩展名确定格式
+        // Determine format based on file extension
         let format = match config_path.extension().and_then(|ext| ext.to_str()) {
             Some("yaml") | Some("yml") => FileFormat::Yaml,
             Some("toml") => FileFormat::Toml,
-            _ => FileFormat::Toml, // 默认使用TOML
+            _ => FileFormat::Yaml, // Default to YAML
         };
 
         let config = ConfigLib::builder()
@@ -99,11 +99,11 @@ impl Config {
     pub fn from_file<P: AsRef<Path>>(path: P) -> Result<Self> {
         let path_ref = path.as_ref();
         
-        // 根据文件扩展名确定格式
+        // Determine format based on file extension
         let format = match path_ref.extension().and_then(|ext| ext.to_str()) {
             Some("yaml") | Some("yml") => FileFormat::Yaml,
             Some("toml") => FileFormat::Toml,
-            _ => FileFormat::Toml, // 默认使用TOML
+            _ => FileFormat::Yaml, // Default to YAML
         };
         
         let config = ConfigLib::builder()
@@ -133,13 +133,13 @@ impl Config {
                 config_key_pattern: "ems:model:config:*".to_string(),
                 data_key_pattern: "ems:data:*".to_string(),
                 output_key_pattern: "ems:model:output:*".to_string(),
-                templates_dir: default_templates_dir(),
+                templates_dir: "/opt/voltageems/modsrv/templates".to_string(),
             },
             control: ControlConfig {
                 operation_key_pattern: "ems:control:operation:*".to_string(),
                 enabled: true,
             },
-            templates_dir: default_templates_dir(),
+            templates_dir: "/opt/voltageems/modsrv/templates".to_string(),
             log_level: "info".to_string(),
             use_redis: true,
             storage_mode: "hybrid".to_string(),

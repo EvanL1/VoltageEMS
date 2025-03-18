@@ -99,9 +99,9 @@ impl TemplateManager {
                     .map_err(|e| ModelSrvError::JsonError(e))?
             },
             _ => {
-                // Default to JSON format
-                serde_json::from_str::<ModelWithActions>(&content)
-                    .map_err(|e| ModelSrvError::JsonError(e))?
+                // Default to YAML format
+                serde_yaml::from_str::<ModelWithActions>(&content)
+                    .map_err(|e| ModelSrvError::YamlError(e))?
             }
         };
             
@@ -166,28 +166,28 @@ impl TemplateManager {
         // Determine format based on file extension
         let template = match path.extension().and_then(|ext| ext.to_str()) {
             Some("yaml") | Some("yml") => {
-                println!("Parsing as YAML");
+                debug!("Parsing as YAML");
                 serde_yaml::from_str(&file_content)
                     .map_err(|e| {
-                        println!("YAML parsing error: {}", e);
+                        error!("YAML parsing error: {}", e);
                         ModelSrvError::YamlError(e)
                     })?
             },
             Some("json") => {
-                println!("Parsing as JSON");
+                debug!("Parsing as JSON");
                 serde_json::from_str(&file_content)
                     .map_err(|e| {
-                        println!("JSON parsing error: {}", e);
+                        error!("JSON parsing error: {}", e);
                         ModelSrvError::JsonError(e)
                     })?
             },
             _ => {
-                // Default to JSON format
-                println!("Parsing as default JSON");
-                serde_json::from_str(&file_content)
+                // Default to YAML format
+                debug!("Parsing as default YAML");
+                serde_yaml::from_str(&file_content)
                     .map_err(|e| {
-                        println!("JSON parsing error: {}", e);
-                        ModelSrvError::JsonError(e)
+                        error!("YAML parsing error: {}", e);
+                        ModelSrvError::YamlError(e)
                     })?
             }
         };
@@ -410,15 +410,14 @@ impl TemplateManager {
         instance: &ModelWithActions,
         instance_id: &str,
     ) -> Result<()> {
-        // Serialize instance
-        let instance_json = serde_json::to_string(instance)
-            .map_err(|e| ModelSrvError::TemplateError(
-                format!("Failed to serialize instance: {}", e)
-            ))?;
+        let key = format!("{}model:config:{}", self.key_prefix, instance_id);
+        
+        // Convert to YAML
+        let yaml = serde_yaml::to_string(instance)
+            .map_err(|e| ModelSrvError::YamlError(e))?;
             
         // Save to store
-        let key = format!("{}model:config:{}", self.key_prefix, instance_id);
-        store.set_string(&key, &instance_json)?;
+        store.set_string(&key, &yaml)?;
         
         Ok(())
     }

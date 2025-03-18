@@ -1,0 +1,62 @@
+id: "stepper_motor_template"
+name: "Stepper Motor Template"
+description: "Real-time monitoring and control model for stepper motors"
+file_path: "templates/stepper_motor_template.yaml"
+version: "1.0.0"
+
+input_mappings:
+  - source_field: "position"
+    target_field: "current_position"
+    data_type: "float"
+  - source_field: "speed"
+    target_field: "current_speed"
+    data_type: "float"
+  - source_field: "torque"
+    target_field: "current_torque"
+    data_type: "float"
+  - source_field: "temperature"
+    target_field: "motor_temperature"
+    data_type: "float"
+
+output_mappings:
+  - source_field: "status"
+    target_field: "motor_status"
+    data_type: "string"
+  - source_field: "efficiency"
+    target_field: "motor_efficiency"
+    data_type: "float"
+  - source_field: "error_code"
+    target_field: "motor_error"
+    data_type: "integer"
+
+control_actions:
+  - id: "start_motor"
+    name: "Start Motor"
+    description: "Start the stepper motor"
+    parameters:
+      - name: "initial_speed"
+        description: "Initial speed in RPM"
+        data_type: "float"
+        default_value: "60.0"
+      - name: "acceleration"
+        description: "Acceleration rate"
+        data_type: "float"
+        default_value: "10.0"
+  
+  - id: "stop_motor"
+    name: "Stop Motor"
+    description: "Stop the stepper motor"
+    parameters:
+      - name: "deceleration"
+        description: "Deceleration rate"
+        data_type: "float"
+        default_value: "15.0"
+  
+  - id: "change_speed"
+    name: "Change Speed"
+    description: "Change the motor speed"
+    parameters:
+      - name: "target_speed"
+        description: "Target speed in RPM"
+        data_type: "float"
+        required: true

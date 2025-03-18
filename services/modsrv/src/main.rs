@@ -6,8 +6,10 @@ mod control;
 mod template;
 mod storage;
 mod storage_agent;
-// Comment out the gui module as we don't need it
-// mod gui;
+
+// Only include GUI module when the 'gui' feature is enabled
+#[cfg(feature = "gui")]
+mod gui;
 
 use crate::config::Config;
 use crate::error::{Result, ModelSrvError};
@@ -17,14 +19,16 @@ use crate::control::ControlManager;
 use crate::template::TemplateManager;
 use crate::storage_agent::StorageAgent;
 use crate::storage::DataStore;
-// Remove gui module import
+
+// Only include GUI imports when the 'gui' feature is enabled
+#[cfg(feature = "gui")]
+use crate::gui::start_gui;
+
 use clap::{Parser, Subcommand};
 use log::{error, info};
 use std::path::PathBuf;
 use std::time::Duration;
 use tokio::time;
-// Remove external modsrv import
-// use modsrv::{StorageAgent};
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -87,12 +91,24 @@ fn main() -> Result<()> {
     // Load configuration
     let config_path = args.config.unwrap_or_else(|| {
         // Try to find configuration file by priority
-        if std::path::Path::new("modsrv.yaml").exists() {
+        // 1. Check in /etc/voltageems/config/modsrv directory
+        if std::path::Path::new("/etc/voltageems/config/modsrv/modsrv.yaml").exists() {
+            PathBuf::from("/etc/voltageems/config/modsrv/modsrv.yaml")
+        } else if std::path::Path::new("/etc/voltageems/config/modsrv/modsrv.yml").exists() {
+            PathBuf::from("/etc/voltageems/config/modsrv/modsrv.yml")
+        } else if std::path::Path::new("/etc/voltageems/config/modsrv/modsrv.toml").exists() {
+            PathBuf::from("/etc/voltageems/config/modsrv/modsrv.toml")
+        } 
+        // 2. Fall back to checking in current directory
+        else if std::path::Path::new("modsrv.yaml").exists() {
             PathBuf::from("modsrv.yaml")
         } else if std::path::Path::new("modsrv.yml").exists() {
             PathBuf::from("modsrv.yml")
-        } else {
+        } else if std::path::Path::new("modsrv.toml").exists() {
             PathBuf::from("modsrv.toml")
+        } else {
+            // Default to /etc/voltageems/config/modsrv/modsrv.yaml
+            PathBuf::from("/etc/voltageems/config/modsrv/modsrv.yaml")
         }
     });
     
@@ -128,8 +144,18 @@ fn main() -> Result<()> {
         }
         Some(Commands::Service) => {
             info!("Starting service");
-            // TODO: Implement service mode
-            println!("Service mode not implemented yet");
+            #[cfg(feature = "gui")]
+            {
+                // Start GUI version if the feature is enabled
+                start_gui(config.clone())?;
+            }
+            
+            #[cfg(not(feature = "gui"))]
+            {
+                // Start the regular service if GUI is not enabled
+                let rt = tokio::runtime::Runtime::new()?;
+                rt.block_on(run_service(&config))?;
+            }
         }
         Some(Commands::Create { template_id, instance_id, name }) => {
             info!("Creating model instance");

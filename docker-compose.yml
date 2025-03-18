@@ -8,6 +8,7 @@ services:
     volumes:
       - redis-data:/data
     command: redis-server --appendonly yes
+    restart: unless-stopped
     networks:
       - ems-network
 
@@ -61,15 +62,20 @@ services:
       - TZ=Asia/Shanghai
 
   modsrv:
-    build: ./services/modsrv
+    build:
+      context: ./services/modsrv
+      dockerfile: Dockerfile
     volumes:
-      - ./config/modsrv/modsrv.toml:/etc/modsrv.toml
+      - ./config/modsrv:/etc/voltageems/config/modsrv
+      - ./services/modsrv/templates:/opt/voltageems/modsrv/templates
     depends_on:
-      - mosquitto
-      - comsrv
+      - redis
     restart: unless-stopped
     environment:
-      - TZ=Asia/Shanghai
+      - RUST_LOG=debug
+    command: ["--config", "/etc/voltageems/config/modsrv/modsrv.yaml", "service"]
+    networks:
+      - ems-network
 
   netsrv:
     build: ./netsrv

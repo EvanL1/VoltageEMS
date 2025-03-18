@@ -36,3 +36,7 @@ templates:
     name: 步进电机模型
     description: 步进电机实时状态监控和控制模型
     file_path: templates/stepper_motor_model.json 
+  - id: stepper_motor_template
+    name: Stepper Motor Template
+    description: Real-time monitoring and control model for stepper motors
+    file_path: templates/stepper_motor_template.yaml
