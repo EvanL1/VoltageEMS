@@ -11,69 +11,69 @@ pub mod redis_store;
 pub mod memory_store;
 pub mod hybrid_store;
 
-/// 数据存储接口，定义了存储操作的基本方法
+/// Data store interface defining basic storage operations
 pub trait DataStore: Send + Sync {
-    /// 获取字符串值
+    /// Get a string value
     fn get_string(&self, key: &str) -> Result<String>;
     
-    /// 设置字符串值
+    /// Set a string value
     fn set_string(&self, key: &str, value: &str) -> Result<()>;
     
-    /// 获取哈希表
+    /// Get a hash table
     fn get_hash(&self, key: &str) -> Result<HashMap<String, String>>;
     
-    /// 设置哈希表
+    /// Set a hash table
     fn set_hash(&self, key: &str, hash: &HashMap<String, String>) -> Result<()>;
     
-    /// 设置哈希表中的单个字段
+    /// Set a single field in a hash table
     fn set_hash_field(&self, key: &str, field: &str, value: &str) -> Result<()>;
     
-    /// 获取键的类型
+    /// Get the type of a key
     fn get_type(&self, key: &str) -> Result<crate::redis_handler::RedisType> {
-        // 默认实现：先尝试获取字符串，如果成功则是字符串类型
+        // Default implementation: first try to get a string, if successful it's a string type
         if self.get_string(key).is_ok() {
             return Ok(crate::redis_handler::RedisType::String);
         }
         
-        // 尝试获取哈希表，如果成功则是哈希类型
+        // Try to get a hash table, if successful it's a hash type
         if self.get_hash(key).is_ok() {
             return Ok(crate::redis_handler::RedisType::Hash);
         }
         
-        // 如果键存在但类型未知，返回None类型
+        // If the key exists but type is unknown, return None type
         if self.exists(key)? {
             return Ok(crate::redis_handler::RedisType::None);
         }
         
-        // 键不存在
+        // Key doesn't exist
         Err(ModelSrvError::KeyNotFound(key.to_string()))
     }
     
-    /// 获取匹配模式的所有键
+    /// Get all keys matching a pattern
     fn get_keys(&self, pattern: &str) -> Result<Vec<String>>;
     
-    /// 检查键是否存在
+    /// Check if a key exists
     fn exists(&self, key: &str) -> Result<bool>;
     
-    /// 删除键
+    /// Delete a key
     fn delete(&self, key: &str) -> Result<()>;
 }
 
-/// 同步模式枚举
+/// Sync mode enumeration
 #[derive(Clone, Debug)]
 pub enum SyncMode {
-    /// 写操作立即同步到Redis
+    /// Write operations are immediately synced to Redis
     WriteThrough,
     
-    /// 定期批量同步到Redis
+    /// Batch sync to Redis periodically
     WriteBack(Duration),
     
-    /// 只在需要时同步到Redis
+    /// Only sync to Redis when explicitly requested
     OnDemand,
 }
 
-/// 将通配符模式转换为正则表达式
+/// Convert a wildcard pattern to a regular expression
 pub fn pattern_to_regex(pattern: &str) -> Regex {
     let pattern = pattern.replace("*", ".*");
     Regex::new(&format!("^{}$", pattern)).unwrap_or_else(|_| Regex::new(".*").unwrap())
-} 
+}

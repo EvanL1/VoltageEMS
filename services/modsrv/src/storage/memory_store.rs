@@ -4,14 +4,14 @@ use crate::error::{Result, ModelSrvError};
 use super::{DataStore, pattern_to_regex};
 use serde_json;
 
-/// 内存存储实现
+/// Memory store implementation
 pub struct MemoryStore {
     data: Arc<RwLock<HashMap<String, String>>>,
     hash_data: Arc<RwLock<HashMap<String, HashMap<String, String>>>>,
 }
 
 impl MemoryStore {
-    /// 创建新的内存存储
+    /// Create a new memory store
     pub fn new() -> Self {
         Self {
             data: Arc::new(RwLock::new(HashMap::new())),
@@ -19,7 +19,7 @@ impl MemoryStore {
         }
     }
     
-    /// 清空所有数据
+    /// Clear all data
     pub fn clear(&self) -> Result<()> {
         let mut data = self.data.write().map_err(|_| ModelSrvError::LockError)?;
         data.clear();

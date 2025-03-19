@@ -1,4 +1,4 @@
-FROM rust:1.75 as builder
+FROM rust:latest as builder
 
 WORKDIR /usr/src/app
 
@@ -13,13 +13,14 @@ RUN cargo build --release && \
 COPY . .
 RUN cargo build --release
 
-# Runtime stage
-FROM debian:bullseye-slim
+# Runtime stage - use Debian Bookworm which has newer GLIBC
+FROM debian:bookworm-slim
 
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
     ca-certificates \
     libssl-dev \
+    curl \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app

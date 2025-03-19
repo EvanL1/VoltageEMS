@@ -50,8 +50,13 @@ impl StorageAgent {
         })
     }
     
-    /// Get storage instance
+    /// Get storage instance that implements DataStore trait
     pub fn store(&self) -> Arc<HybridStore> {
+        self.store.clone()
+    }
+    
+    /// Get direct access to the hybrid store
+    pub fn hybrid_store(&self) -> Arc<HybridStore> {
         self.store.clone()
     }
     

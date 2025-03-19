@@ -4,6 +4,7 @@ use redis::{Client, Connection, Commands, RedisResult, Value};
 use std::collections::HashMap;
 use log::{info, error, debug};
 
+/// Redis connection handler
 pub struct RedisConnection {
     client: Option<Client>,
     connection: Option<Connection>,
@@ -25,6 +26,13 @@ impl RedisConnection {
             client: None,
             connection: None,
         }
+    }
+
+    pub fn from_config(config: &crate::config::RedisConfig) -> Result<Self> {
+        let mut conn = Self::new();
+        let redis_url = format!("redis://{}:{}/{}", config.host, config.port, config.database);
+        conn.connect(&redis_url)?;
+        Ok(conn)
     }
 
     pub fn connect(&mut self, redis_url: &str) -> Result<()> {
@@ -121,7 +129,7 @@ impl RedisConnection {
         }
     }
 
-    /// 将值推送到列表的右端（尾部）
+    /// Push a value to the right end (tail) of the list
     pub fn push_list(&mut self, key: &str, value: &str) -> Result<()> {
         if let Some(conn) = &mut self.connection {
             conn.rpush(key, value).map_err(|e| ModelSrvError::RedisError(e.to_string()))
@@ -130,7 +138,7 @@ impl RedisConnection {
         }
     }
 
-    /// 将值推送到列表的左端（头部）
+    /// Push a value to the left end (head) of the list
     pub fn push_list_front(&mut self, key: &str, value: &str) -> Result<()> {
         if let Some(conn) = &mut self.connection {
             conn.lpush(key, value).map_err(|e| ModelSrvError::RedisError(e.to_string()))
@@ -139,7 +147,7 @@ impl RedisConnection {
         }
     }
 
-    /// 从列表的右端（尾部）弹出值
+    /// Pop a value from the right end (tail) of the list
     pub fn pop_list(&mut self, key: &str) -> Result<Option<String>> {
         if let Some(conn) = &mut self.connection {
             conn.rpop::<_, Option<String>>(key, None)
@@ -149,7 +157,7 @@ impl RedisConnection {
         }
     }
 
-    /// 从列表的左端（头部）弹出值
+    /// Pop a value from the left end (head) of the list
     pub fn pop_list_front(&mut self, key: &str) -> Result<Option<String>> {
         if let Some(conn) = &mut self.connection {
             conn.lpop::<_, Option<String>>(key, None)
@@ -159,7 +167,7 @@ impl RedisConnection {
         }
     }
 
-    /// 获取列表的长度
+    /// Get the length of the list
     pub fn list_len(&mut self, key: &str) -> Result<usize> {
         if let Some(conn) = &mut self.connection {
             conn.llen(key).map_err(|e| ModelSrvError::RedisError(e.to_string()))
@@ -168,7 +176,7 @@ impl RedisConnection {
         }
     }
 
-    /// 获取列表的范围
+    /// Get a range of values from the list
     pub fn list_range(&mut self, key: &str, start: isize, stop: isize) -> Result<Vec<String>> {
         if let Some(conn) = &mut self.connection {
             conn.lrange(key, start, stop).map_err(|e| ModelSrvError::RedisError(e.to_string()))
@@ -177,7 +185,7 @@ impl RedisConnection {
         }
     }
 
-    /// 阻塞式从列表弹出值，支持超时
+    /// Block and pop a value from a list with timeout
     pub fn blpop(&mut self, key: &str, timeout_seconds: usize) -> Result<Option<(String, String)>> {
         if let Some(conn) = &mut self.connection {
             conn.blpop(key, timeout_seconds).map_err(|e| ModelSrvError::RedisError(e.to_string()))
@@ -186,7 +194,7 @@ impl RedisConnection {
         }
     }
 
-    /// 阻塞式从多个列表弹出值，支持超时
+    /// Block and pop a value from multiple lists with timeout
     pub fn blpop_multiple(&mut self, keys: &[&str], timeout_seconds: usize) -> Result<Option<(String, String)>> {
         if let Some(conn) = &mut self.connection {
             conn.blpop(keys, timeout_seconds).map_err(|e| ModelSrvError::RedisError(e.to_string()))
@@ -219,7 +227,7 @@ impl RedisConnection {
         }
     }
 
-    /// 发布消息到指定的频道
+    /// Publish a message to the specified channel
     pub fn publish(&mut self, channel: &str, message: &str) -> Result<()> {
         if let Some(conn) = &mut self.connection {
             let _: () = redis::cmd("PUBLISH")
@@ -231,5 +239,30 @@ impl RedisConnection {
         } else {
             Err(ModelSrvError::RedisError("Not connected to Redis".to_string()))
         }
+    }
+
+    /// Create a new Redis connection with the same configuration
+    pub fn duplicate(&self) -> Result<Self> {
+        let mut conn = Self::new();
+        
+        if let Some(client) = &self.client {
+            // Try to create a new connection from the original client
+            let connection = client.get_connection()
+                .map_err(|e| ModelSrvError::RedisError(format!("Failed to duplicate connection: {}", e)))?;
+            
+            conn.client = Some(client.clone());
+            conn.connection = Some(connection);
+            return Ok(conn);
+        }
+        
+        // If no client is available, try to get connection info from environment variables
+        if let Ok(redis_url) = std::env::var("REDIS_URL") {
+            conn.connect(&redis_url)
+                .map_err(|e| ModelSrvError::RedisError(format!("Failed to duplicate connection: {}", e)))?;
+            return Ok(conn);
+        }
+        
+        // If all methods fail, return an error
+        Err(ModelSrvError::RedisError("No connection information available to duplicate".to_string()))
     }
 } 

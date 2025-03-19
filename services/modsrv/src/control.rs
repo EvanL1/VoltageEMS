@@ -458,7 +458,7 @@ impl ControlManager {
             if let Some(duration) = condition.duration_ms {
                 let condition_key = format!("{}:{}", condition.id, condition.field);
                 
-                // Use HashMap to store condition states
+                // 使用HashMap来存储条件状态
                 let mut condition_states = HashMap::new();
                 let state_entry = condition_states.entry(condition_key.clone());
                 
@@ -521,7 +521,7 @@ impl ControlManager {
                         format!("Missing point parameter for device operation: {}", operation.id)
                     ))?;
                 
-                // Use let binding to create a value with longer lifetime
+                // 使用let绑定创建一个更长生命周期的值
                 let default_value = "true".to_string();
                 let value = operation.get_parameter("value")
                     .unwrap_or(&default_value);

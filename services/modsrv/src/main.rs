@@ -31,6 +31,9 @@ use log::{error, info};
 use std::path::PathBuf;
 use std::time::Duration;
 use tokio::time;
+use crate::storage::hybrid_store::HybridStore;
+use std::sync::Arc;
+use crate::storage::SyncMode;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -84,6 +87,13 @@ enum Commands {
     
     /// Debug Redis data
     Debug {
+        /// Key pattern to search for
+        #[arg(short, long, default_value = "modsrv:*")]
+        pattern: String,
+    },
+    
+    /// View memory store data
+    Memory {
         /// Key pattern to search for
         #[arg(short, long, default_value = "modsrv:*")]
         pattern: String,
@@ -165,8 +175,13 @@ fn main() -> Result<()> {
         Some(Commands::Api) => {
             info!("Starting API server only");
             let rt = tokio::runtime::Runtime::new()?;
+            let config_clone = config.clone();
+            
+            // Create the HybridStore with proper arguments
+            let store = Arc::new(HybridStore::new(&config, SyncMode::WriteThrough)?);
+            
             rt.block_on(async {
-                if let Err(e) = start_api_server(config).await {
+                if let Err(e) = start_api_server(config_clone, store).await {
                     error!("API server error: {}", e);
                 }
             });
@@ -184,13 +199,16 @@ fn main() -> Result<()> {
         Some(Commands::Debug { pattern }) => {
             debug_redis_data(&config, &pattern)?;
         }
+        Some(Commands::Memory { pattern }) => {
+            view_memory_data(&pattern)?;
+        }
         None => {
             // Default to Info
             info!("Displaying model information (default)");
             display_model_info(&config, &storage_agent)?;
         }
     }
-    
+
     Ok(())
 }
 
@@ -212,10 +230,13 @@ async fn run_service(config: &Config) -> Result<()> {
     let update_interval = Duration::from_millis(config.model.update_interval_ms);
     let mut interval = time::interval(update_interval);
 
-    // 启动API服务器
+    // Start API server
     let config_clone = config.clone();
+    // Create the HybridStore with proper arguments
+    let store_clone = Arc::new(HybridStore::new(config, SyncMode::WriteThrough)?);
+    
     tokio::spawn(async move {
-        if let Err(e) = start_api_server(config_clone).await {
+        if let Err(e) = start_api_server(config_clone, store_clone).await {
             error!("API server error: {}", e);
         }
     });
@@ -508,14 +529,31 @@ fn debug_redis_data(config: &Config, pattern: &str) -> Result<()> {
     Ok(())
 }
 
-fn init_logging(config: &Config) {
-    // Initialize logging based on configuration
-    let env = env_logger::Env::default()
-        .filter_or("RUST_LOG", &config.logging.level);
+/// View memory store data
+fn view_memory_data(pattern: &str) -> Result<()> {
+    let config = Config::default();
+    let store = HybridStore::new(&config, SyncMode::WriteThrough)?;
     
-    env_logger::Builder::from_env(env)
-        .format_timestamp_millis()
-        .init();
+    info!("Retrieving memory data with pattern: {}", pattern);
     
-    info!("Logging initialized at level: {}", config.logging.level);
+    // Get data from memory store
+    let keys = store.get_keys(pattern)?;
+    if keys.is_empty() {
+        println!("No data found matching pattern: {}", pattern);
+        return Ok(());
+    }
+    
+    println!("Memory data ({}): ", keys.len());
+    for key in keys {
+        match store.get_string(&key) {
+            Ok(value) => {
+                println!("{}: {}", key, value);
+            },
+            Err(e) => {
+                println!("{}: Error: {}", key, e);
+            }
+        }
+    }
+    
+    Ok(())
 } 

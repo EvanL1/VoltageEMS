@@ -11,8 +11,9 @@ use crate::config::Config;
 use super::{DataStore, SyncMode};
 use super::memory_store::MemoryStore;
 use super::redis_store::RedisStore;
+use crate::redis_handler::RedisConnection;
 
-/// 混合存储实现，结合内存和Redis
+/// Hybrid store implementation, combining memory and Redis
 pub struct HybridStore {
     memory: Arc<MemoryStore>,
     redis: Option<Arc<RedisStore>>,
@@ -20,12 +21,16 @@ pub struct HybridStore {
 }
 
 impl HybridStore {
-    /// 创建新的混合存储
+    /// Create a new hybrid store
     pub fn new(config: &Config, sync_mode: SyncMode) -> Result<Self> {
         let memory = Arc::new(MemoryStore::new());
         
         let redis = if config.use_redis {
-            Some(Arc::new(RedisStore::new(config)?))
+            // Create a RedisConnection from the config
+            let redis_conn = RedisConnection::from_config(&config.redis)?;
+            
+            // Create the RedisStore with the connection
+            Some(Arc::new(RedisStore::new(redis_conn)))
         } else {
             None
         };
@@ -37,14 +42,14 @@ impl HybridStore {
         })
     }
     
-    /// 从Redis加载数据到内存
+    /// Load data from Redis to memory
     pub fn load_from_redis(&self, pattern: &str) -> Result<()> {
         if let Some(redis) = &self.redis {
             let keys = redis.get_keys(pattern)?;
             let mut keys_count = 0;
             
             for key in &keys {
-                // 检查键的类型
+                // Check key type
                 let key_type = redis.get_type(key)?;
                 
                 match key_type {
@@ -59,7 +64,7 @@ impl HybridStore {
                         keys_count += 1;
                     },
                     _ => {
-                        // 其他类型暂不处理
+                        // Skip other types for now
                         debug!("Skipping key '{}' with unsupported type", key);
                     }
                 }
@@ -70,21 +75,21 @@ impl HybridStore {
         Ok(())
     }
     
-    /// 将内存数据同步到Redis
+    /// Sync memory data to Redis
     pub fn sync_to_redis(&self, pattern: &str) -> Result<()> {
         if let Some(redis) = &self.redis {
             let keys = self.memory.get_keys(pattern)?;
             let mut synced = 0;
             
             for key in keys {
-                // 尝试获取字符串值
+                // Try to get string value
                 match self.memory.get_string(&key) {
                     Ok(value) => {
                         redis.set_string(&key, &value)?;
                         synced += 1;
                     },
                     Err(_) => {
-                        // 尝试获取哈希值
+                        // Try to get hash value
                         match self.memory.get_hash(&key) {
                             Ok(hash) => {
                                 redis.set_hash(&key, &hash)?;
@@ -103,19 +108,51 @@ impl HybridStore {
         Ok(())
     }
     
-    /// 获取内存存储
+    /// Get the memory store
     pub fn memory_store(&self) -> Arc<MemoryStore> {
         self.memory.clone()
     }
     
-    /// 获取Redis存储
+    /// Get the Redis store
     pub fn redis_store(&self) -> Option<Arc<RedisStore>> {
         self.redis.clone()
     }
     
-    /// 获取同步模式
+    /// Get the sync mode
     pub fn sync_mode(&self) -> &SyncMode {
         &self.sync_mode
+    }
+
+    /// Print memory data for debugging purposes
+    pub fn dump_memory_data(&self, pattern: &str) -> Result<HashMap<String, serde_json::Value>> {
+        let keys = self.memory.get_keys(pattern)?;
+        let mut result = HashMap::new();
+        
+        for key in keys {
+            // Try to get string value
+            match self.memory.get_string(&key) {
+                Ok(value) => {
+                    result.insert(key, serde_json::Value::String(value));
+                },
+                Err(_) => {
+                    // Try to get hash value
+                    match self.memory.get_hash(&key) {
+                        Ok(hash) => {
+                            let hash_map: serde_json::Map<String, serde_json::Value> = hash
+                                .into_iter()
+                                .map(|(k, v)| (k, serde_json::Value::String(v)))
+                                .collect();
+                            result.insert(key, serde_json::Value::Object(hash_map));
+                        },
+                        Err(e) => {
+                            debug!("Failed to dump key '{}': {}", key, e);
+                        }
+                    }
+                }
+            }
+        }
+        
+        Ok(result)
     }
 }
 
@@ -125,10 +162,10 @@ impl DataStore for HybridStore {
     }
     
     fn set_string(&self, key: &str, value: &str) -> Result<()> {
-        // 先写入内存
+        // Write to memory first
         self.memory.set_string(key, value)?;
         
-        // 根据同步模式决定是否写入Redis
+        // Decide whether to write to Redis based on sync mode
         if let Some(redis) = &self.redis {
             match &self.sync_mode {
                 SyncMode::WriteThrough => {
@@ -136,11 +173,11 @@ impl DataStore for HybridStore {
                     debug!("WriteThrough: Synced key '{}' to Redis", key);
                 },
                 SyncMode::WriteBack(_) => {
-                    // 在后台线程中处理，不在这里同步
+                    // Handled by background thread, not here
                     debug!("WriteBack: Key '{}' will be synced later", key);
                 },
                 SyncMode::OnDemand => {
-                    // 不做任何事，等待显式同步调用
+                    // Do nothing, wait for explicit sync call
                     debug!("OnDemand: Key '{}' will be synced on demand", key);
                 }
             }
@@ -154,10 +191,10 @@ impl DataStore for HybridStore {
     }
     
     fn set_hash(&self, key: &str, hash: &HashMap<String, String>) -> Result<()> {
-        // 先写入内存
+        // Write to memory first
         self.memory.set_hash(key, hash)?;
         
-        // 根据同步模式决定是否写入Redis
+        // Decide whether to write to Redis based on sync mode
         if let Some(redis) = &self.redis {
             match &self.sync_mode {
                 SyncMode::WriteThrough => {
@@ -165,11 +202,11 @@ impl DataStore for HybridStore {
                     debug!("WriteThrough: Synced hash '{}' to Redis", key);
                 },
                 SyncMode::WriteBack(_) => {
-                    // 在后台线程中处理，不在这里同步
+                    // Handled by background thread, not here
                     debug!("WriteBack: Hash '{}' will be synced later", key);
                 },
                 SyncMode::OnDemand => {
-                    // 不做任何事，等待显式同步调用
+                    // Do nothing, wait for explicit sync call
                     debug!("OnDemand: Hash '{}' will be synced on demand", key);
                 }
             }
@@ -179,10 +216,10 @@ impl DataStore for HybridStore {
     }
     
     fn set_hash_field(&self, key: &str, field: &str, value: &str) -> Result<()> {
-        // 先写入内存
+        // Write to memory first
         self.memory.set_hash_field(key, field, value)?;
         
-        // 根据同步模式决定是否写入Redis
+        // Decide whether to write to Redis based on sync mode
         if let Some(redis) = &self.redis {
             match &self.sync_mode {
                 SyncMode::WriteThrough => {
@@ -190,11 +227,11 @@ impl DataStore for HybridStore {
                     debug!("WriteThrough: Synced hash field '{}:{}' to Redis", key, field);
                 },
                 SyncMode::WriteBack(_) => {
-                    // 在后台线程中处理，不在这里同步
+                    // Handled by background thread, not here
                     debug!("WriteBack: Hash field '{}:{}' will be synced later", key, field);
                 },
                 SyncMode::OnDemand => {
-                    // 不做任何事，等待显式同步调用
+                    // Do nothing, wait for explicit sync call
                     debug!("OnDemand: Hash field '{}:{}' will be synced on demand", key, field);
                 }
             }
@@ -212,10 +249,10 @@ impl DataStore for HybridStore {
     }
     
     fn delete(&self, key: &str) -> Result<()> {
-        // 先从内存删除
+        // Delete from memory first
         self.memory.delete(key)?;
         
-        // 根据同步模式决定是否从Redis删除
+        // Decide whether to delete from Redis based on sync mode
         if let Some(redis) = &self.redis {
             match &self.sync_mode {
                 SyncMode::WriteThrough => {
@@ -223,11 +260,11 @@ impl DataStore for HybridStore {
                     debug!("WriteThrough: Deleted key '{}' from Redis", key);
                 },
                 SyncMode::WriteBack(_) => {
-                    // 在后台线程中处理，不在这里同步
+                    // Handled by background thread, not here
                     debug!("WriteBack: Key '{}' will be deleted from Redis later", key);
                 },
                 SyncMode::OnDemand => {
-                    // 不做任何事，等待显式同步调用
+                    // Do nothing, wait for explicit sync call
                     debug!("OnDemand: Key '{}' will be deleted from Redis on demand", key);
                 }
             }
@@ -237,7 +274,7 @@ impl DataStore for HybridStore {
     }
 }
 
-/// 同步服务，负责定期将内存数据同步到Redis
+/// Sync service, responsible for periodically syncing memory data to Redis
 pub struct SyncService {
     store: Arc<HybridStore>,
     interval: Duration,
@@ -247,7 +284,7 @@ pub struct SyncService {
 }
 
 impl SyncService {
-    /// 创建新的同步服务
+    /// Create a new sync service
     pub fn new(store: Arc<HybridStore>, interval: Duration, patterns: Vec<String>) -> Self {
         Self {
             store,
@@ -258,7 +295,7 @@ impl SyncService {
         }
     }
     
-    /// 启动同步服务
+    /// Start the sync service
     pub fn start(&self) -> Result<()> {
         let store = self.store.clone();
         let interval_duration = self.interval;
@@ -291,17 +328,17 @@ impl SyncService {
         Ok(())
     }
     
-    /// 停止同步服务
+    /// Stop the sync service
     pub fn stop(&self) -> Result<()> {
         self.shutdown.store(true, Ordering::Relaxed);
         
         let mut handle_guard = self.handle.write().map_err(|_| ModelSrvError::LockError)?;
         if let Some(handle) = handle_guard.take() {
-            // 在实际应用中，可能需要等待任务完成
+            // In a real application, you might want to wait for the task to complete
             handle.abort();
             info!("Sync service stopped");
         }
         
         Ok(())
     }
-} 
+}

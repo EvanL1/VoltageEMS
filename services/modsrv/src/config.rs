@@ -10,7 +10,7 @@ use crate::error::{ModelSrvError};
 pub struct RedisConfig {
     pub host: String,
     pub port: u16,
-    pub db: u8,
+    pub database: u8,
     pub key_prefix: String,
 }
 
@@ -33,30 +33,30 @@ pub struct ModelConfig {
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct ApiConfig {
-    #[serde(default = "default_api_enabled")]
-    pub enabled: bool,
-    #[serde(default = "default_api_port")]
-    pub port: u16,
+    /// API server host
     #[serde(default = "default_api_host")]
     pub host: String,
-    #[serde(default = "default_api_cors")]
-    pub cors_enabled: bool,
+    
+    /// API server port
+    #[serde(default = "default_api_port")]
+    pub port: u16,
 }
 
-fn default_api_enabled() -> bool {
-    true
-}
-
-fn default_api_port() -> u16 {
-    8000
+impl Default for ApiConfig {
+    fn default() -> Self {
+        Self {
+            host: default_api_host(),
+            port: default_api_port(),
+        }
+    }
 }
 
 fn default_api_host() -> String {
     "0.0.0.0".to_string()
 }
 
-fn default_api_cors() -> bool {
-    true
+fn default_api_port() -> u16 {
+    8000
 }
 
 fn default_templates_dir() -> String {
@@ -150,7 +150,7 @@ impl Config {
             redis: RedisConfig {
                 host: "localhost".to_string(),
                 port: 6379,
-                db: 0,
+                database: 0,
                 key_prefix: "ems:".to_string(),
             },
             logging: LoggingConfig {
@@ -170,10 +170,8 @@ impl Config {
                 enabled: true,
             },
             api: ApiConfig {
-                enabled: true,
-                port: 8000,
                 host: "0.0.0.0".to_string(),
-                cors_enabled: true,
+                port: 8000,
             },
             templates_dir: "/opt/voltageems/modsrv/templates".to_string(),
             log_level: "info".to_string(),
