@@ -390,7 +390,7 @@ impl ModelEngine {
             let mut conditions_met = true;
             
             for condition in &action.conditions {
-                // 使用String作为键查找
+                // Use String as a key for lookups
                 if let Some(field_value) = model_outputs.get(&condition.field) {
                     if !self.evaluate_condition(field_value, &condition.operator, &condition.value)? {
                         conditions_met = false;
@@ -417,8 +417,8 @@ impl ModelEngine {
                     model_id, action.id, SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs()
                 );
                 
-                // 这里应该使用一个实际的Redis连接来存储日志
-                // 为简化示例，我们只打印日志
+                // An actual Redis connection should be used here to store logs
+                // For simplicity in this example, we just print the log
                 debug!("Action log: {}", action_log);
             }
         }

@@ -31,6 +31,34 @@ pub struct ModelConfig {
     pub templates_dir: String,
 }
 
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct ApiConfig {
+    #[serde(default = "default_api_enabled")]
+    pub enabled: bool,
+    #[serde(default = "default_api_port")]
+    pub port: u16,
+    #[serde(default = "default_api_host")]
+    pub host: String,
+    #[serde(default = "default_api_cors")]
+    pub cors_enabled: bool,
+}
+
+fn default_api_enabled() -> bool {
+    true
+}
+
+fn default_api_port() -> u16 {
+    8000
+}
+
+fn default_api_host() -> String {
+    "0.0.0.0".to_string()
+}
+
+fn default_api_cors() -> bool {
+    true
+}
+
 fn default_templates_dir() -> String {
     "templates".to_string()
 }
@@ -47,6 +75,8 @@ pub struct Config {
     pub logging: LoggingConfig,
     pub model: ModelConfig,
     pub control: ControlConfig,
+    #[serde(default)]
+    pub api: ApiConfig,
     pub templates_dir: String,
     pub log_level: String,
     
@@ -139,6 +169,12 @@ impl Config {
                 operation_key_pattern: "ems:control:operation:*".to_string(),
                 enabled: true,
             },
+            api: ApiConfig {
+                enabled: true,
+                port: 8000,
+                host: "0.0.0.0".to_string(),
+                cors_enabled: true,
+            },
             templates_dir: "/opt/voltageems/modsrv/templates".to_string(),
             log_level: "info".to_string(),
             use_redis: true,
@@ -152,7 +188,7 @@ impl Config {
             "write_through" => SyncMode::WriteThrough,
             "write_back" => SyncMode::WriteBack(Duration::from_secs(self.sync_interval_secs)),
             "on_demand" => SyncMode::OnDemand,
-            _ => SyncMode::WriteThrough, // 默认使用WriteThrough
+            _ => SyncMode::WriteThrough, // Default to use WriteThrough
         }
     }
 } 

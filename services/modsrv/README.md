@@ -1,284 +1,191 @@
-# Model Service (Modelsrv)
+# ModSrv - Model Service
 
-A real-time model execution service for the Energy Management System (EMS). This service loads model configurations from Redis, maps real-time data from Comsrv, and executes the models to produce outputs that are stored back in Redis. It also supports sending remote control and remote adjustment commands to Comsrv.
+Real-time model execution service for VoltageEMS.
 
-## Features
+## Overview
 
-- Dynamic model loading from Redis configurations
-- Real-time data mapping from Comsrv data in Redis
-- Configurable update intervals
-- Transformation support for input data
-- Asynchronous execution using Tokio
-- Automatic control actions based on model outputs
-- Direct remote control and remote adjustment command support
-- Advanced control operations with condition-based execution
-- Priority-based control operation scheduling
-- Time-based condition evaluation (duration conditions)
+ModSrv is a service that executes real-time models for monitoring and control of energy systems. It provides a flexible framework for creating and managing different types of models, with support for:
 
-## Architecture
+- Template-based model creation
+- Real-time data processing
+- Control operations
+- Redis-based data storage and retrieval
 
-The Model Service is designed to run in a Docker container and interact with:
+## Requirements
 
-- Redis container: For configuration, input data, and output storage
-- Comsrv: Provides real-time data that is mapped to model inputs and receives control commands
+- Rust 1.70 or higher
+- Redis (local or remote)
+- Docker and Docker Compose (for containerized deployment)
+
+## Directory Structure
+
+```
+modsrv/
+  ├── src/               # Source code
+  ├── templates/         # Model templates
+  ├── config/            # Configuration files
+  ├── instances/         # Instance data (local storage)
+  ├── Dockerfile         # Docker build file
+  ├── docker-compose.yml # Docker Compose configuration
+  └── Cargo.toml         # Rust project configuration
+```
 
 ## Configuration
 
-The service is configured using a TOML file (`modelsrv.toml`). Key configuration options include:
+Configuration can be provided in YAML or TOML format. The service looks for configuration files in the following order:
 
-```toml
-[redis]
-host = "localhost"
-port = 6379
-password = ""
-socket = ""
-prefix = "ems:"
+1. Path specified by `--config` command-line argument
+2. `/etc/voltageems/config/modsrv/modsrv.yaml` (Docker environment)
+3. Current directory (`modsrv.yaml` or `modsrv.toml`)
 
-[logging]
-level = "info"
-file = "/var/log/ems/modelsrv.log"
-console = true
+Example configuration (YAML):
 
-[model]
-update_interval_ms = 1000
-config_key_pattern = "ems:model:config:*"
-data_key_pattern = "ems:data:*"
-output_key_pattern = "ems:model:output:"
+```yaml
+redis:
+  host: "localhost"  # or "redis" for Docker
+  port: 6379
+  password: ""
+  socket: ""
+  key_prefix: "ems:"
+  db: 0
 
-[control]
-operation_key_pattern = "ems:control:operation:*"
-enabled = true
+logging:
+  level: "debug"
+  file: ""
+  console: true
+
+model:
+  update_interval_ms: 1000
+  config_key_pattern: "ems:model:config:*"
+  data_key_pattern: "ems:data:*"
+  output_key_pattern: "ems:model:output:*"
+  templates_dir: "templates"  # or "/opt/voltageems/modsrv/templates" for Docker
+
+control:
+  operation_key_pattern: "ems:control:operation:*"
+  enabled: true
+
+use_redis: true
+storage_mode: "hybrid"
+sync_interval_secs: 60
 ```
 
-## Model Configuration Format
+## Local Development
 
-Models are defined in Redis as JSON strings with the following structure:
+### Running Locally
 
-### Basic Model
+To run the service locally:
 
-```json
-{
-  "id": "model1",
-  "name": "Battery Model",
-  "description": "Real-time battery state model",
-  "input_mappings": [
-    {
-      "source_key": "ems:data:battery",
-      "source_field": "voltage",
-      "target_field": "battery_voltage",
-      "transform": "scale:0.001"
-    },
-    {
-      "source_key": "ems:data:battery",
-      "source_field": "current",
-      "target_field": "battery_current",
-      "transform": null
-    }
-  ],
-  "output_key": "ems:model:output:battery",
-  "enabled": true
-}
+```sh
+# With default configuration
+cargo run -- service
+
+# With custom configuration
+cargo run -- --config config/local-config.yaml service
+
+# List available templates
+cargo run -- list
+
+# Show model information
+cargo run -- info
 ```
 
-### Model with Control Actions
+### Creating Model Instances
 
-```json
-{
-  "model": {
-    "id": "power_flow_model",
-    "name": "Power Flow Model",
-    "description": "Real-time power flow model",
-    "input_mappings": [
-      {
-        "source_key": "ems:data:pcs",
-        "source_field": "active_power",
-        "target_field": "pcs_power",
-        "transform": null
-      }
-    ],
-    "output_key": "ems:model:output:power_flow",
-    "enabled": true
-  },
-  "actions": [
-    {
-      "id": "start_diesel_generator",
-      "name": "Start Diesel Generator",
-      "action_type": "RemoteControl",
-      "channel": "Diesel_Serial",
-      "point": "start_command",
-      "value": "1",
-      "conditions": [
-        {
-          "field": "battery_soc",
-          "operator": "<",
-          "value": "20"
-        }
-      ],
-      "enabled": true
-    }
-  ]
-}
+To create a model instance from a template:
+
+```sh
+# Create a single instance
+cargo run -- create <template_id> <instance_id> --name "Instance Name"
+
+# Create multiple instances
+cargo run -- create-multiple <template_id> <count> --prefix "instance" --start-index 1
 ```
 
-## Control Operation Configuration
+## Docker Deployment
 
-Control operations are defined in Redis as JSON strings with the following structure:
+### Building and Running with Docker Compose
 
-### Basic Control Operation
+```sh
+# Build and start the services
+docker-compose up -d
 
-```json
-{
-  "id": "battery_low_soc_start_diesel",
-  "name": "启动柴油发电机（电池SOC低）",
-  "description": "当电池SOC低于20%时，自动启动柴油发电机",
-  "operation_type": "Start",
-  "target_type": "Device",
-  "target_id": "diesel",
-  "parameters": [
-    {
-      "name": "value",
-      "value": "true",
-      "description": "启动命令值"
-    }
-  ],
-  "conditions": [
-    {
-      "id": "battery_low_soc",
-      "description": "电池SOC低于20%",
-      "source_key": "ems:data:battery",
-      "field": "soc",
-      "operator": "<",
-      "value": "20",
-      "duration_ms": 30000
-    }
-  ],
-  "priority": 1,
-  "enabled": true,
-  "cooldown_ms": 300000,
-  "last_executed_at": null
-}
+# View logs
+docker-compose logs -f modsrv
+
+# Stop services
+docker-compose down
 ```
 
-### Advanced Control Operation with Multiple Conditions
+### Using Docker directly
 
-```json
-{
-  "id": "grid_peak_shaving",
-  "name": "电网削峰控制",
-  "description": "当电网功率超过阈值时，控制PCS放电以削峰",
-  "operation_type": "Adjust",
-  "target_type": "Device",
-  "target_id": "pcs",
-  "parameters": [
-    {
-      "name": "point",
-      "value": "active_power_setpoint",
-      "description": "有功功率设定点"
-    },
-    {
-      "name": "value",
-      "value": "-500",
-      "description": "放电功率值（kW）"
-    }
-  ],
-  "conditions": [
-    {
-      "id": "grid_power_high",
-      "description": "电网功率超过阈值",
-      "source_key": "ems:data:grid",
-      "field": "active_power",
-      "operator": ">",
-      "value": "800",
-      "duration_ms": 10000
-    },
-    {
-      "id": "battery_soc_sufficient",
-      "description": "电池SOC足够",
-      "source_key": "ems:data:battery",
-      "field": "soc",
-      "operator": ">",
-      "value": "30",
-      "duration_ms": null
-    }
-  ],
-  "priority": 2,
-  "enabled": true,
-  "cooldown_ms": 60000,
-  "last_executed_at": null
-}
+```sh
+# Build the image
+docker build -t voltageems/modsrv .
+
+# Run the container
+docker run -d --name modsrv \
+  -v ./config:/etc/voltageems/config/modsrv \
+  -v ./templates:/opt/voltageems/modsrv/templates \
+  --network host \
+  voltageems/modsrv
 ```
 
-## Control Operation Types
+## Templates
 
-The service supports the following control operation types:
+Templates are stored in the `templates` directory and define the structure and behavior of model instances. Each template includes:
 
-- `Start`: Start a device or system
-- `Stop`: Stop a device or system
-- `Pause`: Pause a device or system
-- `Resume`: Resume a paused device or system
-- `Reset`: Reset a device or system
-- `Adjust`: Adjust a parameter of a device or system
-- `Custom`: Custom operation with user-defined parameters
+- Basic metadata (ID, name, description)
+- Input/output mappings
+- Control actions
 
-## Control Target Types
+Example template:
 
-The service supports the following control target types:
+```yaml
+id: "example_model"
+name: "Example Model"
+description: "A simple example model"
+file_path: "templates/example.yaml"
+version: "1.0.0"
 
-- `Device`: Control a physical device (e.g., battery, PCS, diesel generator)
-- `System`: Control a system (e.g., EMS, BMS)
-- `Model`: Control a model (e.g., power flow model)
-- `Custom`: Custom target with user-defined parameters
+input_mappings:
+  - source_field: "input1"
+    target_field: "model_input1"
+    data_type: "string"
+  - source_field: "input2"
+    target_field: "model_input2"
+    data_type: "float"
 
-## Remote Control and Adjustment
+output_mappings:
+  - source_field: "output1"
+    target_field: "model_output1"
+    data_type: "string"
+  - source_field: "output2"
+    target_field: "model_output2"
+    data_type: "float"
 
-The service supports sending remote control (boolean) and remote adjustment (numeric) commands to Comsrv. These commands can be triggered:
-
-1. Automatically by control actions defined in model configurations
-2. Programmatically through the ModelEngine API
-3. Through the new control operations system
-
-Commands are sent to Comsrv through Redis using a command queue. The command flow is:
-
-1. Modelsrv creates a command and pushes it to the command queue (`ems:command:queue`)
-2. Modelsrv creates a command status record (`ems:command:status:{command_id}`)
-3. Comsrv processes the command from the queue
-4. Comsrv updates the command status as it processes the command
-5. Modelsrv can check the command status to determine if it was successful
-
-## Building and Running
-
-### Building with Cargo
-
-```bash
-cargo build --release
+control_actions:
+  - id: "action1"
+    name: "Example Action 1"
+    description: "This is an example action"
+    parameters:
+      - name: "param1"
+        description: "Example parameter"
+        data_type: "string"
+        default_value: "default"
 ```
 
-### Running the Service
+## Control Operations
 
-```bash
-./target/release/modelsrv --config modelsrv.toml
-```
+ModSrv supports control operations that can be triggered through Redis. To execute a control operation:
 
-### Using Docker
-
-```bash
-docker build -t modelsrv .
-docker run -d --name modelsrv --network ems-network modelsrv
-```
-
-## Development
-
-### Prerequisites
-
-- Rust 1.67 or later
-- Redis server (for development)
-
-### Testing
-
-```bash
-cargo test
-```
+1. Create a control operation in Redis:
+   ```
+   HSET ems:control:operation:<operation_id> id <operation_id> model_id <model_id> action_id <action_id> param1 <value1> param2 <value2>
+   ```
+2. The service will automatically detect and execute the operation on the next update cycle.
 
 ## License
 
-[Your License]
+Copyright © 2024 VoltageEMS. All rights reserved.
+

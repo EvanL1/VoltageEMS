@@ -6,6 +6,7 @@ mod control;
 mod template;
 mod storage;
 mod storage_agent;
+mod api;
 
 // Only include GUI module when the 'gui' feature is enabled
 #[cfg(feature = "gui")]
@@ -19,6 +20,7 @@ use crate::control::ControlManager;
 use crate::template::TemplateManager;
 use crate::storage_agent::StorageAgent;
 use crate::storage::DataStore;
+use crate::api::start_api_server;
 
 // Only include GUI imports when the 'gui' feature is enabled
 #[cfg(feature = "gui")]
@@ -76,6 +78,9 @@ enum Commands {
     
     /// Run in service mode
     Service,
+    
+    /// Start API server
+    Api,
     
     /// Debug Redis data
     Debug {
@@ -157,6 +162,15 @@ fn main() -> Result<()> {
                 rt.block_on(run_service(&config))?;
             }
         }
+        Some(Commands::Api) => {
+            info!("Starting API server only");
+            let rt = tokio::runtime::Runtime::new()?;
+            rt.block_on(async {
+                if let Err(e) = start_api_server(config).await {
+                    error!("API server error: {}", e);
+                }
+            });
+        }
         Some(Commands::Create { template_id, instance_id, name }) => {
             info!("Creating model instance");
             create_instance(&config, &template_id, &instance_id, name.as_deref())?;
@@ -197,6 +211,16 @@ async fn run_service(config: &Config) -> Result<()> {
     // Main service loop
     let update_interval = Duration::from_millis(config.model.update_interval_ms);
     let mut interval = time::interval(update_interval);
+
+    // 启动API服务器
+    let config_clone = config.clone();
+    tokio::spawn(async move {
+        if let Err(e) = start_api_server(config_clone).await {
+            error!("API server error: {}", e);
+        }
+    });
+
+    info!("Model engine started, API server available at http://0.0.0.0:8000");
 
     loop {
         interval.tick().await;

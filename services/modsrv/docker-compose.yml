@@ -1,38 +1,74 @@
-version: '3.8'
-
 services:
   redis:
-    image: redis:6.2-alpine
+    image: redis:7-alpine
     ports:
       - "6379:6379"
     volumes:
       - redis-data:/data
-    command: redis-server --appendonly yes
-    restart: unless-stopped
-    network_mode: "host"
+    command: ["redis-server", "--appendonly", "yes"]
+    networks:
+      - backend
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
+      interval: 5s
+      timeout: 3s
+      retries: 5
 
   modsrv:
     build:
       context: .
       dockerfile: Dockerfile
-    volumes:
-      - ./config:/etc/voltageems/config/modsrv
-      - ./templates:/opt/voltageems/modsrv/templates
-      - ./instances:/opt/voltageems/modsrv/instances
     ports:
       - "8000:8000"
-    depends_on:
-      - redis
-    restart: unless-stopped
+    volumes:
+      - ./config:/etc/voltageems/config/modsrv
+      - ./templates:/app/templates
     environment:
-      - RUST_LOG=debug
-    command: ["--config", "/etc/voltageems/config/modsrv/modsrv.yaml", "service"]
-    network_mode: "host"
+      - RUST_LOG=info
+      - REDIS_URL=redis://redis:6379
+      - TEMPLATES_DIR=/app/templates
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - backend
+    command: ["service"]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+
+  modsrv_api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8001:8000"
+    volumes:
+      - ./config:/etc/voltageems/config/modsrv
+      - ./templates:/app/templates
+    environment:
+      - RUST_LOG=info
+      - REDIS_URL=redis://redis:6379
+      - TEMPLATES_DIR=/app/templates
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - backend
+    command: ["api"]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+
+networks:
+  backend:
+    driver: bridge
 
 volumes:
   redis-data: 

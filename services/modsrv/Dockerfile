@@ -1,36 +1,39 @@
-FROM rust:1.81-slim-bullseye as builder
+FROM rust:1.75 as builder
 
-WORKDIR /usr/src/modsrv
+WORKDIR /usr/src/app
+
+# Create a dummy project to cache dependencies
+RUN USER=root cargo new --bin modsrv
+WORKDIR /usr/src/app/modsrv
+COPY Cargo.toml ./
+RUN cargo build --release && \
+    rm src/*.rs
+
+# Copy actual source code
 COPY . .
+RUN cargo build --release
 
-RUN apt-get update && \
-    apt-get install -y pkg-config libssl-dev && \
-    cargo build --release
-
+# Runtime stage
 FROM debian:bullseye-slim
 
 RUN apt-get update && \
-    apt-get install -y ca-certificates && \
-    rm -rf /var/lib/apt/lists/*
+    apt-get install -y --no-install-recommends \
+    ca-certificates \
+    libssl-dev \
+    && rm -rf /var/lib/apt/lists/*
 
-# Create necessary directories
-RUN mkdir -p /opt/voltageems/modsrv/templates && \
-    mkdir -p /etc/voltageems/config/modsrv
+WORKDIR /app
 
-# Copy the built binary from the builder stage
-COPY --from=builder /usr/src/modsrv/target/release/modsrv /opt/voltageems/modsrv/modsrv
+# Copy binary
+COPY --from=builder /usr/src/app/modsrv/target/release/modsrv /app/modsrv
 
-# Copy templates to the appropriate location
-COPY templates /opt/voltageems/modsrv/templates/
+# Create necessary directories for configuration
+RUN mkdir -p /etc/voltageems/config/modsrv
+RUN mkdir -p /app/templates
 
-# Set the working directory
-WORKDIR /opt/voltageems/modsrv
-
-# Volume for external configuration
-VOLUME /etc/voltageems/config/modsrv
-
-# Expose port for API
+# Default port
 EXPOSE 8000
 
-# Set the entry point
-ENTRYPOINT ["/opt/voltageems/modsrv/modsrv"] 
+# Default command
+ENTRYPOINT ["/app/modsrv"]
+CMD ["service"] 

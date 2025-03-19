@@ -2,15 +2,19 @@ version: '3.8'
 
 services:
   redis:
-    image: redis:6.2-alpine
+    image: redis:7-alpine
     ports:
       - "6379:6379"
     volumes:
       - redis-data:/data
-    command: redis-server --appendonly yes
-    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
     networks:
-      - ems-network
+      - backend
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
 
   influxdb:
     image: influxdb:2.0
@@ -63,19 +67,51 @@ services:
 
   modsrv:
     build:
-      context: ./services/modsrv
+      context: .
       dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
     volumes:
-      - ./config/modsrv:/etc/voltageems/config/modsrv
-      - ./services/modsrv/templates:/opt/voltageems/modsrv/templates
-    depends_on:
-      - redis
-    restart: unless-stopped
+      - /tmp/modsrv-config:/etc/voltageems/config/modsrv
+      - ./templates:/app/templates
     environment:
-      - RUST_LOG=debug
-    command: ["--config", "/etc/voltageems/config/modsrv/modsrv.yaml", "service"]
+      - RUST_LOG=info
+    depends_on:
+      redis:
+        condition: service_healthy
     networks:
-      - ems-network
+      - backend
+    command: ["service"]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+
+  modsrv_api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8001:8000"
+    volumes:
+      - /tmp/modsrv-config:/etc/voltageems/config/modsrv
+      - ./templates:/app/templates
+    environment:
+      - RUST_LOG=info
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - backend
+    command: ["api"]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
 
   netsrv:
     build: ./netsrv
@@ -136,6 +172,8 @@ services:
     restart: unless-stopped
 
 networks:
+  backend:
+    driver: bridge
   ems-network:
     driver: bridge
 
