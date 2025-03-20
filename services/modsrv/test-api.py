@@ -5,7 +5,7 @@ import sys
 import random
 import time
 
-BASE_URL = "http://localhost:8001/api/v1"
+BASE_URL = "http://localhost:8000/api"
 
 def test_health():
     print("Testing health endpoint...")

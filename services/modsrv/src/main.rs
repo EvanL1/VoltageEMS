@@ -8,10 +8,6 @@ mod storage;
 mod storage_agent;
 mod api;
 
-// Only include GUI module when the 'gui' feature is enabled
-#[cfg(feature = "gui")]
-mod gui;
-
 use crate::config::Config;
 use crate::error::{Result, ModelSrvError};
 use crate::model::ModelEngine;
@@ -21,10 +17,6 @@ use crate::template::TemplateManager;
 use crate::storage_agent::StorageAgent;
 use crate::storage::DataStore;
 use crate::api::start_api_server;
-
-// Only include GUI imports when the 'gui' feature is enabled
-#[cfg(feature = "gui")]
-use crate::gui::start_gui;
 
 use clap::{Parser, Subcommand};
 use log::{error, info};
@@ -159,18 +151,8 @@ fn main() -> Result<()> {
         }
         Some(Commands::Service) => {
             info!("Starting service");
-            #[cfg(feature = "gui")]
-            {
-                // Start GUI version if the feature is enabled
-                start_gui(config.clone())?;
-            }
-            
-            #[cfg(not(feature = "gui"))]
-            {
-                // Start the regular service if GUI is not enabled
-                let rt = tokio::runtime::Runtime::new()?;
-                rt.block_on(run_service(&config))?;
-            }
+            let rt = tokio::runtime::Runtime::new()?;
+            rt.block_on(run_service(&config))?;
         }
         Some(Commands::Api) => {
             info!("Starting API server only");
@@ -334,7 +316,7 @@ fn display_model_info(config: &Config, storage_agent: &StorageAgent) -> Result<(
     println!("=== Available Templates ===");
     let template_manager = TemplateManager::new(&config.model.templates_dir, &config.redis.key_prefix);
     
-    // 尝试加载模板，但不要因为模板加载错误而中断程序
+    // try to load templates, but don't fail if it doesn't work
     match template_manager.list_templates() {
         Ok(templates) => {
             if templates.is_empty() {

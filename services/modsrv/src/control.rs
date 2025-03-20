@@ -156,7 +156,7 @@ impl DeviceControlExecutor {
         self.operation_point_map.get(operation_type)
     }
 
-    /// 发送远程控制命令（布尔值）
+    /// send remote control command (boolean value)
     fn send_remote_control(
         &mut self,
         redis: &mut RedisConnection,
@@ -176,7 +176,7 @@ impl DeviceControlExecutor {
         Ok(command_id)
     }
     
-    /// 发送远程调整命令（数值）
+    /// send remote adjust command (numeric value)
     fn send_remote_adjust(
         &mut self,
         redis: &mut RedisConnection,
