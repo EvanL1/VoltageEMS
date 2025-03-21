@@ -1,4 +1,3 @@
-pub mod api;
 pub mod config;
 pub mod error;
 pub mod model;
@@ -8,9 +7,9 @@ pub mod template;
 pub mod storage;
 pub mod storage_agent;
 pub mod rules;
+pub mod rules_engine;
 
 pub use storage_agent::StorageAgent;
 pub use storage::DataStore;
 pub use storage::SyncMode;
-pub use error::{Result, ModelSrvError};
-pub use crate::config::Config; 
+pub use error::{Result, ModelSrvError}; 

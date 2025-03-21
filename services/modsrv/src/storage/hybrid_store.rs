@@ -85,14 +85,34 @@ impl HybridStore {
                 // Try to get string value
                 match self.memory.get_string(&key) {
                     Ok(value) => {
-                        redis.set_string(&key, &value)?;
+                        match &self.sync_mode {
+                            SyncMode::WriteThrough => {
+                                redis.set_string(&key, &value)?;
+                            },
+                            SyncMode::WriteBack(_) => {
+                                // Will be handled by the background thread
+                            },
+                            SyncMode::OnDemand => {
+                                // Do nothing, we'll sync on demand
+                            }
+                        }
                         synced += 1;
                     },
                     Err(_) => {
                         // Try to get hash value
                         match self.memory.get_hash(&key) {
                             Ok(hash) => {
-                                redis.set_hash(&key, &hash)?;
+                                match &self.sync_mode {
+                                    SyncMode::WriteThrough => {
+                                        redis.set_hash(&key, &hash)?;
+                                    },
+                                    SyncMode::WriteBack(_) => {
+                                        // Will be handled by the background thread
+                                    },
+                                    SyncMode::OnDemand => {
+                                        // Do nothing, wait for explicit sync call
+                                    }
+                                }
                                 synced += 1;
                             },
                             Err(e) => {
@@ -154,6 +174,18 @@ impl HybridStore {
         
         Ok(result)
     }
+
+    /// Get a Redis connection
+    pub fn get_redis_connection(&self) -> Option<redis::Connection> {
+        if let Some(redis) = &self.redis {
+            match redis.get_connection() {
+                Ok(conn) => Some(conn),
+                Err(_) => None
+            }
+        } else {
+            None
+        }
+    }
 }
 
 impl DataStore for HybridStore {
@@ -170,15 +202,12 @@ impl DataStore for HybridStore {
             match &self.sync_mode {
                 SyncMode::WriteThrough => {
                     redis.set_string(key, value)?;
-                    debug!("WriteThrough: Synced key '{}' to Redis", key);
                 },
                 SyncMode::WriteBack(_) => {
                     // Handled by background thread, not here
-                    debug!("WriteBack: Key '{}' will be synced later", key);
                 },
                 SyncMode::OnDemand => {
                     // Do nothing, wait for explicit sync call
-                    debug!("OnDemand: Key '{}' will be synced on demand", key);
                 }
             }
         }
@@ -199,15 +228,12 @@ impl DataStore for HybridStore {
             match &self.sync_mode {
                 SyncMode::WriteThrough => {
                     redis.set_hash(key, hash)?;
-                    debug!("WriteThrough: Synced hash '{}' to Redis", key);
                 },
                 SyncMode::WriteBack(_) => {
                     // Handled by background thread, not here
-                    debug!("WriteBack: Hash '{}' will be synced later", key);
                 },
                 SyncMode::OnDemand => {
                     // Do nothing, wait for explicit sync call
-                    debug!("OnDemand: Hash '{}' will be synced on demand", key);
                 }
             }
         }
@@ -228,11 +254,9 @@ impl DataStore for HybridStore {
                 },
                 SyncMode::WriteBack(_) => {
                     // Handled by background thread, not here
-                    debug!("WriteBack: Hash field '{}:{}' will be synced later", key, field);
                 },
                 SyncMode::OnDemand => {
                     // Do nothing, wait for explicit sync call
-                    debug!("OnDemand: Hash field '{}:{}' will be synced on demand", key, field);
                 }
             }
         }
@@ -261,11 +285,9 @@ impl DataStore for HybridStore {
                 },
                 SyncMode::WriteBack(_) => {
                     // Handled by background thread, not here
-                    debug!("WriteBack: Key '{}' will be deleted from Redis later", key);
                 },
                 SyncMode::OnDemand => {
                     // Do nothing, wait for explicit sync call
-                    debug!("OnDemand: Key '{}' will be deleted from Redis on demand", key);
                 }
             }
         }

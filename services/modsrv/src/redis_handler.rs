@@ -265,4 +265,14 @@ impl RedisConnection {
         // If all methods fail, return an error
         Err(ModelSrvError::RedisError("No connection information available to duplicate".to_string()))
     }
+
+    /// Get the underlying Redis connection
+    pub fn get_raw_connection(&self) -> Result<redis::Connection> {
+        if let Some(client) = &self.client {
+            client.get_connection()
+                .map_err(|e| ModelSrvError::RedisError(format!("Failed to get Redis connection: {}", e)))
+        } else {
+            Err(ModelSrvError::RedisError("No Redis client available".to_string()))
+        }
+    }
 } 

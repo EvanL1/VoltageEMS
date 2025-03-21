@@ -28,9 +28,13 @@ impl RedisStore {
         }
         Self { redis: new_conn }
     }
+    
+    pub fn get_connection(&self) -> Result<redis::Connection> {
+        self.redis.get_raw_connection()
+    }
 
     /// Get the type of a key in Redis
-    fn get_type(&self, key: &str) -> Result<RedisType> {
+    pub fn get_type(&self, key: &str) -> Result<RedisType> {
         let mut redis = self.redis.duplicate()?;
         redis.get_type(key).map_err(|e| {
             ModelSrvError::RedisError(format!("Failed to get type for key {}: {}", key, e))

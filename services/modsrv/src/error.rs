@@ -3,6 +3,7 @@ use std::io;
 use serde_json;
 use serde_yaml;
 use config::ConfigError;
+use redis;
 
 pub type Result<T> = std::result::Result<T, ModelSrvError>;
 
@@ -47,6 +48,15 @@ pub enum ModelSrvError {
     #[error("Invalid operation: {0}")]
     InvalidOperation(String),
     
+    #[error("Device error: {0}")]
+    DeviceError(String),
+    
+    #[error("Rule error: {0}")]
+    RuleError(String),
+    
+    #[error("Database error: {0}")]
+    DatabaseError(String),
+    
     #[error("Unknown error: {0}")]
     Unknown(String),
 }
@@ -54,5 +64,11 @@ pub enum ModelSrvError {
 impl From<ConfigError> for ModelSrvError {
     fn from(err: ConfigError) -> Self {
         ModelSrvError::ConfigError(err.to_string())
+    }
+}
+
+impl From<redis::RedisError> for ModelSrvError {
+    fn from(err: redis::RedisError) -> Self {
+        ModelSrvError::RedisError(err.to_string())
     }
 } 

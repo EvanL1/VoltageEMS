@@ -4,160 +4,150 @@ use crate::storage::hybrid_store::HybridStore;
 use petgraph::graph::{DiGraph, NodeIndex};
 use petgraph::algo::toposort;
 use petgraph::visit::EdgeRef;
-use serde::{Serialize, Deserialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::Duration;
 use log::{debug, error, info, warn};
 use serde_json::{json, Value};
+use serde::{Serialize, Deserialize};
 
-// 导出rules子模块
-pub mod engine;
+/// Rule node types
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum NodeType {
+    /// Input nodes collect data from devices
+    Input,
+    /// Condition nodes evaluate conditions
+    Condition,
+    /// Transform nodes transform data
+    Transform,
+    /// Action nodes execute device actions
+    Action,
+    /// Aggregate nodes combine results from other nodes
+    Aggregate,
+}
 
-/// Rule definition
+/// Node execution state
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum NodeState {
+    /// Node is waiting to be processed
+    Pending,
+    /// Node is currently being processed
+    Running,
+    /// Node has been processed successfully
+    Completed,
+    /// Node processing failed
+    Failed,
+    /// Node was skipped (e.g., due to edge condition)
+    Skipped,
+}
+
+/// Graph node definition
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Rule {
+pub struct NodeDefinition {
+    /// Unique node ID
+    pub id: String,
+    /// Node name
+    pub name: String,
+    /// Node type
+    #[serde(rename = "type")]
+    pub node_type: NodeType,
+    /// Node configuration
+    #[serde(default)]
+    pub config: Value,
+}
+
+/// Graph edge definition
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EdgeDefinition {
+    /// Source node ID
+    pub from: String,
+    /// Target node ID
+    pub to: String,
+    /// Edge condition (optional)
+    #[serde(default)]
+    pub condition: Option<String>,
+}
+
+/// Rule definition using DAG
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DagRule {
     /// Rule ID
     pub id: String,
     /// Rule name
     pub name: String,
     /// Rule description
+    #[serde(default)]
     pub description: String,
+    /// Rule nodes
+    pub nodes: Vec<NodeDefinition>,
+    /// Rule edges
+    pub edges: Vec<EdgeDefinition>,
     /// Whether the rule is enabled
+    #[serde(default = "default_true")]
     pub enabled: bool,
-    /// Rule priority (lower number = higher priority)
+    /// Rule priority (higher values = higher priority)
+    #[serde(default)]
     pub priority: i32,
 }
 
-/// Node type
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub enum NodeType {
-    /// Input node fetches data from devices
-    Input,
-    /// Condition node evaluates conditions
-    Condition,
-    /// Transform node transforms data
-    Transform,
-    /// Action node executes actions
-    Action,
-    /// Aggregate node combines multiple inputs
-    Aggregate,
+fn default_true() -> bool {
+    true
 }
 
-/// Node definition
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct NodeDefinition {
-    /// Node ID
-    pub id: String,
-    /// Node name
-    pub name: String,
-    /// Node type
-    pub node_type: NodeType,
-    /// Node configuration
-    pub config: Value,
-}
-
-/// Edge definition
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct EdgeDefinition {
-    /// Edge ID
-    pub id: String,
-    /// Source node ID
-    pub from: String,
-    /// Target node ID
-    pub to: String,
-    /// Optional condition for this edge
-    pub condition: Option<String>,
-}
-
-/// DAG rule definition
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DagRule {
-    /// Rule base information
-    pub rule: Rule,
-    /// Nodes in the rule graph
-    pub nodes: Vec<NodeDefinition>,
-    /// Edges in the rule graph
-    pub edges: Vec<EdgeDefinition>,
-}
-
-/// Node execution state
-#[derive(Debug, Clone, PartialEq)]
-pub enum NodeState {
-    /// Node is pending execution
-    Pending,
-    /// Node is currently running
-    Running,
-    /// Node has completed execution
-    Completed,
-    /// Node execution failed
-    Failed,
-}
-
-/// Runtime rule node with state
-#[derive(Debug)]
+/// Runtime node in a rule graph
+#[derive(Debug, Clone)]
 pub struct RuleNode {
     /// Node definition
     pub definition: NodeDefinition,
-    /// Current execution state
+    /// Node state
     pub state: NodeState,
-    /// Execution result
+    /// Node execution result
     pub result: Option<Value>,
 }
 
-/// Runtime rule
-#[derive(Debug)]
+/// Runtime rule graph
+#[derive(Debug, Clone)]
 pub struct RuntimeRule {
-    /// Original rule definition
+    /// Rule definition
     pub definition: DagRule,
     /// Rule graph
     pub graph: DiGraph<RuleNode, Option<String>>,
-    /// Map from node ID to graph index
+    /// Map from node ID to node index
     pub node_map: HashMap<String, NodeIndex>,
 }
 
-/// Rule Engine
-#[derive(Debug)]
+/// Rule engine
 pub struct RuleEngine {
-    /// Rules storage
-    rules: HashMap<String, RuntimeRule>,
-    /// Data store
-    store: std::sync::Arc<crate::storage::hybrid_store::HybridStore>,
+    /// Rules
+    rules: Vec<DagRule>,
+    /// Storage for rules
+    store: Arc<HybridStore>,
 }
 
 impl RuleEngine {
     /// Create a new rule engine
     pub fn new(store: Arc<HybridStore>) -> Self {
         Self {
-            rules: HashMap::new(),
+            rules: Vec::new(),
             store,
         }
     }
     
-    /// Load rules from a JSON file
+    /// Load rules from a file
     pub fn load_rules_from_file(&mut self, file_path: &str) -> Result<()> {
-        // Implementation will be added later
+        // 实现从文件加载规则的逻辑
         Ok(())
     }
     
     /// Build a rule graph from a rule definition
     fn build_rule_graph(&self, rule_def: DagRule) -> Result<RuntimeRule> {
-        // Implementation will be added later
-        unimplemented!()
+        // 实现构建规则图的逻辑
+        Err(ModelSrvError::InvalidOperation("Not implemented".to_string()))
     }
     
     /// Execute a rule
     pub async fn execute_rule(&self, rule_id: &str) -> Result<Value> {
-        // Implementation will be added later
-        unimplemented!()
+        // 实现执行规则的逻辑
+        Err(ModelSrvError::InvalidOperation("Not implemented".to_string()))
     }
-    
-    /// Execute all rules
-    pub async fn execute_all_rules(&self) -> Result<HashMap<String, Value>> {
-        // Implementation will be added later
-        unimplemented!()
-    }
-}
-
-// 重新导出engine模块中的函数
-pub use engine::{build_rule_graph, execute_rule_graph, ExecutionContext}; 
+} 

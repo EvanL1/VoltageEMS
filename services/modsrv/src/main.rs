@@ -7,6 +7,8 @@ mod template;
 mod storage;
 mod storage_agent;
 mod api;
+mod rules;
+mod rules_engine;
 
 use crate::config::Config;
 use crate::error::{Result, ModelSrvError};
@@ -17,9 +19,10 @@ use crate::template::TemplateManager;
 use crate::storage_agent::StorageAgent;
 use crate::storage::DataStore;
 use crate::api::start_api_server;
+use crate::redis_handler::RedisType;
 
 use clap::{Parser, Subcommand};
-use log::{error, info};
+use log::{error, info, debug};
 use std::path::PathBuf;
 use std::time::Duration;
 use tokio::time;
@@ -487,23 +490,40 @@ fn debug_redis_data(config: &Config, pattern: &str) -> Result<()> {
         println!("\nKey: {}", key);
         
         // Get key type
-        let key_type = store.get_type(key)?;
-        println!("Type: {:?}", key_type);
-        
-        match key_type {
-            crate::redis_handler::RedisType::String => {
-                let value = store.get_string(key)?;
-                println!("Value: {}", value);
-            },
-            crate::redis_handler::RedisType::Hash => {
-                let hash = store.get_hash(key)?;
-                println!("Hash fields:");
-                for (field, value) in hash {
-                    println!("  {} = {}", field, value);
+        let store_ref = store.as_ref();
+        if let Some(redis) = &store_ref.redis_store() {
+            let key_type = redis.get_type(key)?;
+            println!("Type: {:?}", key_type);
+            
+            match key_type {
+                RedisType::String => {
+                    let value = store_ref.get_string(key)?;
+                    println!("Value: {}", value);
+                },
+                RedisType::Hash => {
+                    let hash = store_ref.get_hash(key)?;
+                    for (k, v) in hash {
+                        println!("{}: {}", k, v);
+                    }
+                },
+                _ => {
+                    println!("Unsupported type");
                 }
-            },
-            _ => {
-                println!("Unsupported type");
+            }
+        } else {
+            // Handle the case when Redis is not available
+            debug!("Redis not available for key type check: {}", key);
+            // Try to get it from memory instead
+            if let Ok(value) = store_ref.get_string(key) {
+                println!("Type: String (from memory)");
+                println!("Value: {}", value);
+            } else if let Ok(hash) = store_ref.get_hash(key) {
+                println!("Type: Hash (from memory)");
+                for (k, v) in hash {
+                    println!("{}: {}", k, v);
+                }
+            } else {
+                println!("Key not found or unsupported type");
             }
         }
     }

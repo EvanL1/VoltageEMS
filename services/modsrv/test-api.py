@@ -79,6 +79,75 @@ def test_control_operations():
             return True  # Return true because the API is working as expected
     return operations.status_code == 200
 
+def test_rules_endpoints():
+    print("\nTesting rules endpoints...")
+    # First check if any rules exist
+    response = requests.get(f"{BASE_URL}/rules")
+    print(f"Rules list status code: {response.status_code}")
+    
+    if response.status_code == 200:
+        rules_count = len(response.json().get("rules", []))
+        print(f"Found {rules_count} existing rules")
+        
+        # Create a simple rule for testing
+        rule_id = f"api_test_rule_{int(time.time())}"
+        test_rule = {
+            "id": rule_id,
+            "name": "API Test Rule",
+            "description": "Rule created by the API test script",
+            "enabled": True,
+            "priority": 1,
+            "nodes": [
+                {
+                    "id": "input1",
+                    "name": "Test Input",
+                    "node_type": "Input",
+                    "config": {
+                        "device_id": "test_device",
+                        "data_points": ["status"]
+                    }
+                },
+                {
+                    "id": "action1",
+                    "name": "Test Action",
+                    "node_type": "Action",
+                    "config": {
+                        "type": "notify",
+                        "target": "system",
+                        "message": "Test notification"
+                    }
+                }
+            ],
+            "edges": [
+                {
+                    "from": "input1",
+                    "to": "action1"
+                }
+            ]
+        }
+        
+        # Create the rule
+        print(f"Creating test rule with ID: {rule_id}")
+        create_response = requests.post(f"{BASE_URL}/rules", json=test_rule)
+        print(f"Create rule status code: {create_response.status_code}")
+        
+        if create_response.status_code == 201:
+            # Get the rule
+            get_response = requests.get(f"{BASE_URL}/rules/{rule_id}")
+            print(f"Get rule status code: {get_response.status_code}")
+            
+            # Delete the rule to clean up
+            delete_response = requests.delete(f"{BASE_URL}/rules/{rule_id}")
+            print(f"Delete rule status code: {delete_response.status_code}")
+            
+            return create_response.status_code == 201 and get_response.status_code == 200 and delete_response.status_code == 200
+        else:
+            print(f"Error creating rule: {create_response.text}")
+            return False
+    else:
+        print(f"Error listing rules: {response.text}")
+        return False
+
 def main():
     print("ModSrv API Test Script")
     print("======================")
@@ -87,7 +156,8 @@ def main():
         ("Health Check", test_health),
         ("Templates List", test_templates),
         ("Instance Creation", test_create_instance),
-        ("Control Operations", test_control_operations)
+        ("Control Operations", test_control_operations),
+        ("Rules Endpoints", test_rules_endpoints)
     ]
     
     results = []

@@ -7,11 +7,11 @@ services:
       - "6379:6379"
     volumes:
       - redis-data:/data
-    command: ["redis-server", "--appendonly", "yes"]
+    command: redis-server --appendonly yes
     networks:
       - backend
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: redis-cli ping
       interval: 5s
       timeout: 3s
       retries: 5
@@ -72,22 +72,19 @@ services:
     ports:
       - "8000:8000"
     volumes:
-      - /tmp/modsrv-config:/etc/voltageems/config/modsrv
+      - ./config:/etc/voltageems/config/modsrv
       - ./templates:/app/templates
     environment:
-      - RUST_LOG=info
+      RUST_LOG: debug
+      REDIS_URL: redis://redis:6379
+      TEMPLATES_DIR: /app/templates
+      REDIS_KEY_PREFIX: ""
     depends_on:
       redis:
         condition: service_healthy
     networks:
       - backend
-    command: ["service"]
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/health"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
-      start_period: 5s
+    command: api
 
   modsrv_api:
     build:
