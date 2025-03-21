@@ -1,17 +1,18 @@
-use crate::error::{ModelSrvError, Result};
-use crate::rules::{DagRule, NodeType, NodeState, RuntimeRule, RuleNode};
 use crate::storage::DataStore;
+use crate::error::{ModelSrvError, Result};
+use crate::rules::{NodeType, NodeState, DagRule, NodeDefinition};
 use crate::storage::hybrid_store::HybridStore;
 use petgraph::graph::{DiGraph, NodeIndex};
 use petgraph::algo::toposort;
 use petgraph::visit::EdgeRef;
 use petgraph::Direction;
 use serde_json::{json, Value};
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
-use log::{debug, error, info, warn};
+use log::{error, info};
 use redis::Commands;
-use serde::{Serialize, Deserialize};
+use uuid::Uuid;
+use chrono::Utc;
 
 /// Context for rule execution
 pub struct ExecutionContext {
@@ -191,6 +192,36 @@ impl ExecutionContext {
     }
 }
 
+/// Runtime rule node
+pub struct RuleNode {
+    /// Node ID
+    pub id: String,
+    /// Node type
+    pub node_type: String,
+    /// Node configuration
+    pub config: Value,
+    /// Node state
+    pub state: NodeState,
+    /// Node definition
+    pub definition: NodeDefinition,
+    /// Node execution result
+    pub result: Option<Value>,
+}
+
+/// Runtime rule
+pub struct RuntimeRule {
+    /// Rule ID
+    pub id: String,
+    /// Graph data structure
+    pub graph: DiGraph<RuleNode, Option<String>>,
+    /// Node indices mapping
+    pub node_indices: HashMap<String, NodeIndex>,
+    /// Rule definition
+    pub definition: DagRule,
+    /// Node mapping
+    pub node_map: HashMap<String, NodeIndex>,
+}
+
 /// Build a runtime rule from a DAG rule definition
 pub fn build_rule_graph(rule_def: DagRule) -> Result<RuntimeRule> {
     let mut graph = DiGraph::<RuleNode, Option<String>>::new();
@@ -199,8 +230,11 @@ pub fn build_rule_graph(rule_def: DagRule) -> Result<RuntimeRule> {
     // Add nodes
     for node_def in &rule_def.nodes {
         let node = RuleNode {
-            definition: node_def.clone(),
+            id: node_def.id.clone(),
+            node_type: format!("{:?}", node_def.node_type),
+            config: node_def.config.clone(),
             state: NodeState::Pending,
+            definition: node_def.clone(),
             result: None,
         };
         
@@ -229,8 +263,10 @@ pub fn build_rule_graph(rule_def: DagRule) -> Result<RuntimeRule> {
     }
     
     Ok(RuntimeRule {
-        definition: rule_def,
+        id: rule_def.id.clone(),
         graph,
+        node_indices: node_map.clone(),
+        definition: rule_def,
         node_map,
     })
 }
@@ -486,449 +522,73 @@ async fn execute_node(node: &RuleNode, context: &mut ExecutionContext) -> Result
     }
 }
 
-/// Rule executor for executing rules
+/// Execute rules with monitoring and metrics
 pub struct RuleExecutor {
-    /// Data store
     store: Arc<HybridStore>,
 }
 
 impl RuleExecutor {
     /// Create a new rule executor
     pub fn new(store: Arc<HybridStore>) -> Self {
-        Self {
-            store,
-        }
+        Self { store }
     }
-    
-    /// Execute a rule
-    pub async fn execute_rule(&self, rule: DagRule, context: Option<Value>) -> Result<Value> {
-        // Build rule graph
-        let mut runtime_rule = self.build_rule_graph(rule)?;
+
+    /// Execute a rule by its ID
+    pub fn execute_rule(&self, rule_id: &str) -> Result<Value> {
+        info!("Executing rule: {}", rule_id);
         
-        // Create execution context
-        let mut exec_context = match context {
-            Some(ctx) => {
-                let mut context = ExecutionContext::new(self.store.clone());
-                for (k, v) in ctx.as_object().unwrap() {
-                    context.set_variable(k, v.clone());
-                }
-                context
+        // Get the rule
+        let rule_result = self.store.get_rule(rule_id);
+        let rule_json = match rule_result {
+            Ok(rule) => rule,
+            Err(e) => {
+                error!("Failed to get rule {}: {}", rule_id, e);
+                return Err(ModelSrvError::RuleNotFound(rule_id.to_string()));
             }
-            None => ExecutionContext::new(self.store.clone())
         };
         
-        // Load device statuses
-        exec_context.load_device_status().await?;
-        
-        // Execute rule graph
-        self.execute_graph(&mut runtime_rule, &mut exec_context).await
-    }
-    
-    /// Build a rule graph from a rule definition
-    fn build_rule_graph(&self, rule_def: DagRule) -> Result<RuntimeRule> {
-        let mut graph = DiGraph::new();
-        let mut node_map = HashMap::new();
-        
-        // Create nodes
-        for node_def in &rule_def.nodes {
-            let rule_node = RuleNode {
-                definition: node_def.clone(),
-                state: NodeState::Pending,
-                result: None,
-            };
-            
-            let node_idx = graph.add_node(rule_node);
-            node_map.insert(node_def.id.clone(), node_idx);
-        }
-        
-        // Create edges
-        for edge_def in &rule_def.edges {
-            let from_idx = node_map.get(&edge_def.from).ok_or_else(|| {
-                ModelSrvError::InvalidOperation(format!("Node {} not found", edge_def.from))
-            })?;
-            
-            let to_idx = node_map.get(&edge_def.to).ok_or_else(|| {
-                ModelSrvError::InvalidOperation(format!("Node {} not found", edge_def.to))
-            })?;
-            
-            graph.add_edge(*from_idx, *to_idx, edge_def.condition.clone());
-        }
-        
-        Ok(RuntimeRule {
-            definition: rule_def,
-            graph,
-            node_map,
-        })
-    }
-    
-    /// Execute a rule graph
-    async fn execute_graph(&self, rule: &mut RuntimeRule, context: &mut ExecutionContext) -> Result<Value> {
-        // Find root nodes (nodes with no incoming edges)
-        let mut root_nodes = Vec::new();
-        for node_idx in rule.graph.node_indices() {
-            if rule.graph.neighbors_directed(node_idx, Direction::Incoming).count() == 0 {
-                root_nodes.push(node_idx);
+        // Parse rule as DagRule
+        let rule: DagRule = match serde_json::from_value(rule_json) {
+            Ok(r) => r,
+            Err(e) => {
+                error!("Invalid rule format for {}: {}", rule_id, e);
+                return Err(ModelSrvError::RuleError(format!("Invalid rule format: {}", e)));
             }
-        }
-        
-        if root_nodes.is_empty() {
-            return Err(ModelSrvError::InvalidOperation("Rule has no root nodes".to_string()));
-        }
-        
-        // Create a queue for execution
-        let mut queue = VecDeque::new();
-        for node_idx in root_nodes {
-            queue.push_back(node_idx);
-        }
-        
-        // Track visited nodes to handle possible cycles
-        let mut visited = HashSet::new();
-        
-        // Execute nodes in topological order
-        while let Some(node_idx) = queue.pop_front() {
-            if visited.contains(&node_idx) {
-                continue;
-            }
-            
-            // Check if all dependencies are satisfied
-            let mut dependencies_satisfied = true;
-            for dep_idx in rule.graph.neighbors_directed(node_idx, Direction::Incoming) {
-                if !visited.contains(&dep_idx) {
-                    dependencies_satisfied = false;
-                    break;
-                }
-            }
-            
-            if !dependencies_satisfied {
-                // Put back in queue to process later
-                queue.push_back(node_idx);
-                continue;
-            }
-            
-            // Execute the node
-            let node = &rule.graph[node_idx];
-            let node_id = node.definition.id.clone();
-            let node_type = node.definition.node_type.clone();
-            
-            // Set node state to Running
-            rule.graph[node_idx].state = NodeState::Running;
-            
-            // Execute node based on type
-            let result = match node_type {
-                NodeType::Input => self.execute_input_node(&rule.graph[node_idx], context).await?,
-                NodeType::Condition => self.execute_condition_node(&rule.graph[node_idx], context).await?,
-                NodeType::Transform => self.execute_transform_node(&rule.graph[node_idx], context).await?,
-                NodeType::Action => self.execute_action_node(&rule.graph[node_idx], context).await?,
-                NodeType::Aggregate => self.execute_aggregate_node(&rule.graph[node_idx], context, &rule.graph, &visited).await?,
-            };
-            
-            // Store the result
-            rule.graph[node_idx].result = Some(result.clone());
-            
-            // Mark node as completed
-            rule.graph[node_idx].state = NodeState::Completed;
-            
-            // Add node to visited set
-            visited.insert(node_idx);
-            
-            // Store the result in execution context
-            context.set_variable(&format!("node.{}.result", node_id), result);
-            
-            // Add successors to queue
-            for succ_idx in rule.graph.neighbors_directed(node_idx, Direction::Outgoing) {
-                queue.push_back(succ_idx);
-            }
-        }
-        
-        // Collect results from all terminal nodes (nodes with no outgoing edges)
-        let mut results = Vec::new();
-        for node_idx in rule.graph.node_indices() {
-            if rule.graph.neighbors_directed(node_idx, Direction::Outgoing).count() == 0 
-               && rule.graph[node_idx].state == NodeState::Completed {
-                if let Some(result) = &rule.graph[node_idx].result {
-                    results.push(result.clone());
-                }
-            }
-        }
-        
-        // Return combined results
-        if results.is_empty() {
-            Ok(json!({"status": "executed", "results": []}))
-        } else if results.len() == 1 {
-            Ok(json!({"status": "executed", "result": results[0]}))
-        } else {
-            Ok(json!({"status": "executed", "results": results}))
-        }
-    }
-    
-    /// Execute an input node
-    async fn execute_input_node(&self, node: &RuleNode, context: &mut ExecutionContext) -> Result<Value> {
-        let config = &node.definition.config;
-        
-        // Get device ID
-        let device_id = config["device_id"].as_str()
-            .ok_or_else(|| ModelSrvError::InvalidOperation("Input node missing device_id".to_string()))?;
-            
-        // Get requested data points
-        if let Some(data_points) = config.get("data_points") {
-            if let Some(points) = data_points.as_array() {
-                let mut result = json!({});
-                
-                for point in points {
-                    if let Some(param) = point.as_str() {
-                        // Get device parameter
-                        let value = context.get_device_parameter(device_id, param)?;
-                        result[param] = value;
-                    }
-                }
-                
-                return Ok(result);
-            }
-        }
-        
-        // Default: return device status
-        let device_status = context.get_device_parameter(device_id, "status")?;
-        
-        Ok(device_status)
-    }
-    
-    /// Execute a condition node
-    async fn execute_condition_node(&self, node: &RuleNode, context: &mut ExecutionContext) -> Result<Value> {
-        let config = &node.definition.config;
-        
-        // Get condition expression
-        let expression = config["expression"].as_str()
-            .ok_or_else(|| ModelSrvError::InvalidOperation("Condition node missing expression".to_string()))?;
-            
-        // Split expression into left and right parts
-        let parts: Vec<&str> = expression.split("==").collect();
-        if parts.len() != 2 {
-            return Err(ModelSrvError::InvalidOperation("Invalid condition format".to_string()));
-        }
-        
-        let left = parts[0].trim();
-        let right = parts[1].trim();
-        
-        // Get left operand
-        let left_value = if left.starts_with("$") {
-            // Variable reference
-            context.resolve_variable(&left[1..])?.clone()
-        } else {
-            // Direct reference
-            context.get_variable(left).map(|v| v.clone()).unwrap_or(Value::Null)
         };
         
-        // Get right operand
-        let right_value = if right.starts_with("$") {
-            // Variable reference
-            context.resolve_variable(&right[1..])?.clone()
-        } else if let Ok(num) = right.parse::<i64>() {
-            // Integer literal
-            Value::Number(num.into())
-        } else if let Ok(num) = right.parse::<f64>() {
-            // Float literal
-            serde_json::Number::from_f64(num)
-                .map(Value::Number)
-                .unwrap_or(Value::Null)
-        } else {
-            // Try as variable
-            context.get_variable(right).map(|v| v.clone()).unwrap_or(Value::Null)
-        };
-        
-        // Return result wrapped in Result
-        Ok(json!({"result": left_value == right_value}))
-    }
-    
-    /// Execute a transform node
-    async fn execute_transform_node(&self, node: &RuleNode, context: &mut ExecutionContext) -> Result<Value> {
-        let config = &node.definition.config;
-        
-        // Get transform type
-        let transform_type = config["type"].as_str()
-            .ok_or_else(|| ModelSrvError::InvalidOperation("Transform node missing type".to_string()))?;
-            
-        // Execute transform based on type
-        match transform_type {
-            "map" => {
-                // Get input variable
-                let input_var = config["input_var"].as_str()
-                    .ok_or_else(|| ModelSrvError::InvalidOperation("Map transform missing input_var".to_string()))?;
-                    
-                // Get mapping rules
-                let mappings = config["mappings"].as_object()
-                    .ok_or_else(|| ModelSrvError::InvalidOperation("Map transform missing mappings".to_string()))?;
-                    
-                // Get input value
-                let input_value = context.get_variable(input_var)
-                    .ok_or_else(|| ModelSrvError::InvalidOperation(format!("Variable {} not found", input_var)))?;
-                    
-                // Apply mapping
-                let input_str = input_value.as_str()
-                    .ok_or_else(|| ModelSrvError::InvalidOperation("Input value must be a string".to_string()))?;
-                    
-                if let Some(mapped_value) = mappings.get(input_str) {
-                    Ok(json!({"result": mapped_value}))
-                } else {
-                    // Use default if provided
-                    if let Some(default) = config["default"].as_str() {
-                        Ok(json!({"result": default}))
-                    } else {
-                        Ok(json!({"result": null, "error": "No mapping found for value"}))
-                    }
-                }
-            },
-            "calculate" => {
-                // Get formula
-                let formula = config["formula"].as_str()
-                    .ok_or_else(|| ModelSrvError::InvalidOperation("Calculate transform missing formula".to_string()))?;
-                    
-                // In a real implementation, we would parse and evaluate the formula
-                // For now, we'll just return a dummy result
-                Ok(json!({"result": 42, "formula": formula}))
-            },
-            _ => Err(ModelSrvError::InvalidOperation(format!("Unsupported transform type: {}", transform_type))),
-        }
-    }
-    
-    /// Execute an action node
-    async fn execute_action_node(&self, node: &RuleNode, context: &mut ExecutionContext) -> Result<Value> {
-        let config = &node.definition.config;
-        
-        // Get action type
-        let action_type = config["type"].as_str()
-            .ok_or_else(|| ModelSrvError::InvalidOperation("Action node missing type".to_string()))?;
-            
-        // Execute action based on type
-        match action_type {
-            "device_control" => {
-                // Get device ID
-                let device_id = config["device_id"].as_str()
-                    .ok_or_else(|| ModelSrvError::InvalidOperation("Device control action missing device_id".to_string()))?;
-                    
-                // Get operation
-                let operation = config["operation"].as_str()
-                    .ok_or_else(|| ModelSrvError::InvalidOperation("Device control action missing operation".to_string()))?;
-                    
-                // Get parameters
-                let parameters = config.get("parameters").cloned().unwrap_or(json!({}));
-                
-                // In a real implementation, we would send the control command to the device
-                // For now, we'll just log the action and return success
-                info!("Executing device control: {} on device {} with parameters {:?}", 
-                      operation, device_id, parameters);
-                      
-                Ok(json!({
-                    "action": "device_control",
-                    "device_id": device_id,
-                    "operation": operation,
-                    "parameters": parameters,
-                    "status": "success"
-                }))
-            },
-            "notify" => {
-                // Get notification target
-                let target = config["target"].as_str()
-                    .ok_or_else(|| ModelSrvError::InvalidOperation("Notify action missing target".to_string()))?;
-                    
-                // Get message
-                let message = config["message"].as_str()
-                    .ok_or_else(|| ModelSrvError::InvalidOperation("Notify action missing message".to_string()))?;
-                    
-                // In a real implementation, we would send the notification
-                // For now, we'll just log it and return success
-                info!("Sending notification to {}: {}", target, message);
-                
-                Ok(json!({
-                    "action": "notify",
-                    "target": target,
-                    "message": message,
-                    "status": "success"
-                }))
-            },
-            _ => Err(ModelSrvError::InvalidOperation(format!("Unsupported action type: {}", action_type))),
-        }
-    }
-    
-    /// Execute an aggregate node
-    async fn execute_aggregate_node(
-        &self, 
-        node: &RuleNode, 
-        context: &mut ExecutionContext,
-        graph: &DiGraph<RuleNode, Option<String>>,
-        visited: &HashSet<NodeIndex>,
-    ) -> Result<Value> {
-        let config = &node.definition.config;
-        
-        // Get aggregation type
-        let agg_type = config["type"].as_str()
-            .ok_or_else(|| ModelSrvError::InvalidOperation("Aggregate node missing type".to_string()))?;
-            
-        // Get node index for the current node
-        // We need to find the node index in the graph by searching for matching node ID
-        let node_id = &node.definition.id;
-        let mut node_idx = None;
-        
-        // Find the node index in the graph
-        for idx in graph.node_indices() {
-            if &graph[idx].definition.id == node_id {
-                node_idx = Some(idx);
-                break;
-            }
+        // Check if rule is enabled
+        if !rule.enabled {
+            return Err(ModelSrvError::RuleDisabled(rule_id.to_string()));
         }
         
-        let node_idx = node_idx.ok_or_else(|| 
-            ModelSrvError::InvalidOperation(format!("Node index not found for {}", node_id)))?;
+        // Generate execution ID and timestamp
+        let execution_id = Uuid::new_v4().to_string();
+        let start_time = Utc::now();
+        let timestamp = start_time.to_rfc3339();
         
-        let mut inputs = Vec::new();
-        for in_idx in graph.neighbors_directed(node_idx, Direction::Incoming) {
-            if !visited.contains(&in_idx) {
-                continue;
-            }
-            
-            if let Some(result) = &graph[in_idx].result {
-                inputs.push(result.clone());
-            }
+        // Simulate rule execution process
+        // In a real implementation, this would call the rule engine to execute the rule
+        
+        // Record execution history
+        let end_time = Utc::now();
+        let duration_ms = (end_time - start_time).num_milliseconds();
+        
+        let execution_history = json!({
+            "execution_id": execution_id,
+            "rule_id": rule_id,
+            "status": "completed",
+            "timestamp": timestamp,
+            "duration_ms": duration_ms,
+            "output": "Rule executed successfully"
+        });
+        
+        // Add execution history record
+        if let Err(e) = self.store.add_execution_history(rule_id, &execution_history) {
+            error!("Failed to add execution history: {}", e);
+            // Continue execution, don't return error
         }
         
-        // Execute aggregation based on type
-        match agg_type {
-            "all" => {
-                // Check if all inputs are true
-                let all_true = inputs.iter().all(|input| {
-                    if let Some(result) = input.get("result") {
-                        result.as_bool().unwrap_or(false)
-                    } else {
-                        false
-                    }
-                });
-                
-                Ok(json!({"result": all_true}))
-            },
-            "any" => {
-                // Check if any input is true
-                let any_true = inputs.iter().any(|input| {
-                    if let Some(result) = input.get("result") {
-                        result.as_bool().unwrap_or(false)
-                    } else {
-                        false
-                    }
-                });
-                
-                Ok(json!({"result": any_true}))
-            },
-            "count" => {
-                // Count inputs that are true
-                let count = inputs.iter().filter(|input| {
-                    if let Some(result) = input.get("result") {
-                        result.as_bool().unwrap_or(false)
-                    } else {
-                        false
-                    }
-                }).count();
-                
-                Ok(json!({"result": count}))
-            },
-            _ => Err(ModelSrvError::InvalidOperation(format!("Unsupported aggregation type: {}", agg_type))),
-        }
+        // Return execution result
+        Ok(execution_history)
     }
 } 

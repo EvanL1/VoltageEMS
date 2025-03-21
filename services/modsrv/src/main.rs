@@ -9,16 +9,16 @@ mod storage_agent;
 mod api;
 mod rules;
 mod rules_engine;
+mod monitoring;
 
 use crate::config::Config;
 use crate::error::{Result, ModelSrvError};
 use crate::model::ModelEngine;
-use crate::redis_handler::RedisConnection;
 use crate::control::ControlManager;
 use crate::template::TemplateManager;
 use crate::storage_agent::StorageAgent;
 use crate::storage::DataStore;
-use crate::api::start_api_server;
+use crate::api::ApiServer;
 use crate::redis_handler::RedisType;
 
 use clap::{Parser, Subcommand};
@@ -162,11 +162,8 @@ fn main() -> Result<()> {
             let rt = tokio::runtime::Runtime::new()?;
             let config_clone = config.clone();
             
-            // Create the HybridStore with proper arguments
-            let store = Arc::new(HybridStore::new(&config, SyncMode::WriteThrough)?);
-            
             rt.block_on(async {
-                if let Err(e) = start_api_server(config_clone, store).await {
+                if let Err(e) = start_api_server(&config_clone).await {
                     error!("API server error: {}", e);
                 }
             });
@@ -216,17 +213,18 @@ async fn run_service(config: &Config) -> Result<()> {
     let mut interval = time::interval(update_interval);
 
     // Start API server
-    let config_clone = config.clone();
-    // Create the HybridStore with proper arguments
-    let store_clone = Arc::new(HybridStore::new(config, SyncMode::WriteThrough)?);
+    let store_arc = Arc::new(HybridStore::new(config, SyncMode::WriteThrough)?);
+    let storage_agent_arc = Arc::new(storage_agent);
     
+    // Create and start API server
+    let api_server = ApiServer::new(store_arc.clone(), storage_agent_arc, config.api.port);
     tokio::spawn(async move {
-        if let Err(e) = start_api_server(config_clone, store_clone).await {
+        if let Err(e) = api_server.start().await {
             error!("API server error: {}", e);
         }
     });
 
-    info!("Model engine started, API server available at http://0.0.0.0:8000");
+    info!("Model engine started, API server available at http://0.0.0.0:{}", config.api.port);
 
     loop {
         interval.tick().await;
@@ -478,7 +476,7 @@ fn display_model_info(config: &Config, storage_agent: &StorageAgent) -> Result<(
 /// Debug Redis data
 fn debug_redis_data(config: &Config, pattern: &str) -> Result<()> {
     // Create storage agent
-    let mut storage_agent = StorageAgent::new(config.clone())?;
+    let storage_agent = StorageAgent::new(config.clone())?;
     
     // Get all keys matching the pattern
     let store = storage_agent.store();
@@ -558,4 +556,17 @@ fn view_memory_data(pattern: &str) -> Result<()> {
     }
     
     Ok(())
+}
+
+/// Start the API server
+async fn start_api_server(config: &Config) -> Result<()> {
+    // Create storage agent
+    let storage_agent = Arc::new(StorageAgent::new(config.clone())?);
+    let store = Arc::new(HybridStore::new(config, SyncMode::WriteThrough)?);
+    
+    // Create API server
+    let api_server = ApiServer::new(store, storage_agent, config.api.port);
+    
+    // Start API server
+    api_server.start().await
 } 

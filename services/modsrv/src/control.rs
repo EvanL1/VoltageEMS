@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use crate::storage::DataStore;
-use crate::model::{self, CommandStatus};
+use crate::model::{self};
 use uuid;
 use redis::Commands;
 
@@ -272,7 +272,7 @@ impl ControlOperationExecutor for DeviceControlExecutor {
     }
     
     fn can_execute(&self, 
-                  redis: &mut RedisConnection, 
+                  _redis: &mut RedisConnection, 
                   operation: &ControlOperation) -> Result<bool> {
         // Check if operation is enabled
         if !operation.enabled {

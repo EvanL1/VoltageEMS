@@ -2,7 +2,7 @@ use std::sync::Arc;
 use log::{info, error};
 use crate::error::Result;
 use crate::config::Config;
-use crate::storage::{DataStore, SyncMode};
+use crate::storage::SyncMode;
 use crate::storage::hybrid_store::{HybridStore, SyncService};
 
 /// Storage agent, responsible for managing storage operations and synchronization

@@ -2,7 +2,6 @@ use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 use crate::error::{Result, ModelSrvError};
 use super::{DataStore, pattern_to_regex};
-use serde_json;
 
 /// Memory store implementation
 pub struct MemoryStore {

@@ -5,23 +5,40 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use crate::storage::DataStore;
 use std::time::{SystemTime, UNIX_EPOCH};
+use std::sync::Arc;
 
+/// Data mapping for model inputs and outputs
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DataMapping {
+    /// Source key for data
     pub source_key: String,
+    /// Field name in source data
     pub source_field: String,
+    /// Target field name
     pub target_field: String,
+    /// Optional transformation expression
     pub transform: Option<String>,
 }
 
+/// Model definition
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModelDefinition {
+    /// Unique model ID
     pub id: String,
+    /// Display name
     pub name: String,
+    /// Model description
     pub description: String,
+    /// Input mappings
     pub input_mappings: Vec<DataMapping>,
+    /// Output key
     pub output_key: String,
+    /// Whether the model is enabled
     pub enabled: bool,
+    /// Template ID the model is based on
+    pub template_id: String,
+    /// Model configuration
+    pub config: HashMap<String, String>,
 }
 
 /// Control action type
@@ -129,22 +146,22 @@ impl ModelEngine {
     }
 
     fn load_model_from_store<T: DataStore>(&self, store: &T, key: &str) -> Result<(ModelDefinition, Vec<ControlAction>)> {
-        // 尝试从哈希表中加载模型
+        // Try to load the model from hash table
         let model_hash = match store.get_hash(key) {
             Ok(hash) => hash,
             Err(e) => {
                 debug!("Failed to load model as hash, trying string format: {}", e);
-                // 如果哈希表加载失败，尝试旧的字符串格式
+                // If hash table loading fails, try old string format
                 let model_json = store.get_string(key)?;
                 
-                // 尝试解析为带控制动作的模型
+                // Try to parse as model with control actions
                 let model_with_actions = serde_json::from_str::<ModelWithActions>(&model_json);
                 
                 if let Ok(model_with_actions) = model_with_actions {
                     return Ok((model_with_actions.model, model_with_actions.actions));
                 }
                 
-                // 如果解析失败，尝试解析为基本模型
+                // If parsing fails, try parsing as basic model
                 let model: ModelDefinition = serde_json::from_str(&model_json)
                     .map_err(|e| ModelSrvError::ModelError(format!("Failed to parse model JSON: {}", e)))?;
                 
@@ -154,7 +171,7 @@ impl ModelEngine {
         
         debug!("Loading model from hash: {}", key);
         
-        // 从哈希表构建模型定义
+        // Build model definition from hash table
         let id = model_hash.get("id")
             .ok_or_else(|| ModelSrvError::ModelError("Missing id field in model hash".to_string()))?
             .to_string();
@@ -167,7 +184,7 @@ impl ModelEngine {
             .unwrap_or(&"No description".to_string())
             .to_string();
             
-        // 解析输入映射
+        // Parse input mappings
         let input_mappings = if let Some(mappings_json) = model_hash.get("input_mappings") {
             serde_json::from_str::<Vec<DataMapping>>(mappings_json)
                 .map_err(|e| ModelSrvError::ModelError(format!("Failed to parse input mappings: {}", e)))?
@@ -183,6 +200,17 @@ impl ModelEngine {
             .map(|v| v == "true")
             .unwrap_or(true);
             
+        let template_id = model_hash.get("template_id")
+            .unwrap_or(&String::new())
+            .to_string();
+            
+        let config = if let Some(config_json) = model_hash.get("config") {
+            serde_json::from_str::<HashMap<String, String>>(config_json)
+                .map_err(|e| ModelSrvError::ModelError(format!("Failed to parse config: {}", e)))?
+        } else {
+            HashMap::new()
+        };
+        
         let model = ModelDefinition {
             id,
             name,
@@ -190,9 +218,11 @@ impl ModelEngine {
             input_mappings,
             output_key,
             enabled,
+            template_id,
+            config,
         };
         
-        // 加载动作
+        // Load actions
         let mut actions = Vec::new();
         
         if let Some(action_count_str) = model_hash.get("action_count") {
@@ -232,8 +262,8 @@ impl ModelEngine {
                 Ok(_) => {
                     debug!("Successfully executed model: {}", id);
                     
-                    // 执行模型后检查是否需要触发控制动作
-                    if let Some(actions) = self.actions.get(id) {
+                    // Check if control actions need to be triggered after model execution
+                    if let Some(_actions) = self.actions.get(id) {
                         self.check_and_execute_actions(store, id)?;
                     }
                 }
@@ -272,8 +302,8 @@ impl ModelEngine {
             
         store.set_string(&model.output_key, &output_json)?;
         
-        // 检查并执行控制动作
-        if let Some(actions) = self.actions.get(&format!("model:config:{}", model.id)) {
+        // Check and execute control actions
+        if let Some(_actions) = self.actions.get(&format!("model:config:{}", model.id)) {
             if let Err(e) = self.check_and_execute_actions(store, &model.id) {
                 error!("Failed to execute actions for model {}: {}", model.id, e);
             }
@@ -338,16 +368,16 @@ impl ModelEngine {
         Ok(outputs)
     }
 
-    /// 检查并执行模型动作
+    /// Check and execute model actions
     pub fn check_and_execute_actions<T: DataStore>(&self, store: &T, model_id: &str) -> Result<()> {
         let model_key = format!("{}model:config:{}", self.key_prefix, model_id);
         let model_json = store.get_string(&model_key)?;
         
-        // 尝试解析为带控制动作的模型
+        // Try to parse as model with control actions
         let model_with_actions = serde_json::from_str::<ModelWithActions>(&model_json);
         
         if let Err(_) = model_with_actions {
-            // 如果不是带动作的模型，则跳过
+            // Skip if not a model with actions
             return Ok(());
         }
         
@@ -355,13 +385,13 @@ impl ModelEngine {
         let model = &model_with_actions.model;
         let actions = &model_with_actions.actions;
         
-        // 如果模型未启用，则跳过
+        // Skip if model is disabled
         if !model.enabled {
             debug!("Model {} is disabled, skipping actions", model_id);
             return Ok(());
         }
         
-        // 获取模型输出
+        // Get model output
         let output_key = &model.output_key;
         let output_json = match store.get_string(output_key) {
             Ok(json) => json,
@@ -371,7 +401,7 @@ impl ModelEngine {
             }
         };
         
-        // 解析模型输出
+        // Parse model output
         let model_outputs: HashMap<String, String> = match serde_json::from_str(&output_json) {
             Ok(outputs) => outputs,
             Err(e) => {
@@ -390,7 +420,7 @@ impl ModelEngine {
             let mut conditions_met = true;
             
             for condition in &action.conditions {
-                // 使用String作为键查找
+                // Use String as key for lookup
                 if let Some(field_value) = model_outputs.get(&condition.field) {
                     if !self.evaluate_condition(field_value, &condition.operator, &condition.value)? {
                         conditions_met = false;
@@ -406,19 +436,19 @@ impl ModelEngine {
             if conditions_met {
                 info!("Executing action: {} for model {}", action.id, model_id);
                 
-                // 执行动作
-                // 在实际实现中，这里会根据action_type执行不同的操作
-                // 例如，发送控制命令到设备、触发其他模型等
+                // Execute action
+                // In a real implementation, this would perform different operations based on action_type
+                // For example, sending control commands to devices, triggering other models, etc.
                 
-                // 记录动作执行
-                let action_log_key = format!("{}model:action:{}:{}", self.key_prefix, model_id, action.id);
+                // Record action execution
+                let _action_log_key = format!("{}model:action:{}:{}", self.key_prefix, model_id, action.id);
                 let action_log = format!(
                     r#"{{"model_id":"{}","action_id":"{}","executed_at":{}}}"#,
                     model_id, action.id, SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs()
                 );
                 
-                // 这里应该使用一个实际的Redis连接来存储日志
-                // 为简化示例，我们只打印日志
+                // An actual Redis connection should be used here to store the log
+                // For this example, we just print the log
                 debug!("Action log: {}", action_log);
             }
         }
@@ -460,7 +490,7 @@ impl ModelEngine {
     /// Send remote control command
     pub fn send_remote_control<T: DataStore>(
         &self,
-        store: &T,
+        _store: &T,
         channel: &str,
         point: &str,
         value: bool,
@@ -474,7 +504,7 @@ impl ModelEngine {
     /// Send remote adjustment command
     pub fn send_remote_adjust<T: DataStore>(
         &self,
-        store: &T,
+        _store: &T,
         channel: &str,
         point: &str,
         value: f64,
@@ -488,8 +518,8 @@ impl ModelEngine {
     /// Get command status
     pub fn get_command_status<T: DataStore>(
         &self,
-        store: &T,
-        command_id: &str,
+        _store: &T,
+        _command_id: &str,
     ) -> Result<CommandStatus> {
         // Simplified implementation, always return completed
         Ok(CommandStatus::Completed)
@@ -498,11 +528,126 @@ impl ModelEngine {
     /// Cancel command
     pub fn cancel_command<T: DataStore>(
         &self,
-        store: &T,
+        _store: &T,
         command_id: &str,
     ) -> Result<()> {
         // Simplified implementation, just log the operation
         info!("Cancel command: {}", command_id);
         Ok(())
+    }
+}
+
+impl ModelDefinition {
+    /// Validate the model definition
+    pub fn validate(&self) -> Result<()> {
+        if self.id.is_empty() {
+            return Err(ModelSrvError::ValidationError("Model ID cannot be empty".to_string()));
+        }
+        
+        if self.template_id.is_empty() {
+            return Err(ModelSrvError::ValidationError("Template ID cannot be empty".to_string()));
+        }
+        
+        Ok(())
+    }
+
+    /// Get an action by ID
+    pub fn get_action(&self, _action_id: &str) -> Option<&ControlAction> {
+        // This method should get actions from elsewhere
+        None // Simplified implementation
+    }
+}
+
+/// Model service for managing models
+pub struct ModelService {
+    /// Redis connection for persistence
+    redis: Arc<RedisConnection>,
+    /// Key prefix for storage
+    key_prefix: String,
+}
+
+impl ModelService {
+    /// Create a new model service
+    pub fn new(redis: Arc<RedisConnection>, key_prefix: String) -> Self {
+        ModelService {
+            redis,
+            key_prefix,
+        }
+    }
+
+    /// Get mutable connection
+    fn get_mutable_connection(&self) -> Result<RedisConnection> {
+        let conn = self.redis.clone();
+        conn.duplicate()
+    }
+    
+    pub async fn get_model(&self, id: &str) -> Result<ModelDefinition> {
+        let key = format!("{}model:{}", self.key_prefix, id);
+        let mut redis = self.get_mutable_connection()?;
+        let json = redis.get_string(&key)?;
+        
+        let model: ModelDefinition = serde_json::from_str(&json)?;
+        Ok(model)
+    }
+    
+    pub async fn create_model(&self, model: &ModelDefinition) -> Result<()> {
+        let key = format!("{}model:{}", self.key_prefix, model.id);
+        let mut redis = self.get_mutable_connection()?;
+        
+        if redis.exists(&key)? {
+            return Err(ModelSrvError::ModelAlreadyExists(model.id.clone()));
+        }
+        
+        let json = serde_json::to_string(model)?;
+        redis.set_string(&key, &json)?;
+        
+        Ok(())
+    }
+    
+    pub async fn update_model(&self, id: &str, model: &ModelDefinition) -> Result<()> {
+        let key = format!("{}model:{}", self.key_prefix, id);
+        let mut redis = self.get_mutable_connection()?;
+        
+        if !redis.exists(&key)? {
+            return Err(ModelSrvError::ModelNotFound(id.to_string()));
+        }
+        
+        let json = serde_json::to_string(model)?;
+        redis.set_string(&key, &json)?;
+        
+        Ok(())
+    }
+    
+    pub async fn delete_model(&self, id: &str) -> Result<()> {
+        let key = format!("{}model:{}", self.key_prefix, id);
+        let mut redis = self.get_mutable_connection()?;
+        
+        if !redis.exists(&key)? {
+            return Err(ModelSrvError::ModelNotFound(id.to_string()));
+        }
+        
+        redis.delete(&key)?;
+        
+        Ok(())
+    }
+    
+    pub async fn list_models(&self) -> Result<Vec<ModelDefinition>> {
+        let mut redis = self.get_mutable_connection()?;
+        let pattern = format!("{}model:*", self.key_prefix);
+        let keys = redis.get_keys(&pattern)?;
+        
+        let mut models = Vec::new();
+        for key in keys {
+            match redis.get_string(&key) {
+                Ok(json) => {
+                    if let Ok(model) = serde_json::from_str::<ModelDefinition>(&json) {
+                        models.push(model);
+                    }
+                },
+                Err(_) => continue
+            }
+        }
+        
+        Ok(models)
     }
 } 

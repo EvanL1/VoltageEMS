@@ -1,4 +1,4 @@
-use std::sync::{Arc, Mutex, RwLock};
+use std::sync::{Arc, RwLock};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 use tokio::task::JoinHandle;
@@ -12,6 +12,7 @@ use super::{DataStore, SyncMode};
 use super::memory_store::MemoryStore;
 use super::redis_store::RedisStore;
 use crate::redis_handler::RedisConnection;
+use crate::template::TemplateManager;
 
 /// Hybrid store implementation, combining memory and Redis
 pub struct HybridStore {
@@ -26,8 +27,14 @@ impl HybridStore {
         let memory = Arc::new(MemoryStore::new());
         
         let redis = if config.use_redis {
+            // Create JSON configuration
+            let redis_config = serde_json::json!({
+                "host": config.redis.host,
+                "port": config.redis.port
+            });
+            
             // Create a RedisConnection from the config
-            let redis_conn = RedisConnection::from_config(&config.redis)?;
+            let redis_conn = RedisConnection::from_config(&redis_config)?;
             
             // Create the RedisStore with the connection
             Some(Arc::new(RedisStore::new(redis_conn)))
@@ -40,6 +47,51 @@ impl HybridStore {
             redis,
             sync_mode,
         })
+    }
+    
+    /// Get a rule by ID
+    pub fn get_rule(&self, rule_id: &str) -> Result<serde_json::Value> {
+        let key = format!("rule:{}", rule_id);
+        match self.get_string(&key) {
+            Ok(rule_str) => {
+                serde_json::from_str(&rule_str)
+                    .map_err(|e| ModelSrvError::SerdeError(e))
+            },
+            Err(e) => Err(e)
+        }
+    }
+
+    /// Add execution history for a rule
+    pub fn add_execution_history(&self, rule_id: &str, history: &serde_json::Value) -> Result<()> {
+        let key = format!("rule:{}:history", rule_id);
+        let history_str = serde_json::to_string(history)
+            .map_err(|e| ModelSrvError::SerdeError(e))?;
+        
+        // Add to list in Redis or memory
+        if let Some(redis) = &self.redis {
+            let key_list = format!("rule:{}:history", rule_id);
+            self.memory.set_string(&key_list, &history_str)?;
+            
+            // 如果是 WriteThrough 模式，也写入 Redis
+            if matches!(self.sync_mode, SyncMode::WriteThrough) {
+                redis.set_string(&key_list, &history_str)?;
+            }
+        } else {
+            // If we don't have Redis, store in memory as a string with the execution ID as a field
+            let execution_id = history["execution_id"].as_str()
+                .ok_or_else(|| ModelSrvError::InvalidData("Missing execution_id in history".to_string()))?;
+            
+            let existing_hash = match self.get_hash(&key) {
+                Ok(hash) => hash,
+                Err(_) => HashMap::new()
+            };
+            
+            let mut new_hash = existing_hash;
+            new_hash.insert(execution_id.to_string(), history_str);
+            self.set_hash(&key, &new_hash)?;
+        }
+        
+        Ok(())
     }
     
     /// Load data from Redis to memory
@@ -186,6 +238,133 @@ impl HybridStore {
             None
         }
     }
+
+    /// List all rules in the store
+    pub fn list_rules(&self) -> Result<Vec<serde_json::Value>> {
+        let mut rules = Vec::new();
+        
+        // Get all rule IDs
+        let keys = self.get_keys("rule:*")?;
+        
+        for key in keys {
+            // Skip history records and other non-rule keys
+            if key.contains(":history:") {
+                continue;
+            }
+            
+            // Extract rule ID from key
+            let rule_id = key.strip_prefix("rule:").unwrap_or(&key);
+            
+            // Try to get the rule
+            match self.get_rule(rule_id) {
+                Ok(rule) => {
+                    rules.push(rule);
+                },
+                Err(_) => {
+                    // Skip rules that can't be retrieved
+                    continue;
+                }
+            }
+        }
+        
+        Ok(rules)
+    }
+    
+    /// Create a new rule
+    pub fn create_rule(&self, rule_json: &serde_json::Value) -> Result<()> {
+        // Ensure rule contains ID
+        let rule_id = rule_json.get("id")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| ModelSrvError::InvalidInput("Rule must contain an id field".to_string()))?;
+            
+        // Check if rule already exists
+        let rule_key = format!("rule:{}", rule_id);
+        if self.exists(&rule_key)? {
+            return Err(ModelSrvError::ModelAlreadyExists(rule_id.to_string()));
+        }
+        
+        // Store rule
+        self.set_string(&rule_key, &serde_json::to_string(rule_json)?)?;
+        
+        Ok(())
+    }
+    
+    /// Update an existing rule
+    pub fn update_rule(&self, rule_id: &str, rule_json: &serde_json::Value) -> Result<()> {
+        // Check if rule exists
+        let rule_key = format!("rule:{}", rule_id);
+        if !self.exists(&rule_key)? {
+            return Err(ModelSrvError::RuleNotFound(rule_id.to_string()));
+        }
+        
+        // Store updated rule
+        self.set_string(&rule_key, &serde_json::to_string(rule_json)?)?;
+        
+        Ok(())
+    }
+    
+    /// Delete a rule
+    pub fn delete_rule(&self, rule_id: &str) -> Result<()> {
+        let rule_key = format!("rule:{}", rule_id);
+        
+        // Delete rule
+        self.delete(&rule_key)?;
+        
+        // Try to delete related history
+        let history_key = format!("rule:{}:history", rule_id);
+        let _ = self.delete(&history_key); // Ignore errors
+        
+        Ok(())
+    }
+    
+    /// Get execution history for a rule
+    pub fn get_execution_history(&self, rule_id: &str) -> Result<Vec<serde_json::Value>> {
+        let history_key = format!("rule:{}:history", rule_id);
+        
+        // Check if rule exists
+        let rule_key = format!("rule:{}", rule_id);
+        if !self.exists(&rule_key)? {
+            return Err(ModelSrvError::RuleNotFound(rule_id.to_string()));
+        }
+        
+        // Try to get history from memory store
+        if let Ok(history_json) = self.get_string(&history_key) {
+            // Single record
+            if history_json.starts_with('{') {
+                let record = serde_json::from_str(&history_json)?;
+                return Ok(vec![record]);
+            }
+            
+            // Multiple records, try to parse as array
+            if history_json.starts_with('[') {
+                let records = serde_json::from_str(&history_json)?;
+                return Ok(records);
+            }
+        }
+        
+        // Try to get as hash (for history in memory store)
+        if let Ok(hash) = self.get_hash(&history_key) {
+            let mut records = Vec::new();
+            for (_, value) in hash {
+                if let Ok(record) = serde_json::from_str(&value) {
+                    records.push(record);
+                }
+            }
+            return Ok(records);
+        }
+        
+        Ok(Vec::new())
+    }
+
+    /// Get a template manager instance
+    pub fn get_template_manager(&self) -> Result<TemplateManager> {
+        // 获取配置信息，这里模拟一个简单的实现
+        // 实际实现中，你可能需要从某个字段或缓存中获取这些信息
+        let templates_dir = std::env::var("TEMPLATES_DIR").unwrap_or_else(|_| "templates".to_string());
+        let key_prefix = "ems:";
+        
+        Ok(TemplateManager::new(&templates_dir, key_prefix))
+    }
 }
 
 impl DataStore for HybridStore {
@@ -194,21 +373,13 @@ impl DataStore for HybridStore {
     }
     
     fn set_string(&self, key: &str, value: &str) -> Result<()> {
-        // Write to memory first
+        // Store in memory
         self.memory.set_string(key, value)?;
         
-        // Decide whether to write to Redis based on sync mode
-        if let Some(redis) = &self.redis {
-            match &self.sync_mode {
-                SyncMode::WriteThrough => {
-                    redis.set_string(key, value)?;
-                },
-                SyncMode::WriteBack(_) => {
-                    // Handled by background thread, not here
-                },
-                SyncMode::OnDemand => {
-                    // Do nothing, wait for explicit sync call
-                }
+        // If in WriteThrough mode, also write to Redis
+        if let (Some(redis), SyncMode::WriteThrough) = (&self.redis, self.sync_mode) {
+            if let Err(e) = redis.set_string(key, value) {
+                error!("Failed to write to Redis: {}", e);
             }
         }
         

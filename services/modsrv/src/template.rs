@@ -1,13 +1,14 @@
 use crate::error::{ModelSrvError, Result};
-use crate::model::{ModelDefinition, ControlAction, ModelWithActions, DataMapping};
+use crate::model::{ModelDefinition, ControlAction, ModelWithActions};
 use crate::redis_handler::RedisConnection;
-use log::{debug, error, info, warn};
+use log::{debug, error, info};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use crate::storage::DataStore;
+use serde_json::Value;
 
 /// Template information in the template index
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -22,6 +23,60 @@ pub struct TemplateInfo {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TemplateIndex {
     pub templates: Vec<TemplateInfo>,
+}
+
+/// Represents a data mapping for template input/output
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TemplateDataMapping {
+    /// Source key in the input data
+    pub source: String,
+    /// Target key in the processed data
+    pub target: String,
+    /// Optional transformation to apply
+    #[serde(default)]
+    pub transform: Option<String>,
+}
+
+/// Represents a model template definition
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TemplateDefinition {
+    /// Unique template ID
+    pub id: String,
+    /// Template name
+    pub name: String,
+    /// Template description
+    #[serde(default)]
+    pub description: String,
+    /// Input data mappings
+    #[serde(default)]
+    pub input_mappings: Vec<TemplateDataMapping>,
+    /// Output data key
+    pub output_key: String,
+    /// Template configuration
+    #[serde(default)]
+    pub config: Value,
+    /// Template version
+    #[serde(default = "default_version")]
+    pub version: String,
+}
+
+fn default_version() -> String {
+    "1.0".to_string()
+}
+
+impl TemplateDefinition {
+    /// Validate the template definition
+    pub fn validate(&self) -> Result<()> {
+        if self.id.is_empty() {
+            return Err(ModelSrvError::TemplateError("Template ID cannot be empty".to_string()));
+        }
+        
+        if self.output_key.is_empty() {
+            return Err(ModelSrvError::TemplateError("Output key cannot be empty".to_string()));
+        }
+        
+        Ok(())
+    }
 }
 
 /// Template manager
@@ -420,5 +475,129 @@ impl TemplateManager {
         store.set_string(&key, &yaml)?;
         
         Ok(())
+    }
+}
+
+/// Service for managing model templates
+pub struct TemplateService {
+    /// Redis connection
+    redis: Arc<RedisConnection>,
+    /// Key prefix for templates in Redis
+    key_prefix: String,
+}
+
+impl TemplateService {
+    /// Create a new template service
+    pub fn new(redis: Arc<RedisConnection>, key_prefix: String) -> Self {
+        Self {
+            redis,
+            key_prefix,
+        }
+    }
+    
+    /// Get template by ID
+    pub fn get_template(&self, template_id: &str) -> Result<TemplateDefinition> {
+        let mut redis = self.redis.clone().duplicate()?;
+        let key = format!("{}:{}", self.key_prefix, template_id);
+        
+        if !redis.exists(&key)? {
+            return Err(ModelSrvError::TemplateNotFound(template_id.to_string()));
+        }
+        
+        let template_json = redis.get_string(&key)?;
+        let template: TemplateDefinition = serde_json::from_str(&template_json)?;
+        
+        Ok(template)
+    }
+    
+    /// Create a new template
+    pub fn create_template(&self, template: TemplateDefinition) -> Result<TemplateDefinition> {
+        template.validate()?;
+        
+        let mut redis = self.redis.clone().duplicate()?;
+        let key = format!("{}:{}", self.key_prefix, template.id);
+        
+        if redis.exists(&key)? {
+            return Err(ModelSrvError::TemplateAlreadyExists(template.id.clone()));
+        }
+        
+        let template_json = serde_json::to_string(&template)?;
+        redis.set_string(&key, &template_json)?;
+        
+        // Add to template list
+        redis.rpush(&format!("{}:list", self.key_prefix), &template.id)?;
+        
+        Ok(template)
+    }
+    
+    /// Update an existing template
+    pub fn update_template(&self, template: TemplateDefinition) -> Result<TemplateDefinition> {
+        template.validate()?;
+        
+        let mut redis = self.redis.clone().duplicate()?;
+        let key = format!("{}:{}", self.key_prefix, template.id);
+        
+        if !redis.exists(&key)? {
+            return Err(ModelSrvError::TemplateNotFound(template.id.clone()));
+        }
+        
+        let template_json = serde_json::to_string(&template)?;
+        redis.set_string(&key, &template_json)?;
+        
+        Ok(template)
+    }
+    
+    /// Delete a template
+    pub fn delete_template(&self, template_id: &str) -> Result<()> {
+        let mut redis = self.redis.clone().duplicate()?;
+        let key = format!("{}:{}", self.key_prefix, template_id);
+        
+        if !redis.exists(&key)? {
+            return Err(ModelSrvError::TemplateNotFound(template_id.to_string()));
+        }
+        
+        redis.delete(&key)?;
+        
+        // Remove from template list
+        // Note: This is a simplistic approach, in a real application you might want to use sets
+        let template_list = format!("{}:list", self.key_prefix);
+        let templates = redis.get_list(&template_list)?;
+        let filtered_templates: Vec<String> = templates.into_iter()
+            .filter(|id| id != template_id)
+            .collect();
+        
+        redis.delete(&template_list)?;
+        for id in filtered_templates {
+            redis.rpush(&template_list, &id)?;
+        }
+        
+        Ok(())
+    }
+    
+    /// List all templates
+    pub fn list_templates(&self) -> Result<Vec<TemplateDefinition>> {
+        let mut redis = self.redis.clone().duplicate()?;
+        let template_list = format!("{}:list", self.key_prefix);
+        
+        let template_ids = if redis.exists(&template_list)? {
+            redis.get_list(&template_list)?
+        } else {
+            Vec::new()
+        };
+        
+        let mut templates = Vec::with_capacity(template_ids.len());
+        
+        for id in template_ids {
+            let key = format!("{}:{}", self.key_prefix, id);
+            if redis.exists(&key)? {
+                let template_json = redis.get_string(&key)?;
+                match serde_json::from_str::<TemplateDefinition>(&template_json) {
+                    Ok(template) => templates.push(template),
+                    Err(e) => error!("Failed to parse template {}: {}", id, e),
+                }
+            }
+        }
+        
+        Ok(templates)
     }
 } 

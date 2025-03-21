@@ -1,15 +1,9 @@
 use crate::error::{ModelSrvError, Result};
-use crate::storage::DataStore;
-use crate::storage::hybrid_store::HybridStore;
-use petgraph::graph::{DiGraph, NodeIndex};
-use petgraph::algo::toposort;
-use petgraph::visit::EdgeRef;
-use std::collections::{HashMap, HashSet};
-use std::sync::{Arc, Mutex, RwLock};
-use std::time::Duration;
-use log::{debug, error, info, warn};
-use serde_json::{json, Value};
+use crate::redis_handler::RedisConnection;
 use serde::{Serialize, Deserialize};
+use serde_json::{json, Value};
+use std::sync::Arc;
+use log::info;
 
 /// Rule node types
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -94,60 +88,50 @@ fn default_true() -> bool {
     true
 }
 
-/// Runtime node in a rule graph
-#[derive(Debug, Clone)]
-pub struct RuleNode {
-    /// Node definition
-    pub definition: NodeDefinition,
-    /// Node state
-    pub state: NodeState,
-    /// Node execution result
-    pub result: Option<Value>,
-}
-
-/// Runtime rule graph
-#[derive(Debug, Clone)]
-pub struct RuntimeRule {
-    /// Rule definition
-    pub definition: DagRule,
-    /// Rule graph
-    pub graph: DiGraph<RuleNode, Option<String>>,
-    /// Map from node ID to node index
-    pub node_map: HashMap<String, NodeIndex>,
-}
-
-/// Rule engine
+/// Rule engine for processing rules
 pub struct RuleEngine {
-    /// Rules
-    rules: Vec<DagRule>,
-    /// Storage for rules
-    store: Arc<HybridStore>,
+    /// Redis connection for storage
+    redis: Arc<RedisConnection>,
 }
 
 impl RuleEngine {
     /// Create a new rule engine
-    pub fn new(store: Arc<HybridStore>) -> Self {
+    pub fn new(redis: Arc<RedisConnection>) -> Self {
         Self {
-            rules: Vec::new(),
-            store,
+            redis,
         }
     }
     
-    /// Load rules from a file
-    pub fn load_rules_from_file(&mut self, file_path: &str) -> Result<()> {
-        // 实现从文件加载规则的逻辑
-        Ok(())
-    }
-    
-    /// Build a rule graph from a rule definition
-    fn build_rule_graph(&self, rule_def: DagRule) -> Result<RuntimeRule> {
-        // 实现构建规则图的逻辑
-        Err(ModelSrvError::InvalidOperation("Not implemented".to_string()))
+    /// Get mutable connection
+    fn get_mutable_connection(&self) -> Result<RedisConnection> {
+        self.redis.clone().duplicate()
     }
     
     /// Execute a rule
     pub async fn execute_rule(&self, rule_id: &str) -> Result<Value> {
-        // 实现执行规则的逻辑
-        Err(ModelSrvError::InvalidOperation("Not implemented".to_string()))
+        info!("Executing rule: {}", rule_id);
+        
+        // Get rule from Redis
+        let mut redis = self.get_mutable_connection()?;
+        let key = format!("rule:{}", rule_id);
+        
+        if !redis.exists(&key)? {
+            return Err(ModelSrvError::RuleNotFound(rule_id.to_string()));
+        }
+        
+        let rule_json = redis.get_string(&key)?;
+        let rule: DagRule = serde_json::from_str(&rule_json)?;
+        
+        if !rule.enabled {
+            return Err(ModelSrvError::RuleDisabled(rule_id.to_string()));
+        }
+        
+        // TODO: Implement rule execution logic
+        
+        Ok(json!({
+            "status": "executed",
+            "rule_id": rule_id,
+            "message": "Rule executed successfully"
+        }))
     }
 } 

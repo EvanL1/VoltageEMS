@@ -16,13 +16,13 @@ impl RedisStore {
     }
     
     /// Create a new Redis store from Arc<RedisConnection>
-    pub fn from_arc(redis: Arc<RedisConnection>) -> Self {
+    pub fn from_arc(_redis: Arc<RedisConnection>) -> Self {
         // We need to create a new connection using the same configuration
         // because we can't get mutable access to the Arc<RedisConnection>
         let mut new_conn = RedisConnection::new();
-        // For simplicity, we'll use a default connection string
-        // In a real implementation, we would extract the connection details from the Arc
-        if let Err(e) = new_conn.connect("redis://localhost:6379") {
+        // For simplicity, we'll use the environment variable or default
+        let redis_url = std::env::var("REDIS_URL").unwrap_or_else(|_| "redis://127.0.0.1:6379".to_string());
+        if let Err(e) = new_conn.connect(&redis_url) {
             // Log error but continue with a disconnected instance
             eprintln!("Failed to connect to Redis: {}", e);
         }
@@ -78,7 +78,7 @@ impl super::DataStore for RedisStore {
     /// Set a hash table in Redis
     fn set_hash(&self, key: &str, hash: &HashMap<String, String>) -> Result<()> {
         let mut redis = self.redis.duplicate()?;
-        redis.set_hash(key, hash).map_err(|e| {
+        redis.set_hash(key, hash.clone()).map_err(|e| {
             ModelSrvError::RedisError(format!("Failed to set hash for key {}: {}", key, e))
         })
     }

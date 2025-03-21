@@ -1,19 +1,16 @@
-use crate::config::Config;
-use crate::error::Result;
-use crate::storage::DataStore;
+use crate::error::ModelSrvError;
 use crate::storage::hybrid_store::HybridStore;
-use crate::model::{ModelDefinition, ModelWithActions, ControlAction};
-use crate::template::TemplateInfo;
-use crate::rules::{DagRule, NodeDefinition, EdgeDefinition, NodeType};
 use crate::rules_engine::RuleExecutor;
 use serde_json::{self, json, Value};
-use log::{info, error};
+use log::info;
 use std::sync::Arc;
 use warp::{self, Filter};
 use std::convert::Infallible;
 use serde::{Serialize, Deserialize};
 use warp::http::StatusCode;
-use std::collections::HashSet;
+use crate::monitoring::{MonitoringService, HealthStatus};
+use crate::StorageAgent;
+use std::collections::HashMap;
 
 /// API module for the model service
 /// Provides HTTP REST API for the model service
@@ -34,712 +31,505 @@ struct ExecuteOperationRequest {
     parameters: Value
 }
 
-/// Start the API server
-pub async fn start_api_server(config: Config, store: Arc<HybridStore>) -> Result<()> {
-    let store_filter = warp::any().map(move || store.clone());
-    
-    // Health check endpoint
-    let health_route = warp::path!("api" / "health")
-        .and(warp::get())
-        .map(|| {
-            warp::reply::json(&json!({
-                "status": "ok",
-                "version": env!("CARGO_PKG_VERSION")
-            }))
-        });
-    
-    // Get model endpoint
-    let get_model_route = warp::path!("api" / "models" / String)
-        .and(warp::get())
-        .and(store_filter.clone())
-        .map(|id: String, store: Arc<HybridStore>| {
-            let model_key = format!("model:{}", id);
-            info!("Getting model with key: {}", model_key);
-            
-            match store.get_string(&model_key) {
-                Ok(model_json) => {
-                    warp::reply::json(&json!({
-                        "id": id,
-                        "model": serde_json::from_str::<Value>(&model_json).unwrap_or(json!({}))
-                    }))
-                },
-                Err(e) => {
-                    info!("Error getting model: {:?}", e);
-                    warp::reply::json(&json!({
-                        "error": format!("Model not found: {}", e)
-                    }))
-                }
-            }
-        });
-    
-    // List models endpoint
-    let list_models_route = warp::path!("api" / "models")
-        .and(warp::get())
-        .and(store_filter.clone())
-        .map(|store: Arc<HybridStore>| {
-            let model_pattern = "model:*";
-            info!("Listing models with pattern: {}", model_pattern);
-            
-            match store.get_keys(model_pattern) {
-                Ok(keys) => {
-                    let models = keys.iter()
-                        .map(|key| {
-                            let id = key.replace("model:", "");
-                            match store.get_string(key) {
-                                Ok(model_json) => json!({
-                                    "id": id,
-                                    "model": serde_json::from_str::<Value>(&model_json).unwrap_or(json!({}))
-                                }),
-                                Err(_) => json!({
-                                    "id": id,
-                                    "error": "Failed to get model data"
-                                })
-                            }
-                        })
-                        .collect::<Vec<_>>();
-                    
-                    warp::reply::json(&json!({
-                        "models": models
-                    }))
-                },
-                Err(e) => {
-                    info!("Error listing models: {:?}", e);
-                    warp::reply::json(&json!({
-                        "error": format!("Failed to list models: {}", e)
-                    }))
-                }
-            }
-        });
-    
-    // List templates endpoint
-    let templates_route = warp::path!("api" / "templates")
-        .and(warp::get())
-        .and(store_filter.clone())
-        .map(|store: Arc<HybridStore>| {
-            info!("Listing templates");
-            // In real implementation, we'd fetch templates from a templates directory
-            // For now, return a mock template
-            warp::reply::json(&json!({
-                "templates": [
-                    {
-                        "id": "stepper_motor_template",
-                        "name": "Stepper Motor Template",
-                        "description": "Template for stepper motor control",
-                        "file_path": "templates/stepper_motor.json"
-                    }
-                ]
-            }))
-        });
-    
-    // Create instance endpoint
-    let create_instance_route = warp::path!("api" / "instances")
-        .and(warp::post())
-        .and(warp::body::json())
-        .and(store_filter.clone())
-        .map(|req: CreateInstanceRequest, store: Arc<HybridStore>| {
-            info!("Creating instance with ID: {} from template: {}", 
-                  req.instance_id, req.template_id);
-            
-            // In real implementation, we'd instantiate from template
-            // For now, just create a basic model instance
-            let instance_key = format!("model:{}", req.instance_id);
-            
-            let instance = json!({
-                "id": req.instance_id,
-                "name": req.config.get("name").and_then(|v| v.as_str()).unwrap_or("Unnamed Instance"),
-                "description": req.config.get("description").and_then(|v| v.as_str()).unwrap_or(""),
-                "template_id": req.template_id,
-                "parameters": req.config.get("parameters").unwrap_or(&json!({})),
-                "enabled": true
-            });
-            
-            match store.set_string(&instance_key, &instance.to_string()) {
-                Ok(_) => {
-                    warp::reply::with_status(
-                        warp::reply::json(&json!({
-                            "id": req.instance_id,
-                            "status": "created",
-                            "instance": instance
-                        })),
-                        StatusCode::CREATED
-                    )
-                },
-                Err(e) => {
-                    error!("Error creating instance: {:?}", e);
-                    warp::reply::with_status(
-                        warp::reply::json(&json!({
-                            "error": format!("Failed to create instance: {}", e)
-                        })),
-                        StatusCode::INTERNAL_SERVER_ERROR
-                    )
-                }
-            }
-        });
-    
-    // List control operations endpoint
-    let list_operations_route = warp::path!("api" / "control" / "operations")
-        .and(warp::get())
-        .map(|| {
-            info!("Listing control operations");
-            
-            // In real implementation, we'd fetch available operations
-            // For now, return mock operations
-            warp::reply::json(&json!([
-                "start_motor",
-                "stop_motor",
-                "set_speed"
-            ]))
-        });
-    
-    // Execute control operation endpoint
-    let execute_operation_route = warp::path!("api" / "control" / "execute" / String)
-        .and(warp::post())
-        .and(warp::body::json())
-        .and(store_filter.clone())
-        .map(|operation: String, req: ExecuteOperationRequest, store: Arc<HybridStore>| {
-            info!("Executing operation: {} on instance: {} with parameters: {:?}", 
-                  operation, req.instance_id, req.parameters);
-            
-            // In real implementation, we'd execute the actual operation
-            // For now, just record the operation attempt
-            let operation_key = format!("operation:{}:{}", req.instance_id, operation);
-            let operation_data = json!({
-                "operation": operation,
-                "instance_id": req.instance_id,
-                "parameters": req.parameters,
-                "timestamp": chrono::Utc::now().to_rfc3339(),
-                "status": "executed"
-            });
-            
-            match store.set_string(&operation_key, &operation_data.to_string()) {
-                Ok(_) => {
-                    warp::reply::json(&json!({
-                        "operation": operation,
-                        "instance_id": req.instance_id,
-                        "status": "success",
-                        "message": format!("Operation {} executed successfully", operation)
-                    }))
-                },
-                Err(e) => {
-                    error!("Error executing operation: {:?}", e);
-                    warp::reply::json(&json!({
-                        "error": format!("Failed to execute operation: {}", e)
-                    }))
-                }
-            }
-        });
-    
-    // Rules API endpoints
-    
-    // List rules endpoint
-    let list_rules_route = warp::path!("api" / "rules")
-        .and(warp::get())
-        .and(store_filter.clone())
-        .map(|store: Arc<HybridStore>| {
-            info!("Listing rules");
-            
-            // 首先从Redis重新加载rule数据，确保我们有最新的规则
-            if let Err(e) = store.load_from_redis("rule:*") {
-                error!("Error loading rules from Redis: {}", e);
-            }
-            
-            // Get rule keys from the store - 使用完整的key模式，不依赖RedisConfig中的key_prefix
-            // 使用固定的模式"rule:*"查询Redis
-            match store.get_keys("rule:*") {
-                Ok(keys) => {
-                    let mut rules = Vec::new();
-                    
-                    info!("Found {} rules with pattern 'rule:*'", keys.len());
-                    for key in &keys {
-                        info!("Rule key: {}", key);
-                        match store.get_string(key) {
-                            Ok(rule_json) => {
-                                info!("Rule JSON: {}", rule_json);
-                                
-                                // 尝试解析为DAG规则
-                                match serde_json::from_str::<DagRule>(&rule_json) {
-                                    Ok(rule) => {
-                                        info!("Successfully parsed rule as DAG Rule: {}", rule.id);
-                                        rules.push(rule);
-                                    },
-                                    Err(e) => {
-                                        error!("Error parsing rule {} as DAG Rule: {}", key, e);
-                                        
-                                        // 尝试解析为简单规则格式，然后转换为DAG规则
-                                        #[derive(Deserialize)]
-                                        struct SimpleRule {
-                                            id: String,
-                                            name: String,
-                                            conditions: Vec<serde_json::Value>,
-                                            actions: Vec<serde_json::Value>,
-                                            #[serde(default = "default_true")]
-                                            enabled: bool,
-                                        }
-                                        
-                                        fn default_true() -> bool {
-                                            true
-                                        }
-                                        
-                                        match serde_json::from_str::<SimpleRule>(&rule_json) {
-                                            Ok(simple_rule) => {
-                                                info!("Successfully parsed rule as Simple Rule: {}", simple_rule.id);
-                                                
-                                                // 创建条件节点
-                                                let condition_node = NodeDefinition {
-                                                    id: format!("{}_condition", simple_rule.id),
-                                                    name: "条件检查".to_string(),
-                                                    node_type: NodeType::Condition,
-                                                    config: json!({ "conditions": simple_rule.conditions })
-                                                };
-                                                
-                                                // 创建动作节点
-                                                let action_node = NodeDefinition {
-                                                    id: format!("{}_action", simple_rule.id),
-                                                    name: "执行动作".to_string(),
-                                                    node_type: NodeType::Action,
-                                                    config: json!({ "actions": simple_rule.actions })
-                                                };
-                                                
-                                                // 创建边
-                                                let edge = EdgeDefinition {
-                                                    from: condition_node.id.clone(),
-                                                    to: action_node.id.clone(),
-                                                    condition: None
-                                                };
-                                                
-                                                // 创建DAG规则
-                                                let dag_rule = DagRule {
-                                                    id: simple_rule.id,
-                                                    name: simple_rule.name,
-                                                    description: "从简单规则转换而来".to_string(),
-                                                    nodes: vec![condition_node, action_node],
-                                                    edges: vec![edge],
-                                                    enabled: simple_rule.enabled,
-                                                    priority: 0
-                                                };
-                                                
-                                                rules.push(dag_rule);
-                                            },
-                                            Err(e) => {
-                                                error!("Error parsing rule {} as Simple Rule: {}", key, e);
-                                            }
-                                        }
-                                    }
-                                }
-                            },
-                            Err(e) => {
-                                error!("Error retrieving rule {}: {}", key, e);
-                            }
-                        }
-                    }
-                    
-                    info!("Returning {} rules", rules.len());
-                    warp::reply::json(&json!({
-                        "rules": rules,
-                        "count": rules.len()
-                    }))
-                },
-                Err(e) => {
-                    error!("Error listing rules: {}", e);
-                    warp::reply::json(&json!({
-                        "error": format!("Failed to list rules: {}", e),
-                        "rules": [],
-                        "count": 0
-                    }))
-                }
-            }
-        });
-    
-    // Get rule by ID endpoint
-    let get_rule_route = warp::path!("api" / "rules" / String)
-        .and(warp::get())
-        .and(store_filter.clone())
-        .map(|rule_id: String, store: Arc<HybridStore>| {
-            info!("Getting rule: {}", rule_id);
-            
-            let rule_key = format!("rule:{}", rule_id);
-            
-            match store.get_string(&rule_key) {
-                Ok(rule_json) => {
-                    match serde_json::from_str::<DagRule>(&rule_json) {
-                        Ok(rule) => {
-                            warp::reply::with_status(
-                                warp::reply::json(&json!({
-                                    "rule": rule
-                                })),
-                                StatusCode::OK
-                            )
-                        },
-                        Err(e) => {
-                            error!("Error parsing rule {}: {}", rule_id, e);
-                            warp::reply::with_status(
-                                warp::reply::json(&json!({
-                                    "error": format!("Failed to parse rule: {}", e)
-                                })),
-                                StatusCode::INTERNAL_SERVER_ERROR
-                            )
-                        }
-                    }
-                },
-                Err(e) => {
-                    error!("Error retrieving rule {}: {}", rule_id, e);
-                    warp::reply::with_status(
-                        warp::reply::json(&json!({
-                            "error": format!("Rule not found: {}", rule_id)
-                        })),
-                        StatusCode::NOT_FOUND
-                    )
-                }
-            }
-        });
-    
-    // Create rule endpoint
-    let create_rule_route = warp::path!("api" / "rules")
-        .and(warp::post())
-        .and(warp::body::json())
-        .and(store_filter.clone())
-        .map(|rule: DagRule, store: Arc<HybridStore>| {
-            info!("Creating rule: {}", rule.id);
-            
-            let rule_key = format!("rule:{}", rule.id);
-            
-            // Check if rule already exists
-            if let Ok(true) = store.exists(&rule_key) {
-                return warp::reply::with_status(
-                    warp::reply::json(&json!({
-                        "error": format!("Rule with ID {} already exists", rule.id)
-                    })),
-                    StatusCode::CONFLICT
-                );
-            }
-            
-            // Validate the rule structure
-            // Check if all edges refer to valid nodes
-            let node_ids: HashSet<String> = rule.nodes.iter().map(|n| n.id.clone()).collect();
-            for edge in &rule.edges {
-                if !node_ids.contains(&edge.from) || !node_ids.contains(&edge.to) {
-                    return warp::reply::with_status(
-                        warp::reply::json(&json!({
-                            "error": format!("Edge ({} -> {}) refers to non-existent nodes", edge.from, edge.to)
-                        })),
-                        StatusCode::BAD_REQUEST
-                    );
-                }
-            }
-            
-            // Serialize and store the rule
-            match serde_json::to_string(&rule) {
-                Ok(rule_json) => {
-                    match store.set_string(&rule_key, &rule_json) {
-                        Ok(_) => {
-                            warp::reply::with_status(
-                                warp::reply::json(&json!({
-                                    "id": rule.id,
-                                    "status": "created",
-                                    "rule": rule
-                                })),
-                                StatusCode::CREATED
-                            )
-                        },
-                        Err(e) => {
-                            error!("Error storing rule: {}", e);
-                            warp::reply::with_status(
-                                warp::reply::json(&json!({
-                                    "error": format!("Failed to store rule: {}", e)
-                                })),
-                                StatusCode::INTERNAL_SERVER_ERROR
-                            )
-                        }
-                    }
-                },
-                Err(e) => {
-                    error!("Error serializing rule: {}", e);
-                    warp::reply::with_status(
-                        warp::reply::json(&json!({
-                            "error": format!("Failed to serialize rule: {}", e)
-                        })),
-                        StatusCode::INTERNAL_SERVER_ERROR
-                    )
-                }
-            }
-        });
-    
-    // Update rule endpoint
-    let update_rule_route = warp::path!("api" / "rules" / String)
-        .and(warp::put())
-        .and(warp::body::json())
-        .and(store_filter.clone())
-        .map(|rule_id: String, updated_rule: DagRule, store: Arc<HybridStore>| {
-            info!("Updating rule: {}", rule_id);
-            
-            // Check if IDs match
-            if rule_id != updated_rule.id {
-                return warp::reply::with_status(
-                    warp::reply::json(&json!({
-                        "error": "Rule ID in URL does not match rule ID in body"
-                    })),
-                    StatusCode::BAD_REQUEST
-                );
-            }
-            
-            let rule_key = format!("rule:{}", rule_id);
-            
-            // Check if rule exists
-            if let Ok(false) = store.exists(&rule_key) {
-                return warp::reply::with_status(
-                    warp::reply::json(&json!({
-                        "error": format!("Rule with ID {} not found", rule_id)
-                    })),
-                    StatusCode::NOT_FOUND
-                );
-            }
-            
-            // Validate the rule structure
-            let node_ids: HashSet<String> = updated_rule.nodes.iter()
-                .map(|n| n.id.clone()).collect();
-                
-            for edge in &updated_rule.edges {
-                if !node_ids.contains(&edge.from) || !node_ids.contains(&edge.to) {
-                    return warp::reply::with_status(
-                        warp::reply::json(&json!({
-                            "error": format!("Edge ({} -> {}) refers to non-existent nodes", edge.from, edge.to)
-                        })),
-                        StatusCode::BAD_REQUEST
-                    );
-                }
-            }
-            
-            // Serialize and store the updated rule
-            match serde_json::to_string(&updated_rule) {
-                Ok(rule_json) => {
-                    match store.set_string(&rule_key, &rule_json) {
-                        Ok(_) => {
-                            warp::reply::with_status(
-                                warp::reply::json(&json!({
-                                    "id": rule_id,
-                                    "status": "updated",
-                                    "rule": updated_rule
-                                })),
-                                StatusCode::OK
-                            )
-                        },
-                        Err(e) => {
-                            error!("Error updating rule: {}", e);
-                            warp::reply::with_status(
-                                warp::reply::json(&json!({
-                                    "error": format!("Failed to update rule: {}", e)
-                                })),
-                                StatusCode::INTERNAL_SERVER_ERROR
-                            )
-                        }
-                    }
-                },
-                Err(e) => {
-                    error!("Error serializing rule: {}", e);
-                    warp::reply::with_status(
-                        warp::reply::json(&json!({
-                            "error": format!("Failed to serialize rule: {}", e)
-                        })),
-                        StatusCode::INTERNAL_SERVER_ERROR
-                    )
-                }
-            }
-        });
-    
-    // Delete rule endpoint
-    let delete_rule_route = warp::path!("api" / "rules" / String)
-        .and(warp::delete())
-        .and(store_filter.clone())
-        .map(|rule_id: String, store: Arc<HybridStore>| {
-            info!("Deleting rule: {}", rule_id);
-            
-            let rule_key = format!("rule:{}", rule_id);
-            
-            // Check if rule exists
-            if let Ok(false) = store.exists(&rule_key) {
-                return warp::reply::with_status(
-                    warp::reply::json(&json!({
-                        "error": format!("Rule with ID {} not found", rule_id)
-                    })),
-                    StatusCode::NOT_FOUND
-                );
-            }
-            
-            // Delete the rule
-            match store.delete(&rule_key) {
-                Ok(_) => {
-                    warp::reply::with_status(
-                        warp::reply::json(&json!({
-                            "id": rule_id,
-                            "status": "deleted"
-                        })),
-                        StatusCode::OK
-                    )
-                },
-                Err(e) => {
-                    error!("Error deleting rule: {}", e);
-                    warp::reply::with_status(
-                        warp::reply::json(&json!({
-                            "error": format!("Failed to delete rule: {}", e)
-                        })),
-                        StatusCode::INTERNAL_SERVER_ERROR
-                    )
-                }
-            }
-        });
-    
-    // Execute rule endpoint
-    let execute_rule_route = warp::path!("api" / "rules" / String / "execute")
-        .and(warp::post())
-        .and(warp::body::json())
-        .and(store_filter.clone())
-        .and_then(|rule_id: String, context: Option<Value>, store: Arc<HybridStore>| async move {
-            info!("Executing rule: {}", rule_id);
-            
-            let rule_key = format!("rule:{}", rule_id);
-            
-            // Check if rule exists
-            if let Ok(exists) = store.exists(&rule_key) {
-                if !exists {
-                    return Ok::<_, warp::Rejection>(warp::reply::with_status(
-                        warp::reply::json(&json!({
-                            "error": format!("Rule with ID {} not found", rule_id)
-                        })),
-                        StatusCode::NOT_FOUND
-                    ));
-                }
-            } else {
-                return Ok::<_, warp::Rejection>(warp::reply::with_status(
-                    warp::reply::json(&json!({
-                        "error": "Failed to check rule existence"
-                    })),
-                    StatusCode::INTERNAL_SERVER_ERROR
-                ));
-            }
-            
-            // Get the rule
-            let rule_result = store.get_string(&rule_key);
-            let rule_json = match rule_result {
-                Ok(json) => json,
-                Err(e) => {
-                    error!("Error retrieving rule {}: {}", rule_id, e);
-                    return Ok::<_, warp::Rejection>(warp::reply::with_status(
-                        warp::reply::json(&json!({
-                            "error": format!("Failed to retrieve rule: {}", e)
-                        })),
-                        StatusCode::INTERNAL_SERVER_ERROR
-                    ));
-                }
-            };
-            
-            // Parse the rule
-            let rule: DagRule = match serde_json::from_str(&rule_json) {
-                Ok(r) => r,
-                Err(e) => {
-                    error!("Error parsing rule {}: {}", rule_id, e);
-                    return Ok::<_, warp::Rejection>(warp::reply::with_status(
-                        warp::reply::json(&json!({
-                            "error": format!("Failed to parse rule: {}", e)
-                        })),
-                        StatusCode::INTERNAL_SERVER_ERROR
-                    ));
-                }
-            };
-            
-            // Check if rule is enabled
-            if !rule.enabled {
-                return Ok::<_, warp::Rejection>(warp::reply::with_status(
-                    warp::reply::json(&json!({
-                        "error": format!("Rule {} is disabled", rule_id)
-                    })),
-                    StatusCode::BAD_REQUEST
-                ));
-            }
-            
-            // Execute the rule
-            let executor = RuleExecutor::new(store.clone());
-            match executor.execute_rule(rule, context).await {
-                Ok(result) => {
-                    Ok::<_, warp::Rejection>(warp::reply::with_status(
-                        warp::reply::json(&json!({
-                            "id": rule_id,
-                            "status": "executed",
-                            "result": result
-                        })),
-                        StatusCode::OK
-                    ))
-                },
-                Err(e) => {
-                    error!("Error executing rule {}: {}", rule_id, e);
-                    Ok::<_, warp::Rejection>(warp::reply::with_status(
-                        warp::reply::json(&json!({
-                            "error": format!("Failed to execute rule: {}", e)
-                        })),
-                        StatusCode::INTERNAL_SERVER_ERROR
-                    ))
-                }
-            }
-        });
-    
-    // Combine routes by boxing each filter
-    let health_route = health_route.boxed();
-    let get_model_route = get_model_route.boxed();
-    let list_models_route = list_models_route.boxed();
-    let templates_route = templates_route.boxed();
-    let create_instance_route = create_instance_route.boxed();
-    let list_operations_route = list_operations_route.boxed();
-    let execute_operation_route = execute_operation_route.boxed();
-    let list_rules_route = list_rules_route.boxed();
-    let get_rule_route = get_rule_route.boxed();
-    let create_rule_route = create_rule_route.boxed();
-    let update_rule_route = update_rule_route.boxed();
-    let delete_rule_route = delete_rule_route.boxed();
-    let execute_rule_route = execute_rule_route.boxed();
-    
-    let routes = health_route
-        .or(get_model_route)
-        .or(list_models_route)
-        .or(templates_route)
-        .or(create_instance_route)
-        .or(list_operations_route)
-        .or(execute_operation_route)
-        .or(list_rules_route)
-        .or(get_rule_route)
-        .or(create_rule_route)
-        .or(update_rule_route)
-        .or(delete_rule_route)
-        .or(execute_rule_route)
-        .with(warp::cors().allow_any_origin())
-        .recover(handle_rejection);
-    
-    // Parse host and port from config
-    let port = config.api.port;
-    let host = [0, 0, 0, 0]; // Use default binding to all interfaces
-    
-    info!("Starting API server at http://{}:{}", 
-          host.iter().map(|n| n.to_string()).collect::<Vec<_>>().join("."), 
-          port);
-    
-    warp::serve(routes)
-        .run((host, port))
-        .await;
-    
-    Ok(())
+/// API server for the modsrv service
+pub struct ApiServer {
+    /// Data store
+    store: Arc<HybridStore>,
+    /// Storage agent
+    agent: Arc<StorageAgent>,
+    /// Monitoring service
+    monitoring: Arc<MonitoringService>,
+    port: u16,
 }
 
-// Custom rejection handler function
-async fn handle_rejection(err: warp::Rejection) -> std::result::Result<impl warp::Reply, Infallible> {
-    let code = if err.is_not_found() {
-        warp::http::StatusCode::NOT_FOUND
-    } else {
-        warp::http::StatusCode::INTERNAL_SERVER_ERROR
-    };
+impl ApiServer {
+    /// Create a new API server
+    pub fn new(store: Arc<HybridStore>, agent: Arc<StorageAgent>, port: u16) -> Self {
+        let monitoring = Arc::new(MonitoringService::new(store.clone(), 1000));
+        Self {
+            store,
+            agent,
+            monitoring,
+            port,
+        }
+    }
 
-    Ok(warp::reply::with_status(
-        warp::reply::json(&json!({
-            "error": "An error occurred",
-            "code": code.as_u16()
-        })),
-        code,
-    ))
+    /// Start the API server
+    pub async fn start(&self) -> std::result::Result<(), ModelSrvError> {
+        info!("Starting API server on port {}", self.port);
+        
+        let cors = warp::cors()
+            .allow_any_origin()
+            .allow_headers(vec!["content-type"])
+            .allow_methods(vec!["GET", "POST", "PUT", "DELETE"]);
+            
+        let log = warp::log::custom(|info| {
+            info!("{} {} {} {}ms", 
+                info.method(),
+                info.path(),
+                info.status(),
+                info.elapsed().as_millis()
+            );
+        });
+        
+        // Define routes
+        let health_route = warp::path!("api" / "health")
+            .and(warp::get())
+            .map(|| {
+                warp::reply::json(&json!({
+                    "status": "ok",
+                    "version": env!("CARGO_PKG_VERSION"),
+                }))
+            });
+            
+        // Create combined routes
+        let rule_executor = RuleExecutor::new(self.store.clone());
+        let executor = Arc::new(rule_executor);
+        let rule_executor = executor.clone();
+        
+        // Create combined routes
+        let list_rules = list_rules_route(self.store.clone());
+        let get_rule = get_rule_route(self.store.clone());
+        let create_rule = create_rule_route(self.store.clone());
+        let update_rule = update_rule_route(self.store.clone());
+        let delete_rule = delete_rule_route(self.store.clone());
+        let execute_rule = execute_rule_route(rule_executor);
+        
+        // Template routes
+        let list_templates = list_templates_route(self.store.clone());
+        let get_template = get_template_route(self.store.clone());
+        
+        let routes = health_route
+            .or(list_rules)
+            .or(get_rule)
+            .or(create_rule)
+            .or(update_rule)
+            .or(delete_rule)
+            .or(execute_rule)
+            .or(list_templates)
+            .or(get_template)
+            .with(cors)
+            .with(log);
+            
+        warp::serve(routes).run(([0, 0, 0, 0], self.port)).await;
+        
+        Ok(())
+    }
+}
+
+/// Handle rejections to return appropriate responses
+async fn handle_rejection(err: warp::Rejection) -> std::result::Result<impl warp::Reply, Infallible> {
+    let status;
+    let message;
+    
+    if let Some(e) = err.find::<ModelSrvError>() {
+        match e {
+            ModelSrvError::ModelNotFound(_) => {
+                status = warp::http::StatusCode::NOT_FOUND;
+                message = e.to_string();
+            }
+            ModelSrvError::RuleNotFound(_) => {
+                status = warp::http::StatusCode::NOT_FOUND;
+                message = e.to_string();
+            }
+            ModelSrvError::TemplateNotFound(_) => {
+                status = warp::http::StatusCode::NOT_FOUND;
+                message = e.to_string();
+            }
+            ModelSrvError::RuleDisabled(_) => {
+                status = warp::http::StatusCode::BAD_REQUEST;
+                message = e.to_string();
+            }
+            _ => {
+                status = warp::http::StatusCode::INTERNAL_SERVER_ERROR;
+                message = e.to_string();
+            }
+        }
+    } else if let Some(e) = err.find::<warp::reject::InvalidQuery>() {
+        status = warp::http::StatusCode::BAD_REQUEST;
+        message = format!("Invalid query parameters: {}", e);
+    } else if let Some(e) = err.find::<warp::reject::InvalidHeader>() {
+        status = warp::http::StatusCode::BAD_REQUEST;
+        message = format!("Invalid header: {}", e);
+    } else if let Some(_) = err.find::<warp::reject::UnsupportedMediaType>() {
+        status = warp::http::StatusCode::UNSUPPORTED_MEDIA_TYPE;
+        message = "Unsupported media type".to_string();
+    } else if let Some(_) = err.find::<warp::reject::MissingHeader>() {
+        status = warp::http::StatusCode::BAD_REQUEST;
+        message = "Missing required header".to_string();
+    } else if let Some(_) = err.find::<warp::reject::PayloadTooLarge>() {
+        status = warp::http::StatusCode::PAYLOAD_TOO_LARGE;
+        message = "Payload too large".to_string();
+    } else if let Some(_) = err.find::<warp::reject::LengthRequired>() {
+        status = warp::http::StatusCode::LENGTH_REQUIRED;
+        message = "Length required".to_string();
+    } else if let Some(_) = err.find::<warp::body::BodyDeserializeError>() {
+        status = warp::http::StatusCode::BAD_REQUEST;
+        message = "Invalid JSON payload".to_string();
+    } else {
+        status = warp::http::StatusCode::INTERNAL_SERVER_ERROR;
+        message = "Internal server error".to_string();
+    }
+    
+    let json = warp::reply::json(&json!({
+        "status": "error",
+        "message": message
+    }));
+    
+    Ok(warp::reply::with_status(json, status))
+}
+
+#[derive(Serialize)]
+struct ErrorResponse {
+    code: u16,
+    message: String,
+}
+
+/// Route for getting metrics for all rules
+fn metrics_route(
+    monitoring: Arc<MonitoringService>
+) -> impl Filter<Extract = impl warp::Reply, Error = warp::Rejection> + Clone {
+    warp::path!("api" / "metrics")
+        .and(warp::get())
+        .and_then(move || {
+            let monitoring = monitoring.clone();
+            async move {
+                match monitoring.get_all_metrics() {
+                    Ok(metrics) => Ok(warp::reply::json(&metrics)),
+                    Err(e) => Err(warp::reject::custom(e)),
+                }
+            }
+        })
+}
+
+/// Route for getting metrics for a specific rule
+fn rule_metrics_route(
+    monitoring: Arc<MonitoringService>
+) -> impl Filter<Extract = (impl warp::Reply,), Error = warp::Rejection> + Clone {
+    warp::path!("api" / "rules" / String / "metrics")
+        .and(warp::get())
+        .and_then(move |rule_id: String| {
+            let monitoring = monitoring.clone();
+            async move {
+                match monitoring.get_rule_metrics(&rule_id) {
+                    Ok(Some(metrics)) => Ok(warp::reply::json(&metrics)),
+                    Ok(None) => Err(warp::reject::not_found()),
+                    Err(e) => Err(warp::reject::custom(e)),
+                }
+            }
+        })
+}
+
+/// Route for detailed health check
+fn detailed_health_route(
+    monitoring: Arc<MonitoringService>
+) -> impl Filter<Extract = impl warp::Reply, Error = warp::Rejection> + Clone {
+    warp::path!("api" / "health" / "detailed")
+        .and(warp::get())
+        .and_then(move || {
+            let monitoring = monitoring.clone();
+            async move {
+                match monitoring.run_health_check().await {
+                    Ok(health) => {
+                        let status = match health.status {
+                            HealthStatus::Healthy => StatusCode::OK,
+                            HealthStatus::Degraded => StatusCode::OK,
+                            HealthStatus::Unhealthy => StatusCode::SERVICE_UNAVAILABLE,
+                        };
+                        
+                        Ok(warp::reply::with_status(
+                            warp::reply::json(&health),
+                            status
+                        ))
+                    },
+                    Err(e) => Err(warp::reject::custom(e)),
+                }
+            }
+        })
+}
+
+/// Add store to filter chain
+fn with_store(store: Arc<HybridStore>) -> impl Filter<Extract = (Arc<HybridStore>,), Error = Infallible> + Clone {
+    warp::any().map(move || store.clone())
+}
+
+fn with_rule_executor(executor: Arc<RuleExecutor>) -> impl Filter<Extract = (Arc<RuleExecutor>,), Error = Infallible> + Clone {
+    warp::any().map(move || executor.clone())
+}
+
+/// Create API route for listing rules
+pub fn list_rules_route(
+    store: Arc<HybridStore>
+) -> impl Filter<Extract = (impl warp::Reply,), Error = warp::Rejection> + Clone {
+    warp::path!("api" / "rules")
+        .and(warp::get())
+        .map(move || store.clone())
+        .and_then(handle_list_rules)
+}
+
+/// Create API route for getting a rule by ID
+pub fn get_rule_route(
+    store: Arc<HybridStore>
+) -> impl Filter<Extract = (impl warp::Reply,), Error = warp::Rejection> + Clone {
+    warp::path!("api" / "rules" / String)
+        .and(warp::get())
+        .map(move |rule_id: String| (store.clone(), rule_id))
+        .and_then(handle_get_rule)
+}
+
+/// Create API route for creating a rule
+pub fn create_rule_route(
+    store: Arc<HybridStore>
+) -> impl Filter<Extract = (impl warp::Reply,), Error = warp::Rejection> + Clone {
+    warp::path!("api" / "rules")
+        .and(warp::post())
+        .and(warp::body::json())
+        .map(move |rule_json| (store.clone(), rule_json))
+        .and_then(handle_create_rule)
+}
+
+/// Create API route for updating a rule
+pub fn update_rule_route(
+    store: Arc<HybridStore>
+) -> impl Filter<Extract = (impl warp::Reply,), Error = warp::Rejection> + Clone {
+    warp::path!("api" / "rules" / String)
+        .and(warp::put())
+        .and(warp::body::json())
+        .map(move |rule_id: String, rule_json| (store.clone(), rule_id, rule_json))
+        .and_then(handle_update_rule)
+}
+
+/// Create API route for deleting a rule
+pub fn delete_rule_route(
+    store: Arc<HybridStore>
+) -> impl Filter<Extract = (impl warp::Reply,), Error = warp::Rejection> + Clone {
+    warp::path!("api" / "rules" / String)
+        .and(warp::delete())
+        .map(move |rule_id: String| (store.clone(), rule_id))
+        .and_then(handle_delete_rule)
+}
+
+/// Create API route for executing a rule
+pub fn execute_rule_route(
+    executor: Arc<RuleExecutor>
+) -> impl Filter<Extract = (impl warp::Reply,), Error = warp::Rejection> + Clone {
+    warp::path!("api" / "rules" / String / "execute")
+        .and(warp::post())
+        .and(warp::query::<HashMap<String, String>>())
+        .map(move |rule_id: String, params: HashMap<String, String>| {
+            (executor.clone(), rule_id, params)
+        })
+        .and_then(handle_execute_rule)
+}
+
+/// Handle request to list all rules
+async fn handle_list_rules(
+    store: Arc<HybridStore>
+) -> std::result::Result<impl warp::Reply, warp::Rejection> {
+    let rules = match store.list_rules() {
+        Ok(rules) => rules,
+        Err(e) => {
+            return Ok(warp::reply::json(&json!({
+                "status": "error",
+                "message": format!("Failed to list rules: {}", e)
+            })));
+        }
+    };
+    
+    Ok(warp::reply::json(&json!({
+        "status": "success",
+        "rules": rules
+    })))
+}
+
+/// Handle request to get a rule by ID
+async fn handle_get_rule(
+    params: (Arc<HybridStore>, String)
+) -> std::result::Result<impl warp::Reply, warp::Rejection> {
+    let (store, rule_id) = params;
+    
+    match store.get_rule(&rule_id) {
+        Ok(rule) => {
+            Ok(warp::reply::json(&json!({
+                "status": "success",
+                "rule": rule
+            })))
+        },
+        Err(e) => {
+            Ok(warp::reply::json(&json!({
+                "status": "error",
+                "message": format!("Failed to get rule: {}", e)
+            })))
+        }
+    }
+}
+
+/// Handle request to create a rule
+async fn handle_create_rule(
+    params: (Arc<HybridStore>, serde_json::Value)
+) -> std::result::Result<impl warp::Reply, warp::Rejection> {
+    let (store, rule_json) = params;
+    
+    match store.create_rule(&rule_json) {
+        Ok(_) => {
+            Ok(warp::reply::json(&json!({
+                "status": "success",
+                "message": "Rule created successfully"
+            })))
+        },
+        Err(e) => {
+            Ok(warp::reply::json(&json!({
+                "status": "error",
+                "message": format!("Failed to create rule: {}", e)
+            })))
+        }
+    }
+}
+
+/// Handle request to update a rule
+async fn handle_update_rule(
+    params: (Arc<HybridStore>, String, serde_json::Value)
+) -> std::result::Result<impl warp::Reply, warp::Rejection> {
+    let (store, rule_id, rule_copy) = params;
+    
+    match store.update_rule(&rule_id, &rule_copy) {
+        Ok(_) => {
+            Ok(warp::reply::json(&json!({
+                "status": "success",
+                "message": "Rule updated successfully"
+            })))
+        },
+        Err(e) => {
+            Ok(warp::reply::json(&json!({
+                "status": "error",
+                "message": format!("Failed to update rule: {}", e)
+            })))
+        }
+    }
+}
+
+/// Handle request to delete a rule
+async fn handle_delete_rule(
+    params: (Arc<HybridStore>, String)
+) -> std::result::Result<impl warp::Reply, warp::Rejection> {
+    let (store, rule_id) = params;
+    
+    match store.delete_rule(&rule_id) {
+        Ok(_) => {
+            Ok(warp::reply::json(&json!({
+                "status": "success",
+                "message": "Rule deleted successfully"
+            })))
+        },
+        Err(e) => {
+            Ok(warp::reply::json(&json!({
+                "status": "error",
+                "message": format!("Failed to delete rule: {}", e)
+            })))
+        }
+    }
+}
+
+/// Handle request to execute a rule
+async fn handle_execute_rule(
+    params: (Arc<RuleExecutor>, String, HashMap<String, String>)
+) -> std::result::Result<impl warp::Reply, warp::Rejection> {
+    let (executor, rule_id, _params) = params;
+    
+    match executor.execute_rule(&rule_id) {
+        Ok(result) => {
+            Ok(warp::reply::json(&json!({
+                "status": "success",
+                "result": result
+            })))
+        },
+        Err(e) => {
+            Ok(warp::reply::json(&json!({
+                "status": "error",
+                "message": format!("Failed to execute rule: {}", e)
+            })))
+        }
+    }
+}
+
+/// Create API route for listing templates
+pub fn list_templates_route(
+    store: Arc<HybridStore>
+) -> impl Filter<Extract = (impl warp::Reply,), Error = warp::Rejection> + Clone {
+    warp::path!("api" / "templates")
+        .and(warp::get())
+        .map(move || store.clone())
+        .and_then(handle_list_templates)
+}
+
+/// Create API route for getting a template by ID
+pub fn get_template_route(
+    store: Arc<HybridStore>
+) -> impl Filter<Extract = (impl warp::Reply,), Error = warp::Rejection> + Clone {
+    warp::path!("api" / "templates" / String)
+        .and(warp::get())
+        .map(move |template_id: String| (store.clone(), template_id))
+        .and_then(handle_get_template)
+}
+
+/// Handle request to list all templates
+async fn handle_list_templates(
+    store: Arc<HybridStore>
+) -> std::result::Result<impl warp::Reply, warp::Rejection> {
+    let template_manager = match store.get_template_manager() {
+        Ok(tm) => tm,
+        Err(e) => {
+            return Ok(warp::reply::json(&json!({
+                "status": "error",
+                "message": format!("Failed to get template manager: {}", e)
+            })));
+        }
+    };
+    
+    match template_manager.list_templates() {
+        Ok(templates) => {
+            Ok(warp::reply::json(&json!({
+                "status": "success",
+                "templates": templates
+            })))
+        },
+        Err(e) => {
+            Ok(warp::reply::json(&json!({
+                "status": "error",
+                "message": format!("Failed to list templates: {}", e)
+            })))
+        }
+    }
+}
+
+/// Handle request to get a template by ID
+async fn handle_get_template(
+    params: (Arc<HybridStore>, String)
+) -> std::result::Result<impl warp::Reply, warp::Rejection> {
+    let (store, template_id) = params;
+    
+    let template_manager = match store.get_template_manager() {
+        Ok(tm) => tm,
+        Err(e) => {
+            return Ok(warp::reply::json(&json!({
+                "status": "error",
+                "message": format!("Failed to get template manager: {}", e)
+            })));
+        }
+    };
+    
+    match template_manager.get_template_by_id(&template_id) {
+        Ok(template) => {
+            Ok(warp::reply::json(&json!({
+                "status": "success",
+                "template": template
+            })))
+        },
+        Err(e) => {
+            Ok(warp::reply::json(&json!({
+                "status": "error",
+                "message": format!("Failed to get template: {}", e)
+            })))
+        }
+    }
 }
