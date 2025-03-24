@@ -22,7 +22,7 @@ use crate::api::ApiServer;
 use crate::redis_handler::RedisType;
 
 use clap::{Parser, Subcommand};
-use log::{error, info, debug};
+use log::{error, info, debug, warn};
 use std::path::PathBuf;
 use std::time::Duration;
 use tokio::time;
@@ -216,8 +216,30 @@ async fn run_service(config: &Config) -> Result<()> {
     let store_arc = Arc::new(HybridStore::new(config, SyncMode::WriteThrough)?);
     let storage_agent_arc = Arc::new(storage_agent);
     
+    // Create rule executor
+    let rule_executor = Arc::new(rules_engine::RuleExecutor::new(store_arc.clone()));
+    
+    // Initialize control action handler
+    if let Ok(redis_url) = std::env::var("REDIS_URL") {
+        match control::ControlActionHandler::new(&redis_url, &config.redis.key_prefix) {
+            Ok(handler) => {
+                // Register handler with rule executor
+                if let Err(e) = rule_executor.register_action_handler(handler) {
+                    error!("Failed to register control action handler: {}", e);
+                } else {
+                    info!("Control action handler registered successfully");
+                }
+            },
+            Err(e) => {
+                error!("Failed to create control action handler: {}", e);
+            }
+        }
+    } else {
+        warn!("REDIS_URL environment variable not set, control actions will not be available");
+    }
+    
     // Create and start API server
-    let api_server = ApiServer::new(store_arc.clone(), storage_agent_arc, config.api.port);
+    let api_server = ApiServer::new(store_arc.clone(), storage_agent_arc, rule_executor, config.api.port);
     tokio::spawn(async move {
         if let Err(e) = api_server.start().await {
             error!("API server error: {}", e);

@@ -37,6 +37,8 @@ pub struct ApiServer {
     store: Arc<HybridStore>,
     /// Storage agent
     agent: Arc<StorageAgent>,
+    /// Rule executor for running rules
+    rule_executor: Arc<RuleExecutor>,
     /// Monitoring service
     monitoring: Arc<MonitoringService>,
     port: u16,
@@ -44,75 +46,75 @@ pub struct ApiServer {
 
 impl ApiServer {
     /// Create a new API server
-    pub fn new(store: Arc<HybridStore>, agent: Arc<StorageAgent>, port: u16) -> Self {
-        let monitoring = Arc::new(MonitoringService::new(store.clone(), 1000));
+    pub fn new(
+        store: Arc<HybridStore>, 
+        agent: Arc<StorageAgent>,
+        rule_executor: Arc<RuleExecutor>,
+        port: u16
+    ) -> Self {
+        let monitoring = Arc::new(MonitoringService::new(HealthStatus::default()));
         Self {
             store,
             agent,
+            rule_executor,
             monitoring,
             port,
         }
     }
-
+    
     /// Start the API server
-    pub async fn start(&self) -> std::result::Result<(), ModelSrvError> {
-        info!("Starting API server on port {}", self.port);
+    pub async fn start(&self) -> std::result::Result<(), warp::Error> {
+        // Health check route
+        let health_route = warp::path("health")
+            .map(move || {
+                warp::reply::json(&json!({
+                    "status": "ok",
+                    "version": env!("CARGO_PKG_VERSION")
+                }))
+            });
+            
+        // Get monitoring service reference
+        let monitoring = self.monitoring.clone();
         
+        // Cors configuration
         let cors = warp::cors()
             .allow_any_origin()
             .allow_headers(vec!["content-type"])
             .allow_methods(vec!["GET", "POST", "PUT", "DELETE"]);
             
-        let log = warp::log::custom(|info| {
-            info!("{} {} {} {}ms", 
-                info.method(),
-                info.path(),
-                info.status(),
-                info.elapsed().as_millis()
-            );
-        });
-        
-        // Define routes
-        let health_route = warp::path!("api" / "health")
-            .and(warp::get())
-            .map(|| {
-                warp::reply::json(&json!({
-                    "status": "ok",
-                    "version": env!("CARGO_PKG_VERSION"),
-                }))
-            });
-            
-        // Create combined routes
-        let rule_executor = RuleExecutor::new(self.store.clone());
-        let executor = Arc::new(rule_executor);
-        let rule_executor = executor.clone();
-        
-        // Create combined routes
-        let list_rules = list_rules_route(self.store.clone());
-        let get_rule = get_rule_route(self.store.clone());
-        let create_rule = create_rule_route(self.store.clone());
-        let update_rule = update_rule_route(self.store.clone());
-        let delete_rule = delete_rule_route(self.store.clone());
-        let execute_rule = execute_rule_route(rule_executor);
+        // Create API routes
+        let store = self.store.clone();
+        let rules_list_route = list_rules_route(store.clone());
+        let get_rule_route = get_rule_route(store.clone());
+        let create_rule_route = create_rule_route(store.clone());
+        let update_rule_route = update_rule_route(store.clone());
+        let delete_rule_route = delete_rule_route(store.clone());
+        let rule_executor = self.rule_executor.clone();
+        let execute_rule_route = execute_rule_route(rule_executor);
         
         // Template routes
-        let list_templates = list_templates_route(self.store.clone());
-        let get_template = get_template_route(self.store.clone());
+        let templates_route = list_templates_route(store.clone());
+        let get_template_route = get_template_route(store.clone());
         
-        let routes = health_route
-            .or(list_rules)
-            .or(get_rule)
-            .or(create_rule)
-            .or(update_rule)
-            .or(delete_rule)
-            .or(execute_rule)
-            .or(list_templates)
-            .or(get_template)
-            .with(cors)
-            .with(log);
+        // Combine all routes
+        let api_routes = health_route
+            .or(rules_list_route)
+            .or(get_rule_route)
+            .or(create_rule_route)
+            .or(update_rule_route)
+            .or(delete_rule_route)
+            .or(execute_rule_route)
+            .or(templates_route)
+            .or(get_template_route)
+            .with(cors);
+        
+        // Start the server
+        info!("Starting API server on port {}", self.port);
+        
+        warp::serve(api_routes)
+            .run(([0, 0, 0, 0], self.port))
+            .await;
             
-        warp::serve(routes).run(([0, 0, 0, 0], self.port)).await;
-        
         Ok(())
     }
 }
@@ -315,9 +317,9 @@ pub fn execute_rule_route(
 ) -> impl Filter<Extract = (impl warp::Reply,), Error = warp::Rejection> + Clone {
     warp::path!("api" / "rules" / String / "execute")
         .and(warp::post())
-        .and(warp::query::<HashMap<String, String>>())
-        .map(move |rule_id: String, params: HashMap<String, String>| {
-            (executor.clone(), rule_id, params)
+        .and(warp::body::json::<serde_json::Value>().or(warp::query::<HashMap<String, String>>().map(|q| json!(q))))
+        .map(move |rule_id: String, input: serde_json::Value| {
+            (executor.clone(), rule_id, input)
         })
         .and_then(handle_execute_rule)
 }
@@ -432,16 +434,14 @@ async fn handle_delete_rule(
 
 /// Handle request to execute a rule
 async fn handle_execute_rule(
-    params: (Arc<RuleExecutor>, String, HashMap<String, String>)
+    params: (Arc<RuleExecutor>, String, serde_json::Value)
 ) -> std::result::Result<impl warp::Reply, warp::Rejection> {
-    let (executor, rule_id, _params) = params;
+    let (executor, rule_id, input) = params;
     
-    match executor.execute_rule(&rule_id) {
+    // Execute rule with input data
+    match executor.execute_rule(&rule_id, Some(input)).await {
         Ok(result) => {
-            Ok(warp::reply::json(&json!({
-                "status": "success",
-                "result": result
-            })))
+            Ok(warp::reply::json(&result))
         },
         Err(e) => {
             Ok(warp::reply::json(&json!({

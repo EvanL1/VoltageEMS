@@ -81,6 +81,12 @@ pub enum HealthStatus {
     Unhealthy,
 }
 
+impl Default for HealthStatus {
+    fn default() -> Self {
+        HealthStatus::Healthy
+    }
+}
+
 /// Health check information
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HealthInfo {

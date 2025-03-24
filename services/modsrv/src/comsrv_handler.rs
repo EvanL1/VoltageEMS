@@ -4,67 +4,67 @@ use log::{debug, error, info, warn};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-/// 遥控/遥调命令类型
+/// remote control and remote adjust command type
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum CommandType {
-    /// 遥控命令 (开关量)
+    /// remote control command (switch)
     RemoteControl,
-    /// 遥调命令 (模拟量)
+    /// remote adjust command (analog)
     RemoteAdjust,
 }
 
-/// 遥控/遥调命令状态
+/// remote control and remote adjust command status
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum CommandStatus {
-    /// 等待执行
+    /// pendinging
     Pending,
-    /// 执行中
+    /// executingcuting
     Executing,
-    /// 执行成功
+    /// successess
     Success,
-    /// 执行失败
+    /// failed
     Failed,
-    /// 已取消
+    /// cancelled
     Cancelled,
 }
 
-/// 遥控/遥调命令
+/// remote control and remote adjust command
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Command {
-    /// 命令ID
+    /// command id
     pub id: String,
-    /// 通道名称
+    /// channel name
     pub channel: String,
-    /// 点位名称
+    /// point name
     pub point: String,
-    /// 命令类型
+    /// command type
     pub command_type: CommandType,
-    /// 命令值
+    /// command value
     pub value: String,
-    /// 命令状态
+    /// command status
     pub status: CommandStatus,
-    /// 创建时间戳
+    /// created timestamp
     pub created_at: i64,
-    /// 执行时间戳
+    /// executed timestamp
     pub executed_at: Option<i64>,
-    /// 完成时间戳
+    /// completed timestamp
     pub completed_at: Option<i64>,
-    /// 错误信息
+    /// error message
     pub error: Option<String>,
 }
 
-/// Comsrv处理器
+/// Comsrv handler
 pub struct ComsrvHandler {
-    /// Redis前缀
+    /// Redis prefix
     prefix: String,
-    /// 命令队列键
+    /// command queue key
     command_queue_key: String,
-    /// 命令状态键模式
+    /// command status key pattern
     command_status_key_pattern: String,
 }
 
 impl ComsrvHandler {
-    /// 创建新的Comsrv处理器
+    /// create new Comsrv handler
     pub fn new(redis_prefix: &str) -> Self {
         ComsrvHandler {
             prefix: redis_prefix.to_string(),
@@ -73,7 +73,7 @@ impl ComsrvHandler {
         }
     }
 
-    /// 发送遥控命令
+    /// send remote control command
     pub fn send_remote_control(
         &self,
         redis: &mut RedisConnection,
@@ -94,7 +94,7 @@ impl ComsrvHandler {
         )
     }
 
-    /// 发送遥调命令
+    /// send remote adjust command
     pub fn send_remote_adjust(
         &self,
         redis: &mut RedisConnection,
@@ -115,7 +115,7 @@ impl ComsrvHandler {
         )
     }
 
-    /// 获取命令状态
+    /// get command status
     pub fn get_command_status(&self, redis: &mut RedisConnection, command_id: &str) -> Result<CommandStatus> {
         let status_key = self.command_status_key_pattern.replace("{}", command_id);
         
@@ -145,7 +145,7 @@ impl ComsrvHandler {
         }
     }
 
-    /// 等待命令完成
+    /// wait for command completion
     pub async fn wait_for_command_completion(
         &self,
         redis: &mut RedisConnection,
@@ -165,25 +165,25 @@ impl ComsrvHandler {
                     return Ok(status);
                 }
                 _ => {
-                    // 检查是否超时
+                    // check if timeout
                     if start_time.elapsed() > timeout_duration {
                         return Err(ModelSrvError::ConnectionError(
                             format!("Command execution timed out after {} ms", timeout_ms)
                         ));
                     }
                     
-                    // 等待一段时间后再次检查
+                    // wait for a while and check again
                     sleep(Duration::from_millis(100)).await;
                 }
             }
         }
     }
 
-    /// 取消命令
+    /// cancel command
     pub fn cancel_command(&self, redis: &mut RedisConnection, command_id: &str) -> Result<()> {
         let status_key = self.command_status_key_pattern.replace("{}", command_id);
         
-        // 检查命令是否存在
+        // check if command exists
         let status_data = redis.get_hash(&status_key)?;
         
         if status_data.is_empty() {
@@ -192,7 +192,7 @@ impl ComsrvHandler {
             )));
         }
         
-        // 检查命令状态
+        // check command status
         let status_str = status_data.get("status").ok_or_else(|| {
             ModelSrvError::DataMappingError(format!(
                 "Status field not found in command status for ID: {}", command_id
@@ -201,10 +201,10 @@ impl ComsrvHandler {
         
         match status_str.as_str() {
             "pending" | "executing" => {
-                // 只有等待中或执行中的命令可以取消
+                // only pending or executing commands can be cancelled
                 redis.set_hash_field(&status_key, "status", "cancelled")?;
                 
-                // 设置完成时间
+                // set completed timestamp
                 let now = chrono::Utc::now().timestamp();
                 redis.set_hash_field(&status_key, "completed_at", &now.to_string())?;
                 
@@ -216,15 +216,15 @@ impl ComsrvHandler {
         }
     }
 
-    // 私有辅助方法
+    // private helper methods
 
-    /// 生成命令ID
+    /// generate command id
     fn generate_command_id(&self) -> String {
         use uuid::Uuid;
         Uuid::new_v4().to_string()
     }
 
-    /// 发送命令
+    /// send command
     fn send_command(
         &self,
         redis: &mut RedisConnection,
@@ -234,7 +234,7 @@ impl ComsrvHandler {
         command_type: CommandType,
         value: &str,
     ) -> Result<String> {
-        // 创建命令对象
+        // create command object
         let now = chrono::Utc::now().timestamp();
         
         let command = Command {
@@ -250,14 +250,14 @@ impl ComsrvHandler {
             error: None,
         };
         
-        // 序列化命令
+        // serialize command
         let command_json = serde_json::to_string(&command)
             .map_err(|e| ModelSrvError::JsonError(e))?;
         
-        // 将命令添加到队列
+        // add command to queue
         redis.push_list(&self.command_queue_key, &command_json)?;
         
-        // 创建命令状态记录
+        // create command status record
         let status_key = self.command_status_key_pattern.replace("{}", command_id);
         
         let mut status_data = HashMap::new();

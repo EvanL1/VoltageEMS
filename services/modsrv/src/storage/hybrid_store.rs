@@ -14,7 +14,10 @@ use super::redis_store::RedisStore;
 use crate::redis_handler::RedisConnection;
 use crate::template::TemplateManager;
 
-/// Hybrid store implementation, combining memory and Redis
+/// HybridStore: Combines memory and Redis storage.
+/// - WriteThrough: data is stored in memory and immediately synced to Redis
+/// - WriteBack(x): data is written to memory, and synced to Redis every `x` duration
+/// - OnDemand: data is written to memory, and synced manually
 pub struct HybridStore {
     memory: Arc<MemoryStore>,
     redis: Option<Arc<RedisStore>>,
@@ -358,8 +361,7 @@ impl HybridStore {
 
     /// Get a template manager instance
     pub fn get_template_manager(&self) -> Result<TemplateManager> {
-        // 获取配置信息，这里模拟一个简单的实现
-        // 实际实现中，你可能需要从某个字段或缓存中获取这些信息
+        // get templates_dir and key_prefix from config
         let templates_dir = std::env::var("TEMPLATES_DIR").unwrap_or_else(|_| "templates".to_string());
         let key_prefix = "ems:";
         

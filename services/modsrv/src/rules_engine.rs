@@ -9,10 +9,11 @@ use petgraph::Direction;
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
-use log::{error, info};
+use log::{error, info, debug, warn};
 use redis::Commands;
 use uuid::Uuid;
 use chrono::Utc;
+use crate::control::ActionHandler;
 
 /// Context for rule execution
 pub struct ExecutionContext {
@@ -22,6 +23,8 @@ pub struct ExecutionContext {
     variables: HashMap<String, Value>,
     /// Data store for persistence and device interaction
     store: Arc<HybridStore>,
+    /// Action handlers for executing actions
+    action_handlers: Vec<Box<dyn ActionHandler>>,
 }
 
 impl ExecutionContext {
@@ -31,6 +34,36 @@ impl ExecutionContext {
             device_status: HashMap::new(),
             variables: HashMap::new(),
             store,
+            action_handlers: Vec::new(),
+        }
+    }
+    
+    /// Register an action handler
+    pub fn register_action_handler(&mut self, handler: Box<dyn ActionHandler>) {
+        self.action_handlers.push(handler);
+    }
+    
+    /// Find an action handler that can handle the given action type
+    fn find_action_handler(&mut self, action_type: &str) -> Option<&mut Box<dyn ActionHandler>> {
+        for handler in &mut self.action_handlers {
+            if handler.can_handle(action_type) {
+                return Some(handler);
+            }
+        }
+        None
+    }
+    
+    /// Execute an action using the registered action handlers
+    pub fn execute_action(&mut self, action_type: &str, config: &Value) -> Result<Value> {
+        if let Some(handler) = self.find_action_handler(action_type) {
+            let result = handler.execute_action(action_type, config)?;
+            Ok(json!({
+                "status": "success",
+                "action_id": result,
+                "action_type": action_type
+            }))
+        } else {
+            Err(ModelSrvError::RuleError(format!("No handler found for action type: {}", action_type)))
         }
     }
     
@@ -57,12 +90,24 @@ impl ExecutionContext {
     
     /// Get device parameter
     pub fn get_device_parameter(&self, device_id: &str, parameter: &str) -> Result<Value> {
-        match self.device_status.get(device_id) {
-            Some(status) => match status.get(parameter) {
-                Some(value) => Ok(value.clone()),
-                None => Err(ModelSrvError::KeyNotFound(format!("Parameter '{}' not found for device '{}'", parameter, device_id)))
+        let key = format!("device:status:{}:{}", device_id, parameter);
+        
+        // Try from cached device status first
+        let cache_key = format!("{}:{}", device_id, parameter);
+        if let Some(value) = self.device_status.get(&cache_key) {
+            return Ok(value.clone());
+        }
+        
+        // Then try from store
+        match self.store.as_ref().get_string(&key) {
+            Ok(value_str) => {
+                // Try to parse as JSON, or use raw string
+                match serde_json::from_str(&value_str) {
+                    Ok(value) => Ok(value),
+                    Err(_) => Ok(json!(value_str)),
+                }
             },
-            None => Err(ModelSrvError::KeyNotFound(format!("Device '{}' not found", device_id)))
+            Err(_) => Ok(json!(null)),
         }
     }
     
@@ -76,87 +121,103 @@ impl ExecutionContext {
         self.variables.get(name)
     }
     
-    /// Evaluate a condition expression
+    /// Evaluate a simple expression
     pub fn evaluate_expression(&self, expression: &str) -> Result<bool> {
-        // Simple expression evaluation implementation
-        // A more robust implementation would use a proper expression engine
-        match expression {
-            "true" => Ok(true),
-            "false" => Ok(false),
-            expr if expr.contains(">") => {
-                let parts: Vec<&str> = expr.split('>').collect();
-                if parts.len() == 2 {
-                    let left = self.resolve_variable(parts[0].trim())?;
-                    let right = self.resolve_variable(parts[1].trim())?;
-                    
-                    if let (Some(a), Some(b)) = (left.as_f64(), right.as_f64()) {
-                        return Ok(a > b);
-                    }
-                }
-                Err(ModelSrvError::RuleError(format!("Invalid comparison expression: {}", expression)))
-            },
-            expr if expr.contains("<") => {
-                let parts: Vec<&str> = expr.split('<').collect();
-                if parts.len() == 2 {
-                    let left = self.resolve_variable(parts[0].trim())?;
-                    let right = self.resolve_variable(parts[1].trim())?;
-                    
-                    if let (Some(a), Some(b)) = (left.as_f64(), right.as_f64()) {
-                        return Ok(a < b);
-                    }
-                }
-                Err(ModelSrvError::RuleError(format!("Invalid comparison expression: {}", expression)))
-            },
-            expr if expr.contains("==") => {
-                let parts: Vec<&str> = expr.split("==").collect();
-                if parts.len() == 2 {
-                    let left = self.resolve_variable(parts[0].trim())?;
-                    let right = self.resolve_variable(parts[1].trim())?;
-                    
-                    return Ok(left == right);
-                }
-                Err(ModelSrvError::RuleError(format!("Invalid equality expression: {}", expression)))
-            },
-            _ => Err(ModelSrvError::RuleError(format!("Unsupported expression: {}", expression))),
-        }
-    }
-    
-    /// Resolve a variable reference or literal value
-    fn resolve_variable(&self, var_expr: &str) -> Result<Value> {
-        // Check if it's a numeric literal
-        if let Ok(num) = var_expr.parse::<f64>() {
-            return Ok(json!(num));
-        }
-        
-        // Check if it's a boolean literal
-        if var_expr == "true" {
-            return Ok(json!(true));
-        } else if var_expr == "false" {
-            return Ok(json!(false));
-        }
-        
-        // Check if it's a string literal
-        if var_expr.starts_with('"') && var_expr.ends_with('"') {
-            return Ok(json!(var_expr[1..var_expr.len()-1].to_string()));
-        }
-        
-        // Check if it's a device parameter reference (device.parameter)
-        if var_expr.contains('.') {
-            let parts: Vec<&str> = var_expr.split('.').collect();
-            if parts.len() == 2 {
-                return self.get_device_parameter(parts[0], parts[1]);
+        // Very simple expression evaluator (should be replaced with a proper one)
+        if expression.contains("==") {
+            let parts: Vec<&str> = expression.split("==").map(|s| s.trim()).collect();
+            if parts.len() != 2 {
+                return Err(ModelSrvError::RuleError(format!("Invalid expression: {}", expression)));
+            }
+            
+            let left = self.resolve_variable(parts[0])?;
+            let right = self.resolve_variable(parts[1])?;
+            
+            Ok(left == right)
+        } else if expression.contains("!=") {
+            let parts: Vec<&str> = expression.split("!=").map(|s| s.trim()).collect();
+            if parts.len() != 2 {
+                return Err(ModelSrvError::RuleError(format!("Invalid expression: {}", expression)));
+            }
+            
+            let left = self.resolve_variable(parts[0])?;
+            let right = self.resolve_variable(parts[1])?;
+            
+            Ok(left != right)
+        } else if expression.contains(">") {
+            let parts: Vec<&str> = expression.split(">").map(|s| s.trim()).collect();
+            if parts.len() != 2 {
+                return Err(ModelSrvError::RuleError(format!("Invalid expression: {}", expression)));
+            }
+            
+            let left = self.resolve_variable(parts[0])?;
+            let right = self.resolve_variable(parts[1])?;
+            
+            match (left.as_f64(), right.as_f64()) {
+                (Some(l), Some(r)) => Ok(l > r),
+                _ => Err(ModelSrvError::RuleError(format!("Cannot compare: {} and {}", left, right))),
+            }
+        } else if expression.contains("<") {
+            let parts: Vec<&str> = expression.split("<").map(|s| s.trim()).collect();
+            if parts.len() != 2 {
+                return Err(ModelSrvError::RuleError(format!("Invalid expression: {}", expression)));
+            }
+            
+            let left = self.resolve_variable(parts[0])?;
+            let right = self.resolve_variable(parts[1])?;
+            
+            match (left.as_f64(), right.as_f64()) {
+                (Some(l), Some(r)) => Ok(l < r),
+                _ => Err(ModelSrvError::RuleError(format!("Cannot compare: {} and {}", left, right))),
+            }
+        } else {
+            // Assume it's a boolean variable or literal
+            let value = self.resolve_variable(expression)?;
+            
+            if let Some(b) = value.as_bool() {
+                Ok(b)
+            } else if let Some(n) = value.as_f64() {
+                Ok(n != 0.0)
+            } else if let Some(s) = value.as_str() {
+                Ok(!s.is_empty())
+            } else {
+                Ok(false)
             }
         }
-        
-        // Check if it's a variable reference
-        if let Some(value) = self.get_variable(var_expr) {
-            return Ok(value.clone());
-        }
-        
-        Err(ModelSrvError::RuleError(format!("Failed to resolve variable: {}", var_expr)))
     }
     
-    /// Execute a device action
+    /// Resolve a variable or literal
+    pub fn resolve_variable(&self, name: &str) -> Result<Value> {
+        // Check if it's a variable reference
+        if name.starts_with("$") {
+            let var_name = &name[1..];
+            match self.get_variable(var_name) {
+                Some(value) => Ok(value.clone()),
+                None => Err(ModelSrvError::RuleError(format!("Variable not found: {}", var_name))),
+            }
+        } else if name.starts_with("device:") {
+            // Device parameter reference: device:device_id:parameter
+            let parts: Vec<&str> = name.split(':').collect();
+            if parts.len() != 3 {
+                return Err(ModelSrvError::RuleError(format!("Invalid device reference: {}", name)));
+            }
+            
+            self.get_device_parameter(parts[1], parts[2])
+        } else {
+            // Assume it's a literal
+            if name == "true" {
+                Ok(json!(true))
+            } else if name == "false" {
+                Ok(json!(false))
+            } else if let Ok(num) = name.parse::<f64>() {
+                Ok(json!(num))
+            } else {
+                Ok(json!(name))
+            }
+        }
+    }
+    
+    /// Execute device action
     pub async fn execute_device_action(&self, device_id: &str, operation: &str, parameters: &Value) -> Result<Value> {
         let cmd_id = format!("cmd_{}", uuid::Uuid::new_v4().simple());
         
@@ -457,17 +518,48 @@ async fn execute_node(node: &RuleNode, context: &mut ExecutionContext) -> Result
         },
         NodeType::Action => {
             // Process action node
-            let device_id = node.definition.config.get("device_id")
-                .and_then(Value::as_str)
-                .ok_or_else(|| ModelSrvError::RuleError("Action node missing device_id".to_string()))?;
+            if let Some(action_type) = node.definition.config.get("action_type").and_then(Value::as_str) {
+                // Use ActionHandler implementation
+                context.execute_action(action_type, &node.definition.config)
+            } else if let Some(control_id) = node.definition.config.get("control_id").and_then(Value::as_str) {
+                // Directly execute control operation by ID
+                let config = json!({
+                    "action_type": "control",
+                    "control_id": control_id
+                });
+                context.execute_action("control", &config)
+            } else if let (Some(device_id), Some(operation)) = (
+                node.definition.config.get("device_id").and_then(Value::as_str),
+                node.definition.config.get("operation").and_then(Value::as_str)
+            ) {
+                // Legacy direct device action
+                let parameters = node.definition.config.get("parameters").cloned().unwrap_or(json!({}));
                 
-            let operation = node.definition.config.get("operation")
-                .and_then(Value::as_str)
-                .ok_or_else(|| ModelSrvError::RuleError("Action node missing operation".to_string()))?;
-                
-            let parameters = node.definition.config.get("parameters").cloned().unwrap_or(json!({}));
-            
-            context.execute_device_action(device_id, operation, &parameters).await
+                // If we have registered handlers, try to use them first
+                if !context.action_handlers.is_empty() {
+                    let config = json!({
+                        "device_id": device_id,
+                        "point": operation,
+                        "value": parameters,
+                        "channel": "default_channel"
+                    });
+                    
+                    // Try to execute via action handler
+                    match context.execute_action("device_control", &config) {
+                        Ok(result) => Ok(result),
+                        Err(e) => {
+                            // Fall back to legacy implementation if handler doesn't work
+                            warn!("Action handler failed: {}, falling back to legacy implementation", e);
+                            context.execute_device_action(device_id, operation, &parameters).await
+                        }
+                    }
+                } else {
+                    // Use legacy implementation directly
+                    context.execute_device_action(device_id, operation, &parameters).await
+                }
+            } else {
+                Err(ModelSrvError::RuleError("Invalid action node configuration".to_string()))
+            }
         },
         NodeType::Aggregate => {
             // Process aggregate node
@@ -533,8 +625,16 @@ impl RuleExecutor {
         Self { store }
     }
 
+    /// Register an action handler for rule execution
+    pub fn register_action_handler<T: ActionHandler + 'static>(&self, handler: T) -> Result<()> {
+        // Ensure we have the handler registered to the store
+        let mut context = ExecutionContext::new(self.store.clone());
+        context.register_action_handler(Box::new(handler));
+        Ok(())
+    }
+
     /// Execute a rule by its ID
-    pub fn execute_rule(&self, rule_id: &str) -> Result<Value> {
+    pub async fn execute_rule(&self, rule_id: &str, input_data: Option<Value>) -> Result<Value> {
         info!("Executing rule: {}", rule_id);
         
         // Get the rule
@@ -548,47 +648,125 @@ impl RuleExecutor {
         };
         
         // Parse rule as DagRule
-        let rule: DagRule = match serde_json::from_value(rule_json) {
-            Ok(r) => r,
+        let rule_def: DagRule = match serde_json::from_str(&rule_json) {
+            Ok(rule) => rule,
             Err(e) => {
-                error!("Invalid rule format for {}: {}", rule_id, e);
-                return Err(ModelSrvError::RuleError(format!("Invalid rule format: {}", e)));
+                error!("Failed to parse rule {}: {}", rule_id, e);
+                return Err(ModelSrvError::JsonError(e));
             }
         };
         
         // Check if rule is enabled
-        if !rule.enabled {
+        if !rule_def.enabled {
             return Err(ModelSrvError::RuleDisabled(rule_id.to_string()));
         }
         
-        // Generate execution ID and timestamp
+        // Create execution context
+        let mut context = ExecutionContext::new(self.store.clone());
+        
+        // Register control action handler
+        if let Ok(redis_url) = std::env::var("REDIS_URL") {
+            match crate::control::ControlActionHandler::new(&redis_url, "ems:") {
+                Ok(handler) => {
+                    context.register_action_handler(Box::new(handler));
+                },
+                Err(e) => {
+                    warn!("Failed to create control action handler: {}", e);
+                }
+            }
+        }
+        
+        // Set initial input data if provided
+        if let Some(input) = input_data {
+            // Parse input data into variables
+            if let Some(obj) = input.as_object() {
+                for (key, value) in obj {
+                    context.set_variable(key, value.clone());
+                }
+            }
+        }
+        
+        // Build runtime rule
+        let mut runtime_rule = match build_rule_graph(rule_def) {
+            Ok(rule) => rule,
+            Err(e) => {
+                error!("Failed to build rule graph for {}: {}", rule_id, e);
+                return Err(e);
+            }
+        };
+        
+        // Execute rule
+        let execution_start = std::time::Instant::now();
+        let result = execute_rule_graph(&mut runtime_rule, &mut context).await;
+        let execution_time = execution_start.elapsed();
+        
+        info!("Rule {} executed in {:?}", rule_id, execution_time);
+        
+        // Record execution result
         let execution_id = Uuid::new_v4().to_string();
-        let start_time = Utc::now();
-        let timestamp = start_time.to_rfc3339();
-        
-        // Simulate rule execution process
-        // In a real implementation, this would call the rule engine to execute the rule
-        
-        // Record execution history
-        let end_time = Utc::now();
-        let duration_ms = (end_time - start_time).num_milliseconds();
-        
-        let execution_history = json!({
+        let record = json!({
             "execution_id": execution_id,
             "rule_id": rule_id,
-            "status": "completed",
-            "timestamp": timestamp,
-            "duration_ms": duration_ms,
-            "output": "Rule executed successfully"
+            "timestamp": Utc::now().to_rfc3339(),
+            "duration_ms": execution_time.as_millis(),
+            "status": if result.is_ok() { "completed" } else { "failed" },
+            "output": match &result {
+                Ok(output) => output,
+                Err(e) => json!({ "error": e.to_string() }),
+            }
         });
         
-        // Add execution history record
-        if let Err(e) = self.store.add_execution_history(rule_id, &execution_history) {
-            error!("Failed to add execution history: {}", e);
-            // Continue execution, don't return error
+        // Store execution result in Redis
+        let record_key = format!("ems:rule:execution:{}", execution_id);
+        if let Err(e) = self.store.set_string(&record_key, &record.to_string()) {
+            error!("Failed to store execution record: {}", e);
+        }
+        
+        // Store in rule history
+        let history_key = format!("ems:rule:history:{}", rule_id);
+        if let Some(mut redis) = self.store.get_redis_connection() {
+            let _: Result<()> = redis::cmd("LPUSH")
+                .arg(&history_key)
+                .arg(&execution_id)
+                .query(&mut redis)
+                .map_err(|e| ModelSrvError::RedisError(e));
+                
+            let _: Result<()> = redis::cmd("LTRIM")
+                .arg(&history_key)
+                .arg(0)
+                .arg(99) // Keep last 100 executions
+                .query(&mut redis)
+                .map_err(|e| ModelSrvError::RedisError(e));
         }
         
         // Return execution result
-        Ok(execution_history)
+        match result {
+            Ok(output) => Ok(json!({
+                "status": "success",
+                "result": {
+                    "execution_id": execution_id,
+                    "rule_id": rule_id,
+                    "timestamp": record["timestamp"],
+                    "duration_ms": record["duration_ms"],
+                    "status": "completed",
+                    "output": "Rule executed successfully"
+                }
+            })),
+            Err(e) => {
+                error!("Rule execution failed: {}", e);
+                Ok(json!({
+                    "status": "error",
+                    "error": e.to_string(),
+                    "result": {
+                        "execution_id": execution_id,
+                        "rule_id": rule_id,
+                        "timestamp": record["timestamp"],
+                        "duration_ms": record["duration_ms"],
+                        "status": "failed",
+                        "output": format!("Rule execution failed: {}", e)
+                    }
+                }))
+            }
+        }
     }
 } 
