@@ -52,13 +52,24 @@ impl HybridStore {
         })
     }
     
+    /// Create a new hybrid store with only in-memory storage
+    pub fn new_in_memory() -> Result<Self> {
+        let memory = Arc::new(MemoryStore::new());
+        
+        Ok(Self {
+            memory,
+            redis: None,
+            sync_mode: SyncMode::OnDemand,
+        })
+    }
+    
     /// Get a rule by ID
     pub fn get_rule(&self, rule_id: &str) -> Result<serde_json::Value> {
         let key = format!("rule:{}", rule_id);
         match self.get_string(&key) {
             Ok(rule_str) => {
                 serde_json::from_str(&rule_str)
-                    .map_err(|e| ModelSrvError::SerdeError(e))
+                    .map_err(|e| ModelSrvError::SerdeError(e.to_string()))
             },
             Err(e) => Err(e)
         }
@@ -68,7 +79,7 @@ impl HybridStore {
     pub fn add_execution_history(&self, rule_id: &str, history: &serde_json::Value) -> Result<()> {
         let key = format!("rule:{}:history", rule_id);
         let history_str = serde_json::to_string(history)
-            .map_err(|e| ModelSrvError::SerdeError(e))?;
+            .map_err(|e| ModelSrvError::SerdeError(e.to_string()))?;
         
         // Add to list in Redis or memory
         if let Some(redis) = &self.redis {
@@ -260,7 +271,14 @@ impl HybridStore {
             
             // Try to get the rule
             match self.get_rule(rule_id) {
-                Ok(rule) => {
+                Ok(mut rule) => {
+                    // 确保规则对象包含id字段
+                    if !rule.get("id").is_some() {
+                        // 如果规则中没有id字段，添加id字段
+                        if let Some(rule_obj) = rule.as_object_mut() {
+                            rule_obj.insert("id".to_string(), serde_json::Value::String(rule_id.to_string()));
+                        }
+                    }
                     rules.push(rule);
                 },
                 Err(_) => {

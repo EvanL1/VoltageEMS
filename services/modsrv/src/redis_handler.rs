@@ -2,6 +2,7 @@ use crate::error::{ModelSrvError, Result};
 use redis::{Client, Connection, Commands as RedisCommands};
 use serde_json::Value;
 use std::collections::HashMap;
+use std::ops::{Deref, DerefMut};
 
 /// Redis connection handler
 pub struct RedisConnection {
@@ -196,30 +197,19 @@ impl Clone for RedisConnection {
     }
 }
 
-impl redis::ConnectionLike for RedisConnection {
-    fn req_packed_command(&mut self, cmd: &[u8]) -> redis::RedisResult<redis::Value> {
-        self.conn.req_packed_command(cmd)
-    }
+// 实现Deref trait以允许从&RedisConnection转为&Connection
+impl Deref for RedisConnection {
+    type Target = Connection;
 
-    fn req_packed_commands(
-        &mut self,
-        cmd: &[u8],
-        offset: usize,
-        count: usize,
-    ) -> redis::RedisResult<Vec<redis::Value>> {
-        self.conn.req_packed_commands(cmd, offset, count)
+    fn deref(&self) -> &Self::Target {
+        &self.conn
     }
+}
 
-    fn get_db(&self) -> i64 {
-        self.conn.get_db()
-    }
-
-    fn check_connection(&mut self) -> bool {
-        self.conn.check_connection()
-    }
-
-    fn is_open(&self) -> bool {
-        self.conn.is_open()
+// 实现DerefMut trait以允许从&mut RedisConnection转为&mut Connection
+impl DerefMut for RedisConnection {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.conn
     }
 }
 

@@ -8,60 +8,45 @@ use warp::reject;
 pub type Result<T> = std::result::Result<T, ModelSrvError>;
 
 /// Model service error types
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum ModelSrvError {
-    /// Redis related errors
-    RedisError(String),
-    /// IO errors
-    IoError(std::io::Error),
-    /// Serialization errors
-    SerdeError(serde_json::Error),
-    /// JSON parsing errors
-    JsonError(serde_json::Error),
-    /// YAML parsing errors
-    YamlError(serde_yaml::Error),
-    /// Mutex/RwLock errors
-    LockError,
-    /// Key not found
-    KeyNotFound(String),
-    /// Invalid operation
-    InvalidOperation(String),
-    /// Invalid input data
-    InvalidInput(String),
-    /// Invalid data format or structure
-    InvalidData(String),
-    /// Data validation errors
-    ValidationError(String),
-    /// Model not found
-    ModelNotFound(String),
-    /// Model already exists
-    ModelAlreadyExists(String),
-    /// Rule not found
-    RuleNotFound(String),
-    /// Rule disabled
-    RuleDisabled(String),
-    /// Rule already exists
-    AlreadyExists(String),
-    /// Not found error
-    NotFound(String),
-    /// Action not found
-    ActionNotFound(String),
-    /// Execution error
-    ExecutionError(String),
-    /// Data mapping error
-    DataMappingError(String),
-    /// Configuration error
     ConfigError(String),
-    /// Model error
-    ModelError(String),
-    /// Template error
+    FormatError(String),
+    InvalidCommand(String),
+    RedisError(String),
+    PermissionDenied(String),
+    IoError(String),
+    LockError,
+    SerdeError(String),
+    ParseError(String),
+    JsonError(String),
+    InvalidData(String),
+    YamlError(String),
     TemplateError(String),
-    /// Rule execution error
-    RuleError(String),
-    /// Template not found
     TemplateNotFound(String),
-    /// Template already exists
+    ModelError(String),
+    RuleNotFound(String),
+    RuleExecutionError(String),
+    InvalidRuleDefinition(String),
+    ActionHandlerNotFound(String),
+    InvalidActionConfig(String),
+    RuleParsingError(String),
+    RuleDisabled(String),
+    ActionTypeNotSupported(String),
+    ActionExecutionError(String),
     TemplateAlreadyExists(String),
+    RuleError(String),
+    InvalidAuth(String),
+    ComSrvError(String),
+    ModelNotFound(String),
+    ModelAlreadyExists(String),
+    ValidationError(String),
+    DataMappingError(String),
+    KeyNotFound(String),
+    InvalidOperation(String),
+    InvalidInput(String),
+    Unauthorized(String),
+    NotImplemented(String),
 }
 
 impl fmt::Display for ModelSrvError {
@@ -73,39 +58,44 @@ impl fmt::Display for ModelSrvError {
             ModelSrvError::JsonError(e) => write!(f, "JSON error: {}", e),
             ModelSrvError::YamlError(e) => write!(f, "YAML error: {}", e),
             ModelSrvError::LockError => write!(f, "Lock error"),
+            ModelSrvError::ConfigError(msg) => write!(f, "Configuration error: {}", msg),
+            ModelSrvError::FormatError(msg) => write!(f, "Format error: {}", msg),
+            ModelSrvError::InvalidCommand(msg) => write!(f, "Invalid command: {}", msg),
+            ModelSrvError::PermissionDenied(msg) => write!(f, "Permission denied: {}", msg),
+            ModelSrvError::ParseError(msg) => write!(f, "Parse error: {}", msg),
+            ModelSrvError::TemplateError(msg) => write!(f, "Template error: {}", msg),
+            ModelSrvError::TemplateNotFound(id) => write!(f, "Template not found: {}", id),
+            ModelSrvError::ModelError(msg) => write!(f, "Model error: {}", msg),
+            ModelSrvError::RuleNotFound(id) => write!(f, "Rule not found: {}", id),
+            ModelSrvError::RuleExecutionError(msg) => write!(f, "Rule execution error: {}", msg),
+            ModelSrvError::InvalidRuleDefinition(msg) => write!(f, "Invalid rule definition: {}", msg),
+            ModelSrvError::ActionHandlerNotFound(id) => write!(f, "Action handler not found: {}", id),
+            ModelSrvError::InvalidActionConfig(msg) => write!(f, "Invalid action config: {}", msg),
+            ModelSrvError::RuleParsingError(msg) => write!(f, "Rule parsing error: {}", msg),
+            ModelSrvError::RuleDisabled(id) => write!(f, "Rule is disabled: {}", id),
+            ModelSrvError::ActionTypeNotSupported(msg) => write!(f, "Action type not supported: {}", msg),
+            ModelSrvError::ActionExecutionError(msg) => write!(f, "Action execution error: {}", msg),
+            ModelSrvError::TemplateAlreadyExists(id) => write!(f, "Template already exists: {}", id),
+            ModelSrvError::RuleError(msg) => write!(f, "Rule error: {}", msg),
+            ModelSrvError::InvalidAuth(msg) => write!(f, "Authentication error: {}", msg),
+            ModelSrvError::ComSrvError(msg) => write!(f, "Communication service error: {}", msg),
+            ModelSrvError::ModelNotFound(id) => write!(f, "Model not found: {}", id),
+            ModelSrvError::ModelAlreadyExists(id) => write!(f, "Model already exists: {}", id),
+            ModelSrvError::ValidationError(msg) => write!(f, "Validation error: {}", msg),
+            ModelSrvError::DataMappingError(msg) => write!(f, "Data mapping error: {}", msg),
             ModelSrvError::KeyNotFound(key) => write!(f, "Key not found: {}", key),
             ModelSrvError::InvalidOperation(msg) => write!(f, "Invalid operation: {}", msg),
             ModelSrvError::InvalidInput(msg) => write!(f, "Invalid input: {}", msg),
-            ModelSrvError::InvalidData(msg) => write!(f, "Invalid data format or structure: {}", msg),
-            ModelSrvError::ValidationError(msg) => write!(f, "Validation error: {}", msg),
-            ModelSrvError::ModelNotFound(id) => write!(f, "Model not found: {}", id),
-            ModelSrvError::ModelAlreadyExists(id) => write!(f, "Model already exists: {}", id),
-            ModelSrvError::RuleNotFound(id) => write!(f, "Rule not found: {}", id),
-            ModelSrvError::RuleDisabled(id) => write!(f, "Rule is disabled: {}", id),
-            ModelSrvError::AlreadyExists(msg) => write!(f, "Already exists: {}", msg),
-            ModelSrvError::NotFound(msg) => write!(f, "Not found: {}", msg),
-            ModelSrvError::ActionNotFound(id) => write!(f, "Action not found: {}", id),
-            ModelSrvError::ExecutionError(msg) => write!(f, "Execution error: {}", msg),
-            ModelSrvError::DataMappingError(msg) => write!(f, "Data mapping error: {}", msg),
-            ModelSrvError::ConfigError(msg) => write!(f, "Configuration error: {}", msg),
-            ModelSrvError::ModelError(msg) => write!(f, "Model error: {}", msg),
-            ModelSrvError::TemplateError(msg) => write!(f, "Template error: {}", msg),
-            ModelSrvError::RuleError(msg) => write!(f, "Rule error: {}", msg),
-            ModelSrvError::TemplateNotFound(id) => write!(f, "Template not found: {}", id),
-            ModelSrvError::TemplateAlreadyExists(id) => write!(f, "Template already exists: {}", id),
+            ModelSrvError::Unauthorized(msg) => write!(f, "Unauthorized: {}", msg),
+            ModelSrvError::NotImplemented(msg) => write!(f, "Not implemented: {}", msg),
+            ModelSrvError::InvalidData(msg) => write!(f, "Invalid data: {}", msg),
         }
     }
 }
 
 impl Error for ModelSrvError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
-        match self {
-            ModelSrvError::IoError(e) => Some(e),
-            ModelSrvError::SerdeError(e) => Some(e),
-            ModelSrvError::JsonError(e) => Some(e),
-            ModelSrvError::YamlError(e) => Some(e),
-            _ => None,
-        }
+        None
     }
 }
 
@@ -117,13 +107,13 @@ impl From<redis::RedisError> for ModelSrvError {
 
 impl From<std::io::Error> for ModelSrvError {
     fn from(err: std::io::Error) -> Self {
-        ModelSrvError::IoError(err)
+        ModelSrvError::IoError(err.to_string())
     }
 }
 
 impl From<serde_json::Error> for ModelSrvError {
     fn from(err: serde_json::Error) -> Self {
-        ModelSrvError::SerdeError(err)
+        ModelSrvError::SerdeError(err.to_string())
     }
 }
 
@@ -135,8 +125,15 @@ impl From<config::ConfigError> for ModelSrvError {
 
 impl From<serde_yaml::Error> for ModelSrvError {
     fn from(err: serde_yaml::Error) -> Self {
-        ModelSrvError::YamlError(err)
+        ModelSrvError::YamlError(err.to_string())
     }
 }
 
-impl reject::Reject for ModelSrvError {} 
+impl reject::Reject for ModelSrvError {}
+
+impl From<tokio::task::JoinError> for ModelSrvError {
+    fn from(e: tokio::task::JoinError) -> Self {
+        ModelSrvError::IoError(e.to_string())
+    }
+}
+

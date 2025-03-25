@@ -70,6 +70,21 @@ pub struct ControlConfig {
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct MonitoringConfig {
+    pub enabled: bool,
+    pub notification_threshold_ms: Option<u128>,
+}
+
+impl Default for MonitoringConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            notification_threshold_ms: None,
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct Config {
     pub redis: RedisConfig,
     pub logging: LoggingConfig,
@@ -77,6 +92,8 @@ pub struct Config {
     pub control: ControlConfig,
     #[serde(default)]
     pub api: ApiConfig,
+    #[serde(default)]
+    pub monitoring: MonitoringConfig,
     pub templates_dir: String,
     pub log_level: String,
     
@@ -172,6 +189,10 @@ impl Config {
             api: ApiConfig {
                 host: "0.0.0.0".to_string(),
                 port: 8000,
+            },
+            monitoring: MonitoringConfig {
+                enabled: false,
+                notification_threshold_ms: None,
             },
             templates_dir: "/opt/voltageems/modsrv/templates".to_string(),
             log_level: "info".to_string(),
