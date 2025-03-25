@@ -139,9 +139,32 @@ pub struct MonitoringService {
 
 impl MonitoringService {
     /// Create a new monitoring service
-    pub fn new(store: Arc<HybridStore>, history_limit: usize) -> Self {
+    pub fn new(initial_status: HealthStatus) -> Self {
         let default_health = HealthInfo {
-            status: HealthStatus::Healthy,
+            status: initial_status,
+            uptime: 0,
+            memory_usage: 0,
+            rules_count: 0,
+            redis_connected: false,
+            timestamp: SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs(),
+            checks: HashMap::new(),
+        };
+        
+        Self {
+            store: Arc::new(HybridStore::new_in_memory().unwrap()),
+            metrics: Arc::new(RwLock::new(HashMap::new())),
+            history: Arc::new(Mutex::new(Vec::with_capacity(100))),
+            history_limit: 100,
+            health: Arc::new(RwLock::new(default_health)),
+            start_time: SystemTime::now(),
+            redis: Mutex::new(RedisConnection::new()),
+        }
+    }
+
+    /// Create a new monitoring service with a shared data store
+    pub fn new_with_store(store: Arc<HybridStore>, history_limit: usize, initial_status: HealthStatus) -> Self {
+        let default_health = HealthInfo {
+            status: initial_status,
             uptime: 0,
             memory_usage: 0,
             rules_count: 0,

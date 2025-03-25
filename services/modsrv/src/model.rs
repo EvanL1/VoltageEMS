@@ -298,7 +298,7 @@ impl ModelEngine {
         
         // Store the results in Redis
         let output_json = serde_json::to_string(&model_outputs)
-            .map_err(|e| ModelSrvError::JsonError(e))?;
+            .map_err(|e| ModelSrvError::JsonError(e.to_string()))?;
             
         store.set_string(&model.output_key, &output_json)?;
         

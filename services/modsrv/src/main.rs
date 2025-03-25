@@ -219,10 +219,39 @@ async fn run_service(config: &Config) -> Result<()> {
     // Create rule executor
     let rule_executor = Arc::new(rules_engine::RuleExecutor::new(store_arc.clone()));
     
+    // Initialize and register post-processors
+    if config.monitoring.enabled {
+        // Create and register notification post-processor if threshold is configured
+        if let Some(threshold_ms) = config.monitoring.notification_threshold_ms {
+            let mut notification_processor = rules_engine::NotificationPostProcessor::new(
+                threshold_ms, 
+                &config.redis.key_prefix
+            );
+            
+            // Initialize Redis connection if available
+            if let Ok(redis_url) = std::env::var("REDIS_URL") {
+                if let Err(e) = notification_processor.init(&redis_url) {
+                    error!("Failed to initialize notification post-processor: {}", e);
+                } else {
+                    if let Err(e) = rule_executor.register_post_processor(notification_processor) {
+                        error!("Failed to register notification post-processor: {}", e);
+                    } else {
+                        info!("Notification post-processor registered");
+                    }
+                }
+            }
+        }
+    }
+    
     // Initialize control action handler
     if let Ok(redis_url) = std::env::var("REDIS_URL") {
         match control::ControlActionHandler::new(&redis_url, &config.redis.key_prefix) {
-            Ok(handler) => {
+            Ok(mut handler) => {
+                // Load control operations
+                if let Err(e) = handler.load_operations(&*store_arc, &config.control.operation_key_pattern) {
+                    error!("Failed to load control operations: {}", e);
+                }
+                
                 // Register handler with rule executor
                 if let Err(e) = rule_executor.register_action_handler(handler) {
                     error!("Failed to register control action handler: {}", e);
@@ -239,7 +268,8 @@ async fn run_service(config: &Config) -> Result<()> {
     }
     
     // Create and start API server
-    let api_server = ApiServer::new(store_arc.clone(), storage_agent_arc, rule_executor, config.api.port);
+    let api_server = ApiServer::new(store_arc.clone(), storage_agent_arc, rule_executor.clone(), config.api.port);
+    
     tokio::spawn(async move {
         if let Err(e) = api_server.start().await {
             error!("API server error: {}", e);
@@ -586,9 +616,12 @@ async fn start_api_server(config: &Config) -> Result<()> {
     let storage_agent = Arc::new(StorageAgent::new(config.clone())?);
     let store = Arc::new(HybridStore::new(config, SyncMode::WriteThrough)?);
     
+    // Create rule executor
+    let rule_executor = Arc::new(rules_engine::RuleExecutor::new(store.clone()));
+    
     // Create API server
-    let api_server = ApiServer::new(store, storage_agent, config.api.port);
+    let api_server = ApiServer::new(store, storage_agent, rule_executor, config.api.port);
     
     // Start API server
-    api_server.start().await
+    api_server.start().await.map_err(|e| ModelSrvError::IoError(e.to_string()))
 } 

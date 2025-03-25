@@ -8,7 +8,7 @@ pub mod storage;
 pub mod storage_agent;
 pub mod api;
 pub mod rules;
-pub mod rule;
+// pub mod rule;
 pub mod rules_engine;
 pub mod monitoring;
 
