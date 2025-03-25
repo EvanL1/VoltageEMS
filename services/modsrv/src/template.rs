@@ -141,22 +141,22 @@ impl TemplateManager {
         let template_path = Path::new(&template.file_path);
         
         let content = fs::read_to_string(template_path)
-            .map_err(|e| ModelSrvError::IoError(e))?;
+            .map_err(|e| ModelSrvError::IoError(e.to_string()))?;
             
         // Determine format based on file extension
         let model_with_actions = match template_path.extension().and_then(|ext| ext.to_str()) {
             Some("yaml") | Some("yml") => {
                 serde_yaml::from_str::<ModelWithActions>(&content)
-                    .map_err(|e| ModelSrvError::YamlError(e))?
+                    .map_err(|e| ModelSrvError::YamlError(e.to_string()))?
             },
             Some("json") => {
                 serde_json::from_str::<ModelWithActions>(&content)
-                    .map_err(|e| ModelSrvError::JsonError(e))?
+                    .map_err(|e| ModelSrvError::JsonError(e.to_string()))?
             },
             _ => {
                 // Default to YAML format
                 serde_yaml::from_str::<ModelWithActions>(&content)
-                    .map_err(|e| ModelSrvError::YamlError(e))?
+                    .map_err(|e| ModelSrvError::YamlError(e.to_string()))?
             }
         };
             
@@ -166,10 +166,10 @@ impl TemplateManager {
     /// Get template by ID
     pub fn get_template_by_id(&self, template_id: &str) -> Result<TemplateInfo> {
         let templates_dir = Path::new(&self.templates_dir);
-        let entries = fs::read_dir(templates_dir).map_err(|e| ModelSrvError::IoError(e))?;
+        let entries = fs::read_dir(templates_dir).map_err(|e| ModelSrvError::IoError(e.to_string()))?;
         
         for entry_result in entries {
-            let entry = entry_result.map_err(|e| ModelSrvError::IoError(e))?;
+            let entry = entry_result.map_err(|e| ModelSrvError::IoError(e.to_string()))?;
             let path = entry.path();
             
             if path.is_file() && path.extension().map_or(false, |ext| {
@@ -189,12 +189,12 @@ impl TemplateManager {
     pub fn list_templates(&self) -> Result<Vec<TemplateInfo>> {
         let templates_dir = Path::new(&self.templates_dir);
         println!("Looking for templates in directory: {}", templates_dir.display());
-        let entries = fs::read_dir(templates_dir).map_err(|e| ModelSrvError::IoError(e))?;
+        let entries = fs::read_dir(templates_dir).map_err(|e| ModelSrvError::IoError(e.to_string()))?;
         
         let mut templates = Vec::new();
         
         for entry_result in entries {
-            let entry = entry_result.map_err(|e| ModelSrvError::IoError(e))?;
+            let entry = entry_result.map_err(|e| ModelSrvError::IoError(e.to_string()))?;
             let path = entry.path();
             
             println!("Found file: {}", path.display());
@@ -214,7 +214,7 @@ impl TemplateManager {
     /// Load template info
     fn load_template_info(&self, path: &Path) -> Result<TemplateInfo> {
         let file_content = fs::read_to_string(path)
-            .map_err(|e| ModelSrvError::IoError(e))?;
+            .map_err(|e| ModelSrvError::IoError(e.to_string()))?;
             
         println!("File content: {}", file_content);
 
@@ -225,7 +225,7 @@ impl TemplateManager {
                 serde_yaml::from_str(&file_content)
                     .map_err(|e| {
                         error!("YAML parsing error: {}", e);
-                        ModelSrvError::YamlError(e)
+                        ModelSrvError::YamlError(e.to_string())
                     })?
             },
             Some("json") => {
@@ -233,7 +233,7 @@ impl TemplateManager {
                 serde_json::from_str(&file_content)
                     .map_err(|e| {
                         error!("JSON parsing error: {}", e);
-                        ModelSrvError::JsonError(e)
+                        ModelSrvError::JsonError(e.to_string())
                     })?
             },
             _ => {
@@ -242,7 +242,7 @@ impl TemplateManager {
                 serde_yaml::from_str(&file_content)
                     .map_err(|e| {
                         error!("YAML parsing error: {}", e);
-                        ModelSrvError::YamlError(e)
+                        ModelSrvError::YamlError(e.to_string())
                     })?
             }
         };
@@ -268,7 +268,7 @@ impl TemplateManager {
         // Read template file
         let template_path = Path::new(&template.file_path);
         let template_content = fs::read_to_string(template_path)
-            .map_err(|e| ModelSrvError::IoError(e))?;
+            .map_err(|e| ModelSrvError::IoError(e.to_string()))?;
             
         // Create instance configuration
         let instance_key = format!("{}model:config:{}", self.key_prefix, instance_id);
@@ -295,12 +295,12 @@ impl TemplateManager {
             Some("yaml") | Some("yml") => {
                 debug!("Parsing YAML template: {}", template_path.display());
                 serde_yaml::from_str(&instance_content)
-                    .map_err(|e| ModelSrvError::YamlError(e))?
+                    .map_err(|e| ModelSrvError::YamlError(e.to_string()))?
             },
             _ => {
                 debug!("Parsing JSON template: {}", template_path.display());
                 serde_json::from_str(&instance_content)
-                    .map_err(|e| ModelSrvError::JsonError(e))?
+                    .map_err(|e| ModelSrvError::JsonError(e.to_string()))?
             }
         };
         
@@ -325,7 +325,7 @@ impl TemplateManager {
             
             // 将模型存储为JSON字符串
             let model_json = serde_json::to_string(model)
-                .map_err(|e| ModelSrvError::JsonError(e))?;
+                .map_err(|e| ModelSrvError::JsonError(e.to_string()))?;
             store.set_string(&model_key, &model_json)?;
             
             // 在配置键中存储对模型定义的引用
@@ -334,7 +334,7 @@ impl TemplateManager {
             // 从模型中提取关键字段添加到哈希表
             if let Some(input_mappings) = model.get("input_mappings") {
                 let input_mappings_json = serde_json::to_string(input_mappings)
-                    .map_err(|e| ModelSrvError::JsonError(e))?;
+                    .map_err(|e| ModelSrvError::JsonError(e.to_string()))?;
                 instance_hash.insert("input_mappings".to_string(), input_mappings_json);
             }
             
@@ -346,7 +346,7 @@ impl TemplateManager {
             
             if let Some(calculation) = model.get("calculation") {
                 let calculation_json = serde_json::to_string(calculation)
-                    .map_err(|e| ModelSrvError::JsonError(e))?;
+                    .map_err(|e| ModelSrvError::JsonError(e.to_string()))?;
                 instance_hash.insert("calculation".to_string(), calculation_json);
             }
         }
@@ -360,7 +360,7 @@ impl TemplateManager {
                 for (i, action) in actions_array.iter().enumerate() {
                     let action_key = format!("{}model:action:{}:{}", self.key_prefix, instance_id, i);
                     let action_json = serde_json::to_string(action)
-                        .map_err(|e| ModelSrvError::JsonError(e))?;
+                        .map_err(|e| ModelSrvError::JsonError(e.to_string()))?;
                     store.set_string(&action_key, &action_json)?;
                 }
                 
@@ -372,12 +372,12 @@ impl TemplateManager {
         // 同时保存到文件用于调试
         let instances_dir = Path::new("instances");
         if !instances_dir.exists() {
-            fs::create_dir(instances_dir).map_err(|e| ModelSrvError::IoError(e))?;
+            fs::create_dir(instances_dir).map_err(|e| ModelSrvError::IoError(e.to_string()))?;
         }
         
         let instance_file_path = instances_dir.join(format!("{}.json", instance_id));
         fs::write(&instance_file_path, &instance_content)
-            .map_err(|e| ModelSrvError::IoError(e))?;
+            .map_err(|e| ModelSrvError::IoError(e.to_string()))?;
         
         println!("Instance also saved to file: {:?}", instance_file_path);
         
@@ -469,7 +469,7 @@ impl TemplateManager {
         
         // Convert to YAML
         let yaml = serde_yaml::to_string(instance)
-            .map_err(|e| ModelSrvError::YamlError(e))?;
+            .map_err(|e| ModelSrvError::YamlError(e.to_string()))?;
             
         // Save to store
         store.set_string(&key, &yaml)?;

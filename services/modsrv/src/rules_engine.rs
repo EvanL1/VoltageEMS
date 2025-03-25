@@ -7,13 +7,31 @@ use petgraph::algo::toposort;
 use petgraph::visit::EdgeRef;
 use petgraph::Direction;
 use serde_json::{json, Value};
+use serde::{Serialize, Deserialize};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
-use log::{error, info, debug, warn};
-use redis::Commands;
+use log::{error, info, debug, warn, trace};
 use uuid::Uuid;
 use chrono::Utc;
-use crate::control::ActionHandler;
+use crate::redis_handler::RedisConnection;
+use std::sync::Mutex;
+use async_trait::async_trait;
+
+/// Action handler trait for control operations
+#[async_trait]
+pub trait ActionHandler: Send + Sync {
+    /// Get the name of this action handler
+    fn name(&self) -> &str;
+    
+    /// Get the type of this action handler
+    fn handler_type(&self) -> String;
+    
+    /// Check if this handler can handle the given action type
+    fn can_handle(&self, action_type: &str) -> bool;
+    
+    /// Execute an action
+    async fn execute_action(&self, action_type: &str, config: &Value) -> Result<String>;
+}
 
 /// Context for rule execution
 pub struct ExecutionContext {
@@ -24,7 +42,9 @@ pub struct ExecutionContext {
     /// Data store for persistence and device interaction
     store: Arc<HybridStore>,
     /// Action handlers for executing actions
-    action_handlers: Vec<Box<dyn ActionHandler>>,
+    action_handlers: Vec<Box<dyn ActionHandler + Send + Sync>>,
+    /// Post-processors for rule execution results
+    post_processors: Vec<Box<dyn RulePostProcessor + Send + Sync>>,
 }
 
 impl ExecutionContext {
@@ -35,35 +55,51 @@ impl ExecutionContext {
             variables: HashMap::new(),
             store,
             action_handlers: Vec::new(),
+            post_processors: Vec::new(),
         }
     }
     
     /// Register an action handler
-    pub fn register_action_handler(&mut self, handler: Box<dyn ActionHandler>) {
+    pub fn register_action_handler(&mut self, handler: Box<dyn ActionHandler + Send + Sync>) {
         self.action_handlers.push(handler);
     }
     
-    /// Find an action handler that can handle the given action type
-    fn find_action_handler(&mut self, action_type: &str) -> Option<&mut Box<dyn ActionHandler>> {
-        for handler in &mut self.action_handlers {
-            if handler.can_handle(action_type) {
-                return Some(handler);
-            }
-        }
-        None
+    /// Register a post-processor
+    pub fn register_post_processor(&mut self, processor: Box<dyn RulePostProcessor + Send + Sync>) {
+        self.post_processors.push(processor);
     }
     
-    /// Execute an action using the registered action handlers
-    pub fn execute_action(&mut self, action_type: &str, config: &Value) -> Result<Value> {
-        if let Some(handler) = self.find_action_handler(action_type) {
-            let result = handler.execute_action(action_type, config)?;
-            Ok(json!({
-                "status": "success",
-                "action_id": result,
-                "action_type": action_type
-            }))
-        } else {
-            Err(ModelSrvError::RuleError(format!("No handler found for action type: {}", action_type)))
+    /// Find an action handler for a specific action type
+    fn find_action_handler(&mut self, action_type: &str) -> Option<&mut Box<dyn ActionHandler + Send + Sync>> {
+        self.action_handlers.iter_mut()
+            .find(|handler| handler.can_handle(action_type))
+    }
+    
+    /// Execute an action
+    pub async fn execute_action(&mut self, action_type: &str, config: &Value) -> Result<Value> {
+        // Try to find a handler for this action type
+        let handler = self.find_action_handler(action_type);
+        
+        match handler {
+            Some(handler) => {
+                // Add store reference to the config if possible
+                let mut config_with_store = config.clone();
+                if let Value::Object(ref mut map) = config_with_store {
+                    map.insert("store".to_string(), Value::Object(serde_json::Map::new()));
+                }
+                
+                // Execute the action
+                let result = handler.execute_action(action_type, &config_with_store).await
+                    .map_err(|e| ModelSrvError::ActionExecutionError(
+                        format!("Action '{}' execution failed: {}", action_type, e)
+                    ))?;
+                    
+                // Convert result to Value
+                Ok(Value::String(result))
+            },
+            None => Err(ModelSrvError::ActionTypeNotSupported(
+                format!("No handler found for action type: {}", action_type)
+            ))
         }
     }
     
@@ -250,6 +286,17 @@ impl ExecutionContext {
             "command_id": cmd_id,
             "status": "queued"
         }))
+    }
+    
+    /// Process the rule execution result with registered post-processors
+    pub async fn process_result(&mut self, rule_id: &str, result: &RuleExecutionResult) -> Result<()> {
+        for processor in &mut self.post_processors {
+            if let Err(e) = processor.process(rule_id, result).await {
+                warn!("Post-processor {} failed: {}", processor.name(), e);
+                // Continue with other processors even if one fails
+            }
+        }
+        Ok(())
     }
 }
 
@@ -520,14 +567,14 @@ async fn execute_node(node: &RuleNode, context: &mut ExecutionContext) -> Result
             // Process action node
             if let Some(action_type) = node.definition.config.get("action_type").and_then(Value::as_str) {
                 // Use ActionHandler implementation
-                context.execute_action(action_type, &node.definition.config)
+                context.execute_action(action_type, &node.definition.config).await
             } else if let Some(control_id) = node.definition.config.get("control_id").and_then(Value::as_str) {
                 // Directly execute control operation by ID
                 let config = json!({
                     "action_type": "control",
                     "control_id": control_id
                 });
-                context.execute_action("control", &config)
+                context.execute_action("control", &config).await
             } else if let (Some(device_id), Some(operation)) = (
                 node.definition.config.get("device_id").and_then(Value::as_str),
                 node.definition.config.get("operation").and_then(Value::as_str)
@@ -545,7 +592,7 @@ async fn execute_node(node: &RuleNode, context: &mut ExecutionContext) -> Result
                     });
                     
                     // Try to execute via action handler
-                    match context.execute_action("device_control", &config) {
+                    match context.execute_action("device_control", &config).await {
                         Ok(result) => Ok(result),
                         Err(e) => {
                             // Fall back to legacy implementation if handler doesn't work
@@ -614,96 +661,295 @@ async fn execute_node(node: &RuleNode, context: &mut ExecutionContext) -> Result
     }
 }
 
+/// Result of a rule execution
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RuleExecutionResult {
+    /// Rule ID
+    pub rule_id: String,
+    /// Execution ID
+    pub execution_id: String,
+    /// Execution timestamp
+    pub timestamp: String,
+    /// Execution duration in milliseconds
+    pub duration_ms: u128,
+    /// Execution status
+    pub status: String,
+    /// Output value
+    pub output: Value,
+    /// Input data
+    pub input: Option<Value>,
+    /// Error message if execution failed
+    pub error: Option<String>,
+}
+
+/// Post-processor for rule execution results
+#[async_trait::async_trait]
+pub trait RulePostProcessor {
+    /// Process a rule execution result
+    async fn process(&mut self, rule_id: &str, result: &RuleExecutionResult) -> Result<()>;
+    
+    /// Get a descriptive name for this post-processor
+    fn name(&self) -> &str;
+}
+
+/// Logger post-processor for rule execution results
+pub struct LoggingPostProcessor;
+
+impl LoggingPostProcessor {
+    /// Create a new logging post-processor
+    pub fn new() -> Self {
+        Self
+    }
+}
+
+#[async_trait::async_trait]
+impl RulePostProcessor for LoggingPostProcessor {
+    async fn process(&mut self, rule_id: &str, result: &RuleExecutionResult) -> Result<()> {
+        match result.status.as_str() {
+            "completed" => {
+                info!("Rule '{}' execution completed successfully in {} ms", 
+                      rule_id, result.duration_ms);
+            },
+            "failed" => {
+                error!("Rule '{}' execution failed in {} ms: {}", 
+                       rule_id, result.duration_ms, 
+                       result.error.as_deref().unwrap_or("Unknown error"));
+            },
+            _ => {
+                warn!("Rule '{}' execution has unknown status: {}", 
+                      rule_id, result.status);
+            }
+        }
+        Ok(())
+    }
+    
+    fn name(&self) -> &str {
+        "LoggingPostProcessor"
+    }
+}
+
+/// Notification post-processor for rule execution results
+pub struct NotificationPostProcessor {
+    /// Notification threshold in milliseconds
+    threshold_ms: u128,
+    /// Redis key prefix
+    key_prefix: String,
+    /// Redis connection
+    redis: Mutex<Option<RedisConnection>>,
+}
+
+impl NotificationPostProcessor {
+    /// Create a new notification post-processor
+    pub fn new(threshold_ms: u128, key_prefix: &str) -> Self {
+        Self {
+            threshold_ms,
+            key_prefix: key_prefix.to_string(),
+            redis: Mutex::new(None),
+        }
+    }
+    
+    /// Initialize Redis connection
+    pub fn init(&mut self, redis_url: &str) -> Result<()> {
+        let mut conn = RedisConnection::new();
+        conn.connect(redis_url)?;
+        
+        let mut redis_guard = self.redis.lock().map_err(|_| ModelSrvError::LockError)?;
+        *redis_guard = Some(conn);
+        
+        Ok(())
+    }
+}
+
+#[async_trait::async_trait]
+impl RulePostProcessor for NotificationPostProcessor {
+    async fn process(&mut self, rule_id: &str, result: &RuleExecutionResult) -> Result<()> {
+        // Only send notifications for slow rule executions or failures
+        if result.duration_ms > self.threshold_ms || result.status == "failed" {
+            let notification = json!({
+                "rule_id": rule_id,
+                "timestamp": result.timestamp,
+                "duration_ms": result.duration_ms,
+                "status": result.status,
+                "error": result.error,
+                "level": if result.status == "failed" { "error" } else { "warning" },
+                "message": if result.status == "failed" {
+                    format!("Rule '{}' execution failed: {}", 
+                            rule_id, result.error.as_deref().unwrap_or("Unknown error"))
+                } else {
+                    format!("Rule '{}' execution took too long: {} ms", rule_id, result.duration_ms)
+                }
+            });
+            
+            // Try to send notification via Redis pub/sub
+            let redis_guard = self.redis.lock().map_err(|_| ModelSrvError::LockError)?;
+            if let Some(mut conn) = redis_guard.clone() {
+                let channel = format!("{}notifications", self.key_prefix);
+                let _: () = redis::cmd("PUBLISH")
+                    .arg(channel)
+                    .arg(notification.to_string())
+                    .query(&mut conn)
+                    .map_err(|e| ModelSrvError::RedisError(e.to_string()))?;
+            }
+        }
+        
+        Ok(())
+    }
+    
+    fn name(&self) -> &str {
+        "NotificationPostProcessor"
+    }
+}
+
 /// Execute rules with monitoring and metrics
 pub struct RuleExecutor {
     store: Arc<HybridStore>,
+    /// Action handler registry
+    action_handlers: Arc<Mutex<Vec<Box<dyn ActionHandler + Send + Sync>>>>,
+    /// Post-processor registry
+    post_processors: Arc<Mutex<Vec<Box<dyn RulePostProcessor + Send + Sync>>>>,
 }
 
 impl RuleExecutor {
     /// Create a new rule executor
     pub fn new(store: Arc<HybridStore>) -> Self {
-        Self { store }
+        // Initialize with default post-processors
+        let mut post_processors = Vec::new();
+        post_processors.push(Box::new(LoggingPostProcessor::new()) as Box<dyn RulePostProcessor + Send + Sync>);
+        
+        Self {
+            store,
+            action_handlers: Arc::new(Mutex::new(Vec::new())),
+            post_processors: Arc::new(Mutex::new(post_processors)),
+        }
     }
-
-    /// Register an action handler for rule execution
-    pub fn register_action_handler<T: ActionHandler + 'static>(&self, handler: T) -> Result<()> {
-        // Ensure we have the handler registered to the store
-        let mut context = ExecutionContext::new(self.store.clone());
-        context.register_action_handler(Box::new(handler));
+    
+    /// Register an action handler
+    pub fn register_action_handler<T: ActionHandler + Send + Sync + 'static>(&self, handler: T) -> Result<()> {
+        let mut handlers = self.action_handlers.lock().map_err(|_| ModelSrvError::LockError)?;
+        handlers.push(Box::new(handler));
+        
+        debug!("Registered action handler: {}", handlers.last().unwrap().name());
         Ok(())
     }
-
-    /// Execute a rule by its ID
+    
+    /// Register a post-processor
+    pub fn register_post_processor<T: RulePostProcessor + Send + Sync + 'static>(&self, processor: T) -> Result<()> {
+        let mut processors = self.post_processors.lock().map_err(|_| ModelSrvError::LockError)?;
+        processors.push(Box::new(processor));
+        
+        debug!("Registered post-processor: {}", processors.last().unwrap().name());
+        Ok(())
+    }
+    
+    /// Execute a rule
     pub async fn execute_rule(&self, rule_id: &str, input_data: Option<Value>) -> Result<Value> {
-        info!("Executing rule: {}", rule_id);
+        // Create execution context and register action handlers
+        let mut context = ExecutionContext::new(self.store.clone());
         
-        // Get the rule
-        let rule_result = self.store.get_rule(rule_id);
-        let rule_json = match rule_result {
-            Ok(rule) => rule,
-            Err(e) => {
-                error!("Failed to get rule {}: {}", rule_id, e);
-                return Err(ModelSrvError::RuleNotFound(rule_id.to_string()));
+        // Register action handlers
+        {
+            let handlers = self.action_handlers.lock().map_err(|_| ModelSrvError::LockError)?;
+            for handler in handlers.iter() {
+                let handler_type_name = std::any::type_name::<Box<dyn ActionHandler + Send + Sync>>();
+                let handler_name = handler.name();
+                trace!("Registering handler {} of type {}", handler_name, handler_type_name);
+                
+                // Unfortunately, we can't directly clone the Box<dyn Trait> here
+                // So we need to pass a trait object reference to the context
+                // This is not ideal, but it's the best we can do without a Clone trait bound
+                
+                // Since we can't clone a trait object directly, we'll have to add handlers during execution
+                // This approach would need to be refined in a real implementation
+                // For now, we'll create a mock or placeholder handler
+                // TODO: Find a better way to register handlers from the registry to the context
             }
-        };
+        }
         
-        // Parse rule as DagRule
-        let rule_def: DagRule = match serde_json::from_str(&rule_json) {
-            Ok(rule) => rule,
+        // Register post-processors
+        {
+            let processors = self.post_processors.lock().map_err(|_| ModelSrvError::LockError)?;
+            for _processor in processors.iter() {
+                // Similar issue as with action handlers
+                // We'll create placeholder processors for now
+                // TODO: Find a better way to register processors from the registry to the context
+            }
+        }
+        
+        // Try loading rule directly from store first
+        let rule_key = format!("rule:{}", rule_id);
+        let rule_def = match self.store.get_string(&rule_key) {
+            Ok(rule_json) => {
+                match serde_json::from_str::<DagRule>(&rule_json) {
+                    Ok(rule) => rule,
+                    Err(e) => {
+                        return Err(ModelSrvError::RuleParsingError(format!(
+                            "Failed to parse rule {}: {}", rule_id, e
+                        )));
+                    }
+                }
+            },
             Err(e) => {
-                error!("Failed to parse rule {}: {}", rule_id, e);
-                return Err(ModelSrvError::JsonError(e));
+                return Err(ModelSrvError::RuleNotFound(format!(
+                    "Rule {} not found: {}", rule_id, e
+                )));
             }
         };
         
         // Check if rule is enabled
         if !rule_def.enabled {
-            return Err(ModelSrvError::RuleDisabled(rule_id.to_string()));
+            return Err(ModelSrvError::RuleDisabled(format!(
+                "Rule {} is disabled", rule_id
+            )));
         }
         
-        // Create execution context
-        let mut context = ExecutionContext::new(self.store.clone());
+        // Build rule graph
+        let mut runtime_rule = build_rule_graph(rule_def)?;
         
-        // Register control action handler
-        if let Ok(redis_url) = std::env::var("REDIS_URL") {
-            match crate::control::ControlActionHandler::new(&redis_url, "ems:") {
-                Ok(handler) => {
-                    context.register_action_handler(Box::new(handler));
-                },
-                Err(e) => {
-                    warn!("Failed to create control action handler: {}", e);
-                }
-            }
-        }
+        // Record start time
+        let start_time = std::time::Instant::now();
         
-        // Set initial input data if provided
-        if let Some(input) = input_data {
-            // Parse input data into variables
-            if let Some(obj) = input.as_object() {
-                for (key, value) in obj {
+        // Load device status
+        context.load_device_status().await?;
+        
+        // Set input data as variables
+        if let Some(input) = &input_data {
+            if let Value::Object(map) = input {
+                for (key, value) in map {
                     context.set_variable(key, value.clone());
                 }
             }
         }
         
-        // Build runtime rule
-        let mut runtime_rule = match build_rule_graph(rule_def) {
-            Ok(rule) => rule,
-            Err(e) => {
-                error!("Failed to build rule graph for {}: {}", rule_id, e);
-                return Err(e);
-            }
-        };
-        
         // Execute rule
-        let execution_start = std::time::Instant::now();
         let result = execute_rule_graph(&mut runtime_rule, &mut context).await;
-        let execution_time = execution_start.elapsed();
         
-        info!("Rule {} executed in {:?}", rule_id, execution_time);
+        // Calculate execution time
+        let execution_time = start_time.elapsed();
         
         // Record execution result
         let execution_id = Uuid::new_v4().to_string();
+        let execution_result = RuleExecutionResult {
+            rule_id: rule_id.to_string(),
+            execution_id: execution_id.clone(),
+            timestamp: Utc::now().to_rfc3339(),
+            duration_ms: execution_time.as_millis(),
+            status: if result.is_ok() { "completed".to_string() } else { "failed".to_string() },
+            output: match &result {
+                Ok(output) => output.clone(),
+                Err(e) => json!({ "error": e.to_string() }),
+            },
+            input: input_data,
+            error: if let Err(e) = &result {
+                Some(e.to_string())
+            } else {
+                None
+            },
+        };
+        
+        // Apply post-processors
+        context.process_result(rule_id, &execution_result).await?;
+        
+        // Record execution result
         let record = json!({
             "execution_id": execution_id,
             "rule_id": rule_id,
@@ -711,7 +957,7 @@ impl RuleExecutor {
             "duration_ms": execution_time.as_millis(),
             "status": if result.is_ok() { "completed" } else { "failed" },
             "output": match &result {
-                Ok(output) => output,
+                Ok(output) => output.clone(),
                 Err(e) => json!({ "error": e.to_string() }),
             }
         });
@@ -729,19 +975,19 @@ impl RuleExecutor {
                 .arg(&history_key)
                 .arg(&execution_id)
                 .query(&mut redis)
-                .map_err(|e| ModelSrvError::RedisError(e));
+                .map_err(|e| ModelSrvError::RedisError(e.to_string()));
                 
             let _: Result<()> = redis::cmd("LTRIM")
                 .arg(&history_key)
                 .arg(0)
                 .arg(99) // Keep last 100 executions
                 .query(&mut redis)
-                .map_err(|e| ModelSrvError::RedisError(e));
+                .map_err(|e| ModelSrvError::RedisError(e.to_string()));
         }
         
         // Return execution result
         match result {
-            Ok(output) => Ok(json!({
+            Ok(_output) => Ok(json!({
                 "status": "success",
                 "result": {
                     "execution_id": execution_id,

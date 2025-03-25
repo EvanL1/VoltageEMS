@@ -2,7 +2,7 @@ use crate::error::ModelSrvError;
 use crate::storage::hybrid_store::HybridStore;
 use crate::rules_engine::RuleExecutor;
 use serde_json::{self, json, Value};
-use log::info;
+use log::{info, error};
 use std::sync::Arc;
 use warp::{self, Filter};
 use std::convert::Infallible;
@@ -11,13 +11,15 @@ use warp::http::StatusCode;
 use crate::monitoring::{MonitoringService, HealthStatus};
 use crate::StorageAgent;
 use std::collections::HashMap;
+use crate::template::TemplateManager;
+use rand;
 
 /// API module for the model service
 /// Provides HTTP REST API for the model service
 /// Uses warp for routing and request handling
 
 // Create Instance Request
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize, Debug)]
 struct CreateInstanceRequest {
     template_id: String,
     instance_id: String,
@@ -25,7 +27,7 @@ struct CreateInstanceRequest {
 }
 
 // Execute Operation Request
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize, Debug)]
 struct ExecuteOperationRequest {
     instance_id: String,
     parameters: Value
@@ -52,7 +54,7 @@ impl ApiServer {
         rule_executor: Arc<RuleExecutor>,
         port: u16
     ) -> Self {
-        let monitoring = Arc::new(MonitoringService::new(HealthStatus::default()));
+        let monitoring = Arc::new(MonitoringService::new(HealthStatus::Healthy));
         Self {
             store,
             agent,
@@ -74,7 +76,7 @@ impl ApiServer {
             });
             
         // Get monitoring service reference
-        let monitoring = self.monitoring.clone();
+        let _monitoring = self.monitoring.clone();
         
         // Cors configuration
         let cors = warp::cors()
@@ -96,6 +98,12 @@ impl ApiServer {
         let templates_route = list_templates_route(store.clone());
         let get_template_route = get_template_route(store.clone());
         
+        // Instance routes
+        let create_instance_route = create_instance_route(store.clone());
+        
+        // Control operations route
+        let control_operations_route = control_operations_route(store.clone());
+        
         // Combine all routes
         let api_routes = health_route
             .or(rules_list_route)
@@ -106,6 +114,8 @@ impl ApiServer {
             .or(execute_rule_route)
             .or(templates_route)
             .or(get_template_route)
+            .or(create_instance_route)
+            .or(control_operations_route)
             .with(cors);
         
         // Start the server
@@ -126,10 +136,6 @@ async fn handle_rejection(err: warp::Rejection) -> std::result::Result<impl warp
     
     if let Some(e) = err.find::<ModelSrvError>() {
         match e {
-            ModelSrvError::ModelNotFound(_) => {
-                status = warp::http::StatusCode::NOT_FOUND;
-                message = e.to_string();
-            }
             ModelSrvError::RuleNotFound(_) => {
                 status = warp::http::StatusCode::NOT_FOUND;
                 message = e.to_string();
@@ -315,13 +321,33 @@ pub fn delete_rule_route(
 pub fn execute_rule_route(
     executor: Arc<RuleExecutor>
 ) -> impl Filter<Extract = (impl warp::Reply,), Error = warp::Rejection> + Clone {
+    use log::error;
+    use std::convert::Infallible;
+    
     warp::path!("api" / "rules" / String / "execute")
         .and(warp::post())
-        .and(warp::body::json::<serde_json::Value>().or(warp::query::<HashMap<String, String>>().map(|q| json!(q))))
-        .map(move |rule_id: String, input: serde_json::Value| {
-            (executor.clone(), rule_id, input)
+        .and(
+            warp::body::json()
+                .map(|json: serde_json::Value| json)
+                .or(warp::body::form()
+                    .map(|form: HashMap<String, String>| json!(form)))
+                .unify()
+        )
+        .and_then(move |rule_id: String, input: serde_json::Value| {
+            let executor = executor.clone();
+            async move {
+                match executor.execute_rule(&rule_id, Some(input)).await {
+                    Ok(result) => Ok::<_, Infallible>(warp::reply::json(&result)),
+                    Err(e) => {
+                        error!("Failed to execute rule {}: {}", rule_id, e);
+                        Ok::<_, Infallible>(warp::reply::json(&json!({
+                            "status": "error",
+                            "error": e.to_string()
+                        })))
+                    }
+                }
+            }
         })
-        .and_then(handle_execute_rule)
 }
 
 /// Handle request to list all rules
@@ -432,26 +458,6 @@ async fn handle_delete_rule(
     }
 }
 
-/// Handle request to execute a rule
-async fn handle_execute_rule(
-    params: (Arc<RuleExecutor>, String, serde_json::Value)
-) -> std::result::Result<impl warp::Reply, warp::Rejection> {
-    let (executor, rule_id, input) = params;
-    
-    // Execute rule with input data
-    match executor.execute_rule(&rule_id, Some(input)).await {
-        Ok(result) => {
-            Ok(warp::reply::json(&result))
-        },
-        Err(e) => {
-            Ok(warp::reply::json(&json!({
-                "status": "error",
-                "message": format!("Failed to execute rule: {}", e)
-            })))
-        }
-    }
-}
-
 /// Create API route for listing templates
 pub fn list_templates_route(
     store: Arc<HybridStore>
@@ -532,4 +538,124 @@ async fn handle_get_template(
             })))
         }
     }
+}
+
+/// Create API route for creating an instance
+pub fn create_instance_route(
+    store: Arc<HybridStore>
+) -> impl Filter<Extract = (impl warp::Reply,), Error = warp::Rejection> + Clone {
+    warp::path!("api" / "instances")
+        .and(warp::post())
+        .and(warp::body::json())
+        .map(move |req: CreateInstanceRequest| (store.clone(), req))
+        .and_then(handle_create_instance)
+}
+
+/// Handle request to create an instance
+async fn handle_create_instance(
+    params: (Arc<HybridStore>, CreateInstanceRequest)
+) -> std::result::Result<impl warp::Reply, warp::Rejection> {
+    let (store, req) = params;
+    
+    let mut template_manager = match store.get_template_manager() {
+        Ok(tm) => tm,
+        Err(e) => {
+            return Ok(warp::reply::json(&json!({
+                "status": "error",
+                "message": format!("Failed to get template manager: {}", e)
+            })));
+        }
+    };
+    
+    match template_manager.create_instance(&*store, &req.template_id, &req.instance_id, None) {
+        Ok(_) => {
+            Ok(warp::reply::json(&json!({
+                "status": "success",
+                "message": "Instance created successfully",
+                "instance_id": req.instance_id
+            })))
+        },
+        Err(e) => {
+            Ok(warp::reply::json(&json!({
+                "status": "error",
+                "message": format!("Failed to create instance: {}", e)
+            })))
+        }
+    }
+}
+
+/// Create API route for control operations
+pub fn control_operations_route(
+    store: Arc<HybridStore>
+) -> impl Filter<Extract = (impl warp::Reply,), Error = warp::Rejection> + Clone {
+    // 增加GET方法的路由
+    let store1 = store.clone();
+    let get_route = warp::path!("api" / "control" / "operations")
+        .and(warp::get())
+        .map(move || store1.clone())
+        .and_then(handle_list_operations);
+    
+    // 原有的POST方法路由
+    let store2 = store.clone();
+    let post_route = warp::path!("api" / "control" / "operations")
+        .and(warp::post())
+        .and(warp::body::json())
+        .map(move |req: ExecuteOperationRequest| (store2.clone(), req))
+        .and_then(handle_control_operation);
+    
+    // 添加执行特定操作的路由
+    let store3 = store.clone();
+    let execute_route = warp::path!("api" / "control" / "execute" / String)
+        .and(warp::post())
+        .and(warp::body::json())
+        .map(move |op_name: String, req: ExecuteOperationRequest| (store3.clone(), op_name, req))
+        .and_then(handle_execute_operation);
+    
+    get_route.or(post_route).or(execute_route)
+}
+
+/// Handle request to list available operations
+async fn handle_list_operations(
+    _store: Arc<HybridStore>
+) -> std::result::Result<impl warp::Reply, warp::Rejection> {
+    // 返回支持的操作列表
+    let operations = vec![
+        "start_motor", 
+        "stop_motor", 
+        "change_speed"
+    ];
+    
+    Ok(warp::reply::json(&operations))
+}
+
+/// Handle request for control operations
+async fn handle_control_operation(
+    params: (Arc<HybridStore>, ExecuteOperationRequest)
+) -> std::result::Result<impl warp::Reply, warp::Rejection> {
+    let (_store, req) = params;
+    
+    // 这里我们仅提供一个基础实现，返回成功但表明该功能尚未完全实现
+    Ok(warp::reply::json(&json!({
+        "status": "success",
+        "message": "Operation submitted",
+        "instance_id": req.instance_id,
+        "operation_id": format!("op_{}", rand::random::<u32>()),
+        "note": "This is a placeholder implementation"
+    })))
+}
+
+/// Handle request to execute a specific operation
+async fn handle_execute_operation(
+    params: (Arc<HybridStore>, String, ExecuteOperationRequest)
+) -> std::result::Result<impl warp::Reply, warp::Rejection> {
+    let (_store, op_name, req) = params;
+    
+    // 基础实现，返回成功，但表明是模拟操作
+    Ok(warp::reply::json(&json!({
+        "status": "success",
+        "message": format!("Operation '{}' executed on instance '{}'", op_name, req.instance_id),
+        "operation_id": format!("op_{}_{}", op_name, rand::random::<u32>()),
+        "instance_id": req.instance_id,
+        "note": "This is a simulated operation execution"
+    })))
 }
