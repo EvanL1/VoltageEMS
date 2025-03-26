@@ -19,6 +19,7 @@ serde = { version = "1.0.152", features = ["derive"] }
 serde_yaml = "0.9.25"
 serde_json = "1.0.93"
 config = { version = "0.13.1", features = ["yaml"] }
+csv = "1.2.2"
 # error handling
 thiserror = "1.0.38"
 anyhow = "1.0.69"

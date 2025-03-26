@@ -571,7 +571,7 @@ impl ComBase for ModbusRtuClient {
     }
     
     fn channel_id(&self) -> &str {
-        self.base.channel_id()
+        self.device.as_str()
     }
     
     fn protocol_type(&self) -> &str {
@@ -594,23 +594,33 @@ impl ComBase for ModbusRtuClient {
     }
     
     async fn start(&mut self) -> Result<()> {
-        info!("Starting Modbus RTU client for channel: {}", self.channel_id());
+        info!("启动Modbus RTU客户端: {} (通道: {})", self.device, self.base.channel_id());
+        
+        // 设置运行状态
+        self.base.set_running(true).await;
         
         // 连接到设备
         match self.connect().await {
             Ok(_) => {
-                self.base.set_running(true).await;
+                info!("Modbus RTU连接成功: {}", self.device);
+                
+                // 加载点表
+                let config_path = std::env::var("CONFIG_DIR").unwrap_or_else(|_| "./config".to_string());
+                if let Err(e) = self.base.load_point_tables(&config_path).await {
+                    error!("加载点表失败: {}", e);
+                }
+                
                 Ok(())
             },
             Err(e) => {
-                self.base.set_running(false).await;
+                error!("Modbus RTU连接失败: {}", e);
                 Err(e)
             }
         }
     }
     
     async fn stop(&mut self) -> Result<()> {
-        info!("Stopping Modbus RTU client for channel: {}", self.channel_id());
+        info!("停止Modbus RTU客户端: {} (通道: {})", self.device, self.channel_id());
         self.disconnect().await?;
         self.base.set_running(false).await;
         Ok(())

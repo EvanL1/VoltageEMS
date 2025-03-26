@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-通信服务API测试脚本
-用于测试comsrv通信服务的API接口
+Communication Service API Test Script
+For testing comsrv communication service API interfaces
 """
 
 import requests
@@ -10,26 +10,26 @@ import time
 import logging
 from typing import Dict, Any, List, Optional
 
-# 配置日志
+# Configure logging
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger("ComsrvTest")
 
-# 服务配置
+# Service configuration
 API_BASE_URL = "http://localhost:8888/api"
 BASE_URL = "http://localhost:8888"
-TIMEOUT = 5  # 超时时间（秒）
+TIMEOUT = 5  # Timeout in seconds
 
-# API路径
+# API paths
 CHANNELS_API = f"{API_BASE_URL}/v1/channels"
 POINTS_API = f"{API_BASE_URL}/v1/channels"
 VALUES_API = f"{API_BASE_URL}/v1/channels"
 HEALTH_API = f"{BASE_URL}/health"
 
 def make_request(method: str, url: str, data: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-    """发送HTTP请求并处理可能的错误"""
+    """Send HTTP request and handle possible errors"""
     try:
         if method.lower() == "get":
             response = requests.get(url, timeout=TIMEOUT)
@@ -40,39 +40,39 @@ def make_request(method: str, url: str, data: Optional[Dict[str, Any]] = None) -
         elif method.lower() == "delete":
             response = requests.delete(url, timeout=TIMEOUT)
         else:
-            raise ValueError(f"不支持的HTTP方法: {method}")
+            raise ValueError(f"Unsupported HTTP method: {method}")
         
         response.raise_for_status()
         return response.json()
     except requests.exceptions.RequestException as e:
-        logger.error(f"请求失败: {e}")
+        logger.error(f"Request failed: {e}")
         return {"success": False, "error": str(e)}
 
 def test_health() -> bool:
-    """测试健康检查API"""
-    logger.info("测试健康检查API...")
+    """Test health check API"""
+    logger.info("Testing health check API...")
     response = make_request("get", HEALTH_API)
     success = response.get("success", False) and response.get("data", {}).get("status") == "OK"
-    logger.info(f"健康检查结果: {'成功' if success else '失败'}")
+    logger.info(f"Health check result: {'success' if success else 'failed'}")
     return success
 
 def test_get_channels() -> List[Dict[str, Any]]:
-    """测试获取通道列表API"""
-    logger.info("测试获取通道列表...")
+    """Test get channels list API"""
+    logger.info("Testing get channels list...")
     response = make_request("get", CHANNELS_API)
     channels = response.get("data", [])
-    logger.info(f"共获取到 {len(channels)} 个通道")
+    logger.info(f"Retrieved {len(channels)} channels")
     for i, channel in enumerate(channels):
-        logger.info(f"通道 {i+1}: ID={channel.get('id')}, 协议={channel.get('protocol')}, 状态={channel.get('status', {}).get('connected', False)}")
+        logger.info(f"Channel {i+1}: ID={channel.get('id')}, Protocol={channel.get('protocol')}, Status={channel.get('status', {}).get('connected', False)}")
     return channels
 
 def test_get_channel_status(channel_id: str) -> Dict[str, Any]:
-    """测试获取通道状态API"""
-    logger.info(f"测试获取通道状态: {channel_id}...")
+    """Test get channel status API"""
+    logger.info(f"Testing get channel status: {channel_id}...")
     response = make_request("get", f"{CHANNELS_API}/{channel_id}/status")
     channels = response.get("data", [])
     
-    # 查找指定id的通道
+    # Find channel with specified id
     channel_status = None
     for channel in channels:
         if channel.get("id") == channel_id:
@@ -80,54 +80,54 @@ def test_get_channel_status(channel_id: str) -> Dict[str, Any]:
             break
     
     if channel_status:
-        logger.info(f"通道 {channel_id} 状态: 连接={channel_status.get('connected', False)}, 最后错误={channel_status.get('last_error', 'N/A')}")
+        logger.info(f"Channel {channel_id} status: Connected={channel_status.get('connected', False)}, Last error={channel_status.get('last_error', 'N/A')}")
     else:
-        logger.warning(f"未找到通道 {channel_id} 的状态信息")
+        logger.warning(f"Status information for channel {channel_id} not found")
     
     return channel_status or {}
 
 def test_get_points(channel_id: str) -> List[Dict[str, Any]]:
-    """测试获取点位列表API"""
-    logger.info(f"测试获取点位列表: {channel_id}...")
+    """Test get points list API"""
+    logger.info(f"Testing get points list: {channel_id}...")
     response = make_request("get", f"{POINTS_API}/{channel_id}/points")
     channels = response.get("data", [])
     
-    # 假设返回的是通道列表，我们从中找到点位信息
+    # Assume we get a channel list, find the point information from it
     channel_info = None
     for channel in channels:
         if channel.get("id") == channel_id:
             channel_info = channel
             break
     
-    # 这里我们使用参数作为"点位"，因为目前的API似乎没有专门的点位API
+    # Here we use parameters as "points" because the current API doesn't seem to have a dedicated point API
     points = []
     if channel_info and "parameters" in channel_info:
         for key, value in channel_info.get("parameters", {}).items():
             points.append({
                 "id": key,
                 "value": value,
-                "writable": False  # 假设所有参数都不可写
+                "writable": False  # Assume all parameters are read-only
             })
     
-    logger.info(f"通道 {channel_id} 共有 {len(points)} 个点位")
+    logger.info(f"Channel {channel_id} has {len(points)} points")
     return points
 
 def test_read_point(channel_id: str, point_id: str) -> Dict[str, Any]:
-    """测试读取点位值API"""
-    logger.info(f"测试读取点位值: {channel_id}/{point_id}...")
+    """Test read point value API"""
+    logger.info(f"Testing read point value: {channel_id}/{point_id}...")
     
-    # 由于API可能没有专门的点位读取接口，我们从通道信息中提取点位值
+    # Since the API may not have a dedicated point reading interface, we extract point values from channel information
     response = make_request("get", f"{CHANNELS_API}/{channel_id}/status")
     channels = response.get("data", [])
     
-    # 找出特定通道
+    # Find the specific channel
     channel_info = None
     for channel in channels:
         if channel.get("id") == channel_id:
             channel_info = channel
             break
     
-    # 从参数中找出点位值
+    # Find the point value from parameters
     value = "N/A"
     timestamp = channel_info.get("last_update_time", "N/A") if channel_info else "N/A"
     
@@ -139,65 +139,65 @@ def test_read_point(channel_id: str, point_id: str) -> Dict[str, Any]:
         "timestamp": timestamp
     }
     
-    logger.info(f"点位 {point_id} 值: {result.get('value', 'N/A')}, 时间戳: {result.get('timestamp', 'N/A')}")
+    logger.info(f"Point {point_id} value: {result.get('value', 'N/A')}, Timestamp: {result.get('timestamp', 'N/A')}")
     return result
 
 def test_write_point(channel_id: str, point_id: str, value: Any) -> bool:
-    """测试写入点位值API"""
-    logger.info(f"测试写入点位值: {channel_id}/{point_id}, 值={value}...")
+    """Test write point value API"""
+    logger.info(f"Testing write point value: {channel_id}/{point_id}, Value={value}...")
     
-    # 目前API可能不支持参数写入，这里我们只是模拟
-    logger.warning("当前API可能不支持参数写入，这是一个模拟操作")
+    # Current API may not support parameter writing, we're just simulating here
+    logger.warning("Current API may not support parameter writing, this is a simulated operation")
     
-    # 假设写入成功
+    # Assume write is successful
     success = True
-    logger.info(f"写入点位值结果: {'成功' if success else '失败'}")
+    logger.info(f"Write point value result: {'success' if success else 'failed'}")
     return success
 
 def main():
-    """主测试函数"""
-    logger.info("开始测试Communication Service API...")
+    """Main test function"""
+    logger.info("Starting test of Communication Service API...")
     
-    # 测试健康检查
+    # Test health check
     if not test_health():
-        logger.error("健康检查失败，终止测试")
+        logger.error("Health check failed, terminating test")
         return
     
-    # 测试获取通道列表
+    # Test get channels list
     channels = test_get_channels()
     if not channels:
-        logger.warning("没有找到通道，无法进行后续测试")
+        logger.warning("No channels found, cannot proceed with subsequent tests")
         return
     
-    # 选择第一个通道进行测试
+    # Select the first channel for testing
     channel_id = channels[0].get("id")
     
-    # 测试获取通道状态
+    # Test get channel status
     test_get_channel_status(channel_id)
     
-    # 测试获取点位列表
+    # Test get points list
     points = test_get_points(channel_id)
     if not points:
-        logger.warning(f"通道 {channel_id} 没有点位，无法测试读写点位值")
+        logger.warning(f"Channel {channel_id} has no points, cannot test reading/writing point values")
         return
     
-    # 选择第一个点位进行测试
+    # Select the first point for testing
     point_id = points[0].get("id")
     
-    # 测试读取点位值
+    # Test read point value
     test_read_point(channel_id, point_id)
     
-    # 测试写入点位值 (如果点位可写)
+    # Test write point value (if point is writable)
     if points[0].get("writable", False):
         test_write_point(channel_id, point_id, 123.45)
         
-        # 验证写入结果
-        time.sleep(1)  # 等待值更新
+        # Verify write result
+        time.sleep(1)  # Wait for value update
         test_read_point(channel_id, point_id)
     else:
-        logger.info(f"点位 {point_id} 不可写，跳过写入测试")
+        logger.info(f"Point {point_id} is not writable, skipping write test")
     
-    logger.info("API测试完成！")
+    logger.info("API test completed!")
 
 if __name__ == "__main__":
     main() 
