@@ -1,4 +1,7 @@
 use std::path::Path;
+use std::fs::OpenOptions;
+use std::io::Write;
+use chrono::Local;
 use tracing_appender::rolling::{RollingFileAppender, Rotation};
 use tracing_subscriber::fmt;
 use tracing_subscriber::EnvFilter;
@@ -118,4 +121,49 @@ impl LogLevel {
             LogLevel::Error => "error",
         }
     }
+}
+
+/// Log a message packet to a dedicated file
+///
+/// This function writes message packets to a dedicated file in the messages directory.
+/// Messages are organized by channel and date.
+///
+/// # Arguments
+///
+/// * `log_dir` - The directory where log files will be stored
+/// * `channel_id` - The identifier of the channel
+/// * `direction` - The direction of the message ("send" or "receive")
+/// * `message` - The message content to log
+pub fn log_message(
+    log_dir: impl AsRef<Path>,
+    channel_id: &str,
+    direction: &str,
+    message: &[u8],
+) -> Result<()> {
+    // Create messages directory if it doesn't exist
+    let messages_dir = log_dir.as_ref().join("messages");
+    std::fs::create_dir_all(&messages_dir).map_err(|e| ComSrvError::IoError(e))?;
+
+    // Create channel-specific directory
+    let channel_dir = messages_dir.join(channel_id);
+    std::fs::create_dir_all(&channel_dir).map_err(|e| ComSrvError::IoError(e))?;
+
+    // Generate filename with current date only
+    let date = Local::now().format("%Y-%m-%d").to_string();
+    let filename = format!("{}.msg", date);
+    let filepath = channel_dir.join(filename);
+
+    // Open file in append mode
+    let mut file = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(filepath)
+        .map_err(|e| ComSrvError::IoError(e))?;
+
+    // Write timestamp, direction and message
+    let timestamp = Local::now().format("%Y-%m-%d %H:%M:%S.%3f").to_string();
+    writeln!(file, "[{}][{}] {}", timestamp, direction, String::from_utf8_lossy(message))
+        .map_err(|e| ComSrvError::IoError(e))?;
+
+    Ok(())
 }
