@@ -1,26 +1,38 @@
 #!/bin/bash
 
-# 创建必要的目录
-mkdir -p config/points logs
+# Comsrv 启动脚本
 
-# 如果配置文件不存在，复制默认配置
-if [ ! -f config/comsrv/devices.json ]; then
-    cp /ems/config/comsrv/devices.json config/comsrv/
+# 设置环境变量
+export LOG_DIR="./logs"
+export RUST_LOG=info
+
+# 创建日志目录
+mkdir -p "$LOG_DIR"
+
+# 默认配置文件
+CONFIG_FILE="./config/comsrv.yaml"
+
+# 检查环境变量
+if [ -n "$CONFIG_PATH" ]; then
+    # 如果CONFIG_PATH是目录，则拼接默认配置文件名
+    if [ -d "$CONFIG_PATH" ]; then
+        CONFIG_FILE="$CONFIG_PATH/comsrv.yaml"
+    else
+        CONFIG_FILE="$CONFIG_PATH"
+    fi
 fi
 
-# 设置串口设备权限
-for port in /dev/ttyUSB*; do
-    if [ -e "$port" ]; then
-        echo "Setting permissions for $port"
-        sudo chmod 666 "$port"
-    fi
-done
+# 检查命令行参数
+if [ "$#" -ge 1 ]; then
+    CONFIG_FILE="$1"
+fi
 
-# 构建并启动容器
-docker-compose up -d --build
+# 检查配置文件是否存在
+if [ ! -f "$CONFIG_FILE" ]; then
+    echo "Error: Configuration file not found: $CONFIG_FILE"
+    exit 1
+fi
 
-# 显示容器状态
-docker-compose ps
-
-# 显示日志
-docker-compose logs -f 
+# 启动服务
+echo "Starting Comsrv with configuration: $CONFIG_FILE"
+./comsrv "$CONFIG_FILE" 

@@ -1,4 +1,0 @@
-address,slaveId,name,dataType,functionCode
-200,1,断路器状态1,BOOL,1
-201,1,断路器状态2,BOOL,1
-202,2,另一个设备状态,BOOL,2

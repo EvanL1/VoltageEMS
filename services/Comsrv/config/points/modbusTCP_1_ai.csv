@@ -1,2 +1,0 @@
-address,name,dataType,byteOrder,coefficiency,offset,unit
-100,有功功率,FLOAT32,CDAB,1.0,0.0,kW 

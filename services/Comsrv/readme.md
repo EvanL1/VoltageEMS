@@ -1,33 +1,33 @@
-# Comsrv - Highly Configurable Communication Service
+# Comsrv - Rust版本高度可配置的通信服务
 
-Comsrv is a highly configurable communication service for connecting and managing various industrial devices and protocols. It provides a unified interface for handling different communication protocols such as Modbus RTU, Modbus TCP, etc.
+Comsrv是一个用Rust实现的高度可配置的通信服务，用于连接和管理各种工业设备和协议。它提供了一个统一的接口来处理不同的通信协议，如Modbus RTU、Modbus TCP等。
 
-## Features
+## 特性
 
-- Support for multiple industrial communication protocols
-  - Modbus RTU master/slave
-  - Modbus TCP master/slave
-  - Extensible for more protocols
-- Configuration-based device management
-- Flexible data polling and processing
-- Data export to Redis and MQTT
-- Real-time data processing and monitoring
-- Thread-safe design
-- High performance and low latency
-- Prometheus metrics integration
+- 支持多种工业通信协议
+  - Modbus RTU 主/从设备
+  - Modbus TCP 主/从设备
+  - 可扩展以支持更多协议
+- 基于配置的设备管理
+- 灵活的数据轮询和处理
+- 数据导出到Redis和MQTT
+- 实时数据处理和监控
+- 线程安全设计
+- 高性能和低延迟
+- Prometheus指标集成
 
-## Architecture
+## 架构
 
-Comsrv adopts a modular architecture design, including the following components:
+Comsrv采用模块化架构设计，包括以下组件：
 
-1. **Core Framework**: Provides infrastructure such as configuration management, thread pool, logging, etc.
-2. **Communication Interface**: Defines basic interfaces and abstract classes for communication protocols.
-3. **Protocol Implementation**: Concrete implementations of various communication protocols.
-4. **Data Processing**: Components for processing and transforming data.
-5. **Data Export**: Components for exporting data to external systems like Redis, MQTT.
-6. **Metrics**: Prometheus metrics for monitoring system performance and status.
+1. **核心框架**：提供基础设施，如配置管理、日志记录等。
+2. **通信接口**：定义通信协议的基本接口和抽象类。
+3. **协议实现**：各种通信协议的具体实现。
+4. **数据处理**：用于处理和转换数据的组件。
+5. **数据导出**：用于将数据导出到外部系统，如Redis、MQTT的组件。
+6. **指标**：用于监控系统性能和状态的Prometheus指标。
 
-### Architecture Diagram
+### 架构图
 
 ```
 +------------------+     +------------------+
@@ -40,7 +40,7 @@ Comsrv adopts a modular architecture design, including the following components:
         |                     |
         v                     v
 +------------------+     +------------------+
-|  ComBase Class   | --> |  Metrics Export  |
+|  ComBase Trait   | --> |  Metrics Export  |
 +------------------+     +------------------+
         |                       |
         v                       v
@@ -49,9 +49,9 @@ Comsrv adopts a modular architecture design, including the following components:
 +------------------+     +------------------+
 ```
 
-## Configuration
+## 配置
 
-Comsrv uses YAML format configuration files to define communication devices and parameters. Here's an example:
+Comsrv使用YAML格式的配置文件来定义通信设备和参数。示例如下：
 
 ```yaml
 version: "1.0"
@@ -86,142 +86,206 @@ channels:
       poll_rate: 1000
 ```
 
-## Building and Installation
+## 构建和安装
 
-### Dependencies
+### 依赖
 
-- C++17 compatible compiler
-- CMake 3.10 or higher
-- yaml-cpp library (automatically downloaded)
-- prometheus-cpp library (automatically downloaded)
-- spdlog library (automatically downloaded)
+- Rust 1.70.0 或更高版本
+- Cargo 包管理器
 
-### Build Steps
+### 构建步骤
 
 ```bash
-mkdir build
-cd build
-cmake ..
-make
+# 克隆代码库
+git clone https://github.com/yourusername/comsrv.git
+cd comsrv
+
+# 构建项目
+cargo build --release
 ```
 
-### Installation
+### 安装
 
 ```bash
-sudo make install
+# 复制可执行文件
+sudo cp target/release/comsrv /usr/local/bin/
+
+# 创建配置目录
+sudo mkdir -p /etc/comsrv
+sudo cp -r config/* /etc/comsrv/
 ```
 
-## Usage
+## 使用方法
 
-### Running the Service
+### 运行服务
 
 ```bash
+# 使用默认配置
+comsrv
+
+# 指定配置文件
 comsrv /path/to/config.yaml
+
+# 使用启动脚本
+./start.sh /path/to/config.yaml
 ```
 
-### Using Docker
+### 使用Docker
 
 ```bash
+# 构建Docker镜像
 docker build -t comsrv .
+
+# 运行容器
 docker run -v /path/to/config.yaml:/etc/comsrv/comsrv.yaml -d comsrv
 ```
 
-### Monitoring
+### 监控
 
-Comsrv exposes Prometheus metrics at `http://<host>:9100/metrics`. Available metrics include:
+Comsrv在 `http://<host>:9100/metrics`暴露Prometheus指标。可用的指标包括：
 
-- Communication metrics:
-  - `comsrv_bytes_total`: Total number of bytes sent/received
-  - `comsrv_packets_total`: Total number of packets sent/received
-  - `comsrv_packet_errors_total`: Total number of packet errors by type
-  - `comsrv_packet_processing_duration_seconds`: Packet processing duration
+- 通信指标：
 
-- Channel metrics:
-  - `comsrv_channel_status`: Channel connection status
-  - `comsrv_channel_response_time_seconds`: Channel response time
-  - `comsrv_channel_errors_total`: Channel errors by type
+  - `comsrv_bytes_total`：发送/接收的总字节数
+  - `comsrv_packets_total`：发送/接收的总数据包数
+  - `comsrv_packet_errors_total`：按类型统计的数据包错误数
+  - `comsrv_packet_processing_duration_seconds`：数据包处理时间
+- 通道指标：
 
-- Protocol metrics:
-  - `comsrv_protocol_status`: Protocol status
-  - `comsrv_protocol_errors_total`: Protocol errors by type
+  - `comsrv_channel_status`：通道连接状态
+  - `comsrv_channel_response_time_seconds`：通道响应时间
+  - `comsrv_channel_errors_total`：按类型统计的通道错误数
+- 协议指标：
 
-- Service metrics:
-  - `comsrv_service_status`: Service status
-  - `comsrv_service_uptime_seconds`: Service uptime
-  - `comsrv_service_errors_total`: Service errors by type
+  - `comsrv_protocol_status`：协议状态
+  - `comsrv_protocol_errors_total`：按类型统计的协议错误数
+- 服务指标：
 
-### Logging
+  - `comsrv_service_status`：服务状态
+  - `comsrv_service_uptime_seconds`：服务运行时间
+  - `comsrv_service_errors_total`：按类型统计的服务错误数
 
-Comsrv provides comprehensive logging at both service and channel levels:
+### 日志
 
-- Service log (`/var/log/ems/comsrv.log`):
-  - Service startup/shutdown events
-  - Channel configuration and status changes
-  - System-wide events and errors
+Comsrv在服务和通道级别提供全面的日志记录：
 
-- Channel logs (`/var/log/ems/channels/<channel_id>.log`):
-  - Channel connection status
-  - Raw communication data (INFO level)
-  - Data parsing details (DEBUG level)
-  - Channel-specific errors and warnings
+- 服务日志（`/var/log/comsrv/comsrv.log`）：
 
-## Development
+  - 服务启动/关闭事件
+  - 通道配置和状态变化
+  - 系统级事件和错误
+- 通道日志（`/var/log/comsrv/channels/<channel_id>.log`）：
 
-### Adding a New Protocol
+  - 通道连接状态
+  - 原始通信数据（INFO级别）
+  - 数据解析详情（DEBUG级别）
+  - 通道特定的错误和警告
 
-1. Create a new protocol class inheriting from ComBase
-2. Implement all required virtual functions
-3. Register the new protocol type in ProtocolFactory
+## 开发
 
-Example:
+### 添加新协议
 
-```cpp
-class NewProtocol : public ComBase {
-public:
-    NewProtocol(const std::string& name);
-    virtual ~NewProtocol();
-    
-    bool start() override;
-    bool stop() override;
-    
-    // Protocol specific methods...
-};
+1. 创建一个新的协议结构体，实现ComBase trait
+2. 实现所有required方法
+3. 在ProtocolFactory中注册新协议类型
 
-// Register in ProtocolFactory
-factory.registerProtocol("new_protocol", 
-    [](const std::map<std::string, ConfigManager::ConfigValue>& config) -> std::unique_ptr<ComBase> {
-        return std::make_unique<NewProtocol>(config.at("name").get<std::string>());
-    });
+示例：
+
+```rust
+struct NewProtocol {
+    base: ComBaseImpl,
+    // 协议特定字段...
+}
+
+#[async_trait]
+impl ComBase for NewProtocol {
+    fn name(&self) -> &str {
+        self.base.name()
+    }
+  
+    fn channel_id(&self) -> &str {
+        self.base.channel_id()
+    }
+  
+    fn is_running(&self) -> bool {
+        self.base.is_running()
+    }
+  
+    async fn start(&mut self) -> Result<()> {
+        // 实现启动逻辑
+        Ok(())
+    }
+  
+    async fn stop(&mut self) -> Result<()> {
+        // 实现停止逻辑
+        Ok(())
+    }
+  
+    async fn status(&self) -> ChannelStatus {
+        self.base.status().await
+    }
+}
+
+// 在ProtocolFactory中注册
+factory.register_protocol("new_protocol", |config| {
+    // 创建协议实例
+    let protocol = NewProtocol {
+        base: ComBaseImpl::new("new_protocol", config),
+        // 初始化其他字段...
+    };
+  
+    Ok(Box::new(protocol))
+}).await?;
 ```
 
-### Adding New Metrics
+### 添加新指标
 
-1. Define new metric in the Metrics class
-2. Initialize the metric in the constructor
-3. Add methods to update the metric
-4. Use the metric in your protocol implementation
+1. 在Metrics结构体中定义新指标
+2. 在构造函数中初始化
+3. 添加方法来更新指标
+4. 在协议实现中使用
 
-Example:
+示例：
 
-```cpp
-// In metrics.h
-prometheus::Counter& my_new_metric_;
+```rust
+// 在metrics.rs中
+pub struct Metrics {
+    // 现有指标...
+    my_new_metric: Arc<IntCounterVec>,
+}
 
-// In metrics.cpp
-my_new_metric_(prometheus::BuildCounter()
-    .Name("comsrv_my_new_metric_total")
-    .Help("Description of my new metric")
-    .Labels({{"service", "comsrv"}})
-    .Register(*registry_))
-
-// Usage
-Metrics::instance().incrementMyNewMetric();
+impl Metrics {
+    pub fn new(service_name: &str) -> Self {
+        // 初始化其他指标...
+        let my_new_metric = Arc::new(
+            IntCounterVec::new(
+                prometheus::opts!("comsrv_my_new_metric_total", "Description of my new metric"),
+                &["service", "label"],
+            )
+            .expect("Failed to create my_new_metric"),
+        );
+      
+        registry.register(Box::new(my_new_metric.clone())).expect("Failed to register my_new_metric");
+      
+        Metrics {
+            // 其他字段...
+            my_new_metric,
+        }
+    }
+  
+    // 添加方法来更新指标
+    pub fn increment_my_new_metric(&self, label: &str, service_name: &str) {
+        self.my_new_metric
+            .with_label_values(&[service_name, label])
+            .inc();
+    }
+}
 ```
 
-## Contributing
+## 贡献
 
-Pull requests and issues are welcome.
+欢迎提交Pull requests和issues。
 
-## License
+## 许可证
 
-MIT License 
+MIT许可证

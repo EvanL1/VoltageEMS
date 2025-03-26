@@ -1,65 +1,62 @@
-# Multi-stage build for minimal runtime image
+FROM rust:slim as builder
 
-# Build stage
-FROM ubuntu:22.04 as builder
+WORKDIR /usr/src/app
 
-# Set timezone
-ENV TZ=Asia/Shanghai
-RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
-
-# Install build dependencies
-RUN apt-get update && apt-get install -y \
-    build-essential \
-    cmake \
+# 安装依赖
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
     pkg-config \
-    libmodbus-dev \
-    libhiredis-dev \
-    libjsoncpp-dev \
-    && rm -rf /var/lib/apt/lists/*
+    libssl-dev \
+    build-essential \
+    git \
+    ca-certificates
 
-# Set working directory
-WORKDIR /build
+# 拷贝Cargo文件
+COPY Cargo.toml Cargo.lock ./
 
-# Copy source code
+# 为了利用Docker层缓存，先只构建依赖
+RUN mkdir -p src && \
+    echo "fn main() {println!(\"placeholder\")}" > src/main.rs && \
+    cargo build --release && \
+    rm -rf src
+
+# 拷贝源码
 COPY . .
 
-# Build project
-RUN mkdir -p build && cd build \
-    && cmake .. \
-    && make -j$(nproc) \
-    && make install DESTDIR=/install
+# 删除placeholder后重新构建项目
+RUN touch src/main.rs && cargo build --release
 
-# Runtime stage - minimal image
-FROM ubuntu:22.04
+# 运行阶段 - 使用相同的基础镜像以确保glibc版本兼容
+FROM rust:slim
 
-# Set timezone
-ENV TZ=Asia/Shanghai
-RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
+WORKDIR /app
 
-# Install only runtime dependencies
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    libmodbus5 \
-    libhiredis0.14 \
-    libjsoncpp25 \
+# 安装运行时依赖
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+    ca-certificates \
+    libssl3 \
     && rm -rf /var/lib/apt/lists/*
 
-# Create necessary directories
-RUN mkdir -p /etc/comsrv /var/log/comsrv
+# 拷贝编译后的二进制文件
+COPY --from=builder /usr/src/app/target/release/comsrv /app/
+# 拷贝配置文件
+COPY --from=builder /usr/src/app/config /app/config
 
-# Copy only the built application and necessary files from builder
-COPY --from=builder /install/usr/local/bin/comsrv /usr/local/bin/
-COPY --from=builder /install/usr/local/lib/libcomsrv.so* /usr/local/lib/
-COPY config /etc/comsrv/
+# 添加start脚本
+COPY start.sh /app/
+RUN chmod +x /app/start.sh
 
-# Update library cache
-RUN ldconfig
+# 设置环境变量
+ENV RUST_LOG=info
+ENV CONFIG_PATH=/app/config
+ENV LOG_PATH=/app/logs
 
-# Set environment variables
-ENV CONFIG_PATH=/etc/comsrv
-ENV LOG_PATH=/var/log/comsrv
+# 创建日志目录
+RUN mkdir -p /app/logs
 
-# Expose Modbus TCP port
-EXPOSE 502
+# 暴露API端口和Metrics端口
+EXPOSE 8080 9090
 
-# Set entrypoint
-ENTRYPOINT ["/usr/local/bin/comsrv", "-c", "/etc/comsrv", "-l", "/var/log/comsrv"] 
+# 启动服务
+CMD ["/app/start.sh"] 
