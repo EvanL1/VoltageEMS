@@ -19,7 +19,7 @@ use crate::api::routes::api_routes;
 use crate::core::protocols::modbus::client::ModbusClientFactory;
 use crate::utils::ComSrvError;
 
-/// 为工厂创建Modbus TCP客户端的函数
+/// Function to create Modbus TCP client for the factory
 fn create_modbus_tcp(config: crate::core::config::config_manager::ChannelConfig) 
     -> Result<Box<dyn crate::core::protocols::common::ComBase>> {
     let config_clone = config.clone();
@@ -27,7 +27,7 @@ fn create_modbus_tcp(config: crate::core::config::config_manager::ChannelConfig)
     
     match result {
         Ok(_) => {
-            // 创建一个新的 Box<dyn ComBase> 对象
+            // Create a new Box<dyn ComBase> object
             let client = crate::core::protocols::modbus::tcp::ModbusTcpClient::new(config_clone);
             Ok(Box::new(client) as Box<dyn crate::core::protocols::common::ComBase>)
         },
@@ -35,7 +35,7 @@ fn create_modbus_tcp(config: crate::core::config::config_manager::ChannelConfig)
     }
 }
 
-/// 为工厂创建Modbus RTU客户端的函数
+/// Function to create Modbus RTU client for the factory
 fn create_modbus_rtu(config: crate::core::config::config_manager::ChannelConfig) 
     -> Result<Box<dyn crate::core::protocols::common::ComBase>> {
     let config_clone = config.clone();
@@ -43,7 +43,7 @@ fn create_modbus_rtu(config: crate::core::config::config_manager::ChannelConfig)
     
     match result {
         Ok(_) => {
-            // 创建一个新的 Box<dyn ComBase> 对象
+            // Create a new Box<dyn ComBase> object
             let client = crate::core::protocols::modbus::rtu::ModbusRtuClient::new(config_clone);
             Ok(Box::new(client) as Box<dyn crate::core::protocols::common::ComBase>)
         },
@@ -53,21 +53,21 @@ fn create_modbus_rtu(config: crate::core::config::config_manager::ChannelConfig)
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    // 加载.env文件
+    // Load .env file
     dotenv().ok();
     
-    // 初始化日志系统
+    // Initialize logging system
     let log_dir = env::var("LOG_DIR").unwrap_or_else(|_| "logs".to_string());
     crate::utils::logger::init_logger(Path::new(&log_dir), "comsrv", "info", true)?;
     tracing::info!("Starting Comsrv Service");
     
-    // 记录启动时间
+    // Record start time
     let start_time = Arc::new(Utc::now());
     
-    // 加载配置
+    // Load configuration
     let config_path_env = env::var("CONFIG_PATH").unwrap_or_else(|_| "config".to_string());
     let config_path = if Path::new(&config_path_env).is_dir() {
-        // 如果是目录，则拼接默认配置文件名
+        // If it's a directory, append the default config filename
         format!("{}/comsrv.yaml", config_path_env)
     } else {
         config_path_env
@@ -75,24 +75,24 @@ async fn main() -> Result<()> {
     tracing::info!("Loading configuration from {}", config_path);
     let config_manager = ConfigManager::from_file(&config_path)?;
     
-    // 创建协议工厂
+    // Create protocol factory
     let protocol_factory = Arc::new(RwLock::new(ProtocolFactory::new()));
     
-    // 注册各种协议实现
+    // Register protocol implementations
     {
         let mut factory = protocol_factory.write().await;
-        // 这里注册各种协议实现
+        // Register various protocol implementations
         tracing::info!("Registering protocol implementations");
         
-        // 注册Modbus TCP和RTU协议
+        // Register Modbus TCP and RTU protocols
         factory.register_protocol("modbus_tcp", create_modbus_tcp).await?;
         factory.register_protocol("modbus_rtu", create_modbus_rtu).await?;
     }
     
-    // 初始化通道
+    // Initialize channels
     {
         let mut factory = protocol_factory.write().await;
-        // 从配置中加载通道
+        // Load channels from configuration
         tracing::info!("Initializing channels from configuration");
         
         for channel_config in config_manager.get_channels() {
@@ -103,7 +103,7 @@ async fn main() -> Result<()> {
         }
     }
     
-    // 启动所有通道
+    // Start all channels
     {
         let mut factory = protocol_factory.write().await;
         let channels = factory.get_all_channels_mut().await;
@@ -115,7 +115,7 @@ async fn main() -> Result<()> {
         }
     }
     
-    // 启动指标服务
+    // Start metrics service
     if config_manager.get_metrics_enabled() {
         let metrics_addr = config_manager.get_metrics_address()
             .parse::<SocketAddr>()
@@ -123,10 +123,10 @@ async fn main() -> Result<()> {
             
         tracing::info!("Starting metrics service on {}", metrics_addr);
         
-        // 初始化指标系统
+        // Initialize metrics system
         crate::core::metrics::init_metrics(&config_manager.get_service_name());
         
-        // 获取指标实例
+        // Get metrics instance
         if let Some(metrics) = crate::core::metrics::get_metrics() {
             tokio::spawn(async move {
                 if let Err(e) = metrics.start_server(&metrics_addr.to_string()).await {
@@ -138,22 +138,22 @@ async fn main() -> Result<()> {
         }
     }
     
-    // 启动API服务
+    // Start API service
     let api_addr = config_manager.get_api_address()
         .parse::<SocketAddr>()
         .unwrap_or_else(|_| "0.0.0.0:3000".parse().unwrap());
     
     tracing::info!("Starting API service on {}", api_addr);
     
-    // 创建API路由
+    // Create API routes
     let api = api_routes(protocol_factory.clone(), start_time.clone());
     
-    // 启动warp服务器
+    // Start warp server
     warp::serve(api)
         .run(api_addr)
         .await;
     
-    // 正常退出
+    // Normal exit
     tracing::info!("Comsrv Service shutdown");
     Ok(())
 }

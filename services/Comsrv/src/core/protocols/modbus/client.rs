@@ -7,6 +7,10 @@ use crate::core::config::config_manager::ChannelConfig;
 use crate::core::protocols::common::{ComBase, ComBaseImpl, ChannelStatus, PointData};
 use crate::utils::{ComSrvError, Result};
 use super::common::{ModbusFunctionCode, ModbusDataType, ModbusRegisterMapping, ByteOrder};
+use crate::core::config::PointTableManager;
+use std::path::Path;
+use std::collections::HashMap;
+use serde_yaml;
 
 /// Modbus客户端抽象接口
 ///
@@ -200,6 +204,162 @@ impl ModbusClientBase {
         
         // 返回点位列表，实际值会在具体的实现类中填充
         points
+    }
+
+    /// 加载点表
+    pub async fn load_point_tables(&self, config_dir: &str) -> Result<()> {
+        // 获取通道配置
+        let channel_config = self.base.config();
+        let params = &channel_config.parameters;
+        
+        // 尝试获取点表配置
+        if let Some(point_tables) = params.get("point_tables") {
+            if let Some(tables) = point_tables.as_mapping() {
+                // 创建点表管理器
+                let point_table_manager = PointTableManager::new(config_dir);
+                let mut all_mappings = Vec::new();
+                
+                // Load all point tables
+                for (table_name, path) in tables {
+                    if let Some(path_str) = path.as_str() {
+                        let table_name_str = if let Some(s) = table_name.as_str() {
+                            s
+                        } else {
+                            "unknown"
+                        };
+                        
+                        info!("Loading point table {}: {}", table_name_str, path_str);
+                        match point_table_manager.load_point_table(path_str) {
+                            Ok(mappings) => {
+                                info!("Successfully loaded point table {}: {} points", table_name_str, mappings.len());
+                                // Add all mappings
+                                all_mappings.extend(mappings);
+                            },
+                            Err(e) => {
+                                error!("Failed to load point table {}: {}", table_name_str, e);
+                                return Err(e);
+                            }
+                        }
+                    }
+                }
+                
+                // 更新点表
+                info!("Total loaded {} point mappings", all_mappings.len());
+                self.load_register_mappings(all_mappings).await;
+                return Ok(());
+            }
+        }
+        
+        // 尝试获取内嵌点位配置
+        if let Some(points) = params.get("points") {
+            if let Some(points_array) = points.as_sequence() {
+                let mut mappings = Vec::new();
+                
+                for point in points_array {
+                    if let Some(point_obj) = point.as_mapping() {
+                        // Extract required fields
+                        let id = point_obj.get(&serde_yaml::Value::String("id".to_string()))
+                            .and_then(|v| v.as_str())
+                            .ok_or_else(|| {
+                                ComSrvError::ConfigError("Point missing required 'id' field".to_string())
+                            })?;
+                        
+                        let address = point_obj.get(&serde_yaml::Value::String("address".to_string()))
+                            .and_then(|v| v.as_u64())
+                            .ok_or_else(|| {
+                                ComSrvError::ConfigError(format!("Point {} missing required 'address' field", id))
+                            })? as u16;
+                        
+                        let point_type = point_obj.get(&serde_yaml::Value::String("type".to_string()))
+                            .and_then(|v| v.as_str())
+                            .ok_or_else(|| {
+                                ComSrvError::ConfigError(format!("Point {} missing required 'type' field", id))
+                            })?;
+                        
+                        // Determine data type and quantity
+                        let (data_type, quantity) = match point_type {
+                            "coil" | "discrete_input" => (ModbusDataType::Bool, 1),
+                            "holding_register" | "input_register" => {
+                                let dt = point_obj.get(&serde_yaml::Value::String("data_type".to_string()))
+                                    .and_then(|v| v.as_str())
+                                    .ok_or_else(|| {
+                                        ComSrvError::ConfigError(format!("Register point {} missing required 'data_type' field", id))
+                                    })?;
+                                
+                                match dt {
+                                    "bool" => (ModbusDataType::Bool, 1),
+                                    "int16" => (ModbusDataType::Int16, 1),
+                                    "uint16" => (ModbusDataType::UInt16, 1),
+                                    "int32" => (ModbusDataType::Int32, 2),
+                                    "uint32" => (ModbusDataType::UInt32, 2),
+                                    "float32" => (ModbusDataType::Float32, 2),
+                                    "float64" => (ModbusDataType::Float64, 4),
+                                    s if s.starts_with("string") => {
+                                        let len = s.trim_start_matches("string")
+                                            .trim_start_matches(|c: char| !c.is_digit(10))
+                                            .parse::<usize>()
+                                            .unwrap_or(10);
+                                        let registers = (len + 1) / 2;
+                                        (ModbusDataType::String(len), registers as u16)
+                                    },
+                                    _ => return Err(ComSrvError::ConfigError(format!(
+                                        "Point {} has unsupported data_type: {}", id, dt
+                                    ))),
+                                }
+                            },
+                            _ => return Err(ComSrvError::ConfigError(format!(
+                                "Point {} has unsupported type: {}", id, point_type
+                            ))),
+                        };
+                        
+                        // Writability
+                        let writable = point_obj.get(&serde_yaml::Value::String("writable".to_string()))
+                            .and_then(|v| v.as_bool())
+                            .unwrap_or(false);
+                            
+                        // Byte order
+                        let byte_order = match point_obj.get(&serde_yaml::Value::String("byte_order".to_string())).and_then(|v| v.as_str()) {
+                            Some("ABCD") => ByteOrder::BigEndian,
+                            Some("DCBA") => ByteOrder::LittleEndian,
+                            Some("BADC") => ByteOrder::BigEndianWordSwapped,
+                            Some("CDAB") => ByteOrder::LittleEndianWordSwapped,
+                            _ => ByteOrder::BigEndian, // Default
+                        };
+                        
+                        // Scale factor
+                        let scale_factor = point_obj.get(&serde_yaml::Value::String("scale".to_string()))
+                            .and_then(|v| v.as_f64());
+                            
+                        // Offset
+                        let offset = point_obj.get(&serde_yaml::Value::String("offset".to_string()))
+                            .and_then(|v| v.as_f64());
+                            
+                        // Create mapping
+                        let mapping = ModbusRegisterMapping {
+                            point_id: id.to_string(),
+                            address,
+                            quantity,
+                            data_type,
+                            writable,
+                            byte_order,
+                            scale_factor,
+                            offset,
+                        };
+                        
+                        mappings.push(mapping);
+                    }
+                }
+                
+                // Update point table
+                info!("Loaded {} point mappings from embedded configuration", mappings.len());
+                self.load_register_mappings(mappings).await;
+                return Ok(());
+            }
+        }
+        
+        // If no point table configuration is found
+        warn!("No point table configuration found");
+        Ok(())
     }
 }
 

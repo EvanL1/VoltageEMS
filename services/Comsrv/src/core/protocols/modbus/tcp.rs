@@ -517,23 +517,33 @@ impl ComBase for ModbusTcpClient {
     }
     
     async fn start(&mut self) -> Result<()> {
-        info!("Starting Modbus TCP client for channel: {}", self.channel_id());
+        info!("启动Modbus TCP客户端: {}:{}", self.host, self.port);
+        
+        // 设置运行状态
+        self.base.set_running(true).await;
         
         // 连接到服务器
         match self.connect().await {
             Ok(_) => {
-                self.base.set_running(true).await;
+                info!("Modbus TCP连接成功: {}:{}", self.host, self.port);
+                
+                // 加载点表
+                let config_path = std::env::var("CONFIG_DIR").unwrap_or_else(|_| "./config".to_string());
+                if let Err(e) = self.base.load_point_tables(&config_path).await {
+                    error!("加载点表失败: {}", e);
+                }
+                
                 Ok(())
             },
             Err(e) => {
-                self.base.set_running(false).await;
+                error!("Modbus TCP连接失败: {}", e);
                 Err(e)
             }
         }
     }
     
     async fn stop(&mut self) -> Result<()> {
-        info!("Stopping Modbus TCP client for channel: {}", self.channel_id());
+        info!("停止Modbus TCP客户端: {}:{} (通道: {})", self.host, self.port, self.channel_id());
         self.disconnect().await?;
         self.base.set_running(false).await;
         Ok(())
