@@ -4,10 +4,12 @@ use async_trait::async_trait;
 use tokio::sync::Mutex;
 use tokio::time::timeout;
 use tokio_modbus::prelude::*;
-use log::{debug, error, info, warn};
+use log::{debug, error, info, warn, trace};
 use chrono::Utc;
 use serde_json::json;
 use std::collections::HashMap;
+use tracing::{field, Span};
+use hex;
 
 use crate::core::config::config_manager::ChannelConfig;
 use crate::core::protocols::common::{ComBase, ChannelStatus, PointData};
@@ -112,6 +114,123 @@ impl ModbusTcpClient {
         Ok(())
     }
     
+    /// 记录Modbus报文
+    fn log_modbus_message(&self, direction: &str, data: &[u8]) {
+        let hex_str = hex::encode(data);
+        debug!("Modbus TCP {} [{}]: {}", direction, self.host, hex_str);
+        // 使用跟踪级别记录详细的报文分析
+        if log::log_enabled!(log::Level::Trace) {
+            if direction == "TX" && data.len() >= 7 {
+                // 解析标准Modbus TCP请求
+                let transaction_id = u16::from_be_bytes([data[0], data[1]]);
+                let protocol_id = u16::from_be_bytes([data[2], data[3]]);
+                let length = u16::from_be_bytes([data[4], data[5]]);
+                let unit_id = data[6];
+                let function_code = if data.len() > 7 { data[7] } else { 0 };
+                
+                trace!(
+                    "Modbus TCP Request: Transaction ID={}, Protocol ID={}, Length={}, Unit ID={}, Function Code={}",
+                    transaction_id, protocol_id, length, unit_id, function_code
+                );
+                
+                // 根据功能码进一步解析
+                if data.len() > 9 {
+                    match function_code {
+                        1 | 2 | 3 | 4 => { // 读取功能
+                            let address = u16::from_be_bytes([data[8], data[9]]);
+                            let quantity = u16::from_be_bytes([data[10], data[11]]);
+                            trace!(
+                                "Reading: Starting Address={}, Quantity={}",
+                                address, quantity
+                            );
+                        },
+                        5 => { // 写单个线圈
+                            let address = u16::from_be_bytes([data[8], data[9]]);
+                            let value = u16::from_be_bytes([data[10], data[11]]);
+                            trace!(
+                                "Write Single Coil: Address={}, Value={}",
+                                address, value
+                            );
+                        },
+                        6 => { // 写单个寄存器
+                            let address = u16::from_be_bytes([data[8], data[9]]);
+                            let value = u16::from_be_bytes([data[10], data[11]]);
+                            trace!(
+                                "Write Single Register: Address={}, Value={}",
+                                address, value
+                            );
+                        },
+                        15 | 16 => { // 写多个线圈/寄存器
+                            let address = u16::from_be_bytes([data[8], data[9]]);
+                            let quantity = u16::from_be_bytes([data[10], data[11]]);
+                            trace!(
+                                "Write Multiple: Address={}, Quantity={}",
+                                address, quantity
+                            );
+                        },
+                        _ => {
+                            trace!("Unknown function code: {}", function_code);
+                        }
+                    }
+                }
+            } else if direction == "RX" && data.len() >= 7 {
+                // 解析标准Modbus TCP响应
+                let transaction_id = u16::from_be_bytes([data[0], data[1]]);
+                let protocol_id = u16::from_be_bytes([data[2], data[3]]);
+                let length = u16::from_be_bytes([data[4], data[5]]);
+                let unit_id = data[6];
+                let function_code = if data.len() > 7 { data[7] } else { 0 };
+                
+                if function_code > 0x80 {
+                    // 错误响应
+                    let error_code = if data.len() > 8 { data[8] } else { 0 };
+                    trace!(
+                        "Modbus TCP Error Response: Transaction ID={}, Protocol ID={}, Length={}, Unit ID={}, Error Function={}, Exception Code={}",
+                        transaction_id, protocol_id, length, unit_id, function_code, error_code
+                    );
+                } else {
+                    trace!(
+                        "Modbus TCP Response: Transaction ID={}, Protocol ID={}, Length={}, Unit ID={}, Function Code={}",
+                        transaction_id, protocol_id, length, unit_id, function_code
+                    );
+                    
+                    // 针对不同响应类型进行解析
+                    if data.len() > 8 {
+                        match function_code {
+                            1 | 2 => { // 读线圈/离散量输入响应
+                                let byte_count = data[8] as usize;
+                                if data.len() >= 9 + byte_count {
+                                    let values: Vec<u8> = data[9..9+byte_count].to_vec();
+                                    trace!("Read Coils/Discrete Inputs Response: Byte Count={}, Values={:?}", byte_count, values);
+                                }
+                            },
+                            3 | 4 => { // 读保持/输入寄存器响应
+                                let byte_count = data[8] as usize;
+                                if data.len() >= 9 + byte_count && byte_count % 2 == 0 {
+                                    let mut registers = Vec::new();
+                                    for i in 0..byte_count/2 {
+                                        let idx = 9 + i * 2;
+                                        let reg = u16::from_be_bytes([data[idx], data[idx+1]]);
+                                        registers.push(reg);
+                                    }
+                                    trace!("Read Registers Response: Byte Count={}, Registers={:?}", byte_count, registers);
+                                }
+                            },
+                            5 | 6 | 15 | 16 => { // 写响应
+                                if data.len() >= 11 {
+                                    let address = u16::from_be_bytes([data[8], data[9]]);
+                                    let value = u16::from_be_bytes([data[10], data[11]]);
+                                    trace!("Write Response: Address={}, Value/Quantity={}", address, value);
+                                }
+                            },
+                            _ => {}
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     /// 执行Modbus操作
     async fn execute<F, T>(&self, operation: F) -> Result<T>
     where
@@ -139,6 +258,8 @@ impl ModbusTcpClient {
             
             if let Some(ref mut client) = *client_guard {
                 // 直接在已获取的锁上下文中执行操作
+                // 注意：由于tokio_modbus库的封装，我们无法直接获取原始报文
+                // 但在底层实现中应该已经记录了报文流
                 match operation_clone(client) {
                     Ok(result) => return Ok(result),
                     Err(e) => {

@@ -5,10 +5,11 @@ use tokio::sync::Mutex;
 use tokio::time::timeout;
 use tokio_modbus::prelude::*;
 use tokio_serial::{SerialPortBuilder, SerialStream};
-use log::{debug, error, info, warn};
+use log::{debug, error, info, warn, trace};
 use chrono::Utc;
 use serde_json::json;
 use std::collections::HashMap;
+use hex;
 
 use crate::core::config::config_manager::ChannelConfig;
 use crate::core::protocols::common::{ComBase, ChannelStatus, PointData};
@@ -166,13 +167,153 @@ impl ModbusRtuClient {
         Ok(())
     }
     
-    /// 执行Modbus操作
+    /// 记录Modbus报文
+    fn log_modbus_message(&self, direction: &str, data: &[u8]) {
+        let hex_str = hex::encode(data);
+        debug!("Modbus RTU {} [{}]: {}", direction, self.device, hex_str);
+        // 使用跟踪级别记录详细的报文分析
+        if log::log_enabled!(log::Level::Trace) {
+            if direction == "TX" && data.len() >= 1 {
+                // 解析标准Modbus RTU请求
+                let slave_id = data[0];
+                let function_code = if data.len() > 1 { data[1] } else { 0 };
+                
+                trace!(
+                    "Modbus RTU Request: Slave ID={}, Function Code={}",
+                    slave_id, function_code
+                );
+                
+                // 根据功能码进一步解析
+                if data.len() > 3 {
+                    match function_code {
+                        1 | 2 | 3 | 4 => { // 读取功能
+                            if data.len() >= 6 {
+                                let address = u16::from_be_bytes([data[2], data[3]]);
+                                let quantity = u16::from_be_bytes([data[4], data[5]]);
+                                trace!(
+                                    "Reading: Starting Address={}, Quantity={}",
+                                    address, quantity
+                                );
+                            }
+                        },
+                        5 => { // 写单个线圈
+                            if data.len() >= 6 {
+                                let address = u16::from_be_bytes([data[2], data[3]]);
+                                let value = u16::from_be_bytes([data[4], data[5]]);
+                                trace!(
+                                    "Write Single Coil: Address={}, Value={}",
+                                    address, value
+                                );
+                            }
+                        },
+                        6 => { // 写单个寄存器
+                            if data.len() >= 6 {
+                                let address = u16::from_be_bytes([data[2], data[3]]);
+                                let value = u16::from_be_bytes([data[4], data[5]]);
+                                trace!(
+                                    "Write Single Register: Address={}, Value={}",
+                                    address, value
+                                );
+                            }
+                        },
+                        15 | 16 => { // 写多个线圈/寄存器
+                            if data.len() >= 6 {
+                                let address = u16::from_be_bytes([data[2], data[3]]);
+                                let quantity = u16::from_be_bytes([data[4], data[5]]);
+                                let byte_count = if data.len() > 6 { data[6] as usize } else { 0 };
+                                trace!(
+                                    "Write Multiple: Address={}, Quantity={}, Byte Count={}",
+                                    address, quantity, byte_count
+                                );
+                            }
+                        },
+                        _ => {
+                            trace!("Unknown function code: {}", function_code);
+                        }
+                    }
+                }
+                
+                // 检查CRC
+                if data.len() >= 4 {
+                    let crc_pos = data.len() - 2;
+                    let crc = u16::from_le_bytes([data[crc_pos], data[crc_pos+1]]);
+                    trace!("Frame CRC: 0x{:04X}", crc);
+                }
+            } else if direction == "RX" && data.len() >= 2 {
+                // 解析标准Modbus RTU响应
+                let slave_id = data[0];
+                let function_code = data[1];
+                
+                if function_code > 0x80 {
+                    // 错误响应
+                    let error_code = if data.len() > 2 { data[2] } else { 0 };
+                    trace!(
+                        "Modbus RTU Error Response: Slave ID={}, Error Function={}, Exception Code={}",
+                        slave_id, function_code, error_code
+                    );
+                } else {
+                    trace!(
+                        "Modbus RTU Response: Slave ID={}, Function Code={}",
+                        slave_id, function_code
+                    );
+                    
+                    // 针对不同响应类型进行解析
+                    if data.len() > 2 {
+                        match function_code {
+                            1 | 2 => { // 读线圈/离散量输入响应
+                                let byte_count = data[2] as usize;
+                                if data.len() >= 3 + byte_count {
+                                    let values: Vec<u8> = data[3..3+byte_count].to_vec();
+                                    trace!("Read Coils/Discrete Inputs Response: Byte Count={}, Values={:?}", byte_count, values);
+                                }
+                            },
+                            3 | 4 => { // 读保持/输入寄存器响应
+                                let byte_count = data[2] as usize;
+                                if data.len() >= 3 + byte_count && byte_count % 2 == 0 {
+                                    let mut registers = Vec::new();
+                                    for i in 0..byte_count/2 {
+                                        let idx = 3 + i * 2;
+                                        let reg = u16::from_be_bytes([data[idx], data[idx+1]]);
+                                        registers.push(reg);
+                                    }
+                                    trace!("Read Registers Response: Byte Count={}, Registers={:?}", byte_count, registers);
+                                }
+                            },
+                            5 | 6 => { // 写单个线圈/寄存器响应
+                                if data.len() >= 6 {
+                                    let address = u16::from_be_bytes([data[2], data[3]]);
+                                    let value = u16::from_be_bytes([data[4], data[5]]);
+                                    trace!("Write Response: Address={}, Value={}", address, value);
+                                }
+                            },
+                            15 | 16 => { // 写多个线圈/寄存器响应
+                                if data.len() >= 6 {
+                                    let address = u16::from_be_bytes([data[2], data[3]]);
+                                    let quantity = u16::from_be_bytes([data[4], data[5]]);
+                                    trace!("Write Multiple Response: Address={}, Quantity={}", address, quantity);
+                                }
+                            },
+                            _ => {}
+                        }
+                    }
+                }
+                
+                // 检查CRC
+                if data.len() >= 4 {
+                    let crc_pos = data.len() - 2;
+                    let crc = u16::from_le_bytes([data[crc_pos], data[crc_pos+1]]);
+                    trace!("Frame CRC: 0x{:04X}", crc);
+                }
+            }
+        }
+    }
+    
+    /// 执行Modbus RTU操作
     async fn execute<F, T>(&self, operation: F) -> Result<T>
     where
         F: FnOnce(&mut client::Context) -> Result<T> + Send + Clone + 'static,
         T: Send + 'static,
     {
-        let _timeout_ms = self.base.timeout_ms();
         let retry_count = self.base.retry_count();
         let mut attempts = 0;
         let mut last_error = None;
@@ -194,6 +335,8 @@ impl ModbusRtuClient {
             
             if let Some(ref mut client) = *client_guard {
                 // 直接在已获取的锁上下文中执行操作
+                // 注意：由于tokio_modbus库的封装，我们无法直接获取原始报文
+                // 但在底层实现中应该已经记录了报文流
                 match operation_clone(client) {
                     Ok(result) => return Ok(result),
                     Err(e) => {
