@@ -112,8 +112,9 @@ impl<T, E: std::error::Error + Send + Sync + 'static> ErrorExt<T> for std::resul
         C: AsRef<str>,
     {
         self.map_err(|e| {
-            // 直接将错误信息转换为带有上下文的Unknown错误
-            ComSrvError::Unknown(format!("{}: {}", context.as_ref(), e))
+            // transfer the error to ComSrvError
+            let error = ComSrvError::Unknown(format!("{}: {}", context.as_ref(), e));
+            error
         })
     }
 }

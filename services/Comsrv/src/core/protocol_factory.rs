@@ -13,7 +13,7 @@ type ProtocolCreator = fn(ChannelConfig) -> Result<Box<dyn ComBase>>;
 pub struct ProtocolFactory {
     /// Registered protocol creators
     creators: Arc<RwLock<HashMap<String, ProtocolCreator>>>,
-    /// 存储已创建的通道
+    /// Store created channels
     channels: HashMap<String, Box<dyn ComBase>>,
 }
 
@@ -80,13 +80,13 @@ impl ProtocolFactory {
         Ok(protocols)
     }
     
-    /// 创建并注册一个通道
+    /// Create and register a channel
     ///
     /// # Arguments
     ///
-    /// * `config` - 通道配置
+    /// * `config` - Channel configuration
     pub async fn create_channel(&mut self, config: ChannelConfig) -> Result<()> {
-        // 检查通道ID是否已存在
+        // Check if the channel ID already exists
         if self.channels.contains_key(&config.id) {
             return Err(ComSrvError::ConfigError(format!(
                 "Channel ID already exists: {}",
@@ -94,30 +94,30 @@ impl ProtocolFactory {
             )));
         }
         
-        // 创建协议实例
+        // Create protocol instance
         let protocol = self.create_protocol(config.clone()).await?;
         
-        // 添加到通道映射
+        // Add to channel mapping
         self.channels.insert(config.id.clone(), protocol);
         Ok(())
     }
     
-    /// 获取所有通道的可变引用
+    /// Get all channels mutable reference
     pub async fn get_all_channels_mut(&mut self) -> &mut HashMap<String, Box<dyn ComBase>> {
         &mut self.channels
     }
     
-    /// 获取所有通道
+    /// Get all channels
     pub async fn get_all_channels(&self) -> &HashMap<String, Box<dyn ComBase>> {
         &self.channels
     }
     
-    /// 获取指定ID的通道
+    /// Get channel by ID
     pub async fn get_channel(&self, id: &str) -> Option<&Box<dyn ComBase>> {
         self.channels.get(id)
     }
     
-    /// 获取指定ID的通道的可变引用
+    /// Get the mutable reference of the channel by ID
     pub async fn get_channel_mut(&mut self, id: &str) -> Option<&mut Box<dyn ComBase>> {
         self.channels.get_mut(id)
     }

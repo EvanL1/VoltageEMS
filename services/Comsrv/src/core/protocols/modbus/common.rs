@@ -56,6 +56,24 @@ impl From<ModbusFunctionCode> for u8 {
     }
 }
 
+impl std::fmt::Display for ModbusFunctionCode {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        let name = match self {
+            ModbusFunctionCode::ReadCoils => "Read Coils (0x01)",
+            ModbusFunctionCode::ReadDiscreteInputs => "Read Discrete Inputs (0x02)",
+            ModbusFunctionCode::ReadHoldingRegisters => "Read Holding Registers (0x03)",
+            ModbusFunctionCode::ReadInputRegisters => "Read Input Registers (0x04)",
+            ModbusFunctionCode::WriteSingleCoil => "Write Single Coil (0x05)",
+            ModbusFunctionCode::WriteSingleRegister => "Write Single Register (0x06)",
+            ModbusFunctionCode::WriteMultipleCoils => "Write Multiple Coils (0x0F)",
+            ModbusFunctionCode::WriteMultipleRegisters => "Write Multiple Registers (0x10)",
+            ModbusFunctionCode::Custom(code) => return write!(f, "Custom (0x{:02X})", code),
+        };
+        write!(f, "{}", name)
+    }
+}
+
+
 /// Modbus data type
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ModbusDataType {

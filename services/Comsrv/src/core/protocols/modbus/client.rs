@@ -12,62 +12,62 @@ use std::path::Path;
 use std::collections::HashMap;
 use serde_yaml;
 
-/// Modbus客户端抽象接口
+/// Modbus client abstract interface
 ///
-/// 定义所有Modbus客户端必须实现的方法
+/// Define all methods that Modbus clients must implement
 #[async_trait]
 pub trait ModbusClient: ComBase {
-    /// 读取线圈
+    /// Read coils
     async fn read_coils(&self, address: u16, quantity: u16) -> Result<Vec<bool>>;
     
-    /// 读取离散输入
+    /// Read discrete inputs
     async fn read_discrete_inputs(&self, address: u16, quantity: u16) -> Result<Vec<bool>>;
     
-    /// 读取保持寄存器
+    /// Read holding registers
     async fn read_holding_registers(&self, address: u16, quantity: u16) -> Result<Vec<u16>>;
     
-    /// 读取输入寄存器
+    /// Read input registers
     async fn read_input_registers(&self, address: u16, quantity: u16) -> Result<Vec<u16>>;
     
-    /// 写入单个线圈
+    /// Write single coil
     async fn write_single_coil(&self, address: u16, value: bool) -> Result<()>;
     
-    /// 写入单个寄存器
+    /// Write single register
     async fn write_single_register(&self, address: u16, value: u16) -> Result<()>;
     
-    /// 写入多个线圈
+    /// Write multiple coils
     async fn write_multiple_coils(&self, address: u16, values: &[bool]) -> Result<()>;
     
-    /// 写入多个寄存器
+    /// Write multiple registers
     async fn write_multiple_registers(&self, address: u16, values: &[u16]) -> Result<()>;
     
-    /// 读取指定类型的数据
+    /// Read data of specified type
     async fn read_data(&self, mapping: &ModbusRegisterMapping) -> Result<serde_json::Value>;
     
-    /// 写入指定类型的数据
+    /// Write data of specified type
     async fn write_data(&self, mapping: &ModbusRegisterMapping, value: &serde_json::Value) -> Result<()>;
 }
 
-/// Modbus客户端基础实现
+/// Modbus client base implementation
 pub struct ModbusClientBase {
-    /// 基础通信实现
+    /// Base communication implementation
     pub base: ComBaseImpl,
-    /// Modbus设备ID
+    /// Modbus device ID
     slave_id: u8,
-    /// 连接超时(毫秒)
+    /// Connection timeout (milliseconds)
     timeout_ms: u64,
-    /// 重试次数
+    /// Retry count
     retry_count: u8,
-    /// 是否连接
+    /// Whether connected
     connected: Arc<RwLock<bool>>,
-    /// 寄存器映射
+    /// Register mappings
     register_mappings: Arc<RwLock<Vec<ModbusRegisterMapping>>>,
 }
 
 impl ModbusClientBase {
-    /// 创建新的Modbus客户端基础实现
+    /// Create a new Modbus client base implementation
     pub fn new(name: &str, config: ChannelConfig) -> Self {
-        // 从配置中获取设备参数
+        // Get device parameters from configuration
         let params = &config.parameters;
         let slave_id = params.get("slave_id")
             .and_then(|v| v.as_u64())
@@ -81,7 +81,7 @@ impl ModbusClientBase {
             .and_then(|v| v.as_u64())
             .unwrap_or(3) as u8;
             
-        // 创建对象    
+        // Create object    
         Self {
             base: ComBaseImpl::new(name, &config.protocol.clone(), config),
             slave_id,
@@ -92,89 +92,89 @@ impl ModbusClientBase {
         }
     }
     
-    /// 获取设备ID
+    /// Get device ID
     pub fn slave_id(&self) -> u8 {
         self.slave_id
     }
     
-    /// 获取超时时间
+    /// Get timeout time
     pub fn timeout_ms(&self) -> u64 {
         self.timeout_ms
     }
     
-    /// 获取重试次数
+    /// Get retry count
     pub fn retry_count(&self) -> u8 {
         self.retry_count
     }
     
-    /// 获取名称
+    /// Get name
     pub fn name(&self) -> &str {
         self.base.name()
     }
     
-    /// 获取通道ID
+    /// Get channel ID
     pub fn channel_id(&self) -> &str {
         self.base.channel_id()
     }
     
-    /// 获取运行状态
+    /// Get running status
     pub async fn is_running(&self) -> bool {
         self.base.is_running().await
     }
     
-    /// 设置运行状态
+    /// Set running status
     pub async fn set_running(&self, running: bool) {
         self.base.set_running(running).await;
     }
     
-    /// 获取当前状态
+    /// Get current status
     pub async fn status(&self) -> ChannelStatus {
         let mut status = self.base.status().await;
         status.connected = self.is_connected().await;
         status
     }
     
-    /// 设置连接状态
+    /// Set connected status
     pub async fn set_connected(&self, connected: bool) {
         let mut c = self.connected.write().await;
         *c = connected;
         
-        // 更新通道状态
+        // Update channel status
         let mut status = ChannelStatus::new(self.base.channel_id());
         status.connected = connected;
         status.last_update_time = Utc::now();
         
         if !connected {
-            status.last_error = "设备已断开连接".to_string();
+            status.last_error = "Device disconnected".to_string();
         }
     }
     
-    /// 获取连接状态
+    /// Get connected status
     pub async fn is_connected(&self) -> bool {
         *self.connected.read().await
     }
     
-    /// 设置错误信息
+    /// Set error information
     pub async fn set_error(&self, error: &str) {
-        // 更新通道状态
+        // Update channel status
         let mut status = ChannelStatus::new(self.base.channel_id());
         status.connected = false;
         status.last_error = error.to_string();
         status.last_update_time = Utc::now();
     }
     
-    /// 加载寄存器映射
+    /// Load register mappings
     pub async fn load_register_mappings(&self, mappings: Vec<ModbusRegisterMapping>) {
         let mut reg_mappings = self.register_mappings.write().await;
         *reg_mappings = mappings;
     }
     
-    /// 获取寄存器映射
+    /// Get register mappings
     pub async fn get_register_mappings(&self) -> Vec<ModbusRegisterMapping> {
         self.register_mappings.read().await.clone()
     }
     
-    /// 根据点ID查找寄存器映射
+    /// Find mapping by point ID
     pub async fn find_mapping(&self, point_id: &str) -> Option<ModbusRegisterMapping> {
         let mappings = self.register_mappings.read().await;
         for mapping in mappings.iter() {
@@ -185,16 +185,16 @@ impl ModbusClientBase {
         None
     }
     
-    /// 获取所有点位实时数据
+    /// Get all points real-time data
     pub async fn get_all_points(&self) -> Vec<PointData> {
         let mappings = self.register_mappings.read().await;
         let mut points = Vec::new();
         
         for mapping in mappings.iter() {
-            // 创建点位数据对象
+            // Create point data object
             let point_data = PointData {
                 id: mapping.point_id.clone(),
-                value: serde_json::Value::Null, // 初始化为空，后续在各实现类中填充实际值
+                value: serde_json::Value::Null, // Initialize to null, fill actual value in the specific implementation class
                 quality: false,
                 timestamp: Utc::now(),
             };
@@ -202,20 +202,20 @@ impl ModbusClientBase {
             points.push(point_data);
         }
         
-        // 返回点位列表，实际值会在具体的实现类中填充
+        // Return point list, actual value will be filled in the specific implementation class
         points
     }
 
-    /// 加载点表
+    /// Load point tables
     pub async fn load_point_tables(&self, config_dir: &str) -> Result<()> {
-        // 获取通道配置
+        // Get channel configuration
         let channel_config = self.base.config();
         let params = &channel_config.parameters;
         
-        // 尝试获取点表配置
+        // Try to get point table configuration
         if let Some(point_tables) = params.get("point_tables") {
             if let Some(tables) = point_tables.as_mapping() {
-                // 创建点表管理器
+                // Create point table manager
                 let point_table_manager = PointTableManager::new(config_dir);
                 let mut all_mappings = Vec::new();
                 
@@ -243,14 +243,14 @@ impl ModbusClientBase {
                     }
                 }
                 
-                // 更新点表
+                // Update point table
                 info!("Total loaded {} point mappings", all_mappings.len());
                 self.load_register_mappings(all_mappings).await;
                 return Ok(());
             }
         }
         
-        // 尝试获取内嵌点位配置
+        // Try to get embedded point configuration
         if let Some(points) = params.get("points") {
             if let Some(points_array) = points.as_sequence() {
                 let mut mappings = Vec::new();
@@ -363,17 +363,17 @@ impl ModbusClientBase {
     }
 }
 
-/// Modbus客户端工厂
+/// Modbus client factory
 /// 
-/// 用于根据配置创建不同类型的Modbus客户端
+/// Used to create different types of Modbus clients based on configuration
 pub struct ModbusClientFactory;
 
 impl ModbusClientFactory {
-    /// 创建Modbus客户端
+    /// Create Modbus client
     /// 
-    /// 根据配置中的协议类型创建相应的客户端实例
+    /// Create a client instance based on the protocol type in the configuration
     pub fn create_client(config: ChannelConfig) -> Result<Box<dyn ModbusClient>> {
-        // 根据协议类型创建不同的客户端
+        // Create different clients based on the protocol type
         let client: Box<dyn ModbusClient> = match config.protocol.as_str() {
             "modbus_tcp" => {
                 info!("Creating Modbus TCP client for channel: {}", config.id);
