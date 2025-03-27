@@ -41,14 +41,14 @@ impl HttpClient {
             let method = self.get_method();
             let mut request = client.request(method, &self.config.url);
 
-            // 添加请求头
+            // Add headers
             if let Some(headers) = &self.config.headers {
                 for (key, value) in headers {
                     request = request.header(key, value);
                 }
             }
 
-            // 添加认证
+            // Add authentication
             if let Some(auth_type) = &self.config.auth_type {
                 match auth_type.to_lowercase().as_str() {
                     "basic" => {
@@ -75,7 +75,7 @@ impl HttpClient {
                 }
             }
 
-            // 添加请求体
+            // Add request body
             if method != Method::GET {
                 request = request.body(data.to_string());
                 request = request.header("Content-Type", "application/json");
@@ -95,11 +95,11 @@ impl NetworkClient for HttpClient {
     async fn connect(&mut self) -> Result<()> {
         let mut client_builder = ClientBuilder::new();
 
-        // 设置超时
+        // Set timeout
         let timeout = Duration::from_millis(self.config.timeout_ms);
         client_builder = client_builder.timeout(timeout);
 
-        // 创建客户端
+        // Create client
         let client = client_builder.build()?;
         self.client = Some(client);
         *self.connected.lock().unwrap() = true;

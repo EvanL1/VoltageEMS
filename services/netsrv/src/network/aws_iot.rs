@@ -38,17 +38,17 @@ impl AwsIotClient {
 #[async_trait]
 impl NetworkClient for AwsIotClient {
     async fn connect(&mut self) -> Result<()> {
-        // 创建 MQTT 客户端选项
+        // Create MQTT client options
         let create_opts = paho::CreateOptionsBuilder::new()
             .server_uri(format!("ssl://{}:8883", self.config.endpoint))
             .client_id(&self.config.client_id)
             .finalize();
 
-        // 创建客户端
+        // Create client
         let client = paho::AsyncClient::new(create_opts)
             .map_err(|e| NetSrvError::AwsIotError(format!("Error creating AWS IoT client: {}", e)))?;
 
-        // 设置连接选项
+        // Set connection options
         let ssl_opts = paho::SslOptionsBuilder::new()
             .trust_store(&self.config.ca_path)
             .map_err(|e| NetSrvError::AwsIotError(format!("Error setting CA certificate: {}", e)))?
@@ -64,11 +64,11 @@ impl NetworkClient for AwsIotClient {
             .clean_session(true)
             .finalize();
 
-        // 连接到 AWS IoT Core
+        // Connect to AWS IoT Core
         client.connect(conn_opts).await
             .map_err(|e| NetSrvError::AwsIotError(format!("Error connecting to AWS IoT Core: {}", e)))?;
 
-        // 设置连接状态回调
+        // Set connection status callback
         let connected = self.connected.clone();
         client.set_connected_callback(move |_| {
             *connected.lock().unwrap() = true;
