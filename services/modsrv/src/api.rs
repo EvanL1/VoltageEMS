@@ -588,14 +588,14 @@ async fn handle_create_instance(
 pub fn control_operations_route(
     store: Arc<HybridStore>
 ) -> impl Filter<Extract = (impl warp::Reply,), Error = warp::Rejection> + Clone {
-    // 增加GET方法的路由
+    // Add GET method route
     let store1 = store.clone();
     let get_route = warp::path!("api" / "control" / "operations")
         .and(warp::get())
         .map(move || store1.clone())
         .and_then(handle_list_operations);
     
-    // 原有的POST方法路由
+    // Original POST method route
     let store2 = store.clone();
     let post_route = warp::path!("api" / "control" / "operations")
         .and(warp::post())
@@ -603,7 +603,7 @@ pub fn control_operations_route(
         .map(move |req: ExecuteOperationRequest| (store2.clone(), req))
         .and_then(handle_control_operation);
     
-    // 添加执行特定操作的路由
+    // Add route for executing specific operations
     let store3 = store.clone();
     let execute_route = warp::path!("api" / "control" / "execute" / String)
         .and(warp::post())
@@ -618,7 +618,7 @@ pub fn control_operations_route(
 async fn handle_list_operations(
     _store: Arc<HybridStore>
 ) -> std::result::Result<impl warp::Reply, warp::Rejection> {
-    // 返回支持的操作列表
+    // Return list of supported operations
     let operations = vec![
         "start_motor", 
         "stop_motor", 
@@ -634,7 +634,7 @@ async fn handle_control_operation(
 ) -> std::result::Result<impl warp::Reply, warp::Rejection> {
     let (_store, req) = params;
     
-    // 这里我们仅提供一个基础实现，返回成功但表明该功能尚未完全实现
+    // Here we provide a basic implementation, returning success but indicating the feature is not fully implemented
     Ok(warp::reply::json(&json!({
         "status": "success",
         "message": "Operation submitted",
@@ -650,7 +650,7 @@ async fn handle_execute_operation(
 ) -> std::result::Result<impl warp::Reply, warp::Rejection> {
     let (_store, op_name, req) = params;
     
-    // 基础实现，返回成功，但表明是模拟操作
+    // Basic implementation, returns success but indicates it's a simulated operation
     Ok(warp::reply::json(&json!({
         "status": "success",
         "message": format!("Operation '{}' executed on instance '{}'", op_name, req.instance_id),
