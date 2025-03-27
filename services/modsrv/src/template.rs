@@ -304,12 +304,12 @@ impl TemplateManager {
             }
         };
         
-        // 创建哈希表存储实例配置
+        // Create a hash table to store instance configuration
         let mut instance_hash = HashMap::new();
         instance_hash.insert("id".to_string(), instance_id.to_string());
         instance_hash.insert("template_id".to_string(), template_id.to_string());
         
-        // 添加名称和描述
+        // Add name and description
         if let Some(name) = instance_name {
             instance_hash.insert("name".to_string(), name.to_string());
         } else {
@@ -318,20 +318,20 @@ impl TemplateManager {
         
         instance_hash.insert("description".to_string(), template.description.clone());
         
-        // 存储模型定义
+        // Store model definition
         if let Some(model) = model_with_actions.get("model") {
-            // 存储模型字段
+            // Store model fields
             let model_key = format!("{}model:definition:{}", self.key_prefix, instance_id);
             
-            // 将模型存储为JSON字符串
+            // Store model as JSON string
             let model_json = serde_json::to_string(model)
                 .map_err(|e| ModelSrvError::JsonError(e.to_string()))?;
             store.set_string(&model_key, &model_json)?;
             
-            // 在配置键中存储对模型定义的引用
+            // Store reference to model definition in config key
             instance_hash.insert("model_key".to_string(), model_key);
             
-            // 从模型中提取关键字段添加到哈希表
+            // Extract key fields from model and add to hash table
             if let Some(input_mappings) = model.get("input_mappings") {
                 let input_mappings_json = serde_json::to_string(input_mappings)
                     .map_err(|e| ModelSrvError::JsonError(e.to_string()))?;
@@ -351,10 +351,10 @@ impl TemplateManager {
             }
         }
         
-        // 存储哈希表
+        // Store hash table
         store.set_hash(&instance_key, &instance_hash)?;
         
-        // 单独存储动作
+        // Store actions separately
         if let Some(actions) = model_with_actions.get("actions") {
             if let Some(actions_array) = actions.as_array() {
                 for (i, action) in actions_array.iter().enumerate() {
@@ -364,12 +364,12 @@ impl TemplateManager {
                     store.set_string(&action_key, &action_json)?;
                 }
                 
-                // 在配置中存储动作计数
+                // Store action count in config
                 store.set_hash_field(&instance_key, "action_count", &actions_array.len().to_string())?;
             }
         }
         
-        // 同时保存到文件用于调试
+        // Save to file for debugging
         let instances_dir = Path::new("instances");
         if !instances_dir.exists() {
             fs::create_dir(instances_dir).map_err(|e| ModelSrvError::IoError(e.to_string()))?;
