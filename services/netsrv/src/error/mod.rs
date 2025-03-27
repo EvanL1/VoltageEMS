@@ -38,21 +38,21 @@ pub enum NetSrvError {
 
 pub type Result<T> = std::result::Result<T, NetSrvError>;
 
-// 从 reqwest 错误转换
+// Convert from reqwest error
 impl From<reqwest::Error> for NetSrvError {
     fn from(err: reqwest::Error) -> Self {
         NetSrvError::HttpError(err.to_string())
     }
 }
 
-// 从 rumqttc 错误转换
+// Convert from rumqttc error
 impl From<rumqttc::ClientError> for NetSrvError {
     fn from(err: rumqttc::ClientError) -> Self {
         NetSrvError::MqttError(err.to_string())
     }
 }
 
-// 从 paho-mqtt 错误转换
+// Convert from paho-mqtt error
 impl From<paho_mqtt::Error> for NetSrvError {
     fn from(err: paho_mqtt::Error) -> Self {
         NetSrvError::MqttError(err.to_string())

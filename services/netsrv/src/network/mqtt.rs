@@ -44,30 +44,30 @@ impl NetworkClient for MqttClient {
             self.config.port,
         );
 
-        // 设置认证信息
+        // Set authentication information
         if let (Some(username), Some(password)) = (&self.config.username, &self.config.password) {
             mqtt_options.set_credentials(username, password);
         }
 
-        // 设置连接参数
+        // Set connection parameters
         mqtt_options.set_keep_alive(Duration::from_secs(30));
         mqtt_options.set_clean_session(true);
 
-        // 设置 SSL/TLS
+        // Set SSL/TLS
         if self.config.use_ssl {
             if let (Some(ca_path), Some(cert_path), Some(key_path)) = (
                 &self.config.ca_cert_path,
                 &self.config.client_cert_path,
                 &self.config.client_key_path,
             ) {
-                // 使用客户端证书认证
+                // Use client certificate authentication
                 let transport = Transport::Tls(
                     ca_path.into(),
                     Some((cert_path.into(), key_path.into())),
                 );
                 mqtt_options.set_transport(transport);
             } else if let Some(ca_path) = &self.config.ca_cert_path {
-                // 仅使用 CA 证书
+                // Only use CA certificate
                 let transport = Transport::Tls(ca_path.into(), None);
                 mqtt_options.set_transport(transport);
             } else {
@@ -77,11 +77,11 @@ impl NetworkClient for MqttClient {
             }
         }
 
-        // 创建客户端
+        // Create client
         let (client, mut eventloop) = AsyncClient::new(mqtt_options, 10);
         self.client = Some(client);
 
-        // 启动事件循环处理
+        // Start event loop processing
         let connected = self.connected.clone();
         tokio::spawn(async move {
             *connected.lock().unwrap() = true;
