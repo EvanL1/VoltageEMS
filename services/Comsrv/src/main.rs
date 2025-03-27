@@ -18,6 +18,7 @@ use crate::core::protocol_factory::ProtocolFactory;
 use crate::api::routes::api_routes;
 use crate::core::protocols::modbus::client::ModbusClientFactory;
 use crate::utils::ComSrvError;
+use crate::core::storage::redisStorage::RedisStore;
 
 /// Function to create Modbus TCP client for the factory
 fn create_modbus_tcp(config: crate::core::config::config_manager::ChannelConfig) 
@@ -53,9 +54,6 @@ fn create_modbus_rtu(config: crate::core::config::config_manager::ChannelConfig)
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    // Load .env file
-    dotenv().ok();
-    
     // Initialize logging system
     let log_dir = env::var("LOG_DIR").unwrap_or_else(|_| "logs".to_string());
     crate::utils::logger::init_logger(Path::new(&log_dir), "comsrv", "info", true)?;
@@ -75,9 +73,13 @@ async fn main() -> Result<()> {
     tracing::info!("Loading configuration from {}", config_path);
     let config_manager = ConfigManager::from_file(&config_path)?;
     
+    // Initialize Redis storage
+    let redis_config = config_manager.get_redis_config();
+    let redis_store = RedisStore::from_config(&redis_config).await?;
+        
     // Create protocol factory
     let protocol_factory = Arc::new(RwLock::new(ProtocolFactory::new()));
-    
+
     // Register protocol implementations
     {
         let mut factory = protocol_factory.write().await;

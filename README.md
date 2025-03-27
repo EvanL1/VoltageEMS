@@ -116,3 +116,159 @@ npm run dev
 ## 许可证
 
 [您的许可证]
+
+# 通信服务测试工具集
+
+本工具集为VoltageEMS通信服务(comsrv)提供了一系列测试和模拟工具，帮助开发、测试和部署通信服务。
+
+## 工具列表
+
+- **test_api.py** - API测试脚本，用于测试通信服务的REST API接口
+- **load_test.py** - 负载测试脚本，用于对通信服务进行压力测试
+- **modbus_simulator.py** - Modbus协议模拟器，模拟Modbus TCP服务器
+- **opcua_simulator.py** - OPC UA协议模拟器，模拟OPC UA服务器
+- **generate_config.py** - 配置生成工具，用于生成通道和点位配置
+
+## 安装依赖
+
+在使用这些工具之前，请确保已安装所需的依赖包：
+
+```bash
+# 通用依赖
+pip install requests
+
+# Modbus模拟器依赖
+pip install pymodbus
+
+# OPC UA模拟器依赖
+pip install opcua
+```
+
+## 工具使用方法
+
+### API测试脚本 (test_api.py)
+
+测试通信服务的REST API接口，包括健康检查、通道管理、点位管理和数据读写等功能。
+
+```bash
+python test_api.py
+```
+
+脚本会自动执行一系列API测试，并显示测试结果。
+
+### 负载测试脚本 (load_test.py)
+
+对通信服务进行压力测试，模拟大量并发请求。
+
+```bash
+# 基本用法
+python load_test.py
+
+# 自定义参数
+python load_test.py --url http://localhost:8080/api --threads 20 --requests 2000 --read-ratio 70
+```
+
+参数说明：
+- `--url` - API基础URL，默认为http://localhost:8080/api
+- `--threads` - 并发线程数，默认为10
+- `--requests` - 总请求数，默认为1000
+- `--timeout` - 请求超时时间(秒)，默认为5秒
+- `--read-ratio` - 读取操作的百分比，默认为80%
+
+### Modbus模拟器 (modbus_simulator.py)
+
+模拟Modbus TCP服务器，为通信服务提供测试数据源。
+
+```bash
+# 基本用法
+python modbus_simulator.py
+
+# 自定义参数
+python modbus_simulator.py --host 0.0.0.0 --port 502 --slave-id 1 --update-interval 2.0
+```
+
+参数说明：
+- `--host` - 监听主机地址，默认为0.0.0.0
+- `--port` - 监听端口，默认为502
+- `--slave-id` - 从站ID，默认为1
+- `--no-auto-update` - 禁用自动更新寄存器值
+- `--update-interval` - 自动更新间隔(秒)，默认为1.0秒
+
+### OPC UA模拟器 (opcua_simulator.py)
+
+模拟OPC UA服务器，为通信服务提供测试数据源。
+
+```bash
+# 基本用法
+python opcua_simulator.py
+
+# 自定义参数
+python opcua_simulator.py --host 0.0.0.0 --port 4840 --update-interval 2.0
+```
+
+参数说明：
+- `--host` - 监听主机地址，默认为0.0.0.0
+- `--port` - 监听端口，默认为4840
+- `--namespace` - 命名空间URI，默认为http://voltage.com/opcua/simulator
+- `--no-auto-update` - 禁用自动更新节点值
+- `--update-interval` - 自动更新间隔(秒)，默认为1.0秒
+
+### 配置生成工具 (generate_config.py)
+
+生成通信服务的通道和点位配置文件，用于测试和部署。
+
+```bash
+# 基本用法
+python generate_config.py
+
+# 自定义参数
+python generate_config.py --output ./my_config --modbus 3 --opcua 2 --points 30
+```
+
+参数说明：
+- `--output` - 输出目录，默认为./config
+- `--modbus` - Modbus通道数量，默认为2
+- `--opcua` - OPC UA通道数量，默认为2
+- `--points` - 每个通道的点位数量，默认为20
+
+## 典型测试流程
+
+1. 使用配置生成工具生成测试配置文件：
+   ```bash
+   python generate_config.py --output ./test_config
+   ```
+
+2. 启动协议模拟器：
+   ```bash
+   # 终端1: 启动Modbus模拟器
+   python modbus_simulator.py --port 502
+   
+   # 终端2: 启动OPC UA模拟器
+   python opcua_simulator.py --port 4840
+   ```
+
+3. 启动通信服务，指定配置目录：
+   ```bash
+   # 终端3: 启动通信服务
+   cd ../
+   cargo run --bin comsrv -- --config-dir ./test_tools/test_config
+   ```
+
+4. 使用API测试脚本测试功能：
+   ```bash
+   # 终端4: 执行API测试
+   python test_api.py
+   ```
+
+5. 执行负载测试：
+   ```bash
+   # 终端5: 执行负载测试
+   python load_test.py --threads 20 --requests 5000
+   ```
+
+## 注意事项
+
+- 确保通信服务已正确配置并运行，默认API端口为8080
+- Modbus模拟器默认使用502端口，这在某些系统上可能需要管理员权限
+- 对于真实环境中的部署，请根据实际情况调整配置参数
+- 负载测试时请注意监控系统资源使用情况，避免过载

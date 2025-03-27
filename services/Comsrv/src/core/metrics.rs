@@ -1,7 +1,3 @@
-use hyper::{
-    service::{make_service_fn, service_fn},
-    Body, Request, Response, Server,
-};
 use prometheus::{
     Counter, Encoder, Gauge, GaugeVec, HistogramVec,
     IntCounterVec, Registry, TextEncoder,

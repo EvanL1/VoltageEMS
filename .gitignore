@@ -41,9 +41,9 @@ logs/
 Thumbs.db 
 
 # Config
-services/Comsrv/config/
 config/
 
 # models
 services/modsrv/instances/
 services/modsrv/templates/
+services/modsrv/config/
