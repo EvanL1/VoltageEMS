@@ -10,29 +10,31 @@ use serde_json::json;
 use std::collections::HashMap;
 use tracing::{field, Span};
 use hex;
+use std::sync::atomic::{AtomicU16, Ordering};
 
 use crate::core::config::config_manager::ChannelConfig;
 use crate::core::protocols::common::{ComBase, ChannelStatus, PointData};
 use crate::utils::{ComSrvError, Result};
-use super::client::{ModbusClient, ModbusClientBase};
+use super::client::{ModbusClient, ModbusClientBase, ModbusOptimizer, ModbusReadGroupType};
 use super::common::{ModbusRegisterMapping, ModbusDataType, ByteOrder};
 
-/// Modbus TCP客户端实现
+/// Modbus TCP client implementation
 pub struct ModbusTcpClient {
-    /// 基础Modbus客户端
+    /// Base Modbus client
     base: ModbusClientBase,
-    /// TCP地址
+    /// TCP address
     host: String,
-    /// TCP端口
+    /// TCP port
     port: u16,
-    /// Modbus客户端
+    /// Modbus client context
     client: Arc<Mutex<Option<client::Context>>>,
+    transaction_id: AtomicU16, // Simple transaction ID counter
 }
 
 impl ModbusTcpClient {
-    /// 创建新的Modbus TCP客户端
+    /// Create a new Modbus TCP client
     pub fn new(config: ChannelConfig) -> Self {
-        // 获取TCP连接参数
+        // Get TCP connection parameters
         let params = &config.parameters;
         let host = params.get("host")
             .and_then(|v| if let Some(s) = v.as_str() { Some(s.to_string()) } else { None })
@@ -47,25 +49,26 @@ impl ModbusTcpClient {
             host,
             port,
             client: Arc::new(Mutex::new(None)),
+            transaction_id: AtomicU16::new(0), // Initialize counter
         }
     }
     
-    /// 连接到Modbus TCP服务器
+    /// Connect to the Modbus TCP server
     async fn connect(&self) -> Result<()> {
         if self.base.is_connected().await {
             return Ok(());
         }
         
-        // 关闭现有连接
+        // Close existing connection
         self.disconnect().await?;
         
-        // 构建TCP地址
+        // Build TCP address
         let socket_addr = format!("{}:{}", self.host, self.port).parse()
             .map_err(|e| ComSrvError::ConnectionError(format!("Invalid address: {}", e)))?;
             
         debug!("Connecting to Modbus TCP server at {}", socket_addr);
         
-        // 创建TCP连接
+        // Create TCP connection
         let timeout_duration = Duration::from_millis(self.base.timeout_ms());
         let _slave = Slave(self.base.slave_id());
         
@@ -76,7 +79,7 @@ impl ModbusTcpClient {
         
         match client_result {
             Ok(Ok(client)) => {
-                // 连接成功
+                // Connection successful
                 let mut c = self.client.lock().await;
                 *c = Some(client);
                 self.base.set_connected(true).await;
@@ -84,14 +87,14 @@ impl ModbusTcpClient {
                 Ok(())
             },
             Ok(Err(e)) => {
-                // 连接错误
+                // Connection error
                 let err_msg = format!("Failed to connect to Modbus TCP server: {}", e);
                 error!("{}", err_msg);
                 self.base.set_error(&err_msg).await;
                 Err(ComSrvError::ConnectionError(err_msg))
             },
             Err(_) => {
-                // 连接超时
+                // Connection timeout
                 let err_msg = format!(
                     "Connection to Modbus TCP server timed out after {} ms",
                     self.base.timeout_ms()
@@ -103,7 +106,7 @@ impl ModbusTcpClient {
         }
     }
     
-    /// 断开连接
+    /// Disconnect from the server
     async fn disconnect(&self) -> Result<()> {
         let mut client = self.client.lock().await;
         if client.is_some() {
@@ -114,14 +117,14 @@ impl ModbusTcpClient {
         Ok(())
     }
     
-    /// 记录Modbus报文
+    /// Log Modbus messages
     fn log_modbus_message(&self, direction: &str, data: &[u8]) {
         let hex_str = hex::encode(data);
         debug!("Modbus TCP {} [{}]: {}", direction, self.host, hex_str);
-        // 使用跟踪级别记录详细的报文分析
+        // Log detailed message analysis at trace level
         if log::log_enabled!(log::Level::Trace) {
             if direction == "TX" && data.len() >= 7 {
-                // 解析标准Modbus TCP请求
+                // Parse standard Modbus TCP request
                 let transaction_id = u16::from_be_bytes([data[0], data[1]]);
                 let protocol_id = u16::from_be_bytes([data[2], data[3]]);
                 let length = u16::from_be_bytes([data[4], data[5]]);
@@ -133,10 +136,10 @@ impl ModbusTcpClient {
                     transaction_id, protocol_id, length, unit_id, function_code
                 );
                 
-                // 根据功能码进一步解析
+                // Further parse based on function code
                 if data.len() > 9 {
                     match function_code {
-                        1 | 2 | 3 | 4 => { // 读取功能
+                        1 | 2 | 3 | 4 => { // Read function
                             let address = u16::from_be_bytes([data[8], data[9]]);
                             let quantity = u16::from_be_bytes([data[10], data[11]]);
                             trace!(
@@ -144,7 +147,7 @@ impl ModbusTcpClient {
                                 address, quantity
                             );
                         },
-                        5 => { // 写单个线圈
+                        5 => { // Write single coil
                             let address = u16::from_be_bytes([data[8], data[9]]);
                             let value = u16::from_be_bytes([data[10], data[11]]);
                             trace!(
@@ -152,7 +155,7 @@ impl ModbusTcpClient {
                                 address, value
                             );
                         },
-                        6 => { // 写单个寄存器
+                        6 => { // Write single register
                             let address = u16::from_be_bytes([data[8], data[9]]);
                             let value = u16::from_be_bytes([data[10], data[11]]);
                             trace!(
@@ -160,7 +163,7 @@ impl ModbusTcpClient {
                                 address, value
                             );
                         },
-                        15 | 16 => { // 写多个线圈/寄存器
+                        15 | 16 => { // Write multiple coils/registers
                             let address = u16::from_be_bytes([data[8], data[9]]);
                             let quantity = u16::from_be_bytes([data[10], data[11]]);
                             trace!(
@@ -174,7 +177,7 @@ impl ModbusTcpClient {
                     }
                 }
             } else if direction == "RX" && data.len() >= 7 {
-                // 解析标准Modbus TCP响应
+                // Parse standard Modbus TCP response
                 let transaction_id = u16::from_be_bytes([data[0], data[1]]);
                 let protocol_id = u16::from_be_bytes([data[2], data[3]]);
                 let length = u16::from_be_bytes([data[4], data[5]]);
@@ -182,7 +185,7 @@ impl ModbusTcpClient {
                 let function_code = if data.len() > 7 { data[7] } else { 0 };
                 
                 if function_code > 0x80 {
-                    // 错误响应
+                    // Error response
                     let error_code = if data.len() > 8 { data[8] } else { 0 };
                     trace!(
                         "Modbus TCP Error Response: Transaction ID={}, Protocol ID={}, Length={}, Unit ID={}, Error Function={}, Exception Code={}",
@@ -194,17 +197,17 @@ impl ModbusTcpClient {
                         transaction_id, protocol_id, length, unit_id, function_code
                     );
                     
-                    // 针对不同响应类型进行解析
+                    // Parse based on response type
                     if data.len() > 8 {
                         match function_code {
-                            1 | 2 => { // 读线圈/离散量输入响应
+                            1 | 2 => { // Read coils/discrete inputs response
                                 let byte_count = data[8] as usize;
                                 if data.len() >= 9 + byte_count {
                                     let values: Vec<u8> = data[9..9+byte_count].to_vec();
                                     trace!("Read Coils/Discrete Inputs Response: Byte Count={}, Values={:?}", byte_count, values);
                                 }
                             },
-                            3 | 4 => { // 读保持/输入寄存器响应
+                            3 | 4 => { // Read holding/input registers response
                                 let byte_count = data[8] as usize;
                                 if data.len() >= 9 + byte_count && byte_count % 2 == 0 {
                                     let mut registers = Vec::new();
@@ -216,7 +219,7 @@ impl ModbusTcpClient {
                                     trace!("Read Registers Response: Byte Count={}, Registers={:?}", byte_count, registers);
                                 }
                             },
-                            5 | 6 | 15 | 16 => { // 写响应
+                            5 | 6 | 15 | 16 => { // Write response
                                 if data.len() >= 11 {
                                     let address = u16::from_be_bytes([data[8], data[9]]);
                                     let value = u16::from_be_bytes([data[10], data[11]]);
@@ -231,7 +234,7 @@ impl ModbusTcpClient {
         }
     }
 
-    /// 执行Modbus操作
+    /// Execute Modbus operation
     async fn execute<F, T>(&self, operation: F) -> Result<T>
     where
         F: FnOnce(&mut client::Context) -> Result<T> + Send + Clone + 'static,
@@ -242,39 +245,39 @@ impl ModbusTcpClient {
         let mut last_error = None;
         
         while attempts < retry_count {
-            // 如果已超过最大重试次数，则返回最后一个错误
+            // If max retries exceeded, return last error
             if attempts > 0 {
                 info!("Retry {}/{} for Modbus TCP operation", attempts, retry_count);
-                // 等待一段时间后重试
+                // Wait a bit before retrying
                 tokio::time::sleep(Duration::from_millis(100)).await;
             }
             
             attempts += 1;
             
-            // 获取锁并执行操作
+            // Get lock and execute operation
             let mut client_guard = self.client.lock().await;
-            // 克隆操作闭包，以便可以在不同的重试中重用
+            // Clone the operation closure to reuse in different retries
             let operation_clone = operation.clone();
             
             if let Some(ref mut client) = *client_guard {
-                // 直接在已获取的锁上下文中执行操作
-                // 注意：由于tokio_modbus库的封装，我们无法直接获取原始报文
-                // 但在底层实现中应该已经记录了报文流
+                // Execute operation directly within the locked context
+                // Note: Due to tokio_modbus library encapsulation, we can't directly get the raw message
+                // But the message stream should be logged in the underlying implementation
                 match operation_clone(client) {
                     Ok(result) => return Ok(result),
                     Err(e) => {
                         warn!("Modbus TCP operation failed: {}", e);
                         last_error = Some(e);
-                        // 释放锁后再等待
+                        // Release lock before waiting
                         drop(client_guard);
                         continue;
                     }
                 }
             } else {
-                // 客户端未连接，尝试连接
+                // Client not connected, try to connect
                 drop(client_guard);
                 match self.connect().await {
-                    Ok(_) => continue, // 重新尝试操作
+                    Ok(_) => continue, // Retry operation
                     Err(e) => {
                         warn!("Failed to connect: {}", e);
                         last_error = Some(e);
@@ -284,11 +287,11 @@ impl ModbusTcpClient {
             }
         }
         
-        // 所有重试都失败
+        // All retries failed
         Err(last_error.unwrap_or_else(|| ComSrvError::ModbusError("Unknown error in Modbus TCP execute".to_string())))
     }
     
-    /// 解析寄存器值为JSON
+    /// Parse register values to JSON
     fn parse_registers(&self, registers: &[u16], mapping: &ModbusRegisterMapping) -> Result<serde_json::Value> {
         if registers.is_empty() {
             return Err(ComSrvError::ParsingError("Empty register data".to_string()));
@@ -362,7 +365,7 @@ impl ModbusTcpClient {
                     ));
                 }
                 
-                // 将两个u16转换为u32，然后解释为f32
+                // Convert two u16 to u32, then interpret as f32
                 let bits = match byte_order {
                     ByteOrder::BigEndian => {
                         ((registers[0] as u32) << 16) | (registers[1] as u32)
@@ -380,7 +383,7 @@ impl ModbusTcpClient {
                 
                 let value = f32::from_bits(bits);
                 
-                // 应用缩放因子和偏移量
+                // Apply scale factor and offset
                 let scaled_value = if let Some(scale) = mapping.scale_factor {
                     value * scale as f32
                 } else {
@@ -402,7 +405,7 @@ impl ModbusTcpClient {
                     ));
                 }
                 
-                // 将四个u16转换为u64，然后解释为f64
+                // Convert four u16 to u64, then interpret as f64
                 let bits = match byte_order {
                     ByteOrder::BigEndian => {
                         ((registers[0] as u64) << 48) | 
@@ -432,7 +435,7 @@ impl ModbusTcpClient {
                 
                 let value = f64::from_bits(bits);
                 
-                // 应用缩放因子和偏移量
+                // Apply scale factor and offset
                 let scaled_value = if let Some(scale) = mapping.scale_factor {
                     value * scale
                 } else {
@@ -448,11 +451,11 @@ impl ModbusTcpClient {
                 Ok(json!(final_value))
             },
             ModbusDataType::String(_) => {
-                // 从寄存器构建字符串
+                // Build string from registers
                 let mut bytes = Vec::with_capacity(registers.len() * 2);
                 
                 for register in registers {
-                    // 根据字节序添加字节
+                    // Add bytes according to byte order
                     match byte_order {
                         ByteOrder::BigEndian | ByteOrder::BigEndianWordSwapped => {
                             bytes.push((register >> 8) as u8);
@@ -465,7 +468,7 @@ impl ModbusTcpClient {
                     }
                 }
                 
-                // 转换为字符串，去除空字节
+                // Convert to string, remove null bytes
                 let valid_bytes: Vec<u8> = bytes.into_iter()
                     .take_while(|&b| b != 0)
                     .collect();
@@ -477,12 +480,12 @@ impl ModbusTcpClient {
         }
     }
 
-    /// 获取客户端上下文
+    /// Get client context
     async fn get_client(&self) -> Result<Arc<Mutex<Option<client::Context>>>> {
-        // 确保已连接
+        // Ensure connected
         self.connect().await?;
         
-        // 返回Arc克隆，而不是引用，以避免生命周期问题
+        // Return Arc clone, not reference, to avoid lifetime issues
         Ok(self.client.clone())
     }
 }
@@ -517,33 +520,33 @@ impl ComBase for ModbusTcpClient {
     }
     
     async fn start(&mut self) -> Result<()> {
-        info!("启动Modbus TCP客户端: {}:{}", self.host, self.port);
+        info!("Starting Modbus TCP client: {}:{}", self.host, self.port);
         
-        // 设置运行状态
+        // Set running state
         self.base.set_running(true).await;
         
-        // 连接到服务器
+        // Connect to server
         match self.connect().await {
             Ok(_) => {
-                info!("Modbus TCP连接成功: {}:{}", self.host, self.port);
+                info!("Modbus TCP connection successful: {}:{}", self.host, self.port);
                 
-                // 加载点表
+                // Load point tables
                 let config_path = std::env::var("CONFIG_DIR").unwrap_or_else(|_| "./config".to_string());
                 if let Err(e) = self.base.load_point_tables(&config_path).await {
-                    error!("加载点表失败: {}", e);
+                    error!("Failed to load point tables: {}", e);
                 }
                 
                 Ok(())
             },
             Err(e) => {
-                error!("Modbus TCP连接失败: {}", e);
+                error!("Modbus TCP connection failed: {}", e);
                 Err(e)
             }
         }
     }
     
     async fn stop(&mut self) -> Result<()> {
-        info!("停止Modbus TCP客户端: {}:{} (通道: {})", self.host, self.port, self.channel_id());
+        info!("Stopping Modbus TCP client: {}:{} (Channel: {})", self.host, self.port, self.channel_id());
         self.disconnect().await?;
         self.base.set_running(false).await;
         Ok(())
@@ -556,34 +559,138 @@ impl ComBase for ModbusTcpClient {
     async fn get_all_points(&self) -> Vec<PointData> {
         let mut points = self.base.get_all_points().await;
         
-        // 确保已连接，如果未连接则重试连接
+        // Ensure connected, retry connection if not
         if !self.base.is_connected().await {
             if let Err(e) = self.connect().await {
                 error!("Failed to connect to Modbus TCP server: {}", e);
-                return points; // 连接失败，返回空值点位
+                return points; // Return empty points on connection failure
             }
         }
         
-        // 对每个点位，尝试读取其实际值
-        for point in &mut points {
-            // 查找对应的寄存器映射
-            if let Some(mapping) = self.base.find_mapping(&point.id).await {
-                // 尝试读取该点位的值
-                match self.read_data(&mapping).await {
+        // Create a map from point ID to points array index for updating
+        let mut point_id_to_index = HashMap::new();
+        for (i, point) in points.iter().enumerate() {
+            point_id_to_index.insert(point.id.clone(), i);
+        }
+        
+        // Get all register mappings from the base implementation
+        let register_mappings = self.base.get_all_mappings().await;
+        if register_mappings.is_empty() {
+            warn!("No register mappings found for channel {}", self.base.channel_id());
+            return points;
+        }
+        
+        // Use optimizer to generate optimal read groups
+        let optimizer = ModbusOptimizer::from_channel(self.base.channel_id(), &self.base.get_config().parameters);
+        let read_groups = optimizer.optimize(&register_mappings, self.base.slave_id());
+        
+        info!("Using optimized batch read with {} read groups", read_groups.len());
+        
+        // Execute batch read for each read group
+        for group in read_groups {
+            
+            // --- Start: Demonstrate TCP Frame (ADU) Construction --- 
+            let pdu = group.build_request_pdu();
+            let transaction_id = self.transaction_id.fetch_add(1, Ordering::Relaxed); // Increment and get current ID
+            let pdu_length = pdu.len() as u16;
+            
+            // Build MBAP Header (7 bytes) + PDU
+            let mut adu_builder = Vec::with_capacity(7 + pdu.len());
+            
+            // MBAP Header:
+            adu_builder.extend_from_slice(&transaction_id.to_be_bytes()); // Transaction Identifier (2 bytes)
+            adu_builder.extend_from_slice(&0u16.to_be_bytes()); // Protocol Identifier (2 bytes, 0 for Modbus)
+            adu_builder.extend_from_slice(&(pdu_length + 1).to_be_bytes()); // Length (2 bytes, PDU length + Unit ID byte)
+            adu_builder.push(group.slave_id); // Unit Identifier (1 byte)
+            
+            // Append PDU
+            adu_builder.extend_from_slice(&pdu);
+            
+            // Example: Now `adu_builder` holds the complete TCP ADU frame bytes
+            // In a full implementation, these bytes would be sent over the TCP socket,
+            // and the response would be read and parsed.
+            trace!("Generated TCP ADU for group (addr={}, qty={}, TxID={}): {:02X?}",
+                   group.start_address, group.quantity, transaction_id, adu_builder);
+            // --- End: Demonstrate TCP Frame (ADU) Construction --- 
+
+            // NOTE: The following code still uses high-level tokio_modbus functions for reading.
+            // To use the generated `adu_builder`, the communication logic in `execute`
+            // would need to be refactored to handle raw byte transmission and reception.
+
+            // Select read method based on group type
+            let register_values = match group.group_type {
+                ModbusReadGroupType::Coil => {
+                    match self.read_coils(group.start_address, group.quantity).await {
+                        Ok(values) => {
+                            // Convert boolean values to u16 array for unified processing
+                            values.into_iter().map(|v| if v { 1u16 } else { 0u16 }).collect::<Vec<u16>>()
+                        },
+                        Err(e) => {
+                            error!("Failed to read coils: {}", e);
+                            continue;
+                        }
+                    }
+                },
+                ModbusReadGroupType::DiscreteInput => {
+                    match self.read_discrete_inputs(group.start_address, group.quantity).await {
+                        Ok(values) => {
+                            // Convert boolean values to u16 array for unified processing
+                            values.into_iter().map(|v| if v { 1u16 } else { 0u16 }).collect::<Vec<u16>>()
+                        },
+                        Err(e) => {
+                            error!("Failed to read discrete inputs: {}", e);
+                            continue;
+                        }
+                    }
+                },
+                ModbusReadGroupType::HoldingRegister => {
+                    match self.read_holding_registers(group.start_address, group.quantity).await {
+                        Ok(values) => values,
+                        Err(e) => {
+                            error!("Failed to read holding registers: {}", e);
+                            continue;
+                        }
+                    }
+                },
+                ModbusReadGroupType::InputRegister => {
+                    match self.read_input_registers(group.start_address, group.quantity).await {
+                        Ok(values) => values,
+                        Err(e) => {
+                            error!("Failed to read input registers: {}", e);
+                            continue;
+                        }
+                    }
+                },
+            };
+            
+            // Process the read values and update corresponding points
+            for (point_id, (offset, mapping)) in &group.mappings {
+                // Check if there is enough register data
+                if *offset + mapping.quantity as usize > register_values.len() {
+                    warn!("Insufficient register values for point {}", point_id);
+                    continue;
+                }
+                
+                // Extract register values for the point
+                let registers = &register_values[*offset..*offset + mapping.quantity as usize];
+                
+                // Parse register values
+                match self.parse_registers(registers, mapping) {
                     Ok(value) => {
-                        point.value = value;
-                        point.quality = true;
-                        point.timestamp = Utc::now();
+                        // Update point value
+                        if let Some(&index) = point_id_to_index.get(point_id) {
+                            points[index].value = value;
+                            points[index].quality = true;
+                            points[index].timestamp = Utc::now();
+                        }
                     },
                     Err(e) => {
-                        // 读取失败，记录错误但保持默认值
-                        error!("Failed to read point {}: {}", point.id, e);
-                        point.quality = false;
+                        error!("Failed to parse registers for point {}: {}", point_id, e);
+                        if let Some(&index) = point_id_to_index.get(point_id) {
+                            points[index].quality = false;
+                        }
                     }
                 }
-            } else {
-                // 如果找不到映射，记录警告
-                warn!("No mapping found for point: {}", point.id);
             }
         }
         
@@ -597,7 +704,7 @@ impl ModbusClient for ModbusTcpClient {
         debug!("Reading {} coils from address {}", quantity, address);
         
         self.execute(move |ctx: &mut client::Context| {
-            // 使用Ok来包装异步操作返回的结果
+            // Wrap the result of the async operation with Ok
             let fut = ctx.read_coils(address, quantity);
             Ok(tokio::runtime::Handle::current().block_on(fut)
                 .map_err(|e| ComSrvError::ModbusError(format!("Failed to read coils: {}", e)))?)
@@ -685,10 +792,10 @@ impl ModbusClient for ModbusTcpClient {
             address, quantity, mapping.data_type
         );
         
-        // 根据数据类型选择读取方法
+        // Select read method based on data type
         match mapping.data_type {
             ModbusDataType::Bool => {
-                // 布尔类型读取线圈
+                // Read coils for boolean type
                 let values = self.read_coils(address, 1).await?;
                 if values.is_empty() {
                     return Err(ComSrvError::ModbusError("No coil data received".to_string()));
@@ -696,7 +803,7 @@ impl ModbusClient for ModbusTcpClient {
                 Ok(json!(values[0]))
             },
             _ => {
-                // 其他类型读取保持寄存器
+                // Read holding registers for other types
                 let registers = self.read_holding_registers(address, quantity).await?;
                 self.parse_registers(&registers, mapping)
             }
@@ -712,7 +819,7 @@ impl ModbusClient for ModbusTcpClient {
         
         let address = mapping.address;
         
-        // 根据数据类型执行写入
+        // Execute write based on data type
         match mapping.data_type {
             ModbusDataType::Bool => {
                 let bool_value = value.as_bool().ok_or_else(|| {
@@ -739,7 +846,7 @@ impl ModbusClient for ModbusTcpClient {
                 self.write_single_register(address, int_value).await
             },
             _ => {
-                // 对于复杂类型暂不支持
+                // Writing complex types is not yet supported
                 Err(ComSrvError::ProtocolNotSupported(
                     format!("Writing {:?} data type is not implemented yet", mapping.data_type)
                 ))

@@ -361,6 +361,17 @@ impl ModbusClientBase {
         warn!("No point table configuration found");
         Ok(())
     }
+
+    /// Get all register mappings
+    pub async fn get_all_mappings(&self) -> Vec<ModbusRegisterMapping> {
+        let mappings = self.register_mappings.read().await;
+        mappings.clone()
+    }
+
+    /// Get channel configuration
+    pub fn config(&self) -> &ChannelConfig {
+        &self.base.config()
+    }
 }
 
 /// Modbus client factory
@@ -393,4 +404,295 @@ impl ModbusClientFactory {
         
         Ok(client)
     }
+}
+
+/// Modbus read group type, used to identify different register types
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ModbusReadGroupType {
+    /// Coil
+    Coil,
+    /// Discrete input
+    DiscreteInput,
+    /// Holding register
+    HoldingRegister,
+    /// Input register
+    InputRegister,
+}
+
+/// Modbus read group, represents a group of contiguous registers
+#[derive(Debug, Clone)]
+pub struct ModbusReadGroup {
+    /// Group type
+    pub group_type: ModbusReadGroupType,
+    /// Slave ID
+    pub slave_id: u8,
+    /// Start address
+    pub start_address: u16,
+    /// Register quantity
+    pub quantity: u16,
+    /// Mapping table, maps point ID to register offset
+    pub mappings: HashMap<String, (usize, ModbusRegisterMapping)>,
+}
+
+impl ModbusReadGroup {
+    /// Create a new read group
+    pub fn new(group_type: ModbusReadGroupType, slave_id: u8, start_address: u16) -> Self {
+        Self {
+            group_type,
+            slave_id,
+            start_address,
+            quantity: 0,
+            mappings: HashMap::new(),
+        }
+    }
+
+    /// Add a point mapping to the read group
+    pub fn add_mapping(&mut self, point_id: String, mapping: ModbusRegisterMapping) -> Result<()> {
+        // Calculate the offset relative to the start address
+        let offset = (mapping.address - self.start_address) as usize;
+        
+        // Update the group size
+        let end_address = mapping.address + mapping.quantity - 1;
+        let group_end = self.start_address + self.quantity - 1;
+        
+        if end_address > group_end {
+            self.quantity = end_address - self.start_address + 1;
+        }
+        
+        // Add mapping
+        self.mappings.insert(point_id, (offset, mapping));
+        
+        Ok(())
+    }
+    
+    /// Check if a point can be added to this read group
+    pub fn can_add(&self, mapping: &ModbusRegisterMapping, max_gap: u16, max_size: u16) -> bool {
+        // Check if exceeds maximum group size
+        if mapping.address < self.start_address {
+            // Point is before the group
+            if self.start_address - mapping.address > max_gap {
+                return false; // Gap too large
+            }
+            
+            let new_size = self.start_address + self.quantity - mapping.address;
+            if new_size > max_size {
+                return false; // Group would become too large
+            }
+        } else {
+            // Point is after the group
+            let current_end = self.start_address + self.quantity - 1;
+            if mapping.address > current_end && mapping.address - current_end > max_gap {
+                return false; // Gap too large
+            }
+            
+            let new_end = mapping.address + mapping.quantity - 1;
+            let new_size = new_end - self.start_address + 1;
+            if new_size > max_size {
+                return false; // Group would become too large
+            }
+        }
+        
+        true
+    }
+    
+    /// Get the Modbus function code for this group type
+    fn get_function_code(&self) -> u8 {
+        match self.group_type {
+            ModbusReadGroupType::Coil => 0x01,            // Read Coils
+            ModbusReadGroupType::DiscreteInput => 0x02,   // Read Discrete Inputs
+            ModbusReadGroupType::HoldingRegister => 0x03, // Read Holding Registers
+            ModbusReadGroupType::InputRegister => 0x04,   // Read Input Registers
+        }
+    }
+
+    /// Build the Modbus PDU (Protocol Data Unit) for the read request
+    /// PDU = [Function Code (1 byte)] [Start Address (2 bytes)] [Quantity (2 bytes)]
+    pub fn build_request_pdu(&self) -> Vec<u8> {
+        let function_code = self.get_function_code();
+        let start_addr_bytes = self.start_address.to_be_bytes();
+        let quantity_bytes = self.quantity.to_be_bytes();
+        
+        vec![
+            function_code,
+            start_addr_bytes[0],
+            start_addr_bytes[1],
+            quantity_bytes[0],
+            quantity_bytes[1],
+        ]
+    }
+}
+
+/// Modbus point optimizer, used to merge points into optimal read groups
+pub struct ModbusOptimizer {
+    /// Maximum allowed register gap, create a new read group if exceeded
+    max_gap: u16,
+    /// Maximum size of a single read group
+    max_group_size: u16,
+}
+
+impl ModbusOptimizer {
+    /// Create a new point optimizer
+    pub fn new(max_gap: u16, max_group_size: u16) -> Self {
+        Self {
+            max_gap,
+            max_group_size,
+        }
+    }
+
+    /// Create optimizer with default settings
+    pub fn default() -> Self {
+        // Default settings: max gap 10 registers, max group size 125 registers
+        Self::new(10, 125)
+    }
+
+    /// Create optimizer from channel configuration
+    pub fn from_channel(channel_id: &str, params: &serde_yaml::Value) -> Self {
+        // Get maximum gap, default to 10
+        let max_gap = params.get("max_register_gap")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(10) as u16;
+            
+        // Get maximum group size, default to 125
+        let max_group_size = params.get("max_read_group_size")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(125) as u16;
+            
+        // Check if optimization is disabled
+        let optimize_enabled = params.get("optimize_reads")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(true);
+            
+        if !optimize_enabled {
+            // If optimization is disabled, set max gap to 0 so each point is read individually
+            info!("Batch read optimization disabled for channel {}", channel_id);
+            Self::new(0, 1)
+        } else {
+            info!("Batch read optimization for channel {}: max_gap={}, max_group_size={}", 
+                channel_id, max_gap, max_group_size);
+            Self::new(max_gap, max_group_size)
+        }
+    }
+
+    /// Generate optimized read groups based on point mappings
+    pub fn optimize(&self, mappings: &[ModbusRegisterMapping], slave_id: u8) -> Vec<ModbusReadGroup> {
+        let mut groups: Vec<ModbusReadGroup> = Vec::new();
+        
+        // Classify by register type
+        let mut coils: Vec<&ModbusRegisterMapping> = Vec::new();
+        let mut discrete_inputs: Vec<&ModbusRegisterMapping> = Vec::new();
+        let mut holding_registers: Vec<&ModbusRegisterMapping> = Vec::new();
+        let mut input_registers: Vec<&ModbusRegisterMapping> = Vec::new();
+        
+        for mapping in mappings {
+            match mapping.data_type {
+                ModbusDataType::Bool => {
+                    // Determine if this is a coil or discrete input based on specific implementation
+                    // In this example, we assume it's a coil
+                    coils.push(mapping);
+                },
+                _ => {
+                    // Other data types are typically holding registers
+                    holding_registers.push(mapping);
+                }
+            }
+        }
+        
+        // Sort and group points by type
+        let coil_groups = self.optimize_type(
+            &coils, ModbusReadGroupType::Coil, slave_id
+        );
+        
+        let discrete_input_groups = self.optimize_type(
+            &discrete_inputs, ModbusReadGroupType::DiscreteInput, slave_id
+        );
+        
+        let holding_register_groups = self.optimize_type(
+            &holding_registers, ModbusReadGroupType::HoldingRegister, slave_id
+        );
+        
+        let input_register_groups = self.optimize_type(
+            &input_registers, ModbusReadGroupType::InputRegister, slave_id
+        );
+        
+        // Merge all groups
+        groups.extend(coil_groups);
+        groups.extend(discrete_input_groups);
+        groups.extend(holding_register_groups);
+        groups.extend(input_register_groups);
+        
+        info!("Number of optimized read groups: {}", groups.len());
+        for (i, group) in groups.iter().enumerate() {
+            debug!(
+                "Read group #{}: type={:?}, start_address={}, quantity={}, point_count={}",
+                i, group.group_type, group.start_address, group.quantity, group.mappings.len()
+            );
+        }
+        
+        groups
+    }
+
+    /// Optimize points of a specific type
+    fn optimize_type(
+        &self,
+        mappings: &[&ModbusRegisterMapping],
+        group_type: ModbusReadGroupType,
+        slave_id: u8
+    ) -> Vec<ModbusReadGroup> {
+        let mut sorted_mappings = mappings.to_vec();
+        sorted_mappings.sort_by_key(|m| m.address);
+        
+        let mut groups: Vec<ModbusReadGroup> = Vec::new();
+        
+        for mapping in sorted_mappings {
+            let mut added = false;
+            
+            // Try to add to existing group
+            for group in &mut groups {
+                if group.can_add(mapping, self.max_gap, self.max_group_size) {
+                    // If point is before the group, adjust group start address
+                    if mapping.address < group.start_address {
+                        let old_start = group.start_address;
+                        group.start_address = mapping.address;
+                        
+                        // Adjust existing mapping offsets
+                        let offset_change = old_start - mapping.address;
+                        for (_, (offset, _)) in &mut group.mappings {
+                            *offset += offset_change as usize;
+                        }
+                    }
+                    
+                    // Add mapping
+                    group.add_mapping(mapping.point_id.clone(), mapping.clone()).ok();
+                    added = true;
+                    break;
+                }
+            }
+            
+            // If cannot add to existing group, create a new group
+            if !added {
+                let mut new_group = ModbusReadGroup::new(group_type, slave_id, mapping.address);
+                new_group.add_mapping(mapping.point_id.clone(), mapping.clone()).ok();
+                groups.push(new_group);
+            }
+        }
+        
+        groups
+    }
+}
+
+/// Calculate Modbus RTU CRC16 checksum
+fn crc16_modbus(data: &[u8]) -> u16 {
+    let mut crc: u16 = 0xFFFF;
+    for byte in data {
+        crc ^= *byte as u16;
+        for _ in 0..8 {
+            if (crc & 0x0001) != 0 {
+                crc >>= 1;
+                crc ^= 0xA001; // Polynomial for Modbus CRC
+            } else {
+                crc >>= 1;
+            }
+        }
+    }
+    crc // CRC is returned directly, need to handle byte order when appending
 } 

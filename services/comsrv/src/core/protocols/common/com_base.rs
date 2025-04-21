@@ -86,7 +86,7 @@ pub trait ComBase: Send + Sync {
     }
     /// Get all points' real-time data from the channel
     async fn get_all_points(&self) -> Vec<PointData> {
-        Vec::new() // 默认实现返回空数组
+        Vec::new() // Default implementation returns an empty vector
     }
 }
 
@@ -143,10 +143,10 @@ impl ComBaseImpl {
     /// Get protocol parameters as HashMap
     pub fn get_parameters(&self) -> HashMap<String, String> {
         let mut params = HashMap::new();
-        // 将配置转为HashMap
+        // Convert configuration to HashMap
         params.insert("protocol".to_string(), self.protocol_type.clone());
         params.insert("channel_id".to_string(), self.channel_id.clone());
-        // 实际实现中可以添加更多从config中提取的参数
+        // More parameters extracted from config can be added in actual implementation
         params
     }
     

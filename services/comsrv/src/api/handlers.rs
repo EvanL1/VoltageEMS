@@ -21,7 +21,7 @@ pub async fn get_service_status(
     let factory = protocol_factory.read().await;
     let channels = factory.get_all_channels().await.len() as u32;
     
-    // 计算活跃通道数
+    // Calculate the number of active channels
     let mut active_channels = 0;
     for (_, channel) in factory.get_all_channels().await.iter() {
         if channel.is_running().await {
@@ -141,12 +141,12 @@ pub async fn control_channel(
 pub async fn health_check(
     start_time: Arc<chrono::DateTime<Utc>>,
 ) -> Result<impl Reply, Infallible> {
-    // 简单版本，实际项目中可能需要收集更多信息
+    // Simple version, more information might need to be collected in a real project
     let status = HealthStatus {
         status: "OK".to_string(),
         uptime: (Utc::now() - *start_time).num_seconds() as u64,
-        memory_usage: 0,  // 实际实现需要获取真实数据
-        cpu_usage: 0.0,   // 实际实现需要获取真实数据
+        memory_usage: 0,  // Real implementation needs to fetch actual data
+        cpu_usage: 0.0,   // Real implementation needs to fetch actual data
     };
     
     Ok(warp::reply::json(&ApiResponse::success(status)))
@@ -162,10 +162,10 @@ pub async fn read_point(
     let factory = protocol_factory.read().await;
     
     if let Some(channel) = factory.get_channel(&channel_id).await {
-        // 从通道获取点位数据
+        // Get point data from the channel
         let channel_points = channel.get_all_points().await;
         
-        // 尝试找到指定的点位
+        // Try to find the specified point
         let mut point_value = None;
         for point in channel_points {
             if point.id == point_name {
@@ -179,7 +179,7 @@ pub async fn read_point(
             }
         }
         
-        // 如果找到点位，返回其值，否则返回错误
+        // If the point is found, return its value, otherwise return an error
         if let Some(value) = point_value {
             Ok(warp::reply::json(&ApiResponse::success(value)))
         } else {
@@ -205,7 +205,7 @@ pub async fn write_point(
     let mut factory = protocol_factory.write().await;
     
     if let Some(channel) = factory.get_channel_mut(&channel_id).await {
-        // 首先获取所有点位，检查点位是否存在
+        // First, get all points to check if the point exists
         let channel_points = channel.get_all_points().await;
         let mut found = false;
         
@@ -223,9 +223,10 @@ pub async fn write_point(
             return Ok(warp::reply::json(&error_response));
         }
         
-        // 这里应实现实际的点位写入逻辑
-        // 由于我们没有实现ModbusClient实际的写入功能，这里简化处理，返回成功
-        // 在实际场景中，应根据点位类型和值调用相应的写入方法
+        // Actual point writing logic should be implemented here
+        // Since the ModbusClient write functionality is not fully implemented,
+        // this is simplified to return success.
+        // In a real scenario, the appropriate write method should be called based on point type and value.
         
         let message = format!(
             "Successfully wrote value {} to point {}.{}", 
@@ -249,7 +250,7 @@ pub async fn get_channel_points(
     if let Some(channel) = factory.get_channel(&channel_id).await {
         let mut points = Vec::new();
         
-        // 获取该通道所有点位的最新值
+        // Get all points from the channel
         let channel_points = channel.get_all_points().await;
         for point in channel_points {
             let point_value = PointValue {
