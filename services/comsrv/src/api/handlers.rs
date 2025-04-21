@@ -54,7 +54,7 @@ pub async fn get_all_channels(
             .unwrap_or_else(|_| json!({}));
         
         channel_statuses.push(ApiChannelStatus {
-            id: id.clone(),
+            id: id.to_string(),
             name: channel.name().to_string(),
             protocol: channel.protocol_type().to_string(),
             connected: status.connected,
@@ -76,7 +76,8 @@ pub async fn get_channel_status(
 ) -> Result<impl Reply, Rejection> {
     let factory = protocol_factory.read().await;
     
-    if let Some(channel) = factory.get_channel(&id).await {
+    let id_u16 = id.parse::<u16>().map_err(|_| warp::reject::reject())?;
+    if let Some(channel) = factory.get_channel(id_u16).await {
         let status = channel.status().await;
         let params = serde_json::to_value(&channel.get_parameters())
             .unwrap_or_else(|_| json!({}));
@@ -108,7 +109,8 @@ pub async fn control_channel(
 ) -> Result<impl Reply, Rejection> {
     let mut factory = protocol_factory.write().await;
     
-    if let Some(channel) = factory.get_channel_mut(&id).await {
+    let id_u16 = id.parse::<u16>().map_err(|_| warp::reject::reject())?;
+    if let Some(channel) = factory.get_channel_mut(id_u16).await {
         let result = match operation.operation.as_str() {
             "start" => channel.start().await,
             "stop" => channel.stop().await,
@@ -161,7 +163,8 @@ pub async fn read_point(
 ) -> Result<impl Reply, Rejection> {
     let factory = protocol_factory.read().await;
     
-    if let Some(channel) = factory.get_channel(&channel_id).await {
+    let channel_id_u16 = channel_id.parse::<u16>().map_err(|_| warp::reject::reject())?;
+    if let Some(channel) = factory.get_channel(channel_id_u16).await {
         // Get point data from the channel
         let channel_points = channel.get_all_points().await;
         
@@ -204,7 +207,8 @@ pub async fn write_point(
 ) -> Result<impl Reply, Rejection> {
     let mut factory = protocol_factory.write().await;
     
-    if let Some(channel) = factory.get_channel_mut(&channel_id).await {
+    let channel_id_u16 = channel_id.parse::<u16>().map_err(|_| warp::reject::reject())?;
+    if let Some(channel) = factory.get_channel_mut(channel_id_u16).await {
         // First, get all points to check if the point exists
         let channel_points = channel.get_all_points().await;
         let mut found = false;
@@ -247,7 +251,8 @@ pub async fn get_channel_points(
 ) -> Result<impl Reply, Rejection> {
     let factory = protocol_factory.read().await;
     
-    if let Some(channel) = factory.get_channel(&channel_id).await {
+    let channel_id_u16 = channel_id.parse::<u16>().map_err(|_| warp::reject::reject())?;
+    if let Some(channel) = factory.get_channel(channel_id_u16).await {
         let mut points = Vec::new();
         
         // Get all points from the channel

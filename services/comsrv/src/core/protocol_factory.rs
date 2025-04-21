@@ -1,8 +1,9 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
+use std::borrow::Borrow;
 
-use crate::core::config::config_manager::ChannelConfig;
+use crate::core::config::config_manager::{ChannelConfig, ProtocolType};
 use crate::core::protocols::common::ComBase;
 use crate::utils::{ComSrvError, Result};
 
@@ -14,7 +15,7 @@ pub struct ProtocolFactory {
     /// Registered protocol creators
     creators: Arc<RwLock<HashMap<String, ProtocolCreator>>>,
     /// Store created channels
-    channels: HashMap<String, Box<dyn ComBase>>,
+    channels: HashMap<u16, Box<dyn ComBase>>,
 }
 
 impl ProtocolFactory {
@@ -54,7 +55,8 @@ impl ProtocolFactory {
     pub async fn create_protocol(&self, config: ChannelConfig) -> Result<Box<dyn ComBase>> {
         let creators = self.creators.read().await;
         
-        let creator = creators.get(&config.protocol).ok_or_else(|| {
+        let protocol_str = config.protocol.to_string();
+        let creator = creators.get(&protocol_str).ok_or_else(|| {
             ComSrvError::ConfigError(format!(
                 "Unknown protocol type: {}",
                 config.protocol
@@ -98,28 +100,28 @@ impl ProtocolFactory {
         let protocol = self.create_protocol(config.clone()).await?;
         
         // Add to channel mapping
-        self.channels.insert(config.id.clone(), protocol);
+        self.channels.insert(config.id, protocol);
         Ok(())
     }
     
     /// Get all channels mutable reference
-    pub async fn get_all_channels_mut(&mut self) -> &mut HashMap<String, Box<dyn ComBase>> {
+    pub async fn get_all_channels_mut(&mut self) -> &mut HashMap<u16, Box<dyn ComBase>> {
         &mut self.channels
     }
     
     /// Get all channels
-    pub async fn get_all_channels(&self) -> &HashMap<String, Box<dyn ComBase>> {
+    pub async fn get_all_channels(&self) -> &HashMap<u16, Box<dyn ComBase>> {
         &self.channels
     }
     
     /// Get channel by ID
-    pub async fn get_channel(&self, id: &str) -> Option<&Box<dyn ComBase>> {
-        self.channels.get(id)
+    pub async fn get_channel(&self, id: u16) -> Option<&Box<dyn ComBase>> {
+        self.channels.get(&id)
     }
     
     /// Get the mutable reference of the channel by ID
-    pub async fn get_channel_mut(&mut self, id: &str) -> Option<&mut Box<dyn ComBase>> {
-        self.channels.get_mut(id)
+    pub async fn get_channel_mut(&mut self, id: u16) -> Option<&mut Box<dyn ComBase>> {
+        self.channels.get_mut(&id)
     }
 }
 

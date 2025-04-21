@@ -6,6 +6,8 @@ use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
 use tokio::task;
 use std::ops::Deref;
+use hyper::{Body, Response, Server, Request};
+use hyper::service::{make_service_fn, service_fn};
 
 use crate::utils::{ComSrvError, Result};
 

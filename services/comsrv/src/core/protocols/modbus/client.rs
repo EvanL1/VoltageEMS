@@ -83,7 +83,7 @@ impl ModbusClientBase {
             
         // Create object    
         Self {
-            base: ComBaseImpl::new(name, &config.protocol.clone(), config),
+            base: ComBaseImpl::new(name, &config.protocol.to_string(), config),
             slave_id,
             timeout_ms,
             retry_count,
@@ -113,7 +113,7 @@ impl ModbusClientBase {
     }
     
     /// Get channel ID
-    pub fn channel_id(&self) -> &str {
+    pub fn channel_id(&self) -> String {
         self.base.channel_id()
     }
     
@@ -129,9 +129,7 @@ impl ModbusClientBase {
     
     /// Get current status
     pub async fn status(&self) -> ChannelStatus {
-        let mut status = self.base.status().await;
-        status.connected = self.is_connected().await;
-        status
+        self.base.status().await
     }
     
     /// Set connected status
@@ -140,7 +138,8 @@ impl ModbusClientBase {
         *c = connected;
         
         // Update channel status
-        let mut status = ChannelStatus::new(self.base.channel_id());
+        let channel_id = self.base.channel_id();
+        let mut status = ChannelStatus::new(&channel_id);
         status.connected = connected;
         status.last_update_time = Utc::now();
         
@@ -157,7 +156,8 @@ impl ModbusClientBase {
     /// Set error information
     pub async fn set_error(&self, error: &str) {
         // Update channel status
-        let mut status = ChannelStatus::new(self.base.channel_id());
+        let channel_id = self.base.channel_id();
+        let mut status = ChannelStatus::new(&channel_id);
         status.connected = false;
         status.last_error = error.to_string();
         status.last_update_time = Utc::now();
@@ -546,19 +546,19 @@ impl ModbusOptimizer {
     }
 
     /// Create optimizer from channel configuration
-    pub fn from_channel(channel_id: &str, params: &serde_yaml::Value) -> Self {
+    pub fn from_channel(channel_id: &str, params: &ChannelConfig) -> Self {
         // Get maximum gap, default to 10
-        let max_gap = params.get("max_register_gap")
+        let max_gap = params.parameters.get("max_register_gap")
             .and_then(|v| v.as_u64())
             .unwrap_or(10) as u16;
             
         // Get maximum group size, default to 125
-        let max_group_size = params.get("max_read_group_size")
+        let max_group_size = params.parameters.get("max_read_group_size")
             .and_then(|v| v.as_u64())
             .unwrap_or(125) as u16;
             
         // Check if optimization is disabled
-        let optimize_enabled = params.get("optimize_reads")
+        let optimize_enabled = params.parameters.get("optimize_reads")
             .and_then(|v| v.as_bool())
             .unwrap_or(true);
             

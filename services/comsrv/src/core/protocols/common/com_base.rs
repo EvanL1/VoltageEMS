@@ -95,7 +95,7 @@ pub struct ComBaseImpl {
     /// Service name
     name: String,
     /// Channel ID
-    channel_id: String,
+    channel_id: u16,
     /// Protocol type
     protocol_type: String,
     /// Channel configuration
@@ -111,8 +111,8 @@ pub struct ComBaseImpl {
 impl ComBaseImpl {
     /// Create a new ComBaseImpl instance
     pub fn new(name: &str, protocol_type: &str, config: ChannelConfig) -> Self {
-        let channel_id = config.id.clone();
-        let status = ChannelStatus::new(&channel_id);
+        let channel_id = config.id;
+        let status = ChannelStatus::new(&channel_id.to_string());
         
         Self {
             name: name.to_string(),
@@ -131,8 +131,8 @@ impl ComBaseImpl {
     }
     
     /// Get the channel ID
-    pub fn channel_id(&self) -> &str {
-        &self.channel_id
+    pub fn channel_id(&self) -> String {
+        self.channel_id.to_string()
     }
     
     /// Get protocol type
@@ -145,7 +145,7 @@ impl ComBaseImpl {
         let mut params = HashMap::new();
         // Convert configuration to HashMap
         params.insert("protocol".to_string(), self.protocol_type.clone());
-        params.insert("channel_id".to_string(), self.channel_id.clone());
+        params.insert("channel_id".to_string(), self.channel_id.to_string());
         // More parameters extracted from config can be added in actual implementation
         params
     }

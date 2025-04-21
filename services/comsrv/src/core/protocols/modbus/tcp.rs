@@ -29,27 +29,31 @@ pub struct ModbusTcpClient {
     /// Modbus client context
     client: Arc<Mutex<Option<client::Context>>>,
     transaction_id: AtomicU16, // Simple transaction ID counter
+    channel_id_str: String,
 }
 
 impl ModbusTcpClient {
     /// Create a new Modbus TCP client
     pub fn new(config: ChannelConfig) -> Self {
-        // Get TCP connection parameters
+        // Get parameters from configuration
         let params = &config.parameters;
         let host = params.get("host")
-            .and_then(|v| if let Some(s) = v.as_str() { Some(s.to_string()) } else { None })
-            .unwrap_or("127.0.0.1".to_string());
+            .and_then(|v| v.as_str().map(|s| s.to_string()))
+            .unwrap_or_else(|| "localhost".to_string());
             
         let port = params.get("port")
             .and_then(|v| v.as_u64())
             .unwrap_or(502) as u16;
             
+        let channel_id_str = config.id.to_string();
+        
         Self {
             base: ModbusClientBase::new("ModbusTcpClient", config),
-            host,
+            host: host,
             port,
             client: Arc::new(Mutex::new(None)),
             transaction_id: AtomicU16::new(0), // Initialize counter
+            channel_id_str,
         }
     }
     
@@ -497,7 +501,7 @@ impl ComBase for ModbusTcpClient {
     }
     
     fn channel_id(&self) -> &str {
-        self.base.channel_id()
+        &self.channel_id_str
     }
     
     fn protocol_type(&self) -> &str {
@@ -580,8 +584,8 @@ impl ComBase for ModbusTcpClient {
             return points;
         }
         
-        // Use optimizer to generate optimal read groups
-        let optimizer = ModbusOptimizer::from_channel(self.base.channel_id(), &self.base.get_config().parameters);
+        // Create optimizer for reading registers
+        let optimizer = ModbusOptimizer::from_channel(&self.channel_id_str, &self.base.config());
         let read_groups = optimizer.optimize(&register_mappings, self.base.slave_id());
         
         info!("Using optimized batch read with {} read groups", read_groups.len());
@@ -618,74 +622,56 @@ impl ComBase for ModbusTcpClient {
             // would need to be refactored to handle raw byte transmission and reception.
 
             // Select read method based on group type
-            let register_values = match group.group_type {
+            let result: Result<Vec<u16>> = match group.group_type {
                 ModbusReadGroupType::Coil => {
-                    match self.read_coils(group.start_address, group.quantity).await {
-                        Ok(values) => {
-                            // Convert boolean values to u16 array for unified processing
-                            values.into_iter().map(|v| if v { 1u16 } else { 0u16 }).collect::<Vec<u16>>()
-                        },
-                        Err(e) => {
-                            error!("Failed to read coils: {}", e);
-                            continue;
-                        }
-                    }
+                    self.read_coils(group.start_address, group.quantity).await
+                        .map(|bools| bools.into_iter().map(|b| if b { 1u16 } else { 0u16 }).collect())
                 },
                 ModbusReadGroupType::DiscreteInput => {
-                    match self.read_discrete_inputs(group.start_address, group.quantity).await {
-                        Ok(values) => {
-                            // Convert boolean values to u16 array for unified processing
-                            values.into_iter().map(|v| if v { 1u16 } else { 0u16 }).collect::<Vec<u16>>()
-                        },
-                        Err(e) => {
-                            error!("Failed to read discrete inputs: {}", e);
-                            continue;
-                        }
-                    }
+                    self.read_discrete_inputs(group.start_address, group.quantity).await
+                        .map(|bools| bools.into_iter().map(|b| if b { 1u16 } else { 0u16 }).collect())
                 },
-                ModbusReadGroupType::HoldingRegister => {
-                    match self.read_holding_registers(group.start_address, group.quantity).await {
-                        Ok(values) => values,
-                        Err(e) => {
-                            error!("Failed to read holding registers: {}", e);
-                            continue;
-                        }
-                    }
-                },
-                ModbusReadGroupType::InputRegister => {
-                    match self.read_input_registers(group.start_address, group.quantity).await {
-                        Ok(values) => values,
-                        Err(e) => {
-                            error!("Failed to read input registers: {}", e);
-                            continue;
-                        }
-                    }
-                },
+                ModbusReadGroupType::HoldingRegister => self.read_holding_registers(group.start_address, group.quantity).await,
+                ModbusReadGroupType::InputRegister => self.read_input_registers(group.start_address, group.quantity).await,
             };
             
             // Process the read values and update corresponding points
-            for (point_id, (offset, mapping)) in &group.mappings {
-                // Check if there is enough register data
-                if *offset + mapping.quantity as usize > register_values.len() {
-                    warn!("Insufficient register values for point {}", point_id);
-                    continue;
-                }
-                
-                // Extract register values for the point
-                let registers = &register_values[*offset..*offset + mapping.quantity as usize];
-                
-                // Parse register values
-                match self.parse_registers(registers, mapping) {
-                    Ok(value) => {
-                        // Update point value
-                        if let Some(&index) = point_id_to_index.get(point_id) {
-                            points[index].value = value;
-                            points[index].quality = true;
-                            points[index].timestamp = Utc::now();
+            match result {
+                Ok(data) => {
+                    // Process the read values and update corresponding points
+                    for (point_id, (offset, mapping)) in &group.mappings {
+                        // Check if there is enough register data
+                        if *offset + mapping.quantity as usize > data.len() {
+                            warn!("Insufficient register values for point {}", point_id);
+                            continue;
                         }
-                    },
-                    Err(e) => {
-                        error!("Failed to parse registers for point {}: {}", point_id, e);
+                        
+                        // Extract register values for the point
+                        let registers = &data[*offset..*offset + mapping.quantity as usize];
+                        
+                        // Parse register values
+                        match self.parse_registers(registers, mapping) {
+                            Ok(value) => {
+                                // Update point value
+                                if let Some(&index) = point_id_to_index.get(point_id) {
+                                    points[index].value = value;
+                                    points[index].quality = true;
+                                    points[index].timestamp = Utc::now();
+                                }
+                            },
+                            Err(e) => {
+                                error!("Failed to parse registers for point {}: {}", point_id, e);
+                                if let Some(&index) = point_id_to_index.get(point_id) {
+                                    points[index].quality = false;
+                                }
+                            }
+                        }
+                    }
+                },
+                Err(e) => {
+                    error!("Failed to read data: {}", e);
+                    // 修改：标记所有与该组关联的点位为质量不好
+                    for (point_id, _) in &group.mappings {
                         if let Some(&index) = point_id_to_index.get(point_id) {
                             points[index].quality = false;
                         }

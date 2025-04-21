@@ -1,9 +1,10 @@
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use redis::{AsyncCommands, Client};
-use redis::aio::ConnectionManager;
+use redis::aio::Connection;
 use serde::{Serialize, Deserialize};
 use crate::utils::error::{ComSrvError, Result};
+use crate::core::config::config_manager::RedisConfig;
 
 /// realtime value structure
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -16,7 +17,7 @@ pub struct RealtimeValue {
 /// Redis storage structure
 #[derive(Clone)]
 pub struct RedisStore {
-    conn: Arc<Mutex<ConnectionManager>>,  // Redis connection pool
+    conn: Arc<Mutex<Connection>>,  // Redis connection
 }
 
 impl RedisStore {
@@ -40,9 +41,11 @@ impl RedisStore {
         let client = Client::open(url)
             .map_err(|e| ComSrvError::RedisError(format!("Invalid Redis URL: {}", e)))?;
 
-        let mut conn = ConnectionManager::new(client).await
+        let conn = client.get_async_connection().await
             .map_err(|e| ComSrvError::RedisError(format!("Failed to connect Redis: {}", e)))?;
 
+        let mut conn = conn;
+        
         if let Some(db_index) = config.db {
             redis::cmd("SELECT").arg(db_index)
                 .query_async(&mut conn).await
