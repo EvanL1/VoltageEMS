@@ -386,11 +386,11 @@ impl ModbusClientFactory {
     pub fn create_client(config: ChannelConfig) -> Result<Box<dyn ModbusClient>> {
         // Create different clients based on the protocol type
         let client: Box<dyn ModbusClient> = match config.protocol.as_str() {
-            "modbus_tcp" => {
+            "ModbusTcp" => {
                 info!("Creating Modbus TCP client for channel: {}", config.id);
                 Box::new(super::tcp::ModbusTcpClient::new(config))
             },
-            "modbus_rtu" => {
+            "ModbusRtu" => {
                 info!("Creating Modbus RTU client for channel: {}", config.id);
                 Box::new(super::rtu::ModbusRtuClient::new(config))
             },

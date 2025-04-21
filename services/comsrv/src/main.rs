@@ -87,8 +87,8 @@ async fn main() -> Result<()> {
         tracing::info!("Registering protocol implementations");
         
         // Register Modbus TCP and RTU protocols
-        factory.register_protocol("modbus_tcp", create_modbus_tcp).await?;
-        factory.register_protocol("modbus_rtu", create_modbus_rtu).await?;
+        factory.register_protocol("ModbusTcp", create_modbus_tcp).await?;
+        factory.register_protocol("ModbusRtu", create_modbus_rtu).await?;
     }
     
     // Initialize channels

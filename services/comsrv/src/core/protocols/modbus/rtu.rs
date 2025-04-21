@@ -573,12 +573,12 @@ impl ComBase for ModbusRtuClient {
     }
     
     fn protocol_type(&self) -> &str {
-        "modbus_rtu"
+        "ModbusRtu"
     }
     
     fn get_parameters(&self) -> HashMap<String, String> {
         let mut params = HashMap::new();
-        params.insert("protocol".to_string(), "modbus_rtu".to_string());
+        params.insert("protocol".to_string(), "ModbusRtu".to_string());
         params.insert("device".to_string(), self.device.clone());
         params.insert("baud_rate".to_string(), self.baud_rate.to_string());
         params.insert("slave_id".to_string(), self.base.slave_id().to_string());

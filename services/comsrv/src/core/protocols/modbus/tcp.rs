@@ -505,12 +505,12 @@ impl ComBase for ModbusTcpClient {
     }
     
     fn protocol_type(&self) -> &str {
-        "modbus_tcp"
+        "ModbusTcp"
     }
     
     fn get_parameters(&self) -> HashMap<String, String> {
         let mut params = HashMap::new();
-        params.insert("protocol".to_string(), "modbus_tcp".to_string());
+        params.insert("protocol".to_string(), "ModbusTcp".to_string());
         params.insert("host".to_string(), self.host.clone());
         params.insert("port".to_string(), self.port.to_string());
         params.insert("slave_id".to_string(), self.base.slave_id().to_string());
@@ -535,7 +535,8 @@ impl ComBase for ModbusTcpClient {
                 info!("Modbus TCP connection successful: {}:{}", self.host, self.port);
                 
                 // Load point tables
-                let config_path = std::env::var("CONFIG_DIR").unwrap_or_else(|_| "./config".to_string());
+                let config_path = std::env::var("CONFIG_PATH").unwrap_or_else(|_| "./config".to_string());
+                info!("Loading point tables from config path: {}", config_path);
                 if let Err(e) = self.base.load_point_tables(&config_path).await {
                     error!("Failed to load point tables: {}", e);
                 }
