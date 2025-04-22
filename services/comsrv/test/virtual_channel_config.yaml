@@ -1,0 +1,37 @@
+version: "1.0"
+service:
+  name: "comsrv"
+  description: "Communication Service for industrial protocols"
+  version: "1.0"
+  api:
+    enabled: true
+    version: "v1"
+    bind_address: "0.0.0.0:3000"  
+  metrics:
+    enabled: true
+    bind_address: "0.0.0.0:9100"
+  redis:
+    enabled: true
+    connection_type: "Tcp"
+    address: "tcp://redis:6379"
+    db: 0
+  logging:
+    level: "debug" 
+    file: "./logs/comsrv.log"
+    max_size: 10485760  # 10MB
+    max_files: 5
+    console: true
+
+channels:
+  - id: 1
+    name: "Virtual Channel Test"
+    description: "Virtual Channel for testing message formats"
+    protocol: "ModbusTcp"
+    parameters:
+      host: "virtual-channel"  # 使用Docker网络中的服务名称
+      port: 9000              # 虚拟通道端口
+      timeout: 1000
+      max_retries: 3
+      poll_rate: 1000
+      point_tables:
+        default: "./config/points/virtual_channel_test.csv" 
