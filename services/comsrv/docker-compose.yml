@@ -16,11 +16,30 @@ services:
     volumes:
       - ./config:/app/config
       - ./logs:/app/logs
+      - ./test:/app/test
     networks:
       - voltage-network
     depends_on:
       - redis
       - modbus-simulator
+      - virtual-channel
+    command: /app/start.sh
+
+  # 虚拟通道模拟器
+  virtual-channel:
+    image: python:latest
+    container_name: voltage-virtual-channel
+    restart: unless-stopped
+    ports:
+      - "9000:9000"  # 虚拟通道端口
+    volumes:
+      - ./test:/app
+      - ./logs:/app/logs
+    working_dir: /app
+    command: >
+      bash -c "python3 virtual_channel_simulator.py --host 0.0.0.0 --port 9000 -v --log-dir /app/logs"
+    networks:
+      - voltage-network
 
   # Redis服务
   redis:
