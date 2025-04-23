@@ -19,11 +19,11 @@ pub async fn get_service_status(
     protocol_factory: Arc<RwLock<ProtocolFactory>>,
 ) -> Result<impl Reply, Rejection> {
     let factory = protocol_factory.read().await;
-    let channels = factory.get_all_channels().await.len() as u32;
+    let channels = factory.get_all_channels().len() as u32;
     
     // Calculate the number of active channels
     let mut active_channels = 0;
-    for (_, channel) in factory.get_all_channels().await.iter() {
+    for (_, channel) in factory.get_all_channels().iter() {
         if channel.is_running().await {
             active_channels += 1;
         }
@@ -48,7 +48,7 @@ pub async fn get_all_channels(
     let factory = protocol_factory.read().await;
     let mut channel_statuses = Vec::new();
     
-    for (id, channel) in factory.get_all_channels().await.iter() {
+    for (id, channel) in factory.get_all_channels().iter() {
         let status = channel.status().await;
         let params = serde_json::to_value(&channel.get_parameters())
             .unwrap_or_else(|_| json!({}));
@@ -77,7 +77,7 @@ pub async fn get_channel_status(
     let factory = protocol_factory.read().await;
     
     let id_u16 = id.parse::<u16>().map_err(|_| warp::reject::reject())?;
-    if let Some(channel) = factory.get_channel(id_u16).await {
+    if let Some(channel) = factory.get_channel(id_u16) {
         let status = channel.status().await;
         let params = serde_json::to_value(&channel.get_parameters())
             .unwrap_or_else(|_| json!({}));
@@ -110,7 +110,7 @@ pub async fn control_channel(
     let mut factory = protocol_factory.write().await;
     
     let id_u16 = id.parse::<u16>().map_err(|_| warp::reject::reject())?;
-    if let Some(channel) = factory.get_channel_mut(id_u16).await {
+    if let Some(channel) = factory.get_channel_mut(id_u16) {
         let result = match operation.operation.as_str() {
             "start" => channel.start().await,
             "stop" => channel.stop().await,
@@ -164,7 +164,7 @@ pub async fn read_point(
     let factory = protocol_factory.read().await;
     
     let channel_id_u16 = channel_id.parse::<u16>().map_err(|_| warp::reject::reject())?;
-    if let Some(channel) = factory.get_channel(channel_id_u16).await {
+    if let Some(channel) = factory.get_channel(channel_id_u16) {
         // Get point data from the channel
         let channel_points = channel.get_all_points().await;
         
@@ -208,7 +208,7 @@ pub async fn write_point(
     let mut factory = protocol_factory.write().await;
     
     let channel_id_u16 = channel_id.parse::<u16>().map_err(|_| warp::reject::reject())?;
-    if let Some(channel) = factory.get_channel_mut(channel_id_u16).await {
+    if let Some(channel) = factory.get_channel_mut(channel_id_u16) {
         // First, get all points to check if the point exists
         let channel_points = channel.get_all_points().await;
         let mut found = false;
@@ -252,28 +252,27 @@ pub async fn get_channel_points(
     let factory = protocol_factory.read().await;
     
     let channel_id_u16 = channel_id.parse::<u16>().map_err(|_| warp::reject::reject())?;
-    if let Some(channel) = factory.get_channel(channel_id_u16).await {
-        let mut points = Vec::new();
-        
+    if let Some(channel) = factory.get_channel(channel_id_u16) {
         // Get all points from the channel
         let channel_points = channel.get_all_points().await;
-        for point in channel_points {
-            let point_value = PointValue {
-                name: point.id.clone(),
-                value: point.value.clone(),
+        
+        // Convert to PointValue format
+        let points: Vec<PointValue> = channel_points.into_iter()
+            .map(|point| PointValue {
+                name: point.id,
+                value: point.value,
                 quality: point.quality,
                 timestamp: point.timestamp,
-            };
-            points.push(point_value);
-        }
+            })
+            .collect();
         
-        let point_table_data = PointTableData {
+        let point_table = PointTableData {
             channel_id: channel_id.clone(),
             points,
             timestamp: Utc::now(),
         };
         
-        Ok(warp::reply::json(&ApiResponse::success(point_table_data)))
+        Ok(warp::reply::json(&ApiResponse::success(point_table)))
     } else {
         let error_response = ApiResponse::<()>::error(format!("Channel {} not found", channel_id));
         Ok(warp::reply::json(&error_response))
