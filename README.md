@@ -4,13 +4,29 @@
 
 ## 服务组件
 
-- **Comsrv**: 通信服务，负责与设备通信，采集实时数据
+- **Comsrv**: 基于 Rust 的通信服务，负责与设备通信并采集实时数据
 - **Hissrv**: 历史数据服务，负责将实时数据存储到时序数据库
 - **modsrv**: 模型服务，负责执行实时模型计算和控制策略
 - **netsrv**: 网络服务，负责将数据通过多种协议上送到外部系统
 - **前端配置管理平台**: 基于 Vue.js 的 Web 应用，用于管理各服务的配置文件
 - **API 服务**: 为前端提供配置文件读写接口
 - **Grafana**: 数据可视化平台，嵌入到前端应用中
+
+## 项目目录结构
+
+```
+VoltageEMS/
+├── services/            # 后端微服务
+│   ├── comsrv/          # 通信服务
+│   ├── Hissrv/          # 历史数据服务
+│   ├── modsrv/          # 模型服务
+│   ├── netsrv/          # 网络服务
+│   └── rust-iec60870/   # IEC 60870 协议库
+├── frontend/            # 配置管理前端 (Vue + Electron)
+├── tests/               # 集成测试与示例
+├── examples/            # 示例程序
+└── README.md
+```
 
 ## 系统架构
 
@@ -33,7 +49,7 @@
 
 ## 技术栈
 
-- **Comsrv**: C++
+- **Comsrv**: Rust
 - **Hissrv**: Rust
 - **modsrv**: Rust
 - **netsrv**: Rust
@@ -49,7 +65,6 @@
 
 - Docker 和 Docker Compose
 - Rust 1.67 或更高版本 (开发时需要)
-- C++ 编译器 (开发 Comsrv 时需要)
 - Node.js 16 或更高版本 (开发前端和 API 时需要)
 
 ### 使用 Docker Compose 启动
