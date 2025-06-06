@@ -857,14 +857,13 @@ impl ModbusClient {
     /// Read a point based on its mapping configuration
     async fn read_point_internal(&self, mapping: &ModbusRegisterMapping) -> Result<DataPoint> {
         let start_time = std::time::Instant::now();
-        
-        let raw_value = match mapping.register_type {
+
+        // Read raw register data according to the mapping
+        let registers: Vec<u16> = match mapping.register_type {
             ModbusRegisterType::HoldingRegister => {
-                let values = self.read_holding_registers(mapping.address, 1).await?;
-                values[0] as f64
+                self.read_holding_registers(mapping.address, mapping.register_count()).await?
             }
             ModbusRegisterType::InputRegister => {
-                // Read input registers
                 let result = {
                     let mut client_guard = self.internal_client.lock().await;
                     match client_guard.as_mut() {
@@ -872,97 +871,61 @@ impl ModbusClient {
                             client.read_input_registers(
                                 self.config.slave_id,
                                 mapping.address,
-                                1
+                                mapping.register_count(),
                             ).await
                         }
                         Some(InternalModbusClient::Rtu(client)) => {
                             client.read_input_registers(
                                 self.config.slave_id,
                                 mapping.address,
-                                1
+                                mapping.register_count(),
                             ).await
                         }
                         None => {
                             return Err(ComSrvError::ConnectionError("Client not connected".to_string()));
                         }
                     }
-                };
-                
-                match result {
-                    Ok(values) => values[0] as f64,
-                    Err(e) => {
-                        return Err(ComSrvError::CommunicationError(format!("Read input register failed: {}", e)));
-                    }
-                }
+                }?;
+                result
             }
             ModbusRegisterType::Coil => {
-                // Read coils
                 let result = {
                     let mut client_guard = self.internal_client.lock().await;
                     match client_guard.as_mut() {
                         Some(InternalModbusClient::Tcp(client)) => {
-                            client.read_coils(
-                                self.config.slave_id,
-                                mapping.address,
-                                1
-                            ).await
+                            client.read_coils(self.config.slave_id, mapping.address, 1).await
                         }
                         Some(InternalModbusClient::Rtu(client)) => {
-                            client.read_coils(
-                                self.config.slave_id,
-                                mapping.address,
-                                1
-                            ).await
+                            client.read_coils(self.config.slave_id, mapping.address, 1).await
                         }
                         None => {
                             return Err(ComSrvError::ConnectionError("Client not connected".to_string()));
                         }
                     }
-                };
-                
-                match result {
-                    Ok(values) => if values[0] { 1.0 } else { 0.0 },
-                    Err(e) => {
-                        return Err(ComSrvError::CommunicationError(format!("Read coil failed: {}", e)));
-                    }
-                }
+                }?;
+                vec![if result[0] { 1 } else { 0 }]
             }
             ModbusRegisterType::DiscreteInput => {
-                // Read discrete inputs
                 let result = {
                     let mut client_guard = self.internal_client.lock().await;
                     match client_guard.as_mut() {
                         Some(InternalModbusClient::Tcp(client)) => {
-                            client.read_discrete_inputs(
-                                self.config.slave_id,
-                                mapping.address,
-                                1
-                            ).await
+                            client.read_discrete_inputs(self.config.slave_id, mapping.address, 1).await
                         }
                         Some(InternalModbusClient::Rtu(client)) => {
-                            client.read_discrete_inputs(
-                                self.config.slave_id,
-                                mapping.address,
-                                1
-                            ).await
+                            client.read_discrete_inputs(self.config.slave_id, mapping.address, 1).await
                         }
                         None => {
                             return Err(ComSrvError::ConnectionError("Client not connected".to_string()));
                         }
                     }
-                };
-                
-                match result {
-                    Ok(values) => if values[0] { 1.0 } else { 0.0 },
-                    Err(e) => {
-                        return Err(ComSrvError::CommunicationError(format!("Read discrete input failed: {}", e)));
-                    }
-                }
+                }?;
+                vec![if result[0] { 1 } else { 0 }]
             }
         };
 
-        // Apply data conversion based on mapping configuration
-        let processed_value = self.convert_raw_data_to_value(raw_value, mapping)?;
+        // Convert registers to final value
+        let processed_value = self.convert_registers_to_value(&registers, mapping)?;
 
         Ok(DataPoint {
             id: mapping.name.clone(),
@@ -973,65 +936,43 @@ impl ModbusClient {
         })
     }
 
-    /// Convert raw register data to actual value based on data type and scaling
-    fn convert_raw_data_to_value(&self, raw_value: f64, mapping: &ModbusRegisterMapping) -> Result<f64> {
-        let mut value = raw_value;
+    /// Convert raw Modbus register values to a numeric value
+    fn convert_registers_to_value(&self, registers: &[u16], mapping: &ModbusRegisterMapping) -> Result<f64> {
+        use byteorder::ByteOrder as BO;
 
-        // Apply data type conversion
-        match mapping.data_type {
-            ModbusDataType::UInt16 => {
-                // Value is already correct for uint16
+        // Arrange registers according to byte order
+        let mut regs: Vec<u16> = registers.to_vec();
+        match mapping.byte_order {
+            ByteOrder::BigEndian => {}
+            ByteOrder::LittleEndian => regs.reverse(),
+            ByteOrder::BigEndianWordSwapped => {
+                for r in regs.iter_mut() { *r = r.swap_bytes(); }
             }
-            ModbusDataType::Int16 => {
-                // Convert unsigned to signed 16-bit
-                let raw_u16 = raw_value as u16;
-                value = (raw_u16 as i16) as f64;
-            }
-            ModbusDataType::UInt32 => {
-                // For 32-bit values, we would need to read 2 registers
-                // This is a simplified implementation
-                warn!("UInt32 conversion not fully implemented for single register");
-            }
-            ModbusDataType::Int32 => {
-                // For 32-bit values, we would need to read 2 registers
-                // This is a simplified implementation
-                warn!("Int32 conversion not fully implemented for single register");
-            }
-            ModbusDataType::UInt64 => {
-                // For 64-bit values, we would need to read 4 registers
-                // This is a simplified implementation
-                warn!("UInt64 conversion not fully implemented for single register");
-            }
-            ModbusDataType::Int64 => {
-                // For 64-bit values, we would need to read 4 registers
-                // This is a simplified implementation
-                warn!("Int64 conversion not fully implemented for single register");
-            }
-            ModbusDataType::Float32 => {
-                // For float32, we would need to read 2 registers and convert
-                // This is a simplified implementation
-                warn!("Float32 conversion not fully implemented for single register");
-            }
-            ModbusDataType::Float64 => {
-                // For float64, we would need to read 4 registers and convert
-                // This is a simplified implementation
-                warn!("Float64 conversion not fully implemented for single register");
-            }
-            ModbusDataType::Bool => {
-                value = if raw_value != 0.0 { 1.0 } else { 0.0 };
-            }
-            ModbusDataType::String(_) => {
-                // String types are not supported for numeric register readings
-                warn!("String data type not supported for register readings");
+            ByteOrder::LittleEndianWordSwapped => {
+                for r in regs.iter_mut() { *r = r.swap_bytes(); }
+                regs.reverse();
             }
         }
 
-        // Apply scaling
-        value *= mapping.scale;
+        let bytes: Vec<u8> = regs.iter().flat_map(|r| r.to_be_bytes()).collect();
+        let mut value = match mapping.data_type {
+            ModbusDataType::UInt16 => BO::read_u16(&bytes) as f64,
+            ModbusDataType::Int16 => BO::read_i16(&bytes) as f64,
+            ModbusDataType::UInt32 => BO::read_u32(&bytes) as f64,
+            ModbusDataType::Int32 => BO::read_i32(&bytes) as f64,
+            ModbusDataType::UInt64 => BO::read_u64(&bytes) as f64,
+            ModbusDataType::Int64 => BO::read_i64(&bytes) as f64,
+            ModbusDataType::Float32 => f32::from_bits(BO::read_u32(&bytes)) as f64,
+            ModbusDataType::Float64 => f64::from_bits(BO::read_u64(&bytes)),
+            ModbusDataType::Bool => if registers[0] != 0 { 1.0 } else { 0.0 },
+            ModbusDataType::String(_) => {
+                warn!("String data type not supported for numeric register readings");
+                0.0
+            }
+        };
 
-        // Apply offset
-        value += mapping.offset;
-
+        // Apply scaling and offset
+        value = value * mapping.scale + mapping.offset;
         Ok(value)
     }
 }
