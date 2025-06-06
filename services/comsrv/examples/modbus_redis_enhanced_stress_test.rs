@@ -6,7 +6,7 @@
 //! - 随机数据点生成
 //! - 多频率并发测试
 
-use comsrv::core::protocol_factory::{create_default_factory};
+use comsrv::core::protocols::common::{create_default_factory};
 use comsrv::core::config::config_manager::{ChannelConfig, ChannelParameters, ProtocolType};
 use comsrv::utils::error::Result;
 use redis::Connection;

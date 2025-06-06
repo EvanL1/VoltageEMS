@@ -865,6 +865,27 @@ mod tests {
         }
     }
 
+    /// Create test configuration for Modbus RTU protocol with default serial parameters
+    fn create_modbus_rtu_test_config(id: u16) -> ChannelConfig {
+        let mut parameters = std::collections::HashMap::new();
+        parameters.insert("port".to_string(), serde_yaml::Value::String("/dev/ttyUSB0".to_string()));
+        parameters.insert("baud_rate".to_string(), serde_yaml::Value::Number(serde_yaml::Number::from(9600)));
+        parameters.insert("data_bits".to_string(), serde_yaml::Value::Number(serde_yaml::Number::from(8)));
+        parameters.insert("stop_bits".to_string(), serde_yaml::Value::Number(serde_yaml::Number::from(1)));
+        parameters.insert("parity".to_string(), serde_yaml::Value::String("None".to_string()));
+        parameters.insert("slave_id".to_string(), serde_yaml::Value::Number(serde_yaml::Number::from(1)));
+        parameters.insert("timeout".to_string(), serde_yaml::Value::Number(serde_yaml::Number::from(1000)));
+        parameters.insert("retry_count".to_string(), serde_yaml::Value::Number(serde_yaml::Number::from(3)));
+        
+        ChannelConfig {
+            id,
+            name: "Test Modbus RTU Channel".to_string(),
+            description: "Test Modbus RTU channel description".to_string(),
+            protocol: ProtocolType::ModbusRtu,
+            parameters: crate::core::config::config_manager::ChannelParameters::Generic(parameters),
+        }
+    }
+
     #[test]
     fn test_protocol_factory_new() {
         let factory = ProtocolFactory::new();
@@ -963,23 +984,7 @@ mod tests {
     #[test]
     fn test_create_modbus_rtu_protocol() {
         let factory = ProtocolFactory::new();
-        // Create specific config for Modbus RTU with serial port parameters
-        let mut parameters = std::collections::HashMap::new();
-        parameters.insert("port".to_string(), serde_yaml::Value::String("/dev/ttyUSB0".to_string()));
-        parameters.insert("baud_rate".to_string(), serde_yaml::Value::Number(serde_yaml::Number::from(9600)));
-        parameters.insert("data_bits".to_string(), serde_yaml::Value::Number(serde_yaml::Number::from(8)));
-        parameters.insert("stop_bits".to_string(), serde_yaml::Value::Number(serde_yaml::Number::from(1)));
-        parameters.insert("parity".to_string(), serde_yaml::Value::String("None".to_string()));
-        parameters.insert("slave_id".to_string(), serde_yaml::Value::Number(serde_yaml::Number::from(1)));
-        parameters.insert("timeout".to_string(), serde_yaml::Value::Number(serde_yaml::Number::from(1000)));
-        
-        let config = ChannelConfig {
-            id: 4,
-            name: "Test Modbus RTU Channel".to_string(),
-            description: "Test Modbus RTU channel description".to_string(),
-            protocol: ProtocolType::ModbusRtu,
-            parameters: crate::core::config::config_manager::ChannelParameters::Generic(parameters),
-        };
+        let config = create_modbus_rtu_test_config(4);
         
         let result = factory.create_protocol(config);
         assert!(result.is_ok(), "Modbus RTU protocol should be supported");

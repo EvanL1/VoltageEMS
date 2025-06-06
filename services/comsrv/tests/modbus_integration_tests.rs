@@ -10,7 +10,7 @@ use tokio::time::timeout;
 use tempfile::TempDir;
 
 use comsrv::core::config::config_manager::{ChannelConfig, ChannelParameters, ConfigManager, ProtocolType};
-use comsrv::core::protocol_factory::ProtocolFactory;
+use comsrv::core::protocols::common::ProtocolFactory;
 use comsrv::core::protocols::modbus::client::{ModbusClient, ModbusClientConfig, ModbusCommunicationMode};
 use comsrv::core::protocols::modbus::common::{ModbusRegisterMapping, ModbusRegisterType, ModbusDataType, ByteOrder};
 use comsrv::utils::error::ComSrvError;

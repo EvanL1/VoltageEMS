@@ -5,7 +5,7 @@ use chrono::Utc;
 
 use crate::api::handlers;
 use crate::api::models::ChannelOperation;
-use crate::core::protocol_factory::ProtocolFactory;
+use crate::core::protocols::common::ProtocolFactory;
 use crate::core::config::ConfigManager;
 
 /// create API routes

@@ -61,7 +61,7 @@ mod api;
 
 use crate::utils::error::Result;
 use crate::core::config::ConfigManager;
-use crate::core::protocol_factory::ProtocolFactory;
+use crate::core::protocols::common::ProtocolFactory;
 use crate::api::routes::api_routes;
 use crate::utils::logger::init_logger;
 use crate::core::metrics::{init_metrics, get_metrics};

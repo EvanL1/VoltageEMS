@@ -6,7 +6,7 @@
 //! - 实时性能监控和统计
 //! - Redis批量数据存储
 
-use comsrv::core::protocol_factory::{create_default_factory, ProtocolFactory};
+use comsrv::core::protocols::common::{create_default_factory, ProtocolFactory};
 use comsrv::core::config::config_manager::{ChannelConfig, ChannelParameters};
 use comsrv::core::config::config_manager::ProtocolType;
 use comsrv::utils::error::Result;

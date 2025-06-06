@@ -11,7 +11,7 @@ use crate::api::models::{
     ServiceStatus, HealthStatus, ApiResponse, ChannelStatus,
     ChannelOperation, PointValue, PointTableData, WritePointRequest
 };
-use crate::core::protocol_factory::ProtocolFactory;
+use crate::core::protocols::common::ProtocolFactory;
 use crate::utils::ComSrvError;
 
 /// get service status

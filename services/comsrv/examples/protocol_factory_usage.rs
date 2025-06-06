@@ -3,7 +3,7 @@
 //! This example demonstrates how to use the integrated protocol factory
 //! to create and manage communication channels with different protocols.
 
-use comsrv::core::protocol_factory::{ProtocolFactory, create_default_factory, ProtocolClientFactory};
+use comsrv::core::protocols::common::{ProtocolFactory, create_default_factory, ProtocolClientFactory};
 use comsrv::core::config::config_manager::{ChannelConfig, ProtocolType, ChannelParameters};
 use comsrv::utils::Result;
 use std::collections::HashMap;

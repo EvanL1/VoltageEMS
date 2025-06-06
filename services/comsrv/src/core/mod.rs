@@ -82,13 +82,14 @@
 pub mod config;
 pub mod protocols;
 pub mod storage;
-pub mod connection_pool;
-pub mod protocol_factory;
 pub mod metrics;
 pub mod monitoring;
 
 // Re-export commonly used protocol components for public API
 pub use protocols::common::{ComBase, ComBaseImpl, ChannelStatus, PointData};
+
+// Re-export protocol factory and connection pool from protocols/common
+pub use protocols::common::{ProtocolFactory, ProtocolClientFactory, create_default_factory, create_factory_with_custom_protocols, ConnectionPool, PooledConnection};
 
 // Re-export enhanced components for business layer
 pub use config::point_table::{

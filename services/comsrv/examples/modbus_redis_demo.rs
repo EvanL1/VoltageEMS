@@ -12,7 +12,7 @@ use std::sync::Arc;
 use tokio::time::interval;
 use serde_json::json;
 use redis::{Client as RedisClient, Commands, Connection};
-use comsrv::core::protocol_factory::{create_default_factory, ProtocolFactory};
+use comsrv::core::protocols::common::{create_default_factory, ProtocolFactory};
 use comsrv::core::config::config_manager::{ChannelConfig, ProtocolType, ChannelParameters};
 
 #[tokio::main]
