@@ -1161,65 +1161,183 @@ impl From<ChannelConfig> for ModbusClientConfig {
     fn from(channel_config: ChannelConfig) -> Self {
         let mut config = ModbusClientConfig::default();
         
-        // Parse channel parameters
-        let params_map = match channel_config.parameters {
-            crate::core::config::config_manager::ChannelParameters::Generic(map) => map,
-            _ => std::collections::HashMap::new(),
-        };
-        
-        for (name, value) in params_map {
-            let param_value = match value {
-                serde_yaml::Value::String(s) => s,
-                _ => format!("{:?}", value),
-            };
-                match name.as_str() {
-                    "mode" => {
-                        config.mode = match param_value.as_str() {
-                            "tcp" => ModbusCommunicationMode::Tcp,
-                            "rtu" => ModbusCommunicationMode::Rtu,
-                            _ => ModbusCommunicationMode::Rtu,
-                        };
-                    }
-                    "slave_id" => {
-                        if let Ok(id) = param_value.parse::<u8>() {
-                            config.slave_id = id;
+        match channel_config.parameters {
+            crate::core::config::config_manager::ChannelParameters::ModbusTcp {
+                host,
+                port,
+                timeout,
+                max_retries,
+                poll_rate,
+                ..
+            } => {
+                config.mode = ModbusCommunicationMode::Tcp;
+                config.host = Some(host);
+                config.tcp_port = Some(port);
+                config.timeout = Duration::from_millis(timeout);
+                config.max_retries = max_retries;
+                config.poll_interval = Duration::from_millis(poll_rate);
+            }
+            crate::core::config::config_manager::ChannelParameters::ModbusRtu {
+                port,
+                baud_rate,
+                data_bits,
+                parity,
+                stop_bits,
+                timeout,
+                max_retries,
+                poll_rate,
+                slave_id,
+                ..
+            } => {
+                config.mode = ModbusCommunicationMode::Rtu;
+                config.port = Some(port);
+                config.baud_rate = Some(baud_rate);
+                config.data_bits = Some(match data_bits {
+                    7 => DataBits::Seven,
+                    _ => DataBits::Eight,
+                });
+                config.parity = Some(match parity.to_lowercase().as_str() {
+                    "even" => Parity::Even,
+                    "odd" => Parity::Odd,
+                    _ => Parity::None,
+                });
+                config.stop_bits = Some(match stop_bits {
+                    2 => StopBits::Two,
+                    _ => StopBits::One,
+                });
+                config.timeout = Duration::from_millis(timeout);
+                config.max_retries = max_retries;
+                config.poll_interval = Duration::from_millis(poll_rate);
+                config.slave_id = slave_id;
+            }
+            crate::core::config::config_manager::ChannelParameters::Generic(map) => {
+                for (name, value) in map {
+                    match name.as_str() {
+                        "mode" => {
+                            let param_value = match value {
+                                serde_yaml::Value::String(s) => s,
+                                _ => format!("{:?}", value),
+                            };
+                            config.mode = match param_value.as_str() {
+                                "tcp" => ModbusCommunicationMode::Tcp,
+                                "rtu" => ModbusCommunicationMode::Rtu,
+                                _ => ModbusCommunicationMode::Rtu,
+                            };
                         }
-                    }
-                    "timeout_ms" => {
-                        if let Ok(timeout) = param_value.parse::<u64>() {
-                            config.timeout = Duration::from_millis(timeout);
+                        "slave_id" => {
+                            match value {
+                                serde_yaml::Value::Number(n) => {
+                                    if let Some(id) = n.as_u64() {
+                                        if id <= 255 {
+                                            config.slave_id = id as u8;
+                                        }
+                                    }
+                                }
+                                serde_yaml::Value::String(s) => {
+                                    if let Ok(id) = s.parse::<u8>() {
+                                        config.slave_id = id;
+                                    }
+                                }
+                                _ => {}
+                            }
                         }
-                    }
-                    "max_retries" => {
-                        if let Ok(retries) = param_value.parse::<u32>() {
-                            config.max_retries = retries;
+                        "timeout_ms" => {
+                            match value {
+                                serde_yaml::Value::Number(n) => {
+                                    if let Some(timeout) = n.as_u64() {
+                                        config.timeout = Duration::from_millis(timeout);
+                                    }
+                                }
+                                serde_yaml::Value::String(s) => {
+                                    if let Ok(timeout) = s.parse::<u64>() {
+                                        config.timeout = Duration::from_millis(timeout);
+                                    }
+                                }
+                                _ => {}
+                            }
                         }
-                    }
-                    "poll_interval_ms" => {
-                        if let Ok(interval) = param_value.parse::<u64>() {
-                            config.poll_interval = Duration::from_millis(interval);
+                        "max_retries" => {
+                            match value {
+                                serde_yaml::Value::Number(n) => {
+                                    if let Some(retries) = n.as_u64() {
+                                        config.max_retries = retries as u32;
+                                    }
+                                }
+                                serde_yaml::Value::String(s) => {
+                                    if let Ok(retries) = s.parse::<u32>() {
+                                        config.max_retries = retries;
+                                    }
+                                }
+                                _ => {}
+                            }
                         }
-                    }
-                    "host" => {
-                        config.host = Some(param_value);
-                    }
-                    "port" => {
-                        if let Ok(port) = param_value.parse::<u16>() {
-                            config.tcp_port = Some(port);
+                        "poll_interval_ms" => {
+                            match value {
+                                serde_yaml::Value::Number(n) => {
+                                    if let Some(interval) = n.as_u64() {
+                                        config.poll_interval = Duration::from_millis(interval);
+                                    }
+                                }
+                                serde_yaml::Value::String(s) => {
+                                    if let Ok(interval) = s.parse::<u64>() {
+                                        config.poll_interval = Duration::from_millis(interval);
+                                    }
+                                }
+                                _ => {}
+                            }
                         }
-                    }
-                    "serial_port" => {
-                        config.port = Some(param_value);
-                    }
-                    "baud_rate" => {
-                        if let Ok(baud) = param_value.parse::<u32>() {
-                            config.baud_rate = Some(baud);
+                        "host" => {
+                            let param_value = match value {
+                                serde_yaml::Value::String(s) => s,
+                                _ => format!("{:?}", value),
+                            };
+                            config.host = Some(param_value);
                         }
+                        "port" => {
+                            match value {
+                                serde_yaml::Value::Number(n) => {
+                                    if let Some(port) = n.as_u64() {
+                                        if port <= 65535 {
+                                            config.tcp_port = Some(port as u16);
+                                        }
+                                    }
+                                }
+                                serde_yaml::Value::String(s) => {
+                                    if let Ok(port) = s.parse::<u16>() {
+                                        config.tcp_port = Some(port);
+                                    }
+                                }
+                                _ => {}
+                            }
+                        }
+                        "serial_port" => {
+                            let param_value = match value {
+                                serde_yaml::Value::String(s) => s,
+                                _ => format!("{:?}", value),
+                            };
+                            config.port = Some(param_value);
+                        }
+                        "baud_rate" => {
+                            match value {
+                                serde_yaml::Value::Number(n) => {
+                                    if let Some(baud) = n.as_u64() {
+                                        config.baud_rate = Some(baud as u32);
+                                    }
+                                }
+                                serde_yaml::Value::String(s) => {
+                                    if let Ok(baud) = s.parse::<u32>() {
+                                        config.baud_rate = Some(baud);
+                                    }
+                                }
+                                _ => {}
+                            }
+                        }
+                        _ => {}
                     }
-                    _ => {}
                 }
             }
-        
+        }
+
         config
     }
 }
@@ -1282,6 +1400,9 @@ impl ConfigValidator for ModbusClient {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::config::config_manager::ChannelParameters;
+    use std::collections::HashMap;
+
     #[tokio::test]
     async fn test_client_creation() {
         let config = ModbusClientConfig::default();
@@ -1310,5 +1431,94 @@ mod tests {
         assert_eq!(stats.successful_requests, 1);
         assert_eq!(stats.timeout_requests, 1);
         assert_eq!(stats.communication_quality, 50.0);
+    }
+
+    #[test]
+    fn test_config_conversion_from_structured_params() {
+        // Test ModbusTcp structured parameters
+        let tcp_channel = ChannelConfig {
+            id: 1,
+            name: "TCP Test".to_string(),
+            description: "Test TCP config".to_string(),
+            protocol: crate::core::config::config_manager::ProtocolType::ModbusTcp,
+            parameters: ChannelParameters::ModbusTcp {
+                host: "192.168.1.100".to_string(),
+                port: 502,
+                timeout: 5000,
+                max_retries: 3,
+                poll_rate: 1000,
+                point_tables: HashMap::new(),
+            },
+        };
+
+        let tcp_config: ModbusClientConfig = tcp_channel.into();
+        assert_eq!(tcp_config.mode, ModbusCommunicationMode::Tcp);
+        assert_eq!(tcp_config.host, Some("192.168.1.100".to_string()));
+        assert_eq!(tcp_config.tcp_port, Some(502));
+        assert_eq!(tcp_config.timeout, Duration::from_millis(5000));
+        assert_eq!(tcp_config.max_retries, 3);
+        assert_eq!(tcp_config.poll_interval, Duration::from_millis(1000));
+
+        // Test ModbusRtu structured parameters
+        let rtu_channel = ChannelConfig {
+            id: 2,
+            name: "RTU Test".to_string(),
+            description: "Test RTU config".to_string(),
+            protocol: crate::core::config::config_manager::ProtocolType::ModbusRtu,
+            parameters: ChannelParameters::ModbusRtu {
+                port: "/dev/ttyUSB0".to_string(),
+                baud_rate: 9600,
+                data_bits: 8,
+                parity: "None".to_string(),
+                stop_bits: 1,
+                timeout: 3000,
+                max_retries: 5,
+                poll_rate: 2000,
+                slave_id: 1,
+                point_tables: HashMap::new(),
+            },
+        };
+
+        let rtu_config: ModbusClientConfig = rtu_channel.into();
+        assert_eq!(rtu_config.mode, ModbusCommunicationMode::Rtu);
+        assert_eq!(rtu_config.port, Some("/dev/ttyUSB0".to_string()));
+        assert_eq!(rtu_config.baud_rate, Some(9600));
+        assert_eq!(rtu_config.data_bits, Some(DataBits::Eight));
+        assert_eq!(rtu_config.parity, Some(Parity::None));
+        assert_eq!(rtu_config.stop_bits, Some(StopBits::One));
+        assert_eq!(rtu_config.timeout, Duration::from_millis(3000));
+        assert_eq!(rtu_config.max_retries, 5);
+        assert_eq!(rtu_config.poll_interval, Duration::from_millis(2000));
+        assert_eq!(rtu_config.slave_id, 1);
+    }
+
+    #[test]
+    fn test_config_conversion_from_generic_params() {
+        // Test backward compatibility with Generic parameters
+        let mut generic_params = HashMap::new();
+        generic_params.insert("mode".to_string(), serde_yaml::Value::String("tcp".to_string()));
+        generic_params.insert("host".to_string(), serde_yaml::Value::String("10.0.0.1".to_string()));
+        generic_params.insert("port".to_string(), serde_yaml::Value::Number(serde_yaml::Number::from(502)));
+        generic_params.insert("timeout_ms".to_string(), serde_yaml::Value::Number(serde_yaml::Number::from(5000)));
+        generic_params.insert("max_retries".to_string(), serde_yaml::Value::Number(serde_yaml::Number::from(3)));
+        generic_params.insert("poll_interval_ms".to_string(), serde_yaml::Value::Number(serde_yaml::Number::from(1000)));
+        generic_params.insert("slave_id".to_string(), serde_yaml::Value::Number(serde_yaml::Number::from(5)));
+
+        let generic_channel = ChannelConfig {
+            id: 3,
+            name: "Generic Test".to_string(),
+            description: "Test generic config".to_string(),
+            protocol: crate::core::config::config_manager::ProtocolType::ModbusTcp,
+            parameters: ChannelParameters::Generic(generic_params),
+        };
+
+        let generic_config: ModbusClientConfig = generic_channel.into();
+        assert_eq!(generic_config.mode, ModbusCommunicationMode::Tcp);
+        assert_eq!(generic_config.host, Some("10.0.0.1".to_string()));
+        assert_eq!(generic_config.tcp_port, Some(502));
+        assert_eq!(generic_config.timeout, Duration::from_millis(5000));
+        assert_eq!(generic_config.max_retries, 3);
+        assert_eq!(generic_config.poll_interval, Duration::from_millis(1000));
+        assert_eq!(generic_config.slave_id, 5);
     }
 } 
