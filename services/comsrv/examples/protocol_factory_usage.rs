@@ -46,7 +46,7 @@ async fn main() -> Result<()> {
     
     // Example 4: Get channel statistics
     println!("\n=== Example 4: Channel Statistics ===");
-    let stats = factory.get_channel_stats();
+    let stats = factory.get_channel_stats().await;
     println!("Total channels: {}", stats.total_channels);
     println!("Protocol distribution: {:?}", stats.protocol_counts);
     

@@ -201,7 +201,7 @@ async fn start_communication_service(
         // Log but don't fail - some channels might have started successfully
     }
     
-    let stats = factory_guard.get_channel_stats();
+    let stats = factory_guard.get_channel_stats().await;
     info!("Communication service started with {} channels (Protocol distribution: {:?})", 
           stats.total_channels, stats.protocol_counts);
     drop(factory_guard);
@@ -326,7 +326,7 @@ fn start_cleanup_task(factory: Arc<RwLock<ProtocolFactory>>) -> tokio::task::Joi
             factory_guard.cleanup_channels(std::time::Duration::from_secs(3600)).await;
             
             // Log statistics
-            let stats = factory_guard.get_channel_stats();
+            let stats = factory_guard.get_channel_stats().await;
             info!("Channel stats: total={}, running={}", 
                   stats.total_channels, stats.running_channels);
             drop(factory_guard);
