@@ -885,7 +885,7 @@ impl ModbusClient {
                             return Err(ComSrvError::ConnectionError("Client not connected".to_string()));
                         }
                     }
-                }?;
+                }.map_err(|e| ComSrvError::CommunicationError(format!("Read input register failed: {}", e)))?;
                 result
             }
             ModbusRegisterType::Coil => {
@@ -902,7 +902,7 @@ impl ModbusClient {
                             return Err(ComSrvError::ConnectionError("Client not connected".to_string()));
                         }
                     }
-                }?;
+                }.map_err(|e| ComSrvError::CommunicationError(format!("Read coil failed: {}", e)))?;
                 vec![if result[0] { 1 } else { 0 }]
             }
             ModbusRegisterType::DiscreteInput => {
@@ -919,7 +919,7 @@ impl ModbusClient {
                             return Err(ComSrvError::ConnectionError("Client not connected".to_string()));
                         }
                     }
-                }?;
+                }.map_err(|e| ComSrvError::CommunicationError(format!("Read discrete input failed: {}", e)))?;
                 vec![if result[0] { 1 } else { 0 }]
             }
         };
@@ -938,17 +938,17 @@ impl ModbusClient {
 
     /// Convert raw Modbus register values to a numeric value
     fn convert_registers_to_value(&self, registers: &[u16], mapping: &ModbusRegisterMapping) -> Result<f64> {
-        use byteorder::ByteOrder as BO;
+        use byteorder::{BigEndian, LittleEndian, ByteOrder};
 
         // Arrange registers according to byte order
         let mut regs: Vec<u16> = registers.to_vec();
         match mapping.byte_order {
-            ByteOrder::BigEndian => {}
-            ByteOrder::LittleEndian => regs.reverse(),
-            ByteOrder::BigEndianWordSwapped => {
+            super::common::ByteOrder::BigEndian => {}
+            super::common::ByteOrder::LittleEndian => regs.reverse(),
+            super::common::ByteOrder::BigEndianWordSwapped => {
                 for r in regs.iter_mut() { *r = r.swap_bytes(); }
             }
-            ByteOrder::LittleEndianWordSwapped => {
+            super::common::ByteOrder::LittleEndianWordSwapped => {
                 for r in regs.iter_mut() { *r = r.swap_bytes(); }
                 regs.reverse();
             }
@@ -956,14 +956,14 @@ impl ModbusClient {
 
         let bytes: Vec<u8> = regs.iter().flat_map(|r| r.to_be_bytes()).collect();
         let mut value = match mapping.data_type {
-            ModbusDataType::UInt16 => BO::read_u16(&bytes) as f64,
-            ModbusDataType::Int16 => BO::read_i16(&bytes) as f64,
-            ModbusDataType::UInt32 => BO::read_u32(&bytes) as f64,
-            ModbusDataType::Int32 => BO::read_i32(&bytes) as f64,
-            ModbusDataType::UInt64 => BO::read_u64(&bytes) as f64,
-            ModbusDataType::Int64 => BO::read_i64(&bytes) as f64,
-            ModbusDataType::Float32 => f32::from_bits(BO::read_u32(&bytes)) as f64,
-            ModbusDataType::Float64 => f64::from_bits(BO::read_u64(&bytes)),
+            ModbusDataType::UInt16 => BigEndian::read_u16(&bytes) as f64,
+            ModbusDataType::Int16 => BigEndian::read_i16(&bytes) as f64,
+            ModbusDataType::UInt32 => BigEndian::read_u32(&bytes) as f64,
+            ModbusDataType::Int32 => BigEndian::read_i32(&bytes) as f64,
+            ModbusDataType::UInt64 => BigEndian::read_u64(&bytes) as f64,
+            ModbusDataType::Int64 => BigEndian::read_i64(&bytes) as f64,
+            ModbusDataType::Float32 => f32::from_bits(BigEndian::read_u32(&bytes)) as f64,
+            ModbusDataType::Float64 => f64::from_bits(BigEndian::read_u64(&bytes)),
             ModbusDataType::Bool => if registers[0] != 0 { 1.0 } else { 0.0 },
             ModbusDataType::String(_) => {
                 warn!("String data type not supported for numeric register readings");
