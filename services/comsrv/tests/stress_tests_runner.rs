@@ -5,7 +5,12 @@
 mod stress_tests;
 
 use std::env;
-use stress_tests::{run_300k_comsrv_pressure_test, run_modbus_protocol_test, run_comsrv_integration_test};
+use stress_tests::{
+    run_300k_comsrv_pressure_test,
+    run_modbus_protocol_test,
+    run_comsrv_integration_test,
+    run_multi_protocol_pressure_test,
+};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -34,6 +39,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("运行comsrv集成测试...");
             run_comsrv_integration_test().await?;
         },
+        Some("multi") => {
+            println!("运行多协议压力测试...");
+            run_multi_protocol_pressure_test().await?;
+        },
         Some(test_type) => {
             eprintln!("未知的测试类型: {}", test_type);
             eprintln!("可用的测试类型:");
@@ -41,6 +50,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             eprintln!("  modbus      - 运行Modbus协议报文测试");
             eprintln!("  protocol    - 运行Modbus协议报文测试");
             eprintln!("  integration - 运行comsrv集成测试");
+            eprintln!("  multi       - 运行多协议压力测试");
             std::process::exit(1);
         }
     }
