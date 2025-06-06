@@ -155,6 +155,7 @@
 pub mod core;
 pub mod utils;
 pub mod api;
+mod service_impl;
 
 /// Service entry point and lifecycle management
 /// 
@@ -225,6 +226,7 @@ pub mod service {
     use tokio::sync::RwLock;
     use crate::{ConfigManager, ProtocolFactory};
     use crate::utils::Result;
+    use crate::service_impl as impls;
     
     /// Start the communication service with optimized performance and monitoring
     /// 
@@ -295,13 +297,13 @@ pub mod service {
     ///     Ok(())
     /// }
     /// ```
+    ///
+    /// This function simply forwards to [`crate::service_impl::start_communication_service`].
     pub async fn start_communication_service(
-        _config_manager: Arc<ConfigManager>,
-        _factory: Arc<RwLock<ProtocolFactory>>
+        config_manager: Arc<ConfigManager>,
+        factory: Arc<RwLock<ProtocolFactory>>,
     ) -> Result<()> {
-        // This is a placeholder for documentation purposes
-        // The actual implementation is in main.rs
-        todo!("This function is implemented in the binary")
+        impls::start_communication_service(config_manager, factory).await
     }
     
     /// Handle graceful shutdown of the communication service
@@ -363,14 +365,14 @@ pub mod service {
     ///         tokio::signal::ctrl_c().await.unwrap();
     ///         shutdown_handler(factory_clone).await;
     ///     });
-    ///     
+    ///
     ///     // Main service loop...
     /// }
     /// ```
-    pub async fn shutdown_handler(_factory: Arc<RwLock<ProtocolFactory>>) {
-        // This is a placeholder for documentation purposes
-        // The actual implementation is in main.rs
-        todo!("This function is implemented in the binary")
+    ///
+    /// This function simply forwards to [`crate::service_impl::shutdown_handler`].
+    pub async fn shutdown_handler(factory: Arc<RwLock<ProtocolFactory>>) {
+        impls::shutdown_handler(factory).await;
     }
     
     /// Start the periodic cleanup task for resource management
@@ -446,12 +448,10 @@ pub mod service {
     ///     }
     /// }
     /// ```
-    pub fn start_cleanup_task(_factory: Arc<RwLock<ProtocolFactory>>) -> tokio::task::JoinHandle<()> {
-        // This is a placeholder for documentation purposes
-        // The actual implementation is in main.rs
-        tokio::spawn(async {
-            todo!("This function is implemented in the binary")
-        })
+    ///
+    /// This function simply forwards to [`crate::service_impl::start_cleanup_task`].
+    pub fn start_cleanup_task(factory: Arc<RwLock<ProtocolFactory>>) -> tokio::task::JoinHandle<()> {
+        impls::start_cleanup_task(factory)
     }
 }
 

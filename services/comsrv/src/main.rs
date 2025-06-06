@@ -58,6 +58,7 @@ use tracing::{info, error, warn};
 mod core;
 mod utils;
 mod api;
+mod service_impl;
 
 use crate::utils::error::Result;
 use crate::core::config::ConfigManager;
@@ -65,6 +66,11 @@ use crate::core::protocols::common::ProtocolFactory;
 use crate::api::routes::api_routes;
 use crate::utils::logger::init_logger;
 use crate::core::metrics::{init_metrics, get_metrics};
+use crate::service_impl::{
+    start_communication_service,
+    shutdown_handler,
+    start_cleanup_task,
+};
 
 /// Command line arguments for the Communication Service
 #[derive(Parser)]
@@ -135,204 +141,6 @@ struct Args {
 ///     Ok(())
 /// }
 /// ```
-async fn start_communication_service(
-    config_manager: Arc<ConfigManager>,
-    factory: Arc<RwLock<ProtocolFactory>>
-) -> Result<()> {
-    // Get channel configurations
-    let configs = config_manager.get_channels().clone();
-    
-    if configs.is_empty() {
-        warn!("No channels configured");
-        return Ok(());
-    }
-    
-    info!("Creating {} channels...", configs.len());
-    
-    // Create channels with improved error handling and metrics
-    let mut successful_channels = 0;
-    let mut failed_channels = 0;
-    
-    for channel_config in configs {
-        info!("Creating channel: {} - {}", channel_config.id, channel_config.name);
-        
-        let factory_guard = factory.write().await;
-        match factory_guard.create_channel(channel_config.clone()) {
-            Ok(_) => {
-                info!("Channel created successfully: {}", channel_config.id);
-                successful_channels += 1;
-                
-                // Record metrics if available
-                if let Some(metrics) = get_metrics() {
-                    metrics.update_channel_status(
-                        &channel_config.id.to_string(), 
-                        false, // Not connected yet
-                        &config_manager.get_service_name()
-                    );
-                }
-            },
-            Err(e) => {
-                error!("Failed to create channel {}: {}", channel_config.id, e);
-                failed_channels += 1;
-                
-                // Record error metrics if available
-                if let Some(metrics) = get_metrics() {
-                    metrics.record_channel_error(
-                        &channel_config.id.to_string(),
-                        "creation_failed",
-                        &config_manager.get_service_name()
-                    );
-                }
-                
-                // Continue with other channels instead of failing completely
-                continue;
-            }
-        }
-        drop(factory_guard); // Release the lock for each iteration
-    }
-    
-    info!("Channel creation completed: {} successful, {} failed", 
-          successful_channels, failed_channels);
-    
-    // Start all channels with improved performance
-    let factory_guard = factory.read().await;
-    if let Err(e) = factory_guard.start_all_channels().await {
-        error!("Failed to start some channels: {}", e);
-        // Log but don't fail - some channels might have started successfully
-    }
-    
-    let stats = factory_guard.get_channel_stats();
-    info!("Communication service started with {} channels (Protocol distribution: {:?})", 
-          stats.total_channels, stats.protocol_counts);
-    drop(factory_guard);
-    
-    // Update service metrics
-    if let Some(metrics) = get_metrics() {
-        metrics.update_service_status(true);
-    }
-    
-    Ok(())
-}
-
-/// Handle graceful shutdown of the communication service
-/// 
-/// Performs an orderly shutdown of all communication channels, ensuring that
-/// ongoing operations complete properly and resources are released cleanly.
-/// Updates metrics to reflect the service shutdown state.
-/// 
-/// # Arguments
-/// 
-/// * `factory` - Thread-safe protocol factory managing all active channels
-/// 
-/// # Features
-/// 
-/// - **Graceful Channel Shutdown**: Stops all channels in an orderly manner
-/// - **Resource Cleanup**: Ensures proper release of network and system resources
-/// - **Metrics Update**: Records service shutdown in monitoring systems
-/// - **Error Handling**: Logs but doesn't fail on individual channel shutdown errors
-/// 
-/// # Examples
-/// 
-/// ```rust,no_run
-/// use std::sync::Arc;
-/// use tokio::sync::RwLock;
-/// use comsrv::core::ProtocolFactory;
-/// 
-/// async fn main_loop(factory: Arc<RwLock<ProtocolFactory>>) {
-///     // Setup signal handlers
-///     let factory_clone = factory.clone();
-///     tokio::spawn(async move {
-///         tokio::signal::ctrl_c().await.unwrap();
-///         shutdown_handler(factory_clone).await;
-///     });
-///     
-///     // Main service loop...
-/// }
-/// ```
-async fn shutdown_handler(factory: Arc<RwLock<ProtocolFactory>>) {
-    info!("Starting graceful shutdown...");
-    
-    let factory_guard = factory.read().await;
-    if let Err(e) = factory_guard.stop_all_channels().await {
-        error!("Error during channel shutdown: {}", e);
-    }
-    drop(factory_guard);
-    
-    // Update service metrics
-    if let Some(metrics) = get_metrics() {
-        metrics.update_service_status(false);
-    }
-    
-    info!("All channels stopped");
-}
-
-/// Start the periodic cleanup task for resource management
-/// 
-/// Launches a background task that periodically cleans up idle channels and
-/// logs system statistics. This helps prevent resource leaks and provides
-/// operational visibility into the service state.
-/// 
-/// # Arguments
-/// 
-/// * `factory` - Thread-safe protocol factory to monitor and clean up
-/// 
-/// # Returns
-/// 
-/// A `JoinHandle` for the cleanup task that can be used to cancel or wait for completion
-/// 
-/// # Features
-/// 
-/// - **Idle Channel Cleanup**: Removes channels that have been idle for extended periods
-/// - **Statistics Logging**: Regular logging of channel and system statistics
-/// - **Resource Monitoring**: Tracks memory and connection usage
-/// - **Configurable Intervals**: Adjustable cleanup and reporting intervals
-/// 
-/// # Configuration
-/// 
-/// - **Cleanup Interval**: 5 minutes (300 seconds)
-/// - **Idle Timeout**: 1 hour (3600 seconds)
-/// - **Statistics Interval**: Every cleanup cycle
-/// 
-/// # Examples
-/// 
-/// ```rust,no_run
-/// use std::sync::Arc;
-/// use tokio::sync::RwLock;
-/// use comsrv::core::ProtocolFactory;
-/// 
-/// async fn setup_maintenance(factory: Arc<RwLock<ProtocolFactory>>) {
-///     let cleanup_handle = start_cleanup_task(factory);
-///     
-///     // Keep the handle to cancel if needed
-///     tokio::select! {
-///         _ = cleanup_handle => {
-///             println!("Cleanup task completed");
-///         }
-///         _ = tokio::signal::ctrl_c() => {
-///             println!("Shutting down cleanup task");
-///         }
-///     }
-/// }
-/// ```
-fn start_cleanup_task(factory: Arc<RwLock<ProtocolFactory>>) -> tokio::task::JoinHandle<()> {
-    tokio::spawn(async move {
-        let mut interval = tokio::time::interval(std::time::Duration::from_secs(300)); // 5 minutes
-        
-        loop {
-            interval.tick().await;
-            
-            // Clean up idle channels (1 hour idle time)
-            let factory_guard = factory.read().await;
-            factory_guard.cleanup_channels(std::time::Duration::from_secs(3600)).await;
-            
-            // Log statistics
-            let stats = factory_guard.get_channel_stats();
-            info!("Channel stats: total={}, running={}", 
-                  stats.total_channels, stats.running_channels);
-            drop(factory_guard);
-        }
-    })
-}
 
 /// Main entry point for the Communication Service
 /// 
