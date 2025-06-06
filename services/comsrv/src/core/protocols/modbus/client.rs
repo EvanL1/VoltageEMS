@@ -31,8 +31,9 @@ use crate::core::metrics::{ProtocolMetrics, DataPoint};
 use super::common::{ModbusRegisterMapping, ModbusDataType, ModbusRegisterType, ByteOrder};
 use crate::core::config::config_manager::{ChannelConfig, ProtocolType};
 use crate::core::protocols::common::combase::{
-    ComBase, ChannelStatus, PointData, PointReader, 
-    PollingConfig, PollingPoint
+    ComBase, ChannelStatus, PointData, PointReader,
+    PollingConfig, PollingPoint, ConnectionManager, ConnectionState,
+    ConfigValidator, ProtocolStats
 };
 use crate::utils::logger::{ChannelLogger, LogLevel};
 
@@ -194,6 +195,12 @@ impl ModbusClientStats {
     }
 }
 
+impl ProtocolStats for ModbusClientStats {
+    fn reset(&mut self) {
+        *self = ModbusClientStats::new();
+    }
+}
+
 /// Internal Modbus client wrapper enum
 enum InternalModbusClient {
     Tcp(ModbusTcpClient),
@@ -259,8 +266,8 @@ impl ModbusClient {
         self.channel_logger = Some(logger);
     }
 
-    /// Connect to the Modbus device
-    async fn connect(&mut self) -> Result<()> {
+    /// Connect to the Modbus device (internal helper)
+    async fn connect_internal(&mut self) -> Result<()> {
         debug!("Connecting to Modbus device with mode: {:?}", self.config.mode);
         
         // Update state to connecting
@@ -353,7 +360,7 @@ impl ModbusClient {
         info!("Starting Modbus client");
         
         // Connect to device
-        self.connect().await?;
+        self.connect_internal().await?;
         
         // Mark as running
         *self.is_running.write().await = true;
@@ -1239,6 +1246,36 @@ impl std::fmt::Debug for ModbusClient {
             .field("is_running", &is_running)
             .field("has_internal_client", &"Arc<Mutex<Option<InternalModbusClient>>>")
             .finish()
+    }
+}
+
+#[async_trait]
+impl ConnectionManager for ModbusClient {
+    async fn connect(&mut self) -> Result<()> {
+        self.connect_internal().await
+    }
+
+    async fn disconnect(&mut self) -> Result<()> {
+        self.stop().await
+    }
+
+    async fn connection_state(&self) -> ConnectionState {
+        match self.get_connection_state().await {
+            ModbusConnectionState::Disconnected => ConnectionState::Disconnected,
+            ModbusConnectionState::Connecting => ConnectionState::Connecting,
+            ModbusConnectionState::Connected => ConnectionState::Connected,
+            ModbusConnectionState::Error(e) => ConnectionState::Error(e),
+        }
+    }
+}
+
+#[async_trait]
+impl ConfigValidator for ModbusClient {
+    async fn validate_config(&self) -> Result<()> {
+        if self.config.max_retries == 0 {
+            return Err(ComSrvError::ConfigError("max_retries cannot be zero".into()));
+        }
+        Ok(())
     }
 }
 

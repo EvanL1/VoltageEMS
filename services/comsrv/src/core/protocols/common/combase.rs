@@ -366,6 +366,56 @@ pub struct PollingPoint {
     pub protocol_params: HashMap<String, serde_json::Value>,
 }
 
+/// Generic connection state used by [`ConnectionManager`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ConnectionState {
+    /// Channel is disconnected.
+    Disconnected,
+    /// Channel is attempting to establish a connection.
+    Connecting,
+    /// Channel is connected and operational.
+    Connected,
+    /// Channel encountered an error during connection.
+    Error(String),
+}
+
+/// Unified trait for connection management across protocols.
+///
+/// Implementors should handle protocol specific connect/disconnect logic
+/// while updating the provided [`ConnectionState`] information.
+#[async_trait]
+pub trait ConnectionManager: Send + Sync {
+    /// Connect to the remote endpoint.
+    async fn connect(&mut self) -> Result<()>;
+
+    /// Disconnect from the remote endpoint.
+    async fn disconnect(&mut self) -> Result<()>;
+
+    /// Attempt to reconnect using protocol specific strategy.
+    async fn reconnect(&mut self) -> Result<()> {
+        self.disconnect().await?;
+        self.connect().await
+    }
+
+    /// Retrieve the current connection state.
+    async fn connection_state(&self) -> ConnectionState;
+}
+
+/// Trait for configuration validation of protocol implementations.
+#[async_trait]
+pub trait ConfigValidator: Send + Sync {
+    /// Validate configuration parameters.
+    async fn validate_config(&self) -> Result<()> {
+        Ok(())
+    }
+}
+
+/// Trait representing protocol specific statistics collection.
+pub trait ProtocolStats: Send + Sync {
+    /// Reset all statistic counters.
+    fn reset(&mut self);
+}
+
 /// Primary communication interface for all protocol implementations
 /// 
 /// This trait defines the standard interface that all communication protocols
