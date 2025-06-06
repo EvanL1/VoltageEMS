@@ -4,7 +4,7 @@ use dashmap::DashMap;
 use ahash::AHashMap;
 use async_trait::async_trait;
 
-use crate::core::config::config_manager::{ChannelConfig, ProtocolType};
+use crate::core::config::config_manager::{ChannelConfig, ProtocolType, ConfigManager};
 use crate::core::protocols::common::ComBase;
 use crate::core::protocols::iec60870::iec104::Iec104Client;
 use crate::core::protocols::modbus::{ModbusClient, ModbusCommunicationMode};
@@ -27,11 +27,12 @@ pub trait ProtocolClientFactory: Send + Sync {
     /// # Arguments
     /// 
     /// * `config` - Channel configuration containing protocol parameters
+    /// * `config_manager` - Optional config manager for loading point tables
     /// 
     /// # Returns
     /// 
     /// `Ok(client)` if successful, `Err` if creation failed
-    fn create_client(&self, config: ChannelConfig) -> Result<Box<dyn ComBase>>;
+    fn create_client(&self, config: ChannelConfig, config_manager: Option<&ConfigManager>) -> Result<Box<dyn ComBase>>;
     
     /// Validate configuration before client creation
     /// 
@@ -59,8 +60,22 @@ impl ProtocolClientFactory for ModbusTcpFactory {
         ProtocolType::ModbusTcp
     }
     
-    fn create_client(&self, config: ChannelConfig) -> Result<Box<dyn ComBase>> {
-        let modbus_config: crate::core::protocols::modbus::ModbusClientConfig = config.into();
+    fn create_client(&self, config: ChannelConfig, config_manager: Option<&ConfigManager>) -> Result<Box<dyn ComBase>> {
+        let mut modbus_config: crate::core::protocols::modbus::ModbusClientConfig = config.clone().into();
+        
+        // Load point mappings from config manager if available
+        if let Some(cm) = config_manager {
+            match cm.get_modbus_mappings_for_channel(config.id) {
+                Ok(mappings) => {
+                    tracing::info!("Loaded {} point mappings for channel {}", mappings.len(), config.id);
+                    modbus_config.point_mappings = mappings;
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to load point mappings for channel {}: {}", config.id, e);
+                }
+            }
+        }
+        
         let client = ModbusClient::new(modbus_config, ModbusCommunicationMode::Tcp)?;
         Ok(Box::new(client))
     }
@@ -156,7 +171,7 @@ impl ProtocolClientFactory for Iec104Factory {
         ProtocolType::Iec104
     }
     
-    fn create_client(&self, config: ChannelConfig) -> Result<Box<dyn ComBase>> {
+    fn create_client(&self, config: ChannelConfig, config_manager: Option<&ConfigManager>) -> Result<Box<dyn ComBase>> {
         let client = Iec104Client::new(config);
         Ok(Box::new(client))
     }
@@ -243,8 +258,22 @@ impl ProtocolClientFactory for ModbusRtuFactory {
         ProtocolType::ModbusRtu
     }
     
-    fn create_client(&self, config: ChannelConfig) -> Result<Box<dyn ComBase>> {
-        let modbus_config: crate::core::protocols::modbus::ModbusClientConfig = config.into();
+    fn create_client(&self, config: ChannelConfig, config_manager: Option<&ConfigManager>) -> Result<Box<dyn ComBase>> {
+        let mut modbus_config: crate::core::protocols::modbus::ModbusClientConfig = config.clone().into();
+        
+        // Load point mappings from config manager if available
+        if let Some(cm) = config_manager {
+            match cm.get_modbus_mappings_for_channel(config.id) {
+                Ok(mappings) => {
+                    tracing::info!("Loaded {} point mappings for RTU channel {}", mappings.len(), config.id);
+                    modbus_config.point_mappings = mappings;
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to load point mappings for RTU channel {}: {}", config.id, e);
+                }
+            }
+        }
+        
         let client = ModbusClient::new(modbus_config, ModbusCommunicationMode::Rtu)?;
         Ok(Box::new(client))
     }
@@ -520,18 +549,28 @@ impl ProtocolFactory {
     ///
     /// * `config` - Channel configuration
     pub fn create_protocol(&self, config: ChannelConfig) -> Result<Box<dyn ComBase>> {
+        self.create_protocol_with_config_manager(config, None)
+    }
+
+    /// Create a protocol instance using registered factories with config manager
+    ///
+    /// # Arguments
+    ///
+    /// * `config` - Channel configuration
+    /// * `config_manager` - Config manager for loading point tables
+    pub fn create_protocol_with_config_manager(&self, config: ChannelConfig, config_manager: Option<&ConfigManager>) -> Result<Box<dyn ComBase>> {
         // First validate the configuration
         self.validate_config(&config)?;
         
         // Try to use registered factory first
         if let Some(factory) = self.protocol_factories.get(&config.protocol) {
             tracing::info!("Creating protocol instance using registered factory: {:?}", config.protocol);
-            return factory.create_client(config);
+            return factory.create_client(config, config_manager);
         }
         
         // Fallback to legacy implementation for backward compatibility
         match config.protocol {
-            ProtocolType::ModbusRtu => self.create_modbus_rtu(config),
+            ProtocolType::ModbusRtu => self.create_modbus_rtu_with_config_manager(config, config_manager),
             ProtocolType::Virtual => self.create_virtual(config),
             // For other protocol types that don't have registered factories
             ProtocolType::Dio | 
@@ -554,10 +593,10 @@ impl ProtocolFactory {
 
     // Create Modbus RTU client (now using factory)
     #[inline]
-    fn create_modbus_rtu(&self, config: ChannelConfig) -> Result<Box<dyn ComBase>> {
+    fn create_modbus_rtu_with_config_manager(&self, config: ChannelConfig, config_manager: Option<&ConfigManager>) -> Result<Box<dyn ComBase>> {
         // Try to use registered factory first
         if let Some(factory) = self.protocol_factories.get(&ProtocolType::ModbusRtu) {
-            return factory.create_client(config);
+            return factory.create_client(config, config_manager);
         }
         
         // Fallback error
@@ -596,6 +635,16 @@ impl ProtocolFactory {
     ///
     /// * `config` - Channel configuration
     pub fn create_channel(&self, config: ChannelConfig) -> Result<()> {
+        self.create_channel_with_config_manager(config, None)
+    }
+
+    /// Create and register a channel with config manager support for point table loading
+    ///
+    /// # Arguments
+    ///
+    /// * `config` - Channel configuration
+    /// * `config_manager` - Optional config manager for loading point tables
+    pub fn create_channel_with_config_manager(&self, config: ChannelConfig, config_manager: Option<&ConfigManager>) -> Result<()> {
         let channel_id = config.id;
         
         // Check if the channel ID already exists
@@ -609,8 +658,8 @@ impl ProtocolFactory {
         // Validate configuration using registered factories
         self.validate_config(&config)?;
         
-        // Create protocol instance
-        let protocol = self.create_protocol(config.clone())?;
+        // Create protocol instance with config manager support
+        let protocol = self.create_protocol_with_config_manager(config.clone(), config_manager)?;
         
         // Create metadata
         let metadata = ChannelMetadata {
