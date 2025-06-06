@@ -297,7 +297,7 @@ async fn test_multiple_channels() {
     assert!(created_count >= 1, "At least one channel should be created successfully");
     
     // Test channel statistics
-    let stats = factory.get_channel_stats();
+    let stats = factory.get_channel_stats().await;
     assert_eq!(stats.total_channels, created_count);
 }
 

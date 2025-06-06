@@ -751,14 +751,32 @@ impl ProtocolFactory {
         self.channels.len()
     }
     
+    /// Get the number of channels that are currently running
+    pub async fn running_channel_count(&self) -> usize {
+        use futures::future::join_all;
+
+        let running_futures = self.channels.iter().map(|entry| {
+            let channel = entry.value().clone();
+            async move {
+                let ch = channel.read().await;
+                ch.is_running().await
+            }
+        });
+
+        join_all(running_futures)
+            .await
+            .into_iter()
+            .filter(|running| *running)
+            .count()
+    }
+
     /// Get channel statistics
-    pub fn get_channel_stats(&self) -> ChannelStats {
+    pub async fn get_channel_stats(&self) -> ChannelStats {
         let total_channels = self.channels.len();
-        let running_channels = 0; // TODO: 需要异步访问才能获得真实状态
+        let running_channels = self.running_channel_count().await;
         let mut protocol_counts = AHashMap::new();
         
-        // Since we can't use async here, we'll just count by metadata
-        // For runtime status, a separate async method would be needed
+        // Count channels by protocol based on cached metadata
         for entry in self.channel_metadata.iter() {
             let metadata = entry.value();
             let protocol_name = metadata.protocol_type.as_str();
@@ -1081,8 +1099,8 @@ mod tests {
         assert!(ids.contains(&61));
     }
 
-    #[test]
-    fn test_get_channel_stats() {
+    #[tokio::test]
+    async fn test_get_channel_stats() {
         let factory = ProtocolFactory::new();
         let config1 = create_test_channel_config(70, ProtocolType::ModbusTcp);
         let config2 = create_test_channel_config(71, ProtocolType::Iec104);
@@ -1092,9 +1110,14 @@ mod tests {
         factory.create_channel(config2).unwrap();
         factory.create_channel(config3).unwrap();
         
-        let stats = factory.get_channel_stats();
+        let stats = factory.get_channel_stats().await;
         assert_eq!(stats.total_channels, 3);
         assert_eq!(stats.running_channels, 0); // Channels not started yet
+
+        // Start channels and verify running count
+        factory.start_all_channels().await.unwrap();
+        let stats = factory.get_channel_stats().await;
+        assert_eq!(stats.running_channels, 3);
         
         // Check protocol counts
         assert_eq!(stats.protocol_counts.get("ModbusTcp"), Some(&2));
