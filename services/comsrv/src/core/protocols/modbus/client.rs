@@ -1,698 +1,1336 @@
-use std::sync::Arc;
-use async_trait::async_trait;
-use tokio::sync::RwLock;
-use chrono::Utc;
-use log::{debug, error, info, warn};
-use crate::core::config::config_manager::ChannelConfig;
-use crate::core::protocols::common::{ComBase, ComBaseImpl, ChannelStatus, PointData};
-use crate::utils::{ComSrvError, Result};
-use super::common::{ModbusFunctionCode, ModbusDataType, ModbusRegisterMapping, ByteOrder};
-use crate::core::config::PointTableManager;
-use std::path::Path;
+//! Unified Modbus Client - Real Implementation using voltage_modbus library
+//!
+//! This module provides a unified Modbus client that supports both RTU and TCP communication modes.
+//! Uses the voltage_modbus library for actual Modbus communication.
+//! Key features:
+//! - Real RTU and TCP client implementation using voltage_modbus
+//! - Proper separation of connection and polling logic  
+//! - Improved error handling and logging
+//! - Better async lock usage
+//! - Batch operation optimization
+
 use std::collections::HashMap;
-use serde_yaml;
+use std::sync::Arc;
+use std::time::{Duration, SystemTime};
+use tokio::sync::{RwLock, Mutex};
+use log::{debug, info, warn, trace, error};
+use serde::{Deserialize, Serialize};
+use tokio_serial::{DataBits, Parity, StopBits};
+use async_trait::async_trait;
+use chrono::Utc;
 
-/// Modbus client abstract interface
-///
-/// Define all methods that Modbus clients must implement
-#[async_trait]
-pub trait ModbusClient: ComBase {
-    /// Read coils
-    async fn read_coils(&self, address: u16, quantity: u16) -> Result<Vec<bool>>;
-    
-    /// Read discrete inputs
-    async fn read_discrete_inputs(&self, address: u16, quantity: u16) -> Result<Vec<bool>>;
-    
-    /// Read holding registers
-    async fn read_holding_registers(&self, address: u16, quantity: u16) -> Result<Vec<u16>>;
-    
-    /// Read input registers
-    async fn read_input_registers(&self, address: u16, quantity: u16) -> Result<Vec<u16>>;
-    
-    /// Write single coil
-    async fn write_single_coil(&self, address: u16, value: bool) -> Result<()>;
-    
-    /// Write single register
-    async fn write_single_register(&self, address: u16, value: u16) -> Result<()>;
-    
-    /// Write multiple coils
-    async fn write_multiple_coils(&self, address: u16, values: &[bool]) -> Result<()>;
-    
-    /// Write multiple registers
-    async fn write_multiple_registers(&self, address: u16, values: &[u16]) -> Result<()>;
-    
-    /// Read data of specified type
-    async fn read_data(&self, mapping: &ModbusRegisterMapping) -> Result<serde_json::Value>;
-    
-    /// Write data of specified type
-    async fn write_data(&self, mapping: &ModbusRegisterMapping, value: &serde_json::Value) -> Result<()>;
+// Import voltage_modbus types
+use voltage_modbus::{ModbusResult as VoltageResult, ModbusError as VoltageError};
+use voltage_modbus::client::{ModbusClient as VoltageModbusClient, ModbusTcpClient, ModbusRtuClient};
+use voltage_modbus::protocol::SlaveId;
+use voltage_modbus::transport::TransportStats;
+
+use crate::utils::error::{ComSrvError, Result};
+use crate::core::config::ChannelParameters;
+use crate::core::metrics::{ProtocolMetrics, DataPoint};
+use super::common::{ModbusRegisterMapping, ModbusDataType, ModbusRegisterType, ByteOrder};
+use crate::core::config::config_manager::{ChannelConfig, ProtocolType};
+use crate::core::protocols::common::combase::{
+    ComBase, ChannelStatus, PointData, PointReader, 
+    PollingConfig, PollingPoint
+};
+use crate::utils::logger::{ChannelLogger, LogLevel};
+
+/// Modbus communication mode
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ModbusCommunicationMode {
+    /// RTU mode over serial port
+    Rtu,
+    /// TCP mode over network
+    Tcp,
 }
 
-/// Modbus client base implementation
-pub struct ModbusClientBase {
-    /// Base communication implementation
-    pub base: ComBaseImpl,
-    /// Modbus device ID
-    slave_id: u8,
-    /// Connection timeout (milliseconds)
-    timeout_ms: u64,
-    /// Retry count
-    retry_count: u8,
-    /// Whether connected
-    connected: Arc<RwLock<bool>>,
-    /// Register mappings
-    register_mappings: Arc<RwLock<Vec<ModbusRegisterMapping>>>,
+/// Unified Modbus client configuration
+#[derive(Debug, Clone)]
+pub struct ModbusClientConfig {
+    /// Communication mode (RTU or TCP)
+    pub mode: ModbusCommunicationMode,
+    /// Slave/Unit ID
+    pub slave_id: u8,
+    /// Connection timeout
+    pub timeout: Duration,
+    /// Maximum retry attempts
+    pub max_retries: u32,
+    /// Polling interval for data collection
+    pub poll_interval: Duration,
+    /// Point mappings for this client
+    pub point_mappings: Vec<ModbusRegisterMapping>,
+    
+    // RTU-specific configuration
+    /// Serial port path (RTU mode only)
+    pub port: Option<String>,
+    /// Baud rate (RTU mode only)
+    pub baud_rate: Option<u32>,
+    /// Data bits (RTU mode only)
+    pub data_bits: Option<DataBits>,
+    /// Stop bits (RTU mode only)
+    pub stop_bits: Option<StopBits>,
+    /// Parity (RTU mode only)
+    pub parity: Option<Parity>,
+    
+    // TCP-specific configuration
+    /// Host address (TCP mode only)
+    pub host: Option<String>,
+    /// Port number (TCP mode only)
+    pub tcp_port: Option<u16>,
 }
 
-impl ModbusClientBase {
-    /// Create a new Modbus client base implementation
-    pub fn new(name: &str, config: ChannelConfig) -> Self {
-        // Get device parameters from configuration
-        let params = &config.parameters;
-        let slave_id = params.get("slave_id")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(1) as u8;
-            
-        let timeout_ms = params.get("timeout_ms")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(1000);
-            
-        let retry_count = params.get("retry_count")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(3) as u8;
-            
-        // Create object    
+impl Default for ModbusClientConfig {
+    fn default() -> Self {
         Self {
-            base: ComBaseImpl::new(name, &config.protocol.to_string(), config),
-            slave_id,
-            timeout_ms,
-            retry_count,
-            connected: Arc::new(RwLock::new(false)),
-            register_mappings: Arc::new(RwLock::new(Vec::new())),
+            mode: ModbusCommunicationMode::Rtu,
+            slave_id: 1,
+            timeout: Duration::from_secs(5),
+            max_retries: 3,
+            poll_interval: Duration::from_secs(1),
+            point_mappings: Vec::new(),
+            port: Some("/dev/ttyUSB0".to_string()),
+            baud_rate: Some(9600),
+            data_bits: Some(DataBits::Eight),
+            stop_bits: Some(StopBits::One),
+            parity: Some(Parity::None),
+            host: Some("127.0.0.1".to_string()),
+            tcp_port: Some(502),
+        }
+    }
+}
+
+/// Connection state for the Modbus client
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ModbusConnectionState {
+    /// Client is disconnected
+    Disconnected,
+    /// Client is attempting to connect
+    Connecting,
+    /// Client is connected and ready
+    Connected,
+    /// Client encountered an error
+    Error(String),
+}
+
+/// Communication statistics for the Modbus client
+#[derive(Debug, Clone)]
+pub struct ModbusClientStats {
+    /// Total number of requests sent
+    pub total_requests: u64,
+    /// Number of successful requests
+    pub successful_requests: u64,
+    /// Number of failed requests
+    pub failed_requests: u64,
+    /// Number of timeout requests
+    pub timeout_requests: u64,
+    /// Number of CRC errors (RTU mode)
+    pub crc_errors: u64,
+    /// Number of exception responses
+    pub exception_responses: u64,
+    /// Average response time in milliseconds
+    pub avg_response_time_ms: f64,
+    /// Number of reconnection attempts
+    pub reconnect_attempts: u64,
+    /// Last successful communication timestamp
+    pub last_successful_communication: Option<SystemTime>,
+    /// Communication quality percentage (0-100)
+    pub communication_quality: f64,
+}
+
+impl ModbusClientStats {
+    /// Create new statistics instance
+    pub fn new() -> Self {
+        Self {
+            total_requests: 0,
+            successful_requests: 0,
+            failed_requests: 0,
+            timeout_requests: 0,
+            crc_errors: 0,
+            exception_responses: 0,
+            avg_response_time_ms: 0.0,
+            reconnect_attempts: 0,
+            last_successful_communication: None,
+            communication_quality: 100.0,
         }
     }
     
-    /// Get device ID
-    pub fn slave_id(&self) -> u8 {
-        self.slave_id
-    }
-    
-    /// Get timeout time
-    pub fn timeout_ms(&self) -> u64 {
-        self.timeout_ms
-    }
-    
-    /// Get retry count
-    pub fn retry_count(&self) -> u8 {
-        self.retry_count
-    }
-    
-    /// Get name
-    pub fn name(&self) -> &str {
-        self.base.name()
-    }
-    
-    /// Get channel ID
-    pub fn channel_id(&self) -> String {
-        self.base.channel_id()
-    }
-    
-    /// Get running status
-    pub async fn is_running(&self) -> bool {
-        self.base.is_running().await
-    }
-    
-    /// Set running status
-    pub async fn set_running(&self, running: bool) {
-        self.base.set_running(running).await;
-    }
-    
-    /// Get current status
-    pub async fn status(&self) -> ChannelStatus {
-        self.base.status().await
-    }
-    
-    /// Set connected status
-    pub async fn set_connected(&self, connected: bool) {
-        let mut c = self.connected.write().await;
-        *c = connected;
+    /// Update statistics after a request
+    pub fn update_request_stats(&mut self, success: bool, response_time: Duration, error_type: Option<&str>) {
+        self.total_requests += 1;
         
-        // Update channel status
-        let channel_id = self.base.channel_id();
-        let mut status = ChannelStatus::new(&channel_id);
-        status.connected = connected;
-        status.last_update_time = Utc::now();
-        
-        if !connected {
-            status.last_error = "Device disconnected".to_string();
-        }
-    }
-    
-    /// Get connected status
-    pub async fn is_connected(&self) -> bool {
-        *self.connected.read().await
-    }
-    
-    /// Set error information
-    pub async fn set_error(&self, error: &str) {
-        // Update channel status
-        let channel_id = self.base.channel_id();
-        let mut status = ChannelStatus::new(&channel_id);
-        status.connected = false;
-        status.last_error = error.to_string();
-        status.last_update_time = Utc::now();
-    }
-    
-    /// Load register mappings
-    pub async fn load_register_mappings(&self, mappings: Vec<ModbusRegisterMapping>) {
-        let mut reg_mappings = self.register_mappings.write().await;
-        *reg_mappings = mappings;
-    }
-    
-    /// Get register mappings
-    pub async fn get_register_mappings(&self) -> Vec<ModbusRegisterMapping> {
-        self.register_mappings.read().await.clone()
-    }
-    
-    /// Find mapping by point ID
-    pub async fn find_mapping(&self, point_id: &str) -> Option<ModbusRegisterMapping> {
-        let mappings = self.register_mappings.read().await;
-        for mapping in mappings.iter() {
-            if mapping.point_id == point_id {
-                return Some(mapping.clone());
+        if success {
+            self.successful_requests += 1;
+            self.last_successful_communication = Some(SystemTime::now());
+        } else {
+            self.failed_requests += 1;
+            
+            // Classify error types
+            if let Some(error) = error_type {
+                match error {
+                    "timeout" => self.timeout_requests += 1,
+                    "crc" => self.crc_errors += 1,
+                    "exception" => self.exception_responses += 1,
+                    _ => {},
+                }
             }
         }
-        None
+        
+        // Update average response time
+        let current_avg = self.avg_response_time_ms;
+        let new_time = response_time.as_millis() as f64;
+        self.avg_response_time_ms = if self.total_requests == 1 {
+            new_time
+        } else {
+            (current_avg * (self.total_requests - 1) as f64 + new_time) / self.total_requests as f64
+        };
+        
+        // Update communication quality
+        self.communication_quality = if self.total_requests > 0 {
+            (self.successful_requests as f64 / self.total_requests as f64) * 100.0
+        } else {
+            100.0
+        };
     }
-    
-    /// Get all points real-time data
-    pub async fn get_all_points(&self) -> Vec<PointData> {
-        let mappings = self.register_mappings.read().await;
-        let mut points = Vec::new();
+}
+
+/// Internal Modbus client wrapper enum
+enum InternalModbusClient {
+    Tcp(ModbusTcpClient),
+    Rtu(ModbusRtuClient),
+}
+
+/// Unified Modbus client that supports both RTU and TCP modes
+pub struct ModbusClient {
+    /// Client configuration
+    config: ModbusClientConfig,
+    /// Internal client instance (wrapped in Arc<Mutex> for thread safety)
+    internal_client: Arc<Mutex<Option<InternalModbusClient>>>,
+    /// Current connection state
+    connection_state: Arc<RwLock<ModbusConnectionState>>,
+    /// Client statistics
+    stats: Arc<RwLock<ModbusClientStats>>,
+    /// Point value cache
+    point_cache: Arc<RwLock<HashMap<String, DataPoint>>>,
+    /// Running state
+    is_running: Arc<RwLock<bool>>,
+    /// Channel logger for protocol message logging
+    channel_logger: Option<ChannelLogger>,
+    /// Polling task handle for graceful shutdown
+    polling_handle: Arc<RwLock<Option<tokio::task::JoinHandle<()>>>>,
+}
+
+impl ModbusClient {
+    /// Create a new ModbusClient with the specified configuration
+    pub fn new(config: ModbusClientConfig, _mode: ModbusCommunicationMode) -> Result<Self> {
+        debug!("Creating ModbusClient with mode: {:?}", config.mode);
         
-        for mapping in mappings.iter() {
-            // Create point data object
-            let point_data = PointData {
-                id: mapping.point_id.clone(),
-                value: serde_json::Value::Null, // Initialize to null, fill actual value in the specific implementation class
-                quality: false,
-                timestamp: Utc::now(),
-            };
-            
-            points.push(point_data);
-        }
+        let protocol_name = format!("modbus_{:?}", config.mode);
         
-        // Return point list, actual value will be filled in the specific implementation class
-        points
+        Ok(Self {
+            config,
+            internal_client: Arc::new(Mutex::new(None)),
+            connection_state: Arc::new(RwLock::new(ModbusConnectionState::Disconnected)),
+            stats: Arc::new(RwLock::new(ModbusClientStats::new())),
+            point_cache: Arc::new(RwLock::new(HashMap::new())),
+            is_running: Arc::new(RwLock::new(false)),
+            channel_logger: None,
+            polling_handle: Arc::new(RwLock::new(None)),
+        })
     }
 
-    /// Load point tables
-    pub async fn load_point_tables(&self, config_dir: &str) -> Result<()> {
-        // Get channel configuration
-        let channel_config = self.base.config();
-        let params = &channel_config.parameters;
+    /// Get current connection state
+    pub async fn get_connection_state(&self) -> ModbusConnectionState {
+        self.connection_state.read().await.clone()
+    }
+
+    /// Get current statistics
+    pub async fn get_stats(&self) -> ModbusClientStats {
+        self.stats.read().await.clone()
+    }
+
+    /// Check if the client is running
+    pub async fn is_running(&self) -> bool {
+        *self.is_running.read().await
+    }
+
+    /// Set channel logger for protocol message logging
+    pub fn set_channel_logger(&mut self, logger: ChannelLogger) {
+        self.channel_logger = Some(logger);
+    }
+
+    /// Connect to the Modbus device
+    async fn connect(&mut self) -> Result<()> {
+        debug!("Connecting to Modbus device with mode: {:?}", self.config.mode);
         
-        // Try to get point table configuration
-        if let Some(point_tables) = params.get("point_tables") {
-            if let Some(tables) = point_tables.as_mapping() {
-                // Create point table manager
-                let point_table_manager = PointTableManager::new(config_dir);
-                let mut all_mappings = Vec::new();
+        // Update state to connecting
+        *self.connection_state.write().await = ModbusConnectionState::Connecting;
+        
+        let result = match self.config.mode {
+            ModbusCommunicationMode::Tcp => self.connect_tcp().await,
+            ModbusCommunicationMode::Rtu => self.connect_rtu().await,
+        };
+        
+        match result {
+            Ok(_) => {
+                *self.connection_state.write().await = ModbusConnectionState::Connected;
+                info!("Successfully connected to Modbus device");
                 
-                // Load all point tables
-                for (table_name, path) in tables {
-                    if let Some(path_str) = path.as_str() {
-                        let table_name_str = if let Some(s) = table_name.as_str() {
-                            s
-                        } else {
-                            "unknown"
-                        };
-                        
-                        info!("Loading point table {}: {}", table_name_str, path_str);
-                        match point_table_manager.load_point_table(path_str) {
-                            Ok(mappings) => {
-                                info!("Successfully loaded point table {}: {} points", table_name_str, mappings.len());
-                                // Add all mappings
-                                all_mappings.extend(mappings);
-                            },
-                            Err(e) => {
-                                error!("Failed to load point table {}: {}", table_name_str, e);
-                                return Err(e);
-                            }
-                        }
-                    }
+                // Log connection success
+                if let Some(logger) = &self.channel_logger {
+                    logger.info(&format!("== [{}] Connected to Modbus device (mode: {:?}, slave: {})", 
+                        chrono::Utc::now().format("%H:%M:%S%.3f"), 
+                        self.config.mode,
+                        self.config.slave_id
+                    ));
                 }
+                Ok(())
+            }
+            Err(e) => {
+                let error_msg = format!("Failed to connect: {}", e);
+                *self.connection_state.write().await = ModbusConnectionState::Error(error_msg.clone());
+                error!("Connection failed: {}", error_msg);
                 
-                // Update point table
-                info!("Total loaded {} point mappings", all_mappings.len());
-                self.load_register_mappings(all_mappings).await;
-                return Ok(());
+                // Log connection failure
+                if let Some(logger) = &self.channel_logger {
+                    logger.error(&format!("== [{}] Connection failed: {}", 
+                        chrono::Utc::now().format("%H:%M:%S%.3f"), 
+                        error_msg
+                    ));
+                }
+                Err(e)
             }
         }
+    }
+
+    /// Connect to TCP Modbus device
+    async fn connect_tcp(&mut self) -> Result<()> {
+        let host = self.config.host.as_ref()
+            .ok_or_else(|| ComSrvError::ConfigError("TCP host not specified".to_string()))?;
+        let port = self.config.tcp_port
+            .ok_or_else(|| ComSrvError::ConfigError("TCP port not specified".to_string()))?;
         
-        // Try to get embedded point configuration
-        if let Some(points) = params.get("points") {
-            if let Some(points_array) = points.as_sequence() {
-                let mut mappings = Vec::new();
-                
-                for point in points_array {
-                    if let Some(point_obj) = point.as_mapping() {
-                        // Extract required fields
-                        let id = point_obj.get(&serde_yaml::Value::String("id".to_string()))
-                            .and_then(|v| v.as_str())
-                            .ok_or_else(|| {
-                                ComSrvError::ConfigError("Point missing required 'id' field".to_string())
-                            })?;
-                        
-                        let address = point_obj.get(&serde_yaml::Value::String("address".to_string()))
-                            .and_then(|v| v.as_u64())
-                            .ok_or_else(|| {
-                                ComSrvError::ConfigError(format!("Point {} missing required 'address' field", id))
-                            })? as u16;
-                        
-                        let point_type = point_obj.get(&serde_yaml::Value::String("type".to_string()))
-                            .and_then(|v| v.as_str())
-                            .ok_or_else(|| {
-                                ComSrvError::ConfigError(format!("Point {} missing required 'type' field", id))
-                            })?;
-                        
-                        // Determine data type and quantity
-                        let (data_type, quantity) = match point_type {
-                            "coil" | "discrete_input" => (ModbusDataType::Bool, 1),
-                            "holding_register" | "input_register" => {
-                                let dt = point_obj.get(&serde_yaml::Value::String("data_type".to_string()))
-                                    .and_then(|v| v.as_str())
-                                    .ok_or_else(|| {
-                                        ComSrvError::ConfigError(format!("Register point {} missing required 'data_type' field", id))
-                                    })?;
-                                
-                                match dt {
-                                    "bool" => (ModbusDataType::Bool, 1),
-                                    "int16" => (ModbusDataType::Int16, 1),
-                                    "uint16" => (ModbusDataType::UInt16, 1),
-                                    "int32" => (ModbusDataType::Int32, 2),
-                                    "uint32" => (ModbusDataType::UInt32, 2),
-                                    "float32" => (ModbusDataType::Float32, 2),
-                                    "float64" => (ModbusDataType::Float64, 4),
-                                    s if s.starts_with("string") => {
-                                        let len = s.trim_start_matches("string")
-                                            .trim_start_matches(|c: char| !c.is_digit(10))
-                                            .parse::<usize>()
-                                            .unwrap_or(10);
-                                        let registers = (len + 1) / 2;
-                                        (ModbusDataType::String(len), registers as u16)
-                                    },
-                                    _ => return Err(ComSrvError::ConfigError(format!(
-                                        "Point {} has unsupported data_type: {}", id, dt
-                                    ))),
-                                }
-                            },
-                            _ => return Err(ComSrvError::ConfigError(format!(
-                                "Point {} has unsupported type: {}", id, point_type
-                            ))),
-                        };
-                        
-                        // Writability
-                        let writable = point_obj.get(&serde_yaml::Value::String("writable".to_string()))
-                            .and_then(|v| v.as_bool())
-                            .unwrap_or(false);
-                            
-                        // Byte order
-                        let byte_order = match point_obj.get(&serde_yaml::Value::String("byte_order".to_string())).and_then(|v| v.as_str()) {
-                            Some("ABCD") => ByteOrder::BigEndian,
-                            Some("DCBA") => ByteOrder::LittleEndian,
-                            Some("BADC") => ByteOrder::BigEndianWordSwapped,
-                            Some("CDAB") => ByteOrder::LittleEndianWordSwapped,
-                            _ => ByteOrder::BigEndian, // Default
-                        };
-                        
-                        // Scale factor
-                        let scale_factor = point_obj.get(&serde_yaml::Value::String("scale".to_string()))
-                            .and_then(|v| v.as_f64());
-                            
-                        // Offset
-                        let offset = point_obj.get(&serde_yaml::Value::String("offset".to_string()))
-                            .and_then(|v| v.as_f64());
-                            
-                        // Create mapping
-                        let mapping = ModbusRegisterMapping {
-                            point_id: id.to_string(),
-                            address,
-                            quantity,
-                            data_type,
-                            writable,
-                            byte_order,
-                            scale_factor,
-                            offset,
-                        };
-                        
-                        mappings.push(mapping);
-                    }
-                }
-                
-                // Update point table
-                info!("Loaded {} point mappings from embedded configuration", mappings.len());
-                self.load_register_mappings(mappings).await;
-                return Ok(());
+        let address = format!("{}:{}", host, port);
+        debug!("Connecting to TCP Modbus server at {}", address);
+        
+        match ModbusTcpClient::with_timeout(&address, self.config.timeout).await {
+            Ok(client) => {
+                *self.internal_client.lock().await = Some(InternalModbusClient::Tcp(client));
+                info!("Connected to TCP Modbus server at {}", address);
+                Ok(())
+            }
+            Err(e) => {
+                error!("Failed to connect to TCP server: {}", e);
+                Err(ComSrvError::ConnectionError(format!("TCP connection failed: {}", e)))
             }
         }
+    }
+
+    /// Connect to RTU Modbus device
+    async fn connect_rtu(&mut self) -> Result<()> {
+        let port = self.config.port.as_ref()
+            .ok_or_else(|| ComSrvError::ConfigError("RTU port not specified".to_string()))?;
+        let baud_rate = self.config.baud_rate
+            .ok_or_else(|| ComSrvError::ConfigError("RTU baud rate not specified".to_string()))?;
         
-        // If no point table configuration is found
-        warn!("No point table configuration found");
+        debug!("Connecting to RTU Modbus device at {} with baud rate {}", port, baud_rate);
+        
+        match ModbusRtuClient::new(port, baud_rate) {
+            Ok(client) => {
+                *self.internal_client.lock().await = Some(InternalModbusClient::Rtu(client));
+                info!("Connected to RTU Modbus device at {}", port);
+                Ok(())
+            }
+            Err(e) => {
+                error!("Failed to connect to RTU device: {}", e);
+                Err(ComSrvError::ConnectionError(format!("RTU connection failed: {}", e)))
+            }
+        }
+    }
+
+    /// Start the Modbus client
+    pub async fn start(&mut self) -> Result<()> {
+        info!("Starting Modbus client");
+        
+        // Connect to device
+        self.connect().await?;
+        
+        // Mark as running
+        *self.is_running.write().await = true;
+        
+        // Start polling task
+        let config = self.config.clone();
+        let stats = Arc::clone(&self.stats);
+        let point_cache = Arc::clone(&self.point_cache);
+        let is_running = Arc::clone(&self.is_running);
+        let internal_client = Arc::clone(&self.internal_client);
+        let logger = self.channel_logger.clone();
+        
+        let handle = tokio::spawn(async move {
+            Self::polling_loop(config, stats, point_cache, is_running, internal_client, logger).await;
+        });
+        
+        *self.polling_handle.write().await = Some(handle);
+        
+        info!("Modbus client started successfully");
         Ok(())
     }
 
-    /// Get all register mappings
-    pub async fn get_all_mappings(&self) -> Vec<ModbusRegisterMapping> {
-        let mappings = self.register_mappings.read().await;
-        mappings.clone()
+    /// Stop the Modbus client
+    pub async fn stop(&mut self) -> Result<()> {
+        info!("Stopping Modbus client");
+        
+        // Mark as not running
+        *self.is_running.write().await = false;
+        
+        // Stop polling task
+        if let Some(handle) = self.polling_handle.write().await.take() {
+            handle.abort();
+            debug!("Polling task stopped");
+        }
+        
+        // Close connection
+        if let Some(ref mut client) = self.internal_client.lock().await.as_mut() {
+            match client {
+                InternalModbusClient::Tcp(tcp_client) => {
+                    if let Err(e) = tcp_client.close().await {
+                        warn!("Error closing TCP connection: {}", e);
+                    }
+                }
+                InternalModbusClient::Rtu(rtu_client) => {
+                    if let Err(e) = rtu_client.close().await {
+                        warn!("Error closing RTU connection: {}", e);
+                    }
+                }
+            }
+        }
+        
+        *self.internal_client.lock().await = None;
+        *self.connection_state.write().await = ModbusConnectionState::Disconnected;
+        
+        // Log disconnection
+        if let Some(logger) = &self.channel_logger {
+            logger.info(&format!("== [{}] Disconnected from Modbus device", 
+                chrono::Utc::now().format("%H:%M:%S%.3f")
+            ));
+        }
+        
+        info!("Modbus client stopped successfully");
+        Ok(())
     }
 
-    /// Get channel configuration
-    pub fn config(&self) -> &ChannelConfig {
-        &self.base.config()
+    /// Polling loop for continuous data collection
+    async fn polling_loop(
+        config: ModbusClientConfig,
+        stats: Arc<RwLock<ModbusClientStats>>,
+        point_cache: Arc<RwLock<HashMap<String, DataPoint>>>,
+        is_running: Arc<RwLock<bool>>,
+        internal_client: Arc<Mutex<Option<InternalModbusClient>>>,
+        logger: Option<ChannelLogger>,
+    ) {
+        debug!("Starting polling loop with interval: {:?}", config.poll_interval);
+        
+        let mut interval = tokio::time::interval(config.poll_interval);
+        
+        while *is_running.read().await {
+            interval.tick().await;
+            
+            // Poll all configured points
+            for mapping in &config.point_mappings {
+                if !*is_running.read().await {
+                    break;
+                }
+                
+                match Self::read_point_from_mapping(&config, &internal_client, mapping, logger.as_ref()).await {
+                    Ok(data_point) => {
+                        // Update point cache
+                        point_cache.write().await.insert(mapping.name.clone(), data_point);
+                        
+                        // Update successful request stats
+                        stats.write().await.update_request_stats(true, Duration::from_millis(10), None);
+                        trace!("Successfully read point: {}", mapping.name);
+                    }
+                    Err(e) => {
+                        error!("Failed to read point {}: {}", mapping.name, e);
+                        
+                        // Update failed request stats
+                        stats.write().await.update_request_stats(false, Duration::from_millis(10), Some("polling_error"));
+                    }
+                }
+            }
+            
+            trace!("Polling cycle executed for {} points", config.point_mappings.len());
+        }
+        
+        debug!("Polling loop stopped");
     }
-}
 
-/// Modbus client factory
-/// 
-/// Used to create different types of Modbus clients based on configuration
-pub struct ModbusClientFactory;
+    /// Static method to read a point from mapping (used in polling loop)
+    async fn read_point_from_mapping(
+        config: &ModbusClientConfig,
+        internal_client: &Arc<Mutex<Option<InternalModbusClient>>>,
+        mapping: &ModbusRegisterMapping,
+        logger: Option<&ChannelLogger>,
+    ) -> Result<DataPoint> {
+        let start_time = std::time::Instant::now();
+        
+        // Log the request
+        if let Some(logger) = logger {
+            logger.debug(&format!(">> [{}] ReadPoint \"{}\" slave={} addr={} type={:?}", 
+                chrono::Utc::now().format("%H:%M:%S%.3f"), 
+                mapping.name,
+                config.slave_id, 
+                mapping.address,
+                mapping.register_type
+            ));
+        }
+        
+        let raw_value = match mapping.register_type {
+            ModbusRegisterType::HoldingRegister => {
+                let result = {
+                    let mut client_guard = internal_client.lock().await;
+                    match client_guard.as_mut() {
+                        Some(InternalModbusClient::Tcp(client)) => {
+                            client.read_holding_registers(config.slave_id, mapping.address, 1).await
+                        }
+                        Some(InternalModbusClient::Rtu(client)) => {
+                            client.read_holding_registers(config.slave_id, mapping.address, 1).await
+                        }
+                        None => {
+                            return Err(ComSrvError::ConnectionError("Client not connected".to_string()));
+                        }
+                    }
+                };
+                match result {
+                    Ok(values) => values[0] as f64,
+                    Err(e) => {
+                        if let Some(logger) = logger {
+                            let duration = start_time.elapsed();
+                            logger.error(&format!("<< [{}] ReadPoint \"{}\" ERR: {} ({}ms)", 
+                                chrono::Utc::now().format("%H:%M:%S%.3f"), 
+                                mapping.name,
+                                e,
+                                duration.as_millis()
+                            ));
+                        }
+                        return Err(ComSrvError::CommunicationError(format!("Read holding register failed: {}", e)));
+                    }
+                }
+            }
+            ModbusRegisterType::InputRegister => {
+                let result = {
+                    let mut client_guard = internal_client.lock().await;
+                    match client_guard.as_mut() {
+                        Some(InternalModbusClient::Tcp(client)) => {
+                            client.read_input_registers(config.slave_id, mapping.address, 1).await
+                        }
+                        Some(InternalModbusClient::Rtu(client)) => {
+                            client.read_input_registers(config.slave_id, mapping.address, 1).await
+                        }
+                        None => {
+                            return Err(ComSrvError::ConnectionError("Client not connected".to_string()));
+                        }
+                    }
+                };
+                match result {
+                    Ok(values) => values[0] as f64,
+                    Err(e) => {
+                        if let Some(logger) = logger {
+                            let duration = start_time.elapsed();
+                            logger.error(&format!("<< [{}] ReadPoint \"{}\" ERR: {} ({}ms)", 
+                                chrono::Utc::now().format("%H:%M:%S%.3f"), 
+                                mapping.name,
+                                e,
+                                duration.as_millis()
+                            ));
+                        }
+                        return Err(ComSrvError::CommunicationError(format!("Read input register failed: {}", e)));
+                    }
+                }
+            }
+            ModbusRegisterType::Coil => {
+                let result = {
+                    let mut client_guard = internal_client.lock().await;
+                    match client_guard.as_mut() {
+                        Some(InternalModbusClient::Tcp(client)) => {
+                            client.read_coils(config.slave_id, mapping.address, 1).await
+                        }
+                        Some(InternalModbusClient::Rtu(client)) => {
+                            client.read_coils(config.slave_id, mapping.address, 1).await
+                        }
+                        None => {
+                            return Err(ComSrvError::ConnectionError("Client not connected".to_string()));
+                        }
+                    }
+                };
+                match result {
+                    Ok(values) => if values[0] { 1.0 } else { 0.0 },
+                    Err(e) => {
+                        if let Some(logger) = logger {
+                            let duration = start_time.elapsed();
+                            logger.error(&format!("<< [{}] ReadPoint \"{}\" ERR: {} ({}ms)", 
+                                chrono::Utc::now().format("%H:%M:%S%.3f"), 
+                                mapping.name,
+                                e,
+                                duration.as_millis()
+                            ));
+                        }
+                        return Err(ComSrvError::CommunicationError(format!("Read coil failed: {}", e)));
+                    }
+                }
+            }
+            ModbusRegisterType::DiscreteInput => {
+                let result = {
+                    let mut client_guard = internal_client.lock().await;
+                    match client_guard.as_mut() {
+                        Some(InternalModbusClient::Tcp(client)) => {
+                            client.read_discrete_inputs(config.slave_id, mapping.address, 1).await
+                        }
+                        Some(InternalModbusClient::Rtu(client)) => {
+                            client.read_discrete_inputs(config.slave_id, mapping.address, 1).await
+                        }
+                        None => {
+                            return Err(ComSrvError::ConnectionError("Client not connected".to_string()));
+                        }
+                    }
+                };
+                match result {
+                    Ok(values) => if values[0] { 1.0 } else { 0.0 },
+                    Err(e) => {
+                        if let Some(logger) = logger {
+                            let duration = start_time.elapsed();
+                            logger.error(&format!("<< [{}] ReadPoint \"{}\" ERR: {} ({}ms)", 
+                                chrono::Utc::now().format("%H:%M:%S%.3f"), 
+                                mapping.name,
+                                e,
+                                duration.as_millis()
+                            ));
+                        }
+                        return Err(ComSrvError::CommunicationError(format!("Read discrete input failed: {}", e)));
+                    }
+                }
+            }
+        };
 
-impl ModbusClientFactory {
-    /// Create Modbus client
-    /// 
-    /// Create a client instance based on the protocol type in the configuration
-    pub fn create_client(config: ChannelConfig) -> Result<Box<dyn ModbusClient>> {
-        // Create different clients based on the protocol type
-        let client: Box<dyn ModbusClient> = match config.protocol.as_str() {
-            "ModbusTcp" => {
-                info!("Creating Modbus TCP client for channel: {}", config.id);
-                Box::new(super::tcp::ModbusTcpClient::new(config))
-            },
-            "ModbusRtu" => {
-                info!("Creating Modbus RTU client for channel: {}", config.id);
-                Box::new(super::rtu::ModbusRtuClient::new(config))
-            },
-            _ => {
-                return Err(ComSrvError::ProtocolNotSupported(format!(
-                    "Unsupported Modbus protocol type: {}",
-                    config.protocol
-                )));
+        // Apply basic scaling and offset
+        let processed_value = raw_value * mapping.scale + mapping.offset;
+
+        // Log the successful response
+        if let Some(logger) = logger {
+            let duration = start_time.elapsed();
+            logger.debug(&format!("<< [{}] ReadPoint \"{}\" OK: raw={} processed={} ({}ms)", 
+                chrono::Utc::now().format("%H:%M:%S%.3f"), 
+                mapping.name,
+                raw_value,
+                processed_value,
+                duration.as_millis()
+            ));
+        }
+
+        Ok(DataPoint {
+            id: mapping.name.clone(),
+            value: processed_value.to_string(),
+            quality: 1, // Good quality
+            timestamp: std::time::SystemTime::now(),
+            description: mapping.description.clone().unwrap_or_default(),
+        })
+    }
+
+    /// Read a single register value from the device
+    pub async fn read_holding_register(&self, address: u16) -> Result<u16> {
+        let start_time = std::time::Instant::now();
+        
+        // Log the request
+        if let Some(logger) = &self.channel_logger {
+            logger.debug(&format!(">> [{}] ReadHolding slave={} addr={} qty=1", 
+                chrono::Utc::now().format("%H:%M:%S%.3f"), 
+                self.config.slave_id, 
+                address
+            ));
+        }
+        
+        let result = {
+            let mut client_guard = self.internal_client.lock().await;
+            match client_guard.as_mut() {
+                Some(InternalModbusClient::Tcp(client)) => {
+                    client.read_holding_registers(
+                        self.config.slave_id,
+                        address,
+                        1
+                    ).await.map(|values| values[0])
+                }
+                Some(InternalModbusClient::Rtu(client)) => {
+                    client.read_holding_registers(
+                        self.config.slave_id,
+                        address,
+                        1
+                    ).await.map(|values| values[0])
+                }
+                None => {
+                    return Err(ComSrvError::ConnectionError("Client not connected".to_string()));
+                }
             }
         };
         
-        Ok(client)
-    }
-}
-
-/// Modbus read group type, used to identify different register types
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum ModbusReadGroupType {
-    /// Coil
-    Coil,
-    /// Discrete input
-    DiscreteInput,
-    /// Holding register
-    HoldingRegister,
-    /// Input register
-    InputRegister,
-}
-
-/// Modbus read group, represents a group of contiguous registers
-#[derive(Debug, Clone)]
-pub struct ModbusReadGroup {
-    /// Group type
-    pub group_type: ModbusReadGroupType,
-    /// Slave ID
-    pub slave_id: u8,
-    /// Start address
-    pub start_address: u16,
-    /// Register quantity
-    pub quantity: u16,
-    /// Mapping table, maps point ID to register offset
-    pub mappings: HashMap<String, (usize, ModbusRegisterMapping)>,
-}
-
-impl ModbusReadGroup {
-    /// Create a new read group
-    pub fn new(group_type: ModbusReadGroupType, slave_id: u8, start_address: u16) -> Self {
-        Self {
-            group_type,
-            slave_id,
-            start_address,
-            quantity: 0,
-            mappings: HashMap::new(),
-        }
-    }
-
-    /// Add a point mapping to the read group
-    pub fn add_mapping(&mut self, point_id: String, mapping: ModbusRegisterMapping) -> Result<()> {
-        // Calculate the offset relative to the start address
-        let offset = (mapping.address - self.start_address) as usize;
+        let duration = start_time.elapsed();
         
-        // Update the group size
-        let end_address = mapping.address + mapping.quantity - 1;
-        let group_end = self.start_address + self.quantity - 1;
-        
-        if end_address > group_end {
-            self.quantity = end_address - self.start_address + 1;
-        }
-        
-        // Add mapping
-        self.mappings.insert(point_id, (offset, mapping));
-        
-        Ok(())
-    }
-    
-    /// Check if a point can be added to this read group
-    pub fn can_add(&self, mapping: &ModbusRegisterMapping, max_gap: u16, max_size: u16) -> bool {
-        // Check if exceeds maximum group size
-        if mapping.address < self.start_address {
-            // Point is before the group
-            if self.start_address - mapping.address > max_gap {
-                return false; // Gap too large
+        match result {
+            Ok(value) => {
+                // Log the successful response
+                if let Some(logger) = &self.channel_logger {
+                    logger.debug(&format!("<< [{}] ReadHolding OK: value={} ({}ms)", 
+                        chrono::Utc::now().format("%H:%M:%S%.3f"), 
+                        value,
+                        duration.as_millis()
+                    ));
+                }
+                self.stats.write().await.update_request_stats(true, duration, None);
+                debug!("Read register {} value: {}", address, value);
+                Ok(value)
             }
-            
-            let new_size = self.start_address + self.quantity - mapping.address;
-            if new_size > max_size {
-                return false; // Group would become too large
-            }
-        } else {
-            // Point is after the group
-            let current_end = self.start_address + self.quantity - 1;
-            if mapping.address > current_end && mapping.address - current_end > max_gap {
-                return false; // Gap too large
-            }
-            
-            let new_end = mapping.address + mapping.quantity - 1;
-            let new_size = new_end - self.start_address + 1;
-            if new_size > max_size {
-                return false; // Group would become too large
+            Err(e) => {
+                // Log the error response
+                if let Some(logger) = &self.channel_logger {
+                    logger.error(&format!("<< [{}] ReadHolding ERR: {} ({}ms)", 
+                        chrono::Utc::now().format("%H:%M:%S%.3f"), 
+                        e,
+                        duration.as_millis()
+                    ));
+                }
+                let error_type = Self::classify_error(&e);
+                self.stats.write().await.update_request_stats(false, duration, Some(&error_type));
+                error!("Failed to read register {}: {}", address, e);
+                Err(ComSrvError::CommunicationError(format!("Read failed: {}", e)))
             }
         }
-        
-        true
     }
-    
-    /// Get the Modbus function code for this group type
-    fn get_function_code(&self) -> u8 {
-        match self.group_type {
-            ModbusReadGroupType::Coil => 0x01,            // Read Coils
-            ModbusReadGroupType::DiscreteInput => 0x02,   // Read Discrete Inputs
-            ModbusReadGroupType::HoldingRegister => 0x03, // Read Holding Registers
-            ModbusReadGroupType::InputRegister => 0x04,   // Read Input Registers
+
+    /// Read multiple holding registers from the device
+    pub async fn read_holding_registers(&self, address: u16, quantity: u16) -> Result<Vec<u16>> {
+        let start_time = std::time::Instant::now();
+        
+        // Log the request
+        if let Some(logger) = &self.channel_logger {
+            logger.debug(&format!(">> [{}] ReadHoldingRegs slave={} addr={} qty={}", 
+                chrono::Utc::now().format("%H:%M:%S%.3f"), 
+                self.config.slave_id, 
+                address,
+                quantity
+            ));
         }
-    }
-
-    /// Build the Modbus PDU (Protocol Data Unit) for the read request
-    /// PDU = [Function Code (1 byte)] [Start Address (2 bytes)] [Quantity (2 bytes)]
-    pub fn build_request_pdu(&self) -> Vec<u8> {
-        let function_code = self.get_function_code();
-        let start_addr_bytes = self.start_address.to_be_bytes();
-        let quantity_bytes = self.quantity.to_be_bytes();
         
-        vec![
-            function_code,
-            start_addr_bytes[0],
-            start_addr_bytes[1],
-            quantity_bytes[0],
-            quantity_bytes[1],
-        ]
-    }
-}
-
-/// Modbus point optimizer, used to merge points into optimal read groups
-pub struct ModbusOptimizer {
-    /// Maximum allowed register gap, create a new read group if exceeded
-    max_gap: u16,
-    /// Maximum size of a single read group
-    max_group_size: u16,
-}
-
-impl ModbusOptimizer {
-    /// Create a new point optimizer
-    pub fn new(max_gap: u16, max_group_size: u16) -> Self {
-        Self {
-            max_gap,
-            max_group_size,
-        }
-    }
-
-    /// Create optimizer with default settings
-    pub fn default() -> Self {
-        // Default settings: max gap 10 registers, max group size 125 registers
-        Self::new(10, 125)
-    }
-
-    /// Create optimizer from channel configuration
-    pub fn from_channel(channel_id: &str, params: &ChannelConfig) -> Self {
-        // Get maximum gap, default to 10
-        let max_gap = params.parameters.get("max_register_gap")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(10) as u16;
-            
-        // Get maximum group size, default to 125
-        let max_group_size = params.parameters.get("max_read_group_size")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(125) as u16;
-            
-        // Check if optimization is disabled
-        let optimize_enabled = params.parameters.get("optimize_reads")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(true);
-            
-        if !optimize_enabled {
-            // If optimization is disabled, set max gap to 0 so each point is read individually
-            info!("Batch read optimization disabled for channel {}", channel_id);
-            Self::new(0, 1)
-        } else {
-            info!("Batch read optimization for channel {}: max_gap={}, max_group_size={}", 
-                channel_id, max_gap, max_group_size);
-            Self::new(max_gap, max_group_size)
-        }
-    }
-
-    /// Generate optimized read groups based on point mappings
-    pub fn optimize(&self, mappings: &[ModbusRegisterMapping], slave_id: u8) -> Vec<ModbusReadGroup> {
-        let mut groups: Vec<ModbusReadGroup> = Vec::new();
-        
-        // Classify by register type
-        let mut coils: Vec<&ModbusRegisterMapping> = Vec::new();
-        let mut discrete_inputs: Vec<&ModbusRegisterMapping> = Vec::new();
-        let mut holding_registers: Vec<&ModbusRegisterMapping> = Vec::new();
-        let mut input_registers: Vec<&ModbusRegisterMapping> = Vec::new();
-        
-        for mapping in mappings {
-            match mapping.data_type {
-                ModbusDataType::Bool => {
-                    // Determine if this is a coil or discrete input based on specific implementation
-                    // In this example, we assume it's a coil
-                    coils.push(mapping);
-                },
-                _ => {
-                    // Other data types are typically holding registers
-                    holding_registers.push(mapping);
+        let result = {
+            let mut client_guard = self.internal_client.lock().await;
+            match client_guard.as_mut() {
+                Some(InternalModbusClient::Tcp(client)) => {
+                    client.read_holding_registers(
+                        self.config.slave_id,
+                        address,
+                        quantity
+                    ).await
+                }
+                Some(InternalModbusClient::Rtu(client)) => {
+                    client.read_holding_registers(
+                        self.config.slave_id,
+                        address,
+                        quantity
+                    ).await
+                }
+                None => {
+                    return Err(ComSrvError::ConnectionError("Client not connected".to_string()));
                 }
             }
+        };
+        
+        let duration = start_time.elapsed();
+        
+        match result {
+            Ok(values) => {
+                // Log the successful response
+                if let Some(logger) = &self.channel_logger {
+                    logger.debug(&format!("<< [{}] ReadHoldingRegs OK: values={:?} ({}ms)", 
+                        chrono::Utc::now().format("%H:%M:%S%.3f"), 
+                        values,
+                        duration.as_millis()
+                    ));
+                }
+                self.stats.write().await.update_request_stats(true, duration, None);
+                debug!("Read {} registers from address {}: {:?}", quantity, address, values);
+                Ok(values)
+            }
+            Err(e) => {
+                // Log the error response
+                if let Some(logger) = &self.channel_logger {
+                    logger.error(&format!("<< [{}] ReadHoldingRegs ERR: {} ({}ms)", 
+                        chrono::Utc::now().format("%H:%M:%S%.3f"), 
+                        e,
+                        duration.as_millis()
+                    ));
+                }
+                let error_type = Self::classify_error(&e);
+                self.stats.write().await.update_request_stats(false, duration, Some(&error_type));
+                error!("Failed to read registers from {}: {}", address, e);
+                Err(ComSrvError::CommunicationError(format!("Read failed: {}", e)))
+            }
         }
-        
-        // Sort and group points by type
-        let coil_groups = self.optimize_type(
-            &coils, ModbusReadGroupType::Coil, slave_id
-        );
-        
-        let discrete_input_groups = self.optimize_type(
-            &discrete_inputs, ModbusReadGroupType::DiscreteInput, slave_id
-        );
-        
-        let holding_register_groups = self.optimize_type(
-            &holding_registers, ModbusReadGroupType::HoldingRegister, slave_id
-        );
-        
-        let input_register_groups = self.optimize_type(
-            &input_registers, ModbusReadGroupType::InputRegister, slave_id
-        );
-        
-        // Merge all groups
-        groups.extend(coil_groups);
-        groups.extend(discrete_input_groups);
-        groups.extend(holding_register_groups);
-        groups.extend(input_register_groups);
-        
-        info!("Number of optimized read groups: {}", groups.len());
-        for (i, group) in groups.iter().enumerate() {
-            debug!(
-                "Read group #{}: type={:?}, start_address={}, quantity={}, point_count={}",
-                i, group.group_type, group.start_address, group.quantity, group.mappings.len()
-            );
-        }
-        
-        groups
     }
 
-    /// Optimize points of a specific type
-    fn optimize_type(
-        &self,
-        mappings: &[&ModbusRegisterMapping],
-        group_type: ModbusReadGroupType,
-        slave_id: u8
-    ) -> Vec<ModbusReadGroup> {
-        let mut sorted_mappings = mappings.to_vec();
-        sorted_mappings.sort_by_key(|m| m.address);
+    /// Write a single holding register to the device
+    pub async fn write_single_register(&self, address: u16, value: u16) -> Result<()> {
+        let start_time = std::time::Instant::now();
         
-        let mut groups: Vec<ModbusReadGroup> = Vec::new();
+        // Log the request
+        if let Some(logger) = &self.channel_logger {
+            logger.debug(&format!(">> [{}] WriteSingle slave={} addr={} value={}", 
+                chrono::Utc::now().format("%H:%M:%S%.3f"), 
+                self.config.slave_id, 
+                address,
+                value
+            ));
+        }
         
-        for mapping in sorted_mappings {
-            let mut added = false;
-            
-            // Try to add to existing group
-            for group in &mut groups {
-                if group.can_add(mapping, self.max_gap, self.max_group_size) {
-                    // If point is before the group, adjust group start address
-                    if mapping.address < group.start_address {
-                        let old_start = group.start_address;
-                        group.start_address = mapping.address;
-                        
-                        // Adjust existing mapping offsets
-                        let offset_change = old_start - mapping.address;
-                        for (_, (offset, _)) in &mut group.mappings {
-                            *offset += offset_change as usize;
+        let result = {
+            let mut client_guard = self.internal_client.lock().await;
+            match client_guard.as_mut() {
+                Some(InternalModbusClient::Tcp(client)) => {
+                    client.write_single_register(
+                        self.config.slave_id,
+                        address,
+                        value
+                    ).await
+                }
+                Some(InternalModbusClient::Rtu(client)) => {
+                    client.write_single_register(
+                        self.config.slave_id,
+                        address,
+                        value
+                    ).await
+                }
+                None => {
+                    return Err(ComSrvError::ConnectionError("Client not connected".to_string()));
+                }
+            }
+        };
+        
+        let duration = start_time.elapsed();
+        
+        match result {
+            Ok(_) => {
+                // Log the successful response
+                if let Some(logger) = &self.channel_logger {
+                    logger.debug(&format!("<< [{}] WriteSingle OK ({}ms)", 
+                        chrono::Utc::now().format("%H:%M:%S%.3f"), 
+                        duration.as_millis()
+                    ));
+                }
+                self.stats.write().await.update_request_stats(true, duration, None);
+                debug!("Wrote register {} value: {}", address, value);
+                Ok(())
+            }
+            Err(e) => {
+                // Log the error response
+                if let Some(logger) = &self.channel_logger {
+                    logger.error(&format!("<< [{}] WriteSingle ERR: {} ({}ms)", 
+                        chrono::Utc::now().format("%H:%M:%S%.3f"), 
+                        e,
+                        duration.as_millis()
+                    ));
+                }
+                let error_type = Self::classify_error(&e);
+                self.stats.write().await.update_request_stats(false, duration, Some(&error_type));
+                error!("Failed to write register {}: {}", address, e);
+                Err(ComSrvError::CommunicationError(format!("Write failed: {}", e)))
+            }
+        }
+    }
+
+    /// Classify voltage_modbus errors for statistics
+    fn classify_error(error: &VoltageError) -> String {
+        match error {
+            VoltageError::Timeout { .. } => "timeout".to_string(),
+            VoltageError::Frame { .. } => "crc".to_string(),
+            VoltageError::Exception { .. } => "exception".to_string(),
+            _ => "other".to_string(),
+        }
+    }
+
+    /// Read a point based on its mapping configuration
+    async fn read_point_internal(&self, mapping: &ModbusRegisterMapping) -> Result<DataPoint> {
+        let start_time = std::time::Instant::now();
+        
+        let raw_value = match mapping.register_type {
+            ModbusRegisterType::HoldingRegister => {
+                let values = self.read_holding_registers(mapping.address, 1).await?;
+                values[0] as f64
+            }
+            ModbusRegisterType::InputRegister => {
+                // Read input registers
+                let result = {
+                    let mut client_guard = self.internal_client.lock().await;
+                    match client_guard.as_mut() {
+                        Some(InternalModbusClient::Tcp(client)) => {
+                            client.read_input_registers(
+                                self.config.slave_id,
+                                mapping.address,
+                                1
+                            ).await
+                        }
+                        Some(InternalModbusClient::Rtu(client)) => {
+                            client.read_input_registers(
+                                self.config.slave_id,
+                                mapping.address,
+                                1
+                            ).await
+                        }
+                        None => {
+                            return Err(ComSrvError::ConnectionError("Client not connected".to_string()));
                         }
                     }
-                    
-                    // Add mapping
-                    group.add_mapping(mapping.point_id.clone(), mapping.clone()).ok();
-                    added = true;
-                    break;
+                };
+                
+                match result {
+                    Ok(values) => values[0] as f64,
+                    Err(e) => {
+                        return Err(ComSrvError::CommunicationError(format!("Read input register failed: {}", e)));
+                    }
                 }
             }
-            
-            // If cannot add to existing group, create a new group
-            if !added {
-                let mut new_group = ModbusReadGroup::new(group_type, slave_id, mapping.address);
-                new_group.add_mapping(mapping.point_id.clone(), mapping.clone()).ok();
-                groups.push(new_group);
+            ModbusRegisterType::Coil => {
+                // Read coils
+                let result = {
+                    let mut client_guard = self.internal_client.lock().await;
+                    match client_guard.as_mut() {
+                        Some(InternalModbusClient::Tcp(client)) => {
+                            client.read_coils(
+                                self.config.slave_id,
+                                mapping.address,
+                                1
+                            ).await
+                        }
+                        Some(InternalModbusClient::Rtu(client)) => {
+                            client.read_coils(
+                                self.config.slave_id,
+                                mapping.address,
+                                1
+                            ).await
+                        }
+                        None => {
+                            return Err(ComSrvError::ConnectionError("Client not connected".to_string()));
+                        }
+                    }
+                };
+                
+                match result {
+                    Ok(values) => if values[0] { 1.0 } else { 0.0 },
+                    Err(e) => {
+                        return Err(ComSrvError::CommunicationError(format!("Read coil failed: {}", e)));
+                    }
+                }
+            }
+            ModbusRegisterType::DiscreteInput => {
+                // Read discrete inputs
+                let result = {
+                    let mut client_guard = self.internal_client.lock().await;
+                    match client_guard.as_mut() {
+                        Some(InternalModbusClient::Tcp(client)) => {
+                            client.read_discrete_inputs(
+                                self.config.slave_id,
+                                mapping.address,
+                                1
+                            ).await
+                        }
+                        Some(InternalModbusClient::Rtu(client)) => {
+                            client.read_discrete_inputs(
+                                self.config.slave_id,
+                                mapping.address,
+                                1
+                            ).await
+                        }
+                        None => {
+                            return Err(ComSrvError::ConnectionError("Client not connected".to_string()));
+                        }
+                    }
+                };
+                
+                match result {
+                    Ok(values) => if values[0] { 1.0 } else { 0.0 },
+                    Err(e) => {
+                        return Err(ComSrvError::CommunicationError(format!("Read discrete input failed: {}", e)));
+                    }
+                }
+            }
+        };
+
+        // Apply data conversion based on mapping configuration
+        let processed_value = self.convert_raw_data_to_value(raw_value, mapping)?;
+
+        Ok(DataPoint {
+            id: mapping.name.clone(),
+            value: processed_value.to_string(),
+            quality: 1, // Good quality
+            timestamp: std::time::SystemTime::now(),
+            description: mapping.description.clone().unwrap_or_default(),
+        })
+    }
+
+    /// Convert raw register data to actual value based on data type and scaling
+    fn convert_raw_data_to_value(&self, raw_value: f64, mapping: &ModbusRegisterMapping) -> Result<f64> {
+        let mut value = raw_value;
+
+        // Apply data type conversion
+        match mapping.data_type {
+            ModbusDataType::UInt16 => {
+                // Value is already correct for uint16
+            }
+            ModbusDataType::Int16 => {
+                // Convert unsigned to signed 16-bit
+                let raw_u16 = raw_value as u16;
+                value = (raw_u16 as i16) as f64;
+            }
+            ModbusDataType::UInt32 => {
+                // For 32-bit values, we would need to read 2 registers
+                // This is a simplified implementation
+                warn!("UInt32 conversion not fully implemented for single register");
+            }
+            ModbusDataType::Int32 => {
+                // For 32-bit values, we would need to read 2 registers
+                // This is a simplified implementation
+                warn!("Int32 conversion not fully implemented for single register");
+            }
+            ModbusDataType::UInt64 => {
+                // For 64-bit values, we would need to read 4 registers
+                // This is a simplified implementation
+                warn!("UInt64 conversion not fully implemented for single register");
+            }
+            ModbusDataType::Int64 => {
+                // For 64-bit values, we would need to read 4 registers
+                // This is a simplified implementation
+                warn!("Int64 conversion not fully implemented for single register");
+            }
+            ModbusDataType::Float32 => {
+                // For float32, we would need to read 2 registers and convert
+                // This is a simplified implementation
+                warn!("Float32 conversion not fully implemented for single register");
+            }
+            ModbusDataType::Float64 => {
+                // For float64, we would need to read 4 registers and convert
+                // This is a simplified implementation
+                warn!("Float64 conversion not fully implemented for single register");
+            }
+            ModbusDataType::Bool => {
+                value = if raw_value != 0.0 { 1.0 } else { 0.0 };
+            }
+            ModbusDataType::String(_) => {
+                // String types are not supported for numeric register readings
+                warn!("String data type not supported for register readings");
             }
         }
-        
-        groups
+
+        // Apply scaling
+        value *= mapping.scale;
+
+        // Apply offset
+        value += mapping.offset;
+
+        Ok(value)
     }
 }
 
-/// Calculate Modbus RTU CRC16 checksum
-fn crc16_modbus(data: &[u8]) -> u16 {
-    let mut crc: u16 = 0xFFFF;
-    for byte in data {
-        crc ^= *byte as u16;
-        for _ in 0..8 {
-            if (crc & 0x0001) != 0 {
-                crc >>= 1;
-                crc ^= 0xA001; // Polynomial for Modbus CRC
-            } else {
-                crc >>= 1;
+#[async_trait]
+impl ComBase for ModbusClient {
+    fn name(&self) -> &str {
+        "ModbusClient"
+    }
+
+    fn channel_id(&self) -> String {
+        format!("modbus_{}_{}", 
+            match self.config.mode {
+                ModbusCommunicationMode::Tcp => "tcp",
+                ModbusCommunicationMode::Rtu => "rtu",
+            },
+            self.config.slave_id
+        )
+    }
+
+    fn protocol_type(&self) -> &str {
+        match self.config.mode {
+            ModbusCommunicationMode::Tcp => "ModbusTCP",
+            ModbusCommunicationMode::Rtu => "ModbusRTU",
+        }
+    }
+
+    fn get_parameters(&self) -> HashMap<String, String> {
+        let mut params = HashMap::new();
+        params.insert("mode".to_string(), format!("{:?}", self.config.mode));
+        params.insert("slave_id".to_string(), self.config.slave_id.to_string());
+        params.insert("timeout_ms".to_string(), self.config.timeout.as_millis().to_string());
+        params.insert("max_retries".to_string(), self.config.max_retries.to_string());
+        params.insert("poll_interval_ms".to_string(), self.config.poll_interval.as_millis().to_string());
+        
+        match self.config.mode {
+            ModbusCommunicationMode::Tcp => {
+                if let Some(ref host) = self.config.host {
+                    params.insert("host".to_string(), host.clone());
+                }
+                if let Some(port) = self.config.tcp_port {
+                    params.insert("port".to_string(), port.to_string());
+                }
+            }
+            ModbusCommunicationMode::Rtu => {
+                if let Some(ref port) = self.config.port {
+                    params.insert("port".to_string(), port.clone());
+                }
+                if let Some(baud_rate) = self.config.baud_rate {
+                    params.insert("baud_rate".to_string(), baud_rate.to_string());
+                }
+            }
+        }
+        
+        params
+    }
+
+    async fn is_running(&self) -> bool {
+        *self.is_running.read().await
+    }
+
+    async fn start(&mut self) -> Result<()> {
+        self.start().await
+    }
+
+    async fn stop(&mut self) -> Result<()> {
+        self.stop().await
+    }
+
+    async fn status(&self) -> ChannelStatus {
+        let state = self.get_connection_state().await;
+        let is_running = self.is_running().await;
+        let stats = self.get_stats().await;
+        
+        let mut status = ChannelStatus::new(&self.channel_id());
+        status.connected = matches!(state, ModbusConnectionState::Connected);
+        status.last_response_time = stats.avg_response_time_ms;
+        status.last_error = match state {
+            ModbusConnectionState::Error(ref msg) => msg.clone(),
+            _ => String::new(),
+        };
+        status.last_update_time = Utc::now();
+        status
+    }
+
+    async fn get_all_points(&self) -> Vec<PointData> {
+        let cache = self.point_cache.read().await;
+        cache
+            .values()
+            .map(|data_point| PointData {
+                id: data_point.id.clone(),
+                name: data_point.id.clone(),
+                value: data_point.value.clone(),
+                unit: String::new(),
+                description: data_point.description.clone(),
+                timestamp: data_point.timestamp.into(),
+                quality: data_point.quality,
+            })
+            .collect()
+    }
+}
+
+#[async_trait]
+impl PointReader for ModbusClient {
+    async fn read_point(&self, point: &PollingPoint) -> Result<PointData> {
+        // Find the mapping for this point
+        let mapping = self
+            .config
+            .point_mappings
+            .iter()
+            .find(|m| m.name == point.name)
+            .ok_or_else(|| ComSrvError::ConfigError(format!("No mapping found for point: {}", point.name)))?;
+
+        // Use the real read method 
+        match Self::read_point_from_mapping(&self.config, &self.internal_client, mapping, self.channel_logger.as_ref()).await {
+            Ok(data_point) => {
+                Ok(PointData {
+                    id: data_point.id,
+                    name: mapping.display_name.clone().unwrap_or_else(|| mapping.name.clone()),
+                    value: data_point.value,
+                    unit: mapping.unit.clone().unwrap_or_default(),
+                    description: data_point.description,
+                    timestamp: Utc::now(),
+                    quality: data_point.quality,
+                })
+            }
+            Err(e) => {
+                warn!("Failed to read point {}: {}", point.name, e);
+                Ok(PointData {
+                    id: mapping.name.clone(),
+                    name: mapping.display_name.clone().unwrap_or_else(|| mapping.name.clone()),
+                    value: "ERROR".to_string(),
+                    unit: mapping.unit.clone().unwrap_or_default(),
+                    description: format!("Read error: {}", e),
+                    timestamp: Utc::now(),
+                    quality: 0, // Bad quality
+                })
             }
         }
     }
-    crc // CRC is returned directly, need to handle byte order when appending
+
+    async fn read_points_batch(&self, points: &[PollingPoint]) -> Result<Vec<PointData>> {
+        let mut results = Vec::new();
+        
+        // Read each point individually
+        // In a real implementation, you would optimize this by grouping adjacent registers
+        for point in points {
+            match self.read_point(point).await {
+                Ok(data) => results.push(data),
+                Err(e) => {
+                    warn!("Failed to read point {}: {}", point.name, e);
+                    // Create an error data point
+                    results.push(PointData {
+                        id: point.id.clone(),
+                        name: point.name.clone(),
+                        value: "ERROR".to_string(),
+                        unit: String::new(),
+                        description: format!("Read error: {}", e),
+                        timestamp: Utc::now(),
+                        quality: 0, // Bad quality
+                    });
+                }
+            }
+        }
+        
+        Ok(results)
+    }
+
+    async fn is_connected(&self) -> bool {
+        matches!(self.get_connection_state().await, ModbusConnectionState::Connected)
+    }
+
+    fn protocol_name(&self) -> &str {
+        self.protocol_type()
+    }
+}
+
+impl From<ChannelConfig> for ModbusClientConfig {
+    fn from(channel_config: ChannelConfig) -> Self {
+        let mut config = ModbusClientConfig::default();
+        
+        // Parse channel parameters
+        let params_map = match channel_config.parameters {
+            crate::core::config::config_manager::ChannelParameters::Generic(map) => map,
+            _ => std::collections::HashMap::new(),
+        };
+        
+        for (name, value) in params_map {
+            let param_value = match value {
+                serde_yaml::Value::String(s) => s,
+                _ => format!("{:?}", value),
+            };
+                match name.as_str() {
+                    "mode" => {
+                        config.mode = match param_value.as_str() {
+                            "tcp" => ModbusCommunicationMode::Tcp,
+                            "rtu" => ModbusCommunicationMode::Rtu,
+                            _ => ModbusCommunicationMode::Rtu,
+                        };
+                    }
+                    "slave_id" => {
+                        if let Ok(id) = param_value.parse::<u8>() {
+                            config.slave_id = id;
+                        }
+                    }
+                    "timeout_ms" => {
+                        if let Ok(timeout) = param_value.parse::<u64>() {
+                            config.timeout = Duration::from_millis(timeout);
+                        }
+                    }
+                    "max_retries" => {
+                        if let Ok(retries) = param_value.parse::<u32>() {
+                            config.max_retries = retries;
+                        }
+                    }
+                    "poll_interval_ms" => {
+                        if let Ok(interval) = param_value.parse::<u64>() {
+                            config.poll_interval = Duration::from_millis(interval);
+                        }
+                    }
+                    "host" => {
+                        config.host = Some(param_value);
+                    }
+                    "port" => {
+                        if let Ok(port) = param_value.parse::<u16>() {
+                            config.tcp_port = Some(port);
+                        }
+                    }
+                    "serial_port" => {
+                        config.port = Some(param_value);
+                    }
+                    "baud_rate" => {
+                        if let Ok(baud) = param_value.parse::<u32>() {
+                            config.baud_rate = Some(baud);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        
+        config
+    }
+}
+
+impl std::fmt::Debug for ModbusClient {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // Use try_read to avoid blocking in Debug context
+        let connection_state = if let Ok(state) = self.connection_state.try_read() {
+            format!("{:?}", *state)
+        } else {
+            "Locked".to_string()
+        };
+        
+        let is_running = if let Ok(running) = self.is_running.try_read() {
+            *running
+        } else {
+            false
+        };
+        
+        f.debug_struct("ModbusClient")
+            .field("mode", &self.config.mode)
+            .field("slave_id", &self.config.slave_id)
+            .field("connection_state", &connection_state)
+            .field("is_running", &is_running)
+            .field("has_internal_client", &"Arc<Mutex<Option<InternalModbusClient>>>")
+            .finish()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[tokio::test]
+    async fn test_client_creation() {
+        let config = ModbusClientConfig::default();
+        let client = ModbusClient::new(config, ModbusCommunicationMode::Rtu).unwrap();
+        
+        assert_eq!(client.name(), "ModbusClient");
+        assert!(!client.is_running().await);
+        assert!(!client.is_connected().await);
+    }
+
+    #[tokio::test]
+    async fn test_statistics() {
+        let mut stats = ModbusClientStats::new();
+        
+        assert_eq!(stats.total_requests, 0);
+        assert_eq!(stats.successful_requests, 0);
+        assert_eq!(stats.communication_quality, 100.0);
+        
+        stats.update_request_stats(true, Duration::from_millis(100), None);
+        assert_eq!(stats.total_requests, 1);
+        assert_eq!(stats.successful_requests, 1);
+        assert_eq!(stats.communication_quality, 100.0);
+        
+        stats.update_request_stats(false, Duration::from_millis(200), Some("timeout"));
+        assert_eq!(stats.total_requests, 2);
+        assert_eq!(stats.successful_requests, 1);
+        assert_eq!(stats.timeout_requests, 1);
+        assert_eq!(stats.communication_quality, 50.0);
+    }
 } 

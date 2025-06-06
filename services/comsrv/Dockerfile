@@ -1,62 +1,97 @@
-FROM rust:slim as builder
+# =============================================================================
+# Multi-stage build for Comsrv
+# =============================================================================
 
-WORKDIR /usr/src/app
+# -----------------------------------------------------------------------------
+# Build stage
+# -----------------------------------------------------------------------------
+FROM rust:1.75 AS builder
 
-# 安装依赖
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends \
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
     pkg-config \
     libssl-dev \
-    build-essential \
-    git \
-    ca-certificates
-
-# 拷贝Cargo文件
-COPY Cargo.toml Cargo.lock ./
-
-# 为了利用Docker层缓存，先只构建依赖
-RUN mkdir -p src && \
-    echo "fn main() {println!(\"placeholder\")}" > src/main.rs && \
-    cargo build --release && \
-    rm -rf src
-
-# 拷贝源码
-COPY . .
-
-# 删除placeholder后重新构建项目
-RUN touch src/main.rs && cargo build --release
-
-# 运行阶段 - 使用相同的基础镜像以确保glibc版本兼容
-FROM rust:slim
-
-WORKDIR /app
-
-# 安装运行时依赖
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends \
     ca-certificates \
-    libssl3 \
     && rm -rf /var/lib/apt/lists/*
 
-# 拷贝编译后的二进制文件
-COPY --from=builder /usr/src/app/target/release/comsrv /app/
-# 拷贝配置文件
-COPY --from=builder /usr/src/app/config /app/config
+# Set working directory
+WORKDIR /app
 
-# 添加start脚本
-COPY start.sh /app/
-RUN chmod +x /app/start.sh
+# Copy dependency files first for better caching
+COPY Cargo.toml Cargo.lock ./
 
-# 设置环境变量
+# Create a dummy main.rs to build dependencies
+RUN mkdir src && echo "fn main() {}" > src/main.rs
+
+# Build dependencies (this layer will be cached unless Cargo.* files change)
+RUN cargo build --release && rm src/main.rs target/release/deps/comsrv*
+
+# Copy source code
+COPY src ./src
+
+# Build the application
+RUN cargo build --release
+
+# Strip the binary to reduce size
+RUN strip target/release/comsrv
+
+# -----------------------------------------------------------------------------
+# Runtime stage
+# -----------------------------------------------------------------------------
+FROM debian:bullseye-slim
+
+# Install runtime dependencies
+RUN apt-get update && apt-get install -y \
+    ca-certificates \
+    tzdata \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create a non-root user
+RUN groupadd -r comsrv && useradd -r -g comsrv comsrv
+
+# Create necessary directories
+RUN mkdir -p /app/config /app/logs /app/data && \
+    chown -R comsrv:comsrv /app
+
+# Set working directory
+WORKDIR /app
+
+# Copy the binary from builder stage
+COPY --from=builder /app/target/release/comsrv /app/bin/comsrv
+
+# Copy configuration template
+COPY config/comsrv.example.yaml /app/config/comsrv.example.yaml
+
+# Make binary executable
+RUN chmod +x /app/bin/comsrv
+
+# Switch to non-root user
+USER comsrv
+
+# Set environment variables
+ENV CONFIG_FILE=/app/config/comsrv.yaml
+ENV LOG_DIR=/app/logs
+ENV DATA_DIR=/app/data
 ENV RUST_LOG=info
-ENV CONFIG_PATH=/app/config
-ENV LOG_PATH=/app/logs
+ENV RUST_BACKTRACE=1
 
-# 创建日志目录
-RUN mkdir -p /app/logs
+# Expose ports
+EXPOSE 3000 9090
 
-# 暴露API端口和Metrics端口
-EXPOSE 8080 9090
+# Health check
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+    CMD curl -f http://localhost:3000/health || exit 1
 
-# 启动服务
-CMD ["/app/start.sh"] 
+# Default command
+CMD ["/app/bin/comsrv"]
+
+# -----------------------------------------------------------------------------
+# Labels
+# -----------------------------------------------------------------------------
+LABEL maintainer="Your Team <team@example.com>"
+LABEL description="Comsrv - Industrial Communication Service"
+LABEL version="1.0.0"
+LABEL org.opencontainers.image.source="https://github.com/your-org/comsrv"
+LABEL org.opencontainers.image.documentation="https://github.com/your-org/comsrv/blob/main/README.md"
+LABEL org.opencontainers.image.licenses="MIT" 

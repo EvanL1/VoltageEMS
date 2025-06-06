@@ -47,3 +47,4 @@ config/
 services/modsrv/instances/
 services/modsrv/templates/
 services/modsrv/config/
+services/comsrv/PERFORMANCE_TESTING.md

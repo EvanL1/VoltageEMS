@@ -1,3 +1,3 @@
-pub mod com_base;
+pub mod combase;
 
-pub use com_base::{ComBase, ComBaseImpl, ChannelStatus, PointData};
+pub use combase::*;
