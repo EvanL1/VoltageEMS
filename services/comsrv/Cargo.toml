@@ -62,3 +62,9 @@ criterion = "0.5"
 async-trait = "0.1"
 
 
+[features]
+default = []
+can = []
+iec60870 = []
+
+
