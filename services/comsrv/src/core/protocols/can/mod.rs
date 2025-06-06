@@ -12,4 +12,47 @@ pub mod frame;
 
 pub use common::*;
 pub use client::*;
-pub use frame::*; 
+pub use frame::*;
+
+use std::collections::HashMap;
+use crate::core::protocols::common::combase::{ProtocolPacketParser, PacketParseResult};
+
+/// CAN protocol packet parser
+///
+/// Provides basic hex logging of CAN frames. Detailed parsing can be
+/// implemented when the `can` feature is enabled.
+pub struct CanPacketParser;
+
+impl CanPacketParser {
+    /// Create a new CAN packet parser
+    pub fn new() -> Self {
+        Self
+    }
+}
+
+impl ProtocolPacketParser for CanPacketParser {
+    fn protocol_name(&self) -> &str {
+        "CAN"
+    }
+
+    fn parse_packet(&self, data: &[u8], direction: &str) -> PacketParseResult {
+        let hex_data = self.format_hex_data(data);
+
+        #[cfg(feature = "can")]
+        {
+            let description = format!("CAN frame, {} bytes", data.len());
+            return PacketParseResult::success("CAN", direction, &hex_data, &description, HashMap::new());
+        }
+
+        #[cfg(not(feature = "can"))]
+        {
+            PacketParseResult::success(
+                "CAN",
+                direction,
+                &hex_data,
+                "CAN parser disabled",
+                HashMap::new(),
+            )
+        }
+    }
+}
