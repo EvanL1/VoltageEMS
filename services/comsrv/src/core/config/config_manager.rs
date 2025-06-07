@@ -974,7 +974,7 @@ mod tests {
     use std::fs;
     use tempfile::tempdir;
 
-    /// 创建测试配置文件
+    /// Create a test configuration file
     fn create_test_config_file(dir: &std::path::Path, content: &str) -> std::path::PathBuf {
         let config_path = dir.join("test_comsrv.yaml");
         fs::write(&config_path, content).expect("Failed to write test config");
@@ -1012,7 +1012,7 @@ channels: []
     fn test_config_validation() {
         let temp_dir = tempdir().expect("Failed to create temp dir");
         
-        // 测试有效配置
+        // test a valid configuration
         let valid_config = r#"
 version: "1.0"
 service:
@@ -1036,7 +1036,7 @@ channels:
         let manager = ConfigManager::from_file(&config_path).expect("Failed to load valid config");
         assert!(manager.validate_config().is_ok());
         
-        // 测试无效配置 - 重复通道ID
+        // test invalid configuration with duplicate channel ID
         let invalid_config = r#"
 version: "1.0"
 service:
@@ -1074,7 +1074,7 @@ channels:
         let invalid_config_path = temp_dir.path().join("invalid_config.yaml");
         fs::write(&invalid_config_path, invalid_config).expect("Failed to write invalid config");
         
-        // 这个配置应该加载失败，因为有重复的通道ID
+        // this configuration should fail due to duplicate channel IDs
         let result = ConfigManager::from_file(&invalid_config_path);
         assert!(result.is_err());
         if let Err(e) = result {
@@ -1123,20 +1123,20 @@ channels:
         let config_path = create_test_config_file(temp_dir.path(), config_content);
         let manager = ConfigManager::from_file(&config_path).expect("Failed to load config");
         
-        // 检查通道数量
+        // verify channel count
         assert_eq!(manager.get_channels().len(), 2);
         
-        // 检查TCP通道
+        // verify TCP channel
         let tcp_channel = manager.get_channel(1).expect("TCP channel should exist");
         assert_eq!(tcp_channel.name, "TCP Test Channel");
         assert_eq!(tcp_channel.protocol, ProtocolType::ModbusTcp);
         
-        // 检查RTU通道
+        // verify RTU channel
         let rtu_channel = manager.get_channel(2).expect("RTU channel should exist");
         assert_eq!(rtu_channel.name, "RTU Test Channel");
         assert_eq!(rtu_channel.protocol, ProtocolType::ModbusRtu);
         
-        // 检查不存在的通道
+        // verify non-existent channel
         assert!(manager.get_channel(999).is_none());
     }
 
@@ -1153,24 +1153,24 @@ channels:
         ];
         
         for (str_repr, enum_val) in protocols {
-            // 测试字符串到枚举的转换
+            // test conversion from string to enum
             let parsed = ProtocolType::from_str(str_repr).expect("Failed to parse protocol type");
             assert_eq!(parsed, enum_val);
             
-            // 测试枚举到字符串的转换
+            // test conversion from enum to string
             assert_eq!(enum_val.as_str(), str_repr);
             
-            // 测试Display trait
+            // test Display trait
             assert_eq!(format!("{}", enum_val), str_repr);
         }
         
-        // 测试无效协议类型
+        // test invalid protocol type
         assert!(ProtocolType::from_str("InvalidProtocol").is_err());
     }
 
     #[test]
     fn test_channel_parameters_get() {
-        // 测试ModbusTcp参数获取
+        // test ModbusTcp parameter retrieval
         let tcp_params = ChannelParameters::ModbusTcp {
             host: "192.168.1.100".to_string(),
             port: 502,
@@ -1192,7 +1192,7 @@ channels:
             panic!("Port parameter not found");
         }
         
-        // 测试ModbusRtu参数获取
+        // test ModbusRtu parameter retrieval
         let rtu_params = ChannelParameters::ModbusRtu {
             port: "/dev/ttyUSB0".to_string(),
             baud_rate: 9600,
@@ -1218,7 +1218,7 @@ channels:
             panic!("Baud rate parameter not found");
         }
         
-        // 测试Generic参数获取
+        // test generic parameter retrieval
         let mut generic_map = HashMap::new();
         generic_map.insert("custom_param".to_string(), serde_yaml::Value::String("test_value".to_string()));
         let generic_params = ChannelParameters::Generic(generic_map);
@@ -1229,7 +1229,7 @@ channels:
             panic!("Custom parameter not found");
         }
         
-        // 测试不存在的参数
+        // test nonexistent parameter
         assert!(tcp_params.get("nonexistent_param").is_none());
     }
 
@@ -1285,14 +1285,14 @@ channels:
             ],
         };
         
-        // 序列化配置
+        // serialize the configuration
         let serialized = serde_yaml::to_string(&config).expect("Failed to serialize config");
         assert!(!serialized.is_empty());
         
-        // 反序列化配置
+        // deserialize the configuration
         let deserialized: Config = serde_yaml::from_str(&serialized).expect("Failed to deserialize config");
         
-        // 验证反序列化结果
+        // verify deserialization results
         assert_eq!(config.version, deserialized.version);
         assert_eq!(config.service.name, deserialized.service.name);
         assert_eq!(config.channels.len(), deserialized.channels.len());
@@ -1306,7 +1306,7 @@ channels:
 
     #[test]
     fn test_redis_config() {
-        // 测试TCP连接
+        // test TCP connection
         let tcp_config = RedisConfig {
             enabled: true,
             connection_type: RedisConnectionType::Tcp,
@@ -1317,7 +1317,7 @@ channels:
         let tcp_url = tcp_config.to_redis_url();
         assert_eq!(tcp_url, "redis://127.0.0.1:6379/0");
         
-        // 测试Unix socket连接
+        // test Unix socket connection
         let unix_config = RedisConfig {
             enabled: true,
             connection_type: RedisConnectionType::Unix,
@@ -1328,7 +1328,7 @@ channels:
         let unix_url = unix_config.to_redis_url();
         assert_eq!(unix_url, "unix:///tmp/redis.sock");
         
-        // 测试无数据库的TCP连接
+        // test TCP connection without database
         let tcp_no_db_config = RedisConfig {
             enabled: true,
             connection_type: RedisConnectionType::Tcp,
@@ -1368,7 +1368,7 @@ channels:
         assert_eq!(manager.get_service_name(), "initial_service");
         assert_eq!(manager.get_channels().len(), 1);
         
-        // 更新配置文件
+        // update the configuration file
         let updated_config = r#"
 version: "1.0"
 service:
@@ -1405,7 +1405,7 @@ channels:
         
         fs::write(&config_path, updated_config).expect("Failed to update config file");
         
-        // 重新加载配置
+        // reload the configuration
         let (config_changed, changes) = manager.reload_config().expect("Failed to reload config");
         
         assert!(config_changed);

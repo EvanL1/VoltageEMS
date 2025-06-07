@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use crate::utils::{ComSrvError, Result};
 use crate::core::protocols::modbus::common::{ModbusRegisterMapping, ModbusDataType, ModbusRegisterType};
 
-/// CSV点表记录结构
+/// CSV point table record structure
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct CsvPointRecord {
     pub id: String,
@@ -204,13 +204,13 @@ impl CsvPointManager {
             return Err(ComSrvError::ConfigError(format!("Point name cannot be empty for ID: {}", record.id)));
         }
 
-        // 验证数据类型
+        // validate data type
         self.parse_data_type(&record.data_type)?;
 
         Ok(())
     }
 
-    /// 解析数据类型
+    /// Parse the data type
     fn parse_data_type(&self, data_type: &str) -> Result<ModbusDataType> {
         match data_type.to_lowercase().as_str() {
             "bool" | "boolean" => Ok(ModbusDataType::Bool),
@@ -219,12 +219,12 @@ impl CsvPointManager {
             "int32" | "i32" => Ok(ModbusDataType::Int32),
             "uint32" | "u32" => Ok(ModbusDataType::UInt32),
             "float32" | "f32" | "float" => Ok(ModbusDataType::Float32),
-            "string" | "str" => Ok(ModbusDataType::String(10)), // 默认长度10
+            "string" | "str" => Ok(ModbusDataType::String(10)), // default length 10
             _ => Err(ComSrvError::ConfigError(format!("Unsupported data type: {}", data_type))),
         }
     }
 
-    /// 解析寄存器类型
+    /// Parse the register type
     fn parse_register_type(&self, register_type: &Option<String>) -> Result<ModbusRegisterType> {
         match register_type.as_deref() {
             Some("coil") | Some("coils") => Ok(ModbusRegisterType::Coil),
@@ -232,14 +232,14 @@ impl CsvPointManager {
             Some("input_register") | Some("input") => Ok(ModbusRegisterType::InputRegister),
             Some("holding_register") | Some("holding") => Ok(ModbusRegisterType::HoldingRegister),
             None => {
-                // 根据地址范围自动推断寄存器类型
-                Ok(ModbusRegisterType::InputRegister) // 默认为输入寄存器
+                // infer register type based on address range
+                Ok(ModbusRegisterType::InputRegister) // default to input register
             },
             Some(other) => Err(ComSrvError::ConfigError(format!("Unsupported register type: {}", other))),
         }
     }
 
-    /// 保存点表到CSV文件
+    /// Save point table to a CSV file
     pub fn save_to_csv<P: AsRef<Path>>(&self, table_name: &str, file_path: P) -> Result<()> {
         let points = self.point_tables.get(table_name)
             .ok_or_else(|| ComSrvError::ConfigError(format!("Point table not found: {}", table_name)))?;
@@ -267,13 +267,13 @@ impl CsvPointManager {
         Ok(())
     }
 
-    /// 添加或更新点位
+    /// Add or update a point
     pub fn upsert_point(&mut self, table_name: &str, point: CsvPointRecord) -> Result<()> {
         self.validate_record(&point)?;
         
         let points = self.point_tables.entry(table_name.to_string()).or_insert_with(Vec::new);
         
-        // 查找是否存在相同ID的点位
+        // check if a point with the same ID exists
         if let Some(existing) = points.iter_mut().find(|p| p.id == point.id) {
             *existing = point;
         } else {
@@ -283,7 +283,7 @@ impl CsvPointManager {
         Ok(())
     }
 
-    /// 删除点位
+    /// Remove a point
     pub fn remove_point(&mut self, table_name: &str, point_id: &str) -> Result<bool> {
         let points = self.point_tables.get_mut(table_name)
             .ok_or_else(|| ComSrvError::ConfigError(format!("Point table not found: {}", table_name)))?;
@@ -295,7 +295,7 @@ impl CsvPointManager {
     }
 }
 
-/// 点表统计信息
+/// Point table statistics information
 #[derive(Debug, Clone, Serialize)]
 pub struct PointTableStats {
     pub total_points: usize,
@@ -335,13 +335,13 @@ pump_status,Pump Status,1,,1,0,bool,coil,Water pump on/off status"#;
         let points = manager.get_points("test_table").unwrap();
         assert_eq!(points.len(), 3);
 
-        // 测试查找点位
+        // test point lookup
         let temp_point = manager.find_point("test_table", "temp_01").unwrap();
         assert_eq!(temp_point.name, "Temperature Sensor 1");
         assert_eq!(temp_point.address, 1000);
         assert_eq!(temp_point.scale, 0.1);
 
-        // 测试统计信息
+        // test statistics
         let stats = manager.get_table_stats("test_table").unwrap();
         assert_eq!(stats.total_points, 3);
     }

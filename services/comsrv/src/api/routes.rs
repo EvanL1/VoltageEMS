@@ -29,10 +29,10 @@ pub fn api_routes(
         .and(with_protocol_factory(protocol_factory.clone()))
         .and_then(handlers::get_service_status);
     
-    // channels related routes - 更明确的路由定义
+    // channels related routes - detailed channel routes
     let channels_base = v1.and(warp::path("channels"));
     
-    // 最具体的channel路由 - 带有多个路径参数的路由
+    // most specific channel routes with multiple path parameters
     let read_point = channels_base
         .and(warp::path::param::<String>())  // channel_id
         .and(warp::path("points"))
@@ -54,7 +54,7 @@ pub fn api_routes(
         .and(with_protocol_factory(protocol_factory.clone()))
         .and_then(handlers::write_point);
 
-    // 中等具体的channel路由
+    // moderately specific channel routes
     let get_channel_points = channels_base
         .and(warp::path::param::<String>())  // channel_id
         .and(warp::path("points"))
@@ -72,7 +72,7 @@ pub fn api_routes(
         .and(with_protocol_factory(protocol_factory.clone()))
         .and_then(handlers::control_channel);
     
-    // 单个channel状态路由
+    // single channel status route
     let channel_status = channels_base
         .and(warp::path::param::<String>())  // channel_id
         .and(warp::path::end())
@@ -80,7 +80,7 @@ pub fn api_routes(
         .and(with_protocol_factory(protocol_factory.clone()))
         .and_then(handlers::get_channel_status);
     
-    // 所有channels路由
+    // route for all channels
     let all_channels = channels_base
         .and(warp::path::end())
         .and(warp::get())
@@ -90,7 +90,7 @@ pub fn api_routes(
     // Point tables management routes
     let point_tables_base = v1.and(warp::path("point-tables"));
     
-    // 最具体的point-table路由
+    // most specific point-table routes
     let point_from_table = point_tables_base
         .and(warp::path::param::<String>())  // table_name
         .and(warp::path("points"))
@@ -133,7 +133,7 @@ pub fn api_routes(
         .and(with_config_manager(config_manager.clone()))
         .and_then(handlers::reload_point_tables);
     
-    // 单个point-table路由
+    // single point-table route
     let point_table_details = point_tables_base
         .and(warp::path::param::<String>())  // table_name
         .and(warp::path::end())
@@ -141,14 +141,14 @@ pub fn api_routes(
         .and(with_config_manager(config_manager.clone()))
         .and_then(handlers::get_point_table);
     
-    // 所有point-tables路由
+    // route for all point tables
     let all_point_tables = point_tables_base
         .and(warp::path::end())
         .and(warp::get())
         .and(with_config_manager(config_manager.clone()))
         .and_then(handlers::get_point_tables);
     
-    // combine all routes - 按照路径的具体程度排序
+    // combine all routes ordered by specificity
     health
         .or(status)
         .or(read_point)           // /channels/{id}/points/{table}/{point}
