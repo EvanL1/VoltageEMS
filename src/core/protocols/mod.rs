@@ -6,6 +6,8 @@ pub mod factory;
 
 use crate::core::protocols::common::combase::get_global_parser_registry;
 use crate::core::protocols::modbus::ModbusPacketParser;
+use crate::core::protocols::can::CanPacketParser;
+use crate::core::protocols::iec60870::Iec60870PacketParser;
 
 /// Initialize all protocol parsers
 /// 
@@ -16,10 +18,12 @@ pub fn init_protocol_parsers() {
     
     // Register Modbus parser
     registry.register_parser(ModbusPacketParser::new());
-    
-    // TODO: Register other protocol parsers as they are implemented
-    // registry.register_parser(CanPacketParser::new());
-    // registry.register_parser(Iec60870PacketParser::new());
+
+    // Register CAN parser
+    registry.register_parser(CanPacketParser::new());
+
+    // Register IEC60870 parser
+    registry.register_parser(Iec60870PacketParser::new());
     
     tracing::info!("Protocol parsers initialized: {:?}", registry.registered_protocols());
 } 
