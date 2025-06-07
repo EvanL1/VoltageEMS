@@ -5,7 +5,21 @@ use serde::{Deserialize, Serialize};
 use crate::utils::{ComSrvError, Result};
 use crate::core::protocols::modbus::common::{ModbusRegisterMapping, ModbusDataType, ModbusRegisterType};
 
-/// CSV点表记录结构
+/// Point category for separating telemetry, status, setpoint and control points
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[serde(rename_all = "lowercase")]
+pub enum PointCategory {
+    /// Analog telemetry value
+    Telemetry,
+    /// Digital status value
+    Status,
+    /// Remote setpoint
+    Setpoint,
+    /// Remote control command
+    Control,
+}
+
+/// CSV point table record
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct CsvPointRecord {
     pub id: String,
@@ -18,7 +32,10 @@ pub struct CsvPointRecord {
     pub register_type: Option<String>,
     pub description: Option<String>,
     pub access: Option<String>,  // read, write, read_write
-    pub group: Option<String>,   
+    pub group: Option<String>,
+    /// Point category (telemetry, status, setpoint, control)
+    #[serde(default)]
+    pub category: Option<PointCategory>,
 }
 
 /// CSV point table manager
@@ -139,6 +156,7 @@ impl CsvPointManager {
             read_write_points: 0,
             data_types: HashMap::new(),
             groups: HashMap::new(),
+            categories: HashMap::new(),
         };
 
         for point in points {
@@ -156,6 +174,14 @@ impl CsvPointManager {
             // Count groups
             if let Some(group) = &point.group {
                 *stats.groups.entry(group.clone()).or_insert(0) += 1;
+            }
+
+            // Count point categories
+            if let Some(cat) = &point.category {
+                *stats
+                    .categories
+                    .entry(format!("{:?}", cat))
+                    .or_insert(0) += 1;
             }
         }
 
@@ -210,7 +236,7 @@ impl CsvPointManager {
         Ok(())
     }
 
-    /// 解析数据类型
+    /// Parse data type
     fn parse_data_type(&self, data_type: &str) -> Result<ModbusDataType> {
         match data_type.to_lowercase().as_str() {
             "bool" | "boolean" => Ok(ModbusDataType::Bool),
@@ -219,12 +245,12 @@ impl CsvPointManager {
             "int32" | "i32" => Ok(ModbusDataType::Int32),
             "uint32" | "u32" => Ok(ModbusDataType::UInt32),
             "float32" | "f32" | "float" => Ok(ModbusDataType::Float32),
-            "string" | "str" => Ok(ModbusDataType::String(10)), // 默认长度10
+            "string" | "str" => Ok(ModbusDataType::String(10)), // default length 10
             _ => Err(ComSrvError::ConfigError(format!("Unsupported data type: {}", data_type))),
         }
     }
 
-    /// 解析寄存器类型
+    /// Parse register type
     fn parse_register_type(&self, register_type: &Option<String>) -> Result<ModbusRegisterType> {
         match register_type.as_deref() {
             Some("coil") | Some("coils") => Ok(ModbusRegisterType::Coil),
@@ -232,14 +258,14 @@ impl CsvPointManager {
             Some("input_register") | Some("input") => Ok(ModbusRegisterType::InputRegister),
             Some("holding_register") | Some("holding") => Ok(ModbusRegisterType::HoldingRegister),
             None => {
-                // 根据地址范围自动推断寄存器类型
-                Ok(ModbusRegisterType::InputRegister) // 默认为输入寄存器
+                // Automatically infer register type from address range
+                Ok(ModbusRegisterType::InputRegister) // default to input register
             },
             Some(other) => Err(ComSrvError::ConfigError(format!("Unsupported register type: {}", other))),
         }
     }
 
-    /// 保存点表到CSV文件
+    /// Save point table to a CSV file
     pub fn save_to_csv<P: AsRef<Path>>(&self, table_name: &str, file_path: P) -> Result<()> {
         let points = self.point_tables.get(table_name)
             .ok_or_else(|| ComSrvError::ConfigError(format!("Point table not found: {}", table_name)))?;
@@ -267,13 +293,13 @@ impl CsvPointManager {
         Ok(())
     }
 
-    /// 添加或更新点位
+    /// Add or update a point
     pub fn upsert_point(&mut self, table_name: &str, point: CsvPointRecord) -> Result<()> {
         self.validate_record(&point)?;
         
         let points = self.point_tables.entry(table_name.to_string()).or_insert_with(Vec::new);
         
-        // 查找是否存在相同ID的点位
+        // Check if a point with the same ID exists
         if let Some(existing) = points.iter_mut().find(|p| p.id == point.id) {
             *existing = point;
         } else {
@@ -283,7 +309,7 @@ impl CsvPointManager {
         Ok(())
     }
 
-    /// 删除点位
+    /// Remove a point
     pub fn remove_point(&mut self, table_name: &str, point_id: &str) -> Result<bool> {
         let points = self.point_tables.get_mut(table_name)
             .ok_or_else(|| ComSrvError::ConfigError(format!("Point table not found: {}", table_name)))?;
@@ -295,7 +321,7 @@ impl CsvPointManager {
     }
 }
 
-/// 点表统计信息
+/// Point table statistics
 #[derive(Debug, Clone, Serialize)]
 pub struct PointTableStats {
     pub total_points: usize,
@@ -304,6 +330,7 @@ pub struct PointTableStats {
     pub read_write_points: usize,
     pub data_types: HashMap<String, usize>,
     pub groups: HashMap<String, usize>,
+    pub categories: HashMap<String, usize>,
 }
 
 impl Default for CsvPointManager {
@@ -320,10 +347,10 @@ mod tests {
 
     #[test]
     fn test_csv_parsing() {
-        let csv_content = r#"id,name,address,unit,scale,offset,data_type,register_type,description
-temp_01,Temperature Sensor 1,1000,°C,0.1,0,float32,input_register,Environment temperature
-press_01,Pressure Sensor 1,1001,bar,0.01,0,float32,input_register,System pressure
-pump_status,Pump Status,1,,1,0,bool,coil,Water pump on/off status"#;
+        let csv_content = r#"id,name,address,unit,scale,offset,data_type,register_type,description,category
+temp_01,Temperature Sensor 1,1000,°C,0.1,0,float32,input_register,Environment temperature,telemetry
+press_01,Pressure Sensor 1,1001,bar,0.01,0,float32,input_register,System pressure,telemetry
+pump_status,Pump Status,1,,1,0,bool,coil,Water pump on/off status,status"#;
 
         let dir = tempdir().unwrap();
         let file_path = dir.path().join("test_points.csv");
@@ -335,7 +362,7 @@ pump_status,Pump Status,1,,1,0,bool,coil,Water pump on/off status"#;
         let points = manager.get_points("test_table").unwrap();
         assert_eq!(points.len(), 3);
 
-        // 测试查找点位
+        // Test point lookup
         let temp_point = manager.find_point("test_table", "temp_01").unwrap();
         assert_eq!(temp_point.name, "Temperature Sensor 1");
         assert_eq!(temp_point.address, 1000);
@@ -344,6 +371,7 @@ pump_status,Pump Status,1,,1,0,bool,coil,Water pump on/off status"#;
         // 测试统计信息
         let stats = manager.get_table_stats("test_table").unwrap();
         assert_eq!(stats.total_points, 3);
+        assert_eq!(stats.categories.get("Telemetry"), Some(&2));
     }
 
     #[test]
@@ -362,6 +390,7 @@ pump_status,Pump Status,1,,1,0,bool,coil,Water pump on/off status"#;
             description: Some("Test description".to_string()),
             access: Some("read".to_string()),
             group: Some("sensors".to_string()),
+            category: Some(PointCategory::Telemetry),
         };
         
         manager.upsert_point("test_table", point).unwrap();

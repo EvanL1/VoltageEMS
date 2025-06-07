@@ -647,20 +647,12 @@ impl ProtocolFactory {
     pub fn create_channel_with_config_manager(&self, config: ChannelConfig, config_manager: Option<&ConfigManager>) -> Result<()> {
         let channel_id = config.id;
         
-        // Check if the channel ID already exists
-        if self.channels.contains_key(&channel_id) {
-            return Err(ComSrvError::ConfigError(format!(
-                "Channel ID already exists: {}",
-                channel_id
-            )));
-        }
-        
         // Validate configuration using registered factories
         self.validate_config(&config)?;
-        
+
         // Create protocol instance with config manager support
         let protocol = self.create_protocol_with_config_manager(config.clone(), config_manager)?;
-        
+
         // Create metadata
         let metadata = ChannelMetadata {
             name: config.name.clone(),
@@ -668,11 +660,23 @@ impl ProtocolFactory {
             created_at: std::time::Instant::now(),
             last_accessed: Arc::new(RwLock::new(std::time::Instant::now())),
         };
-        
-        // Add to channel mapping with Arc<RwLock> for thread-safe access
+
         let channel_wrapper = Arc::new(RwLock::new(protocol));
-        self.channels.insert(channel_id, channel_wrapper);
-        self.channel_metadata.insert(channel_id, metadata);
+
+        // Atomically insert channel and metadata
+        if self.channels.try_insert(channel_id, channel_wrapper).is_err() {
+            return Err(ComSrvError::ConfigError(format!(
+                "Channel ID already exists: {}",
+                channel_id
+            )));
+        }
+        if self.channel_metadata.try_insert(channel_id, metadata).is_err() {
+            self.channels.remove(&channel_id);
+            return Err(ComSrvError::ConfigError(format!(
+                "Channel ID already exists: {}",
+                channel_id
+            )));
+        }
         
         tracing::info!("Created channel {} with protocol {:?}", channel_id, config.protocol);
         Ok(())
@@ -760,14 +764,9 @@ impl ProtocolFactory {
     pub async fn get_channel(&self, id: u16) -> Option<Arc<RwLock<Box<dyn ComBase>>>> {
         let channel = self.channels.get(&id).map(|entry| entry.value().clone());
         
-        // Update last accessed time asynchronously if channel exists
-        if channel.is_some() {
-            if let Some(metadata_entry) = self.channel_metadata.get(&id) {
-                let metadata = metadata_entry.value().clone();
-                tokio::spawn(async move {
-                    *metadata.last_accessed.write().await = std::time::Instant::now();
-                });
-            }
+        // Update last accessed time directly if channel exists
+        if let Some(metadata_entry) = self.channel_metadata.get(&id) {
+            *metadata_entry.value().last_accessed.write().await = std::time::Instant::now();
         }
         
         channel
@@ -1221,5 +1220,29 @@ mod tests {
         let factory = ProtocolFactory::default();
         assert_eq!(factory.channel_count(), 0);
         assert!(factory.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_concurrent_channel_creation() {
+        let factory = Arc::new(ProtocolFactory::new());
+        let config = create_test_channel_config(200, ProtocolType::ModbusTcp);
+
+        let f1 = {
+            let factory = factory.clone();
+            let cfg = config.clone();
+            tokio::spawn(async move { factory.create_channel(cfg) })
+        };
+
+        let f2 = {
+            let factory = factory.clone();
+            let cfg = config.clone();
+            tokio::spawn(async move { factory.create_channel(cfg) })
+        };
+
+        let r1 = f1.await.unwrap();
+        let r2 = f2.await.unwrap();
+
+        assert!(r1.is_ok() ^ r2.is_ok(), "only one creation should succeed");
+        assert_eq!(factory.channel_count(), 1);
     }
 } 

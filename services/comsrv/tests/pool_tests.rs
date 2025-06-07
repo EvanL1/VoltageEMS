@@ -7,36 +7,36 @@ use tokio::time::timeout;
 mod tests {
     use super::*;
     
-    /// 测试通用对象池的基本功能
+    /// Test basic functionality of a generic object pool
     #[tokio::test]
     async fn test_generic_object_pool() {
         use crossbeam::queue::SegQueue;
         use bytes::BytesMut;
         
-        // 创建池
+        // Create the pool
         let pool = Arc::new(SegQueue::new());
         
-        // 预分配一些对象
+        // Preallocate some objects
         for i in 0..5 {
             let mut buffer = BytesMut::with_capacity(1024);
             buffer.extend_from_slice(format!("Initial buffer {}", i).as_bytes());
             pool.push(buffer);
         }
         
-        // 测试获取和归还
+        // Test acquire and release
         if let Some(mut buffer) = pool.pop() {
-            // 使用缓冲区
+            // Use the buffer
             buffer.clear();
             buffer.extend_from_slice(b"Modified content");
             
-            // 归还到池中
+            // Return to the pool
             pool.push(buffer);
         }
         
-        // 验证池中还有对象
+        // Verify pool still has objects
         assert!(!pool.is_empty());
         
-        // 测试并发访问
+        // Test concurrent access
         let pool_clone = pool.clone();
         let handle = tokio::spawn(async move {
             if let Some(buffer) = pool_clone.pop() {
@@ -50,19 +50,19 @@ mod tests {
         println!("✅ Generic object pool test passed");
     }
     
-    /// 测试连接池的基本概念
+    /// Test basic connection pool concept
     #[tokio::test]
     async fn test_connection_pool_concept() {
-        // 模拟连接池
+        // Simulate a connection pool
         let (tx, mut rx) = mpsc::channel::<String>(10);
         
-        // 预创建一些连接
+        // Pre-create some connections
         for i in 0..3 {
             let conn_id = format!("connection_{}", i);
             tx.send(conn_id).await.unwrap();
         }
         
-        // 测试获取连接
+        // Test acquiring a connection
         let connection = timeout(Duration::from_secs(1), rx.recv())
             .await
             .expect("Should get connection within timeout")
@@ -70,10 +70,10 @@ mod tests {
         
         println!("Got connection: {}", connection);
         
-        // 使用连接后归还
+        // Return the connection after use
         tx.send(connection).await.unwrap();
         
-        // 验证连接已归还
+        // Verify the connection was returned
         let returned_connection = timeout(Duration::from_secs(1), rx.recv())
             .await
             .expect("Should get returned connection")
@@ -84,7 +84,7 @@ mod tests {
         println!("✅ Connection pool concept test passed");
     }
     
-    /// 测试池化的性能优势
+    /// Test performance benefits of pooling
     #[tokio::test]
     async fn test_pool_performance_benefit() {
         use crossbeam::queue::SegQueue;
@@ -93,12 +93,12 @@ mod tests {
         
         let pool = Arc::new(SegQueue::new());
         
-        // 预分配对象到池中
+        // Preallocate objects into the pool
         for _ in 0..100 {
             pool.push(BytesMut::with_capacity(1024));
         }
         
-        // 测试从池中获取对象的性能
+        // Measure performance of fetching from pool
         let start = Instant::now();
         for _ in 0..1000 {
             if let Some(mut buffer) = pool.pop() {
@@ -115,7 +115,7 @@ mod tests {
         }
         let pool_duration = start.elapsed();
         
-        // 测试每次都创建新对象的性能
+        // Measure performance of creating new objects each time
         let start = Instant::now();
         let mut buffers = Vec::new();
         for _ in 0..1000 {
@@ -128,19 +128,19 @@ mod tests {
         println!("Pool-based allocation: {:?}", pool_duration);
         println!("New allocation each time: {:?}", new_duration);
         
-        // 池化应该更快（或至少不会太慢）
+        // Pooling should be faster (or at least not much slower)
         assert!(pool_duration <= new_duration * 2, 
                 "Pool should not be significantly slower than direct allocation");
         
         println!("✅ Pool performance test passed");
     }
     
-    /// 测试资源管理和清理
+    /// Test resource management and cleanup
     #[tokio::test]
     async fn test_resource_management() {
         use std::sync::atomic::{AtomicU32, Ordering};
         
-        // 跟踪资源的创建和销毁
+        // Track resource creation and drop
         let created_count = Arc::new(AtomicU32::new(0));
         let dropped_count = Arc::new(AtomicU32::new(0));
         
@@ -158,7 +158,7 @@ mod tests {
         {
             let pool = crossbeam::queue::SegQueue::new();
             
-            // 创建一些资源
+            // Create some resources
             for i in 0..5 {
                 created_count.fetch_add(1, Ordering::SeqCst);
                 let resource = TrackedResource {
@@ -168,19 +168,19 @@ mod tests {
                 pool.push(resource);
             }
             
-            // 使用一些资源
+            // Use some resources
             if let Some(_resource) = pool.pop() {
-                // 资源会在作用域结束时自动释放
+                // Resource drops when scope ends
             }
             
-            // 清空池
+            // Empty the pool
             while pool.pop().is_some() {}
         } // 池在这里被销毁
         
-        // 等待一下确保所有析构函数都已执行
+        // Wait to ensure destructors have run
         tokio::time::sleep(Duration::from_millis(1)).await;
         
-        // 验证所有资源都被正确释放
+        // Verify all resources were released
         assert_eq!(created_count.load(Ordering::SeqCst), 5);
         assert_eq!(dropped_count.load(Ordering::SeqCst), 5);
         
@@ -188,7 +188,7 @@ mod tests {
     }
 }
 
-// 用于测试连接超时和生命周期管理的模拟连接
+// Mock connection for timeout and lifecycle testing
 #[derive(Debug, Clone)]
 struct MockConnection {
     id: String,
@@ -233,22 +233,22 @@ mod connection_tests {
     async fn test_connection_lifecycle() {
         let mut conn = MockConnection::new("test_conn");
         
-        // 新连接应该是有效的
+        // Newly created connection should be valid
         assert!(conn.is_valid());
         
-        // 使用连接
+        // Use the connection
         conn.use_connection();
         
-        // 短时间内不应该是空闲的
+        // Should not be idle shortly after use
         assert!(!conn.is_idle(Duration::from_millis(1)));
         
-        // 等待一段时间
+        // Wait for a short period
         tokio::time::sleep(Duration::from_millis(10)).await;
         
-        // 现在应该是空闲的
+        // Now it should be idle
         assert!(conn.is_idle(Duration::from_millis(5)));
         
-        // 关闭连接
+        // Close the connection
         conn.close();
         assert!(!conn.is_valid());
         
@@ -260,7 +260,7 @@ mod connection_tests {
         use std::collections::HashMap;
         use tokio::sync::RwLock;
         
-        // 简化的连接池实现
+        // Simplified connection pool implementation
         struct SimpleConnectionPool {
             connections: RwLock<HashMap<String, Vec<MockConnection>>>,
             max_idle_time: Duration,
@@ -278,10 +278,10 @@ mod connection_tests {
                 let mut pools = self.connections.write().await;
                 let pool = pools.entry(key.to_string()).or_insert_with(Vec::new);
                 
-                // 移除过期连接
+                // Remove expired connections
                 pool.retain(|conn| conn.is_valid() && !conn.is_idle(self.max_idle_time));
                 
-                // 返回可用连接或创建新连接
+                // Return available connection or create a new one
                 pool.pop().or_else(|| Some(MockConnection::new(&format!("{}_{}", key, pools.len()))))
             }
             
@@ -312,21 +312,21 @@ mod connection_tests {
         // 归还连接
         pool.return_connection(key, conn).await;
         
-        // 再次获取应该返回同一个连接（或新连接）
+        // Acquire again; should return the same or a new connection
         let conn2 = pool.get_connection(key).await.unwrap();
         assert!(conn2.is_valid());
         
-        // 等待连接过期
+        // Wait for the connection to expire
         tokio::time::sleep(Duration::from_millis(150)).await;
         
-        // 清理过期连接
+        // Clean up expired connections
         pool.cleanup_expired().await;
         
-        // 验证过期连接被清理
+        // Verify expired connections were removed
         {
             let pools = pool.connections.read().await;
             if let Some(conns) = pools.get(key) {
-                // 由于我们没有归还conn2，池应该是空的或只包含有效连接
+                // Because conn2 wasn't returned the pool should be empty or only contain valid connections
                 for conn in conns {
                     assert!(conn.is_valid());
                 }

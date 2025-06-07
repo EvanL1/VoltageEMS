@@ -897,6 +897,7 @@ point_tables:
             register_type: Some("holding_register".to_string()),
             access: Some("read".to_string()),
             group: Some("temperature".to_string()),
+            category: Some(crate::core::config::PointCategory::Telemetry),
         }
     }
 
@@ -1050,6 +1051,7 @@ point_tables:
             register_type: Some("holding_register".to_string()),
             access: Some("read".to_string()),
             group: Some("sensors".to_string()),
+            category: Some(crate::core::config::PointCategory::Telemetry),
         };
         
         let point2 = CsvPointRecord {
@@ -1064,6 +1066,7 @@ point_tables:
             register_type: Some("holding_register".to_string()),
             access: Some("read".to_string()),
             group: Some("sensors".to_string()),
+            category: Some(crate::core::config::PointCategory::Telemetry),
         };
         
         // Add points to table
@@ -1103,6 +1106,7 @@ point_tables:
             register_type: None,
             access: None,
             group: None,
+            category: None,
         };
         
         let response = upsert_point_in_table(

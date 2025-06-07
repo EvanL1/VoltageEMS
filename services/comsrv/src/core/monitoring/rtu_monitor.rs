@@ -1,10 +1,10 @@
-//! RTU监控模块
+//! RTU monitoring module
 //!
-//! 此模块提供对RTU通信的实时监控功能，包括：
-//! - 连接状态监控
-//! - 通信统计
-//! - 数据质量分析
-//! - 报警和诊断
+//! Provides real-time monitoring of RTU communication including:
+//! - Connection status
+//! - Communication statistics
+//! - Data quality analysis
+//! - Alarm and diagnostics
 
 use std::collections::{HashMap, VecDeque};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -40,16 +40,16 @@ mod timestamp_as_seconds {
     }
 }
 
-/// RTU监控配置
+/// RTU monitor configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RtuMonitorConfig {
-    /// 监控间隔(秒)
+    /// Monitoring interval in seconds
     pub monitor_interval: u64,
-    /// 历史数据保留时间(分钟)
+    /// History retention time in minutes
     pub history_retention_minutes: u64,
-    /// 报警阈值
+    /// Alarm thresholds
     pub alarm_thresholds: RtuAlarmThresholds,
-    /// 是否启用详细日志
+    /// Whether to enable detailed logging
     pub detailed_logging: bool,
 }
 
@@ -64,16 +64,16 @@ impl Default for RtuMonitorConfig {
     }
 }
 
-/// RTU报警阈值
+/// RTU alarm thresholds
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RtuAlarmThresholds {
-    /// 通信质量低阈值(百分比)
+    /// Communication quality low threshold (%)
     pub communication_quality_low: f64,
-    /// 平均响应时间高阈值(毫秒)
+    /// High average response time threshold (ms)
     pub avg_response_time_high: f64,
-    /// 连续失败次数阈值
+    /// Consecutive failures threshold
     pub consecutive_failures_threshold: u32,
-    /// CRC错误率高阈值(百分比)
+    /// High CRC error rate threshold (%)
     pub crc_error_rate_high: f64,
 }
 
@@ -88,77 +88,77 @@ impl Default for RtuAlarmThresholds {
     }
 }
 
-/// RTU监控数据点
+/// RTU monitoring data point
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RtuMonitorPoint {
-    /// 时间戳
+    /// Timestamp
     #[serde(with = "timestamp_as_seconds")]
     pub timestamp: SystemTime,
-    /// 连接状态
+    /// Connection state
     pub connection_state: String,
-    /// 通信质量(百分比)
+    /// Communication quality (%)
     pub communication_quality: f64,
-    /// 平均响应时间(毫秒)
+    /// Average response time (ms)
     pub avg_response_time_ms: f64,
-    /// 成功请求数
+    /// Successful request count
     pub successful_requests: u64,
-    /// 失败请求数
+    /// Failed request count
     pub failed_requests: u64,
-    /// CRC错误数
+    /// CRC error count
     pub crc_errors: u64,
-    /// 超时请求数
+    /// Timeout request count
     pub timeout_requests: u64,
-    /// 异常响应数
+    /// Exception response count
     pub exception_responses: u64,
 }
 
-/// RTU报警信息
+/// RTU alarm information
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RtuAlarm {
-    /// 报警ID
+    /// Alarm ID
     pub id: String,
-    /// 报警类型
+    /// Alarm type
     pub alarm_type: RtuAlarmType,
-    /// 报警级别
+    /// Alarm severity
     pub severity: RtuAlarmSeverity,
-    /// 报警消息
+    /// Alarm message
     pub message: String,
-    /// 报警时间
+    /// Alarm timestamp
     #[serde(with = "timestamp_as_seconds")]
     pub timestamp: SystemTime,
-    /// 是否已确认
+    /// Whether the alarm is acknowledged
     pub acknowledged: bool,
-    /// 通道ID
+    /// Channel ID
     pub channel_id: u16,
 }
 
-/// RTU报警类型
+/// RTU alarm type
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum RtuAlarmType {
-    /// 连接丢失
+    /// Connection lost
     ConnectionLost,
-    /// 通信质量低
+    /// Communication quality low
     CommunicationQualityLow,
-    /// 响应时间过高
+    /// High response time
     HighResponseTime,
-    /// CRC错误率高
+    /// High CRC error rate
     HighCrcErrorRate,
-    /// 连续失败
+    /// Consecutive failures
     ConsecutiveFailures,
-    /// 设备无响应
+    /// Device not responding
     DeviceNotResponding,
 }
 
-/// RTU报警级别
+/// RTU alarm severity
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum RtuAlarmSeverity {
-    /// 信息
+    /// Info
     Info,
-    /// 警告
+    /// Warning
     Warning,
-    /// 错误
+    /// Error
     Error,
-    /// 严重
+    /// Critical
     Critical,
 }
 
@@ -498,7 +498,7 @@ impl RtuMonitor {
         self.active_alarms.read().await.values().cloned().collect()
     }
 
-    /// 确认报警
+    /// Acknowledge an alarm
     pub async fn acknowledge_alarm(&self, alarm_id: &str) -> Result<()> {
         let mut alarms = self.active_alarms.write().await;
         if let Some(alarm) = alarms.get_mut(alarm_id) {
@@ -510,14 +510,14 @@ impl RtuMonitor {
         }
     }
 
-    /// 清除已确认的报警
+    /// Clear acknowledged alarms
     pub async fn clear_acknowledged_alarms(&self) {
         let mut alarms = self.active_alarms.write().await;
         alarms.retain(|_, alarm| !alarm.acknowledged);
         log::info!("Cleared acknowledged alarms");
     }
 
-    /// 获取通道历史数据
+    /// Get channel history data
     pub async fn get_channel_history(&self, channel_id: u16, limit: Option<usize>) -> Vec<RtuMonitorPoint> {
         let history_map = self.history.read().await;
         if let Some(channel_history) = history_map.get(&channel_id) {
@@ -534,7 +534,7 @@ impl RtuMonitor {
         }
     }
 
-    /// 获取通道当前状态
+    /// Get current channel status
     pub async fn get_channel_status(&self, channel_id: u16) -> Option<RtuMonitorPoint> {
         let history_map = self.history.read().await;
         if let Some(channel_history) = history_map.get(&channel_id) {
@@ -544,7 +544,7 @@ impl RtuMonitor {
         }
     }
 
-    /// 生成监控报告
+    /// Generate a monitoring report
     pub async fn generate_report(&self) -> RtuMonitorReport {
         let status = self.get_status().await;
         let alarms = self.get_active_alarms().await;
@@ -579,38 +579,38 @@ impl RtuMonitor {
     }
 }
 
-/// RTU通道摘要
+/// RTU channel summary
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RtuChannelSummary {
-    /// 通道ID
+    /// Channel ID
     pub channel_id: u16,
-    /// 连接状态
+    /// Connection state
     pub connection_state: String,
-    /// 通信质量
+    /// Communication quality
     pub communication_quality: f64,
-    /// 平均响应时间
+    /// Average response time
     pub avg_response_time_ms: f64,
-    /// 总请求数
+    /// Total request count
     pub total_requests: u64,
-    /// 成功请求数
+    /// Successful request count
     pub successful_requests: u64,
-    /// 失败请求数
+    /// Failed request count
     pub failed_requests: u64,
-    /// 活跃报警数
+    /// Active alarm count
     pub active_alarms: u32,
 }
 
-/// RTU监控报告
+/// RTU monitor report
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RtuMonitorReport {
-    /// 生成时间
+    /// Generation time
     #[serde(with = "timestamp_as_seconds")]
     pub generated_at: SystemTime,
-    /// 整体状态
+    /// Overall status
     pub overall_status: RtuMonitorStatus,
-    /// 通道摘要
+    /// Channel summaries
     pub channel_summaries: Vec<RtuChannelSummary>,
-    /// 活跃报警
+    /// Active alarms
     pub active_alarms: Vec<RtuAlarm>,
 }
 
