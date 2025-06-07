@@ -4,7 +4,7 @@ use std::time::{Duration, Instant};
 use std::hash::{Hash, Hasher};
 use parking_lot::RwLock;
 use dashmap::DashMap;
-use tokio::sync::Semaphore;
+use tokio::sync::{Semaphore, OwnedSemaphorePermit};
 use tokio::time::timeout;
 use tracing::{debug};
 
@@ -149,6 +149,8 @@ pub struct ConnectionPool<T> {
     pools: DashMap<ConnectionKey, Arc<RwLock<Vec<ConnectionWrapper<T>>>>>,
     /// Semaphore to limit total connections
     connection_semaphore: Arc<Semaphore>,
+    /// Handle for the background cleanup task
+    cleanup_handle: Option<tokio::task::JoinHandle<()>>,
     /// Connection factory
     factory: Arc<dyn Fn(&ConnectionKey) -> Box<dyn std::future::Future<Output = Result<T>> + Send + Unpin> + Send + Sync>,
 }
@@ -170,21 +172,32 @@ where
             Box::new(Box::pin(fut)) as Box<dyn std::future::Future<Output = Result<T>> + Send + Unpin>
         });
 
-        let pool = Self {
+        let mut pool = Self {
             config,
             pools: DashMap::new(),
             connection_semaphore,
             factory,
+            cleanup_handle: None,
         };
 
         // Start cleanup task
-        pool.start_cleanup_task();
-        
+        let handle = pool.start_cleanup_task();
+        pool.cleanup_handle = Some(handle);
+
         pool
     }
 
     /// Get a connection from the pool or create a new one
     pub async fn get_connection(&self, key: &ConnectionKey) -> Result<PooledConnectionGuard<T>> {
+        // Acquire semaphore permit for the connection
+        let permit = timeout(
+            self.config.connection_timeout,
+            self.connection_semaphore.acquire_owned()
+        )
+        .await
+        .map_err(|_| ComSrvError::TimeoutError("Connection pool timeout".to_string()))?
+        .map_err(|_| ComSrvError::InternalError("Semaphore closed".to_string()))?;
+
         // Try to get an existing connection first
         if let Some(pool_ref) = self.pools.get(key) {
             let mut pool = pool_ref.write();
@@ -199,6 +212,7 @@ where
                         connection: Some(conn_wrapper),
                         pool_ref: pool_ref.clone(),
                         semaphore: self.connection_semaphore.clone(),
+                        permit: Some(permit),
                     });
                 } else {
                     // Connection is invalid or expired, drop it
@@ -208,19 +222,12 @@ where
         }
 
         // No valid connection found, create a new one
-        self.create_new_connection(key).await
+        self.create_new_connection_with_permit(key, permit).await
     }
 
-    /// Create a new connection
-    async fn create_new_connection(&self, key: &ConnectionKey) -> Result<PooledConnectionGuard<T>> {
-        // Acquire semaphore permit
-        let _permit = timeout(
-            self.config.connection_timeout,
-            self.connection_semaphore.acquire()
-        ).await
-        .map_err(|_| ComSrvError::TimeoutError("Connection pool timeout".to_string()))?
-        .map_err(|_| ComSrvError::InternalError("Semaphore closed".to_string()))?;
-
+    /// Create a new connection with an acquired permit
+    async fn create_new_connection_with_permit(&self, key: &ConnectionKey, permit: OwnedSemaphorePermit) -> Result<PooledConnectionGuard<T>> {
+        
         // Create the connection with timeout
         let connection = timeout(
             self.config.connection_timeout,
@@ -239,17 +246,18 @@ where
             connection: Some(conn_wrapper),
             pool_ref,
             semaphore: self.connection_semaphore.clone(),
+            permit: Some(permit),
         })
     }
 
     /// Start the cleanup task to remove expired connections
-    fn start_cleanup_task(&self) {
+    fn start_cleanup_task(&self) -> tokio::task::JoinHandle<()> {
         let pools = self.pools.clone();
         let config = self.config.clone();
-        
+
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(config.cleanup_interval);
-            
+
             loop {
                 interval.tick().await;
                 
@@ -272,7 +280,7 @@ where
                     }
                 }
             }
-        });
+        })
     }
 
     /// Get pool statistics
@@ -303,6 +311,7 @@ where
     connection: Option<ConnectionWrapper<T>>,
     pool_ref: Arc<RwLock<Vec<ConnectionWrapper<T>>>>,
     semaphore: Arc<Semaphore>,
+    permit: Option<OwnedSemaphorePermit>,
 }
 
 impl<T> PooledConnectionGuard<T>
@@ -353,7 +362,15 @@ where
                 debug!("Connection invalid, not returning to pool");
             }
         }
-        // Semaphore permit is automatically released when guard is dropped
+        // Semaphore permit is automatically released when permit is dropped
+    }
+}
+
+impl<T> Drop for ConnectionPool<T> {
+    fn drop(&mut self) {
+        if let Some(handle) = &self.cleanup_handle {
+            handle.abort();
+        }
     }
 }
 
@@ -615,7 +632,7 @@ mod tests {
 
         let stats = pool.stats();
         assert_eq!(stats.max_total_connections, 5);
-        assert!(stats.available_permits <= 5);
+        assert_eq!(stats.available_permits, 3);
     }
 
     #[tokio::test]
