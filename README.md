@@ -12,6 +12,13 @@
 - **API 服务**: 为前端提供配置文件读写接口
 - **Grafana**: 数据可视化平台，嵌入到前端应用中
 
+### Comsrv 功能概览
+- 支持 Modbus TCP/RTU、CAN 等工业协议，可扩展自定义协议
+- 异步架构，运行高并发并可扩展
+- 提供 REST API 进行通道管理和状态监控
+- YAML/CSV 配置管理通道和点表
+- 集成 Prometheus 指标和结构化日志
+
 ## 系统架构
 
 系统采用微服务架构，各服务通过 Redis 进行数据交换：
@@ -33,7 +40,7 @@
 
 ## 技术栈
 
-- **Comsrv**: C++
+- **Comsrv**: Rust
 - **Hissrv**: Rust
 - **modsrv**: Rust
 - **netsrv**: Rust
@@ -49,7 +56,7 @@
 
 - Docker 和 Docker Compose
 - Rust 1.67 或更高版本 (开发时需要)
-- C++ 编译器 (开发 Comsrv 时需要)
+- Rust 工具链 (开发 Comsrv 时需要)
 - Node.js 16 或更高版本 (开发前端和 API 时需要)
 
 ### 使用 Docker Compose 启动
