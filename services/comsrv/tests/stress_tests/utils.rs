@@ -1,11 +1,11 @@
-//! 压力测试工具函数
+//! Stress test utility functions
 
 use std::time::{Duration, Instant};
 use redis::Client as RedisClient;
 use serde_json::json;
 use std::collections::HashMap;
 
-/// 测试配置
+/// test configuration
 #[derive(Debug, Clone)]
 pub struct TestConfig {
     pub channels: usize,
@@ -27,7 +27,7 @@ impl Default for TestConfig {
     }
 }
 
-/// 性能统计
+/// performance statistics
 #[derive(Debug, Default)]
 pub struct PerformanceStats {
     pub total_reads: u64,
@@ -70,24 +70,24 @@ impl PerformanceStats {
     }
 }
 
-/// 检查Redis连接
+/// check Redis connection
 pub fn check_redis_connection() -> Result<RedisClient, Box<dyn std::error::Error>> {
     let redis_url = std::env::var("REDIS_URL").unwrap_or_else(|_| "redis://127.0.0.1:6379".to_string());
     let client = RedisClient::open(redis_url)?;
     
-    // 测试连接
+    // test the connection
     let mut conn = client.get_connection()?;
     let _: String = redis::cmd("PING").query(&mut conn)?;
     
     Ok(client)
 }
 
-/// 检查端口是否可用
+/// check whether a port is available
 pub fn check_port_available(port: u16) -> bool {
     std::net::TcpListener::bind(format!("127.0.0.1:{}", port)).is_ok()
 }
 
-/// 等待端口开放
+/// wait for a port to open
 pub fn wait_for_port(port: u16, timeout: Duration) -> bool {
     let start = Instant::now();
     
@@ -104,7 +104,7 @@ pub fn wait_for_port(port: u16, timeout: Duration) -> bool {
     false
 }
 
-/// 生成模拟数据点
+/// generate simulated data points
 pub fn generate_test_points(count: usize, channel_id: usize) -> Vec<TestDataPoint> {
     (0..count).map(|i| TestDataPoint {
         name: format!("point_{}_{}", channel_id, i),
@@ -115,7 +115,7 @@ pub fn generate_test_points(count: usize, channel_id: usize) -> Vec<TestDataPoin
     }).collect()
 }
 
-/// 测试数据点
+/// test data point
 #[derive(Debug, Clone)]
 pub struct TestDataPoint {
     pub name: String,
@@ -125,7 +125,7 @@ pub struct TestDataPoint {
     pub description: Option<String>,
 }
 
-/// 创建Modbus模拟器脚本
+/// create a Modbus simulator script
 pub fn create_simple_modbus_simulator(output_path: &str, port: u16) -> std::io::Result<()> {
     let script_content = format!(r#"#!/usr/bin/env python3
 import socket
@@ -141,7 +141,7 @@ class SimpleModbusSimulator:
         self.running = True
         self.request_count = 0
         
-        # 启动数据生成线程
+        # start data generation thread
         threading.Thread(target=self._generate_data, daemon=True).start()
     
     def _generate_data(self):
@@ -172,13 +172,13 @@ class ModbusHandler:
                 if len(data) < 8:
                     continue
                 
-                # 解析Modbus TCP请求
+                # parse Modbus TCP request
                 transaction_id = struct.unpack('>H', data[0:2])[0]
                 function_code = data[7]
                 
                 self.simulator.request_count += 1
                 
-                if function_code == 0x03:  # 读保持寄存器
+                if function_code == 0x03:  # read holding register
                     start_addr = struct.unpack('>H', data[8:10])[0]
                     count = struct.unpack('>H', data[10:12])[0]
                     count = min(count, 125)
@@ -197,7 +197,7 @@ class ModbusHandler:
 
 def main():
     port = {port}
-    print(f"启动Modbus模拟器，端口: {{port}}")
+    print(f"Starting Modbus simulator on port: {{port}}")
     
     simulator = SimpleModbusSimulator()
     server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -210,7 +210,7 @@ def main():
             conn, addr = server.accept()
             threading.Thread(target=ModbusHandler(conn, simulator).handle).start()
     except KeyboardInterrupt:
-        print("停止模拟器")
+        print("Stopping simulator")
     finally:
         simulator.stop()
         server.close()
@@ -221,7 +221,7 @@ if __name__ == "__main__":
 
     std::fs::write(output_path, script_content)?;
     
-    // 设置执行权限
+    // set execute permission
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -234,33 +234,33 @@ if __name__ == "__main__":
     Ok(())
 }
 
-/// 清理测试环境
+/// clean up the test environment
 pub fn cleanup_test_environment() {
-    // 清理Redis数据
+    // clean Redis data
     if let Ok(client) = check_redis_connection() {
         if let Ok(mut conn) = client.get_connection() {
             let _: Result<(), redis::RedisError> = redis::cmd("FLUSHDB").query(&mut conn);
         }
     }
     
-    // 清理临时文件
+    // remove temporary files
     let _ = std::fs::remove_dir_all("/tmp/comsrv_test");
 }
 
-/// 设置测试环境
+/// set up the test environment
 pub fn setup_test_environment() -> Result<(), Box<dyn std::error::Error>> {
-    // 创建临时目录
+    // create temporary directory
     std::fs::create_dir_all("/tmp/comsrv_test")?;
     
-    // 检查Redis连接
+    // check Redis connection
     check_redis_connection()?;
     
-    println!("✅ 测试环境准备完成");
+    println!("✅ Test environment ready");
     
     Ok(())
 }
 
-/// 创建大规模测试配置
+/// create large-scale test configuration
 pub fn create_large_scale_config(point_count: usize, port: u16) -> HashMap<u16, serde_json::Value> {
     let mut data_points = HashMap::new();
     

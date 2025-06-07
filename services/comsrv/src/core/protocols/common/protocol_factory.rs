@@ -660,7 +660,7 @@ impl ProtocolFactory {
             created_at: std::time::Instant::now(),
             last_accessed: Arc::new(RwLock::new(std::time::Instant::now())),
         };
-
+      
         let channel_wrapper = Arc::new(RwLock::new(protocol));
 
         // Atomically insert channel and metadata
@@ -1089,6 +1089,24 @@ mod tests {
         let result2 = factory.create_channel(config2);
         assert!(result2.is_err());
         assert!(matches!(result2.unwrap_err(), ComSrvError::ConfigError(_)));
+    }
+
+    #[tokio::test]
+    async fn test_concurrent_duplicate_channel_creation() {
+        let factory = Arc::new(ProtocolFactory::new());
+        let config1 = create_test_channel_config(21, ProtocolType::ModbusTcp);
+        let config2 = create_test_channel_config(21, ProtocolType::Iec104);
+
+        let factory_clone = factory.clone();
+        let handle1 = tokio::spawn(async move { factory_clone.create_channel(config1) });
+        let factory_clone = factory.clone();
+        let handle2 = tokio::spawn(async move { factory_clone.create_channel(config2) });
+
+        let res1 = handle1.await.unwrap();
+        let res2 = handle2.await.unwrap();
+
+        assert!(res1.is_ok() ^ res2.is_ok(), "one creation must fail");
+        assert_eq!(factory.channel_count(), 1);
     }
 
     #[tokio::test]

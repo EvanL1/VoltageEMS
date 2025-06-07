@@ -1,6 +1,6 @@
-//! 基于comsrv现有功能的压力测试
+//! Stress tests based on existing comsrv features
 //! 
-//! 测试comsrv的ModbusClient在大规模点位下的性能
+//! Evaluate ModbusClient performance with large numbers of points
 
 use comsrv::core::protocols::modbus::client::{ModbusClient, ModbusClientConfig, ModbusCommunicationMode};
 use comsrv::core::protocols::modbus::common::{ModbusRegisterMapping, ModbusDataType, ModbusRegisterType};
@@ -11,28 +11,28 @@ use tokio::time::interval;
 use redis::Commands;
 use serde_json::json;
 
-/// comsrv多通道压力测试配置
+/// comsrv multi-channel stress test configuration
 #[derive(Debug, Clone)]
 pub struct ComSrvPressureTestConfig {
-    /// 总点位数
+    /// total number of points
     pub total_points: usize,
-    /// comsrv客户端数量（多通道）
+    /// number of comsrv clients (channels)
     pub comsrv_client_count: usize,
-    /// 每个通道的点位数
+    /// points per channel
     pub points_per_channel: usize,
-    /// 基础端口
+    /// base port
     pub base_port: u16,
-    /// 测试持续时间(秒)
+    /// test duration in seconds
     pub test_duration_secs: u64,
-    /// 数据采集频率配置(毫秒) - 支持多种频率并发测试
+    /// data collection rates in milliseconds for concurrent testing
     pub poll_frequencies: Vec<u64>,
-    /// Redis批量大小
+    /// Redis batch size
     pub redis_batch_size: usize,
-    /// 是否启用真实Modbus模拟器
+    /// enable real Modbus simulators
     pub enable_real_simulators: bool,
-    /// 并发读取线程数
+    /// number of concurrent read workers
     pub concurrent_read_workers: usize,
-    /// 每个工作线程的读取间隔(毫秒)
+    /// read interval for each worker in milliseconds
     pub read_interval_ms: u64,
 }
 
@@ -40,20 +40,20 @@ impl Default for ComSrvPressureTestConfig {
     fn default() -> Self {
         Self {
             total_points: 300000,
-            comsrv_client_count: 20,        // 增加到20个通道
-            points_per_channel: 15000,      // 每通道15K点位
+            comsrv_client_count: 20,        // increase to 20 channels
+            points_per_channel: 15000,      // 15k points per channel
             base_port: 5020,
-            test_duration_secs: 180,        // 延长到3分钟
-            poll_frequencies: vec![50, 100, 200, 500, 1000, 2000],  // 更激进的轮询频率
-            redis_batch_size: 200,          // 增大批量处理
-            enable_real_simulators: false,  // 默认关闭真实模拟器，避免端口冲突
-            concurrent_read_workers: 50,    // 增加并发工作线程
-            read_interval_ms: 20,           // 更频繁的读取间隔
+            test_duration_secs: 180,        // extended to 3 minutes
+            poll_frequencies: vec![50, 100, 200, 500, 1000, 2000],  // aggressive poll rates
+            redis_batch_size: 200,          // larger batch processing
+            enable_real_simulators: false,  // disable real simulators by default
+            concurrent_read_workers: 50,    // more concurrent worker threads
+            read_interval_ms: 20,           // more frequent read interval
         }
     }
 }
 
-/// comsrv多通道测试统计信息
+/// comsrv multi-channel test statistics
 #[derive(Debug, Default)]
 pub struct ComSrvTestStats {
     pub start_time: Option<Instant>,
@@ -71,7 +71,7 @@ pub struct ComSrvTestStats {
     pub channel_stats: std::collections::HashMap<usize, ChannelStats>,
 }
 
-/// 单个通道统计
+/// single channel statistics
 #[derive(Debug, Default, Clone)]
 pub struct ChannelStats {
     pub channel_id: usize,
@@ -117,26 +117,26 @@ impl ComSrvTestStats {
     }
 }
 
-/// 检查Redis连接
+/// check Redis connection
 pub fn check_redis_connection() -> Result<redis::Client, Box<dyn std::error::Error>> {
     let redis_url = std::env::var("REDIS_URL").unwrap_or_else(|_| "redis://127.0.0.1:6379".to_string());
     let client = redis::Client::open(redis_url)?;
     
-    // 测试连接
+    // test connection
     let mut conn = client.get_connection()?;
     let _: String = redis::cmd("PING").query(&mut conn)?;
     
     Ok(client)
 }
 
-/// comsrv多通道压力测试管理器
+/// comsrv multi-channel stress test manager
 pub struct ComSrvPressureTestManager {
     config: ComSrvPressureTestConfig,
     test_stats: Arc<RwLock<ComSrvTestStats>>,
 }
 
 impl ComSrvPressureTestManager {
-    /// 创建新的comsrv压力测试管理器
+    /// create a new comsrv stress test manager
     pub fn new(config: ComSrvPressureTestConfig) -> Self {
         Self {
             config,
@@ -144,7 +144,7 @@ impl ComSrvPressureTestManager {
         }
     }
 
-    /// 运行完整的comsrv多通道压力测试
+    /// run the full comsrv multi-channel stress test
     pub async fn run_complete_test(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         println!("🚀 启动comsrv多通道Modbus压力测试");
         println!("配置: {} 总点位, {} 个通道, 每通道 {} 点位", 
@@ -155,39 +155,39 @@ impl ComSrvPressureTestManager {
                  self.config.concurrent_read_workers,
                  self.config.read_interval_ms);
         
-        // 设置测试环境
+        // set up the test environment
         self.setup_test_environment().await?;
         
-        // 启动多通道数据收集和Redis存储
+        // start multi-channel data collection and Redis storage
         self.start_multichannel_data_collection().await?;
         
-        // 启动增强监控
+        // start enhanced monitoring
         self.start_enhanced_monitoring().await?;
         
-        // 运行多通道并发测试
+        // run multi-channel concurrent test
         self.execute_multichannel_test().await?;
         
-        // 生成详细报告
+        // generate a detailed report
         self.generate_comprehensive_report().await;
         
         Ok(())
     }
 
-    /// 设置测试环境
+    /// set up the test environment
     async fn setup_test_environment(&self) -> Result<(), Box<dyn std::error::Error>> {
         println!("🛠️  设置多通道测试环境...");
         
-        // 检查Redis连接
+        // check Redis connection
         let redis_client = check_redis_connection()?;
         
-        // 清理Redis数据
+        // clean Redis data
         {
             let mut conn = redis_client.get_connection()?;
             let _: () = redis::cmd("FLUSHDB").query(&mut conn)?;
             println!("  ✅ Redis数据已清理");
         }
         
-        // 初始化通道统计
+        // initialize channel statistics
         {
             let mut stats = self.test_stats.write().await;
             for i in 0..self.config.comsrv_client_count {
@@ -204,7 +204,7 @@ impl ComSrvPressureTestManager {
         Ok(())
     }
 
-    /// 启动多通道数据收集和Redis存储
+    /// start multi-channel data collection and Redis storage
     async fn start_multichannel_data_collection(&self) -> Result<(), Box<dyn std::error::Error>> {
         println!("💾 启动多通道数据收集和Redis存储...");
         
@@ -214,19 +214,19 @@ impl ComSrvPressureTestManager {
         let channel_count = self.config.comsrv_client_count;
         let points_per_channel = self.config.points_per_channel;
         
-        // 为每个通道启动数据收集任务
+        // start a data collection task for each channel
         for channel_id in 0..channel_count {
             let redis_client_clone = redis_client.clone();
             let test_stats_clone = test_stats.clone();
             
             tokio::spawn(async move {
-                let mut interval = interval(Duration::from_millis(100)); // 更频繁的数据收集
+                let mut interval = interval(Duration::from_millis(100)); // more frequent data collection
                 let mut data_buffer = Vec::new();
                 
                 loop {
                     interval.tick().await;
                     
-                    // 模拟从该通道的comsrv客户端收集数据
+                    // simulate data collection from the channel's comsrv client
                     for point_idx in 0..batch_size.min(points_per_channel) {
                         let global_point_id = channel_id * points_per_channel + point_idx;
                         let timestamp = std::time::SystemTime::now()
@@ -234,7 +234,7 @@ impl ComSrvPressureTestManager {
                             .unwrap()
                             .as_secs();
                         
-                        // 模拟不同类型的数据点
+                        // simulate different types of data points
                         let data_entry = json!({
                             "channel_id": channel_id,
                             "point_id": format!("ch{}_point_{}", channel_id, point_idx),
@@ -263,7 +263,7 @@ impl ComSrvPressureTestManager {
                         ));
                     }
                     
-                    // 批量写入Redis
+                    // batch write to Redis
                     if !data_buffer.is_empty() {
                         if let Ok(mut conn) = redis_client_clone.get_connection() {
                             let mut pipe = redis::pipe();
@@ -278,7 +278,7 @@ impl ComSrvPressureTestManager {
                                     stats.successful_redis_writes += 1;
                                     stats.total_data_points_processed += data_buffer.len() as u64;
                                     
-                                    // 更新通道统计
+                                    // update channel statistics
                                     if let Some(channel_stat) = stats.channel_stats.get_mut(&channel_id) {
                                         channel_stat.points_processed += data_buffer.len() as u64;
                                         channel_stat.last_update = Some(Instant::now());
@@ -304,27 +304,27 @@ impl ComSrvPressureTestManager {
         Ok(())
     }
 
-    /// 生成逼真的数据值
+    /// generate realistic data values
     fn generate_realistic_value(point_idx: usize) -> serde_json::Value {
         match point_idx % 6 {
-            0 => json!(rand::random::<u16>() % 1000 + 20), // 温度类数据 20-1020
-            1 => json!((rand::random::<f32>() * 100.0).round() / 10.0), // 压力类数据 0-10.0
-            2 => json!(rand::random::<bool>()), // 状态类数据
-            3 => json!(rand::random::<u32>() % 10000), // 计数器类数据
-            4 => json!((rand::random::<f32>() * 360.0).round() / 10.0), // 角度类数据 0-36.0
-            _ => json!(rand::random::<i16>() as i32), // 通用整数数据
+            0 => json!(rand::random::<u16>() % 1000 + 20), // temperature-like data 20-1020
+            1 => json!((rand::random::<f32>() * 100.0).round() / 10.0), // pressure data 0-10.0
+            2 => json!(rand::random::<bool>()), // status data
+            3 => json!(rand::random::<u32>() % 10000), // counter data
+            4 => json!((rand::random::<f32>() * 360.0).round() / 10.0), // angle data 0-36.0
+            _ => json!(rand::random::<i16>() as i32), // generic integer data
         }
     }
 
-    /// 启动增强监控
+    /// start enhanced monitoring
     async fn start_enhanced_monitoring(&self) -> Result<(), Box<dyn std::error::Error>> {
-        println!("📊 启动增强性能监控...");
+        println!("📊 Starting enhanced performance monitoring...");
         
         let test_stats = self.test_stats.clone();
         
-        // 启动实时监控任务
+        // start real-time monitoring task
         tokio::spawn(async move {
-            let mut interval = interval(Duration::from_secs(5)); // 更频繁的监控更新
+            let mut interval = interval(Duration::from_secs(5)); // more frequent monitoring updates
             
             loop {
                 interval.tick().await;
@@ -350,7 +350,7 @@ impl ComSrvPressureTestManager {
                              stats.comsrv_clients_active,
                              stats.channel_stats.len());
                     
-                    // 显示通道详情（前5个）
+                    // show details for the first five channels
                     let mut sorted_channels: Vec<_> = stats.channel_stats.iter().collect();
                     sorted_channels.sort_by_key(|(id, _)| *id);
                     
@@ -360,13 +360,13 @@ impl ComSrvPressureTestManager {
                         }
                     }
                     
-                    // 检查Redis状态
+                    // check Redis status
                     if let Ok(client) = check_redis_connection() {
                         if let Ok(mut conn) = client.get_connection() {
                             if let Ok(db_size) = redis::cmd("DBSIZE").query::<i64>(&mut conn) {
                                 println!("  🔑 Redis键数: {}", db_size);
                                 
-                                // 显示内存使用情况
+                                // display memory usage
                                 if let Ok(memory_info) = redis::cmd("MEMORY").arg("USAGE").query::<String>(&mut conn) {
                                     if let Ok(memory_bytes) = memory_info.parse::<u64>() {
                                         println!("  🧠 Redis内存: {:.2} MB", memory_bytes as f64 / 1024.0 / 1024.0);
@@ -495,7 +495,7 @@ impl ComSrvPressureTestManager {
         Ok(())
     }
 
-    /// 生成详细报告
+    /// generate a detailed report
     async fn generate_comprehensive_report(&self) {
         println!("\n🎉 comsrv多通道压力测试完成！");
         println!("==============================================");

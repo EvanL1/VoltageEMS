@@ -19,7 +19,7 @@ pub enum PointCategory {
     Control,
 }
 
-/// CSV point table record
+/// CSV point table record structure
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct CsvPointRecord {
     pub id: String,
@@ -236,7 +236,7 @@ impl CsvPointManager {
         Ok(())
     }
 
-    /// Parse data type
+    /// Parse the data type
     fn parse_data_type(&self, data_type: &str) -> Result<ModbusDataType> {
         match data_type.to_lowercase().as_str() {
             "bool" | "boolean" => Ok(ModbusDataType::Bool),
