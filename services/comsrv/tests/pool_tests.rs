@@ -102,13 +102,13 @@ mod tests {
         let start = Instant::now();
         for _ in 0..1000 {
             if let Some(mut buffer) = pool.pop() {
-                // 模拟使用
+                // Simulate using the buffer
                 buffer.clear();
                 buffer.extend_from_slice(b"test data");
-                // 归还
+                // Return the buffer
                 pool.push(buffer);
             } else {
-                // 如果池为空，创建新对象
+                // Create a new buffer if the pool is empty
                 let buffer = BytesMut::with_capacity(1024);
                 pool.push(buffer);
             }
@@ -175,7 +175,7 @@ mod tests {
             
             // Empty the pool
             while pool.pop().is_some() {}
-        } // 池在这里被销毁
+        } // Pool is dropped here
         
         // Wait to ensure destructors have run
         tokio::time::sleep(Duration::from_millis(1)).await;
@@ -305,11 +305,11 @@ mod connection_tests {
         let pool = SimpleConnectionPool::new();
         let key = "test_pool";
         
-        // 获取连接
+        // Acquire a connection
         let conn = pool.get_connection(key).await.unwrap();
         assert!(conn.is_valid());
         
-        // 归还连接
+        // Return the connection
         pool.return_connection(key, conn).await;
         
         // Acquire again; should return the same or a new connection

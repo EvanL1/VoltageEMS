@@ -1,5 +1,5 @@
-//! 监控模块
+//! Monitoring module
 //!
-//! 此模块提供各种协议的监控功能
+//! Provides monitoring capabilities for various protocols
 
 pub mod rtu_monitor; 

@@ -230,7 +230,7 @@ impl CsvPointManager {
             return Err(ComSrvError::ConfigError(format!("Point name cannot be empty for ID: {}", record.id)));
         }
 
-        // 验证数据类型
+        // Validate data type
         self.parse_data_type(&record.data_type)?;
 
         Ok(())
@@ -368,7 +368,7 @@ pump_status,Pump Status,1,,1,0,bool,coil,Water pump on/off status,status"#;
         assert_eq!(temp_point.address, 1000);
         assert_eq!(temp_point.scale, 0.1);
 
-        // 测试统计信息
+        // Test statistics retrieval
         let stats = manager.get_table_stats("test_table").unwrap();
         assert_eq!(stats.total_points, 3);
         assert_eq!(stats.categories.get("Telemetry"), Some(&2));

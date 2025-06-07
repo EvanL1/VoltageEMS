@@ -1,7 +1,7 @@
-///! comsrv 集成测试
-///! 
-///! 该测试通过启动外部Modbus服务器，然后让comsrv服务连接并进行通信测试
-///! 验证comsrv服务的多通道日志功能
+///! comsrv integration test
+///!
+///! This test starts external Modbus servers and lets comsrv connect and
+///! communicate with them, verifying multi-channel logging functionality
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -14,18 +14,18 @@ use log::{info, debug, warn, error};
 use comsrv::utils::logger::{ChannelLoggerManager, LogLevel};
 use comsrv::core::protocols::init_protocol_parsers;
 
-/// comsrv集成测试配置
+/// comsrv integration test configuration
 #[derive(Debug, Clone)]
 pub struct ComsrvIntegrationTestConfig {
-    /// 外部Modbus服务器数量
+    /// Number of external Modbus servers
     pub external_server_count: usize,
-    /// 基础端口号
+    /// Base port number
     pub base_port: u16,
-    /// 测试持续时间（秒）
+    /// Test duration in seconds
     pub test_duration_secs: u64,
-    /// comsrv配置文件路径
+    /// Path to comsrv configuration file
     pub comsrv_config_path: String,
-    /// 监控间隔（毫秒）
+    /// Monitor interval in milliseconds
     pub monitor_interval_ms: u64,
 }
 
@@ -41,7 +41,7 @@ impl Default for ComsrvIntegrationTestConfig {
     }
 }
 
-/// 集成测试统计
+/// Integration test statistics
 #[derive(Debug, Default, Clone)]
 pub struct IntegrationTestStats {
     pub start_time: Option<Instant>,
@@ -62,7 +62,7 @@ impl IntegrationTestStats {
     }
 }
 
-/// comsrv集成测试管理器
+/// comsrv integration test manager
 pub struct ComsrvIntegrationTestManager {
     config: ComsrvIntegrationTestConfig,
     stats: Arc<RwLock<IntegrationTestStats>>,
@@ -71,11 +71,11 @@ pub struct ComsrvIntegrationTestManager {
 
 impl ComsrvIntegrationTestManager {
     pub fn new(config: ComsrvIntegrationTestConfig) -> Self {
-        // 外部服务器使用单独的日志目录
+        // Use a separate log directory for external servers
         let external_log_dir = "tests/logs/external_servers";
         let external_logger_manager = ChannelLoggerManager::new(&external_log_dir);
         
-        // 初始化协议解析器
+        // Initialize protocol parsers
         init_protocol_parsers();
         
         Self {
@@ -85,11 +85,11 @@ impl ComsrvIntegrationTestManager {
         }
     }
 
-    /// 运行完整的集成测试
+    /// Run the full integration test
     pub async fn run_integration_test(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-        println!("🚀 启动comsrv集成测试");
-        println!("配置：{}个外部服务器，端口{}-{}", 
-                 self.config.external_server_count, 
+        println!("🚀 Starting comsrv integration test");
+        println!("Config: {} external servers, ports {}-{}",
+                 self.config.external_server_count,
                  self.config.base_port,
                  self.config.base_port + self.config.external_server_count as u16 - 1);
         
@@ -98,25 +98,25 @@ impl ComsrvIntegrationTestManager {
             stats.start_time = Some(Instant::now());
         }
         
-        // 步骤1：启动外部Modbus服务器
+        // Step 1: start external Modbus servers
         self.start_external_modbus_servers().await?;
         
-        // 步骤2：等待服务器启动
+        // Step 2: wait for the servers to start
         sleep(Duration::from_secs(2)).await;
         
-        // 步骤3：启动comsrv服务（在后台）
+        // Step 3: start the comsrv service in the background
         self.start_comsrv_service().await?;
         
-        // 步骤4：等待comsrv启动并连接
+        // Step 4: wait for comsrv to start and connect
         sleep(Duration::from_secs(3)).await;
         
-        // 步骤5：开始监控
+        // Step 5: start monitoring
         self.start_monitoring().await?;
         
-        // 步骤6：等待测试完成
+        // Step 6: wait for the test to finish
         sleep(Duration::from_secs(self.config.test_duration_secs)).await;
         
-        // 步骤7：生成报告
+        // Step 7: generate report
         self.generate_integration_report().await;
         
         println!("✅ comsrv集成测试完成");

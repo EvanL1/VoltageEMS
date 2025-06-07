@@ -162,42 +162,42 @@ pub enum RtuAlarmSeverity {
     Critical,
 }
 
-/// RTU监控状态
+/// RTU monitoring status
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RtuMonitorStatus {
-    /// 监控的通道数量
+    /// Number of monitored channels
     pub monitored_channels: u32,
-    /// 在线通道数量
+    /// Number of online channels
     pub online_channels: u32,
-    /// 离线通道数量
+    /// Number of offline channels
     pub offline_channels: u32,
-    /// 活跃报警数量
+    /// Number of active alarms
     pub active_alarms: u32,
-    /// 总通信质量
+    /// Overall communication quality
     pub overall_communication_quality: f64,
-    /// 最后更新时间
+    /// Last update time
     #[serde(with = "timestamp_as_seconds")]
     pub last_update: SystemTime,
 }
 
-/// RTU监控器
+/// RTU monitor
 pub struct RtuMonitor {
-    /// 配置
+    /// Configuration
     config: RtuMonitorConfig,
-    /// 监控的客户端
+    /// Monitored clients
     clients: Arc<RwLock<HashMap<u16, Arc<Mutex<ModbusClient>>>>>,
-    /// 历史监控数据
+    /// Historical monitoring data
     history: Arc<RwLock<HashMap<u16, VecDeque<RtuMonitorPoint>>>>,
-    /// 活跃报警
+    /// Active alarms
     active_alarms: Arc<RwLock<HashMap<String, RtuAlarm>>>,
-    /// 监控状态
+    /// Monitoring status
     status: Arc<RwLock<RtuMonitorStatus>>,
-    /// 是否正在运行
+    /// Whether the monitor is running
     is_running: Arc<RwLock<bool>>,
 }
 
 impl RtuMonitor {
-    /// 创建新的RTU监控器
+    /// Create a new RTU monitor
     pub fn new(config: RtuMonitorConfig) -> Self {
         Self {
             config,
@@ -216,7 +216,7 @@ impl RtuMonitor {
         }
     }
 
-    /// 启动监控
+    /// Start monitoring
     pub async fn start(&self) -> Result<()> {
         {
             let mut running = self.is_running.write().await;
@@ -226,14 +226,14 @@ impl RtuMonitor {
             *running = true;
         }
 
-        // 启动监控任务
+        // Spawn the monitoring task
         self.start_monitoring_task().await;
 
         log::info!("RTU monitor started with {} second interval", self.config.monitor_interval);
         Ok(())
     }
 
-    /// 停止监控
+    /// Stop monitoring
     pub async fn stop(&self) -> Result<()> {
         {
             let mut running = self.is_running.write().await;
@@ -244,7 +244,7 @@ impl RtuMonitor {
         Ok(())
     }
 
-    /// 添加客户端到监控
+    /// Add a client to the monitor
     pub async fn add_client(&self, channel_id: u16, client: Arc<Mutex<ModbusClient>>) {
         {
             let mut clients = self.clients.write().await;
@@ -259,7 +259,7 @@ impl RtuMonitor {
         log::info!("Added channel {} to RTU monitoring", channel_id);
     }
 
-    /// 从监控中移除客户端
+    /// Remove a client from the monitor
     pub async fn remove_client(&self, channel_id: u16) {
         {
             let mut clients = self.clients.write().await;
@@ -274,7 +274,7 @@ impl RtuMonitor {
         log::info!("Removed channel {} from RTU monitoring", channel_id);
     }
 
-    /// 启动监控任务
+    /// Spawn the monitoring task
     async fn start_monitoring_task(&self) {
         let config = self.config.clone();
         let clients = self.clients.clone();
@@ -289,7 +289,7 @@ impl RtuMonitor {
             while *is_running.read().await {
                 monitor_interval.tick().await;
 
-                // 收集所有客户端的监控数据
+                // Collect monitoring data from all clients
                 Self::collect_monitoring_data(
                     &config,
                     &clients,
@@ -301,7 +301,7 @@ impl RtuMonitor {
         });
     }
 
-    /// 收集监控数据
+    /// Collect monitoring data
     async fn collect_monitoring_data(
         config: &RtuMonitorConfig,
         clients: &Arc<RwLock<HashMap<u16, Arc<Mutex<ModbusClient>>>>>,
@@ -317,11 +317,11 @@ impl RtuMonitor {
         for (&channel_id, client) in client_map.iter() {
             let client_guard = client.lock().await;
             
-            // 获取连接状态和统计信息
+            // Obtain connection state and statistics
             let connection_state = client_guard.get_connection_state().await;
             let stats = client_guard.get_stats().await;
 
-            // 创建监控数据点
+            // Create monitoring data point
             let monitor_point = RtuMonitorPoint {
                 timestamp: SystemTime::now(),
                 connection_state: format!("{:?}", connection_state),
@@ -334,13 +334,13 @@ impl RtuMonitor {
                 exception_responses: stats.exception_responses,
             };
 
-            // 更新历史数据
+            // Update historical data
             {
                 let mut history_map = history.write().await;
                 if let Some(channel_history) = history_map.get_mut(&channel_id) {
                     channel_history.push_back(monitor_point.clone());
                     
-                    // 清理过期数据
+                    // Remove expired entries
                     let retention_duration = Duration::from_secs(config.history_retention_minutes * 60);
                     let cutoff_time = SystemTime::now() - retention_duration;
                     
@@ -354,7 +354,7 @@ impl RtuMonitor {
                 }
             }
 
-            // 更新计数器
+            // Update counters
             match connection_state {
                 ModbusConnectionState::Connected => {
                     online_count += 1;
@@ -365,7 +365,7 @@ impl RtuMonitor {
                 }
             }
 
-            // 检查报警条件
+            // Check alarm conditions
             Self::check_alarms(config, channel_id, &monitor_point, &stats, active_alarms).await;
 
             if config.detailed_logging {
@@ -376,7 +376,7 @@ impl RtuMonitor {
             }
         }
 
-        // 更新监控状态
+        // Update monitoring status
         {
             let mut status_guard = status.write().await;
             status_guard.monitored_channels = client_map.len() as u32;
@@ -392,7 +392,7 @@ impl RtuMonitor {
         }
     }
 
-    /// 检查报警条件
+    /// Check alarm conditions
     async fn check_alarms(
         config: &RtuMonitorConfig,
         channel_id: u16,
@@ -402,7 +402,7 @@ impl RtuMonitor {
     ) {
         let mut new_alarms = Vec::new();
 
-        // 检查通信质量
+        // Verify communication quality
         if monitor_point.communication_quality < config.alarm_thresholds.communication_quality_low {
             let alarm = RtuAlarm {
                 id: format!("ch{}_comm_quality_low", channel_id),
@@ -419,7 +419,7 @@ impl RtuMonitor {
             new_alarms.push(alarm);
         }
 
-        // 检查响应时间
+        // Verify response time
         if monitor_point.avg_response_time_ms > config.alarm_thresholds.avg_response_time_high {
             let alarm = RtuAlarm {
                 id: format!("ch{}_high_response_time", channel_id),
@@ -436,7 +436,7 @@ impl RtuMonitor {
             new_alarms.push(alarm);
         }
 
-        // 检查CRC错误率
+        // Verify CRC error rate
         if stats.total_requests > 0 {
             let crc_error_rate = (stats.crc_errors as f64 / stats.total_requests as f64) * 100.0;
             if crc_error_rate > config.alarm_thresholds.crc_error_rate_high {
@@ -456,7 +456,7 @@ impl RtuMonitor {
             }
         }
 
-        // 检查连接状态
+        // Verify connection state
         if monitor_point.connection_state != "Connected" {
             let alarm = RtuAlarm {
                 id: format!("ch{}_connection_lost", channel_id),
@@ -473,13 +473,13 @@ impl RtuMonitor {
             new_alarms.push(alarm);
         }
 
-        // 添加新报警到活跃报警列表
+        // Add new alarms to the active list
         {
             let mut alarms = active_alarms.write().await;
             for alarm in new_alarms {
                 let existing_alarm = alarms.get(&alarm.id);
                 
-                // 只有当报警不存在或已被确认时才添加新报警
+                // Only insert if alarm does not exist or has been acknowledged
                 if existing_alarm.is_none() || existing_alarm.unwrap().acknowledged {
                     log::warn!("RTU Alarm: {}", alarm.message);
                     alarms.insert(alarm.id.clone(), alarm);
@@ -488,12 +488,12 @@ impl RtuMonitor {
         }
     }
 
-    /// 获取监控状态
+    /// Get monitoring status
     pub async fn get_status(&self) -> RtuMonitorStatus {
         self.status.read().await.clone()
     }
 
-    /// 获取活跃报警
+    /// Get active alarms
     pub async fn get_active_alarms(&self) -> Vec<RtuAlarm> {
         self.active_alarms.read().await.values().cloned().collect()
     }
@@ -621,10 +621,10 @@ mod tests {
     use std::time::Duration;
     use tokio::time::sleep;
 
-    /// 创建测试用的RTU监控器
+    /// Create a test RTU monitor
     fn create_test_rtu_monitor() -> RtuMonitor {
         let config = RtuMonitorConfig {
-            monitor_interval: 1, // 1秒间隔用于快速测试
+            monitor_interval: 1, // 1-second interval for fast tests
             history_retention_minutes: 5,
             alarm_thresholds: RtuAlarmThresholds::default(),
             detailed_logging: false,
@@ -632,7 +632,7 @@ mod tests {
         RtuMonitor::new(config)
     }
 
-    /// 创建测试用的Modbus客户端
+    /// Create a test Modbus client
     fn create_test_modbus_client() -> ModbusClient {
         let config = crate::core::config::config_manager::ChannelConfig {
             id: 1,
@@ -666,7 +666,7 @@ mod tests {
     #[test]
     fn test_rtu_monitor_config_default() {
         let config = RtuMonitorConfig::default();
-        assert_eq!(config.monitor_interval, 10);  // 修正为实际的默认值
+        assert_eq!(config.monitor_interval, 10);  // Match actual default value
         assert_eq!(config.history_retention_minutes, 60);
         assert!(!config.detailed_logging);
     }
@@ -674,7 +674,7 @@ mod tests {
     #[test]
     fn test_rtu_alarm_thresholds_default() {
         let thresholds = RtuAlarmThresholds::default();
-        assert_eq!(thresholds.communication_quality_low, 90.0);  // 修正为实际的默认值
+        assert_eq!(thresholds.communication_quality_low, 90.0);  // Match actual default value
         assert_eq!(thresholds.avg_response_time_high, 1000.0);
         assert_eq!(thresholds.consecutive_failures_threshold, 5);
         assert_eq!(thresholds.crc_error_rate_high, 5.0);

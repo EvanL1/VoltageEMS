@@ -118,7 +118,7 @@ impl MultiProtocolPressureTest {
             };
             let port = self.config.base_port + i as u16;
             let config = self.make_channel_config(i as u16, protocol.clone(), port);
-            // 注意：由于create_channel返回值类型不匹配，这里创建模拟客户端
+            // Note: create_channel returns a different type, create a mock client here
             println!("  ✅ 配置通道 {} ({:?}), 端口: {}", i, protocol, port);
             
             // Load point table (generated beforehand)
@@ -134,13 +134,13 @@ impl MultiProtocolPressureTest {
         let duration = Duration::from_secs(self.config.test_duration_secs);
         let start = Instant::now();
         
-        // 由于clients是空的，模拟压力测试任务
+        // Since clients are empty, simulate pressure test tasks
         let channel_count = self.config.channel_count;
         for _i in 0..channel_count {
             let stats_clone = stats.clone();
             tokio::spawn(async move {
                 while start.elapsed() < duration {
-                    // 模拟读取操作
+                    // Simulate read operation
                     let _dummy_read = rand::random::<u32>() % 1000;
                     {
                         let mut st = stats_clone.write().await;
@@ -151,7 +151,7 @@ impl MultiProtocolPressureTest {
             });
         }
         
-        // 等待所有任务完成
+        // Wait for all tasks to complete
         sleep(duration).await;
     }
 
