@@ -7,36 +7,36 @@ use tokio::time::timeout;
 mod tests {
     use super::*;
     
-    /// test basic functionality of a generic object pool
+    /// Test basic functionality of a generic object pool
     #[tokio::test]
     async fn test_generic_object_pool() {
         use crossbeam::queue::SegQueue;
         use bytes::BytesMut;
         
-        // create the pool
+        // Create the pool
         let pool = Arc::new(SegQueue::new());
         
-        // preallocate some objects
+        // Preallocate some objects
         for i in 0..5 {
             let mut buffer = BytesMut::with_capacity(1024);
             buffer.extend_from_slice(format!("Initial buffer {}", i).as_bytes());
             pool.push(buffer);
         }
         
-        // test acquiring and returning
+        // Test acquire and release
         if let Some(mut buffer) = pool.pop() {
-            // use the buffer
+            // Use the buffer
             buffer.clear();
             buffer.extend_from_slice(b"Modified content");
             
-            // return to the pool
+            // Return to the pool
             pool.push(buffer);
         }
         
-        // verify objects remain in the pool
+        // Verify pool still has objects
         assert!(!pool.is_empty());
         
-        // test concurrent access
+        // Test concurrent access
         let pool_clone = pool.clone();
         let handle = tokio::spawn(async move {
             if let Some(buffer) = pool_clone.pop() {
@@ -50,19 +50,19 @@ mod tests {
         println!("✅ Generic object pool test passed");
     }
     
-    /// test the basic concept of a connection pool
+    /// Test basic connection pool concept
     #[tokio::test]
     async fn test_connection_pool_concept() {
-        // simulate a connection pool
+        // Simulate a connection pool
         let (tx, mut rx) = mpsc::channel::<String>(10);
         
-        // pre-create some connections
+        // Pre-create some connections
         for i in 0..3 {
             let conn_id = format!("connection_{}", i);
             tx.send(conn_id).await.unwrap();
         }
         
-        // test acquiring a connection
+        // Test acquiring a connection
         let connection = timeout(Duration::from_secs(1), rx.recv())
             .await
             .expect("Should get connection within timeout")
@@ -70,10 +70,10 @@ mod tests {
         
         println!("Got connection: {}", connection);
         
-        // return the connection after use
+        // Return the connection after use
         tx.send(connection).await.unwrap();
         
-        // verify the connection was returned
+        // Verify the connection was returned
         let returned_connection = timeout(Duration::from_secs(1), rx.recv())
             .await
             .expect("Should get returned connection")
@@ -84,7 +84,7 @@ mod tests {
         println!("✅ Connection pool concept test passed");
     }
     
-    /// test the performance advantages of pooling
+    /// Test performance benefits of pooling
     #[tokio::test]
     async fn test_pool_performance_benefit() {
         use crossbeam::queue::SegQueue;
@@ -93,29 +93,29 @@ mod tests {
         
         let pool = Arc::new(SegQueue::new());
         
-        // preallocate objects into the pool
+        // Preallocate objects into the pool
         for _ in 0..100 {
             pool.push(BytesMut::with_capacity(1024));
         }
         
-        // measure performance of getting objects from the pool
+        // Measure performance of fetching from pool
         let start = Instant::now();
         for _ in 0..1000 {
             if let Some(mut buffer) = pool.pop() {
-                // simulate usage
+                // Simulate using the buffer
                 buffer.clear();
                 buffer.extend_from_slice(b"test data");
-                // return
+                // Return the buffer
                 pool.push(buffer);
             } else {
-                // create a new object if the pool is empty
+                // Create a new buffer if the pool is empty
                 let buffer = BytesMut::with_capacity(1024);
                 pool.push(buffer);
             }
         }
         let pool_duration = start.elapsed();
         
-        // measure performance when creating new objects each time
+        // Measure performance of creating new objects each time
         let start = Instant::now();
         let mut buffers = Vec::new();
         for _ in 0..1000 {
@@ -128,19 +128,19 @@ mod tests {
         println!("Pool-based allocation: {:?}", pool_duration);
         println!("New allocation each time: {:?}", new_duration);
         
-        // pooling should be faster (or at least not much slower)
+        // Pooling should be faster (or at least not much slower)
         assert!(pool_duration <= new_duration * 2, 
                 "Pool should not be significantly slower than direct allocation");
         
         println!("✅ Pool performance test passed");
     }
     
-    /// test resource management and cleanup
+    /// Test resource management and cleanup
     #[tokio::test]
     async fn test_resource_management() {
         use std::sync::atomic::{AtomicU32, Ordering};
         
-        // track creation and destruction of resources
+        // Track resource creation and drop
         let created_count = Arc::new(AtomicU32::new(0));
         let dropped_count = Arc::new(AtomicU32::new(0));
         
@@ -158,7 +158,7 @@ mod tests {
         {
             let pool = crossbeam::queue::SegQueue::new();
             
-            // create some resources
+            // Create some resources
             for i in 0..5 {
                 created_count.fetch_add(1, Ordering::SeqCst);
                 let resource = TrackedResource {
@@ -168,19 +168,19 @@ mod tests {
                 pool.push(resource);
             }
             
-            // use some resources
+            // Use some resources
             if let Some(_resource) = pool.pop() {
-                // resource will be automatically released at end of scope
+                // Resource drops when scope ends
             }
             
-            // empty the pool
+            // Empty the pool
             while pool.pop().is_some() {}
-        } // pool is dropped here
+        } // Pool is dropped here
         
-        // wait a bit to ensure all destructors have run
+        // Wait to ensure destructors have run
         tokio::time::sleep(Duration::from_millis(1)).await;
         
-        // verify all resources were correctly released
+        // Verify all resources were released
         assert_eq!(created_count.load(Ordering::SeqCst), 5);
         assert_eq!(dropped_count.load(Ordering::SeqCst), 5);
         
@@ -188,7 +188,7 @@ mod tests {
     }
 }
 
-// Mock connection used for timeout and lifecycle management tests
+// Mock connection for timeout and lifecycle testing
 #[derive(Debug, Clone)]
 struct MockConnection {
     id: String,
@@ -233,22 +233,22 @@ mod connection_tests {
     async fn test_connection_lifecycle() {
         let mut conn = MockConnection::new("test_conn");
         
-        // newly created connection should be valid
+        // Newly created connection should be valid
         assert!(conn.is_valid());
         
-        // use the connection
+        // Use the connection
         conn.use_connection();
         
-        // should not be idle shortly after use
+        // Should not be idle shortly after use
         assert!(!conn.is_idle(Duration::from_millis(1)));
         
-        // wait for a while
+        // Wait for a short period
         tokio::time::sleep(Duration::from_millis(10)).await;
         
-        // now it should be idle
+        // Now it should be idle
         assert!(conn.is_idle(Duration::from_millis(5)));
         
-        // close the connection
+        // Close the connection
         conn.close();
         assert!(!conn.is_valid());
         
@@ -260,7 +260,7 @@ mod connection_tests {
         use std::collections::HashMap;
         use tokio::sync::RwLock;
         
-        // simplified connection pool implementation
+        // Simplified connection pool implementation
         struct SimpleConnectionPool {
             connections: RwLock<HashMap<String, Vec<MockConnection>>>,
             max_idle_time: Duration,
@@ -278,10 +278,10 @@ mod connection_tests {
                 let mut pools = self.connections.write().await;
                 let pool = pools.entry(key.to_string()).or_insert_with(Vec::new);
                 
-                // remove expired connections
+                // Remove expired connections
                 pool.retain(|conn| conn.is_valid() && !conn.is_idle(self.max_idle_time));
                 
-                // return an available connection or create a new one
+                // Return available connection or create a new one
                 pool.pop().or_else(|| Some(MockConnection::new(&format!("{}_{}", key, pools.len()))))
             }
             
@@ -305,28 +305,28 @@ mod connection_tests {
         let pool = SimpleConnectionPool::new();
         let key = "test_pool";
         
-        // obtain a connection
+        // Acquire a connection
         let conn = pool.get_connection(key).await.unwrap();
         assert!(conn.is_valid());
         
-        // return the connection
+        // Return the connection
         pool.return_connection(key, conn).await;
         
-        // getting again should return the same or a new connection
+        // Acquire again; should return the same or a new connection
         let conn2 = pool.get_connection(key).await.unwrap();
         assert!(conn2.is_valid());
         
-        // wait for the connection to expire
+        // Wait for the connection to expire
         tokio::time::sleep(Duration::from_millis(150)).await;
         
-        // clean up expired connections
+        // Clean up expired connections
         pool.cleanup_expired().await;
         
-        // verify expired connections were cleaned up
+        // Verify expired connections were removed
         {
             let pools = pool.connections.read().await;
             if let Some(conns) = pools.get(key) {
-                // since conn2 wasn't returned, the pool should be empty or contain only valid connections
+                // Because conn2 wasn't returned the pool should be empty or only contain valid connections
                 for conn in conns {
                     assert!(conn.is_valid());
                 }

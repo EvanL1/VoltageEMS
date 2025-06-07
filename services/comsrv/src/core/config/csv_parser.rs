@@ -5,6 +5,20 @@ use serde::{Deserialize, Serialize};
 use crate::utils::{ComSrvError, Result};
 use crate::core::protocols::modbus::common::{ModbusRegisterMapping, ModbusDataType, ModbusRegisterType};
 
+/// Point category for separating telemetry, status, setpoint and control points
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[serde(rename_all = "lowercase")]
+pub enum PointCategory {
+    /// Analog telemetry value
+    Telemetry,
+    /// Digital status value
+    Status,
+    /// Remote setpoint
+    Setpoint,
+    /// Remote control command
+    Control,
+}
+
 /// CSV point table record structure
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct CsvPointRecord {
@@ -18,7 +32,10 @@ pub struct CsvPointRecord {
     pub register_type: Option<String>,
     pub description: Option<String>,
     pub access: Option<String>,  // read, write, read_write
-    pub group: Option<String>,   
+    pub group: Option<String>,
+    /// Point category (telemetry, status, setpoint, control)
+    #[serde(default)]
+    pub category: Option<PointCategory>,
 }
 
 /// CSV point table manager
@@ -139,6 +156,7 @@ impl CsvPointManager {
             read_write_points: 0,
             data_types: HashMap::new(),
             groups: HashMap::new(),
+            categories: HashMap::new(),
         };
 
         for point in points {
@@ -156,6 +174,14 @@ impl CsvPointManager {
             // Count groups
             if let Some(group) = &point.group {
                 *stats.groups.entry(group.clone()).or_insert(0) += 1;
+            }
+
+            // Count point categories
+            if let Some(cat) = &point.category {
+                *stats
+                    .categories
+                    .entry(format!("{:?}", cat))
+                    .or_insert(0) += 1;
             }
         }
 
@@ -204,7 +230,7 @@ impl CsvPointManager {
             return Err(ComSrvError::ConfigError(format!("Point name cannot be empty for ID: {}", record.id)));
         }
 
-        // validate data type
+        // Validate data type
         self.parse_data_type(&record.data_type)?;
 
         Ok(())
@@ -224,7 +250,7 @@ impl CsvPointManager {
         }
     }
 
-    /// Parse the register type
+    /// Parse register type
     fn parse_register_type(&self, register_type: &Option<String>) -> Result<ModbusRegisterType> {
         match register_type.as_deref() {
             Some("coil") | Some("coils") => Ok(ModbusRegisterType::Coil),
@@ -232,7 +258,7 @@ impl CsvPointManager {
             Some("input_register") | Some("input") => Ok(ModbusRegisterType::InputRegister),
             Some("holding_register") | Some("holding") => Ok(ModbusRegisterType::HoldingRegister),
             None => {
-                // infer register type based on address range
+                // Automatically infer register type from address range
                 Ok(ModbusRegisterType::InputRegister) // default to input register
             },
             Some(other) => Err(ComSrvError::ConfigError(format!("Unsupported register type: {}", other))),
@@ -273,7 +299,7 @@ impl CsvPointManager {
         
         let points = self.point_tables.entry(table_name.to_string()).or_insert_with(Vec::new);
         
-        // check if a point with the same ID exists
+        // Check if a point with the same ID exists
         if let Some(existing) = points.iter_mut().find(|p| p.id == point.id) {
             *existing = point;
         } else {
@@ -295,7 +321,7 @@ impl CsvPointManager {
     }
 }
 
-/// Point table statistics information
+/// Point table statistics
 #[derive(Debug, Clone, Serialize)]
 pub struct PointTableStats {
     pub total_points: usize,
@@ -304,6 +330,7 @@ pub struct PointTableStats {
     pub read_write_points: usize,
     pub data_types: HashMap<String, usize>,
     pub groups: HashMap<String, usize>,
+    pub categories: HashMap<String, usize>,
 }
 
 impl Default for CsvPointManager {
@@ -320,10 +347,10 @@ mod tests {
 
     #[test]
     fn test_csv_parsing() {
-        let csv_content = r#"id,name,address,unit,scale,offset,data_type,register_type,description
-temp_01,Temperature Sensor 1,1000,°C,0.1,0,float32,input_register,Environment temperature
-press_01,Pressure Sensor 1,1001,bar,0.01,0,float32,input_register,System pressure
-pump_status,Pump Status,1,,1,0,bool,coil,Water pump on/off status"#;
+        let csv_content = r#"id,name,address,unit,scale,offset,data_type,register_type,description,category
+temp_01,Temperature Sensor 1,1000,°C,0.1,0,float32,input_register,Environment temperature,telemetry
+press_01,Pressure Sensor 1,1001,bar,0.01,0,float32,input_register,System pressure,telemetry
+pump_status,Pump Status,1,,1,0,bool,coil,Water pump on/off status,status"#;
 
         let dir = tempdir().unwrap();
         let file_path = dir.path().join("test_points.csv");
@@ -335,15 +362,16 @@ pump_status,Pump Status,1,,1,0,bool,coil,Water pump on/off status"#;
         let points = manager.get_points("test_table").unwrap();
         assert_eq!(points.len(), 3);
 
-        // test point lookup
+        // Test point lookup
         let temp_point = manager.find_point("test_table", "temp_01").unwrap();
         assert_eq!(temp_point.name, "Temperature Sensor 1");
         assert_eq!(temp_point.address, 1000);
         assert_eq!(temp_point.scale, 0.1);
 
-        // test statistics
+        // Test statistics retrieval
         let stats = manager.get_table_stats("test_table").unwrap();
         assert_eq!(stats.total_points, 3);
+        assert_eq!(stats.categories.get("Telemetry"), Some(&2));
     }
 
     #[test]
@@ -362,6 +390,7 @@ pump_status,Pump Status,1,,1,0,bool,coil,Water pump on/off status"#;
             description: Some("Test description".to_string()),
             access: Some("read".to_string()),
             group: Some("sensors".to_string()),
+            category: Some(PointCategory::Telemetry),
         };
         
         manager.upsert_point("test_table", point).unwrap();

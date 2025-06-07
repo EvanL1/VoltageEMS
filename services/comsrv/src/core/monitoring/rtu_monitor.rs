@@ -1,10 +1,10 @@
 //! RTU monitoring module
 //!
-//! This module provides real-time monitoring for RTU communication, including:
-//! - connection status monitoring
-//! - communication statistics
-//! - data quality analysis
-//! - alarms and diagnostics
+//! Provides real-time monitoring of RTU communication including:
+//! - Connection status
+//! - Communication statistics
+//! - Data quality analysis
+//! - Alarm and diagnostics
 
 use std::collections::{HashMap, VecDeque};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -40,16 +40,16 @@ mod timestamp_as_seconds {
     }
 }
 
-/// RTU monitoring configuration
+/// RTU monitor configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RtuMonitorConfig {
-    /// monitoring interval in seconds
+    /// Monitoring interval in seconds
     pub monitor_interval: u64,
-    /// history retention time in minutes
+    /// History retention time in minutes
     pub history_retention_minutes: u64,
-    /// alarm thresholds
+    /// Alarm thresholds
     pub alarm_thresholds: RtuAlarmThresholds,
-    /// enable detailed logging
+    /// Whether to enable detailed logging
     pub detailed_logging: bool,
 }
 
@@ -67,13 +67,13 @@ impl Default for RtuMonitorConfig {
 /// RTU alarm thresholds
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RtuAlarmThresholds {
-    /// communication quality low threshold (percentage)
+    /// Communication quality low threshold (%)
     pub communication_quality_low: f64,
-    /// high average response time threshold (milliseconds)
+    /// High average response time threshold (ms)
     pub avg_response_time_high: f64,
-    /// consecutive failure count threshold
+    /// Consecutive failures threshold
     pub consecutive_failures_threshold: u32,
-    /// high CRC error rate threshold (percentage)
+    /// High CRC error rate threshold (%)
     pub crc_error_rate_high: f64,
 }
 
@@ -88,116 +88,116 @@ impl Default for RtuAlarmThresholds {
     }
 }
 
-/// RTU monitoring datapoint
+/// RTU monitoring data point
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RtuMonitorPoint {
-    /// timestamp
+    /// Timestamp
     #[serde(with = "timestamp_as_seconds")]
     pub timestamp: SystemTime,
-    /// connection state
+    /// Connection state
     pub connection_state: String,
-    /// communication quality (percentage)
+    /// Communication quality (%)
     pub communication_quality: f64,
-    /// average response time (milliseconds)
+    /// Average response time (ms)
     pub avg_response_time_ms: f64,
-    /// successful request count
+    /// Successful request count
     pub successful_requests: u64,
-    /// failed request count
+    /// Failed request count
     pub failed_requests: u64,
-    /// number of CRC errors
+    /// CRC error count
     pub crc_errors: u64,
-    /// number of timed-out requests
+    /// Timeout request count
     pub timeout_requests: u64,
-    /// number of exception responses
+    /// Exception response count
     pub exception_responses: u64,
 }
 
 /// RTU alarm information
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RtuAlarm {
-    /// alarm identifier
+    /// Alarm ID
     pub id: String,
-    /// alarm type
+    /// Alarm type
     pub alarm_type: RtuAlarmType,
-    /// alarm severity
+    /// Alarm severity
     pub severity: RtuAlarmSeverity,
-    /// alarm message
+    /// Alarm message
     pub message: String,
-    /// alarm time
+    /// Alarm timestamp
     #[serde(with = "timestamp_as_seconds")]
     pub timestamp: SystemTime,
-    /// whether the alarm is acknowledged
+    /// Whether the alarm is acknowledged
     pub acknowledged: bool,
-    /// channel identifier
+    /// Channel ID
     pub channel_id: u16,
 }
 
-/// RTU alarm types
+/// RTU alarm type
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum RtuAlarmType {
-    /// connection lost
+    /// Connection lost
     ConnectionLost,
-    /// low communication quality
+    /// Communication quality low
     CommunicationQualityLow,
-    /// high response time
+    /// High response time
     HighResponseTime,
-    /// high CRC error rate
+    /// High CRC error rate
     HighCrcErrorRate,
-    /// consecutive failures
+    /// Consecutive failures
     ConsecutiveFailures,
-    /// device not responding
+    /// Device not responding
     DeviceNotResponding,
 }
 
-/// RTU alarm severity levels
+/// RTU alarm severity
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum RtuAlarmSeverity {
-    /// informational
+    /// Info
     Info,
-    /// warning
+    /// Warning
     Warning,
-    /// error
+    /// Error
     Error,
-    /// critical
+    /// Critical
     Critical,
 }
 
 /// RTU monitoring status
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RtuMonitorStatus {
-    /// number of monitored channels
+    /// Number of monitored channels
     pub monitored_channels: u32,
-    /// number of online channels
+    /// Number of online channels
     pub online_channels: u32,
-    /// number of offline channels
+    /// Number of offline channels
     pub offline_channels: u32,
-    /// number of active alarms
+    /// Number of active alarms
     pub active_alarms: u32,
-    /// overall communication quality
+    /// Overall communication quality
     pub overall_communication_quality: f64,
-    /// last update time
+    /// Last update time
     #[serde(with = "timestamp_as_seconds")]
     pub last_update: SystemTime,
 }
 
 /// RTU monitor
 pub struct RtuMonitor {
-    /// configuration
+    /// Configuration
     config: RtuMonitorConfig,
-    /// monitored clients
+    /// Monitored clients
     clients: Arc<RwLock<HashMap<u16, Arc<Mutex<ModbusClient>>>>>,
-    /// historical monitoring data
+    /// Historical monitoring data
     history: Arc<RwLock<HashMap<u16, VecDeque<RtuMonitorPoint>>>>,
-    /// active alarms
+    /// Active alarms
     active_alarms: Arc<RwLock<HashMap<String, RtuAlarm>>>,
-    /// monitoring status
+    /// Monitoring status
     status: Arc<RwLock<RtuMonitorStatus>>,
-    /// whether the monitor is running
+    /// Whether the monitor is running
     is_running: Arc<RwLock<bool>>,
 }
 
 impl RtuMonitor {
-    /// create a new RTU monitor
+    /// Create a new RTU monitor
     pub fn new(config: RtuMonitorConfig) -> Self {
         Self {
             config,
@@ -216,7 +216,7 @@ impl RtuMonitor {
         }
     }
 
-    /// start monitoring
+    /// Start monitoring
     pub async fn start(&self) -> Result<()> {
         {
             let mut running = self.is_running.write().await;
@@ -226,14 +226,14 @@ impl RtuMonitor {
             *running = true;
         }
 
-        // launch monitoring task
+        // Spawn the monitoring task
         self.start_monitoring_task().await;
 
         log::info!("RTU monitor started with {} second interval", self.config.monitor_interval);
         Ok(())
     }
 
-    /// stop monitoring
+    /// Stop monitoring
     pub async fn stop(&self) -> Result<()> {
         {
             let mut running = self.is_running.write().await;
@@ -244,7 +244,7 @@ impl RtuMonitor {
         Ok(())
     }
 
-    /// add a client to monitoring
+    /// Add a client to the monitor
     pub async fn add_client(&self, channel_id: u16, client: Arc<Mutex<ModbusClient>>) {
         {
             let mut clients = self.clients.write().await;
@@ -259,7 +259,7 @@ impl RtuMonitor {
         log::info!("Added channel {} to RTU monitoring", channel_id);
     }
 
-    /// remove a client from monitoring
+    /// Remove a client from the monitor
     pub async fn remove_client(&self, channel_id: u16) {
         {
             let mut clients = self.clients.write().await;
@@ -274,7 +274,7 @@ impl RtuMonitor {
         log::info!("Removed channel {} from RTU monitoring", channel_id);
     }
 
-    /// start the monitoring task
+    /// Spawn the monitoring task
     async fn start_monitoring_task(&self) {
         let config = self.config.clone();
         let clients = self.clients.clone();
@@ -289,7 +289,7 @@ impl RtuMonitor {
             while *is_running.read().await {
                 monitor_interval.tick().await;
 
-                // collect monitoring data from all clients
+                // Collect monitoring data from all clients
                 Self::collect_monitoring_data(
                     &config,
                     &clients,
@@ -301,7 +301,7 @@ impl RtuMonitor {
         });
     }
 
-    /// collect monitoring data
+    /// Collect monitoring data
     async fn collect_monitoring_data(
         config: &RtuMonitorConfig,
         clients: &Arc<RwLock<HashMap<u16, Arc<Mutex<ModbusClient>>>>>,
@@ -317,11 +317,11 @@ impl RtuMonitor {
         for (&channel_id, client) in client_map.iter() {
             let client_guard = client.lock().await;
             
-            // get connection state and statistics
+            // Obtain connection state and statistics
             let connection_state = client_guard.get_connection_state().await;
             let stats = client_guard.get_stats().await;
 
-            // create a monitoring datapoint
+            // Create monitoring data point
             let monitor_point = RtuMonitorPoint {
                 timestamp: SystemTime::now(),
                 connection_state: format!("{:?}", connection_state),
@@ -334,13 +334,13 @@ impl RtuMonitor {
                 exception_responses: stats.exception_responses,
             };
 
-            // update history
+            // Update historical data
             {
                 let mut history_map = history.write().await;
                 if let Some(channel_history) = history_map.get_mut(&channel_id) {
                     channel_history.push_back(monitor_point.clone());
                     
-                    // clean up expired data
+                    // Remove expired entries
                     let retention_duration = Duration::from_secs(config.history_retention_minutes * 60);
                     let cutoff_time = SystemTime::now() - retention_duration;
                     
@@ -354,7 +354,7 @@ impl RtuMonitor {
                 }
             }
 
-            // update counters
+            // Update counters
             match connection_state {
                 ModbusConnectionState::Connected => {
                     online_count += 1;
@@ -365,7 +365,7 @@ impl RtuMonitor {
                 }
             }
 
-            // check alarm conditions
+            // Check alarm conditions
             Self::check_alarms(config, channel_id, &monitor_point, &stats, active_alarms).await;
 
             if config.detailed_logging {
@@ -376,7 +376,7 @@ impl RtuMonitor {
             }
         }
 
-        // update monitoring status
+        // Update monitoring status
         {
             let mut status_guard = status.write().await;
             status_guard.monitored_channels = client_map.len() as u32;
@@ -392,7 +392,7 @@ impl RtuMonitor {
         }
     }
 
-    /// check alarm conditions
+    /// Check alarm conditions
     async fn check_alarms(
         config: &RtuMonitorConfig,
         channel_id: u16,
@@ -402,7 +402,7 @@ impl RtuMonitor {
     ) {
         let mut new_alarms = Vec::new();
 
-        // check communication quality
+        // Verify communication quality
         if monitor_point.communication_quality < config.alarm_thresholds.communication_quality_low {
             let alarm = RtuAlarm {
                 id: format!("ch{}_comm_quality_low", channel_id),
@@ -419,7 +419,7 @@ impl RtuMonitor {
             new_alarms.push(alarm);
         }
 
-        // check response time
+        // Verify response time
         if monitor_point.avg_response_time_ms > config.alarm_thresholds.avg_response_time_high {
             let alarm = RtuAlarm {
                 id: format!("ch{}_high_response_time", channel_id),
@@ -436,7 +436,7 @@ impl RtuMonitor {
             new_alarms.push(alarm);
         }
 
-        // check CRC error rate
+        // Verify CRC error rate
         if stats.total_requests > 0 {
             let crc_error_rate = (stats.crc_errors as f64 / stats.total_requests as f64) * 100.0;
             if crc_error_rate > config.alarm_thresholds.crc_error_rate_high {
@@ -456,7 +456,7 @@ impl RtuMonitor {
             }
         }
 
-        // check connection state
+        // Verify connection state
         if monitor_point.connection_state != "Connected" {
             let alarm = RtuAlarm {
                 id: format!("ch{}_connection_lost", channel_id),
@@ -473,13 +473,13 @@ impl RtuMonitor {
             new_alarms.push(alarm);
         }
 
-        // add new alarms to the active list
+        // Add new alarms to the active list
         {
             let mut alarms = active_alarms.write().await;
             for alarm in new_alarms {
                 let existing_alarm = alarms.get(&alarm.id);
                 
-                // add a new alarm only if it does not exist or is acknowledged
+                // Only insert if alarm does not exist or has been acknowledged
                 if existing_alarm.is_none() || existing_alarm.unwrap().acknowledged {
                     log::warn!("RTU Alarm: {}", alarm.message);
                     alarms.insert(alarm.id.clone(), alarm);
@@ -488,17 +488,17 @@ impl RtuMonitor {
         }
     }
 
-    /// get monitoring status
+    /// Get monitoring status
     pub async fn get_status(&self) -> RtuMonitorStatus {
         self.status.read().await.clone()
     }
 
-    /// get active alarms
+    /// Get active alarms
     pub async fn get_active_alarms(&self) -> Vec<RtuAlarm> {
         self.active_alarms.read().await.values().cloned().collect()
     }
 
-    /// acknowledge an alarm
+    /// Acknowledge an alarm
     pub async fn acknowledge_alarm(&self, alarm_id: &str) -> Result<()> {
         let mut alarms = self.active_alarms.write().await;
         if let Some(alarm) = alarms.get_mut(alarm_id) {
@@ -510,14 +510,14 @@ impl RtuMonitor {
         }
     }
 
-    /// clear acknowledged alarms
+    /// Clear acknowledged alarms
     pub async fn clear_acknowledged_alarms(&self) {
         let mut alarms = self.active_alarms.write().await;
         alarms.retain(|_, alarm| !alarm.acknowledged);
         log::info!("Cleared acknowledged alarms");
     }
 
-    /// get channel history
+    /// Get channel history data
     pub async fn get_channel_history(&self, channel_id: u16, limit: Option<usize>) -> Vec<RtuMonitorPoint> {
         let history_map = self.history.read().await;
         if let Some(channel_history) = history_map.get(&channel_id) {
@@ -534,7 +534,7 @@ impl RtuMonitor {
         }
     }
 
-    /// get current channel status
+    /// Get current channel status
     pub async fn get_channel_status(&self, channel_id: u16) -> Option<RtuMonitorPoint> {
         let history_map = self.history.read().await;
         if let Some(channel_history) = history_map.get(&channel_id) {
@@ -544,7 +544,7 @@ impl RtuMonitor {
         }
     }
 
-    /// generate a monitoring report
+    /// Generate a monitoring report
     pub async fn generate_report(&self) -> RtuMonitorReport {
         let status = self.get_status().await;
         let alarms = self.get_active_alarms().await;
@@ -582,35 +582,35 @@ impl RtuMonitor {
 /// RTU channel summary
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RtuChannelSummary {
-    /// channel ID
+    /// Channel ID
     pub channel_id: u16,
-    /// connection state
+    /// Connection state
     pub connection_state: String,
-    /// communication quality
+    /// Communication quality
     pub communication_quality: f64,
-    /// average response time
+    /// Average response time
     pub avg_response_time_ms: f64,
-    /// total request count
+    /// Total request count
     pub total_requests: u64,
-    /// successful request count
+    /// Successful request count
     pub successful_requests: u64,
-    /// failed request count
+    /// Failed request count
     pub failed_requests: u64,
-    /// active alarm count
+    /// Active alarm count
     pub active_alarms: u32,
 }
 
-/// RTU monitoring report
+/// RTU monitor report
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RtuMonitorReport {
-    /// generation time
+    /// Generation time
     #[serde(with = "timestamp_as_seconds")]
     pub generated_at: SystemTime,
-    /// overall status
+    /// Overall status
     pub overall_status: RtuMonitorStatus,
-    /// channel summaries
+    /// Channel summaries
     pub channel_summaries: Vec<RtuChannelSummary>,
-    /// active alarms
+    /// Active alarms
     pub active_alarms: Vec<RtuAlarm>,
 }
 
@@ -621,10 +621,10 @@ mod tests {
     use std::time::Duration;
     use tokio::time::sleep;
 
-    /// create a test RTU monitor
+    /// Create a test RTU monitor
     fn create_test_rtu_monitor() -> RtuMonitor {
         let config = RtuMonitorConfig {
-            monitor_interval: 1, // 1 second interval for quick tests
+            monitor_interval: 1, // 1-second interval for fast tests
             history_retention_minutes: 5,
             alarm_thresholds: RtuAlarmThresholds::default(),
             detailed_logging: false,
@@ -632,7 +632,7 @@ mod tests {
         RtuMonitor::new(config)
     }
 
-    /// create a test Modbus client
+    /// Create a test Modbus client
     fn create_test_modbus_client() -> ModbusClient {
         let config = crate::core::config::config_manager::ChannelConfig {
             id: 1,
@@ -666,7 +666,7 @@ mod tests {
     #[test]
     fn test_rtu_monitor_config_default() {
         let config = RtuMonitorConfig::default();
-        assert_eq!(config.monitor_interval, 10);  // verify actual default value
+        assert_eq!(config.monitor_interval, 10);  // Match actual default value
         assert_eq!(config.history_retention_minutes, 60);
         assert!(!config.detailed_logging);
     }
@@ -674,7 +674,7 @@ mod tests {
     #[test]
     fn test_rtu_alarm_thresholds_default() {
         let thresholds = RtuAlarmThresholds::default();
-        assert_eq!(thresholds.communication_quality_low, 90.0);  // verify actual default value
+        assert_eq!(thresholds.communication_quality_low, 90.0);  // Match actual default value
         assert_eq!(thresholds.avg_response_time_high, 1000.0);
         assert_eq!(thresholds.consecutive_failures_threshold, 5);
         assert_eq!(thresholds.crc_error_rate_high, 5.0);

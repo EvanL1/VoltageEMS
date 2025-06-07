@@ -651,31 +651,32 @@ impl ProtocolFactory {
         self.validate_config(&config)?;
 
         // Create protocol instance with config manager support
-        let protocol =
-            self.create_protocol_with_config_manager(config.clone(), config_manager)?;
+        let protocol = self.create_protocol_with_config_manager(config.clone(), config_manager)?;
 
-        // Create metadata and channel wrapper
+        // Create metadata
         let metadata = ChannelMetadata {
             name: config.name.clone(),
             protocol_type: config.protocol.clone(),
             created_at: std::time::Instant::now(),
             last_accessed: Arc::new(RwLock::new(std::time::Instant::now())),
         };
+      
         let channel_wrapper = Arc::new(RwLock::new(protocol));
 
-        // Try to insert the channel; fail if the ID already exists
-        if self
-            .channels
-            .try_insert(channel_id, channel_wrapper)
-            .is_err()
-        {
+        // Atomically insert channel and metadata
+        if self.channels.try_insert(channel_id, channel_wrapper).is_err() {
             return Err(ComSrvError::ConfigError(format!(
                 "Channel ID already exists: {}",
                 channel_id
             )));
         }
-        // Insert metadata after channel insertion
-        self.channel_metadata.insert(channel_id, metadata);
+        if self.channel_metadata.try_insert(channel_id, metadata).is_err() {
+            self.channels.remove(&channel_id);
+            return Err(ComSrvError::ConfigError(format!(
+                "Channel ID already exists: {}",
+                channel_id
+            )));
+        }
         
         tracing::info!("Created channel {} with protocol {:?}", channel_id, config.protocol);
         Ok(())
@@ -764,10 +765,8 @@ impl ProtocolFactory {
         let channel = self.channels.get(&id).map(|entry| entry.value().clone());
         
         // Update last accessed time directly if channel exists
-        if channel.is_some() {
-            if let Some(metadata_entry) = self.channel_metadata.get(&id) {
-                *metadata_entry.value().last_accessed.write().await = std::time::Instant::now();
-            }
+        if let Some(metadata_entry) = self.channel_metadata.get(&id) {
+            *metadata_entry.value().last_accessed.write().await = std::time::Instant::now();
         }
         
         channel
@@ -1239,5 +1238,29 @@ mod tests {
         let factory = ProtocolFactory::default();
         assert_eq!(factory.channel_count(), 0);
         assert!(factory.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_concurrent_channel_creation() {
+        let factory = Arc::new(ProtocolFactory::new());
+        let config = create_test_channel_config(200, ProtocolType::ModbusTcp);
+
+        let f1 = {
+            let factory = factory.clone();
+            let cfg = config.clone();
+            tokio::spawn(async move { factory.create_channel(cfg) })
+        };
+
+        let f2 = {
+            let factory = factory.clone();
+            let cfg = config.clone();
+            tokio::spawn(async move { factory.create_channel(cfg) })
+        };
+
+        let r1 = f1.await.unwrap();
+        let r2 = f2.await.unwrap();
+
+        assert!(r1.is_ok() ^ r2.is_ok(), "only one creation should succeed");
+        assert_eq!(factory.channel_count(), 1);
     }
 } 

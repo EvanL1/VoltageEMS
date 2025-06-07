@@ -1,78 +1,78 @@
 #!/bin/bash
 
-# COMSRV 压力测试监控脚本
-# 实时监控comsrv在高负载下的日志输出
+# COMSRV pressure test monitoring script
+# Monitor comsrv logs under heavy load
 
-echo "🔍 COMSRV 压力测试日志监控"
+echo "🔍 COMSRV pressure test log monitor"
 echo "=" 
-echo "此脚本将实时监控comsrv的日志输出"
-echo "按 Ctrl+C 停止监控"
+echo "This script monitors comsrv logs in real time"
+echo "Press Ctrl+C to stop"
 echo ""
 
-# 创建监控会话
+# Create monitoring session
 LOG_DIR="./logs"
 CHANNELS_DIR="$LOG_DIR/channels"
 MAIN_LOG="$LOG_DIR/comsrv_pressure.log"
 
-# 检查日志目录是否存在
+# Ensure log directory exists
 if [ ! -d "$LOG_DIR" ]; then
-    echo "⚠️  日志目录不存在，创建中..."
+    echo "⚠️  Log directory not found, creating..."
     mkdir -p "$LOG_DIR"
 fi
 
-echo "📁 监控目录: $LOG_DIR"
-echo "📊 主日志文件: $MAIN_LOG"
-echo "📂 通道日志目录: $CHANNELS_DIR"
+echo "📁 Log directory: $LOG_DIR"
+echo "📊 Main log file: $MAIN_LOG"
+echo "📂 Channel log directory: $CHANNELS_DIR"
 echo ""
 
-# 启动多个监控进程
+# Start monitoring processes
 monitor_main_log() {
-    echo "🔍 [主日志监控] 开始监控主日志文件..."
+    echo "🔍 [Main log] Monitoring main log file..."
     if [ -f "$MAIN_LOG" ]; then
         tail -f "$MAIN_LOG" | while read line; do
-            echo "[主日志] $line"
+            echo "[main] $line"
         done
     else
-        echo "⚠️  主日志文件尚未创建: $MAIN_LOG"
+        echo "⚠️  Main log file not created yet: $MAIN_LOG"
         while [ ! -f "$MAIN_LOG" ]; do
             sleep 1
         done
-        echo "✅ 主日志文件已创建，开始监控..."
+        echo "✅ Main log file created, start monitoring..."
         tail -f "$MAIN_LOG" | while read line; do
-            echo "[主日志] $line"
+            echo "[main] $line"
         done
     fi
 }
 
 monitor_channel_logs() {
-    echo "🔍 [通道日志监控] 开始监控通道日志..."
+    echo "🔍 [Channel log] Monitoring channel logs..."
     
-    # 等待通道目录创建
+    # Wait for channel directory creation
     while [ ! -d "$CHANNELS_DIR" ]; do
         sleep 1
     done
     
-    # 监控所有通道的今日日志
+    # Monitor today's logs for all channels
     TODAY=$(date +"%Y-%m-%d")
     
-    # 使用inotify监控新文件创建和修改
+    # Use inotify to watch for new or modified files
     if command -v fswatch >/dev/null 2>&1; then
-        # macOS 使用 fswatch
+        # Use fswatch on macOS
         fswatch -o "$CHANNELS_DIR" | while read f; do
-            echo "📝 通道日志有更新..."
+            echo "📝 Channel logs updated..."
             find "$CHANNELS_DIR" -name "*$TODAY.log" -newer /tmp/last_check 2>/dev/null | while read logfile; do
                 channel_name=$(basename $(dirname "$logfile"))
-                tail -n 1 "$logfile" | sed "s/^/[通道:$channel_name] /"
+                tail -n 1 "$logfile" | sed "s/^/[channel:$channel_name] /"
             done
             touch /tmp/last_check
         done
     else
-        # 回退到轮询方式
+        # Fallback to polling
         while true; do
             find "$CHANNELS_DIR" -name "*$TODAY.log" -type f 2>/dev/null | while read logfile; do
                 if [ -f "$logfile" ]; then
                     channel_name=$(basename $(dirname "$logfile"))
-                    tail -n 5 "$logfile" | tail -n 1 | sed "s/^/[通道:$channel_name] /"
+                    tail -n 5 "$logfile" | tail -n 1 | sed "s/^/[channel:$channel_name] /"
                 fi
             done
             sleep 2
@@ -81,52 +81,52 @@ monitor_channel_logs() {
 }
 
 show_pressure_stats() {
-    echo "📊 [统计监控] 开始性能统计..."
+    echo "📊 [Stats] Starting performance monitoring..."
     
     while true; do
         sleep 10
         
         echo ""
         echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-        echo "📊 压力测试统计 ($(date))"
+        echo "📊 Pressure test stats ($(date))"
         echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
         
-        # 统计进程信息
+        # Process information
         if pgrep -f "comsrv.*pressure_test_config" > /dev/null; then
             comsrv_pid=$(pgrep -f "comsrv.*pressure_test_config")
-            echo "🟢 COMSRV 进程状态: 运行中 (PID: $comsrv_pid)"
+            echo "🟢 COMSRV running (PID: $comsrv_pid)"
             
-            # 内存使用
+            # Memory usage
             if command -v ps >/dev/null 2>&1; then
                 memory_usage=$(ps -p $comsrv_pid -o rss= 2>/dev/null | awk '{print $1/1024}')
                 if [ ! -z "$memory_usage" ]; then
-                    echo "💾 内存使用: ${memory_usage} MB"
+                    echo "💾 Memory usage: ${memory_usage} MB"
                 fi
             fi
         else
-            echo "🔴 COMSRV 进程状态: 未运行"
+            echo "🔴 COMSRV not running"
         fi
         
-        # 统计通道日志数量
+        # Channel log count
         if [ -d "$CHANNELS_DIR" ]; then
             channel_count=$(find "$CHANNELS_DIR" -maxdepth 1 -type d | wc -l)
-            channel_count=$((channel_count - 1))  # 减去父目录
-            echo "📂 活跃通道数量: $channel_count"
+            channel_count=$((channel_count - 1))  # Subtract parent directory
+            echo "📂 Active channels: $channel_count"
             
-            # 统计今日日志条目
+            # Count today's log entries
             TODAY=$(date +"%Y-%m-%d")
             total_lines=0
             find "$CHANNELS_DIR" -name "*$TODAY.log" -type f 2>/dev/null | while read logfile; do
                 lines=$(wc -l < "$logfile" 2>/dev/null || echo "0")
                 total_lines=$((total_lines + lines))
             done
-            echo "📝 今日日志条目: 正在统计..."
+            echo "📝 Log entries today: counting..."
         fi
         
-        # 统计主日志大小
+        # Main log size
         if [ -f "$MAIN_LOG" ]; then
             log_size=$(du -h "$MAIN_LOG" 2>/dev/null | cut -f1)
-            echo "📋 主日志文件大小: $log_size"
+            echo "📋 Main log size: $log_size"
         fi
         
         echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
@@ -134,26 +134,26 @@ show_pressure_stats() {
     done
 }
 
-# 捕获退出信号
+# Catch exit signals
 cleanup() {
     echo ""
-    echo "🛑 停止监控..."
+    echo "🛑 Stopping monitoring..."
     kill $(jobs -p) 2>/dev/null
     exit 0
 }
 
 trap cleanup SIGINT SIGTERM
 
-# 启动所有监控进程
-echo "🚀 启动监控进程..."
+# Start all monitoring processes
+echo "🚀 Starting monitoring processes..."
 
-# 后台启动各种监控
+# Launch background monitors
 show_pressure_stats &
 STATS_PID=$!
 
-# 前台监控通道日志（主要输出）
+# Foreground monitoring of channel logs (main output)
 monitor_channel_logs &
 CHANNEL_PID=$!
 
-# 等待用户中断
+# Wait for user interruption
 wait $CHANNEL_PID $STATS_PID 
