@@ -4,7 +4,7 @@
 
 ## 服务组件
 
-- **Comsrv**: 通信服务，负责与设备通信，采集实时数据
+ - **Comsrv**: 通信服务，负责与设备通信并采集实时数据，支持 Modbus TCP/RTU、CAN 等协议
 - **Hissrv**: 历史数据服务，负责将实时数据存储到时序数据库
 - **modsrv**: 模型服务，负责执行实时模型计算和控制策略
 - **netsrv**: 网络服务，负责将数据通过多种协议上送到外部系统
@@ -33,7 +33,7 @@
 
 ## 技术栈
 
-- **Comsrv**: C++
+ - **Comsrv**: Rust
 - **Hissrv**: Rust
 - **modsrv**: Rust
 - **netsrv**: Rust
@@ -48,8 +48,8 @@
 ### 前提条件
 
 - Docker 和 Docker Compose
-- Rust 1.67 或更高版本 (开发时需要)
-- C++ 编译器 (开发 Comsrv 时需要)
+- Rust 1.67 或更高版本 (开发 comsrv 等服务需要)
+- Python 3 (测试和模拟工具需要)
 - Node.js 16 或更高版本 (开发前端和 API 时需要)
 
 ### 使用 Docker Compose 启动

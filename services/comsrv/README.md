@@ -1,6 +1,14 @@
 # Communication Service (comsrv)
 
-通信服务模块为EMS系统提供了统一的工业通信协议支持。该架构设计为可扩展的、异步的、高性能的通信框架。
+通信服务模块为 EMS 系统提供统一的工业协议接入。核心采用 Rust + Tokio，实现高并发的异步通信。
+
+## 功能特色
+
+- 支持 Modbus TCP、Modbus RTU 和 CAN 总线
+- 可扩展的协议工厂机制，便于添加新协议
+- 基于 Warp 的 REST API，用于通道和点表管理
+- 内置 Prometheus 指标，方便监控
+- 配置与点表采用 YAML/CSV 格式
 
 ## 🏗️ 架构概览
 
