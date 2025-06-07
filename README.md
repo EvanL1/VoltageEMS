@@ -238,6 +238,18 @@ python generate_config.py --output ./my_config --modbus 3 --opcua 2 --points 30
 - `--opcua` - OPC UA通道数量，默认为2
 - `--points` - 每个通道的点位数量，默认为20
 
+### 通道监控脚本 (channel_monitor.py)
+
+该脚本周期性地请求 comsrv 的 `/api/v1/channels` 接口，并在终端中展示通道状态。
+
+```bash
+# 直接运行
+python tools/channel_monitor.py --interactive
+
+# 或使用封装脚本
+./monitor.sh
+```
+
 ## 典型测试流程
 
 1. 使用配置生成工具生成测试配置文件：
