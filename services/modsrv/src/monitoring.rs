@@ -9,6 +9,7 @@ use tokio::time::interval;
 use serde::{Serialize, Deserialize};
 use log::{info, error, warn, debug};
 use serde_json::Value;
+use std::fs;
 use redis::Commands;
 use crate::redis_handler::RedisConnection;
 
@@ -117,6 +118,23 @@ pub struct HealthCheckResult {
     pub details: Option<String>,
     /// Last success timestamp
     pub last_success: Option<u64>,
+}
+
+/// Get current process memory usage in bytes
+fn current_memory_usage() -> u64 {
+    if let Ok(content) = fs::read_to_string("/proc/self/status") {
+        for line in content.lines() {
+            if line.starts_with("VmRSS:") {
+                let parts: Vec<&str> = line.split_whitespace().collect();
+                if parts.len() >= 2 {
+                    if let Ok(kb) = parts[1].parse::<u64>() {
+                        return kb * 1024;
+                    }
+                }
+            }
+        }
+    }
+    0
 }
 
 /// Monitoring service for rule execution and system health
@@ -331,8 +349,26 @@ impl MonitoringService {
             }
         };
         checks.insert("rules_data".to_string(), rules_health);
-        
-        // TODO: Add more health checks as needed
+
+        // Check 3: Memory usage
+        let mem_usage = current_memory_usage();
+        health.memory_usage = mem_usage;
+        let memory_health = if mem_usage > 200 * 1024 * 1024 {
+            HealthCheckResult {
+                name: "Memory Usage".to_string(),
+                status: HealthStatus::Degraded,
+                details: Some(format!("High memory usage: {} bytes", mem_usage)),
+                last_success: None,
+            }
+        } else {
+            HealthCheckResult {
+                name: "Memory Usage".to_string(),
+                status: HealthStatus::Healthy,
+                details: Some(format!("{} bytes", mem_usage)),
+                last_success: Some(SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs()),
+            }
+        };
+        checks.insert("memory".to_string(), memory_health);
         
         // Update overall health status
         let any_unhealthy = checks.values().any(|check| check.status == HealthStatus::Unhealthy);
@@ -349,7 +385,25 @@ impl MonitoringService {
         health.checks = checks;
         health.timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
         
-        // TODO: Implement automatic recovery actions based on health status
+        // Attempt recovery actions when degraded or unhealthy
+        if !redis_connected {
+            let url = std::env::var("REDIS_URL").unwrap_or_else(|_| "redis://127.0.0.1:6379".to_string());
+            let mut redis = self.redis.lock().map_err(|_| ModelSrvError::LockError)?;
+            if let Err(e) = redis.connect(&url) {
+                error!("Failed to reconnect to Redis: {}", e);
+            } else {
+                info!("Reconnected to Redis");
+                health.redis_connected = true;
+            }
+        }
+
+        if health.memory_usage > 200 * 1024 * 1024 {
+            warn!("High memory usage detected - clearing history");
+            if let Ok(mut history) = self.history.lock() {
+                history.clear();
+            }
+        }
+
         if health.status == HealthStatus::Unhealthy {
             warn!("System health is UNHEALTHY - consider manual intervention");
         } else if health.status == HealthStatus::Degraded {
@@ -364,6 +418,7 @@ impl MonitoringService {
         // Clone required data for the background task
         let health_lock = self.health.clone();
         let store = self.store.clone();
+        let history_store = self.history.clone();
         
         // Spawn health check task
         tokio::spawn(async move {
@@ -413,7 +468,24 @@ impl MonitoringService {
                 // Attempt recovery if needed
                 if health.status != HealthStatus::Healthy {
                     info!("Attempting recovery actions");
-                    // TODO: Implement recovery actions
+
+                    if !redis_connected {
+                        let url = std::env::var("REDIS_URL").unwrap_or_else(|_| "redis://127.0.0.1:6379".to_string());
+                        let mut conn = RedisConnection::new();
+                        if let Err(e) = conn.connect(&url) {
+                            error!("Background Redis reconnect failed: {}", e);
+                        } else {
+                            health.redis_connected = true;
+                            info!("Background Redis reconnection successful");
+                        }
+                    }
+
+                    if health.memory_usage > 200 * 1024 * 1024 {
+                        if let Ok(mut history) = history_store.lock() {
+                            history.clear();
+                        }
+                        warn!("Cleared history due to high memory usage");
+                    }
                 }
             }
         });
@@ -474,4 +546,15 @@ impl MonitoringService {
         
         Ok(())
     }
-} 
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_memory_usage_non_zero() {
+        let usage = current_memory_usage();
+        assert!(usage > 0);
+    }
+}

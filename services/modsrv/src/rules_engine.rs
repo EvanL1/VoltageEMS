@@ -1015,4 +1015,41 @@ impl RuleExecutor {
             }
         }
     }
-} 
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Arc;
+
+    #[tokio::test]
+    async fn test_rule_executor_simple() {
+        let store = Arc::new(HybridStore::new_in_memory().unwrap());
+
+        let rule = DagRule {
+            id: "r1".to_string(),
+            name: "test".to_string(),
+            description: "".to_string(),
+            nodes: vec![NodeDefinition {
+                id: "n1".to_string(),
+                name: "transform".to_string(),
+                node_type: NodeType::Transform,
+                config: json!({
+                    "transform_type": "scale",
+                    "input": {"value_expr": "2", "factor": 3}
+                }),
+            }],
+            edges: vec![],
+            enabled: true,
+            priority: 0,
+        };
+
+        store
+            .set_string("rule:r1", &serde_json::to_string(&rule).unwrap())
+            .unwrap();
+
+        let executor = RuleExecutor::new(store.clone());
+        let res = executor.execute_rule("r1", None).await.unwrap();
+        assert_eq!(res["status"], "success");
+    }
+}

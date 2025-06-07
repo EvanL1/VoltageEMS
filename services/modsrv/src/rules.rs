@@ -1,5 +1,7 @@
 use crate::error::{ModelSrvError, Result};
 use crate::redis_handler::RedisConnection;
+use crate::rules_engine::{build_rule_graph, execute_rule_graph, ExecutionContext};
+use crate::storage::hybrid_store::HybridStore;
 use serde::{Serialize, Deserialize};
 use serde_json::{json, Value};
 use std::sync::Arc;
@@ -125,13 +127,17 @@ impl RuleEngine {
         if !rule.enabled {
             return Err(ModelSrvError::RuleDisabled(rule_id.to_string()));
         }
-        
-        // TODO: Implement rule execution logic
-        
-        Ok(json!({
-            "status": "executed",
-            "rule_id": rule_id,
-            "message": "Rule executed successfully"
-        }))
+
+        // Build runtime rule and execute using the rules engine
+        let mut runtime_rule = build_rule_graph(rule)?;
+
+        // Use an in-memory store for execution context
+        let store = Arc::new(HybridStore::new_in_memory()?);
+        let mut context = ExecutionContext::new(store);
+
+        // Execute the rule graph
+        let result = execute_rule_graph(&mut runtime_rule, &mut context).await?;
+
+        Ok(result)
     }
-} 
+}
