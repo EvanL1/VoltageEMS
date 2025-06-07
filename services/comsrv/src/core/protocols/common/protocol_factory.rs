@@ -760,13 +760,10 @@ impl ProtocolFactory {
     pub async fn get_channel(&self, id: u16) -> Option<Arc<RwLock<Box<dyn ComBase>>>> {
         let channel = self.channels.get(&id).map(|entry| entry.value().clone());
         
-        // Update last accessed time asynchronously if channel exists
+        // Update last accessed time directly if channel exists
         if channel.is_some() {
             if let Some(metadata_entry) = self.channel_metadata.get(&id) {
-                let metadata = metadata_entry.value().clone();
-                tokio::spawn(async move {
-                    *metadata.last_accessed.write().await = std::time::Instant::now();
-                });
+                *metadata_entry.value().last_accessed.write().await = std::time::Instant::now();
             }
         }
         
