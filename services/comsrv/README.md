@@ -1,6 +1,13 @@
 # Communication Service (comsrv)
 
 通信服务模块为EMS系统提供了统一的工业通信协议支持。该架构设计为可扩展的、异步的、高性能的通信框架。
+## 功能概览
+- 支持 Modbus TCP/RTU、CAN 等协议，可扩展新协议
+- 统一异步接口 `ComBase`
+- YAML/CSV 配置管理与热加载
+- 提供 REST API 与 Prometheus 指标
+- 协议工厂模式便于扩展
+
 
 ## 🏗️ 架构概览
 
