@@ -28,4 +28,4 @@ fi
 # 启动交互式监控
 echo "🚀 启动交互式监控界面..."
 echo ""
-$PYTHON_CMD tools/channel_monitor.py -i 
+$PYTHON_CMD tools/channel_monitor.py --interactive

@@ -35,5 +35,4 @@ The service is configured with `netsrv.json`. Example:
   }
 }
 ```
-
 Network-specific sections further define MQTT, HTTP or cloud options.
