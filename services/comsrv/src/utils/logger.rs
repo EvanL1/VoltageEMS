@@ -8,7 +8,6 @@ use tracing_appender::rolling::{RollingFileAppender, Rotation};
 use tracing_subscriber::fmt;
 use tracing_subscriber::EnvFilter;
 
-use crate::core::config::config_manager::ChannelConfig;
 use crate::core::protocols::common::combase::{parse_protocol_packet, PacketParseResult};
 use crate::utils::error::{ComSrvError, Result};
 
