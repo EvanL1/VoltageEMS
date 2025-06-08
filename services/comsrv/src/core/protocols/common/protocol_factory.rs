@@ -664,13 +664,13 @@ impl ProtocolFactory {
         let channel_wrapper = Arc::new(RwLock::new(protocol));
 
         // Atomically insert channel and metadata
-        if self.channels.try_insert(channel_id, channel_wrapper).is_err() {
+        if self.channels.insert(channel_id, channel_wrapper).is_some() {
             return Err(ComSrvError::ConfigError(format!(
                 "Channel ID already exists: {}",
                 channel_id
             )));
         }
-        if self.channel_metadata.try_insert(channel_id, metadata).is_err() {
+        if self.channel_metadata.insert(channel_id, metadata).is_some() {
             self.channels.remove(&channel_id);
             return Err(ComSrvError::ConfigError(format!(
                 "Channel ID already exists: {}",

@@ -192,7 +192,7 @@ where
         // Acquire semaphore permit for the connection
         let permit = timeout(
             self.config.connection_timeout,
-            self.connection_semaphore.acquire_owned()
+            self.connection_semaphore.clone().acquire_owned()
         )
         .await
         .map_err(|_| ComSrvError::TimeoutError("Connection pool timeout".to_string()))?

@@ -13,6 +13,7 @@ The Energy Management System is a collection of microservices used to monitor, c
 - **Grafana**: visualization platform embedded in the frontend
 
 ### Comsrv Highlights
+
 - Supports Modbus TCP/RTU, CAN and custom protocols
 - Asynchronous architecture for high concurrency and scalability
 - REST API for channel management and status monitoring
@@ -27,7 +28,7 @@ The services communicate via Redis as shown below:
 +--------+      +--------+      +--------+      +--------+
 | Comsrv | <--> |        | <--> | Modsrv | <--> | Netsrv |
 +--------+      |        |      +--------+      +--------+
-               | Redis  |
+                | Redis  |
 +--------+      |        |      +--------+      +--------+
 | Hissrv | <--> |        | <--> |  API   | <--> |Frontend|
 +--------+      +--------+      +--------+      +--------+
@@ -265,26 +266,26 @@ use modbus_native::{ModbusTcpClient, ModbusClient};
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Connect to Modbus server
     let mut client = ModbusTcpClient::new("127.0.0.1:502").await?;
-    
+  
     // Read holding registers
     let values = client.read_holding_registers(1, 100, 10).await?;
     println!("Read registers: {:?}", values);
-    
+  
     // Write single register
     client.write_single_register(1, 100, 0x1234).await?;
-    
+  
     // Write multiple registers
     let values = vec![0x1111, 0x2222, 0x3333];
     client.write_multiple_registers(1, 200, &values).await?;
-    
+  
     // Read coils
     let coils = client.read_coils(1, 0, 16).await?;
     println!("Coil values: {:?}", coils);
-    
+  
     // Write coils
     let coil_values = vec![true, false, true, false];
     client.write_multiple_coils(1, 10, &coil_values).await?;
-    
+  
     client.close().await?;
     Ok(())
 }
@@ -301,15 +302,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Connect with custom timeout
     let timeout = Duration::from_secs(10);
     let mut client = ModbusTcpClient::with_timeout("192.168.1.100:502", timeout).await?;
-    
+  
     // Perform operations...
-    
+  
     // Get connection statistics
     let stats = client.get_stats();
     println!("Requests sent: {}", stats.requests_sent);
     println!("Success rate: {:.1}%", 
         (stats.responses_received as f64 / stats.requests_sent as f64) * 100.0);
-    
+  
     Ok(())
 }
 ```
@@ -385,7 +386,7 @@ pub trait ModbusClient: Send + Sync {
 ### Supported Function Codes
 
 - **0x01**: Read Coils
-- **0x02**: Read Discrete Inputs  
+- **0x02**: Read Discrete Inputs
 - **0x03**: Read Holding Registers
 - **0x04**: Read Input Registers
 - **0x05**: Write Single Coil
