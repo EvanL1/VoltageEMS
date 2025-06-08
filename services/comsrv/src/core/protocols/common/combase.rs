@@ -1383,23 +1383,22 @@ impl ProtocolParserRegistry {
     }
 }
 
-/// Global protocol parser registry
-static mut GLOBAL_PARSER_REGISTRY: Option<ProtocolParserRegistry> = None;
-static INIT_REGISTRY: std::sync::Once = std::sync::Once::new();
+use once_cell::sync::Lazy;
+use parking_lot::RwLock;
+
+/// Global protocol parser registry protected by a read-write lock
+static GLOBAL_PARSER_REGISTRY: Lazy<RwLock<ProtocolParserRegistry>> =
+    Lazy::new(|| RwLock::new(ProtocolParserRegistry::new()));
 
 /// Get the global protocol parser registry
-pub fn get_global_parser_registry() -> &'static mut ProtocolParserRegistry {
-    unsafe {
-        INIT_REGISTRY.call_once(|| {
-            GLOBAL_PARSER_REGISTRY = Some(ProtocolParserRegistry::new());
-        });
-        GLOBAL_PARSER_REGISTRY.as_mut().unwrap()
-    }
+pub fn get_global_parser_registry() -> &'static RwLock<ProtocolParserRegistry> {
+    &GLOBAL_PARSER_REGISTRY
 }
 
 /// Parse a protocol packet using the global registry
 pub fn parse_protocol_packet(protocol: &str, data: &[u8], direction: &str) -> PacketParseResult {
     let registry = get_global_parser_registry();
+    let registry = registry.read();
     registry.parse_packet(protocol, data, direction)
 }
 
