@@ -1,125 +1,94 @@
 # Voltage EMS Desktop Application
 
-这是Voltage EMS的桌面应用版本，基于Electron构建，集成了所有后端服务。
+This is the Electron-based desktop bundle of Voltage EMS with all backend services included.
 
-## 功能特点
+## Features
 
-- 集成所有后端服务(modsrv, comsrv, hissrv, netsrv)
-- 统一的服务管理界面
-- 跨平台支持(Windows, macOS, Linux)
-- 自动更新功能
-- 离线运行能力
+- Ships with modsrv, comsrv, hissrv and netsrv
+- Unified service management UI
+- Cross-platform (Windows, macOS, Linux)
+- Automatic updates
+- Offline operation
 
-## 系统要求
+## System Requirements
 
-- Windows 10/11, macOS 10.13+, 或 Ubuntu 18.04+
-- 4GB RAM 以上
-- 500MB 磁盘空间
+- Windows 10/11, macOS 10.13+, or Ubuntu 18.04+
+- 4GB RAM or more
+- 500MB free disk space
 
-## 安装
+## Installation
 
 ### Windows
-
-1. 下载最新的 `VoltageEMS-Setup-x.x.x.exe` 安装文件
-2. 双击安装文件并按照提示完成安装
-3. 从开始菜单或桌面快捷方式启动应用
+1. Download the latest `VoltageEMS-Setup-x.x.x.exe` file
+2. Run the installer and follow the prompts
+3. Start the application from the Start Menu or desktop shortcut
 
 ### macOS
-
-1. 下载最新的 `VoltageEMS-x.x.x.dmg` 文件
-2. 打开DMG文件并将应用拖到Applications文件夹
-3. 从Launchpad或Applications文件夹启动应用
+1. Download `VoltageEMS-x.x.x.dmg`
+2. Mount the image and drag the app to Applications
+3. Launch from Launchpad or the Applications folder
 
 ### Linux
+1. Download `VoltageEMS-x.x.x.AppImage` or `.deb`
+2. For AppImage: make it executable (`chmod +x ...`) and run
+3. For deb: install with `sudo dpkg -i VoltageEMS-x.x.x.deb`
 
-1. 下载最新的 `VoltageEMS-x.x.x.AppImage` 或 `.deb` 文件
-2. 对于AppImage: 添加执行权限 (`chmod +x VoltageEMS-x.x.x.AppImage`) 并双击运行
-3. 对于DEB: 使用包管理器安装 (`sudo dpkg -i VoltageEMS-x.x.x.deb`)
+## Development
 
-## 开发指南
-
-### 环境设置
-
+### Setup
 ```bash
-# 克隆仓库
+# clone
 git clone https://github.com/voltage/ems.git
 cd ems
-
-# 安装依赖
 npm install
 
-# 安装前端依赖
+# frontend dependencies
 cd frontend
 npm install
 cd ..
 ```
 
-### 开发模式
-
+### Development Mode
 ```bash
-# 启动开发服务器和Electron
 npm run dev
 ```
 
-### 构建应用
-
+### Build
 ```bash
-# 构建所有组件(前端、后端服务和Electron应用)
-npm run build:all
-
-# 仅构建Electron应用(假设前端和服务已构建)
-npm run build
+npm run build:all   # build frontend, backend and electron
+npm run build       # build only the electron app
 ```
 
-### 项目结构
-
+### Project Layout
 ```
 voltage-ems/
-├── electron/             # Electron主进程代码
-│   ├── main.js           # 主进程入口
-│   ├── preload.js        # 预加载脚本
-│   └── services/         # 服务管理
-├── frontend/             # Vue.js前端代码
-├── services/             # 后端服务
-│   ├── modsrv/           # 模型服务
-│   ├── comsrv/           # 通信服务
-│   ├── hissrv/           # 历史服务
-│   └── netsrv/           # 网络服务
-├── build/                # 构建配置和脚本
-└── config/               # 配置文件
+├── electron/       # Electron main process
+├── frontend/       # Vue.js frontend code
+├── services/       # Backend services
+├── build/          # Build scripts
+└── config/         # Configuration files
 ```
 
-## 服务管理
+## Service Management
 
-桌面应用集成了所有后端服务，可以通过服务管理界面控制:
+The desktop app provides a control panel where you can:
+1. Start/stop/restart individual services
+2. Start/stop all services
+3. View logs and service status
+4. Configure service parameters
 
-1. 启动/停止/重启单个服务
-2. 启动/停止所有服务
-3. 查看服务状态和日志
-4. 配置服务参数
+## Troubleshooting
 
-## 故障排除
+### Common Issues
+1. **Application fails to start** – check the logs under `%APPDATA%/voltage-ems/logs` or `~/.config/voltage-ems/logs`
+2. **Service startup failure** – review service logs and verify configuration
+3. **UI not responding** – restart the application and check system resources
 
-### 常见问题
-
-1. **应用无法启动**
-   - 检查日志文件 (`%APPDATA%\voltage-ems\logs` 或 `~/.config/voltage-ems/logs`)
-   - 确保没有端口冲突
-
-2. **服务启动失败**
-   - 检查服务日志
-   - 验证配置文件是否正确
-
-3. **界面无响应**
-   - 重启应用
-   - 检查系统资源使用情况
-
-### 日志位置
-
-- Windows: `%APPDATA%\voltage-ems\logs`
+### Log Locations
+- Windows: `%APPDATA%/voltage-ems/logs`
 - macOS: `~/Library/Logs/voltage-ems`
 - Linux: `~/.config/voltage-ems/logs`
 
-## 许可证
+## License
 
-Copyright © 2025 Voltage, LLC. 保留所有权利。 
+Copyright © 2025 Voltage, LLC. All rights reserved.
