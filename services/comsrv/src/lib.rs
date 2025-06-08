@@ -459,4 +459,4 @@ pub mod service {
 pub use utils::{ComSrvError, Result};
 pub use core::config::config_manager::ConfigManager;
 pub use core::protocols::common::ProtocolFactory;
-pub use core::protocols::common::combase::{ComBase, ComBaseImpl, ChannelStatus, PointData}; 
+pub use core::protocols::common::combase::{ComBase, ComBaseImpl, ChannelStatus, PointData};
