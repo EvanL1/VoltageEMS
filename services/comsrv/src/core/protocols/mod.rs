@@ -13,16 +13,19 @@ use crate::core::protocols::iec60870::Iec60870PacketParser;
 /// Registers all available protocol parsers with the global registry.
 /// This function should be called during application startup.
 pub fn init_protocol_parsers() {
-    let registry = get_global_parser_registry();
-    
+    let mut registry = get_global_parser_registry().write();
+
     // Register Modbus parser
     registry.register_parser(ModbusPacketParser::new());
-    
+
     // Register CAN parser
     registry.register_parser(CanPacketParser::new());
 
     // Register IEC60870 parser
     registry.register_parser(Iec60870PacketParser::new());
-    
-    tracing::info!("Protocol parsers initialized: {:?}", registry.registered_protocols());
-} 
+
+    tracing::info!(
+        "Protocol parsers initialized: {:?}",
+        registry.registered_protocols()
+    );
+}
