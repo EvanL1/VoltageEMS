@@ -465,6 +465,8 @@ pub trait ProtocolStats: Send + Sync {
 /// ```
 #[async_trait]
 pub trait ComBase: Send + Sync + std::fmt::Debug {
+    /// Downcast helper for dynamic protocol access
+    fn as_any(&self) -> &dyn std::any::Any;
     /// Get the human-readable name of the communication service
     /// 
     /// Returns a descriptive name for this communication service instance,

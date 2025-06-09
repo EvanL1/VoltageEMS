@@ -12,6 +12,8 @@ use crate::api::models::{
     ChannelOperation, PointValue, PointTableData, WritePointRequest
 };
 use crate::core::protocols::common::ProtocolFactory;
+use crate::core::protocols::modbus::{ModbusClient};
+use crate::core::protocols::modbus::common::ModbusRegisterType;
 use crate::utils::ComSrvError;
 
 /// get service status
@@ -298,17 +300,56 @@ pub async fn write_point(
         return Ok(warp::reply::json(&error_response));
     }
     
-    // Actual point writing logic should be implemented here
-    // Since the ModbusClient write functionality is not fully implemented,
-    // this is simplified to return success.
-    // In a real scenario, the appropriate write method should be called based on point type and value.
-    
-    let message = format!(
-        "Successfully wrote value {} to point {}.{}", 
-        value.value, point_table, point_name
-    );
-    
-    Ok(warp::reply::json(&ApiResponse::<String>::success(message)))
+    // Perform write through Modbus client
+    let result = {
+        let channel_guard = channel.read().await;
+        if let Some(client) = channel_guard.as_any().downcast_ref::<ModbusClient>() {
+            let mapping = match client.find_mapping(&point_name) {
+                Some(m) => m,
+                None => {
+                    let error_response = ApiResponse::<()>::error(
+                        format!("Point {}.{} not found", point_table, point_name)
+                    );
+                    return Ok(warp::reply::json(&error_response));
+                }
+            };
+
+            if mapping.register_type != ModbusRegisterType::HoldingRegister {
+                let error_response = ApiResponse::<()>::error("Write not supported for this register type".to_string());
+                return Ok(warp::reply::json(&error_response));
+            }
+
+            let raw_value = if let Some(v) = value.value.as_u64() {
+                v as u16
+            } else if let Some(v) = value.value.as_i64() {
+                v as u16
+            } else if let Some(s) = value.value.as_str() {
+                s.parse::<u16>().map_err(|_| warp::reject::reject())?
+            } else {
+                let error_response = ApiResponse::<()>::error("Unsupported value type".to_string());
+                return Ok(warp::reply::json(&error_response));
+            };
+
+            client.write_single_register(mapping.address, raw_value).await
+        } else {
+            let error_response = ApiResponse::<()>::error("Protocol not supported".to_string());
+            return Ok(warp::reply::json(&error_response));
+        }
+    };
+
+    match result {
+        Ok(_) => {
+            let message = format!(
+                "Successfully wrote value {} to point {}.{}",
+                raw_value, point_table, point_name
+            );
+            Ok(warp::reply::json(&ApiResponse::<String>::success(message)))
+        }
+        Err(e) => {
+            let error_response = ApiResponse::<()>::error(format!("Write failed: {}", e));
+            Ok(warp::reply::json(&error_response))
+        }
+    }
 }
 
 /// get all points from a channel
@@ -861,6 +902,10 @@ mod tests {
     use std::io::Write;
     use crate::core::config::ConfigManager;
     use crate::core::config::{CsvPointRecord, CsvPointManager};
+    use crate::core::protocols::common::ProtocolFactory;
+    use crate::core::config::config_manager::{ChannelConfig, ProtocolType, ChannelParameters};
+    use serde_yaml;
+    use std::collections::HashMap;
 
     fn create_test_config_manager() -> Arc<RwLock<ConfigManager>> {
         let temp_dir = TempDir::new().unwrap();
@@ -1116,6 +1161,48 @@ point_tables:
         ).await;
         
         // The response should handle the invalid data gracefully
+        assert!(response.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_write_point_channel_not_found() {
+        let factory = Arc::new(RwLock::new(ProtocolFactory::new()));
+        let req = WritePointRequest { value: serde_json::json!(1) };
+        let response = write_point(
+            "1".to_string(),
+            "tbl".to_string(),
+            "p1".to_string(),
+            req,
+            factory,
+        ).await;
+        assert!(response.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_write_point_point_not_found() {
+        let factory = Arc::new(RwLock::new(ProtocolFactory::new()));
+
+        // Create a simple Modbus channel without mappings
+        let mut params = std::collections::HashMap::new();
+        params.insert("address".to_string(), serde_yaml::Value::String("127.0.0.1".to_string()));
+        params.insert("port".to_string(), serde_yaml::Value::Number(serde_yaml::Number::from(502)));
+        let config = ChannelConfig {
+            id: 1,
+            name: "ch1".to_string(),
+            description: "test".to_string(),
+            protocol: ProtocolType::ModbusTcp,
+            parameters: ChannelParameters::Generic(params),
+        };
+        factory.write().await.create_channel(config).unwrap();
+
+        let req = WritePointRequest { value: serde_json::json!(1) };
+        let response = write_point(
+            "1".to_string(),
+            "tbl".to_string(),
+            "unknown".to_string(),
+            req,
+            factory,
+        ).await;
         assert!(response.is_ok());
     }
 }
