@@ -171,7 +171,7 @@ impl ProtocolClientFactory for Iec104Factory {
         ProtocolType::Iec104
     }
     
-    fn create_client(&self, config: ChannelConfig, config_manager: Option<&ConfigManager>) -> Result<Box<dyn ComBase>> {
+    fn create_client(&self, config: ChannelConfig, _config_manager: Option<&ConfigManager>) -> Result<Box<dyn ComBase>> {
         let client = Iec104Client::new(config);
         Ok(Box::new(client))
     }

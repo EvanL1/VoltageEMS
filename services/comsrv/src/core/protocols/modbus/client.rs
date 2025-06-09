@@ -20,22 +20,18 @@ use async_trait::async_trait;
 use chrono::Utc;
 
 // Import voltage_modbus types
-use voltage_modbus::{ModbusResult as VoltageResult, ModbusError as VoltageError};
+use voltage_modbus::ModbusError as VoltageError;
 use voltage_modbus::client::{ModbusClient as VoltageModbusClient, ModbusTcpClient, ModbusRtuClient};
-use voltage_modbus::protocol::SlaveId;
-use voltage_modbus::transport::TransportStats;
 
 use crate::utils::error::{ComSrvError, Result};
-use crate::core::config::ChannelParameters;
-use crate::core::metrics::{ProtocolMetrics, DataPoint};
-use super::common::{ModbusRegisterMapping, ModbusDataType, ModbusRegisterType, ByteOrder};
-use crate::core::config::config_manager::{ChannelConfig, ProtocolType};
+use crate::core::metrics::DataPoint;
+use super::common::{ModbusRegisterMapping, ModbusDataType, ModbusRegisterType};
+use crate::core::config::config_manager::ChannelConfig;
 use crate::core::protocols::common::combase::{
-    ComBase, ChannelStatus, PointData, PointReader,
-    PollingConfig, PollingPoint, ConnectionManager, ConnectionState,
+    ComBase, ChannelStatus, PointData, PointReader, PollingPoint, ConnectionManager, ConnectionState,
     ConfigValidator, ProtocolStats
 };
-use crate::utils::logger::{ChannelLogger, LogLevel};
+use crate::utils::logger::ChannelLogger;
 
 /// Modbus communication mode
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -954,7 +950,7 @@ impl ModbusClient {
 
     /// Convert raw Modbus register values to a numeric value
     fn convert_registers_to_value(&self, registers: &[u16], mapping: &ModbusRegisterMapping) -> Result<f64> {
-        use byteorder::{BigEndian, LittleEndian, ByteOrder};
+        use byteorder::{BigEndian, ByteOrder};
 
         // Arrange registers according to byte order
         let mut regs: Vec<u16> = registers.to_vec();
@@ -1063,7 +1059,7 @@ impl ComBase for ModbusClient {
 
     async fn status(&self) -> ChannelStatus {
         let state = self.get_connection_state().await;
-        let is_running = self.is_running().await;
+        let _is_running = self.is_running().await;
         let stats = self.get_stats().await;
         
         let mut status = ChannelStatus::new(&self.channel_id());

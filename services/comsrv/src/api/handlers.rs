@@ -300,6 +300,18 @@ pub async fn write_point(
         return Ok(warp::reply::json(&error_response));
     }
     
+    // Parse raw value first (before the scoped block)
+    let raw_value = if let Some(v) = value.value.as_u64() {
+        v as u16
+    } else if let Some(v) = value.value.as_i64() {
+        v as u16
+    } else if let Some(s) = value.value.as_str() {
+        s.parse::<u16>().map_err(|_| warp::reject::reject())?
+    } else {
+        let error_response = ApiResponse::<()>::error("Unsupported value type".to_string());
+        return Ok(warp::reply::json(&error_response));
+    };
+
     // Perform write through Modbus client
     let result = {
         let channel_guard = channel.read().await;
@@ -318,17 +330,6 @@ pub async fn write_point(
                 let error_response = ApiResponse::<()>::error("Write not supported for this register type".to_string());
                 return Ok(warp::reply::json(&error_response));
             }
-
-            let raw_value = if let Some(v) = value.value.as_u64() {
-                v as u16
-            } else if let Some(v) = value.value.as_i64() {
-                v as u16
-            } else if let Some(s) = value.value.as_str() {
-                s.parse::<u16>().map_err(|_| warp::reject::reject())?
-            } else {
-                let error_response = ApiResponse::<()>::error("Unsupported value type".to_string());
-                return Ok(warp::reply::json(&error_response));
-            };
 
             client.write_single_register(mapping.address, raw_value).await
         } else {
@@ -726,7 +727,7 @@ pub async fn get_enhanced_monitoring_status(
     let mut channel_summaries = Vec::new();
     
     for (id, channel) in channel_list {
-        let (name, protocol_type) = {
+        let (_name, _protocol_type) = {
             let channel_guard = channel.read().await;
             (
                 channel_guard.name().to_string(),

@@ -5,12 +5,12 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::{Duration, Instant, SystemTime};
-use tokio::sync::{RwLock, Mutex};
+use std::time::{Duration, SystemTime};
+use tokio::sync::RwLock;
 use serde::{Deserialize, Serialize};
 
 use crate::utils::error::{ComSrvError, Result};
-use super::common::{ModbusRegisterMapping, ModbusDataType, ModbusRegisterType};
+use super::common::{ModbusRegisterMapping, ModbusRegisterType};
 
 /// Modbus server mode
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

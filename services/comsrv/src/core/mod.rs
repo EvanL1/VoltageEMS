@@ -86,33 +86,10 @@ pub mod metrics;
 pub mod monitoring;
 
 // Re-export commonly used protocol components for public API
-pub use protocols::common::{ComBase, ComBaseImpl, ChannelStatus, PointData};
 
 // Re-export protocol factory and connection pool from protocols/common
-pub use protocols::common::{ProtocolFactory, ProtocolClientFactory, create_default_factory, create_factory_with_custom_protocols, ConnectionPool, PooledConnection};
 
 // Re-export enhanced components for business layer
-pub use config::point_table::{
-    PointTableConfig,
-    PointTableStats,
-    PointTableOptimization,
-    OptimizationType,
-};
 
-pub use monitoring::rtu_monitor::{
-    RtuMonitor,
-    RtuMonitorConfig,
-    RtuMonitorStatus,
-    RtuAlarm,
-    RtuAlarmType,
-    RtuAlarmSeverity,
-    RtuMonitorReport,
-};
 
-pub use protocols::modbus::{
-    ModbusClient,
-    ModbusCommunicationMode,
-    ModbusClientConfig,
-    ModbusClientStats,
-    ModbusConnectionState,
-}; 
+ 

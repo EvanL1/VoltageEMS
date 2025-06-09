@@ -12,7 +12,7 @@ use crate::core::config::config_manager::ChannelConfig;
 use crate::core::protocols::common::{ComBase, ComBaseImpl, ChannelStatus, PointData};
 use crate::utils::{ComSrvError, Result};
 use super::common::*;
-use super::frame::{CanFrame, CanId};
+use super::frame::CanFrame;
 use std::collections::HashMap;
 
 /// CAN client trait defining the interface for CAN bus communication

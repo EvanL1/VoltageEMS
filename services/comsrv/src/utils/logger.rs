@@ -8,7 +8,7 @@ use tracing_appender::rolling::{RollingFileAppender, Rotation};
 use tracing_subscriber::fmt;
 use tracing_subscriber::EnvFilter;
 
-use crate::core::protocols::common::combase::{parse_protocol_packet, PacketParseResult};
+use crate::core::protocols::common::combase::parse_protocol_packet;
 use crate::utils::error::{ComSrvError, Result};
 
 /// Initialize the logger with file and console output

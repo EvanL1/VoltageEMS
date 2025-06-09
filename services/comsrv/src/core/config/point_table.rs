@@ -659,7 +659,7 @@ impl PointTableManager {
         
         for entry in entries {
             // determine quantity based on type
-            let (data_type, quantity) = self.parse_data_type(&entry.type_, &entry.data_type)?;
+            let (data_type, _quantity) = self.parse_data_type(&entry.type_, &entry.data_type)?;
             
             // determine byte order
             let byte_order = self.parse_byte_order(&entry.byte_order)?;

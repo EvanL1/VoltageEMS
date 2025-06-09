@@ -1386,14 +1386,14 @@ impl ProtocolParserRegistry {
 }
 
 use once_cell::sync::Lazy;
-use parking_lot::RwLock;
+use parking_lot::RwLock as ParkingLotRwLock;
 
 /// Global protocol parser registry protected by a read-write lock
-static GLOBAL_PARSER_REGISTRY: Lazy<RwLock<ProtocolParserRegistry>> =
-    Lazy::new(|| RwLock::new(ProtocolParserRegistry::new()));
+static GLOBAL_PARSER_REGISTRY: Lazy<ParkingLotRwLock<ProtocolParserRegistry>> =
+    Lazy::new(|| ParkingLotRwLock::new(ProtocolParserRegistry::new()));
 
 /// Get the global protocol parser registry
-pub fn get_global_parser_registry() -> &'static RwLock<ProtocolParserRegistry> {
+pub fn get_global_parser_registry() -> &'static ParkingLotRwLock<ProtocolParserRegistry> {
     &GLOBAL_PARSER_REGISTRY
 }
 

@@ -7,7 +7,7 @@
 //! - Alarm and diagnostics
 
 use std::collections::{HashMap, VecDeque};
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime};
 use std::sync::Arc;
 use tokio::sync::{RwLock, Mutex};
 use tokio::time::interval;
@@ -15,7 +15,6 @@ use serde::{Deserialize, Serialize};
 
 use crate::utils::error::{ComSrvError, Result};
 use super::super::protocols::modbus::{ModbusClient, ModbusClientStats, ModbusConnectionState};
-use crate::core::metrics::{DataPoint, ProtocolMetrics};
 
 // Serde helper module for SystemTime serialization
 mod timestamp_as_seconds {

@@ -37,5 +37,4 @@ pub mod error;
 pub mod logger;
 pub mod pool;
 
-pub use error::{ComSrvError, Result, ErrorExt};
-pub use pool::{ObjectPool, BufferPool, get_global_buffer_pool};
+pub use error::{ComSrvError, Result};
