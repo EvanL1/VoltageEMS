@@ -24,19 +24,129 @@ The Energy Management System is a collection of microservices used to monitor, c
 
 The services communicate via Redis as shown below:
 
+```mermaid
+graph TD
+    subgraph "Devices"
+        ModbusDev["MODBUS"]
+        CANDev["CAN BUS"] 
+        IECDev["IEC 60870"]
+    end
+  
+    subgraph "Communication Layer"
+        Comsrv["COMSRV"]
+    end
+  
+    subgraph "Message Broker"
+        Redis[("REDIS")]
+    end
+  
+    subgraph "Processing Services"
+        Modsrv["MODSRV"]
+        Hissrv["HISSRV"]
+        Netsrv["NETSRV"]
+    end
+  
+    subgraph "Storage Layer"
+        InfluxDB[("INFLUXDB")]
+    end
+  
+    subgraph "Application Layer"
+        API["API SERVICE"]
+        Frontend["FRONTEND"]
+    end
+  
+    subgraph "Visualization"
+        Grafana["GRAFANA"]
+    end
+  
+    subgraph "External Systems"
+        ExternalSys["EXTERNAL SYSTEMS"]
+    end
+  
+    %% Vertical data flow
+    ModbusDev --> Comsrv
+    CANDev --> Comsrv
+    IECDev --> Comsrv
+  
+    Comsrv --> Redis
+    Redis --> Modsrv
+    Redis --> Hissrv
+    Redis --> Netsrv
+  
+    Hissrv --> InfluxDB
+    Modsrv --> Redis
+  
+    Redis --> API
+    API --> Frontend
+    Frontend --> Grafana
+    Grafana --> InfluxDB
+  
+    Netsrv --> ExternalSys
 ```
-+--------+      +--------+      +--------+      +--------+
-| Comsrv | <--> |        | <--> | Modsrv | <--> | Netsrv |
-+--------+      |        |      +--------+      +--------+
-                | Redis  |
-+--------+      |        |      +--------+      +--------+
-| Hissrv | <--> |        | <--> |  API   | <--> |Frontend|
-+--------+      +--------+      +--------+      +--------+
-    |                                               |
-    v                                               v
-+--------+                                      +--------+
-|InfluxDB|                                      | Grafana|
-+--------+                                      +--------+
+
+## Data Flow
+
+The complete data processing flow through the system is illustrated below:
+
+```mermaid
+sequenceDiagram
+    participant User as USER
+    participant API as API
+    participant Redis as REDIS
+    participant Comsrv as COMSRV
+    participant Modsrv as MODSRV
+    participant Hissrv as HISSRV
+    participant Netsrv as NETSRV
+    participant Device as DEVICE
+    participant DB as INFLUXDB
+
+    Note over User,DB: VoltageEMS Data Flow
+
+    %% Configuration Phase
+    User->>API: Configure Channels
+    API->>Redis: Store Config
+    API-->>User: Config Saved
+
+    %% Data Collection Phase
+    Comsrv->>Redis: Get Config
+    Comsrv->>Device: Connect
+    loop Data Collection
+        Device->>Comsrv: Send Data
+        Comsrv->>Redis: Publish Data
+        Note over Comsrv,Redis: Real-time data
+    end
+
+    %% Model Processing Phase
+    Modsrv->>Redis: Get Raw Data
+    loop Model Execution
+        Redis->>Modsrv: New Data
+        Modsrv->>Modsrv: Process
+        Modsrv->>Redis: Publish Results
+        Note over Modsrv,Redis: Processed data
+    end
+
+    %% Historical Storage Phase
+    Hissrv->>Redis: Get Data
+    loop Storage
+        Redis->>Hissrv: Data Update
+        Hissrv->>DB: Store Data
+        Note over Hissrv,DB: Time series storage
+    end
+
+    %% Network Distribution Phase
+    Netsrv->>Redis: Get Results
+    loop Distribution
+        Redis->>Netsrv: Results
+        Netsrv->>Netsrv: Format
+        Netsrv->>External: Send Data
+        Note over Netsrv,External: External forwarding
+    end
+
+    %% Monitoring & Visualization
+    User->>API: Request Data
+    API->>DB: Query
+    DB-->>API: Data
+    API-->>User: Display
 ```
 
 ## Technology Stack

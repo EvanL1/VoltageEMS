@@ -11,6 +11,95 @@ ModSrv is a service that executes real-time models for monitoring and control of
 - Control operations
 - Redis-based data storage and retrieval
 
+## Model Execution Flow
+
+The following diagram illustrates the complete model execution workflow:
+
+```mermaid
+flowchart TD
+    subgraph "Initialization"
+        Start([START])
+        LoadConfig[LOAD CONFIG]
+        LoadTemplates[LOAD TEMPLATES]
+        InitRedis[INIT REDIS]
+    end
+    
+    subgraph "Main Loop"
+        StartLoop[START LOOP]
+        CheckData{NEW DATA?}
+        Wait[WAIT]
+    end
+    
+    subgraph "Data Processing"
+        ProcessData[PROCESS DATA]
+        ExecuteModels[EXECUTE MODELS]
+    end
+    
+    subgraph "Results Handling"
+        UpdateMetrics[UPDATE METRICS]
+        StoreResults[STORE RESULTS]
+        CheckControl{CONTROL OPS?}
+    end
+    
+    subgraph "Control Actions"
+        ExecuteControl[EXECUTE CONTROL]
+        LogOperation[LOG RESULTS]
+    end
+    
+    subgraph "Templates"
+        Template1[TEMPLATE 1]
+        Template2[TEMPLATE 2]
+        TemplateN[TEMPLATE N]
+    end
+    
+    subgraph "Storage"
+        RedisStore[("REDIS")]
+        LocalStore[("LOCAL")]
+    end
+    
+    subgraph "Monitoring"
+        Metrics[METRICS]
+        History[HISTORY]
+        Health[HEALTH]
+    end
+    
+    %% Vertical execution flow
+    Start --> LoadConfig
+    LoadConfig --> LoadTemplates
+    LoadTemplates --> InitRedis
+    InitRedis --> StartLoop
+    
+    StartLoop --> CheckData
+    CheckData -->|No| Wait
+    Wait --> CheckData
+    
+    CheckData -->|Yes| ProcessData
+    ProcessData --> ExecuteModels
+    
+    ExecuteModels --> UpdateMetrics
+    UpdateMetrics --> StoreResults
+    StoreResults --> CheckControl
+    
+    CheckControl -->|No| CheckData
+    CheckControl -->|Yes| ExecuteControl
+    ExecuteControl --> LogOperation
+    LogOperation --> CheckData
+    
+    %% Side connections
+    LoadTemplates --> Template1
+    LoadTemplates --> Template2
+    LoadTemplates --> TemplateN
+    
+    ProcessData <--> RedisStore
+    StoreResults --> RedisStore
+    ExecuteControl --> RedisStore
+    ProcessData <--> LocalStore
+    
+    UpdateMetrics --> Metrics
+    UpdateMetrics --> History
+    UpdateMetrics --> Health
+```
+
 ## Requirements
 
 - Rust 1.70 or higher

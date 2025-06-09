@@ -11,6 +11,76 @@ The monitoring system offers the following capabilities:
 3. **Health Monitoring**: Monitor the overall system health with detailed checks and automatic recovery.
 4. **Structured Logging**: Enhanced logging capabilities for better observability.
 
+## Monitoring Architecture
+
+```mermaid
+graph TD
+    subgraph "API Layer"
+        MetricsAPI[METRICS API]
+        HistoryAPI[HISTORY API]
+        HealthAPI[HEALTH API]
+        DetailedHealthAPI[DETAILED API]
+    end
+    
+    subgraph "Monitoring Components"
+        MetricsCollector[METRICS COLLECTOR]
+        HistoryTracker[HISTORY TRACKER]
+        HealthMonitor[HEALTH MONITOR]
+    end
+    
+    subgraph "Rule Engine"
+        RuleEngine[RULE ENGINE]
+        RuleResult[RESULTS]
+        RuleError[ERRORS]
+    end
+    
+    subgraph "Storage Layer"
+        RedisMetrics[("METRICS STORE")]
+        RedisHistory[("HISTORY STORE")]
+        RedisHealth[("HEALTH STORE")]
+    end
+    
+    subgraph "Recovery System"
+        AutoRecovery[AUTO RECOVERY]
+        RedisReconnect[REDIS RECONNECT]
+        RuleIsolation[RULE ISOLATION]
+        SystemRestart[SYSTEM RESTART]
+    end
+    
+    subgraph "External Systems"
+        Prometheus[PROMETHEUS]
+        Grafana[GRAFANA]
+        ELK[ELK STACK]
+    end
+    
+    %% Vertical monitoring flow
+    RuleEngine --> RuleResult
+    RuleEngine --> RuleError
+    
+    RuleResult --> MetricsCollector
+    RuleResult --> HistoryTracker
+    RuleError --> HistoryTracker
+    
+    MetricsCollector --> RedisMetrics
+    HistoryTracker --> RedisHistory
+    HealthMonitor --> RedisHealth
+    
+    RedisMetrics --> MetricsAPI
+    RedisHistory --> HistoryAPI
+    HealthMonitor --> HealthAPI
+    HealthMonitor --> DetailedHealthAPI
+    
+    RedisMetrics --> Prometheus
+    RedisHealth --> Prometheus
+    HistoryTracker --> ELK
+    Prometheus --> Grafana
+    
+    HealthMonitor --> AutoRecovery
+    AutoRecovery --> RedisReconnect
+    AutoRecovery --> RuleIsolation
+    AutoRecovery --> SystemRestart
+```
+
 ## API Endpoints
 
 ### Rule Metrics

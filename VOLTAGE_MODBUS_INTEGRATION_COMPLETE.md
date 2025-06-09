@@ -58,6 +58,102 @@
 - ✅ 所有 traits 正确实现
 - ✅ 依赖冲突已解决
 
+### Modbus集成架构
+
+```mermaid
+graph TD
+    subgraph "Configuration Layer"
+        HostConfig[HOST CONFIG]
+        RetryConfig[RETRY CONFIG]
+        HeartbeatConfig[HEARTBEAT CONFIG]
+    end
+    
+    subgraph "Client Layer"
+        VoltageClient[VOLTAGE CLIENT]
+        RawClient[RAW CLIENT]
+    end
+    
+    subgraph "Interface Layer"
+        ComBase[COMBASE TRAIT]
+        ModbusClient[MODBUS TRAIT]
+    end
+    
+    subgraph "Connection Management"
+        ConnPool[CONN POOL]
+        RetryMech[RETRY MECHANISM]
+        Heartbeat[HEARTBEAT]
+        Statistics[STATISTICS]
+    end
+    
+    subgraph "Data Processing"
+        DataTypes[DATA TYPES]
+        ByteOrder[BYTE ORDER]
+        Scaling[SCALING]
+    end
+    
+    subgraph "Modbus Functions"
+        ReadHolding[READ HOLDING]
+        ReadInput[READ INPUT]
+        ReadCoils[READ COILS]
+        ReadDiscrete[READ DISCRETE]
+        WriteSingleCoil[WRITE COIL]
+        WriteSingleReg[WRITE REG]
+        WriteMultiCoils[WRITE COILS]
+        WriteMultiRegs[WRITE REGS]
+    end
+    
+    subgraph "Error Handling"
+        ModbusError[MODBUS ERROR]
+        ErrorConversion[ERROR CONVERSION]
+        ComSrvError[COMSRV ERROR]
+    end
+    
+    subgraph "Device Layer"
+        PLCDevice[PLC DEVICES]
+        ModbusDevices[MODBUS DEVICES]
+    end
+    
+    %% Vertical integration flow
+    HostConfig --> VoltageClient
+    RetryConfig --> VoltageClient
+    HeartbeatConfig --> VoltageClient
+    
+    VoltageClient --> ComBase
+    VoltageClient --> ModbusClient
+    RawClient --> ComBase
+    RawClient --> ModbusClient
+    
+    ComBase --> ConnPool
+    ComBase --> RetryMech
+    ComBase --> Heartbeat
+    ComBase --> Statistics
+    
+    ConnPool --> DataTypes
+    ConnPool --> ByteOrder
+    ConnPool --> Scaling
+    
+    DataTypes --> ReadHolding
+    DataTypes --> ReadInput
+    DataTypes --> ReadCoils
+    DataTypes --> ReadDiscrete
+    DataTypes --> WriteSingleCoil
+    DataTypes --> WriteSingleReg
+    DataTypes --> WriteMultiCoils
+    DataTypes --> WriteMultiRegs
+    
+    ReadHolding --> ModbusError
+    ReadInput --> ModbusError
+    ModbusError --> ErrorConversion
+    ErrorConversion --> ComSrvError
+    
+    WriteSingleCoil --> PLCDevice
+    WriteSingleReg --> PLCDevice
+    ReadHolding --> PLCDevice
+    ReadInput --> PLCDevice
+    
+    PLCDevice --> ModbusDevices
+```
+
 ### 实现的关键特性
 
 #### 连接管理

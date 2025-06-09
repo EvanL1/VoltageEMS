@@ -11,6 +11,72 @@ Netsrv transfers data from Redis to external systems over various network protoc
 - Fully configurable without code changes
 
 ## Architecture
+
+```mermaid
+graph TD
+    subgraph "Configuration Layer"
+        ConfigFile[CONFIG FILE]
+    end
+    
+    subgraph "Data Source Layer"
+        RedisInput[("REDIS")]
+        DataFilter[DATA FILTER]
+    end
+    
+    subgraph "Processing Layer"
+        DataProcessor[PROCESSOR]
+    end
+    
+    subgraph "Format Layer"
+        FormatJSON[JSON FORMAT]
+        FormatASCII[ASCII FORMAT]
+    end
+    
+    subgraph "Protocol Layer"
+        MQTT[MQTT CLIENT]
+        HTTP[HTTP CLIENT]
+        AWS[AWS IOT]
+        Aliyun[ALIYUN IOT]
+    end
+    
+    subgraph "Destination Layer"
+        MQTTBroker[MQTT BROKER]
+        WebAPI[WEB APIS]
+        AWSCloud[AWS CLOUD]
+        AliyunCloud[ALIYUN CLOUD]
+    end
+    
+    subgraph "External Systems"
+        ExternalSys[EXTERNAL SYS]
+    end
+    
+    %% Vertical data flow
+    ConfigFile --> RedisInput
+    RedisInput --> DataFilter
+    DataFilter --> DataProcessor
+    
+    DataProcessor --> FormatJSON
+    DataProcessor --> FormatASCII
+    
+    FormatJSON --> MQTT
+    FormatJSON --> HTTP
+    FormatJSON --> AWS
+    FormatJSON --> Aliyun
+    
+    FormatASCII --> MQTT
+    FormatASCII --> HTTP
+    
+    MQTT --> MQTTBroker
+    HTTP --> WebAPI
+    AWS --> AWSCloud
+    Aliyun --> AliyunCloud
+    
+    MQTTBroker --> ExternalSys
+    WebAPI --> ExternalSys
+    AWSCloud --> ExternalSys
+    AliyunCloud --> ExternalSys
+```
+
 The service runs in a Docker container and interacts with:
 - Redis for source data
 - Optional MQTT broker

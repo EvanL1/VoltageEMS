@@ -3,6 +3,7 @@
 The communication service provides unified industrial protocol support for EMS. It is designed as an extensible asynchronous framework.
 
 ## Features
+
 - Supports Modbus TCP/RTU, CAN and more
 - Unified async interface `ComBase`
 - YAML/CSV configuration with hot reload
@@ -10,6 +11,60 @@ The communication service provides unified industrial protocol support for EMS. 
 - Protocol factory pattern for easy extension
 
 ## Architecture Overview
+
+```mermaid
+graph TD
+    subgraph "API Layer"
+        API["REST API"]
+    end
+  
+    subgraph "Factory Layer"
+        Factory["PROTOCOL FACTORY"]
+        Config["CONFIGURATION"]
+    end
+  
+    subgraph "Protocol Layer"
+        ModbusTCP["MODBUS TCP"]
+        ModbusRTU["MODBUS RTU"]
+        CAN["CAN BUS"]
+        IEC104["IEC 60870"]
+    end
+  
+    subgraph "Common Layer"
+        ComBase["COMBASE TRAIT"]
+        ConnPool["CONNECTION POOL"]
+    end
+  
+    subgraph "Device Layer"
+        PLC1["PLC 1"]
+        PLC2["PLC 2"]
+        CANBus["CAN NETWORK"]
+    end
+  
+    %% Vertical flow
+    API --> Factory
+    Config --> Factory
+  
+    Factory --> ModbusTCP
+    Factory --> ModbusRTU
+    Factory --> CAN
+    Factory --> IEC104
+  
+    ModbusTCP --> ComBase
+    ModbusRTU --> ComBase
+    CAN --> ComBase
+    IEC104 --> ComBase
+  
+    ComBase --> ConnPool
+    ComBase --> Logging
+  
+    ModbusTCP --> PLC1
+    ModbusRTU --> PLC2
+    CAN --> CANBus
+```
+
+### Directory Structure
+
 ```
 comsrv/
 ├── src/
@@ -24,6 +79,7 @@ comsrv/
 ```
 
 ## Design Principles
+
 1. **Unified API** – all protocol clients implement the `ComBase` trait
 2. **Factory pattern** – `ProtocolFactory` dynamically creates clients
 3. **Async design** – built on `async/await` for high concurrency
@@ -32,6 +88,7 @@ comsrv/
 6. **Type safety** – strong typing ensures runtime safety
 
 ## Supported Protocols
+
 - **Modbus TCP** – supports functions 1,2,3,4,5,6,15,16
 - **Modbus RTU** – serial communication over RS485/232
 - **CAN Bus** – SocketCAN, Peak CAN etc.
@@ -39,6 +96,7 @@ comsrv/
 - **IEC 61850** – planned
 
 ## Quick Start Example
+
 ```rust
 use comsrv::core::protocols::factory::create_default_factory;
 use comsrv::core::config::config_manager::{ChannelConfig, ProtocolType};
