@@ -391,6 +391,9 @@ impl CanClientBase {
 
 #[async_trait]
 impl ComBase for CanClientBase {
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
     fn name(&self) -> &str {
         self.base.name()
     }

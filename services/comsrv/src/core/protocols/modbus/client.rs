@@ -246,6 +246,15 @@ impl ModbusClient {
         })
     }
 
+    /// Find a point mapping by name
+    pub fn find_mapping(&self, name: &str) -> Option<ModbusRegisterMapping> {
+        self.config
+            .point_mappings
+            .iter()
+            .find(|m| m.name == name)
+            .cloned()
+    }
+
     /// Get current connection state
     pub async fn get_connection_state(&self) -> ModbusConnectionState {
         self.connection_state.read().await.clone()
@@ -986,6 +995,9 @@ impl ModbusClient {
 
 #[async_trait]
 impl ComBase for ModbusClient {
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
     fn name(&self) -> &str {
         "ModbusClient"
     }

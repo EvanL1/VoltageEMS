@@ -500,6 +500,9 @@ impl Iec104Client {
 
 #[async_trait]
 impl ComBase for Iec104Client {
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
     fn name(&self) -> &str {
         &self.name
     }
