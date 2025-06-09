@@ -1619,16 +1619,23 @@ impl UniversalPollingEngine {
         
         tokio::spawn(async move {
             let mut cycle_counter = 0u64;
-            
+
+            let mut current_interval_ms = config.read().await.interval_ms;
+            let mut poll_interval = interval(Duration::from_millis(current_interval_ms));
+
             while *is_running.read().await {
                 let config_snapshot = config.read().await.clone();
-                
+
                 if !config_snapshot.enabled {
                     tokio::time::sleep(Duration::from_millis(1000)).await;
                     continue;
                 }
-                
-                let mut poll_interval = interval(Duration::from_millis(config_snapshot.interval_ms));
+
+                if config_snapshot.interval_ms != current_interval_ms {
+                    current_interval_ms = config_snapshot.interval_ms;
+                    poll_interval = interval(Duration::from_millis(current_interval_ms));
+                }
+
                 poll_interval.tick().await;
                 cycle_counter += 1;
                 
@@ -1828,4 +1835,84 @@ impl UniversalPollingEngine {
             stats_guard.current_polling_rate = 1000.0 / stats_guard.avg_cycle_time_ms;
         }
     }
-} 
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::{Arc, Mutex};
+    use tokio::time::{sleep, Duration, Instant};
+    use async_trait::async_trait;
+
+    struct MockReader;
+
+    #[async_trait]
+    impl PointReader for MockReader {
+        async fn read_point(&self, point: &PollingPoint) -> Result<PointData> {
+            Ok(PointData {
+                id: point.id.clone(),
+                name: point.name.clone(),
+                value: "1".to_string(),
+                quality: 1,
+                timestamp: Utc::now(),
+                unit: String::new(),
+                description: String::new(),
+            })
+        }
+
+        async fn is_connected(&self) -> bool {
+            true
+        }
+
+        fn protocol_name(&self) -> &str {
+            "mock"
+        }
+    }
+
+    #[tokio::test]
+    async fn test_poll_interval_respected() {
+        let reader: Arc<dyn PointReader> = Arc::new(MockReader);
+        let mut engine = UniversalPollingEngine::new("TestProto".to_string(), reader);
+
+        let call_times: Arc<Mutex<Vec<Instant>>> = Arc::new(Mutex::new(Vec::new()));
+        let times_clone = call_times.clone();
+        engine.set_data_callback(move |_| {
+            times_clone.lock().unwrap().push(Instant::now());
+        });
+
+        let config = PollingConfig {
+            enabled: true,
+            interval_ms: 100,
+            max_points_per_cycle: 1,
+            timeout_ms: 100,
+            max_retries: 0,
+            retry_delay_ms: 0,
+            enable_batch_reading: false,
+            point_read_delay_ms: 0,
+        };
+
+        let point = PollingPoint {
+            id: "p1".to_string(),
+            name: "p1".to_string(),
+            address: 0,
+            data_type: "u8".to_string(),
+            scale: 1.0,
+            offset: 0.0,
+            unit: String::new(),
+            description: String::new(),
+            access_mode: "read".to_string(),
+            group: "g1".to_string(),
+            protocol_params: HashMap::new(),
+        };
+
+        engine.start_polling(config, vec![point]).await.unwrap();
+
+        sleep(Duration::from_millis(250)).await;
+        engine.stop_polling().await.unwrap();
+
+        let times = call_times.lock().unwrap();
+        assert!(times.len() >= 2);
+        let diff = times[1].duration_since(times[0]);
+        assert!(diff >= Duration::from_millis(100));
+    }
+}
