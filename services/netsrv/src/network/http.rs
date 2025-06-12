@@ -1,16 +1,27 @@
-use crate::config::network_config::HttpConfig;
 use crate::error::{NetSrvError, Result};
 use crate::formatter::DataFormatter;
 use crate::network::NetworkClient;
 use async_trait::async_trait;
-use log::{debug, info};
-use reqwest::{Client, Method};
+use reqwest::Client;
 use serde_json::Value;
 use std::any::Any;
 use std::collections::HashMap;
-use std::str::FromStr;
 use std::time::Duration;
 
+/// HTTP client configuration
+#[derive(Debug, Clone)]
+pub struct HttpConfig {
+    pub url: String,
+    pub method: String,
+    pub headers: Option<HashMap<String, String>>,
+    pub auth_type: Option<String>,
+    pub username: Option<String>,
+    pub password: Option<String>,
+    pub token: Option<String>,
+    pub timeout_ms: u64,
+}
+
+/// HTTP client for REST API communication
 pub struct HttpClient {
     config: HttpConfig,
     client: Client,
@@ -19,28 +30,40 @@ pub struct HttpClient {
 }
 
 impl HttpClient {
-    pub fn new(config: HttpConfig, formatter: Box<dyn DataFormatter>) -> Self {
+    /// Create a new HTTP client
+    pub fn new(config: HttpConfig, formatter: Box<dyn DataFormatter>) -> Result<Self> {
+        if config.url.is_empty() {
+            return Err(NetSrvError::Config("HTTP URL is empty".to_string()));
+        }
+
         let client = Client::builder()
             .timeout(Duration::from_millis(config.timeout_ms))
             .build()
-            .unwrap_or_else(|_| Client::new());
+            .map_err(|e| NetSrvError::Http(e.to_string()))?;
 
-        Self {
+        Ok(HttpClient {
             config,
             client,
             formatter,
             connected: false,
+        })
+    }
+
+    /// Format data using the client's formatter
+    pub fn format_data(&self, data: &Value) -> Result<String> {
+        self.formatter.format(data)
+    }
+
+    /// Build HTTP headers based on configuration
+    fn build_headers(&self) -> HashMap<String, String> {
+        let mut headers = HashMap::new();
+
+        // Add configured headers
+        if let Some(config_headers) = &self.config.headers {
+            headers.extend(config_headers.clone());
         }
-    }
 
-    fn get_method(&self) -> Method {
-        Method::from_str(&self.config.method.to_uppercase()).unwrap_or(Method::POST)
-    }
-
-    fn get_headers(&self) -> HashMap<String, String> {
-        let mut headers = self.config.headers.clone().unwrap_or_default();
-        
-        // Add authentication headers if configured
+        // Add authentication headers
         match self.config.auth_type.as_deref() {
             Some("bearer") => {
                 if let Some(token) = &self.config.token {
@@ -49,89 +72,76 @@ impl HttpClient {
             }
             Some("basic") => {
                 if let (Some(username), Some(password)) = (&self.config.username, &self.config.password) {
-                    let credentials = base64::encode(format!("{}:{}", username, password));
+                    use base64::{Engine as _, engine::general_purpose};
+                    let credentials = general_purpose::STANDARD.encode(format!("{}:{}", username, password));
                     headers.insert("Authorization".to_string(), format!("Basic {}", credentials));
+                }
+            }
+            Some("apikey") => {
+                if let Some(token) = &self.config.token {
+                    headers.insert("X-API-Key".to_string(), token.clone());
                 }
             }
             _ => {}
         }
 
-        // Set default content type if not specified
-        if !headers.contains_key("Content-Type") && !headers.contains_key("content-type") {
-            headers.insert("Content-Type".to_string(), "application/json".to_string());
-        }
-
         headers
-    }
-
-    /// Format data using the configured formatter
-    pub fn format_data(&self, data: &Value) -> Result<String> {
-        self.formatter.format(data)
     }
 }
 
 #[async_trait]
 impl NetworkClient for HttpClient {
     async fn connect(&mut self) -> Result<()> {
-        info!("Connecting to HTTP endpoint: {}", self.config.url);
-        
-        // For HTTP, we just validate the configuration and mark as connected
-        // Actual connection will be established when sending data
-        if self.config.url.is_empty() {
-            return Err(NetSrvError::ConfigError("HTTP URL is empty".to_string()));
-        }
-
+        // For HTTP, connection is tested by attempting a simple request
+        // In this case, we'll just mark as connected since HTTP is connectionless
         self.connected = true;
-        info!("HTTP client initialized successfully");
         Ok(())
     }
 
     async fn disconnect(&mut self) -> Result<()> {
-        info!("Disconnecting HTTP client");
         self.connected = false;
-        info!("HTTP client disconnected");
         Ok(())
-    }
-
-    async fn send(&self, data: &str) -> Result<()> {
-        if !self.is_connected() {
-            return Err(NetSrvError::ConnectionError("Not connected".to_string()));
-        }
-
-        let method = self.get_method();
-        let mut request = self.client.request(method.clone(), &self.config.url);
-
-        // Add headers
-        let headers = self.get_headers();
-        for (key, value) in headers {
-            request = request.header(key, value);
-        }
-
-        // Add body for POST, PUT, PATCH methods
-        if matches!(method, Method::POST | Method::PUT | Method::PATCH) {
-            request = request.body(data.to_string());
-        }
-
-        // Send request
-        let response = request.send().await
-            .map_err(|e| NetSrvError::HttpError(format!("Failed to send HTTP request: {}", e)))?;
-
-        if response.status().is_success() {
-            debug!("HTTP request sent successfully to: {}", self.config.url);
-            Ok(())
-        } else {
-            let status = response.status();
-            let error_text = response.text().await.unwrap_or_default();
-            Err(NetSrvError::HttpError(format!(
-                "HTTP request failed with status {}: {}", 
-                status, 
-                error_text
-            )))
-        }
     }
 
     fn is_connected(&self) -> bool {
         self.connected
+    }
+
+    async fn send(&self, data: &str) -> Result<()> {
+        if !self.connected {
+            return Err(NetSrvError::Connection("Not connected".to_string()));
+        }
+
+        let headers = self.build_headers();
+        let mut request_builder = match self.config.method.to_uppercase().as_str() {
+            "GET" => self.client.get(&self.config.url),
+            "POST" => self.client.post(&self.config.url),
+            "PUT" => self.client.put(&self.config.url),
+            "PATCH" => self.client.patch(&self.config.url),
+            _ => self.client.post(&self.config.url), // Default to POST
+        };
+
+        // Add headers
+        for (key, value) in headers {
+            request_builder = request_builder.header(&key, &value);
+        }
+
+        // Add body for non-GET requests
+        if self.config.method.to_uppercase() != "GET" {
+            request_builder = request_builder.body(data.to_string());
+        }
+
+        let response = request_builder.send().await
+            .map_err(|e| NetSrvError::Http(format!("Failed to send HTTP request: {}", e)))?;
+
+        if !response.status().is_success() {
+            return Err(NetSrvError::Http(format!(
+                "HTTP request failed with status: {}",
+                response.status()
+            )));
+        }
+
+        Ok(())
     }
 
     fn as_any(&self) -> &dyn Any {
