@@ -33,8 +33,7 @@ pub trait NetworkClient: Send + Sync {
 pub fn create_client(config: &NetworkConfig, formatter: Box<dyn DataFormatter>) -> Result<Box<dyn NetworkClient>> {
     match config {
         NetworkConfig::Mqtt { 
-            broker_url, port, client_id, username, password, topic,
-            qos, use_ssl, ca_cert_path, client_cert_path, client_key_path, ..
+            broker_url, port, client_id, username, password, topic, qos, ..
         } => {
             let mqtt_config = mqtt::LegacyMqttConfig {
                 broker_url: broker_url.clone(),
@@ -44,10 +43,6 @@ pub fn create_client(config: &NetworkConfig, formatter: Box<dyn DataFormatter>) 
                 password: password.clone(),
                 topic: topic.clone(),
                 qos: *qos,
-                use_ssl: *use_ssl,
-                ca_cert_path: ca_cert_path.clone(),
-                client_cert_path: client_cert_path.clone(),
-                client_key_path: client_key_path.clone(),
             };
             
             let client = MqttClient::new_legacy(mqtt_config, formatter)?;
@@ -74,8 +69,7 @@ pub fn create_client(config: &NetworkConfig, formatter: Box<dyn DataFormatter>) 
         
         NetworkConfig::Cloud { 
             cloud_provider, endpoint, port, client_id, auth_config, 
-            topic_config, tls_config, keep_alive_secs, connection_timeout_ms,
-            reconnect_delay_ms, max_reconnect_attempts, custom_properties, ..
+            topic_config, tls_config, keep_alive_secs, connection_timeout_ms, ..
         } => {
             let cloud_config = mqtt::CloudMqttConfig {
                 cloud_provider: cloud_provider.clone(),
@@ -87,9 +81,6 @@ pub fn create_client(config: &NetworkConfig, formatter: Box<dyn DataFormatter>) 
                 tls_config: tls_config.clone(),
                 keep_alive_secs: *keep_alive_secs,
                 connection_timeout_ms: *connection_timeout_ms,
-                reconnect_delay_ms: *reconnect_delay_ms,
-                max_reconnect_attempts: *max_reconnect_attempts,
-                custom_properties: custom_properties.clone(),
             };
             
             let client = MqttClient::new_cloud(cloud_config, formatter)?;

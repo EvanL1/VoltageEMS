@@ -28,10 +28,6 @@ pub struct LegacyMqttConfig {
     pub password: Option<String>,
     pub topic: String,
     pub qos: u8,
-    pub use_ssl: bool,
-    pub ca_cert_path: Option<String>,
-    pub client_cert_path: Option<String>,
-    pub client_key_path: Option<String>,
 }
 
 /// Cloud MQTT configuration
@@ -46,9 +42,6 @@ pub struct CloudMqttConfig {
     pub tls_config: TlsConfig,
     pub keep_alive_secs: u64,
     pub connection_timeout_ms: u64,
-    pub reconnect_delay_ms: u64,
-    pub max_reconnect_attempts: u32,
-    pub custom_properties: Option<HashMap<String, String>>,
 }
 
 impl CloudMqttConfig {
@@ -449,10 +442,6 @@ mod tests {
             password: None,
             topic: "test/data".to_string(),
             qos: 0,
-            use_ssl: false,
-            ca_cert_path: None,
-            client_cert_path: None,
-            client_key_path: None,
         }
     }
 
@@ -482,9 +471,6 @@ mod tests {
             },
             keep_alive_secs: 30,
             connection_timeout_ms: 5000,
-            reconnect_delay_ms: 1000,
-            max_reconnect_attempts: 3,
-            custom_properties: None,
         }
     }
 
