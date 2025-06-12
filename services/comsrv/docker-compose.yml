@@ -1,0 +1,99 @@
+services:
+  # 通信服务
+  comsrv:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: voltage-comsrv
+    restart: unless-stopped
+    ports:
+      - "8888:3000"  # API端口
+      - "9090:9100"  # Metrics端口
+    environment:
+      - RUST_LOG=info
+      - CONFIG_PATH=/app/config
+      - LOG_PATH=/app/logs
+    volumes:
+      - ./config:/app/config
+      - ./logs:/app/logs
+      - ./test:/app/test
+    networks:
+      - voltage-network
+    depends_on:
+      - redis
+      - modbus-simulator
+      - virtual-channel
+    command: /app/start.sh
+
+  # 虚拟通道模拟器
+  virtual-channel:
+    image: python:latest
+    container_name: voltage-virtual-channel
+    restart: unless-stopped
+    ports:
+      - "9000:9000"  # 虚拟通道端口
+    volumes:
+      - ./test:/app
+      - ./logs:/app/logs
+    working_dir: /app
+    command: >
+      bash -c "python3 virtual_channel_simulator.py --host 0.0.0.0 --port 9000 -v --log-dir /app/logs"
+    networks:
+      - voltage-network
+
+  # Redis服务
+  redis:
+    image: redis:7-alpine
+    container_name: voltage-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    networks:
+      - voltage-network
+    command: redis-server --appendonly yes
+
+  # Modbus模拟器
+  modbus-simulator:
+    image: python:latest
+    container_name: voltage-modbus-simulator
+    restart: unless-stopped
+    ports:
+      - "502:502"
+    volumes:
+      - ./test:/app
+    working_dir: /app
+    command: >
+      bash -c "pip install 'pymodbus>=3.8.0,<3.9.0' 'setuptools>=65.5.1' 'wheel>=0.38.0' && 
+      python -c 'import pymodbus; print(f\"pymodbus version: {pymodbus.__version__}\")' && 
+      python modbus_simulator.py --host 0.0.0.0 --port 502"
+    networks:
+      - voltage-network
+
+  # Prometheus监控
+  prometheus:
+    image: prom/prometheus:v2.45.0
+    container_name: voltage-prometheus
+    restart: unless-stopped
+    ports:
+      - "9091:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus-data:/prometheus
+    networks:
+      - voltage-network
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--web.enable-lifecycle'
+
+networks:
+  voltage-network:
+    driver: bridge
+
+volumes:
+  redis-data:
+  prometheus-data: 

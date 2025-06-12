@@ -6,6 +6,7 @@
 # IDE
 .idea/
 .vscode/
+.cursor/
 *.swp
 *.swo
 
@@ -41,9 +42,15 @@ logs/
 Thumbs.db 
 
 # Config
-config/
+services/comsrv/config/
+./config/
 
 # models
 services/modsrv/instances/
 services/modsrv/templates/
 services/modsrv/config/
+services/comsrv/PERFORMANCE_TESTING.md
+
+# voltage_modbus
+voltage_modbus/
+config/pressure_test_config.yaml
