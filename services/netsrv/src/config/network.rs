@@ -17,10 +17,6 @@ pub enum NetworkConfig {
         password: Option<String>,
         topic: String,
         qos: u8,
-        use_ssl: bool,
-        ca_cert_path: Option<String>,
-        client_cert_path: Option<String>,
-        client_key_path: Option<String>,
         data_filter: Option<Vec<String>>,
     },
     /// HTTP REST API configuration
@@ -51,9 +47,6 @@ pub enum NetworkConfig {
         tls_config: TlsConfig,
         keep_alive_secs: u64,
         connection_timeout_ms: u64,
-        reconnect_delay_ms: u64,
-        max_reconnect_attempts: u32,
-        custom_properties: Option<HashMap<String, String>>,
     },
 }
 
@@ -218,10 +211,6 @@ impl NetworkConfig {
             password: None,
             topic: "ems/data".to_string(),
             qos: 0,
-            use_ssl: false,
-            ca_cert_path: None,
-            client_cert_path: None,
-            client_key_path: None,
             data_filter: None,
         }
     }
@@ -266,9 +255,6 @@ impl NetworkConfig {
             tls_config: TlsConfig::default(),
             keep_alive_secs: 30,
             connection_timeout_ms: 10000,
-            reconnect_delay_ms: 5000,
-            max_reconnect_attempts: 5,
-            custom_properties: None,
         }
     }
 
@@ -296,9 +282,6 @@ impl NetworkConfig {
             tls_config: TlsConfig::default(),
             keep_alive_secs: 60,
             connection_timeout_ms: 10000,
-            reconnect_delay_ms: 5000,
-            max_reconnect_attempts: 5,
-            custom_properties: None,
         }
     }
 
