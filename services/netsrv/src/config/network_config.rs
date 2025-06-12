@@ -1,14 +1,14 @@
 use serde::{Deserialize, Serialize};
 
+/// Network type enumeration for basic protocols
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 #[serde(rename_all = "lowercase")]
 pub enum NetworkType {
     Mqtt,
     Http,
-    AwsIot,
-    AliyunIot,
 }
 
+/// Data format types (re-exported from formatter module for compatibility)
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 #[serde(rename_all = "lowercase")]
 pub enum FormatType {
@@ -16,6 +16,16 @@ pub enum FormatType {
     Ascii,
 }
 
+impl From<FormatType> for crate::formatter::FormatType {
+    fn from(format_type: FormatType) -> Self {
+        match format_type {
+            FormatType::Json => crate::formatter::FormatType::Json,
+            FormatType::Ascii => crate::formatter::FormatType::Ascii,
+        }
+    }
+}
+
+/// Network configuration for legacy MQTT and HTTP protocols
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct NetworkConfig {
     pub name: String,
@@ -24,11 +34,10 @@ pub struct NetworkConfig {
     pub format_type: FormatType,
     pub mqtt_config: Option<MqttConfig>,
     pub http_config: Option<HttpConfig>,
-    pub aws_iot_config: Option<AwsIotConfig>,
-    pub aliyun_iot_config: Option<AliyunIotConfig>,
     pub data_filter: Option<Vec<String>>,
 }
 
+/// Basic MQTT configuration for legacy systems
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct MqttConfig {
     pub broker_url: String,
@@ -44,6 +53,7 @@ pub struct MqttConfig {
     pub client_key_path: Option<String>,
 }
 
+/// HTTP configuration for REST API integration
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct HttpConfig {
     pub url: String,
@@ -54,29 +64,6 @@ pub struct HttpConfig {
     pub password: Option<String>,
     pub token: Option<String>,
     pub timeout_ms: u64,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct AwsIotConfig {
-    pub endpoint: String,
-    pub region: String,
-    pub topic: String,
-    pub thing_name: String,
-    pub client_id: String,
-    pub cert_path: String,
-    pub key_path: String,
-    pub ca_path: String,
-    pub qos: u8,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct AliyunIotConfig {
-    pub product_key: String,
-    pub device_name: String,
-    pub device_secret: String,
-    pub region_id: String,
-    pub topic: String,
-    pub qos: u8,
 }
 
 impl NetworkConfig {
@@ -100,8 +87,6 @@ impl NetworkConfig {
                 client_key_path: None,
             }),
             http_config: None,
-            aws_iot_config: None,
-            aliyun_iot_config: None,
             data_filter: None,
         }
     }
@@ -123,8 +108,6 @@ impl NetworkConfig {
                 token: None,
                 timeout_ms: 5000,
             }),
-            aws_iot_config: None,
-            aliyun_iot_config: None,
             data_filter: None,
         }
     }

@@ -1,27 +1,32 @@
 mod mqtt;
 mod http;
-mod aws_iot;
-mod aliyun_iot;
 
 use crate::config::network_config::{NetworkConfig, NetworkType};
+use crate::config::cloud_config::CloudMqttConfig;
 use crate::error::Result;
 use crate::formatter::DataFormatter;
 use async_trait::async_trait;
-use serde_json::Value;
+use std::any::Any;
 
 pub use mqtt::MqttClient;
 pub use http::HttpClient;
-pub use aws_iot::AwsIotClient;
-pub use aliyun_iot::AliyunIotClient;
 
+/// Network client trait for sending data
 #[async_trait]
 pub trait NetworkClient: Send + Sync {
+    /// Connect to the network service
     async fn connect(&mut self) -> Result<()>;
-    async fn disconnect(&mut self) -> Result<()>;
+    /// Send data to the network service
     async fn send(&self, data: &str) -> Result<()>;
+    /// Check if connected
     fn is_connected(&self) -> bool;
+    /// Disconnect from the network service
+    async fn disconnect(&mut self) -> Result<()>;
+    /// Get reference to Any for dynamic casting
+    fn as_any(&self) -> &dyn Any;
 }
 
+/// Factory function to create network clients for legacy protocols
 pub fn create_client(
     config: &NetworkConfig,
     formatter: Box<dyn DataFormatter>,
@@ -32,7 +37,7 @@ pub fn create_client(
                 Ok(Box::new(MqttClient::new(mqtt_config.clone(), formatter)))
             } else {
                 Err(crate::error::NetSrvError::ConfigError(
-                    "MQTT configuration is missing".into(),
+                    "MQTT configuration is missing".to_string(),
                 ))
             }
         }
@@ -41,27 +46,20 @@ pub fn create_client(
                 Ok(Box::new(HttpClient::new(http_config.clone(), formatter)))
             } else {
                 Err(crate::error::NetSrvError::ConfigError(
-                    "HTTP configuration is missing".into(),
+                    "HTTP configuration is missing".to_string(),
                 ))
             }
         }
-        NetworkType::AwsIot => {
-            if let Some(aws_config) = &config.aws_iot_config {
-                Ok(Box::new(AwsIotClient::new(aws_config.clone(), formatter)))
-            } else {
-                Err(crate::error::NetSrvError::ConfigError(
-                    "AWS IoT configuration is missing".into(),
-                ))
-            }
-        }
-        NetworkType::AliyunIot => {
-            if let Some(aliyun_config) = &config.aliyun_iot_config {
-                Ok(Box::new(AliyunIotClient::new(aliyun_config.clone(), formatter)))
-            } else {
-                Err(crate::error::NetSrvError::ConfigError(
-                    "Aliyun IoT configuration is missing".into(),
-                ))
-            }
-        }
+    }
+}
+
+/// Factory function to create cloud clients
+pub fn create_cloud_client(
+    config: &CloudMqttConfig,
+    formatter: Box<dyn DataFormatter>,
+) -> Result<Box<dyn NetworkClient>> {
+    match MqttClient::new_cloud(config.clone(), formatter) {
+        Ok(client) => Ok(Box::new(client)),
+        Err(e) => Err(e),
     }
 } 

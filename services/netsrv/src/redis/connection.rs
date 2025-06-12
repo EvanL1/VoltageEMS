@@ -1,6 +1,6 @@
 use crate::config::redis_config::RedisConfig;
 use crate::error::{NetSrvError, Result};
-use log::{debug, error, info};
+use log::info;
 use redis::{Client, Connection, Commands};
 use std::collections::HashMap;
 
