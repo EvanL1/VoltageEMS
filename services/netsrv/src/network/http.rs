@@ -1,143 +1,150 @@
-use crate::config::network_config::HttpConfig;
 use crate::error::{NetSrvError, Result};
 use crate::formatter::DataFormatter;
 use crate::network::NetworkClient;
 use async_trait::async_trait;
-use log::{debug, error, info, warn};
-use reqwest::{Client, ClientBuilder, Method, RequestBuilder};
-use std::sync::{Arc, Mutex};
+use reqwest::Client;
+use serde_json::Value;
+use std::any::Any;
+use std::collections::HashMap;
 use std::time::Duration;
 
+/// HTTP client configuration
+#[derive(Debug, Clone)]
+pub struct HttpConfig {
+    pub url: String,
+    pub method: String,
+    pub headers: Option<HashMap<String, String>>,
+    pub auth_type: Option<String>,
+    pub username: Option<String>,
+    pub password: Option<String>,
+    pub token: Option<String>,
+    pub timeout_ms: u64,
+}
+
+/// HTTP client for REST API communication
 pub struct HttpClient {
     config: HttpConfig,
-    client: Option<Client>,
+    client: Client,
     formatter: Box<dyn DataFormatter>,
-    connected: Arc<Mutex<bool>>,
+    connected: bool,
 }
 
 impl HttpClient {
-    pub fn new(config: HttpConfig, formatter: Box<dyn DataFormatter>) -> Self {
-        HttpClient {
+    /// Create a new HTTP client
+    pub fn new(config: HttpConfig, formatter: Box<dyn DataFormatter>) -> Result<Self> {
+        if config.url.is_empty() {
+            return Err(NetSrvError::Config("HTTP URL is empty".to_string()));
+        }
+
+        let client = Client::builder()
+            .timeout(Duration::from_millis(config.timeout_ms))
+            .build()
+            .map_err(|e| NetSrvError::Http(e.to_string()))?;
+
+        Ok(HttpClient {
             config,
-            client: None,
+            client,
             formatter,
-            connected: Arc::new(Mutex::new(false)),
-        }
+            connected: false,
+        })
     }
 
-    fn get_method(&self) -> Method {
-        match self.config.method.to_uppercase().as_str() {
-            "GET" => Method::GET,
-            "POST" => Method::POST,
-            "PUT" => Method::PUT,
-            "DELETE" => Method::DELETE,
-            "PATCH" => Method::PATCH,
-            _ => Method::POST,
-        }
+    /// Format data using the client's formatter
+    pub fn format_data(&self, data: &Value) -> Result<String> {
+        self.formatter.format(data)
     }
 
-    fn build_request(&self, data: &str) -> Result<RequestBuilder> {
-        if let Some(client) = &self.client {
-            let method = self.get_method();
-            let mut request = client.request(method, &self.config.url);
+    /// Build HTTP headers based on configuration
+    fn build_headers(&self) -> HashMap<String, String> {
+        let mut headers = HashMap::new();
 
-            // Add headers
-            if let Some(headers) = &self.config.headers {
-                for (key, value) in headers {
-                    request = request.header(key, value);
-                }
-            }
-
-            // Add authentication
-            if let Some(auth_type) = &self.config.auth_type {
-                match auth_type.to_lowercase().as_str() {
-                    "basic" => {
-                        if let (Some(username), Some(password)) = (&self.config.username, &self.config.password) {
-                            request = request.basic_auth(username, Some(password));
-                        } else {
-                            return Err(NetSrvError::HttpError(
-                                "Basic auth requires username and password".to_string(),
-                            ));
-                        }
-                    }
-                    "bearer" => {
-                        if let Some(token) = &self.config.token {
-                            request = request.bearer_auth(token);
-                        } else {
-                            return Err(NetSrvError::HttpError(
-                                "Bearer auth requires token".to_string(),
-                            ));
-                        }
-                    }
-                    _ => {
-                        warn!("Unknown auth type: {}", auth_type);
-                    }
-                }
-            }
-
-            // Add request body
-            if method != Method::GET {
-                request = request.body(data.to_string());
-                request = request.header("Content-Type", "application/json");
-            }
-
-            Ok(request)
-        } else {
-            Err(NetSrvError::ConnectionError(
-                "HTTP client not initialized".to_string(),
-            ))
+        // Add configured headers
+        if let Some(config_headers) = &self.config.headers {
+            headers.extend(config_headers.clone());
         }
+
+        // Add authentication headers
+        match self.config.auth_type.as_deref() {
+            Some("bearer") => {
+                if let Some(token) = &self.config.token {
+                    headers.insert("Authorization".to_string(), format!("Bearer {}", token));
+                }
+            }
+            Some("basic") => {
+                if let (Some(username), Some(password)) = (&self.config.username, &self.config.password) {
+                    use base64::{Engine as _, engine::general_purpose};
+                    let credentials = general_purpose::STANDARD.encode(format!("{}:{}", username, password));
+                    headers.insert("Authorization".to_string(), format!("Basic {}", credentials));
+                }
+            }
+            Some("apikey") => {
+                if let Some(token) = &self.config.token {
+                    headers.insert("X-API-Key".to_string(), token.clone());
+                }
+            }
+            _ => {}
+        }
+
+        headers
     }
 }
 
 #[async_trait]
 impl NetworkClient for HttpClient {
     async fn connect(&mut self) -> Result<()> {
-        let mut client_builder = ClientBuilder::new();
-
-        // Set timeout
-        let timeout = Duration::from_millis(self.config.timeout_ms);
-        client_builder = client_builder.timeout(timeout);
-
-        // Create client
-        let client = client_builder.build()?;
-        self.client = Some(client);
-        *self.connected.lock().unwrap() = true;
-
-        info!("HTTP client initialized for URL: {}", self.config.url);
+        // For HTTP, connection is tested by attempting a simple request
+        // In this case, we'll just mark as connected since HTTP is connectionless
+        self.connected = true;
         Ok(())
     }
 
     async fn disconnect(&mut self) -> Result<()> {
-        self.client = None;
-        *self.connected.lock().unwrap() = false;
-        Ok(())
-    }
-
-    async fn send(&self, data: &str) -> Result<()> {
-        if !self.is_connected() {
-            return Err(NetSrvError::ConnectionError(
-                "HTTP client not connected".to_string(),
-            ));
-        }
-
-        let request = self.build_request(data)?;
-        let response = request.send().await?;
-
-        if !response.status().is_success() {
-            let status = response.status();
-            let body = response.text().await.unwrap_or_default();
-            return Err(NetSrvError::HttpError(format!(
-                "HTTP request failed with status {}: {}",
-                status, body
-            )));
-        }
-
-        debug!("HTTP request sent successfully to: {}", self.config.url);
+        self.connected = false;
         Ok(())
     }
 
     fn is_connected(&self) -> bool {
-        *self.connected.lock().unwrap()
+        self.connected
+    }
+
+    async fn send(&self, data: &str) -> Result<()> {
+        if !self.connected {
+            return Err(NetSrvError::Connection("Not connected".to_string()));
+        }
+
+        let headers = self.build_headers();
+        let mut request_builder = match self.config.method.to_uppercase().as_str() {
+            "GET" => self.client.get(&self.config.url),
+            "POST" => self.client.post(&self.config.url),
+            "PUT" => self.client.put(&self.config.url),
+            "PATCH" => self.client.patch(&self.config.url),
+            _ => self.client.post(&self.config.url), // Default to POST
+        };
+
+        // Add headers
+        for (key, value) in headers {
+            request_builder = request_builder.header(&key, &value);
+        }
+
+        // Add body for non-GET requests
+        if self.config.method.to_uppercase() != "GET" {
+            request_builder = request_builder.body(data.to_string());
+        }
+
+        let response = request_builder.send().await
+            .map_err(|e| NetSrvError::Http(format!("Failed to send HTTP request: {}", e)))?;
+
+        if !response.status().is_success() {
+            return Err(NetSrvError::Http(format!(
+                "HTTP request failed with status: {}",
+                response.status()
+            )));
+        }
+
+        Ok(())
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
     }
 } 

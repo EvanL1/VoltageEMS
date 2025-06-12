@@ -6,8 +6,8 @@ mod redis;
 
 use crate::config::Config;
 use crate::error::Result;
-use crate::formatter::create_formatter;
-use crate::network::{create_client, NetworkClient};
+use crate::formatter::{create_formatter, default_formatter};
+use crate::network::create_client;
 use crate::redis::RedisDataFetcher;
 use clap::Parser;
 use log::{debug, error, info, warn};
@@ -15,7 +15,7 @@ use serde_json::Value;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::mpsc;
-use tokio::time::{sleep, Duration};
+
 
 #[derive(Parser, Debug)]
 #[clap(author, version, about, long_about = None)]
@@ -60,29 +60,35 @@ async fn main() -> Result<()> {
         }
     });
 
-    // Create network clients
+    // Create network clients with their formatters
     let mut clients = Vec::new();
     
+    // Process all network configurations
     for network_config in &config.networks {
-        if !network_config.enabled {
-            info!("Network '{}' is disabled, skipping", network_config.name);
+        if !network_config.is_enabled() {
+            info!("Network '{}' is disabled, skipping", network_config.name());
             continue;
         }
 
-        info!("Initializing network: {}", network_config.name);
+        info!("Initializing network: {}", network_config.name());
         
-        // Create formatter
-        let formatter = create_formatter(&network_config.format_type);
+        // Create formatter based on configuration
+        let formatter = if let Some(format_type) = network_config.format_type() {
+            create_formatter(&format_type.clone().into())
+        } else {
+            // Cloud networks use JSON by default
+            default_formatter()
+        };
         
         // Create client
         match create_client(network_config, formatter) {
             Ok(client) => {
-                let client_name = network_config.name.clone();
+                let client_name = network_config.name().to_string();
                 let client = Arc::new(tokio::sync::Mutex::new(client));
                 clients.push((client_name, client));
             }
             Err(e) => {
-                error!("Failed to create client for network '{}': {}", network_config.name, e);
+                error!("Failed to create client for network '{}': {}", network_config.name(), e);
             }
         }
     }
@@ -98,7 +104,7 @@ async fn main() -> Result<()> {
 
     // Main loop: Receive data and send to all networks
     while let Some(data) = rx.recv().await {
-        debug!("Received data from Redis");
+        debug!("Received data from Redis: {:?}", data);
         
         for (name, client) in &clients {
             let client = client.lock().await;
@@ -108,12 +114,33 @@ async fn main() -> Result<()> {
                 continue;
             }
             
-            // Format data
-            let formatted_data = match client.format_data(&data) {
-                Ok(formatted) => formatted,
-                Err(e) => {
-                    error!("Failed to format data for network '{}': {}", name, e);
-                    continue;
+            // Format data using client's internal formatter
+            let formatted_data = if let Some(mqtt_client) = client.as_any().downcast_ref::<crate::network::MqttClient>() {
+                // For MQTT clients, use their internal formatter
+                match mqtt_client.format_data(&data) {
+                    Ok(formatted) => formatted,
+                    Err(e) => {
+                        error!("Failed to format data for network '{}': {}", name, e);
+                        continue;
+                    }
+                }
+            } else if let Some(http_client) = client.as_any().downcast_ref::<crate::network::HttpClient>() {
+                // For HTTP clients, use their internal formatter
+                match http_client.format_data(&data) {
+                    Ok(formatted) => formatted,
+                    Err(e) => {
+                        error!("Failed to format data for network '{}': {}", name, e);
+                        continue;
+                    }
+                }
+            } else {
+                // Fallback to default JSON formatting
+                match serde_json::to_string(&data) {
+                    Ok(formatted) => formatted,
+                    Err(e) => {
+                        error!("Failed to format data for network '{}': {}", name, e);
+                        continue;
+                    }
                 }
             };
             
@@ -152,18 +179,4 @@ fn init_logging(config: &Config) {
     info!("Logging initialized at level: {}", config.logging.level);
 }
 
-// Extend NetworkClient trait to add formatting method
-trait NetworkClientExt: NetworkClient {
-    fn format_data(&self, data: &Value) -> Result<String>;
-}
-
-// Implement NetworkClientExt for all NetworkClient
-impl<T: NetworkClient> NetworkClientExt for T {
-    fn format_data(&self, data: &Value) -> Result<String> {
-        // This should use the client's internal formatter, but since we can't directly access it,
-        // this is just an example implementation, and it should be handled in each client implementation
-        serde_json::to_string(data).map_err(|e| {
-            crate::error::NetSrvError::FormatError(format!("JSON formatting error: {}", e))
-        })
-    }
-} 
+ 

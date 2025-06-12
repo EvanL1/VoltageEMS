@@ -25,18 +25,18 @@ fn format_value(value: &Value, output: &mut String, depth: usize) -> Result<()> 
             for (key, val) in map {
                 let indent = " ".repeat(depth * 2);
                 write!(output, "{}{}: ", indent, key)
-                    .map_err(|e| NetSrvError::FormatError(format!("ASCII formatting error: {}", e)))?;
+                    .map_err(|e| NetSrvError::Format(format!("ASCII formatting error: {}", e)))?;
                 
                 match val {
                     Value::Object(_) | Value::Array(_) => {
                         writeln!(output)
-                            .map_err(|e| NetSrvError::FormatError(format!("ASCII formatting error: {}", e)))?;
+                            .map_err(|e| NetSrvError::Format(format!("ASCII formatting error: {}", e)))?;
                         format_value(val, output, depth + 1)?;
                     },
                     _ => {
                         let val_str = format_simple_value(val)?;
                         writeln!(output, "{}", val_str)
-                            .map_err(|e| NetSrvError::FormatError(format!("ASCII formatting error: {}", e)))?;
+                            .map_err(|e| NetSrvError::Format(format!("ASCII formatting error: {}", e)))?;
                     }
                 }
             }
@@ -45,18 +45,18 @@ fn format_value(value: &Value, output: &mut String, depth: usize) -> Result<()> 
             for (i, val) in arr.iter().enumerate() {
                 let indent = " ".repeat(depth * 2);
                 write!(output, "{}[{}]: ", indent, i)
-                    .map_err(|e| NetSrvError::FormatError(format!("ASCII formatting error: {}", e)))?;
+                    .map_err(|e| NetSrvError::Format(format!("ASCII formatting error: {}", e)))?;
                 
                 match val {
                     Value::Object(_) | Value::Array(_) => {
                         writeln!(output)
-                            .map_err(|e| NetSrvError::FormatError(format!("ASCII formatting error: {}", e)))?;
+                            .map_err(|e| NetSrvError::Format(format!("ASCII formatting error: {}", e)))?;
                         format_value(val, output, depth + 1)?;
                     },
                     _ => {
                         let val_str = format_simple_value(val)?;
                         writeln!(output, "{}", val_str)
-                            .map_err(|e| NetSrvError::FormatError(format!("ASCII formatting error: {}", e)))?;
+                            .map_err(|e| NetSrvError::Format(format!("ASCII formatting error: {}", e)))?;
                     }
                 }
             }
@@ -64,7 +64,7 @@ fn format_value(value: &Value, output: &mut String, depth: usize) -> Result<()> 
         _ => {
             let val_str = format_simple_value(value)?;
             writeln!(output, "{}", val_str)
-                .map_err(|e| NetSrvError::FormatError(format!("ASCII formatting error: {}", e)))?;
+                .map_err(|e| NetSrvError::Format(format!("ASCII formatting error: {}", e)))?;
         }
     }
     
@@ -77,6 +77,6 @@ fn format_simple_value(value: &Value) -> Result<String> {
         Value::Bool(b) => Ok(b.to_string()),
         Value::Number(n) => Ok(n.to_string()),
         Value::String(s) => Ok(s.clone()),
-        _ => Err(NetSrvError::FormatError("Unexpected complex value".to_string())),
+        _ => Err(NetSrvError::Format("Unexpected complex value".to_string())),
     }
 } 
