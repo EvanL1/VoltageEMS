@@ -44,7 +44,7 @@ impl RedisConnection {
         // Test connection with PING
         let ping_result: String = redis::cmd("PING").query(&mut conn)?;
         if ping_result != "PONG" {
-            return Err(NetSrvError::ConnectionError(
+            return Err(NetSrvError::Connection(
                 "Redis connection test failed".to_string(),
             ));
         }
@@ -80,7 +80,7 @@ impl RedisConnection {
 
     pub fn get_keys(&mut self, pattern: &str) -> Result<Vec<String>> {
         if !self.connected || self.conn.is_none() {
-            return Err(NetSrvError::ConnectionError(
+            return Err(NetSrvError::Connection(
                 "Not connected to Redis".to_string(),
             ));
         }
@@ -95,7 +95,7 @@ impl RedisConnection {
 
     pub fn get_string(&mut self, key: &str) -> Result<String> {
         if !self.connected || self.conn.is_none() {
-            return Err(NetSrvError::ConnectionError(
+            return Err(NetSrvError::Connection(
                 "Not connected to Redis".to_string(),
             ));
         }
@@ -107,7 +107,7 @@ impl RedisConnection {
 
     pub fn get_hash(&mut self, key: &str) -> Result<HashMap<String, String>> {
         if !self.connected || self.conn.is_none() {
-            return Err(NetSrvError::ConnectionError(
+            return Err(NetSrvError::Connection(
                 "Not connected to Redis".to_string(),
             ));
         }

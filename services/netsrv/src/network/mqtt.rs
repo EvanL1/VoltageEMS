@@ -1,5 +1,4 @@
-use crate::config::network_config::MqttConfig;
-use crate::config::cloud_config::{CloudMqttConfig, CloudProvider, AuthConfig};
+use crate::config::network::{AuthConfig, TopicConfig, TlsConfig, CloudProvider};
 use crate::error::{NetSrvError, Result};
 use crate::formatter::DataFormatter;
 use crate::network::NetworkClient;
@@ -19,11 +18,83 @@ use chrono::Utc;
 
 type HmacSha256 = Hmac<Sha256>;
 
+/// Legacy MQTT configuration
+#[derive(Debug, Clone)]
+pub struct LegacyMqttConfig {
+    pub broker_url: String,
+    pub port: u16,
+    pub client_id: String,
+    pub username: Option<String>,
+    pub password: Option<String>,
+    pub topic: String,
+    pub qos: u8,
+    pub use_ssl: bool,
+    pub ca_cert_path: Option<String>,
+    pub client_cert_path: Option<String>,
+    pub client_key_path: Option<String>,
+}
+
+/// Cloud MQTT configuration
+#[derive(Debug, Clone)]
+pub struct CloudMqttConfig {
+    pub cloud_provider: CloudProvider,
+    pub endpoint: String,
+    pub port: u16,
+    pub client_id: String,
+    pub auth_config: AuthConfig,
+    pub topic_config: TopicConfig,
+    pub tls_config: TlsConfig,
+    pub keep_alive_secs: u64,
+    pub connection_timeout_ms: u64,
+    pub reconnect_delay_ms: u64,
+    pub max_reconnect_attempts: u32,
+    pub custom_properties: Option<HashMap<String, String>>,
+}
+
+impl CloudMqttConfig {
+    /// Validate cloud configuration
+    pub fn validate(&self) -> std::result::Result<(), String> {
+        match self.cloud_provider {
+            CloudProvider::Aws => {
+                if !matches!(self.auth_config, AuthConfig::Certificate { .. }) {
+                    return Err("AWS IoT requires certificate authentication".to_string());
+                }
+                if self.port != 8883 && self.port != 443 {
+                    return Err("AWS IoT typically uses port 8883 or 443".to_string());
+                }
+            }
+            CloudProvider::Aliyun => {
+                if !matches!(self.auth_config, AuthConfig::DeviceSecret { .. }) {
+                    return Err("Aliyun IoT requires device secret authentication".to_string());
+                }
+            }
+            CloudProvider::Azure => {
+                if !matches!(self.auth_config, AuthConfig::SasToken { .. }) {
+                    return Err("Azure IoT typically uses SAS token authentication".to_string());
+                }
+            }
+            CloudProvider::Tencent => {
+                if !matches!(self.auth_config, AuthConfig::Certificate { .. }) {
+                    return Err("Tencent IoT requires certificate authentication".to_string());
+                }
+            }
+            CloudProvider::Huawei => {
+                match self.auth_config {
+                    AuthConfig::Certificate { .. } | AuthConfig::DeviceSecret { .. } => {}
+                    _ => return Err("Huawei IoT requires certificate or device secret authentication".to_string()),
+                }
+            }
+            CloudProvider::Custom => {} // Custom configs are flexible
+        }
+        Ok(())
+    }
+}
+
 /// MQTT client configuration type
 #[derive(Debug, Clone)]
 pub enum MqttClientConfig {
     /// Legacy MQTT configuration
-    Legacy(MqttConfig),
+    Legacy(LegacyMqttConfig),
     /// Cloud MQTT configuration
     Cloud(CloudMqttConfig),
 }
@@ -34,32 +105,29 @@ pub struct MqttClient {
     client: Option<AsyncClient>,
     formatter: Box<dyn DataFormatter>,
     connected: Arc<Mutex<bool>>,
-    topic_variables: Arc<Mutex<HashMap<String, String>>>,
 }
 
 impl MqttClient {
     /// Create a new MQTT client with legacy configuration
-    pub fn new(config: MqttConfig, formatter: Box<dyn DataFormatter>) -> Self {
-        Self {
+    pub fn new_legacy(config: LegacyMqttConfig, formatter: Box<dyn DataFormatter>) -> Result<Self> {
+        Ok(Self {
             config: MqttClientConfig::Legacy(config),
             client: None,
             formatter,
             connected: Arc::new(Mutex::new(false)),
-            topic_variables: Arc::new(Mutex::new(HashMap::new())),
-        }
+        })
     }
 
     /// Create a new MQTT client with cloud configuration
     pub fn new_cloud(config: CloudMqttConfig, formatter: Box<dyn DataFormatter>) -> Result<Self> {
         // Validate configuration
-        config.validate().map_err(|e| NetSrvError::ConfigError(e))?;
+        config.validate().map_err(NetSrvError::Config)?;
         
         Ok(Self {
             config: MqttClientConfig::Cloud(config),
             client: None,
             formatter,
             connected: Arc::new(Mutex::new(false)),
-            topic_variables: Arc::new(Mutex::new(HashMap::new())),
         })
     }
 
@@ -72,7 +140,7 @@ impl MqttClient {
     }
 
     /// Build MQTT options for legacy configuration
-    fn build_legacy_mqtt_options(&self, config: &MqttConfig) -> Result<MqttOptions> {
+    fn build_legacy_mqtt_options(&self, config: &LegacyMqttConfig) -> Result<MqttOptions> {
         let mut mqtt_options = MqttOptions::new(
             &config.client_id,
             &config.broker_url,
@@ -141,7 +209,7 @@ impl MqttClient {
                 mqtt_options.set_credentials(username, device_secret);
             }
             _ => {
-                return Err(NetSrvError::ConfigError("Device secret auth not supported for this provider".to_string()));
+                return Err(NetSrvError::Config("Device secret auth not supported for this provider".to_string()));
             }
         }
         Ok(())
@@ -164,7 +232,7 @@ impl MqttClient {
                              device_name, device_name, product_key, timestamp);
         
         let mut mac = HmacSha256::new_from_slice(device_secret.as_bytes())
-            .map_err(|e| NetSrvError::ConfigError(format!("HMAC key error: {}", e)))?;
+            .map_err(|e| NetSrvError::Config(format!("HMAC key error: {}", e)))?;
         mac.update(content.as_bytes());
         let password = hex::encode(mac.finalize().into_bytes());
         
@@ -234,7 +302,7 @@ impl NetworkClient for MqttClient {
     async fn connect(&mut self) -> Result<()> {
         let config_name = match &self.config {
             MqttClientConfig::Legacy(config) => config.client_id.clone(),
-            MqttClientConfig::Cloud(config) => config.name.clone(),
+            MqttClientConfig::Cloud(config) => config.client_id.clone(),
         };
         
         info!("Connecting to MQTT: {}", config_name);
@@ -290,7 +358,7 @@ impl NetworkClient for MqttClient {
                             let topic = self.process_topic_sync(topic_template);
                             if let Some(client) = &self.client {
                                 client.subscribe(topic.clone(), self.get_qos()).await
-                                    .map_err(|e| NetSrvError::MqttError(e.to_string()))?;
+                                    .map_err(|e| NetSrvError::Mqtt(e.to_string()))?;
                                 info!("Subscribed to topic: {}", topic);
                             }
                         }
@@ -302,20 +370,20 @@ impl NetworkClient for MqttClient {
             sleep(Duration::from_millis(100)).await;
         }
         
-        Err(NetSrvError::ConnectionError("Connection timeout".to_string()))
+        Err(NetSrvError::Connection("Connection timeout".to_string()))
     }
 
     async fn disconnect(&mut self) -> Result<()> {
         let config_name = match &self.config {
             MqttClientConfig::Legacy(config) => &config.client_id,
-            MqttClientConfig::Cloud(config) => &config.name,
+            MqttClientConfig::Cloud(config) => &config.client_id,
         };
         
         info!("Disconnecting from MQTT: {}", config_name);
         
         if let Some(client) = &self.client {
             client.disconnect().await
-                .map_err(|e| NetSrvError::MqttError(e.to_string()))?;
+                .map_err(|e| NetSrvError::Mqtt(e.to_string()))?;
         }
         
         *self.connected.lock().await = false;
@@ -327,24 +395,24 @@ impl NetworkClient for MqttClient {
 
     async fn send(&self, data: &str) -> Result<()> {
         if !self.is_connected() {
-            return Err(NetSrvError::ConnectionError("Not connected".to_string()));
+            return Err(NetSrvError::Connection("Not connected".to_string()));
         }
         
         let client = self.client.as_ref()
-            .ok_or_else(|| NetSrvError::ConnectionError("Client not initialized".to_string()))?;
+            .ok_or_else(|| NetSrvError::Connection("Client not initialized".to_string()))?;
         
         match &self.config {
             MqttClientConfig::Legacy(config) => {
                 client.publish(&config.topic, self.get_qos(), false, data)
                     .await
-                    .map_err(|e| NetSrvError::MqttError(e.to_string()))?;
+                    .map_err(|e| NetSrvError::Mqtt(e.to_string()))?;
                 debug!("Published data to legacy topic: {}", config.topic);
             }
             MqttClientConfig::Cloud(config) => {
                 let topic = self.process_topic_sync(&config.topic_config.publish_topic);
                 client.publish(topic.clone(), self.get_qos(), config.topic_config.retain, data)
                     .await
-                    .map_err(|e| NetSrvError::MqttError(e.to_string()))?;
+                    .map_err(|e| NetSrvError::Mqtt(e.to_string()))?;
                 debug!("Published data to cloud topic: {}", topic);
             }
         }
@@ -369,11 +437,11 @@ impl NetworkClient for MqttClient {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::cloud_config::{CloudProvider, AuthConfig, TopicConfig, TlsConfig};
+    use crate::config::network::{CloudProvider, AuthConfig, TopicConfig, TlsConfig};
     use crate::formatter::JsonFormatter;
 
-    fn create_legacy_config() -> MqttConfig {
-        MqttConfig {
+    fn create_legacy_config() -> LegacyMqttConfig {
+        LegacyMqttConfig {
             broker_url: "localhost".to_string(),
             port: 1883,
             client_id: "test-legacy".to_string(),
@@ -390,8 +458,6 @@ mod tests {
 
     fn create_cloud_config() -> CloudMqttConfig {
         CloudMqttConfig {
-            name: "Test Cloud Client".to_string(),
-            enabled: true,
             cloud_provider: CloudProvider::Custom,
             endpoint: "localhost".to_string(),
             port: 1883,
@@ -426,7 +492,7 @@ mod tests {
     fn test_new_legacy_mqtt_client() {
         let config = create_legacy_config();
         let formatter = Box::new(JsonFormatter::new());
-        let client = MqttClient::new(config, formatter);
+        let client = MqttClient::new_legacy(config, formatter).unwrap();
         assert!(matches!(client.config, MqttClientConfig::Legacy(_)));
     }
 

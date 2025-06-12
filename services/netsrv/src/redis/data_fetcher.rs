@@ -34,12 +34,12 @@ impl RedisDataFetcher {
     }
 
     pub async fn fetch_data(&mut self) -> Result<Value> {
-        // 检查是否已连接
+        // check if connected
         if !self.is_connected() {
             self.connect().await?;
         }
 
-        // 获取所有匹配的键
+        // get all matching keys
         let mut all_data = json!({});
         let mut conn = self.connection.lock().unwrap();
 
@@ -48,17 +48,17 @@ impl RedisDataFetcher {
             debug!("Found {} keys matching pattern: {}", keys.len(), pattern);
 
             for key in keys {
-                // 获取键的类型并根据类型获取数据
+                // get the type of the key and get the data
                 match self.get_data_for_key(&mut conn, &key) {
                     Ok(data) => {
-                        // 将键名转换为没有前缀的形式
+                        // convert the key name to the one without the prefix
                         let key_without_prefix = if key.starts_with(&self.config.prefix) {
                             key[self.config.prefix.len()..].to_string()
                         } else {
                             key.clone()
                         };
 
-                        // 将数据添加到结果中
+                        // add the data to the result
                         all_data[key_without_prefix] = data;
                     }
                     Err(e) => {
@@ -68,7 +68,7 @@ impl RedisDataFetcher {
             }
         }
 
-        // 更新最后获取时间
+        // update the last fetch time
         self.last_fetch_time = Instant::now();
 
         Ok(all_data)
@@ -89,10 +89,10 @@ impl RedisDataFetcher {
                 }
                 Err(e) => {
                     error!("Failed to fetch data from Redis: {}", e);
-                    // 尝试重新连接
+                    // try to reconnect
                     if let Err(conn_err) = self.connect().await {
                         error!("Failed to reconnect to Redis: {}", conn_err);
-                        // 等待一段时间后再尝试
+                        // wait for a while and try again
                         time::sleep(Duration::from_secs(5)).await;
                     }
                 }
@@ -101,7 +101,7 @@ impl RedisDataFetcher {
     }
 
     fn get_data_for_key(&self, conn: &mut RedisConnection, key: &str) -> Result<Value> {
-        // 尝试获取哈希表
+        // try to get the hash table
         let hash_result = conn.get_hash(key);
         if let Ok(hash) = hash_result {
             if !hash.is_empty() {
@@ -109,19 +109,19 @@ impl RedisDataFetcher {
             }
         }
 
-        // 如果不是哈希表，尝试获取字符串
+        // if not a hash table, try to get the string
         let string_result = conn.get_string(key);
         if let Ok(string_value) = string_result {
-            // 尝试将字符串解析为 JSON
+            // try to parse the string as JSON
             let json_result = serde_json::from_str::<Value>(&string_value);
             if let Ok(json_value) = json_result {
                 return Ok(json_value);
             }
-            // 如果不是 JSON，则作为普通字符串返回
+            // if not JSON, return as a normal string
             return Ok(json!(string_value));
         }
 
-        // 如果都失败了，返回空对象
-        Err(NetSrvError::DataError(format!("No data found for key: {}", key)))
+        // if all failed, return an empty object
+        Err(NetSrvError::Data(format!("No data found for key: {}", key)))
     }
 } 
