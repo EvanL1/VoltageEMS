@@ -1,9 +1,9 @@
 use crate::config::redis_config::RedisConfig;
 use crate::error::{NetSrvError, Result};
 use crate::redis::RedisConnection;
-use log::{debug, error, info, warn};
+use log::{debug, error};
 use serde_json::{json, Value};
-use std::collections::HashMap;
+
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tokio::time;
