@@ -902,7 +902,7 @@ mod tests {
     use std::fs::File;
     use std::io::Write;
     use crate::core::config::ConfigManager;
-    use crate::core::config::{CsvPointRecord, CsvPointManager};
+    use crate::core::config::{CsvPointRecord, csv_parser::CsvPointManager, csv_parser::PointCategory};
     use crate::core::protocols::common::ProtocolFactory;
     use crate::core::config::config_manager::{ChannelConfig, ProtocolType, ChannelParameters};
     use serde_yaml;
@@ -943,7 +943,7 @@ point_tables:
             register_type: Some("holding_register".to_string()),
             access: Some("read".to_string()),
             group: Some("temperature".to_string()),
-            category: Some(crate::core::config::PointCategory::Telemetry),
+            category: Some(PointCategory::Telemetry),
         }
     }
 
@@ -1097,7 +1097,7 @@ point_tables:
             register_type: Some("holding_register".to_string()),
             access: Some("read".to_string()),
             group: Some("sensors".to_string()),
-            category: Some(crate::core::config::PointCategory::Telemetry),
+            category: Some(PointCategory::Telemetry),
         };
         
         let point2 = CsvPointRecord {
@@ -1112,7 +1112,7 @@ point_tables:
             register_type: Some("holding_register".to_string()),
             access: Some("read".to_string()),
             group: Some("sensors".to_string()),
-            category: Some(crate::core::config::PointCategory::Telemetry),
+            category: Some(PointCategory::Telemetry),
         };
         
         // Add points to table
@@ -1194,7 +1194,7 @@ point_tables:
             protocol: ProtocolType::ModbusTcp,
             parameters: ChannelParameters::Generic(params),
         };
-        factory.write().await.create_channel(config).unwrap();
+        factory.write().await.create_channel(config).await.unwrap();
 
         let req = WritePointRequest { value: serde_json::json!(1) };
         let response = write_point(

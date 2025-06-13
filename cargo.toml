@@ -2,6 +2,6 @@
 members = [
   "services/comsrv",
   "services/hissrv",
-  "services/netsrv",
   "services/modsrv",
+  "services/netsrv",
 ]

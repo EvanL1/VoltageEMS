@@ -34,7 +34,7 @@ pub async fn start_communication_service(
         info!("Creating channel: {} - {}", channel_config.id, channel_config.name);
 
         let factory_guard = factory.write().await;
-        match factory_guard.create_channel(channel_config.clone()) {
+        match factory_guard.create_channel(channel_config.clone()).await {
             Ok(_) => {
                 info!("Channel created successfully: {}", channel_config.id);
                 successful_channels += 1;
@@ -136,5 +136,282 @@ pub fn start_cleanup_task(
             drop(factory_guard);
         }
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashMap;
+    use tempfile::TempDir;
+    use std::time::Duration;
+    use tokio::time::timeout;
+
+    /// Create a test configuration manager with minimal valid configuration
+    fn create_test_config_manager() -> Arc<ConfigManager> {
+        let temp_dir = TempDir::new().unwrap();
+        let config_path = temp_dir.path().join("test_config.yaml");
+        
+        let test_config = r#"
+version: "1.0"
+service:
+  name: "test_service"
+  description: "Test Communication Service"
+  metrics:
+    enabled: false
+    bind_address: "0.0.0.0:9100"
+  logging:
+    level: "info"
+    file: "/tmp/test_comsrv.log"
+    max_size: 10485760
+    max_files: 5
+    console: true
+  api:
+    enabled: false
+    bind_address: "0.0.0.0:3000"
+    version: "v1"
+  redis:
+    enabled: false
+    connection_type: "Tcp"
+    address: "127.0.0.1:6379"
+    db: 0
+  point_tables:
+    enabled: false
+    directory: "config/points"
+    watch_changes: false
+    reload_interval: 60
+channels: []
+"#;
+        
+        std::fs::write(&config_path, test_config).unwrap();
+        Arc::new(ConfigManager::from_file(&config_path).unwrap())
+    }
+
+    /// Create a test configuration manager with sample channels
+    fn create_test_config_manager_with_channels() -> Arc<ConfigManager> {
+        let temp_dir = TempDir::new().unwrap();
+        let config_path = temp_dir.path().join("test_config.yaml");
+        
+        let test_config = r#"
+version: "1.0"
+service:
+  name: "test_service_with_channels"
+  description: "Test Communication Service with Channels"
+  metrics:
+    enabled: false
+    bind_address: "0.0.0.0:9100"
+  logging:
+    level: "info"
+    file: "/tmp/test_comsrv.log"
+    max_size: 10485760
+    max_files: 5
+    console: true
+  api:
+    enabled: false
+    bind_address: "0.0.0.0:3000"
+    version: "v1"
+  redis:
+    enabled: false
+    connection_type: "Tcp"
+    address: "127.0.0.1:6379"
+    db: 0
+  point_tables:
+    enabled: false
+    directory: "config/points"
+    watch_changes: false
+    reload_interval: 60
+channels:
+  - id: 1
+    name: "Test Virtual Channel"
+    description: "Test virtual channel for unit testing"
+    protocol: "Virtual"
+    parameters:
+      interval: 1000
+      data_points: 10
+"#;
+        
+        std::fs::write(&config_path, test_config).unwrap();
+        Arc::new(ConfigManager::from_file(&config_path).unwrap())
+    }
+
+    #[tokio::test]
+    async fn test_start_communication_service_empty_channels() {
+        let config_manager = create_test_config_manager();
+        let factory = Arc::new(RwLock::new(ProtocolFactory::new()));
+
+        let result = start_communication_service(config_manager, factory.clone()).await;
+        
+        assert!(result.is_ok(), "Should succeed with empty channels");
+        
+        // Verify no channels were created
+        let factory_guard = factory.read().await;
+        assert_eq!(factory_guard.channel_count(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_start_communication_service_with_virtual_channels() {
+        let config_manager = create_test_config_manager_with_channels();
+        let factory = Arc::new(RwLock::new(ProtocolFactory::new()));
+
+        let result = start_communication_service(config_manager, factory.clone()).await;
+        
+        assert!(result.is_ok(), "Should succeed with virtual channels");
+        
+        // Verify channel was created
+        let factory_guard = factory.read().await;
+        assert_eq!(factory_guard.channel_count(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_shutdown_handler() {
+        let factory = Arc::new(RwLock::new(ProtocolFactory::new()));
+        
+        // This should not panic or error, even with empty factory
+        shutdown_handler(factory.clone()).await;
+        
+        // Add a channel and test shutdown
+        let config_manager = create_test_config_manager_with_channels();
+        let _result = start_communication_service(config_manager, factory.clone()).await;
+        
+        // Shutdown should work with channels
+        shutdown_handler(factory).await;
+    }
+
+    #[tokio::test]
+    async fn test_start_cleanup_task() {
+        let factory = Arc::new(RwLock::new(ProtocolFactory::new()));
+        
+        // Start cleanup task
+        let cleanup_handle = start_cleanup_task(factory.clone());
+        
+        // Let it run for a short time
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        
+        // Cancel the task
+        cleanup_handle.abort();
+        
+        // Verify task was running (doesn't panic when aborted)
+        let result = cleanup_handle.await;
+        assert!(result.is_err()); // Should be cancelled
+    }
+
+    #[tokio::test]
+    async fn test_cleanup_task_with_channels() {
+        let config_manager = create_test_config_manager_with_channels();
+        let factory = Arc::new(RwLock::new(ProtocolFactory::new()));
+        
+        // Create channels first
+        let _result = start_communication_service(config_manager, factory.clone()).await;
+        
+        // Start cleanup task
+        let cleanup_handle = start_cleanup_task(factory.clone());
+        
+        // Let it run for a short time
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        
+        // Cancel the task
+        cleanup_handle.abort();
+        
+        // Verify the factory still has channels
+        let factory_guard = factory.read().await;
+        assert_eq!(factory_guard.channel_count(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_service_lifecycle() {
+        let config_manager = create_test_config_manager_with_channels();
+        let factory = Arc::new(RwLock::new(ProtocolFactory::new()));
+        
+        // Test complete lifecycle
+        // 1. Start service
+        let start_result = start_communication_service(config_manager, factory.clone()).await;
+        assert!(start_result.is_ok());
+        
+        // 2. Verify channels created
+        {
+            let factory_guard = factory.read().await;
+            assert_eq!(factory_guard.channel_count(), 1);
+        }
+        
+        // 3. Start cleanup task
+        let cleanup_handle = start_cleanup_task(factory.clone());
+        
+        // 4. Let it run briefly
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        
+        // 5. Shutdown service
+        shutdown_handler(factory.clone()).await;
+        
+        // 6. Stop cleanup task
+        cleanup_handle.abort();
+        let _cleanup_result = cleanup_handle.await;
+        
+        // 7. Verify final state
+        let factory_guard = factory.read().await;
+        assert_eq!(factory_guard.channel_count(), 1); // Channels still exist but stopped
+    }
+
+    #[tokio::test]
+    async fn test_concurrent_operations() {
+        let config_manager = create_test_config_manager_with_channels();
+        let factory = Arc::new(RwLock::new(ProtocolFactory::new()));
+        
+        // Start multiple operations concurrently
+        let factory1 = factory.clone();
+        let config1 = config_manager.clone();
+        let start_handle = tokio::spawn(async move {
+            start_communication_service(config1, factory1).await
+        });
+        
+        let factory2 = factory.clone();
+        let cleanup_handle = start_cleanup_task(factory2);
+        
+        // Wait for start to complete
+        let start_result = timeout(Duration::from_secs(5), start_handle).await;
+        assert!(start_result.is_ok());
+        assert!(start_result.unwrap().is_ok());
+        
+        // Let cleanup run briefly
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        
+        // Shutdown concurrently
+        let factory3 = factory.clone();
+        let shutdown_handle = tokio::spawn(async move {
+            shutdown_handler(factory3).await
+        });
+        
+        // Wait for shutdown
+        let shutdown_result = timeout(Duration::from_secs(5), shutdown_handle).await;
+        assert!(shutdown_result.is_ok());
+        
+        // Stop cleanup
+        cleanup_handle.abort();
+    }
+
+    #[tokio::test]
+    async fn test_error_handling_in_service_start() {
+        let config_manager = create_test_config_manager();
+        let factory = Arc::new(RwLock::new(ProtocolFactory::new()));
+        
+        // Should handle empty configuration gracefully
+        let result = start_communication_service(config_manager, factory).await;
+        assert!(result.is_ok(), "Empty config should not cause failure");
+    }
+
+    #[tokio::test]
+    async fn test_cleanup_task_creation() {
+        let factory = Arc::new(RwLock::new(ProtocolFactory::new()));
+        
+        // Should be able to create cleanup task without panic
+        let cleanup_handle = start_cleanup_task(factory);
+        
+        // Let it run briefly
+        tokio::time::sleep(Duration::from_millis(10)).await;
+        
+        // Immediately abort to clean up
+        cleanup_handle.abort();
+        
+        // Wait for abort to complete
+        let _ = cleanup_handle.await;
+    }
 }
 

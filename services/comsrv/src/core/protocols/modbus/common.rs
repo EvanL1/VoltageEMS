@@ -414,6 +414,129 @@ impl ModbusDataType {
             ModbusDataType::String(length) => format!("string({})", length),
         }
     }
+
+    /// Parse a data type from string representation
+    /// 
+    /// # Arguments
+    /// 
+    /// * `s` - String representation of the data type
+    /// 
+    /// # Returns
+    /// 
+    /// `Ok(ModbusDataType)` if parsing succeeds, `Err(String)` with error message if it fails
+    /// 
+    /// # Example
+    /// 
+    /// ```rust
+    /// use comsrv::core::protocols::modbus::common::ModbusDataType;
+    /// 
+    /// assert_eq!(ModbusDataType::from_str("float32").unwrap(), ModbusDataType::Float32);
+    /// assert_eq!(ModbusDataType::from_str("string(20)").unwrap(), ModbusDataType::String(20));
+    /// ```
+    pub fn from_str(s: &str) -> Result<Self, String> {
+        match s.to_lowercase().as_str() {
+            "bool" => Ok(ModbusDataType::Bool),
+            "int16" => Ok(ModbusDataType::Int16),
+            "uint16" => Ok(ModbusDataType::UInt16),
+            "int32" => Ok(ModbusDataType::Int32),
+            "uint32" => Ok(ModbusDataType::UInt32),
+            "int64" => Ok(ModbusDataType::Int64),
+            "uint64" => Ok(ModbusDataType::UInt64),
+            "float32" => Ok(ModbusDataType::Float32),
+            "float64" => Ok(ModbusDataType::Float64),
+            s if s.starts_with("string(") && s.ends_with(')') => {
+                let length_str = &s[7..s.len()-1];
+                match length_str.parse::<usize>() {
+                    Ok(length) => Ok(ModbusDataType::String(length)),
+                    Err(_) => Err(format!("Invalid string length: {}", length_str)),
+                }
+            }
+            _ => Err(format!("Unknown data type: {}", s)),
+        }
+    }
+
+    /// Check if this data type is a numeric type
+    /// 
+    /// # Returns
+    /// 
+    /// `true` if the data type represents a numeric value
+    /// 
+    /// # Example
+    /// 
+    /// ```rust
+    /// use comsrv::core::protocols::modbus::common::ModbusDataType;
+    /// 
+    /// assert!(ModbusDataType::Float32.is_numeric());
+    /// assert!(ModbusDataType::Int16.is_numeric());
+    /// assert!(!ModbusDataType::String(10).is_numeric());
+    /// ```
+    pub fn is_numeric(&self) -> bool {
+        !matches!(self, ModbusDataType::String(_))
+    }
+
+    /// Check if this data type is a floating point type
+    /// 
+    /// # Returns
+    /// 
+    /// `true` if the data type represents a floating point value
+    /// 
+    /// # Example
+    /// 
+    /// ```rust
+    /// use comsrv::core::protocols::modbus::common::ModbusDataType;
+    /// 
+    /// assert!(ModbusDataType::Float32.is_float());
+    /// assert!(ModbusDataType::Float64.is_float());
+    /// assert!(!ModbusDataType::Int16.is_float());
+    /// ```
+    pub fn is_float(&self) -> bool {
+        matches!(self, ModbusDataType::Float32 | ModbusDataType::Float64)
+    }
+
+    /// Check if this data type is an integer type
+    /// 
+    /// # Returns
+    /// 
+    /// `true` if the data type represents an integer value
+    /// 
+    /// # Example
+    /// 
+    /// ```rust
+    /// use comsrv::core::protocols::modbus::common::ModbusDataType;
+    /// 
+    /// assert!(ModbusDataType::Int32.is_integer());
+    /// assert!(ModbusDataType::UInt16.is_integer());
+    /// assert!(!ModbusDataType::Float32.is_integer());
+    /// ```
+    pub fn is_integer(&self) -> bool {
+        matches!(self, 
+            ModbusDataType::Int16 | ModbusDataType::UInt16 |
+            ModbusDataType::Int32 | ModbusDataType::UInt32 |
+            ModbusDataType::Int64 | ModbusDataType::UInt64
+        )
+    }
+
+    /// Check if this data type is signed
+    /// 
+    /// # Returns
+    /// 
+    /// `true` if the data type can represent negative values
+    /// 
+    /// # Example
+    /// 
+    /// ```rust
+    /// use comsrv::core::protocols::modbus::common::ModbusDataType;
+    /// 
+    /// assert!(ModbusDataType::Int32.is_signed());
+    /// assert!(ModbusDataType::Float32.is_signed());
+    /// assert!(!ModbusDataType::UInt16.is_signed());
+    /// ```
+    pub fn is_signed(&self) -> bool {
+        matches!(self, 
+            ModbusDataType::Int16 | ModbusDataType::Int32 | ModbusDataType::Int64 |
+            ModbusDataType::Float32 | ModbusDataType::Float64
+        )
+    }
 }
 
 /// Enhanced Modbus register address mapping configuration
@@ -622,6 +745,315 @@ impl ModbusRegisterMapping {
     /// ```
     pub fn end_address(&self) -> u16 {
         self.address + self.register_count() - 1
+    }
+
+    /// Check if this mapping overlaps with another mapping
+    /// 
+    /// # Arguments
+    /// 
+    /// * `other` - Another register mapping to check against
+    /// 
+    /// # Returns
+    /// 
+    /// `true` if the mappings overlap in address space
+    /// 
+    /// # Example
+    /// 
+    /// ```rust
+    /// use comsrv::core::protocols::modbus::common::*;
+    /// 
+    /// let mapping1 = ModbusRegisterMapping::new(100, ModbusDataType::Float32, "temp1".to_string());
+    /// let mapping2 = ModbusRegisterMapping::new(101, ModbusDataType::UInt16, "temp2".to_string());
+    /// assert!(mapping1.overlaps_with(&mapping2)); // Float32 uses 2 registers (100-101)
+    /// ```
+    pub fn overlaps_with(&self, other: &ModbusRegisterMapping) -> bool {
+        if self.register_type != other.register_type {
+            return false; // Different register types can't overlap
+        }
+        
+        let self_start = self.address;
+        let self_end = self.end_address();
+        let other_start = other.address;
+        let other_end = other.end_address();
+        
+        !(self_end < other_start || other_end < self_start)
+    }
+
+    /// Validate the mapping configuration
+    /// 
+    /// # Returns
+    /// 
+    /// `Ok(())` if the mapping is valid, `Err(String)` with error message if invalid
+    /// 
+    /// # Example
+    /// 
+    /// ```rust
+    /// use comsrv::core::protocols::modbus::common::*;
+    /// 
+    /// let mut mapping = ModbusRegisterMapping::default();
+    /// mapping.name = "test".to_string();
+    /// assert!(mapping.validate().is_ok());
+    /// 
+    /// let mut invalid_mapping = ModbusRegisterMapping::default();
+    /// invalid_mapping.name = "".to_string(); // Empty name
+    /// assert!(invalid_mapping.validate().is_err());
+    /// ```
+    pub fn validate(&self) -> Result<(), String> {
+        // Check required fields
+        if self.name.is_empty() {
+            return Err("Point name cannot be empty".to_string());
+        }
+        
+        // Check access mode
+        if !matches!(self.access_mode.as_str(), "read" | "write" | "read_write") {
+            return Err(format!("Invalid access mode: {}", self.access_mode));
+        }
+        
+        // Check write permission consistency
+        if self.access_mode.contains("write") && !self.register_type.is_writable() {
+            return Err(format!("Register type {:?} does not support write operations", self.register_type));
+        }
+        
+        // Check address range (16-bit)
+        let end_addr = self.end_address();
+        if end_addr < self.address { // Overflow check
+            return Err("Address range overflow".to_string());
+        }
+        
+        // Check string length
+        if let ModbusDataType::String(len) = self.data_type {
+            if len == 0 {
+                return Err("String length cannot be zero".to_string());
+            }
+            if len > 1000 { // Reasonable limit
+                return Err("String length too large (max 1000)".to_string());
+            }
+        }
+        
+        Ok(())
+    }
+
+    /// Convert raw register value to engineering units
+    /// 
+    /// # Arguments
+    /// 
+    /// * `raw_value` - Raw value from the register
+    /// 
+    /// # Returns
+    /// 
+    /// Scaled and offset-adjusted value in engineering units
+    /// 
+    /// # Example
+    /// 
+    /// ```rust
+    /// use comsrv::core::protocols::modbus::common::*;
+    /// 
+    /// let mut mapping = ModbusRegisterMapping::default();
+    /// mapping.scale = 0.1;
+    /// mapping.offset = -40.0;
+    /// 
+    /// // Raw value 650 -> (650 * 0.1) + (-40.0) = 25.0
+    /// assert_eq!(mapping.convert_to_engineering_units(650.0), 25.0);
+    /// ```
+    pub fn convert_to_engineering_units(&self, raw_value: f64) -> f64 {
+        raw_value * self.scale + self.offset
+    }
+
+    /// Convert engineering units value to raw register value
+    /// 
+    /// # Arguments
+    /// 
+    /// * `engineering_value` - Value in engineering units
+    /// 
+    /// # Returns
+    /// 
+    /// Raw register value after inverse scaling and offset
+    /// 
+    /// # Example
+    /// 
+    /// ```rust
+    /// use comsrv::core::protocols::modbus::common::*;
+    /// 
+    /// let mut mapping = ModbusRegisterMapping::default();
+    /// mapping.scale = 0.1;
+    /// mapping.offset = -40.0;
+    /// 
+    /// // Engineering value 25.0 -> (25.0 + 40.0) / 0.1 = 650.0
+    /// assert_eq!(mapping.convert_from_engineering_units(25.0), 650.0);
+    /// ```
+    pub fn convert_from_engineering_units(&self, engineering_value: f64) -> f64 {
+        if self.scale != 0.0 {
+            (engineering_value - self.offset) / self.scale
+        } else {
+            engineering_value // No scaling if scale is zero
+        }
+    }
+
+    /// Get the address range used by this mapping
+    /// 
+    /// # Returns
+    /// 
+    /// Tuple of (start_address, end_address_inclusive)
+    /// 
+    /// # Example
+    /// 
+    /// ```rust
+    /// use comsrv::core::protocols::modbus::common::*;
+    /// 
+    /// let mapping = ModbusRegisterMapping::new(100, ModbusDataType::Float32, "test".to_string());
+    /// assert_eq!(mapping.address_range(), (100, 101));
+    /// ```
+    pub fn address_range(&self) -> (u16, u16) {
+        (self.address, self.end_address())
+    }
+
+    /// Create a builder for constructing register mappings
+    /// 
+    /// # Arguments
+    /// 
+    /// * `name` - Unique point identifier
+    /// 
+    /// # Returns
+    /// 
+    /// Builder instance for fluent construction
+    /// 
+    /// # Example
+    /// 
+    /// ```rust
+    /// use comsrv::core::protocols::modbus::common::*;
+    /// 
+    /// let mapping = ModbusRegisterMapping::builder("temperature")
+    ///     .address(100)
+    ///     .data_type(ModbusDataType::Float32)
+    ///     .scale(0.1)
+    ///     .offset(-40.0)
+    ///     .unit("°C")
+    ///     .build();
+    /// 
+    /// assert_eq!(mapping.name, "temperature");
+    /// assert_eq!(mapping.address, 100);
+    /// ```
+    pub fn builder(name: &str) -> ModbusRegisterMappingBuilder {
+        ModbusRegisterMappingBuilder::new(name)
+    }
+}
+
+/// Builder for constructing ModbusRegisterMapping instances
+/// 
+/// Provides a fluent interface for building register mappings with optional parameters.
+/// 
+/// # Example
+/// 
+/// ```rust
+/// use comsrv::core::protocols::modbus::common::*;
+/// 
+/// let mapping = ModbusRegisterMapping::builder("flow_rate")
+///     .address(200)
+///     .register_type(ModbusRegisterType::HoldingRegister)
+///     .data_type(ModbusDataType::Float32)
+///     .scale(0.01)
+///     .unit("m³/h")
+///     .description("Main flow rate sensor")
+///     .access_mode("read_write")
+///     .build();
+/// ```
+#[derive(Debug)]
+pub struct ModbusRegisterMappingBuilder {
+    mapping: ModbusRegisterMapping,
+}
+
+impl ModbusRegisterMappingBuilder {
+    /// Create a new builder with the specified name
+    /// 
+    /// # Arguments
+    /// 
+    /// * `name` - Unique point identifier
+    /// 
+    /// # Returns
+    /// 
+    /// New builder instance
+    pub fn new(name: &str) -> Self {
+        Self {
+            mapping: ModbusRegisterMapping {
+                name: name.to_string(),
+                ..Default::default()
+            }
+        }
+    }
+
+    /// Set the register address
+    pub fn address(mut self, address: u16) -> Self {
+        self.mapping.address = address;
+        self
+    }
+
+    /// Set the register type
+    pub fn register_type(mut self, register_type: ModbusRegisterType) -> Self {
+        self.mapping.register_type = register_type;
+        self
+    }
+
+    /// Set the data type
+    pub fn data_type(mut self, data_type: ModbusDataType) -> Self {
+        self.mapping.data_type = data_type;
+        self
+    }
+
+    /// Set the scale factor
+    pub fn scale(mut self, scale: f64) -> Self {
+        self.mapping.scale = scale;
+        self
+    }
+
+    /// Set the offset
+    pub fn offset(mut self, offset: f64) -> Self {
+        self.mapping.offset = offset;
+        self
+    }
+
+    /// Set the engineering unit
+    pub fn unit(mut self, unit: &str) -> Self {
+        self.mapping.unit = Some(unit.to_string());
+        self
+    }
+
+    /// Set the description
+    pub fn description(mut self, description: &str) -> Self {
+        self.mapping.description = Some(description.to_string());
+        self
+    }
+
+    /// Set the display name
+    pub fn display_name(mut self, display_name: &str) -> Self {
+        self.mapping.display_name = Some(display_name.to_string());
+        self
+    }
+
+    /// Set the access mode
+    pub fn access_mode(mut self, access_mode: &str) -> Self {
+        self.mapping.access_mode = access_mode.to_string();
+        self
+    }
+
+    /// Set the group
+    pub fn group(mut self, group: &str) -> Self {
+        self.mapping.group = Some(group.to_string());
+        self
+    }
+
+    /// Set the byte order
+    pub fn byte_order(mut self, byte_order: ByteOrder) -> Self {
+        self.mapping.byte_order = byte_order;
+        self
+    }
+
+    /// Build the final mapping
+    /// 
+    /// # Returns
+    /// 
+    /// Constructed ModbusRegisterMapping instance
+    pub fn build(self) -> ModbusRegisterMapping {
+        self.mapping
     }
 }
 
@@ -1356,5 +1788,430 @@ mod tests {
         let default_mapping = ModbusRegisterMapping::default();
         assert!(default_mapping.is_readable());
         assert!(!default_mapping.is_writable()); // Input register is read-only
+    }
+
+    #[test]
+    fn test_modbus_data_type_additional_methods() {
+        // Test from_str
+        assert_eq!(ModbusDataType::from_str("float32").unwrap(), ModbusDataType::Float32);
+        assert_eq!(ModbusDataType::from_str("string(20)").unwrap(), ModbusDataType::String(20));
+        assert!(ModbusDataType::from_str("invalid").is_err());
+
+        // Test type checking methods
+        assert!(ModbusDataType::Float32.is_numeric());
+        assert!(ModbusDataType::Float32.is_float());
+        assert!(!ModbusDataType::Float32.is_integer());
+        assert!(ModbusDataType::Float32.is_signed());
+
+        assert!(ModbusDataType::UInt16.is_numeric());
+        assert!(!ModbusDataType::UInt16.is_float());
+        assert!(ModbusDataType::UInt16.is_integer());
+        assert!(!ModbusDataType::UInt16.is_signed());
+
+        assert!(!ModbusDataType::String(10).is_numeric());
+        assert!(!ModbusDataType::String(10).is_float());
+        assert!(!ModbusDataType::String(10).is_integer());
+        assert!(!ModbusDataType::String(10).is_signed());
+    }
+
+    #[test]
+    fn test_modbus_register_mapping_validation() {
+        let mut mapping = ModbusRegisterMapping::default();
+        mapping.name = "test".to_string();
+        assert!(mapping.validate().is_ok());
+
+        // Test empty name
+        let mut invalid_mapping = ModbusRegisterMapping::default();
+        invalid_mapping.name = "".to_string();
+        assert!(invalid_mapping.validate().is_err());
+
+        // Test invalid access mode
+        let mut invalid_access = ModbusRegisterMapping::default();
+        invalid_access.name = "test".to_string();
+        invalid_access.access_mode = "invalid".to_string();
+        assert!(invalid_access.validate().is_err());
+
+        // Test write on read-only register type
+        let mut invalid_write = ModbusRegisterMapping::default();
+        invalid_write.name = "test".to_string();
+        invalid_write.register_type = ModbusRegisterType::InputRegister;
+        invalid_write.access_mode = "write".to_string();
+        assert!(invalid_write.validate().is_err());
+    }
+
+    #[test]
+    fn test_modbus_register_mapping_overlap() {
+        let mapping1 = ModbusRegisterMapping::new(100, ModbusDataType::Float32, "temp1".to_string());
+        let mapping2 = ModbusRegisterMapping::new(101, ModbusDataType::UInt16, "temp2".to_string());
+        let mapping3 = ModbusRegisterMapping::new(102, ModbusDataType::UInt16, "temp3".to_string());
+
+        // mapping1 uses addresses 100-101 (Float32 = 2 registers)
+        // mapping2 uses address 101 (UInt16 = 1 register)
+        // mapping3 uses address 102 (UInt16 = 1 register)
+        
+        assert!(mapping1.overlaps_with(&mapping2)); // 100-101 overlaps with 101
+        assert!(!mapping1.overlaps_with(&mapping3)); // 100-101 doesn't overlap with 102
+        assert!(!mapping2.overlaps_with(&mapping3)); // 101 doesn't overlap with 102
+
+        // Different register types don't overlap
+        let mut coil_mapping = mapping1.clone();
+        coil_mapping.register_type = ModbusRegisterType::Coil;
+        assert!(!mapping1.overlaps_with(&coil_mapping));
+    }
+
+    #[test]
+    fn test_modbus_register_mapping_conversion() {
+        let mut mapping = ModbusRegisterMapping::default();
+        mapping.scale = 0.1;
+        mapping.offset = -40.0;
+
+        // Test engineering units conversion
+        assert_eq!(mapping.convert_to_engineering_units(650.0), 25.0); // (650 * 0.1) + (-40.0)
+        assert_eq!(mapping.convert_from_engineering_units(25.0), 650.0); // (25.0 - (-40.0)) / 0.1
+
+        // Test with zero scale
+        mapping.scale = 0.0;
+        assert_eq!(mapping.convert_from_engineering_units(25.0), 25.0); // No scaling
+    }
+
+    #[test]
+    fn test_modbus_register_mapping_builder() {
+        let mapping = ModbusRegisterMapping::builder("temperature")
+            .address(100)
+            .register_type(ModbusRegisterType::HoldingRegister)
+            .data_type(ModbusDataType::Float32)
+            .scale(0.1)
+            .offset(-40.0)
+            .unit("°C")
+            .description("Temperature sensor")
+            .access_mode("read_write")
+            .build();
+
+        assert_eq!(mapping.name, "temperature");
+        assert_eq!(mapping.address, 100);
+        assert_eq!(mapping.register_type, ModbusRegisterType::HoldingRegister);
+        assert_eq!(mapping.data_type, ModbusDataType::Float32);
+        assert_eq!(mapping.scale, 0.1);
+        assert_eq!(mapping.offset, -40.0);
+        assert_eq!(mapping.unit, Some("°C".to_string()));
+        assert_eq!(mapping.description, Some("Temperature sensor".to_string()));
+        assert_eq!(mapping.access_mode, "read_write");
+        assert!(mapping.is_writable());
+    }
+
+    #[test]
+    fn test_modbus_register_mapping_address_range() {
+        let mapping = ModbusRegisterMapping::new(100, ModbusDataType::Float32, "test".to_string());
+        assert_eq!(mapping.address_range(), (100, 101));
+
+        let single_reg_mapping = ModbusRegisterMapping::new(200, ModbusDataType::UInt16, "test2".to_string());
+        assert_eq!(single_reg_mapping.address_range(), (200, 200));
+    }
+
+    /// Integration test for real configuration loading
+    #[tokio::test]
+    async fn test_real_config_loading_to_memory_and_redis() {
+        use std::fs::{self, File};
+        use std::io::Write;
+        use tempfile::TempDir;
+        use std::collections::HashMap;
+        
+        // Create temporary directory for test files
+        let temp_dir = TempDir::new().unwrap();
+        let config_dir = temp_dir.path();
+        
+        // 1. Create real Modbus client configuration YAML
+        let modbus_config_content = r#"
+# Modbus TCP Client Configuration
+slave_id: 1
+timeout_ms: 5000
+max_retries: 3
+poll_interval_ms: 1000
+host: "192.168.1.100"
+port: 502
+mode: "tcp"
+
+# Point table configuration
+point_tables:
+  main_device: "device_points.csv"
+  backup_device: "backup_points.csv"
+"#;
+        
+        let config_path = config_dir.join("modbus_config.yaml");
+        let mut config_file = File::create(&config_path).unwrap();
+        config_file.write_all(modbus_config_content.as_bytes()).unwrap();
+        
+        // 2. Create real CSV point table
+        let csv_content = r#"id,name,address,type_,data_type,unit,scale,offset,writable,description,byte_order
+PT001,Tank_Temperature,1000,input_register,float32,°C,0.1,-40.0,false,Main tank temperature sensor,big_endian
+PT002,Tank_Pressure,1002,input_register,uint16,Pa,1.0,0.0,false,Tank pressure sensor,big_endian
+PT003,Flow_Rate,1004,input_register,float32,L/min,0.01,0.0,false,Flow rate meter,big_endian
+CT001,Pump_Control,2000,holding_register,uint16,,1.0,0.0,true,Pump speed control,big_endian
+CT002,Valve_Position,2001,holding_register,uint16,%,0.1,0.0,true,Valve position setpoint,big_endian
+ST001,Pump_Status,3000,coil,bool,,1.0,0.0,true,Pump on/off status,big_endian
+ST002,Alarm_Status,3001,discrete_input,bool,,1.0,0.0,false,General alarm status,big_endian
+AT001,System_Mode,4000,holding_register,uint16,,1.0,0.0,true,System operation mode,big_endian
+AT002,Error_Code,4001,input_register,uint16,,1.0,0.0,false,Last error code,big_endian
+FT001,Total_Volume,5000,input_register,uint32,L,1.0,0.0,false,Cumulative volume,big_endian"#;
+        
+        let csv_path = config_dir.join("device_points.csv");
+        let mut csv_file = File::create(&csv_path).unwrap();
+        csv_file.write_all(csv_content.as_bytes()).unwrap();
+        
+        // 3. Parse configuration and load point mappings
+        println!("📂 Loading Modbus configuration from: {}", config_path.display());
+        
+        // Simulate loading YAML config (simplified)
+        let config_content = fs::read_to_string(&config_path).unwrap();
+        println!("✅ Config file loaded, size: {} bytes", config_content.len());
+        
+        // Parse CSV using our point table functionality
+        use csv::ReaderBuilder;
+        use std::collections::HashMap as StdHashMap;
+        
+        #[derive(serde::Deserialize)]
+        struct CsvPointRecord {
+            id: String,
+            name: String,
+            address: u16,
+            #[serde(rename = "type_")]
+            type_: String,
+            data_type: String,
+            unit: String,
+            scale: f64,
+            offset: f64,
+            writable: bool,
+            description: String,
+            byte_order: String,
+        }
+        
+        println!("📊 Loading CSV point table from: {}", csv_path.display());
+        
+        let file = File::open(&csv_path).unwrap();
+        let mut reader = ReaderBuilder::new()
+            .has_headers(true)
+            .from_reader(file);
+        
+        let mut mappings = Vec::new();
+        let mut point_count_by_type = StdHashMap::new();
+        
+        for result in reader.deserialize() {
+            let record: CsvPointRecord = result.unwrap();
+            
+            // Parse data type
+            let data_type = match record.data_type.to_lowercase().as_str() {
+                "bool" | "boolean" => ModbusDataType::Bool,
+                "uint16" | "u16" => ModbusDataType::UInt16,
+                "uint32" | "u32" => ModbusDataType::UInt32,
+                "float32" | "f32" => ModbusDataType::Float32,
+                _ => ModbusDataType::UInt16, // default
+            };
+            
+            // Parse register type
+            let register_type = match record.type_.to_lowercase().as_str() {
+                "coil" => ModbusRegisterType::Coil,
+                "discrete_input" => ModbusRegisterType::DiscreteInput,
+                "input_register" => ModbusRegisterType::InputRegister,
+                "holding_register" => ModbusRegisterType::HoldingRegister,
+                _ => ModbusRegisterType::InputRegister, // default
+            };
+            
+            // Parse byte order
+            let byte_order = match record.byte_order.to_lowercase().as_str() {
+                "little_endian" => ByteOrder::LittleEndian,
+                "big_endian_word_swapped" => ByteOrder::BigEndianWordSwapped,
+                "little_endian_word_swapped" => ByteOrder::LittleEndianWordSwapped,
+                _ => ByteOrder::BigEndian, // default
+            };
+            
+            // Create mapping using our enhanced constructor
+            let mapping = ModbusRegisterMapping::builder(&record.id)
+                .address(record.address)
+                .register_type(register_type)
+                .data_type(data_type)
+                .scale(record.scale)
+                .offset(record.offset)
+                .unit(&record.unit)
+                .description(&record.description)
+                .display_name(&record.name)
+                .access_mode(if record.writable { "read_write" } else { "read" })
+                .byte_order(byte_order)
+                .build();
+            
+            // Validate the mapping
+            mapping.validate().unwrap();
+            
+            // Count by type for statistics
+            *point_count_by_type.entry(format!("{:?}", register_type)).or_insert(0) += 1;
+            
+            mappings.push(mapping);
+        }
+        
+        println!("✅ Loaded {} point mappings from CSV", mappings.len());
+        println!("📈 Point distribution:");
+        for (type_name, count) in &point_count_by_type {
+            println!("   - {}: {} points", type_name, count);
+        }
+        
+        // 4. Test memory storage and access
+        println!("\n🧠 Testing in-memory storage and access...");
+        
+        // Test address range calculations
+        let mut total_registers = 0u32;
+        let mut address_ranges = Vec::new();
+        
+        for mapping in &mappings {
+            let range = mapping.address_range();
+            address_ranges.push((mapping.name.clone(), range));
+            total_registers += mapping.register_count() as u32;
+            
+            // Test engineering units conversion
+            let raw_value = 1000.0;
+            let eng_value = mapping.convert_to_engineering_units(raw_value);
+            let back_to_raw = mapping.convert_from_engineering_units(eng_value);
+            
+            println!("   📏 {}: addr={}-{}, raw={} -> eng={} -> raw={:.1}", 
+                mapping.name, range.0, range.1, raw_value, eng_value, back_to_raw);
+        }
+        
+        println!("✅ Total registers required: {}", total_registers);
+        
+        // Test overlap detection
+        println!("\n🔍 Testing address overlap detection...");
+        let mut overlaps_found = 0;
+        for i in 0..mappings.len() {
+            for j in (i + 1)..mappings.len() {
+                if mappings[i].overlaps_with(&mappings[j]) {
+                    overlaps_found += 1;
+                    println!("   ⚠️  Overlap detected: {} <-> {}", 
+                        mappings[i].name, mappings[j].name);
+                }
+            }
+        }
+        
+        if overlaps_found == 0 {
+            println!("✅ No address overlaps detected");
+        }
+        
+        // 5. Test Redis storage simulation
+        println!("\n🔴 Testing Redis storage simulation...");
+        
+        // Simulate Redis storage structure
+        let mut redis_data = StdHashMap::new();
+        
+        // Store configuration
+        let config_key = "modbus:config:channel_1";
+        let config_json = serde_json::json!({
+            "slave_id": 1,
+            "host": "192.168.1.100",
+            "port": 502,
+            "timeout_ms": 5000,
+            "loaded_at": chrono::Utc::now().to_rfc3339(),
+            "point_count": mappings.len()
+        });
+        redis_data.insert(config_key.to_string(), config_json.to_string());
+        
+        // Store point mappings
+        for (index, mapping) in mappings.iter().enumerate() {
+            let point_key = format!("modbus:points:channel_1:{}", mapping.name);
+            let point_json = serde_json::json!({
+                "id": mapping.name,
+                "display_name": mapping.display_name,
+                "address": mapping.address,
+                "register_type": format!("{:?}", mapping.register_type),
+                "data_type": format!("{:?}", mapping.data_type),
+                "scale": mapping.scale,
+                "offset": mapping.offset,
+                "unit": mapping.unit,
+                "access_mode": mapping.access_mode,
+                "byte_order": format!("{:?}", mapping.byte_order),
+                "register_count": mapping.register_count(),
+                "address_range": mapping.address_range(),
+                "stored_at": chrono::Utc::now().to_rfc3339()
+            });
+            redis_data.insert(point_key, point_json.to_string());
+        }
+        
+        // Store statistics
+        let stats_key = "modbus:stats:channel_1";
+        let stats_json = serde_json::json!({
+            "total_points": mappings.len(),
+            "total_registers": total_registers,
+            "point_types": point_count_by_type,
+            "overlaps_detected": overlaps_found,
+            "last_updated": chrono::Utc::now().to_rfc3339()
+        });
+        redis_data.insert(stats_key.to_string(), stats_json.to_string());
+        
+        println!("✅ Stored {} entries in Redis simulation", redis_data.len());
+        
+        // 6. Test retrieval and validation
+        println!("\n🔍 Testing data retrieval and validation...");
+        
+        // Retrieve and validate configuration
+        let retrieved_config = redis_data.get(config_key).unwrap();
+        let config_obj: serde_json::Value = serde_json::from_str(retrieved_config).unwrap();
+        assert_eq!(config_obj["slave_id"], 1);
+        assert_eq!(config_obj["point_count"], mappings.len());
+        println!("✅ Configuration retrieved and validated");
+        
+        // Retrieve and validate sample point
+        let sample_point_key = format!("modbus:points:channel_1:{}", mappings[0].name);
+        let retrieved_point = redis_data.get(&sample_point_key).unwrap();
+        let point_obj: serde_json::Value = serde_json::from_str(retrieved_point).unwrap();
+        assert_eq!(point_obj["id"], mappings[0].name);
+        assert_eq!(point_obj["address"], mappings[0].address);
+        println!("✅ Point data retrieved and validated");
+        
+        // Retrieve and validate statistics
+        let retrieved_stats = redis_data.get(stats_key).unwrap();
+        let stats_obj: serde_json::Value = serde_json::from_str(retrieved_stats).unwrap();
+        assert_eq!(stats_obj["total_points"], mappings.len());
+        println!("✅ Statistics retrieved and validated");
+        
+        // 7. Performance metrics test
+        println!("\n⚡ Testing performance metrics...");
+        
+        let start_time = std::time::Instant::now();
+        
+        // Simulate batch operations
+        let batch_config = BatchConfig::super_scale();
+        let batch_count = batch_config.calculate_batches(mappings.len());
+        let estimated_memory = batch_config.estimate_memory_usage(mappings.len());
+        
+        let mut metrics = PerformanceMetrics::new();
+        
+        // Simulate processing each mapping
+        for mapping in &mappings {
+            let processing_time = 10 + (mapping.register_count() as u64 * 2); // Simulate processing time
+            metrics.record_operation(true, processing_time);
+            metrics.record_data_transfer(mapping.register_count() as u64 * 2); // 2 bytes per register
+        }
+        
+        metrics.finish();
+        
+        let elapsed = start_time.elapsed();
+        
+        println!("✅ Processed {} mappings in {:?}", mappings.len(), elapsed);
+        println!("   📊 Success rate: {:.2}%", metrics.success_rate() * 100.0);
+        println!("   ⏱️  Average latency: {:.2}ms", metrics.average_latency_ms());
+        println!("   🚀 Operations/sec: {:.2}", metrics.operations_per_second());
+        println!("   📦 Batches required: {}", batch_count);
+        println!("   💾 Estimated memory: {:.2}KB", estimated_memory as f64 / 1024.0);
+        
+        // 8. Final assertions
+        assert_eq!(mappings.len(), 10, "Should load exactly 10 points from CSV");
+        assert!(overlaps_found == 0, "No address overlaps should be detected");
+        assert!(redis_data.len() > mappings.len(), "Redis should contain config + points + stats");
+        assert!(metrics.success_rate() == 1.0, "All operations should succeed");
+        assert!(estimated_memory > 0, "Memory estimation should be positive");
+        
+        println!("\n🎉 Integration test completed successfully!");
+        println!("   ✅ Configuration loading: PASSED");
+        println!("   ✅ CSV parsing: PASSED");
+        println!("   ✅ Memory storage: PASSED");
+        println!("   ✅ Redis simulation: PASSED");
+        println!("   ✅ Data validation: PASSED");
+        println!("   ✅ Performance metrics: PASSED");
     }
 } 

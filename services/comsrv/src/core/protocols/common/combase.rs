@@ -90,10 +90,12 @@ use std::collections::HashMap;
 use serde_json;
 use tokio::time::interval;
 use serde::{Serialize, Deserialize};
-use tracing::{info, warn, error, debug};
+use tracing::{info, warn, error, debug, trace};
+use log::{info as log_info, warn as log_warn, error as log_error, debug as log_debug};
 
 use crate::core::config::config_manager::ChannelConfig;
 use crate::utils::error::{ComSrvError, Result};
+use crate::core::storage::redis_storage::{RemoteCommand, CommandResult, CommandType};
 
 /// Channel operational status and health information
 /// 
@@ -317,6 +319,367 @@ pub struct PollingStats {
     pub last_polling_error: Option<String>,
     /// Communication quality percentage (0-100)
     pub communication_quality: f64,
+}
+
+/// Point value type enumeration for four-telemetry operations
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum PointValueType {
+    /// Analog measurements
+    Analog(f64),
+    /// Digital status
+    Digital(bool),
+}
+
+/// Point operation type for remote control
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum RemoteOperationType {
+    /// Digital control
+    Control { value: bool },
+    /// Analog regulation
+    Regulation { value: f64 },
+}
+
+/// Command execution request
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RemoteOperationRequest {
+    /// Operation ID
+    pub operation_id: String,
+    /// Point name
+    pub point_name: String,
+    /// Operation type
+    pub operation_type: RemoteOperationType,
+    /// Operator information
+    pub operator: Option<String>,
+    /// Operation description
+    pub description: Option<String>,
+    /// Request timestamp
+    pub timestamp: DateTime<Utc>,
+}
+
+/// Command execution response
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RemoteOperationResponse {
+    /// Operation ID (corresponds to request ID)
+    pub operation_id: String,
+    /// Execution success
+    pub success: bool,
+    /// Error message (if any)
+    pub error_message: Option<String>,
+    /// Actual value after execution
+    pub actual_value: Option<PointValueType>,
+    /// Execution completion timestamp
+    pub execution_time: DateTime<Utc>,
+}
+
+
+/// Define the standard four-telemetry interface for SCADA systems
+#[async_trait]
+pub trait FourTelemetryOperations: Send + Sync {
+    /// Remote Measurement - Read analog measurement values from remote devices
+    /// Read analog measurement values from remote devices
+    /// 
+    /// # Arguments
+    /// * `point_names` - List of point names to read
+    /// 
+    /// # Returns
+    /// * `Ok(Vec<(String, PointValueType)>)` - Successfully read values with point names
+    /// * `Err(ComSrvError)` - Read operation failed
+    async fn remote_measurement(&self, point_names: &[String]) -> Result<Vec<(String, PointValueType)>>;
+    
+    /// Read digital status values from remote devices
+    /// 
+    /// # Arguments
+    /// * `point_names` - List of point names to read
+    /// 
+    /// # Returns
+    /// * `Ok(Vec<(String, PointValueType)>)` - Successfully read values with point names
+    /// * `Err(ComSrvError)` - Read operation failed
+    async fn remote_signaling(&self, point_names: &[String]) -> Result<Vec<(String, PointValueType)>>;
+    
+    /// Execute digital control operations on remote devices
+    /// 
+    /// # Arguments
+    /// * `request` - Remote control operation request
+    /// 
+    /// # Returns
+    /// * `Ok(RemoteOperationResponse)` - Control operation result
+    /// * `Err(ComSrvError)` - Control operation failed
+    async fn remote_control(&self, request: RemoteOperationRequest) -> Result<RemoteOperationResponse>;
+    
+    /// Execute analog regulation operations on remote devices
+    /// 
+    /// # Arguments
+    /// * `request` - Remote regulation operation request
+    /// 
+    /// # Returns
+    /// * `Ok(RemoteOperationResponse)` - Regulation operation result
+    /// * `Err(ComSrvError)` - Regulation operation failed
+    async fn remote_regulation(&self, request: RemoteOperationRequest) -> Result<RemoteOperationResponse>;
+    
+
+    /// Get all available remote control points
+    async fn get_control_points(&self) -> Vec<String>;
+    
+    /// Get all available remote regulation points
+    async fn get_regulation_points(&self) -> Vec<String>;
+    
+    /// Get all available measurement points
+    async fn get_measurement_points(&self) -> Vec<String>;
+    
+    /// Get all available signaling points  
+    async fn get_signaling_points(&self) -> Vec<String>;
+}
+
+/// Universal Redis Command Manager
+/// Universal Redis command manager for handling four-telemetry commands across all protocols
+#[derive(Clone)]
+pub struct UniversalCommandManager {
+    /// Redis store for command handling
+    redis_store: Option<crate::core::storage::redis_storage::RedisStore>,
+    /// Channel ID for this communication instance
+    channel_id: String,
+    /// Command listener task handle
+    command_listener_handle: Arc<RwLock<Option<tokio::task::JoinHandle<()>>>>,
+    /// Running state
+    is_running: Arc<RwLock<bool>>,
+}
+
+impl UniversalCommandManager {
+    /// Create a new command manager
+    pub fn new(channel_id: String) -> Self {
+        Self {
+            redis_store: None,
+            channel_id,
+            command_listener_handle: Arc::new(RwLock::new(None)),
+            is_running: Arc::new(RwLock::new(false)),
+        }
+    }
+
+    /// Initialize with Redis store
+    pub fn with_redis_store(mut self, redis_store: crate::core::storage::redis_storage::RedisStore) -> Self {
+        self.redis_store = Some(redis_store);
+        self
+    }
+
+    /// Start command listener
+    pub async fn start<T>(&self, four_telemetry_impl: Arc<T>) -> Result<()> 
+    where 
+        T: FourTelemetryOperations + 'static,
+    {
+        if self.redis_store.is_none() {
+            // No Redis integration, skip command listener
+            return Ok(());
+        }
+
+        *self.is_running.write().await = true;
+
+        let redis_store = self.redis_store.as_ref().unwrap().clone();
+        let channel_id = self.channel_id.clone();
+        let is_running = Arc::clone(&self.is_running);
+
+        let handle = tokio::spawn(async move {
+            Self::command_listener_loop(redis_store, four_telemetry_impl, channel_id, is_running).await;
+        });
+
+        *self.command_listener_handle.write().await = Some(handle);
+        info!("Universal command manager started for channel: {}", self.channel_id);
+        Ok(())
+    }
+
+    /// Stop command listener
+    pub async fn stop(&self) -> Result<()> {
+        *self.is_running.write().await = false;
+
+        if let Some(handle) = self.command_listener_handle.write().await.take() {
+            handle.abort();
+        }
+
+        info!("Universal command manager stopped for channel: {}", self.channel_id);
+        Ok(())
+    }
+
+    /// Redis command listener loop
+    async fn command_listener_loop<T>(
+        redis_store: crate::core::storage::redis_storage::RedisStore,
+        four_telemetry_impl: Arc<T>,
+        channel_id: String,
+        is_running: Arc<RwLock<bool>>,
+    ) 
+    where 
+        T: FourTelemetryOperations + 'static,
+    {
+        use futures::StreamExt;
+        
+        info!("Starting Redis command listener for channel: {}", channel_id);
+
+        // Create PubSub connection
+        let mut pubsub = match redis_store.create_pubsub().await {
+            Ok(pubsub) => pubsub,
+            Err(e) => {
+                error!("Failed to create Redis PubSub connection: {}", e);
+                return;
+            }
+        };
+
+        // Subscribe to command channel
+        let command_channel = format!("commands:{}", channel_id);
+        if let Err(e) = pubsub.subscribe(&command_channel).await {
+            error!("Failed to subscribe to command channel {}: {}", command_channel, e);
+            return;
+        }
+
+        info!("Subscribed to Redis command channel: {}", command_channel);
+
+        // Listen for commands
+        while *is_running.read().await {
+            match pubsub.on_message().next().await {
+                Some(msg) => {
+                    let command_id: String = match msg.get_payload() {
+                        Ok(payload) => payload,
+                        Err(e) => {
+                            warn!("Failed to parse command notification payload: {}", e);
+                            continue;
+                        }
+                    };
+
+                    debug!("Received command notification: {}", command_id);
+
+                    // Process command
+                    if let Err(e) = Self::process_redis_command(
+                        &redis_store,
+                        &four_telemetry_impl,
+                        &channel_id,
+                        &command_id,
+                    ).await {
+                        error!("Failed to process command {}: {}", command_id, e);
+                    }
+                }
+                None => {
+                    trace!("No message received from Redis PubSub");
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+                }
+            }
+        }
+
+        debug!("Redis command listener loop stopped");
+    }
+
+    /// Process a Redis command using four-telemetry operations
+    async fn process_redis_command<T>(
+        redis_store: &crate::core::storage::redis_storage::RedisStore,
+        four_telemetry_impl: &Arc<T>,
+        channel_id: &str,
+        command_id: &str,
+    ) -> Result<()>
+    where 
+        T: FourTelemetryOperations + 'static,
+    {
+        use crate::core::storage::redis_storage::{CommandType, CommandResult};
+
+        // Get command from Redis
+        let command = match redis_store.get_command(channel_id, command_id).await? {
+            Some(cmd) => cmd,
+            None => {
+                warn!("Command {} not found in Redis", command_id);
+                return Ok(());
+            }
+        };
+
+        info!("Processing command: {} for point: {} with value: {}", 
+            command_id, command.point_name, command.value);
+
+        // Convert Redis command to four-telemetry request
+        let request = RemoteOperationRequest {
+            operation_id: command.command_id.clone(),
+            point_name: command.point_name.clone(),
+            operation_type: match command.command_type {
+                CommandType::RemoteControl => RemoteOperationType::Control { 
+                    value: command.value != 0.0 
+                },
+                CommandType::RemoteRegulation => RemoteOperationType::Regulation { 
+                    value: command.value 
+                },
+            },
+            operator: None,
+            description: None,
+            timestamp: Utc::now(),
+        };
+
+        // Execute command using four-telemetry interface
+        let response = match command.command_type {
+            CommandType::RemoteControl => {
+                four_telemetry_impl.remote_control(request).await
+            }
+            CommandType::RemoteRegulation => {
+                four_telemetry_impl.remote_regulation(request).await
+            }
+        };
+
+        // Convert four-telemetry response to Redis result
+        let result = match response {
+            Ok(resp) => {
+                info!("Command {} executed successfully", command_id);
+                
+                CommandResult {
+                    command_id: resp.operation_id,
+                    success: resp.success,
+                    error_message: resp.error_message,
+                    execution_time: resp.execution_time.format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string(),
+                    actual_value: resp.actual_value.map(|v| match v {
+                        PointValueType::Analog(val) => val,
+                        PointValueType::Digital(val) => if val { 1.0 } else { 0.0 },
+                    }),
+                }
+            }
+            Err(e) => {
+                error!("Command {} execution failed: {}", command_id, e);
+                
+                CommandResult {
+                    command_id: command.command_id.clone(),
+                    success: false,
+                    error_message: Some(e.to_string()),
+                    execution_time: Utc::now().format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string(),
+                    actual_value: None,
+                }
+            }
+        };
+
+        // Save result to Redis
+        if let Err(e) = redis_store.set_command_result(channel_id, &result).await {
+            warn!("Failed to save command result: {}", e);
+        }
+
+        // Delete processed command
+        if let Err(e) = redis_store.delete_command(channel_id, command_id).await {
+            warn!("Failed to delete processed command: {}", e);
+        }
+
+        Ok(())
+    }
+
+    /// Sync real-time data to Redis
+    pub async fn sync_data_to_redis(&self, data_points: &[PointData]) -> Result<()> {
+        if let Some(ref redis_store) = self.redis_store {
+            for point in data_points {
+                let realtime_value = crate::core::storage::redis_storage::RealtimeValue {
+                    raw: point.value.parse::<f64>().unwrap_or(0.0),
+                    processed: point.value.parse::<f64>().unwrap_or(0.0),
+                    timestamp: point.timestamp.format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string(),
+                };
+
+                let redis_key = format!("realtime:{}:{}", self.channel_id, point.id);
+
+                if let Err(e) = redis_store.set_realtime_value_with_expire(&redis_key, &realtime_value, 3600).await {
+                    warn!("Failed to sync point {} to Redis: {}", point.id, e);
+                } else {
+                    trace!("Successfully synced point {} to Redis", point.id);
+                }
+            }
+            
+            debug!("Synced {} points to Redis for channel {}", data_points.len(), self.channel_id);
+        }
+        Ok(())
+    }
 }
 
 impl Default for PollingStats {
@@ -653,7 +1016,7 @@ pub trait ComBase: Send + Sync + std::fmt::Debug {
     /// ```
     async fn status(&self) -> ChannelStatus;
     
-    /// Check if the channel currently has an error condition
+/// Check if the channel currently has an error condition
     /// 
     /// Convenience method that checks the current status for error conditions.
     /// This provides a quick way to determine if the channel is experiencing
@@ -761,6 +1124,8 @@ pub trait ComBase: Send + Sync + std::fmt::Debug {
         Vec::new() // Default implementation returns an empty vector
     }
 }
+
+
 
 /// Base implementation of the ComBase trait
 /// 
@@ -1121,14 +1486,14 @@ impl ComBaseImpl {
         result
     }
     
-    /// Measure execution time of an asynchronous operation
+    /// Measure execution time of a synchronous operation that returns a Result
     /// 
-    /// Executes the provided async function and measures its execution time.
+    /// Executes the provided function and measures its execution time.
     /// Updates the channel status based on the operation result.
     /// 
     /// # Arguments
     /// 
-    /// * `f` - Async function to execute and measure
+    /// * `f` - Synchronous function to execute and measure
     /// 
     /// # Returns
     /// 
@@ -1142,15 +1507,15 @@ impl ComBaseImpl {
     /// use std::collections::HashMap;
     /// 
     /// # async fn example(service: &ComBaseImpl) -> std::result::Result<String, String> {
-    /// let result = service.measure_execution_async(|| {
-    ///     // Simulate async work
-    ///     async_operation()
+    /// let result = service.measure_result_execution(|| {
+    ///     // Simulate sync work that returns a Result
+    ///     sync_operation()
     /// }).await?;
     /// # Ok(result)
     /// # }
-    /// # fn async_operation() -> std::result::Result<String, String> { Ok("Done".to_string()) }
+    /// # fn sync_operation() -> std::result::Result<String, String> { Ok("Done".to_string()) }
     /// ```
-    pub async fn measure_execution_async<F, T, E>(&self, f: F) -> std::result::Result<T, E>
+    pub async fn measure_result_execution<F, T, E>(&self, f: F) -> std::result::Result<T, E>
     where
         F: FnOnce() -> std::result::Result<T, E> + Send,
         E: ToString,
@@ -1456,6 +1821,8 @@ pub struct UniversalPollingEngine {
     point_reader: Arc<dyn PointReader>,
     /// Data callback for storing read values
     data_callback: Option<Arc<dyn Fn(Vec<PointData>) + Send + Sync>>,
+    /// Task handle for polling task
+    task_handle: Arc<RwLock<Option<tokio::task::JoinHandle<()>>>>,
 }
 
 /// Point Reader Trait
@@ -1514,6 +1881,7 @@ impl UniversalPollingEngine {
             is_running: Arc::new(RwLock::new(false)),
             point_reader,
             data_callback: None,
+            task_handle: Arc::new(RwLock::new(None)),
         }
     }
     
@@ -1558,7 +1926,13 @@ impl PollingEngine for UniversalPollingEngine {
               config.interval_ms, config.max_points_per_cycle);
         
         // Start the polling task
-        self.start_polling_task().await;
+        let handle = self.start_polling_task().await;
+        
+        // Store the task handle for cleanup
+        {
+            let mut task_handle = self.task_handle.write().await;
+            *task_handle = Some(handle);
+        }
         
         Ok(())
     }
@@ -1567,6 +1941,14 @@ impl PollingEngine for UniversalPollingEngine {
         {
             let mut running = self.is_running.write().await;
             *running = false;
+        }
+        
+        // Abort the polling task if it's running
+        {
+            let mut handle = self.task_handle.write().await;
+            if let Some(task) = handle.take() {
+                task.abort();
+            }
         }
         
         info!("Stopped universal polling engine for {} protocol", self.protocol_name);
@@ -1610,7 +1992,7 @@ impl PollingEngine for UniversalPollingEngine {
 
 impl UniversalPollingEngine {
     /// Start the main polling task
-    async fn start_polling_task(&self) {
+    async fn start_polling_task(&self) -> tokio::task::JoinHandle<()> {
         let config = self.config.clone();
         let points = self.points.clone();
         let stats = self.stats.clone();
@@ -1619,7 +2001,7 @@ impl UniversalPollingEngine {
         let data_callback = self.data_callback.clone();
         let protocol_name = self.protocol_name.clone();
         
-        tokio::spawn(async move {
+        return tokio::spawn(async move {
             let mut cycle_counter = 0u64;
 
             let mut current_interval_ms = config.read().await.interval_ms;
@@ -1833,8 +2215,10 @@ impl UniversalPollingEngine {
             (stats_guard.successful_cycles as f64 / stats_guard.total_cycles as f64) * 100.0;
         
         // Update polling rate (approximate)
-        if stats_guard.total_cycles > 1 {
+        if stats_guard.total_cycles > 1 && stats_guard.avg_cycle_time_ms > 0.0 {
             stats_guard.current_polling_rate = 1000.0 / stats_guard.avg_cycle_time_ms;
+        } else {
+            stats_guard.current_polling_rate = 0.0;
         }
     }
 }
@@ -1845,25 +2229,76 @@ mod tests {
     use std::sync::{Arc, Mutex};
     use tokio::time::{sleep, Duration, Instant};
     use async_trait::async_trait;
+    use crate::core::config::config_manager::{ChannelConfig, ProtocolType, ChannelParameters};
 
-    struct MockReader;
+    // Mock implementations for testing
+    struct MockReader {
+        connected: Arc<Mutex<bool>>,
+        fail_reads: Arc<Mutex<bool>>,
+        read_delay: Arc<Mutex<Option<Duration>>>,
+    }
+
+    impl MockReader {
+        fn new() -> Self {
+            Self {
+                connected: Arc::new(Mutex::new(true)),
+                fail_reads: Arc::new(Mutex::new(false)),
+                read_delay: Arc::new(Mutex::new(None)),
+            }
+        }
+
+        fn set_connected(&self, connected: bool) {
+            *self.connected.lock().unwrap() = connected;
+        }
+
+        fn set_fail_reads(&self, fail: bool) {
+            *self.fail_reads.lock().unwrap() = fail;
+        }
+
+        fn set_read_delay(&self, delay: Option<Duration>) {
+            *self.read_delay.lock().unwrap() = delay;
+        }
+    }
 
     #[async_trait]
     impl PointReader for MockReader {
         async fn read_point(&self, point: &PollingPoint) -> Result<PointData> {
+            let delay = *self.read_delay.lock().unwrap();
+            if let Some(delay) = delay {
+                sleep(delay).await;
+            }
+
+            let should_fail = *self.fail_reads.lock().unwrap();
+            if should_fail {
+                return Err(ComSrvError::CommunicationError("Mock read failure".to_string()));
+            }
+
             Ok(PointData {
                 id: point.id.clone(),
                 name: point.name.clone(),
-                value: "1".to_string(),
+                value: format!("value_{}", point.address),
                 quality: 1,
                 timestamp: Utc::now(),
-                unit: String::new(),
-                description: String::new(),
+                unit: point.unit.clone(),
+                description: point.description.clone(),
             })
         }
 
+        async fn read_points_batch(&self, points: &[PollingPoint]) -> Result<Vec<PointData>> {
+            let should_fail = *self.fail_reads.lock().unwrap();
+            if should_fail {
+                return Err(ComSrvError::CommunicationError("Mock batch read failure".to_string()));
+            }
+
+            let mut results = Vec::new();
+            for point in points {
+                results.push(self.read_point(point).await?);
+            }
+            Ok(results)
+        }
+
         async fn is_connected(&self) -> bool {
-            true
+            *self.connected.lock().unwrap()
         }
 
         fn protocol_name(&self) -> &str {
@@ -1871,9 +2306,672 @@ mod tests {
         }
     }
 
+    struct MockParser {
+        protocol: String,
+    }
+
+    impl MockParser {
+        fn new(protocol: &str) -> Self {
+            Self {
+                protocol: protocol.to_string(),
+            }
+        }
+    }
+
+    impl ProtocolPacketParser for MockParser {
+        fn protocol_name(&self) -> &str {
+            &self.protocol
+        }
+
+        fn parse_packet(&self, data: &[u8], direction: &str) -> PacketParseResult {
+            let hex_data = self.format_hex_data(data);
+            let mut fields = HashMap::new();
+            fields.insert("length".to_string(), data.len().to_string());
+            fields.insert("first_byte".to_string(), format!("0x{:02x}", data.first().unwrap_or(&0)));
+
+            PacketParseResult::success(
+                &self.protocol,
+                direction,
+                &hex_data,
+                &format!("{} packet with {} bytes", self.protocol, data.len()),
+                fields,
+            )
+        }
+    }
+
+    fn create_test_config() -> ChannelConfig {
+        ChannelConfig {
+            id: 1,
+            name: "Test Channel".to_string(),
+            description: "Test Description".to_string(),
+            protocol: ProtocolType::ModbusTcp,
+            parameters: ChannelParameters::Generic(HashMap::new()),
+        }
+    }
+
+    fn create_test_point(id: &str, address: u32) -> PollingPoint {
+        PollingPoint {
+            id: id.to_string(),
+            name: format!("Point {}", id),
+            address,
+            data_type: "u16".to_string(),
+            scale: 1.0,
+            offset: 0.0,
+            unit: "V".to_string(),
+            description: format!("Test point {}", id),
+            access_mode: "read".to_string(),
+            group: "default".to_string(),
+            protocol_params: HashMap::new(),
+        }
+    }
+
+    // ChannelStatus Tests
+    #[test]
+    fn test_channel_status_new() {
+        let status = ChannelStatus::new("test_channel");
+        assert_eq!(status.id, "test_channel");
+        assert!(!status.connected);
+        assert_eq!(status.last_response_time, 0.0);
+        assert!(status.last_error.is_empty());
+        assert!(!status.has_error());
+    }
+
+    #[test]
+    fn test_channel_status_has_error() {
+        let mut status = ChannelStatus::new("test_channel");
+        assert!(!status.has_error());
+
+        status.last_error = "Connection failed".to_string();
+        assert!(status.has_error());
+
+        status.last_error.clear();
+        assert!(!status.has_error());
+    }
+
+    // PointData Tests
+    #[test]
+    fn test_point_data_creation() {
+        let now = Utc::now();
+        let point = PointData {
+            id: "test_point".to_string(),
+            name: "Test Point".to_string(),
+            value: "123.45".to_string(),
+            quality: 1,
+            timestamp: now,
+            unit: "V".to_string(),
+            description: "Test voltage point".to_string(),
+        };
+
+        assert_eq!(point.id, "test_point");
+        assert_eq!(point.name, "Test Point");
+        assert_eq!(point.value, "123.45");
+        assert_eq!(point.quality, 1);
+        assert_eq!(point.timestamp, now);
+        assert_eq!(point.unit, "V");
+        assert_eq!(point.description, "Test voltage point");
+    }
+
+    // PollingConfig Tests
+    #[test]
+    fn test_polling_config_default() {
+        let config = PollingConfig::default();
+        assert!(config.enabled);
+        assert_eq!(config.interval_ms, 1000);
+        assert_eq!(config.max_points_per_cycle, 1000);
+        assert_eq!(config.timeout_ms, 5000);
+        assert_eq!(config.max_retries, 3);
+        assert_eq!(config.retry_delay_ms, 1000);
+        assert!(config.enable_batch_reading);
+        assert_eq!(config.point_read_delay_ms, 10);
+    }
+
+    #[test]
+    fn test_polling_config_custom() {
+        let config = PollingConfig {
+            enabled: false,
+            interval_ms: 500,
+            max_points_per_cycle: 100,
+            timeout_ms: 2000,
+            max_retries: 1,
+            retry_delay_ms: 500,
+            enable_batch_reading: false,
+            point_read_delay_ms: 50,
+        };
+
+        assert!(!config.enabled);
+        assert_eq!(config.interval_ms, 500);
+        assert_eq!(config.max_points_per_cycle, 100);
+        assert_eq!(config.timeout_ms, 2000);
+        assert_eq!(config.max_retries, 1);
+        assert_eq!(config.retry_delay_ms, 500);
+        assert!(!config.enable_batch_reading);
+        assert_eq!(config.point_read_delay_ms, 50);
+    }
+
+    // PollingStats Tests
+    #[test]
+    fn test_polling_stats_default() {
+        let stats = PollingStats::default();
+        assert_eq!(stats.total_cycles, 0);
+        assert_eq!(stats.successful_cycles, 0);
+        assert_eq!(stats.failed_cycles, 0);
+        assert_eq!(stats.total_points_read, 0);
+        assert_eq!(stats.total_points_failed, 0);
+        assert_eq!(stats.avg_cycle_time_ms, 0.0);
+        assert_eq!(stats.current_polling_rate, 0.0);
+        assert!(stats.last_successful_polling.is_none());
+        assert!(stats.last_polling_error.is_none());
+        assert_eq!(stats.communication_quality, 100.0);
+    }
+
+    // ConnectionState Tests
+    #[test]
+    fn test_connection_state_equality() {
+        assert_eq!(ConnectionState::Disconnected, ConnectionState::Disconnected);
+        assert_eq!(ConnectionState::Connecting, ConnectionState::Connecting);
+        assert_eq!(ConnectionState::Connected, ConnectionState::Connected);
+        assert_eq!(ConnectionState::Error("test".to_string()), ConnectionState::Error("test".to_string()));
+        
+        assert_ne!(ConnectionState::Connected, ConnectionState::Disconnected);
+        assert_ne!(ConnectionState::Error("a".to_string()), ConnectionState::Error("b".to_string()));
+    }
+
+    // PacketParseResult Tests
+    #[test]
+    fn test_packet_parse_result_success() {
+        let mut fields = HashMap::new();
+        fields.insert("function_code".to_string(), "0x03".to_string());
+        fields.insert("data_length".to_string(), "4".to_string());
+
+        let result = PacketParseResult::success(
+            "Modbus",
+            "send",
+            "01 03 00 00 00 02 c4 0b",
+            "Read holding registers request",
+            fields.clone(),
+        );
+
+        assert_eq!(result.protocol, "Modbus");
+        assert_eq!(result.direction, "send");
+        assert_eq!(result.hex_data, "01 03 00 00 00 02 c4 0b");
+        assert_eq!(result.description, "Read holding registers request");
+        assert_eq!(result.fields, fields);
+        assert!(result.success);
+        assert!(result.error.is_none());
+    }
+
+    #[test]
+    fn test_packet_parse_result_failure() {
+        let result = PacketParseResult::failure(
+            "Modbus",
+            "receive",
+            "01 83 02",
+            "Invalid function code",
+        );
+
+        assert_eq!(result.protocol, "Modbus");
+        assert_eq!(result.direction, "receive");
+        assert_eq!(result.hex_data, "01 83 02");
+        assert!(result.description.contains("Parse error"));
+        assert!(result.fields.is_empty());
+        assert!(!result.success);
+        assert!(result.error.is_some());
+        assert_eq!(result.error.unwrap(), "Invalid function code");
+    }
+
+    #[test]
+    fn test_packet_parse_result_format_debug_log() {
+        let mut fields = HashMap::new();
+        fields.insert("test".to_string(), "value".to_string());
+
+        let success_result = PacketParseResult::success(
+            "Test",
+            "send",
+            "01 02 03",
+            "Test packet",
+            fields,
+        );
+
+        let log = success_result.format_debug_log();
+        assert!(log.contains("SEND"));
+        assert!(log.contains("01 02 03"));
+        assert!(log.contains("Test packet"));
+
+        let failure_result = PacketParseResult::failure(
+            "Test",
+            "receive",
+            "04 05 06",
+            "Parse failed",
+        );
+
+        let log = failure_result.format_debug_log();
+        assert!(log.contains("RECEIVE"));
+        assert!(log.contains("04 05 06"));
+        assert!(log.contains("Parse failed"));
+    }
+
+    // ProtocolParserRegistry Tests
+    #[test]
+    fn test_protocol_parser_registry() {
+        let mut registry = ProtocolParserRegistry::new();
+        assert!(registry.registered_protocols().is_empty());
+
+        // Register parsers
+        registry.register_parser(MockParser::new("Modbus"));
+        registry.register_parser(MockParser::new("IEC60870"));
+
+        let protocols = registry.registered_protocols();
+        assert_eq!(protocols.len(), 2);
+        assert!(protocols.contains(&"Modbus".to_string()));
+        assert!(protocols.contains(&"IEC60870".to_string()));
+
+        // Test parsing with registered protocol
+        let data = [0x01, 0x03, 0x00, 0x00];
+        let result = registry.parse_packet("Modbus", &data, "send");
+        assert!(result.success);
+        assert_eq!(result.protocol, "Modbus");
+        assert_eq!(result.direction, "send");
+
+        // Test parsing with unregistered protocol
+        let result = registry.parse_packet("Unknown", &data, "send");
+        assert!(!result.success);
+        assert!(result.error.is_some());
+        assert!(result.error.unwrap().contains("No parser registered"));
+    }
+
+    // ComBaseImpl Tests
+    #[tokio::test]
+    async fn test_combase_impl_creation() {
+        let config = create_test_config();
+        let service = ComBaseImpl::new("TestService", "TestProtocol", config);
+
+        assert_eq!(service.name(), "TestService");
+        assert_eq!(service.channel_id(), "1");
+        assert_eq!(service.protocol_type(), "TestProtocol");
+        assert!(!service.is_running().await);
+    }
+
+    #[tokio::test]
+    async fn test_combase_impl_lifecycle() {
+        let config = create_test_config();
+        let service = ComBaseImpl::new("TestService", "TestProtocol", config);
+
+        // Initial state
+        assert!(!service.is_running().await);
+        let status = service.status().await;
+        assert!(!status.connected);
+        assert!(!status.has_error());
+
+        // Start service
+        service.start().await.unwrap();
+        assert!(service.is_running().await);
+
+        // Stop service
+        service.stop().await.unwrap();
+        assert!(!service.is_running().await);
+    }
+
+    #[tokio::test]
+    async fn test_combase_impl_status_updates() {
+        let config = create_test_config();
+        let service = ComBaseImpl::new("TestService", "TestProtocol", config);
+
+        // Update status with success
+        service.update_status(true, 123.45, None).await;
+        let status = service.status().await;
+        assert!(status.connected);
+        assert_eq!(status.last_response_time, 123.45);
+        assert!(!status.has_error());
+
+        // Update status with error
+        service.update_status(false, 0.0, Some("Connection failed")).await;
+        let status = service.status().await;
+        assert!(!status.connected);
+        assert_eq!(status.last_response_time, 0.0);
+        assert!(status.has_error());
+        assert_eq!(status.last_error, "Connection failed");
+    }
+
+    #[tokio::test]
+    async fn test_combase_impl_error_handling() {
+        let config = create_test_config();
+        let service = ComBaseImpl::new("TestService", "TestProtocol", config);
+
+        // Set error
+        service.set_error("Test error message").await;
+        let status = service.status().await;
+        assert!(status.has_error());
+        assert_eq!(status.last_error, "Test error message");
+
+        // Clear error by updating status without error
+        service.update_status(false, 0.0, None).await;
+        let status = service.status().await;
+        assert!(!status.has_error());
+        assert!(status.last_error.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_combase_impl_measure_execution() {
+        let config = create_test_config();
+        let service = ComBaseImpl::new("TestService", "TestProtocol", config);
+
+        // Test successful execution
+        let result = service.measure_execution(|| {
+            std::thread::sleep(std::time::Duration::from_millis(10));
+            Ok("success".to_string())
+        }).await;
+
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), "success");
+
+        let status = service.status().await;
+        assert!(status.connected);
+        assert!(status.last_response_time > 0.0);
+
+        // Test failed execution
+        let result = service.measure_execution(|| {
+            Err::<String, ComSrvError>(ComSrvError::CommunicationError("Test error".to_string()))
+        }).await;
+
+        assert!(result.is_err());
+        let status = service.status().await;
+        assert!(!status.connected);
+        assert!(status.has_error());
+    }
+
+    #[tokio::test]
+    async fn test_combase_impl_measure_result_execution() {
+        let config = create_test_config();
+        let service = ComBaseImpl::new("TestService", "TestProtocol", config);
+
+        // Test successful execution
+        let result = service.measure_result_execution(|| {
+            std::thread::sleep(std::time::Duration::from_millis(5));
+            Ok::<String, String>("success".to_string())
+        }).await;
+
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), "success");
+
+        let status = service.status().await;
+        assert!(status.connected);
+        assert!(status.last_response_time > 0.0);
+
+        // Test failed execution
+        let result = service.measure_result_execution(|| {
+            Err::<String, String>("Test error".to_string())
+        }).await;
+
+        assert!(result.is_err());
+        let status = service.status().await;
+        assert!(!status.connected);
+        assert!(status.has_error());
+        assert_eq!(status.last_error, "Test error");
+    }
+
+    #[test]
+    fn test_combase_impl_parameters() {
+        let config = create_test_config();
+        let service = ComBaseImpl::new("TestService", "TestProtocol", config);
+
+        let params = service.get_parameters();
+        assert_eq!(params.get("protocol").unwrap(), "TestProtocol");
+        assert_eq!(params.get("channel_id").unwrap(), "1");
+    }
+
+    // Universal Polling Engine Tests
+    #[tokio::test]
+    async fn test_universal_polling_engine_creation() {
+        let reader = Arc::new(MockReader::new());
+        let engine = UniversalPollingEngine::new("TestProto".to_string(), reader);
+
+        assert!(!engine.is_polling_active().await);
+        let stats = engine.get_polling_stats().await;
+        assert_eq!(stats.total_cycles, 0);
+    }
+
+    #[tokio::test]
+    async fn test_universal_polling_engine_disabled() {
+        let reader = Arc::new(MockReader::new());
+        let engine = UniversalPollingEngine::new("TestProto".to_string(), reader);
+
+        let config = PollingConfig {
+            enabled: false,
+            ..Default::default()
+        };
+
+        let points = vec![create_test_point("p1", 1)];
+        engine.start_polling(config, points).await.unwrap();
+
+        assert!(engine.is_polling_active().await);
+        
+        // Wait a bit and check stats - should remain zero since polling is disabled
+        sleep(Duration::from_millis(100)).await;
+        let stats = engine.get_polling_stats().await;
+        assert_eq!(stats.total_cycles, 0);
+
+        engine.stop_polling().await.unwrap();
+        assert!(!engine.is_polling_active().await);
+    }
+
+    #[tokio::test]
+    async fn test_universal_polling_engine_successful_polling() {
+        let reader = Arc::new(MockReader::new());
+        let mut engine = UniversalPollingEngine::new("TestProto".to_string(), reader);
+
+        let collected_data: Arc<Mutex<Vec<Vec<PointData>>>> = Arc::new(Mutex::new(Vec::new()));
+        let data_clone = collected_data.clone();
+        engine.set_data_callback(move |data| {
+            data_clone.lock().unwrap().push(data);
+        });
+
+        let config = PollingConfig {
+            enabled: true,
+            interval_ms: 50,
+            max_points_per_cycle: 10,
+            timeout_ms: 1000,
+            max_retries: 1,
+            retry_delay_ms: 100,
+            enable_batch_reading: false,
+            point_read_delay_ms: 1,
+        };
+
+        let points = vec![
+            create_test_point("p1", 1),
+            create_test_point("p2", 2),
+        ];
+
+        engine.start_polling(config, points).await.unwrap();
+        assert!(engine.is_polling_active().await);
+
+        // Wait for some polling cycles
+        sleep(Duration::from_millis(200)).await;
+
+        engine.stop_polling().await.unwrap();
+        assert!(!engine.is_polling_active().await);
+
+        // Check statistics
+        let stats = engine.get_polling_stats().await;
+        assert!(stats.total_cycles > 0);
+        assert!(stats.successful_cycles > 0);
+        assert_eq!(stats.failed_cycles, 0);
+        assert!(stats.total_points_read > 0);
+        assert_eq!(stats.total_points_failed, 0);
+        assert!(stats.avg_cycle_time_ms > 0.0);
+        assert_eq!(stats.communication_quality, 100.0);
+
+        // Check collected data
+        let data = collected_data.lock().unwrap();
+        assert!(!data.is_empty());
+        for batch in data.iter() {
+            assert_eq!(batch.len(), 2); // Two points
+            for point in batch {
+                assert_eq!(point.quality, 1);
+                assert!(point.value.starts_with("value_"));
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_universal_polling_engine_failed_reads() {
+        let reader = Arc::new(MockReader::new());
+        reader.set_fail_reads(true); // Make all reads fail
+
+        let mut engine = UniversalPollingEngine::new("TestProto".to_string(), reader);
+
+        let collected_data: Arc<Mutex<Vec<Vec<PointData>>>> = Arc::new(Mutex::new(Vec::new()));
+        let data_clone = collected_data.clone();
+        engine.set_data_callback(move |data| {
+            data_clone.lock().unwrap().push(data);
+        });
+
+        let config = PollingConfig {
+            enabled: true,
+            interval_ms: 50,
+            max_points_per_cycle: 10,
+            timeout_ms: 1000,
+            max_retries: 1,
+            retry_delay_ms: 10,
+            enable_batch_reading: false,
+            point_read_delay_ms: 1,
+        };
+
+        let points = vec![create_test_point("p1", 1)];
+
+        engine.start_polling(config, points).await.unwrap();
+
+        // Wait for some polling cycles
+        sleep(Duration::from_millis(150)).await;
+
+        engine.stop_polling().await.unwrap();
+
+        // Check that data was still collected (with error points)
+        let data = collected_data.lock().unwrap();
+        assert!(!data.is_empty());
+        for batch in data.iter() {
+            for point in batch {
+                assert_eq!(point.quality, 0); // Bad quality due to read failure
+                assert_eq!(point.value, "null");
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_universal_polling_engine_batch_reading() {
+        let reader = Arc::new(MockReader::new());
+        let mut engine = UniversalPollingEngine::new("TestProto".to_string(), reader);
+
+        let collected_data: Arc<Mutex<Vec<Vec<PointData>>>> = Arc::new(Mutex::new(Vec::new()));
+        let data_clone = collected_data.clone();
+        engine.set_data_callback(move |data| {
+            data_clone.lock().unwrap().push(data);
+        });
+
+        let config = PollingConfig {
+            enabled: true,
+            interval_ms: 50,
+            max_points_per_cycle: 10,
+            timeout_ms: 1000,
+            max_retries: 1,
+            retry_delay_ms: 10,
+            enable_batch_reading: true, // Enable batch reading
+            point_read_delay_ms: 1,
+        };
+
+        let points = vec![
+            create_test_point("p1", 1),
+            create_test_point("p2", 2),
+        ];
+
+        engine.start_polling(config, points).await.unwrap();
+
+        // Wait for some polling cycles
+        sleep(Duration::from_millis(150)).await;
+
+        engine.stop_polling().await.unwrap();
+
+        // Check that data was collected
+        let data = collected_data.lock().unwrap();
+        assert!(!data.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_universal_polling_engine_disconnected() {
+        let reader = Arc::new(MockReader::new());
+        reader.set_connected(false); // Simulate disconnection
+
+        let engine = UniversalPollingEngine::new("TestProto".to_string(), reader);
+
+        let config = PollingConfig {
+            enabled: true,
+            interval_ms: 50,
+            ..Default::default()
+        };
+
+        let points = vec![create_test_point("p1", 1)];
+
+        engine.start_polling(config, points).await.unwrap();
+
+        // Wait for some polling attempts
+        sleep(Duration::from_millis(150)).await;
+
+        engine.stop_polling().await.unwrap();
+
+        // Statistics should show no successful cycles due to disconnection
+        let stats = engine.get_polling_stats().await;
+        assert_eq!(stats.successful_cycles, 0);
+        assert_eq!(stats.total_points_read, 0);
+    }
+
+    #[tokio::test]
+    async fn test_universal_polling_engine_config_updates() {
+        let reader = Arc::new(MockReader::new());
+        let engine = UniversalPollingEngine::new("TestProto".to_string(), reader);
+
+        let new_config = PollingConfig {
+            enabled: true,
+            interval_ms: 100,
+            max_points_per_cycle: 50,
+            timeout_ms: 2000,
+            max_retries: 5,
+            retry_delay_ms: 200,
+            enable_batch_reading: false,
+            point_read_delay_ms: 20,
+        };
+
+        engine.update_polling_config(new_config).await.unwrap();
+
+        let new_points = vec![
+            create_test_point("new_p1", 10),
+            create_test_point("new_p2", 20),
+            create_test_point("new_p3", 30),
+        ];
+
+        engine.update_polling_points(new_points).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_universal_polling_engine_double_start() {
+        let reader = Arc::new(MockReader::new());
+        let engine = UniversalPollingEngine::new("TestProto".to_string(), reader);
+
+        let config = PollingConfig::default();
+        let points = vec![create_test_point("p1", 1)];
+
+        // First start should succeed
+        engine.start_polling(config.clone(), points.clone()).await.unwrap();
+        assert!(engine.is_polling_active().await);
+
+        // Second start should fail
+        let result = engine.start_polling(config, points).await;
+        assert!(result.is_err());
+
+        engine.stop_polling().await.unwrap();
+    }
+
     #[tokio::test]
     async fn test_poll_interval_respected() {
-        let reader: Arc<dyn PointReader> = Arc::new(MockReader);
+        let reader: Arc<dyn PointReader> = Arc::new(MockReader::new());
         let mut engine = UniversalPollingEngine::new("TestProto".to_string(), reader);
 
         let call_times: Arc<Mutex<Vec<Instant>>> = Arc::new(Mutex::new(Vec::new()));
@@ -1893,19 +2991,7 @@ mod tests {
             point_read_delay_ms: 0,
         };
 
-        let point = PollingPoint {
-            id: "p1".to_string(),
-            name: "p1".to_string(),
-            address: 0,
-            data_type: "u8".to_string(),
-            scale: 1.0,
-            offset: 0.0,
-            unit: String::new(),
-            description: String::new(),
-            access_mode: "read".to_string(),
-            group: "g1".to_string(),
-            protocol_params: HashMap::new(),
-        };
+        let point = create_test_point("p1", 1);
 
         engine.start_polling(config, vec![point]).await.unwrap();
 
@@ -1916,5 +3002,94 @@ mod tests {
         assert!(times.len() >= 2);
         let diff = times[1].duration_since(times[0]);
         assert!(diff >= Duration::from_millis(100));
+    }
+
+    // Point reader trait test
+    #[tokio::test]
+    async fn test_point_reader_default_batch_read() {
+        let reader = MockReader::new();
+        
+        let points = vec![
+            create_test_point("p1", 1),
+            create_test_point("p2", 2),
+        ];
+
+        let results = reader.read_points_batch(&points).await.unwrap();
+        assert_eq!(results.len(), 2);
+        
+        for (i, result) in results.iter().enumerate() {
+            assert_eq!(result.id, points[i].id);
+            assert_eq!(result.quality, 1);
+        }
+    }
+
+    #[tokio::test]
+    async fn test_point_reader_batch_read_with_failures() {
+        let reader = MockReader::new();
+        reader.set_fail_reads(true);
+        
+        let points = vec![create_test_point("p1", 1)];
+        let result = reader.read_points_batch(&points).await;
+        assert!(result.is_err());
+    }
+
+    // Integration test for polling with various scenarios
+    #[tokio::test]
+    async fn test_polling_integration_scenarios() {
+        let reader = Arc::new(MockReader::new());
+        let mut engine = UniversalPollingEngine::new("Integration".to_string(), reader.clone());
+
+        let all_data: Arc<Mutex<Vec<PointData>>> = Arc::new(Mutex::new(Vec::new()));
+        let data_clone = all_data.clone();
+        engine.set_data_callback(move |data| {
+            data_clone.lock().unwrap().extend(data);
+        });
+
+        let config = PollingConfig {
+            enabled: true,
+            interval_ms: 30,
+            max_points_per_cycle: 5,
+            timeout_ms: 500,
+            max_retries: 2,
+            retry_delay_ms: 50,
+            enable_batch_reading: true,
+            point_read_delay_ms: 5,
+        };
+
+        let points = vec![
+            create_test_point("voltage", 40001),
+            create_test_point("current", 40002),
+            create_test_point("power", 40003),
+        ];
+
+        engine.start_polling(config, points).await.unwrap();
+
+        // Phase 1: Normal operation
+        sleep(Duration::from_millis(100)).await;
+        
+        // Phase 2: Simulate connection issues
+        reader.set_connected(false);
+        sleep(Duration::from_millis(80)).await;
+        
+        // Phase 3: Restore connection but with read errors
+        reader.set_connected(true);
+        reader.set_fail_reads(true);
+        sleep(Duration::from_millis(80)).await;
+        
+        // Phase 4: Restore normal operation
+        reader.set_fail_reads(false);
+        sleep(Duration::from_millis(100)).await;
+
+        engine.stop_polling().await.unwrap();
+
+        // Verify we collected some data
+        let data = all_data.lock().unwrap();
+        assert!(!data.is_empty());
+
+        // Verify statistics show mixed results
+        let stats = engine.get_polling_stats().await;
+        assert!(stats.total_cycles > 0);
+        // Note: Communication quality might be 100% if all cycles during connected phases were successful
+        // This is acceptable behavior - we're just testing that the engine handles the different scenarios
     }
 }

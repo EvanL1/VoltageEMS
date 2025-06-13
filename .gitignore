@@ -55,3 +55,15 @@ services/comsrv/PERFORMANCE_TESTING.md
 voltage_modbus/
 config/pressure_test_config.yaml
 MQTT_REFACTOR_SUMMARY.md
+services/comsrv/src/core/protocols/modbus/README.md
+services/comsrv/CONFIG_REFACTORING_SUMMARY.md
+services/comsrv/CORE_OPTIMIZATION_COMPLETE.md
+services/comsrv/MODBUS_OPTIMIZATION_SUMMARY.md
+services/comsrv/OPTIMIZATION_SUMMARY.md
+services/comsrv/OPTIMIZATION_PROGRESS.md
+services/comsrv/OPTIMIZATION_STATUS.md
+services/comsrv/QUICK_FIX_GUIDE.md
+services/comsrv/docs/MODBUS_REDIS_INTEGRATION.md
+services/comsrv/REDUNDANCY_OPTIMIZATION.md
+services/comsrv/docs/modbus_server_refactoring.md
+services/comsrv/examples/yaml_config_example.yaml

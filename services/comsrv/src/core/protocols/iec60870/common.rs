@@ -1,6 +1,6 @@
 /// IEC60870 Constants and Common Data Types
 use std::fmt;
-use thiserror::Error;
+use crate::core::protocols::common::errors::BaseCommError;
 
 /// IEC60870 protocol versions
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -20,33 +20,8 @@ impl fmt::Display for IecProtocolVersion {
     }
 }
 
-/// IEC60870 Error Types
-#[derive(Error, Debug)]
-pub enum IecError {
-    /// Error in connection
-    #[error("Connection error: {0}")]
-    ConnectionError(String),
-    
-    /// Timeout error
-    #[error("Timeout error: {0}")]
-    TimeoutError(String),
-    
-    /// Protocol error
-    #[error("Protocol error: {0}")]
-    ProtocolError(String),
-    
-    /// Data conversion error
-    #[error("Data conversion error: {0}")]
-    DataConversionError(String),
-    
-    /// Configuration error
-    #[error("Configuration error: {0}")]
-    ConfigError(String),
-    
-    /// IO error
-    #[error("IO error: {0}")]
-    IoError(#[from] std::io::Error),
-}
+/// IEC60870 Error Type - using unified base communication error
+pub type IecError = BaseCommError;
 
 /// Common protocol result type
 pub type IecResult<T> = Result<T, IecError>;
