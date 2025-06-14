@@ -49,6 +49,84 @@ VoltageEMS is a comprehensive energy management system built with a microservice
 - **Protocol configuration** templates and validation
 - **Deployment configuration** for different environments
 
+## Development Workflow
+
+```mermaid
+graph TD
+    subgraph "AI Agent Layer"
+        CodeDev["CODE DEV"]
+        Documentation["DOCS"]
+        Testing["TESTING"]
+        ConfigMgmt["CONFIG"]
+    end
+    
+    subgraph "Planning Phase"
+        Planning["PLANNING"]
+    end
+    
+    subgraph "Implementation Phase"
+        Implementation["IMPLEMENTATION"]
+    end
+    
+    subgraph "Development Standards"
+        RustDev["RUST DEV"]
+        FrontendDev["FRONTEND"]
+        ProtocolImpl["PROTOCOLS"]
+        GitPractices["GIT"]
+    end
+    
+    subgraph "Validation Phase"
+        Testing2["VALIDATION"]
+    end
+    
+    subgraph "Quality Assurance"
+        UnitTests["UNIT TESTS"]
+        IntegrationTests["INTEGRATION"]
+        PerformanceTests["PERFORMANCE"]
+        CodeReview["CODE REVIEW"]
+    end
+    
+    subgraph "Deployment Phase"
+        Deployment["DEPLOYMENT"]
+    end
+    
+    subgraph "Monitoring & Operations"
+        HealthCheck["HEALTH CHECK"]
+        MetricsCollection["METRICS"]
+        LoggingSystem["LOGGING"]
+        AlertMechanisms["ALERTS"]
+    end
+    
+    %% Vertical workflow
+    Documentation --> Planning
+    CodeDev --> Implementation
+    
+    Planning --> Implementation
+    
+    RustDev --> Implementation
+    FrontendDev --> Implementation
+    ProtocolImpl --> Implementation
+    GitPractices --> Implementation
+    
+    Implementation --> Testing2
+    Testing --> Testing2
+    
+    UnitTests --> Testing2
+    IntegrationTests --> Testing2
+    PerformanceTests --> Testing2
+    CodeReview --> Testing2
+    
+    Testing2 --> Deployment
+    ConfigMgmt --> Deployment
+    
+    HealthCheck --> Deployment
+    MetricsCollection --> Deployment
+    LoggingSystem --> Deployment
+    AlertMechanisms --> Deployment
+    
+    Deployment --> Planning
+```
+
 ## Development Guidelines
 
 ### Code Standards

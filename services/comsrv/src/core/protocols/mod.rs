@@ -1,12 +1,14 @@
 pub mod common;
 pub mod modbus;
-pub mod iec60870;
-pub mod can;
+// TODO: 暂时屏蔽，等核心组件稳定后再启用
+// pub mod iec60870;
+// pub mod can;
 
 use crate::core::protocols::common::combase::get_global_parser_registry;
 use crate::core::protocols::modbus::ModbusPacketParser;
-use crate::core::protocols::can::CanPacketParser;
-use crate::core::protocols::iec60870::Iec60870PacketParser;
+// TODO: 暂时屏蔽，等核心组件稳定后再启用
+// use crate::core::protocols::can::CanPacketParser;
+// use crate::core::protocols::iec60870::Iec60870PacketParser;
 
 /// Initialize all protocol parsers
 /// 
@@ -18,11 +20,12 @@ pub fn init_protocol_parsers() {
     // Register Modbus parser
     registry.register_parser(ModbusPacketParser::new());
 
+    // TODO: 暂时屏蔽，等核心组件稳定后再启用
     // Register CAN parser
-    registry.register_parser(CanPacketParser::new());
+    // registry.register_parser(CanPacketParser::new());
 
     // Register IEC60870 parser
-    registry.register_parser(Iec60870PacketParser::new());
+    // registry.register_parser(Iec60870PacketParser::new());
 
     tracing::info!(
         "Protocol parsers initialized: {:?}",

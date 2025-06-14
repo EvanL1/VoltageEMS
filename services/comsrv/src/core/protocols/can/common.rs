@@ -5,6 +5,8 @@
 
 use serde::{Serialize, Deserialize};
 use std::fmt;
+use crate::core::protocols::common::errors::BaseCommError;
+use crate::core::protocols::common::stats::{BaseCommStats, BaseConnectionStats};
 
 /// CAN message ID type
 pub type CanId = u32;
@@ -167,72 +169,115 @@ pub enum CanByteOrder {
     LittleEndian,
 }
 
-/// CAN error types
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub enum CanError {
-    /// Interface not available
-    InterfaceNotAvailable(String),
-    /// Invalid CAN ID
-    InvalidCanId(CanId),
-    /// Invalid data length
-    InvalidDataLength(usize),
-    /// Frame format mismatch
-    FrameFormatMismatch,
-    /// Bus off error
-    BusOff,
-    /// Error passive state
-    ErrorPassive,
-    /// Acknowledgment error
-    AckError,
-    /// Bit error
-    BitError,
-    /// Form error
-    FormError,
-    /// Stuff error
-    StuffError,
-    /// CRC error
-    CrcError,
-    /// Timeout error
-    Timeout,
-    /// General I/O error
-    IoError(String),
+/// CAN-specific error type that wraps the base communication error
+pub type CanError = BaseCommError;
+
+/// CAN bus statistics using unified base components
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CanStatistics {
+    /// Base communication statistics
+    pub base_stats: BaseCommStats,
+    /// Connection-specific statistics  
+    pub connection_stats: BaseConnectionStats,
 }
 
-impl fmt::Display for CanError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            CanError::InterfaceNotAvailable(name) => write!(f, "CAN interface not available: {}", name),
-            CanError::InvalidCanId(id) => write!(f, "Invalid CAN ID: 0x{:X}", id),
-            CanError::InvalidDataLength(len) => write!(f, "Invalid data length: {} bytes", len),
-            CanError::FrameFormatMismatch => write!(f, "CAN frame format mismatch"),
-            CanError::BusOff => write!(f, "CAN bus off error"),
-            CanError::ErrorPassive => write!(f, "CAN error passive state"),
-            CanError::AckError => write!(f, "CAN acknowledgment error"),
-            CanError::BitError => write!(f, "CAN bit error"),
-            CanError::FormError => write!(f, "CAN form error"),
-            CanError::StuffError => write!(f, "CAN stuff error"),
-            CanError::CrcError => write!(f, "CAN CRC error"),
-            CanError::Timeout => write!(f, "CAN timeout error"),
-            CanError::IoError(msg) => write!(f, "CAN I/O error: {}", msg),
+impl CanStatistics {
+    /// Create new CAN statistics
+    pub fn new() -> Self {
+        Self {
+            base_stats: BaseCommStats::new(),
+            connection_stats: BaseConnectionStats::new(),
         }
+    }
+
+    /// Reset all statistics
+    pub fn reset(&mut self) {
+        self.base_stats.reset();
+        self.connection_stats.reset();
+    }
+
+    /// Record a sent message
+    pub fn record_message_sent(&mut self) {
+        self.base_stats.successful_requests += 1;
+        self.base_stats.total_requests += 1;
+        // Update communication quality manually
+        self.base_stats.communication_quality = if self.base_stats.total_requests > 0 {
+            (self.base_stats.successful_requests as f64 / self.base_stats.total_requests as f64) * 100.0
+        } else {
+            100.0
+        };
+    }
+
+    /// Record a received message
+    pub fn record_message_received(&mut self) {
+        self.base_stats.successful_requests += 1;
+        self.base_stats.total_requests += 1;
+        // Update communication quality manually
+        self.base_stats.communication_quality = if self.base_stats.total_requests > 0 {
+            (self.base_stats.successful_requests as f64 / self.base_stats.total_requests as f64) * 100.0
+        } else {
+            100.0
+        };
+    }
+
+    /// Record an error message
+    pub fn record_error_message(&mut self, error_type: &str) {
+        self.base_stats.failed_requests += 1;
+        self.base_stats.total_requests += 1;
+        self.base_stats.increment_error_counter(error_type);
+        // Update communication quality manually
+        self.base_stats.communication_quality = if self.base_stats.total_requests > 0 {
+            (self.base_stats.successful_requests as f64 / self.base_stats.total_requests as f64) * 100.0
+        } else {
+            100.0
+        };
+    }
+
+    /// Update bus utilization
+    pub fn update_bus_utilization(&mut self, utilization: f64) {
+        // Store in error_counters as a special metric
+        self.base_stats.error_counters.insert("bus_utilization".to_string(), utilization as u64);
+    }
+
+    // Convenience accessors for backward compatibility
+    
+    /// Get total messages sent
+    pub fn messages_sent(&self) -> u64 {
+        self.base_stats.successful_requests
+    }
+
+    /// Get total messages received
+    pub fn messages_received(&self) -> u64 {
+        self.base_stats.successful_requests
+    }
+
+    /// Get error message count
+    pub fn error_messages(&self) -> u64 {
+        self.base_stats.failed_requests
+    }
+
+    /// Get bus utilization percentage
+    pub fn bus_utilization(&self) -> f64 {
+        self.base_stats.error_counters.get("bus_utilization")
+            .map(|&v| v as f64)
+            .unwrap_or(0.0)
+    }
+
+    /// Get last error time
+    pub fn last_error_time(&self) -> Option<chrono::DateTime<chrono::Utc>> {
+        // Convert from SystemTime to chrono::DateTime
+        self.base_stats.start_time
+            .and_then(|st| chrono::DateTime::from_timestamp(
+                st.duration_since(std::time::UNIX_EPOCH).ok()?.as_secs() as i64,
+                0
+            ))
     }
 }
 
-impl std::error::Error for CanError {}
-
-/// CAN bus statistics
-#[derive(Debug, Clone, Default)]
-pub struct CanStatistics {
-    /// Total messages sent
-    pub messages_sent: u64,
-    /// Total messages received
-    pub messages_received: u64,
-    /// Messages with errors
-    pub error_messages: u64,
-    /// Bus utilization percentage
-    pub bus_utilization: f64,
-    /// Last error time
-    pub last_error_time: Option<chrono::DateTime<chrono::Utc>>,
+impl Default for CanStatistics {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 #[cfg(test)]

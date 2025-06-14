@@ -1,5 +1,7 @@
 [workspace]
 members = [
   "services/comsrv",
-
+  "services/hissrv",
+  "services/modsrv",
+  "services/netsrv",
 ]

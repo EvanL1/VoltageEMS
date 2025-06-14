@@ -69,6 +69,88 @@ voltage-ems/
 └── config/         # Configuration files
 ```
 
+## Application Architecture
+
+```mermaid
+graph TD
+    subgraph "Application Entry"
+        ElectronMain[ELECTRON MAIN]
+    end
+    
+    subgraph "Frontend Layer"
+        ElectronRenderer[ELECTRON RENDERER]
+        ServiceUI[SERVICE UI]
+    end
+    
+    subgraph "Management Layer"
+        ServiceManager[SERVICE MANAGER]
+        LogViewer[LOG VIEWER]
+        ConfigManager[CONFIG MANAGER]
+        StatusMonitor[STATUS MONITOR]
+    end
+    
+    subgraph "Backend Services"
+        Comsrv2[COMSRV]
+        Modsrv2[MODSRV]
+        Hissrv2[HISSRV]
+        Netsrv2[NETSRV]
+    end
+    
+    subgraph "Storage Layer"
+        LocalFiles[LOCAL FILES]
+        LogFiles[LOG FILES]
+        AppData[APP DATA]
+    end
+    
+    subgraph "Platform Layer"
+        Windows[WINDOWS]
+        MacOS[MACOS]
+        Linux[LINUX]
+    end
+    
+    subgraph "Distribution Layer"
+        WindowsInstaller[WINDOWS INSTALLER]
+        MacPackage[MACOS PACKAGE]
+        LinuxPackage[LINUX PACKAGE]
+    end
+    
+    subgraph "Features"
+        OfflineMode[OFFLINE MODE]
+        AutoUpdate[AUTO UPDATE]
+        CrossPlatform[CROSS PLATFORM]
+    end
+    
+    %% Vertical application flow
+    ElectronMain --> ElectronRenderer
+    ElectronRenderer --> ServiceUI
+    ServiceUI --> ServiceManager
+    
+    ServiceManager --> LogViewer
+    ServiceManager --> ConfigManager
+    ServiceManager --> StatusMonitor
+    
+    ServiceManager --> Comsrv2
+    ServiceManager --> Modsrv2
+    ServiceManager --> Hissrv2
+    ServiceManager --> Netsrv2
+    
+    ConfigManager --> LocalFiles
+    LogViewer --> LogFiles
+    ElectronMain --> AppData
+    
+    ElectronMain --> Windows
+    ElectronMain --> MacOS
+    ElectronMain --> Linux
+    
+    Windows --> WindowsInstaller
+    MacOS --> MacPackage
+    Linux --> LinuxPackage
+    
+    ServiceManager --> OfflineMode
+    ElectronMain --> AutoUpdate
+    ElectronMain --> CrossPlatform
+```
+
 ## Service Management
 
 The desktop app provides a control panel where you can:

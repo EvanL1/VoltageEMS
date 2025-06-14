@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use redis::{AsyncCommands, Client};
-use redis::aio::Connection;
+use redis::aio::{Connection, PubSub};
 use serde::{Serialize, Deserialize};
 use crate::utils::error::{ComSrvError, Result};
 use crate::core::config::config_manager::RedisConfig;
@@ -14,10 +14,42 @@ pub struct RealtimeValue {
     pub timestamp: String, // ISO 8601 format
 }
 
+/// Command types for remote control
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum CommandType {
+    /// 遥控指令 (Remote Control) - 布尔值操作
+    RemoteControl,
+    /// 遥调指令 (Remote Regulation) - 数值设定
+    RemoteRegulation,
+}
+
+/// Command structure for remote operations
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RemoteCommand {
+    pub command_type: CommandType,
+    pub point_name: String,
+    pub value: f64,
+    pub timestamp: String,
+    pub command_id: String, // 唯一标识符
+    pub operator: Option<String>, // 操作员信息
+    pub description: Option<String>, // 操作描述
+}
+
+/// Command execution result
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CommandResult {
+    pub command_id: String,
+    pub success: bool,
+    pub error_message: Option<String>,
+    pub execution_time: String,
+    pub actual_value: Option<f64>, // 执行后的实际值
+}
+
 /// Redis storage structure
 #[derive(Clone)]
 pub struct RedisStore {
     conn: Arc<Mutex<Connection>>,  // Redis connection
+    client: Client, // Redis client for creating additional connections
 }
 
 impl RedisStore {
@@ -54,6 +86,7 @@ impl RedisStore {
 
         Ok(Some(RedisStore {
             conn: Arc::new(Mutex::new(conn)),
+            client,
         }))
     }
 
@@ -95,6 +128,88 @@ impl RedisStore {
         } else {
             Ok(None)
         }
+    }
+
+    /// 发布遥控/遥调指令到指定通道
+    pub async fn publish_command(&self, channel: &str, command: &RemoteCommand) -> Result<()> {
+        let command_str = serde_json::to_string(command)
+            .map_err(|e| ComSrvError::RedisError(format!("Serialize command error: {}", e)))?;
+
+        let mut guard = self.conn.lock().await;
+        let _: () = guard.publish(channel, command_str).await
+            .map_err(|e| ComSrvError::RedisError(format!("Redis publish error: {}", e)))?;
+
+        Ok(())
+    }
+
+    /// 设置指令到指令队列
+    pub async fn set_command(&self, channel_id: &str, command: &RemoteCommand) -> Result<()> {
+        let command_key = format!("cmd:{}:{}", channel_id, command.command_id);
+        let command_str = serde_json::to_string(command)
+            .map_err(|e| ComSrvError::RedisError(format!("Serialize command error: {}", e)))?;
+
+        let mut guard = self.conn.lock().await;
+        // 设置指令，带过期时间（5分钟）
+        guard.set_ex::<&str, String, ()>(&command_key, command_str, 300).await
+            .map_err(|e| ComSrvError::RedisError(format!("Redis set command error: {}", e)))?;
+
+        // 同时发布到指令通道通知
+        let notify_channel = format!("commands:{}", channel_id);
+        let _: () = guard.publish(&notify_channel, &command.command_id).await
+            .map_err(|e| ComSrvError::RedisError(format!("Redis publish command notification error: {}", e)))?;
+
+        Ok(())
+    }
+
+    /// 获取指令
+    pub async fn get_command(&self, channel_id: &str, command_id: &str) -> Result<Option<RemoteCommand>> {
+        let command_key = format!("cmd:{}:{}", channel_id, command_id);
+        
+        let mut guard = self.conn.lock().await;
+        let val: Option<String> = guard.get(&command_key).await
+            .map_err(|e| ComSrvError::RedisError(format!("Redis get command error: {}", e)))?;
+
+        if let Some(json_str) = val {
+            let parsed = serde_json::from_str(&json_str)
+                .map_err(|e| ComSrvError::RedisError(format!("Deserialize command error: {}", e)))?;
+            Ok(Some(parsed))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// 删除已执行的指令
+    pub async fn delete_command(&self, channel_id: &str, command_id: &str) -> Result<()> {
+        let command_key = format!("cmd:{}:{}", channel_id, command_id);
+        
+        let mut guard = self.conn.lock().await;
+        let _: () = guard.del(&command_key).await
+            .map_err(|e| ComSrvError::RedisError(format!("Redis delete command error: {}", e)))?;
+
+        Ok(())
+    }
+
+    /// 设置指令执行结果
+    pub async fn set_command_result(&self, channel_id: &str, result: &CommandResult) -> Result<()> {
+        let result_key = format!("result:{}:{}", channel_id, result.command_id);
+        let result_str = serde_json::to_string(result)
+            .map_err(|e| ComSrvError::RedisError(format!("Serialize command result error: {}", e)))?;
+
+        let mut guard = self.conn.lock().await;
+        // 设置结果，带过期时间（1小时）
+        guard.set_ex::<&str, String, ()>(&result_key, result_str, 3600).await
+            .map_err(|e| ComSrvError::RedisError(format!("Redis set command result error: {}", e)))?;
+
+        Ok(())
+    }
+
+    /// 创建新的Redis PubSub连接用于订阅
+    pub async fn create_pubsub(&self) -> Result<PubSub> {
+        let pubsub = self.client.get_async_connection().await
+            .map_err(|e| ComSrvError::RedisError(format!("Failed to create pubsub connection: {}", e)))?
+            .into_pubsub();
+        
+        Ok(pubsub)
     }
 }
 

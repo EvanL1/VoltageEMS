@@ -156,7 +156,7 @@ use std::fmt::{self, Display, Formatter};
 /// Each variant provides detailed context about the specific failure,
 /// making it easier to diagnose issues and implement appropriate
 /// recovery strategies.
-#[derive(Error, Debug, Clone)]
+#[derive(Error, Debug, Clone, PartialEq, Eq)]
 pub enum ComSrvError {
     /// Configuration-related errors
     /// 
@@ -470,6 +470,18 @@ pub enum ComSrvError {
     #[error("State error: {0}")]
     StateError(String),
 
+    /// Resource exhaustion errors
+    /// 
+    /// Errors that occur when system resources are exhausted
+    /// or usage limits are exceeded.
+    /// 
+    /// # Examples
+    /// - Connection pool full
+    /// - Memory limit exceeded
+    /// - Too many open connections
+    #[error("Resource exhausted: {0}")]
+    ResourceExhausted(String),
+
     /// Configuration validation and setup errors
     /// 
     /// Specific errors related to configuration validation,
@@ -696,26 +708,6 @@ impl From<warp::reject::Rejection> for ComSrvError {
 impl From<std::net::AddrParseError> for ComSrvError {
     fn from(err: std::net::AddrParseError) -> Self {
         ComSrvError::ConfigError(format!("Address parse error: {}", err))
-    }
-}
-
-/// Convert from IecError to ComSrvError
-impl From<crate::core::protocols::iec60870::common::IecError> for ComSrvError {
-    fn from(error: crate::core::protocols::iec60870::common::IecError) -> Self {
-        match error {
-            crate::core::protocols::iec60870::common::IecError::ConnectionError(msg) => 
-                ComSrvError::ConnectionError(msg),
-            crate::core::protocols::iec60870::common::IecError::TimeoutError(msg) => 
-                ComSrvError::TimeoutError(msg),
-            crate::core::protocols::iec60870::common::IecError::ProtocolError(msg) => 
-                ComSrvError::ProtocolError(msg),
-            crate::core::protocols::iec60870::common::IecError::DataConversionError(msg) => 
-                ComSrvError::SerializationError(msg),
-            crate::core::protocols::iec60870::common::IecError::ConfigError(msg) => 
-                ComSrvError::ConfigError(msg),
-            crate::core::protocols::iec60870::common::IecError::IoError(e) => 
-                ComSrvError::IoError(e.to_string()),
-        }
     }
 }
 

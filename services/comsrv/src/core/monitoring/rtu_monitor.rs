@@ -324,13 +324,13 @@ impl RtuMonitor {
             let monitor_point = RtuMonitorPoint {
                 timestamp: SystemTime::now(),
                 connection_state: format!("{:?}", connection_state),
-                communication_quality: stats.communication_quality,
-                avg_response_time_ms: stats.avg_response_time_ms,
-                successful_requests: stats.successful_requests,
-                failed_requests: stats.failed_requests,
-                crc_errors: stats.crc_errors,
-                timeout_requests: stats.timeout_requests,
-                exception_responses: stats.exception_responses,
+                communication_quality: stats.communication_quality(),
+                avg_response_time_ms: stats.avg_response_time_ms(),
+                successful_requests: stats.successful_requests(),
+                failed_requests: stats.failed_requests(),
+                crc_errors: stats.crc_errors(),
+                timeout_requests: stats.timeout_requests(),
+                exception_responses: stats.exception_responses(),
             };
 
             // Update historical data
@@ -357,7 +357,7 @@ impl RtuMonitor {
             match connection_state {
                 ModbusConnectionState::Connected => {
                     online_count += 1;
-                    total_quality += stats.communication_quality;
+                    total_quality += stats.communication_quality();
                 }
                 _ => {
                     offline_count += 1;
@@ -370,7 +370,7 @@ impl RtuMonitor {
             if config.detailed_logging {
                 log::debug!(
                     "Channel {}: State={:?}, Quality={:.1}%, ResponseTime={:.1}ms",
-                    channel_id, connection_state, stats.communication_quality, stats.avg_response_time_ms
+                    channel_id, connection_state, stats.communication_quality(), stats.avg_response_time_ms()
                 );
             }
         }
@@ -436,8 +436,8 @@ impl RtuMonitor {
         }
 
         // Verify CRC error rate
-        if stats.total_requests > 0 {
-            let crc_error_rate = (stats.crc_errors as f64 / stats.total_requests as f64) * 100.0;
+        if stats.total_requests() > 0 {
+            let crc_error_rate = (stats.crc_errors() as f64 / stats.total_requests() as f64) * 100.0;
             if crc_error_rate > config.alarm_thresholds.crc_error_rate_high {
                 let alarm = RtuAlarm {
                     id: format!("ch{}_high_crc_error_rate", channel_id),
