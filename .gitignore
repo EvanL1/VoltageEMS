@@ -67,3 +67,4 @@ services/comsrv/docs/MODBUS_REDIS_INTEGRATION.md
 services/comsrv/REDUNDANCY_OPTIMIZATION.md
 services/comsrv/docs/modbus_server_refactoring.md
 services/comsrv/examples/yaml_config_example.yaml
+Voltage_EMS_功能文档.md
