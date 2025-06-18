@@ -8,6 +8,8 @@ pub struct AlarmConfig {
     pub redis: RedisConfig,
     /// API configuration
     pub api: ApiConfig,
+    /// Storage configuration
+    pub storage: StorageConfig,
 }
 
 /// Redis configuration
@@ -32,6 +34,17 @@ pub struct ApiConfig {
     pub port: u16,
 }
 
+/// Storage configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StorageConfig {
+    /// Retention period for resolved alarms (in days)
+    pub retention_days: u32,
+    /// Enable automatic cleanup
+    pub auto_cleanup: bool,
+    /// Cleanup interval (in hours)
+    pub cleanup_interval_hours: u32,
+}
+
 impl Default for AlarmConfig {
     fn default() -> Self {
         Self {
@@ -44,6 +57,11 @@ impl Default for AlarmConfig {
             api: ApiConfig {
                 host: "0.0.0.0".to_string(),
                 port: 8080,
+            },
+            storage: StorageConfig {
+                retention_days: 30,
+                auto_cleanup: true,
+                cleanup_interval_hours: 24,
             },
         }
     }
@@ -73,6 +91,20 @@ impl AlarmConfig {
                     .parse()
                     .unwrap_or(8080),
             },
+            storage: StorageConfig {
+                retention_days: std::env::var("STORAGE_RETENTION_DAYS")
+                    .unwrap_or_else(|_| "30".to_string())
+                    .parse()
+                    .unwrap_or(30),
+                auto_cleanup: std::env::var("STORAGE_AUTO_CLEANUP")
+                    .unwrap_or_else(|_| "true".to_string())
+                    .parse()
+                    .unwrap_or(true),
+                cleanup_interval_hours: std::env::var("STORAGE_CLEANUP_INTERVAL_HOURS")
+                    .unwrap_or_else(|_| "24".to_string())
+                    .parse()
+                    .unwrap_or(24),
+            },
         };
 
         Ok(config)
@@ -96,6 +128,8 @@ mod tests {
         assert_eq!(config.redis.port, 6379);
         assert_eq!(config.api.host, "0.0.0.0");
         assert_eq!(config.api.port, 8080);
+        assert_eq!(config.storage.retention_days, 30);
+        assert!(config.storage.auto_cleanup);
     }
 
     #[tokio::test]
@@ -104,6 +138,7 @@ mod tests {
         assert!(!config.redis.host.is_empty());
         assert!(config.redis.port > 0);
         assert!(config.api.port > 0);
+        assert!(config.storage.retention_days > 0);
     }
 
     #[test]
@@ -111,5 +146,6 @@ mod tests {
         let yaml = AlarmConfig::generate_default_config();
         assert!(yaml.contains("redis"));
         assert!(yaml.contains("api"));
+        assert!(yaml.contains("storage"));
     }
 } 
