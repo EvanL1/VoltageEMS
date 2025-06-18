@@ -5,7 +5,6 @@ edition = "2021"
 authors = ["Your Name <your.email@voltageenergy.com>"]
 description = "Network service for data transmission from Redis to various protocols"
 
-[workspace]
 
 [dependencies]
 # Core dependencies
