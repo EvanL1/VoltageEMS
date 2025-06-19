@@ -1,0 +1,39 @@
+# Alarm Service Configuration - Unix Socket Example
+
+# Redis Configuration using Unix Socket
+redis:
+  # Use Unix socket connection
+  connection_type: "Unix"
+  # Path to Redis Unix socket file
+  socket_path: "/var/run/redis/redis.sock"
+  # Database number (default: 0)
+  database: 0
+  # Optional: Redis password if authentication is required
+  # password: "your_secure_password"
+
+# API Configuration
+api:
+  # Bind address (0.0.0.0 allows connections from any IP)
+  host: "0.0.0.0"
+  # API port
+  port: 8080
+
+# Storage Configuration
+storage:
+  # Retention period for resolved alarms (in days)
+  retention_days: 30
+  # Enable automatic cleanup of old resolved alarms
+  auto_cleanup: true
+  # Cleanup interval (in hours)
+  cleanup_interval_hours: 24
+
+# Notes:
+# 1. Ensure Redis server is configured to use Unix socket
+#    Add to redis.conf:
+#    unixsocket /var/run/redis/redis.sock
+#    unixsocketperm 755
+# 
+# 2. Make sure the alarmsrv process has read/write permissions to the socket file
+# 
+# 3. Unix socket connections typically offer better performance for local connections
+#    compared to TCP connections 

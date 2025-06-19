@@ -1,9 +1,37 @@
+# Alarm Service Configuration
+
+# Redis Configuration
 redis:
-  host: localhost
+  # Connection type: "Tcp" or "Unix"
+  connection_type: "Tcp"
+  # Redis host (for TCP connections)
+  host: "localhost"
+  # Redis port (for TCP connections)
   port: 6379
-  password: null
+  # Unix socket path (for Unix socket connections)
+  # socket_path: "/var/run/redis/redis.sock"
+  # Redis password (optional)
+  # password: "your_password"
+  # Database number (default: 0)
   database: 0
 
+# Alternative Unix Socket Configuration:
+# redis:
+#   connection_type: "Unix"
+#   socket_path: "/var/run/redis/redis.sock"
+#   database: 0
+#   # password: "your_password"  # if needed
+
+# API Configuration
 api:
-  host: 0.0.0.0
-  port: 8080 
+  host: "0.0.0.0"
+  port: 8080
+
+# Storage Configuration
+storage:
+  # Retention period for resolved alarms (in days)
+  retention_days: 30
+  # Enable automatic cleanup
+  auto_cleanup: true
+  # Cleanup interval (in hours)
+  cleanup_interval_hours: 24 

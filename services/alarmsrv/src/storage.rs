@@ -19,9 +19,33 @@ pub struct RedisStorage {
 impl RedisStorage {
     /// Create new Redis storage instance
     pub async fn new(config: Arc<AlarmConfig>) -> Result<Self> {
-        let redis_url = format!("redis://{}:{}", config.redis.host, config.redis.port);
+        let redis_url = config.redis.get_connection_url();
+        tracing::info!("Connecting to Redis using URL: {}", 
+            redis_url.replace(&config.redis.password.clone().unwrap_or_default(), "***"));
+        
         let client = Client::open(redis_url)?;
-        let connection = client.get_connection()?;
+        let mut connection = client.get_connection()?;
+        
+        // Test connection with PING
+        let ping_result: String = redis::cmd("PING").query(&mut connection)?;
+        if ping_result != "PONG" {
+            return Err(anyhow::anyhow!("Redis connection test failed"));
+        }
+        
+        // Log connection success
+        match config.redis.connection_type {
+            crate::config::RedisConnectionType::Tcp => {
+                tracing::info!("Successfully connected to Redis via TCP at {}:{}", 
+                    config.redis.host, config.redis.port);
+            }
+            crate::config::RedisConnectionType::Unix => {
+                if let Some(ref socket_path) = config.redis.socket_path {
+                    tracing::info!("Successfully connected to Redis via Unix socket at {}", socket_path);
+                } else {
+                    tracing::info!("Successfully connected to Redis via TCP (fallback from Unix socket)");
+                }
+            }
+        }
         
         Ok(Self {
             client: Arc::new(Mutex::new(Some(connection))),
