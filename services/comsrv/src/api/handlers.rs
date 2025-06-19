@@ -238,10 +238,13 @@ pub async fn read_point(
     for point in channel_points {
         if point.id == point_name {
             point_value = Some(PointValue {
-                name: point.id,
+                id: point.id.clone(),
+                name: point.name,
                 value: serde_json::Value::String(point.value),
                 quality: point.quality > 0,
                 timestamp: point.timestamp,
+                unit: point.unit,
+                description: point.description,
             });
             break;
         }
@@ -380,10 +383,13 @@ pub async fn get_channel_points(
     // Convert to PointValue format
     let points: Vec<PointValue> = channel_points.into_iter()
         .map(|point| PointValue {
-            name: point.id,
+            id: point.id.clone(),
+            name: point.name,
             value: serde_json::Value::String(point.value),
             quality: point.quality > 0,
             timestamp: point.timestamp,
+            unit: point.unit,
+            description: point.description,
         })
         .collect();
     

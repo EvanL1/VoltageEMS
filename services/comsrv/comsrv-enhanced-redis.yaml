@@ -1,0 +1,77 @@
+version: "1.0"
+
+service:
+  name: "comsrv"
+  description: "Communication Service with Enhanced Redis Support"
+  
+  # Enhanced Redis configuration
+  redis:
+    enabled: true
+    connection_type: "Tcp"  # "Tcp" or "Unix"
+    address: "redis://127.0.0.1:6379"  # For TCP: "redis://host:port" or "host:port"
+                                       # For Unix: "/tmp/redis.sock" or "unix:///tmp/redis.sock"
+    db: 0                              # Database number (0-15)
+    timeout_ms: 5000                   # Connection timeout in milliseconds
+    max_connections: 20                # Maximum connections in pool
+    min_connections: 2                 # Minimum connections in pool
+    idle_timeout_secs: 300             # Connection idle timeout in seconds
+    max_retries: 3                     # Maximum retry attempts for failed operations
+    # password: "your_password"        # Optional authentication password
+    # username: "your_username"        # Optional authentication username (Redis 6.0+)
+  
+  # Metrics configuration
+  metrics:
+    enabled: true
+    bind_address: "0.0.0.0:9100"
+  
+  # Logging configuration
+  logging:
+    level: "info"
+    file: "/var/log/comsrv/comsrv.log"
+    max_size: 10485760  # 10MB
+    max_files: 5
+    console: true
+  
+  # API configuration
+  api:
+    enabled: true
+    bind_address: "0.0.0.0:3000"
+    version: "v1"
+  
+  # Point tables configuration
+  point_tables:
+    enabled: true
+    directory: "config/points"
+    watch_changes: true
+    reload_interval: 60
+
+channels:
+  - id: 1
+    name: "Modbus TCP Channel 1"
+    description: "Primary Modbus TCP connection"
+    protocol: "ModbusTcp"
+    parameters:
+      host: "192.168.1.100"
+      port: 502
+      timeout: 3000
+      max_retries: 3
+      poll_rate: 1000
+      point_tables:
+        "slave_1": "modbus_points.csv"
+  
+  - id: 2
+    name: "Modbus RTU Channel 1"
+    description: "Serial Modbus RTU connection"
+    protocol: "ModbusRtu"
+    parameters:
+      port: "/dev/ttyUSB0"
+      baud_rate: 9600
+      data_bits: 8
+      parity: "None"
+      stop_bits: 1
+      timeout: 2000
+      max_retries: 3
+      poll_rate: 2000
+      slave_id: 1
+      point_tables:
+        "slave_1": "rtu_points.csv" 

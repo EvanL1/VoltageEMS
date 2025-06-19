@@ -3,6 +3,7 @@ use tokio::sync::Mutex;
 use redis::{AsyncCommands, Client};
 use redis::aio::{Connection, PubSub};
 use serde::{Serialize, Deserialize};
+use std::time::Duration;
 use crate::utils::error::{ComSrvError, Result};
 use crate::core::config::config_manager::RedisConfig;
 
@@ -45,62 +46,151 @@ pub struct CommandResult {
     pub actual_value: Option<f64>, // 执行后的实际值
 }
 
-/// Redis storage structure
+/// Redis connection manager with enhanced features
 #[derive(Clone)]
-pub struct RedisStore {
-    conn: Arc<Mutex<Connection>>,  // Redis connection
-    client: Client, // Redis client for creating additional connections
+pub struct RedisConnectionManager {
+    client: Client,
+    config: RedisConfig,
 }
 
-impl RedisStore {
-    /// create Redis connection, support TCP and Unix Socket
-    pub async fn from_config(config: &RedisConfig) -> Result<Option<Self>> {
-        if !config.enabled {
-            tracing::info!("Redis disabled in config");
-            return Ok(None);
-        }
+impl RedisConnectionManager {
+    /// Create new Redis connection manager
+    pub async fn new(config: &RedisConfig) -> Result<Self> {
+        config.validate()?;
 
-        let url = if config.address.starts_with("unix://") {
-            config.address.to_string()
-        } else if config.address.starts_with("tcp://") {
-            config.address.replacen("tcp://", "redis://", 1)
-        } else if config.address.starts_with("redis://") {
-            config.address.to_string()
-        } else {
-            return Err(ComSrvError::RedisError(format!("Unsupported Redis address: {}", config.address)));
-        };
+        let url = config.to_redis_url();
+        tracing::debug!("Creating Redis connection manager with URL: {}", &url);
 
-        let client = Client::open(url)
-            .map_err(|e| ComSrvError::RedisError(format!("Invalid Redis URL: {}", e)))?;
+        let client = Client::open(url.clone())
+            .map_err(|e| ComSrvError::RedisError(format!("Invalid Redis URL '{}': {}", url, e)))?;
 
-        let conn = client.get_async_connection().await
-            .map_err(|e| ComSrvError::RedisError(format!("Failed to connect Redis: {}", e)))?;
+        // Test the connection
+        let mut conn = client.get_async_connection().await
+            .map_err(|e| ComSrvError::RedisError(format!("Redis connection test failed: {}", e)))?;
 
-        let mut conn = conn;
-        
+        let _: String = redis::cmd("PING").query_async(&mut conn).await
+            .map_err(|e| ComSrvError::RedisError(format!("Redis PING failed: {}", e)))?;
+
+        // Select database if specified
         if let Some(db_index) = config.db {
             redis::cmd("SELECT").arg(db_index)
                 .query_async(&mut conn).await
-                .map_err(|e| ComSrvError::RedisError(format!("SELECT DB error: {}", e)))?;
+                .map_err(|e| ComSrvError::RedisError(format!("Failed to select database {}: {}", db_index, e)))?;
         }
 
-        Ok(Some(RedisStore {
-            conn: Arc::new(Mutex::new(conn)),
+        tracing::info!(
+            "Redis connection manager created successfully: type={:?}, db={:?}, timeout={}ms",
+            config.connection_type,
+            config.db,
+            config.timeout_ms
+        );
+
+        Ok(Self {
             client,
-        }))
+            config: config.clone(),
+        })
     }
 
+    /// Get a new connection from Redis client
+    pub async fn get_connection(&self) -> Result<Connection> {
+        let mut conn = self.client.get_async_connection().await
+            .map_err(|e| ComSrvError::RedisError(format!("Failed to create Redis connection: {}", e)))?;
+
+        // Select database if specified
+        if let Some(db_index) = self.config.db {
+            redis::cmd("SELECT").arg(db_index)
+                .query_async(&mut conn).await
+                .map_err(|e| ComSrvError::RedisError(format!("Failed to select database {}: {}", db_index, e)))?;
+        }
+
+        Ok(conn)
+    }
+
+    /// Get the configuration
+    pub fn config(&self) -> &RedisConfig {
+        &self.config
+    }
+
+    /// Test connection health
+    pub async fn health_check(&self) -> Result<bool> {
+        match self.get_connection().await {
+            Ok(mut conn) => {
+                match redis::cmd("PING").query_async::<_, String>(&mut conn).await {
+                    Ok(_) => Ok(true),
+                    Err(e) => {
+                        tracing::warn!("Redis health check failed: {}", e);
+                        Ok(false)
+                    }
+                }
+            }
+            Err(e) => {
+                tracing::warn!("Redis connection failed: {}", e);
+                Ok(false)
+            }
+        }
+    }
+}
+
+/// Redis storage structure with enhanced connection management
+#[derive(Clone)]
+pub struct RedisStore {
+    manager: RedisConnectionManager,
+}
+
+impl RedisStore {
+    /// create Redis connection with enhanced management
+    pub async fn from_config(config: &RedisConfig) -> Result<Option<Self>> {
+        if !config.enabled {
+            tracing::info!("Redis disabled in configuration");
+            return Ok(None);
+        }
+
+        let manager = RedisConnectionManager::new(config).await?;
+        
+        Ok(Some(RedisStore { manager }))
+    }
+
+    /// Get connection manager
+    pub fn manager(&self) -> &RedisConnectionManager {
+        &self.manager
+    }
 
     /// write realtime value to Redis
     pub async fn set_realtime_value(&self, key: &str, value: &RealtimeValue) -> Result<()> {
         let val_str = serde_json::to_string(value)
             .map_err(|e| ComSrvError::RedisError(format!("Serialize RealtimeValue error: {}", e)))?;
 
-        let mut guard = self.conn.lock().await;
-        guard.set::<&str, String, ()>(key, val_str).await
-            .map_err(|e| ComSrvError::RedisError(format!("Redis set error: {}", e)))?;
-
-        Ok(())
+        // Use retry mechanism for robustness
+        let mut last_error = None;
+        for attempt in 1..=self.manager.config().max_retries {
+            match self.manager.get_connection().await {
+                Ok(mut conn) => {
+                    match conn.set::<&str, String, ()>(key, val_str.clone()).await {
+                        Ok(_) => {
+                            if attempt > 1 {
+                                tracing::info!("Redis set succeeded on attempt {}", attempt);
+                            }
+                            return Ok(());
+                        }
+                        Err(e) => {
+                            last_error = Some(format!("Redis set error: {}", e));
+                        }
+                    }
+                }
+                Err(e) => {
+                    last_error = Some(format!("Connection error: {}", e));
+                }
+            }
+            
+            if attempt < self.manager.config().max_retries {
+                tracing::warn!("Redis set failed on attempt {}, retrying: {}", attempt, last_error.as_ref().unwrap());
+                tokio::time::sleep(Duration::from_millis(100 * attempt as u64)).await;
+            }
+        }
+        
+        Err(ComSrvError::RedisError(format!("Redis set error after {} attempts: {}", 
+            self.manager.config().max_retries, 
+            last_error.unwrap_or_else(|| "Unknown error".to_string()))))
     }
 
     /// write realtime value with expire time (seconds)
@@ -108,17 +198,44 @@ impl RedisStore {
         let val_str = serde_json::to_string(value)
             .map_err(|e| ComSrvError::RedisError(format!("Serialize RealtimeValue error: {}", e)))?;
 
-        let mut guard = self.conn.lock().await;
-        guard.set_ex::<&str, String, ()>(key, val_str, expire_secs).await
-            .map_err(|e| ComSrvError::RedisError(format!("Redis set_ex error: {}", e)))?;
-
-        Ok(())
+        // Use retry mechanism for robustness
+        let mut last_error = None;
+        for attempt in 1..=self.manager.config().max_retries {
+            match self.manager.get_connection().await {
+                Ok(mut conn) => {
+                    match conn.set_ex::<&str, String, ()>(key, val_str.clone(), expire_secs).await {
+                        Ok(_) => {
+                            if attempt > 1 {
+                                tracing::info!("Redis set_ex succeeded on attempt {}", attempt);
+                            }
+                            return Ok(());
+                        }
+                        Err(e) => {
+                            last_error = Some(format!("Redis set_ex error: {}", e));
+                        }
+                    }
+                }
+                Err(e) => {
+                    last_error = Some(format!("Connection error: {}", e));
+                }
+            }
+            
+            if attempt < self.manager.config().max_retries {
+                tracing::warn!("Redis set_ex failed on attempt {}, retrying: {}", attempt, last_error.as_ref().unwrap());
+                tokio::time::sleep(Duration::from_millis(100 * attempt as u64)).await;
+            }
+        }
+        
+        Err(ComSrvError::RedisError(format!("Redis set_ex error after {} attempts: {}", 
+            self.manager.config().max_retries, 
+            last_error.unwrap_or_else(|| "Unknown error".to_string()))))
     }
 
     /// read realtime value
     pub async fn get_realtime_value(&self, key: &str) -> Result<Option<RealtimeValue>> {
-        let mut guard = self.conn.lock().await;
-        let val: Option<String> = guard.get(key).await
+        let mut conn = self.manager.get_connection().await?;
+        
+        let val: Option<String> = conn.get(key).await
             .map_err(|e| ComSrvError::RedisError(format!("Redis get error: {}", e)))?;
 
         if let Some(json_str) = val {
@@ -135,8 +252,8 @@ impl RedisStore {
         let command_str = serde_json::to_string(command)
             .map_err(|e| ComSrvError::RedisError(format!("Serialize command error: {}", e)))?;
 
-        let mut guard = self.conn.lock().await;
-        let _: () = guard.publish(channel, command_str).await
+        let mut conn = self.manager.get_connection().await?;
+        let _: () = conn.publish(channel, command_str).await
             .map_err(|e| ComSrvError::RedisError(format!("Redis publish error: {}", e)))?;
 
         Ok(())
@@ -148,14 +265,14 @@ impl RedisStore {
         let command_str = serde_json::to_string(command)
             .map_err(|e| ComSrvError::RedisError(format!("Serialize command error: {}", e)))?;
 
-        let mut guard = self.conn.lock().await;
+        let mut conn = self.manager.get_connection().await?;
         // 设置指令，带过期时间（5分钟）
-        guard.set_ex::<&str, String, ()>(&command_key, command_str, 300).await
+        conn.set_ex::<&str, String, ()>(&command_key, command_str, 300).await
             .map_err(|e| ComSrvError::RedisError(format!("Redis set command error: {}", e)))?;
 
         // 同时发布到指令通道通知
         let notify_channel = format!("commands:{}", channel_id);
-        let _: () = guard.publish(&notify_channel, &command.command_id).await
+        let _: () = conn.publish(&notify_channel, &command.command_id).await
             .map_err(|e| ComSrvError::RedisError(format!("Redis publish command notification error: {}", e)))?;
 
         Ok(())
@@ -165,8 +282,8 @@ impl RedisStore {
     pub async fn get_command(&self, channel_id: &str, command_id: &str) -> Result<Option<RemoteCommand>> {
         let command_key = format!("cmd:{}:{}", channel_id, command_id);
         
-        let mut guard = self.conn.lock().await;
-        let val: Option<String> = guard.get(&command_key).await
+        let mut conn = self.manager.get_connection().await?;
+        let val: Option<String> = conn.get(&command_key).await
             .map_err(|e| ComSrvError::RedisError(format!("Redis get command error: {}", e)))?;
 
         if let Some(json_str) = val {
@@ -182,8 +299,8 @@ impl RedisStore {
     pub async fn delete_command(&self, channel_id: &str, command_id: &str) -> Result<()> {
         let command_key = format!("cmd:{}:{}", channel_id, command_id);
         
-        let mut guard = self.conn.lock().await;
-        let _: () = guard.del(&command_key).await
+        let mut conn = self.manager.get_connection().await?;
+        let _: () = conn.del(&command_key).await
             .map_err(|e| ComSrvError::RedisError(format!("Redis delete command error: {}", e)))?;
 
         Ok(())
@@ -195,9 +312,9 @@ impl RedisStore {
         let result_str = serde_json::to_string(result)
             .map_err(|e| ComSrvError::RedisError(format!("Serialize command result error: {}", e)))?;
 
-        let mut guard = self.conn.lock().await;
+        let mut conn = self.manager.get_connection().await?;
         // 设置结果，带过期时间（1小时）
-        guard.set_ex::<&str, String, ()>(&result_key, result_str, 3600).await
+        conn.set_ex::<&str, String, ()>(&result_key, result_str, 3600).await
             .map_err(|e| ComSrvError::RedisError(format!("Redis set command result error: {}", e)))?;
 
         Ok(())
@@ -205,11 +322,15 @@ impl RedisStore {
 
     /// 创建新的Redis PubSub连接用于订阅
     pub async fn create_pubsub(&self) -> Result<PubSub> {
-        let pubsub = self.client.get_async_connection().await
-            .map_err(|e| ComSrvError::RedisError(format!("Failed to create pubsub connection: {}", e)))?
-            .into_pubsub();
+        let conn = self.manager.get_connection().await?;
+        let pubsub = conn.into_pubsub();
         
         Ok(pubsub)
+    }
+
+    /// Check if Redis connection is healthy
+    pub async fn is_healthy(&self) -> bool {
+        self.manager.health_check().await.unwrap_or(false)
     }
 }
 
@@ -225,6 +346,13 @@ mod tests {
             connection_type: RedisConnectionType::Tcp,
             address: "redis://127.0.0.1:6379".to_string(),
             db: Some(0),
+            timeout_ms: 5000,
+            max_connections: 10,
+            min_connections: 1,
+            idle_timeout_secs: 300,
+            max_retries: 3,
+            password: None,
+            username: None,
         }
     }
 
@@ -235,6 +363,13 @@ mod tests {
             connection_type: RedisConnectionType::Tcp,
             address: "redis://127.0.0.1:6379".to_string(),
             db: Some(0),
+            timeout_ms: 5000,
+            max_connections: 10,
+            min_connections: 1,
+            idle_timeout_secs: 300,
+            max_retries: 3,
+            password: None,
+            username: None,
         }
     }
 
@@ -289,6 +424,13 @@ mod tests {
             connection_type: RedisConnectionType::Tcp,
             address: "invalid://invalid".to_string(),
             db: Some(0),
+            timeout_ms: 5000,
+            max_connections: 10,
+            min_connections: 1,
+            idle_timeout_secs: 300,
+            max_retries: 3,
+            password: None,
+            username: None,
         };
         
         // This test just verifies the configuration structure
@@ -303,6 +445,13 @@ mod tests {
             connection_type: RedisConnectionType::Tcp,
             address: "tcp://127.0.0.1:6379".to_string(),
             db: Some(1),
+            timeout_ms: 5000,
+            max_connections: 10,
+            min_connections: 1,
+            idle_timeout_secs: 300,
+            max_retries: 3,
+            password: None,
+            username: None,
         };
         
         let redis_config = RedisConfig {
@@ -310,6 +459,13 @@ mod tests {
             connection_type: RedisConnectionType::Tcp,
             address: "redis://127.0.0.1:6379".to_string(),
             db: Some(2),
+            timeout_ms: 5000,
+            max_connections: 10,
+            min_connections: 1,
+            idle_timeout_secs: 300,
+            max_retries: 3,
+            password: None,
+            username: None,
         };
         
         let unix_config = RedisConfig {
@@ -317,6 +473,13 @@ mod tests {
             connection_type: RedisConnectionType::Unix,
             address: "unix:///tmp/redis.sock".to_string(),
             db: Some(3),
+            timeout_ms: 5000,
+            max_connections: 10,
+            min_connections: 1,
+            idle_timeout_secs: 300,
+            max_retries: 3,
+            password: None,
+            username: None,
         };
         
         // Test that all address types are properly stored
@@ -332,6 +495,13 @@ mod tests {
             connection_type: RedisConnectionType::Tcp,
             address: "redis://127.0.0.1:6379".to_string(),
             db: Some(5),
+            timeout_ms: 5000,
+            max_connections: 10,
+            min_connections: 1,
+            idle_timeout_secs: 300,
+            max_retries: 3,
+            password: None,
+            username: None,
         };
         
         let config_without_db = RedisConfig {
@@ -339,6 +509,13 @@ mod tests {
             connection_type: RedisConnectionType::Tcp,
             address: "redis://127.0.0.1:6379".to_string(),
             db: None,
+            timeout_ms: 5000,
+            max_connections: 10,
+            min_connections: 1,
+            idle_timeout_secs: 300,
+            max_retries: 3,
+            password: None,
+            username: None,
         };
         
         assert_eq!(config_with_db.db, Some(5));

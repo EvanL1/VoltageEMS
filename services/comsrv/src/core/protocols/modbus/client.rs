@@ -2828,6 +2828,13 @@ mod tests {
             connection_type: crate::core::config::config_manager::RedisConnectionType::Tcp,
             address: "redis://127.0.0.1:6379".to_string(),
             db: Some(0),
+            timeout_ms: 5000,
+            max_connections: 10,
+            min_connections: 1,
+            idle_timeout_secs: 300,
+            max_retries: 3,
+            password: None,
+            username: None,
         };
         
         let client = ModbusClient::new_with_redis(

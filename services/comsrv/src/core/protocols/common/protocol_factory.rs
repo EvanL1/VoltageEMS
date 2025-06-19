@@ -723,10 +723,22 @@ impl ProtocolFactory {
     pub fn validate_config(&self, config: &ChannelConfig) -> Result<()> {
         match self.protocol_factories.get(&config.protocol) {
             Some(factory) => factory.validate_config(config),
-            None => Err(ComSrvError::ProtocolNotSupported(format!(
-                "Protocol type not supported: {:?}", 
-                config.protocol
-            ))),
+            None => {
+                // Allow certain protocols that have fallback implementations
+                match config.protocol {
+                    ProtocolType::Virtual => {
+                        // Virtual protocol has basic validation - just check required fields
+                        if config.name.is_empty() {
+                            return Err(ComSrvError::ConfigError("Channel name cannot be empty".to_string()));
+                        }
+                        Ok(())
+                    },
+                    _ => Err(ComSrvError::ProtocolNotSupported(format!(
+                        "Protocol type not supported: {:?}", 
+                        config.protocol
+                    ))),
+                }
+            }
         }
     }
     
@@ -818,10 +830,14 @@ impl ProtocolFactory {
 
     // Create virtual channel
     #[inline]
-    async fn create_virtual(&self, _config: ChannelConfig) -> Result<Box<dyn ComBase>> {
-        Err(ComSrvError::ProtocolNotSupported(
-            "Virtual protocol not implemented yet".to_string()
-        ))
+    async fn create_virtual(&self, config: ChannelConfig) -> Result<Box<dyn ComBase>> {
+        // Create a virtual mock channel for testing purposes
+        let mock = MockComBase::new(
+            &config.name,
+            config.id,
+            "Virtual"
+        );
+        Ok(Box::new(mock) as Box<dyn ComBase>)
     }
 
     /// Create multiple protocols in parallel for improved performance
@@ -1448,8 +1464,12 @@ mod tests {
         let config = create_test_channel_config(5, ProtocolType::Virtual);
         
         let result = factory.create_protocol(config).await;
-        assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), ComSrvError::ProtocolNotSupported(_)));
+        assert!(result.is_ok(), "Virtual protocol should be supported");
+        
+        // Verify it's a MockComBase instance
+        let protocol = result.unwrap();
+        let protocol_type = protocol.protocol_type();
+        assert_eq!(protocol_type, "Virtual");
     }
 
     #[tokio::test]

@@ -6,6 +6,7 @@ use std::fs;
 use std::path::Path;
 use std::str::FromStr;
 use std::net::SocketAddr;
+use std::time::Duration;
 
 /// Service configuration section
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -76,42 +77,224 @@ pub enum RedisConnectionType {
 /// Redis configuration section
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RedisConfig {
+    /// Whether Redis is enabled
     pub enabled: bool,
+    /// Connection type (TCP or Unix socket)
     pub connection_type: RedisConnectionType,
+    /// Redis server address
+    /// For TCP: "127.0.0.1:6379" or "redis://127.0.0.1:6379"
+    /// For Unix: "/tmp/redis.sock" or "unix:///tmp/redis.sock"
     pub address: String,
+    /// Database number (0-15)
     #[serde(default)]
     pub db: Option<u8>,
+    /// Connection timeout in milliseconds
+    #[serde(default = "default_redis_timeout")]
+    pub timeout_ms: u64,
+    /// Maximum number of connections in pool
+    #[serde(default = "default_redis_max_connections")]
+    pub max_connections: u32,
+    /// Minimum number of connections in pool
+    #[serde(default = "default_redis_min_connections")]
+    pub min_connections: u32,
+    /// Connection idle timeout in seconds
+    #[serde(default = "default_redis_idle_timeout")]
+    pub idle_timeout_secs: u64,
+    /// Maximum number of retry attempts
+    #[serde(default = "default_redis_max_retries")]
+    pub max_retries: u32,
+    /// Password for Redis authentication (optional)
+    #[serde(default)]
+    pub password: Option<String>,
+    /// Username for Redis authentication (optional, Redis 6.0+)
+    #[serde(default)]
+    pub username: Option<String>,
 }
+
+fn default_redis_timeout() -> u64 { 5000 }
+fn default_redis_max_connections() -> u32 { 10 }
+fn default_redis_min_connections() -> u32 { 1 }
+fn default_redis_idle_timeout() -> u64 { 300 }
+fn default_redis_max_retries() -> u32 { 3 }
 
 impl Default for RedisConfig {
     fn default() -> Self {
         Self {
-            enabled: true,
+            enabled: std::env::var("REDIS_ENABLED")
+                .unwrap_or_else(|_| "true".to_string())
+                .parse()
+                .unwrap_or(true),
             connection_type: RedisConnectionType::Tcp,
-            address: "redis://127.0.0.1:6379".to_string(),
-            db: Some(0),
+            address: std::env::var("REDIS_URL")
+                .unwrap_or_else(|_| "redis://127.0.0.1:6379".to_string()),
+            db: std::env::var("REDIS_DB")
+                .ok()
+                .and_then(|s| s.parse().ok())
+                .or(Some(0)),
+            timeout_ms: std::env::var("REDIS_TIMEOUT_MS")
+                .ok()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(5000),
+            max_connections: std::env::var("REDIS_MAX_CONNECTIONS")
+                .ok()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(10),
+            min_connections: std::env::var("REDIS_MIN_CONNECTIONS")
+                .ok()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(1),
+            idle_timeout_secs: std::env::var("REDIS_IDLE_TIMEOUT_SECS")
+                .ok()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(300),
+            max_retries: std::env::var("REDIS_MAX_RETRIES")
+                .ok()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(3),
+            password: std::env::var("REDIS_PASSWORD").ok(),
+            username: std::env::var("REDIS_USERNAME").ok(),
         }
     }
 }
 
 impl RedisConfig {
+    /// Create Redis configuration from environment variables
+    pub fn from_env() -> Result<Self> {
+        let enabled: bool = std::env::var("REDIS_ENABLED")
+            .unwrap_or_else(|_| "true".to_string())
+            .parse()
+            .map_err(|_| ComSrvError::ConfigError("Invalid REDIS_ENABLED value".to_string()))?;
+
+        if !enabled {
+            return Ok(Self {
+                enabled: false,
+                ..Default::default()
+            });
+        }
+
+        let address = std::env::var("REDIS_URL")
+            .unwrap_or_else(|_| "redis://127.0.0.1:6379".to_string());
+
+        let connection_type = if address.starts_with("unix://") || address.starts_with("/") {
+            RedisConnectionType::Unix
+        } else {
+            RedisConnectionType::Tcp
+        };
+
+        Ok(Self {
+            enabled,
+            connection_type,
+            address,
+            db: std::env::var("REDIS_DB")
+                .ok()
+                .and_then(|s| s.parse().ok()),
+            timeout_ms: std::env::var("REDIS_TIMEOUT_MS")
+                .ok()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(5000),
+            max_connections: std::env::var("REDIS_MAX_CONNECTIONS")
+                .ok()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(10),
+            min_connections: std::env::var("REDIS_MIN_CONNECTIONS")
+                .ok()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(1),
+            idle_timeout_secs: std::env::var("REDIS_IDLE_TIMEOUT_SECS")
+                .ok()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(300),
+            max_retries: std::env::var("REDIS_MAX_RETRIES")
+                .ok()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(3),
+            password: std::env::var("REDIS_PASSWORD").ok(),
+            username: std::env::var("REDIS_USERNAME").ok(),
+        })
+    }
+
+    /// Validate Redis configuration
+    pub fn validate(&self) -> Result<()> {
+        if !self.enabled {
+            return Ok(());
+        }
+
+        if self.address.is_empty() {
+            return Err(ComSrvError::ConfigError("Redis address cannot be empty".to_string()));
+        }
+
+        if self.max_connections == 0 {
+            return Err(ComSrvError::ConfigError("Redis max_connections must be greater than 0".to_string()));
+        }
+
+        if self.min_connections > self.max_connections {
+            return Err(ComSrvError::ConfigError("Redis min_connections cannot exceed max_connections".to_string()));
+        }
+
+        if self.timeout_ms == 0 {
+            return Err(ComSrvError::ConfigError("Redis timeout_ms must be greater than 0".to_string()));
+        }
+
+        // Validate database number (Redis supports 0-15 by default)
+        if let Some(db) = self.db {
+            if db > 15 {
+                return Err(ComSrvError::ConfigError("Redis database number must be between 0-15".to_string()));
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Convert to Redis connection URL
     pub fn to_redis_url(&self) -> String {
-        match self.connection_type {
+        let mut url = match self.connection_type {
             RedisConnectionType::Tcp => {
-                if let Some(db) = self.db {
-                    format!("redis://{}/{}", self.address, db)
+                if self.address.starts_with("redis://") {
+                    self.address.clone()
                 } else {
                     format!("redis://{}", self.address)
                 }
             }
             RedisConnectionType::Unix => {
-                if let Some(db) = self.db {
-                    format!("unix:{}?db={}", self.address, db)
+                if self.address.starts_with("unix://") {
+                    self.address.clone()
                 } else {
                     format!("unix://{}", self.address)
                 }
             }
+        };
+
+        // Add authentication if provided
+        if let (Some(username), Some(password)) = (&self.username, &self.password) {
+            url = url.replace("redis://", &format!("redis://{}:{}@", username, password));
+        } else if let Some(password) = &self.password {
+            url = url.replace("redis://", &format!("redis://:{}@", password));
         }
+
+        // Add database number
+        if let Some(db) = self.db {
+            match self.connection_type {
+                RedisConnectionType::Tcp => {
+                    url = format!("{}/{}", url, db);
+                }
+                RedisConnectionType::Unix => {
+                    let separator = if url.contains('?') { "&" } else { "?" };
+                    url = format!("{}{}db={}", url, separator, db);
+                }
+            }
+        }
+
+        url
+    }
+
+    /// Get connection timeout as Duration
+    pub fn timeout(&self) -> Duration {
+        Duration::from_millis(self.timeout_ms)
+    }
+
+    /// Get idle timeout as Duration  
+    pub fn idle_timeout(&self) -> Duration {
+        Duration::from_secs(self.idle_timeout_secs)
     }
 }
 
@@ -1312,6 +1495,13 @@ channels:
             connection_type: RedisConnectionType::Tcp,
             address: "127.0.0.1:6379".to_string(),
             db: Some(0),
+            timeout_ms: 5000,
+            max_connections: 10,
+            min_connections: 1,
+            idle_timeout_secs: 300,
+            max_retries: 3,
+            password: None,
+            username: None,
         };
         
         let tcp_url = tcp_config.to_redis_url();
@@ -1323,6 +1513,13 @@ channels:
             connection_type: RedisConnectionType::Unix,
             address: "/tmp/redis.sock".to_string(),
             db: None,
+            timeout_ms: 5000,
+            max_connections: 10,
+            min_connections: 1,
+            idle_timeout_secs: 300,
+            max_retries: 3,
+            password: None,
+            username: None,
         };
         
         let unix_url = unix_config.to_redis_url();
@@ -1334,6 +1531,13 @@ channels:
             connection_type: RedisConnectionType::Tcp,
             address: "127.0.0.1:6379".to_string(),
             db: None,
+            timeout_ms: 5000,
+            max_connections: 10,
+            min_connections: 1,
+            idle_timeout_secs: 300,
+            max_retries: 3,
+            password: None,
+            username: None,
         };
         
         let tcp_no_db_url = tcp_no_db_config.to_redis_url();
