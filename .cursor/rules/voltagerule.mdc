@@ -16,3 +16,4 @@ alwaysApply: false
   - 采用Electron+vue.js的方式构建跨平台界面以及Web界面；
   - 开发不同功能时用feature/{service name}的git分支来开发，开发完成后合并到develop分支，开发另一功能时先合并develop分支；
   - 使用英文写代码注释以及git commit doc。
+  - 不要主动提交git。
