@@ -5,7 +5,7 @@ use std::hash::{Hash, Hasher};
 use tokio::sync::{RwLock, Semaphore, OwnedSemaphorePermit};
 use tokio::time::timeout;
 use dashmap::DashMap;
-use tracing::{debug, warn, info};
+use log::{debug, warn, info};
 use once_cell::sync::OnceCell;
 
 use crate::utils::{ComSrvError, Result};

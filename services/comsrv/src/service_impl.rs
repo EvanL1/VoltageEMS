@@ -4,7 +4,7 @@
 
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use tracing::{info, warn, error};
+use log::{info, warn, error};
 
 use crate::core::config::ConfigManager;
 use crate::core::protocols::common::ProtocolFactory;

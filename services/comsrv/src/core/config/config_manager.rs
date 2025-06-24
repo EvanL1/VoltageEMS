@@ -572,7 +572,7 @@ impl ConfigManager {
         if config.service.point_tables.enabled {
             let points_dir = Path::new(&config.service.point_tables.directory);
             if let Err(e) = csv_point_manager.load_from_directory(points_dir) {
-                tracing::warn!("Failed to load CSV point tables: {}", e);
+                log::warn!("Failed to load CSV point tables: {}", e);
             }
         }
         
@@ -1085,7 +1085,7 @@ impl ConfigManager {
         let points_dir = Path::new(&self.config.service.point_tables.directory);
         self.csv_point_manager.load_from_directory(points_dir)?;
         
-        tracing::info!("Reloaded CSV point tables from: {}", points_dir.display());
+        log::info!("Reloaded CSV point tables from: {}", points_dir.display());
         Ok(())
     }
 

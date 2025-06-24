@@ -84,7 +84,7 @@ impl CsvPointManager {
             records.push(record);
         }
 
-        tracing::info!("Loaded {} points from CSV file: {}", records.len(), file_path.display());
+        log::info!("Loaded {} points from CSV file: {}", records.len(), file_path.display());
         self.point_tables.insert(table_name.to_string(), records);
         
         Ok(())
@@ -120,7 +120,7 @@ impl CsvPointManager {
                     .to_string();
                 
                 if let Err(e) = self.load_from_csv(&path, &table_name) {
-                    tracing::warn!("Failed to load CSV file {}: {}", path.display(), e);
+                    log::warn!("Failed to load CSV file {}: {}", path.display(), e);
                 }
             }
         }
@@ -289,7 +289,7 @@ impl CsvPointManager {
                 "Failed to flush CSV file: {}", e
             )))?;
 
-        tracing::info!("Saved {} points to CSV file: {}", points.len(), file_path.display());
+        log::info!("Saved {} points to CSV file: {}", points.len(), file_path.display());
         Ok(())
     }
 

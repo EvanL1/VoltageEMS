@@ -12,7 +12,7 @@ use crate::api::models::{
     ChannelOperation, PointValue, PointTableData, WritePointRequest
 };
 use crate::core::protocols::common::ProtocolFactory;
-use crate::core::protocols::modbus::{ModbusClient};
+use crate::core::protocols::modbus::client::ModbusClient;
 use crate::core::protocols::modbus::common::ModbusRegisterType;
 use crate::utils::ComSrvError;
 

@@ -865,9 +865,7 @@ mod tests {
             }
             retries += 1;
         }
-        
 
-        
         assert!(server.is_running().await, "Server should be running after start and proper startup delay");
         
         // Check status

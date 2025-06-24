@@ -59,7 +59,7 @@ impl RedisConnectionManager {
         config.validate()?;
 
         let url = config.to_redis_url();
-        tracing::debug!("Creating Redis connection manager with URL: {}", &url);
+        log::debug!("Creating Redis connection manager with URL: {}", &url);
 
         let client = Client::open(url.clone())
             .map_err(|e| ComSrvError::RedisError(format!("Invalid Redis URL '{}': {}", url, e)))?;
@@ -78,7 +78,7 @@ impl RedisConnectionManager {
                 .map_err(|e| ComSrvError::RedisError(format!("Failed to select database {}: {}", db_index, e)))?;
         }
 
-        tracing::info!(
+        log::info!(
             "Redis connection manager created successfully: type={:?}, db={:?}, timeout={}ms",
             config.connection_type,
             config.db,
@@ -118,13 +118,13 @@ impl RedisConnectionManager {
                 match redis::cmd("PING").query_async::<_, String>(&mut conn).await {
                     Ok(_) => Ok(true),
                     Err(e) => {
-                        tracing::warn!("Redis health check failed: {}", e);
+                        log::warn!("Redis health check failed: {}", e);
                         Ok(false)
                     }
                 }
             }
             Err(e) => {
-                tracing::warn!("Redis connection failed: {}", e);
+                log::warn!("Redis connection failed: {}", e);
                 Ok(false)
             }
         }
@@ -141,7 +141,7 @@ impl RedisStore {
     /// create Redis connection with enhanced management
     pub async fn from_config(config: &RedisConfig) -> Result<Option<Self>> {
         if !config.enabled {
-            tracing::info!("Redis disabled in configuration");
+            log::info!("Redis disabled in configuration");
             return Ok(None);
         }
 
@@ -168,7 +168,7 @@ impl RedisStore {
                     match conn.set::<&str, String, ()>(key, val_str.clone()).await {
                         Ok(_) => {
                             if attempt > 1 {
-                                tracing::info!("Redis set succeeded on attempt {}", attempt);
+                                log::info!("Redis set succeeded on attempt {}", attempt);
                             }
                             return Ok(());
                         }
@@ -183,7 +183,7 @@ impl RedisStore {
             }
             
             if attempt < self.manager.config().max_retries {
-                tracing::warn!("Redis set failed on attempt {}, retrying: {}", attempt, last_error.as_ref().unwrap());
+                log::warn!("Redis set failed on attempt {}, retrying: {}", attempt, last_error.as_ref().unwrap());
                 tokio::time::sleep(Duration::from_millis(100 * attempt as u64)).await;
             }
         }
@@ -206,7 +206,7 @@ impl RedisStore {
                     match conn.set_ex::<&str, String, ()>(key, val_str.clone(), expire_secs).await {
                         Ok(_) => {
                             if attempt > 1 {
-                                tracing::info!("Redis set_ex succeeded on attempt {}", attempt);
+                                log::info!("Redis set_ex succeeded on attempt {}", attempt);
                             }
                             return Ok(());
                         }
@@ -221,7 +221,7 @@ impl RedisStore {
             }
             
             if attempt < self.manager.config().max_retries {
-                tracing::warn!("Redis set_ex failed on attempt {}, retrying: {}", attempt, last_error.as_ref().unwrap());
+                log::warn!("Redis set_ex failed on attempt {}, retrying: {}", attempt, last_error.as_ref().unwrap());
                 tokio::time::sleep(Duration::from_millis(100 * attempt as u64)).await;
             }
         }

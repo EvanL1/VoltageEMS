@@ -4,7 +4,7 @@ use serde_json;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use tracing::debug;
+use log::{debug, info};
 use chrono::{DateTime, Utc, Duration};
 
 use crate::config::AlarmConfig;
@@ -20,7 +20,7 @@ impl RedisStorage {
     /// Create new Redis storage instance
     pub async fn new(config: Arc<AlarmConfig>) -> Result<Self> {
         let redis_url = config.redis.get_connection_url();
-        tracing::info!("Connecting to Redis using URL: {}", 
+        info!("Connecting to Redis using URL: {}", 
             redis_url.replace(&config.redis.password.clone().unwrap_or_default(), "***"));
         
         let client = Client::open(redis_url)?;
@@ -35,14 +35,14 @@ impl RedisStorage {
         // Log connection success
         match config.redis.connection_type {
             crate::config::RedisConnectionType::Tcp => {
-                tracing::info!("Successfully connected to Redis via TCP at {}:{}", 
+                info!("Successfully connected to Redis via TCP at {}:{}", 
                     config.redis.host, config.redis.port);
             }
             crate::config::RedisConnectionType::Unix => {
                 if let Some(ref socket_path) = config.redis.socket_path {
-                    tracing::info!("Successfully connected to Redis via Unix socket at {}", socket_path);
+                    info!("Successfully connected to Redis via Unix socket at {}", socket_path);
                 } else {
-                    tracing::info!("Successfully connected to Redis via TCP (fallback from Unix socket)");
+                    info!("Successfully connected to Redis via TCP (fallback from Unix socket)");
                 }
             }
         }

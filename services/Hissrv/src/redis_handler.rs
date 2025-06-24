@@ -275,6 +275,7 @@ pub async fn process_redis_data(
                 // Process hash type
                 match redis.get_hash(key) {
                     Ok(hash_values) => {
+                        let hash_len = hash_values.len();
                         for (field, value) in hash_values {
                             // Try to parse value as numeric
                             let (is_numeric, numeric_value) = try_parse_numeric(&value);
@@ -300,7 +301,7 @@ pub async fn process_redis_data(
                             println!(
                                 "Transferred hash key: {} with {} fields",
                                 key,
-                                hash_values.len()
+                                hash_len
                             );
                         }
                     }
@@ -351,6 +352,7 @@ pub async fn process_redis_data(
                 // Process set type
                 match redis.get_set(key) {
                     Ok(set_values) => {
+                        let set_len = set_values.len();
                         for value in set_values {
                             // Try to parse value as numeric
                             let (is_numeric, numeric_value) = try_parse_numeric(&value);
@@ -376,7 +378,7 @@ pub async fn process_redis_data(
                             println!(
                                 "Transferred set key: {} with {} members",
                                 key,
-                                set_values.len()
+                                set_len
                             );
                         }
                     }
@@ -389,6 +391,7 @@ pub async fn process_redis_data(
                 // Process sorted set type
                 match redis.get_zset(key) {
                     Ok(zset_values) => {
+                        let zset_len = zset_values.len();
                         for (member, score) in zset_values {
                             // Try to parse value as numeric
                             let (is_numeric, numeric_value) = try_parse_numeric(&member);
@@ -414,7 +417,7 @@ pub async fn process_redis_data(
                             println!(
                                 "Transferred sorted set key: {} with {} members",
                                 key,
-                                zset_values.len()
+                                zset_len
                             );
                         }
                     }

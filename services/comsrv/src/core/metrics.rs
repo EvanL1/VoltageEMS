@@ -289,7 +289,7 @@ impl Metrics {
 
             let server = Server::bind(&addr).serve(service);
             if let Err(e) = server.await {
-                tracing::error!("Metrics server error: {}", e);
+                log::error!("Metrics server error: {}", e);
             }
         });
 

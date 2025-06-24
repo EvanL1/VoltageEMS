@@ -1,8 +1,7 @@
 use crate::config::Config;
 use crate::error::{HisSrvError, Result};
-use influxdb::{Client, InfluxDbWriteable, WriteQuery};
+use influxdb::{Client, InfluxDbWriteable, WriteQuery, Timestamp};
 use chrono::Utc;
-use serde_json::json;
 
 pub struct InfluxDBConnection {
     client: Option<Client>,
@@ -71,7 +70,8 @@ impl InfluxDBConnection {
             self.db_name, self.db_name, retention_days
         );
 
-        match client.query(&query).await {
+        let read_query = influxdb::ReadQuery::new(query);
+        match client.query(&read_query).await {
             Ok(_) => {
                 println!("Created retention policy: {} days", retention_days);
                 Ok(())
@@ -82,7 +82,8 @@ impl InfluxDBConnection {
                     "ALTER RETENTION POLICY \"{}_retention\" ON \"{}\" DURATION {}d REPLICATION 1 DEFAULT",
                     self.db_name, self.db_name, retention_days
                 );
-                match client.query(&query).await {
+                let read_query = influxdb::ReadQuery::new(query);
+                match client.query(&read_query).await {
                     Ok(_) => {
                         println!("Updated retention policy: {} days", retention_days);
                         Ok(())
@@ -113,25 +114,28 @@ impl InfluxDBConnection {
         }
 
         let client = self.client.as_ref().unwrap();
-        let mut point = influxdb::Point::new("rtdb_data")
+        
+        // Create WriteQuery using the builder pattern for InfluxDB 0.5.x  
+        let timestamp = Utc::now();
+        let mut write_query = WriteQuery::new(timestamp.into(), "rtdb_data")
             .add_tag("key", key)
             .add_tag("type", data_type);
 
         if let Some(field) = field_name {
-            point = point.add_tag("field", field);
+            write_query = write_query.add_tag("field", field);
         }
 
         if is_numeric {
-            point = point.add_field("value", numeric_value);
+            write_query = write_query.add_field("value", numeric_value);
         } else if let Some(text) = text_value {
-            point = point.add_field("text_value", text);
+            write_query = write_query.add_field("text_value", text);
         }
 
         if let Some(s) = score {
-            point = point.add_field("score", s);
+            write_query = write_query.add_field("score", s);
         }
 
-        match client.write_point(point, None, None).await {
+        match client.query(&write_query).await {
             Ok(_) => Ok(()),
             Err(e) => Err(HisSrvError::InfluxDBError(e)),
         }

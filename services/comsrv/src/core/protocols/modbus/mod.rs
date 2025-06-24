@@ -1,4 +1,4 @@
-//! Unified Modbus Protocol Implementation
+//! Modbus Protocol Implementation
 //!
 //! This module provides a comprehensive Modbus implementation supporting both RTU and TCP modes.
 //! It integrates with the voltage_modbus library and provides enhanced features like:
@@ -23,16 +23,17 @@ pub mod common;
 pub mod client;
 pub mod server;
 
+// Re-enabled comprehensive tests with updated structure
+#[cfg(test)]
+pub mod comprehensive_tests;
+
+// Re-export main types for easier usage
+pub use client::{ModbusClient, ModbusClientConfig, ModbusCommunicationMode, ModbusClientStats, ModbusConnectionState};
+pub use server::{ModbusServer, ModbusServerConfig, ModbusServerMode};
+pub use common::{ModbusRegisterMapping, ModbusRegisterType, ModbusDataType, ByteOrder};
+
 use std::collections::HashMap;
 use crate::core::protocols::common::combase::{ProtocolPacketParser, PacketParseResult};
-
-// Re-export commonly used types
-
-pub use client::{
-    ModbusClient, ModbusClientConfig, ModbusClientStats, ModbusConnectionState,
-    ModbusCommunicationMode
-};
-
 
 /// Modbus protocol packet parser
 /// 

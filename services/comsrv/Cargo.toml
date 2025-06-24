@@ -39,9 +39,7 @@ ahash = "0.8"
 hex = "0.4"
 async-trait = "0.1"
 futures = "0.3"
-tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-tracing-appender = "0.2"
+
 dotenv = "0.15"
 clap = { version = "4.0", features = ["derive"] }
 prometheus = { version = "0.13", features = ["process"] }

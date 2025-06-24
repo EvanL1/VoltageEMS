@@ -90,8 +90,8 @@ use std::collections::HashMap;
 use serde_json;
 use tokio::time::interval;
 use serde::{Serialize, Deserialize};
-use tracing::{info, warn, error, debug, trace};
-use log::{info as log_info, warn as log_warn, error as log_error, debug as log_debug};
+
+use log::{trace, info, warn, error, debug, info as log_info, warn as log_warn, error as log_error, debug as log_debug};
 
 use crate::core::config::config_manager::ChannelConfig;
 use crate::utils::error::{ComSrvError, Result};
@@ -371,7 +371,6 @@ pub struct RemoteOperationResponse {
     pub execution_time: DateTime<Utc>,
 }
 
-
 /// Define the standard four-telemetry interface for SCADA systems
 #[async_trait]
 pub trait FourTelemetryOperations: Send + Sync {
@@ -415,7 +414,6 @@ pub trait FourTelemetryOperations: Send + Sync {
     /// * `Ok(RemoteOperationResponse)` - Regulation operation result
     /// * `Err(ComSrvError)` - Regulation operation failed
     async fn remote_regulation(&self, request: RemoteOperationRequest) -> Result<RemoteOperationResponse>;
-    
 
     /// Get all available remote control points
     async fn get_control_points(&self) -> Vec<String>;
@@ -1125,7 +1123,211 @@ pub trait ComBase: Send + Sync + std::fmt::Debug {
     }
 }
 
-
+/// Protocol logging trait for unified logging across all communication protocols
+/// 
+/// This trait provides standardized logging methods that can be used by all protocol
+/// implementations. It's separate from ComBase to maintain object safety while 
+/// providing rich logging capabilities.
+pub trait ProtocolLogger: Send + Sync {
+    /// Get the channel ID for logging context
+    fn channel_id(&self) -> String;
+    
+    /// Get the protocol type for logging context  
+    fn protocol_type(&self) -> &str;
+    
+    /// Log protocol connection events with standardized format
+    /// 
+    /// Provides a unified way to log connection-related events across all protocols.
+    /// Uses the channel ID as the log target for filtering.
+    /// 
+    /// # Arguments
+    /// 
+    /// * `event` - Connection event ("connecting", "connected", "disconnected", "reconnecting")
+    /// * `details` - Optional additional details about the connection event
+    /// 
+    /// # Examples
+    /// 
+    /// ```rust
+    /// # use comsrv::core::protocols::common::combase::ProtocolLogger;
+    /// # async fn example(logger: &dyn ProtocolLogger) {
+    /// logger.log_connection("connecting", Some("192.168.1.100:502")).await;
+    /// logger.log_connection("connected", None).await;
+    /// logger.log_connection("disconnected", Some("Connection timeout")).await;
+    /// # }
+    /// ```
+    async fn log_connection(&self, event: &str, details: Option<&str>) {
+        let channel_id = self.channel_id();
+        let protocol = self.protocol_type();
+        let timestamp = chrono::Utc::now().format("%H:%M:%S%.3f");
+        
+        let message = match details {
+            Some(detail) => format!("== [{}] {} {} ({})", timestamp, event, protocol, detail),
+            None => format!("== [{}] {} {}", timestamp, event, protocol),
+        };
+        
+        let target = format!("{}::channel::{}", protocol.to_lowercase(), channel_id);
+        
+        match event {
+            "connected" | "reconnected" => log_info!(target: &target, "{}", message),
+            "connecting" | "reconnecting" => log_info!(target: &target, "{}", message),
+            "disconnected" => log_warn!(target: &target, "{}", message),
+            _ => log_debug!(target: &target, "{}", message),
+        }
+    }
+    
+    /// Log protocol operation success
+    /// 
+    /// Logs successful protocol operations with timing information.
+    /// 
+    /// # Arguments
+    /// 
+    /// * `operation` - Operation type ("read", "write", "batch_read", etc.)
+    /// * `direction` - Direction indicator (">>" for request, "<<" for response)
+    /// * `details` - Operation details (address, value, etc.)
+    /// * `result_value` - Success result value
+    /// * `duration_ms` - Operation duration in milliseconds
+    async fn log_operation_success(&self, operation: &str, direction: &str, details: &str, result_value: &str, duration_ms: u128) {
+        let channel_id = self.channel_id();
+        let protocol = self.protocol_type();
+        let timestamp = chrono::Utc::now().format("%H:%M:%S%.3f");
+        
+        let target = format!("{}::channel::{}", protocol.to_lowercase(), channel_id);
+        let message = format!("{} [{}] {} {} OK: {} ({}ms)", 
+            direction, timestamp, operation, details, result_value, duration_ms);
+        
+        log_debug!(target: &target, "{}", message);
+    }
+    
+    /// Log protocol operation failure
+    /// 
+    /// Logs failed protocol operations with timing information.
+    /// 
+    /// # Arguments
+    /// 
+    /// * `operation` - Operation type
+    /// * `direction` - Direction indicator  
+    /// * `details` - Operation details
+    /// * `error_msg` - Error message
+    /// * `duration_ms` - Operation duration in milliseconds
+    async fn log_operation_error(&self, operation: &str, direction: &str, details: &str, error_msg: &str, duration_ms: u128) {
+        let channel_id = self.channel_id();
+        let protocol = self.protocol_type();
+        let timestamp = chrono::Utc::now().format("%H:%M:%S%.3f");
+        
+        let target = format!("{}::channel::{}", protocol.to_lowercase(), channel_id);
+        let message = format!("{} [{}] {} {} ERR: {} ({}ms)", 
+            direction, timestamp, operation, details, error_msg, duration_ms);
+        
+        log_error!(target: &target, "{}", message);
+    }
+    
+    /// Log protocol operation request
+    /// 
+    /// Logs the start of a protocol operation with request details.
+    /// 
+    /// # Arguments
+    /// 
+    /// * `operation` - Operation type
+    /// * `details` - Request details
+    async fn log_request(&self, operation: &str, details: &str) {
+        let channel_id = self.channel_id();
+        let protocol = self.protocol_type();
+        let timestamp = chrono::Utc::now().format("%H:%M:%S%.3f");
+        
+        let target = format!("{}::channel::{}", protocol.to_lowercase(), channel_id);
+        let message = format!(">> [{}] {} {}", timestamp, operation, details);
+        
+        log_debug!(target: &target, "{}", message);
+    }
+    
+    /// Log protocol data synchronization success
+    /// 
+    /// Logs successful data synchronization activities like Redis updates, batch operations, etc.
+    /// 
+    /// # Arguments
+    /// 
+    /// * `sync_type` - Type of synchronization ("redis_sync", "batch_update", etc.)
+    /// * `count` - Number of items synchronized
+    async fn log_data_sync_success(&self, sync_type: &str, count: usize) {
+        let channel_id = self.channel_id();
+        let protocol = self.protocol_type();
+        let timestamp = chrono::Utc::now().format("%H:%M:%S%.3f");
+        
+        let target = format!("{}::channel::{}", protocol.to_lowercase(), channel_id);
+        let message = format!("== [{}] {} completed: {} items", timestamp, sync_type, count);
+        
+        log_debug!(target: &target, "{}", message);
+    }
+    
+    /// Log protocol data synchronization failure
+    /// 
+    /// Logs failed data synchronization activities.
+    /// 
+    /// # Arguments
+    /// 
+    /// * `sync_type` - Type of synchronization
+    /// * `count` - Number of items attempted
+    /// * `error_msg` - Error message
+    async fn log_data_sync_error(&self, sync_type: &str, count: usize, error_msg: &str) {
+        let channel_id = self.channel_id();
+        let protocol = self.protocol_type();
+        let timestamp = chrono::Utc::now().format("%H:%M:%S%.3f");
+        
+        let target = format!("{}::channel::{}", protocol.to_lowercase(), channel_id);
+        let message = format!("== [{}] {} failed: {} (attempted {} items)", timestamp, sync_type, error_msg, count);
+        
+        log_error!(target: &target, "{}", message);
+    }
+    
+    /// Convenience method to log operation results with automatic timing
+    /// 
+    /// This method handles both success and error cases with proper timing calculation.
+    /// 
+    /// # Arguments
+    /// 
+    /// * `operation` - Operation type
+    /// * `direction` - Direction indicator
+    /// * `details` - Operation details
+    /// * `result` - Operation result
+    /// * `start_time` - Operation start time
+    async fn log_operation_result<T, E>(&self, operation: &str, direction: &str, details: &str, result: &std::result::Result<T, E>, start_time: Instant) 
+    where 
+        T: std::fmt::Display,
+        E: std::fmt::Display,
+    {
+        let duration_ms = start_time.elapsed().as_millis();
+        
+        match result {
+            Ok(value) => {
+                self.log_operation_success(operation, direction, details, &value.to_string(), duration_ms).await;
+            },
+            Err(error) => {
+                self.log_operation_error(operation, direction, details, &error.to_string(), duration_ms).await;
+            }
+        }
+    }
+    
+    /// Convenience method to log data sync results
+    /// 
+    /// # Arguments
+    /// 
+    /// * `sync_type` - Type of synchronization
+    /// * `count` - Number of items
+    /// * `result` - Synchronization result
+    async fn log_data_sync_result<E>(&self, sync_type: &str, count: usize, result: &std::result::Result<(), E>) 
+    where 
+        E: std::fmt::Display,
+    {
+        match result {
+            Ok(()) => {
+                self.log_data_sync_success(sync_type, count).await;
+            },
+            Err(error) => {
+                self.log_data_sync_error(sync_type, count, &error.to_string()).await;
+            }
+        }
+    }
+}
 
 /// Base implementation of the ComBase trait
 /// 

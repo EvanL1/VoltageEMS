@@ -20,10 +20,7 @@ async fn main() -> Result<()> {
     
     // Connect to RTDB
     let mut redis = RedisConnection::new();
-    if !redis.connect(&config)? {
-        println!("Failed to connect to RTDB. Exiting.");
-        return Ok(());
-    }
+    redis.connect(&config)?;
     
     // Connect to InfluxDB (if enabled)
     let mut influxdb = InfluxDBConnection::new();
@@ -77,9 +74,7 @@ async fn main() -> Result<()> {
                 
                 if reconnect_redis {
                     println!("RTDB connection settings changed. Reconnecting...");
-                    if !redis.connect(&config)? {
-                        println!("Failed to reconnect to RTDB with new settings.");
-                    }
+                    redis.connect(&config)?;
                 }
                 
                 // If InfluxDB settings have changed, need to reconnect

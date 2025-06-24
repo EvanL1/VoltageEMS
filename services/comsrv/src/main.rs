@@ -49,11 +49,10 @@ use std::net::SocketAddr;
 use std::path::Path;
 use chrono::Utc;
 use dotenv::dotenv;
-use tracing;
 use tokio::sync::RwLock;
 use clap::Parser;
 
-use tracing::{info, error, warn};
+use log::{info, error, warn};
 
 mod core;
 mod utils;
@@ -64,7 +63,7 @@ use crate::utils::error::Result;
 use crate::core::config::ConfigManager;
 use crate::core::protocols::common::ProtocolFactory;
 use crate::api::routes::api_routes;
-use crate::utils::logger::init_logger;
+
 use crate::core::metrics::{init_metrics, get_metrics};
 use crate::service_impl::{
     start_communication_service,
@@ -102,8 +101,6 @@ struct Args {
     log_level: Option<String>,
 }
 
-
-
 /// Handle graceful shutdown of the communication service
 /// 
 /// Performs an orderly shutdown of all communication channels, ensuring that
@@ -137,9 +134,6 @@ struct Args {
 ///     });
 ///     
 ///     // Main service loop...
-
-
-
 
 /// Main entry point for the Communication Service
 /// 
@@ -231,12 +225,10 @@ async fn main() -> Result<()> {
     };
     
     // Initialize logging early for better debugging
-    let log_dir = env::var("LOG_DIR").unwrap_or(args.log_dir);
     let log_level = args.log_level.as_deref().unwrap_or(config_manager.get_log_level());
-    if let Err(e) = init_logger(Path::new(&log_dir), "comsrv", log_level, true) {
-        eprintln!("Failed to initialize logger: {}", e);
-        return Err(e);
-    }
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(log_level))
+        .format_timestamp_millis()
+        .init();
     
     if args.super_test {
         info!("🚀 Starting Communication Service v{} - SUPER TEST MODE", env!("CARGO_PKG_VERSION"));

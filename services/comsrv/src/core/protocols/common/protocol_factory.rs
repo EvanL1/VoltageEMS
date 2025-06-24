@@ -197,11 +197,11 @@ impl ProtocolClientFactory for ModbusTcpFactory {
         if let Some(cm) = config_manager {
             match cm.get_modbus_mappings_for_channel(config.id) {
                 Ok(mappings) => {
-                    tracing::info!("Loaded {} point mappings for channel {}", mappings.len(), config.id);
+                    log::info!("Loaded {} point mappings for channel {}", mappings.len(), config.id);
                     modbus_config.point_mappings = mappings;
                 }
                 Err(e) => {
-                    tracing::warn!("Failed to load point mappings for channel {}: {}", config.id, e);
+                    log::warn!("Failed to load point mappings for channel {}: {}", config.id, e);
                 }
             }
         }
@@ -313,11 +313,11 @@ impl ProtocolClientFactory for ModbusRtuFactory {
         if let Some(cm) = config_manager {
             match cm.get_modbus_mappings_for_channel(config.id) {
                 Ok(mappings) => {
-                    tracing::info!("Loaded {} point mappings for RTU channel {}", mappings.len(), config.id);
+                    log::info!("Loaded {} point mappings for RTU channel {}", mappings.len(), config.id);
                     modbus_config.point_mappings = mappings;
                 }
                 Err(e) => {
-                    tracing::warn!("Failed to load point mappings for RTU channel {}: {}", config.id, e);
+                    log::warn!("Failed to load point mappings for RTU channel {}: {}", config.id, e);
                 }
             }
         }
@@ -617,7 +617,7 @@ impl ProtocolFactory {
     fn register_builtin_factories(&self) {
         self.register_protocol_factory(Arc::new(ModbusTcpFactory));
         self.register_protocol_factory(Arc::new(ModbusRtuFactory));
-        tracing::info!("Registered built-in protocol factories");
+        log::info!("Registered built-in protocol factories");
     }
     
     /// Register a protocol factory
@@ -628,7 +628,7 @@ impl ProtocolFactory {
     pub fn register_protocol_factory(&self, factory: Arc<dyn ProtocolClientFactory>) {
         let protocol_type = factory.protocol_type();
         self.protocol_factories.insert(protocol_type.clone(), factory);
-        tracing::info!("Registered protocol factory for {:?}", protocol_type);
+        log::info!("Registered protocol factory for {:?}", protocol_type);
     }
     
     /// Unregister a protocol factory for hot-swappable protocol support
@@ -689,17 +689,11 @@ impl ProtocolFactory {
         // Safe to remove the factory
         match self.protocol_factories.remove(protocol_type) {
             Some(_) => {
-                tracing::info!(
-                    protocol = ?protocol_type,
-                    "Protocol factory unregistered successfully"
-                );
+                log::info!("Protocol factory unregistered successfully: {:?}", protocol_type);
                 Ok(true)
             },
             None => {
-                tracing::warn!(
-                    protocol = ?protocol_type,
-                    "Attempted to unregister non-existent protocol factory"
-                );
+                log::warn!("Attempted to unregister non-existent protocol factory: {:?}", protocol_type);
                 Ok(false)
             }
         }
@@ -787,7 +781,7 @@ impl ProtocolFactory {
         
         // Try to use registered factory first
         if let Some(factory) = self.protocol_factories.get(&config.protocol) {
-            tracing::info!("Creating protocol instance using registered factory: {:?}", config.protocol);
+            log::info!("Creating protocol instance using registered factory: {:?}", config.protocol);
             return factory.create_client(config, config_manager).await;
         }
         
@@ -903,7 +897,7 @@ impl ProtocolFactory {
         match self.channels.entry(channel_id) {
             dashmap::mapref::entry::Entry::Vacant(vacant) => {
                 vacant.insert(entry);
-                tracing::info!("Created channel {} with protocol {:?}", channel_id, config.protocol);
+                log::info!("Created channel {} with protocol {:?}", channel_id, config.protocol);
                 Ok(())
             }
             dashmap::mapref::entry::Entry::Occupied(_) => {
@@ -928,14 +922,11 @@ impl ProtocolFactory {
             .collect();
         
         if channel_ids.is_empty() {
-            tracing::info!("No channels to start");
+            log::info!("No channels to start");
             return Ok(());
         }
         
-        tracing::info!(
-            total_channels = channel_ids.len(),
-            "Starting all channels with snapshot approach"
-        );
+        log::info!("Starting all channels with snapshot approach: total_channels={}", channel_ids.len());
         
         let start_futures = channel_ids.into_iter().map(|id| {
             async move {
@@ -944,23 +935,16 @@ impl ProtocolFactory {
                     let mut channel = channel_entry.channel.write().await;
                     match channel.start().await {
                         Ok(_) => {
-                            tracing::info!(channel_id = %id, "Channel started successfully");
+                            log::info!("Channel started successfully: channel_id={}", id);
                             Ok(())
                         },
                         Err(e) => {
-                            tracing::error!(
-                                channel_id = %id,
-                                error = %e,
-                                "Failed to start channel"
-                            );
+                            log::error!("Failed to start channel {}: {}", id, e);
                             Err(e)
                         }
                     }
                 } else {
-                    tracing::debug!(
-                        channel_id = %id,
-                        "Channel was removed during startup, skipping"
-                    );
+                    log::debug!("Channel {} was removed during startup, skipping", id);
                     Ok(())
                 }
             }
@@ -983,12 +967,8 @@ impl ProtocolFactory {
             }
         }
         
-        tracing::info!(
-            successful_starts,
-            failed_starts,
-            total_attempted = successful_starts + failed_starts,
-            "Channel startup completed"
-        );
+        log::info!("Channel startup completed: {} successful, {} failed, {} total attempted", 
+                   successful_starts, failed_starts, successful_starts + failed_starts);
         
         if failed_starts > 0 {
             let error_msg = format!(
@@ -1016,14 +996,10 @@ impl ProtocolFactory {
                 let mut channel = channel_wrapper.write().await;
                 match channel.stop().await {
                     Ok(_) => {
-                        tracing::info!(channel_id = %id, "Channel stopped successfully");
+                        log::info!("Channel {} stopped successfully", id);
                     },
                     Err(e) => {
-                        tracing::warn!(
-                            channel_id = %id, 
-                            error = %e, 
-                            "Failed to stop channel - continuing with other channels"
-                        );
+                        log::warn!("Channel {}: Failed to stop channel - continuing with other channels: {}", id, e);
                         // Continue stopping other channels even if one fails
                     }
                 }
@@ -1132,16 +1108,12 @@ impl ProtocolFactory {
             
             if now.duration_since(last_accessed) > max_idle_time {
                 channels_to_remove.push(*id);
-                tracing::info!(
-                    channel_id = %id,
-                    idle_duration = ?now.duration_since(last_accessed),
-                    "Channel marked for cleanup due to inactivity"
-                );
+                log::info!("Channel {} marked for cleanup due to inactivity", id);
             }
         }
         
         if channels_to_remove.is_empty() {
-            tracing::debug!("No idle channels found for cleanup");
+            log::debug!("No idle channels found for cleanup");
             return;
         }
         
@@ -1155,26 +1127,16 @@ impl ProtocolFactory {
                     let mut channel = channel_entry.channel.write().await;
                     match channel.stop().await {
                         Ok(_) => {
-                            tracing::info!(
-                                channel_id = %id,
-                                "Channel stopped successfully during cleanup"
-                            );
+                            log::info!("Channel {} stopped successfully", id);
                             Ok(id)
                         },
                         Err(e) => {
-                            tracing::warn!(
-                                channel_id = %id,
-                                error = %e,
-                                "Failed to stop channel during cleanup"
-                            );
+                            log::warn!("Channel {}: Failed to stop - continuing with cleanup: {}", id, e);
                             Err((id, e))
                         }
                     }
                 } else {
-                    tracing::debug!(
-                        channel_id = %id,
-                        "Channel already removed during cleanup"
-                    );
+                    log::debug!("Channel {} already removed during cleanup", id);
                     Ok(id)
                 }
             }
@@ -1191,28 +1153,17 @@ impl ProtocolFactory {
                 Ok(id) => {
                     self.channels.remove(&id);
                     successfully_stopped += 1;
-                    tracing::debug!(
-                        channel_id = %id,
-                        "Channel removed from factory during cleanup"
-                    );
+                    log::debug!("Channel {} removed from factory during cleanup", id);
                 },
                 Err((id, e)) => {
                     failed_to_stop += 1;
-                    tracing::error!(
-                        channel_id = %id,
-                        error = %e,
-                        "Failed to cleanup channel, keeping in factory"
-                    );
+                    log::error!("Failed to cleanup channel {}, keeping in factory: {}", id, e);
                 }
             }
         }
         
-        tracing::info!(
-            total_candidates = channels_to_remove.len(),
-            successfully_cleaned = successfully_stopped,
-            failed_cleanup = failed_to_stop,
-            "Channel cleanup completed"
-        );
+        log::info!("Channel cleanup completed: {} successfully cleaned, {} failed cleanup", 
+                   successfully_stopped, failed_to_stop);
     }
     
     /// Hot update channel configuration
@@ -1238,7 +1189,7 @@ impl ProtocolFactory {
         {
             let mut channel = old_channel.write().await;
             if let Err(e) = channel.stop().await {
-                tracing::warn!("Failed to stop channel {} during update: {}", id, e);
+                log::warn!("Failed to stop channel {} during update: {}", id, e);
             }
         }
         
@@ -1267,14 +1218,14 @@ impl ProtocolFactory {
         {
             let mut channel = new_channel_wrapper.write().await;
             if let Err(e) = channel.start().await {
-                tracing::error!("Failed to start updated channel {}: {}", id, e);
+                log::error!("Failed to start updated channel {}: {}", id, e);
                 return Err(ComSrvError::ChannelError(format!(
                     "Failed to start updated channel {}: {}", id, e
                 )));
             }
         }
         
-        tracing::info!("Successfully updated channel {} configuration", id);
+        log::info!("Successfully updated channel {} configuration", id);
         Ok(())
     }
 }

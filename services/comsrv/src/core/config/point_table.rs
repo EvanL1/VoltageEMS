@@ -778,7 +778,6 @@ mod tests {
     use std::fs::File;
     use std::io::Write;
 
-
     fn create_test_csv_content() -> String {
         r#"id,name,description,address,type_,data_type,writable,byte_order,scale,offset,unit,deadband
 1,Temperature,Temperature sensor,100,holding_register,float32,false,ABCD,0.1,0,°C,0.1
