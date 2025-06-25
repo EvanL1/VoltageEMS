@@ -200,24 +200,12 @@ impl CanStatistics {
     pub fn record_message_sent(&mut self) {
         self.base_stats.successful_requests += 1;
         self.base_stats.total_requests += 1;
-        // Update communication quality manually
-        self.base_stats.communication_quality = if self.base_stats.total_requests > 0 {
-            (self.base_stats.successful_requests as f64 / self.base_stats.total_requests as f64) * 100.0
-        } else {
-            100.0
-        };
     }
 
     /// Record a received message
     pub fn record_message_received(&mut self) {
         self.base_stats.successful_requests += 1;
         self.base_stats.total_requests += 1;
-        // Update communication quality manually
-        self.base_stats.communication_quality = if self.base_stats.total_requests > 0 {
-            (self.base_stats.successful_requests as f64 / self.base_stats.total_requests as f64) * 100.0
-        } else {
-            100.0
-        };
     }
 
     /// Record an error message
@@ -225,12 +213,6 @@ impl CanStatistics {
         self.base_stats.failed_requests += 1;
         self.base_stats.total_requests += 1;
         self.base_stats.increment_error_counter(error_type);
-        // Update communication quality manually
-        self.base_stats.communication_quality = if self.base_stats.total_requests > 0 {
-            (self.base_stats.successful_requests as f64 / self.base_stats.total_requests as f64) * 100.0
-        } else {
-            100.0
-        };
     }
 
     /// Update bus utilization

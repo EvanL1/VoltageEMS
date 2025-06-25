@@ -156,7 +156,6 @@ async fn test_modbus_client_polling() -> Result<(), Box<dyn std::error::Error>> 
             info!("  - Total requests: {}", stats.total_requests);
             info!("  - Successful requests: {}", stats.successful_requests);
             info!("  - Failed requests: {}", stats.failed_requests);
-            info!("  - Communication quality: {:.1}%", stats.communication_quality);
             info!("  - Average response time: {:.2}ms", stats.avg_response_time_ms);
             
             // Stop the client
@@ -307,13 +306,11 @@ mod test_with_server {
         info!("📊 Real server statistics:");
         info!("  - Total requests: {}", stats.total_requests);
         info!("  - Successful requests: {}", stats.successful_requests);
-        info!("  - Communication quality: {:.1}%", stats.communication_quality);
         
         client.stop().await?;
         
         // With a real server, we should have successful requests
         assert!(stats.successful_requests > 0, "Expected successful requests with real server");
-        assert!(stats.communication_quality > 50.0, "Expected good communication quality");
         
         info!("✅ Real server test completed successfully");
         Ok(())

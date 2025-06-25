@@ -167,8 +167,8 @@ async fn test_universal_polling_engine_rtu() -> Result<()> {
     engine.set_data_callback(|data_points| {
         println!("📊 Received {} data points:", data_points.len());
         for point in data_points {
-            println!("  - {}: {:?} (quality: {})", 
-                     point.id, point.value, point.quality);
+            println!("  - {}: {:?}", 
+                     point.id, point.value);
         }
     });
     
@@ -208,7 +208,10 @@ async fn test_universal_polling_engine_rtu() -> Result<()> {
             println!("  Total cycles: {}", stats.total_cycles);
             println!("  Successful: {}", stats.successful_cycles);
             println!("  Failed: {}", stats.failed_cycles);
-            println!("  Quality: {:.1}%", stats.communication_quality);
+    
+            println!("  Total Successful Requests: {}", stats.successful_requests);
+            println!("  Total Failed Requests: {}", stats.failed_requests);
+            println!("  Average Response Time: {:.2}ms", stats.avg_response_time_ms);
             
             // Stop polling
             engine.stop_polling().await?;
@@ -460,7 +463,7 @@ async fn test_polling_engine_creation() {
     let stats = engine.get_polling_stats().await;
     assert_eq!(stats.total_cycles, 0);
     assert_eq!(stats.successful_cycles, 0);
-    assert_eq!(stats.communication_quality, 100.0);
+    
     
     println!("✅ Engine created successfully with correct initial state");
 } 

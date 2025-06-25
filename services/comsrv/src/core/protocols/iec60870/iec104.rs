@@ -483,7 +483,7 @@ impl Iec104Client {
                 id: format!("{}:{}", asdu.common_addr, "some_point_id"),
                 name: format!("IEC Point {}:{}", asdu.common_addr, "some_point_id"),
                 value: "null".to_string(), // Replace with actual value
-                quality: 1, // 1 = good quality
+
                 timestamp: Utc::now(),
                 unit: "".to_string(),
                 description: format!("IEC 60870 data point {}:{}", asdu.common_addr, "some_point_id"),

@@ -1,6 +1,6 @@
-use std::time::{Duration, SystemTime};
-use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::time::{Duration, SystemTime};
 
 /// Base communication statistics that all protocols can extend
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -17,8 +17,7 @@ pub struct BaseCommStats {
     pub avg_response_time_ms: f64,
     /// Last successful communication timestamp
     pub last_successful_communication: Option<SystemTime>,
-    /// Communication quality percentage (0-100)
-    pub communication_quality: f64,
+
     /// Start time for calculating uptime
     pub start_time: SystemTime,
     /// Protocol-specific error counters
@@ -35,22 +34,26 @@ impl BaseCommStats {
             timeout_errors: 0,
             avg_response_time_ms: 0.0,
             last_successful_communication: None,
-            communication_quality: 100.0,
             start_time: SystemTime::now(),
             error_counters: HashMap::new(),
         }
     }
 
     /// Update statistics after a request/operation
-    pub fn update_request_stats(&mut self, success: bool, response_time: Duration, error_type: Option<&str>) {
+    pub fn update_request_stats(
+        &mut self,
+        success: bool,
+        response_time: Duration,
+        error_type: Option<&str>,
+    ) {
         self.total_requests += 1;
-        
+
         if success {
             self.successful_requests += 1;
             self.last_successful_communication = Some(SystemTime::now());
         } else {
             self.failed_requests += 1;
-            
+
             // Handle specific error types
             if let Some(error) = error_type {
                 if error == "timeout" {
@@ -59,7 +62,7 @@ impl BaseCommStats {
                 *self.error_counters.entry(error.to_string()).or_insert(0) += 1;
             }
         }
-        
+
         // Update average response time
         let current_avg = self.avg_response_time_ms;
         let new_time = response_time.as_millis() as f64;
@@ -68,13 +71,8 @@ impl BaseCommStats {
         } else {
             (current_avg * (self.total_requests - 1) as f64 + new_time) / self.total_requests as f64
         };
-        
-        // Update communication quality
-        self.communication_quality = if self.total_requests > 0 {
-            (self.successful_requests as f64 / self.total_requests as f64) * 100.0
-        } else {
-            100.0
-        };
+
+
     }
 
     /// Get uptime since statistics started
@@ -94,7 +92,10 @@ impl BaseCommStats {
 
     /// Increment specific error counter
     pub fn increment_error_counter(&mut self, error_type: &str) {
-        *self.error_counters.entry(error_type.to_string()).or_insert(0) += 1;
+        *self
+            .error_counters
+            .entry(error_type.to_string())
+            .or_insert(0) += 1;
     }
 }
 
@@ -177,19 +178,17 @@ mod tests {
         assert_eq!(stats.total_requests, 0);
         assert_eq!(stats.successful_requests, 0);
         assert_eq!(stats.failed_requests, 0);
-        assert_eq!(stats.communication_quality, 100.0);
     }
 
     #[test]
     fn test_base_comm_stats_update_success() {
         let mut stats = BaseCommStats::new();
         stats.update_request_stats(true, Duration::from_millis(100), None);
-        
+
         assert_eq!(stats.total_requests, 1);
         assert_eq!(stats.successful_requests, 1);
         assert_eq!(stats.failed_requests, 0);
         assert_eq!(stats.avg_response_time_ms, 100.0);
-        assert_eq!(stats.communication_quality, 100.0);
         assert!(stats.last_successful_communication.is_some());
     }
 
@@ -197,12 +196,11 @@ mod tests {
     fn test_base_comm_stats_update_failure() {
         let mut stats = BaseCommStats::new();
         stats.update_request_stats(false, Duration::from_millis(50), Some("timeout"));
-        
+
         assert_eq!(stats.total_requests, 1);
         assert_eq!(stats.successful_requests, 0);
         assert_eq!(stats.failed_requests, 1);
         assert_eq!(stats.timeout_errors, 1);
-        assert_eq!(stats.communication_quality, 0.0);
         assert_eq!(stats.get_error_count("timeout"), 1);
     }
 
@@ -218,19 +216,19 @@ mod tests {
     #[test]
     fn test_base_connection_stats_operations() {
         let mut stats = BaseConnectionStats::new();
-        
+
         // Test connection
         stats.record_connection();
         assert_eq!(stats.total_connections, 1);
         assert_eq!(stats.connected_clients, 1);
         assert!(stats.last_connection_time.is_some());
-        
+
         // Test disconnection
         stats.record_disconnection();
         assert_eq!(stats.connection_drops, 1);
         assert_eq!(stats.connected_clients, 0);
         assert!(stats.last_disconnection_time.is_some());
-        
+
         // Test reconnection attempt
         stats.record_reconnection_attempt();
         assert_eq!(stats.reconnect_attempts, 1);
@@ -239,13 +237,13 @@ mod tests {
     #[test]
     fn test_error_counters() {
         let mut stats = BaseCommStats::new();
-        
+
         stats.increment_error_counter("crc_error");
         stats.increment_error_counter("crc_error");
         stats.increment_error_counter("protocol_error");
-        
+
         assert_eq!(stats.get_error_count("crc_error"), 2);
         assert_eq!(stats.get_error_count("protocol_error"), 1);
         assert_eq!(stats.get_error_count("unknown_error"), 0);
     }
-} 
+}

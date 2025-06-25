@@ -443,7 +443,6 @@ impl ComBase for CanClientBase {
                 id: mapping.name.clone(),
                 name: mapping.display_name.clone().unwrap_or_else(|| mapping.name.clone()),
                 value: "null".to_string(),
-                quality: 0, // 0 = bad quality
                 timestamp: Utc::now(),
                 unit: mapping.unit.clone().unwrap_or_default(),
                 description: mapping.description.clone().unwrap_or_default(),
