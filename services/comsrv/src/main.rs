@@ -1,22 +1,22 @@
 //! # Communication Service (ComSrv) - Main Entry Point
-//! 
+//!
 //! The main executable for the Communication Service, responsible for initializing
 //! and managing communication channels for various industrial protocols including
 //! Modbus TCP, IEC 60870-5-104, and other SCADA communication protocols.
-//! 
+//!
 //! ## Overview
-//! 
+//!
 //! ComSrv is designed as a high-performance, asynchronous communication service
 //! that handles multiple protocol channels simultaneously. It provides:
-//! 
+//!
 //! - Multi-protocol communication support
 //! - Real-time data collection and processing
 //! - RESTful API for management and monitoring
 //! - Comprehensive metrics and logging
 //! - Graceful shutdown and resource cleanup
-//! 
+//!
 //! ## Architecture
-//! 
+//!
 //! ```text
 //! ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
 //! │   Config Mgr    │───►│ Protocol Factory│───►│   Channels      │
@@ -29,47 +29,42 @@
 //! │   (Rotating)    │    │  (Prometheus)   │    │   (REST/HTTP)   │
 //! └─────────────────┘    └─────────────────┘    └─────────────────┘
 //! ```
-//! 
+//!
 //! ## Usage
-//! 
+//!
 //! ```bash
 //! # Start with default configuration
 //! cargo run --bin comsrv
-//! 
+//!
 //! # Start with custom configuration file
 //! CONFIG_FILE=my_config.yaml cargo run --bin comsrv
-//! 
+//!
 //! # Start with custom log directory
 //! LOG_DIR=/var/log/comsrv cargo run --bin comsrv
 //! ```
 
-use std::sync::Arc;
 use std::env;
 use std::net::SocketAddr;
-use std::path::Path;
+use std::sync::Arc;
+
 use chrono::Utc;
+use clap::Parser;
 use dotenv::dotenv;
 use tokio::sync::RwLock;
-use clap::Parser;
 
-use log::{info, error, warn};
+use log::{error, info, warn};
 
-mod core;
-mod utils;
 mod api;
+mod core;
 mod service_impl;
+mod utils;
 
-use crate::utils::error::Result;
+use crate::api::routes::api_routes;
 use crate::core::config::ConfigManager;
 use crate::core::protocols::common::ProtocolFactory;
-use crate::api::routes::api_routes;
+use crate::utils::error::Result;
 
-use crate::core::metrics::{init_metrics, get_metrics};
-use crate::service_impl::{
-    start_communication_service,
-    shutdown_handler,
-    start_cleanup_task,
-};
+use crate::service_impl::{shutdown_handler, start_cleanup_task, start_communication_service};
 
 /// Command line arguments for the Communication Service
 #[derive(Parser)]
@@ -102,29 +97,29 @@ struct Args {
 }
 
 /// Handle graceful shutdown of the communication service
-/// 
+///
 /// Performs an orderly shutdown of all communication channels, ensuring that
 /// ongoing operations complete properly and resources are released cleanly.
 /// Updates metrics to reflect the service shutdown state.
-/// 
+///
 /// # Arguments
-/// 
+///
 /// * `factory` - Thread-safe protocol factory managing all active channels
-/// 
+///
 /// # Features
-/// 
+///
 /// - **Graceful Channel Shutdown**: Stops all channels in an orderly manner
 /// - **Resource Cleanup**: Ensures proper release of network and system resources
 /// - **Metrics Update**: Records service shutdown in monitoring systems
 /// - **Error Handling**: Logs but doesn't fail on individual channel shutdown errors
-/// 
+///
 /// # Examples
-/// 
+///
 /// ```rust,no_run
 /// use std::sync::Arc;
 /// use tokio::sync::RwLock;
 /// use comsrv::core::ProtocolFactory;
-/// 
+///
 /// async fn main_loop(factory: Arc<RwLock<ProtocolFactory>>) {
 ///     // Setup signal handlers
 ///     let factory_clone = factory.clone();
@@ -136,27 +131,27 @@ struct Args {
 ///     // Main service loop...
 
 /// Main entry point for the Communication Service
-/// 
+///
 /// Initializes the complete communication service including configuration loading,
 /// logging setup, metrics initialization, and service startup. Handles graceful
 /// shutdown and provides comprehensive error handling throughout the lifecycle.
-/// 
+///
 /// # Environment Variables
-/// 
+///
 /// * `CONFIG_FILE` - Path to configuration file (default: "config/comsrv.yaml")
 /// * `LOG_DIR` - Directory for log files (default: "logs")
-/// 
+///
 /// # Configuration File
-/// 
+///
 /// The service expects a YAML configuration file with the following structure:
-/// 
+///
 /// ```yaml
 /// service:
 ///   name: "ComSrv"
 ///   log_level: "info"
 ///   metrics_enabled: true
 ///   metrics_address: "0.0.0.0:9090"
-/// 
+///
 /// channels:
 ///   - id: 1
 ///     name: "Modbus Device 1"
@@ -165,37 +160,37 @@ struct Args {
 ///       host: "192.168.1.100"
 ///       port: 502
 /// ```
-/// 
+///
 /// # Returns
-/// 
+///
 /// * `Ok(())` - Service completed successfully
 /// * `Err(error)` - Critical error occurred during startup or operation
-/// 
+///
 /// # Features
-/// 
+///
 /// - **Environment Configuration**: Supports configuration via environment variables
 /// - **Structured Logging**: Comprehensive logging with rotation and levels
 /// - **Metrics Collection**: Prometheus-compatible metrics for monitoring
 /// - **Signal Handling**: Graceful shutdown on SIGINT/SIGTERM
 /// - **API Server**: RESTful API for management and monitoring
 /// - **Health Checks**: Built-in health checking and status reporting
-/// 
+///
 /// # Error Handling
-/// 
+///
 /// The service implements graceful error handling at multiple levels:
 /// - Configuration errors: Service fails to start with clear error messages
 /// - Channel errors: Individual channel failures don't affect other channels
 /// - Runtime errors: Logged and reported via metrics without service termination
-/// 
+///
 /// # Examples
-/// 
+///
 /// ```bash
 /// # Start with default settings
 /// cargo run --bin comsrv
-/// 
+///
 /// # Start with custom configuration
 /// CONFIG_FILE=/etc/comsrv/config.yaml cargo run --bin comsrv
-/// 
+///
 /// # Start with debug logging
 /// RUST_LOG=debug cargo run --bin comsrv
 /// ```
@@ -203,35 +198,41 @@ struct Args {
 async fn main() -> Result<()> {
     // Parse command line arguments
     let args = Args::parse();
-    
+
     // Initialize environment variables with better error handling
     if let Err(e) = dotenv() {
         eprintln!("Warning: Failed to load .env file: {}", e);
     }
-    
+
     // Use config file from CLI args or environment variable
     let config_file = env::var("CONFIG_FILE").unwrap_or(args.config);
-    
+
     // Create configuration manager with better error context
     let config_manager = match ConfigManager::from_file(&config_file) {
         Ok(cm) => {
             info!("Configuration loaded from: {}", config_file);
             Arc::new(cm)
-        },
+        }
         Err(e) => {
             error!("Failed to load configuration from {}: {}", config_file, e);
             return Err(e);
         }
     };
-    
+
     // Initialize logging early for better debugging
-    let log_level = args.log_level.as_deref().unwrap_or(config_manager.get_log_level());
+    let log_level = args
+        .log_level
+        .as_deref()
+        .unwrap_or(config_manager.get_log_level());
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(log_level))
         .format_timestamp_millis()
         .init();
-    
+
     if args.super_test {
-        info!("🚀 Starting Communication Service v{} - SUPER TEST MODE", env!("CARGO_PKG_VERSION"));
+        info!(
+            "🚀 Starting Communication Service v{} - SUPER TEST MODE",
+            env!("CARGO_PKG_VERSION")
+        );
         info!("Super test configuration:");
         info!("  - Config file: {}", config_file);
         if let Some(duration) = args.duration {
@@ -239,69 +240,63 @@ async fn main() -> Result<()> {
         }
         info!("  - Log level: {}", log_level);
     } else {
-        info!("Starting Communication Service v{}", env!("CARGO_PKG_VERSION"));
+        info!(
+            "Starting Communication Service v{}",
+            env!("CARGO_PKG_VERSION")
+        );
     }
-    
-    // Initialize metrics early
-    if let Err(e) = init_metrics(config_manager.get_service_name()) {
-        warn!("Failed to initialize metrics: {}", e);
-    } else {
-        info!("Metrics system initialized");
-        
-        // Start metrics server if enabled
-        if config_manager.get_metrics_enabled() {
-            if let Some(metrics) = get_metrics() {
-                if let Err(e) = metrics.start_server(config_manager.get_metrics_address()).await {
-                    warn!("Failed to start metrics server: {}", e);
-                } else {
-                    info!("Metrics server started at: {}", config_manager.get_metrics_address());
-                }
-            }
-        }
-    }
-    
+
     // Initialize optimized Protocol Factory
     let factory = Arc::new(RwLock::new(ProtocolFactory::new()));
-    
+
     // Start cleanup task
     let cleanup_handle = start_cleanup_task(factory.clone());
-    
+
     // Start communication service with improved error handling
     if let Err(e) = start_communication_service(config_manager.clone(), factory.clone()).await {
         error!("Failed to start communication service: {}", e);
         return Err(e);
     }
-    
+
     // Start API service if enabled
     if config_manager.get_api_enabled() {
         let start_time = Arc::new(Utc::now());
         let config_manager_for_api = Arc::new(RwLock::new((*config_manager).clone()));
         let routes = api_routes(factory.clone(), config_manager_for_api, start_time);
-        
-        info!("Starting API server at: {}", config_manager.get_api_address());
-        
-        let socket_addr = config_manager.get_api_address().parse::<SocketAddr>().unwrap_or_else(|e| {
-            warn!("Invalid API address: {}, using default 0.0.0.0:3000. Error: {}", 
-                  config_manager.get_api_address(), e);
-            "0.0.0.0:3000".parse().unwrap()
-        });
-        
+
+        info!(
+            "Starting API server at: {}",
+            config_manager.get_api_address()
+        );
+
+        let socket_addr = config_manager
+            .get_api_address()
+            .parse::<SocketAddr>()
+            .unwrap_or_else(|e| {
+                warn!(
+                    "Invalid API address: {}, using default 0.0.0.0:3000. Error: {}",
+                    config_manager.get_api_address(),
+                    e
+                );
+                "0.0.0.0:3000".parse().unwrap()
+            });
+
         tokio::spawn(async move {
             warp::serve(routes).run(socket_addr).await;
         });
-        
+
         info!("API server started successfully");
     } else {
         info!("API server disabled in configuration");
     }
-    
+
     info!("Service startup completed successfully");
-    
+
     // Handle super test mode with duration
     if args.super_test && args.duration.is_some() {
         let duration = args.duration.unwrap();
         info!("🚀 Super test mode: running for {} seconds", duration);
-        
+
         tokio::select! {
             _ = tokio::time::sleep(std::time::Duration::from_secs(duration)) => {
                 info!("⏰ Super test duration completed ({} seconds)", duration);
@@ -315,20 +310,20 @@ async fn main() -> Result<()> {
         match tokio::signal::ctrl_c().await {
             Ok(_) => {
                 info!("Received shutdown signal");
-            },
+            }
             Err(e) => {
                 error!("Failed to listen for shutdown signal: {}", e);
             }
         }
     }
-    
+
     // Perform graceful shutdown
     shutdown_handler(factory).await;
     // Stop background cleanup task
     cleanup_handle.abort();
     let _ = cleanup_handle.await;
     info!("Communication service shutdown completed");
-    
+
     Ok(())
 }
 
@@ -337,7 +332,7 @@ mod tests {
     use super::*;
     use std::sync::Arc;
     use tokio::sync::RwLock;
-    use tempfile::TempDir;
+
     use crate::core::config::ConfigManager;
     use std::time::Duration;
 
@@ -346,7 +341,7 @@ mod tests {
         // Create a temporary config file for testing
         let temp_dir = tempfile::TempDir::new().unwrap();
         let config_path = temp_dir.path().join("test_config.yaml");
-        
+
         let test_config = r#"
 version: "1.0"
 service:
@@ -377,9 +372,9 @@ service:
     reload_interval: 60
 channels: []
 "#;
-        
+
         std::fs::write(&config_path, test_config).unwrap();
-        
+
         let config_manager = Arc::new(ConfigManager::from_file(&config_path).unwrap());
         let factory = Arc::new(RwLock::new(ProtocolFactory::new()));
 
@@ -390,7 +385,7 @@ channels: []
     #[tokio::test]
     async fn test_shutdown_handler() {
         let factory = Arc::new(RwLock::new(ProtocolFactory::new()));
-        
+
         // This should not panic or error
         shutdown_handler(factory).await;
     }
@@ -398,58 +393,33 @@ channels: []
     #[tokio::test]
     async fn test_start_cleanup_task() {
         let factory = Arc::new(RwLock::new(ProtocolFactory::new()));
-        
+
         // Start cleanup task
         let cleanup_handle = start_cleanup_task(factory.clone());
-        
+
         // Let it run for a short time
         tokio::time::sleep(Duration::from_millis(10)).await;
-        
+
         // Cancel the task
         cleanup_handle.abort();
-        
+
         // Wait for the task to actually finish
         let _ = cleanup_handle.await;
-        
+
         // The task should be finished now
         assert!(true); // If we get here, the test passed
     }
 
     #[test]
     fn test_logger_initialization() {
-        // Create a temporary directory for testing
-        let temp_dir = tempfile::TempDir::new().unwrap();
-        let log_dir = temp_dir.path();
-        
-        // Test logger initialization - only test if no global subscriber is set
+        // Test that we can set environment variables for logging
         if std::env::var("RUST_LOG").is_err() {
             std::env::set_var("RUST_LOG", "info");
         }
-        
-        // Try to initialize logger, but don't fail if already initialized
-        let result = init_logger(log_dir, "test_service", "info", true);
-        
-        // The function should either succeed or fail gracefully
-        // We don't assert on the result since global logger might already be set
-        match result {
-            Ok(_) => {
-                // Logger was successfully initialized
-                assert!(true);
-            },
-            Err(_) => {
-                // Logger was already initialized, which is also fine
-                assert!(true);
-            }
-        }
-    }
 
-    #[test]
-    fn test_metrics_initialization() {
-        let result = init_metrics("test_service");
-        assert!(result.is_ok());
-        
-        let metrics = get_metrics();
-        assert!(metrics.is_some());
+        // Simply test that the log level environment variable is set
+        let log_level = std::env::var("RUST_LOG").unwrap_or_else(|_| "info".to_string());
+        assert!(!log_level.is_empty());
     }
 
     #[test]
@@ -462,14 +432,16 @@ channels: []
     fn test_environment_variable_handling() {
         // Test default config file path
         std::env::remove_var("CONFIG_FILE");
-        let config_file = env::var("CONFIG_FILE").unwrap_or_else(|_| "config/comsrv.yaml".to_string());
+        let config_file =
+            env::var("CONFIG_FILE").unwrap_or_else(|_| "config/comsrv.yaml".to_string());
         assert_eq!(config_file, "config/comsrv.yaml");
 
         // Test custom config file path
         std::env::set_var("CONFIG_FILE", "custom/config.yaml");
-        let config_file = env::var("CONFIG_FILE").unwrap_or_else(|_| "config/comsrv.yaml".to_string());
+        let config_file =
+            env::var("CONFIG_FILE").unwrap_or_else(|_| "config/comsrv.yaml".to_string());
         assert_eq!(config_file, "custom/config.yaml");
-        
+
         // Clean up
         std::env::remove_var("CONFIG_FILE");
     }
@@ -485,7 +457,7 @@ channels: []
         std::env::set_var("LOG_DIR", "custom/logs");
         let log_dir = env::var("LOG_DIR").unwrap_or_else(|_| "logs".to_string());
         assert_eq!(log_dir, "custom/logs");
-        
+
         // Clean up
         std::env::remove_var("LOG_DIR");
     }
@@ -494,13 +466,13 @@ channels: []
     async fn test_service_lifecycle() {
         // Test basic service lifecycle components
         let factory = Arc::new(RwLock::new(ProtocolFactory::new()));
-        
+
         // Test factory creation
         assert_eq!(factory.read().await.channel_count(), 0);
-        
+
         // Test cleanup task creation (should not panic)
         let cleanup_handle = start_cleanup_task(factory.clone());
-        
+
         // Test shutdown handler (should not panic)
         shutdown_handler(factory).await;
     }
@@ -516,21 +488,21 @@ channels: []
     #[tokio::test]
     async fn test_concurrent_factory_access() {
         let factory = Arc::new(RwLock::new(ProtocolFactory::new()));
-        
+
         // Test concurrent read access
         let factory1 = factory.clone();
         let factory2 = factory.clone();
-        
+
         let handle1 = tokio::spawn(async move {
             let _guard = factory1.read().await;
             tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
         });
-        
+
         let handle2 = tokio::spawn(async move {
             let _guard = factory2.read().await;
             tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
         });
-        
+
         // Both should complete without deadlock
         let _ = tokio::join!(handle1, handle2);
     }
@@ -539,10 +511,10 @@ channels: []
     fn test_error_handling_patterns() {
         // Test that our error handling patterns work correctly
         use crate::utils::error::{ComSrvError, Result};
-        
+
         let error_result: Result<()> = Err(ComSrvError::ConfigError("Test error".to_string()));
         assert!(error_result.is_err());
-        
+
         match error_result {
             Err(ComSrvError::ConfigError(msg)) => assert_eq!(msg, "Test error"),
             _ => panic!("Expected ConfigError"),

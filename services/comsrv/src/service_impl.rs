@@ -2,13 +2,13 @@
 // Contains concrete functions for starting, shutting down, and cleaning up the
 // communication service.
 
+use log::{error, info, warn};
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use log::{info, warn, error};
 
 use crate::core::config::ConfigManager;
 use crate::core::protocols::common::ProtocolFactory;
-use crate::core::metrics::get_metrics;
+
 use crate::utils::error::Result;
 
 /// Start the communication service with optimized performance and monitoring.
@@ -31,35 +31,23 @@ pub async fn start_communication_service(
     let mut failed_channels = 0;
 
     for channel_config in configs {
-        info!("Creating channel: {} - {}", channel_config.id, channel_config.name);
+        info!(
+            "Creating channel: {} - {}",
+            channel_config.id, channel_config.name
+        );
 
         let factory_guard = factory.write().await;
-        match factory_guard.create_channel(channel_config.clone()).await {
+        match factory_guard
+            .create_channel_with_config_manager(channel_config.clone(), Some(&*config_manager))
+            .await
+        {
             Ok(_) => {
                 info!("Channel created successfully: {}", channel_config.id);
                 successful_channels += 1;
-
-                // Record metrics if available
-                if let Some(metrics) = get_metrics() {
-                    metrics.update_channel_status(
-                        &channel_config.id.to_string(),
-                        false, // Not connected yet
-                        &config_manager.get_service_name(),
-                    );
-                }
             }
             Err(e) => {
                 error!("Failed to create channel {}: {}", channel_config.id, e);
                 failed_channels += 1;
-
-                // Record error metrics if available
-                if let Some(metrics) = get_metrics() {
-                    metrics.record_channel_error(
-                        &channel_config.id.to_string(),
-                        "creation_failed",
-                        &config_manager.get_service_name(),
-                    );
-                }
 
                 // Continue with other channels instead of failing completely
                 continue;
@@ -87,11 +75,6 @@ pub async fn start_communication_service(
     );
     drop(factory_guard);
 
-    // Update service metrics
-    if let Some(metrics) = get_metrics() {
-        metrics.update_service_status(true);
-    }
-
     Ok(())
 }
 
@@ -105,18 +88,11 @@ pub async fn shutdown_handler(factory: Arc<RwLock<ProtocolFactory>>) {
     }
     drop(factory_guard);
 
-    // Update service metrics
-    if let Some(metrics) = get_metrics() {
-        metrics.update_service_status(false);
-    }
-
     info!("All channels stopped");
 }
 
 /// Start the periodic cleanup task for resource management.
-pub fn start_cleanup_task(
-    factory: Arc<RwLock<ProtocolFactory>>, 
-) -> tokio::task::JoinHandle<()> {
+pub fn start_cleanup_task(factory: Arc<RwLock<ProtocolFactory>>) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(std::time::Duration::from_secs(300)); // 5 minutes
 
@@ -125,7 +101,9 @@ pub fn start_cleanup_task(
 
             // Clean up idle channels (1 hour idle time)
             let factory_guard = factory.read().await;
-            factory_guard.cleanup_channels(std::time::Duration::from_secs(3600)).await;
+            factory_guard
+                .cleanup_channels(std::time::Duration::from_secs(3600))
+                .await;
 
             // Log statistics
             let stats = factory_guard.get_channel_stats().await;
@@ -141,16 +119,16 @@ pub fn start_cleanup_task(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::HashMap;
-    use tempfile::TempDir;
+
     use std::time::Duration;
+    use tempfile::TempDir;
     use tokio::time::timeout;
 
     /// Create a test configuration manager with minimal valid configuration
     fn create_test_config_manager() -> Arc<ConfigManager> {
         let temp_dir = TempDir::new().unwrap();
         let config_path = temp_dir.path().join("test_config.yaml");
-        
+
         let test_config = r#"
 version: "1.0"
 service:
@@ -181,7 +159,7 @@ service:
     reload_interval: 60
 channels: []
 "#;
-        
+
         std::fs::write(&config_path, test_config).unwrap();
         Arc::new(ConfigManager::from_file(&config_path).unwrap())
     }
@@ -190,7 +168,7 @@ channels: []
     fn create_test_config_manager_with_channels() -> Arc<ConfigManager> {
         let temp_dir = TempDir::new().unwrap();
         let config_path = temp_dir.path().join("test_config.yaml");
-        
+
         let test_config = r#"
 version: "1.0"
 service:
@@ -228,7 +206,7 @@ channels:
       interval: 1000
       data_points: 10
 "#;
-        
+
         std::fs::write(&config_path, test_config).unwrap();
         Arc::new(ConfigManager::from_file(&config_path).unwrap())
     }
@@ -239,9 +217,9 @@ channels:
         let factory = Arc::new(RwLock::new(ProtocolFactory::new()));
 
         let result = start_communication_service(config_manager, factory.clone()).await;
-        
+
         assert!(result.is_ok(), "Should succeed with empty channels");
-        
+
         // Verify no channels were created
         let factory_guard = factory.read().await;
         assert_eq!(factory_guard.channel_count(), 0);
@@ -253,9 +231,9 @@ channels:
         let factory = Arc::new(RwLock::new(ProtocolFactory::new()));
 
         let result = start_communication_service(config_manager, factory.clone()).await;
-        
+
         assert!(result.is_ok(), "Should succeed with virtual channels");
-        
+
         // Verify channel was created
         let factory_guard = factory.read().await;
         assert_eq!(factory_guard.channel_count(), 1);
@@ -264,14 +242,14 @@ channels:
     #[tokio::test]
     async fn test_shutdown_handler() {
         let factory = Arc::new(RwLock::new(ProtocolFactory::new()));
-        
+
         // This should not panic or error, even with empty factory
         shutdown_handler(factory.clone()).await;
-        
+
         // Add a channel and test shutdown
         let config_manager = create_test_config_manager_with_channels();
         let _result = start_communication_service(config_manager, factory.clone()).await;
-        
+
         // Shutdown should work with channels
         shutdown_handler(factory).await;
     }
@@ -279,16 +257,16 @@ channels:
     #[tokio::test]
     async fn test_start_cleanup_task() {
         let factory = Arc::new(RwLock::new(ProtocolFactory::new()));
-        
+
         // Start cleanup task
         let cleanup_handle = start_cleanup_task(factory.clone());
-        
+
         // Let it run for a short time
         tokio::time::sleep(Duration::from_millis(100)).await;
-        
+
         // Cancel the task
         cleanup_handle.abort();
-        
+
         // Verify task was running (doesn't panic when aborted)
         let result = cleanup_handle.await;
         assert!(result.is_err()); // Should be cancelled
@@ -298,19 +276,19 @@ channels:
     async fn test_cleanup_task_with_channels() {
         let config_manager = create_test_config_manager_with_channels();
         let factory = Arc::new(RwLock::new(ProtocolFactory::new()));
-        
+
         // Create channels first
         let _result = start_communication_service(config_manager, factory.clone()).await;
-        
+
         // Start cleanup task
         let cleanup_handle = start_cleanup_task(factory.clone());
-        
+
         // Let it run for a short time
         tokio::time::sleep(Duration::from_millis(100)).await;
-        
+
         // Cancel the task
         cleanup_handle.abort();
-        
+
         // Verify the factory still has channels
         let factory_guard = factory.read().await;
         assert_eq!(factory_guard.channel_count(), 1);
@@ -320,31 +298,31 @@ channels:
     async fn test_service_lifecycle() {
         let config_manager = create_test_config_manager_with_channels();
         let factory = Arc::new(RwLock::new(ProtocolFactory::new()));
-        
+
         // Test complete lifecycle
         // 1. Start service
         let start_result = start_communication_service(config_manager, factory.clone()).await;
         assert!(start_result.is_ok());
-        
+
         // 2. Verify channels created
         {
             let factory_guard = factory.read().await;
             assert_eq!(factory_guard.channel_count(), 1);
         }
-        
+
         // 3. Start cleanup task
         let cleanup_handle = start_cleanup_task(factory.clone());
-        
+
         // 4. Let it run briefly
         tokio::time::sleep(Duration::from_millis(50)).await;
-        
+
         // 5. Shutdown service
         shutdown_handler(factory.clone()).await;
-        
+
         // 6. Stop cleanup task
         cleanup_handle.abort();
         let _cleanup_result = cleanup_handle.await;
-        
+
         // 7. Verify final state
         let factory_guard = factory.read().await;
         assert_eq!(factory_guard.channel_count(), 1); // Channels still exist but stopped
@@ -354,35 +332,32 @@ channels:
     async fn test_concurrent_operations() {
         let config_manager = create_test_config_manager_with_channels();
         let factory = Arc::new(RwLock::new(ProtocolFactory::new()));
-        
+
         // Start multiple operations concurrently
         let factory1 = factory.clone();
         let config1 = config_manager.clone();
-        let start_handle = tokio::spawn(async move {
-            start_communication_service(config1, factory1).await
-        });
-        
+        let start_handle =
+            tokio::spawn(async move { start_communication_service(config1, factory1).await });
+
         let factory2 = factory.clone();
         let cleanup_handle = start_cleanup_task(factory2);
-        
+
         // Wait for start to complete
         let start_result = timeout(Duration::from_secs(5), start_handle).await;
         assert!(start_result.is_ok());
         assert!(start_result.unwrap().is_ok());
-        
+
         // Let cleanup run briefly
         tokio::time::sleep(Duration::from_millis(50)).await;
-        
+
         // Shutdown concurrently
         let factory3 = factory.clone();
-        let shutdown_handle = tokio::spawn(async move {
-            shutdown_handler(factory3).await
-        });
-        
+        let shutdown_handle = tokio::spawn(async move { shutdown_handler(factory3).await });
+
         // Wait for shutdown
         let shutdown_result = timeout(Duration::from_secs(5), shutdown_handle).await;
         assert!(shutdown_result.is_ok());
-        
+
         // Stop cleanup
         cleanup_handle.abort();
     }
@@ -391,7 +366,7 @@ channels:
     async fn test_error_handling_in_service_start() {
         let config_manager = create_test_config_manager();
         let factory = Arc::new(RwLock::new(ProtocolFactory::new()));
-        
+
         // Should handle empty configuration gracefully
         let result = start_communication_service(config_manager, factory).await;
         assert!(result.is_ok(), "Empty config should not cause failure");
@@ -400,18 +375,17 @@ channels:
     #[tokio::test]
     async fn test_cleanup_task_creation() {
         let factory = Arc::new(RwLock::new(ProtocolFactory::new()));
-        
+
         // Should be able to create cleanup task without panic
         let cleanup_handle = start_cleanup_task(factory);
-        
+
         // Let it run briefly
         tokio::time::sleep(Duration::from_millis(10)).await;
-        
+
         // Immediately abort to clean up
         cleanup_handle.abort();
-        
+
         // Wait for abort to complete
         let _ = cleanup_handle.await;
     }
 }
-

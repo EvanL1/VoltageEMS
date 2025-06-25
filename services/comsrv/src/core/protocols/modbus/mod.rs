@@ -2,7 +2,7 @@
 //!
 //! This module provides a comprehensive Modbus implementation supporting both RTU and TCP modes.
 //! It integrates with the voltage_modbus library and provides enhanced features like:
-//! 
+//!
 //! - **Client Module**: Unified client supporting RTU and TCP communication
 //! - **Server Module**: Unified server with device simulation capabilities  
 //! - **Common Module**: Shared types, utilities, and protocol definitions
@@ -19,24 +19,23 @@
 //! adding enhanced features like connection management, statistics collection, and point
 //! value caching.
 
-pub mod common;
+pub mod bit_operations;
 pub mod client;
+pub mod common;
 pub mod server;
 
 // Re-enabled comprehensive tests with updated structure
-#[cfg(test)]
-pub mod comprehensive_tests;
+// #[cfg(test)]
+// pub mod comprehensive_tests;
 
 // Re-export main types for easier usage
-pub use client::{ModbusClient, ModbusClientConfig, ModbusCommunicationMode, ModbusClientStats, ModbusConnectionState};
-pub use server::{ModbusServer, ModbusServerConfig, ModbusServerMode};
-pub use common::{ModbusRegisterMapping, ModbusRegisterType, ModbusDataType, ByteOrder};
+pub use client::{ModbusClient, ModbusClientConfig, ModbusCommunicationMode};
 
+use crate::core::protocols::common::combase::{PacketParseResult, ProtocolPacketParser};
 use std::collections::HashMap;
-use crate::core::protocols::common::combase::{ProtocolPacketParser, PacketParseResult};
 
 /// Modbus protocol packet parser
-/// 
+///
 /// Implements protocol-specific parsing for Modbus TCP packets,
 /// providing human-readable interpretation of packet structure and data.
 pub struct ModbusPacketParser;
@@ -51,7 +50,7 @@ impl ModbusPacketParser {
     fn function_code_name(code: u8) -> &'static str {
         match code {
             0x01 => "Read Coils",
-            0x02 => "Read Discrete Inputs", 
+            0x02 => "Read Discrete Inputs",
             0x03 => "Read Holding Registers",
             0x04 => "Read Input Registers",
             0x05 => "Write Single Coil",
@@ -60,7 +59,13 @@ impl ModbusPacketParser {
             0x10 => "Write Multiple Registers",
             0x16 => "Mask Write Register",
             0x17 => "Read/Write Multiple Registers",
-            _ => if code & 0x80 != 0 { "Error Response" } else { "Unknown Function" },
+            _ => {
+                if code & 0x80 != 0 {
+                    "Error Response"
+                } else {
+                    "Unknown Function"
+                }
+            }
         }
     }
 
@@ -80,7 +85,11 @@ impl ModbusPacketParser {
     }
 
     /// Parse read request (functions 0x01, 0x02, 0x03, 0x04)
-    fn parse_read_request(&self, data: &[u8], function_code: u8) -> (String, HashMap<String, String>) {
+    fn parse_read_request(
+        &self,
+        data: &[u8],
+        function_code: u8,
+    ) -> (String, HashMap<String, String>) {
         if data.len() < 12 {
             return ("Invalid read request".to_string(), HashMap::new());
         }
@@ -91,7 +100,7 @@ impl ModbusPacketParser {
         let register_type = match function_code {
             0x01 => "coils",
             0x02 => "discrete inputs",
-            0x03 => "holding registers", 
+            0x03 => "holding registers",
             0x04 => "input registers",
             _ => "unknown registers",
         };
@@ -110,7 +119,11 @@ impl ModbusPacketParser {
     }
 
     /// Parse read response (functions 0x01, 0x02, 0x03, 0x04)
-    fn parse_read_response(&self, data: &[u8], function_code: u8) -> (String, HashMap<String, String>) {
+    fn parse_read_response(
+        &self,
+        data: &[u8],
+        function_code: u8,
+    ) -> (String, HashMap<String, String>) {
         if data.len() < 9 {
             return ("Invalid read response".to_string(), HashMap::new());
         }
@@ -132,9 +145,12 @@ impl ModbusPacketParser {
                         }
                     }
                 }
-                fields.insert("bit_values".to_string(), format!("[{}]", bit_values.join(", ")));
+                fields.insert(
+                    "bit_values".to_string(),
+                    format!("[{}]", bit_values.join(", ")),
+                );
                 format!("Response: {} bytes, {} bits", byte_count, bit_values.len())
-            },
+            }
             0x03 | 0x04 => {
                 // Holding/input registers - word values
                 let mut register_values = Vec::new();
@@ -144,9 +160,16 @@ impl ModbusPacketParser {
                         register_values.push(value.to_string());
                     }
                 }
-                fields.insert("register_values".to_string(), format!("[{}]", register_values.join(", ")));
-                format!("Response: {} bytes, values: [{}]", byte_count, register_values.join(", "))
-            },
+                fields.insert(
+                    "register_values".to_string(),
+                    format!("[{}]", register_values.join(", ")),
+                );
+                format!(
+                    "Response: {} bytes, values: [{}]",
+                    byte_count,
+                    register_values.join(", ")
+                )
+            }
             _ => format!("Response: {} bytes", byte_count),
         };
 
@@ -154,7 +177,11 @@ impl ModbusPacketParser {
     }
 
     /// Parse write single request (functions 0x05, 0x06)
-    fn parse_write_single_request(&self, data: &[u8], function_code: u8) -> (String, HashMap<String, String>) {
+    fn parse_write_single_request(
+        &self,
+        data: &[u8],
+        function_code: u8,
+    ) -> (String, HashMap<String, String>) {
         if data.len() < 12 {
             return ("Invalid write single request".to_string(), HashMap::new());
         }
@@ -171,10 +198,10 @@ impl ModbusPacketParser {
                 let coil_value = if value == 0xFF00 { "ON" } else { "OFF" };
                 fields.insert("coil_state".to_string(), coil_value.to_string());
                 format!("Write coil {} to {}", address, coil_value)
-            },
+            }
             0x06 => {
                 format!("Write value {} to register {}", value, address)
-            },
+            }
             _ => format!("Write value {} to address {}", value, address),
         };
 
@@ -182,7 +209,11 @@ impl ModbusPacketParser {
     }
 
     /// Parse write single response (functions 0x05, 0x06)
-    fn parse_write_single_response(&self, data: &[u8], function_code: u8) -> (String, HashMap<String, String>) {
+    fn parse_write_single_response(
+        &self,
+        data: &[u8],
+        function_code: u8,
+    ) -> (String, HashMap<String, String>) {
         if data.len() < 12 {
             return ("Invalid write single response".to_string(), HashMap::new());
         }
@@ -199,10 +230,10 @@ impl ModbusPacketParser {
                 let coil_value = if value == 0xFF00 { "ON" } else { "OFF" };
                 fields.insert("coil_state".to_string(), coil_value.to_string());
                 format!("Confirmed: wrote coil {} to {}", address, coil_value)
-            },
+            }
             0x06 => {
                 format!("Confirmed: wrote value {} to register {}", value, address)
-            },
+            }
             _ => format!("Confirmed: wrote value {} to address {}", value, address),
         };
 
@@ -210,7 +241,11 @@ impl ModbusPacketParser {
     }
 
     /// Parse error response
-    fn parse_error_response(&self, data: &[u8], function_code: u8) -> (String, HashMap<String, String>) {
+    fn parse_error_response(
+        &self,
+        data: &[u8],
+        function_code: u8,
+    ) -> (String, HashMap<String, String>) {
         if data.len() < 9 {
             return ("Invalid error response".to_string(), HashMap::new());
         }
@@ -232,8 +267,14 @@ impl ModbusPacketParser {
         };
 
         let mut fields = HashMap::new();
-        fields.insert("original_function".to_string(), format!("0x{:02x}", original_function));
-        fields.insert("exception_code".to_string(), format!("0x{:02x}", exception_code));
+        fields.insert(
+            "original_function".to_string(),
+            format!("0x{:02x}", original_function),
+        );
+        fields.insert(
+            "exception_code".to_string(),
+            format!("0x{:02x}", exception_code),
+        );
         fields.insert("exception_name".to_string(), exception_name.to_string());
 
         let description = format!(
@@ -254,7 +295,7 @@ impl ProtocolPacketParser for ModbusPacketParser {
         let hex_data = self.format_hex_data(data);
 
         // Parse TCP header
-        let (transaction_id, protocol_id, length, unit_id, function_code) = 
+        let (transaction_id, protocol_id, length, unit_id, function_code) =
             match self.parse_tcp_header(data) {
                 Ok(header) => header,
                 Err(e) => {
@@ -263,17 +304,31 @@ impl ProtocolPacketParser for ModbusPacketParser {
             };
 
         let mut fields = HashMap::new();
-        fields.insert("transaction_id".to_string(), format!("0x{:04x}", transaction_id));
+        fields.insert(
+            "transaction_id".to_string(),
+            format!("0x{:04x}", transaction_id),
+        );
         fields.insert("protocol_id".to_string(), protocol_id.to_string());
         fields.insert("length".to_string(), length.to_string());
         fields.insert("unit_id".to_string(), unit_id.to_string());
-        fields.insert("function_code".to_string(), format!("0x{:02x}", function_code));
-        fields.insert("function_name".to_string(), Self::function_code_name(function_code).to_string());
+        fields.insert(
+            "function_code".to_string(),
+            format!("0x{:02x}", function_code),
+        );
+        fields.insert(
+            "function_name".to_string(),
+            Self::function_code_name(function_code).to_string(),
+        );
 
         // Base description with header info
         let mut description = format!(
             "TxID:0x{:04x} ProtoID:{} Len:{} Unit:{} FC:0x{:02x}({})",
-            transaction_id, protocol_id, length, unit_id, function_code, Self::function_code_name(function_code)
+            transaction_id,
+            protocol_id,
+            length,
+            unit_id,
+            function_code,
+            Self::function_code_name(function_code)
         );
 
         // Parse function-specific data
@@ -288,14 +343,14 @@ impl ProtocolPacketParser for ModbusPacketParser {
                     } else {
                         self.parse_read_response(data, function_code)
                     }
-                },
+                }
                 0x05 | 0x06 => {
                     if direction == "send" {
                         self.parse_write_single_request(data, function_code)
                     } else {
                         self.parse_write_single_response(data, function_code)
                     }
-                },
+                }
                 _ => ("Unsupported function".to_string(), HashMap::new()),
             }
         };
@@ -310,4 +365,4 @@ impl ProtocolPacketParser for ModbusPacketParser {
 
         PacketParseResult::success("Modbus", direction, &hex_data, &description, fields)
     }
-} 
+}

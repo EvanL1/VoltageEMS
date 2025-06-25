@@ -1,8 +1,5 @@
-use std::collections::HashMap;
 use std::net::TcpListener;
-use std::time::{Duration, Instant};
-use serde_json::json;
-use redis::Commands;
+use std::time::Instant;
 
 /// Test configuration
 #[derive(Debug, Clone)]
@@ -77,7 +74,8 @@ impl PerformanceStats {
 
 /// Check whether a Redis instance is reachable
 pub fn check_redis_connection() -> Result<redis::Client, Box<dyn std::error::Error>> {
-    let redis_url = std::env::var("REDIS_URL").unwrap_or_else(|_| "redis://127.0.0.1:6379".to_string());
+    let redis_url =
+        std::env::var("REDIS_URL").unwrap_or_else(|_| "redis://127.0.0.1:6379".to_string());
     let client = redis::Client::open(redis_url)?;
     let mut conn = client.get_connection()?;
     let _: String = redis::cmd("PING").query(&mut conn)?;

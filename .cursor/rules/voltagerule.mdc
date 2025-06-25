@@ -9,7 +9,7 @@ alwaysApply: false
   - 必须用中文回复我；
   - 项目为一个物联网管理系统，需要实现通信、控制、Iot联网、历史存储功能
   - 整个项目采用微服务架构，分为前端（frontend）和后端（services），后段采用Rust开发，后端又有多个模块。
-  - services下的comsrv负责边端设备的通信，通过**通道**和**通信点表**的方式来进行管理，通讯数据存储在redis中，支持多种通讯协议；
+  - services下的comsrv负责边端设备的通信，通过**通道**和**通信点表**的方式来进行管理，通讯数据存储在redis中，支持多种通讯协议，不要关注数据quality，不要有quality属性；
   - services下的modsrv负责在系统内部实现物模型，映射通信电表中的数据到内部模型，实现**模型状态更新**以及**设备控制下发**，同时通过有向无环图（DAG）来进行控制流程管理；
   - services下的hissrv负责在将redis中的数据存储到InfluxDB中；
   - services下的netsrv负责将边端数据通过mqtt、Http协议上送到对应的服务器中，同时也需要支持AWS Iot core、阿里云Iot等平台；

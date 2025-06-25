@@ -40,10 +40,11 @@ logs/
 # Misc
 .DS_Store
 Thumbs.db 
+*.csv
 
 # Config
 services/comsrv/config/
-./config/
+config/
 
 # models
 services/modsrv/instances/
@@ -69,3 +70,11 @@ services/comsrv/docs/modbus_server_refactoring.md
 services/comsrv/examples/yaml_config_example.yaml
 Voltage_EMS_功能文档.md
 .cursor/rules/voltagerule.mdc
+services/comsrv/docs/layered_configuration_system.md
+simple_modbus_server.py
+services/comsrv/comsrv-enhanced-redis.yaml
+.gitignore
+services/comsrv/docs/CSV_FOUR_TELEMETRY_STRUCTURE.md
+services/comsrv/docs/REDIS_MONITORING_GUIDE.md
+services/comsrv/docs/DATA_STRUCTURES.md
+tools/redis_monitor.py

@@ -1,4 +1,4 @@
-use comsrv::core::protocols::{init_protocol_parsers, common::combase::get_global_parser_registry};
+use comsrv::core::protocols::{common::combase::get_global_parser_registry, init_protocol_parsers};
 
 #[test]
 fn test_protocol_parser_registration() {
@@ -10,4 +10,3 @@ fn test_protocol_parser_registration() {
     assert!(protocols.contains(&"CAN".to_string()));
     assert!(protocols.contains(&"IEC60870".to_string()));
 }
-

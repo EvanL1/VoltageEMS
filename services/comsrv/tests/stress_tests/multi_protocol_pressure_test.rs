@@ -12,13 +12,13 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use rand::Rng;
+
+use comsrv::core::config::config_manager::{ChannelConfig, ChannelParameters, ProtocolType};
+use comsrv::core::config::point_table::PointTableManager;
+use comsrv::core::protocols::common::combase::ComBase;
+use comsrv::core::protocols::common::protocol_factory::{create_default_factory, ProtocolFactory};
 use tokio::sync::RwLock;
 use tokio::time::sleep;
-use comsrv::core::config::point_table::PointTableManager;
-use comsrv::core::config::config_manager::{ChannelConfig, ProtocolType};
-use comsrv::core::protocols::common::protocol_factory::{create_default_factory, ProtocolFactory};
-use comsrv::core::protocols::common::combase::{ComBase, PollingPoint};
 
 /// Configuration for the multi-protocol pressure test
 #[derive(Debug, Clone)]
@@ -76,24 +76,66 @@ impl MultiProtocolPressureTest {
         let mut params = HashMap::new();
         match protocol {
             ProtocolType::ModbusTcp => {
-                params.insert("address".to_string(), serde_yaml::Value::String("127.0.0.1".to_string()));
-                params.insert("port".to_string(), serde_yaml::Value::Number(serde_yaml::Number::from(port)));
-                params.insert("timeout".to_string(), serde_yaml::Value::Number(serde_yaml::Number::from(1000)));
-                params.insert("slave_id".to_string(), serde_yaml::Value::Number(serde_yaml::Number::from(1)));
+                params.insert(
+                    "address".to_string(),
+                    serde_yaml::Value::String("127.0.0.1".to_string()),
+                );
+                params.insert(
+                    "port".to_string(),
+                    serde_yaml::Value::Number(serde_yaml::Number::from(port)),
+                );
+                params.insert(
+                    "timeout".to_string(),
+                    serde_yaml::Value::Number(serde_yaml::Number::from(1000)),
+                );
+                params.insert(
+                    "slave_id".to_string(),
+                    serde_yaml::Value::Number(serde_yaml::Number::from(1)),
+                );
             }
             ProtocolType::ModbusRtu => {
-                params.insert("port".to_string(), serde_yaml::Value::String(format!("/dev/ttyFAKE{}", id)));
-                params.insert("baud_rate".to_string(), serde_yaml::Value::Number(serde_yaml::Number::from(9600)));
-                params.insert("data_bits".to_string(), serde_yaml::Value::Number(serde_yaml::Number::from(8)));
-                params.insert("stop_bits".to_string(), serde_yaml::Value::Number(serde_yaml::Number::from(1)));
-                params.insert("parity".to_string(), serde_yaml::Value::String("None".to_string()));
-                params.insert("timeout".to_string(), serde_yaml::Value::Number(serde_yaml::Number::from(1000)));
-                params.insert("slave_id".to_string(), serde_yaml::Value::Number(serde_yaml::Number::from(1)));
+                params.insert(
+                    "port".to_string(),
+                    serde_yaml::Value::String(format!("/dev/ttyFAKE{}", id)),
+                );
+                params.insert(
+                    "baud_rate".to_string(),
+                    serde_yaml::Value::Number(serde_yaml::Number::from(9600)),
+                );
+                params.insert(
+                    "data_bits".to_string(),
+                    serde_yaml::Value::Number(serde_yaml::Number::from(8)),
+                );
+                params.insert(
+                    "stop_bits".to_string(),
+                    serde_yaml::Value::Number(serde_yaml::Number::from(1)),
+                );
+                params.insert(
+                    "parity".to_string(),
+                    serde_yaml::Value::String("None".to_string()),
+                );
+                params.insert(
+                    "timeout".to_string(),
+                    serde_yaml::Value::Number(serde_yaml::Number::from(1000)),
+                );
+                params.insert(
+                    "slave_id".to_string(),
+                    serde_yaml::Value::Number(serde_yaml::Number::from(1)),
+                );
             }
             ProtocolType::Iec104 => {
-                params.insert("address".to_string(), serde_yaml::Value::String("127.0.0.1".to_string()));
-                params.insert("port".to_string(), serde_yaml::Value::Number(serde_yaml::Number::from(port)));
-                params.insert("timeout".to_string(), serde_yaml::Value::Number(serde_yaml::Number::from(5000)));
+                params.insert(
+                    "address".to_string(),
+                    serde_yaml::Value::String("127.0.0.1".to_string()),
+                );
+                params.insert(
+                    "port".to_string(),
+                    serde_yaml::Value::Number(serde_yaml::Number::from(port)),
+                );
+                params.insert(
+                    "timeout".to_string(),
+                    serde_yaml::Value::Number(serde_yaml::Number::from(5000)),
+                );
             }
             _ => {}
         }
@@ -103,13 +145,14 @@ impl MultiProtocolPressureTest {
             name: format!("channel_{}", id),
             description: "multi protocol test".to_string(),
             protocol,
-            parameters: comsrv::core::config::config_manager::ChannelParameters::Generic(params),
+            parameters: ChannelParameters::Generic(params),
+            csv_config: None,
         }
     }
 
     /// Create channels and load point tables
     async fn setup_channels(&self) -> Vec<Arc<RwLock<Box<dyn ComBase>>>> {
-        let mut clients = Vec::new();
+        let clients = Vec::new();
         for i in 0..self.config.channel_count {
             let protocol = match i % 3 {
                 0 => ProtocolType::ModbusTcp,
@@ -117,13 +160,16 @@ impl MultiProtocolPressureTest {
                 _ => ProtocolType::Iec104,
             };
             let port = self.config.base_port + i as u16;
-            let config = self.make_channel_config(i as u16, protocol.clone(), port);
+            let _config = self.make_channel_config(i as u16, protocol.clone(), port);
             // Note: create_channel returns a different type, create a mock client here
             println!("  ✅ 配置通道 {} ({:?}), 端口: {}", i, protocol, port);
-            
+
             // Load point table (generated beforehand)
             let path = format!("channel_{:02}.csv", i);
-            let _ = self.point_manager.load_channel_point_table(i as u16, &path).await;
+            let _ = self
+                .point_manager
+                .load_channel_point_table(i as u16, &path)
+                .await;
         }
         clients
     }
@@ -133,7 +179,7 @@ impl MultiProtocolPressureTest {
         let stats = self.stats.clone();
         let duration = Duration::from_secs(self.config.test_duration_secs);
         let start = Instant::now();
-        
+
         // Since clients are empty, simulate pressure test tasks
         let channel_count = self.config.channel_count;
         for _i in 0..channel_count {
@@ -150,7 +196,7 @@ impl MultiProtocolPressureTest {
                 }
             });
         }
-        
+
         // Wait for all tasks to complete
         sleep(duration).await;
     }
@@ -161,7 +207,10 @@ impl MultiProtocolPressureTest {
         self.start_pressure_tasks(clients).await;
         sleep(Duration::from_secs(self.config.test_duration_secs)).await;
         let stats = self.stats.read().await;
-        println!("Multi-protocol test completed: {} reads, {} writes", stats.reads, stats.writes);
+        println!(
+            "Multi-protocol test completed: {} reads, {} writes",
+            stats.reads, stats.writes
+        );
     }
 }
 
@@ -184,4 +233,3 @@ mod tests {
         assert_eq!(cfg.channel_count, 50);
     }
 }
-

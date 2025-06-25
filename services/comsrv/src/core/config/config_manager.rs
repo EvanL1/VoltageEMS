@@ -1,11 +1,11 @@
+use crate::core::config::protocol_table_manager::{FourTelemetryTableManager, FourTelemetryTableManagerTrait};
 use crate::utils::error::{ComSrvError, Result};
-use crate::core::config::csv_parser::CsvPointManager;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
-use std::path::Path;
-use std::str::FromStr;
 use std::net::SocketAddr;
+use std::path::{Path, PathBuf};
+use std::str::FromStr;
 use std::time::Duration;
 
 /// Service configuration section
@@ -15,9 +15,7 @@ pub struct ServiceConfig {
     pub name: String,
     /// Service description
     pub description: String,
-    /// Metrics configuration
-    #[serde(default)]
-    pub metrics: MetricsConfig,
+
     /// Logging configuration
     #[serde(default)]
     pub logging: LoggingConfig,
@@ -27,9 +25,6 @@ pub struct ServiceConfig {
     /// Redis configuration
     #[serde(default)]
     pub redis: RedisConfig,
-    /// Point tables configuration
-    #[serde(default)]
-    pub point_tables: PointTablesConfig,
 }
 
 impl Default for ServiceConfig {
@@ -37,11 +32,10 @@ impl Default for ServiceConfig {
         Self {
             name: "comsrv".to_string(),
             description: "Communication Service".to_string(),
-            metrics: MetricsConfig::default(),
+
             logging: LoggingConfig::default(),
             api: ApiConfig::default(),
             redis: RedisConfig::default(),
-            point_tables: PointTablesConfig::default(),
         }
     }
 }
@@ -111,11 +105,21 @@ pub struct RedisConfig {
     pub username: Option<String>,
 }
 
-fn default_redis_timeout() -> u64 { 5000 }
-fn default_redis_max_connections() -> u32 { 10 }
-fn default_redis_min_connections() -> u32 { 1 }
-fn default_redis_idle_timeout() -> u64 { 300 }
-fn default_redis_max_retries() -> u32 { 3 }
+fn default_redis_timeout() -> u64 {
+    5000
+}
+fn default_redis_max_connections() -> u32 {
+    10
+}
+fn default_redis_min_connections() -> u32 {
+    1
+}
+fn default_redis_idle_timeout() -> u64 {
+    300
+}
+fn default_redis_max_retries() -> u32 {
+    3
+}
 
 impl Default for RedisConfig {
     fn default() -> Self {
@@ -172,8 +176,8 @@ impl RedisConfig {
             });
         }
 
-        let address = std::env::var("REDIS_URL")
-            .unwrap_or_else(|_| "redis://127.0.0.1:6379".to_string());
+        let address =
+            std::env::var("REDIS_URL").unwrap_or_else(|_| "redis://127.0.0.1:6379".to_string());
 
         let connection_type = if address.starts_with("unix://") || address.starts_with("/") {
             RedisConnectionType::Unix
@@ -185,9 +189,7 @@ impl RedisConfig {
             enabled,
             connection_type,
             address,
-            db: std::env::var("REDIS_DB")
-                .ok()
-                .and_then(|s| s.parse().ok()),
+            db: std::env::var("REDIS_DB").ok().and_then(|s| s.parse().ok()),
             timeout_ms: std::env::var("REDIS_TIMEOUT_MS")
                 .ok()
                 .and_then(|s| s.parse().ok())
@@ -220,25 +222,35 @@ impl RedisConfig {
         }
 
         if self.address.is_empty() {
-            return Err(ComSrvError::ConfigError("Redis address cannot be empty".to_string()));
+            return Err(ComSrvError::ConfigError(
+                "Redis address cannot be empty".to_string(),
+            ));
         }
 
         if self.max_connections == 0 {
-            return Err(ComSrvError::ConfigError("Redis max_connections must be greater than 0".to_string()));
+            return Err(ComSrvError::ConfigError(
+                "Redis max_connections must be greater than 0".to_string(),
+            ));
         }
 
         if self.min_connections > self.max_connections {
-            return Err(ComSrvError::ConfigError("Redis min_connections cannot exceed max_connections".to_string()));
+            return Err(ComSrvError::ConfigError(
+                "Redis min_connections cannot exceed max_connections".to_string(),
+            ));
         }
 
         if self.timeout_ms == 0 {
-            return Err(ComSrvError::ConfigError("Redis timeout_ms must be greater than 0".to_string()));
+            return Err(ComSrvError::ConfigError(
+                "Redis timeout_ms must be greater than 0".to_string(),
+            ));
         }
 
         // Validate database number (Redis supports 0-15 by default)
         if let Some(db) = self.db {
             if db > 15 {
-                return Err(ComSrvError::ConfigError("Redis database number must be between 0-15".to_string()));
+                return Err(ComSrvError::ConfigError(
+                    "Redis database number must be between 0-15".to_string(),
+                ));
             }
         }
 
@@ -303,22 +315,6 @@ pub fn get_redis_config(config: &Config) -> &RedisConfig {
     &config.service.redis
 }
 
-/// Metrics configuration section
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct MetricsConfig {
-    pub enabled: bool,
-    pub bind_address: String,
-}
-
-impl Default for MetricsConfig {
-    fn default() -> Self {
-        Self {
-            enabled: true,
-            bind_address: "0.0.0.0:9100".to_string(),
-        }
-    }
-}
-
 /// Logging configuration section
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LoggingConfig {
@@ -338,8 +334,8 @@ impl Default for LoggingConfig {
     fn default() -> Self {
         Self {
             level: "info".to_string(),
-            file: "/var/log/comsrv/comsrv.log".to_string(),
-            max_size: 10485760, // 10MB
+            file: "/tmp/comsrv.log".to_string(),
+            max_size: 10 * 1024 * 1024, // 10MB
             max_files: 5,
             console: true,
         }
@@ -347,28 +343,6 @@ impl Default for LoggingConfig {
 }
 
 /// Point tables configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PointTablesConfig {
-    /// Whether CSV point tables are enabled
-    pub enabled: bool,
-    /// Directory containing CSV point table files
-    pub directory: String,
-    /// Whether to watch for changes in CSV files
-    pub watch_changes: bool,
-    /// Reload interval in seconds
-    pub reload_interval: u64,
-}
-
-impl Default for PointTablesConfig {
-    fn default() -> Self {
-        Self {
-            enabled: true,
-            directory: "config/points".to_string(),
-            watch_changes: true,
-            reload_interval: 60,
-        }
-    }
-}
 
 /// Channel parameters, specific to each protocol type
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -404,29 +378,43 @@ impl ChannelParameters {
     /// Get the value of the parameter
     pub fn get(&self, key: &str) -> Option<serde_yaml::Value> {
         match self {
-            ChannelParameters::ModbusTcp { host, port, timeout, max_retries, point_tables: _, poll_rate } => {
-                match key {
-                    "host" => Some(serde_yaml::Value::String(host.clone())),
-                    "port" => Some(serde_yaml::Value::Number((*port).into())),
-                    "timeout" => Some(serde_yaml::Value::Number((*timeout).into())),
-                    "max_retries" => Some(serde_yaml::Value::Number((*max_retries).into())),
-                    "poll_rate" => Some(serde_yaml::Value::Number((*poll_rate).into())),
-                    _ => None,
-                }
+            ChannelParameters::ModbusTcp {
+                host,
+                port,
+                timeout,
+                max_retries,
+                point_tables: _,
+                poll_rate,
+            } => match key {
+                "host" => Some(serde_yaml::Value::String(host.clone())),
+                "port" => Some(serde_yaml::Value::Number((*port).into())),
+                "timeout" => Some(serde_yaml::Value::Number((*timeout).into())),
+                "max_retries" => Some(serde_yaml::Value::Number((*max_retries).into())),
+                "poll_rate" => Some(serde_yaml::Value::Number((*poll_rate).into())),
+                _ => None,
             },
-            ChannelParameters::ModbusRtu { port, baud_rate, data_bits, parity, stop_bits, timeout, max_retries, point_tables: _, poll_rate, slave_id } => {
-                match key {
-                    "port" => Some(serde_yaml::Value::String(port.clone())),
-                    "baud_rate" => Some(serde_yaml::Value::Number((*baud_rate).into())),
-                    "data_bits" => Some(serde_yaml::Value::Number((*data_bits).into())),
-                    "parity" => Some(serde_yaml::Value::String(parity.clone())),
-                    "stop_bits" => Some(serde_yaml::Value::Number((*stop_bits).into())),
-                    "timeout" => Some(serde_yaml::Value::Number((*timeout).into())),
-                    "max_retries" => Some(serde_yaml::Value::Number((*max_retries).into())),
-                    "poll_rate" => Some(serde_yaml::Value::Number((*poll_rate).into())),
-                    "slave_id" => Some(serde_yaml::Value::Number((*slave_id).into())),
-                    _ => None,
-                }
+            ChannelParameters::ModbusRtu {
+                port,
+                baud_rate,
+                data_bits,
+                parity,
+                stop_bits,
+                timeout,
+                max_retries,
+                point_tables: _,
+                poll_rate,
+                slave_id,
+            } => match key {
+                "port" => Some(serde_yaml::Value::String(port.clone())),
+                "baud_rate" => Some(serde_yaml::Value::Number((*baud_rate).into())),
+                "data_bits" => Some(serde_yaml::Value::Number((*data_bits).into())),
+                "parity" => Some(serde_yaml::Value::String(parity.clone())),
+                "stop_bits" => Some(serde_yaml::Value::Number((*stop_bits).into())),
+                "timeout" => Some(serde_yaml::Value::Number((*timeout).into())),
+                "max_retries" => Some(serde_yaml::Value::Number((*max_retries).into())),
+                "poll_rate" => Some(serde_yaml::Value::Number((*poll_rate).into())),
+                "slave_id" => Some(serde_yaml::Value::Number((*slave_id).into())),
+                _ => None,
             },
             ChannelParameters::Generic(map) => map.get(key).cloned(),
         }
@@ -485,24 +473,24 @@ impl FromStr for ProtocolType {
 }
 
 /// Channel configuration
-/// 
+///
 /// Complete configuration for a single communication channel including
 /// protocol type, connection parameters, and metadata.
-/// 
+///
 /// # Fields
-/// 
+///
 /// * `id` - Unique numeric identifier for the channel
 /// * `name` - Human-readable name for the channel
 /// * `description` - Detailed description of the channel purpose
 /// * `protocol` - Protocol type (ModbusTcp, ModbusRtu, etc.)
 /// * `parameters` - Protocol-specific configuration parameters
-/// 
+///
 /// # Examples
-/// 
+///
 /// ```rust
 /// use comsrv::core::config::config_manager::{ChannelConfig, ProtocolType, ChannelParameters};
 /// use std::collections::HashMap;
-/// 
+///
 /// let config = ChannelConfig {
 ///     id: 1,
 ///     name: "Device 1".to_string(),
@@ -523,17 +511,20 @@ pub struct ChannelConfig {
     pub protocol: ProtocolType,
     /// Protocol-specific parameters
     pub parameters: ChannelParameters,
+    /// CSV configuration for ComBase point tables
+    #[serde(default)]
+    pub csv_config: Option<ChannelCsvConfig>,
 }
 
 impl Default for ChannelConfig {
     fn default() -> Self {
-        use std::collections::HashMap;
         Self {
-            id: 0,
+            id: 1,
             name: "Default Channel".to_string(),
-            description: "Default channel configuration".to_string(),
-            protocol: ProtocolType::ModbusTcp,
+            description: "Default channel description".to_string(),
+            protocol: ProtocolType::Virtual,
             parameters: ChannelParameters::Generic(HashMap::new()),
+            csv_config: Some(ChannelCsvConfig::default()),
         }
     }
 }
@@ -557,34 +548,27 @@ pub struct ConfigManager {
     /// Path to configuration file
     config_path: String,
     /// CSV point table manager
-    csv_point_manager: CsvPointManager,
+    csv_point_manager: FourTelemetryTableManager,
 }
 
 impl ConfigManager {
-    /// Create a new ConfigManager from a configuration file
+    /// Create config manager from configuration file
     pub fn from_file(config_path: impl AsRef<Path>) -> Result<Self> {
         let config_path = config_path.as_ref().to_string_lossy().to_string();
         let config = Self::load_config(&config_path)?;
-        
-        let mut csv_point_manager = CsvPointManager::new();
-        
-        // Load CSV point tables if enabled
-        if config.service.point_tables.enabled {
-            let points_dir = Path::new(&config.service.point_tables.directory);
-            if let Err(e) = csv_point_manager.load_from_directory(points_dir) {
-                log::warn!("Failed to load CSV point tables: {}", e);
-            }
-        }
-        
+
+        // Create empty CSV point manager (not used in new architecture)
+        let csv_point_manager = FourTelemetryTableManager::new();
+
         let manager = Self {
             config,
             config_path,
             csv_point_manager,
         };
-        
+
         // Validate the configuration
         manager.validate_config()?;
-        
+
         Ok(manager)
     }
 
@@ -593,21 +577,26 @@ impl ConfigManager {
         // Check if file exists
         if !std::path::Path::new(config_path).exists() {
             return Err(ComSrvError::ConfigError(format!(
-                "Configuration file not found: {}", config_path
+                "Configuration file not found: {}",
+                config_path
             )));
         }
 
         // Read file content
-        let content = fs::read_to_string(config_path)
-            .map_err(|e| ComSrvError::ConfigError(format!(
-                "Failed to read configuration file {}: {}", config_path, e
-            )))?;
+        let content = fs::read_to_string(config_path).map_err(|e| {
+            ComSrvError::ConfigError(format!(
+                "Failed to read configuration file {}: {}",
+                config_path, e
+            ))
+        })?;
 
         // Parse YAML content
-        let config: Config = serde_yaml::from_str(&content)
-            .map_err(|e| ComSrvError::ConfigError(format!(
-                "Failed to parse configuration file {}: {}", config_path, e
-            )))?;
+        let config: Config = serde_yaml::from_str(&content).map_err(|e| {
+            ComSrvError::ConfigError(format!(
+                "Failed to parse configuration file {}: {}",
+                config_path, e
+            ))
+        })?;
 
         Ok(config)
     }
@@ -616,35 +605,24 @@ impl ConfigManager {
     pub fn validate_config(&self) -> Result<()> {
         // Validate service configuration
         if self.config.service.name.is_empty() {
-            return Err(ComSrvError::ConfigError("Service name cannot be empty".to_string()));
+            return Err(ComSrvError::ConfigError(
+                "Service name cannot be empty".to_string(),
+            ));
         }
 
         // Validate API configuration
         if self.config.service.api.enabled {
             if self.config.service.api.bind_address.is_empty() {
-                return Err(ComSrvError::ConfigError("API bind address cannot be empty when API is enabled".to_string()));
+                return Err(ComSrvError::ConfigError(
+                    "API bind address cannot be empty when API is enabled".to_string(),
+                ));
             }
-            
+
             // Validate bind address format
             if let Err(e) = self.config.service.api.bind_address.parse::<SocketAddr>() {
                 return Err(ComSrvError::ConfigError(format!(
-                    "Invalid API bind address format: {}, error: {}", 
+                    "Invalid API bind address format: {}, error: {}",
                     self.config.service.api.bind_address, e
-                )));
-            }
-        }
-
-        // Validate metrics configuration
-        if self.config.service.metrics.enabled {
-            if self.config.service.metrics.bind_address.is_empty() {
-                return Err(ComSrvError::ConfigError("Metrics bind address cannot be empty when metrics is enabled".to_string()));
-            }
-            
-            // Validate bind address format
-            if let Err(e) = self.config.service.metrics.bind_address.parse::<SocketAddr>() {
-                return Err(ComSrvError::ConfigError(format!(
-                    "Invalid metrics bind address format: {}, error: {}", 
-                    self.config.service.metrics.bind_address, e
                 )));
             }
         }
@@ -655,14 +633,16 @@ impl ConfigManager {
             // Check for duplicate channel IDs
             if !channel_ids.insert(channel.id) {
                 return Err(ComSrvError::ConfigError(format!(
-                    "Duplicate channel ID found: {}", channel.id
+                    "Duplicate channel ID found: {}",
+                    channel.id
                 )));
             }
 
             // Validate channel name
             if channel.name.is_empty() {
                 return Err(ComSrvError::ConfigError(format!(
-                    "Channel name cannot be empty for channel ID: {}", channel.id
+                    "Channel name cannot be empty for channel ID: {}",
+                    channel.id
                 )));
             }
 
@@ -676,66 +656,91 @@ impl ConfigManager {
     /// Validate channel-specific parameters
     fn validate_channel_parameters(&self, channel: &ChannelConfig) -> Result<()> {
         match &channel.parameters {
-            ChannelParameters::ModbusTcp { host, port, timeout, max_retries, poll_rate, .. } => {
+            ChannelParameters::ModbusTcp {
+                host,
+                port,
+                timeout,
+                max_retries,
+                poll_rate,
+                ..
+            } => {
                 if host.is_empty() {
                     return Err(ComSrvError::ConfigError(format!(
-                        "Modbus TCP host cannot be empty for channel {}", channel.id
+                        "Modbus TCP host cannot be empty for channel {}",
+                        channel.id
                     )));
                 }
                 if *port == 0 {
                     return Err(ComSrvError::ConfigError(format!(
-                        "Modbus TCP port cannot be 0 for channel {}", channel.id
+                        "Modbus TCP port cannot be 0 for channel {}",
+                        channel.id
                     )));
                 }
                 if *timeout == 0 {
                     return Err(ComSrvError::ConfigError(format!(
-                        "Timeout cannot be 0 for channel {}", channel.id
+                        "Timeout cannot be 0 for channel {}",
+                        channel.id
                     )));
                 }
                 if *max_retries > 10 {
                     return Err(ComSrvError::ConfigError(format!(
-                        "Max retries should not exceed 10 for channel {}", channel.id
+                        "Max retries should not exceed 10 for channel {}",
+                        channel.id
                     )));
                 }
                 if *poll_rate == 0 {
                     return Err(ComSrvError::ConfigError(format!(
-                        "Poll rate cannot be 0 for channel {}", channel.id
+                        "Poll rate cannot be 0 for channel {}",
+                        channel.id
                     )));
                 }
-            },
-            ChannelParameters::ModbusRtu { port, baud_rate, timeout, max_retries, poll_rate, slave_id, .. } => {
+            }
+            ChannelParameters::ModbusRtu {
+                port,
+                baud_rate,
+                timeout,
+                max_retries,
+                poll_rate,
+                slave_id,
+                ..
+            } => {
                 if port.is_empty() {
                     return Err(ComSrvError::ConfigError(format!(
-                        "Modbus RTU port cannot be empty for channel {}", channel.id
+                        "Modbus RTU port cannot be empty for channel {}",
+                        channel.id
                     )));
                 }
                 if *baud_rate == 0 {
                     return Err(ComSrvError::ConfigError(format!(
-                        "Baud rate cannot be 0 for channel {}", channel.id
+                        "Baud rate cannot be 0 for channel {}",
+                        channel.id
                     )));
                 }
                 if *timeout == 0 {
                     return Err(ComSrvError::ConfigError(format!(
-                        "Timeout cannot be 0 for channel {}", channel.id
+                        "Timeout cannot be 0 for channel {}",
+                        channel.id
                     )));
                 }
                 if *max_retries > 10 {
                     return Err(ComSrvError::ConfigError(format!(
-                        "Max retries should not exceed 10 for channel {}", channel.id
+                        "Max retries should not exceed 10 for channel {}",
+                        channel.id
                     )));
                 }
                 if *poll_rate == 0 {
                     return Err(ComSrvError::ConfigError(format!(
-                        "Poll rate cannot be 0 for channel {}", channel.id
+                        "Poll rate cannot be 0 for channel {}",
+                        channel.id
                     )));
                 }
                 if *slave_id == 0 || *slave_id > 247 {
                     return Err(ComSrvError::ConfigError(format!(
-                        "Invalid slave ID {} for channel {}. Must be between 1 and 247", 
+                        "Invalid slave ID {} for channel {}. Must be between 1 and 247",
                         slave_id, channel.id
                     )));
                 }
-            },
+            }
             ChannelParameters::Generic(_) => {
                 // Generic validation can be added here if needed
             }
@@ -747,77 +752,66 @@ impl ConfigManager {
     pub fn get_config_copy(&self) -> Config {
         self.config.clone()
     }
-    
+
     /// Get a reference to the current configuration
     pub fn get_config(&self) -> &Config {
         &self.config
     }
-    
+
     /// Get service configuration
     pub fn get_service_config(&self) -> &ServiceConfig {
         &self.config.service
     }
-    
+
     /// Get service name
     pub fn get_service_name(&self) -> &str {
         &self.config.service.name
     }
-    
+
     /// Get channel configurations
     pub fn get_channels(&self) -> &Vec<ChannelConfig> {
         &self.config.channels
     }
-    
+
     /// Get channel configuration by ID
     ///
     /// # Arguments
     ///
     /// * `channel_id` - Channel ID to look for
     pub fn get_channel(&self, channel_id: u16) -> Option<&ChannelConfig> {
-        self.config.channels.iter()
-            .find(|c| c.id == channel_id)
+        self.config.channels.iter().find(|c| c.id == channel_id)
     }
-    
-    /// Check if metrics are enabled
-    pub fn get_metrics_enabled(&self) -> bool {
-        self.config.service.metrics.enabled
-    }
-    
-    /// Get metrics bind address
-    pub fn get_metrics_address(&self) -> &str {
-        &self.config.service.metrics.bind_address
-    }
-    
+
     /// Check if API is enabled
     pub fn get_api_enabled(&self) -> bool {
         self.config.service.api.enabled
     }
-    
+
     /// Get API bind address
     pub fn get_api_address(&self) -> &str {
         &self.config.service.api.bind_address
     }
-    
+
     /// Get API version
     pub fn get_api_version(&self) -> &str {
         &self.config.service.api.version
     }
-    
+
     /// Get log level
     pub fn get_log_level(&self) -> &str {
         &self.config.service.logging.level
     }
-    
+
     /// Get log file path
     pub fn get_log_file(&self) -> &str {
         &self.config.service.logging.file
     }
-    
+
     /// Get redis configuration
     pub fn get_redis_config(&self) -> RedisConfig {
         self.config.service.redis.clone()
     }
-    
+
     /// Save configuration to file
     ///
     /// # Arguments
@@ -825,18 +819,14 @@ impl ConfigManager {
     /// * `config_path` - Path to save the configuration to (optional, uses current path if None)
     pub fn save_config(&self, config_path: Option<&str>) -> Result<()> {
         let path = config_path.unwrap_or(&self.config_path);
-        let content = serde_yaml::to_string(&self.config)
-            .map_err(|e| ComSrvError::ConfigError(format!(
-                "Failed to serialize configuration: {}",
-                e
-            )))?;
-        
-        fs::write(path, content)
-            .map_err(|e| ComSrvError::ConfigError(format!(
-                "Failed to write configuration to {}: {}",
-                path, e
-            )))?;
-        
+        let content = serde_yaml::to_string(&self.config).map_err(|e| {
+            ComSrvError::ConfigError(format!("Failed to serialize configuration: {}", e))
+        })?;
+
+        fs::write(path, content).map_err(|e| {
+            ComSrvError::ConfigError(format!("Failed to write configuration to {}: {}", path, e))
+        })?;
+
         Ok(())
     }
 
@@ -854,77 +844,83 @@ impl ConfigManager {
     pub fn reload_config(&mut self) -> Result<(bool, HashMap<String, Vec<String>>)> {
         // Load the new configuration
         let new_config = Self::load_config(&self.config_path)?;
-        
+
         // Compare configurations to detect changes
         let mut config_changed = false;
         let mut channel_changes: HashMap<String, Vec<String>> = HashMap::new();
-        
+
         // Check for service config changes
         if new_config.service.description != self.config.service.description {
             config_changed = true;
         }
-        
+
         // Check API config changes
-        if new_config.service.api.enabled != self.config.service.api.enabled ||
-           new_config.service.api.bind_address != self.config.service.api.bind_address ||
-           new_config.service.api.version != self.config.service.api.version {
+        if new_config.service.api.enabled != self.config.service.api.enabled
+            || new_config.service.api.bind_address != self.config.service.api.bind_address
+            || new_config.service.api.version != self.config.service.api.version
+        {
             config_changed = true;
         }
-        
+
         // Check Redis config changes
-        if new_config.service.redis.enabled != self.config.service.redis.enabled ||
-           match (&new_config.service.redis.connection_type, &self.config.service.redis.connection_type) {
-               (RedisConnectionType::Tcp, RedisConnectionType::Tcp) => false,
-               (RedisConnectionType::Unix, RedisConnectionType::Unix) => false,
-               _ => true,
-           } ||
-           new_config.service.redis.address != self.config.service.redis.address ||
-           new_config.service.redis.db != self.config.service.redis.db {
+        if new_config.service.redis.enabled != self.config.service.redis.enabled
+            || match (
+                &new_config.service.redis.connection_type,
+                &self.config.service.redis.connection_type,
+            ) {
+                (RedisConnectionType::Tcp, RedisConnectionType::Tcp) => false,
+                (RedisConnectionType::Unix, RedisConnectionType::Unix) => false,
+                _ => true,
+            }
+            || new_config.service.redis.address != self.config.service.redis.address
+            || new_config.service.redis.db != self.config.service.redis.db
+        {
             config_changed = true;
         }
-        
+
         // Check for channel changes
         for new_channel in &new_config.channels {
             // Check if channel exists in current config
-            let existing_channel = self.config.channels.iter()
-                .find(|c| c.id == new_channel.id);
-            
+            let existing_channel = self.config.channels.iter().find(|c| c.id == new_channel.id);
+
             let channel_id = new_channel.id.clone();
             let mut changed_properties = Vec::new();
-            
+
             match existing_channel {
                 Some(existing) => {
                     // Compare channel properties and update changed ones
                     if new_channel.name != existing.name {
                         changed_properties.push("name".to_string());
                     }
-                    
+
                     if new_channel.description != existing.description {
                         changed_properties.push("description".to_string());
                     }
-                    
+
                     if new_channel.protocol != existing.protocol {
                         changed_properties.push("protocol".to_string());
                     }
-                    
+
                     // Parameters comparison is more complex, depends on the protocol type
                     match (&new_channel.parameters, &existing.parameters) {
-                        (ChannelParameters::ModbusTcp { 
-                            host: new_host, 
-                            port: new_port, 
-                            timeout: new_timeout, 
-                            max_retries: new_max_retries, 
-                            point_tables: new_point_tables, 
-                            poll_rate: new_poll_rate 
-                        },
-                        ChannelParameters::ModbusTcp { 
-                            host: existing_host, 
-                            port: existing_port, 
-                            timeout: existing_timeout, 
-                            max_retries: existing_max_retries, 
-                            point_tables: existing_point_tables, 
-                            poll_rate: existing_poll_rate 
-                        }) => {
+                        (
+                            ChannelParameters::ModbusTcp {
+                                host: new_host,
+                                port: new_port,
+                                timeout: new_timeout,
+                                max_retries: new_max_retries,
+                                point_tables: new_point_tables,
+                                poll_rate: new_poll_rate,
+                            },
+                            ChannelParameters::ModbusTcp {
+                                host: existing_host,
+                                port: existing_port,
+                                timeout: existing_timeout,
+                                max_retries: existing_max_retries,
+                                point_tables: existing_point_tables,
+                                poll_rate: existing_poll_rate,
+                            },
+                        ) => {
                             if new_host != existing_host {
                                 changed_properties.push("parameters.host".to_string());
                             }
@@ -943,31 +939,33 @@ impl ConfigManager {
                             if new_point_tables != existing_point_tables {
                                 changed_properties.push("parameters.point_tables".to_string());
                             }
-                        },
-                        (ChannelParameters::ModbusRtu { 
-                            port: new_port, 
-                            baud_rate: new_baud_rate, 
-                            data_bits: new_data_bits, 
-                            parity: new_parity, 
-                            stop_bits: new_stop_bits, 
-                            timeout: new_timeout, 
-                            max_retries: new_max_retries, 
-                            point_tables: new_point_tables, 
-                            poll_rate: new_poll_rate, 
-                            slave_id: new_slave_id 
-                        },
-                        ChannelParameters::ModbusRtu { 
-                            port: existing_port, 
-                            baud_rate: existing_baud_rate, 
-                            data_bits: existing_data_bits, 
-                            parity: existing_parity, 
-                            stop_bits: existing_stop_bits, 
-                            timeout: existing_timeout, 
-                            max_retries: existing_max_retries, 
-                            point_tables: existing_point_tables, 
-                            poll_rate: existing_poll_rate, 
-                            slave_id: existing_slave_id 
-                        }) => {
+                        }
+                        (
+                            ChannelParameters::ModbusRtu {
+                                port: new_port,
+                                baud_rate: new_baud_rate,
+                                data_bits: new_data_bits,
+                                parity: new_parity,
+                                stop_bits: new_stop_bits,
+                                timeout: new_timeout,
+                                max_retries: new_max_retries,
+                                point_tables: new_point_tables,
+                                poll_rate: new_poll_rate,
+                                slave_id: new_slave_id,
+                            },
+                            ChannelParameters::ModbusRtu {
+                                port: existing_port,
+                                baud_rate: existing_baud_rate,
+                                data_bits: existing_data_bits,
+                                parity: existing_parity,
+                                stop_bits: existing_stop_bits,
+                                timeout: existing_timeout,
+                                max_retries: existing_max_retries,
+                                point_tables: existing_point_tables,
+                                poll_rate: existing_poll_rate,
+                                slave_id: existing_slave_id,
+                            },
+                        ) => {
                             if new_port != existing_port {
                                 changed_properties.push("parameters.port".to_string());
                             }
@@ -998,107 +996,104 @@ impl ConfigManager {
                             if new_point_tables != existing_point_tables {
                                 changed_properties.push("parameters.point_tables".to_string());
                             }
-                        },
-                        (ChannelParameters::Generic(new_params), ChannelParameters::Generic(existing_params)) => {
+                        }
+                        (
+                            ChannelParameters::Generic(new_params),
+                            ChannelParameters::Generic(existing_params),
+                        ) => {
                             // Compare each parameter in the generic map
                             for (key, new_value) in new_params {
                                 match existing_params.get(key) {
                                     Some(existing_value) if existing_value != new_value => {
                                         changed_properties.push(format!("parameters.{}", key));
-                                    },
+                                    }
                                     None => {
                                         changed_properties.push(format!("parameters.{}", key));
-                                    },
+                                    }
                                     _ => {}
                                 }
                             }
-                            
+
                             // Check for removed parameters
                             for key in existing_params.keys() {
                                 if !new_params.contains_key(key) {
                                     changed_properties.push(format!("parameters.{}.removed", key));
                                 }
                             }
-                        },
+                        }
                         _ => {
                             // Different parameter types, consider all parameters changed
                             changed_properties.push("parameters".to_string());
                         }
                     }
-                },
+                }
                 None => {
                     // New channel
                     changed_properties.push("new_channel".to_string());
                 }
             }
-            
+
             // If any properties changed, add to the changes map
             if !changed_properties.is_empty() {
                 config_changed = true;
                 channel_changes.insert(channel_id.to_string(), changed_properties);
             }
         }
-        
+
         // Check for removed channels
         for existing_channel in &self.config.channels {
-            let channel_exists = new_config.channels.iter()
+            let channel_exists = new_config
+                .channels
+                .iter()
                 .any(|c| c.id == existing_channel.id);
-            
+
             if !channel_exists {
                 config_changed = true;
-                channel_changes.insert(
-                    existing_channel.id.to_string(), 
-                    vec!["removed".to_string()]
-                );
+                channel_changes
+                    .insert(existing_channel.id.to_string(), vec!["removed".to_string()]);
             }
         }
-        
+
         // Update config if changed
         if config_changed {
             self.config = new_config;
         }
-        
+
         Ok((config_changed, channel_changes))
     }
 
-    /// Get point tables configuration
-    pub fn get_point_tables_config(&self) -> &PointTablesConfig {
-        &self.config.service.point_tables
-    }
-
     /// Get CSV point manager reference
-    pub fn get_csv_point_manager(&self) -> &CsvPointManager {
+    pub fn get_csv_point_manager(&self) -> &FourTelemetryTableManager {
         &self.csv_point_manager
     }
 
     /// Get mutable CSV point manager reference
-    pub fn get_csv_point_manager_mut(&mut self) -> &mut CsvPointManager {
+    pub fn get_csv_point_manager_mut(&mut self) -> &mut FourTelemetryTableManager {
         &mut self.csv_point_manager
     }
 
     /// Reload CSV point tables
     pub fn reload_csv_point_tables(&mut self) -> Result<()> {
-        if !self.config.service.point_tables.enabled {
-            return Ok(());
-        }
-
-        let points_dir = Path::new(&self.config.service.point_tables.directory);
-        self.csv_point_manager.load_from_directory(points_dir)?;
-        
-        log::info!("Reloaded CSV point tables from: {}", points_dir.display());
+        // In the new architecture, CSV tables are loaded per-channel, not globally
+        // This method is kept for compatibility but does nothing
+        log::info!("CSV point tables are now managed per-channel, global reload not needed");
         Ok(())
     }
 
     /// Get point table names
     pub fn get_point_table_names(&self) -> Vec<String> {
-        self.csv_point_manager.get_table_names()
+        self.csv_point_manager.get_channel_names()
     }
 
     /// Get Modbus mappings for a specific channel
-    pub fn get_modbus_mappings_for_channel(&self, channel_id: u16) -> Result<Vec<crate::core::protocols::modbus::common::ModbusRegisterMapping>> {
-        let channel = self.get_channel(channel_id)
+    pub fn get_modbus_mappings_for_channel(
+        &self,
+        channel_id: u16,
+    ) -> Result<Vec<crate::core::protocols::modbus::common::ModbusRegisterMapping>> {
+        let channel = self
+            .get_channel(channel_id)
             .ok_or_else(|| ComSrvError::ConfigError(format!("Channel {} not found", channel_id)))?;
-        
+
         // Try to get point table from channel parameters
         if let Some(table_name) = self.get_channel_point_table(&channel.parameters) {
             self.csv_point_manager.to_modbus_mappings(&table_name)
@@ -1111,35 +1106,44 @@ impl ConfigManager {
     /// Get point table name from channel parameters
     fn get_channel_point_table(&self, parameters: &ChannelParameters) -> Option<String> {
         match parameters {
-            ChannelParameters::ModbusTcp { point_tables, .. } |
-            ChannelParameters::ModbusRtu { point_tables, .. } => {
+            ChannelParameters::ModbusTcp { point_tables, .. }
+            | ChannelParameters::ModbusRtu { point_tables, .. } => {
                 // Use the first point table if multiple are configured
                 point_tables.keys().next().cloned()
-            },
+            }
             ChannelParameters::Generic(map) => {
                 // Look for point_table parameter in generic parameters
                 map.get("point_table")
                     .and_then(|v| v.as_str())
                     .map(|s| s.to_string())
-            },
+            }
         }
     }
 
     /// Update channel point table mapping
-    pub fn update_channel_point_table(&mut self, channel_id: u16, table_name: String) -> Result<()> {
-        let channel = self.get_channels_mut().iter_mut()
+    pub fn update_channel_point_table(
+        &mut self,
+        channel_id: u16,
+        table_name: String,
+    ) -> Result<()> {
+        let channel = self
+            .get_channels_mut()
+            .iter_mut()
             .find(|c| c.id == channel_id)
             .ok_or_else(|| ComSrvError::ConfigError(format!("Channel {} not found", channel_id)))?;
 
         match &mut channel.parameters {
-            ChannelParameters::ModbusTcp { point_tables, .. } |
-            ChannelParameters::ModbusRtu { point_tables, .. } => {
+            ChannelParameters::ModbusTcp { point_tables, .. }
+            | ChannelParameters::ModbusRtu { point_tables, .. } => {
                 point_tables.clear();
                 point_tables.insert("default".to_string(), table_name);
-            },
+            }
             ChannelParameters::Generic(map) => {
-                map.insert("point_table".to_string(), serde_yaml::Value::String(table_name));
-            },
+                map.insert(
+                    "point_table".to_string(),
+                    serde_yaml::Value::String(table_name),
+                );
+            }
         }
 
         Ok(())
@@ -1148,6 +1152,50 @@ impl ConfigManager {
     /// Get mutable channels reference
     fn get_channels_mut(&mut self) -> &mut Vec<ChannelConfig> {
         &mut self.config.channels
+    }
+
+    /// Get CSV configuration for a specific channel
+    pub fn get_channel_csv_config(&self, channel_id: u16) -> Option<&ChannelCsvConfig> {
+        self.get_channel(channel_id)?.csv_config.as_ref()
+    }
+
+    /// Get the CSV path for a specific channel and telemetry type
+    pub fn get_channel_csv_path(
+        &self,
+        channel_id: u16,
+        telemetry_type: TelemetryType,
+    ) -> Option<PathBuf> {
+        let csv_config = self.get_channel_csv_config(channel_id)?;
+        csv_config.get_csv_path(telemetry_type, channel_id)
+    }
+
+    /// Check if a channel has complete CSV configuration
+    pub fn is_channel_csv_complete(&self, channel_id: u16) -> bool {
+        self.get_channel_csv_config(channel_id)
+            .map(|config| config.is_complete())
+            .unwrap_or(false)
+    }
+
+    /// Get all channels with CSV configuration
+    pub fn get_channels_with_csv(&self) -> Vec<&ChannelConfig> {
+        self.config
+            .channels
+            .iter()
+            .filter(|channel| channel.csv_config.is_some())
+            .collect()
+    }
+
+    /// Load ComBase point configurations for a specific channel
+    pub fn load_channel_combase_config(&self, channel_id: u16) -> Result<CombaseConfigManager> {
+        let csv_config = self.get_channel_csv_config(channel_id).ok_or_else(|| {
+            ComSrvError::ConfigError(format!("No CSV config found for channel {}", channel_id))
+        })?;
+
+        let base_dir =
+            PathBuf::from(&csv_config.csv_directory).join(format!("channel_{}", channel_id));
+        let mut combase_manager = CombaseConfigManager::new(base_dir);
+        combase_manager.load_all_configs()?;
+        Ok(combase_manager)
     }
 }
 
@@ -1172,21 +1220,15 @@ version: "1.0"
 service:
   name: "test_service"
   description: "Test service"
-  metrics:
-    enabled: true
-    bind_address: "127.0.0.1:9090"
-  api:
-    enabled: true
-    bind_address: "127.0.0.1:8080"
-    version: "v1"
 channels: []
 "#;
-        
+
         let config_path = create_test_config_file(temp_dir.path(), config_content);
-        let manager = ConfigManager::from_file(&config_path).expect("Failed to create config manager");
-        
+        let manager =
+            ConfigManager::from_file(&config_path).expect("Failed to create config manager");
+
         assert_eq!(manager.get_service_name(), "test_service");
-        assert!(manager.get_metrics_enabled());
+
         assert!(manager.get_api_enabled());
         assert_eq!(manager.get_channels().len(), 0);
     }
@@ -1194,7 +1236,7 @@ channels: []
     #[test]
     fn test_config_validation() {
         let temp_dir = tempdir().expect("Failed to create temp dir");
-        
+
         // Valid configuration test
         let valid_config = r#"
 version: "1.0"
@@ -1214,11 +1256,11 @@ channels:
       point_tables: {}
       poll_rate: 1000
 "#;
-        
+
         let config_path = create_test_config_file(temp_dir.path(), valid_config);
         let manager = ConfigManager::from_file(&config_path).expect("Failed to load valid config");
         assert!(manager.validate_config().is_ok());
-        
+
         // Invalid configuration test - duplicate channel ID
         let invalid_config = r#"
 version: "1.0"
@@ -1253,10 +1295,10 @@ channels:
       poll_rate: 1000
       slave_id: 1
 "#;
-        
+
         let invalid_config_path = temp_dir.path().join("invalid_config.yaml");
         fs::write(&invalid_config_path, invalid_config).expect("Failed to write invalid config");
-        
+
         // This configuration should fail due to duplicate channel ID
         let result = ConfigManager::from_file(&invalid_config_path);
         assert!(result.is_err());
@@ -1302,23 +1344,23 @@ channels:
       poll_rate: 1000
       slave_id: 1
 "#;
-        
+
         let config_path = create_test_config_file(temp_dir.path(), config_content);
         let manager = ConfigManager::from_file(&config_path).expect("Failed to load config");
-        
+
         // Verify channel count
         assert_eq!(manager.get_channels().len(), 2);
-        
+
         // Verify TCP channel
         let tcp_channel = manager.get_channel(1).expect("TCP channel should exist");
         assert_eq!(tcp_channel.name, "TCP Test Channel");
         assert_eq!(tcp_channel.protocol, ProtocolType::ModbusTcp);
-        
+
         // Verify RTU channel
         let rtu_channel = manager.get_channel(2).expect("RTU channel should exist");
         assert_eq!(rtu_channel.name, "RTU Test Channel");
         assert_eq!(rtu_channel.protocol, ProtocolType::ModbusRtu);
-        
+
         // Verify non-existent channel returns None
         assert!(manager.get_channel(999).is_none());
     }
@@ -1334,7 +1376,7 @@ channels:
             ("Iec104", ProtocolType::Iec104),
             ("Iec61850", ProtocolType::Iec61850),
         ];
-        
+
         for (str_repr, enum_val) in protocols {
             // Test conversion from string to enum
             let parsed = ProtocolType::from_str(str_repr).expect("Failed to parse protocol type");
@@ -1362,19 +1404,19 @@ channels:
             point_tables: HashMap::new(),
             poll_rate: 1000,
         };
-        
+
         if let Some(host) = tcp_params.get("host") {
             assert_eq!(host.as_str().unwrap(), "192.168.1.100");
         } else {
             panic!("Host parameter not found");
         }
-        
+
         if let Some(port) = tcp_params.get("port") {
             assert_eq!(port.as_u64().unwrap(), 502);
         } else {
             panic!("Port parameter not found");
         }
-        
+
         // Test retrieval of ModbusRtu parameters
         let rtu_params = ChannelParameters::ModbusRtu {
             port: "/dev/ttyUSB0".to_string(),
@@ -1388,30 +1430,27 @@ channels:
             poll_rate: 1000,
             slave_id: 1,
         };
-        
+
         if let Some(port) = rtu_params.get("port") {
             assert_eq!(port.as_str().unwrap(), "/dev/ttyUSB0");
         } else {
             panic!("Port parameter not found");
         }
-        
-        if let Some(baud_rate) = rtu_params.get("baud_rate") {
-            assert_eq!(baud_rate.as_u64().unwrap(), 9600);
-        } else {
-            panic!("Baud rate parameter not found");
-        }
-        
+
         // Test retrieval of Generic parameters
         let mut generic_map = HashMap::new();
-        generic_map.insert("custom_param".to_string(), serde_yaml::Value::String("test_value".to_string()));
+        generic_map.insert(
+            "custom_param".to_string(),
+            serde_yaml::Value::String("test_value".to_string()),
+        );
         let generic_params = ChannelParameters::Generic(generic_map);
-        
+
         if let Some(custom_param) = generic_params.get("custom_param") {
             assert_eq!(custom_param.as_str().unwrap(), "test_value");
         } else {
             panic!("Custom parameter not found");
         }
-        
+
         // Test retrieval of a nonexistent parameter
         assert!(tcp_params.get("nonexistent_param").is_none());
     }
@@ -1423,14 +1462,10 @@ channels:
             service: ServiceConfig {
                 name: "test_service".to_string(),
                 description: "Test service for serialization".to_string(),
-                metrics: MetricsConfig {
-                    enabled: true,
-                    bind_address: "127.0.0.1:9090".to_string(),
-                },
+
                 logging: LoggingConfig::default(),
                 api: ApiConfig::default(),
                 redis: RedisConfig::default(),
-                point_tables: PointTablesConfig::default(),
             },
             channels: vec![
                 ChannelConfig {
@@ -1446,6 +1481,7 @@ channels:
                         point_tables: HashMap::new(),
                         poll_rate: 1000,
                     },
+                    csv_config: Some(ChannelCsvConfig::default()),
                 },
                 ChannelConfig {
                     id: 2,
@@ -1464,22 +1500,24 @@ channels:
                         poll_rate: 1000,
                         slave_id: 1,
                     },
+                    csv_config: Some(ChannelCsvConfig::default()),
                 },
             ],
         };
-        
+
         // Serialize configuration
         let serialized = serde_yaml::to_string(&config).expect("Failed to serialize config");
         assert!(!serialized.is_empty());
 
         // Deserialize configuration
-        let deserialized: Config = serde_yaml::from_str(&serialized).expect("Failed to deserialize config");
+        let deserialized: Config =
+            serde_yaml::from_str(&serialized).expect("Failed to deserialize config");
 
         // Verify the deserialized result
         assert_eq!(config.version, deserialized.version);
         assert_eq!(config.service.name, deserialized.service.name);
         assert_eq!(config.channels.len(), deserialized.channels.len());
-        
+
         for (original, deserialized) in config.channels.iter().zip(deserialized.channels.iter()) {
             assert_eq!(original.id, deserialized.id);
             assert_eq!(original.name, deserialized.name);
@@ -1503,10 +1541,10 @@ channels:
             password: None,
             username: None,
         };
-        
+
         let tcp_url = tcp_config.to_redis_url();
         assert_eq!(tcp_url, "redis://127.0.0.1:6379/0");
-        
+
         // Test Unix socket connection URL generation
         let unix_config = RedisConfig {
             enabled: true,
@@ -1521,10 +1559,10 @@ channels:
             password: None,
             username: None,
         };
-        
+
         let unix_url = unix_config.to_redis_url();
         assert_eq!(unix_url, "unix:///tmp/redis.sock");
-        
+
         // Test TCP connection without specifying database
         let tcp_no_db_config = RedisConfig {
             enabled: true,
@@ -1539,7 +1577,7 @@ channels:
             password: None,
             username: None,
         };
-        
+
         let tcp_no_db_url = tcp_no_db_config.to_redis_url();
         assert_eq!(tcp_no_db_url, "redis://127.0.0.1:6379");
     }
@@ -1565,13 +1603,14 @@ channels:
       point_tables: {}
       poll_rate: 1000
 "#;
-        
+
         let config_path = create_test_config_file(temp_dir.path(), initial_config);
-        let mut manager = ConfigManager::from_file(&config_path).expect("Failed to load initial config");
-        
+        let mut manager =
+            ConfigManager::from_file(&config_path).expect("Failed to load initial config");
+
         assert_eq!(manager.get_service_name(), "initial_service");
         assert_eq!(manager.get_channels().len(), 1);
-        
+
         // Update the configuration file
         let updated_config = r#"
 version: "1.0"
@@ -1606,22 +1645,618 @@ channels:
       poll_rate: 1000
       slave_id: 2
 "#;
-        
+
         fs::write(&config_path, updated_config).expect("Failed to update config file");
-        
+
         // Reload configuration
         let (config_changed, changes) = manager.reload_config().expect("Failed to reload config");
-        
+
         assert!(config_changed);
         assert!(!changes.is_empty());
         assert_eq!(manager.get_service_name(), "updated_service");
         assert_eq!(manager.get_channels().len(), 2);
-        
+
         let updated_channel = manager.get_channel(1).expect("Channel 1 should exist");
         assert_eq!(updated_channel.name, "Updated Channel");
-        
+
         let new_channel = manager.get_channel(2).expect("Channel 2 should exist");
         assert_eq!(new_channel.name, "New Channel");
         assert_eq!(new_channel.protocol, ProtocolType::ModbusRtu);
+    }
+}
+
+// ======== Combase Layer Configuration Management ========
+// 以下为四遥配置管理相关类型和实现
+
+/// Four telemetry types in industrial automation
+/// 四遥类型定义
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum TelemetryType {
+    /// 遥测 - Analog measurement data (float)
+    Telemetry,
+    /// 遥信 - Digital signaling data (bool)
+    Signaling,
+    /// 遥控 - Digital control commands (bool)
+    Control,
+    /// 遥调 - Analog setpoint data (float)
+    Setpoint,
+}
+
+impl TelemetryType {
+    /// Get the corresponding CSV file name for this telemetry type
+    pub fn csv_filename(&self) -> &'static str {
+        match self {
+            TelemetryType::Telemetry => "telemetry.csv",
+            TelemetryType::Signaling => "signaling.csv",
+            TelemetryType::Control => "control.csv",
+            TelemetryType::Setpoint => "setpoint.csv",
+        }
+    }
+
+    /// Parse telemetry type from CSV filename
+    pub fn from_filename(filename: &str) -> Option<Self> {
+        match filename {
+            "telemetry_table.csv" => Some(TelemetryType::Telemetry),
+            "signaling_table.csv" => Some(TelemetryType::Signaling),
+            "control_table.csv" => Some(TelemetryType::Control),
+            "setpoint_table.csv" => Some(TelemetryType::Setpoint),
+            _ => None,
+        }
+    }
+
+    /// Check if this telemetry type uses analog data (float)
+    pub fn is_analog(&self) -> bool {
+        matches!(self, TelemetryType::Telemetry | TelemetryType::Setpoint)
+    }
+
+    /// Check if this telemetry type uses digital data (bool)
+    pub fn is_digital(&self) -> bool {
+        matches!(self, TelemetryType::Signaling | TelemetryType::Control)
+    }
+
+    /// Get the unified data type for this telemetry type
+    pub fn data_type(&self) -> CombaseDataType {
+        if self.is_analog() {
+            CombaseDataType::Float
+        } else {
+            CombaseDataType::Bool
+        }
+    }
+}
+
+/// Unified data types in Combase layer
+/// Combase层统一数据类型
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum CombaseDataType {
+    /// Floating point number for analog data
+    Float,
+    /// Boolean value for digital data
+    Bool,
+}
+
+/// Analog point configuration (Telemetry & Setpoint)
+/// 模拟量点位配置（遥测和遥调）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AnalogPointConfig {
+    /// Point ID (unique within table)
+    pub id: u32,
+    /// English name
+    pub name: String,
+    /// Chinese name
+    pub chinese_name: String,
+    /// Scale factor for engineering unit conversion
+    pub scale: f64,
+    /// Offset for engineering unit conversion
+    pub offset: f64,
+    /// Engineering unit
+    pub unit: Option<String>,
+    /// Description
+    pub description: Option<String>,
+    /// Group identifier
+    pub group: Option<String>,
+}
+
+impl AnalogPointConfig {
+    /// Convert raw protocol value to engineering units
+    pub fn convert_to_engineering(&self, raw_value: f64) -> f64 {
+        raw_value * self.scale + self.offset
+    }
+
+    /// Convert engineering units to raw protocol value
+    pub fn convert_from_engineering(&self, engineering_value: f64) -> f64 {
+        (engineering_value - self.offset) / self.scale
+    }
+}
+
+/// Digital point configuration (Signaling & Control)
+/// 数字量点位配置（遥信和遥控）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DigitalPointConfig {
+    /// Point ID (unique within table)
+    pub id: u32,
+    /// English name
+    pub name: String,
+    /// Chinese name
+    pub chinese_name: String,
+    /// Description
+    pub description: Option<String>,
+    /// Group identifier
+    pub group: Option<String>,
+}
+
+/// Combase point configuration union
+/// Combase点位配置联合体
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum CombasePointConfig {
+    /// Analog point (Telemetry/Setpoint)
+    Analog(AnalogPointConfig),
+    /// Digital point (Signaling/Control)
+    Digital(DigitalPointConfig),
+}
+
+impl CombasePointConfig {
+    /// Get point ID
+    pub fn id(&self) -> u32 {
+        match self {
+            CombasePointConfig::Analog(config) => config.id,
+            CombasePointConfig::Digital(config) => config.id,
+        }
+    }
+
+    /// Get point name
+    pub fn name(&self) -> &str {
+        match self {
+            CombasePointConfig::Analog(config) => &config.name,
+            CombasePointConfig::Digital(config) => &config.name,
+        }
+    }
+
+    /// Get Chinese name
+    pub fn chinese_name(&self) -> &str {
+        match self {
+            CombasePointConfig::Analog(config) => &config.chinese_name,
+            CombasePointConfig::Digital(config) => &config.chinese_name,
+        }
+    }
+
+    /// Get data type
+    pub fn data_type(&self) -> CombaseDataType {
+        match self {
+            CombasePointConfig::Analog(_) => CombaseDataType::Float,
+            CombasePointConfig::Digital(_) => CombaseDataType::Bool,
+        }
+    }
+}
+
+/// Combase configuration manager
+/// Combase配置管理器
+#[derive(Debug, Clone)]
+pub struct CombaseConfigManager {
+    /// Point configurations grouped by telemetry type
+    point_configs: HashMap<TelemetryType, HashMap<u32, CombasePointConfig>>,
+    /// Configuration directory path
+    config_dir: PathBuf,
+}
+
+impl CombaseConfigManager {
+    /// Create a new Combase configuration manager
+    pub fn new<P: AsRef<Path>>(config_dir: P) -> Self {
+        Self {
+            point_configs: HashMap::new(),
+            config_dir: config_dir.as_ref().to_path_buf(),
+        }
+    }
+
+    /// Load all configuration files from the directory
+    pub fn load_all_configs(&mut self) -> Result<()> {
+        for telemetry_type in &[
+            TelemetryType::Telemetry,
+            TelemetryType::Signaling,
+            TelemetryType::Control,
+            TelemetryType::Setpoint,
+        ] {
+            self.load_config_for_type(*telemetry_type)?;
+        }
+        Ok(())
+    }
+
+    /// Load configuration for a specific telemetry type
+    pub fn load_config_for_type(&mut self, telemetry_type: TelemetryType) -> Result<()> {
+        let filename = telemetry_type.csv_filename();
+        let file_path = self.config_dir.join(filename);
+
+        if !file_path.exists() {
+            log::warn!("Config file not found: {}", file_path.display());
+            return Ok(());
+        }
+
+        let mut reader = csv::Reader::from_path(&file_path).map_err(|e| {
+            ComSrvError::ConfigError(format!(
+                "Failed to open CSV file {}: {}",
+                file_path.display(),
+                e
+            ))
+        })?;
+
+        let mut configs = HashMap::new();
+
+        if telemetry_type.is_analog() {
+            // Load analog point configurations
+            for result in reader.deserialize() {
+                let record: AnalogPointConfig = result.map_err(|e| {
+                    ComSrvError::ConfigError(format!(
+                        "Failed to parse analog config in {}: {}",
+                        filename, e
+                    ))
+                })?;
+
+                configs.insert(record.id, CombasePointConfig::Analog(record));
+            }
+        } else {
+            // Load digital point configurations
+            for result in reader.deserialize() {
+                let record: DigitalPointConfig = result.map_err(|e| {
+                    ComSrvError::ConfigError(format!(
+                        "Failed to parse digital config in {}: {}",
+                        filename, e
+                    ))
+                })?;
+
+                configs.insert(record.id, CombasePointConfig::Digital(record));
+            }
+        }
+
+        self.point_configs.insert(telemetry_type, configs);
+        log::info!(
+            "Loaded {} {} points from {}",
+            self.point_configs[&telemetry_type].len(),
+            format!("{:?}", telemetry_type).to_lowercase(),
+            filename
+        );
+
+        Ok(())
+    }
+
+    /// Get point configuration by telemetry type and ID
+    pub fn get_point_config(
+        &self,
+        telemetry_type: TelemetryType,
+        point_id: u32,
+    ) -> Option<&CombasePointConfig> {
+        self.point_configs.get(&telemetry_type)?.get(&point_id)
+    }
+
+    /// Get all point configurations for a telemetry type
+    pub fn get_points_by_type(
+        &self,
+        telemetry_type: TelemetryType,
+    ) -> Option<&HashMap<u32, CombasePointConfig>> {
+        self.point_configs.get(&telemetry_type)
+    }
+
+    /// Get all telemetry types that have loaded configurations
+    pub fn get_loaded_types(&self) -> Vec<TelemetryType> {
+        self.point_configs.keys().copied().collect()
+    }
+
+    /// Get statistics for loaded configurations
+    pub fn get_statistics(&self) -> CombaseStatistics {
+        let mut stats = CombaseStatistics::default();
+
+        for (telemetry_type, configs) in &self.point_configs {
+            let count = configs.len() as u32;
+            match telemetry_type {
+                TelemetryType::Telemetry => stats.telemetry_points = count,
+                TelemetryType::Signaling => stats.signaling_points = count,
+                TelemetryType::Control => stats.control_points = count,
+                TelemetryType::Setpoint => stats.setpoint_points = count,
+            }
+        }
+
+        stats.total_points = stats.telemetry_points
+            + stats.signaling_points
+            + stats.control_points
+            + stats.setpoint_points;
+        stats.analog_points = stats.telemetry_points + stats.setpoint_points;
+        stats.digital_points = stats.signaling_points + stats.control_points;
+
+        stats
+    }
+
+    /// Validate all loaded configurations
+    pub fn validate_configs(&self) -> Result<Vec<String>> {
+        let mut warnings = Vec::new();
+
+        for (telemetry_type, configs) in &self.point_configs {
+            // Check for duplicate names within the same type
+            let mut names = std::collections::HashSet::new();
+            for config in configs.values() {
+                if !names.insert(config.name()) {
+                    warnings.push(format!(
+                        "Duplicate point name '{}' in {:?} table",
+                        config.name(),
+                        telemetry_type
+                    ));
+                }
+            }
+
+            // Check for missing required fields
+            for config in configs.values() {
+                if config.name().is_empty() {
+                    warnings.push(format!(
+                        "Empty name for point ID {} in {:?} table",
+                        config.id(),
+                        telemetry_type
+                    ));
+                }
+                if config.chinese_name().is_empty() {
+                    warnings.push(format!(
+                        "Empty Chinese name for point '{}' in {:?} table",
+                        config.name(),
+                        telemetry_type
+                    ));
+                }
+            }
+        }
+
+        Ok(warnings)
+    }
+}
+
+/// Combase configuration statistics
+/// Combase配置统计信息
+#[derive(Debug, Default, Serialize, Deserialize)]
+pub struct CombaseStatistics {
+    /// Total number of points
+    pub total_points: u32,
+    /// Number of telemetry points
+    pub telemetry_points: u32,
+    /// Number of signaling points
+    pub signaling_points: u32,
+    /// Number of control points
+    pub control_points: u32,
+    /// Number of setpoint points
+    pub setpoint_points: u32,
+    /// Total analog points (telemetry + setpoint)
+    pub analog_points: u32,
+    /// Total digital points (signaling + control)
+    pub digital_points: u32,
+}
+
+#[cfg(test)]
+mod combase_tests {
+    use super::*;
+    use std::fs;
+    use tempfile::tempdir;
+
+    #[test]
+    fn test_telemetry_type_filename() {
+        assert_eq!(TelemetryType::Telemetry.csv_filename(), "telemetry.csv");
+        assert_eq!(TelemetryType::Signaling.csv_filename(), "signaling.csv");
+        assert_eq!(TelemetryType::Control.csv_filename(), "control.csv");
+        assert_eq!(TelemetryType::Setpoint.csv_filename(), "setpoint.csv");
+    }
+
+    #[test]
+    fn test_telemetry_type_from_filename() {
+        assert_eq!(
+            TelemetryType::from_filename("telemetry_table.csv"),
+            Some(TelemetryType::Telemetry)
+        );
+        assert_eq!(
+            TelemetryType::from_filename("signaling_table.csv"),
+            Some(TelemetryType::Signaling)
+        );
+        assert_eq!(TelemetryType::from_filename("unknown.csv"), None);
+    }
+
+    #[test]
+    fn test_telemetry_type_data_types() {
+        assert!(TelemetryType::Telemetry.is_analog());
+        assert!(TelemetryType::Setpoint.is_analog());
+        assert!(TelemetryType::Signaling.is_digital());
+        assert!(TelemetryType::Control.is_digital());
+
+        assert_eq!(TelemetryType::Telemetry.data_type(), CombaseDataType::Float);
+        assert_eq!(TelemetryType::Signaling.data_type(), CombaseDataType::Bool);
+    }
+
+    #[test]
+    fn test_analog_point_conversion() {
+        let config = AnalogPointConfig {
+            id: 1,
+            name: "test".to_string(),
+            chinese_name: "测试".to_string(),
+            scale: 0.1,
+            offset: 10.0,
+            unit: Some("°C".to_string()),
+            description: None,
+            group: None,
+        };
+
+        // Raw value 100 -> 100 * 0.1 + 10.0 = 20.0
+        assert_eq!(config.convert_to_engineering(100.0), 20.0);
+
+        // Engineering value 20.0 -> (20.0 - 10.0) / 0.1 = 100.0
+        assert_eq!(config.convert_from_engineering(20.0), 100.0);
+    }
+
+    #[test]
+    fn test_combase_config_manager_creation() {
+        let temp_dir = tempdir().unwrap();
+        let manager = CombaseConfigManager::new(temp_dir.path());
+
+        assert_eq!(manager.config_dir, temp_dir.path());
+        assert_eq!(manager.point_configs.len(), 0);
+    }
+
+    #[test]
+    fn test_load_analog_config() {
+        let temp_dir = tempdir().unwrap();
+        let config_path = temp_dir.path().join("telemetry_table.csv");
+
+        let csv_content = r#"id,name,chinese_name,scale,offset,unit,description,group
+1,Tank_Temperature,储罐温度,0.1,0.0,°C,主储罐温度传感器,sensors
+2,Tank_Pressure,储罐压力,0.01,0.0,bar,储罐压力传感器,sensors"#;
+
+        fs::write(&config_path, csv_content).unwrap();
+
+        let mut manager = CombaseConfigManager::new(temp_dir.path());
+        manager
+            .load_config_for_type(TelemetryType::Telemetry)
+            .unwrap();
+
+        let configs = manager
+            .get_points_by_type(TelemetryType::Telemetry)
+            .unwrap();
+        assert_eq!(configs.len(), 2);
+
+        let point_1 = manager
+            .get_point_config(TelemetryType::Telemetry, 1)
+            .unwrap();
+        assert_eq!(point_1.name(), "Tank_Temperature");
+        assert_eq!(point_1.chinese_name(), "储罐温度");
+    }
+
+    #[test]
+    fn test_load_digital_config() {
+        let temp_dir = tempdir().unwrap();
+        let config_path = temp_dir.path().join("signaling_table.csv");
+
+        let csv_content = r#"id,name,chinese_name,description,group
+1,Main_Pump_Running,主泵运行,主泵运行状态,pump_status
+2,Backup_Pump_Running,备用泵运行,备用泵运行状态,pump_status"#;
+
+        fs::write(&config_path, csv_content).unwrap();
+
+        let mut manager = CombaseConfigManager::new(temp_dir.path());
+        manager
+            .load_config_for_type(TelemetryType::Signaling)
+            .unwrap();
+
+        let configs = manager
+            .get_points_by_type(TelemetryType::Signaling)
+            .unwrap();
+        assert_eq!(configs.len(), 2);
+
+        let point_1 = manager
+            .get_point_config(TelemetryType::Signaling, 1)
+            .unwrap();
+        assert_eq!(point_1.name(), "Main_Pump_Running");
+        assert_eq!(point_1.data_type(), CombaseDataType::Bool);
+    }
+
+    #[test]
+    fn test_statistics() {
+        let temp_dir = tempdir().unwrap();
+        let mut manager = CombaseConfigManager::new(temp_dir.path());
+
+        // Create test configs
+        let mut telemetry_configs = HashMap::new();
+        telemetry_configs.insert(
+            1,
+            CombasePointConfig::Analog(AnalogPointConfig {
+                id: 1,
+                name: "test1".to_string(),
+                chinese_name: "测试1".to_string(),
+                scale: 1.0,
+                offset: 0.0,
+                unit: None,
+                description: None,
+                group: None,
+            }),
+        );
+
+        let mut signaling_configs = HashMap::new();
+        signaling_configs.insert(
+            1,
+            CombasePointConfig::Digital(DigitalPointConfig {
+                id: 1,
+                name: "test2".to_string(),
+                chinese_name: "测试2".to_string(),
+                description: None,
+                group: None,
+            }),
+        );
+        signaling_configs.insert(
+            2,
+            CombasePointConfig::Digital(DigitalPointConfig {
+                id: 2,
+                name: "test3".to_string(),
+                chinese_name: "测试3".to_string(),
+                description: None,
+                group: None,
+            }),
+        );
+
+        manager
+            .point_configs
+            .insert(TelemetryType::Telemetry, telemetry_configs);
+        manager
+            .point_configs
+            .insert(TelemetryType::Signaling, signaling_configs);
+
+        let stats = manager.get_statistics();
+        assert_eq!(stats.total_points, 3);
+        assert_eq!(stats.telemetry_points, 1);
+        assert_eq!(stats.signaling_points, 2);
+        assert_eq!(stats.analog_points, 1);
+        assert_eq!(stats.digital_points, 2);
+    }
+}
+
+/// Channel-level CSV configuration for ComBase point tables
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChannelCsvConfig {
+    /// Base directory for CSV files (relative to config file)
+    pub csv_directory: String,
+    /// Telemetry CSV file name (遥测)
+    #[serde(default)]
+    pub telemetry_file: Option<String>,
+    /// Signaling CSV file name (遥信)  
+    #[serde(default)]
+    pub signaling_file: Option<String>,
+    /// Control CSV file name (遥控)
+    #[serde(default)]
+    pub control_file: Option<String>,
+    /// Setpoint CSV file name (遥调)
+    #[serde(default)]
+    pub setpoint_file: Option<String>,
+}
+
+impl Default for ChannelCsvConfig {
+    fn default() -> Self {
+        Self {
+            csv_directory: "config/channels".to_string(),
+            telemetry_file: Some("telemetry.csv".to_string()),
+            signaling_file: Some("signaling.csv".to_string()),
+            control_file: Some("control.csv".to_string()),
+            setpoint_file: Some("setpoint.csv".to_string()),
+        }
+    }
+}
+
+impl ChannelCsvConfig {
+    /// Get the full path for a telemetry type CSV file
+    pub fn get_csv_path(&self, telemetry_type: TelemetryType, channel_id: u16) -> Option<PathBuf> {
+        let filename = match telemetry_type {
+            TelemetryType::Telemetry => self.telemetry_file.as_ref()?,
+            TelemetryType::Signaling => self.signaling_file.as_ref()?,
+            TelemetryType::Control => self.control_file.as_ref()?,
+            TelemetryType::Setpoint => self.setpoint_file.as_ref()?,
+        };
+
+        let mut path = PathBuf::from(&self.csv_directory);
+        path.push(format!("channel_{}", channel_id));
+        path.push(filename);
+        Some(path)
+    }
+
+    /// Check if all required CSV files are configured
+    pub fn is_complete(&self) -> bool {
+        self.telemetry_file.is_some()
+            && self.signaling_file.is_some()
+            && self.control_file.is_some()
+            && self.setpoint_file.is_some()
     }
 }

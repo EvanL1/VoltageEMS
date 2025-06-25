@@ -1,53 +1,53 @@
 //! # Communication Service Error Handling
-//! 
+//!
 //! This module provides comprehensive error handling for the Communication Service (ComSrv),
 //! including error types, conversion utilities, and standardized error responses for API endpoints.
-//! 
+//!
 //! ## Overview
-//! 
+//!
 //! The error handling system is designed to provide clear, actionable error information
 //! across all communication protocols and system operations. It includes automatic error
 //! conversion, contextual error information, and standardized error responses for web APIs.
-//! 
+//!
 //! ## Error Categories
-//! 
+//!
 //! ### Configuration Errors
 //! - Invalid configuration files or parameters
 //! - Missing required configuration values
 //! - Configuration format violations
-//! 
+//!
 //! ### Communication Errors
 //! - Protocol-specific communication failures
 //! - Network connectivity issues
 //! - Device communication timeouts
-//! 
+//!
 //! ### System Errors
 //! - I/O operation failures
 //! - Resource access problems
 //! - Internal system errors
-//! 
+//!
 //! ### Protocol Errors
 //! - Modbus communication errors
 //! - IEC 60870 protocol errors
 //! - MQTT messaging errors
-//! 
+//!
 //! ## Error Context Enhancement
-//! 
+//!
 //! The [`ErrorExt`] trait provides convenient methods for adding context to errors:
-//! 
+//!
 //! ```rust
 //! use comsrv::utils::{ErrorExt, Result};
-//! 
+//!
 //! fn load_config() -> Result<String> {
 //!     std::fs::read_to_string("config.yaml")
 //!         .config_error("Failed to load main configuration file")
 //! }
-//! 
+//!
 //! fn connect_device() -> Result<()> {
 //!     // ... connection logic
 //!     Ok(())
 //! }
-//! 
+//!
 //! // Usage with context
 //! fn initialize_system() -> Result<()> {
 //!     load_config().context("System initialization failed")?;
@@ -55,15 +55,15 @@
 //!     Ok(())
 //! }
 //! ```
-//! 
+//!
 //! ## API Error Responses
-//! 
+//!
 //! For web API endpoints, errors are converted to standardized [`ErrorResponse`] objects:
-//! 
+//!
 //! ```rust
 //! use comsrv::utils::error::{ComSrvError, ErrorResponse};
 //! use warp::reply::json;
-//! 
+//!
 //! async fn api_handler() -> Result<warp::reply::Json, warp::Rejection> {
 //!     // Simulate some operation that might fail
 //!     let result: Result<String, ComSrvError> = Ok("success".to_string());
@@ -78,15 +78,15 @@
 //!     }
 //! }
 //! ```
-//! 
+//!
 //! ## Error Recovery Strategies
-//! 
+//!
 //! Different error types suggest different recovery strategies:
-//! 
+//!
 //! ```
 //! use comsrv::utils::{ComSrvError, Result};
 //! use tokio::time::{sleep, Duration};
-//! 
+//!
 //! async fn robust_operation() -> Result<String> {
 //!     for attempt in 1..=3 {
 //!         match risky_operation().await {
@@ -109,21 +109,21 @@
 //!     }
 //!     Err(ComSrvError::TimeoutError("Operation failed after 3 attempts".to_string()))
 //! }
-//! 
+//!
 //! async fn risky_operation() -> Result<String> {
 //!     // Simulate a risky operation
 //!     Ok("Success".to_string())
 //! }
 //! ```
-//! 
+//!
 //! ## Logging Integration
-//! 
+//!
 //! Errors integrate with the logging system for comprehensive error tracking:
-//! 
+//!
 //! ```rust
 //! use log::{error, warn};
 //! use comsrv::utils::{ComSrvError, Result};
-//! 
+//!
 //! fn handle_error(result: Result<()>) {
 //!     if let Err(e) = result {
 //!         match &e {
@@ -143,26 +143,26 @@
 //! }
 //! ```
 
+use std::fmt::{self, Display, Formatter};
 use std::io;
 use thiserror::Error;
-use std::fmt::{self, Display, Formatter};
 
 /// Comprehensive error type for all Communication Service operations
-/// 
+///
 /// This enumeration covers all possible error conditions that can occur
 /// during communication service operations, from configuration loading
 /// to protocol communication and system resource management.
-/// 
+///
 /// Each variant provides detailed context about the specific failure,
 /// making it easier to diagnose issues and implement appropriate
 /// recovery strategies.
 #[derive(Error, Debug, Clone, PartialEq, Eq)]
 pub enum ComSrvError {
     /// Configuration-related errors
-    /// 
+    ///
     /// Covers issues with configuration files, invalid parameters,
     /// and missing required configuration values.
-    /// 
+    ///
     /// # Examples
     /// - Invalid YAML syntax in configuration files
     /// - Missing required configuration parameters
@@ -171,9 +171,9 @@ pub enum ComSrvError {
     ConfigError(String),
 
     /// Input/Output operation errors
-    /// 
+    ///
     /// File system, network I/O, and other input/output related failures.
-    /// 
+    ///
     /// # Examples
     /// - File not found or permission denied
     /// - Network socket creation failures
@@ -182,10 +182,10 @@ pub enum ComSrvError {
     IoError(String),
 
     /// General protocol communication errors
-    /// 
+    ///
     /// Protocol-level communication issues that don't fit into
     /// more specific protocol categories.
-    /// 
+    ///
     /// # Examples
     /// - Invalid protocol message format
     /// - Unsupported protocol version
@@ -194,10 +194,10 @@ pub enum ComSrvError {
     ProtocolError(String),
 
     /// Connection establishment and maintenance errors
-    /// 
+    ///
     /// Network connection issues including establishment failures,
     /// connection loss, and authentication problems.
-    /// 
+    ///
     /// # Examples
     /// - TCP connection refused
     /// - Connection timeout
@@ -206,10 +206,10 @@ pub enum ComSrvError {
     ConnectionError(String),
 
     /// Data serialization and deserialization errors
-    /// 
+    ///
     /// Issues with converting data between different formats
     /// including JSON, YAML, and binary protocols.
-    /// 
+    ///
     /// # Examples
     /// - Invalid JSON format
     /// - YAML parsing errors
@@ -217,11 +217,23 @@ pub enum ComSrvError {
     #[error("Serialization error: {0}")]
     SerializationError(String),
 
+    /// Data conversion and transformation errors
+    ///
+    /// Issues with converting data between protocol layer and combase layer,
+    /// including type conversions and value transformations.
+    ///
+    /// # Examples
+    /// - Cannot convert boolean to float
+    /// - Invalid data type for conversion
+    /// - Conversion overflow or underflow
+    #[error("Data conversion error: {0}")]
+    DataConversionError(String),
+
     /// Invalid data format or content errors
-    /// 
+    ///
     /// Issues with data validation, format checking,
     /// and content verification.
-    /// 
+    ///
     /// # Examples
     /// - Invalid data format
     /// - Data content validation failure
@@ -230,9 +242,9 @@ pub enum ComSrvError {
     InvalidData(String),
 
     /// Operation timeout errors
-    /// 
+    ///
     /// Operations that exceed their configured timeout limits.
-    /// 
+    ///
     /// # Examples
     /// - Device response timeout
     /// - Database query timeout
@@ -241,10 +253,10 @@ pub enum ComSrvError {
     TimeoutError(String),
 
     /// Modbus protocol specific errors
-    /// 
+    ///
     /// Errors specific to Modbus communication including
     /// protocol violations and device exceptions.
-    /// 
+    ///
     /// # Examples
     /// - Modbus exception responses
     /// - Invalid function codes
@@ -253,9 +265,9 @@ pub enum ComSrvError {
     ModbusError(String),
 
     /// Redis database operation errors
-    /// 
+    ///
     /// Issues with Redis connectivity, commands, and data operations.
-    /// 
+    ///
     /// # Examples
     /// - Redis connection failure
     /// - Invalid Redis command
@@ -264,9 +276,9 @@ pub enum ComSrvError {
     RedisError(String),
 
     /// MQTT messaging protocol errors
-    /// 
+    ///
     /// MQTT broker connectivity and messaging issues.
-    /// 
+    ///
     /// # Examples
     /// - MQTT broker connection failure
     /// - Topic subscription errors
@@ -275,9 +287,9 @@ pub enum ComSrvError {
     MqttError(String),
 
     /// Communication channel management errors
-    /// 
+    ///
     /// Issues with creating, managing, or operating communication channels.
-    /// 
+    ///
     /// # Examples
     /// - Channel creation failure
     /// - Channel not in expected state
@@ -286,10 +298,10 @@ pub enum ComSrvError {
     ChannelError(String),
 
     /// Data parsing and format errors
-    /// 
+    ///
     /// Issues with parsing data formats, protocol messages,
     /// and structured data validation.
-    /// 
+    ///
     /// # Examples
     /// - Invalid CSV format
     /// - Malformed XML/JSON
@@ -298,10 +310,10 @@ pub enum ComSrvError {
     ParsingError(String),
 
     /// Invalid parameter or argument errors
-    /// 
+    ///
     /// Function parameters or configuration values that are
     /// outside valid ranges or formats.
-    /// 
+    ///
     /// # Examples
     /// - Parameter out of valid range
     /// - Invalid argument type
@@ -310,9 +322,9 @@ pub enum ComSrvError {
     InvalidParameter(String),
 
     /// Permission and authorization errors
-    /// 
+    ///
     /// Access control violations and permission denied errors.
-    /// 
+    ///
     /// # Examples
     /// - File permission denied
     /// - Insufficient user privileges
@@ -321,9 +333,9 @@ pub enum ComSrvError {
     PermissionDenied(String),
 
     /// Resource not found errors
-    /// 
+    ///
     /// Requested resources, files, or entities that don't exist.
-    /// 
+    ///
     /// # Examples
     /// - Configuration file not found
     /// - Channel ID not found
@@ -332,10 +344,10 @@ pub enum ComSrvError {
     NotFound(String),
 
     /// Unclassified or unexpected errors
-    /// 
+    ///
     /// Errors that don't fit into other specific categories
     /// or represent unexpected system conditions.
-    /// 
+    ///
     /// # Examples
     /// - Unexpected system state
     /// - Third-party library errors
@@ -344,10 +356,10 @@ pub enum ComSrvError {
     UnknownError(String),
 
     /// General communication system errors
-    /// 
+    ///
     /// High-level communication system failures that affect
     /// multiple protocols or the overall communication service.
-    /// 
+    ///
     /// # Examples
     /// - Communication service shutdown
     /// - System resource exhaustion
@@ -356,10 +368,10 @@ pub enum ComSrvError {
     CommunicationError(String),
 
     /// Unsupported protocol errors
-    /// 
+    ///
     /// Attempts to use protocols or features that are not
     /// supported in the current configuration.
-    /// 
+    ///
     /// # Examples
     /// - Protocol not compiled in
     /// - Feature not enabled
@@ -368,9 +380,9 @@ pub enum ComSrvError {
     ProtocolNotSupported(String),
 
     /// Channel lookup and access errors
-    /// 
+    ///
     /// Issues with finding or accessing specific communication channels.
-    /// 
+    ///
     /// # Examples
     /// - Channel ID not found
     /// - Channel not initialized
@@ -379,9 +391,9 @@ pub enum ComSrvError {
     ChannelNotFound(String),
 
     /// Point table management errors
-    /// 
+    ///
     /// Issues with loading, parsing, or managing point table configurations.
-    /// 
+    ///
     /// # Examples
     /// - Point table file not found
     /// - Invalid point table format
@@ -390,9 +402,9 @@ pub enum ComSrvError {
     PointTableError(String),
 
     /// Point data access errors
-    /// 
+    ///
     /// Issues with accessing specific data points or point configurations.
-    /// 
+    ///
     /// # Examples
     /// - Point ID not found
     /// - Point data not available
@@ -401,9 +413,9 @@ pub enum ComSrvError {
     PointNotFound(String),
 
     /// Invalid operation or state errors
-    /// 
+    ///
     /// Operations attempted in invalid states or contexts.
-    /// 
+    ///
     /// # Examples
     /// - Operation not allowed in current state
     /// - Invalid operation sequence
@@ -412,9 +424,9 @@ pub enum ComSrvError {
     InvalidOperation(String),
 
     /// Web API specific errors
-    /// 
+    ///
     /// Issues specific to HTTP API endpoints and web service operations.
-    /// 
+    ///
     /// # Examples
     /// - Invalid API request format
     /// - API authentication failure
@@ -423,10 +435,10 @@ pub enum ComSrvError {
     ApiError(String),
 
     /// Internal system errors
-    /// 
+    ///
     /// Library or service internal errors that indicate bugs
     /// or unexpected conditions within the system itself.
-    /// 
+    ///
     /// # Examples
     /// - Internal state corruption
     /// - Unexpected code path execution
@@ -435,10 +447,10 @@ pub enum ComSrvError {
     InternalError(String),
 
     /// Network communication errors
-    /// 
+    ///
     /// Low-level network communication issues including
     /// connectivity and transport layer problems.
-    /// 
+    ///
     /// # Examples
     /// - Network interface down
     /// - DNS resolution failure
@@ -447,10 +459,10 @@ pub enum ComSrvError {
     NetworkError(String),
 
     /// Thread synchronization and locking errors
-    /// 
+    ///
     /// Issues with thread synchronization primitives such as
     /// mutexes, locks, and other concurrent access mechanisms.
-    /// 
+    ///
     /// # Examples
     /// - Mutex poisoned by panic
     /// - Lock acquisition timeout
@@ -459,10 +471,10 @@ pub enum ComSrvError {
     LockError(String),
 
     /// System state-related errors
-    /// 
+    ///
     /// Errors related to invalid system or component states,
     /// such as attempting operations when the system is not ready.
-    /// 
+    ///
     /// # Examples
     /// - Service not initialized
     /// - Component already running
@@ -471,10 +483,10 @@ pub enum ComSrvError {
     StateError(String),
 
     /// Resource exhaustion errors
-    /// 
+    ///
     /// Errors that occur when system resources are exhausted
     /// or usage limits are exceeded.
-    /// 
+    ///
     /// # Examples
     /// - Connection pool full
     /// - Memory limit exceeded
@@ -483,10 +495,10 @@ pub enum ComSrvError {
     ResourceExhausted(String),
 
     /// Configuration validation and setup errors
-    /// 
+    ///
     /// Specific errors related to configuration validation,
     /// parameter checking, and system setup issues.
-    /// 
+    ///
     /// # Examples
     /// - Invalid configuration parameter value
     /// - Missing required configuration section
@@ -496,21 +508,21 @@ pub enum ComSrvError {
 }
 
 /// Extension trait for enhancing error handling with context information
-/// 
+///
 /// This trait provides convenient methods for adding context to errors,
 /// making them more informative and easier to debug. It supports both
 /// static context and dynamic context generation.
-/// 
+///
 /// # Examples
-/// 
+///
 /// ```rust
 /// use comsrv::utils::{ErrorExt, Result};
-/// 
+///
 /// fn read_config_file() -> Result<String> {
 ///     std::fs::read_to_string("config.yaml")
 ///         .config_error("Failed to read configuration file")
 /// }
-/// 
+///
 /// fn dynamic_context() -> Result<String> {
 ///     std::fs::read_to_string("data.txt")
 ///         .with_context(|| format!("Failed to read file at {}", std::env::current_dir().unwrap().display()))
@@ -518,31 +530,31 @@ pub enum ComSrvError {
 /// ```
 pub trait ErrorExt<T> {
     /// Add context to any error with a static message
-    /// 
+    ///
     /// Maps any error to a `ComSrvError::UnknownError` with additional context.
-    /// 
+    ///
     /// # Arguments
-    /// 
+    ///
     /// * `context` - Context message to add to the error
-    /// 
+    ///
     /// # Returns
-    /// 
+    ///
     /// Result with enhanced error information
     fn context<C>(self, context: C) -> Result<T>
     where
         C: AsRef<str>;
 
     /// Add dynamic context to any error
-    /// 
+    ///
     /// Similar to `context()` but allows for dynamic context generation
     /// using a closure, which is only called if an error occurs.
-    /// 
+    ///
     /// # Arguments
-    /// 
+    ///
     /// * `f` - Closure that generates the context message
-    /// 
+    ///
     /// # Returns
-    /// 
+    ///
     /// Result with enhanced error information
     fn with_context<C, F>(self, f: F) -> Result<T>
     where
@@ -550,48 +562,48 @@ pub trait ErrorExt<T> {
         F: FnOnce() -> C;
 
     /// Map error to ConfigError variant with context
-    /// 
+    ///
     /// Specifically maps errors to `ComSrvError::ConfigError`,
     /// indicating configuration-related issues.
-    /// 
+    ///
     /// # Arguments
-    /// 
+    ///
     /// * `context` - Context message describing the configuration issue
-    /// 
+    ///
     /// # Returns
-    /// 
+    ///
     /// Result with ConfigError variant
     fn config_error<C>(self, context: C) -> Result<T>
     where
         C: AsRef<str>;
 
     /// Map error to ProtocolError variant with context
-    /// 
+    ///
     /// Specifically maps errors to `ComSrvError::ProtocolError`,
     /// indicating protocol communication issues.
-    /// 
+    ///
     /// # Arguments
-    /// 
+    ///
     /// * `context` - Context message describing the protocol issue
-    /// 
+    ///
     /// # Returns
-    /// 
+    ///
     /// Result with ProtocolError variant
     fn protocol_error<C>(self, context: C) -> Result<T>
     where
         C: AsRef<str>;
 
     /// Map error to ConnectionError variant with context
-    /// 
+    ///
     /// Specifically maps errors to `ComSrvError::ConnectionError`,
     /// indicating network connection issues.
-    /// 
+    ///
     /// # Arguments
-    /// 
+    ///
     /// * `context` - Context message describing the connection issue
-    /// 
+    ///
     /// # Returns
-    /// 
+    ///
     /// Result with ConnectionError variant
     fn connection_error<C>(self, context: C) -> Result<T>
     where
@@ -603,9 +615,7 @@ impl<T, E: std::error::Error + Send + Sync + 'static> ErrorExt<T> for std::resul
     where
         C: AsRef<str>,
     {
-        self.map_err(|e| {
-            ComSrvError::UnknownError(format!("{}: {}", context.as_ref(), e))
-        })
+        self.map_err(|e| ComSrvError::UnknownError(format!("{}: {}", context.as_ref(), e)))
     }
 
     fn with_context<C, F>(self, f: F) -> Result<T>
@@ -613,41 +623,33 @@ impl<T, E: std::error::Error + Send + Sync + 'static> ErrorExt<T> for std::resul
         C: AsRef<str>,
         F: FnOnce() -> C,
     {
-        self.map_err(|e| {
-            ComSrvError::UnknownError(format!("{}: {}", f().as_ref(), e))
-        })
+        self.map_err(|e| ComSrvError::UnknownError(format!("{}: {}", f().as_ref(), e)))
     }
 
     fn config_error<C>(self, context: C) -> Result<T>
     where
         C: AsRef<str>,
     {
-        self.map_err(|e| {
-            ComSrvError::ConfigError(format!("{}: {}", context.as_ref(), e))
-        })
+        self.map_err(|e| ComSrvError::ConfigError(format!("{}: {}", context.as_ref(), e)))
     }
 
     fn protocol_error<C>(self, context: C) -> Result<T>
     where
         C: AsRef<str>,
     {
-        self.map_err(|e| {
-            ComSrvError::ProtocolError(format!("{}: {}", context.as_ref(), e))
-        })
+        self.map_err(|e| ComSrvError::ProtocolError(format!("{}: {}", context.as_ref(), e)))
     }
 
     fn connection_error<C>(self, context: C) -> Result<T>
     where
         C: AsRef<str>,
     {
-        self.map_err(|e| {
-            ComSrvError::ConnectionError(format!("{}: {}", context.as_ref(), e))
-        })
+        self.map_err(|e| ComSrvError::ConnectionError(format!("{}: {}", context.as_ref(), e)))
     }
 }
 
 /// Convert from serde_yaml error to ComSrvError
-/// 
+///
 /// Automatically converts YAML parsing errors to appropriate
 /// ComSrvError variants for consistent error handling.
 impl From<serde_yaml::Error> for ComSrvError {
@@ -657,7 +659,7 @@ impl From<serde_yaml::Error> for ComSrvError {
 }
 
 /// Convert from io::Error to ComSrvError
-/// 
+///
 /// Automatically converts standard I/O errors to ComSrvError
 /// for consistent error handling across the system.
 impl From<io::Error> for ComSrvError {
@@ -667,7 +669,7 @@ impl From<io::Error> for ComSrvError {
 }
 
 /// Convert from redis error to ComSrvError
-/// 
+///
 /// Automatically converts Redis client errors to appropriate
 /// ComSrvError variants.
 impl From<redis::RedisError> for ComSrvError {
@@ -715,17 +717,17 @@ impl From<std::net::AddrParseError> for ComSrvError {
 pub type Result<T> = std::result::Result<T, ComSrvError>;
 
 /// HTTP API error response structure
-/// 
+///
 /// Standardized error response format for HTTP API endpoints.
 /// Provides consistent error reporting across all API operations.
-/// 
+///
 /// # Fields
-/// 
+///
 /// * `code` - Error code identifier for programmatic handling
 /// * `message` - Human-readable error description
-/// 
+///
 /// # JSON Format
-/// 
+///
 /// ```json
 /// {
 ///   "code": "CONFIG_ERROR",
@@ -758,16 +760,32 @@ impl From<ComSrvError> for ErrorResponse {
         match err {
             ComSrvError::ConfigError(_) => ErrorResponse::new("config_error", &err.to_string()),
             ComSrvError::IoError(_) => ErrorResponse::new("io_error", &err.to_string()),
-            ComSrvError::SerializationError(_) => ErrorResponse::new("serialization_error", &err.to_string()),
-            ComSrvError::CommunicationError(_) => ErrorResponse::new("communication_error", &err.to_string()),
+            ComSrvError::SerializationError(_) => {
+                ErrorResponse::new("serialization_error", &err.to_string())
+            }
+            ComSrvError::CommunicationError(_) => {
+                ErrorResponse::new("communication_error", &err.to_string())
+            }
             ComSrvError::ProtocolError(_) => ErrorResponse::new("protocol_error", &err.to_string()),
-            ComSrvError::ProtocolNotSupported(_) => ErrorResponse::new("protocol_not_supported", &err.to_string()),
+            ComSrvError::ProtocolNotSupported(_) => {
+                ErrorResponse::new("protocol_not_supported", &err.to_string())
+            }
             ComSrvError::ChannelError(_) => ErrorResponse::new("channel_error", &err.to_string()),
-            ComSrvError::ChannelNotFound(_) => ErrorResponse::new("channel_not_found", &err.to_string()),
-            ComSrvError::PointTableError(_) => ErrorResponse::new("point_table_error", &err.to_string()),
-            ComSrvError::PointNotFound(_) => ErrorResponse::new("point_not_found", &err.to_string()),
-            ComSrvError::InvalidOperation(_) => ErrorResponse::new("invalid_operation", &err.to_string()),
-            ComSrvError::ConnectionError(_) => ErrorResponse::new("connection_error", &err.to_string()),
+            ComSrvError::ChannelNotFound(_) => {
+                ErrorResponse::new("channel_not_found", &err.to_string())
+            }
+            ComSrvError::PointTableError(_) => {
+                ErrorResponse::new("point_table_error", &err.to_string())
+            }
+            ComSrvError::PointNotFound(_) => {
+                ErrorResponse::new("point_not_found", &err.to_string())
+            }
+            ComSrvError::InvalidOperation(_) => {
+                ErrorResponse::new("invalid_operation", &err.to_string())
+            }
+            ComSrvError::ConnectionError(_) => {
+                ErrorResponse::new("connection_error", &err.to_string())
+            }
             ComSrvError::RedisError(_) => ErrorResponse::new("redis_error", &err.to_string()),
             ComSrvError::ApiError(_) => ErrorResponse::new("api_error", &err.to_string()),
             ComSrvError::InternalError(_) => ErrorResponse::new("internal_error", &err.to_string()),
@@ -786,13 +804,19 @@ mod tests {
     #[test]
     fn test_error_creation() {
         let config_error = ComSrvError::ConfigError("Test config error".to_string());
-        assert_eq!(config_error.to_string(), "Configuration error: Test config error");
+        assert_eq!(
+            config_error.to_string(),
+            "Configuration error: Test config error"
+        );
 
         let io_error = ComSrvError::IoError("Test IO error".to_string());
         assert_eq!(io_error.to_string(), "IO error: Test IO error");
 
         let protocol_error = ComSrvError::ProtocolError("Test protocol error".to_string());
-        assert_eq!(protocol_error.to_string(), "Protocol error: Test protocol error");
+        assert_eq!(
+            protocol_error.to_string(),
+            "Protocol error: Test protocol error"
+        );
     }
 
     #[test]
@@ -808,12 +832,14 @@ mod tests {
 
     #[test]
     fn test_error_ext() {
-        let result: std::result::Result<u32, std::io::Error> = 
-            Err(std::io::Error::new(std::io::ErrorKind::NotFound, "File not found"));
-        
+        let result: std::result::Result<u32, std::io::Error> = Err(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            "File not found",
+        ));
+
         let with_context = result.context("Custom context");
         assert!(with_context.is_err());
-        
+
         let error = with_context.unwrap_err();
         assert!(error.to_string().contains("Custom context"));
         assert!(error.to_string().contains("File not found"));
@@ -821,12 +847,17 @@ mod tests {
 
     #[test]
     fn test_error_ext_variants() {
-        let result: std::result::Result<u32, std::io::Error> = 
-            Err(std::io::Error::new(std::io::ErrorKind::NotFound, "Test error"));
-        
+        let result: std::result::Result<u32, std::io::Error> = Err(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            "Test error",
+        ));
+
         let config_error = result.config_error("Config context");
         assert!(config_error.is_err());
-        assert!(matches!(config_error.unwrap_err(), ComSrvError::ConfigError(_)));
+        assert!(matches!(
+            config_error.unwrap_err(),
+            ComSrvError::ConfigError(_)
+        ));
     }
 
     #[test]
@@ -869,4 +900,4 @@ mod tests {
             assert!(!error.to_string().is_empty());
         }
     }
-} 
+}

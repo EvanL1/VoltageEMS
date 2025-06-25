@@ -1,13 +1,13 @@
 //! Protocol Configuration Module
-//! 
+//!
 //! This module provides protocol-specific configuration structures and validation
 //! for all supported communication protocols. It consolidates configuration
 //! management for network, serial, and protocol-specific parameters.
 
-use std::time::Duration;
-use std::collections::HashMap;
-use serde::{Deserialize, Serialize};
 use crate::utils::error::{ComSrvError, Result};
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::time::Duration;
 
 /// Base communication configuration that all protocols extend
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -81,21 +81,27 @@ impl BaseCommConfig {
     /// Validate configuration values
     pub fn validate(&self) -> Result<()> {
         if self.timeout.is_zero() {
-            return Err(ComSrvError::ConfigError("Timeout must be greater than zero".to_string()));
+            return Err(ComSrvError::ConfigError(
+                "Timeout must be greater than zero".to_string(),
+            ));
         }
-        
+
         if self.max_retries == 0 {
-            return Err(ComSrvError::ConfigError("Max retries must be greater than zero".to_string()));
+            return Err(ComSrvError::ConfigError(
+                "Max retries must be greater than zero".to_string(),
+            ));
         }
-        
+
         if self.retry_delay.is_zero() {
-            return Err(ComSrvError::ConfigError("Retry delay must be greater than zero".to_string()));
+            return Err(ComSrvError::ConfigError(
+                "Retry delay must be greater than zero".to_string(),
+            ));
         }
-        
+
         if let Some(ref pool_config) = self.pool_config {
             pool_config.validate()?;
         }
-        
+
         Ok(())
     }
 }
@@ -136,21 +142,29 @@ impl ConnectionPoolConfig {
     /// Validate pool configuration values
     pub fn validate(&self) -> Result<()> {
         if self.max_connections == 0 {
-            return Err(ComSrvError::ConfigError("Max connections must be greater than zero".to_string()));
+            return Err(ComSrvError::ConfigError(
+                "Max connections must be greater than zero".to_string(),
+            ));
         }
-        
+
         if self.min_connections > self.max_connections {
-            return Err(ComSrvError::ConfigError("Min connections cannot exceed max connections".to_string()));
+            return Err(ComSrvError::ConfigError(
+                "Min connections cannot exceed max connections".to_string(),
+            ));
         }
-        
+
         if self.max_idle_time.is_zero() {
-            return Err(ComSrvError::ConfigError("Max idle time must be greater than zero".to_string()));
+            return Err(ComSrvError::ConfigError(
+                "Max idle time must be greater than zero".to_string(),
+            ));
         }
-        
+
         if self.validation_interval.is_zero() {
-            return Err(ComSrvError::ConfigError("Validation interval must be greater than zero".to_string()));
+            return Err(ComSrvError::ConfigError(
+                "Validation interval must be greater than zero".to_string(),
+            ));
         }
-        
+
         Ok(())
     }
 }
@@ -192,8 +206,8 @@ impl NetworkConfig {
     }
 
     /// Add socket option
-    pub fn with_socket_option<K, V>(mut self, key: K, value: V) -> Self 
-    where 
+    pub fn with_socket_option<K, V>(mut self, key: K, value: V) -> Self
+    where
         K: Into<String>,
         V: Into<String>,
     {
@@ -224,11 +238,13 @@ impl NetworkConfig {
         if self.host.is_empty() {
             return Err(ComSrvError::ConfigError("Host cannot be empty".to_string()));
         }
-        
+
         if self.port == 0 {
-            return Err(ComSrvError::ConfigError("Port must be greater than zero".to_string()));
+            return Err(ComSrvError::ConfigError(
+                "Port must be greater than zero".to_string(),
+            ));
         }
-        
+
         Ok(())
     }
 }
@@ -296,15 +312,23 @@ impl SerialConfig {
     /// Validate serial configuration
     pub fn validate(&self) -> Result<()> {
         if self.port_path.is_empty() {
-            return Err(ComSrvError::ConfigError("Port path cannot be empty".to_string()));
+            return Err(ComSrvError::ConfigError(
+                "Port path cannot be empty".to_string(),
+            ));
         }
-        
+
         // Common baud rates validation
         match self.baud_rate {
-            300 | 600 | 1200 | 2400 | 4800 | 9600 | 19200 | 38400 | 57600 | 115200 | 230400 | 460800 | 921600 => {},
-            _ => return Err(ComSrvError::ConfigError(format!("Unsupported baud rate: {}", self.baud_rate))),
+            300 | 600 | 1200 | 2400 | 4800 | 9600 | 19200 | 38400 | 57600 | 115200 | 230400
+            | 460800 | 921600 => {}
+            _ => {
+                return Err(ComSrvError::ConfigError(format!(
+                    "Unsupported baud rate: {}",
+                    self.baud_rate
+                )))
+            }
         }
-        
+
         Ok(())
     }
 }
@@ -380,8 +404,8 @@ impl ModbusConfig {
     }
 
     /// Add point table
-    pub fn with_point_table<K, V>(mut self, key: K, value: V) -> Self 
-    where 
+    pub fn with_point_table<K, V>(mut self, key: K, value: V) -> Self
+    where
         K: Into<String>,
         V: Into<String>,
     {
@@ -392,15 +416,19 @@ impl ModbusConfig {
     /// Validate Modbus configuration
     pub fn validate(&self) -> Result<()> {
         self.base.validate()?;
-        
+
         if self.slave_id == 0 || self.slave_id > 247 {
-            return Err(ComSrvError::ConfigError("Slave ID must be between 1 and 247".to_string()));
+            return Err(ComSrvError::ConfigError(
+                "Slave ID must be between 1 and 247".to_string(),
+            ));
         }
-        
+
         if self.poll_rate == 0 {
-            return Err(ComSrvError::ConfigError("Poll rate must be greater than zero".to_string()));
+            return Err(ComSrvError::ConfigError(
+                "Poll rate must be greater than zero".to_string(),
+            ));
         }
-        
+
         Ok(())
     }
 }
@@ -492,8 +520,8 @@ mod tests {
     fn test_config_validation() {
         let mut config = ModbusConfig::new(0); // Invalid slave ID
         assert!(config.validate().is_err());
-        
+
         config.slave_id = 1;
         assert!(config.validate().is_ok());
     }
-} 
+}

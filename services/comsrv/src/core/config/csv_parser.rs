@@ -1,64 +1,311 @@
-use std::path::Path;
-use std::collections::HashMap;
+use crate::core::protocols::common::combase::TelemetryType;
+use crate::core::protocols::modbus::common::{
+    ByteOrder, ModbusDataType, ModbusRegisterMapping, ModbusRegisterType,
+};
+use crate::utils::{ComSrvError, Result};
 use csv::ReaderBuilder;
 use serde::{Deserialize, Serialize};
-use crate::utils::{ComSrvError, Result};
-use crate::core::protocols::modbus::common::{ModbusRegisterMapping, ModbusDataType, ModbusRegisterType};
+use std::collections::HashMap;
+use std::path::Path;
+use std::time::SystemTime;
 
-/// Point category for separating telemetry, status, setpoint and control points
+/// Simple data point structure
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DataPoint {
+    /// Point identifier
+    pub id: String,
+    /// Point value
+    pub value: String,
+    /// Data quality (0-100)
+    pub quality: u8,
+    /// Timestamp when the value was captured
+    pub timestamp: SystemTime,
+    /// Point description
+    pub description: String,
+}
+
+impl DataPoint {
+    /// Create a new data point
+    pub fn new(id: String, value: String, quality: u8, description: String) -> Self {
+        Self {
+            id,
+            value,
+            quality,
+            timestamp: SystemTime::now(),
+            description,
+        }
+    }
+}
+
+// Serde helper module for SystemTime serialization
+mod timestamp_as_seconds {
+    use serde::{Deserialize, Deserializer, Serializer};
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    pub fn serialize<S>(time: &SystemTime, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let duration = time
+            .duration_since(UNIX_EPOCH)
+            .map_err(serde::ser::Error::custom)?;
+        serializer.serialize_u64(duration.as_secs())
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<SystemTime, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let seconds = u64::deserialize(deserializer)?;
+        Ok(UNIX_EPOCH + std::time::Duration::from_secs(seconds))
+    }
+}
+
+/// 四遥类型枚举
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
 #[serde(rename_all = "lowercase")]
-pub enum PointCategory {
-    /// Analog telemetry value
+pub enum TelemetryCategory {
+    /// 遥测 - Telemetry (analog measurements)
     Telemetry,
-    /// Digital status value
-    Status,
-    /// Remote setpoint
+    /// 遥信 - Signaling (digital inputs)  
+    Signaling,
+    /// 遥调 - Setpoint (analog outputs)
     Setpoint,
-    /// Remote control command
+    /// 遥控 - Control (digital outputs)
     Control,
 }
 
-/// CSV point table record structure
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct CsvPointRecord {
-    pub id: String,
-    pub name: String,
-    pub address: u16,
-    pub unit: Option<String>,
-    pub scale: f64,
-    pub offset: f64,
-    pub data_type: String,
-    pub register_type: Option<String>,
-    pub description: Option<String>,
-    pub access: Option<String>,  // read, write, read_write
-    pub group: Option<String>,
-    /// Point category (telemetry, status, setpoint, control)
-    #[serde(default)]
-    pub category: Option<PointCategory>,
-}
-
-/// CSV point table manager
-#[derive(Debug, Clone)]
-pub struct CsvPointManager {
-    point_tables: HashMap<String, Vec<CsvPointRecord>>,
-}
-
-impl CsvPointManager {
-    /// Create a new CSV point table manager
-    pub fn new() -> Self {
-        Self {
-            point_tables: HashMap::new(),
+impl TelemetryCategory {
+    /// 转换为TelemetryType
+    pub fn to_telemetry_type(&self) -> TelemetryType {
+        match self {
+            TelemetryCategory::Telemetry => TelemetryType::Telemetry,
+            TelemetryCategory::Signaling => TelemetryType::Signaling,
+            TelemetryCategory::Setpoint => TelemetryType::Setpoint,
+            TelemetryCategory::Control => TelemetryType::Control,
         }
     }
 
-    /// Load a point table from a CSV file
-    pub fn load_from_csv<P: AsRef<Path>>(&mut self, file_path: P, table_name: &str) -> Result<()> {
+    /// 从字符串解析
+    pub fn from_str(s: &str) -> Result<Self> {
+        match s {
+            "遥测" => Ok(TelemetryCategory::Telemetry),
+            "遥信" => Ok(TelemetryCategory::Signaling),
+            "遥调" => Ok(TelemetryCategory::Setpoint),
+            "遥控" => Ok(TelemetryCategory::Control),
+            _ => Err(ComSrvError::ConfigError(format!(
+                "Unknown telemetry category: {}",
+                s
+            ))),
+        }
+    }
+
+    /// 获取表名后缀
+    pub fn table_suffix(&self) -> &'static str {
+        match self {
+            TelemetryCategory::Telemetry => "遥测",
+            TelemetryCategory::Signaling => "遥信",
+            TelemetryCategory::Setpoint => "遥调",
+            TelemetryCategory::Control => "遥控",
+        }
+    }
+}
+
+/// 协议配置记录 - Protocol-specific configuration
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ProtocolConfigRecord {
+    /// 点位ID（表内独立编号）
+    pub point_id: u32,
+    /// 协议地址 (如Modbus寄存器地址)
+    pub protocol_address: u16,
+    /// 协议功能码 (如Modbus功能码)
+    pub function_code: u8,
+    /// 数据类型 (UInt16, Int16, UInt32, Int32, Float32, Bool)
+    pub data_type: String,
+    /// 字节序 (ABCD, DCBA, BADC, CDAB)
+    pub byte_order: String,
+    /// 描述
+    pub description: String,
+}
+
+/// 通道点表记录 - Channel point configuration  
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ChannelPointRecord {
+    /// 点位ID（表内独立编号）
+    pub point_id: u32,
+    /// 点位名称
+    pub point_name: String,
+    /// 数据单位
+    #[serde(default)]
+    pub unit: String,
+    /// 系数 - 用于数据转换
+    #[serde(default = "default_scale")]
+    pub scale: f64,
+    /// 偏移量 - 用于数据转换  
+    #[serde(default)]
+    pub offset: f64,
+    /// 描述
+    pub description: String,
+}
+
+// Default value functions
+fn default_scale() -> f64 {
+    1.0
+}
+
+/// 四遥分离表管理器
+#[derive(Debug, Clone)]
+pub struct FourTelemetryTableManager {
+    /// 协议配置表 (channel_name -> telemetry_category -> protocol_configs)
+    protocol_configs: HashMap<String, HashMap<TelemetryCategory, Vec<ProtocolConfigRecord>>>,
+    /// 通道点表 (channel_name -> telemetry_category -> channel_points)  
+    channel_points: HashMap<String, HashMap<TelemetryCategory, Vec<ChannelPointRecord>>>,
+    /// 点位映射 (channel_name -> telemetry_category -> point_id -> (protocol_config, channel_point))
+    point_mappings: HashMap<
+        String,
+        HashMap<TelemetryCategory, HashMap<u32, (ProtocolConfigRecord, ChannelPointRecord)>>,
+    >,
+}
+
+impl FourTelemetryTableManager {
+    /// 创建新的四遥表管理器
+    pub fn new() -> Self {
+        Self {
+            protocol_configs: HashMap::new(),
+            channel_points: HashMap::new(),
+            point_mappings: HashMap::new(),
+        }
+    }
+
+    /// 从目录加载所有CSV文件
+    /// 期望目录结构：
+    /// - {channel_name}_遥测_protocol.csv - 遥测协议配置表
+    /// - {channel_name}_遥测_points.csv - 遥测通道点表
+    /// - {channel_name}_遥信_protocol.csv - 遥信协议配置表  
+    /// - {channel_name}_遥信_points.csv - 遥信通道点表
+    /// - {channel_name}_遥控_protocol.csv - 遥控协议配置表
+    /// - {channel_name}_遥控_points.csv - 遥控通道点表
+    /// - {channel_name}_遥调_protocol.csv - 遥调协议配置表
+    /// - {channel_name}_遥调_points.csv - 遥调通道点表
+    pub fn load_from_directory<P: AsRef<Path>>(&mut self, dir_path: P) -> Result<()> {
+        let dir_path = dir_path.as_ref();
+
+        log::info!(
+            "🔍 [FOUR CSV] Loading CSV files from directory: {}",
+            dir_path.display()
+        );
+
+        if !dir_path.exists() || !dir_path.is_dir() {
+            return Err(ComSrvError::ConfigError(format!(
+                "CSV directory not found: {}",
+                dir_path.display()
+            )));
+        }
+
+        let entries = std::fs::read_dir(dir_path).map_err(|e| {
+            ComSrvError::ConfigError(format!(
+                "Failed to read directory {}: {}",
+                dir_path.display(),
+                e
+            ))
+        })?;
+
+        let mut protocol_files = Vec::new();
+        let mut point_files = Vec::new();
+
+        // 收集所有CSV文件
+        for entry in entries {
+            let entry = entry.map_err(|e| {
+                ComSrvError::ConfigError(format!("Failed to read directory entry: {}", e))
+            })?;
+
+            let path = entry.path();
+            if path.is_file() && path.extension().and_then(|s| s.to_str()) == Some("csv") {
+                let file_name = path
+                    .file_stem()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("unknown");
+
+                // 解析文件名格式: {channel_name}_{telemetry_type}_{table_type}.csv
+                if let Some((channel_part, table_type)) = file_name.rsplit_once('_') {
+                    if table_type == "protocol" {
+                        if let Some((channel_name, telemetry_type)) = channel_part.rsplit_once('_')
+                        {
+                            if let Ok(category) = TelemetryCategory::from_str(telemetry_type) {
+                                protocol_files.push((
+                                    path.clone(),
+                                    channel_name.to_string(),
+                                    category,
+                                ));
+                            }
+                        }
+                    } else if table_type == "points" {
+                        if let Some((channel_name, telemetry_type)) = channel_part.rsplit_once('_')
+                        {
+                            if let Ok(category) = TelemetryCategory::from_str(telemetry_type) {
+                                point_files.push((
+                                    path.clone(),
+                                    channel_name.to_string(),
+                                    category,
+                                ));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        log::info!(
+            "🔍 [FOUR CSV] Found {} protocol files and {} point files",
+            protocol_files.len(),
+            point_files.len()
+        );
+
+        // 加载协议配置文件
+        for (path, channel_name, category) in protocol_files {
+            log::info!(
+                "📁 [FOUR CSV] Loading protocol config: {} for channel '{}' category '{:?}'",
+                path.display(),
+                channel_name,
+                category
+            );
+            self.load_protocol_config(&path, &channel_name, category)?;
+        }
+
+        // 加载通道点表文件
+        for (path, channel_name, category) in point_files {
+            log::info!(
+                "📁 [FOUR CSV] Loading channel points: {} for channel '{}' category '{:?}'",
+                path.display(),
+                channel_name,
+                category
+            );
+            self.load_channel_points(&path, &channel_name, category)?;
+        }
+
+        // 构建点位映射
+        self.build_point_mappings()?;
+
+        log::info!(
+            "✅ [FOUR CSV] Successfully loaded CSV configuration for {} channels",
+            self.get_channel_names().len()
+        );
+
+        Ok(())
+    }
+
+    /// 加载协议配置文件
+    pub fn load_protocol_config<P: AsRef<Path>>(
+        &mut self,
+        file_path: P,
+        channel_name: &str,
+        category: TelemetryCategory,
+    ) -> Result<()> {
         let file_path = file_path.as_ref();
-        
+
         if !file_path.exists() {
             return Err(ComSrvError::ConfigError(format!(
-                "CSV file not found: {}", 
+                "Protocol config file not found: {}",
                 file_path.display()
             )));
         }
@@ -66,341 +313,524 @@ impl CsvPointManager {
         let mut reader = ReaderBuilder::new()
             .has_headers(true)
             .from_path(file_path)
-            .map_err(|e| ComSrvError::ConfigError(format!(
-                "Failed to open CSV file {}: {}", 
-                file_path.display(), e
-            )))?;
+            .map_err(|e| {
+                ComSrvError::ConfigError(format!(
+                    "Failed to open protocol config file {}: {}",
+                    file_path.display(),
+                    e
+                ))
+            })?;
 
         let mut records = Vec::new();
-        
+
         for result in reader.deserialize() {
-            let record: CsvPointRecord = result.map_err(|e| ComSrvError::ConfigError(format!(
-                "Failed to parse CSV record in {}: {}", 
-                file_path.display(), e
-            )))?;
-            
-            // Validate the record
-            self.validate_record(&record)?;
+            let record: ProtocolConfigRecord = result.map_err(|e| {
+                ComSrvError::ConfigError(format!(
+                    "Failed to parse protocol config record in {}: {}",
+                    file_path.display(),
+                    e
+                ))
+            })?;
+
+            // 验证记录
+            self.validate_protocol_record(&record)?;
             records.push(record);
         }
 
-        log::info!("Loaded {} points from CSV file: {}", records.len(), file_path.display());
-        self.point_tables.insert(table_name.to_string(), records);
-        
+        log::info!(
+            "📊 [FOUR CSV] Loaded {} protocol config records for channel '{}' category '{:?}'",
+            records.len(),
+            channel_name,
+            category
+        );
+
+        self.protocol_configs
+            .entry(channel_name.to_string())
+            .or_insert_with(HashMap::new)
+            .insert(category, records);
+
         Ok(())
     }
 
-    /// Load all CSV point tables from a directory
-    pub fn load_from_directory<P: AsRef<Path>>(&mut self, dir_path: P) -> Result<()> {
-        let dir_path = dir_path.as_ref();
-        
-        if !dir_path.exists() || !dir_path.is_dir() {
+    /// 加载通道点表文件
+    pub fn load_channel_points<P: AsRef<Path>>(
+        &mut self,
+        file_path: P,
+        channel_name: &str,
+        category: TelemetryCategory,
+    ) -> Result<()> {
+        let file_path = file_path.as_ref();
+
+        if !file_path.exists() {
             return Err(ComSrvError::ConfigError(format!(
-                "Point table directory not found: {}", 
-                dir_path.display()
+                "Channel points file not found: {}",
+                file_path.display()
             )));
         }
 
-        let entries = std::fs::read_dir(dir_path)
-            .map_err(|e| ComSrvError::ConfigError(format!(
-                "Failed to read directory {}: {}", 
-                dir_path.display(), e
-            )))?;
+        let mut reader = ReaderBuilder::new()
+            .has_headers(true)
+            .from_path(file_path)
+            .map_err(|e| {
+                ComSrvError::ConfigError(format!(
+                    "Failed to open channel points file {}: {}",
+                    file_path.display(),
+                    e
+                ))
+            })?;
 
-        for entry in entries {
-            let entry = entry.map_err(|e| ComSrvError::ConfigError(format!(
-                "Failed to read directory entry: {}", e
-            )))?;
+        let mut records = Vec::new();
 
-            let path = entry.path();
-            if path.is_file() && path.extension().and_then(|s| s.to_str()) == Some("csv") {
-                let table_name = path.file_stem()
-                    .and_then(|s| s.to_str())
-                    .unwrap_or("unknown")
-                    .to_string();
-                
-                if let Err(e) = self.load_from_csv(&path, &table_name) {
-                    log::warn!("Failed to load CSV file {}: {}", path.display(), e);
+        for result in reader.deserialize() {
+            let record: ChannelPointRecord = result.map_err(|e| {
+                ComSrvError::ConfigError(format!(
+                    "Failed to parse channel point record in {}: {}",
+                    file_path.display(),
+                    e
+                ))
+            })?;
+
+            // 验证记录
+            self.validate_channel_record(&record)?;
+            records.push(record);
+        }
+
+        log::info!(
+            "📊 [FOUR CSV] Loaded {} channel point records for channel '{}' category '{:?}'",
+            records.len(),
+            channel_name,
+            category
+        );
+
+        self.channel_points
+            .entry(channel_name.to_string())
+            .or_insert_with(HashMap::new)
+            .insert(category, records);
+
+        Ok(())
+    }
+
+    /// 构建点位映射关系
+    fn build_point_mappings(&mut self) -> Result<()> {
+        for channel_name in self.get_channel_names() {
+            let mut channel_mappings = HashMap::new();
+
+            // 为每个四遥类型构建映射
+            for category in [
+                TelemetryCategory::Telemetry,
+                TelemetryCategory::Signaling,
+                TelemetryCategory::Control,
+                TelemetryCategory::Setpoint,
+            ] {
+                let mut category_mappings = HashMap::new();
+
+                let empty_protocol_configs = Vec::new();
+                let empty_channel_points = Vec::new();
+                let protocol_configs = self
+                    .protocol_configs
+                    .get(&channel_name)
+                    .and_then(|ch| ch.get(&category))
+                    .unwrap_or(&empty_protocol_configs);
+                let channel_points = self
+                    .channel_points
+                    .get(&channel_name)
+                    .and_then(|ch| ch.get(&category))
+                    .unwrap_or(&empty_channel_points);
+
+                // 创建通道点表的索引映射
+                let mut points_by_id: HashMap<u32, &ChannelPointRecord> = HashMap::new();
+                for point in channel_points {
+                    points_by_id.insert(point.point_id, point);
+                }
+
+                // 匹配协议配置和通道点表
+                for protocol_config in protocol_configs {
+                    if let Some(channel_point) = points_by_id.get(&protocol_config.point_id) {
+                        category_mappings.insert(
+                            protocol_config.point_id,
+                            (protocol_config.clone(), (*channel_point).clone()),
+                        );
+                    } else {
+                        log::warn!("📊 [FOUR CSV] No matching channel point found for protocol config point {} in channel '{}' category '{:?}'",
+                                   protocol_config.point_id, channel_name, category);
+                    }
+                }
+
+                if !category_mappings.is_empty() {
+                    log::info!(
+                        "📊 [FOUR CSV] Built {} point mappings for channel '{}' category '{:?}'",
+                        category_mappings.len(),
+                        channel_name,
+                        category
+                    );
+                    channel_mappings.insert(category, category_mappings);
+                }
+            }
+
+            if !channel_mappings.is_empty() {
+                self.point_mappings.insert(channel_name, channel_mappings);
+            }
+        }
+
+        Ok(())
+    }
+
+    /// 获取所有通道名称
+    pub fn get_channel_names(&self) -> Vec<String> {
+        let mut channels = std::collections::HashSet::new();
+        channels.extend(self.protocol_configs.keys().cloned());
+        channels.extend(self.channel_points.keys().cloned());
+        channels.into_iter().collect()
+    }
+
+    /// 获取通道的点位映射
+    pub fn get_channel_mappings(
+        &self,
+        channel_name: &str,
+    ) -> Option<&HashMap<TelemetryCategory, HashMap<u32, (ProtocolConfigRecord, ChannelPointRecord)>>>
+    {
+        self.point_mappings.get(channel_name)
+    }
+
+    /// 获取表名称（通道名称）- 兼容性方法
+    pub fn get_table_names(&self) -> Vec<String> {
+        self.get_channel_names()
+    }
+
+    /// 查找特定点位 - 兼容性方法
+    pub fn find_point(&self, channel_name: &str, point_id: &str) -> Option<ChannelPointRecord> {
+        let point_id = point_id.parse::<u32>().ok()?;
+
+        let mappings = self.point_mappings.get(channel_name)?;
+        for (_, category_mappings) in mappings {
+            if let Some((_, channel_point)) = category_mappings.get(&point_id) {
+                return Some(channel_point.clone());
+            }
+        }
+        None
+    }
+
+    /// 插入或更新点位 - 兼容性方法
+    pub fn upsert_point(&mut self, channel_name: &str, point: ChannelPointRecord) -> Result<()> {
+        // 这是一个简化的实现，实际使用中需要确定四遥类型
+        // 这里假设遥测类型作为默认
+        let category = TelemetryCategory::Telemetry;
+
+        self.channel_points
+            .entry(channel_name.to_string())
+            .or_insert_with(HashMap::new)
+            .entry(category)
+            .or_insert_with(Vec::new)
+            .push(point);
+
+        // 重建映射
+        self.build_point_mappings()?;
+        Ok(())
+    }
+
+    /// 删除点位 - 兼容性方法  
+    pub fn remove_point(&mut self, channel_name: &str, point_id: &str) -> Result<bool> {
+        let point_id = point_id
+            .parse::<u32>()
+            .map_err(|_| ComSrvError::ConfigError(format!("Invalid point ID: {}", point_id)))?;
+
+        let mut removed = false;
+
+        if let Some(channel_points) = self.channel_points.get_mut(channel_name) {
+            for (_, category_points) in channel_points.iter_mut() {
+                if let Some(pos) = category_points.iter().position(|p| p.point_id == point_id) {
+                    category_points.remove(pos);
+                    removed = true;
+                    break;
                 }
             }
         }
 
-        Ok(())
+        if removed {
+            // 重建映射
+            self.build_point_mappings()?;
+        }
+
+        Ok(removed)
     }
 
-    /// Get all points from a specified table
-    pub fn get_points(&self, table_name: &str) -> Option<&Vec<CsvPointRecord>> {
-        self.point_tables.get(table_name)
+    /// 获取通道点位 - 兼容性方法
+    pub fn get_points(&self, channel_name: &str) -> Option<Vec<ChannelPointRecord>> {
+        let channel_points = self.channel_points.get(channel_name)?;
+        let mut all_points = Vec::new();
+
+        for (_, category_points) in channel_points {
+            all_points.extend(category_points.clone());
+        }
+
+        if all_points.is_empty() {
+            None
+        } else {
+            Some(all_points)
+        }
     }
 
-    /// Find a point by its ID
-    pub fn find_point(&self, table_name: &str, point_id: &str) -> Option<&CsvPointRecord> {
-        self.point_tables.get(table_name)?
-            .iter()
-            .find(|p| p.id == point_id)
-    }
+    /// 获取表统计信息 - 兼容性方法
+    pub fn get_table_stats(&self, channel_name: &str) -> Option<FourTelemetryStatistics> {
+        if !self.point_mappings.contains_key(channel_name) {
+            return None;
+        }
 
-    /// Get all table names
-    pub fn get_table_names(&self) -> Vec<String> {
-        self.point_tables.keys().cloned().collect()
-    }
-
-    /// Get the statistics of a table
-    pub fn get_table_stats(&self, table_name: &str) -> Option<PointTableStats> {
-        let points = self.point_tables.get(table_name)?;
-        
-        let mut stats = PointTableStats {
-            total_points: points.len(),
-            read_points: 0,
-            write_points: 0,
-            read_write_points: 0,
-            data_types: HashMap::new(),
-            groups: HashMap::new(),
-            categories: HashMap::new(),
+        let mut stats = FourTelemetryStatistics {
+            total_channels: 1,
+            total_protocol_configs: 0,
+            total_channel_points: 0,
+            total_mapped_points: 0,
+            telemetry_points: 0,
+            signaling_points: 0,
+            control_points: 0,
+            setpoint_points: 0,
         };
 
-        for point in points {
-            // Count access types
-            match point.access.as_deref() {
-                Some("read") => stats.read_points += 1,
-                Some("write") => stats.write_points += 1,
-                Some("read_write") => stats.read_write_points += 1,
-                _ => stats.read_points += 1, // Default to read only
+        // 统计该通道的协议配置
+        if let Some(channel_configs) = self.protocol_configs.get(channel_name) {
+            for (category, configs) in channel_configs {
+                stats.total_protocol_configs += configs.len();
+                match category {
+                    TelemetryCategory::Telemetry => stats.telemetry_points += configs.len(),
+                    TelemetryCategory::Signaling => stats.signaling_points += configs.len(),
+                    TelemetryCategory::Control => stats.control_points += configs.len(),
+                    TelemetryCategory::Setpoint => stats.setpoint_points += configs.len(),
+                }
             }
+        }
 
-            // Count data types
-            *stats.data_types.entry(point.data_type.clone()).or_insert(0) += 1;
-
-            // Count groups
-            if let Some(group) = &point.group {
-                *stats.groups.entry(group.clone()).or_insert(0) += 1;
+        // 统计该通道的点表
+        if let Some(channel_points) = self.channel_points.get(channel_name) {
+            for (_, points) in channel_points {
+                stats.total_channel_points += points.len();
             }
+        }
 
-            // Count point categories
-            if let Some(cat) = &point.category {
-                *stats
-                    .categories
-                    .entry(format!("{:?}", cat))
-                    .or_insert(0) += 1;
+        // 统计映射点位
+        if let Some(channel_mappings) = self.point_mappings.get(channel_name) {
+            for (_, category_mappings) in channel_mappings {
+                stats.total_mapped_points += category_mappings.len();
             }
         }
 
         Some(stats)
     }
 
-    /// Convert a CSV point table to Modbus register mappings
-    pub fn to_modbus_mappings(&self, table_name: &str) -> Result<Vec<ModbusRegisterMapping>> {
-        let points = self.point_tables.get(table_name)
-            .ok_or_else(|| ComSrvError::ConfigError(format!("Point table not found: {}", table_name)))?;
+    /// 转换为Modbus寄存器映射  
+    pub fn to_modbus_mappings(&self, channel_name: &str) -> Result<Vec<ModbusRegisterMapping>> {
+        let mappings = self.point_mappings.get(channel_name).ok_or_else(|| {
+            ComSrvError::ConfigError(format!(
+                "No point mappings found for channel: {}",
+                channel_name
+            ))
+        })?;
 
-        let mut mappings = Vec::new();
-        
-        for point in points {
-            let data_type = self.parse_data_type(&point.data_type)?;
-            let register_type = self.parse_register_type(&point.register_type)?;
-            
-            let mapping = ModbusRegisterMapping {
-                name: point.id.clone(),
-                display_name: Some(point.name.clone()),
-                register_type,
-                address: point.address,
-                data_type,
-                scale: point.scale,
-                offset: point.offset,
-                unit: point.unit.clone(),
-                description: point.description.clone(),
-                access_mode: point.access.clone().unwrap_or_else(|| "read".to_string()),
-                group: point.group.clone(),
-                byte_order: crate::core::protocols::modbus::common::ByteOrder::BigEndian,
-            };
-            
-            mappings.push(mapping);
+        let mut modbus_mappings = Vec::new();
+
+        for (_category, category_mappings) in mappings {
+            for (_point_id, (protocol_config, channel_point)) in category_mappings {
+                let data_type = self.parse_data_type(&protocol_config.data_type)?;
+                let register_type =
+                    self.parse_function_code_to_register_type(protocol_config.function_code)?;
+                let byte_order = self.parse_byte_order(&protocol_config.byte_order)?;
+
+                let mapping = ModbusRegisterMapping {
+                    name: channel_point.point_name.clone(),
+                    display_name: Some(channel_point.point_name.clone()),
+                    register_type,
+                    address: protocol_config.protocol_address,
+                    data_type,
+                    scale: channel_point.scale,
+                    offset: channel_point.offset,
+                    unit: if channel_point.unit.is_empty() {
+                        None
+                    } else {
+                        Some(channel_point.unit.clone())
+                    },
+                    description: if channel_point.description.is_empty() {
+                        None
+                    } else {
+                        Some(channel_point.description.clone())
+                    },
+                    access_mode: if protocol_config.function_code <= 4 {
+                        "read".to_string()
+                    } else {
+                        "write".to_string()
+                    },
+                    group: None,
+                    byte_order,
+                };
+
+                modbus_mappings.push(mapping);
+            }
         }
 
-        Ok(mappings)
+        log::info!(
+            "📊 [FOUR CSV] Generated {} Modbus mappings for channel '{}'",
+            modbus_mappings.len(),
+            channel_name
+        );
+
+        Ok(modbus_mappings)
     }
 
-    /// Validate a CSV record
-    fn validate_record(&self, record: &CsvPointRecord) -> Result<()> {
-        if record.id.is_empty() {
-            return Err(ComSrvError::ConfigError("Point ID cannot be empty".to_string()));
-        }
-
-        if record.name.is_empty() {
-            return Err(ComSrvError::ConfigError(format!("Point name cannot be empty for ID: {}", record.id)));
-        }
-
-        // Validate data type
+    /// 验证协议配置记录
+    fn validate_protocol_record(&self, record: &ProtocolConfigRecord) -> Result<()> {
+        // 验证数据类型
         self.parse_data_type(&record.data_type)?;
 
+        // 验证功能码
+        if !(1..=16).contains(&record.function_code) {
+            return Err(ComSrvError::ConfigError(format!(
+                "Invalid Modbus function code: {}",
+                record.function_code
+            )));
+        }
+
+        // 验证字节序
+        self.parse_byte_order(&record.byte_order)?;
+
         Ok(())
     }
 
-    /// Parse the data type
+    /// 验证通道点表记录
+    fn validate_channel_record(&self, record: &ChannelPointRecord) -> Result<()> {
+        // 验证系数不能为0
+        if record.scale == 0.0 {
+            return Err(ComSrvError::ConfigError(format!(
+                "Scale factor cannot be zero for point: {}",
+                record.point_name
+            )));
+        }
+
+        Ok(())
+    }
+
+    /// 解析数据类型
     fn parse_data_type(&self, data_type: &str) -> Result<ModbusDataType> {
-        match data_type.to_lowercase().as_str() {
-            "bool" | "boolean" => Ok(ModbusDataType::Bool),
-            "int16" | "i16" => Ok(ModbusDataType::Int16),
-            "uint16" | "u16" => Ok(ModbusDataType::UInt16),
-            "int32" | "i32" => Ok(ModbusDataType::Int32),
-            "uint32" | "u32" => Ok(ModbusDataType::UInt32),
-            "float32" | "f32" | "float" => Ok(ModbusDataType::Float32),
-            "string" | "str" => Ok(ModbusDataType::String(10)), // default length 10
-            _ => Err(ComSrvError::ConfigError(format!("Unsupported data type: {}", data_type))),
+        match data_type {
+            "UInt16" => Ok(ModbusDataType::UInt16),
+            "Int16" => Ok(ModbusDataType::Int16),
+            "UInt32" => Ok(ModbusDataType::UInt32),
+            "Int32" => Ok(ModbusDataType::Int32),
+            "Float32" => Ok(ModbusDataType::Float32),
+            "Bool" => Ok(ModbusDataType::Bool),
+            _ => Err(ComSrvError::ConfigError(format!(
+                "Unsupported data type: {}",
+                data_type
+            ))),
         }
     }
 
-    /// Parse register type
-    fn parse_register_type(&self, register_type: &Option<String>) -> Result<ModbusRegisterType> {
-        match register_type.as_deref() {
-            Some("coil") | Some("coils") => Ok(ModbusRegisterType::Coil),
-            Some("discrete_input") | Some("discrete") => Ok(ModbusRegisterType::DiscreteInput),
-            Some("input_register") | Some("input") => Ok(ModbusRegisterType::InputRegister),
-            Some("holding_register") | Some("holding") => Ok(ModbusRegisterType::HoldingRegister),
-            None => {
-                // Automatically infer register type from address range
-                Ok(ModbusRegisterType::InputRegister) // default to input register
-            },
-            Some(other) => Err(ComSrvError::ConfigError(format!("Unsupported register type: {}", other))),
+    /// 解析功能码到寄存器类型
+    fn parse_function_code_to_register_type(
+        &self,
+        function_code: u8,
+    ) -> Result<ModbusRegisterType> {
+        match function_code {
+            1 => Ok(ModbusRegisterType::Coil),
+            2 => Ok(ModbusRegisterType::DiscreteInput),
+            3 => Ok(ModbusRegisterType::HoldingRegister),
+            4 => Ok(ModbusRegisterType::InputRegister),
+            5 | 15 => Ok(ModbusRegisterType::Coil),
+            6 | 16 => Ok(ModbusRegisterType::HoldingRegister),
+            _ => Err(ComSrvError::ConfigError(format!(
+                "Unsupported function code: {}",
+                function_code
+            ))),
         }
     }
 
-    /// Save point table to a CSV file
-    pub fn save_to_csv<P: AsRef<Path>>(&self, table_name: &str, file_path: P) -> Result<()> {
-        let points = self.point_tables.get(table_name)
-            .ok_or_else(|| ComSrvError::ConfigError(format!("Point table not found: {}", table_name)))?;
-
-        let file_path = file_path.as_ref();
-        let mut writer = csv::Writer::from_path(file_path)
-            .map_err(|e| ComSrvError::ConfigError(format!(
-                "Failed to create CSV file {}: {}", 
-                file_path.display(), e
-            )))?;
-
-        for point in points {
-            writer.serialize(point)
-                .map_err(|e| ComSrvError::ConfigError(format!(
-                    "Failed to write CSV record: {}", e
-                )))?;
+    /// 解析字节序 - 支持ABCD格式
+    fn parse_byte_order(&self, byte_order: &str) -> Result<ByteOrder> {
+        match byte_order {
+            "ABCD" => Ok(ByteOrder::BigEndian),
+            "DCBA" => Ok(ByteOrder::LittleEndian),
+            "BADC" => Ok(ByteOrder::BigEndianWordSwapped),
+            "CDAB" => Ok(ByteOrder::LittleEndianWordSwapped),
+            _ => Err(ComSrvError::ConfigError(format!(
+                "Unsupported byte order: {}",
+                byte_order
+            ))),
         }
-
-        writer.flush()
-            .map_err(|e| ComSrvError::ConfigError(format!(
-                "Failed to flush CSV file: {}", e
-            )))?;
-
-        log::info!("Saved {} points to CSV file: {}", points.len(), file_path.display());
-        Ok(())
     }
 
-    /// Add or update a point
-    pub fn upsert_point(&mut self, table_name: &str, point: CsvPointRecord) -> Result<()> {
-        self.validate_record(&point)?;
-        
-        let points = self.point_tables.entry(table_name.to_string()).or_insert_with(Vec::new);
-        
-        // Check if a point with the same ID exists
-        if let Some(existing) = points.iter_mut().find(|p| p.id == point.id) {
-            *existing = point;
-        } else {
-            points.push(point);
-        }
-        
-        Ok(())
-    }
+    /// 获取统计信息
+    pub fn get_statistics(&self) -> FourTelemetryStatistics {
+        let mut stats = FourTelemetryStatistics {
+            total_channels: self.get_channel_names().len(),
+            total_protocol_configs: 0,
+            total_channel_points: 0,
+            total_mapped_points: 0,
+            telemetry_points: 0,
+            signaling_points: 0,
+            control_points: 0,
+            setpoint_points: 0,
+        };
 
-    /// Remove a point
-    pub fn remove_point(&mut self, table_name: &str, point_id: &str) -> Result<bool> {
-        let points = self.point_tables.get_mut(table_name)
-            .ok_or_else(|| ComSrvError::ConfigError(format!("Point table not found: {}", table_name)))?;
-        
-        let initial_len = points.len();
-        points.retain(|p| p.id != point_id);
-        
-        Ok(points.len() < initial_len)
+        // 统计协议配置
+        for channel_configs in self.protocol_configs.values() {
+            for (category, configs) in channel_configs {
+                stats.total_protocol_configs += configs.len();
+                match category {
+                    TelemetryCategory::Telemetry => stats.telemetry_points += configs.len(),
+                    TelemetryCategory::Signaling => stats.signaling_points += configs.len(),
+                    TelemetryCategory::Control => stats.control_points += configs.len(),
+                    TelemetryCategory::Setpoint => stats.setpoint_points += configs.len(),
+                }
+            }
+        }
+
+        // 统计通道点表
+        for channel_points in self.channel_points.values() {
+            for (_, points) in channel_points {
+                stats.total_channel_points += points.len();
+            }
+        }
+
+        // 统计映射点位
+        for channel_mappings in self.point_mappings.values() {
+            for (_, category_mappings) in channel_mappings {
+                stats.total_mapped_points += category_mappings.len();
+            }
+        }
+
+        stats
     }
 }
 
-/// Point table statistics
-#[derive(Debug, Clone, Serialize)]
-pub struct PointTableStats {
-    pub total_points: usize,
-    pub read_points: usize,
-    pub write_points: usize,
-    pub read_write_points: usize,
-    pub data_types: HashMap<String, usize>,
-    pub groups: HashMap<String, usize>,
-    pub categories: HashMap<String, usize>,
+/// 四遥统计信息
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FourTelemetryStatistics {
+    /// 总通道数
+    pub total_channels: usize,
+    /// 总协议配置数
+    pub total_protocol_configs: usize,
+    /// 总通道点表数
+    pub total_channel_points: usize,
+    /// 总映射点位数
+    pub total_mapped_points: usize,
+    /// 遥测点数
+    pub telemetry_points: usize,
+    /// 遥信点数
+    pub signaling_points: usize,
+    /// 遥控点数
+    pub control_points: usize,
+    /// 遥调点数
+    pub setpoint_points: usize,
 }
 
-impl Default for CsvPointManager {
+impl Default for FourTelemetryTableManager {
     fn default() -> Self {
         Self::new()
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use tempfile::tempdir;
-    use std::fs;
+// Legacy type aliases - use new types instead
 
-    #[test]
-    fn test_csv_parsing() {
-        let csv_content = r#"id,name,address,unit,scale,offset,data_type,register_type,description,category
-temp_01,Temperature Sensor 1,1000,°C,0.1,0,float32,input_register,Environment temperature,telemetry
-press_01,Pressure Sensor 1,1001,bar,0.01,0,float32,input_register,System pressure,telemetry
-pump_status,Pump Status,1,,1,0,bool,coil,Water pump on/off status,status"#;
+// Removed ModbusCsvPointConfig - replaced by FourTelemetryTableManager structure
 
-        let dir = tempdir().unwrap();
-        let file_path = dir.path().join("test_points.csv");
-        fs::write(&file_path, csv_content).unwrap();
+// Removed ModbusCsvPointManager - replaced by FourTelemetryTableManager
 
-        let mut manager = CsvPointManager::new();
-        manager.load_from_csv(&file_path, "test_table").unwrap();
-
-        let points = manager.get_points("test_table").unwrap();
-        assert_eq!(points.len(), 3);
-
-        // Test point lookup
-        let temp_point = manager.find_point("test_table", "temp_01").unwrap();
-        assert_eq!(temp_point.name, "Temperature Sensor 1");
-        assert_eq!(temp_point.address, 1000);
-        assert_eq!(temp_point.scale, 0.1);
-
-        // Test statistics retrieval
-        let stats = manager.get_table_stats("test_table").unwrap();
-        assert_eq!(stats.total_points, 3);
-        assert_eq!(stats.categories.get("Telemetry"), Some(&2));
-    }
-
-    #[test]
-    fn test_modbus_mapping_conversion() {
-        let mut manager = CsvPointManager::new();
-        
-        let point = CsvPointRecord {
-            id: "test_point".to_string(),
-            name: "Test Point".to_string(),
-            address: 1000,
-            unit: Some("V".to_string()),
-            scale: 0.1,
-            offset: 0.0,
-            data_type: "float32".to_string(),
-            register_type: Some("input_register".to_string()),
-            description: Some("Test description".to_string()),
-            access: Some("read".to_string()),
-            group: Some("sensors".to_string()),
-            category: Some(PointCategory::Telemetry),
-        };
-        
-        manager.upsert_point("test_table", point).unwrap();
-        
-        let mappings = manager.to_modbus_mappings("test_table").unwrap();
-        assert_eq!(mappings.len(), 1);
-        
-        let mapping = &mappings[0];
-        assert_eq!(mapping.name, "test_point");
-        assert_eq!(mapping.address, 1000);
-        assert_eq!(mapping.scale, 0.1);
-    }
-} 
+// Removed all ModbusCsvPointManager related code - replaced by FourTelemetryTableManager

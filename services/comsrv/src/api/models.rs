@@ -1,5 +1,5 @@
-use serde::{Deserialize, Serialize};
 use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 /// service status response
@@ -31,7 +31,7 @@ impl From<crate::core::protocols::common::combase::ChannelStatus> for ChannelSta
     fn from(status: crate::core::protocols::common::combase::ChannelStatus) -> Self {
         Self {
             id: status.id,
-            name: "Unknown".to_string(),  // ComBase doesn't provide name, will be filled by handler
+            name: "Unknown".to_string(), // ComBase doesn't provide name, will be filled by handler
             protocol: "Unknown".to_string(), // ComBase doesn't provide protocol, will be filled by handler
             connected: status.connected,
             last_response_time: status.last_response_time,
@@ -54,7 +54,7 @@ pub struct HealthStatus {
 /// channel operation request
 #[derive(Debug, Clone, Deserialize)]
 pub struct ChannelOperation {
-    pub operation: String,  // "start", "stop", "restart"
+    pub operation: String, // "start", "stop", "restart"
 }
 
 /// point value read response
@@ -63,7 +63,6 @@ pub struct PointValue {
     pub id: String,
     pub name: String,
     pub value: serde_json::Value,
-    pub quality: bool,  // Simplified from ComBase u8 to bool for API compatibility
     pub timestamp: DateTime<Utc>,
     pub unit: String,
     pub description: String,
@@ -76,7 +75,6 @@ impl From<crate::core::protocols::common::combase::PointData> for PointValue {
             id: point.id,
             name: point.name,
             value: serde_json::Value::String(point.value), // Convert string to JSON value
-            quality: point.quality > 0, // Convert u8 (0,1,2) to bool (false,true,true)
             timestamp: point.timestamp,
             unit: point.unit,
             description: point.description,
@@ -170,7 +168,7 @@ impl<T> ApiResponse<T> {
 mod tests {
     use super::*;
     use chrono::Utc;
-    use serde_json::{json, Value};
+    use serde_json::json;
 
     #[test]
     fn test_service_status_serialization() {
@@ -251,7 +249,6 @@ mod tests {
             id: "temp_001".to_string(),
             name: "temperature".to_string(),
             value: json!(23.5),
-            quality: true,
             timestamp: now,
             unit: "°C".to_string(),
             description: "Temperature sensor".to_string(),
@@ -260,7 +257,6 @@ mod tests {
         let serialized = serde_json::to_string(&point).unwrap();
         assert!(serialized.contains("temperature"));
         assert!(serialized.contains("23.5"));
-        assert!(serialized.contains("true"));
         assert!(serialized.contains("temp_001"));
         assert!(serialized.contains("°C"));
     }
@@ -273,7 +269,6 @@ mod tests {
                 id: "point1_id".to_string(),
                 name: "point1".to_string(),
                 value: json!(100),
-                quality: true,
                 timestamp: now,
                 unit: "unit".to_string(),
                 description: "Test point 1".to_string(),
@@ -282,7 +277,6 @@ mod tests {
                 id: "point2_id".to_string(),
                 name: "point2".to_string(),
                 value: json!("active"),
-                quality: false,
                 timestamp: now,
                 unit: "status".to_string(),
                 description: "Test point 2".to_string(),
@@ -360,13 +354,12 @@ mod tests {
     #[test]
     fn test_complex_point_value_types() {
         let now = Utc::now();
-        
+
         // Test with different value types
         let int_point = PointValue {
             id: "int_001".to_string(),
             name: "int_value".to_string(),
             value: json!(42),
-            quality: true,
             timestamp: now,
             unit: "count".to_string(),
             description: "Integer test point".to_string(),
@@ -376,7 +369,6 @@ mod tests {
             id: "float_001".to_string(),
             name: "float_value".to_string(),
             value: json!(3.14159),
-            quality: true,
             timestamp: now,
             unit: "ratio".to_string(),
             description: "Float test point".to_string(),
@@ -386,7 +378,6 @@ mod tests {
             id: "bool_001".to_string(),
             name: "bool_value".to_string(),
             value: json!(false),
-            quality: true,
             timestamp: now,
             unit: "state".to_string(),
             description: "Boolean test point".to_string(),
@@ -396,7 +387,6 @@ mod tests {
             id: "string_001".to_string(),
             name: "string_value".to_string(),
             value: json!("test string"),
-            quality: true,
             timestamp: now,
             unit: "text".to_string(),
             description: "String test point".to_string(),
@@ -406,7 +396,6 @@ mod tests {
             id: "array_001".to_string(),
             name: "array_value".to_string(),
             value: json!([1, 2, 3, 4, 5]),
-            quality: true,
             timestamp: now,
             unit: "list".to_string(),
             description: "Array test point".to_string(),
@@ -442,9 +431,10 @@ mod tests {
 
     #[test]
     fn test_combase_channel_status_conversion() {
-        let combase_status = crate::core::protocols::common::combase::ChannelStatus::new("test_001");
+        let combase_status =
+            crate::core::protocols::common::combase::ChannelStatus::new("test_001");
         let api_status = ChannelStatus::from(combase_status);
-        
+
         assert_eq!(api_status.id, "test_001");
         assert_eq!(api_status.name, "Unknown");
         assert_eq!(api_status.protocol, "Unknown");
@@ -460,18 +450,19 @@ mod tests {
             id: "point_001".to_string(),
             name: "Temperature".to_string(),
             value: "25.5".to_string(),
-            quality: 1, // Good quality
             timestamp: Utc::now(),
             unit: "°C".to_string(),
             description: "Ambient temperature".to_string(),
         };
 
         let api_point = PointValue::from(combase_point);
-        
+
         assert_eq!(api_point.id, "point_001");
         assert_eq!(api_point.name, "Temperature");
-        assert_eq!(api_point.value, serde_json::Value::String("25.5".to_string()));
-        assert!(api_point.quality); // Should be true for quality > 0
+        assert_eq!(
+            api_point.value,
+            serde_json::Value::String("25.5".to_string())
+        );
         assert_eq!(api_point.unit, "°C");
         assert_eq!(api_point.description, "Ambient temperature");
     }
@@ -529,7 +520,10 @@ mod tests {
         assert_eq!(request.description, "Test channel for Modbus TCP");
         assert_eq!(request.protocol, "ModbusTcp");
         assert_eq!(request.parameters.len(), 3);
-        assert_eq!(request.parameters.get("host"), Some(&json!("192.168.1.100")));
+        assert_eq!(
+            request.parameters.get("host"),
+            Some(&json!("192.168.1.100"))
+        );
         assert_eq!(request.parameters.get("port"), Some(&json!(502)));
         assert_eq!(request.parameters.get("slave_id"), Some(&json!(1)));
     }
@@ -547,8 +541,8 @@ mod tests {
         assert_eq!(request.name, Some("Updated Channel Name".to_string()));
         assert!(request.description.is_none());
         assert!(request.parameters.is_some());
-        
+
         let params = request.parameters.unwrap();
         assert_eq!(params.get("timeout"), Some(&json!(5000)));
     }
-} 
+}

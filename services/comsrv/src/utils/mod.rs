@@ -1,32 +1,32 @@
 //! Utility Functions and Common Components
-//! 
+//!
 //! This module provides essential utilities, error handling, logging, and shared
 //! components used throughout the communication service library.
-//! 
+//!
 //! # Modules
-//! 
+//!
 //! - [`error`] - Comprehensive error types and error handling utilities
 //! - [`logger`] - Structured logging configuration and management
 //! - [`pool`] - Object and buffer pooling for memory efficiency
-//! 
+//!
 //! # Key Components
-//! 
+//!
 //! ## Error Handling
-//! 
+//!
 //! The [`ComSrvError`] enum provides comprehensive error classification for all
 //! possible error conditions in the system. The [`ErrorExt`] trait adds convenient
 //! error conversion methods to `Result` types.
-//! 
+//!
 //! ## Object Pooling
-//! 
+//!
 //! Object pools help reduce memory allocation overhead for frequently used objects
 //! like buffers and temporary data structures.
-//! 
+//!
 //! # Examples
-//! 
+//!
 //! ```rust
 //! use comsrv::utils::{ComSrvError, Result, ErrorExt};
-//! 
+//!
 //! fn example_function() -> Result<String> {
 //!     std::fs::read_to_string("config.yaml")
 //!         .config_error("Failed to read configuration file")
@@ -38,6 +38,7 @@ pub mod error;
 pub mod pool;
 
 pub use error::{ComSrvError, Result};
+// Re-export BaseCommError and BaseCommResult for backward compatibility
 pub use crate::core::protocols::common::errors::{BaseCommError, BaseCommResult};
 
 #[cfg(test)]
@@ -83,7 +84,10 @@ mod tests {
         assert!(matches!(comsrv_error, ComSrvError::IoError(_)));
 
         let base_error: BaseCommError = BaseCommError::io("test io error");
-        assert_eq!(base_error.category(), crate::core::protocols::common::errors::ErrorCategory::Io);
+        assert_eq!(
+            base_error.category(),
+            crate::core::protocols::common::errors::ErrorCategory::Io
+        );
     }
 
     #[test]
@@ -91,12 +95,14 @@ mod tests {
         use crate::utils::error::ErrorExt;
 
         // Test that ErrorExt trait is available through the module
-        let io_result: std::result::Result<String, io::Error> = 
-            Err(io::Error::new(io::ErrorKind::PermissionDenied, "access denied"));
-        
+        let io_result: std::result::Result<String, io::Error> = Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "access denied",
+        ));
+
         let contextualized = io_result.context("Failed to access resource");
         assert!(contextualized.is_err());
-        
+
         let error = contextualized.unwrap_err();
         assert!(error.to_string().contains("Failed to access resource"));
         assert!(error.to_string().contains("access denied"));
@@ -105,13 +111,13 @@ mod tests {
     #[test]
     fn test_module_structure() {
         // Verify that the expected modules are accessible
-        
+
         // Test error module availability
         let _error_type = ComSrvError::ConfigError("test".to_string());
-        
+
         // We can't directly test logger and pool modules here without importing them,
         // but we can verify the module exists by checking compilation
-        
+
         // This test mainly serves as a compilation check for module structure
         assert!(true, "Module structure is valid if this compiles");
     }
@@ -138,10 +144,22 @@ mod tests {
     fn test_base_error_categories() {
         // Test BaseCommError categories
         let errors = vec![
-            (BaseCommError::connection("test"), crate::core::protocols::common::errors::ErrorCategory::Connection),
-            (BaseCommError::timeout(1000), crate::core::protocols::common::errors::ErrorCategory::Timeout),
-            (BaseCommError::protocol("test"), crate::core::protocols::common::errors::ErrorCategory::Protocol),
-            (BaseCommError::configuration("test"), crate::core::protocols::common::errors::ErrorCategory::Configuration),
+            (
+                BaseCommError::connection("test"),
+                crate::core::protocols::common::errors::ErrorCategory::Connection,
+            ),
+            (
+                BaseCommError::timeout(1000),
+                crate::core::protocols::common::errors::ErrorCategory::Timeout,
+            ),
+            (
+                BaseCommError::protocol("test"),
+                crate::core::protocols::common::errors::ErrorCategory::Protocol,
+            ),
+            (
+                BaseCommError::configuration("test"),
+                crate::core::protocols::common::errors::ErrorCategory::Configuration,
+            ),
         ];
 
         for (error, expected_category) in errors {
@@ -154,10 +172,10 @@ mod tests {
         // Test error classification features
         let conn_error = BaseCommError::connection("connection failed");
         assert!(conn_error.is_retriable());
-        
+
         let config_error = BaseCommError::configuration("invalid config");
         assert!(!config_error.is_retriable());
-        
+
         use crate::core::protocols::common::errors::ErrorSeverity;
         assert_eq!(config_error.severity(), ErrorSeverity::Critical);
     }
@@ -171,7 +189,7 @@ mod tests {
 
         let result = failing_async_operation().await;
         assert!(result.is_err());
-        
+
         if let Err(error) = result {
             assert!(matches!(error, ComSrvError::TimeoutError(_)));
         }
