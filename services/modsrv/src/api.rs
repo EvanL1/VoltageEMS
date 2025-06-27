@@ -1,5 +1,5 @@
 use crate::error::ModelSrvError;
-use crate::storage::hybrid_store::HybridStore;
+use crate::storage::redis_store::RedisStore;
 use crate::rules_engine::RuleExecutor;
 use serde_json::{self, json, Value};
 use log::{info, error};
@@ -36,7 +36,7 @@ struct ExecuteOperationRequest {
 /// API server for the modsrv service
 pub struct ApiServer {
     /// Data store
-    store: Arc<HybridStore>,
+    store: Arc<RedisStore>,
     /// Storage agent
     agent: Arc<StorageAgent>,
     /// Rule executor for running rules
@@ -49,7 +49,7 @@ pub struct ApiServer {
 impl ApiServer {
     /// Create a new API server
     pub fn new(
-        store: Arc<HybridStore>, 
+        store: Arc<RedisStore>, 
         agent: Arc<StorageAgent>,
         rule_executor: Arc<RuleExecutor>,
         port: u16
@@ -257,7 +257,7 @@ fn detailed_health_route(
 }
 
 /// Add store to filter chain
-fn with_store(store: Arc<HybridStore>) -> impl Filter<Extract = (Arc<HybridStore>,), Error = Infallible> + Clone {
+fn with_store(store: Arc<RedisStore>) -> impl Filter<Extract = (Arc<RedisStore>,), Error = Infallible> + Clone {
     warp::any().map(move || store.clone())
 }
 
@@ -267,7 +267,7 @@ fn with_rule_executor(executor: Arc<RuleExecutor>) -> impl Filter<Extract = (Arc
 
 /// Create API route for listing rules
 pub fn list_rules_route(
-    store: Arc<HybridStore>
+    store: Arc<RedisStore>
 ) -> impl Filter<Extract = (impl warp::Reply,), Error = warp::Rejection> + Clone {
     warp::path!("api" / "rules")
         .and(warp::get())
@@ -277,7 +277,7 @@ pub fn list_rules_route(
 
 /// Create API route for getting a rule by ID
 pub fn get_rule_route(
-    store: Arc<HybridStore>
+    store: Arc<RedisStore>
 ) -> impl Filter<Extract = (impl warp::Reply,), Error = warp::Rejection> + Clone {
     warp::path!("api" / "rules" / String)
         .and(warp::get())
@@ -287,7 +287,7 @@ pub fn get_rule_route(
 
 /// Create API route for creating a rule
 pub fn create_rule_route(
-    store: Arc<HybridStore>
+    store: Arc<RedisStore>
 ) -> impl Filter<Extract = (impl warp::Reply,), Error = warp::Rejection> + Clone {
     warp::path!("api" / "rules")
         .and(warp::post())
@@ -298,7 +298,7 @@ pub fn create_rule_route(
 
 /// Create API route for updating a rule
 pub fn update_rule_route(
-    store: Arc<HybridStore>
+    store: Arc<RedisStore>
 ) -> impl Filter<Extract = (impl warp::Reply,), Error = warp::Rejection> + Clone {
     warp::path!("api" / "rules" / String)
         .and(warp::put())
@@ -309,7 +309,7 @@ pub fn update_rule_route(
 
 /// Create API route for deleting a rule
 pub fn delete_rule_route(
-    store: Arc<HybridStore>
+    store: Arc<RedisStore>
 ) -> impl Filter<Extract = (impl warp::Reply,), Error = warp::Rejection> + Clone {
     warp::path!("api" / "rules" / String)
         .and(warp::delete())
@@ -352,7 +352,7 @@ pub fn execute_rule_route(
 
 /// Handle request to list all rules
 async fn handle_list_rules(
-    store: Arc<HybridStore>
+    store: Arc<RedisStore>
 ) -> std::result::Result<impl warp::Reply, warp::Rejection> {
     let rules = match store.list_rules() {
         Ok(rules) => rules,
@@ -372,7 +372,7 @@ async fn handle_list_rules(
 
 /// Handle request to get a rule by ID
 async fn handle_get_rule(
-    params: (Arc<HybridStore>, String)
+    params: (Arc<RedisStore>, String)
 ) -> std::result::Result<impl warp::Reply, warp::Rejection> {
     let (store, rule_id) = params;
     
@@ -394,7 +394,7 @@ async fn handle_get_rule(
 
 /// Handle request to create a rule
 async fn handle_create_rule(
-    params: (Arc<HybridStore>, serde_json::Value)
+    params: (Arc<RedisStore>, serde_json::Value)
 ) -> std::result::Result<impl warp::Reply, warp::Rejection> {
     let (store, rule_json) = params;
     
@@ -416,7 +416,7 @@ async fn handle_create_rule(
 
 /// Handle request to update a rule
 async fn handle_update_rule(
-    params: (Arc<HybridStore>, String, serde_json::Value)
+    params: (Arc<RedisStore>, String, serde_json::Value)
 ) -> std::result::Result<impl warp::Reply, warp::Rejection> {
     let (store, rule_id, rule_copy) = params;
     
@@ -438,7 +438,7 @@ async fn handle_update_rule(
 
 /// Handle request to delete a rule
 async fn handle_delete_rule(
-    params: (Arc<HybridStore>, String)
+    params: (Arc<RedisStore>, String)
 ) -> std::result::Result<impl warp::Reply, warp::Rejection> {
     let (store, rule_id) = params;
     
@@ -460,7 +460,7 @@ async fn handle_delete_rule(
 
 /// Create API route for listing templates
 pub fn list_templates_route(
-    store: Arc<HybridStore>
+    store: Arc<RedisStore>
 ) -> impl Filter<Extract = (impl warp::Reply,), Error = warp::Rejection> + Clone {
     warp::path!("api" / "templates")
         .and(warp::get())
@@ -470,7 +470,7 @@ pub fn list_templates_route(
 
 /// Create API route for getting a template by ID
 pub fn get_template_route(
-    store: Arc<HybridStore>
+    store: Arc<RedisStore>
 ) -> impl Filter<Extract = (impl warp::Reply,), Error = warp::Rejection> + Clone {
     warp::path!("api" / "templates" / String)
         .and(warp::get())
@@ -480,7 +480,7 @@ pub fn get_template_route(
 
 /// Handle request to list all templates
 async fn handle_list_templates(
-    store: Arc<HybridStore>
+    store: Arc<RedisStore>
 ) -> std::result::Result<impl warp::Reply, warp::Rejection> {
     let template_manager = match store.get_template_manager() {
         Ok(tm) => tm,
@@ -510,7 +510,7 @@ async fn handle_list_templates(
 
 /// Handle request to get a template by ID
 async fn handle_get_template(
-    params: (Arc<HybridStore>, String)
+    params: (Arc<RedisStore>, String)
 ) -> std::result::Result<impl warp::Reply, warp::Rejection> {
     let (store, template_id) = params;
     
@@ -542,7 +542,7 @@ async fn handle_get_template(
 
 /// Create API route for creating an instance
 pub fn create_instance_route(
-    store: Arc<HybridStore>
+    store: Arc<RedisStore>
 ) -> impl Filter<Extract = (impl warp::Reply,), Error = warp::Rejection> + Clone {
     warp::path!("api" / "instances")
         .and(warp::post())
@@ -553,7 +553,7 @@ pub fn create_instance_route(
 
 /// Handle request to create an instance
 async fn handle_create_instance(
-    params: (Arc<HybridStore>, CreateInstanceRequest)
+    params: (Arc<RedisStore>, CreateInstanceRequest)
 ) -> std::result::Result<impl warp::Reply, warp::Rejection> {
     let (store, req) = params;
     
@@ -586,7 +586,7 @@ async fn handle_create_instance(
 
 /// Create API route for control operations
 pub fn control_operations_route(
-    store: Arc<HybridStore>
+    store: Arc<RedisStore>
 ) -> impl Filter<Extract = (impl warp::Reply,), Error = warp::Rejection> + Clone {
     // Add GET method route
     let store1 = store.clone();
@@ -616,7 +616,7 @@ pub fn control_operations_route(
 
 /// Handle request to list available operations
 async fn handle_list_operations(
-    _store: Arc<HybridStore>
+    _store: Arc<RedisStore>
 ) -> std::result::Result<impl warp::Reply, warp::Rejection> {
     // Return list of supported operations
     let operations = vec![
@@ -630,7 +630,7 @@ async fn handle_list_operations(
 
 /// Handle request for control operations
 async fn handle_control_operation(
-    params: (Arc<HybridStore>, ExecuteOperationRequest)
+    params: (Arc<RedisStore>, ExecuteOperationRequest)
 ) -> std::result::Result<impl warp::Reply, warp::Rejection> {
     let (_store, req) = params;
     

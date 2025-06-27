@@ -4,11 +4,7 @@ use std::collections::HashMap;
 use std::time::Duration;
 
 // Export sub-modules
-pub mod memory_store;
 pub mod redis_store;
-pub mod hybrid_store;
-
-// Export implementations
 
 /// Synchronization mode for storing model instances
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]

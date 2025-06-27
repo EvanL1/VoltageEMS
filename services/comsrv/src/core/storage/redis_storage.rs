@@ -1,12 +1,10 @@
 use crate::core::config::config_manager::RedisConfig;
 use crate::utils::error::{ComSrvError, Result};
 use redis::aio::{Connection, PubSub};
-use redis::{AsyncCommands, Client, Commands};
+use redis::{AsyncCommands, Client};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::sync::Arc;
 use std::time::Duration;
-use log::{debug, error, info, warn};
 
 /// realtime value structure
 #[derive(Debug, Clone, Serialize, Deserialize)]

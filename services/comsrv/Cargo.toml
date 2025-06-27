@@ -13,17 +13,7 @@ path = "src/lib.rs"
 name = "comsrv"
 path = "src/main.rs"
 
-[[bin]]
-name = "stress_tests_runner"
-path = "tests/stress_tests_runner.rs"
 
-[[bin]]
-name = "redis_test"
-path = "src/bin/redis_test.rs"
-
-[[bin]]
-name = "data_simulator"
-path = "src/bin/data_simulator.rs"
 
 [dependencies]
 tokio = { version = "1.35", features = ["full"] }

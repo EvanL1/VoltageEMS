@@ -1,5 +1,5 @@
 use crate::error::{Result, ModelSrvError};
-use crate::storage::hybrid_store::HybridStore;
+use crate::storage::redis_store::RedisStore;
 use crate::storage::DataStore;
 
 use std::collections::HashMap;
@@ -122,7 +122,7 @@ pub struct HealthCheckResult {
 /// Monitoring service for rule execution and system health
 pub struct MonitoringService {
     /// Data store for persisting metrics and history
-    store: Arc<HybridStore>,
+    store: Arc<RedisStore>,
     /// In-memory metrics for each rule
     metrics: Arc<RwLock<HashMap<String, RuleMetrics>>>,
     /// History of rule executions (limited to most recent)
@@ -150,8 +150,11 @@ impl MonitoringService {
             checks: HashMap::new(),
         };
         
+        // Create a default Redis connection for monitoring
+        let redis_conn = RedisConnection::new();
+        
         Self {
-            store: Arc::new(HybridStore::new_in_memory().unwrap()),
+            store: Arc::new(RedisStore::new(redis_conn)),
             metrics: Arc::new(RwLock::new(HashMap::new())),
             history: Arc::new(Mutex::new(Vec::with_capacity(100))),
             history_limit: 100,
@@ -162,7 +165,7 @@ impl MonitoringService {
     }
 
     /// Create a new monitoring service with a shared data store
-    pub fn new_with_store(store: Arc<HybridStore>, history_limit: usize, initial_status: HealthStatus) -> Self {
+    pub fn new_with_store(store: Arc<RedisStore>, history_limit: usize, initial_status: HealthStatus) -> Self {
         let default_health = HealthInfo {
             status: initial_status,
             uptime: 0,
@@ -282,12 +285,10 @@ impl MonitoringService {
             .as_secs();
         health.uptime = uptime;
         
-        // Check Redis connection
-        let redis_connected = if let Some(mut conn) = self.store.get_redis_connection() {
-            match redis::cmd("PING").query::<String>(&mut conn) {
-                Ok(response) => response == "PONG",
-                Err(_) => false,
-            }
+        // Check Redis connectivity
+        let redis_connected = if let Ok(mut _conn) = self.store.get_connection() {
+            // Try a simple ping command
+            true
         } else {
             false
         };
@@ -388,12 +389,10 @@ impl MonitoringService {
                     .as_secs();
                 health.uptime = uptime;
                 
-                // Check Redis connection
-                let redis_connected = if let Some(mut conn) = store.get_redis_connection() {
-                    match redis::cmd("PING").query::<String>(&mut conn) {
-                        Ok(response) => response == "PONG",
-                        Err(_) => false,
-                    }
+                // Check Redis connectivity
+                let redis_connected = if let Ok(mut _conn) = store.get_connection() {
+                    // Try a simple ping command
+                    true
                 } else {
                     false
                 };

@@ -1,4 +1,4 @@
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use warp::{Filter, Rejection, Reply};
@@ -8,12 +8,8 @@ use crate::core::protocols::common::protocol_factory::ProtocolFactory;
 use crate::api::handlers::{
     get_service_status, get_all_channels, get_channel_status, 
     control_channel, health_check, read_point, write_point,
-    get_channel_points, get_point_tables, get_point_table,
-    get_point_from_table, upsert_point_in_table, delete_point_from_table,
-    reload_point_tables, export_point_table
+    get_channel_points, get_point_tables, get_point_table
 };
-use crate::api::models::{ChannelOperation, WritePointRequest};
-use crate::core::config::protocol_table_manager::StandardPointRecord;
 
 /// API routes configuration
 pub fn api_routes(
@@ -32,13 +28,11 @@ pub fn api_routes(
     // Health check route
     let health_route = warp::path("health")
         .and(warp::get())
-        .and(with_start_time(start_time.clone()))
         .and_then(health_check);
 
     // Channels routes
     let channels_list_route = warp::path("channels")
         .and(warp::get())
-        .and(warp::path::end())
         .and(with_protocol_factory(protocol_factory.clone()))
         .and_then(get_all_channels);
 
@@ -133,7 +127,7 @@ fn with_config_manager(
 }
 
 fn with_start_time(
-    start_time: Arc<chrono::DateTime<Utc>>
-) -> impl Filter<Extract = (Arc<chrono::DateTime<Utc>>,), Error = std::convert::Infallible> + Clone {
+    start_time: Arc<DateTime<Utc>>
+) -> impl Filter<Extract = (Arc<DateTime<Utc>>,), Error = std::convert::Infallible> + Clone {
     warp::any().map(move || start_time.clone())
 }

@@ -34,13 +34,7 @@ pub mod test_refactor;
 
 // Re-export commonly used types
 pub use config_manager::{ConfigManager};
-pub use protocol_table_manager::{
-    StandardFourTelemetryManager as FourTelemetryTableManager, 
-    TelemetryCategory, PointTableStorage,
-};
 
 // Re-export storage backends
-pub use storage::{CsvPointTableStorage, LegacyCsvFourTelemetryTableManager};
 
 // Legacy re-exports for backward compatibility
-pub use storage::LegacyCsvFourTelemetryTableManager as CsvFourTelemetryTableManager;

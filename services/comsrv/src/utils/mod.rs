@@ -1,14 +1,11 @@
 //! Utility Functions and Common Components
 //!
-//! This module provides essential utilities, error handling, logging, and shared
+//! This module provides essential utilities, error handling, and shared
 //! components used throughout the communication service library.
 //!
 //! # Modules
 //!
 //! - [`error`] - Comprehensive error types and error handling utilities
-//! - [`time`] - Time-related utilities and formatting functions
-//! - [`serialization`] - JSON/YAML serialization and deserialization utilities
-//! - [`hex`] - Hexadecimal encoding, decoding, and formatting utilities
 //!
 //! # Key Components
 //!
@@ -17,21 +14,6 @@
 //! The [`ComSrvError`] enum provides comprehensive error classification for all
 //! possible error conditions in the system. The [`error::ErrorExt`] trait adds convenient
 //! error conversion methods to `Result` types.
-//!
-//! ## Time Utilities
-//!
-//! Common time formatting and handling functions for consistent timestamp
-//! management across the application.
-//!
-//! ## Serialization
-//!
-//! Safe JSON and YAML serialization/deserialization with proper error handling
-//! and file I/O utilities.
-//!
-//! ## Hexadecimal Utilities
-//!
-//! Comprehensive hex encoding/decoding functions for protocol data visualization
-//! and debugging.
 //!
 //! # Examples
 //!
@@ -47,15 +29,10 @@
 //! ```
 
 pub mod error;
-pub mod examples;
-pub mod hex;
-pub mod serialization;
-pub mod time;
 
 // Re-export commonly used items for convenience
 pub use error::{ComSrvError, Result};
 // Re-export BaseCommError and BaseCommResult for backward compatibility
-pub use crate::core::protocols::common::errors::{BaseCommError, BaseCommResult};
 
 #[cfg(test)]
 mod tests {

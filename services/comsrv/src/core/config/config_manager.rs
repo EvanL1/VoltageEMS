@@ -1,4 +1,4 @@
-use crate::core::config::protocol_table_manager::{FourTelemetryTableManager, FourTelemetryTableManagerTrait};
+use crate::core::config::protocol_table_manager::FourTelemetryTableManager;
 use crate::utils::error::{ComSrvError, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -871,7 +871,7 @@ impl ConfigManager {
         let csv_storage = Box::new(crate::core::config::storage::CsvPointTableStorage::new(&temp_dir));
         let csv_point_manager = FourTelemetryTableManager::new(csv_storage);
 
-        let mut manager = Self {
+        let manager = Self {
             config,
             config_path,
             csv_point_manager,
@@ -896,7 +896,7 @@ impl ConfigManager {
         let csv_storage = Box::new(crate::core::config::storage::CsvPointTableStorage::new(&temp_dir));
         let csv_point_manager = FourTelemetryTableManager::new(csv_storage);
 
-        let mut manager = Self {
+        let manager = Self {
             config,
             config_path,
             csv_point_manager,
