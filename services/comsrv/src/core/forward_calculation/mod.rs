@@ -6,10 +6,15 @@
 /// - 灵活的配置管理
 /// - 实时计算执行
 
-pub mod config;
+// 计算执行引擎
+pub mod calculator;
+// 计算执行器
+// TODO: Implement executor module
+// pub mod executor;
 
-#[cfg(test)]
-mod demo_tests;
-
-// 重新导出主要的公共接口
-pub use config::*; 
+// 从config模块重新导出配置相关类型
+pub use crate::core::config::forward_calculation_config::*;
+// 重新导出计算引擎
+pub use calculator::ForwardCalculationEngine;
+// TODO: Re-export executor types when implemented
+// pub use executor::{ForwardCalculationExecutor, DataSource, DataStore, ExecutionStats, MockDataSource, MockDataStore}; 

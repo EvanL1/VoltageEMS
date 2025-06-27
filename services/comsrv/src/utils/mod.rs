@@ -6,27 +6,40 @@
 //! # Modules
 //!
 //! - [`error`] - Comprehensive error types and error handling utilities
-//! - [`logger`] - Structured logging configuration and management
-//! - [`pool`] - Object and buffer pooling for memory efficiency
+//! - [`time`] - Time-related utilities and formatting functions
+//! - [`serialization`] - JSON/YAML serialization and deserialization utilities
+//! - [`hex`] - Hexadecimal encoding, decoding, and formatting utilities
 //!
 //! # Key Components
 //!
 //! ## Error Handling
 //!
 //! The [`ComSrvError`] enum provides comprehensive error classification for all
-//! possible error conditions in the system. The [`ErrorExt`] trait adds convenient
+//! possible error conditions in the system. The [`error::ErrorExt`] trait adds convenient
 //! error conversion methods to `Result` types.
 //!
-//! ## Object Pooling
+//! ## Time Utilities
 //!
-//! Object pools help reduce memory allocation overhead for frequently used objects
-//! like buffers and temporary data structures.
+//! Common time formatting and handling functions for consistent timestamp
+//! management across the application.
+//!
+//! ## Serialization
+//!
+//! Safe JSON and YAML serialization/deserialization with proper error handling
+//! and file I/O utilities.
+//!
+//! ## Hexadecimal Utilities
+//!
+//! Comprehensive hex encoding/decoding functions for protocol data visualization
+//! and debugging.
 //!
 //! # Examples
 //!
 //! ```rust
-//! use comsrv::utils::{ComSrvError, Result, ErrorExt};
+//! use comsrv::utils::{ComSrvError, Result};
+//! use comsrv::utils::error::ErrorExt;
 //!
+//! // Error handling
 //! fn example_function() -> Result<String> {
 //!     std::fs::read_to_string("config.yaml")
 //!         .config_error("Failed to read configuration file")
@@ -34,9 +47,12 @@
 //! ```
 
 pub mod error;
+pub mod examples;
+pub mod hex;
+pub mod serialization;
+pub mod time;
 
-pub mod pool;
-
+// Re-export commonly used items for convenience
 pub use error::{ComSrvError, Result};
 // Re-export BaseCommError and BaseCommResult for backward compatibility
 pub use crate::core::protocols::common::errors::{BaseCommError, BaseCommResult};

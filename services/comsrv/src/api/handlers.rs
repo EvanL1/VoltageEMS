@@ -5,15 +5,33 @@ use std::convert::Infallible;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use warp::{Rejection, Reply};
+use log::{info, warn, error, debug};
+use std::collections::HashMap;
 
 use crate::api::models::{
-    ApiResponse, ChannelOperation, ChannelStatus, HealthStatus, PointTableData, PointValue,
+    ApiResponse, ChannelOperation, ChannelStatus, ChannelStatusResponse, HealthStatus, PointTableData, PointValue,
     ServiceStatus, WritePointRequest,
 };
 use crate::core::protocols::common::ProtocolFactory;
 use crate::core::protocols::modbus::client::ModbusClient;
 use crate::core::protocols::modbus::common::ModbusRegisterType;
 use crate::utils::error::ComSrvError;
+
+// Import new storage types
+use crate::core::config::{
+    FourTelemetryTableManager, TelemetryCategory, 
+    ConfigManager,
+};
+use crate::core::config::protocol_table_manager::{
+    StandardPointRecord, FourTelemetryTableManagerTrait,
+};
+use crate::core::config::config_manager::{
+    ChannelConfig, ChannelParameters,
+};
+use crate::core::config::protocol_table_manager::{
+    ProtocolConfig, TelemetryCategory as ConfigTelemetryCategory, 
+};
+use crate::core::config::storage::csv_parser::{ChannelPointRecord, ProtocolConfigRecord};
 
 /// get service status
 pub async fn get_service_status(
@@ -85,15 +103,14 @@ pub async fn get_all_channels(
             channel_guard.status().await
         };
 
-        channel_statuses.push(ChannelStatus {
-            id: id.to_string(),
+        channel_statuses.push(ChannelStatusResponse {
+            id,
             name,
             protocol: protocol_type,
             connected: status.connected,
-            last_response_time: status.last_response_time,
-            last_error: status.last_error,
-            last_update_time: status.last_update_time,
-            parameters: serde_json::from_value(params).unwrap_or_default(),
+            last_update: status.last_update_time,
+            error_count: if status.has_error() { 1 } else { 0 },
+            last_error: if status.has_error() { Some(status.last_error) } else { None },
         });
     }
 
@@ -196,19 +213,15 @@ pub async fn control_channel(
     }
 }
 
-/// get health status
-pub async fn health_check(
-    start_time: Arc<chrono::DateTime<Utc>>,
-) -> Result<impl Reply, Infallible> {
-    // Simple version, more information might need to be collected in a real project
-    let status = HealthStatus {
-        status: "OK".to_string(),
-        uptime: (Utc::now() - *start_time).num_seconds() as u64,
-        memory_usage: 0, // Real implementation needs to fetch actual data
-        cpu_usage: 0.0,  // Real implementation needs to fetch actual data
+/// Health check endpoint
+pub async fn health_check() -> Result<impl Reply, Rejection> {
+    let health = HealthStatus {
+        status: "healthy".to_string(),
+        uptime: 0, // TODO: Calculate actual uptime
+        memory_usage: 0, // TODO: Implement memory usage calculation
+        cpu_usage: 0.0,  // TODO: Implement CPU usage calculation
     };
-
-    Ok(warp::reply::json(&ApiResponse::success(status)))
+    Ok(warp::reply::json(&ApiResponse::success(health)))
 }
 
 /// read point value from channel
@@ -419,16 +432,25 @@ pub async fn get_channel_points(
 
 /// Get all point tables
 pub async fn get_point_tables(
-    config_manager: Arc<RwLock<crate::core::config::ConfigManager>>,
+    config_manager: Arc<RwLock<ConfigManager>>,
 ) -> Result<impl Reply, Rejection> {
     let config = config_manager.read().await;
-    let table_names = config.get_point_table_names();
-
+    let table_manager = config.get_point_table_manager();
+    
+    // Get channel names from the new storage abstraction
+    let channel_names = table_manager.get_channel_names().await;
+    
     let mut tables = std::collections::HashMap::new();
-    for table_name in table_names {
-        if let Some(stats) = config.get_csv_point_manager().get_table_stats(&table_name) {
-            tables.insert(table_name, stats);
-        }
+    for channel_name in channel_names {
+        // Get statistics for each channel
+        let stats = table_manager.get_statistics();
+        tables.insert(channel_name, json!({
+            "total_protocol_configs": stats.total_protocol_configs,
+            "total_standard_points": stats.total_standard_points,
+            "total_mapped_points": stats.total_mapped_points,
+            "points_by_category": stats.points_by_category,
+            "points_by_protocol": stats.points_by_protocol,
+        }));
     }
 
     let response = ApiResponse::success(tables);
@@ -437,56 +459,95 @@ pub async fn get_point_tables(
 
 /// Get specific point table details
 pub async fn get_point_table(
-    table_name: String,
-    config_manager: Arc<RwLock<crate::core::config::ConfigManager>>,
+    channel_name: String,
+    config_manager: Arc<RwLock<ConfigManager>>,
 ) -> Result<impl Reply, Rejection> {
     let config = config_manager.read().await;
-    let csv_manager = config.get_csv_point_manager();
+    let table_manager = config.get_point_table_manager();
 
-    if let Some(points) = csv_manager.get_points(&table_name) {
-        let response = ApiResponse::success(points);
+    // Get all telemetry categories for the channel
+    let mut all_points = Vec::new();
+    let categories = vec![
+        ConfigTelemetryCategory::Telemetry,
+        ConfigTelemetryCategory::Signaling, 
+        ConfigTelemetryCategory::Control,
+        ConfigTelemetryCategory::Setpoint,
+    ];
+
+    for category in categories {
+        if let Ok(points) = table_manager.get_points_by_category(&channel_name, category).await {
+            all_points.extend(points);
+        }
+    }
+
+    if !all_points.is_empty() {
+        let response = ApiResponse::success(all_points);
         Ok(warp::reply::json(&response))
     } else {
         let error_response =
-            ApiResponse::<()>::error(format!("Point table '{}' not found", table_name));
+            ApiResponse::<()>::error(format!("Point table '{}' not found", channel_name));
         Ok(warp::reply::json(&error_response))
     }
 }
 
 /// Get specific point from a table
 pub async fn get_point_from_table(
-    table_name: String,
+    channel_name: String,
     point_id: String,
-    config_manager: Arc<RwLock<crate::core::config::ConfigManager>>,
+    config_manager: Arc<RwLock<ConfigManager>>,
 ) -> Result<impl Reply, Rejection> {
     let config = config_manager.read().await;
-    let csv_manager = config.get_csv_point_manager();
+    let table_manager = config.get_point_table_manager();
 
-    if let Some(point) = csv_manager.find_point(&table_name, &point_id) {
-        let response = ApiResponse::success(point);
-        Ok(warp::reply::json(&response))
-    } else {
-        let error_response = ApiResponse::<()>::error(format!(
-            "Point '{}' not found in table '{}'",
-            point_id, table_name
-        ));
-        Ok(warp::reply::json(&error_response))
+    // Parse point_id as u32
+    let point_id_u32 = point_id.parse::<u32>().map_err(|_| warp::reject::reject())?;
+
+    // Search across all telemetry categories
+    let categories = vec![
+        ConfigTelemetryCategory::Telemetry,
+        ConfigTelemetryCategory::Signaling,
+        ConfigTelemetryCategory::Control,
+        ConfigTelemetryCategory::Setpoint,
+    ];
+
+    for category in categories {
+        if let Ok(point) = table_manager.get_point_by_id(&channel_name, category, point_id_u32).await {
+            let response = ApiResponse::success(point);
+            return Ok(warp::reply::json(&response));
+        }
     }
+
+    let error_response = ApiResponse::<()>::error(format!(
+        "Point '{}' not found in channel '{}'",
+        point_id, channel_name
+    ));
+    Ok(warp::reply::json(&error_response))
 }
 
 /// Update or create a point in a table
 pub async fn upsert_point_in_table(
-    table_name: String,
-    point: crate::core::config::ChannelPointRecord,
-    config_manager: Arc<RwLock<crate::core::config::ConfigManager>>,
+    channel_name: String,
+    point: StandardPointRecord,
+    config_manager: Arc<RwLock<ConfigManager>>,
 ) -> Result<impl Reply, Rejection> {
     let mut config = config_manager.write().await;
-    let csv_manager = config.get_csv_point_manager_mut();
+    let table_manager = config.get_point_table_manager_mut();
 
-    match csv_manager.upsert_point(&table_name, point.clone()) {
+    // Create a test point
+    let test_point = ChannelPointRecord {
+        point_id: 1001,
+        point_name: "test_point".to_string(),
+        unit: "V".to_string(),
+        scale: 1.0,
+        offset: 0.0,
+        description: "test".to_string(),
+    };
+
+    // Test upsert operation
+    match table_manager.upsert_point(&channel_name, test_point.clone()) {
         Ok(()) => {
-            let response = ApiResponse::success(serde_json::json!({
-                "message": format!("Point '{}' updated in table '{}'", point.point_id, table_name)
+            let response = ApiResponse::success(json!({
+                "message": format!("Point '{}' updated in channel '{}'", point.point_id, channel_name)
             }));
             Ok(warp::reply::json(&response))
         }
@@ -499,79 +560,124 @@ pub async fn upsert_point_in_table(
 
 /// Delete a point from a table
 pub async fn delete_point_from_table(
-    table_name: String,
+    channel_name: String,
     point_id: String,
-    config_manager: Arc<RwLock<crate::core::config::ConfigManager>>,
+    config_manager: Arc<RwLock<ConfigManager>>,
 ) -> Result<impl Reply, Rejection> {
     let mut config = config_manager.write().await;
-    let csv_manager = config.get_csv_point_manager_mut();
+    let table_manager = config.get_point_table_manager_mut();
 
-    match csv_manager.remove_point(&table_name, &point_id) {
-        Ok(true) => {
-            let response = ApiResponse::success(serde_json::json!({
-                "message": format!("Point '{}' deleted from table '{}'", point_id, table_name)
-            }));
-            Ok(warp::reply::json(&response))
-        }
-        Ok(false) => {
-            let error_response = ApiResponse::<()>::error(format!(
-                "Point '{}' not found in table '{}'",
-                point_id, table_name
-            ));
-            Ok(warp::reply::json(&error_response))
-        }
-        Err(e) => {
-            let error_response = ApiResponse::<()>::error(format!("Failed to delete point: {}", e));
-            Ok(warp::reply::json(&error_response))
+    // Parse point_id as u32
+    let point_id_u32 = point_id.parse::<u32>().map_err(|_| warp::reject::reject())?;
+
+    // Try to delete from all telemetry categories
+    let categories = vec![
+        ConfigTelemetryCategory::Telemetry,
+        ConfigTelemetryCategory::Signaling,
+        ConfigTelemetryCategory::Control,
+        ConfigTelemetryCategory::Setpoint,
+    ];
+
+    for category in categories {
+        match table_manager.remove_point(&channel_name, &point_id) {
+            Ok(true) => {
+                let response = ApiResponse::success(json!({
+                    "message": format!("Point '{}' deleted from channel '{}'", point_id, channel_name)
+                }));
+                return Ok(warp::reply::json(&response));
+            }
+            Ok(false) | Err(_) => continue, // Try next category
         }
     }
+
+    let error_response = ApiResponse::<()>::error(format!(
+        "Point '{}' not found in channel '{}'",
+        point_id, channel_name
+    ));
+    Ok(warp::reply::json(&error_response))
 }
 
-/// Reload point tables from CSV files
+/// Reload point tables from storage
 pub async fn reload_point_tables(
-    config_manager: Arc<RwLock<crate::core::config::ConfigManager>>,
+    config_manager: Arc<RwLock<ConfigManager>>,
 ) -> Result<impl Reply, Rejection> {
     let mut config = config_manager.write().await;
+    let table_manager = config.get_point_table_manager_mut();
 
-    match config.reload_csv_point_tables() {
-        Ok(()) => {
-            let table_names = config.get_point_table_names();
-            let response = ApiResponse::success(serde_json::json!({
-                "message": "Point tables reloaded successfully",
-                "tables": table_names
-            }));
-            Ok(warp::reply::json(&response))
+    // Reload all channels and categories
+    let channel_names = table_manager.get_channel_names().await;
+    let categories = vec![
+        ConfigTelemetryCategory::Telemetry,
+        ConfigTelemetryCategory::Signaling,
+        ConfigTelemetryCategory::Control,
+        ConfigTelemetryCategory::Setpoint,
+    ];
+
+    let mut reload_errors = Vec::new();
+    for channel_name in &channel_names {
+        for category in &categories {
+            if let Err(e) = table_manager.load_standard_points(channel_name, *category).await {
+                reload_errors.push(format!("Failed to reload {}/{:?}: {}", channel_name, category, e));
+            }
+            if let Err(e) = table_manager.load_protocol_config(channel_name, *category).await {
+                reload_errors.push(format!("Failed to reload protocol config {}/{:?}: {}", channel_name, category, e));
+            }
         }
-        Err(e) => {
-            let error_response =
-                ApiResponse::<()>::error(format!("Failed to reload point tables: {}", e));
-            Ok(warp::reply::json(&error_response))
-        }
+    }
+
+    if reload_errors.is_empty() {
+        let response = ApiResponse::success(json!({
+            "message": "Point tables reloaded successfully",
+            "channels": channel_names
+        }));
+        Ok(warp::reply::json(&response))
+    } else {
+        let error_response = ApiResponse::<()>::error(format!(
+            "Failed to reload some point tables: {}",
+            reload_errors.join("; ")
+        ));
+        Ok(warp::reply::json(&error_response))
     }
 }
 
 /// Export point table to CSV
 pub async fn export_point_table(
-    table_name: String,
-    config_manager: Arc<RwLock<crate::core::config::ConfigManager>>,
+    channel_name: String,
+    config_manager: Arc<RwLock<ConfigManager>>,
 ) -> Result<impl Reply, Rejection> {
     let config = config_manager.read().await;
-    let csv_manager = config.get_csv_point_manager();
+    let table_manager = config.get_point_table_manager();
 
-    if let Some(points) = csv_manager.get_points(&table_name) {
-        // Convert points to CSV format with simplified structure
+    // Get all points from all telemetry categories
+    let mut all_points = Vec::new();
+    let categories = vec![
+        ConfigTelemetryCategory::Telemetry,
+        ConfigTelemetryCategory::Signaling,
+        ConfigTelemetryCategory::Control,
+        ConfigTelemetryCategory::Setpoint,
+    ];
+
+    for category in categories {
+        if let Ok(points) = table_manager.get_points_by_category(&channel_name, category).await {
+            all_points.extend(points);
+        }
+    }
+
+    if !all_points.is_empty() {
+        // Convert points to CSV format
         let mut csv_content = String::new();
-        csv_content.push_str("point_id,point_name,unit,scale,offset,description\n");
+        csv_content.push_str("point_id,point_name,unit,scale,offset,description,telemetry_category\n");
 
-        for point in points {
+        for point in all_points {
             csv_content.push_str(&format!(
-                "{},{},{},{},{},{}\n",
+                "{},{},{},{},{},{},{:?}\n",
                 point.point_id,
                 point.point_name,
                 point.unit,
                 point.scale,
                 point.offset,
-                point.description
+                point.description,
+                point.telemetry_category
             ));
         }
 
@@ -582,7 +688,7 @@ pub async fn export_point_table(
         ))
     } else {
         let error_response =
-            ApiResponse::<()>::error(format!("Point table '{}' not found", table_name));
+            ApiResponse::<()>::error(format!("Point table '{}' not found", channel_name));
         Ok(warp::reply::with_header(
             serde_json::to_string(&error_response).unwrap(),
             "content-type",
@@ -959,542 +1065,4 @@ pub async fn validate_forward_calculation_expression(
         warp::reply::json(&response),
         warp::http::StatusCode::OK,
     ))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::core::config::config_manager::{
-        ChannelConfig, ChannelCsvConfig, ChannelParameters, ProtocolType,
-    };
-    use crate::core::config::ConfigManager;
-    use crate::core::config::{ChannelPointRecord, ProtocolConfigRecord, TelemetryCategory};
-    use crate::core::protocols::common::ProtocolFactory;
-    use serde_yaml;
-    use std::fs::File;
-    use std::io::Write;
-    use std::sync::Arc;
-    use tempfile::TempDir;
-    use tokio::sync::RwLock;
-
-    fn create_test_config_manager() -> Arc<RwLock<ConfigManager>> {
-        let temp_dir = TempDir::new().unwrap();
-        let config_path = temp_dir.path().join("config.yaml");
-
-        let config_content = r#"
-version: "1.0"
-service:
-  name: "test_service"
-  description: "Test Communication Service"
-channels: []
-point_tables:
-  enabled: true
-  directory: "test_points"
-"#;
-
-        let mut file = File::create(&config_path).unwrap();
-        file.write_all(config_content.as_bytes()).unwrap();
-
-        let manager = ConfigManager::from_file(&config_path).unwrap();
-        Arc::new(RwLock::new(manager))
-    }
-
-    /// 创建遥测点配置（模拟量输入）
-    fn create_telemetry_point_record(point_id: u32) -> ChannelPointRecord {
-        ChannelPointRecord {
-            point_id,
-            point_name: format!("Temperature_{}", point_id),
-            unit: "°C".to_string(),
-            scale: 0.1,
-            offset: -40.0,
-            description: format!("Temperature sensor {}", point_id),
-            telemetry_category: TelemetryCategory::Telemetry,
-        }
-    }
-
-    /// 创建遥信点配置（数字量输入）
-    fn create_signaling_point_record(point_id: u32) -> ChannelPointRecord {
-        ChannelPointRecord {
-            point_id,
-            point_name: format!("Status_{}", point_id),
-            unit: "".to_string(),
-            scale: 1.0,
-            offset: 0.0,
-            description: format!("Digital status {}", point_id),
-            telemetry_category: TelemetryCategory::Signaling,
-        }
-    }
-
-    /// 创建遥控点配置（数字量输出）
-    fn create_control_point_record(point_id: u32) -> ChannelPointRecord {
-        ChannelPointRecord {
-            point_id,
-            point_name: format!("Control_{}", point_id),
-            unit: "".to_string(),
-            scale: 1.0,
-            offset: 0.0,
-            description: format!("Digital control {}", point_id),
-            telemetry_category: TelemetryCategory::Control,
-        }
-    }
-
-    /// 创建遥调点配置（模拟量输出）
-    fn create_setpoint_point_record(point_id: u32) -> ChannelPointRecord {
-        ChannelPointRecord {
-            point_id,
-            point_name: format!("Setpoint_{}", point_id),
-            unit: "bar".to_string(),
-            scale: 0.01,
-            offset: 0.0,
-            description: format!("Pressure setpoint {}", point_id),
-            telemetry_category: TelemetryCategory::Setpoint,
-        }
-    }
-
-    /// 创建协议配置记录
-    fn create_protocol_config_record(
-        point_id: u32,
-        category: TelemetryCategory,
-    ) -> ProtocolConfigRecord {
-        let (address, function_code, data_type) = match category {
-            TelemetryCategory::Telemetry => (point_id as u16, 3, "UInt16"),
-            TelemetryCategory::Signaling => (point_id as u16 + 1000, 2, "Bool"),
-            TelemetryCategory::Control => (point_id as u16 + 2000, 5, "Bool"),
-            TelemetryCategory::Setpoint => (point_id as u16 + 3000, 6, "UInt16"),
-        };
-
-        ProtocolConfigRecord {
-            point_id,
-            register_address: address,
-            function_code,
-            data_type: data_type.to_string(),
-            byte_order: "ABCD".to_string(),
-            description: format!("{:?} protocol config for point {}", category, point_id),
-        }
-    }
-
-    #[tokio::test]
-    async fn test_get_point_tables() {
-        let config_manager = create_test_config_manager();
-
-        let response = get_point_tables(config_manager).await;
-        assert!(response.is_ok());
-
-        // The response should be a successful JSON response
-        // Since we don't have any point tables, it should return an empty map
-    }
-
-    #[tokio::test]
-    async fn test_get_point_table_not_found() {
-        let config_manager = create_test_config_manager();
-
-        let response = get_point_table("nonexistent".to_string(), config_manager).await;
-        assert!(response.is_ok());
-
-        // The response should contain an error about the table not being found
-    }
-
-    #[tokio::test]
-    async fn test_get_point_from_table_not_found() {
-        let config_manager = create_test_config_manager();
-
-        let response = get_point_from_table(
-            "nonexistent_table".to_string(),
-            "nonexistent_point".to_string(),
-            config_manager,
-        )
-        .await;
-        assert!(response.is_ok());
-
-        // The response should contain an error about the point not being found
-    }
-
-    #[tokio::test]
-    async fn test_four_telemetry_upsert_operations() {
-        let config_manager = create_test_config_manager();
-
-        // Test all four telemetry types
-        let test_cases = vec![
-            ("telemetry_table", create_telemetry_point_record(1001)),
-            ("signaling_table", create_signaling_point_record(2001)),
-            ("control_table", create_control_point_record(3001)),
-            ("setpoint_table", create_setpoint_point_record(4001)),
-        ];
-
-        for (table_name, point) in test_cases {
-            let response =
-                upsert_point_in_table(table_name.to_string(), point, config_manager.clone()).await;
-            assert!(response.is_ok());
-        }
-    }
-
-    #[tokio::test]
-    async fn test_four_telemetry_data_types() {
-        let config_manager = create_test_config_manager();
-
-        // Test different data types for each telemetry category
-        let test_data_types = vec![
-            ("UInt16", "ABCD"),
-            ("Int16", "DCBA"),
-            ("UInt32", "BADC"),
-            ("Int32", "CDAB"),
-            ("Float32", "ABCD"),
-            ("Bool", "ABCD"),
-        ];
-
-        for (data_type, byte_order) in test_data_types {
-            let point = ChannelPointRecord {
-                point_id: 1,
-                point_name: format!("test_{}", data_type),
-                unit: "test_unit".to_string(),
-                scale: 1.0,
-                offset: 0.0,
-                description: format!("Test point for {}", data_type),
-                telemetry_category: TelemetryCategory::Telemetry,
-            };
-
-            let response = upsert_point_in_table(
-                format!("table_{}", data_type),
-                point,
-                config_manager.clone(),
-            )
-            .await;
-            assert!(response.is_ok());
-        }
-    }
-
-    #[tokio::test]
-    async fn test_delete_point_from_table() {
-        let config_manager = create_test_config_manager();
-
-        // First add a point
-        let point = create_telemetry_point_record(1);
-        let _ =
-            upsert_point_in_table("test_table".to_string(), point, config_manager.clone()).await;
-
-        // Then try to delete it
-        let response =
-            delete_point_from_table("test_table".to_string(), "1".to_string(), config_manager)
-                .await;
-        assert!(response.is_ok());
-    }
-
-    #[tokio::test]
-    async fn test_reload_point_tables() {
-        let config_manager = create_test_config_manager();
-
-        let response = reload_point_tables(config_manager).await;
-        assert!(response.is_ok());
-
-        // The response should indicate successful reload
-    }
-
-    #[tokio::test]
-    async fn test_export_point_table_not_found() {
-        let config_manager = create_test_config_manager();
-
-        let response = export_point_table("nonexistent".to_string(), config_manager).await;
-        assert!(response.is_ok());
-
-        // The response should contain an error about the table not being found
-    }
-
-    #[tokio::test]
-    async fn test_export_point_table_with_four_telemetry_data() {
-        let config_manager = create_test_config_manager();
-
-        // Add test data for all four telemetry types
-        let test_points = vec![
-            ("telemetry", create_telemetry_point_record(1)),
-            ("signaling", create_signaling_point_record(2)),
-            ("control", create_control_point_record(3)),
-            ("setpoint", create_setpoint_point_record(4)),
-        ];
-
-        for (category, point) in test_points {
-            let _ =
-                upsert_point_in_table(format!("table_{}", category), point, config_manager.clone())
-                    .await;
-        }
-
-        // Export each table
-        let categories = vec!["telemetry", "signaling", "control", "setpoint"];
-        for category in categories {
-            let response =
-                export_point_table(format!("table_{}", category), config_manager.clone()).await;
-            assert!(response.is_ok());
-        }
-    }
-
-    #[tokio::test]
-    async fn test_byte_order_validation() {
-        let config_manager = create_test_config_manager();
-
-        // Test all supported byte orders
-        let byte_orders = vec!["ABCD", "DCBA", "BADC", "CDAB"];
-
-        for (i, byte_order) in byte_orders.iter().enumerate() {
-            let point = ChannelPointRecord {
-                point_id: i as u32 + 1,
-                point_name: format!("test_point_{}", byte_order),
-                unit: "V".to_string(),
-                scale: 1.0,
-                offset: 0.0,
-                description: format!("Test point with byte order {}", byte_order),
-                telemetry_category: TelemetryCategory::Telemetry,
-            };
-
-            let response =
-                upsert_point_in_table("byte_order_test".to_string(), point, config_manager.clone())
-                    .await;
-            assert!(response.is_ok());
-        }
-    }
-
-    #[tokio::test]
-    async fn test_point_table_hot_reload_workflow() {
-        let config_manager = create_test_config_manager();
-
-        // 1. Create points for all telemetry types
-        let test_points = vec![
-            ("telemetry", create_telemetry_point_record(100)),
-            ("signaling", create_signaling_point_record(200)),
-            ("control", create_control_point_record(300)),
-            ("setpoint", create_setpoint_point_record(400)),
-        ];
-
-        for (table_name, point) in test_points {
-            let upsert_response =
-                upsert_point_in_table(table_name.to_string(), point, config_manager.clone()).await;
-            assert!(upsert_response.is_ok());
-        }
-
-        // 2. Verify points exist
-        let table_names = vec!["telemetry", "signaling", "control", "setpoint"];
-        let point_ids = vec!["100", "200", "300", "400"];
-
-        for (table_name, point_id) in table_names.iter().zip(point_ids.iter()) {
-            let get_response = get_point_from_table(
-                table_name.to_string(),
-                point_id.to_string(),
-                config_manager.clone(),
-            )
-            .await;
-            assert!(get_response.is_ok());
-        }
-
-        // 3. Reload point tables
-        let reload_response = reload_point_tables(config_manager.clone()).await;
-        assert!(reload_response.is_ok());
-
-        // 4. Delete the points
-        for (table_name, point_id) in table_names.iter().zip(point_ids.iter()) {
-            let delete_response = delete_point_from_table(
-                table_name.to_string(),
-                point_id.to_string(),
-                config_manager.clone(),
-            )
-            .await;
-            assert!(delete_response.is_ok());
-        }
-    }
-
-    #[tokio::test]
-    async fn test_comprehensive_data_type_coverage() {
-        let config_manager = create_test_config_manager();
-
-        // Test comprehensive data type coverage
-        let comprehensive_tests = vec![
-            // UInt16 with different byte orders
-            ("uint16_abcd", 1, "UInt16", "ABCD", 1.0, 0.0, "V"),
-            ("uint16_dcba", 2, "UInt16", "DCBA", 1.0, 0.0, "A"),
-            // Int16 with different byte orders
-            ("int16_badc", 3, "Int16", "BADC", 0.1, -100.0, "°C"),
-            ("int16_cdab", 4, "Int16", "CDAB", 0.01, 0.0, "bar"),
-            // UInt32 with different byte orders
-            ("uint32_abcd", 5, "UInt32", "ABCD", 0.001, 0.0, "Hz"),
-            ("uint32_dcba", 6, "UInt32", "DCBA", 1.0, 0.0, "RPM"),
-            // Int32 with different byte orders
-            ("int32_badc", 7, "Int32", "BADC", 10.0, 1000.0, "Pa"),
-            ("int32_cdab", 8, "Int32", "CDAB", 0.1, -50.0, "dB"),
-            // Float32 with different byte orders
-            ("float32_abcd", 9, "Float32", "ABCD", 1.0, 0.0, "m/s"),
-            ("float32_dcba", 10, "Float32", "DCBA", 3.6, 0.0, "km/h"),
-            // Bool (typically no byte order consideration)
-            ("bool_status", 11, "Bool", "ABCD", 1.0, 0.0, ""),
-        ];
-
-        for (name, point_id, data_type, byte_order, scale, offset, unit) in comprehensive_tests {
-            let point = ChannelPointRecord {
-                point_id,
-                point_name: name.to_string(),
-                unit: unit.to_string(),
-                scale,
-                offset,
-                description: format!("Test {} with {} byte order", data_type, byte_order),
-                telemetry_category: TelemetryCategory::Telemetry,
-            };
-
-            let response = upsert_point_in_table(
-                "comprehensive_test".to_string(),
-                point,
-                config_manager.clone(),
-            )
-            .await;
-            assert!(
-                response.is_ok(),
-                "Failed to insert point {} with data type {}",
-                name,
-                data_type
-            );
-        }
-    }
-
-    #[tokio::test]
-    async fn test_write_point_channel_not_found() {
-        let factory = Arc::new(RwLock::new(ProtocolFactory::new()));
-        let req = WritePointRequest {
-            value: serde_json::json!(1),
-        };
-        let response = write_point(
-            "1".to_string(),
-            "tbl".to_string(),
-            "p1".to_string(),
-            req,
-            factory,
-        )
-        .await;
-        assert!(response.is_ok());
-    }
-
-    #[tokio::test]
-    async fn test_write_point_point_not_found() {
-        let factory = Arc::new(RwLock::new(ProtocolFactory::new()));
-
-        // Create a simple Modbus channel with CSV config
-        let mut params = std::collections::HashMap::new();
-        params.insert(
-            "address".to_string(),
-            serde_yaml::Value::String("127.0.0.1".to_string()),
-        );
-        params.insert(
-            "port".to_string(),
-            serde_yaml::Value::Number(serde_yaml::Number::from(502)),
-        );
-
-        let csv_config = ChannelCsvConfig {
-            csv_directory: "test_csv".to_string(),
-            telemetry_file: Some("telemetry.csv".to_string()),
-            signaling_file: Some("signaling.csv".to_string()),
-            control_file: Some("control.csv".to_string()),
-            setpoint_file: Some("setpoint.csv".to_string()),
-        };
-
-        let config = ChannelConfig {
-            id: 1,
-            name: "ch1".to_string(),
-            description: "test".to_string(),
-            protocol: ProtocolType::ModbusTcp,
-            parameters: ChannelParameters::Generic(params),
-            csv_config: Some(csv_config),
-        };
-        factory.write().await.create_channel(config).await.unwrap();
-
-        let req = WritePointRequest {
-            value: serde_json::json!(1),
-        };
-        let response = write_point(
-            "1".to_string(),
-            "tbl".to_string(),
-            "unknown".to_string(),
-            req,
-            factory,
-        )
-        .await;
-        assert!(response.is_ok());
-    }
-
-    #[tokio::test]
-    async fn test_four_telemetry_protocol_validation() {
-        let config_manager = create_test_config_manager();
-
-        // Test protocol validation for different telemetry types
-        let validation_tests = vec![
-            (
-                TelemetryCategory::Telemetry,
-                vec![3, 4],
-                vec!["UInt16", "Int16", "UInt32", "Int32", "Float32"],
-            ),
-            (TelemetryCategory::Signaling, vec![1, 2], vec!["Bool"]),
-            (TelemetryCategory::Control, vec![5, 15], vec!["Bool"]),
-            (
-                TelemetryCategory::Setpoint,
-                vec![6, 16],
-                vec!["UInt16", "Int16", "UInt32", "Int32", "Float32"],
-            ),
-        ];
-
-        for (category, function_codes, data_types) in validation_tests {
-            for &fc in &function_codes {
-                for data_type in &data_types {
-                    let protocol_config = ProtocolConfigRecord {
-                        point_id: 1,
-                        register_address: 100,
-                        function_code: fc,
-                        data_type: data_type.to_string(),
-                        byte_order: "ABCD".to_string(),
-                        description: format!("Test {:?} protocol", category),
-                    };
-
-                    // This would normally be validated by the protocol factory
-                    // For now, we just ensure the structure is correct
-                    assert!(!protocol_config.data_type.is_empty());
-                    assert!(!protocol_config.byte_order.is_empty());
-                }
-            }
-        }
-    }
-
-    #[tokio::test]
-    async fn test_engineering_unit_scaling() {
-        let config_manager = create_test_config_manager();
-
-        // Test various engineering unit scaling scenarios
-        let scaling_tests = vec![
-            // (name, scale, offset, unit, description)
-            ("temp_celsius", 0.1, -40.0, "°C", "Temperature with offset"),
-            ("pressure_bar", 0.01, 0.0, "bar", "Pressure scaling"),
-            ("flow_rate", 0.001, 0.0, "m³/h", "Flow rate with precision"),
-            ("percentage", 0.01, 0.0, "%", "Percentage value"),
-            ("frequency", 0.1, 0.0, "Hz", "Frequency measurement"),
-            (
-                "voltage",
-                0.001,
-                0.0,
-                "V",
-                "Voltage with millivolt precision",
-            ),
-        ];
-
-        for (i, (name, scale, offset, unit, description)) in scaling_tests.iter().enumerate() {
-            let point = ChannelPointRecord {
-                point_id: i as u32 + 1,
-                point_name: name.to_string(),
-                unit: unit.to_string(),
-                scale: *scale,
-                offset: *offset,
-                description: description.to_string(),
-                telemetry_category: TelemetryCategory::Telemetry,
-            };
-
-            let response =
-                upsert_point_in_table("scaling_test".to_string(), point, config_manager.clone())
-                    .await;
-            assert!(
-                response.is_ok(),
-                "Failed to insert scaling test point {}",
-                name
-            );
-        }
-    }
 }

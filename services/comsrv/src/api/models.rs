@@ -13,31 +13,45 @@ pub struct ServiceStatus {
     pub active_channels: u32,
 }
 
-/// channel status response - Enhanced version combining API and ComBase requirements
+/// channel status response for list endpoint
 #[derive(Debug, Clone, Serialize)]
-pub struct ChannelStatus {
-    pub id: String,
+pub struct ChannelStatusResponse {
+    pub id: u16,
     pub name: String,
     pub protocol: String,
     pub connected: bool,
-    pub last_response_time: f64,
-    pub last_error: String,
-    pub last_update_time: DateTime<Utc>,
-    pub parameters: HashMap<String, serde_json::Value>,
+    pub last_update: DateTime<Utc>,
+    pub error_count: u32,
+    pub last_error: Option<String>,
+}
+
+/// channel status response - Enhanced version combining API and ComBase requirements
+#[derive(Debug, Clone, Serialize)]
+pub struct ChannelStatus {
+    pub id: u16,
+    pub name: String,
+    pub protocol: String,
+    pub connected: bool,
+    pub running: bool,
+    pub last_update: DateTime<Utc>,
+    pub error_count: u32,
+    pub last_error: Option<String>,
+    pub statistics: HashMap<String, serde_json::Value>,
 }
 
 impl From<crate::core::protocols::common::combase::ChannelStatus> for ChannelStatus {
     /// Convert from ComBase ChannelStatus to API ChannelStatus
     fn from(status: crate::core::protocols::common::combase::ChannelStatus) -> Self {
         Self {
-            id: status.id,
+            id: status.id.parse().unwrap_or(0), // Convert string ID to u16
             name: "Unknown".to_string(), // ComBase doesn't provide name, will be filled by handler
             protocol: "Unknown".to_string(), // ComBase doesn't provide protocol, will be filled by handler
             connected: status.connected,
-            last_response_time: status.last_response_time,
-            last_error: status.last_error,
-            last_update_time: status.last_update_time,
-            parameters: HashMap::new(), // ComBase doesn't provide parameters, will be filled by handler
+            running: false, // Will be filled by handler
+            last_update: status.last_update_time,
+            error_count: if status.has_error() { 1 } else { 0 }, // Estimate from error state
+            last_error: if status.has_error() { Some(status.last_error) } else { None },
+            statistics: HashMap::new(), // ComBase doesn't provide statistics, will be filled by handler
         }
     }
 }
@@ -196,18 +210,19 @@ mod tests {
         parameters.insert("slave_id".to_string(), json!(1));
 
         let status = ChannelStatus {
-            id: "channel_1".to_string(),
+            id: 1,
             name: "Test Channel".to_string(),
             protocol: "ModbusTcp".to_string(),
             connected: true,
-            last_response_time: 123.456,
-            last_error: "".to_string(),
-            last_update_time: now,
-            parameters,
+            running: true,
+            last_update: now,
+            error_count: 0,
+            last_error: None,
+            statistics: parameters,
         };
 
         let serialized = serde_json::to_string(&status).unwrap();
-        assert!(serialized.contains("channel_1"));
+        assert!(serialized.contains("1"));
         assert!(serialized.contains("ModbusTcp"));
         assert!(serialized.contains("true"));
     }
@@ -413,18 +428,19 @@ mod tests {
     fn test_channel_status_with_empty_parameters() {
         let now = Utc::now();
         let status = ChannelStatus {
-            id: "simple_channel".to_string(),
+            id: 1,
             name: "Simple Channel".to_string(),
             protocol: "Virtual".to_string(),
             connected: false,
-            last_response_time: 0.0,
-            last_error: "Connection timeout".to_string(),
-            last_update_time: now,
-            parameters: HashMap::new(),
+            running: false,
+            last_update: now,
+            error_count: 0,
+            last_error: Some("Connection timeout".to_string()),
+            statistics: HashMap::new(),
         };
 
         let serialized = serde_json::to_string(&status).unwrap();
-        assert!(serialized.contains("simple_channel"));
+        assert!(serialized.contains("1"));
         assert!(serialized.contains("false"));
         assert!(serialized.contains("Connection timeout"));
     }
@@ -435,13 +451,13 @@ mod tests {
             crate::core::protocols::common::combase::ChannelStatus::new("test_001");
         let api_status = ChannelStatus::from(combase_status);
 
-        assert_eq!(api_status.id, "test_001");
+        assert_eq!(api_status.id, 1);
         assert_eq!(api_status.name, "Unknown");
         assert_eq!(api_status.protocol, "Unknown");
         assert!(!api_status.connected);
-        assert_eq!(api_status.last_response_time, 0.0);
-        assert!(api_status.last_error.is_empty());
-        assert!(api_status.parameters.is_empty());
+        assert_eq!(api_status.error_count, 0);
+        assert!(api_status.last_error.is_none());
+        assert!(api_status.statistics.is_empty());
     }
 
     #[test]

@@ -1480,7 +1480,7 @@ impl From<ChannelConfig> for ModbusClientConfig {
                 config.tcp_port = Some(port);
                 config.timeout = Duration::from_millis(timeout);
                 config.max_retries = max_retries;
-                config.poll_interval = Duration::from_millis(poll_rate);
+                config.poll_interval = Duration::from_millis(poll_rate.unwrap_or(1000));
             }
             crate::core::config::config_manager::ChannelParameters::ModbusRtu {
                 port,
@@ -1512,8 +1512,8 @@ impl From<ChannelConfig> for ModbusClientConfig {
                 });
                 config.timeout = Duration::from_millis(timeout);
                 config.max_retries = max_retries;
-                config.poll_interval = Duration::from_millis(poll_rate);
-                config.slave_id = slave_id;
+                config.poll_interval = Duration::from_millis(poll_rate.unwrap_or(1000));
+                config.slave_id = slave_id.unwrap_or(1);
             }
             crate::core::config::config_manager::ChannelParameters::Generic(ref params) => {
                 // 根据ChannelConfig中的protocol类型来设置正确的模式
@@ -1521,30 +1521,12 @@ impl From<ChannelConfig> for ModbusClientConfig {
                     crate::core::config::config_manager::ProtocolType::ModbusTcp => {
                         config.mode = ModbusCommunicationMode::Tcp;
 
-                        // 从Generic参数中提取TCP相关配置
-                        if let Some(address) = params.get("address") {
-                            if let Some(addr_str) = address.as_str() {
-                                // 支持 "host:port" 格式的地址
-                                if addr_str.contains(':') {
-                                    // 解析 "host:port" 格式
-                                    let parts: Vec<&str> = addr_str.split(':').collect();
-                                    if parts.len() == 2 {
-                                        config.host = Some(parts[0].to_string());
-                                        if let Ok(port_num) = parts[1].parse::<u16>() {
-                                            config.tcp_port = Some(port_num);
-                                        }
-                                    } else {
-                                        // 如果格式不正确，使用整个字符串作为主机地址
-                                        config.host = Some(addr_str.to_string());
-                                    }
-                                } else {
-                                    // 只有主机地址，没有端口
-                                    config.host = Some(addr_str.to_string());
-                                }
+                        if let Some(host) = params.get("host") {
+                            if let Some(host_str) = host.as_str() {
+                                config.host = Some(host_str.to_string());
                             }
                         }
 
-                        // 如果有单独的port参数，优先使用它
                         if let Some(port) = params.get("port") {
                             if let Some(port_num) = port.as_u64() {
                                 config.tcp_port = Some(port_num as u16);
@@ -1596,6 +1578,11 @@ impl From<ChannelConfig> for ModbusClientConfig {
                         // 这里可以根据需要添加更多协议支持
                     }
                 }
+            }
+            crate::core::config::config_manager::ChannelParameters::Virtual { .. } => {
+                // Virtual protocol doesn't use Modbus client
+                // This should not happen in practice, but we handle it gracefully
+                config.mode = ModbusCommunicationMode::Tcp;
             }
         }
 
@@ -2505,5 +2492,39 @@ mod tests {
         assert_eq!(modbus_config.slave_id, 2);
         assert_eq!(modbus_config.max_retries, 5);
         assert_eq!(modbus_config.poll_interval, Duration::from_millis(200));
+    }
+
+    #[cfg(test)]
+    async fn test_generic_parameters_configuration() {
+        use crate::core::config::config_manager::{ChannelConfig, ChannelParameters, ProtocolType};
+        use std::collections::HashMap;
+        
+        // 创建使用Generic参数的通道配置
+        let mut generic_params = HashMap::new();
+        generic_params.insert("host".to_string(), serde_yaml::Value::String("192.168.1.100".to_string()));
+        generic_params.insert("port".to_string(), serde_yaml::Value::Number(502.into()));
+        generic_params.insert("timeout".to_string(), serde_yaml::Value::Number(3000.into()));
+        generic_params.insert("slave_id".to_string(), serde_yaml::Value::Number(1.into()));
+        
+        let channel_config = ChannelConfig {
+            id: 100,
+            name: "Test_PLC".to_string(),
+            description: Some("Test PLC with Generic parameters".to_string()),
+            protocol: ProtocolType::ModbusTcp,
+            parameters: ChannelParameters::Generic(generic_params),
+            point_table: None,
+            source_tables: None,
+            csv_config: None,
+        };
+        
+        // 转换为ModbusClientConfig
+        let modbus_config: ModbusClientConfig = channel_config.into();
+        
+        // 验证配置是否正确解析
+        assert_eq!(modbus_config.mode, ModbusCommunicationMode::Tcp);
+        assert_eq!(modbus_config.host, Some("192.168.1.100".to_string()));
+        assert_eq!(modbus_config.tcp_port, Some(502));
+        assert_eq!(modbus_config.timeout, Duration::from_millis(3000));
+        assert_eq!(modbus_config.slave_id, 1);
     }
 }

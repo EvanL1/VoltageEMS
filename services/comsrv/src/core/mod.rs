@@ -11,8 +11,10 @@
 //! - **`config`** - Configuration management and validation, including enhanced point table management
 //! - **`protocols`** - Protocol implementations (Modbus RTU/TCP, IEC60870, etc.)
 //! - **`storage`** - Data storage and caching mechanisms
-//! - **`connection_pool`** - Connection pooling for network efficiency
-//! - **`protocol_factory`** - Factory pattern for creating protocol instances
+//! 
+//! These components work together to provide a comprehensive communication
+//! platform that supports multiple industrial protocols with high performance
+//! and reliability.
 
 //!
 //! # Design Principles
@@ -32,43 +34,31 @@
 //! All behavior is controlled through configuration files, enabling
 //! runtime customization without code changes.
 //!
-//! ## Business Layer Focus
+//! ## Extensible Design
 //!
-//! Enhanced with business-level features including:
-//! - Intelligent point table management with optimization
+//! The core supports easy extension with:
+//! - Pluggable protocol implementations
+//! - Configurable data storage backends
+//! - Flexible point table management
 //! - Real-time monitoring and diagnostics
-//! - Advanced channel configuration management
-//! - Performance analytics and reporting
 //!
 //! # Example Usage
 //!
 //! ```rust
-//! use comsrv::{ConfigManager, ProtocolFactory, EnhancedPointTableManager};
+//! use comsrv::{ConfigManager, ProtocolFactory};
 //! use std::sync::Arc;
 //! use tokio::sync::RwLock;
 //!
-//! async fn setup_enhanced_service() -> comsrv::Result<()> {
+//! async fn setup_service() -> comsrv::Result<()> {
 //!     // Load configuration
 //!     let config_manager = ConfigManager::from_file("config/comsrv.yaml")?;
 //!     
-//!     // Create enhanced point table manager
-//!     let point_table_manager = Arc::new(EnhancedPointTableManager::new(
-//!         "config/points",
-//!         Default::default(),
-//!     ));
-//!     point_table_manager.start().await?;
-//!     
-
-//!     
-//!     // Create protocol factory with enhanced capabilities
+//!     // Create protocol factory
 //!     let factory = Arc::new(RwLock::new(ProtocolFactory::new()));
 //!     
-//!     // Register channels from configuration with enhanced point tables
+//!     // Register channels from configuration
 //!     for channel_config in config_manager.get_channels() {
-//!         let channel = factory.write().await.create_enhanced_channel(
-//!             channel_config.clone(),
-//!             point_table_manager.clone(),
-//!         )?;
+//!         let channel = factory.write().await.create_channel(channel_config.clone())?;
 //!     }
 //!     
 //!     Ok(())
@@ -265,7 +255,7 @@ channels:
     #[test]
     fn test_configuration_types_integration() {
         // Test integration between config and protocol modules
-        use crate::core::config::*;
+        use crate::core::config::config_manager::ProtocolType;
 
         // Test protocol types
         let modbus_tcp = ProtocolType::ModbusTcp;

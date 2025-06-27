@@ -7,14 +7,78 @@ use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::time::Duration;
+use redis::{Client, Connection};
+use serde_json;
+
+/// Default path configuration for channels and tables
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DefaultPathConfig {
+    /// Root directory for all channels (relative to config directory)
+    pub channels_root: String,
+    /// ComBase point table directory name within each channel
+    pub combase_dir: String,
+    /// Protocol source table directory name within each channel
+    pub protocol_dir: String,
+    /// Default file names for different table types
+    pub filenames: DefaultFilenames,
+}
+
+/// Default file names for point tables and source tables
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DefaultFilenames {
+    /// Telemetry (遥测) point table file
+    pub telemetry: String,
+    /// Signaling (遥信) point table file
+    pub signaling: String,
+    /// Control (遥控) point table file
+    pub control: String,
+    /// Setpoint (遥调) point table file
+    pub setpoint: String,
+    /// Modbus TCP source table file
+    pub modbus_tcp_source: String,
+    /// Modbus RTU source table file
+    pub modbus_rtu_source: String,
+    /// Calculation source table file
+    pub calculation_source: String,
+    /// Manual source table file
+    pub manual_source: String,
+}
+
+impl Default for DefaultPathConfig {
+    fn default() -> Self {
+        Self {
+            channels_root: "channels".to_string(),
+            combase_dir: "combase".to_string(),
+            protocol_dir: "protocol".to_string(),
+            filenames: DefaultFilenames::default(),
+        }
+    }
+}
+
+impl Default for DefaultFilenames {
+    fn default() -> Self {
+        Self {
+            telemetry: "telemetry.csv".to_string(),
+            signaling: "signaling.csv".to_string(),
+            control: "control.csv".to_string(),
+            setpoint: "setpoint.csv".to_string(),
+            modbus_tcp_source: "modbus_tcp_source.csv".to_string(),
+            modbus_rtu_source: "modbus_rtu_source.csv".to_string(),
+            calculation_source: "calculation_source.csv".to_string(),
+            manual_source: "manual_source.csv".to_string(),
+        }
+    }
+}
 
 /// Service configuration section
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ServiceConfig {
     /// Service name
+    #[serde(default = "default_service_name")]
     pub name: String,
-    /// Service description
-    pub description: String,
+    /// Service description (optional)
+    #[serde(default)]
+    pub description: Option<String>,
 
     /// Logging configuration
     #[serde(default)]
@@ -27,12 +91,15 @@ pub struct ServiceConfig {
     pub redis: RedisConfig,
 }
 
+fn default_service_name() -> String {
+    "comsrv".to_string()
+}
+
 impl Default for ServiceConfig {
     fn default() -> Self {
         Self {
-            name: "comsrv".to_string(),
-            description: "Communication Service".to_string(),
-
+            name: default_service_name(),
+            description: Some("Communication Service".to_string()),
             logging: LoggingConfig::default(),
             api: ApiConfig::default(),
             redis: RedisConfig::default(),
@@ -44,19 +111,34 @@ impl Default for ServiceConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ApiConfig {
     /// Whether API is enabled
+    #[serde(default = "default_api_enabled")]
     pub enabled: bool,
     /// Bind address for API server
+    #[serde(default = "default_api_bind_address")]
     pub bind_address: String,
     /// API version
+    #[serde(default = "default_api_version")]
     pub version: String,
+}
+
+fn default_api_enabled() -> bool {
+    true
+}
+
+fn default_api_bind_address() -> String {
+    "127.0.0.1:8080".to_string()
+}
+
+fn default_api_version() -> String {
+    "v1".to_string()
 }
 
 impl Default for ApiConfig {
     fn default() -> Self {
         Self {
-            enabled: true,
-            bind_address: "0.0.0.0:3000".to_string(),
-            version: "v1".to_string(),
+            enabled: default_api_enabled(),
+            bind_address: default_api_bind_address(),
+            version: default_api_version(),
         }
     }
 }
@@ -72,25 +154,28 @@ pub enum RedisConnectionType {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RedisConfig {
     /// Whether Redis is enabled
+    #[serde(default = "default_redis_enabled")]
     pub enabled: bool,
     /// Connection type (TCP or Unix socket)
+    #[serde(default)]
     pub connection_type: RedisConnectionType,
     /// Redis server address
     /// For TCP: "127.0.0.1:6379" or "redis://127.0.0.1:6379"
     /// For Unix: "/tmp/redis.sock" or "unix:///tmp/redis.sock"
+    #[serde(default = "default_redis_address")]
     pub address: String,
     /// Database number (0-15)
-    #[serde(default)]
-    pub db: Option<u8>,
+    #[serde(default = "default_redis_db")]
+    pub db: u8,
     /// Connection timeout in milliseconds
     #[serde(default = "default_redis_timeout")]
     pub timeout_ms: u64,
-    /// Maximum number of connections in pool
-    #[serde(default = "default_redis_max_connections")]
-    pub max_connections: u32,
-    /// Minimum number of connections in pool
-    #[serde(default = "default_redis_min_connections")]
-    pub min_connections: u32,
+    /// Maximum number of connections in pool (optional, no limit if not set)
+    #[serde(default)]
+    pub max_connections: Option<u32>,
+    /// Minimum number of connections in pool (optional, no limit if not set)
+    #[serde(default)]
+    pub min_connections: Option<u32>,
     /// Connection idle timeout in seconds
     #[serde(default = "default_redis_idle_timeout")]
     pub idle_timeout_secs: u64,
@@ -105,58 +190,50 @@ pub struct RedisConfig {
     pub username: Option<String>,
 }
 
+fn default_redis_enabled() -> bool {
+    true
+}
+
+fn default_redis_address() -> String {
+    "127.0.0.1:6379".to_string()
+}
+
+fn default_redis_db() -> u8 {
+    1
+}
+
 fn default_redis_timeout() -> u64 {
     5000
 }
-fn default_redis_max_connections() -> u32 {
-    10
-}
-fn default_redis_min_connections() -> u32 {
-    1
-}
+
 fn default_redis_idle_timeout() -> u64 {
     300
 }
+
 fn default_redis_max_retries() -> u32 {
     3
+}
+
+impl Default for RedisConnectionType {
+    fn default() -> Self {
+        RedisConnectionType::Tcp
+    }
 }
 
 impl Default for RedisConfig {
     fn default() -> Self {
         Self {
-            enabled: std::env::var("REDIS_ENABLED")
-                .unwrap_or_else(|_| "true".to_string())
-                .parse()
-                .unwrap_or(true),
+            enabled: default_redis_enabled(),
             connection_type: RedisConnectionType::Tcp,
-            address: std::env::var("REDIS_URL")
-                .unwrap_or_else(|_| "redis://127.0.0.1:6379".to_string()),
-            db: std::env::var("REDIS_DB")
-                .ok()
-                .and_then(|s| s.parse().ok())
-                .or(Some(0)),
-            timeout_ms: std::env::var("REDIS_TIMEOUT_MS")
-                .ok()
-                .and_then(|s| s.parse().ok())
-                .unwrap_or(5000),
-            max_connections: std::env::var("REDIS_MAX_CONNECTIONS")
-                .ok()
-                .and_then(|s| s.parse().ok())
-                .unwrap_or(10),
-            min_connections: std::env::var("REDIS_MIN_CONNECTIONS")
-                .ok()
-                .and_then(|s| s.parse().ok())
-                .unwrap_or(1),
-            idle_timeout_secs: std::env::var("REDIS_IDLE_TIMEOUT_SECS")
-                .ok()
-                .and_then(|s| s.parse().ok())
-                .unwrap_or(300),
-            max_retries: std::env::var("REDIS_MAX_RETRIES")
-                .ok()
-                .and_then(|s| s.parse().ok())
-                .unwrap_or(3),
-            password: std::env::var("REDIS_PASSWORD").ok(),
-            username: std::env::var("REDIS_USERNAME").ok(),
+            address: default_redis_address(),
+            db: default_redis_db(),
+            timeout_ms: default_redis_timeout(),
+            max_connections: None,
+            min_connections: None,
+            idle_timeout_secs: default_redis_idle_timeout(),
+            max_retries: default_redis_max_retries(),
+            password: None,
+            username: None,
         }
     }
 }
@@ -189,19 +266,20 @@ impl RedisConfig {
             enabled,
             connection_type,
             address,
-            db: std::env::var("REDIS_DB").ok().and_then(|s| s.parse().ok()),
+            db: std::env::var("REDIS_DB")
+                .ok()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(0),
             timeout_ms: std::env::var("REDIS_TIMEOUT_MS")
                 .ok()
                 .and_then(|s| s.parse().ok())
                 .unwrap_or(5000),
             max_connections: std::env::var("REDIS_MAX_CONNECTIONS")
                 .ok()
-                .and_then(|s| s.parse().ok())
-                .unwrap_or(10),
+                .and_then(|s| s.parse().ok()),
             min_connections: std::env::var("REDIS_MIN_CONNECTIONS")
                 .ok()
-                .and_then(|s| s.parse().ok())
-                .unwrap_or(1),
+                .and_then(|s| s.parse().ok()),
             idle_timeout_secs: std::env::var("REDIS_IDLE_TIMEOUT_SECS")
                 .ok()
                 .and_then(|s| s.parse().ok())
@@ -227,13 +305,13 @@ impl RedisConfig {
             ));
         }
 
-        if self.max_connections == 0 {
+        if self.max_connections == Some(0) {
             return Err(ComSrvError::ConfigError(
                 "Redis max_connections must be greater than 0".to_string(),
             ));
         }
 
-        if self.min_connections > self.max_connections {
+        if self.min_connections > Some(0) && self.min_connections > self.max_connections {
             return Err(ComSrvError::ConfigError(
                 "Redis min_connections cannot exceed max_connections".to_string(),
             ));
@@ -246,22 +324,20 @@ impl RedisConfig {
         }
 
         // Validate database number (Redis supports 0-15 by default)
-        if let Some(db) = self.db {
-            if db > 15 {
-                return Err(ComSrvError::ConfigError(
-                    "Redis database number must be between 0-15".to_string(),
-                ));
-            }
+        if self.db > 15 {
+            return Err(ComSrvError::ConfigError(
+                "Redis database number must be between 0-15".to_string(),
+            ));
         }
 
         Ok(())
     }
 
-    /// Convert to Redis connection URL
+    /// Convert to Redis URL string
     pub fn to_redis_url(&self) -> String {
-        let mut url = match self.connection_type {
+        let base_url = match self.connection_type {
             RedisConnectionType::Tcp => {
-                if self.address.starts_with("redis://") {
+                if self.address.starts_with("redis://") || self.address.starts_with("rediss://") {
                     self.address.clone()
                 } else {
                     format!("redis://{}", self.address)
@@ -277,26 +353,16 @@ impl RedisConfig {
         };
 
         // Add authentication if provided
-        if let (Some(username), Some(password)) = (&self.username, &self.password) {
-            url = url.replace("redis://", &format!("redis://{}:{}@", username, password));
+        let auth_url = if let (Some(username), Some(password)) = (&self.username, &self.password) {
+            base_url.replace("://", &format!("://{}:{}@", username, password))
         } else if let Some(password) = &self.password {
-            url = url.replace("redis://", &format!("redis://:{}@", password));
-        }
+            base_url.replace("://", &format!("://:{}@", password))
+        } else {
+            base_url
+        };
 
         // Add database number
-        if let Some(db) = self.db {
-            match self.connection_type {
-                RedisConnectionType::Tcp => {
-                    url = format!("{}/{}", url, db);
-                }
-                RedisConnectionType::Unix => {
-                    let separator = if url.contains('?') { "&" } else { "?" };
-                    url = format!("{}{}db={}", url, separator, db);
-                }
-            }
-        }
-
-        url
+        format!("{}/{}", auth_url, self.db)
     }
 
     /// Get connection timeout as Duration
@@ -319,25 +385,46 @@ pub fn get_redis_config(config: &Config) -> &RedisConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LoggingConfig {
     /// Log level
+    #[serde(default = "default_log_level")]
     pub level: String,
-    /// Log file path
-    pub file: String,
+    /// Log file path (optional)
+    #[serde(default)]
+    pub file: Option<String>,
     /// Maximum log file size in bytes
+    #[serde(default = "default_log_max_size")]
     pub max_size: u64,
     /// Maximum number of log files to keep
+    #[serde(default = "default_log_max_files")]
     pub max_files: u32,
     /// Whether to output logs to console
+    #[serde(default = "default_log_console")]
     pub console: bool,
+}
+
+fn default_log_level() -> String {
+    "info".to_string()
+}
+
+fn default_log_max_size() -> u64 {
+    104857600 // 100MB
+}
+
+fn default_log_max_files() -> u32 {
+    5
+}
+
+fn default_log_console() -> bool {
+    true
 }
 
 impl Default for LoggingConfig {
     fn default() -> Self {
         Self {
-            level: "info".to_string(),
-            file: "/tmp/comsrv.log".to_string(),
-            max_size: 10 * 1024 * 1024, // 10MB
-            max_files: 5,
-            console: true,
+            level: default_log_level(),
+            file: None,
+            max_size: default_log_max_size(),
+            max_files: default_log_max_files(),
+            console: default_log_console(),
         }
     }
 }
@@ -352,26 +439,68 @@ pub enum ChannelParameters {
     ModbusTcp {
         host: String,
         port: u16,
+        #[serde(default = "default_timeout")]
         timeout: u64,
+        #[serde(default = "default_max_retries")]
         max_retries: u32,
-        point_tables: HashMap<String, String>,
-        poll_rate: u64,
+        #[serde(default)]
+        poll_rate: Option<u64>,
+        #[serde(default)]
+        slave_id: Option<u8>,
     },
     /// Modbus RTU specific parameters
     ModbusRtu {
         port: String,
+        #[serde(default = "default_baud_rate")]
         baud_rate: u32,
+        #[serde(default = "default_data_bits")]
         data_bits: u8,
+        #[serde(default = "default_parity")]
         parity: String,
+        #[serde(default = "default_stop_bits")]
         stop_bits: u8,
+        #[serde(default = "default_timeout")]
         timeout: u64,
+        #[serde(default = "default_max_retries")]
         max_retries: u32,
-        point_tables: HashMap<String, String>,
-        poll_rate: u64,
-        slave_id: u8,
+        #[serde(default)]
+        poll_rate: Option<u64>,
+        #[serde(default)]
+        slave_id: Option<u8>,
+    },
+    /// Virtual protocol parameters (no poll_rate needed)
+    Virtual {
+        #[serde(default = "default_max_retries")]
+        max_retries: u32,
+        #[serde(default = "default_timeout")]
+        timeout: u64,
     },
     /// Generic parameters as HashMap
     Generic(HashMap<String, serde_yaml::Value>),
+}
+
+fn default_timeout() -> u64 {
+    1000
+}
+
+fn default_max_retries() -> u32 {
+    3
+}
+
+fn default_baud_rate() -> u32 {
+    9600
+}
+
+fn default_data_bits() -> u8 {
+    8
+}
+
+fn default_parity() -> String {
+    "None".to_string()
+}
+
+fn default_stop_bits() -> u8 {
+    1
 }
 
 impl ChannelParameters {
@@ -383,14 +512,14 @@ impl ChannelParameters {
                 port,
                 timeout,
                 max_retries,
-                point_tables: _,
                 poll_rate,
+                ..
             } => match key {
                 "host" => Some(serde_yaml::Value::String(host.clone())),
                 "port" => Some(serde_yaml::Value::Number((*port).into())),
                 "timeout" => Some(serde_yaml::Value::Number((*timeout).into())),
                 "max_retries" => Some(serde_yaml::Value::Number((*max_retries).into())),
-                "poll_rate" => Some(serde_yaml::Value::Number((*poll_rate).into())),
+                "poll_rate" => poll_rate.map(|v| serde_yaml::Value::Number(v.into())),
                 _ => None,
             },
             ChannelParameters::ModbusRtu {
@@ -401,9 +530,9 @@ impl ChannelParameters {
                 stop_bits,
                 timeout,
                 max_retries,
-                point_tables: _,
                 poll_rate,
                 slave_id,
+                ..
             } => match key {
                 "port" => Some(serde_yaml::Value::String(port.clone())),
                 "baud_rate" => Some(serde_yaml::Value::Number((*baud_rate).into())),
@@ -412,8 +541,13 @@ impl ChannelParameters {
                 "stop_bits" => Some(serde_yaml::Value::Number((*stop_bits).into())),
                 "timeout" => Some(serde_yaml::Value::Number((*timeout).into())),
                 "max_retries" => Some(serde_yaml::Value::Number((*max_retries).into())),
-                "poll_rate" => Some(serde_yaml::Value::Number((*poll_rate).into())),
-                "slave_id" => Some(serde_yaml::Value::Number((*slave_id).into())),
+                "poll_rate" => poll_rate.map(|v| serde_yaml::Value::Number(v.into())),
+                "slave_id" => slave_id.map(|v| serde_yaml::Value::Number(v.into())),
+                _ => None,
+            },
+            ChannelParameters::Virtual { max_retries, timeout } => match key {
+                "max_retries" => Some(serde_yaml::Value::Number((*max_retries).into())),
+                "timeout" => Some(serde_yaml::Value::Number((*timeout).into())),
                 _ => None,
             },
             ChannelParameters::Generic(map) => map.get(key).cloned(),
@@ -484,6 +618,7 @@ impl FromStr for ProtocolType {
 /// * `description` - Detailed description of the channel purpose
 /// * `protocol` - Protocol type (ModbusTcp, ModbusRtu, etc.)
 /// * `parameters` - Protocol-specific configuration parameters
+/// * `point_table` - Point table configuration for this channel
 ///
 /// # Examples
 ///
@@ -497,6 +632,9 @@ impl FromStr for ProtocolType {
 ///     description: "Main temperature sensor".to_string(),
 ///     protocol: ProtocolType::ModbusTcp,
 ///     parameters: ChannelParameters::Generic(HashMap::new()),
+///     point_table: None,
+///     source_tables: None,
+///     csv_config: None,
 /// };
 /// ```
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -505,13 +643,20 @@ pub struct ChannelConfig {
     pub id: u16,
     /// Human readable name
     pub name: String,
-    /// Channel description
-    pub description: String,
+    /// Channel description (optional)
+    #[serde(default)]
+    pub description: Option<String>,
     /// Protocol type (e.g., "modbus_rtu", "modbus_tcp")
     pub protocol: ProtocolType,
     /// Protocol-specific parameters
     pub parameters: ChannelParameters,
-    /// CSV configuration for ComBase point tables
+    /// Point table configuration for this channel (ComBase 四遥点表)
+    #[serde(default)]
+    pub point_table: Option<ChannelPointTableConfig>,
+    /// Source table configuration for this channel - completely optional
+    #[serde(default)]
+    pub source_tables: Option<ChannelSourceTableConfig>,
+    /// CSV configuration for ComBase point tables (deprecated - use point_table instead)
     #[serde(default)]
     pub csv_config: Option<ChannelCsvConfig>,
 }
@@ -521,11 +666,153 @@ impl Default for ChannelConfig {
         Self {
             id: 1,
             name: "Default Channel".to_string(),
-            description: "Default channel description".to_string(),
+            description: Some("Default channel description".to_string()),
             protocol: ProtocolType::Virtual,
-            parameters: ChannelParameters::Generic(HashMap::new()),
-            csv_config: Some(ChannelCsvConfig::default()),
+            parameters: ChannelParameters::Virtual {
+                max_retries: default_max_retries(),
+                timeout: default_timeout(),
+            },
+            point_table: Some(ChannelPointTableConfig::default()),
+            source_tables: None, // Source tables are completely optional
+            csv_config: None,
         }
+    }
+}
+
+/// Channel-level point table configuration
+///
+/// This configuration specifies how point tables are organized for each channel.
+/// Supports both default path structure and custom paths.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChannelPointTableConfig {
+    /// Whether point table is enabled for this channel
+    pub enabled: bool,
+    /// Use default path structure (config/channels/channel_{id}_{name}/combase/)
+    #[serde(default)]
+    pub use_defaults: Option<bool>,
+    /// Custom directory (overrides default if use_defaults is false)
+    #[serde(default)]
+    pub directory: Option<String>,
+    /// Custom file names (overrides defaults if specified)
+    #[serde(default)]
+    pub telemetry_file: Option<String>,
+    #[serde(default)]
+    pub signaling_file: Option<String>,
+    #[serde(default)]
+    pub control_file: Option<String>,
+    #[serde(default)]
+    pub setpoint_file: Option<String>,
+    /// Whether to watch for file changes
+    pub watch_changes: bool,
+    /// Reload interval in seconds
+    pub reload_interval: u64,
+}
+
+/// Channel source table configuration
+///
+/// Configuration for protocol source tables that define data sources
+/// and their mapping to point tables.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChannelSourceTableConfig {
+    /// Whether source table loading is enabled
+    pub enabled: bool,
+    /// Use default path structure (config/channels/channel_{id}_{name}/protocol/)
+    #[serde(default)]
+    pub use_defaults: Option<bool>,
+    /// Custom directory (overrides default if use_defaults is false)
+    #[serde(default)]
+    pub directory: Option<String>,
+    /// Custom source table files (overrides defaults if specified)
+    #[serde(default)]
+    pub modbus_tcp_source: Option<String>,
+    #[serde(default)]
+    pub modbus_rtu_source: Option<String>,
+    #[serde(default)]
+    pub calculation_source: Option<String>,
+    #[serde(default)]
+    pub manual_source: Option<String>,
+    /// Redis prefix for source table data
+    #[serde(default)]
+    pub redis_prefix: Option<String>,
+}
+
+impl Default for ChannelPointTableConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            use_defaults: Some(true),
+            directory: None,
+            telemetry_file: None,
+            signaling_file: None,
+            control_file: None,
+            setpoint_file: None,
+            watch_changes: true,
+            reload_interval: 60,
+        }
+    }
+}
+
+impl Default for ChannelSourceTableConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            use_defaults: Some(true),
+            directory: None,
+            modbus_tcp_source: None,
+            modbus_rtu_source: None,
+            calculation_source: None,
+            manual_source: None,
+            redis_prefix: None,
+        }
+    }
+}
+
+impl ChannelPointTableConfig {
+    /// Get the full path to a specific telemetry type CSV file
+    pub fn get_csv_path(&self, telemetry_type: TelemetryType, defaults: &DefaultPathConfig, channel_id: u16, channel_name: &str) -> Option<PathBuf> {
+        // Determine the directory
+        let directory = if self.use_defaults.unwrap_or(true) {
+            // Use default path: config/channels/channel_{id}_{name}/combase/
+            let channel_dir = format!("channel_{}_{}", channel_id, channel_name.to_lowercase().replace(' ', "_"));
+            PathBuf::from("config")
+                .join(&defaults.channels_root)
+                .join(channel_dir)
+                .join(&defaults.combase_dir)
+        } else {
+            // Use custom directory
+            PathBuf::from(self.directory.as_ref()?)
+        };
+
+        // Determine the filename
+        let filename = match telemetry_type {
+            TelemetryType::Telemetry => {
+                self.telemetry_file.as_ref()
+                    .unwrap_or(&defaults.filenames.telemetry)
+            },
+            TelemetryType::Signaling => {
+                self.signaling_file.as_ref()
+                    .unwrap_or(&defaults.filenames.signaling)
+            },
+            TelemetryType::Control => {
+                self.control_file.as_ref()
+                    .unwrap_or(&defaults.filenames.control)
+            },
+            TelemetryType::Setpoint => {
+                self.setpoint_file.as_ref()
+                    .unwrap_or(&defaults.filenames.setpoint)
+            },
+        };
+        
+        Some(directory.join(filename))
+    }
+    
+    /// Check if all required point table files are configured
+    pub fn is_complete(&self) -> bool {
+        self.enabled && 
+        self.telemetry_file.is_some() && 
+        self.signaling_file.is_some() && 
+        self.control_file.is_some() && 
+        self.setpoint_file.is_some()
     }
 }
 
@@ -536,12 +823,14 @@ pub struct Config {
     pub version: String,
     /// Service configuration
     pub service: ServiceConfig,
+    /// Default path configuration for channels and tables
+    #[serde(default)]
+    pub defaults: DefaultPathConfig,
     /// Channel configurations
     pub channels: Vec<ChannelConfig>,
 }
 
-/// Configuration manager
-#[derive(Clone)]
+/// Configuration manager for the communication service
 pub struct ConfigManager {
     /// Configuration data
     config: Config,
@@ -549,56 +838,210 @@ pub struct ConfigManager {
     config_path: String,
     /// CSV point table manager
     csv_point_manager: FourTelemetryTableManager,
+    /// Optional Redis store for configuration data
+    redis_store: Option<crate::core::storage::redis_storage::RedisStore>,
+}
+
+impl Clone for ConfigManager {
+    fn clone(&self) -> Self {
+        // Create a new point table manager with CSV storage using a temporary directory
+        let temp_dir = std::env::temp_dir().join(format!("comsrv_clone_{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&temp_dir);
+        let csv_storage = Box::new(crate::core::config::storage::CsvPointTableStorage::new(&temp_dir));
+        let csv_point_manager = FourTelemetryTableManager::new(csv_storage);
+
+        Self {
+            config: self.config.clone(),
+            config_path: self.config_path.clone(),
+            csv_point_manager,
+            redis_store: self.redis_store.clone(),
+        }
+    }
 }
 
 impl ConfigManager {
-    /// Create config manager from configuration file
+    /// Create configuration manager from file
     pub fn from_file(config_path: impl AsRef<Path>) -> Result<Self> {
         let config_path = config_path.as_ref().to_string_lossy().to_string();
         let config = Self::load_config(&config_path)?;
 
-        // Create empty CSV point manager (not used in new architecture)
-        let csv_point_manager = FourTelemetryTableManager::new();
+        // Create point table manager with CSV storage using a temporary directory
+        let temp_dir = std::env::temp_dir().join(format!("comsrv_config_{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&temp_dir);
+        let csv_storage = Box::new(crate::core::config::storage::CsvPointTableStorage::new(&temp_dir));
+        let csv_point_manager = FourTelemetryTableManager::new(csv_storage);
 
-        let manager = Self {
+        let mut manager = Self {
             config,
             config_path,
             csv_point_manager,
+            redis_store: None,
         };
 
-        // Validate the configuration
         manager.validate_config()?;
+        Ok(manager)
+    }
+
+    /// Create configuration manager with Redis storage support
+    pub async fn from_file_with_redis(
+        config_path: impl AsRef<Path>,
+        redis_store: crate::core::storage::redis_storage::RedisStore,
+    ) -> Result<Self> {
+        let config_path = config_path.as_ref().to_string_lossy().to_string();
+        let config = Self::load_config(&config_path)?;
+
+        // Create point table manager with CSV storage using a temporary directory
+        let temp_dir = std::env::temp_dir().join(format!("comsrv_redis_{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&temp_dir);
+        let csv_storage = Box::new(crate::core::config::storage::CsvPointTableStorage::new(&temp_dir));
+        let csv_point_manager = FourTelemetryTableManager::new(csv_storage);
+
+        let mut manager = Self {
+            config,
+            config_path,
+            csv_point_manager,
+            redis_store: Some(redis_store.clone()),
+        };
+
+        manager.validate_config()?;
+
+        // Store initial configuration to Redis
+        if let Err(e) = manager.sync_config_to_redis().await {
+            log::warn!("Failed to sync initial configuration to Redis: {}", e);
+        }
 
         Ok(manager)
     }
 
-    /// Load configuration from file with enhanced error handling
-    fn load_config(config_path: &str) -> Result<Config> {
-        // Check if file exists
-        if !std::path::Path::new(config_path).exists() {
-            return Err(ComSrvError::ConfigError(format!(
-                "Configuration file not found: {}",
-                config_path
-            )));
+    /// Enable Redis storage for configuration data
+    pub async fn enable_redis_storage(&mut self, redis_store: crate::core::storage::redis_storage::RedisStore) -> Result<()> {
+        self.redis_store = Some(redis_store);
+        
+        // Sync current configuration to Redis
+        self.sync_config_to_redis().await?;
+        
+        log::info!("Redis storage enabled for ConfigManager");
+        Ok(())
+    }
+
+    /// Disable Redis storage
+    pub fn disable_redis_storage(&mut self) {
+        if self.redis_store.is_some() {
+            self.redis_store = None;
+            log::info!("Redis storage disabled for ConfigManager");
+        }
+    }
+
+    /// Check if Redis storage is enabled
+    pub fn is_redis_enabled(&self) -> bool {
+        self.redis_store.is_some()
+    }
+
+    /// Synchronize current configuration to Redis
+    pub async fn sync_config_to_redis(&self) -> Result<()> {
+        if let Some(ref redis_store) = self.redis_store {
+            // Store service configuration
+            let service_config_data = crate::core::storage::redis_storage::RedisConfigData {
+                config_type: "service".to_string(),
+                data: serde_json::to_value(&self.config.service)?,
+                version: self.config.version.clone(),
+                last_updated: chrono::Utc::now().format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string(),
+            };
+            redis_store.set_config_data("service", &service_config_data).await?;
+
+            // Store each channel configuration
+            for channel in &self.config.channels {
+                let channel_config_data = crate::core::storage::redis_storage::RedisConfigData {
+                    config_type: "channel".to_string(),
+                    data: serde_json::to_value(channel)?,
+                    version: self.config.version.clone(),
+                    last_updated: chrono::Utc::now().format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string(),
+                };
+                let config_key = format!("channel_{}", channel.id);
+                redis_store.set_config_data(&config_key, &channel_config_data).await?;
+            }
+
+            log::debug!("Synchronized configuration to Redis: service + {} channels", self.config.channels.len());
+        }
+        Ok(())
+    }
+
+    /// Load configuration from Redis (if available) or fallback to file
+    pub async fn load_config_from_redis(&mut self) -> Result<bool> {
+        if let Some(ref redis_store) = self.redis_store {
+            // Try to load service configuration from Redis
+            if let Some(service_config_data) = redis_store.get_config_data("service").await? {
+                let service_config: ServiceConfig = serde_json::from_value(service_config_data.data)?;
+                
+                // Load channel configurations
+                let config_names = redis_store.list_config_names().await?;
+                let mut channels = Vec::new();
+                
+                for config_name in config_names {
+                    if config_name.starts_with("channel_") {
+                        if let Some(channel_config_data) = redis_store.get_config_data(&config_name).await? {
+                            let channel_config: ChannelConfig = serde_json::from_value(channel_config_data.data)?;
+                            channels.push(channel_config);
+                        }
+                    }
+                }
+
+                // Sort channels by ID
+                channels.sort_by_key(|c| c.id);
+
+                // Update configuration
+                self.config.service = service_config;
+                self.config.channels = channels;
+
+                log::info!("Loaded configuration from Redis: service + {} channels", self.config.channels.len());
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
+    /// Add or update a channel configuration
+    pub async fn upsert_channel(&mut self, channel: ChannelConfig) -> Result<()> {
+        // Update in-memory configuration
+        if let Some(existing) = self.config.channels.iter_mut().find(|c| c.id == channel.id) {
+            *existing = channel.clone();
+        } else {
+            self.config.channels.push(channel.clone());
+            self.config.channels.sort_by_key(|c| c.id);
         }
 
-        // Read file content
-        let content = fs::read_to_string(config_path).map_err(|e| {
-            ComSrvError::ConfigError(format!(
-                "Failed to read configuration file {}: {}",
-                config_path, e
-            ))
-        })?;
+        // Update Redis if enabled
+        if let Some(ref redis_store) = self.redis_store {
+            let channel_config_data = crate::core::storage::redis_storage::RedisConfigData {
+                config_type: "channel".to_string(),
+                data: serde_json::to_value(&channel)?,
+                version: self.config.version.clone(),
+                last_updated: chrono::Utc::now().format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string(),
+            };
+            let config_key = format!("channel_{}", channel.id);
+            redis_store.set_config_data(&config_key, &channel_config_data).await?;
+            
+            log::debug!("Updated channel {} configuration in Redis", channel.id);
+        }
 
-        // Parse YAML content
-        let config: Config = serde_yaml::from_str(&content).map_err(|e| {
-            ComSrvError::ConfigError(format!(
-                "Failed to parse configuration file {}: {}",
-                config_path, e
-            ))
-        })?;
+        Ok(())
+    }
 
-        Ok(config)
+    /// Remove a channel configuration
+    pub async fn remove_channel(&mut self, channel_id: u16) -> Result<bool> {
+        let removed = self.config.channels.iter().position(|c| c.id == channel_id)
+            .map(|index| self.config.channels.remove(index))
+            .is_some();
+
+        // Remove from Redis if enabled
+        if let Some(ref redis_store) = self.redis_store {
+            let config_key = format!("channel_{}", channel_id);
+            redis_store.delete_key(&format!("comsrv:config:{}", config_key)).await?;
+            
+            log::debug!("Removed channel {} configuration from Redis", channel_id);
+        }
+
+        Ok(removed)
     }
 
     /// Validate the loaded configuration
@@ -688,11 +1131,13 @@ impl ConfigManager {
                         channel.id
                     )));
                 }
-                if *poll_rate == 0 {
-                    return Err(ComSrvError::ConfigError(format!(
-                        "Poll rate cannot be 0 for channel {}",
-                        channel.id
-                    )));
+                if let Some(rate) = poll_rate {
+                    if *rate == 0 {
+                        return Err(ComSrvError::ConfigError(format!(
+                            "Poll rate cannot be 0 for channel {}",
+                            channel.id
+                        )));
+                    }
                 }
             }
             ChannelParameters::ModbusRtu {
@@ -728,16 +1173,34 @@ impl ConfigManager {
                         channel.id
                     )));
                 }
-                if *poll_rate == 0 {
+                if let Some(rate) = poll_rate {
+                    if *rate == 0 {
+                        return Err(ComSrvError::ConfigError(format!(
+                            "Poll rate cannot be 0 for channel {}",
+                            channel.id
+                        )));
+                    }
+                }
+                if let Some(sid) = slave_id {
+                    if *sid == 0 || *sid > 247 {
+                        return Err(ComSrvError::ConfigError(format!(
+                            "Invalid slave ID {} for channel {}. Must be between 1 and 247",
+                            sid, channel.id
+                        )));
+                    }
+                }
+            }
+            ChannelParameters::Virtual { max_retries, timeout } => {
+                if *timeout == 0 {
                     return Err(ComSrvError::ConfigError(format!(
-                        "Poll rate cannot be 0 for channel {}",
+                        "Timeout cannot be 0 for channel {}",
                         channel.id
                     )));
                 }
-                if *slave_id == 0 || *slave_id > 247 {
+                if *max_retries > 10 {
                     return Err(ComSrvError::ConfigError(format!(
-                        "Invalid slave ID {} for channel {}. Must be between 1 and 247",
-                        slave_id, channel.id
+                        "Max retries should not exceed 10 for channel {}",
+                        channel.id
                     )));
                 }
             }
@@ -804,7 +1267,7 @@ impl ConfigManager {
 
     /// Get log file path
     pub fn get_log_file(&self) -> &str {
-        &self.config.service.logging.file
+        self.config.service.logging.file.as_deref().unwrap_or("")
     }
 
     /// Get redis configuration
@@ -909,16 +1372,16 @@ impl ConfigManager {
                                 port: new_port,
                                 timeout: new_timeout,
                                 max_retries: new_max_retries,
-                                point_tables: new_point_tables,
                                 poll_rate: new_poll_rate,
+                                slave_id: new_slave_id,
                             },
                             ChannelParameters::ModbusTcp {
                                 host: existing_host,
                                 port: existing_port,
                                 timeout: existing_timeout,
                                 max_retries: existing_max_retries,
-                                point_tables: existing_point_tables,
                                 poll_rate: existing_poll_rate,
+                                slave_id: existing_slave_id,
                             },
                         ) => {
                             if new_host != existing_host {
@@ -936,8 +1399,8 @@ impl ConfigManager {
                             if new_poll_rate != existing_poll_rate {
                                 changed_properties.push("parameters.poll_rate".to_string());
                             }
-                            if new_point_tables != existing_point_tables {
-                                changed_properties.push("parameters.point_tables".to_string());
+                            if new_slave_id != existing_slave_id {
+                                changed_properties.push("parameters.slave_id".to_string());
                             }
                         }
                         (
@@ -949,7 +1412,6 @@ impl ConfigManager {
                                 stop_bits: new_stop_bits,
                                 timeout: new_timeout,
                                 max_retries: new_max_retries,
-                                point_tables: new_point_tables,
                                 poll_rate: new_poll_rate,
                                 slave_id: new_slave_id,
                             },
@@ -961,7 +1423,6 @@ impl ConfigManager {
                                 stop_bits: existing_stop_bits,
                                 timeout: existing_timeout,
                                 max_retries: existing_max_retries,
-                                point_tables: existing_point_tables,
                                 poll_rate: existing_poll_rate,
                                 slave_id: existing_slave_id,
                             },
@@ -993,8 +1454,16 @@ impl ConfigManager {
                             if new_slave_id != existing_slave_id {
                                 changed_properties.push("parameters.slave_id".to_string());
                             }
-                            if new_point_tables != existing_point_tables {
-                                changed_properties.push("parameters.point_tables".to_string());
+                        }
+                        (
+                            ChannelParameters::Virtual { max_retries: new_max_retries, timeout: new_timeout },
+                            ChannelParameters::Virtual { max_retries: existing_max_retries, timeout: existing_timeout },
+                        ) => {
+                            if new_timeout != existing_timeout {
+                                changed_properties.push("parameters.timeout".to_string());
+                            }
+                            if new_max_retries != existing_max_retries {
+                                changed_properties.push("parameters.max_retries".to_string());
                             }
                         }
                         (
@@ -1072,6 +1541,16 @@ impl ConfigManager {
         &mut self.csv_point_manager
     }
 
+    /// Get point table manager (new storage abstraction)
+    pub fn get_point_table_manager(&self) -> &FourTelemetryTableManager {
+        &self.csv_point_manager
+    }
+
+    /// Get mutable point table manager (new storage abstraction)
+    pub fn get_point_table_manager_mut(&mut self) -> &mut FourTelemetryTableManager {
+        &mut self.csv_point_manager
+    }
+
     /// Reload CSV point tables
     pub fn reload_csv_point_tables(&mut self) -> Result<()> {
         // In the new architecture, CSV tables are loaded per-channel, not globally
@@ -1082,7 +1561,9 @@ impl ConfigManager {
 
     /// Get point table names
     pub fn get_point_table_names(&self) -> Vec<String> {
-        self.csv_point_manager.get_channel_names()
+        // For backward compatibility, return empty list for now
+        // TODO: Consider making this method async or using a different approach
+        Vec::new()
     }
 
     /// Get Modbus mappings for a specific channel
@@ -1106,10 +1587,20 @@ impl ConfigManager {
     /// Get point table name from channel parameters
     fn get_channel_point_table(&self, parameters: &ChannelParameters) -> Option<String> {
         match parameters {
-            ChannelParameters::ModbusTcp { point_tables, .. }
-            | ChannelParameters::ModbusRtu { point_tables, .. } => {
-                // Use the first point table if multiple are configured
-                point_tables.keys().next().cloned()
+            ChannelParameters::ModbusTcp { .. } => {
+                // For typed parameters, we don't store point table names in parameters anymore
+                // Point tables are managed through the new ChannelPointTableConfig
+                None
+            }
+            ChannelParameters::ModbusRtu { .. } => {
+                // For typed parameters, we don't store point table names in parameters anymore
+                // Point tables are managed through the new ChannelPointTableConfig
+                None
+            }
+            ChannelParameters::Virtual { .. } => {
+                // For typed parameters, we don't store point table names in parameters anymore
+                // Point tables are managed through the new ChannelPointTableConfig
+                None
             }
             ChannelParameters::Generic(map) => {
                 // Look for point_table parameter in generic parameters
@@ -1133,16 +1624,16 @@ impl ConfigManager {
             .ok_or_else(|| ComSrvError::ConfigError(format!("Channel {} not found", channel_id)))?;
 
         match &mut channel.parameters {
-            ChannelParameters::ModbusTcp { point_tables, .. }
-            | ChannelParameters::ModbusRtu { point_tables, .. } => {
-                point_tables.clear();
-                point_tables.insert("default".to_string(), table_name);
-            }
             ChannelParameters::Generic(map) => {
                 map.insert(
                     "point_table".to_string(),
                     serde_yaml::Value::String(table_name),
                 );
+            }
+            _ => {
+                // For typed parameters, point tables are now managed through ChannelPointTableConfig
+                // This method is kept for backward compatibility but doesn't modify typed parameters
+                log::warn!("Point table updates for typed parameters are no longer supported. Use ChannelPointTableConfig instead.");
             }
         }
 
@@ -1154,9 +1645,14 @@ impl ConfigManager {
         &mut self.config.channels
     }
 
-    /// Get CSV configuration for a specific channel
+    /// Get CSV configuration for a specific channel (deprecated - use get_channel_point_table_config instead)
     pub fn get_channel_csv_config(&self, channel_id: u16) -> Option<&ChannelCsvConfig> {
         self.get_channel(channel_id)?.csv_config.as_ref()
+    }
+
+    /// Get point table configuration for a specific channel
+    pub fn get_channel_point_table_config(&self, channel_id: u16) -> Option<&ChannelPointTableConfig> {
+        self.get_channel(channel_id)?.point_table.as_ref()
     }
 
     /// Get the CSV path for a specific channel and telemetry type
@@ -1196,6 +1692,35 @@ impl ConfigManager {
         let mut combase_manager = CombaseConfigManager::new(base_dir);
         combase_manager.load_all_configs()?;
         Ok(combase_manager)
+    }
+
+    /// Load configuration from file with enhanced error handling
+    fn load_config(config_path: &str) -> Result<Config> {
+        // Check if file exists
+        if !std::path::Path::new(config_path).exists() {
+            return Err(ComSrvError::ConfigError(format!(
+                "Configuration file not found: {}",
+                config_path
+            )));
+        }
+
+        // Read file content
+        let content = fs::read_to_string(config_path).map_err(|e| {
+            ComSrvError::ConfigError(format!(
+                "Failed to read configuration file {}: {}",
+                config_path, e
+            ))
+        })?;
+
+        // Parse YAML content
+        let config: Config = serde_yaml::from_str(&content).map_err(|e| {
+            ComSrvError::ConfigError(format!(
+                "Failed to parse configuration file {}: {}",
+                config_path, e
+            ))
+        })?;
+
+        Ok(config)
     }
 }
 
@@ -1401,8 +1926,8 @@ channels:
             port: 502,
             timeout: 5000,
             max_retries: 3,
-            point_tables: HashMap::new(),
-            poll_rate: 1000,
+            poll_rate: Some(1000),
+            slave_id: Some(1),
         };
 
         if let Some(host) = tcp_params.get("host") {
@@ -1426,9 +1951,8 @@ channels:
             stop_bits: 1,
             timeout: 5000,
             max_retries: 3,
-            point_tables: HashMap::new(),
-            poll_rate: 1000,
-            slave_id: 1,
+            poll_rate: Some(1000),
+            slave_id: Some(1),
         };
 
         if let Some(port) = rtu_params.get("port") {
@@ -1461,32 +1985,34 @@ channels:
             version: "1.0".to_string(),
             service: ServiceConfig {
                 name: "test_service".to_string(),
-                description: "Test service for serialization".to_string(),
-
+                description: Some("Test service for serialization".to_string()),
                 logging: LoggingConfig::default(),
                 api: ApiConfig::default(),
                 redis: RedisConfig::default(),
             },
+            defaults: DefaultPathConfig::default(),
             channels: vec![
                 ChannelConfig {
                     id: 1,
                     name: "Test TCP Channel".to_string(),
-                    description: "TCP test channel".to_string(),
+                    description: Some("TCP test channel".to_string()),
                     protocol: ProtocolType::ModbusTcp,
                     parameters: ChannelParameters::ModbusTcp {
                         host: "192.168.1.100".to_string(),
                         port: 502,
                         timeout: 5000,
                         max_retries: 3,
-                        point_tables: HashMap::new(),
-                        poll_rate: 1000,
+                        poll_rate: Some(1000),
+                        slave_id: Some(1),
                     },
+                    point_table: Some(ChannelPointTableConfig::default()),
+                    source_tables: None,
                     csv_config: Some(ChannelCsvConfig::default()),
                 },
                 ChannelConfig {
                     id: 2,
                     name: "Test RTU Channel".to_string(),
-                    description: "RTU test channel".to_string(),
+                    description: Some("RTU test channel".to_string()),
                     protocol: ProtocolType::ModbusRtu,
                     parameters: ChannelParameters::ModbusRtu {
                         port: "/dev/ttyUSB0".to_string(),
@@ -1496,10 +2022,11 @@ channels:
                         stop_bits: 1,
                         timeout: 5000,
                         max_retries: 3,
-                        point_tables: HashMap::new(),
-                        poll_rate: 1000,
-                        slave_id: 1,
+                        poll_rate: Some(1000),
+                        slave_id: Some(1),
                     },
+                    point_table: Some(ChannelPointTableConfig::default()),
+                    source_tables: None,
                     csv_config: Some(ChannelCsvConfig::default()),
                 },
             ],
@@ -1532,10 +2059,10 @@ channels:
             enabled: true,
             connection_type: RedisConnectionType::Tcp,
             address: "127.0.0.1:6379".to_string(),
-            db: Some(0),
+            db: 0,
             timeout_ms: 5000,
-            max_connections: 10,
-            min_connections: 1,
+            max_connections: None,
+            min_connections: None,
             idle_timeout_secs: 300,
             max_retries: 3,
             password: None,
@@ -1550,10 +2077,10 @@ channels:
             enabled: true,
             connection_type: RedisConnectionType::Unix,
             address: "/tmp/redis.sock".to_string(),
-            db: None,
+            db: 0,
             timeout_ms: 5000,
-            max_connections: 10,
-            min_connections: 1,
+            max_connections: None,
+            min_connections: None,
             idle_timeout_secs: 300,
             max_retries: 3,
             password: None,
@@ -1568,10 +2095,10 @@ channels:
             enabled: true,
             connection_type: RedisConnectionType::Tcp,
             address: "127.0.0.1:6379".to_string(),
-            db: None,
+            db: 0,
             timeout_ms: 5000,
-            max_connections: 10,
-            min_connections: 1,
+            max_connections: None,
+            min_connections: None,
             idle_timeout_secs: 300,
             max_retries: 3,
             password: None,
@@ -1734,6 +2261,101 @@ pub enum CombaseDataType {
     Bool,
 }
 
+/// 数据来源类型枚举（简化版本）
+/// Data Source Type Enumeration (Simplified)
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum DataSourceType {
+    /// 协议数据 - 通过协议配置ID关联
+    Protocol {
+        /// 协议配置ID/索引
+        config_id: String,
+    },
+    /// 计算数据 - 通过计算配置ID关联
+    Calculation {
+        /// 计算配置ID
+        calculation_id: String,
+    },
+    /// 手动输入 - 简单的手动值配置
+    Manual {
+        /// 是否允许运行时修改
+        editable: bool,
+        /// 默认值（可选）
+        default_value: Option<serde_json::Value>,
+    },
+}
+
+impl DataSourceType {
+    /// 检查数据来源是否为只读
+    pub fn is_read_only(&self) -> bool {
+        match self {
+            DataSourceType::Protocol { .. } => true,
+            DataSourceType::Calculation { .. } => true,
+            DataSourceType::Manual { editable, .. } => !editable,
+        }
+    }
+
+    /// 获取数据来源的显示名称
+    pub fn display_name(&self) -> String {
+        match self {
+            DataSourceType::Protocol { config_id } => {
+                format!("协议({})", config_id)
+            }
+            DataSourceType::Calculation { calculation_id } => {
+                format!("计算({})", calculation_id)
+            }
+            DataSourceType::Manual { editable, .. } => {
+                if *editable {
+                    "手动(可编辑)".to_string()
+                } else {
+                    "手动(固定)".to_string()
+                }
+            }
+        }
+    }
+
+    /// 获取关联的配置ID
+    pub fn get_config_id(&self) -> Option<&str> {
+        match self {
+            DataSourceType::Protocol { config_id } => Some(config_id),
+            DataSourceType::Calculation { calculation_id } => Some(calculation_id),
+            DataSourceType::Manual { .. } => None,
+        }
+    }
+
+    /// 验证数据来源配置的有效性
+    pub fn validate(&self) -> Result<()> {
+        match self {
+            DataSourceType::Protocol { config_id } => {
+                if config_id.is_empty() {
+                    return Err(ComSrvError::ConfigError(
+                        "Protocol config ID cannot be empty".to_string(),
+                    ));
+                }
+            }
+            DataSourceType::Calculation { calculation_id } => {
+                if calculation_id.is_empty() {
+                    return Err(ComSrvError::ConfigError(
+                        "Calculation ID cannot be empty".to_string(),
+                    ));
+                }
+            }
+            DataSourceType::Manual { .. } => {
+                // Manual data source is always valid
+            }
+        }
+        Ok(())
+    }
+}
+
+impl Default for DataSourceType {
+    fn default() -> Self {
+        DataSourceType::Manual {
+            editable: true,
+            default_value: None,
+        }
+    }
+}
+
 /// Analog point configuration (Telemetry & Setpoint)
 /// 模拟量点位配置（遥测和遥调）
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1744,6 +2366,9 @@ pub struct AnalogPointConfig {
     pub name: String,
     /// Chinese name
     pub chinese_name: String,
+    /// Data source type 
+    #[serde(default)]
+    pub data_source: DataSourceType,
     /// Scale factor for engineering unit conversion
     pub scale: f64,
     /// Offset for engineering unit conversion
@@ -1778,6 +2403,9 @@ pub struct DigitalPointConfig {
     pub name: String,
     /// Chinese name
     pub chinese_name: String,
+    /// Data source type
+    #[serde(default)]
+    pub data_source: DataSourceType,
     /// Description
     pub description: Option<String>,
     /// Group identifier
@@ -2067,6 +2695,7 @@ mod combase_tests {
             id: 1,
             name: "test".to_string(),
             chinese_name: "测试".to_string(),
+            data_source: DataSourceType::default(),
             scale: 0.1,
             offset: 10.0,
             unit: Some("°C".to_string()),
@@ -2159,6 +2788,7 @@ mod combase_tests {
                 id: 1,
                 name: "test1".to_string(),
                 chinese_name: "测试1".to_string(),
+                data_source: DataSourceType::default(),
                 scale: 1.0,
                 offset: 0.0,
                 unit: None,
@@ -2174,6 +2804,7 @@ mod combase_tests {
                 id: 1,
                 name: "test2".to_string(),
                 chinese_name: "测试2".to_string(),
+                data_source: DataSourceType::default(),
                 description: None,
                 group: None,
             }),
@@ -2184,6 +2815,7 @@ mod combase_tests {
                 id: 2,
                 name: "test3".to_string(),
                 chinese_name: "测试3".to_string(),
+                data_source: DataSourceType::default(),
                 description: None,
                 group: None,
             }),
@@ -2259,4 +2891,387 @@ impl ChannelCsvConfig {
             && self.control_file.is_some()
             && self.setpoint_file.is_some()
     }
+}
+
+/// Data source configuration using table reference approach
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DataSource {
+    /// Source table name (e.g., "modbus_tcp", "calculation", "manual")
+    pub source_table: String,
+    /// Source data index/ID within the table (must be numeric)
+    pub source_data: u32,
+}
+
+impl Default for DataSource {
+    fn default() -> Self {
+        Self {
+            source_table: "manual".to_string(),
+            source_data: 1,
+        }
+    }
+}
+
+/// Modbus TCP source table entry
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ModbusTcpSource {
+    pub source_id: u32,
+    pub protocol_type: String,
+    pub slave_id: u8,
+    pub function_code: u8,
+    pub register_address: u16,
+    pub data_type: String,
+    pub byte_order: String,
+    pub bit_index: Option<u8>,
+    pub scaling_factor: Option<f64>,
+    pub description: Option<String>,
+}
+
+/// Calculation source table entry
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CalculationSource {
+    pub source_id: u32,
+    pub calculation_type: String,
+    pub expression: String,
+    pub source_points: String,  // Comma-separated point IDs
+    pub update_interval_ms: u64,
+    pub description: Option<String>,
+}
+
+/// Manual source table entry
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ManualSource {
+    pub source_id: u32,
+    pub manual_type: String,
+    pub editable: bool,
+    pub default_value: String,
+    pub value_type: String,
+    pub description: Option<String>,
+}
+
+/// Source tables container using Redis storage
+#[derive(Debug, Clone)]
+pub struct SourceTables {
+    redis_client: Client,
+    key_prefix: String,
+}
+
+impl SourceTables {
+    /// Create new SourceTables with Redis client
+    pub fn new(redis_url: &str, key_prefix: Option<&str>) -> Result<Self> {
+        let redis_client = Client::open(redis_url)
+            .map_err(|e| ComSrvError::ConfigError(format!("Failed to connect to Redis: {}", e)))?;
+        
+        Ok(Self {
+            redis_client,
+            key_prefix: key_prefix.unwrap_or("comsrv:source_tables").to_string(),
+        })
+    }
+
+    /// Get Redis connection
+    fn get_connection(&self) -> Result<Connection> {
+        self.redis_client.get_connection()
+            .map_err(|e| ComSrvError::ConfigError(format!("Failed to get Redis connection: {}", e)))
+    }
+
+    /// Generate Redis key for source table
+    fn get_redis_key(&self, table_name: &str, source_id: u32) -> String {
+        format!("{}:{}:{}", self.key_prefix, table_name, source_id)
+    }
+
+    /// Load source tables from CSV files into Redis
+    pub fn load_from_csv_to_redis(
+        &self,
+        modbus_tcp_path: Option<&str>,
+        calculation_path: Option<&str>,
+        manual_path: Option<&str>,
+    ) -> Result<()> {
+        let mut conn = self.get_connection()?;
+
+        // Load Modbus TCP source table
+        if let Some(path) = modbus_tcp_path {
+            if std::path::Path::new(path).exists() {
+                let mut reader = csv::Reader::from_path(path)
+                    .map_err(|e| ComSrvError::ConfigError(format!("Failed to read CSV file {}: {}", path, e)))?;
+                
+                for result in reader.deserialize() {
+                    let record: ModbusTcpSource = result
+                        .map_err(|e| ComSrvError::ConfigError(format!("Failed to parse CSV record: {}", e)))?;
+                    
+                    let key = self.get_redis_key("modbus_tcp", record.source_id);
+                    let value = serde_json::to_string(&record)
+                        .map_err(|e| ComSrvError::ConfigError(format!("Failed to serialize record: {}", e)))?;
+                    
+                    redis::cmd("SET")
+                        .arg(&key)
+                        .arg(&value)
+                        .execute(&mut conn);
+                }
+            }
+        }
+
+        // Load calculation source table
+        if let Some(path) = calculation_path {
+            if std::path::Path::new(path).exists() {
+                let mut reader = csv::Reader::from_path(path)
+                    .map_err(|e| ComSrvError::ConfigError(format!("Failed to read CSV file {}: {}", path, e)))?;
+                
+                for result in reader.deserialize() {
+                    let record: CalculationSource = result
+                        .map_err(|e| ComSrvError::ConfigError(format!("Failed to parse CSV record: {}", e)))?;
+                    
+                    let key = self.get_redis_key("calculation", record.source_id);
+                    let value = serde_json::to_string(&record)
+                        .map_err(|e| ComSrvError::ConfigError(format!("Failed to serialize record: {}", e)))?;
+                    
+                    redis::cmd("SET")
+                        .arg(&key)
+                        .arg(&value)
+                        .execute(&mut conn);
+                }
+            }
+        }
+
+        // Load manual source table
+        if let Some(path) = manual_path {
+            if std::path::Path::new(path).exists() {
+                let mut reader = csv::Reader::from_path(path)
+                    .map_err(|e| ComSrvError::ConfigError(format!("Failed to read CSV file {}: {}", path, e)))?;
+                
+                for result in reader.deserialize() {
+                    let record: ManualSource = result
+                        .map_err(|e| ComSrvError::ConfigError(format!("Failed to parse CSV record: {}", e)))?;
+                    
+                    let key = self.get_redis_key("manual", record.source_id);
+                    let value = serde_json::to_string(&record)
+                        .map_err(|e| ComSrvError::ConfigError(format!("Failed to serialize record: {}", e)))?;
+                    
+                    redis::cmd("SET")
+                        .arg(&key)
+                        .arg(&value)
+                        .execute(&mut conn);
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Get Modbus TCP source from Redis
+    pub fn get_modbus_tcp_source(&self, source_id: u32) -> Result<Option<ModbusTcpSource>> {
+        let mut conn = self.get_connection()?;
+        let key = self.get_redis_key("modbus_tcp", source_id);
+        
+        let value: Option<String> = redis::cmd("GET")
+            .arg(&key)
+            .query(&mut conn)
+            .map_err(|e| ComSrvError::ConfigError(format!("Failed to get from Redis: {}", e)))?;
+        
+        match value {
+            Some(json_str) => {
+                let source: ModbusTcpSource = serde_json::from_str(&json_str)
+                    .map_err(|e| ComSrvError::ConfigError(format!("Failed to deserialize source: {}", e)))?;
+                Ok(Some(source))
+            }
+            None => Ok(None),
+        }
+    }
+
+    /// Get calculation source from Redis
+    pub fn get_calculation_source(&self, source_id: u32) -> Result<Option<CalculationSource>> {
+        let mut conn = self.get_connection()?;
+        let key = self.get_redis_key("calculation", source_id);
+        
+        let value: Option<String> = redis::cmd("GET")
+            .arg(&key)
+            .query(&mut conn)
+            .map_err(|e| ComSrvError::ConfigError(format!("Failed to get from Redis: {}", e)))?;
+        
+        match value {
+            Some(json_str) => {
+                let source: CalculationSource = serde_json::from_str(&json_str)
+                    .map_err(|e| ComSrvError::ConfigError(format!("Failed to deserialize source: {}", e)))?;
+                Ok(Some(source))
+            }
+            None => Ok(None),
+        }
+    }
+
+    /// Get manual source from Redis
+    pub fn get_manual_source(&self, source_id: u32) -> Result<Option<ManualSource>> {
+        let mut conn = self.get_connection()?;
+        let key = self.get_redis_key("manual", source_id);
+        
+        let value: Option<String> = redis::cmd("GET")
+            .arg(&key)
+            .query(&mut conn)
+            .map_err(|e| ComSrvError::ConfigError(format!("Failed to get from Redis: {}", e)))?;
+        
+        match value {
+            Some(json_str) => {
+                let source: ManualSource = serde_json::from_str(&json_str)
+                    .map_err(|e| ComSrvError::ConfigError(format!("Failed to deserialize source: {}", e)))?;
+                Ok(Some(source))
+            }
+            None => Ok(None),
+        }
+    }
+
+    /// Resolve data source from Redis
+    pub fn resolve_source(&self, data_source: &DataSource) -> Result<Option<SourceResolution>> {
+        match data_source.source_table.as_str() {
+            "modbus_tcp" => {
+                if let Some(src) = self.get_modbus_tcp_source(data_source.source_data)? {
+                    Ok(Some(SourceResolution::ModbusTcp(src)))
+                } else {
+                    Ok(None)
+                }
+            }
+            "calculation" => {
+                if let Some(src) = self.get_calculation_source(data_source.source_data)? {
+                    Ok(Some(SourceResolution::Calculation(src)))
+                } else {
+                    Ok(None)
+                }
+            }
+            "manual" => {
+                if let Some(src) = self.get_manual_source(data_source.source_data)? {
+                    Ok(Some(SourceResolution::Manual(src)))
+                } else {
+                    Ok(None)
+                }
+            }
+            _ => Err(ComSrvError::ConfigError(format!(
+                "Unknown source table: {}", 
+                data_source.source_table
+            ))),
+        }
+    }
+
+    /// Validate that data source exists in Redis
+    pub fn validate_data_source(&self, data_source: &DataSource) -> Result<()> {
+        let mut conn = self.get_connection()?;
+        let key = self.get_redis_key(&data_source.source_table, data_source.source_data);
+        
+        let exists: bool = redis::cmd("EXISTS")
+            .arg(&key)
+            .query(&mut conn)
+            .map_err(|e| ComSrvError::ConfigError(format!("Failed to check Redis key existence: {}", e)))?;
+
+        if !exists {
+            return Err(ComSrvError::ConfigError(format!(
+                "Source data {} not found in table {}",
+                data_source.source_data, data_source.source_table
+            )));
+        }
+
+        Ok(())
+    }
+
+    /// Add or update Modbus TCP source in Redis
+    pub fn set_modbus_tcp_source(&self, source: &ModbusTcpSource) -> Result<()> {
+        let mut conn = self.get_connection()?;
+        let key = self.get_redis_key("modbus_tcp", source.source_id);
+        let value = serde_json::to_string(source)
+            .map_err(|e| ComSrvError::ConfigError(format!("Failed to serialize source: {}", e)))?;
+        
+        redis::cmd("SET")
+            .arg(&key)
+            .arg(&value)
+            .execute(&mut conn);
+        
+        Ok(())
+    }
+
+    /// Add or update calculation source in Redis
+    pub fn set_calculation_source(&self, source: &CalculationSource) -> Result<()> {
+        let mut conn = self.get_connection()?;
+        let key = self.get_redis_key("calculation", source.source_id);
+        let value = serde_json::to_string(source)
+            .map_err(|e| ComSrvError::ConfigError(format!("Failed to serialize source: {}", e)))?;
+        
+        redis::cmd("SET")
+            .arg(&key)
+            .arg(&value)
+            .execute(&mut conn);
+        
+        Ok(())
+    }
+
+    /// Add or update manual source in Redis
+    pub fn set_manual_source(&self, source: &ManualSource) -> Result<()> {
+        let mut conn = self.get_connection()?;
+        let key = self.get_redis_key("manual", source.source_id);
+        let value = serde_json::to_string(source)
+            .map_err(|e| ComSrvError::ConfigError(format!("Failed to serialize source: {}", e)))?;
+        
+        redis::cmd("SET")
+            .arg(&key)
+            .arg(&value)
+            .execute(&mut conn);
+        
+        Ok(())
+    }
+
+    /// Delete source from Redis
+    pub fn delete_source(&self, table_name: &str, source_id: u32) -> Result<bool> {
+        let mut conn = self.get_connection()?;
+        let key = self.get_redis_key(table_name, source_id);
+        
+        let deleted: i32 = redis::cmd("DEL")
+            .arg(&key)
+            .query(&mut conn)
+            .map_err(|e| ComSrvError::ConfigError(format!("Failed to delete from Redis: {}", e)))?;
+        
+        Ok(deleted > 0)
+    }
+
+    /// List all source IDs for a table
+    pub fn list_source_ids(&self, table_name: &str) -> Result<Vec<u32>> {
+        let mut conn = self.get_connection()?;
+        let pattern = format!("{}:{}:*", self.key_prefix, table_name);
+        
+        let keys: Vec<String> = redis::cmd("KEYS")
+            .arg(&pattern)
+            .query(&mut conn)
+            .map_err(|e| ComSrvError::ConfigError(format!("Failed to list Redis keys: {}", e)))?;
+        
+        let mut source_ids = Vec::new();
+        for key in keys {
+            if let Some(id_str) = key.split(':').last() {
+                if let Ok(id) = id_str.parse::<u32>() {
+                    source_ids.push(id);
+                }
+            }
+        }
+        
+        source_ids.sort();
+        Ok(source_ids)
+    }
+
+    /// Clear all source tables from Redis
+    pub fn clear_all_sources(&self) -> Result<()> {
+        let mut conn = self.get_connection()?;
+        let pattern = format!("{}:*", self.key_prefix);
+        
+        let keys: Vec<String> = redis::cmd("KEYS")
+            .arg(&pattern)
+            .query(&mut conn)
+            .map_err(|e| ComSrvError::ConfigError(format!("Failed to list Redis keys: {}", e)))?;
+        
+        if !keys.is_empty() {
+            redis::cmd("DEL")
+                .arg(&keys)
+                .execute(&mut conn);
+        }
+        
+        Ok(())
+    }
+}
+
+/// Source resolution result
+#[derive(Debug, Clone)]
+pub enum SourceResolution {
+    ModbusTcp(ModbusTcpSource),
+    Calculation(CalculationSource),
+    Manual(ManualSource),
 }

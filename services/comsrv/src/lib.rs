@@ -12,7 +12,7 @@
 //! - **Configuration**: YAML-based configuration with hot-reload support
 //! - **Point Tables**: CSV-based point table management with dynamic loading
 //! - **REST API**: RESTful API for monitoring and control
-//! - **Metrics**: Prometheus-compatible metrics collection
+//! - **Storage**: Optional Redis integration for data persistence
 //! - **Logging**: Structured logging with configurable levels
 //!
 //! # Architecture
@@ -34,8 +34,8 @@
 //!          │                       │                       │
 //!          ▼                       ▼                       ▼
 //! ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
-//! │   Logger        │    │   Metrics       │    │   API Server    │
-//! │   (Rotating)    │    │  (Prometheus)   │    │   (REST/HTTP)   │
+//! │   env_logger    │    │   Redis Store   │    │   API Server    │
+//! │   (Console)     │    │   (Optional)    │    │   (REST/HTTP)   │
 //! └─────────────────┘    └─────────────────┘    └─────────────────┘
 //! ```
 //!
@@ -80,15 +80,14 @@
 //! # Start with custom configuration file
 //! CONFIG_FILE=my_config.yaml cargo run --bin comsrv
 //!
-//! # Start with custom log directory
-//! LOG_DIR=/var/log/comsrv cargo run --bin comsrv
+//! # Start with debug logging
+//! RUST_LOG=debug cargo run --bin comsrv
 //! ```
 //!
 //! ## Environment Variables
 //!
 //! - `CONFIG_FILE`: Path to configuration file (default: "config/comsrv.yaml")
-//! - `LOG_DIR`: Directory for log files (default: "logs")
-//! - `RUST_LOG`: Log level override for development
+//! - `RUST_LOG`: Log level for env_logger (debug, info, warn, error)
 //!
 //! ## Configuration
 //!
@@ -97,9 +96,11 @@
 //! ```yaml
 //! service:
 //!   name: "ComsrvRust"
-//!   log_level: "info"
-//!   metrics_enabled: true
-//!   metrics_address: "0.0.0.0:9090"
+//!   logging:
+//!     level: "info"
+//!   api:
+//!     enabled: true
+//!     bind_address: "0.0.0.0:3000"
 //!
 //! channels:
 //!   - id: 1
@@ -110,9 +111,10 @@
 //!       port: 502
 //!       slave_id: 1
 //!
-//! api:
-//!   enabled: true
-//!   bind_address: "0.0.0.0:3000"
+//! redis:
+//!   enabled: false
+//!   connection_type: "Tcp"
+//!   address: "127.0.0.1:6379"
 //! ```
 //!
 //! # Protocol Support
@@ -147,7 +149,7 @@
 //! - Connection pooling to minimize overhead
 //! - Batch operations for improved network efficiency
 //! - Lock-free data structures where possible
-//! - Efficient memory management with object pooling
+//! - Efficient memory management and resource cleanup
 
 pub mod api;
 /// Communication Service Library
@@ -297,7 +299,7 @@ pub mod service {
     /// }
     /// ```
     ///
-    /// This function simply forwards to [`crate::service_impl::start_communication_service`].
+    /// This function provides a convenient public interface for starting the communication service.
     pub async fn start_communication_service(
         config_manager: Arc<ConfigManager>,
         factory: Arc<RwLock<ProtocolFactory>>,
@@ -369,7 +371,7 @@ pub mod service {
     /// }
     /// ```
     ///
-    /// This function simply forwards to [`crate::service_impl::shutdown_handler`].
+    /// This function provides a convenient public interface for graceful service shutdown.
     pub async fn shutdown_handler(factory: Arc<RwLock<ProtocolFactory>>) {
         impls::shutdown_handler(factory).await;
     }
@@ -448,7 +450,7 @@ pub mod service {
     /// }
     /// ```
     ///
-    /// This function simply forwards to [`crate::service_impl::start_cleanup_task`].
+    /// This function provides a convenient public interface for resource cleanup management.
     pub fn start_cleanup_task(
         factory: Arc<RwLock<ProtocolFactory>>,
     ) -> tokio::task::JoinHandle<()> {

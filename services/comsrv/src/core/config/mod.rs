@@ -24,20 +24,23 @@
 
 pub mod config_manager;
 pub mod protocol_table_manager;
+
+#[cfg(test)]
+pub mod redis_source_test;
 pub mod protocol_config;
+pub mod forward_calculation_config;
+pub mod storage;
+pub mod test_refactor;
 
 // Re-export commonly used types
-pub use config_manager::{ChannelConfig, ConfigManager, ProtocolType};
+pub use config_manager::{ConfigManager};
 pub use protocol_table_manager::{
-    ChannelPointRecord, DataPoint, FourTelemetryStatistics, FourTelemetryTableManager, ProtocolConfigRecord,
-    TelemetryCategory,
+    StandardFourTelemetryManager as FourTelemetryTableManager, 
+    TelemetryCategory, PointTableStorage,
 };
 
-// Re-export protocol configuration types
-pub use protocol_config::{
-    BaseCommConfig, ConnectionPoolConfig, DataBits, FlowControl, ModbusConfig, ModbusRtuConfig,
-    ModbusTcpConfig, NetworkConfig, Parity, SerialConfig, StopBits,
-};
+// Re-export storage backends
+pub use storage::{CsvPointTableStorage, LegacyCsvFourTelemetryTableManager};
 
-// Re-export main configuration components
-pub use config_manager::*;
+// Legacy re-exports for backward compatibility
+pub use storage::LegacyCsvFourTelemetryTableManager as CsvFourTelemetryTableManager;

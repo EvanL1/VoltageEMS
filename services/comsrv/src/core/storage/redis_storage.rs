@@ -1,9 +1,12 @@
 use crate::core::config::config_manager::RedisConfig;
 use crate::utils::error::{ComSrvError, Result};
 use redis::aio::{Connection, PubSub};
-use redis::{AsyncCommands, Client};
+use redis::{AsyncCommands, Client, Commands};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::sync::Arc;
 use std::time::Duration;
+use log::{debug, error, info, warn};
 
 /// realtime value structure
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -44,6 +47,46 @@ pub struct CommandResult {
     pub actual_value: Option<f64>, // 执行后的实际值
 }
 
+/// Channel metadata for Redis storage
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RedisChannelMetadata {
+    pub name: String,
+    pub protocol_type: String,
+    pub created_at: String,
+    pub last_accessed: String,
+    pub running: bool,
+    pub parameters: HashMap<String, serde_json::Value>,
+}
+
+/// Configuration data for Redis storage
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RedisConfigData {
+    pub config_type: String,
+    pub data: serde_json::Value,
+    pub version: String,
+    pub last_updated: String,
+}
+
+/// Connection pool entry for Redis storage
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RedisConnectionEntry {
+    pub protocol: String,
+    pub address: String,
+    pub port: Option<u16>,
+    pub params: HashMap<String, String>,
+    pub created_at: String,
+    pub last_used: String,
+    pub connection_count: u32,
+}
+
+/// Statistics data for Redis storage
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RedisStatsData {
+    pub stats_type: String,
+    pub data: serde_json::Value,
+    pub timestamp: String,
+}
+
 /// Redis connection manager with enhanced features
 #[derive(Clone)]
 pub struct RedisConnectionManager {
@@ -74,15 +117,15 @@ impl RedisConnectionManager {
             .map_err(|e| ComSrvError::RedisError(format!("Redis PING failed: {}", e)))?;
 
         // Select database if specified
-        if let Some(db_index) = config.db {
+        if config.db > 0 {
             redis::cmd("SELECT")
-                .arg(db_index)
+                .arg(config.db)
                 .query_async(&mut conn)
                 .await
                 .map_err(|e| {
                     ComSrvError::RedisError(format!(
                         "Failed to select database {}: {}",
-                        db_index, e
+                        config.db, e
                     ))
                 })?;
         }
@@ -107,20 +150,27 @@ impl RedisConnectionManager {
         })?;
 
         // Select database if specified
-        if let Some(db_index) = self.config.db {
+        if self.config.db > 0 {
             redis::cmd("SELECT")
-                .arg(db_index)
+                .arg(self.config.db)
                 .query_async(&mut conn)
                 .await
                 .map_err(|e| {
                     ComSrvError::RedisError(format!(
                         "Failed to select database {}: {}",
-                        db_index, e
+                        self.config.db, e
                     ))
                 })?;
         }
 
         Ok(conn)
+    }
+
+    /// Get synchronous connection for blocking operations
+    pub fn get_sync_connection(&self) -> Result<redis::Connection> {
+        self.client.get_connection().map_err(|e| {
+            ComSrvError::RedisError(format!("Failed to create sync Redis connection: {}", e))
+        })
     }
 
     /// Get the configuration
@@ -169,6 +219,8 @@ impl RedisStore {
     pub fn manager(&self) -> &RedisConnectionManager {
         &self.manager
     }
+
+    // ========== Real-time Value Operations ==========
 
     /// write realtime value to Redis
     pub async fn set_realtime_value(&self, key: &str, value: &RealtimeValue) -> Result<()> {
@@ -285,6 +337,376 @@ impl RedisStore {
         }
     }
 
+    // ========== Channel Management Operations ==========
+
+    /// Store channel metadata in Redis
+    pub async fn set_channel_metadata(&self, channel_id: u16, metadata: &RedisChannelMetadata) -> Result<()> {
+        let key = format!("comsrv:channel:{}:metadata", channel_id);
+        let val_str = serde_json::to_string(metadata).map_err(|e| {
+            ComSrvError::RedisError(format!("Serialize channel metadata error: {}", e))
+        })?;
+
+        let mut conn = self.manager.get_connection().await?;
+        conn.set::<&str, String, ()>(&key, val_str).await
+            .map_err(|e| ComSrvError::RedisError(format!("Redis set channel metadata error: {}", e)))
+    }
+
+    /// Get channel metadata from Redis
+    pub async fn get_channel_metadata(&self, channel_id: u16) -> Result<Option<RedisChannelMetadata>> {
+        let key = format!("comsrv:channel:{}:metadata", channel_id);
+        let mut conn = self.manager.get_connection().await?;
+
+        let val: Option<String> = conn.get(&key).await
+            .map_err(|e| ComSrvError::RedisError(format!("Redis get channel metadata error: {}", e)))?;
+
+        if let Some(json_str) = val {
+            let parsed = serde_json::from_str(&json_str).map_err(|e| {
+                ComSrvError::RedisError(format!("Deserialize channel metadata error: {}", e))
+            })?;
+            Ok(Some(parsed))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// List all channel IDs
+    pub async fn list_channel_ids(&self) -> Result<Vec<u16>> {
+        let pattern = "comsrv:channel:*:metadata";
+        let mut conn = self.manager.get_connection().await?;
+
+        let keys: Vec<String> = redis::cmd("KEYS")
+            .arg(pattern)
+            .query_async(&mut conn)
+            .await
+            .map_err(|e| ComSrvError::RedisError(format!("Redis KEYS error: {}", e)))?;
+
+        let mut channel_ids = Vec::new();
+        for key in keys {
+            if let Some(captures) = regex::Regex::new(r"comsrv:channel:(\d+):metadata").unwrap().captures(&key) {
+                if let Some(id_str) = captures.get(1) {
+                    if let Ok(id) = id_str.as_str().parse::<u16>() {
+                        channel_ids.push(id);
+                    }
+                }
+            }
+        }
+
+        channel_ids.sort();
+        Ok(channel_ids)
+    }
+
+    /// Delete channel metadata
+    pub async fn delete_channel_metadata(&self, channel_id: u16) -> Result<()> {
+        let key = format!("comsrv:channel:{}:metadata", channel_id);
+        let mut conn = self.manager.get_connection().await?;
+
+        let _: () = conn.del(&key).await
+            .map_err(|e| ComSrvError::RedisError(format!("Redis delete channel metadata error: {}", e)))?;
+
+        Ok(())
+    }
+
+    // ========== Configuration Management Operations ==========
+
+    /// Store configuration data
+    pub async fn set_config_data(&self, config_name: &str, config_data: &RedisConfigData) -> Result<()> {
+        let key = format!("comsrv:config:{}", config_name);
+        let val_str = serde_json::to_string(config_data).map_err(|e| {
+            ComSrvError::RedisError(format!("Serialize config data error: {}", e))
+        })?;
+
+        let mut conn = self.manager.get_connection().await?;
+        conn.set::<&str, String, ()>(&key, val_str).await
+            .map_err(|e| ComSrvError::RedisError(format!("Redis set config data error: {}", e)))
+    }
+
+    /// Get configuration data
+    pub async fn get_config_data(&self, config_name: &str) -> Result<Option<RedisConfigData>> {
+        let key = format!("comsrv:config:{}", config_name);
+        let mut conn = self.manager.get_connection().await?;
+
+        let val: Option<String> = conn.get(&key).await
+            .map_err(|e| ComSrvError::RedisError(format!("Redis get config data error: {}", e)))?;
+
+        if let Some(json_str) = val {
+            let parsed = serde_json::from_str(&json_str).map_err(|e| {
+                ComSrvError::RedisError(format!("Deserialize config data error: {}", e))
+            })?;
+            Ok(Some(parsed))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// List all configuration names
+    pub async fn list_config_names(&self) -> Result<Vec<String>> {
+        let pattern = "comsrv:config:*";
+        let mut conn = self.manager.get_connection().await?;
+
+        let keys: Vec<String> = redis::cmd("KEYS")
+            .arg(pattern)
+            .query_async(&mut conn)
+            .await
+            .map_err(|e| ComSrvError::RedisError(format!("Redis KEYS error: {}", e)))?;
+
+        let config_names: Vec<String> = keys
+            .into_iter()
+            .filter_map(|key| {
+                key.strip_prefix("comsrv:config:").map(|s| s.to_string())
+            })
+            .collect();
+
+        Ok(config_names)
+    }
+
+    // ========== Connection Pool Management Operations ==========
+
+    /// Store connection pool entry
+    pub async fn set_connection_entry(&self, connection_key: &str, entry: &RedisConnectionEntry) -> Result<()> {
+        let key = format!("comsrv:pool:{}", connection_key);
+        let val_str = serde_json::to_string(entry).map_err(|e| {
+            ComSrvError::RedisError(format!("Serialize connection entry error: {}", e))
+        })?;
+
+        let mut conn = self.manager.get_connection().await?;
+        conn.set::<&str, String, ()>(&key, val_str).await
+            .map_err(|e| ComSrvError::RedisError(format!("Redis set connection entry error: {}", e)))
+    }
+
+    /// Get connection pool entry
+    pub async fn get_connection_entry(&self, connection_key: &str) -> Result<Option<RedisConnectionEntry>> {
+        let key = format!("comsrv:pool:{}", connection_key);
+        let mut conn = self.manager.get_connection().await?;
+
+        let val: Option<String> = conn.get(&key).await
+            .map_err(|e| ComSrvError::RedisError(format!("Redis get connection entry error: {}", e)))?;
+
+        if let Some(json_str) = val {
+            let parsed = serde_json::from_str(&json_str).map_err(|e| {
+                ComSrvError::RedisError(format!("Deserialize connection entry error: {}", e))
+            })?;
+            Ok(Some(parsed))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// List all connection pool keys
+    pub async fn list_connection_keys(&self) -> Result<Vec<String>> {
+        let pattern = "comsrv:pool:*";
+        let mut conn = self.manager.get_connection().await?;
+
+        let keys: Vec<String> = redis::cmd("KEYS")
+            .arg(pattern)
+            .query_async(&mut conn)
+            .await
+            .map_err(|e| ComSrvError::RedisError(format!("Redis KEYS error: {}", e)))?;
+
+        let connection_keys: Vec<String> = keys
+            .into_iter()
+            .filter_map(|key| {
+                key.strip_prefix("comsrv:pool:").map(|s| s.to_string())
+            })
+            .collect();
+
+        Ok(connection_keys)
+    }
+
+    /// Delete connection pool entry
+    pub async fn delete_connection_entry(&self, connection_key: &str) -> Result<()> {
+        let key = format!("comsrv:pool:{}", connection_key);
+        let mut conn = self.manager.get_connection().await?;
+
+        let _: () = conn.del(&key).await
+            .map_err(|e| ComSrvError::RedisError(format!("Redis delete connection entry error: {}", e)))?;
+
+        Ok(())
+    }
+
+    // ========== Statistics Management Operations ==========
+
+    /// Store statistics data
+    pub async fn set_stats_data(&self, stats_key: &str, stats_data: &RedisStatsData) -> Result<()> {
+        let key = format!("comsrv:stats:{}", stats_key);
+        let val_str = serde_json::to_string(stats_data).map_err(|e| {
+            ComSrvError::RedisError(format!("Serialize stats data error: {}", e))
+        })?;
+
+        let mut conn = self.manager.get_connection().await?;
+        conn.set::<&str, String, ()>(&key, val_str).await
+            .map_err(|e| ComSrvError::RedisError(format!("Redis set stats data error: {}", e)))
+    }
+
+    /// Get statistics data
+    pub async fn get_stats_data(&self, stats_key: &str) -> Result<Option<RedisStatsData>> {
+        let key = format!("comsrv:stats:{}", stats_key);
+        let mut conn = self.manager.get_connection().await?;
+
+        let val: Option<String> = conn.get(&key).await
+            .map_err(|e| ComSrvError::RedisError(format!("Redis get stats data error: {}", e)))?;
+
+        if let Some(json_str) = val {
+            let parsed = serde_json::from_str(&json_str).map_err(|e| {
+                ComSrvError::RedisError(format!("Deserialize stats data error: {}", e))
+            })?;
+            Ok(Some(parsed))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// List all statistics keys
+    pub async fn list_stats_keys(&self) -> Result<Vec<String>> {
+        let pattern = "comsrv:stats:*";
+        let mut conn = self.manager.get_connection().await?;
+
+        let keys: Vec<String> = redis::cmd("KEYS")
+            .arg(pattern)
+            .query_async(&mut conn)
+            .await
+            .map_err(|e| ComSrvError::RedisError(format!("Redis KEYS error: {}", e)))?;
+
+        let stats_keys: Vec<String> = keys
+            .into_iter()
+            .filter_map(|key| {
+                key.strip_prefix("comsrv:stats:").map(|s| s.to_string())
+            })
+            .collect();
+
+        Ok(stats_keys)
+    }
+
+    // ========== Generic Key-Value Operations ==========
+
+    /// Generic set operation for any serializable data
+    pub async fn set_data<T: Serialize>(&self, key: &str, data: &T, expire_secs: Option<Duration>) -> Result<()> {
+        let val_str = serde_json::to_string(data).map_err(|e| {
+            ComSrvError::RedisError(format!("Serialize data error: {}", e))
+        })?;
+
+        let mut conn = self.manager.get_connection().await?;
+        
+        if let Some(duration) = expire_secs {
+            conn.set_ex::<&str, String, ()>(key, val_str, duration.as_secs() as usize).await
+                .map_err(|e| ComSrvError::RedisError(format!("Redis set data with expire error: {}", e)))
+        } else {
+            conn.set::<&str, String, ()>(key, val_str).await
+                .map_err(|e| ComSrvError::RedisError(format!("Redis set data error: {}", e)))
+        }
+    }
+
+    /// Generic get operation for any deserializable data
+    pub async fn get_data<T: for<'de> Deserialize<'de>>(&self, key: &str) -> Result<Option<T>> {
+        let mut conn = self.manager.get_connection().await?;
+
+        let val: Option<String> = conn.get(key).await
+            .map_err(|e| ComSrvError::RedisError(format!("Redis get data error: {}", e)))?;
+
+        if let Some(json_str) = val {
+            let parsed = serde_json::from_str(&json_str).map_err(|e| {
+                ComSrvError::RedisError(format!("Deserialize data error: {}", e))
+            })?;
+            Ok(Some(parsed))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Delete a key
+    pub async fn delete_key(&self, key: &str) -> Result<()> {
+        let mut conn = self.manager.get_connection().await?;
+
+        let _: () = conn.del(key).await
+            .map_err(|e| ComSrvError::RedisError(format!("Redis delete key error: {}", e)))?;
+
+        Ok(())
+    }
+
+    /// Check if a key exists
+    pub async fn exists(&self, key: &str) -> Result<bool> {
+        let mut conn = self.manager.get_connection().await?;
+
+        let exists: bool = conn.exists(key).await
+            .map_err(|e| ComSrvError::RedisError(format!("Redis exists error: {}", e)))?;
+
+        Ok(exists)
+    }
+
+    /// List keys matching a pattern
+    pub async fn list_keys(&self, pattern: &str) -> Result<Vec<String>> {
+        let mut conn = self.manager.get_connection().await?;
+
+        let keys: Vec<String> = redis::cmd("KEYS")
+            .arg(pattern)
+            .query_async(&mut conn)
+            .await
+            .map_err(|e| ComSrvError::RedisError(format!("Redis KEYS error: {}", e)))?;
+
+        Ok(keys)
+    }
+
+    /// Set expiration for a key
+    pub async fn set_expire(&self, key: &str, seconds: usize) -> Result<()> {
+        let mut conn = self.manager.get_connection().await?;
+
+        let _: () = conn.expire(key, seconds).await
+            .map_err(|e| ComSrvError::RedisError(format!("Redis expire error: {}", e)))?;
+
+        Ok(())
+    }
+
+    // ========== Hash Operations ==========
+
+    /// Set hash field
+    pub async fn hset<T: Serialize>(&self, key: &str, field: &str, value: &T) -> Result<()> {
+        let val_str = serde_json::to_string(value).map_err(|e| {
+            ComSrvError::RedisError(format!("Serialize hash value error: {}", e))
+        })?;
+
+        let mut conn = self.manager.get_connection().await?;
+        conn.hset::<&str, &str, String, ()>(key, field, val_str).await
+            .map_err(|e| ComSrvError::RedisError(format!("Redis hset error: {}", e)))
+    }
+
+    /// Get hash field
+    pub async fn hget<T: for<'de> Deserialize<'de>>(&self, key: &str, field: &str) -> Result<Option<T>> {
+        let mut conn = self.manager.get_connection().await?;
+
+        let val: Option<String> = conn.hget(key, field).await
+            .map_err(|e| ComSrvError::RedisError(format!("Redis hget error: {}", e)))?;
+
+        if let Some(json_str) = val {
+            let parsed = serde_json::from_str(&json_str).map_err(|e| {
+                ComSrvError::RedisError(format!("Deserialize hash value error: {}", e))
+            })?;
+            Ok(Some(parsed))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Get all hash fields
+    pub async fn hgetall(&self, key: &str) -> Result<HashMap<String, String>> {
+        let mut conn = self.manager.get_connection().await?;
+
+        let hash: HashMap<String, String> = conn.hgetall(key).await
+            .map_err(|e| ComSrvError::RedisError(format!("Redis hgetall error: {}", e)))?;
+
+        Ok(hash)
+    }
+
+    /// Delete hash field
+    pub async fn hdel(&self, key: &str, field: &str) -> Result<()> {
+        let mut conn = self.manager.get_connection().await?;
+
+        let _: () = conn.hdel(key, field).await
+            .map_err(|e| ComSrvError::RedisError(format!("Redis hdel error: {}", e)))?;
+
+        Ok(())
+    }
+
+    // ========== Command Operations (existing) ==========
+
     /// 发布遥控/遥调指令到指定通道
     pub async fn publish_command(&self, channel: &str, command: &RemoteCommand) -> Result<()> {
         let command_str = serde_json::to_string(command)
@@ -390,6 +812,17 @@ impl RedisStore {
     pub async fn is_healthy(&self) -> bool {
         self.manager.health_check().await.unwrap_or(false)
     }
+
+    /// 通用发布方法
+    pub async fn publish(&self, channel: &str, message: &str) -> Result<()> {
+        let mut conn = self.manager.get_connection().await?;
+        let _: () = conn
+            .publish(channel, message)
+            .await
+            .map_err(|e| ComSrvError::RedisError(format!("Redis publish error: {}", e)))?;
+
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -397,16 +830,16 @@ mod tests {
     use super::*;
     use crate::core::config::config_manager::RedisConnectionType;
 
-    /// create test redis config
+    /// create test Redis config
     fn create_test_redis_config() -> RedisConfig {
         RedisConfig {
             enabled: true,
             connection_type: RedisConnectionType::Tcp,
             address: "redis://127.0.0.1:6379".to_string(),
-            db: Some(0),
+            db: 0,
             timeout_ms: 5000,
-            max_connections: 10,
-            min_connections: 1,
+            max_connections: Some(10),
+            min_connections: Some(1),
             idle_timeout_secs: 300,
             max_retries: 3,
             password: None,
@@ -420,10 +853,10 @@ mod tests {
             enabled: false,
             connection_type: RedisConnectionType::Tcp,
             address: "redis://127.0.0.1:6379".to_string(),
-            db: Some(0),
+            db: 0,
             timeout_ms: 5000,
-            max_connections: 10,
-            min_connections: 1,
+            max_connections: Some(10),
+            min_connections: Some(1),
             idle_timeout_secs: 300,
             max_retries: 3,
             password: None,
@@ -481,10 +914,10 @@ mod tests {
             enabled: true,
             connection_type: RedisConnectionType::Tcp,
             address: "invalid://invalid".to_string(),
-            db: Some(0),
+            db: 0,
             timeout_ms: 5000,
-            max_connections: 10,
-            min_connections: 1,
+            max_connections: Some(10),
+            min_connections: Some(1),
             idle_timeout_secs: 300,
             max_retries: 3,
             password: None,
@@ -502,10 +935,10 @@ mod tests {
             enabled: true,
             connection_type: RedisConnectionType::Tcp,
             address: "tcp://127.0.0.1:6379".to_string(),
-            db: Some(1),
+            db: 1,
             timeout_ms: 5000,
-            max_connections: 10,
-            min_connections: 1,
+            max_connections: Some(10),
+            min_connections: Some(1),
             idle_timeout_secs: 300,
             max_retries: 3,
             password: None,
@@ -516,10 +949,10 @@ mod tests {
             enabled: true,
             connection_type: RedisConnectionType::Tcp,
             address: "redis://127.0.0.1:6379".to_string(),
-            db: Some(2),
+            db: 2,
             timeout_ms: 5000,
-            max_connections: 10,
-            min_connections: 1,
+            max_connections: Some(10),
+            min_connections: Some(1),
             idle_timeout_secs: 300,
             max_retries: 3,
             password: None,
@@ -530,10 +963,10 @@ mod tests {
             enabled: true,
             connection_type: RedisConnectionType::Unix,
             address: "unix:///tmp/redis.sock".to_string(),
-            db: Some(3),
+            db: 3,
             timeout_ms: 5000,
-            max_connections: 10,
-            min_connections: 1,
+            max_connections: Some(10),
+            min_connections: Some(1),
             idle_timeout_secs: 300,
             max_retries: 3,
             password: None,
@@ -552,10 +985,10 @@ mod tests {
             enabled: true,
             connection_type: RedisConnectionType::Tcp,
             address: "redis://127.0.0.1:6379".to_string(),
-            db: Some(5),
+            db: 5,
             timeout_ms: 5000,
-            max_connections: 10,
-            min_connections: 1,
+            max_connections: Some(10),
+            min_connections: Some(1),
             idle_timeout_secs: 300,
             max_retries: 3,
             password: None,
@@ -566,18 +999,18 @@ mod tests {
             enabled: true,
             connection_type: RedisConnectionType::Tcp,
             address: "redis://127.0.0.1:6379".to_string(),
-            db: None,
+            db: 0,
             timeout_ms: 5000,
-            max_connections: 10,
-            min_connections: 1,
+            max_connections: Some(10),
+            min_connections: Some(1),
             idle_timeout_secs: 300,
             max_retries: 3,
             password: None,
             username: None,
         };
 
-        assert_eq!(config_with_db.db, Some(5));
-        assert_eq!(config_without_db.db, None);
+        assert_eq!(config_with_db.db, 5);
+        assert_eq!(config_without_db.db, 0);
     }
 
     // Note: The following tests require a running Redis instance

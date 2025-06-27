@@ -16,6 +16,40 @@ pub async fn start_communication_service(
     config_manager: Arc<ConfigManager>,
     factory: Arc<RwLock<ProtocolFactory>>,
 ) -> Result<()> {
+    // Check if Redis is enabled and initialize Redis storage
+    let redis_config = config_manager.get_redis_config();
+    if redis_config.enabled {
+        info!("Redis is enabled, initializing Redis storage...");
+        
+        match crate::core::storage::redis_storage::RedisStore::from_config(&redis_config).await {
+            Ok(Some(redis_store)) => {
+                info!("Redis storage initialized successfully");
+                
+                // Enable Redis storage for the protocol factory
+                {
+                    let mut factory_guard = factory.write().await;
+                    if let Err(e) = factory_guard.enable_redis_storage(redis_store.clone()) {
+                        warn!("Failed to enable Redis storage for ProtocolFactory: {}", e);
+                    } else {
+                        info!("Redis storage enabled for ProtocolFactory");
+                    }
+                }
+                
+                // Note: ConfigManager Redis storage would be enabled separately if needed
+                // This would require making config_manager mutable, which we avoid here
+                // to maintain the current API compatibility
+            }
+            Ok(None) => {
+                info!("Redis storage is disabled in configuration");
+            }
+            Err(e) => {
+                warn!("Failed to initialize Redis storage: {}. Continuing with in-memory storage only.", e);
+            }
+        }
+    } else {
+        info!("Redis storage is disabled, using in-memory storage only");
+    }
+
     // Get channel configurations
     let configs = config_manager.get_channels().clone();
 
@@ -70,10 +104,25 @@ pub async fn start_communication_service(
 
     let stats = factory_guard.get_channel_stats().await;
     info!(
-        "Communication service started with {} channels (Protocol distribution: {:?})",
-        stats.total_channels, stats.protocol_counts
+        "Communication service started with {} channels (Protocol distribution: {:?}){}",
+        stats.total_channels, 
+        stats.protocol_counts,
+        if factory_guard.is_redis_enabled() { " [Redis storage enabled]" } else { " [Memory storage only]" }
     );
+    
     drop(factory_guard);
+    
+    // Sync channel metadata if Redis is enabled
+    let factory_guard = factory.read().await;
+    if factory_guard.is_redis_enabled() {
+        drop(factory_guard);
+        let mut factory_guard = factory.write().await;
+        if let Err(e) = factory_guard.sync_channel_metadata().await {
+            warn!("Failed to sync channel metadata to Redis: {}", e);
+        } else {
+            info!("Channel metadata synchronized to Redis");
+        }
+    }
 
     Ok(())
 }

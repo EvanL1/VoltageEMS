@@ -12,7 +12,7 @@
 //! - Multi-protocol communication support
 //! - Real-time data collection and processing
 //! - RESTful API for management and monitoring
-//! - Comprehensive metrics and logging
+//! - Console-based logging via env_logger
 //! - Graceful shutdown and resource cleanup
 //!
 //! ## Architecture
@@ -25,8 +25,8 @@
 //!          │                       │                       │
 //!          ▼                       ▼                       ▼
 //! ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
-//! │   Logger        │    │   Metrics       │    │   API Server    │
-//! │   (Rotating)    │    │  (Prometheus)   │    │   (REST/HTTP)   │
+//! │   env_logger    │    │   Redis Store   │    │   API Server    │
+//! │   (Console)     │    │   (Optional)    │    │   (REST/HTTP)   │
 //! └─────────────────┘    └─────────────────┘    └─────────────────┘
 //! ```
 //!
@@ -39,8 +39,11 @@
 //! # Start with custom configuration file
 //! CONFIG_FILE=my_config.yaml cargo run --bin comsrv
 //!
-//! # Start with custom log directory
-//! LOG_DIR=/var/log/comsrv cargo run --bin comsrv
+//! # Start with custom log level
+//! RUST_LOG=debug cargo run --bin comsrv
+//!
+//! # Start in super test mode
+//! cargo run --bin comsrv -- --super-test --duration 60
 //! ```
 
 use std::env;
@@ -100,7 +103,6 @@ struct Args {
 ///
 /// Performs an orderly shutdown of all communication channels, ensuring that
 /// ongoing operations complete properly and resources are released cleanly.
-/// Updates metrics to reflect the service shutdown state.
 ///
 /// # Arguments
 ///
@@ -110,7 +112,6 @@ struct Args {
 ///
 /// - **Graceful Channel Shutdown**: Stops all channels in an orderly manner
 /// - **Resource Cleanup**: Ensures proper release of network and system resources
-/// - **Metrics Update**: Records service shutdown in monitoring systems
 /// - **Error Handling**: Logs but doesn't fail on individual channel shutdown errors
 ///
 /// # Examples
@@ -133,13 +134,13 @@ struct Args {
 /// Main entry point for the Communication Service
 ///
 /// Initializes the complete communication service including configuration loading,
-/// logging setup, metrics initialization, and service startup. Handles graceful
-/// shutdown and provides comprehensive error handling throughout the lifecycle.
+/// env_logger setup, and service startup. Handles graceful shutdown and provides
+/// comprehensive error handling throughout the lifecycle.
 ///
 /// # Environment Variables
 ///
 /// * `CONFIG_FILE` - Path to configuration file (default: "config/comsrv.yaml")
-/// * `LOG_DIR` - Directory for log files (default: "logs")
+/// * `RUST_LOG` - Log level (debug, info, warn, error)
 ///
 /// # Configuration File
 ///
@@ -148,9 +149,11 @@ struct Args {
 /// ```yaml
 /// service:
 ///   name: "ComSrv"
-///   log_level: "info"
-///   metrics_enabled: true
-///   metrics_address: "0.0.0.0:9090"
+///   logging:
+///     level: "info"
+///   api:
+///     enabled: true
+///     bind_address: "0.0.0.0:3000"
 ///
 /// channels:
 ///   - id: 1
@@ -169,18 +172,18 @@ struct Args {
 /// # Features
 ///
 /// - **Environment Configuration**: Supports configuration via environment variables
-/// - **Structured Logging**: Comprehensive logging with rotation and levels
-/// - **Metrics Collection**: Prometheus-compatible metrics for monitoring
+/// - **Console Logging**: Structured logging via env_logger with configurable levels
+/// - **Multi-Protocol Support**: Modbus TCP/RTU, IEC 60870-5-104, and custom protocols
 /// - **Signal Handling**: Graceful shutdown on SIGINT/SIGTERM
 /// - **API Server**: RESTful API for management and monitoring
-/// - **Health Checks**: Built-in health checking and status reporting
+/// - **Redis Integration**: Optional Redis storage for data persistence
 ///
 /// # Error Handling
 ///
 /// The service implements graceful error handling at multiple levels:
 /// - Configuration errors: Service fails to start with clear error messages
 /// - Channel errors: Individual channel failures don't affect other channels
-/// - Runtime errors: Logged and reported via metrics without service termination
+/// - Runtime errors: Logged and handled gracefully without service termination
 ///
 /// # Examples
 ///
@@ -261,8 +264,9 @@ async fn main() -> Result<()> {
     // Start API service if enabled
     if config_manager.get_api_enabled() {
         let start_time = Arc::new(Utc::now());
+        // Share the same config manager for API instead of cloning
         let config_manager_for_api = Arc::new(RwLock::new((*config_manager).clone()));
-        let routes = api_routes(factory.clone(), config_manager_for_api, start_time);
+        let routes = api_routes(factory.clone(), config_manager_for_api);
 
         info!(
             "Starting API server at: {}",

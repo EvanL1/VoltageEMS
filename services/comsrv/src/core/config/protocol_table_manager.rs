@@ -1,15 +1,16 @@
 //! Protocol Table Manager
 //! 
 //! This module provides a polymorphic architecture for managing four telemetry types (四遥)
-//! with protocol-specific implementations and comprehensive validation.
+//! with protocol-specific implementations, comprehensive validation, and pluggable storage backends.
 //! 
 //! # Architecture
 //! 
+//! - **PointTableStorage**: Trait for pluggable storage backends (CSV, Database, etc.)
 //! - **StandardPointRecord**: Generic four telemetry point records (protocol-agnostic)
 //! - **ProtocolConfig**: Trait for protocol-specific configurations (Modbus, IEC104, CAN, etc.)
 //! - **FourTelemetryTableManager**: Trait for managing four telemetry tables
 //! - **ProtocolConfigValidator**: Trait for validating configurations
-//! - **StandardFourTelemetryManager**: Concrete implementation with validation
+//! - **StandardFourTelemetryManager**: Concrete implementation with validation and pluggable storage
 
 use crate::core::protocols::common::combase::TelemetryType;
 use crate::core::protocols::modbus::common::{
@@ -23,6 +24,49 @@ use std::path::Path;
 use std::time::SystemTime;
 use log;
 use serde_json;
+
+/// Storage abstraction trait for point table data
+/// 
+/// This trait provides a pluggable storage interface that can be implemented
+/// by different storage backends (CSV files, databases, remote APIs, etc.)
+#[async_trait::async_trait]
+pub trait PointTableStorage: Send + Sync {
+    /// Load standard point records for a specific channel and telemetry category
+    async fn load_standard_points(&self, channel_name: &str, category: TelemetryCategory) -> Result<Vec<StandardPointRecord>>;
+    
+    /// Load protocol configuration records for a specific channel and telemetry category  
+    async fn load_protocol_configs(&self, channel_name: &str, category: TelemetryCategory) -> Result<Vec<Box<dyn ProtocolConfig>>>;
+    
+    /// Save standard point records for a specific channel and telemetry category
+    async fn save_standard_points(&self, channel_name: &str, category: TelemetryCategory, points: &[StandardPointRecord]) -> Result<()>;
+    
+    /// Save protocol configuration records for a specific channel and telemetry category
+    async fn save_protocol_configs(&self, channel_name: &str, category: TelemetryCategory, configs: &[Box<dyn ProtocolConfig>]) -> Result<()>;
+    
+    /// Get all available channel names
+    async fn get_channel_names(&self) -> Result<Vec<String>>;
+    
+    /// Check if storage contains data for a specific channel and category
+    async fn has_data(&self, channel_name: &str, category: TelemetryCategory) -> Result<bool>;
+    
+    /// Get storage statistics
+    async fn get_storage_stats(&self) -> Result<StorageStatistics>;
+}
+
+/// Storage statistics
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StorageStatistics {
+    /// Total number of channels
+    pub total_channels: usize,
+    /// Total number of point records across all channels
+    pub total_points: usize,
+    /// Total number of protocol configs across all channels
+    pub total_configs: usize,
+    /// Storage backend type
+    pub backend_type: String,
+    /// Backend-specific metadata
+    pub metadata: HashMap<String, serde_json::Value>,
+}
 
 /// Simple data point structure
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -207,21 +251,22 @@ pub trait ProtocolConfig: std::fmt::Debug + Send + Sync {
 }
 
 /// 四遥表管理trait（多态接口）
+#[async_trait::async_trait]
 pub trait FourTelemetryTableManagerTrait {
-    /// 加载标准点表
-    fn load_standard_points<P: AsRef<Path>>(&mut self, file_path: P, channel_name: &str, category: TelemetryCategory) -> Result<()>;
+    /// 加载标准点表（从存储后端）
+    async fn load_standard_points(&mut self, channel_name: &str, category: TelemetryCategory) -> Result<()>;
     
-    /// 加载协议配置
-    fn load_protocol_config<P: AsRef<Path>>(&mut self, file_path: P, channel_name: &str, category: TelemetryCategory) -> Result<()>;
+    /// 加载协议配置（从存储后端）
+    async fn load_protocol_config(&mut self, channel_name: &str, category: TelemetryCategory) -> Result<()>;
     
     /// 构建点位映射
-    fn build_mappings(&mut self) -> Result<()>;
+    async fn build_mappings(&mut self) -> Result<()>;
     
     /// 获取通道名列表
-    fn get_channel_names(&self) -> Vec<String>;
+    async fn get_channel_names(&self) -> Vec<String>;
     
     /// 验证配置
-    fn validate_configuration(&self) -> Result<ValidationReport>;
+    async fn validate_configuration(&self) -> Result<ValidationReport>;
     
     /// 获取统计信息
     fn get_statistics(&self) -> TableStatistics;
@@ -419,26 +464,48 @@ impl ProtocolConfigValidator for ModbusValidator {
 
 /// 协议无关的四遥表管理器实现
 pub struct StandardFourTelemetryManager {
-    /// 标准点表 (channel_name -> telemetry_category -> points)
+    /// 存储后端
+    storage: Box<dyn PointTableStorage>,
+    /// 标准点表 (channel_name -> telemetry_category -> points) - 内存缓存
     standard_points: HashMap<String, HashMap<TelemetryCategory, Vec<StandardPointRecord>>>,
-    /// 协议配置 (channel_name -> telemetry_category -> configs)
+    /// 协议配置 (channel_name -> telemetry_category -> configs) - 内存缓存
     protocol_configs: HashMap<String, HashMap<TelemetryCategory, Vec<Box<dyn ProtocolConfig>>>>,
     /// 点位映射 (channel_name -> telemetry_category -> point_id -> (standard_point, protocol_config))
     point_mappings: HashMap<String, HashMap<TelemetryCategory, HashMap<u32, (StandardPointRecord, Box<dyn ProtocolConfig>)>>>,
     /// 协议验证器
     validators: HashMap<ProtocolType, Box<dyn ProtocolConfigValidator>>,
+    /// 是否启用缓存
+    cache_enabled: bool,
 }
 
 impl StandardFourTelemetryManager {
-    pub fn new() -> Self {
+    /// Create a new manager with the specified storage backend
+    pub fn new(storage: Box<dyn PointTableStorage>) -> Self {
         let mut validators: HashMap<ProtocolType, Box<dyn ProtocolConfigValidator>> = HashMap::new();
         validators.insert(ProtocolType::Modbus, Box::new(ModbusValidator));
         
         Self {
+            storage,
             standard_points: HashMap::new(),
             protocol_configs: HashMap::new(),
             point_mappings: HashMap::new(),
             validators,
+            cache_enabled: true,
+        }
+    }
+    
+    /// Create a new manager with storage backend and cache settings
+    pub fn with_cache(storage: Box<dyn PointTableStorage>, cache_enabled: bool) -> Self {
+        let mut validators: HashMap<ProtocolType, Box<dyn ProtocolConfigValidator>> = HashMap::new();
+        validators.insert(ProtocolType::Modbus, Box::new(ModbusValidator));
+        
+        Self {
+            storage,
+            standard_points: HashMap::new(),
+            protocol_configs: HashMap::new(),
+            point_mappings: HashMap::new(),
+            validators,
+            cache_enabled,
         }
     }
     
@@ -530,6 +597,73 @@ impl StandardFourTelemetryManager {
             }
         }
         Ok(false)
+    }
+
+    // ========== New async API methods for storage abstraction ==========
+
+    /// Get points for a specific channel and category (async version)
+    pub async fn get_points_by_category(&self, channel_name: &str, category: TelemetryCategory) -> Result<Vec<StandardPointRecord>> {
+        if let Some(channel_points) = self.standard_points.get(channel_name) {
+            if let Some(points) = channel_points.get(&category) {
+                Ok(points.clone())
+            } else {
+                Ok(Vec::new())
+            }
+        } else {
+            Ok(Vec::new())
+        }
+    }
+
+    /// Get a specific point by ID (async version)
+    pub async fn get_point_by_id(&self, channel_name: &str, category: TelemetryCategory, point_id: u32) -> Result<StandardPointRecord> {
+        if let Some(channel_points) = self.standard_points.get(channel_name) {
+            if let Some(points) = channel_points.get(&category) {
+                for point in points {
+                    if point.point_id == point_id {
+                        return Ok(point.clone());
+                    }
+                }
+            }
+        }
+        Err(ComSrvError::ConfigError(format!(
+            "Point {} not found in channel {} category {:?}",
+            point_id, channel_name, category
+        )))
+    }
+
+    /// Remove a point by ID and category (async version)
+    pub async fn remove_point_by_id(&mut self, channel_name: &str, category: TelemetryCategory, point_id: u32) -> Result<()> {
+        if let Some(channel_points) = self.standard_points.get_mut(channel_name) {
+            if let Some(points) = channel_points.get_mut(&category) {
+                let original_len = points.len();
+                points.retain(|p| p.point_id != point_id);
+                if points.len() < original_len {
+                    return Ok(());
+                }
+            }
+        }
+        Err(ComSrvError::ConfigError(format!(
+            "Point {} not found in channel {} category {:?}",
+            point_id, channel_name, category
+        )))
+    }
+
+    /// Upsert a point (async version)
+    pub async fn upsert_point_async(&mut self, channel_name: &str, point: StandardPointRecord) -> Result<()> {
+        let category = point.telemetry_category;
+        
+        // Get or create channel
+        let channel_points = self.standard_points.entry(channel_name.to_string()).or_insert_with(HashMap::new);
+        let points = channel_points.entry(category).or_insert_with(Vec::new);
+        
+        // Find existing point and update, or add new point
+        if let Some(existing_point) = points.iter_mut().find(|p| p.point_id == point.point_id) {
+            *existing_point = point;
+        } else {
+            points.push(point);
+        }
+        
+        Ok(())
     }
     
     /// 加载Modbus协议配置的便捷方法
@@ -673,42 +807,31 @@ impl StandardFourTelemetryManager {
     }
 }
 
+#[async_trait::async_trait]
 impl FourTelemetryTableManagerTrait for StandardFourTelemetryManager {
-    fn load_standard_points<P: AsRef<Path>>(&mut self, file_path: P, channel_name: &str, category: TelemetryCategory) -> Result<()> {
-        let path = file_path.as_ref();
-        let file = std::fs::File::open(path)
-            .map_err(|e| ComSrvError::IoError(format!("Failed to open file {}: {}", path.display(), e)))?;
-
-        let mut reader = ReaderBuilder::new()
-            .has_headers(true)
-            .delimiter(b',')
-            .from_reader(file);
-
-        let mut points = Vec::new();
-        for result in reader.deserialize() {
-            let mut record: StandardPointRecord = result.map_err(|e| {
-                ComSrvError::ConfigError(format!("Failed to parse standard point in {}: {}", path.display(), e))
-            })?;
-            
-            // 设置四遥类型
-            record.telemetry_category = category.clone();
-            
-            // 验证记录
+    async fn load_standard_points(&mut self, channel_name: &str, category: TelemetryCategory) -> Result<()> {
+        // Load points from storage backend
+        let points = self.storage.load_standard_points(channel_name, category).await?;
+        
+        // Validate records
+        for point in &points {
             if let Some(validator) = self.validators.get(&ProtocolType::Modbus) {
-                let warnings = validator.validate_point_record(&record)?;
+                let warnings = validator.validate_point_record(point)?;
                 for warning in warnings {
                     log::warn!("⚠️ [VALIDATION] {}", warning);
                 }
             }
-            
-            points.push(record);
         }
 
         let points_count = points.len();
-        self.standard_points
-            .entry(channel_name.to_string())
-            .or_insert_with(HashMap::new)
-            .insert(category.clone(), points);
+        
+        // Store in cache if enabled
+        if self.cache_enabled {
+            self.standard_points
+                .entry(channel_name.to_string())
+                .or_insert_with(HashMap::new)
+                .insert(category, points);
+        }
 
         log::info!("📊 [STANDARD] Loaded {} {} points for channel '{}'", 
                   points_count, 
@@ -718,12 +841,39 @@ impl FourTelemetryTableManagerTrait for StandardFourTelemetryManager {
         Ok(())
     }
 
-    fn load_protocol_config<P: AsRef<Path>>(&mut self, file_path: P, channel_name: &str, category: TelemetryCategory) -> Result<()> {
-        // 默认加载Modbus配置，可以根据文件名或其他方式判断协议类型
-        self.load_modbus_protocol_config(file_path, channel_name, category)
+    async fn load_protocol_config(&mut self, channel_name: &str, category: TelemetryCategory) -> Result<()> {
+        // Load protocol configs from storage backend
+        let configs = self.storage.load_protocol_configs(channel_name, category).await?;
+        
+        // Validate configurations
+        for config in &configs {
+            if let Some(validator) = self.validators.get(&config.protocol_type()) {
+                let warnings = validator.validate_protocol_config(config.as_ref())?;
+                for warning in warnings {
+                    log::warn!("⚠️ [VALIDATION] {}", warning);
+                }
+            }
+        }
+
+        let config_count = configs.len();
+        
+        // Store in cache if enabled
+        if self.cache_enabled {
+            self.protocol_configs
+                .entry(channel_name.to_string())
+                .or_insert_with(HashMap::new)
+                .insert(category, configs);
+        }
+
+        log::info!("📋 [PROTOCOL] Loaded {} {} configs for channel '{}'", 
+                  config_count, 
+                  category.table_suffix(), 
+                  channel_name);
+
+        Ok(())
     }
 
-    fn build_mappings(&mut self) -> Result<()> {
+    async fn build_mappings(&mut self) -> Result<()> {
         self.point_mappings.clear();
 
         for (channel_name, channel_standards) in &self.standard_points {
@@ -783,13 +933,13 @@ impl FourTelemetryTableManagerTrait for StandardFourTelemetryManager {
         Ok(())
     }
 
-    fn get_channel_names(&self) -> Vec<String> {
+    async fn get_channel_names(&self) -> Vec<String> {
         let mut names: Vec<String> = self.standard_points.keys().cloned().collect();
         names.sort();
         names
     }
 
-    fn validate_configuration(&self) -> Result<ValidationReport> {
+    async fn validate_configuration(&self) -> Result<ValidationReport> {
         let mut report = ValidationReport {
             is_valid: true,
             errors: Vec::new(),
@@ -896,15 +1046,16 @@ impl FourTelemetryTableManagerTrait for StandardFourTelemetryManager {
     }
 }
 
-impl Default for StandardFourTelemetryManager {
-    fn default() -> Self {
-        Self::new()
-    }
-}
+// Note: Default implementation removed as it requires a storage backend parameter
+// Users should explicitly create with new() or with_cache() methods
+
+/*
+// Note: Clone implementation temporarily removed due to storage backend trait object complexity
+// Consider implementing a proper cloning strategy or using Arc<> for shared storage
 
 impl Clone for StandardFourTelemetryManager {
     fn clone(&self) -> Self {
-        let mut new_manager = Self::new();
+        let mut new_manager = Self::new(/* storage clone needed */);
         
         // Clone standard points
         new_manager.standard_points = self.standard_points.clone();
@@ -937,6 +1088,7 @@ impl Clone for StandardFourTelemetryManager {
         new_manager
     }
 }
+*/
 
 // ============ 向后兼容的类型别名 ============
 
