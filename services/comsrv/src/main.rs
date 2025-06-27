@@ -54,6 +54,7 @@ use chrono::Utc;
 use clap::Parser;
 use dotenv::dotenv;
 use tokio::sync::RwLock;
+use warp::Filter;
 
 use log::{error, info, warn};
 
@@ -62,7 +63,8 @@ mod core;
 mod service_impl;
 mod utils;
 
-use crate::api::routes::api_routes;
+use crate::api::openapi_routes;
+use crate::api::swagger;
 use crate::core::config::ConfigManager;
 use crate::core::protocols::common::ProtocolFactory;
 use crate::utils::error::Result;
@@ -210,10 +212,10 @@ async fn main() -> Result<()> {
     // Use config file from CLI args or environment variable
     let config_file = env::var("CONFIG_FILE").unwrap_or(args.config);
 
-    // Create configuration manager with better error context
+    // Create modern Figment configuration manager with better error context
     let config_manager = match ConfigManager::from_file(&config_file) {
         Ok(cm) => {
-            info!("Configuration loaded from: {}", config_file);
+            info!("Configuration loaded from: {} (using Figment)", config_file);
             Arc::new(cm)
         }
         Err(e) => {
@@ -261,18 +263,8 @@ async fn main() -> Result<()> {
         return Err(e);
     }
 
-    // Start API service if enabled
+    // Start OpenAPI service only
     if config_manager.get_api_enabled() {
-        let start_time = Arc::new(Utc::now());
-        // Share the same config manager for API instead of cloning
-        let config_manager_for_api = Arc::new(RwLock::new((*config_manager).clone()));
-        let routes = api_routes(factory.clone(), config_manager_for_api);
-
-        info!(
-            "Starting API server at: {}",
-            config_manager.get_api_address()
-        );
-
         let socket_addr = config_manager
             .get_api_address()
             .parse::<SocketAddr>()
@@ -285,11 +277,31 @@ async fn main() -> Result<()> {
                 "0.0.0.0:3000".parse().unwrap()
             });
 
+        // Create unified OpenAPI routes
+        let openapi_routes = openapi_routes::api_routes();
+        let swagger_routes = swagger::swagger_routes();
+        let api_routes = openapi_routes
+            .or(swagger_routes)
+            .with(warp::cors()
+                .allow_any_origin()
+                .allow_headers(vec!["content-type", "x-api-version", "authorization"])
+                .allow_methods(vec!["GET", "POST", "PUT", "DELETE", "OPTIONS"]))
+            .with(warp::log("comsrv::api"));
+
+        info!(
+            "🚀 Starting Communication Service with OpenAPI at: http://{}",
+            socket_addr
+        );
+        info!("📚 Swagger UI: http://{}/swagger", socket_addr);
+        info!("📄 OpenAPI spec: http://{}/openapi.json", socket_addr);
+        info!("❤️  Health check: http://{}/api/health", socket_addr);
+        info!("📊 Service status: http://{}/api/status", socket_addr);
+
         tokio::spawn(async move {
-            warp::serve(routes).run(socket_addr).await;
+            warp::serve(api_routes).run(socket_addr).await;
         });
 
-        info!("API server started successfully");
+        info!("✅ OpenAPI service started successfully");
     } else {
         info!("API server disabled in configuration");
     }

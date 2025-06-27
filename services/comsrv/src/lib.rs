@@ -225,7 +225,8 @@ pub mod service {
 
     use crate::service_impl as impls;
     use crate::utils::Result;
-    use crate::{ConfigManager, ProtocolFactory};
+    use crate::core::config::ConfigManager;
+    use crate::core::protocols::common::ProtocolFactory;
     use std::sync::Arc;
     use tokio::sync::RwLock;
 
@@ -459,7 +460,7 @@ pub mod service {
 }
 
 // Re-export commonly used types and traits
-pub use core::config::config_manager::ConfigManager;
+pub use core::config::ConfigManager;
 pub use core::protocols::common::combase::{ChannelStatus, ComBase, ComBaseImpl, PointData};
 pub use core::protocols::common::ProtocolFactory;
 pub use utils::{ComSrvError, Result};

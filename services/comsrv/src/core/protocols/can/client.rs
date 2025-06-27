@@ -8,7 +8,7 @@ use async_trait::async_trait;
 use tokio::sync::RwLock;
 use chrono::Utc;
 use log::{debug, info};
-use crate::core::config::config_manager::ChannelConfig;
+use crate::core::config::ChannelConfig;
 use crate::core::protocols::common::{ComBase, ComBaseImpl, ChannelStatus, PointData};
 use crate::utils::{ComSrvError, Result};
 use super::common::*;
@@ -503,7 +503,7 @@ impl CanClient for CanClientBase {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::config::config_manager::ProtocolType;
+    use crate::core::config::ProtocolType;
     use super::super::frame::CanFrame;
 
     fn create_test_can_config() -> ChannelConfig {
@@ -517,7 +517,7 @@ mod tests {
             name: "Test CAN Channel".to_string(),
             description: "Test channel for CAN client".to_string(),
             protocol: ProtocolType::Can,
-            parameters: crate::core::config::config_manager::ChannelParameters::Generic(parameters),
+            parameters: crate::core::config::ChannelParameters::Generic(parameters),
         }
     }
 

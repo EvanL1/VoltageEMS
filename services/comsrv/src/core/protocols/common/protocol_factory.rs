@@ -5,7 +5,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
-use crate::core::config::config_manager::{ChannelConfig, ConfigManager, ProtocolType};
+use crate::core::config::{ChannelConfig, ConfigManager, ProtocolType};
 use crate::core::protocols::common::ComBase;
 // TODO: 暂时屏蔽，等核心组件稳定后再启用
 // use crate::core::protocols::iec60870::iec104::Iec104Client;
@@ -208,151 +208,24 @@ impl ProtocolClientFactory for ModbusTcpFactory {
 
         // Load ComBase configurations from channel-level CSV files
         if let Some(cm) = config_manager {
-            // Try to load channel-level CSV configuration
-            match cm.load_channel_combase_config(config.id) {
-                Ok(combase_manager) => {
+            // Load point mappings directly from the CSV bridge layer
+            match cm.get_modbus_mappings_for_channel(config.id) {
+                Ok(mappings) => {
                     log::info!(
-                        "Loaded ComBase configuration for channel {} from CSV files",
+                        "Loaded {} point mappings for channel {} from CSV bridge layer",
+                        mappings.len(),
                         config.id
                     );
-
-                    // Convert ComBase configurations to Modbus point mappings
-                    let mut point_mappings = Vec::new();
-
-                    // Process telemetry points (遥测) - analog input registers
-                    if let Some(telemetry_points) = combase_manager.get_points_by_type(
-                        crate::core::config::config_manager::TelemetryType::Telemetry,
-                    ) {
-                        for (point_id, point_config) in telemetry_points {
-                            if let crate::core::config::config_manager::CombasePointConfig::Analog(
-                                analog_config,
-                            ) = point_config
-                            {
-                                let mapping = crate::core::protocols::modbus::common::ModbusRegisterMapping {
-                                    name: format!("telemetry_{}", point_id),
-                                    display_name: Some(analog_config.chinese_name.clone()),
-                                    register_type: crate::core::protocols::modbus::common::ModbusRegisterType::InputRegister,
-                                    address: (*point_id - 1000) as u16, // 映射地址：1000->0, 1001->1, etc.
-                                    data_type: crate::core::protocols::modbus::common::ModbusDataType::UInt16,
-                                    scale: analog_config.scale,
-                                    offset: analog_config.offset,
-                                    unit: analog_config.unit.clone(),
-                                    description: analog_config.description.clone(),
-                                    access_mode: "read".to_string(),
-                                    group: analog_config.group.clone(),
-                                    byte_order: crate::core::protocols::modbus::common::ByteOrder::BigEndian,
-                                };
-                                point_mappings.push(mapping);
-                            }
-                        }
-                    }
-
-                    // Process signaling points (遥信) - discrete inputs
-                    if let Some(signaling_points) = combase_manager.get_points_by_type(
-                        crate::core::config::config_manager::TelemetryType::Signaling,
-                    ) {
-                        for (point_id, point_config) in signaling_points {
-                            if let crate::core::config::config_manager::CombasePointConfig::Digital(digital_config) = point_config {
-                                let mapping = crate::core::protocols::modbus::common::ModbusRegisterMapping {
-                                    name: format!("signaling_{}", point_id),
-                                    display_name: Some(digital_config.chinese_name.clone()),
-                                    register_type: crate::core::protocols::modbus::common::ModbusRegisterType::DiscreteInput,
-                                    address: (*point_id - 2000) as u16, // 映射地址：2000->0, 2001->1, etc.
-                                    data_type: crate::core::protocols::modbus::common::ModbusDataType::Bool,
-                                    scale: 1.0,
-                                    offset: 0.0,
-                                    unit: None,
-                                    description: digital_config.description.clone(),
-                                    access_mode: "read".to_string(),
-                                    group: digital_config.group.clone(),
-                                    byte_order: crate::core::protocols::modbus::common::ByteOrder::BigEndian,
-                                };
-                                point_mappings.push(mapping);
-                            }
-                        }
-                    }
-
-                    // Process control points (遥控) - coils
-                    if let Some(control_points) = combase_manager.get_points_by_type(
-                        crate::core::config::config_manager::TelemetryType::Control,
-                    ) {
-                        for (point_id, point_config) in control_points {
-                            if let crate::core::config::config_manager::CombasePointConfig::Digital(digital_config) = point_config {
-                                let mapping = crate::core::protocols::modbus::common::ModbusRegisterMapping {
-                                    name: format!("control_{}", point_id),
-                                    display_name: Some(digital_config.chinese_name.clone()),
-                                    register_type: crate::core::protocols::modbus::common::ModbusRegisterType::Coil,
-                                    address: (*point_id - 3000) as u16, // 映射地址：3000->0, 3001->1, etc.
-                                    data_type: crate::core::protocols::modbus::common::ModbusDataType::Bool,
-                                    scale: 1.0,
-                                    offset: 0.0,
-                                    unit: None,
-                                    description: digital_config.description.clone(),
-                                    access_mode: "read_write".to_string(),
-                                    group: digital_config.group.clone(),
-                                    byte_order: crate::core::protocols::modbus::common::ByteOrder::BigEndian,
-                                };
-                                point_mappings.push(mapping);
-                            }
-                        }
-                    }
-
-                    // Process setpoint points (遥调) - holding registers
-                    if let Some(setpoint_points) = combase_manager.get_points_by_type(
-                        crate::core::config::config_manager::TelemetryType::Setpoint,
-                    ) {
-                        for (point_id, point_config) in setpoint_points {
-                            if let crate::core::config::config_manager::CombasePointConfig::Analog(
-                                analog_config,
-                            ) = point_config
-                            {
-                                let mapping = crate::core::protocols::modbus::common::ModbusRegisterMapping {
-                                    name: format!("setpoint_{}", point_id),
-                                    display_name: Some(analog_config.chinese_name.clone()),
-                                    register_type: crate::core::protocols::modbus::common::ModbusRegisterType::HoldingRegister,
-                                    address: (*point_id - 4000) as u16, // 映射地址：4000->0, 4001->1, etc.
-                                    data_type: crate::core::protocols::modbus::common::ModbusDataType::UInt16,
-                                    scale: analog_config.scale,
-                                    offset: analog_config.offset,
-                                    unit: analog_config.unit.clone(),
-                                    description: analog_config.description.clone(),
-                                    access_mode: "read_write".to_string(),
-                                    group: analog_config.group.clone(),
-                                    byte_order: crate::core::protocols::modbus::common::ByteOrder::BigEndian,
-                                };
-                                point_mappings.push(mapping);
-                            }
-                        }
-                    }
-
-                    log::info!(
-                        "Created {} Modbus point mappings from ComBase CSV files for channel {}",
-                        point_mappings.len(),
-                        config.id
-                    );
-                    modbus_config.point_mappings = point_mappings;
+                    modbus_config.point_mappings = mappings;
                 }
                 Err(e) => {
-                    log::warn!("Failed to load ComBase CSV configuration for channel {}: {}. Using fallback method.", config.id, e);
-
-                    // Fallback to old CSV point mapping method
-                    match cm.get_modbus_mappings_for_channel(config.id) {
-                        Ok(mappings) => {
-                            log::info!(
-                                "Loaded {} point mappings for channel {} using fallback method",
-                                mappings.len(),
-                                config.id
-                            );
-                            modbus_config.point_mappings = mappings;
-                        }
-                        Err(e) => {
-                            log::warn!(
-                                "Failed to load point mappings for channel {}: {}",
-                                config.id,
-                                e
-                            );
-                        }
-                    }
+                    log::warn!(
+                        "Failed to load point mappings for channel {}: {}",
+                        config.id,
+                        e
+                    );
+                    // Create empty mapping list to allow channel creation
+                    modbus_config.point_mappings = Vec::new();
                 }
             }
         }
@@ -364,7 +237,7 @@ impl ProtocolClientFactory for ModbusTcpFactory {
             let redis_config = cm.get_redis_config();
             if redis_config.enabled {
                 log::info!("Initializing Redis store for channel {}", config.id);
-                match crate::core::storage::redis_storage::RedisStore::from_config(&redis_config)
+                match crate::core::storage::redis_storage::RedisStore::from_config(redis_config)
                     .await
                 {
                     Ok(Some(redis_store)) => {
@@ -400,7 +273,7 @@ impl ProtocolClientFactory for ModbusTcpFactory {
     }
 
     fn validate_config(&self, config: &ChannelConfig) -> Result<()> {
-        use crate::core::config::config_manager::ChannelParameters;
+        use crate::core::config::ChannelParameters;
 
         log::debug!("ModbusTcp validate_config: config = {:?}", config);
 
@@ -454,10 +327,7 @@ impl ProtocolClientFactory for ModbusTcpFactory {
             name: "Modbus TCP Channel".to_string(),
             description: Some("Modbus TCP communication channel".to_string()),
             protocol: ProtocolType::ModbusTcp,
-            parameters: crate::core::config::config_manager::ChannelParameters::Generic(param_map),
-            point_table: None,
-            source_tables: None,
-            csv_config: None,
+            parameters: crate::core::config::ChannelParameters::Generic(param_map),
         }
     }
 
@@ -541,7 +411,7 @@ impl ProtocolClientFactory for ModbusRtuFactory {
     }
 
     fn validate_config(&self, config: &ChannelConfig) -> Result<()> {
-        use crate::core::config::config_manager::ChannelParameters;
+        use crate::core::config::ChannelParameters;
 
         // For now, just accept all ModbusRtu configurations to allow testing
         // TODO: Implement proper parameter validation
@@ -592,10 +462,7 @@ impl ProtocolClientFactory for ModbusRtuFactory {
             name: "Modbus RTU Channel".to_string(),
             description: Some("Modbus RTU serial communication channel".to_string()),
             protocol: ProtocolType::ModbusRtu,
-            parameters: crate::core::config::config_manager::ChannelParameters::Generic(param_map),
-            point_table: None,
-            source_tables: None,
-            csv_config: None,
+            parameters: crate::core::config::ChannelParameters::Generic(param_map),
         }
     }
 
@@ -944,7 +811,7 @@ impl ProtocolFactory {
     ///
     /// ```rust
     /// use comsrv::core::protocols::common::protocol_factory::ProtocolFactory;
-    /// use comsrv::core::config::config_manager::ProtocolType;
+    /// use comsrv::core::config::ProtocolType;
     ///
     /// let factory = ProtocolFactory::new();
     ///
@@ -1232,7 +1099,7 @@ impl ProtocolFactory {
                         last_accessed: chrono::Utc::now().format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string(),
                         running: false,
                         parameters: match &config.parameters {
-                            crate::core::config::config_manager::ChannelParameters::Generic(params) => {
+                            crate::core::config::ChannelParameters::Generic(params) => {
                                 params.iter().map(|(k, v)| {
                                     let json_value = serde_json::to_value(v).unwrap_or(serde_json::Value::Null);
                                     (k.clone(), json_value)
@@ -1667,7 +1534,7 @@ impl Default for ProtocolFactory {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::config::config_manager::ProtocolType;
+    use crate::core::config::ProtocolType;
 
     fn create_test_channel_config(id: u16, protocol: ProtocolType) -> ChannelConfig {
         let parameters = serde_json::json!({
@@ -1682,12 +1549,9 @@ mod tests {
         ChannelConfig {
             id,
             name: format!("Test Channel {}", id),
-            description: "Test channel configuration".to_string(),
+            description: Some("Test channel configuration".to_string()),
             protocol,
-            parameters: crate::core::config::config_manager::ChannelParameters::Generic(param_map),
-            point_table: None,
-            source_tables: None,
-            csv_config: None,
+            parameters: crate::core::config::ChannelParameters::Generic(param_map),
         }
     }
 
@@ -1710,12 +1574,9 @@ mod tests {
         ChannelConfig {
             id,
             name: format!("Test RTU Channel {}", id),
-            description: "Test RTU channel configuration".to_string(),
+            description: Some("Test RTU channel configuration".to_string()),
             protocol: ProtocolType::ModbusRtu,
-            parameters: crate::core::config::config_manager::ChannelParameters::Generic(param_map),
-            point_table: None,
-            source_tables: None,
-            csv_config: None,
+            parameters: crate::core::config::ChannelParameters::Generic(param_map),
         }
     }
 
@@ -1748,7 +1609,7 @@ mod tests {
 
         // Test invalid config (missing address)
         let mut invalid_config = valid_config.clone();
-        if let crate::core::config::config_manager::ChannelParameters::Generic(ref mut params) =
+        if let crate::core::config::ChannelParameters::Generic(ref mut params) =
             invalid_config.parameters
         {
             params.remove("address");

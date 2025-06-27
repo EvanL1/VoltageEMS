@@ -41,7 +41,7 @@
 //!
 //! ```rust
 //! use comsrv::core::protocols::modbus::server::*;
-//! use comsrv::core::config::config_manager::*;
+//! use comsrv::core::config::*;
 //!
 //! #[tokio::main]
 //! async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -125,7 +125,7 @@ use voltage_modbus::{
 };
 
 use super::common::{ModbusRegisterMapping, ModbusRegisterType};
-use crate::core::config::config_manager::ChannelConfig;
+use crate::core::config::ChannelConfig;
 use crate::core::protocols::common::combase::{ChannelStatus, ComBase, ComBaseImpl, PointData};
 use crate::utils::error::{ComSrvError, Result};
 
@@ -823,16 +823,15 @@ impl ComBase for ModbusServer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::config::config_manager::{ChannelConfig, ChannelParameters, ProtocolType};
+            use crate::core::config::{ChannelConfig, ChannelParameters, ProtocolType};
 
     fn create_test_config() -> ChannelConfig {
         ChannelConfig {
             id: 1,
             name: "Test Modbus Server".to_string(),
-            description: "Test Description".to_string(),
+            description: Some("Test Description".to_string()),
             protocol: ProtocolType::ModbusTcp,
             parameters: ChannelParameters::Generic(HashMap::new()),
-            csv_config: None,
         }
     }
 

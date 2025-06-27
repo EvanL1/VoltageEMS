@@ -1,6 +1,11 @@
-pub mod handlers;
+// Legacy API modules - temporarily disabled
+// pub mod handlers;
+// pub mod routes;
+
+// Active API modules
 pub mod models;
-pub mod routes;
+pub mod openapi_routes;
+pub mod swagger;
 
 // Future helper functions can be added here as needed.
 
@@ -60,28 +65,30 @@ mod tests {
         use serde_json::json;
         use std::collections::HashMap;
 
-        let mut parameters = HashMap::new();
-        parameters.insert("host".to_string(), json!("127.0.0.1"));
-        parameters.insert("port".to_string(), json!(502));
+        let mut statistics = HashMap::new();
+        statistics.insert("host".to_string(), json!("127.0.0.1"));
+        statistics.insert("port".to_string(), json!(502));
 
         let now = Utc::now();
         let status = ChannelStatus {
-            id: "channel_1".to_string(),
+            id: 1,
             name: "Test Channel".to_string(),
             protocol: "ModbusTcp".to_string(),
             connected: true,
-            last_response_time: 125.5,
-            last_error: "".to_string(),
-            last_update_time: now,
-            parameters,
+            running: true,
+            last_update: now,
+            error_count: 0,
+            last_error: None,
+            statistics,
         };
 
-        assert_eq!(status.id, "channel_1");
+        assert_eq!(status.id, 1);
         assert_eq!(status.name, "Test Channel");
         assert_eq!(status.protocol, "ModbusTcp");
         assert!(status.connected);
-        assert_eq!(status.last_response_time, 125.5);
-        assert_eq!(status.parameters.len(), 2);
+        assert!(status.running);
+        assert_eq!(status.error_count, 0);
+        assert_eq!(status.statistics.len(), 2);
     }
 
     #[tokio::test]

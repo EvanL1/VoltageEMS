@@ -1,9 +1,10 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use rweb::Schema;
 
 /// service status response
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Schema)]
 pub struct ServiceStatus {
     pub name: String,
     pub version: String,
@@ -14,7 +15,7 @@ pub struct ServiceStatus {
 }
 
 /// channel status response for list endpoint
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Schema)]
 pub struct ChannelStatusResponse {
     pub id: u16,
     pub name: String,
@@ -26,7 +27,7 @@ pub struct ChannelStatusResponse {
 }
 
 /// channel status response - Enhanced version combining API and ComBase requirements
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Schema)]
 pub struct ChannelStatus {
     pub id: u16,
     pub name: String,
@@ -57,7 +58,7 @@ impl From<crate::core::protocols::common::combase::ChannelStatus> for ChannelSta
 }
 
 /// service health status
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Schema)]
 pub struct HealthStatus {
     pub status: String,
     pub uptime: u64,
@@ -66,13 +67,13 @@ pub struct HealthStatus {
 }
 
 /// channel operation request
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Schema)]
 pub struct ChannelOperation {
     pub operation: String, // "start", "stop", "restart"
 }
 
 /// point value read response
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Schema)]
 pub struct PointValue {
     pub id: String,
     pub name: String,
@@ -105,7 +106,7 @@ pub struct PointTableData {
 }
 
 /// point value write request
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Schema)]
 pub struct WritePointRequest {
     pub value: serde_json::Value,
 }
@@ -153,7 +154,7 @@ pub struct ChannelConfigUpdateRequest {
 }
 
 /// API response wrapper
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Schema)]
 pub struct ApiResponse<T> {
     pub success: bool,
     pub data: Option<T>,

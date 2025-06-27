@@ -73,7 +73,7 @@
 //!
 //! ```rust
 //! use comsrv::core::protocols::common::combase::ComBaseImpl;
-//! use comsrv::core::config::config_manager::ChannelConfig;
+//! use comsrv::core::config::ChannelConfig;
 //!
 //! // Example: Creating a communication service base
 //! fn create_service_base(name: &str, protocol: &str, config: ChannelConfig) -> ComBaseImpl {
@@ -96,7 +96,7 @@ use log::{
     warn as log_warn,
 };
 
-use crate::core::config::config_manager::ChannelConfig;
+use crate::core::config::ChannelConfig;
 use crate::utils::error::{ComSrvError, Result};
 
 /// Channel operational status and health information
@@ -1541,7 +1541,7 @@ pub trait ComBase: Send + Sync + std::fmt::Debug {
     ///
     /// ```rust
     /// use comsrv::core::protocols::common::combase::ComBaseImpl;
-    /// use comsrv::core::config::config_manager::{ChannelConfig, ProtocolType, ChannelParameters};
+    /// use comsrv::core::config::{ChannelConfig, ProtocolType, ChannelParameters};
     /// use std::collections::HashMap;
     ///
     /// # async fn example(service: &ComBaseImpl) -> comsrv::utils::Result<()> {
@@ -1568,7 +1568,7 @@ pub trait ComBase: Send + Sync + std::fmt::Debug {
     ///
     /// ```rust
     /// use comsrv::core::protocols::common::combase::ComBaseImpl;
-    /// use comsrv::core::config::config_manager::{ChannelConfig, ProtocolType, ChannelParameters};
+    /// use comsrv::core::config::{ChannelConfig, ProtocolType, ChannelParameters};
     /// use std::collections::HashMap;
     ///
     /// # async fn example(service: &ComBaseImpl) -> comsrv::utils::Result<()> {
@@ -1593,7 +1593,7 @@ pub trait ComBase: Send + Sync + std::fmt::Debug {
     ///
     /// ```rust
     /// use comsrv::core::protocols::common::combase::ComBaseImpl;
-    /// use comsrv::core::config::config_manager::{ChannelConfig, ProtocolType, ChannelParameters};
+    /// use comsrv::core::config::{ChannelConfig, ProtocolType, ChannelParameters};
     /// use std::collections::HashMap;
     ///
     /// # async fn example(service: &ComBaseImpl) {
@@ -1979,7 +1979,7 @@ pub trait ProtocolLogger: Send + Sync {
 ///
 /// ```rust
 /// use comsrv::core::protocols::common::combase::ComBaseImpl;
-/// use comsrv::core::config::config_manager::{ChannelConfig, ProtocolType, ChannelParameters};
+/// use comsrv::core::config::{ChannelConfig, ProtocolType, ChannelParameters};
 /// use std::collections::HashMap;
 ///
 /// // Create a test configuration
@@ -2033,7 +2033,7 @@ impl ComBaseImpl {
     ///
     /// ```rust
     /// use comsrv::core::protocols::common::combase::ComBaseImpl;
-    /// use comsrv::core::config::config_manager::{ChannelConfig, ProtocolType, ChannelParameters};
+    /// use comsrv::core::config::{ChannelConfig, ProtocolType, ChannelParameters};
     /// use std::collections::HashMap;
     ///
     /// let config = ChannelConfig {
@@ -2150,7 +2150,7 @@ impl ComBaseImpl {
     ///
     /// ```rust
     /// use comsrv::core::protocols::common::combase::ComBaseImpl;
-    /// use comsrv::core::config::config_manager::{ChannelConfig, ProtocolType, ChannelParameters};
+    /// use comsrv::core::config::{ChannelConfig, ProtocolType, ChannelParameters};
     /// use std::collections::HashMap;
     ///
     /// # async fn example(service: &ComBaseImpl) -> comsrv::utils::Result<()> {
@@ -2181,7 +2181,7 @@ impl ComBaseImpl {
     ///
     /// ```rust
     /// use comsrv::core::protocols::common::combase::ComBaseImpl;
-    /// use comsrv::core::config::config_manager::{ChannelConfig, ProtocolType, ChannelParameters};
+    /// use comsrv::core::config::{ChannelConfig, ProtocolType, ChannelParameters};
     /// use std::collections::HashMap;
     ///
     /// # async fn example(service: &ComBaseImpl) -> comsrv::utils::Result<()> {
@@ -2210,7 +2210,7 @@ impl ComBaseImpl {
     ///
     /// ```rust
     /// use comsrv::core::protocols::common::combase::ComBaseImpl;
-    /// use comsrv::core::config::config_manager::{ChannelConfig, ProtocolType, ChannelParameters};
+    /// use comsrv::core::config::{ChannelConfig, ProtocolType, ChannelParameters};
     /// use std::collections::HashMap;
     ///
     /// # async fn example(service: &ComBaseImpl) {
@@ -2238,7 +2238,7 @@ impl ComBaseImpl {
     ///
     /// ```rust
     /// use comsrv::core::protocols::common::combase::ComBaseImpl;
-    /// use comsrv::core::config::config_manager::{ChannelConfig, ProtocolType, ChannelParameters};
+    /// use comsrv::core::config::{ChannelConfig, ProtocolType, ChannelParameters};
     /// use std::collections::HashMap;
     ///
     /// # async fn example(service: &ComBaseImpl) {
@@ -2283,7 +2283,7 @@ impl ComBaseImpl {
     ///
     /// ```rust
     /// use comsrv::core::protocols::common::combase::ComBaseImpl;
-    /// use comsrv::core::config::config_manager::{ChannelConfig, ProtocolType, ChannelParameters};
+    /// use comsrv::core::config::{ChannelConfig, ProtocolType, ChannelParameters};
     /// use std::collections::HashMap;
     ///
     /// # async fn example(service: &ComBaseImpl) -> comsrv::utils::Result<String> {
@@ -2335,7 +2335,7 @@ impl ComBaseImpl {
     ///
     /// ```rust
     /// use comsrv::core::protocols::common::combase::ComBaseImpl;
-    /// use comsrv::core::config::config_manager::{ChannelConfig, ProtocolType, ChannelParameters};
+    /// use comsrv::core::config::{ChannelConfig, ProtocolType, ChannelParameters};
     /// use std::collections::HashMap;
     ///
     /// # async fn example(service: &ComBaseImpl) -> std::result::Result<String, String> {
@@ -2385,7 +2385,7 @@ impl ComBaseImpl {
     ///
     /// ```rust
     /// use comsrv::core::protocols::common::combase::ComBaseImpl;
-    /// use comsrv::core::config::config_manager::{ChannelConfig, ProtocolType, ChannelParameters};
+    /// use comsrv::core::config::{ChannelConfig, ProtocolType, ChannelParameters};
     /// use std::collections::HashMap;
     ///
     /// # async fn example(service: &ComBaseImpl) {
@@ -2416,7 +2416,7 @@ impl ComBaseImpl {
     ///
     /// ```rust
     /// use comsrv::core::protocols::common::combase::ComBaseImpl;
-    /// use comsrv::core::config::config_manager::{ChannelConfig, ProtocolType, ChannelParameters};
+    /// use comsrv::core::config::{ChannelConfig, ProtocolType, ChannelParameters};
     /// use std::collections::HashMap;
     ///
     /// # async fn example(service: &ComBaseImpl) {
@@ -3092,7 +3092,7 @@ impl UniversalPollingEngine {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::config::config_manager::{ChannelConfig, ChannelParameters, ProtocolType};
+    use crate::core::config::{ChannelConfig, ChannelParameters, ProtocolType};
     use async_trait::async_trait;
     use std::sync::{Arc, Mutex};
     use tokio::time::{sleep, Duration, Instant};

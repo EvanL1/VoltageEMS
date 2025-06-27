@@ -11,6 +11,31 @@ use crate::core::protocols::common::ProtocolFactory;
 
 use crate::utils::error::Result;
 
+/// Convert new ChannelConfig to legacy types::ChannelConfig for compatibility
+fn convert_channel_config(config: &crate::core::config::config_manager::ChannelConfig) -> crate::core::config::types::ChannelConfig {
+    let protocol_type = match config.protocol.as_str() {
+        "modbus_tcp" => crate::core::config::types::ProtocolType::ModbusTcp,
+        "modbus_rtu" => crate::core::config::types::ProtocolType::ModbusRtu,
+        "can" => crate::core::config::types::ProtocolType::Can,
+        "iec104" => crate::core::config::types::ProtocolType::Iec104,
+        "virtual" => crate::core::config::types::ProtocolType::Virtual,
+        _ => crate::core::config::types::ProtocolType::Virtual, // default fallback
+    };
+
+    // Convert parameters to Generic HashMap (simplified)
+    let param_map: std::collections::HashMap<String, serde_yaml::Value> = config.parameters.iter()
+        .map(|(k, v)| (k.clone(), serde_yaml::Value::String(format!("{:?}", v))))
+        .collect();
+
+    crate::core::config::types::ChannelConfig {
+        id: config.id,
+        name: config.name.clone(),
+        description: config.description.clone(),
+        protocol: protocol_type,
+        parameters: crate::core::config::types::ChannelParameters::Generic(param_map),
+    }
+}
+
 /// Start the communication service with optimized performance and monitoring.
 pub async fn start_communication_service(
     config_manager: Arc<ConfigManager>,
@@ -21,7 +46,7 @@ pub async fn start_communication_service(
     if redis_config.enabled {
         info!("Redis is enabled, initializing Redis storage...");
         
-        match crate::core::storage::redis_storage::RedisStore::from_config(&redis_config).await {
+        match crate::core::storage::redis_storage::RedisStore::from_config(redis_config).await {
             Ok(Some(redis_store)) => {
                 info!("Redis storage initialized successfully");
                 
@@ -71,8 +96,9 @@ pub async fn start_communication_service(
         );
 
         let factory_guard = factory.write().await;
+        let converted_config = convert_channel_config(&channel_config);
         match factory_guard
-            .create_channel_with_config_manager(channel_config.clone(), Some(&*config_manager))
+            .create_channel_with_config_manager(converted_config, Some(&*config_manager))
             .await
         {
             Ok(_) => {

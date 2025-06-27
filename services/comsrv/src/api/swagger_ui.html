@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Communication Service API - Swagger UI</title>
+    <link rel="stylesheet" type="text/css" href="https://unpkg.com/swagger-ui-dist@5.9.0/swagger-ui.css" />
+    <link rel="icon" type="image/png" href="https://unpkg.com/swagger-ui-dist@5.9.0/favicon-32x32.png" sizes="32x32" />
+    <link rel="icon" type="image/png" href="https://unpkg.com/swagger-ui-dist@5.9.0/favicon-16x16.png" sizes="16x16" />
+    <style>
+        html {
+            box-sizing: border-box;
+            overflow: -moz-scrollbars-vertical;
+            overflow-y: scroll;
+        }
+        
+        *, *:before, *:after {
+            box-sizing: inherit;
+        }
+        
+        body {
+            margin: 0;
+            background: #fafafa;
+        }
+        
+        .swagger-ui .topbar {
+            background-color: #1976d2;
+        }
+        
+        .swagger-ui .topbar .download-url-wrapper {
+            display: none;
+        }
+        
+        .swagger-ui .info .title {
+            color: #1976d2;
+        }
+        
+        .custom-header {
+            background: linear-gradient(135deg, #1976d2 0%, #42a5f5 100%);
+            color: white;
+            padding: 20px;
+            text-align: center;
+            margin-bottom: 20px;
+        }
+        
+        .custom-header h1 {
+            margin: 0;
+            font-size: 2.5em;
+            font-weight: 300;
+        }
+        
+        .custom-header p {
+            margin: 10px 0 0 0;
+            font-size: 1.2em;
+            opacity: 0.9;
+        }
+        
+        .version-badge {
+            background: rgba(255, 255, 255, 0.2);
+            padding: 5px 10px;
+            border-radius: 15px;
+            font-size: 0.9em;
+            margin-left: 10px;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="custom-header">
+        <h1>
+            Communication Service API
+            <span class="version-badge">v0.1.0</span>
+        </h1>
+        <p>Industrial communication service providing protocol abstraction and data access</p>
+    </div>
+
+    <div id="swagger-ui"></div>
+
+    <script src="https://unpkg.com/swagger-ui-dist@5.9.0/swagger-ui-bundle.js" charset="UTF-8"></script>
+    <script src="https://unpkg.com/swagger-ui-dist@5.9.0/swagger-ui-standalone-preset.js" charset="UTF-8"></script>
+    <script>
+        window.onload = function() {
+            // Begin Swagger UI call region
+            const ui = SwaggerUIBundle({
+                url: '/openapi.json',
+                dom_id: '#swagger-ui',
+                deepLinking: true,
+                presets: [
+                    SwaggerUIBundle.presets.apis,
+                    SwaggerUIStandalonePreset
+                ],
+                plugins: [
+                    SwaggerUIBundle.plugins.DownloadUrl
+                ],
+                layout: "StandaloneLayout",
+                defaultModelsExpandDepth: 2,
+                defaultModelExpandDepth: 2,
+                docExpansion: "list",
+                filter: true,
+                showExtensions: true,
+                showCommonExtensions: true,
+                tryItOutEnabled: true,
+                requestInterceptor: function(request) {
+                    // Add any custom headers here
+                    request.headers['X-Request-ID'] = 'swagger-ui-' + Math.random().toString(36).substr(2, 9);
+                    return request;
+                },
+                responseInterceptor: function(response) {
+                    // Handle response logging or processing
+                    console.log('API Response:', response);
+                    return response;
+                },
+                onComplete: function() {
+                    console.log('Swagger UI loaded successfully');
+                },
+                onFailure: function(error) {
+                    console.error('Failed to load Swagger UI:', error);
+                }
+            });
+
+            // Custom styling and behavior
+            setTimeout(function() {
+                // Hide the top bar download URL input
+                const topbar = document.querySelector('.swagger-ui .topbar');
+                if (topbar) {
+                    topbar.style.display = 'none';
+                }
+                
+                // Add custom CSS for better styling
+                const style = document.createElement('style');
+                style.textContent = `
+                    .swagger-ui .scheme-container {
+                        background: #f8f9fa;
+                        border: 1px solid #dee2e6;
+                        border-radius: 8px;
+                        padding: 15px;
+                        margin-bottom: 20px;
+                    }
+                    
+                    .swagger-ui .info {
+                        margin-bottom: 30px;
+                    }
+                    
+                    .swagger-ui .opblock {
+                        border-radius: 8px;
+                        margin-bottom: 15px;
+                        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+                    }
+                    
+                    .swagger-ui .opblock .opblock-summary {
+                        border-radius: 8px 8px 0 0;
+                    }
+                    
+                    .swagger-ui .opblock.opblock-get .opblock-summary {
+                        border-color: #4caf50;
+                    }
+                    
+                    .swagger-ui .opblock.opblock-post .opblock-summary {
+                        border-color: #ff9800;
+                    }
+                    
+                    .swagger-ui .opblock.opblock-put .opblock-summary {
+                        border-color: #2196f3;
+                    }
+                    
+                    .swagger-ui .opblock.opblock-delete .opblock-summary {
+                        border-color: #f44336;
+                    }
+                `;
+                document.head.appendChild(style);
+            }, 1000);
+        };
+    </script>
+</body>
+</html> 

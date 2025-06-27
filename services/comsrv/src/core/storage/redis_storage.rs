@@ -115,23 +115,23 @@ impl RedisConnectionManager {
             .map_err(|e| ComSrvError::RedisError(format!("Redis PING failed: {}", e)))?;
 
         // Select database if specified
-        if config.db > 0 {
+        if config.database > 0 {
             redis::cmd("SELECT")
-                .arg(config.db)
+                .arg(config.database)
                 .query_async(&mut conn)
                 .await
                 .map_err(|e| {
                     ComSrvError::RedisError(format!(
                         "Failed to select database {}: {}",
-                        config.db, e
+                        config.database, e
                     ))
                 })?;
         }
 
         log::info!(
             "Redis connection manager created successfully: type={:?}, db={:?}, timeout={}ms",
-            config.connection_type,
-            config.db,
+            config.connection_type(),
+            config.database,
             config.timeout_ms
         );
 
@@ -148,15 +148,15 @@ impl RedisConnectionManager {
         })?;
 
         // Select database if specified
-        if self.config.db > 0 {
+        if self.config.database > 0 {
             redis::cmd("SELECT")
-                .arg(self.config.db)
+                .arg(self.config.database)
                 .query_async(&mut conn)
                 .await
                 .map_err(|e| {
                     ComSrvError::RedisError(format!(
                         "Failed to select database {}: {}",
-                        self.config.db, e
+                        self.config.database, e
                     ))
                 })?;
         }
@@ -824,24 +824,20 @@ impl RedisStore {
 }
 
 #[cfg(test)]
+#[allow(dead_code)]
 mod tests {
     use super::*;
-    use crate::core::config::config_manager::RedisConnectionType;
+    // RedisConnectionType moved to types module - using string-based configuration for tests
 
     /// create test Redis config
     fn create_test_redis_config() -> RedisConfig {
         RedisConfig {
             enabled: true,
-            connection_type: RedisConnectionType::Tcp,
-            address: "redis://127.0.0.1:6379".to_string(),
-            db: 0,
+            url: "redis://127.0.0.1:6379/0".to_string(),
+            database: 0,
             timeout_ms: 5000,
             max_connections: Some(10),
-            min_connections: Some(1),
-            idle_timeout_secs: 300,
             max_retries: 3,
-            password: None,
-            username: None,
         }
     }
 
@@ -849,16 +845,11 @@ mod tests {
     fn create_disabled_redis_config() -> RedisConfig {
         RedisConfig {
             enabled: false,
-            connection_type: RedisConnectionType::Tcp,
-            address: "redis://127.0.0.1:6379".to_string(),
-            db: 0,
+            url: "redis://127.0.0.1:6379/0".to_string(),
+            database: 0,
             timeout_ms: 5000,
             max_connections: Some(10),
-            min_connections: Some(1),
-            idle_timeout_secs: 300,
             max_retries: 3,
-            password: None,
-            username: None,
         }
     }
 

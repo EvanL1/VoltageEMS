@@ -66,7 +66,7 @@
 //! ```
 
 pub mod config;
-pub mod forward_calculation;
+// Forward calculation functionality removed - use ConfigManager for configuration
 pub mod protocols;
 pub mod storage;
 
@@ -255,7 +255,7 @@ channels:
     #[test]
     fn test_configuration_types_integration() {
         // Test integration between config and protocol modules
-        use crate::core::config::config_manager::ProtocolType;
+        use crate::core::config::ProtocolType;
 
         // Test protocol types
         let modbus_tcp = ProtocolType::ModbusTcp;

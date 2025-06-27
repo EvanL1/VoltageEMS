@@ -9,7 +9,7 @@ use tokio::time::sleep;
 use chrono::Utc;
 use async_trait::async_trait;
 
-use crate::core::config::config_manager::ChannelConfig;
+use crate::core::config::ChannelConfig;
 use crate::core::protocols::common::combase::{ChannelStatus, ComBase, PointData};
 use crate::core::protocols::iec60870::asdu::{ASDU, CommonAddrSize, TypeId};
 use crate::core::protocols::iec60870::common::{IecError, IecResult};
@@ -234,7 +234,7 @@ impl Iec104Client {
         
         // Extract specific parameters from config
         match &config.parameters {
-            crate::core::config::config_manager::ChannelParameters::Generic(params) => {
+            crate::core::config::ChannelParameters::Generic(params) => {
                 if let Some(val) = params.get("host") {
                     if let Some(s) = val.as_str() {
                         host = s.to_string();
