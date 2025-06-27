@@ -54,9 +54,8 @@ use chrono::Utc;
 use clap::Parser;
 use dotenv::dotenv;
 use tokio::sync::RwLock;
-use warp::Filter;
 
-use log::{error, info, warn};
+use tracing::{error, info, warn};
 
 mod api;
 mod core;
@@ -224,13 +223,20 @@ async fn main() -> Result<()> {
         }
     };
 
-    // Initialize logging early for better debugging
+    // Initialize tracing early for better debugging
     let log_level = args
         .log_level
         .as_deref()
         .unwrap_or(config_manager.get_log_level());
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(log_level))
-        .format_timestamp_millis()
+    
+    use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
+    
+    tracing_subscriber::registry()
+        .with(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new(log_level))
+        )
+        .with(tracing_subscriber::fmt::layer().with_timer(tracing_subscriber::fmt::time::uptime()))
         .init();
 
     if args.super_test {
@@ -277,28 +283,36 @@ async fn main() -> Result<()> {
                 "0.0.0.0:3000".parse().unwrap()
             });
 
-        // Create unified OpenAPI routes
-        let openapi_routes = openapi_routes::api_routes();
-        let swagger_routes = swagger::swagger_routes();
-        let api_routes = openapi_routes
-            .or(swagger_routes)
-            .with(warp::cors()
-                .allow_any_origin()
-                .allow_headers(vec!["content-type", "x-api-version", "authorization"])
-                .allow_methods(vec!["GET", "POST", "PUT", "DELETE", "OPTIONS"]))
-            .with(warp::log("comsrv::api"));
+        // Create axum router with CORS middleware
+        let app = openapi_routes::create_api_routes()
+            .layer(
+                tower_http::cors::CorsLayer::new()
+                    .allow_origin(tower_http::cors::Any)
+                    .allow_headers([
+                        axum::http::header::CONTENT_TYPE,
+                        axum::http::header::AUTHORIZATION,
+                    ])
+                    .allow_methods([
+                        axum::http::Method::GET,
+                        axum::http::Method::POST,
+                        axum::http::Method::PUT,
+                        axum::http::Method::DELETE,
+                        axum::http::Method::OPTIONS,
+                    ])
+            );
 
         info!(
             "🚀 Starting Communication Service with OpenAPI at: http://{}",
             socket_addr
         );
-        info!("📚 Swagger UI: http://{}/swagger", socket_addr);
-        info!("📄 OpenAPI spec: http://{}/openapi.json", socket_addr);
+        info!("📚 Swagger UI: http://{}/swagger-ui", socket_addr);
+        info!("📄 OpenAPI spec: http://{}/api-docs/openapi.json", socket_addr);
         info!("❤️  Health check: http://{}/api/health", socket_addr);
         info!("📊 Service status: http://{}/api/status", socket_addr);
 
         tokio::spawn(async move {
-            warp::serve(api_routes).run(socket_addr).await;
+            let listener = tokio::net::TcpListener::bind(socket_addr).await.unwrap();
+            axum::serve(listener, app).await.unwrap();
         });
 
         info!("✅ OpenAPI service started successfully");

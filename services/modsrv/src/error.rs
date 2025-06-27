@@ -53,7 +53,7 @@ use serde_yaml;
 use redis;
 use std::error::Error;
 use std::fmt;
-use warp::reject;
+// Removed warp dependency
 
 /// Result type alias for Model Service operations
 /// 
@@ -418,7 +418,7 @@ impl From<serde_yaml::Error> for ModelSrvError {
 /// 
 /// This implementation allows ModelSrvError to be used directly
 /// with the Warp web framework for HTTP API error handling.
-impl reject::Reject for ModelSrvError {}
+// Removed warp dependency - ModelSrvError no longer implements Reject
 
 /// Convert Tokio join errors to ModelSrvError
 /// 

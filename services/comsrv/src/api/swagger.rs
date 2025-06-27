@@ -1,70 +1,56 @@
-use rweb::Filter;
+use axum::{
+    response::{Html, Json},
+    routing::get,
+    Router,
+};
 use serde_json;
-use warp::{Reply, Rejection};
+use utoipa::OpenApi;
+use utoipa_swagger_ui::SwaggerUi;
+
+/// OpenAPI specification for Communication Service
+#[derive(OpenApi)]
+#[openapi(
+    info(
+        title = "Communication Service API",
+        version = "0.1.0",
+        description = "Industrial communication service providing protocol abstraction and data access"
+    ),
+    tags(
+        (name = "health", description = "Health check endpoints"),
+        (name = "status", description = "Service status endpoints"),
+        (name = "channels", description = "Channel management endpoints"),
+        (name = "points", description = "Point data endpoints"),
+        (name = "point-tables", description = "Point table management endpoints")
+    )
+)]
+pub struct ApiDoc;
 
 /// Generate OpenAPI JSON specification
-pub async fn openapi_json() -> Result<impl Reply, Rejection> {
-    let json = crate::api::openapi_routes::get_openapi_spec();
-    
-    Ok(warp::reply::with_header(
-        json,
-        "content-type",
-        "application/json"
-    ))
+pub async fn openapi_json() -> Json<utoipa::openapi::OpenApi> {
+    Json(ApiDoc::openapi())
 }
 
 /// Swagger UI HTML page
-pub async fn swagger_ui() -> Result<impl Reply, Rejection> {
-    let html = include_str!("swagger_ui.html");
-    Ok(warp::reply::html(html))
+pub async fn swagger_ui() -> Html<&'static str> {
+    Html(include_str!("swagger_ui.html"))
 }
 
-/// OpenAPI and Swagger routes
-pub fn swagger_routes() -> impl Filter<Extract = impl Reply, Error = Rejection> + Clone {
-    let openapi_json_route = warp::path("openapi.json")
-        .and(warp::get())
-        .and_then(openapi_json);
-    
-    let swagger_ui_route = warp::path("swagger")
-        .and(warp::get())
-        .and_then(swagger_ui);
-    
-    openapi_json_route.or(swagger_ui_route)
+/// Create Swagger routes
+pub fn swagger_routes() -> Router {
+    Router::new()
+        .merge(SwaggerUi::new("/swagger-ui").url("/api-docs/openapi.json", ApiDoc::openapi()))
+        .route("/api-docs/openapi.json", get(openapi_json))
+        .route("/swagger", get(swagger_ui))
 }
-
-#[derive(Debug)]
-struct OpenApiError;
-impl warp::reject::Reject for OpenApiError {}
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use warp::test::request;
     
-    #[tokio::test]
-    async fn test_openapi_json_endpoint() {
-        let routes = swagger_routes();
-        
-        let resp = request()
-            .method("GET")
-            .path("/openapi.json")
-            .reply(&routes)
-            .await;
-        
-        assert_eq!(resp.status(), 200);
-        assert!(resp.headers().get("content-type").is_some());
-    }
-    
-    #[tokio::test]
-    async fn test_swagger_ui_endpoint() {
-        let routes = swagger_routes();
-        
-        let resp = request()
-            .method("GET")
-            .path("/swagger")
-            .reply(&routes)
-            .await;
-        
-        assert_eq!(resp.status(), 200);
+    #[test]
+    fn test_openapi_generation() {
+        let openapi = ApiDoc::openapi();
+        assert_eq!(openapi.info.title, "Communication Service API");
+        assert_eq!(openapi.info.version, "0.1.0");
     }
 } 

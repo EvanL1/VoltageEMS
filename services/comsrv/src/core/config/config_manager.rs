@@ -705,7 +705,7 @@ impl ConfigBuilder {
                     self.figment = self.figment.merge(Json::file(path));
                 }
                 _ => {
-                    log::warn!("Unknown config file extension: {}, trying YAML", ext);
+                    tracing::warn!("Unknown config file extension: {}, trying YAML", ext);
                     self.figment = self.figment.merge(Yaml::file(path));
                 }
             }
@@ -792,18 +792,18 @@ impl ConfigManager {
         for channel in &mut config.channels {
             // 🌟 New separated table configuration
             if let Some(table_config) = channel.table_config.clone() {
-                log::info!("Loading separated table configuration for channel {}", channel.id);
+                tracing::info!("Loading separated table configuration for channel {}", channel.id);
                 Self::load_separated_tables(channel, &table_config, config_dir)?;
                 continue;
             }
             
             // 🏗️ Legacy unified CSV mapping files
             if channel.mapping_files.is_empty() {
-                log::debug!("Channel {} has no mapping files configured", channel.id);
+                tracing::debug!("Channel {} has no mapping files configured", channel.id);
                 continue;
             }
 
-            log::info!("Loading legacy CSV mappings for channel {}: {:?}", 
+            tracing::info!("Loading legacy CSV mappings for channel {}: {:?}", 
                       channel.id, channel.mapping_files);
 
             for mapping_file in &channel.mapping_files {
@@ -816,7 +816,7 @@ impl ConfigManager {
                 };
 
                 if !csv_path.exists() {
-                    log::warn!("CSV mapping file not found: {}", csv_path.display());
+                    tracing::warn!("CSV mapping file not found: {}", csv_path.display());
                     continue;
                 }
 
@@ -824,7 +824,7 @@ impl ConfigManager {
                 let points = Self::parse_csv_mapping_file(&csv_path)?;
                 channel.points.extend(points);
 
-                log::info!("Loaded {} point mappings from {}", 
+                tracing::info!("Loaded {} point mappings from {}", 
                           channel.points.len(), csv_path.display());
             }
         }
@@ -871,7 +871,7 @@ impl ConfigManager {
         let yc_path = telemetry_base.join(&table_config.four_telemetry_files.telemetry_file);
         if yc_path.exists() {
             let yc_points = Self::parse_four_telemetry_csv(&yc_path, "YC")?;
-            log::info!("Loaded {} YC telemetry points from {}", yc_points.len(), yc_path.display());
+            tracing::info!("Loaded {} YC telemetry points from {}", yc_points.len(), yc_path.display());
             for point in yc_points {
                 all_telemetry_points.insert(point.point_id, point);
             }
@@ -881,7 +881,7 @@ impl ConfigManager {
         let yx_path = telemetry_base.join(&table_config.four_telemetry_files.signal_file);
         if yx_path.exists() {
             let yx_points = Self::parse_four_telemetry_csv(&yx_path, "YX")?;
-            log::info!("Loaded {} YX signal points from {}", yx_points.len(), yx_path.display());
+            tracing::info!("Loaded {} YX signal points from {}", yx_points.len(), yx_path.display());
             for point in yx_points {
                 all_telemetry_points.insert(point.point_id, point);
             }
@@ -891,7 +891,7 @@ impl ConfigManager {
         let yt_path = telemetry_base.join(&table_config.four_telemetry_files.adjustment_file);
         if yt_path.exists() {
             let yt_points = Self::parse_four_telemetry_csv(&yt_path, "YT")?;
-            log::info!("Loaded {} YT adjustment points from {}", yt_points.len(), yt_path.display());
+            tracing::info!("Loaded {} YT adjustment points from {}", yt_points.len(), yt_path.display());
             for point in yt_points {
                 all_telemetry_points.insert(point.point_id, point);
             }
@@ -901,7 +901,7 @@ impl ConfigManager {
         let yk_path = telemetry_base.join(&table_config.four_telemetry_files.control_file);
         if yk_path.exists() {
             let yk_points = Self::parse_four_telemetry_csv(&yk_path, "YK")?;
-            log::info!("Loaded {} YK control points from {}", yk_points.len(), yk_path.display());
+            tracing::info!("Loaded {} YK control points from {}", yk_points.len(), yk_path.display());
             for point in yk_points {
                 all_telemetry_points.insert(point.point_id, point);
             }
@@ -922,7 +922,7 @@ impl ConfigManager {
             let mapping_path = mapping_base.join(mapping_file);
             if mapping_path.exists() {
                 let mappings = Self::parse_protocol_mapping_csv(&mapping_path)?;
-                log::info!("Loaded {} {} protocol mappings from {}", 
+                tracing::info!("Loaded {} {} protocol mappings from {}", 
                           mappings.len(), point_type, mapping_path.display());
                 for mapping in mappings {
                     all_protocol_mappings.insert(mapping.point_id, mapping);
@@ -941,12 +941,12 @@ impl ConfigManager {
                 channel.combined_points.push(combined_point);
                 combined_count += 1;
             } else {
-                log::warn!("No protocol mapping found for telemetry point {} ({})", 
+                tracing::warn!("No protocol mapping found for telemetry point {} ({})", 
                           point_id, telemetry_point.signal_name);
             }
         }
         
-        log::info!("Successfully combined {} telemetry points with protocol mappings for channel {}", 
+        tracing::info!("Successfully combined {} telemetry points with protocol mappings for channel {}", 
                   combined_count, channel.id);
         
         Ok(())
@@ -964,7 +964,7 @@ impl ConfigManager {
                 .map_err(|e| ComSrvError::ConfigError(format!("CSV parse error at row {}: {}", row_idx + 1, e)))?;
             
             if record.len() < 3 {
-                log::warn!("Skipping incomplete row {} in {}", row_idx + 1, csv_path.display());
+                tracing::warn!("Skipping incomplete row {} in {}", row_idx + 1, csv_path.display());
                 continue;
             }
             
@@ -972,7 +972,7 @@ impl ConfigManager {
                 "YC" | "YT" => {
                     // Telemetry/Adjustment: point_id,signal_name,chinese_name,scale,offset,unit
                     if record.len() < 6 {
-                        log::warn!("Incomplete YC/YT row {} in {}", row_idx + 1, csv_path.display());
+                        tracing::warn!("Incomplete YC/YT row {} in {}", row_idx + 1, csv_path.display());
                         continue;
                     }
                     
@@ -989,7 +989,7 @@ impl ConfigManager {
                 "YX" | "YK" => {
                     // Signal/Control: point_id,signal_name,chinese_name,reverse
                     if record.len() < 4 {
-                        log::warn!("Incomplete YX/YK row {} in {}", row_idx + 1, csv_path.display());
+                        tracing::warn!("Incomplete YX/YK row {} in {}", row_idx + 1, csv_path.display());
                         continue;
                     }
                     
@@ -1010,7 +1010,7 @@ impl ConfigManager {
                     }
                 }
                 _ => {
-                    log::warn!("Unknown point type: {}", point_type);
+                    tracing::warn!("Unknown point type: {}", point_type);
                     continue;
                 }
             };
@@ -1033,7 +1033,7 @@ impl ConfigManager {
                 .map_err(|e| ComSrvError::ConfigError(format!("CSV parse error at row {}: {}", row_idx + 2, e)))?;
             
             if record.len() < 6 {
-                log::warn!("Skipping incomplete row {} in {} (need at least 6 columns)", row_idx + 2, csv_path.display());
+                tracing::warn!("Skipping incomplete row {} in {} (need at least 6 columns)", row_idx + 2, csv_path.display());
                 continue;
             }
             
@@ -1074,7 +1074,7 @@ impl ConfigManager {
             mappings.push(mapping);
         }
         
-        log::info!("✅ Parsed and validated {} protocol mappings from {}", mappings.len(), csv_path.display());
+        tracing::info!("✅ Parsed and validated {} protocol mappings from {}", mappings.len(), csv_path.display());
         Ok(mappings)
     }
 

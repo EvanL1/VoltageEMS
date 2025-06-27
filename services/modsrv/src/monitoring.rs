@@ -7,7 +7,7 @@ use std::sync::{Arc, RwLock, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::time::interval;
 use serde::{Serialize, Deserialize};
-use log::{info, error, warn, debug};
+use tracing::{info, error, warn, debug};
 use serde_json::Value;
 use redis::Commands;
 use crate::redis_handler::RedisConnection;

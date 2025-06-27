@@ -7,7 +7,7 @@ use tokio::net::TcpStream;
 use tokio::sync::{Mutex, mpsc, RwLock};
 use tokio::time::sleep;
 use chrono::{DateTime, Utc};
-use log::{debug, error, info, warn};
+use tracing::{debug, error, info, warn};
 
 use crate::asdu::{ASDU, CommonAddrSize, TypeId};
 use crate::common::{CauseOfTransmission, IecError, IecResult};

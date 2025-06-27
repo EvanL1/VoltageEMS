@@ -4,7 +4,7 @@ use serde_json;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use log::{debug, info};
+use tracing::{debug, info};
 use chrono::{DateTime, Utc, Duration};
 
 use crate::config::AlarmConfig;

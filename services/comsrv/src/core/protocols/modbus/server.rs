@@ -464,7 +464,7 @@ impl ModbusServer {
 
         let mut internal_server = match self.config.mode {
             ModbusServerMode::Tcp => {
-                log::info!(
+                tracing::info!(
                     "Starting Modbus TCP server on {}:{}",
                     self.config.bind_address.as_deref().unwrap_or("0.0.0.0"),
                     self.config.bind_port.unwrap_or(502)
@@ -472,7 +472,7 @@ impl ModbusServer {
                 InternalServer::Tcp(self.create_tcp_server()?)
             }
             ModbusServerMode::Rtu => {
-                log::info!("Starting Modbus RTU server on port: {:?}", self.config.port);
+                tracing::info!("Starting Modbus RTU server on port: {:?}", self.config.port);
                 InternalServer::Rtu(self.create_rtu_server()?)
             }
         };
@@ -488,7 +488,7 @@ impl ModbusServer {
         // Update status to connected
         self.base.update_status(true, 50.0, None).await;
 
-        log::info!(
+        tracing::info!(
             "Modbus server started successfully in {:?} mode",
             self.config.mode
         );
@@ -503,7 +503,7 @@ impl ModbusServer {
             })?;
         }
         self.internal_server = None;
-        log::info!("Modbus server stopped");
+        tracing::info!("Modbus server stopped");
         Ok(())
     }
 
@@ -725,7 +725,7 @@ impl ComBase for ModbusServer {
 
         match result {
             Ok(_) => {
-                log::info!(
+                tracing::info!(
                     "Modbus server '{}' started in {:?} mode",
                     self.name(),
                     self.config.mode
@@ -754,7 +754,7 @@ impl ComBase for ModbusServer {
         // Stop the base service
         self.base.stop().await?;
 
-        log::info!("Modbus server '{}' stopped", self.name());
+        tracing::info!("Modbus server '{}' stopped", self.name());
         Ok(())
     }
 

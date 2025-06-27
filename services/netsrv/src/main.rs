@@ -10,7 +10,7 @@ use crate::formatter::{create_formatter, default_formatter};
 use crate::network::create_client;
 use crate::redis::RedisDataFetcher;
 use clap::Parser;
-use log::{debug, error, info, warn};
+use tracing::{debug, error, info, warn};
 use serde_json::Value;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -165,16 +165,15 @@ async fn main() -> Result<()> {
 }
 
 fn init_logging(config: &Config) {
-    use env_logger::{Builder, Env};
+    let filter = tracing_subscriber::EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new(&config.logging.level));
     
-    let env = Env::default().filter_or("RUST_LOG", &config.logging.level);
-    let mut builder = Builder::from_env(env);
-    
-    builder.format_timestamp_millis();
-    
-    if config.logging.console {
-        builder.init();
-    }
+    tracing_subscriber::fmt()
+        .with_env_filter(filter)
+        .with_target(false)
+        .with_thread_ids(true)
+        .with_level(true)
+        .init();
     
     info!("Logging initialized at level: {}", config.logging.level);
 }

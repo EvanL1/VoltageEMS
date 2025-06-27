@@ -1,7 +1,7 @@
 use crate::error::{ModelSrvError, Result};
 use crate::model::{ModelDefinition, ControlAction, ModelWithActions};
 use crate::redis_handler::RedisConnection;
-use log::{debug, error, info};
+use tracing::{debug, error, info};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;

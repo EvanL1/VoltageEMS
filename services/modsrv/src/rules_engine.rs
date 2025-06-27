@@ -10,7 +10,7 @@ use serde_json::{json, Value};
 use serde::{Serialize, Deserialize};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
-use log::{error, info, debug, warn, trace};
+use tracing::{error, info, debug, warn, trace};
 use uuid::Uuid;
 use chrono::Utc;
 use crate::redis_handler::RedisConnection;

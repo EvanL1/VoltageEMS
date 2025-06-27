@@ -1,5 +1,5 @@
 use std::sync::Arc;
-use log::{info, error};
+use tracing::{info, error};
 use crate::error::Result;
 use crate::config::Config;
 use crate::storage::{DataStore, redis_store::RedisStore};

@@ -1,14 +1,75 @@
 use chrono::Utc;
-use serde::Deserialize;
-use warp::{Filter, Rejection, Reply};
+use axum::{
+    extract::{Path, State},
+    http::StatusCode,
+    response::Json,
+    routing::{get, post},
+    Router,
+};
+use utoipa::{OpenApi, ToSchema};
+use utoipa_swagger_ui::SwaggerUi;
 
 use crate::api::models::{
     ApiResponse, ChannelOperation, ChannelStatus, ChannelStatusResponse, 
     HealthStatus, ServiceStatus, PointValue, WritePointRequest
 };
 
+/// OpenAPI documentation
+#[derive(OpenApi)]
+#[openapi(
+    paths(
+        get_service_status,
+        health_check,
+        get_all_channels,
+        get_channel_status,
+        control_channel,
+        read_point,
+        write_point,
+        get_channel_points
+    ),
+    components(
+        schemas(
+            ServiceStatus,
+            HealthStatus,
+            ChannelStatusResponse,
+            ChannelStatus,
+            ChannelOperation,
+            PointValue,
+            WritePointRequest,
+            ApiResponse<ServiceStatus>,
+            ApiResponse<HealthStatus>,
+            ApiResponse<Vec<ChannelStatusResponse>>,
+            ApiResponse<ChannelStatus>,
+            ApiResponse<String>,
+            ApiResponse<PointValue>,
+            ApiResponse<Vec<PointValue>>
+        )
+    ),
+    tags(
+        (name = "comsrv", description = "Communication Service API")
+    ),
+    info(
+        title = "ComSrv API",
+        version = "1.0.0",
+        description = "Communication Service API for industrial protocol management",
+        contact(
+            name = "VoltageEMS Team",
+            email = "support@voltageems.com"
+        )
+    )
+)]
+pub struct ApiDoc;
+
 /// Get service status endpoint
-pub async fn get_service_status() -> Result<impl Reply, Rejection> {
+#[utoipa::path(
+    get,
+    path = "/api/status",
+    responses(
+        (status = 200, description = "Service status retrieved successfully", body = ApiResponse<ServiceStatus>)
+    ),
+    tag = "Status"
+)]
+pub async fn get_service_status() -> Result<Json<ApiResponse<ServiceStatus>>, StatusCode> {
     let status = ServiceStatus {
         name: "Communication Service".to_string(),
         version: env!("CARGO_PKG_VERSION").to_string(),
@@ -18,11 +79,19 @@ pub async fn get_service_status() -> Result<impl Reply, Rejection> {
         active_channels: 3,
     };
     
-    Ok(warp::reply::json(&ApiResponse::success(status)))
+    Ok(Json(ApiResponse::success(status)))
 }
 
 /// Health check endpoint
-pub async fn health_check() -> Result<impl Reply, Rejection> {
+#[utoipa::path(
+    get,
+    path = "/api/health",
+    responses(
+        (status = 200, description = "Health status retrieved successfully", body = ApiResponse<HealthStatus>)
+    ),
+    tag = "Health"
+)]
+pub async fn health_check() -> Result<Json<ApiResponse<HealthStatus>>, StatusCode> {
     let health = HealthStatus {
         status: "healthy".to_string(),
         uptime: 3600,
@@ -30,11 +99,19 @@ pub async fn health_check() -> Result<impl Reply, Rejection> {
         cpu_usage: 15.5,
     };
     
-    Ok(warp::reply::json(&ApiResponse::success(health)))
+    Ok(Json(ApiResponse::success(health)))
 }
 
 /// List all channels
-pub async fn get_all_channels() -> Result<impl Reply, Rejection> {
+#[utoipa::path(
+    get,
+    path = "/api/channels",
+    responses(
+        (status = 200, description = "All channels retrieved successfully", body = ApiResponse<Vec<ChannelStatusResponse>>)
+    ),
+    tag = "Channels"
+)]
+pub async fn get_all_channels() -> Result<Json<ApiResponse<Vec<ChannelStatusResponse>>>, StatusCode> {
     let channels = vec![
         ChannelStatusResponse {
             id: 1,
@@ -56,12 +133,24 @@ pub async fn get_all_channels() -> Result<impl Reply, Rejection> {
         },
     ];
     
-    Ok(warp::reply::json(&ApiResponse::success(channels)))
+    Ok(Json(ApiResponse::success(channels)))
 }
 
 /// Get channel status
-pub async fn get_channel_status(id: String) -> Result<impl Reply, Rejection> {
-    let id_u16 = id.parse::<u16>().map_err(|_| warp::reject::not_found())?;
+#[utoipa::path(
+    get,
+    path = "/api/channels/{id}/status",
+    params(
+        ("id" = u16, Path, description = "Channel ID")
+    ),
+    responses(
+        (status = 200, description = "Channel status retrieved successfully", body = ApiResponse<ChannelStatus>),
+        (status = 404, description = "Channel not found")
+    ),
+    tag = "Channels"
+)]
+pub async fn get_channel_status(Path(id): Path<String>) -> Result<Json<ApiResponse<ChannelStatus>>, StatusCode> {
+    let id_u16 = id.parse::<u16>().map_err(|_| StatusCode::NOT_FOUND)?;
     
     let status = ChannelStatus {
         id: id_u16,
@@ -75,37 +164,63 @@ pub async fn get_channel_status(id: String) -> Result<impl Reply, Rejection> {
         statistics: std::collections::HashMap::new(),
     };
     
-    Ok(warp::reply::json(&ApiResponse::success(status)))
+    Ok(Json(ApiResponse::success(status)))
 }
 
 /// Control channel operation
+#[utoipa::path(
+    post,
+    path = "/api/channels/{id}/control",
+    params(
+        ("id" = u16, Path, description = "Channel ID")
+    ),
+    request_body = ChannelOperation,
+    responses(
+        (status = 200, description = "Channel operation executed successfully", body = ApiResponse<String>),
+        (status = 400, description = "Invalid operation"),
+        (status = 404, description = "Channel not found")
+    ),
+    tag = "Channels"
+)]
 pub async fn control_channel(
-    id: String,
-    operation: ChannelOperation,
-) -> Result<impl Reply, Rejection> {
-    let _id_u16 = id.parse::<u16>().map_err(|_| warp::reject::not_found())?;
+    Path(id): Path<String>,
+    Json(operation): Json<ChannelOperation>,
+) -> Result<Json<ApiResponse<String>>, StatusCode> {
+    let _id_u16 = id.parse::<u16>().map_err(|_| StatusCode::NOT_FOUND)?;
     
     match operation.operation.as_str() {
         "start" | "stop" | "restart" => {
             let message = format!("Successfully {} channel {}", operation.operation, id);
-            Ok(warp::reply::json(&ApiResponse::success(message)))
+            Ok(Json(ApiResponse::success(message)))
         }
         _ => {
             let error_response = ApiResponse::<String>::error(format!(
                 "Invalid operation: {}. Valid operations are: start, stop, restart",
                 operation.operation
             ));
-            Ok(warp::reply::json(&error_response))
+            Ok(Json(error_response))
         }
     }
 }
 
 /// Read point value
+#[utoipa::path(
+    get,
+    path = "/api/channels/{channel_id}/points/{point_table}/{point_name}",
+    params(
+        ("channel_id" = String, Path, description = "Channel ID"),
+        ("point_table" = String, Path, description = "Point table name"),
+        ("point_name" = String, Path, description = "Point name")
+    ),
+    responses(
+        (status = 200, description = "Point value retrieved successfully", body = ApiResponse<PointValue>),
+        (status = 404, description = "Point not found")
+    ),
+    tag = "Points"
+)]
 pub async fn read_point(
-    channel_id: String,
-    point_table: String,
-    point_name: String,
-) -> Result<impl Reply, Rejection> {
+    Path((channel_id, point_table, point_name)): Path<(String, String, String)>,
+) -> Result<Json<ApiResponse<PointValue>>, StatusCode> {
     let point = PointValue {
         id: format!("{}:{}:{}", channel_id, point_table, point_name),
         name: point_name,
@@ -115,26 +230,51 @@ pub async fn read_point(
         description: "Test point value".to_string(),
     };
     
-    Ok(warp::reply::json(&ApiResponse::success(point)))
+    Ok(Json(ApiResponse::success(point)))
 }
 
 /// Write point value
+#[utoipa::path(
+    post,
+    path = "/api/channels/{channel_id}/points/{point_table}/{point_name}",
+    params(
+        ("channel_id" = String, Path, description = "Channel ID"),
+        ("point_table" = String, Path, description = "Point table name"),
+        ("point_name" = String, Path, description = "Point name")
+    ),
+    request_body = WritePointRequest,
+    responses(
+        (status = 200, description = "Point value written successfully", body = ApiResponse<String>),
+        (status = 404, description = "Point not found")
+    ),
+    tag = "Points"
+)]
 pub async fn write_point(
-    channel_id: String,
-    point_table: String,
-    point_name: String,
-    value: WritePointRequest,
-) -> Result<impl Reply, Rejection> {
+    Path((channel_id, point_table, point_name)): Path<(String, String, String)>,
+    Json(value): Json<WritePointRequest>,
+) -> Result<Json<ApiResponse<String>>, StatusCode> {
     let message = format!(
         "Successfully wrote value {:?} to point {}:{}:{}", 
         value.value, channel_id, point_table, point_name
     );
     
-    Ok(warp::reply::json(&ApiResponse::success(message)))
+    Ok(Json(ApiResponse::success(message)))
 }
 
 /// Get all points for a channel
-pub async fn get_channel_points(channel_id: String) -> Result<impl Reply, Rejection> {
+#[utoipa::path(
+    get,
+    path = "/api/channels/{channel_id}/points",
+    params(
+        ("channel_id" = String, Path, description = "Channel ID")
+    ),
+    responses(
+        (status = 200, description = "Channel points retrieved successfully", body = ApiResponse<Vec<PointValue>>),
+        (status = 404, description = "Channel not found")
+    ),
+    tag = "Points"
+)]
+pub async fn get_channel_points(Path(channel_id): Path<String>) -> Result<Json<ApiResponse<Vec<PointValue>>>, StatusCode> {
     let points = vec![
         PointValue {
             id: format!("{}:table1:voltage", channel_id),
@@ -154,357 +294,43 @@ pub async fn get_channel_points(channel_id: String) -> Result<impl Reply, Reject
         },
     ];
     
-    Ok(warp::reply::json(&ApiResponse::success(points)))
+    Ok(Json(ApiResponse::success(points)))
 }
 
-/// Build the API routes using warp
-pub fn api_routes() -> impl Filter<Extract = impl Reply, Error = Rejection> + Clone {
-    let cors = warp::cors()
-        .allow_any_origin()
-        .allow_headers(vec!["content-type", "x-request-id", "authorization"])
-        .allow_methods(vec!["GET", "POST", "PUT", "DELETE", "OPTIONS"]);
-    
-    // GET /api/status
-    let status_route = warp::path!("api" / "status")
-        .and(warp::get())
-        .and_then(get_service_status);
-
-    // GET /api/health
-    let health_route = warp::path!("api" / "health")
-        .and(warp::get())
-        .and_then(health_check);
-
-    // GET /api/channels
-    let channels_route = warp::path!("api" / "channels")
-        .and(warp::get())
-        .and_then(get_all_channels);
-
-    // GET /api/channels/{id}/status
-    let channel_status_route = warp::path!("api" / "channels" / String / "status")
-        .and(warp::get())
-        .and_then(get_channel_status);
-
-    // POST /api/channels/{id}/control
-    let channel_control_route = warp::path!("api" / "channels" / String / "control")
-        .and(warp::post())
-        .and(warp::body::json())
-        .and_then(control_channel);
-
-    // GET /api/channels/{channel_id}/points/{point_table}/{point_name}
-    let read_point_route = warp::path!("api" / "channels" / String / "points" / String / String)
-        .and(warp::get())
-        .and_then(read_point);
-
-    // POST /api/channels/{channel_id}/points/{point_table}/{point_name}
-    let write_point_route = warp::path!("api" / "channels" / String / "points" / String / String)
-        .and(warp::post())
-        .and(warp::body::json())
-        .and_then(write_point);
-
-    // GET /api/channels/{channel_id}/points
-    let channel_points_route = warp::path!("api" / "channels" / String / "points")
-        .and(warp::get())
-        .and_then(get_channel_points);
-
-    status_route
-        .or(health_route)
-        .or(channels_route)
-        .or(channel_status_route)
-        .or(channel_control_route)
-        .or(read_point_route)
-        .or(write_point_route)
-        .or(channel_points_route)
-        .with(cors)
-        .with(warp::log("comsrv::api"))
+/// Create the API router with all routes
+pub fn create_api_routes() -> Router {
+    Router::new()
+        .route("/api/status", get(get_service_status))
+        .route("/api/health", get(health_check))
+        .route("/api/channels", get(get_all_channels))
+        .route("/api/channels/:id/status", get(get_channel_status))
+        .route("/api/channels/:id/control", post(control_channel))
+        .route("/api/channels/:channel_id/points/:point_table/:point_name", get(read_point))
+        .route("/api/channels/:channel_id/points/:point_table/:point_name", post(write_point))
+        .route("/api/channels/:channel_id/points", get(get_channel_points))
+        .merge(SwaggerUi::new("/swagger-ui").url("/api-docs/openapi.json", ApiDoc::openapi()))
 }
 
-/// Generate OpenAPI spec as JSON string
+/// Get OpenAPI specification as JSON string
 pub fn get_openapi_spec() -> String {
-    serde_json::json!({
-        "openapi": "3.0.0",
-        "info": {
-            "title": "Communication Service API",
-            "version": env!("CARGO_PKG_VERSION"),
-            "description": "Industrial communication service providing protocol abstraction and data access",
-            "contact": {
-                "name": "VoltageEMS Team"
-            },
-            "license": {
-                "name": "MIT",
-                "url": "https://opensource.org/licenses/MIT"
-            }
-        },
-        "servers": [
-            {
-                "url": "http://localhost:3030",
-                "description": "Local development server"
-            }
-        ],
-        "paths": {
-            "/api/status": {
-                "get": {
-                    "tags": ["Status"],
-                    "summary": "Get service status",
-                    "description": "Returns the current status of the communication service including uptime, channel count, and active channel count",
-                    "responses": {
-                        "200": {
-                            "description": "Service status",
-                            "content": {
-                                "application/json": {
-                                    "schema": {
-                                        "$ref": "#/components/schemas/ServiceStatusResponse"
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            },
-            "/api/health": {
-                "get": {
-                    "tags": ["Status"],
-                    "summary": "Health check",
-                    "description": "Returns the health status of the service including memory and CPU usage",
-                    "responses": {
-                        "200": {
-                            "description": "Health status",
-                            "content": {
-                                "application/json": {
-                                    "schema": {
-                                        "$ref": "#/components/schemas/HealthStatusResponse"
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            },
-            "/api/channels": {
-                "get": {
-                    "tags": ["Channels"],
-                    "summary": "List all channels",
-                    "description": "Returns a list of all communication channels with their basic status information",
-                    "responses": {
-                        "200": {
-                            "description": "List of channels",
-                            "content": {
-                                "application/json": {
-                                    "schema": {
-                                        "$ref": "#/components/schemas/ChannelListResponse"
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            },
-            "/api/channels/{id}/status": {
-                "get": {
-                    "tags": ["Channels"],
-                    "summary": "Get channel status",
-                    "description": "Returns detailed status information for a specific channel",
-                    "parameters": [
-                        {
-                            "name": "id",
-                            "in": "path",
-                            "required": true,
-                            "description": "Channel ID",
-                            "schema": {
-                                "type": "string"
-                            }
-                        }
-                    ],
-                    "responses": {
-                        "200": {
-                            "description": "Channel status",
-                            "content": {
-                                "application/json": {
-                                    "schema": {
-                                        "$ref": "#/components/schemas/ChannelStatusResponse"
-                                    }
-                                }
-                            }
-                        },
-                        "404": {
-                            "description": "Channel not found"
-                        }
-                    }
-                }
-            },
-            "/api/channels/{id}/control": {
-                "post": {
-                    "tags": ["Channels"],
-                    "summary": "Control channel operation",
-                    "description": "Performs control operations on a channel (start, stop, restart)",
-                    "parameters": [
-                        {
-                            "name": "id",
-                            "in": "path",
-                            "required": true,
-                            "description": "Channel ID",
-                            "schema": {
-                                "type": "string"
-                            }
-                        }
-                    ],
-                    "requestBody": {
-                        "required": true,
-                        "content": {
-                            "application/json": {
-                                "schema": {
-                                    "$ref": "#/components/schemas/ChannelOperation"
-                                }
-                            }
-                        }
-                    },
-                    "responses": {
-                        "200": {
-                            "description": "Operation result",
-                            "content": {
-                                "application/json": {
-                                    "schema": {
-                                        "$ref": "#/components/schemas/StringResponse"
-                                    }
-                                }
-                            }
-                        },
-                        "400": {
-                            "description": "Invalid operation"
-                        },
-                        "404": {
-                            "description": "Channel not found"
-                        }
-                    }
-                }
-            }
-        },
-        "components": {
-            "schemas": {
-                "ServiceStatusResponse": {
-                    "type": "object",
-                    "properties": {
-                        "success": {"type": "boolean"},
-                        "data": {"$ref": "#/components/schemas/ServiceStatus"},
-                        "error": {"type": "string", "nullable": true}
-                    }
-                },
-                "ServiceStatus": {
-                    "type": "object",
-                    "properties": {
-                        "name": {"type": "string"},
-                        "version": {"type": "string"},
-                        "uptime": {"type": "integer"},
-                        "start_time": {"type": "string", "format": "date-time"},
-                        "channels": {"type": "integer"},
-                        "active_channels": {"type": "integer"}
-                    }
-                },
-                "HealthStatusResponse": {
-                    "type": "object",
-                    "properties": {
-                        "success": {"type": "boolean"},
-                        "data": {"$ref": "#/components/schemas/HealthStatus"},
-                        "error": {"type": "string", "nullable": true}
-                    }
-                },
-                "HealthStatus": {
-                    "type": "object",
-                    "properties": {
-                        "status": {"type": "string"},
-                        "uptime": {"type": "integer"},
-                        "memory_usage": {"type": "integer"},
-                        "cpu_usage": {"type": "number"}
-                    }
-                },
-                "ChannelListResponse": {
-                    "type": "object",
-                    "properties": {
-                        "success": {"type": "boolean"},
-                        "data": {
-                            "type": "array",
-                            "items": {"$ref": "#/components/schemas/ChannelStatusResponse"}
-                        },
-                        "error": {"type": "string", "nullable": true}
-                    }
-                },
-                "ChannelStatusResponse": {
-                    "type": "object",
-                    "properties": {
-                        "success": {"type": "boolean"},
-                        "data": {"$ref": "#/components/schemas/ChannelStatus"},
-                        "error": {"type": "string", "nullable": true}
-                    }
-                },
-                "ChannelStatus": {
-                    "type": "object",
-                    "properties": {
-                        "id": {"type": "integer"},
-                        "name": {"type": "string"},
-                        "protocol": {"type": "string"},
-                        "connected": {"type": "boolean"},
-                        "running": {"type": "boolean"},
-                        "last_update": {"type": "string", "format": "date-time"},
-                        "error_count": {"type": "integer"},
-                        "last_error": {"type": "string", "nullable": true},
-                        "statistics": {"type": "object"}
-                    }
-                },
-                "ChannelOperation": {
-                    "type": "object",
-                    "properties": {
-                        "operation": {
-                            "type": "string",
-                            "enum": ["start", "stop", "restart"],
-                            "description": "Operation to perform on the channel"
-                        }
-                    },
-                    "required": ["operation"]
-                },
-                "StringResponse": {
-                    "type": "object",
-                    "properties": {
-                        "success": {"type": "boolean"},
-                        "data": {"type": "string"},
-                        "error": {"type": "string", "nullable": true}
-                    }
-                }
-            }
-        },
-        "tags": [
-            {
-                "name": "Status",
-                "description": "Service status and health check endpoints"
-            },
-            {
-                "name": "Channels",
-                "description": "Channel management and control endpoints"
-            },
-            {
-                "name": "Points",
-                "description": "Point data access endpoints"
-            }
-        ]
-    }).to_string()
+    ApiDoc::openapi().to_pretty_json().unwrap_or_else(|_| "{}".to_string())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[tokio::test]
     async fn test_api_routes() {
-        let routes = api_routes();
-        
+        let app = create_api_routes();
         // Basic test to ensure routes compile
         assert!(true);
     }
-    
+
     #[test]
     fn test_openapi_spec_generation() {
         let spec = get_openapi_spec();
-        
+        assert!(!spec.is_empty());
         assert!(spec.contains("Communication Service API"));
-        assert!(spec.contains("openapi"));
-        assert!(spec.contains("3.0.0"));
     }
 } 

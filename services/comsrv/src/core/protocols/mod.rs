@@ -25,7 +25,7 @@ pub fn init_protocol_parsers() {
     // Register IEC60870 parser
     // registry.register_parser(Iec60870PacketParser::new());
 
-    log::info!(
+    tracing::info!(
         "Protocol parsers initialized: {:?}",
         registry.registered_protocols()
     );

@@ -3,7 +3,7 @@ use crate::redis_handler::RedisConnection;
 use serde::{Serialize, Deserialize};
 use serde_json::{json, Value};
 use std::sync::Arc;
-use log::info;
+use tracing::info;
 
 /// Rule node types
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

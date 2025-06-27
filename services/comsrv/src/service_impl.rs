@@ -2,7 +2,7 @@
 // Contains concrete functions for starting, shutting down, and cleaning up the
 // communication service.
 
-use log::{error, info, warn};
+use tracing::{error, info, warn};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 

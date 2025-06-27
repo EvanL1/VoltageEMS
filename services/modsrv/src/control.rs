@@ -1,6 +1,6 @@
 use crate::error::{ModelSrvError, Result};
 use crate::redis_handler::RedisConnection;
-use log::{debug, error, info, warn};
+use tracing::{debug, error, info, warn};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};

@@ -10,7 +10,7 @@ use futures::StreamExt;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use log::{info, error, warn};
+use tracing::{info, error, warn};
 
 mod types;
 mod config;
@@ -34,8 +34,14 @@ struct AppState {
 #[tokio::main]
 async fn main() -> Result<()> {
     // Initialize logging
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
-        .format_timestamp_millis()
+    let filter = tracing_subscriber::EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
+    
+    tracing_subscriber::fmt()
+        .with_env_filter(filter)
+        .with_target(false)
+        .with_thread_ids(true)
+        .with_level(true)
         .init();
 
     info!("Starting Voltage EMS Alarm Service...");

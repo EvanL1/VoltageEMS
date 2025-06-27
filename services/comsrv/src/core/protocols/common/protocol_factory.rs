@@ -211,7 +211,7 @@ impl ProtocolClientFactory for ModbusTcpFactory {
             // Load point mappings directly from the CSV bridge layer
             match cm.get_modbus_mappings_for_channel(config.id) {
                 Ok(mappings) => {
-                    log::info!(
+                    tracing::info!(
                         "Loaded {} point mappings for channel {} from CSV bridge layer",
                         mappings.len(),
                         config.id
@@ -219,7 +219,7 @@ impl ProtocolClientFactory for ModbusTcpFactory {
                     modbus_config.point_mappings = mappings;
                 }
                 Err(e) => {
-                    log::warn!(
+                    tracing::warn!(
                         "Failed to load point mappings for channel {}: {}",
                         config.id,
                         e
@@ -236,25 +236,25 @@ impl ProtocolClientFactory for ModbusTcpFactory {
         if let Some(cm) = config_manager {
             let redis_config = cm.get_redis_config();
             if redis_config.enabled {
-                log::info!("Initializing Redis store for channel {}", config.id);
+                tracing::info!("Initializing Redis store for channel {}", config.id);
                 match crate::core::storage::redis_storage::RedisStore::from_config(redis_config)
                     .await
                 {
                     Ok(Some(redis_store)) => {
-                        log::info!(
+                        tracing::info!(
                             "Redis store initialized successfully for channel {}",
                             config.id
                         );
                         client = client.with_redis_store(redis_store);
                     }
                     Ok(None) => {
-                        log::warn!(
+                        tracing::warn!(
                             "Redis is disabled in configuration for channel {}",
                             config.id
                         );
                     }
                     Err(e) => {
-                        log::error!(
+                        tracing::error!(
                             "Failed to initialize Redis store for channel {}: {}",
                             config.id,
                             e
@@ -262,7 +262,7 @@ impl ProtocolClientFactory for ModbusTcpFactory {
                     }
                 }
             } else {
-                log::warn!(
+                tracing::warn!(
                     "Redis is disabled in configuration for channel {}",
                     config.id
                 );
@@ -275,16 +275,16 @@ impl ProtocolClientFactory for ModbusTcpFactory {
     fn validate_config(&self, config: &ChannelConfig) -> Result<()> {
         use crate::core::config::ChannelParameters;
 
-        log::debug!("ModbusTcp validate_config: config = {:?}", config);
+        tracing::debug!("ModbusTcp validate_config: config = {:?}", config);
 
         // For now, just accept all ModbusTcp configurations to allow testing
         // TODO: Implement proper parameter validation
         match &config.parameters {
             ChannelParameters::Generic(map) => {
-                log::debug!("ModbusTcp validate_config: Generic parameters = {:?}", map);
+                tracing::debug!("ModbusTcp validate_config: Generic parameters = {:?}", map);
                 // Check if parameters are nested under protocol name
                 if map.get("ModbusTcp").is_some() {
-                    log::debug!("ModbusTcp validate_config: Found ModbusTcp nested parameters");
+                    tracing::debug!("ModbusTcp validate_config: Found ModbusTcp nested parameters");
                     // For testing purposes, accept any ModbusTcp configuration
                     return Ok(());
                 }
@@ -301,7 +301,7 @@ impl ProtocolClientFactory for ModbusTcpFactory {
                 return Ok(());
             }
             other => {
-                log::error!(
+                tracing::error!(
                     "ModbusTcp validate_config: Invalid parameter type = {:?}",
                     other
                 );
@@ -389,7 +389,7 @@ impl ProtocolClientFactory for ModbusRtuFactory {
         if let Some(cm) = config_manager {
             match cm.get_modbus_mappings_for_channel(config.id) {
                 Ok(mappings) => {
-                    log::info!(
+                    tracing::info!(
                         "Loaded {} point mappings for RTU channel {}",
                         mappings.len(),
                         config.id
@@ -397,7 +397,7 @@ impl ProtocolClientFactory for ModbusRtuFactory {
                     modbus_config.point_mappings = mappings;
                 }
                 Err(e) => {
-                    log::warn!(
+                    tracing::warn!(
                         "Failed to load point mappings for RTU channel {}: {}",
                         config.id,
                         e
@@ -682,7 +682,7 @@ impl ProtocolFactory {
     pub fn enable_redis_storage(&mut self, redis_store: crate::core::storage::redis_storage::RedisStore) -> Result<()> {
         // Migrate existing channel metadata to Redis
         if let Some(ref redis) = self.redis_store {
-            log::warn!("Redis storage is already enabled, replacing existing store");
+            tracing::warn!("Redis storage is already enabled, replacing existing store");
         }
 
         // Store existing channels to Redis
@@ -705,13 +705,13 @@ impl ProtocolFactory {
             let redis_clone = redis_store.clone();
             tokio::spawn(async move {
                 if let Err(e) = redis_clone.set_channel_metadata(channel_id, &metadata).await {
-                    log::error!("Failed to migrate channel {} metadata to Redis: {}", channel_id, e);
+                    tracing::error!("Failed to migrate channel {} metadata to Redis: {}", channel_id, e);
                 }
             });
         }
 
         self.redis_store = Some(redis_store);
-        log::info!("Redis storage enabled for ProtocolFactory with {} existing channels", self.channels.len());
+        tracing::info!("Redis storage enabled for ProtocolFactory with {} existing channels", self.channels.len());
         Ok(())
     }
 
@@ -719,7 +719,7 @@ impl ProtocolFactory {
     pub fn disable_redis_storage(&mut self) {
         if self.redis_store.is_some() {
             self.redis_store = None;
-            log::info!("Redis storage disabled for ProtocolFactory, using in-memory storage only");
+            tracing::info!("Redis storage disabled for ProtocolFactory, using in-memory storage only");
         }
     }
 
@@ -754,13 +754,13 @@ impl ProtocolFactory {
                 match redis_store.set_channel_metadata(channel_id, &metadata).await {
                     Ok(_) => sync_count += 1,
                     Err(e) => {
-                        log::error!("Failed to sync channel {} metadata to Redis: {}", channel_id, e);
+                        tracing::error!("Failed to sync channel {} metadata to Redis: {}", channel_id, e);
                         error_count += 1;
                     }
                 }
             }
 
-            log::info!("Channel metadata sync completed: {} successful, {} errors", sync_count, error_count);
+            tracing::info!("Channel metadata sync completed: {} successful, {} errors", sync_count, error_count);
             
             if error_count > 0 {
                 return Err(ComSrvError::RedisError(format!("Failed to sync {} channel metadata entries to Redis", error_count)));
@@ -773,7 +773,7 @@ impl ProtocolFactory {
     fn register_builtin_factories(&self) {
         self.register_protocol_factory(Arc::new(ModbusTcpFactory));
         self.register_protocol_factory(Arc::new(ModbusRtuFactory));
-        log::info!("Registered built-in protocol factories");
+        tracing::info!("Registered built-in protocol factories");
     }
 
     /// Register a protocol factory
@@ -785,7 +785,7 @@ impl ProtocolFactory {
         let protocol_type = factory.protocol_type();
         self.protocol_factories
             .insert(protocol_type.clone(), factory);
-        log::info!("Registered protocol factory for {:?}", protocol_type);
+        tracing::info!("Registered protocol factory for {:?}", protocol_type);
     }
 
     /// Unregister a protocol factory for hot-swappable protocol support
@@ -848,14 +848,14 @@ impl ProtocolFactory {
         // Safe to remove the factory
         match self.protocol_factories.remove(protocol_type) {
             Some(_) => {
-                log::info!(
+                tracing::info!(
                     "Protocol factory unregistered successfully: {:?}",
                     protocol_type
                 );
                 Ok(true)
             }
             None => {
-                log::warn!(
+                tracing::warn!(
                     "Attempted to unregister non-existent protocol factory: {:?}",
                     protocol_type
                 );
@@ -959,7 +959,7 @@ impl ProtocolFactory {
 
         // Try to use registered factory first
         if let Some(factory) = self.protocol_factories.get(&config.protocol) {
-            log::info!(
+            tracing::info!(
                 "Creating protocol instance using registered factory: {:?}",
                 config.protocol
             );
@@ -1110,13 +1110,13 @@ impl ProtocolFactory {
                     };
 
                     if let Err(e) = redis_store.set_channel_metadata(channel_id, &redis_metadata).await {
-                        log::warn!("Failed to store channel {} metadata to Redis: {}", channel_id, e);
+                        tracing::warn!("Failed to store channel {} metadata to Redis: {}", channel_id, e);
                     } else {
-                        log::debug!("Stored channel {} metadata to Redis", channel_id);
+                        tracing::debug!("Stored channel {} metadata to Redis", channel_id);
                     }
                 }
 
-                log::info!(
+                tracing::info!(
                     "Created channel {} with protocol {:?}{}",
                     channel_id,
                     config.protocol,
@@ -1142,11 +1142,11 @@ impl ProtocolFactory {
         let channel_ids: Vec<u16> = self.channels.iter().map(|entry| *entry.key()).collect();
 
         if channel_ids.is_empty() {
-            log::info!("No channels to start");
+            tracing::info!("No channels to start");
             return Ok(());
         }
 
-        log::info!(
+        tracing::info!(
             "Starting all channels with snapshot approach: total_channels={}",
             channel_ids.len()
         );
@@ -1158,16 +1158,16 @@ impl ProtocolFactory {
                     let mut channel = channel_entry.channel.write().await;
                     match channel.start().await {
                         Ok(_) => {
-                            log::info!("Channel started successfully: channel_id={}", id);
+                            tracing::info!("Channel started successfully: channel_id={}", id);
                             Ok(())
                         }
                         Err(e) => {
-                            log::error!("Failed to start channel {}: {}", id, e);
+                            tracing::error!("Failed to start channel {}: {}", id, e);
                             Err(e)
                         }
                     }
                 } else {
-                    log::debug!("Channel {} was removed during startup, skipping", id);
+                    tracing::debug!("Channel {} was removed during startup, skipping", id);
                     Ok(())
                 }
             }
@@ -1190,7 +1190,7 @@ impl ProtocolFactory {
             }
         }
 
-        log::info!(
+        tracing::info!(
             "Channel startup completed: {} successful, {} failed, {} total attempted",
             successful_starts,
             failed_starts,
@@ -1226,10 +1226,10 @@ impl ProtocolFactory {
                 let mut channel = channel_wrapper.write().await;
                 match channel.stop().await {
                     Ok(_) => {
-                        log::info!("Channel {} stopped successfully", id);
+                        tracing::info!("Channel {} stopped successfully", id);
                     },
                     Err(e) => {
-                        log::warn!("Channel {}: Failed to stop channel - continuing with other channels: {}", id, e);
+                        tracing::warn!("Channel {}: Failed to stop channel - continuing with other channels: {}", id, e);
                         // Continue stopping other channels even if one fails
                     }
                 }
@@ -1344,12 +1344,12 @@ impl ProtocolFactory {
 
             if now.duration_since(last_accessed) > max_idle_time {
                 channels_to_remove.push(*id);
-                log::info!("Channel {} marked for cleanup due to inactivity", id);
+                tracing::info!("Channel {} marked for cleanup due to inactivity", id);
             }
         }
 
         if channels_to_remove.is_empty() {
-            log::debug!("No idle channels found for cleanup");
+            tracing::debug!("No idle channels found for cleanup");
             return;
         }
 
@@ -1362,11 +1362,11 @@ impl ProtocolFactory {
                 let mut channel = channel_entry.channel.write().await;
                 match channel.stop().await {
                     Ok(_) => {
-                        log::info!("Channel {} stopped successfully", id);
+                        tracing::info!("Channel {} stopped successfully", id);
                         Ok(id)
                     }
                     Err(e) => {
-                        log::warn!(
+                        tracing::warn!(
                             "Channel {}: Failed to stop - continuing with cleanup: {}",
                             id,
                             e
@@ -1375,7 +1375,7 @@ impl ProtocolFactory {
                     }
                 }
             } else {
-                log::debug!("Channel {} already removed during cleanup", id);
+                tracing::debug!("Channel {} already removed during cleanup", id);
                 Ok(id)
             }
         });
@@ -1391,11 +1391,11 @@ impl ProtocolFactory {
                 Ok(id) => {
                     self.channels.remove(&id);
                     successfully_stopped += 1;
-                    log::debug!("Channel {} removed from factory during cleanup", id);
+                    tracing::debug!("Channel {} removed from factory during cleanup", id);
                 }
                 Err((id, e)) => {
                     failed_to_stop += 1;
-                    log::error!(
+                    tracing::error!(
                         "Failed to cleanup channel {}, keeping in factory: {}",
                         id,
                         e
@@ -1404,7 +1404,7 @@ impl ProtocolFactory {
             }
         }
 
-        log::info!(
+        tracing::info!(
             "Channel cleanup completed: {} successfully cleaned, {} failed cleanup",
             successfully_stopped,
             failed_to_stop
@@ -1441,7 +1441,7 @@ impl ProtocolFactory {
         {
             let mut channel = old_channel.write().await;
             if let Err(e) = channel.stop().await {
-                log::warn!("Failed to stop channel {} during update: {}", id, e);
+                tracing::warn!("Failed to stop channel {} during update: {}", id, e);
             }
         }
 
@@ -1472,7 +1472,7 @@ impl ProtocolFactory {
         {
             let mut channel = new_channel_wrapper.write().await;
             if let Err(e) = channel.start().await {
-                log::error!("Failed to start updated channel {}: {}", id, e);
+                tracing::error!("Failed to start updated channel {}: {}", id, e);
                 return Err(ComSrvError::ChannelError(format!(
                     "Failed to start updated channel {}: {}",
                     id, e
@@ -1480,7 +1480,7 @@ impl ProtocolFactory {
             }
         }
 
-        log::info!("Successfully updated channel {} configuration", id);
+        tracing::info!("Successfully updated channel {} configuration", id);
         Ok(())
     }
 }

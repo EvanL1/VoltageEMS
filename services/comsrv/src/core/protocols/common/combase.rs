@@ -91,7 +91,7 @@ use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
 use tokio::time::interval;
 
-use log::{
+use tracing::{
     debug, debug as log_debug, error, error as log_error, info, info as log_info, trace, warn,
     warn as log_warn,
 };
@@ -1747,10 +1747,10 @@ pub trait ProtocolLogger: Send + Sync {
         let target = format!("{}::channel::{}", protocol.to_lowercase(), channel_id);
 
         match event {
-            "connected" | "reconnected" => log_info!(target: &target, "{}", message),
-            "connecting" | "reconnecting" => log_info!(target: &target, "{}", message),
-            "disconnected" => log_warn!(target: &target, "{}", message),
-            _ => log_debug!(target: &target, "{}", message),
+            "connected" | "reconnected" => log_info!("[{}] {}", target, message),
+            "connecting" | "reconnecting" => log_info!("[{}] {}", target, message),
+            "disconnected" => log_warn!("[{}] {}", target, message),
+            _ => log_debug!("[{}] {}", target, message),
         }
     }
 
@@ -1783,7 +1783,7 @@ pub trait ProtocolLogger: Send + Sync {
             direction, timestamp, operation, details, result_value, duration_ms
         );
 
-        log_debug!(target: &target, "{}", message);
+        log_debug!("{}", message);
     }
 
     /// Log protocol operation failure
@@ -1815,7 +1815,7 @@ pub trait ProtocolLogger: Send + Sync {
             direction, timestamp, operation, details, error_msg, duration_ms
         );
 
-        log_error!(target: &target, "{}", message);
+        log_error!("{}", message);
     }
 
     /// Log protocol operation request
@@ -1834,7 +1834,7 @@ pub trait ProtocolLogger: Send + Sync {
         let target = format!("{}::channel::{}", protocol.to_lowercase(), channel_id);
         let message = format!(">> [{}] {} {}", timestamp, operation, details);
 
-        log_debug!(target: &target, "{}", message);
+        log_debug!("{}", message);
     }
 
     /// Log protocol data synchronization success
@@ -1856,7 +1856,7 @@ pub trait ProtocolLogger: Send + Sync {
             timestamp, sync_type, count
         );
 
-        log_debug!(target: &target, "{}", message);
+        log_debug!("{}", message);
     }
 
     /// Log protocol data synchronization failure
@@ -1879,7 +1879,7 @@ pub trait ProtocolLogger: Send + Sync {
             timestamp, sync_type, error_msg, count
         );
 
-        log_error!(target: &target, "{}", message);
+        log_error!("{}", message);
     }
 
     /// Convenience method to log operation results with automatic timing

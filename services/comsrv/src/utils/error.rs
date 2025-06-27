@@ -121,7 +121,7 @@
 //! Errors integrate with the logging system for comprehensive error tracking:
 //!
 //! ```rust
-//! use log::{error, warn};
+//! use tracing::{error, warn};
 //! use comsrv::utils::{ComSrvError, Result};
 //!
 //! fn handle_error(result: Result<()>) {
@@ -692,17 +692,10 @@ impl From<tokio_serial::Error> for ComSrvError {
     }
 }
 
-/// Convert from warp error to ComSrvError
-impl From<warp::Error> for ComSrvError {
-    fn from(error: warp::Error) -> Self {
-        ComSrvError::InternalError(format!("Warp error: {}", error))
-    }
-}
-
-/// Convert from warp rejection to ComSrvError
-impl From<warp::reject::Rejection> for ComSrvError {
-    fn from(err: warp::reject::Rejection) -> Self {
-        ComSrvError::ApiError(format!("API rejection: {:?}", err))
+/// Convert from axum HTTP error to ComSrvError
+impl From<axum::http::Error> for ComSrvError {
+    fn from(error: axum::http::Error) -> Self {
+        ComSrvError::InternalError(format!("HTTP error: {}", error))
     }
 }
 

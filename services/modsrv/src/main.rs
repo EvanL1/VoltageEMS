@@ -11,18 +11,17 @@ mod rules;
 mod rules_engine;
 mod monitoring;
 
-use crate::config::Config;
-use crate::error::{Result, ModelSrvError};
-use crate::model::ModelEngine;
-use crate::control::ControlManager;
-use crate::template::TemplateManager;
-use crate::storage_agent::StorageAgent;
+use config::Config;
+use error::{ModelSrvError, Result};
+use model::ModelEngine;
+use control::ControlManager;
+use storage_agent::StorageAgent;
 use crate::storage::DataStore;
 use crate::api::ApiServer;
 use crate::redis_handler::RedisType;
 
 use clap::{Parser, Subcommand};
-use log::{error, info, debug, warn};
+use tracing::{error, info, debug, warn};
 use std::path::PathBuf;
 use std::time::Duration;
 use tokio::time;
@@ -131,8 +130,15 @@ fn main() -> Result<()> {
         }
     };
 
-    // Initialize logger
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(&config.log_level))
+    // Initialize tracing
+    use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
+    
+    tracing_subscriber::registry()
+        .with(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new(&config.log_level))
+        )
+        .with(tracing_subscriber::fmt::layer())
         .init();
 
     info!("Starting Model Service");

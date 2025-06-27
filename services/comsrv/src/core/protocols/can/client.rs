@@ -7,7 +7,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use tokio::sync::RwLock;
 use chrono::Utc;
-use log::{debug, info};
+use tracing::{debug, info};
 use crate::core::config::ChannelConfig;
 use crate::core::protocols::common::{ComBase, ComBaseImpl, ChannelStatus, PointData};
 use crate::utils::{ComSrvError, Result};

@@ -266,7 +266,7 @@ impl Iec104Client {
                 }
             },
             _ => {
-                log::warn!("Invalid parameters for IEC-104 client, using defaults");
+                tracing::warn!("Invalid parameters for IEC-104 client, using defaults");
             }
         }
         
@@ -316,7 +316,7 @@ impl Iec104Client {
         
         while retries < self.max_retries {
             let connection_str = format!("{}:{}", self.host, self.port);
-            log::debug!("Connecting to IEC-104 server at {}", connection_str);
+            tracing::debug!("Connecting to IEC-104 server at {}", connection_str);
             
             match tokio::time::timeout(
                 Duration::from_secs(self.timeout),
@@ -324,7 +324,7 @@ impl Iec104Client {
             ).await {
                 Ok(Ok(stream)) => {
                     // Connected successfully
-                    log::info!("Connected to IEC-104 server at {}", connection_str);
+                    tracing::info!("Connected to IEC-104 server at {}", connection_str);
                     
                     // Store the connection
                     let mut connection = self.connection.lock().await;
@@ -344,12 +344,12 @@ impl Iec104Client {
                 Ok(Err(e)) => {
                     // Connection error
                     last_error_str = e.to_string();
-                    log::warn!("Failed to connect to IEC-104 server: {}", last_error_str);
+                    tracing::warn!("Failed to connect to IEC-104 server: {}", last_error_str);
                 },
                 Err(_) => {
                     // Timeout
                     last_error_str = "Connection timed out".to_string();
-                    log::warn!("Connection to IEC-104 server timed out");
+                    tracing::warn!("Connection to IEC-104 server timed out");
                 },
             }
             
@@ -380,13 +380,13 @@ impl Iec104Client {
             match stream.try_write(&data) {
                 Ok(n) if n == data.len() => {
                     let duration = start.elapsed();
-                    log::debug!("Sent APDU: {:?} in {:.2}ms", apdu, duration.as_secs_f64() * 1000.0);
+                    tracing::debug!("Sent APDU: {:?} in {:.2}ms", apdu, duration.as_secs_f64() * 1000.0);
                     self.update_status(true, duration.as_secs_f64() * 1000.0, None).await;
                     Ok(())
                 },
                 Ok(n) => {
                     let err = format!("Incomplete write: {}/{} bytes", n, data.len());
-                    log::error!("{}", err);
+                    tracing::error!("{}", err);
                     self.update_status(false, 0.0, Some(&err)).await;
                     Err(IecError::IoError(std::io::Error::new(
                         std::io::ErrorKind::WriteZero,
@@ -394,13 +394,13 @@ impl Iec104Client {
                     )))
                 },
                 Err(e) => {
-                    log::error!("Failed to send APDU: {}", e);
+                    tracing::error!("Failed to send APDU: {}", e);
                     self.update_status(false, 0.0, Some(&e.to_string())).await;
                     Err(IecError::IoError(e))
                 },
             }
         } else {
-            log::error!("Cannot send APDU: not connected");
+            tracing::error!("Cannot send APDU: not connected");
             Err(IecError::ConnectionError("Not connected".to_string()))
         }
     }
@@ -437,7 +437,7 @@ impl Iec104Client {
             },
             ApciType::SFrame { recv_seq } => {
                 // No action needed, just log
-                log::debug!("Received S-frame with recv_seq = {}", recv_seq);
+                tracing::debug!("Received S-frame with recv_seq = {}", recv_seq);
             },
             ApciType::UFrame(code) => {
                 match code {
@@ -458,10 +458,10 @@ impl Iec104Client {
                     },
                     START_DT_CON | STOP_DT_CON | TEST_FR_CON => {
                         // No action needed, just log
-                        log::debug!("Received U-frame confirmation: {:02X}", code);
+                        tracing::debug!("Received U-frame confirmation: {:02X}", code);
                     },
                     _ => {
-                        log::warn!("Received unknown U-frame code: {:02X}", code);
+                        tracing::warn!("Received unknown U-frame code: {:02X}", code);
                     }
                 }
             }
@@ -475,7 +475,7 @@ impl Iec104Client {
         // Example of processing a measured value (type 13)
         if asdu.type_id == TypeId::MeasuredValueFloat {
             // Process measured values (implementation depends on data format)
-            log::debug!("Received measured value: {:?}", asdu);
+            tracing::debug!("Received measured value: {:?}", asdu);
             
             // Here you would extract the value from ASDU and store it
             // This is a placeholder
@@ -571,7 +571,7 @@ impl ComBase for Iec104Client {
                 ).await {
                     Ok(Ok(0)) => {
                         // Connection closed
-                        log::warn!("IEC-104 server closed the connection");
+                        tracing::warn!("IEC-104 server closed the connection");
                         *conn_locked = None;
                         
                         // Update status
@@ -584,7 +584,7 @@ impl ComBase for Iec104Client {
                     },
                     Ok(Ok(n)) => {
                         // Received data
-                        log::debug!("Received {} bytes from IEC-104 server", n);
+                        tracing::debug!("Received {} bytes from IEC-104 server", n);
                         last_activity = Instant::now();
                         
                         // Process APDU
@@ -592,11 +592,11 @@ impl ComBase for Iec104Client {
                             Ok(apdu) => {
                                 drop(conn_locked); // Release lock before async operation
                                 if let Err(e) = handle_apdu(&apdu, &status).await {
-                                    log::error!("Error handling APDU: {}", e);
+                                    tracing::error!("Error handling APDU: {}", e);
                                 }
                             },
                             Err(e) => {
-                                log::error!("Error decoding APDU: {}", e);
+                                tracing::error!("Error decoding APDU: {}", e);
                                 
                                 // Update status
                                 let mut status_locked = status.write().await;
@@ -609,7 +609,7 @@ impl ComBase for Iec104Client {
                     },
                     Ok(Err(e)) => {
                         // IO error
-                        log::error!("IO error: {}", e);
+                        tracing::error!("IO error: {}", e);
                         *conn_locked = None;
                         
                         // Update status
@@ -626,7 +626,7 @@ impl ComBase for Iec104Client {
                         
                         // Check if we need to send TEST_FR_ACT
                         if last_activity.elapsed() > Duration::from_secs(20) {
-                            log::debug!("Sending TEST_FR_ACT");
+                            tracing::debug!("Sending TEST_FR_ACT");
                             last_activity = Instant::now();
                             
                             // Send test frame
@@ -652,14 +652,14 @@ impl ComBase for Iec104Client {
                 // Send STARTDT activation
                 let start_dt = Apdu::new_u_frame(START_DT_ACT);
                 if let Err(e) = self.send_apdu(&start_dt).await {
-                    log::error!("Failed to send STARTDT activation: {}", e);
+                    tracing::error!("Failed to send STARTDT activation: {}", e);
                     return Err(ComSrvError::ProtocolError(format!("Failed to send STARTDT activation: {}", e)));
                 }
                 
                 Ok(())
             },
             Err(e) => {
-                log::error!("Failed to connect: {}", e);
+                tracing::error!("Failed to connect: {}", e);
                 *running = false;
                 Err(ComSrvError::ProtocolError(format!("Failed to connect: {}", e)))
             }
@@ -680,7 +680,7 @@ impl ComBase for Iec104Client {
         if connection.is_some() {
             let stop_dt = Apdu::new_u_frame(STOP_DT_ACT);
             if let Err(e) = self.send_apdu(&stop_dt).await {
-                log::warn!("Failed to send STOPDT activation: {}", e);
+                tracing::warn!("Failed to send STOPDT activation: {}", e);
                 // Continue with closure even if STOPDT fails
             }
             
@@ -721,7 +721,7 @@ async fn send_test_frame(connection: &Arc<Mutex<Option<TcpStream>>>, status: &Ar
                         status_locked.last_update_time = Utc::now();
                     },
                     Err(e) => {
-                        log::error!("Failed to send test frame: {}", e);
+                        tracing::error!("Failed to send test frame: {}", e);
                         
                         // Update status
                         let mut status_locked = status.write().await;
@@ -735,7 +735,7 @@ async fn send_test_frame(connection: &Arc<Mutex<Option<TcpStream>>>, status: &Ar
                 }
             },
             Err(e) => {
-                log::error!("Failed to encode test frame: {}", e);
+                tracing::error!("Failed to encode test frame: {}", e);
             }
         }
     }
@@ -765,7 +765,7 @@ async fn handle_apdu(apdu: &Apdu, status: &Arc<RwLock<ChannelStatus>>) -> IecRes
             status_locked.last_update_time = Utc::now();
             
             if code == TEST_FR_CON {
-                log::debug!("Received test frame confirmation");
+                tracing::debug!("Received test frame confirmation");
             }
         }
     }

@@ -1,5 +1,5 @@
 use dashmap::DashMap;
-use log::{debug, info, warn};
+use tracing::{debug, info, warn};
 use once_cell::sync::OnceCell;
 use std::collections::BTreeMap;
 use std::hash::{Hash, Hasher};

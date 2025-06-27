@@ -11,7 +11,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::Mutex;
 use tokio::time::sleep;
-use log::{debug, error, info, warn};
+use tracing::{debug, error, info, warn};
 use hmac::{Hmac, Mac};
 use sha2::Sha256;
 use chrono::Utc;
