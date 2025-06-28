@@ -1,11 +1,14 @@
 use ahash::AHashMap;
 use async_trait::async_trait;
 use dashmap::DashMap;
+use std::fs::OpenOptions;
+use std::io::Write;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
 use crate::core::config::{ChannelConfig, ConfigManager, ProtocolType};
+use crate::core::config::types::ChannelLoggingConfig;
 use crate::core::protocols::common::ComBase;
 // TODO: 暂时屏蔽，等核心组件稳定后再启用
 // use crate::core::protocols::iec60870::iec104::Iec104Client;
@@ -277,27 +280,34 @@ impl ProtocolClientFactory for ModbusTcpFactory {
 
         tracing::debug!("ModbusTcp validate_config: config = {:?}", config);
 
-        // For now, just accept all ModbusTcp configurations to allow testing
-        // TODO: Implement proper parameter validation
         match &config.parameters {
             ChannelParameters::Generic(map) => {
                 tracing::debug!("ModbusTcp validate_config: Generic parameters = {:?}", map);
+                
                 // Check if parameters are nested under protocol name
                 if map.get("ModbusTcp").is_some() {
                     tracing::debug!("ModbusTcp validate_config: Found ModbusTcp nested parameters");
-                    // For testing purposes, accept any ModbusTcp configuration
                     return Ok(());
                 }
-                // Check for direct address parameter
+                
+                // Modern configuration: require host, port is optional (defaults to 502)
+                if map.get("host").is_some() {
+                    tracing::debug!("ModbusTcp validate_config: Found host parameter");
+                    return Ok(());
+                }
+                
+                // Legacy compatibility: still support address for existing configurations
                 if map.get("address").is_some() {
+                    tracing::warn!("ModbusTcp validate_config: Using legacy 'address' parameter. Consider using 'host' and 'port' parameters instead.");
                     return Ok(());
                 }
+                
                 return Err(ComSrvError::InvalidParameter(
-                    "address parameter is required".to_string(),
+                    "host parameter is required (or legacy address parameter)".to_string(),
                 ));
             }
             ChannelParameters::ModbusTcp { .. } => {
-                // Handle structured parameters - always valid
+                // Handle structured parameters - always valid (host+port format)
                 return Ok(());
             }
             other => {
@@ -314,9 +324,12 @@ impl ProtocolClientFactory for ModbusTcpFactory {
 
     fn default_config(&self) -> ChannelConfig {
         let parameters = serde_json::json!({
-            "address": "127.0.0.1:502",
+            "host": "127.0.0.1",
+            "port": 502,
             "timeout": 5000,
-            "slave_id": 1
+            "slave_id": 1,
+            "max_retries": 3,
+            "poll_rate": 1000
         });
 
         // Convert JSON to HashMap<String, serde_yaml::Value> for compatibility
@@ -328,6 +341,7 @@ impl ProtocolClientFactory for ModbusTcpFactory {
             description: Some("Modbus TCP communication channel".to_string()),
             protocol: ProtocolType::ModbusTcp,
             parameters: crate::core::config::ChannelParameters::Generic(param_map),
+            logging: ChannelLoggingConfig::default(),
         }
     }
 
@@ -335,15 +349,15 @@ impl ProtocolClientFactory for ModbusTcpFactory {
         serde_json::json!({
             "type": "object",
             "properties": {
-                "address": {
+                "host": {
                     "type": "string",
-                    "description": "Target device address. Format: 'host:port' or 'host' (port defaults to 502)",
-                    "examples": ["192.168.1.100:502", "127.0.0.1:5020", "192.168.1.100"],
+                    "description": "Target device hostname or IP address",
+                    "examples": ["192.168.1.100", "plc.local", "127.0.0.1"],
                     "required": true
                 },
                 "port": {
                     "type": "integer",
-                    "description": "TCP port number (overrides port in address if specified)",
+                    "description": "TCP port number",
                     "minimum": 1,
                     "maximum": 65535,
                     "default": 502
@@ -361,9 +375,30 @@ impl ProtocolClientFactory for ModbusTcpFactory {
                     "minimum": 1,
                     "maximum": 247,
                     "default": 1
+                },
+                "max_retries": {
+                    "type": "integer",
+                    "description": "Maximum retry attempts for failed operations",
+                    "minimum": 0,
+                    "maximum": 10,
+                    "default": 3
+                },
+                "poll_rate": {
+                    "type": "integer",
+                    "description": "Polling interval in milliseconds",
+                    "minimum": 100,
+                    "maximum": 3600000,
+                    "default": 1000
+                },
+                "address": {
+                    "type": "string",
+                    "description": "Legacy address format 'host:port' (deprecated, use host+port instead)",
+                    "examples": ["192.168.1.100:502"],
+                    "deprecated": true
                 }
             },
-            "required": ["address"]
+            "required": ["host"],
+            "additionalProperties": false
         })
     }
 }
@@ -463,6 +498,7 @@ impl ProtocolClientFactory for ModbusRtuFactory {
             description: Some("Modbus RTU serial communication channel".to_string()),
             protocol: ProtocolType::ModbusRtu,
             parameters: crate::core::config::ChannelParameters::Generic(param_map),
+            logging: ChannelLoggingConfig::default(),
         }
     }
 
@@ -695,8 +731,8 @@ impl ProtocolFactory {
             let metadata = crate::core::storage::redis_storage::RedisChannelMetadata {
                 name: channel_entry.metadata.name.clone(),
                 protocol_type: format!("{:?}", channel_entry.metadata.protocol_type),
-                created_at: chrono::DateTime::<chrono::Utc>::from(std::time::UNIX_EPOCH + channel_entry.metadata.created_at.elapsed()).format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string(),
-                last_accessed: chrono::Utc::now().format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string(),
+                created_at: chrono::DateTime::<chrono::Local>::from(std::time::UNIX_EPOCH + channel_entry.metadata.created_at.elapsed()).format("%Y-%m-%dT%H:%M:%S%.3f").to_string(),
+                last_accessed: chrono::Local::now().format("%Y-%m-%dT%H:%M:%S%.3f").to_string(),
                 running: false, // Will be updated when channels are started
                 parameters: std::collections::HashMap::new(),
             };
@@ -745,8 +781,8 @@ impl ProtocolFactory {
                 let metadata = crate::core::storage::redis_storage::RedisChannelMetadata {
                     name: channel_entry.metadata.name.clone(),
                     protocol_type: format!("{:?}", channel_entry.metadata.protocol_type),
-                    created_at: chrono::DateTime::<chrono::Utc>::from(std::time::UNIX_EPOCH + channel_entry.metadata.created_at.elapsed()).format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string(),
-                    last_accessed: chrono::Utc::now().format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string(),
+                    created_at: chrono::DateTime::<chrono::Local>::from(std::time::UNIX_EPOCH + channel_entry.metadata.created_at.elapsed()).format("%Y-%m-%dT%H:%M:%S%.3f").to_string(),
+                    last_accessed: chrono::Local::now().format("%Y-%m-%dT%H:%M:%S%.3f").to_string(),
                     running: channel_entry.channel.read().await.is_running().await,
                     parameters: std::collections::HashMap::new(),
                 };
@@ -1048,8 +1084,6 @@ impl ProtocolFactory {
 
     /// Create and register a channel with config manager support for point table loading
     ///
-    /// Uses atomic insertion to prevent race conditions between channel and metadata
-    ///
     /// # Arguments
     ///
     /// * `config` - Channel configuration
@@ -1063,6 +1097,11 @@ impl ProtocolFactory {
 
         // Validate configuration using registered factories
         self.validate_config(&config)?;
+
+        // Initialize channel-specific logging if enabled
+        if config.logging.enabled {
+            self.setup_channel_logging(&config)?;
+        }
 
         // Create protocol instance with config manager support
         let protocol = self
@@ -1095,8 +1134,8 @@ impl ProtocolFactory {
                     let redis_metadata = crate::core::storage::redis_storage::RedisChannelMetadata {
                         name: metadata.name.clone(),
                         protocol_type: format!("{:?}", metadata.protocol_type),
-                        created_at: chrono::Utc::now().format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string(),
-                        last_accessed: chrono::Utc::now().format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string(),
+                        created_at: chrono::Local::now().format("%Y-%m-%dT%H:%M:%S%.3f").to_string(),
+                        last_accessed: chrono::Local::now().format("%Y-%m-%dT%H:%M:%S%.3f").to_string(),
                         running: false,
                         parameters: match &config.parameters {
                             crate::core::config::ChannelParameters::Generic(params) => {
@@ -1117,10 +1156,11 @@ impl ProtocolFactory {
                 }
 
                 tracing::info!(
-                    "Created channel {} with protocol {:?}{}",
+                    "Created channel {} with protocol {:?}{} [Channel-{}]",
                     channel_id,
                     config.protocol,
-                    if self.redis_store.is_some() { " (with Redis storage)" } else { "" }
+                    if self.redis_store.is_some() { " (with Redis storage)" } else { "" },
+                    channel_id
                 );
                 Ok(())
             }
@@ -1129,6 +1169,99 @@ impl ProtocolFactory {
                 channel_id
             ))),
         }
+    }
+
+    /// Setup channel-specific logging
+    /// Creates dedicated log files for each channel based on configuration
+    fn setup_channel_logging(&self, config: &ChannelConfig) -> Result<()> {
+        use std::fs;
+        
+        // Create log directory if specified
+        if let Some(ref log_dir) = config.logging.log_dir {
+            let full_log_dir = log_dir.replace("{channel_id}", &config.id.to_string())
+                .replace("{channel_name}", &config.name);
+            
+            if let Err(e) = fs::create_dir_all(&full_log_dir) {
+                tracing::warn!("Failed to create channel log directory {}: {}", full_log_dir, e);
+                return Err(ComSrvError::ConfigError(format!(
+                    "Failed to create channel log directory {}: {}",
+                    full_log_dir, e
+                )));
+            }
+            
+            // Create initial log file for the channel
+            let log_file_path = format!("{}/channel_{}.log", full_log_dir, config.id);
+            if let Ok(mut file) = OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&log_file_path) 
+            {
+                let init_message = format!(
+                    "{{\"timestamp\":\"{}\",\"level\":\"INFO\",\"channel_id\":{},\"channel_name\":\"{}\",\"message\":\"Channel log initialized\"}}\n",
+                    chrono::Local::now().format("%Y-%m-%dT%H:%M:%S%.6f"),
+                    config.id,
+                    config.name
+                );
+                let _ = file.write_all(init_message.as_bytes());
+                let _ = file.flush();
+            }
+            
+            tracing::info!(
+                "Created channel log directory: {} for channel {} ({})",
+                full_log_dir, config.id, config.name
+            );
+            
+            // Also create a debug log file if debug logging is enabled
+            if config.logging.level == "debug" {
+                let debug_log_path = format!("{}/channel_{}_debug.log", full_log_dir, config.id);
+                if let Ok(mut file) = OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(&debug_log_path) 
+                {
+                    let debug_message = format!(
+                        "{{\"timestamp\":\"{}\",\"level\":\"DEBUG\",\"channel_id\":{},\"channel_name\":\"{}\",\"message\":\"Debug logging enabled for channel\"}}\n",
+                        chrono::Local::now().format("%Y-%m-%dT%H:%M:%S%.6f"),
+                        config.id,
+                        config.name
+                    );
+                    let _ = file.write_all(debug_message.as_bytes());
+                    let _ = file.flush();
+                }
+            }
+        }
+        
+        Ok(())
+    }
+
+    /// Write a message to channel-specific log file
+    /// This is a helper method for protocols to write to their dedicated log files
+    pub fn write_channel_log(&self, channel_id: u16, level: &str, message: &str) -> Result<()> {
+        // Find the channel configuration
+        if let Some(channel_entry) = self.channels.get(&channel_id) {
+            // Try to write to the channel log file if it exists
+            let log_dir = format!("logs/{}", channel_entry.metadata.name);
+            let log_file_path = format!("{}/channel_{}.log", log_dir, channel_id);
+            
+            if let Ok(mut file) = OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&log_file_path) 
+            {
+                let log_entry = format!(
+                    "{{\"timestamp\":\"{}\",\"level\":\"{}\",\"channel_id\":{},\"channel_name\":\"{}\",\"message\":\"{}\"}}\n",
+                    chrono::Local::now().format("%Y-%m-%dT%H:%M:%S%.6f"),
+                    level,
+                    channel_id,
+                    channel_entry.metadata.name,
+                    message
+                );
+                let _ = file.write_all(log_entry.as_bytes());
+                let _ = file.flush();
+            }
+        }
+        
+        Ok(())
     }
 
     /// Start all channels with improved performance and non-blocking operations
@@ -1538,9 +1671,12 @@ mod tests {
 
     fn create_test_channel_config(id: u16, protocol: ProtocolType) -> ChannelConfig {
         let parameters = serde_json::json!({
-            "address": "127.0.0.1",
+            "host": "127.0.0.1",
             "port": 502,
-            "timeout": 5000
+            "timeout": 5000,
+            "slave_id": 1,
+            "max_retries": 3,
+            "poll_rate": 1000
         });
 
         // Convert JSON to HashMap<String, serde_yaml::Value> for compatibility
@@ -1552,6 +1688,7 @@ mod tests {
             description: Some("Test channel configuration".to_string()),
             protocol,
             parameters: crate::core::config::ChannelParameters::Generic(param_map),
+            logging: ChannelLoggingConfig::default(),
         }
     }
 
@@ -1577,6 +1714,7 @@ mod tests {
             description: Some("Test RTU channel configuration".to_string()),
             protocol: ProtocolType::ModbusRtu,
             parameters: crate::core::config::ChannelParameters::Generic(param_map),
+            logging: ChannelLoggingConfig::default(),
         }
     }
 
@@ -1607,12 +1745,12 @@ mod tests {
         let valid_config = create_test_channel_config(1, ProtocolType::ModbusTcp);
         assert!(factory.validate_config(&valid_config).is_ok());
 
-        // Test invalid config (missing address)
+        // Test invalid config (missing host)
         let mut invalid_config = valid_config.clone();
         if let crate::core::config::ChannelParameters::Generic(ref mut params) =
             invalid_config.parameters
         {
-            params.remove("address");
+            params.remove("host");
         }
         assert!(factory.validate_config(&invalid_config).is_err());
     }

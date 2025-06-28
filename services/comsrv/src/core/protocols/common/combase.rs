@@ -1700,6 +1700,72 @@ pub trait ComBase: Send + Sync + std::fmt::Debug {
     async fn get_all_points(&self) -> Vec<PointData> {
         Vec::new() // Default implementation returns an empty vector
     }
+
+    /// Log channel connection events with mapping context
+    ///
+    /// Protocol-specific implementations should override this to provide
+    /// detailed logging with channel-specific information and mapping details.
+    ///
+    /// # Arguments
+    /// * `action` - The action being performed (e.g., "connecting", "connected", "connect_failed")
+    /// * `mapping_info` - Protocol-specific mapping information (e.g., "slave_id=1, address=127.0.0.1:502")
+    /// * `details` - Additional details about the connection
+    fn log_connection(&self, action: &str, mapping_info: &str, details: &str) {
+        info!(
+            channel = %self.channel_id(),
+            protocol = %self.protocol_type(),
+            action = action,
+            mapping = mapping_info,
+            details = details,
+            "Channel connection event"
+        );
+    }
+
+    /// Log data operation with mapping information
+    ///
+    /// Protocol-specific implementations should override this to provide
+    /// detailed logging with data source, mapping, and transformation details.
+    ///
+    /// # Arguments
+    /// * `action` - The action being performed (e.g., "Read_03", "Write_06", "data_received")
+    /// * `point_name` - Name of the data point
+    /// * `mapping_info` - Protocol-specific mapping information (e.g., "slave_id=1, address=40001, type=holding")
+    /// * `value_info` - Value information (e.g., "raw=1234, scaled=12.34")
+    /// * `details` - Additional details about the operation
+    fn log_data_operation(&self, action: &str, point_name: &str, mapping_info: &str, value_info: &str, details: &str) {
+        info!(
+            channel = %self.channel_id(),
+            protocol = %self.protocol_type(),
+            action = action,
+            point_name = point_name,
+            mapping = mapping_info,
+            value = value_info,
+            details = details,
+            "Data operation event"
+        );
+    }
+
+    /// Log error with mapping context
+    ///
+    /// Protocol-specific implementations should override this to provide
+    /// detailed error logging with mapping and context information.
+    ///
+    /// # Arguments
+    /// * `action` - The action that failed (e.g., "Read_03", "Write_06", "connect")
+    /// * `point_name` - Name of the data point (if applicable)
+    /// * `mapping_info` - Protocol-specific mapping information
+    /// * `error` - Error details
+    fn log_error(&self, action: &str, point_name: Option<&str>, mapping_info: &str, error: &str) {
+        error!(
+            channel = %self.channel_id(),
+            protocol = %self.protocol_type(),
+            action = action,
+            point_name = point_name.unwrap_or("N/A"),
+            mapping = mapping_info,
+            error = error,
+            "Channel operation error"
+        );
+    }
 }
 
 /// Protocol logging trait for unified logging across all communication protocols
@@ -3215,10 +3281,10 @@ mod tests {
         ChannelConfig {
             id: 1,
             name: "Test Channel".to_string(),
-            description: "Test Description".to_string(),
+            description: Some("Test Description".to_string()),
             protocol: ProtocolType::ModbusTcp,
             parameters: ChannelParameters::Generic(HashMap::new()),
-            csv_config: None,
+            logging: crate::core::config::types::ChannelLoggingConfig::default(),
         }
     }
 
@@ -5450,10 +5516,7 @@ mod legacy_forward_calculation_tests {
             unit: "°C".to_string(),
             description: "Temperature sum calculation".to_string(),
             created_at: Utc::now(),
-            updated_at: Utc::now(),
-            target_point_id: None,
-            target_telemetry_type: None,
-            legacy_source_points: None,
+            updated_at: Utc::now(),s
         };
 
         let engine = EnhancedForwardCalculationEngine::new();
@@ -5482,9 +5545,6 @@ mod legacy_forward_calculation_tests {
             description: "Temperature calculation".to_string(),
             created_at: Utc::now(),
             updated_at: Utc::now(),
-            target_point_id: None,
-            target_telemetry_type: None,
-            legacy_source_points: None,
         };
 
         engine.add_config(config).unwrap();
@@ -5908,7 +5968,7 @@ mod forward_calculation_tests {
         
         // 测试字符串转换
         let id_str = point_id.to_string();
-        assert_eq!(id_str, "telemetry:1001");
+        assert_eq!(id_str, "Remote Measurement:1001");
         
         // 测试错误格式
         assert!(TelemetryPointId::from_string("invalid").is_err());

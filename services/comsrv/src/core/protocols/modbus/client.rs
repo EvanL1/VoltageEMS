@@ -23,7 +23,7 @@ use tokio_serial::{DataBits, Parity, StopBits};
 use voltage_modbus::client::{
     ModbusClient as VoltageModbusClient, ModbusRtuClient, ModbusTcpClient,
 };
-use voltage_modbus::ModbusError as VoltageError;
+use voltage_modbus::{ModbusError as VoltageError, TcpTransport};
 
 use crate::core::config::ChannelConfig;
 use crate::core::protocols::common::combase::PointData;
@@ -55,8 +55,6 @@ pub enum ModbusCommunicationMode {
 pub struct ModbusClientConfig {
     /// Communication mode (RTU or TCP)
     pub mode: ModbusCommunicationMode,
-    /// Slave/Unit ID
-    pub slave_id: u8,
     /// Connection timeout
     pub timeout: Duration,
     /// Maximum retry attempts
@@ -89,7 +87,6 @@ impl Default for ModbusClientConfig {
     fn default() -> Self {
         Self {
             mode: ModbusCommunicationMode::Rtu,
-            slave_id: 1,
             timeout: Duration::from_secs(5),
             max_retries: 3,
             poll_interval: Duration::from_secs(1),
@@ -348,12 +345,11 @@ impl ModbusClient {
 
         // Generate channel ID based on configuration
         let channel_id = format!(
-            "modbus_{}_{}",
+            "modbus_{}",
             match config.mode {
                 ModbusCommunicationMode::Tcp => "tcp",
                 ModbusCommunicationMode::Rtu => "rtu",
-            },
-            config.slave_id
+            }
         );
 
         Ok(Self {
@@ -403,8 +399,15 @@ impl ModbusClient {
                     let _ = responder.send(result);
                 }
                 ModbusRequest::ReadHoldingRegister { address, responder } => {
+                    // Find mapping to get slave_id
+                    let slave_id = config.point_mappings
+                        .iter()
+                        .find(|m| m.address == address)
+                        .map(|m| m.slave_id)
+                        .unwrap_or(1); // Default slave_id if not found
+                    
                     let result =
-                        Self::read_holding_register_internal(&config, &mut client, address, &stats)
+                        Self::read_03_internal(&config, &mut client, slave_id, address, &stats)
                             .await;
                     let _ = responder.send(result);
                 }
@@ -413,8 +416,16 @@ impl ModbusClient {
                     quantity,
                     responder,
                 } => {
+                    // Find mapping to get slave_id
+                    let slave_id = config.point_mappings
+                        .iter()
+                        .find(|m| m.address == address)
+                        .map(|m| m.slave_id)
+                        .unwrap_or(1); // Default slave_id if not found
+                        
                     let result = Self::read_holding_registers_internal(
                         &config,
+                        slave_id,
                         &mut client,
                         address,
                         quantity,
@@ -428,15 +439,26 @@ impl ModbusClient {
                     value,
                     responder,
                 } => {
-                    let result = Self::write_single_register_internal(
+                    // Find mapping to get slave_id
+                    let slave_id = config.point_mappings
+                        .iter()
+                        .find(|m| m.address == address)
+                        .map(|m| m.slave_id)
+                        .unwrap_or(1); // Default slave_id if not found
+                        
+                    let result = Self::write_06_internal(
                         &config,
                         &mut client,
+                        slave_id,
                         address,
                         value,
                         &stats,
                     )
                     .await;
-                    let _ = responder.send(result);
+                    
+                    // Convert Result<u16> to Result<()>
+                    let void_result = result.map(|_| ());
+                    let _ = responder.send(void_result);
                 }
             }
         }
@@ -453,8 +475,7 @@ impl ModbusClient {
             config.mode
         );
         debug!(
-            "🔧 [MODBUS-CONFIG] Connection config: slave_id={}, timeout={}ms",
-            config.slave_id,
+            "[MODBUS-CONFIG] Connection config: timeout={}ms",
             config.timeout.as_millis()
         );
 
@@ -483,8 +504,8 @@ impl ModbusClient {
                 *connection_state.write().await = ModbusConnectionState::Connected;
                 info!("✅ [MODBUS-CONN] Successfully connected to Modbus device");
                 debug!(
-                    "🎯 [MODBUS-STATUS] Connection established: mode={:?}, slave_id={}",
-                    config.mode, config.slave_id
+                    "🎯 [MODBUS-STATUS] Connection established: mode={:?}",
+                    config.mode
                 );
                 Ok(())
             }
@@ -506,26 +527,34 @@ impl ModbusClient {
         config: &ModbusClientConfig,
         client: &mut Option<InternalModbusClient>,
     ) -> Result<()> {
-        let host = config
-            .host
-            .as_ref()
-            .ok_or_else(|| ComSrvError::ConfigError("TCP host not specified".to_string()))?;
-        let port = config
-            .tcp_port
-            .ok_or_else(|| ComSrvError::ConfigError("TCP port not specified".to_string()))?;
+        debug!("🌐 [MODBUS-TCP] Initiating TCP connection: host={:?}, port={:?}", config.host, config.tcp_port);
+
+        let host = config.host.as_ref().ok_or_else(|| {
+            ComSrvError::ConfigError("TCP host not configured".into())
+        })?;
+        
+        let port = config.tcp_port.ok_or_else(|| {
+            ComSrvError::ConfigError("TCP port not configured".into())
+        })?;
 
         let address = format!("{}:{}", host, port);
         debug!("Connecting to TCP Modbus server at {}", address);
 
-        match ModbusTcpClient::with_timeout(&address, config.timeout).await {
-            Ok(tcp_client) => {
+        // Parse address as SocketAddr
+        let socket_addr: std::net::SocketAddr = address.parse().map_err(|e| {
+            ComSrvError::ConfigError(format!("Invalid address: {}", e))
+        })?;
+
+        match TcpTransport::new(socket_addr, config.timeout).await {
+            Ok(transport) => {
+                let tcp_client = ModbusTcpClient::from_transport(transport);
                 *client = Some(InternalModbusClient::Tcp(tcp_client));
-                info!("Connected to TCP Modbus server at {}", address);
+                debug!("✅ [MODBUS-TCP] TCP client created successfully");
                 Ok(())
             }
             Err(e) => {
-                error!("Failed to connect to TCP server: {}", e);
-                Err(ComSrvError::CommunicationError(format!(
+                error!("Failed to connect to TCP Modbus server: {}", e);
+                Err(ComSrvError::ConnectionError(format!(
                     "TCP connection failed: {}",
                     e
                 )))
@@ -600,9 +629,10 @@ impl ModbusClient {
     }
 
     /// Read holding register (worker implementation)
-    async fn read_holding_register_internal(
+    async fn read_03_internal(
         config: &ModbusClientConfig,
         client: &mut Option<InternalModbusClient>,
+        slave_id: u8,
         address: u16,
         stats: &Arc<RwLock<ModbusClientStats>>,
     ) -> Result<u16> {
@@ -610,29 +640,29 @@ impl ModbusClient {
 
         // Debug: Log request details
         debug!("📤 [MODBUS] Sending read holding register request: slave_id={}, address={}, quantity=1",
-               config.slave_id, address);
+               slave_id, address);
 
         if let Some(client) = client {
             let result = match client {
                 InternalModbusClient::Tcp(tcp_client) => {
                     // Debug: Log TCP request frame details
                     debug!("📡 [MODBUS-TCP] Request frame: Function=03(Read Holding Registers), Unit={}, Address={}, Count=1",
-                           config.slave_id, address);
+                           slave_id, address);
 
                     let result = tcp_client
-                        .read_holding_registers(config.slave_id, address, 1)
+                        .read_03(slave_id, address, 1)
                         .await;
 
                     match &result {
                         Ok(values) => {
                             debug!("📥 [MODBUS-TCP] Response received: Function=03, Unit={}, Data=[{}] (0x{:04X})",
-                                   config.slave_id, values[0], values[0]);
+                                   slave_id, values[0], values[0]);
                             debug!("🔍 [MODBUS-PARSE] Parsed value: address={}, raw_value={}, type=uint16",
                                    address, values[0]);
                         }
                         Err(e) => {
                             debug!("❌ [MODBUS-TCP] Request failed: Function=03, Unit={}, Address={}, Error={}",
-                                   config.slave_id, address, e);
+                                   slave_id, address, e);
                         }
                     }
 
@@ -641,22 +671,22 @@ impl ModbusClient {
                 InternalModbusClient::Rtu(rtu_client) => {
                     // Debug: Log RTU request frame details
                     debug!("📡 [MODBUS-RTU] Request frame: Function=03(Read Holding Registers), Slave={}, Address={}, Count=1",
-                           config.slave_id, address);
+                           slave_id, address);
 
                     let result = rtu_client
-                        .read_holding_registers(config.slave_id, address, 1)
+                        .read_03(slave_id, address, 1)
                         .await;
 
                     match &result {
                         Ok(values) => {
                             debug!("📥 [MODBUS-RTU] Response received: Function=03, Slave={}, Data=[{}] (0x{:04X})",
-                                   config.slave_id, values[0], values[0]);
+                                   slave_id, values[0], values[0]);
                             debug!("🔍 [MODBUS-PARSE] Parsed value: address={}, raw_value={}, type=uint16",
                                    address, values[0]);
                         }
                         Err(e) => {
                             debug!("❌ [MODBUS-RTU] Request failed: Function=03, Slave={}, Address={}, Error={}",
-                                   config.slave_id, address, e);
+                                   slave_id, address, e);
                         }
                     }
 
@@ -699,40 +729,41 @@ impl ModbusClient {
     }
 
     /// Write single register (worker implementation)
-    async fn write_single_register_internal(
+    async fn write_06_internal(
         config: &ModbusClientConfig,
         client: &mut Option<InternalModbusClient>,
+        slave_id: u8,
         address: u16,
         value: u16,
         stats: &Arc<RwLock<ModbusClientStats>>,
-    ) -> Result<()> {
+    ) -> Result<u16> {
         let start_time = std::time::Instant::now();
 
         // Debug: Log write request details
         debug!("📤 [MODBUS] Sending write single register request: slave_id={}, address={}, value={} (0x{:04X})",
-               config.slave_id, address, value, value);
+               slave_id, address, value, value);
 
         if let Some(client) = client {
             let result = match client {
                 InternalModbusClient::Tcp(tcp_client) => {
                     // Debug: Log TCP write frame details
                     debug!("📡 [MODBUS-TCP] Write frame: Function=06(Write Single Register), Unit={}, Address={}, Value={} (0x{:04X})",
-                           config.slave_id, address, value, value);
+                           slave_id, address, value, value);
 
                     let result = tcp_client
-                        .write_single_register(config.slave_id, address, value)
+                        .write_06(slave_id, address, value)
                         .await;
 
                     match &result {
                         Ok(_) => {
                             debug!("📥 [MODBUS-TCP] Write response: Function=06, Unit={}, Address={}, Value={} - SUCCESS",
-                                   config.slave_id, address, value);
+                                   slave_id, address, value);
                             debug!("🔍 [MODBUS-PARSE] Write confirmed: address={}, written_value={}, type=uint16",
                                    address, value);
                         }
                         Err(e) => {
                             debug!("❌ [MODBUS-TCP] Write failed: Function=06, Unit={}, Address={}, Value={}, Error={}",
-                                   config.slave_id, address, value, e);
+                                   slave_id, address, value, e);
                         }
                     }
 
@@ -741,22 +772,22 @@ impl ModbusClient {
                 InternalModbusClient::Rtu(rtu_client) => {
                     // Debug: Log RTU write frame details
                     debug!("📡 [MODBUS-RTU] Write frame: Function=06(Write Single Register), Slave={}, Address={}, Value={} (0x{:04X})",
-                           config.slave_id, address, value, value);
+                           slave_id, address, value, value);
 
                     let result = rtu_client
-                        .write_single_register(config.slave_id, address, value)
+                        .write_06(slave_id, address, value)
                         .await;
 
                     match &result {
                         Ok(_) => {
                             debug!("📥 [MODBUS-RTU] Write response: Function=06, Slave={}, Address={}, Value={} - SUCCESS",
-                                   config.slave_id, address, value);
+                                   slave_id, address, value);
                             debug!("🔍 [MODBUS-PARSE] Write confirmed: address={}, written_value={}, type=uint16",
                                    address, value);
                         }
                         Err(e) => {
                             debug!("❌ [MODBUS-RTU] Write failed: Function=06, Slave={}, Address={}, Value={}, Error={}",
-                                   config.slave_id, address, value, e);
+                                   slave_id, address, value, e);
                         }
                     }
 
@@ -776,7 +807,7 @@ impl ModbusClient {
                         .write()
                         .await
                         .update_request_stats(true, duration, None);
-                    Ok(())
+                    Ok(value)
                 }
                 Err(e) => {
                     let error_type = Self::classify_error(&e);
@@ -801,6 +832,7 @@ impl ModbusClient {
     /// Read holding registers (worker implementation)
     async fn read_holding_registers_internal(
         config: &ModbusClientConfig,
+        slave_id: u8,
         client: &mut Option<InternalModbusClient>,
         address: u16,
         quantity: u16,
@@ -810,30 +842,30 @@ impl ModbusClient {
 
         // Debug: Log batch read request details
         debug!("📤 [MODBUS] Sending read holding registers batch request: slave_id={}, start_address={}, quantity={}",
-               config.slave_id, address, quantity);
+               slave_id, address, quantity);
 
         if let Some(client) = client {
             let result = match client {
                 InternalModbusClient::Tcp(tcp_client) => {
                     // Debug: Log TCP batch read frame details
                     debug!("📡 [MODBUS-TCP] Batch read frame: Function=03(Read Holding Registers), Unit={}, Start={}, Count={}",
-                           config.slave_id, address, quantity);
+                           slave_id, address, quantity);
 
                     let result = tcp_client
-                        .read_holding_registers(config.slave_id, address, quantity)
+                        .read_03(slave_id, address, quantity)
                         .await;
 
                     match &result {
                         Ok(values) => {
                             debug!("📥 [MODBUS-TCP] Batch response received: Function=03, Unit={}, Count={}, Data={:?}",
-                                   config.slave_id, values.len(), values);
+                                   slave_id, values.len(), values);
                             debug!("🔍 [MODBUS-PARSE] Batch parsed: start_address={}, count={}, values=[{}]",
                                    address, values.len(),
                                    values.iter().map(|v| format!("{}(0x{:04X})", v, v)).collect::<Vec<_>>().join(", "));
                         }
                         Err(e) => {
                             debug!("❌ [MODBUS-TCP] Batch read failed: Function=03, Unit={}, Start={}, Count={}, Error={}",
-                                   config.slave_id, address, quantity, e);
+                                   slave_id, address, quantity, e);
                         }
                     }
 
@@ -842,23 +874,23 @@ impl ModbusClient {
                 InternalModbusClient::Rtu(rtu_client) => {
                     // Debug: Log RTU batch read frame details
                     debug!("📡 [MODBUS-RTU] Batch read frame: Function=03(Read Holding Registers), Slave={}, Start={}, Count={}",
-                           config.slave_id, address, quantity);
+                           slave_id, address, quantity);
 
                     let result = rtu_client
-                        .read_holding_registers(config.slave_id, address, quantity)
+                        .read_03(slave_id, address, quantity)
                         .await;
 
                     match &result {
                         Ok(values) => {
                             debug!("📥 [MODBUS-RTU] Batch response received: Function=03, Slave={}, Count={}, Data={:?}",
-                                   config.slave_id, values.len(), values);
+                                   slave_id, values.len(), values);
                             debug!("🔍 [MODBUS-PARSE] Batch parsed: start_address={}, count={}, values=[{}]",
                                    address, values.len(),
                                    values.iter().map(|v| format!("{}(0x{:04X})", v, v)).collect::<Vec<_>>().join(", "));
                         }
                         Err(e) => {
                             debug!("❌ [MODBUS-RTU] Batch read failed: Function=03, Slave={}, Start={}, Count={}, Error={}",
-                                   config.slave_id, address, quantity, e);
+                                   slave_id, address, quantity, e);
                         }
                     }
 
@@ -1147,7 +1179,7 @@ impl ModbusClient {
             );
             protocol_params.insert(
                 "slave_id".to_string(),
-                serde_json::Value::Number(self.config.slave_id.into()),
+                serde_json::Value::Number(mapping.slave_id.into()),
             );
             protocol_params.insert(
                 "data_type".to_string(),
@@ -1159,20 +1191,17 @@ impl ModbusClient {
             );
 
             let polling_point = PollingPoint {
-                id: mapping.name.clone(),
+                id: format!("{}_{}", mapping.name, mapping.address),
                 name: mapping.name.clone(),
                 address: mapping.address as u32,
-                data_type: format!("{:?}", mapping.data_type).to_lowercase(),
+                data_type: format!("{:?}", mapping.data_type),
                 telemetry_type,
                 scale: mapping.scale,
                 offset: mapping.offset,
                 unit: mapping.unit.clone().unwrap_or_default(),
                 description: mapping.description.clone().unwrap_or_default(),
                 access_mode: mapping.access_mode.clone(),
-                group: mapping
-                    .group
-                    .clone()
-                    .unwrap_or_else(|| "default".to_string()),
+                group: "modbus".to_string(),
                 protocol_params,
                 telemetry_metadata: None,
             };
@@ -1236,12 +1265,11 @@ impl ComBase for ModbusClient {
 
     fn channel_id(&self) -> String {
         format!(
-            "modbus_{}_{}",
+            "modbus_{}",
             match self.config.mode {
                 ModbusCommunicationMode::Tcp => "tcp",
                 ModbusCommunicationMode::Rtu => "rtu",
-            },
-            self.config.slave_id
+            }
         )
     }
 
@@ -1255,7 +1283,6 @@ impl ComBase for ModbusClient {
     fn get_parameters(&self) -> HashMap<String, String> {
         let mut params = HashMap::new();
         params.insert("mode".to_string(), format!("{:?}", self.config.mode));
-        params.insert("slave_id".to_string(), self.config.slave_id.to_string());
         params.insert(
             "timeout_ms".to_string(),
             self.config.timeout.as_millis().to_string(),
@@ -1486,7 +1513,6 @@ impl From<ChannelConfig> for ModbusClientConfig {
                 timeout,
                 max_retries,
                 poll_rate,
-                slave_id,
                 ..
             } => {
                 config.mode = ModbusCommunicationMode::Rtu;
@@ -1508,7 +1534,6 @@ impl From<ChannelConfig> for ModbusClientConfig {
                 config.timeout = Duration::from_millis(timeout);
                 config.max_retries = max_retries;
                 config.poll_interval = Duration::from_millis(poll_rate.unwrap_or(1000));
-                config.slave_id = slave_id.unwrap_or(1);
             }
             crate::core::config::ChannelParameters::Generic(ref params) => {
                 // 根据ChannelConfig中的protocol类型来设置正确的模式
@@ -1534,11 +1559,7 @@ impl From<ChannelConfig> for ModbusClientConfig {
                             }
                         }
 
-                        if let Some(slave_id) = params.get("slave_id") {
-                            if let Some(id) = slave_id.as_u64() {
-                                config.slave_id = id as u8;
-                            }
-                        }
+                        // Note: slave_id is now handled in point mappings, not channel config
                     }
                     crate::core::config::ProtocolType::ModbusRtu => {
                         config.mode = ModbusCommunicationMode::Rtu;
@@ -1562,11 +1583,7 @@ impl From<ChannelConfig> for ModbusClientConfig {
                             }
                         }
 
-                        if let Some(slave_id) = params.get("slave_id") {
-                            if let Some(id) = slave_id.as_u64() {
-                                config.slave_id = id as u8;
-                            }
-                        }
+                        // Note: slave_id is now handled in point mappings, not channel config
                     }
                     _ => {
                         // 对于其他协议类型，保持默认配置（RTU）
@@ -1589,7 +1606,6 @@ impl std::fmt::Debug for ModbusClient {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ModbusClient")
             .field("mode", &self.config.mode)
-            .field("slave_id", &self.config.slave_id)
             .field("has_command_manager", &self.command_manager.is_some())
             .finish()
     }
@@ -2025,7 +2041,6 @@ mod tests {
         config.mode = ModbusCommunicationMode::Rtu;
         config.port = Some("/dev/ttyUSB0".to_string());
         config.baud_rate = Some(9600);
-        config.slave_id = 2;
         config.point_mappings = create_test_register_mappings();
 
         let client = ModbusClient::new(config, ModbusCommunicationMode::Rtu).unwrap();
@@ -2037,7 +2052,6 @@ mod tests {
 
         let channel_id = client.channel_id();
         assert!(channel_id.contains("modbus_rtu"));
-        assert!(channel_id.contains("2")); // slave_id
     }
 
     #[tokio::test]
@@ -2143,14 +2157,12 @@ mod tests {
         config.mode = ModbusCommunicationMode::Tcp;
         config.host = Some("192.168.1.100".to_string());
         config.tcp_port = Some(502);
-        config.slave_id = 5;
         config.timeout = Duration::from_millis(3000);
 
         let client = ModbusClient::new(config, ModbusCommunicationMode::Tcp).unwrap();
 
         let params = client.get_parameters();
         assert_eq!(params.get("mode"), Some(&"Tcp".to_string()));
-        assert_eq!(params.get("slave_id"), Some(&"5".to_string()));
         assert_eq!(params.get("host"), Some(&"192.168.1.100".to_string()));
         assert_eq!(params.get("port"), Some(&"502".to_string()));
         assert_eq!(params.get("timeout_ms"), Some(&"3000".to_string()));
@@ -2162,13 +2174,11 @@ mod tests {
         config.mode = ModbusCommunicationMode::Rtu;
         config.port = Some("/dev/ttyUSB1".to_string());
         config.baud_rate = Some(19200);
-        config.slave_id = 3;
 
         let client = ModbusClient::new(config, ModbusCommunicationMode::Rtu).unwrap();
 
         let params = client.get_parameters();
         assert_eq!(params.get("mode"), Some(&"Rtu".to_string()));
-        assert_eq!(params.get("slave_id"), Some(&"3".to_string()));
         assert_eq!(params.get("port"), Some(&"/dev/ttyUSB1".to_string()));
         assert_eq!(params.get("baud_rate"), Some(&"19200".to_string()));
     }
@@ -2458,7 +2468,6 @@ mod tests {
         assert_eq!(modbus_config.host, Some("192.168.1.100".to_string()));
         assert_eq!(modbus_config.tcp_port, Some(502));
         assert_eq!(modbus_config.timeout, Duration::from_millis(5000));
-        assert_eq!(modbus_config.slave_id, 1);
 
         // Test RTU channel conversion
         let rtu_channel = ChannelConfig {
@@ -2486,7 +2495,6 @@ mod tests {
         assert_eq!(modbus_config.port, Some("/dev/ttyUSB0".to_string()));
         assert_eq!(modbus_config.baud_rate, Some(9600));
         assert_eq!(modbus_config.timeout, Duration::from_millis(1000));
-        assert_eq!(modbus_config.slave_id, 2);
         assert_eq!(modbus_config.max_retries, 5);
         assert_eq!(modbus_config.poll_interval, Duration::from_millis(200));
     }
@@ -2522,6 +2530,6 @@ mod tests {
         assert_eq!(modbus_config.host, Some("192.168.1.100".to_string()));
         assert_eq!(modbus_config.tcp_port, Some(502));
         assert_eq!(modbus_config.timeout, Duration::from_millis(3000));
-        assert_eq!(modbus_config.slave_id, 1);
+        assert_eq!(modbus_config.max_retries, 1);
     }
 }

@@ -1,13 +1,12 @@
 use chrono::Utc;
 use axum::{
-    extract::{Path, State},
+    extract::Path,
     http::StatusCode,
     response::Json,
     routing::{get, post},
     Router,
 };
 use utoipa::{OpenApi, ToSchema};
-use utoipa_swagger_ui::SwaggerUi;
 
 use crate::api::models::{
     ApiResponse, ChannelOperation, ChannelStatus, ChannelStatusResponse, 
@@ -308,7 +307,12 @@ pub fn create_api_routes() -> Router {
         .route("/api/channels/:channel_id/points/:point_table/:point_name", get(read_point))
         .route("/api/channels/:channel_id/points/:point_table/:point_name", post(write_point))
         .route("/api/channels/:channel_id/points", get(get_channel_points))
-        .merge(SwaggerUi::new("/swagger-ui").url("/api-docs/openapi.json", ApiDoc::openapi()))
+        .route("/api-docs/openapi.json", get(serve_openapi_spec))
+}
+
+/// Serve OpenAPI specification as JSON
+pub async fn serve_openapi_spec() -> Json<utoipa::openapi::OpenApi> {
+    Json(ApiDoc::openapi())
 }
 
 /// Get OpenAPI specification as JSON string

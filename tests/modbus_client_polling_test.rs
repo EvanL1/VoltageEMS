@@ -12,7 +12,7 @@ use comsrv::core::protocols::modbus::client::{ModbusClient, ModbusClientConfig, 
 use comsrv::core::protocols::modbus::common::{
     ModbusRegisterMapping, ModbusRegisterType, ModbusDataType, ModbusAccessMode, ByteOrder
 };
-use comsrv::utils::logger::init_logger;
+// Logger initialization removed - using tracing directly
 
 /// Test configuration for Modbus client polling
 #[derive(Debug, Clone)]
@@ -128,7 +128,10 @@ fn create_test_modbus_client(config: &TestConfig) -> comsrv::utils::error::Resul
 #[tokio::test]
 async fn test_modbus_client_polling() -> Result<(), Box<dyn std::error::Error>> {
     // Initialize logging for the test
-    let _ = init_logger("./tests/logs", "modbus_test", "debug", true);
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter("debug")
+        .with_test_writer()
+        .try_init();
     
     info!("🧪 Starting Modbus client polling test");
     
@@ -241,7 +244,10 @@ fn test_point_mappings() {
 /// Integration test with simulated server response
 #[tokio::test]
 async fn test_modbus_polling_simulation() -> Result<(), Box<dyn std::error::Error>> {
-    let _ = init_logger("./tests/logs", "modbus_sim_test", "debug", true);
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter("debug")
+        .with_test_writer()
+        .try_init();
     
     info!("🧪 Starting Modbus polling simulation test");
     
@@ -287,7 +293,10 @@ mod test_with_server {
     #[tokio::test]
     #[ignore]  // Ignored by default since it requires external server
     async fn test_with_real_server() -> Result<(), Box<dyn std::error::Error>> {
-        let _ = init_logger("./tests/logs", "modbus_real_test", "debug", true);
+        let _ = tracing_subscriber::fmt()
+            .with_env_filter("debug")
+            .with_test_writer()
+            .try_init();
         
         info!("🧪 Starting Modbus client test with real server");
         info!("🔧 Make sure server is running: python3 simple_modbus_server.py");

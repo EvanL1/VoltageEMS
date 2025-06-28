@@ -335,7 +335,7 @@ impl ModbusServer {
         for mapping in mappings {
             match mapping.register_type {
                 ModbusRegisterType::Coil => {
-                    let _ = register_bank.write_single_coil(mapping.address, false);
+                    let _ = register_bank.write_05(mapping.address, false);
                 }
                 ModbusRegisterType::DiscreteInput => {
                     let _ = register_bank.set_discrete_input(mapping.address, false);
@@ -344,7 +344,7 @@ impl ModbusServer {
                     let _ = register_bank.set_input_register(mapping.address, 0);
                 }
                 ModbusRegisterType::HoldingRegister => {
-                    let _ = register_bank.write_single_register(mapping.address, 0);
+                    let _ = register_bank.write_06(mapping.address, 0);
                 }
             }
         }
@@ -366,24 +366,22 @@ impl ModbusServer {
         self.register_bank.clone()
     }
 
-    /// Update a register value (for simulation)
+    /// Update a register value
     pub async fn update_register(&self, address: u16, value: u16) -> Result<()> {
         self.register_bank
-            .write_single_register(address, value)
+            .write_06(address, value)
             .map_err(|e| {
                 ComSrvError::CommunicationError(format!("Failed to update register: {}", e))
-            })?;
-        Ok(())
+            })
     }
 
-    /// Update a coil value (for simulation)
+    /// Update a coil value
     pub async fn update_coil(&self, address: u16, value: bool) -> Result<()> {
         self.register_bank
-            .write_single_coil(address, value)
+            .write_05(address, value)
             .map_err(|e| {
                 ComSrvError::CommunicationError(format!("Failed to update coil: {}", e))
-            })?;
-        Ok(())
+            })
     }
 
     /// Update an input register value (for simulation)
@@ -555,7 +553,7 @@ impl ModbusServer {
 
         // Try to read coils
         for &address in &sample_addresses {
-            if let Ok(coils) = self.register_bank.read_coils(address, 1) {
+            if let Ok(coils) = self.register_bank.read_01(address, 1) {
                 if !coils.is_empty() {
                     points.push(PointData {
                         id: format!("coil_{}", address),
@@ -571,7 +569,7 @@ impl ModbusServer {
 
         // Try to read discrete inputs
         for &address in &sample_addresses {
-            if let Ok(inputs) = self.register_bank.read_discrete_inputs(address, 1) {
+            if let Ok(inputs) = self.register_bank.read_02(address, 1) {
                 if !inputs.is_empty() {
                     points.push(PointData {
                         id: format!("discrete_input_{}", address),
@@ -587,7 +585,7 @@ impl ModbusServer {
 
         // Try to read input registers
         for &address in &sample_addresses {
-            if let Ok(registers) = self.register_bank.read_input_registers(address, 1) {
+            if let Ok(registers) = self.register_bank.read_04(address, 1) {
                 if !registers.is_empty() {
                     points.push(PointData {
                         id: format!("input_register_{}", address),
@@ -603,7 +601,7 @@ impl ModbusServer {
 
         // Try to read holding registers
         for &address in &sample_addresses {
-            if let Ok(registers) = self.register_bank.read_holding_registers(address, 1) {
+            if let Ok(registers) = self.register_bank.read_03(address, 1) {
                 if !registers.is_empty() {
                     points.push(PointData {
                         id: format!("holding_register_{}", address),
@@ -832,6 +830,7 @@ mod tests {
             description: Some("Test Description".to_string()),
             protocol: ProtocolType::ModbusTcp,
             parameters: ChannelParameters::Generic(HashMap::new()),
+            logging: crate::core::config::types::ChannelLoggingConfig::default(),
         }
     }
 
@@ -849,6 +848,7 @@ mod tests {
             register_mappings: vec![ModbusRegisterMapping {
                 name: "test_register".to_string(),
                 display_name: Some("Test Register".to_string()),
+                slave_id: 1,
                 address: 1,
                 register_type: ModbusRegisterType::HoldingRegister,
                 data_type: crate::core::protocols::modbus::common::ModbusDataType::UInt16,
@@ -962,16 +962,16 @@ mod tests {
         // Verify values through direct register bank access
         let bank = server.get_register_bank();
 
-        let holding_regs = bank.read_holding_registers(1, 1).unwrap();
+        let holding_regs = bank.read_03(1, 1).unwrap();
         assert_eq!(holding_regs[0], 42);
 
-        let coils = bank.read_coils(1, 1).unwrap();
+        let coils = bank.read_01(1, 1).unwrap();
         assert_eq!(coils[0], true);
 
-        let input_regs = bank.read_input_registers(1, 1).unwrap();
+        let input_regs = bank.read_04(1, 1).unwrap();
         assert_eq!(input_regs[0], 123);
 
-        let discrete_inputs = bank.read_discrete_inputs(1, 1).unwrap();
+        let discrete_inputs = bank.read_02(1, 1).unwrap();
         assert_eq!(discrete_inputs[0], false);
     }
 
@@ -1053,32 +1053,32 @@ mod tests {
         let bank = ModbusRegisterBank::new();
 
         // Test coil operations
-        bank.write_single_coil(0, true).unwrap();
-        let coils = bank.read_coils(0, 1).unwrap();
+        bank.write_05(0, true).unwrap();
+        let coils = bank.read_01(0, 1).unwrap();
         assert_eq!(coils[0], true);
 
         // Test register operations
-        bank.write_single_register(0, 42).unwrap();
-        let regs = bank.read_holding_registers(0, 1).unwrap();
+        bank.write_06(0, 42).unwrap();
+        let regs = bank.read_03(0, 1).unwrap();
         assert_eq!(regs[0], 42);
 
         // Test multiple operations
-        bank.write_multiple_coils(10, &[true, false, true]).unwrap();
-        let coils = bank.read_coils(10, 3).unwrap();
+        bank.write_0f(10, &[true, false, true]).unwrap();
+        let coils = bank.read_01(10, 3).unwrap();
         assert_eq!(coils, vec![true, false, true]);
 
-        bank.write_multiple_registers(20, &[100, 200, 300]).unwrap();
-        let regs = bank.read_holding_registers(20, 3).unwrap();
+        bank.write_10(20, &[100, 200, 300]).unwrap();
+        let regs = bank.read_03(20, 3).unwrap();
         assert_eq!(regs, vec![100, 200, 300]);
 
         // Test input register simulation methods
         bank.set_input_register(5, 500).unwrap();
-        let input_regs = bank.read_input_registers(5, 1).unwrap();
+        let input_regs = bank.read_04(5, 1).unwrap();
         assert_eq!(input_regs[0], 500);
 
         // Test discrete input simulation methods
         bank.set_discrete_input(5, true).unwrap();
-        let discrete_inputs = bank.read_discrete_inputs(5, 1).unwrap();
+        let discrete_inputs = bank.read_02(5, 1).unwrap();
         assert_eq!(discrete_inputs[0], true);
     }
 

@@ -50,7 +50,8 @@ use std::env;
 use std::net::SocketAddr;
 use std::sync::Arc;
 
-use chrono::Utc;
+
+
 use clap::Parser;
 use dotenv::dotenv;
 use tokio::sync::RwLock;
@@ -63,7 +64,6 @@ mod service_impl;
 mod utils;
 
 use crate::api::openapi_routes;
-use crate::api::swagger;
 use crate::core::config::ConfigManager;
 use crate::core::protocols::common::ProtocolFactory;
 use crate::utils::error::Result;
@@ -223,25 +223,41 @@ async fn main() -> Result<()> {
         }
     };
 
-    // Initialize tracing early for better debugging
-    let log_level = args
-        .log_level
-        .as_deref()
-        .unwrap_or(config_manager.get_log_level());
+    // Initialize tracing with file and console output
+    use tracing_appender::rolling::{RollingFileAppender, Rotation};
+    use tracing_subscriber::fmt::writer::MakeWriterExt;
     
-    use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
+    let service_name = config_manager.service().name.clone();
+    let log_file = format!("logs/{}-{}.log", service_name, chrono::Local::now().format("%Y-%m-%d"));
     
-    tracing_subscriber::registry()
-        .with(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new(log_level))
-        )
-        .with(tracing_subscriber::fmt::layer().with_timer(tracing_subscriber::fmt::time::uptime()))
+    // Create log directory if it doesn't exist
+    std::fs::create_dir_all("logs").unwrap_or_else(|e| {
+        eprintln!("Failed to create logs directory: {}", e);
+    });
+    
+    // File appender with daily rotation
+    let file_appender = RollingFileAppender::new(Rotation::DAILY, "logs", &format!("{}.log", service_name));
+    let (non_blocking, _guard) = tracing_appender::non_blocking(file_appender);
+    
+    // Initialize tracing subscriber with JSON format
+    tracing_subscriber::fmt()
+        .with_writer(std::io::stdout.and(non_blocking))
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env()
+            .add_directive(config_manager.get_log_level().parse().unwrap_or(tracing::Level::INFO.into())))
+        .json()
+        .with_target(false)  // 不显示模块路径
+        .with_thread_ids(false)  // 不显示线程ID
+        .with_file(false)    // 不显示文件名
+        .with_line_number(false)  // 不显示行号
+        .with_current_span(false)  // 不显示span信息
         .init();
+    
+    info!("Starting Communication Service: {}", service_name);
+    info!("Logging to console and file: logs/{}.log.YYYY-MM-DD", service_name);
 
     if args.super_test {
         info!(
-            "🚀 Starting Communication Service v{} - SUPER TEST MODE",
+            "Starting Communication Service v{} - SUPER TEST MODE",
             env!("CARGO_PKG_VERSION")
         );
         info!("Super test configuration:");
@@ -249,7 +265,7 @@ async fn main() -> Result<()> {
         if let Some(duration) = args.duration {
             info!("  - Test duration: {} seconds", duration);
         }
-        info!("  - Log level: {}", log_level);
+        info!("  - Log level: {}", config_manager.get_log_level());
     } else {
         info!(
             "Starting Communication Service v{}",
@@ -302,20 +318,20 @@ async fn main() -> Result<()> {
             );
 
         info!(
-            "🚀 Starting Communication Service with OpenAPI at: http://{}",
+            "Starting Communication Service with OpenAPI at: http://{}",
             socket_addr
         );
-        info!("📚 Swagger UI: http://{}/swagger-ui", socket_addr);
-        info!("📄 OpenAPI spec: http://{}/api-docs/openapi.json", socket_addr);
-        info!("❤️  Health check: http://{}/api/health", socket_addr);
-        info!("📊 Service status: http://{}/api/status", socket_addr);
+        info!("Swagger UI: http://{}/swagger-ui", socket_addr);
+        info!("OpenAPI spec: http://{}/api-docs/openapi.json", socket_addr);
+        info!("Health check: http://{}/api/health", socket_addr);
+        info!("Service status: http://{}/api/status", socket_addr);
 
         tokio::spawn(async move {
             let listener = tokio::net::TcpListener::bind(socket_addr).await.unwrap();
             axum::serve(listener, app).await.unwrap();
         });
 
-        info!("✅ OpenAPI service started successfully");
+        info!("OpenAPI service started successfully");
     } else {
         info!("API server disabled in configuration");
     }
@@ -325,7 +341,7 @@ async fn main() -> Result<()> {
     // Handle super test mode with duration
     if args.super_test && args.duration.is_some() {
         let duration = args.duration.unwrap();
-        info!("🚀 Super test mode: running for {} seconds", duration);
+        info!("Super test mode: running for {} seconds", duration);
 
         tokio::select! {
             _ = tokio::time::sleep(std::time::Duration::from_secs(duration)) => {

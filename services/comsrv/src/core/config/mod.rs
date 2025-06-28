@@ -29,10 +29,8 @@ pub mod types;
 
 // Re-export essential types for backward compatibility
 pub use types::{
-    ChannelConfig, ChannelParameters, ProtocolType, RedisConfig,
-    TelemetryType, CombasePointConfig, AnalogPointConfig, DigitalPointConfig,
-    FourTelemetryTableManager,
+    ChannelConfig, ChannelParameters, ProtocolType,
 };
 
 // Re-export the modern ConfigManager
-pub use config_manager::{ConfigManager, AppConfig, ServiceConfig, ApiConfig, LoggingConfig, ConfigBuilder};
+pub use config_manager::ConfigManager;

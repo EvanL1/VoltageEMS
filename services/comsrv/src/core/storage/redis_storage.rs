@@ -901,20 +901,15 @@ mod tests {
         // Test with invalid protocol
         let config = RedisConfig {
             enabled: true,
-            connection_type: RedisConnectionType::Tcp,
-            address: "invalid://invalid".to_string(),
-            db: 0,
+            url: "invalid://invalid".to_string(),
+            database: 0,
             timeout_ms: 5000,
             max_connections: Some(10),
-            min_connections: Some(1),
-            idle_timeout_secs: 300,
             max_retries: 3,
-            password: None,
-            username: None,
         };
 
         // This test just verifies the configuration structure
-        assert_eq!(config.address, "invalid://invalid");
+        assert_eq!(config.url, "invalid://invalid");
         assert!(config.enabled);
     }
 
@@ -922,84 +917,65 @@ mod tests {
     fn test_redis_config_address_types() {
         let tcp_config = RedisConfig {
             enabled: true,
-            connection_type: RedisConnectionType::Tcp,
-            address: "tcp://127.0.0.1:6379".to_string(),
-            db: 1,
+            url: "tcp://127.0.0.1:6379".to_string(),
+            database: 1,
             timeout_ms: 5000,
             max_connections: Some(10),
-            min_connections: Some(1),
-            idle_timeout_secs: 300,
             max_retries: 3,
-            password: None,
-            username: None,
         };
 
         let redis_config = RedisConfig {
             enabled: true,
-            connection_type: RedisConnectionType::Tcp,
-            address: "redis://127.0.0.1:6379".to_string(),
-            db: 2,
+            url: "redis://127.0.0.1:6379".to_string(),
+            database: 2,
             timeout_ms: 5000,
             max_connections: Some(10),
-            min_connections: Some(1),
-            idle_timeout_secs: 300,
             max_retries: 3,
-            password: None,
-            username: None,
         };
 
         let unix_config = RedisConfig {
             enabled: true,
-            connection_type: RedisConnectionType::Unix,
-            address: "unix:///tmp/redis.sock".to_string(),
-            db: 3,
+            url: "unix:///tmp/redis.sock".to_string(),
+            database: 3,
             timeout_ms: 5000,
             max_connections: Some(10),
-            min_connections: Some(1),
-            idle_timeout_secs: 300,
             max_retries: 3,
-            password: None,
-            username: None,
         };
 
-        // Test that all address types are properly stored
-        assert!(tcp_config.address.starts_with("tcp://"));
-        assert!(redis_config.address.starts_with("redis://"));
-        assert!(unix_config.address.starts_with("unix://"));
+        // Test that URLs are properly stored (address() method only extracts host:port from redis:// URLs)
+        assert!(tcp_config.url.starts_with("tcp://"));
+        assert!(redis_config.url.starts_with("redis://"));
+        assert!(unix_config.url.starts_with("unix://"));
+        
+        // Test that address() method works correctly for redis:// URLs
+        assert_eq!(redis_config.address(), "127.0.0.1:6379");
+        // For non-redis URLs, address() returns default
+        assert_eq!(tcp_config.address(), "127.0.0.1:6379");
+        assert_eq!(unix_config.address(), "127.0.0.1:6379");
     }
 
     #[test]
     fn test_redis_config_db_selection() {
         let config_with_db = RedisConfig {
             enabled: true,
-            connection_type: RedisConnectionType::Tcp,
-            address: "redis://127.0.0.1:6379".to_string(),
-            db: 5,
+            url: "redis://127.0.0.1:6379".to_string(),
+            database: 5,
             timeout_ms: 5000,
             max_connections: Some(10),
-            min_connections: Some(1),
-            idle_timeout_secs: 300,
             max_retries: 3,
-            password: None,
-            username: None,
         };
 
         let config_without_db = RedisConfig {
             enabled: true,
-            connection_type: RedisConnectionType::Tcp,
-            address: "redis://127.0.0.1:6379".to_string(),
-            db: 0,
+            url: "redis://127.0.0.1:6379".to_string(),
+            database: 0,
             timeout_ms: 5000,
             max_connections: Some(10),
-            min_connections: Some(1),
-            idle_timeout_secs: 300,
             max_retries: 3,
-            password: None,
-            username: None,
         };
 
-        assert_eq!(config_with_db.db, 5);
-        assert_eq!(config_without_db.db, 0);
+        assert_eq!(config_with_db.db(), 5);
+        assert_eq!(config_without_db.db(), 0);
     }
 
     // Note: The following tests require a running Redis instance
@@ -1159,12 +1135,19 @@ mod tests {
 
     #[test]
     fn test_redis_config_clone() {
-        let config = create_test_redis_config();
+        let config = RedisConfig {
+            enabled: true,
+            url: "redis://127.0.0.1:6379".to_string(),
+            database: 0,
+            timeout_ms: 5000,
+            max_connections: Some(10),
+            max_retries: 3,
+        };
+
         let cloned_config = config.clone();
 
-        assert_eq!(config.enabled, cloned_config.enabled);
-        assert_eq!(config.address, cloned_config.address);
-        assert_eq!(config.db, cloned_config.db);
+        assert_eq!(config.address(), cloned_config.address());
+        assert_eq!(config.db(), cloned_config.db());
     }
 
     #[test]

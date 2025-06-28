@@ -33,6 +33,7 @@ pub mod error;
 // Re-export commonly used items for convenience
 pub use error::{ComSrvError, Result};
 // Re-export BaseCommError and BaseCommResult for backward compatibility
+pub use crate::core::protocols::common::errors::{BaseCommError, BaseCommResult};
 
 #[cfg(test)]
 mod tests {

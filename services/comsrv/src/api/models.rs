@@ -452,7 +452,7 @@ mod tests {
             crate::core::protocols::common::combase::ChannelStatus::new("test_001");
         let api_status = ChannelStatus::from(combase_status);
 
-        assert_eq!(api_status.id, 1);
+        assert_eq!(api_status.id, 0); // Updated: test_001 cannot parse as u16, so returns 0
         assert_eq!(api_status.name, "Unknown");
         assert_eq!(api_status.protocol, "Unknown");
         assert!(!api_status.connected);

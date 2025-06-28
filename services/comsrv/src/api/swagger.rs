@@ -3,9 +3,7 @@ use axum::{
     routing::get,
     Router,
 };
-use serde_json;
 use utoipa::OpenApi;
-use utoipa_swagger_ui::SwaggerUi;
 
 /// OpenAPI specification for Communication Service
 #[derive(OpenApi)]
@@ -38,7 +36,7 @@ pub async fn swagger_ui() -> Html<&'static str> {
 /// Create Swagger routes
 pub fn swagger_routes() -> Router {
     Router::new()
-        .merge(SwaggerUi::new("/swagger-ui").url("/api-docs/openapi.json", ApiDoc::openapi()))
+        // SwaggerUi integration removed due to compatibility issues
         .route("/api-docs/openapi.json", get(openapi_json))
         .route("/swagger", get(swagger_ui))
 }

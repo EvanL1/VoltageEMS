@@ -1,3 +1,106 @@
+//! REST API Module
+//!
+//! This module provides a comprehensive REST API for the communication service,
+//! built with axum for high performance and utoipa for OpenAPI documentation.
+//!
+//! # Architecture
+//!
+//! The API is structured around the following components:
+//!
+//! - **Routes** (`openapi_routes`): API endpoint definitions with axum handlers
+//! - **Models** (`models`): Request/response models with OpenAPI schemas  
+//! - **Documentation** (`swagger`): OpenAPI specification and Swagger UI integration
+//!
+//! # Features
+//!
+//! - **High Performance**: Built on axum for async request handling
+//! - **OpenAPI 3.0**: Auto-generated documentation via utoipa
+//! - **Type Safety**: Comprehensive request/response validation
+//! - **CORS Support**: Cross-origin resource sharing for web clients
+//! - **Error Handling**: Standardized error responses
+//!
+//! # API Structure
+//!
+//! ```text
+//! /api/v1/
+//! ├── status              - Service health and status
+//! ├── channels/           - Channel management
+//! │   ├── {id}/points     - Point data access
+//! │   ├── {id}/start      - Start channel
+//! │   └── {id}/stop       - Stop channel
+//! ├── factory/            - Protocol factory information
+//! └── openapi.json        - OpenAPI specification
+//! ```
+//!
+//! # Usage
+//!
+//! ```rust,no_run
+//! use comsrv::api::openapi_routes::create_api_routes;
+//! use axum::Server;
+//! use std::net::SocketAddr;
+//!
+//! #[tokio::main]
+//! async fn main() {
+//!     let app = create_api_routes();
+//!     let addr = SocketAddr::from(([0, 0, 0, 0], 3000));
+//!     
+//!     Server::bind(&addr)
+//!         .serve(app.into_make_service())
+//!         .await
+//!         .unwrap();
+//! }
+//! ```
+//!
+//! # Request/Response Examples
+//!
+//! ## Get Service Status
+//! 
+//! ```http
+//! GET /api/v1/status
+//! ```
+//!
+//! Response:
+//! ```json
+//! {
+//!   "name": "ComsrvRust",
+//!   "version": "0.1.0", 
+//!   "uptime": 3600,
+//!   "channels": 5,
+//!   "active_channels": 3
+//! }
+//! ```
+//!
+//! ## List Channels
+//!
+//! ```http
+//! GET /api/v1/channels
+//! ```
+//!
+//! Response:
+//! ```json
+//! [
+//!   {
+//!     "id": 1,
+//!     "name": "Modbus Device 1",
+//!     "protocol": "ModbusTcp",
+//!     "connected": true,
+//!     "running": true,
+//!     "error_count": 0
+//!   }
+//! ]
+//! ```
+//!
+//! # Error Responses
+//!
+//! All endpoints return standardized error responses:
+//!
+//! ```json
+//! {
+//!   "status": 404,
+//!   "message": "Channel not found"
+//! }
+//! ```
+
 // Legacy API modules - temporarily disabled
 // pub mod handlers;
 // pub mod routes;

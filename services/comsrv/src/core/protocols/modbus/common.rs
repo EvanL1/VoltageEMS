@@ -562,34 +562,55 @@ impl ModbusDataType {
 /// - Defines data type and conversion parameters
 /// - Provides scaling and offset for engineering unit conversion
 /// - Specifies access permissions and grouping information
+/// - **Supports multiple slave devices on single channel**
 ///
 /// # Configuration Fields
 ///
 /// - **Identity**: `name`, `display_name`, `description`
 /// - **Register**: `register_type`, `address`, `data_type`, `byte_order`
+/// - **Device**: `slave_id` for multi-device support
 /// - **Conversion**: `scale`, `offset`, `unit`
 /// - **Access**: `access_mode` (read, write, read_write)
 /// - **Organization**: `group` for logical grouping
+///
+/// # Multi-Slave Support
+///
+/// Each mapping can specify its own `slave_id`, allowing a single channel
+/// to communicate with multiple Modbus devices on the same physical connection.
+/// This is particularly useful for:
+/// - Modbus RTU daisy chain configurations
+/// - Modbus TCP gateways with multiple downstream devices
 ///
 /// # Example
 ///
 /// ```rust
 /// use comsrv::core::protocols::modbus::common::*;
 ///
-/// let mapping = ModbusRegisterMapping {
-///     name: "tank_temperature".to_string(),
-///     display_name: Some("Tank Temperature".to_string()),
+/// // Device 1: Temperature sensor
+/// let temp_mapping = ModbusRegisterMapping {
+///     name: "device1_temperature".to_string(),
+///     slave_id: 1,  // Device 1
 ///     register_type: ModbusRegisterType::HoldingRegister,
 ///     address: 1000,
 ///     data_type: ModbusDataType::Int16,
-///     scale: 0.1,        // Convert raw value to engineering units
-///     offset: -40.0,     // Apply offset after scaling  
+///     scale: 0.1,
+///     offset: -40.0,
 ///     unit: Some("°C".to_string()),
-///     access_mode: "read".to_string(),
 ///     ..Default::default()
 /// };
 ///
-/// // The raw register value 650 would convert to: (650 * 0.1) + (-40.0) = 25.0°C
+/// // Device 2: Pressure sensor (different slave, different address)
+/// let pressure_mapping = ModbusRegisterMapping {
+///     name: "device2_pressure".to_string(),
+///     slave_id: 2,  // Device 2
+///     register_type: ModbusRegisterType::InputRegister,
+///     address: 500,  // Different address space
+///     data_type: ModbusDataType::UInt16,
+///     scale: 1.0,
+///     offset: 0.0,
+///     unit: Some("Pa".to_string()),
+///     ..Default::default()
+/// };
 /// ```
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModbusRegisterMapping {
@@ -597,6 +618,9 @@ pub struct ModbusRegisterMapping {
     pub name: String,
     /// Human-readable display name for user interfaces
     pub display_name: Option<String>,
+    /// Modbus slave/unit ID (1-247)
+    /// Allows single channel to communicate with multiple devices
+    pub slave_id: u8,
     /// Register type classification (coil, discrete_input, input_register, holding_register)
     pub register_type: ModbusRegisterType,
     /// Physical register address (0-based protocol address)
@@ -625,6 +649,7 @@ impl Default for ModbusRegisterMapping {
     /// # Returns
     ///
     /// Default mapping configured as:
+    /// - Slave ID 1
     /// - Input register at address 0
     /// - UInt16 data type
     /// - 1:1 scaling (scale=1.0, offset=0.0)
@@ -634,6 +659,7 @@ impl Default for ModbusRegisterMapping {
         Self {
             name: String::new(),
             display_name: None,
+            slave_id: 1,
             register_type: ModbusRegisterType::InputRegister,
             address: 0,
             data_type: ModbusDataType::UInt16,
@@ -659,7 +685,7 @@ impl ModbusRegisterMapping {
     ///
     /// # Returns
     ///
-    /// New register mapping with default values for other fields
+    /// New register mapping with default values for other fields (slave_id=1)
     ///
     /// # Example
     ///
@@ -669,10 +695,46 @@ impl ModbusRegisterMapping {
     /// let mapping = ModbusRegisterMapping::new(100, ModbusDataType::UInt16, "temperature".to_string());
     /// assert_eq!(mapping.address, 100);
     /// assert_eq!(mapping.name, "temperature");
+    /// assert_eq!(mapping.slave_id, 1);
     /// ```
     pub fn new(address: u16, data_type: ModbusDataType, name: String) -> Self {
         Self {
             name,
+            address,
+            data_type,
+            register_type: ModbusRegisterType::HoldingRegister,
+            ..Default::default()
+        }
+    }
+
+    /// Create a new register mapping with slave ID
+    ///
+    /// # Arguments
+    ///
+    /// * `slave_id` - Modbus slave/unit ID (1-247)
+    /// * `address` - Register address
+    /// * `data_type` - Data type stored in the register
+    /// * `name` - Unique identifier for the point
+    ///
+    /// # Returns
+    ///
+    /// New register mapping for specified slave device
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use comsrv::core::protocols::modbus::common::*;
+    ///
+    /// let mapping = ModbusRegisterMapping::new_with_slave(
+    ///     5, 100, ModbusDataType::UInt16, "device5_temperature".to_string()
+    /// );
+    /// assert_eq!(mapping.slave_id, 5);
+    /// assert_eq!(mapping.address, 100);
+    /// ```
+    pub fn new_with_slave(slave_id: u8, address: u16, data_type: ModbusDataType, name: String) -> Self {
+        Self {
+            name,
+            slave_id,
             address,
             data_type,
             register_type: ModbusRegisterType::HoldingRegister,
@@ -779,8 +841,14 @@ impl ModbusRegisterMapping {
     /// assert!(mapping1.overlaps_with(&mapping2)); // Float32 uses 2 registers (100-101)
     /// ```
     pub fn overlaps_with(&self, other: &ModbusRegisterMapping) -> bool {
+        // Different slave devices never overlap
+        if self.slave_id != other.slave_id {
+            return false;
+        }
+
+        // Different register types can't overlap
         if self.register_type != other.register_type {
-            return false; // Different register types can't overlap
+            return false;
         }
 
         let self_start = self.address;
@@ -996,6 +1064,12 @@ impl ModbusRegisterMappingBuilder {
                 ..Default::default()
             },
         }
+    }
+
+    /// Set the slave ID
+    pub fn slave_id(mut self, slave_id: u8) -> Self {
+        self.mapping.slave_id = slave_id;
+        self
     }
 
     /// Set the register address
@@ -1900,6 +1974,7 @@ mod tests {
     #[test]
     fn test_modbus_register_mapping_builder() {
         let mapping = ModbusRegisterMapping::builder("temperature")
+            .slave_id(5)
             .address(100)
             .register_type(ModbusRegisterType::HoldingRegister)
             .data_type(ModbusDataType::Float32)
@@ -1911,6 +1986,7 @@ mod tests {
             .build();
 
         assert_eq!(mapping.name, "temperature");
+        assert_eq!(mapping.slave_id, 5);
         assert_eq!(mapping.address, 100);
         assert_eq!(mapping.register_type, ModbusRegisterType::HoldingRegister);
         assert_eq!(mapping.data_type, ModbusDataType::Float32);
@@ -1920,6 +1996,63 @@ mod tests {
         assert_eq!(mapping.description, Some("Temperature sensor".to_string()));
         assert_eq!(mapping.access_mode, "read_write");
         assert!(mapping.is_writable());
+    }
+
+    #[test]
+    fn test_multi_slave_mapping_creation() {
+        // Test new_with_slave constructor
+        let device1_mapping = ModbusRegisterMapping::new_with_slave(
+            1, 1000, ModbusDataType::Float32, "device1_temperature".to_string()
+        );
+        let device2_mapping = ModbusRegisterMapping::new_with_slave(
+            2, 500, ModbusDataType::UInt16, "device2_pressure".to_string()
+        );
+
+        assert_eq!(device1_mapping.slave_id, 1);
+        assert_eq!(device1_mapping.address, 1000);
+        assert_eq!(device1_mapping.name, "device1_temperature");
+
+        assert_eq!(device2_mapping.slave_id, 2);
+        assert_eq!(device2_mapping.address, 500);
+        assert_eq!(device2_mapping.name, "device2_pressure");
+
+        // Test builder pattern for multi-slave
+        let device3_mapping = ModbusRegisterMapping::builder("device3_flow")
+            .slave_id(3)
+            .address(2000)
+            .register_type(ModbusRegisterType::InputRegister)
+            .data_type(ModbusDataType::Float32)
+            .scale(0.001)
+            .unit("L/min")
+            .build();
+
+        assert_eq!(device3_mapping.slave_id, 3);
+        assert_eq!(device3_mapping.address, 2000);
+        assert_eq!(device3_mapping.scale, 0.001);
+        assert_eq!(device3_mapping.unit, Some("L/min".to_string()));
+    }
+
+    #[test]
+    fn test_multi_slave_address_independence() {
+        // Verify that different slaves can use overlapping address ranges
+        let device1_temp = ModbusRegisterMapping::new_with_slave(
+            1, 100, ModbusDataType::Float32, "device1_temp".to_string()
+        );
+        let device2_temp = ModbusRegisterMapping::new_with_slave(
+            2, 100, ModbusDataType::Float32, "device2_temp".to_string()  // Same address, different slave
+        );
+
+        // These should NOT overlap because they're on different slaves
+        assert!(!device1_temp.overlaps_with(&device2_temp), 
+               "Mappings on different slaves should not overlap");
+        
+        // But mappings on the same slave with overlapping addresses should overlap
+        let device1_pressure = ModbusRegisterMapping::new_with_slave(
+            1, 101, ModbusDataType::UInt16, "device1_pressure".to_string()  // Overlaps with device1_temp
+        );
+        
+        assert!(device1_temp.overlaps_with(&device1_pressure),
+               "Mappings on same slave with overlapping addresses should overlap");
     }
 
     #[test]

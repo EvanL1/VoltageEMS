@@ -7,13 +7,13 @@
 //! # Features
 //!
 //! - **Multi-Protocol Support**: Modbus TCP/RTU, IEC60870-5-104, and extensible protocol framework
-//! - **High Performance**: Async/await throughout, connection pooling, and optimized batch operations
+//! - **High Performance**: Async/await throughout, connection pooling, and optimized batch operations  
 //! - **Reliability**: Automatic retry logic, heartbeat monitoring, and comprehensive error handling
-//! - **Configuration**: YAML-based configuration with hot-reload support
-//! - **Point Tables**: CSV-based point table management with dynamic loading
-//! - **REST API**: RESTful API for monitoring and control
-//! - **Storage**: Optional Redis integration for data persistence
-//! - **Logging**: Structured logging with configurable levels
+//! - **Configuration**: YAML-based configuration with hot-reload support and environment overrides
+//! - **Point Tables**: CSV-based point table management with dynamic loading and four telemetry types
+//! - **REST API**: RESTful API built with axum and OpenAPI documentation via utoipa
+//! - **Storage**: Optional Redis integration for data persistence and caching
+//! - **Logging**: Structured logging with tracing instead of traditional log framework
 //!
 //! # Architecture
 //!
@@ -21,7 +21,7 @@
 //!
 //! - **`core`**: Core functionality including protocol implementations, configuration management, and factories
 //! - **`utils`**: Utility functions, error handling, and shared components  
-//! - **`api`**: REST API endpoints and request/response models
+//! - **`api`**: REST API endpoints, OpenAPI documentation, and request/response models
 //! - **`service`**: Main service entry point and lifecycle management
 //!
 //! ## Service Architecture
@@ -29,19 +29,19 @@
 //! ```text
 //! ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
 //! │   Config Mgr    │───►│ Protocol Factory│───►│   Channels      │
-//! │   (YAML)        │    │   (Multi-proto) │    │  (TCP/RTU/...)  │
+//! │ (YAML+Figment)  │    │   (Multi-proto) │    │  (TCP/RTU/...)  │
 //! └─────────────────┘    └─────────────────┘    └─────────────────┘
 //!          │                       │                       │
 //!          ▼                       ▼                       ▼
 //! ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
-//! │   env_logger    │    │   Redis Store   │    │   API Server    │
-//! │   (Console)     │    │   (Optional)    │    │   (REST/HTTP)   │
+//! │     tracing     │    │   Redis Store   │    │   Axum Server   │
+//! │  (Structured)   │    │  (Optional)     │    │ (REST+OpenAPI)  │
 //! └─────────────────┘    └─────────────────┘    └─────────────────┘
 //! ```
 //!
 //! # Quick Start
 //!
-//! ```
+//! ```rust,no_run
 //! use comsrv::{ConfigManager, ProtocolFactory};
 //! use comsrv::utils::Result;
 //! use std::sync::Arc;
@@ -49,7 +49,10 @@
 //!
 //! #[tokio::main]
 //! async fn main() -> Result<()> {
-//!     // Load configuration
+//!     // Initialize tracing
+//!     tracing_subscriber::fmt::init();
+//!     
+//!     // Load configuration with Figment (supports YAML, TOML, JSON, env vars)
 //!     let config_manager = ConfigManager::from_file("config/comsrv.yaml")?;
 //!     
 //!     // Create protocol factory
@@ -62,7 +65,7 @@
 //!         factory.write().await.create_channel(channel_config.clone())?;
 //!     }
 //!     
-//!     println!("Communication service initialized");
+//!     tracing::info!("Communication service initialized");
 //!     Ok(())
 //! }
 //! ```
@@ -78,29 +81,40 @@
 //! cargo run --bin comsrv
 //!
 //! # Start with custom configuration file
-//! CONFIG_FILE=my_config.yaml cargo run --bin comsrv
+//! COMSRV__CONFIG_FILE=my_config.yaml cargo run --bin comsrv
 //!
-//! # Start with debug logging
+//! # Start with debug logging  
 //! RUST_LOG=debug cargo run --bin comsrv
 //! ```
 //!
 //! ## Environment Variables
 //!
-//! - `CONFIG_FILE`: Path to configuration file (default: "config/comsrv.yaml")
-//! - `RUST_LOG`: Log level for env_logger (debug, info, warn, error)
+//! The service supports comprehensive environment variable configuration with the `COMSRV__` prefix:
+//!
+//! - `COMSRV__SERVICE__NAME`: Service name override
+//! - `COMSRV__SERVICE__API__BIND_ADDRESS`: API server bind address
+//! - `COMSRV__SERVICE__REDIS__URL`: Redis connection URL
+//! - `RUST_LOG`: Log level for tracing (trace, debug, info, warn, error)
 //!
 //! ## Configuration
 //!
-//! Configuration is managed through YAML files with the following structure:
+//! Configuration uses Figment for flexible multi-source loading with the following structure:
 //!
 //! ```yaml
 //! service:
 //!   name: "ComsrvRust"
-//!   logging:
-//!     level: "info"
+//!   description: "Industrial Communication Service"
 //!   api:
 //!     enabled: true
 //!     bind_address: "0.0.0.0:3000"
+//!     version: "v1"
+//!   logging:
+//!     level: "info"
+//!     console: true
+//!   redis:
+//!     enabled: false
+//!     url: "redis://127.0.0.1:6379"
+//!     database: 0
 //!
 //! channels:
 //!   - id: 1
@@ -110,23 +124,22 @@
 //!       host: "192.168.1.100"
 //!       port: 502
 //!       slave_id: 1
-//!
-//! redis:
-//!   enabled: false
-//!   connection_type: "Tcp"
-//!   address: "127.0.0.1:6379"
+//!     table_config:
+//!       four_telemetry_route: "channels/modbus1"
+//!       protocol_mapping_route: "mappings/modbus1"
 //! ```
 //!
 //! # Protocol Support
 //!
 //! ## Modbus
 //!
-//! Full support for Modbus TCP with the following features:
+//! Full support for Modbus TCP/RTU with the following features:
 //! - All standard function codes (read/write coils, discrete inputs, holding/input registers)
 //! - Advanced data types (bool, int16/32/64, uint16/32/64, float32/64, strings)
-//! - Byte order handling for multi-register values
+//! - Byte order handling for multi-register values (ABCD, CDBA, BADC, DCBA)
 //! - Automatic register grouping for optimized batch reads
 //! - Connection retry and heartbeat monitoring
+//! - Forward calculation engine for computed points
 //!
 //! ## IEC60870-5-104
 //!
@@ -136,20 +149,51 @@
 //! - File transfer capabilities
 //! - Event-driven and polled data acquisition
 //!
+//! # API Documentation
+//!
+//! The service provides a REST API with comprehensive OpenAPI 3.0 documentation:
+//!
+//! - **Framework**: Built with axum for high performance
+//! - **Documentation**: Auto-generated OpenAPI specs via utoipa
+//! - **Endpoints**: Channel management, point reading/writing, status monitoring
+//! - **Interactive UI**: Swagger UI available at `/swagger-ui/` (when enabled)
+//!
+//! Key API endpoints:
+//! - `GET /api/v1/status` - Service status and health
+//! - `GET /api/v1/channels` - List all channels  
+//! - `GET /api/v1/channels/{id}/points` - Get channel point data
+//! - `POST /api/v1/channels/{id}/points/{point_id}/write` - Write point value
+//!
 //! # Error Handling
 //!
 //! The library uses a comprehensive error type [`ComSrvError`] that covers all
 //! possible error conditions. All operations return `Result<T, ComSrvError>` for
 //! consistent error handling.
 //!
-//! # Performance
+//! Error types include:
+//! - Configuration errors (YAML parsing, validation)
+//! - Protocol errors (Modbus exceptions, IEC104 failures)
+//! - Network errors (connection timeouts, DNS resolution)
+//! - Storage errors (Redis connectivity, serialization)
 //!
-//! The library is designed for high performance:
-//! - Async/await throughout for maximum concurrency
-//! - Connection pooling to minimize overhead
-//! - Batch operations for improved network efficiency
-//! - Lock-free data structures where possible
-//! - Efficient memory management and resource cleanup
+//! # Performance & Reliability
+//!
+//! The library is designed for high performance and reliability:
+//! - **Async/await throughout** for maximum concurrency
+//! - **Connection pooling** to minimize overhead  
+//! - **Batch operations** for improved network efficiency
+//! - **Structured logging** with tracing for observability
+//! - **Graceful error handling** and automatic recovery
+//! - **Resource cleanup** and proper lifecycle management
+//!
+//! # Storage Integration
+//!
+//! Optional Redis integration provides:
+//! - Real-time data caching and persistence
+//! - Channel metadata storage
+//! - Configuration data backup
+//! - Command queuing and result tracking
+//! - Pub/sub messaging for distributed scenarios
 
 pub mod api;
 /// Communication Service Library
