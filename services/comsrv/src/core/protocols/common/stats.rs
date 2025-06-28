@@ -71,8 +71,6 @@ impl BaseCommStats {
         } else {
             (current_avg * (self.total_requests - 1) as f64 + new_time) / self.total_requests as f64
         };
-
-
     }
 
     /// Get uptime since statistics started
@@ -92,10 +90,7 @@ impl BaseCommStats {
 
     /// Increment specific error counter
     pub fn increment_error_counter(&mut self, error_type: &str) {
-        *self
-            .error_counters
-            .entry(error_type.to_string())
-            .or_insert(0) += 1;
+        *self.error_counters.entry(error_type.to_string()).or_insert(0) += 1;
     }
 }
 
@@ -178,6 +173,7 @@ mod tests {
         assert_eq!(stats.total_requests, 0);
         assert_eq!(stats.successful_requests, 0);
         assert_eq!(stats.failed_requests, 0);
+        assert_eq!(stats.timeout_errors, 0);
     }
 
     #[test]

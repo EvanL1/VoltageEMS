@@ -1,6 +1,6 @@
 /// IEC60870 Constants and Common Data Types
 use std::fmt;
-use crate::core::protocols::common::errors::BaseCommError;
+use crate::utils::error::ComSrvError;
 
 /// IEC60870 protocol versions
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -21,7 +21,7 @@ impl fmt::Display for IecProtocolVersion {
 }
 
 /// IEC60870 Error Type - using unified base communication error
-pub type IecError = BaseCommError;
+pub type IecError = ComSrvError;
 
 /// Common protocol result type
 pub type IecResult<T> = Result<T, IecError>;

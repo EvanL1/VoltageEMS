@@ -146,53 +146,23 @@ impl ModbusClientStats {
         response_time: Duration,
         error_type: Option<&str>,
     ) {
-        // Update base stats manually since we don't have the method
-        self.base_stats.total_requests += 1;
-        if success {
-            self.base_stats.successful_requests += 1;
-            self.base_stats.last_successful_communication = Some(SystemTime::now());
-        } else {
-            self.base_stats.failed_requests += 1;
-            if let Some(error) = error_type {
-                match error {
-                    "timeout" => self.base_stats.timeout_errors += 1,
-                    "crc_error" => self.base_stats.increment_error_counter("crc_error"),
-                    "exception_response" => self
-                        .base_stats
-                        .increment_error_counter("exception_response"),
-                    _ => {}
-                }
-            }
-        }
-
-        // Update average response time
-        let current_avg = self.base_stats.avg_response_time_ms;
-        let new_time = response_time.as_millis() as f64;
-        self.base_stats.avg_response_time_ms = if self.base_stats.total_requests == 1 {
-            new_time
-        } else {
-            (current_avg * (self.base_stats.total_requests - 1) as f64 + new_time)
-                / self.base_stats.total_requests as f64
-        };
-
-
+        // Use the base stats update method
+        self.base_stats.update_request_stats(success, response_time, error_type);
     }
 
     /// Record a reconnection attempt
     pub fn record_reconnection_attempt(&mut self) {
-        self.connection_stats.reconnect_attempts += 1;
+        self.connection_stats.record_reconnection_attempt();
     }
 
     /// Record a successful connection
     pub fn record_connection(&mut self) {
-        self.connection_stats.total_connections += 1;
-        self.connection_stats.last_connection_time = Some(SystemTime::now());
+        self.connection_stats.record_connection();
     }
 
     /// Record a disconnection
     pub fn record_disconnection(&mut self) {
-        self.connection_stats.connection_drops += 1;
-        self.connection_stats.last_disconnection_time = Some(SystemTime::now());
+        self.connection_stats.record_disconnection();
     }
 
     // Convenience accessors for backward compatibility
@@ -242,8 +212,6 @@ impl ModbusClientStats {
         self.base_stats.last_successful_communication
     }
 
-
-
     /// Increment CRC error counter (Modbus-specific)
     pub fn increment_crc_errors(&mut self) {
         self.base_stats.increment_error_counter("crc_error");
@@ -251,8 +219,7 @@ impl ModbusClientStats {
 
     /// Increment exception response counter (Modbus-specific)
     pub fn increment_exception_responses(&mut self) {
-        self.base_stats
-            .increment_error_counter("exception_response");
+        self.base_stats.increment_error_counter("exception_response");
     }
 }
 

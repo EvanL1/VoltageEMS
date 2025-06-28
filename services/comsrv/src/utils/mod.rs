@@ -32,8 +32,6 @@ pub mod error;
 
 // Re-export commonly used items for convenience
 pub use error::{ComSrvError, Result};
-// Re-export BaseCommError and BaseCommResult for backward compatibility
-pub use crate::core::protocols::common::errors::{BaseCommError, BaseCommResult};
 
 #[cfg(test)]
 mod tests {
@@ -56,18 +54,13 @@ mod tests {
     }
 
     #[test]
-    fn test_base_comm_error_exports() {
-        // Test BaseCommError re-export
-        let base_error = BaseCommError::connection("test connection error");
-        assert!(base_error.to_string().contains("connection"));
+    fn test_error_types() {
+        // Test basic error creation and handling
+        let config_error = ComSrvError::ConfigError("test config error".to_string());
+        assert!(config_error.to_string().contains("config"));
 
-        // Test BaseCommResult type alias
-        let base_result: BaseCommResult<String> = Ok("success".to_string());
-        assert!(base_result.is_ok());
-        assert_eq!(base_result.unwrap(), "success");
-
-        let base_error_result: BaseCommResult<String> = Err(BaseCommError::timeout(5000));
-        assert!(base_error_result.is_err());
+        let io_error = ComSrvError::IoError("test io error".to_string());
+        assert!(io_error.to_string().contains("io"));
     }
 
     #[test]
@@ -76,12 +69,6 @@ mod tests {
         let io_error = io::Error::new(io::ErrorKind::NotFound, "file not found");
         let comsrv_error: ComSrvError = io_error.into();
         assert!(matches!(comsrv_error, ComSrvError::IoError(_)));
-
-        let base_error: BaseCommError = BaseCommError::io("test io error");
-        assert_eq!(
-            base_error.category(),
-            crate::core::protocols::common::errors::ErrorCategory::Io
-        );
     }
 
     #[test]
@@ -135,43 +122,19 @@ mod tests {
     }
 
     #[test]
-    fn test_base_error_categories() {
-        // Test BaseCommError categories
+    fn test_error_types_comprehensive() {
+        // Test various ComSrvError types
         let errors = vec![
-            (
-                BaseCommError::connection("test"),
-                crate::core::protocols::common::errors::ErrorCategory::Connection,
-            ),
-            (
-                BaseCommError::timeout(1000),
-                crate::core::protocols::common::errors::ErrorCategory::Timeout,
-            ),
-            (
-                BaseCommError::protocol("test"),
-                crate::core::protocols::common::errors::ErrorCategory::Protocol,
-            ),
-            (
-                BaseCommError::configuration("test"),
-                crate::core::protocols::common::errors::ErrorCategory::Configuration,
-            ),
+            ComSrvError::ConfigError("config error".to_string()),
+            ComSrvError::ConnectionError("connection error".to_string()),
+            ComSrvError::TimeoutError("timeout error".to_string()),
+            ComSrvError::ProtocolError("protocol error".to_string()),
+            ComSrvError::NetworkError("network error".to_string()),
         ];
 
-        for (error, expected_category) in errors {
-            assert_eq!(error.category(), expected_category);
+        for error in errors {
+            assert!(!error.to_string().is_empty());
         }
-    }
-
-    #[test]
-    fn test_error_severity_and_retriability() {
-        // Test error classification features
-        let conn_error = BaseCommError::connection("connection failed");
-        assert!(conn_error.is_retriable());
-
-        let config_error = BaseCommError::configuration("invalid config");
-        assert!(!config_error.is_retriable());
-
-        use crate::core::protocols::common::errors::ErrorSeverity;
-        assert_eq!(config_error.severity(), ErrorSeverity::Critical);
     }
 
     #[tokio::test]

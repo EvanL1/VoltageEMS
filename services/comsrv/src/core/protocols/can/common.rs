@@ -5,7 +5,7 @@
 
 use serde::{Serialize, Deserialize};
 use std::fmt;
-use crate::core::protocols::common::errors::BaseCommError;
+use crate::utils::error::ComSrvError;
 use crate::core::protocols::common::stats::{BaseCommStats, BaseConnectionStats};
 
 /// CAN message ID type
@@ -170,7 +170,7 @@ pub enum CanByteOrder {
 }
 
 /// CAN-specific error type that wraps the base communication error
-pub type CanError = BaseCommError;
+pub type CanError = ComSrvError;
 
 /// CAN bus statistics using unified base components
 #[derive(Debug, Clone, Serialize, Deserialize)]
