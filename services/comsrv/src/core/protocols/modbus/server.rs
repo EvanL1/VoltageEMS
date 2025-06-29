@@ -111,11 +111,13 @@
 //! The server never initiates communication - all interactions are client-driven.
 
 use async_trait::async_trait;
+use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 use tokio::sync::RwLock;
+use tracing::{debug, warn};
 
 // Import voltage_modbus components
 use voltage_modbus::server::{ModbusRtuServer, ModbusRtuServerConfig};
@@ -126,7 +128,7 @@ use voltage_modbus::{
 
 use super::common::{ModbusRegisterMapping, ModbusRegisterType};
 use crate::core::config::ChannelConfig;
-use crate::core::protocols::common::combase::{ChannelStatus, ComBase, ComBaseImpl, PointData};
+use crate::core::protocols::common::combase::{ChannelStatus, ComBase, DefaultProtocol, PointData};
 use crate::utils::error::{ComSrvError, Result};
 
 /// Modbus server mode
@@ -292,7 +294,7 @@ impl InternalServer {
 /// Unified Modbus server implementing ComBase trait with voltage_modbus protocol stack
 pub struct ModbusServer {
     /// Base communication implementation
-    base: ComBaseImpl,
+    base: DefaultProtocol,
     /// Server configuration
     config: ModbusServerConfig,
     /// Voltage Modbus register bank
@@ -315,7 +317,7 @@ impl ModbusServer {
         Self::initialize_register_bank(&register_bank, &modbus_config.register_mappings);
 
         Self {
-            base: ComBaseImpl::new(
+            base: DefaultProtocol::new(
                 &name,
                 &format!("ModbusServer_{:?}", modbus_config.mode),
                 channel_config,
@@ -458,7 +460,10 @@ impl ModbusServer {
     /// Start the appropriate server mode
     async fn start_internal_server(&mut self) -> Result<()> {
         // Update status to show we're attempting to start
-        self.base.update_status(false, 0.0, None).await;
+        let mut starting_status = ChannelStatus::new(&self.channel_id());
+        starting_status.connected = false;
+        starting_status.last_error = "Starting server...".to_string();
+        self.base.update_status(starting_status).await;
 
         let mut internal_server = match self.config.mode {
             ModbusServerMode::Tcp => {
@@ -484,7 +489,11 @@ impl ModbusServer {
         self.internal_server = Some(internal_server);
 
         // Update status to connected
-        self.base.update_status(true, 50.0, None).await;
+        let mut connected_status = ChannelStatus::new(&self.channel_id());
+        connected_status.connected = true;
+        connected_status.last_response_time = 50.0;
+        connected_status.last_update_time = Utc::now();
+        self.base.update_status(connected_status).await;
 
         tracing::info!(
             "Modbus server started successfully in {:?} mode",
@@ -815,6 +824,245 @@ impl ComBase for ModbusServer {
 
         // Get points from register bank
         self.get_register_points().await
+    }
+
+    /// Update the channel status
+    async fn update_status(&mut self, status: ChannelStatus) -> Result<()> {
+        // Update base service status
+        self.base.update_status(status.clone()).await?;
+        
+        // Update server-specific status based on the new status
+        if !status.connected && self.is_running().await {
+            // If status indicates disconnection but server is running, stop it
+            tracing::warn!("Server status indicates disconnection, stopping internal server");
+            self.stop_internal_server().await?;
+        }
+        
+        debug!("Updated ModbusServer status: connected={}, error={}", 
+               status.connected, status.last_error);
+        Ok(())
+    }
+
+    /// Read a specific data point by ID (ComBase trait implementation)
+    async fn read_point(&self, point_id: &str) -> Result<PointData> {
+        debug!("Reading point by ID from register bank: {}", point_id);
+        
+        if !self.is_running().await {
+            return Err(ComSrvError::StateError("Server is not running".to_string()));
+        }
+
+        // Find mapping for this point
+        let mapping = self
+            .config
+            .register_mappings
+            .iter()
+            .find(|m| m.name == point_id)
+            .ok_or_else(|| {
+                ComSrvError::PointNotFound(format!("No mapping found for point: {}", point_id))
+            })?;
+
+        // Read value from register bank
+        let raw_value = match mapping.register_type {
+            ModbusRegisterType::HoldingRegister => {
+                match self.register_bank.read_03(mapping.address, 1) {
+                    Ok(values) if !values.is_empty() => {
+                        let scaled_value = (values[0] as f64) * mapping.scale + mapping.offset;
+                        scaled_value.to_string()
+                    }
+                    Ok(_) => {
+                        warn!("No values returned for holding register at address {}", mapping.address);
+                        "ERROR".to_string()
+                    }
+                    Err(e) => {
+                        warn!("Failed to read holding register for point {}: {}", point_id, e);
+                        "ERROR".to_string()
+                    }
+                }
+            }
+            ModbusRegisterType::InputRegister => {
+                match self.register_bank.read_04(mapping.address, 1) {
+                    Ok(values) if !values.is_empty() => {
+                        let scaled_value = (values[0] as f64) * mapping.scale + mapping.offset;
+                        scaled_value.to_string()
+                    }
+                    Ok(_) => {
+                        warn!("No values returned for input register at address {}", mapping.address);
+                        "ERROR".to_string()
+                    }
+                    Err(e) => {
+                        warn!("Failed to read input register for point {}: {}", point_id, e);
+                        "ERROR".to_string()
+                    }
+                }
+            }
+            ModbusRegisterType::Coil => {
+                match self.register_bank.read_01(mapping.address, 1) {
+                    Ok(values) if !values.is_empty() => values[0].to_string(),
+                    Ok(_) => {
+                        warn!("No values returned for coil at address {}", mapping.address);
+                        "ERROR".to_string()
+                    }
+                    Err(e) => {
+                        warn!("Failed to read coil for point {}: {}", point_id, e);
+                        "ERROR".to_string()
+                    }
+                }
+            }
+            ModbusRegisterType::DiscreteInput => {
+                match self.register_bank.read_02(mapping.address, 1) {
+                    Ok(values) if !values.is_empty() => values[0].to_string(),
+                    Ok(_) => {
+                        warn!("No values returned for discrete input at address {}", mapping.address);
+                        "ERROR".to_string()
+                    }
+                    Err(e) => {
+                        warn!("Failed to read discrete input for point {}: {}", point_id, e);
+                        "ERROR".to_string()
+                    }
+                }
+            }
+        };
+
+        let point_data = PointData {
+            id: mapping.name.clone(),
+            name: mapping.display_name.clone().unwrap_or_else(|| mapping.name.clone()),
+            value: raw_value,
+            unit: mapping.unit.clone().unwrap_or_default(),
+            description: mapping.description.clone().unwrap_or_default(),
+            timestamp: Utc::now(),
+        };
+
+        debug!("Successfully read point: {} = {}", point_id, point_data.value);
+        Ok(point_data)
+    }
+
+    /// Write a value to a specific data point (ComBase trait implementation)
+    async fn write_point(&mut self, point_id: &str, value: &str) -> Result<()> {
+        debug!("Writing value to point: {} = {}", point_id, value);
+
+        if !self.is_running().await {
+            return Err(ComSrvError::StateError("Server is not running".to_string()));
+        }
+
+        // Find mapping for this point
+        let mapping = self
+            .config
+            .register_mappings
+            .iter()
+            .find(|m| m.name == point_id)
+            .ok_or_else(|| {
+                ComSrvError::PointNotFound(format!("No mapping found for point: {}", point_id))
+            })?;
+
+        // Parse and write value based on register type
+        match mapping.register_type {
+            ModbusRegisterType::HoldingRegister => {
+                // Parse numeric value and apply inverse scaling
+                let numeric_value: f64 = value.parse()
+                    .map_err(|_| ComSrvError::InvalidParameter(format!("Invalid numeric value: {}", value)))?;
+                
+                let raw_value = ((numeric_value - mapping.offset) / mapping.scale) as u16;
+                
+                self.register_bank.write_06(mapping.address, raw_value)
+                    .map_err(|e| ComSrvError::CommunicationError(format!("Failed to write holding register: {}", e)))?;
+                
+                debug!("Successfully wrote holding register: address={}, raw_value={}, scaled_value={}", 
+                       mapping.address, raw_value, numeric_value);
+            }
+            ModbusRegisterType::Coil => {
+                // Parse boolean value
+                let bool_value = match value.to_lowercase().as_str() {
+                    "true" | "1" | "on" | "yes" => true,
+                    "false" | "0" | "off" | "no" => false,
+                    _ => return Err(ComSrvError::InvalidParameter(format!("Invalid boolean value: {}", value))),
+                };
+                
+                self.register_bank.write_05(mapping.address, bool_value)
+                    .map_err(|e| ComSrvError::CommunicationError(format!("Failed to write coil: {}", e)))?;
+                
+                debug!("Successfully wrote coil: address={}, value={}", 
+                       mapping.address, bool_value);
+            }
+            ModbusRegisterType::InputRegister | ModbusRegisterType::DiscreteInput => {
+                return Err(ComSrvError::InvalidOperation(
+                    format!("Cannot write to read-only register type: {:?}", mapping.register_type)
+                ));
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Get diagnostic information
+    async fn get_diagnostics(&self) -> HashMap<String, String> {
+        let mut diagnostics = HashMap::new();
+        
+        // Server status diagnostics
+        diagnostics.insert("is_running".to_string(), self.is_running().await.to_string());
+        diagnostics.insert("protocol_type".to_string(), self.protocol_type().to_string());
+        diagnostics.insert("server_mode".to_string(), format!("{:?}", self.config.mode));
+        diagnostics.insert("unit_id".to_string(), self.config.unit_id.to_string());
+        
+        // Configuration diagnostics
+        diagnostics.insert("register_mappings_count".to_string(), 
+                          self.config.register_mappings.len().to_string());
+        
+        if let Some(max_connections) = self.config.max_connections {
+            diagnostics.insert("max_connections".to_string(), max_connections.to_string());
+        }
+        
+        if let Some(ref timeout) = self.config.request_timeout {
+            diagnostics.insert("request_timeout_ms".to_string(), timeout.as_millis().to_string());
+        }
+        
+        // Mode-specific diagnostics
+        match self.config.mode {
+            ModbusServerMode::Tcp => {
+                if let Some(ref bind_address) = self.config.bind_address {
+                    diagnostics.insert("bind_address".to_string(), bind_address.clone());
+                }
+                if let Some(bind_port) = self.config.bind_port {
+                    diagnostics.insert("bind_port".to_string(), bind_port.to_string());
+                }
+            }
+            ModbusServerMode::Rtu => {
+                if let Some(ref port) = self.config.port {
+                    diagnostics.insert("serial_port".to_string(), port.clone());
+                }
+                if let Some(baud_rate) = self.config.baud_rate {
+                    diagnostics.insert("baud_rate".to_string(), baud_rate.to_string());
+                }
+            }
+        }
+        
+        // Statistics diagnostics
+        let stats = self.get_stats().await;
+        diagnostics.insert("total_requests".to_string(), stats.total_requests.to_string());
+        diagnostics.insert("successful_responses".to_string(), stats.successful_responses.to_string());
+        diagnostics.insert("error_responses".to_string(), stats.error_responses.to_string());
+        diagnostics.insert("connected_clients".to_string(), stats.connected_clients.to_string());
+        diagnostics.insert("uptime_seconds".to_string(), stats.uptime.as_secs().to_string());
+        diagnostics.insert("bytes_received".to_string(), stats.bytes_received.to_string());
+        diagnostics.insert("bytes_sent".to_string(), stats.bytes_sent.to_string());
+        
+        // Register bank diagnostics
+        let register_bank_stats = self.register_bank.get_stats();
+        diagnostics.insert("holding_registers_count".to_string(), 
+                          register_bank_stats.holding_registers_count.to_string());
+        diagnostics.insert("input_registers_count".to_string(), 
+                          register_bank_stats.input_registers_count.to_string());
+        diagnostics.insert("coils_count".to_string(), 
+                          register_bank_stats.coils_count.to_string());
+        diagnostics.insert("discrete_inputs_count".to_string(), 
+                          register_bank_stats.discrete_inputs_count.to_string());
+        
+        // Base service diagnostics
+        let base_diagnostics = self.base.get_diagnostics().await;
+        for (key, value) in base_diagnostics {
+            diagnostics.insert(format!("base_{}", key), value);
+        }
+        
+        diagnostics
     }
 }
 

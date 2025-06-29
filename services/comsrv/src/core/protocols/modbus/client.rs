@@ -39,7 +39,7 @@ use crate::core::protocols::modbus::common::{
 };
 use crate::utils::error::{ComSrvError, Result};
 // Removed: use crate::core::config::csv_parser::ModbusCsvPointConfig;
-use crate::core::protocols::common::stats::{BaseCommStats, BaseConnectionStats};
+use crate::core::protocols::common::combase::stats::{BaseCommStats, BaseConnectionStats};
 
 /// Modbus communication mode
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -1306,10 +1306,209 @@ impl ComBase for ModbusClient {
 
     async fn get_all_points(&self) -> Vec<PointData> {
         let cache = self.point_cache.read().await;
-        cache
-            .values()
-            .map(|data_point| data_point.clone())
-            .collect()
+        cache.values().cloned().collect()
+    }
+
+    /// Update the channel status
+    async fn update_status(&mut self, status: ChannelStatus) -> Result<()> {
+        // Update internal connection state based on the status
+        let mut state = self.connection_state.write().await;
+        *state = if status.connected {
+            ModbusConnectionState::Connected
+        } else if !status.last_error.is_empty() {
+            ModbusConnectionState::Error(status.last_error.clone())
+        } else {
+            ModbusConnectionState::Disconnected
+        };
+        
+        debug!("Updated ModbusClient status: connected={}, error={}", 
+               status.connected, status.last_error);
+        Ok(())
+    }
+
+    /// Read a specific data point by ID (ComBase trait implementation)
+    async fn read_point(&self, point_id: &str) -> Result<PointData> {
+        debug!("Reading point by ID: {}", point_id);
+        
+        // First check cache
+        {
+            let cache = self.point_cache.read().await;
+            if let Some(cached_data) = cache.get(point_id) {
+                debug!("Found cached data for point: {}", point_id);
+                return Ok(cached_data.clone());
+            }
+        }
+
+        // Find mapping for this point
+        let mapping = self
+            .config
+            .point_mappings
+            .iter()
+            .find(|m| m.name == point_id)
+            .ok_or_else(|| {
+                ComSrvError::PointNotFound(format!("No mapping found for point: {}", point_id))
+            })?;
+
+        // Read value from device
+        let raw_value = match mapping.register_type {
+            ModbusRegisterType::HoldingRegister | ModbusRegisterType::InputRegister => {
+                match self.read_register_value(mapping).await {
+                    Ok(value) => {
+                        let scaled_value = (value as f64) * mapping.scale + mapping.offset;
+                        scaled_value.to_string()
+                    }
+                    Err(e) => {
+                        warn!("Failed to read register for point {}: {}", point_id, e);
+                        "ERROR".to_string()
+                    }
+                }
+            }
+            ModbusRegisterType::Coil | ModbusRegisterType::DiscreteInput => {
+                match self.read_coil_value(mapping).await {
+                    Ok(value) => value.to_string(),
+                    Err(e) => {
+                        warn!("Failed to read coil for point {}: {}", point_id, e);
+                        "ERROR".to_string()
+                    }
+                }
+            }
+        };
+
+        let point_data = PointData {
+            id: mapping.name.clone(),
+            name: mapping.display_name.clone().unwrap_or_else(|| mapping.name.clone()),
+            value: raw_value,
+            unit: mapping.unit.clone().unwrap_or_default(),
+            description: mapping.description.clone().unwrap_or_default(),
+            timestamp: Utc::now(),
+        };
+
+        // Update cache
+        {
+            let mut cache = self.point_cache.write().await;
+            cache.insert(point_id.to_string(), point_data.clone());
+        }
+
+        Ok(point_data)
+    }
+
+    /// Write a value to a specific data point (ComBase trait implementation)
+    async fn write_point(&mut self, point_id: &str, value: &str) -> Result<()> {
+        debug!("Writing value to point: {} = {}", point_id, value);
+
+        // Find mapping for this point
+        let mapping = self
+            .config
+            .point_mappings
+            .iter()
+            .find(|m| m.name == point_id)
+            .ok_or_else(|| {
+                ComSrvError::PointNotFound(format!("No mapping found for point: {}", point_id))
+            })?;
+
+        // Parse and write value based on register type
+        match mapping.register_type {
+            ModbusRegisterType::HoldingRegister => {
+                // Parse numeric value and apply inverse scaling
+                let numeric_value: f64 = value.parse()
+                    .map_err(|_| ComSrvError::InvalidParameter(format!("Invalid numeric value: {}", value)))?;
+                
+                let raw_value = ((numeric_value - mapping.offset) / mapping.scale) as u16;
+                
+                self.write_single_register(mapping.address, raw_value).await?;
+                
+                debug!("Successfully wrote register value: address={}, raw_value={}, scaled_value={}", 
+                       mapping.address, raw_value, numeric_value);
+            }
+            ModbusRegisterType::Coil => {
+                // Parse boolean value
+                let bool_value = match value.to_lowercase().as_str() {
+                    "true" | "1" | "on" | "yes" => true,
+                    "false" | "0" | "off" | "no" => false,
+                    _ => return Err(ComSrvError::InvalidParameter(format!("Invalid boolean value: {}", value))),
+                };
+                
+                self.write_coil_value(mapping, bool_value).await?;
+                
+                debug!("Successfully wrote coil value: address={}, value={}", 
+                       mapping.address, bool_value);
+            }
+            ModbusRegisterType::InputRegister | ModbusRegisterType::DiscreteInput => {
+                return Err(ComSrvError::InvalidOperation(
+                    format!("Cannot write to read-only register type: {:?}", mapping.register_type)
+                ));
+            }
+        }
+
+        // Update cache with new value
+        {
+            let mut cache = self.point_cache.write().await;
+            let point_data = PointData {
+                id: mapping.name.clone(),
+                name: mapping.display_name.clone().unwrap_or_else(|| mapping.name.clone()),
+                value: value.to_string(),
+                unit: mapping.unit.clone().unwrap_or_default(),
+                description: mapping.description.clone().unwrap_or_default(),
+                timestamp: Utc::now(),
+            };
+            cache.insert(point_id.to_string(), point_data);
+        }
+
+        Ok(())
+    }
+
+    /// Get diagnostic information
+    async fn get_diagnostics(&self) -> HashMap<String, String> {
+        let mut diagnostics = HashMap::new();
+        
+        // Connection diagnostics
+        let connection_state = self.get_connection_state().await;
+        diagnostics.insert("connection_state".to_string(), format!("{:?}", connection_state));
+        diagnostics.insert("is_running".to_string(), self.is_running().await.to_string());
+        
+        // Configuration diagnostics
+        diagnostics.insert("protocol_type".to_string(), self.protocol_type().to_string());
+        diagnostics.insert("communication_mode".to_string(), format!("{:?}", self.config.mode));
+        diagnostics.insert("point_mappings_count".to_string(), self.config.point_mappings.len().to_string());
+        diagnostics.insert("timeout_ms".to_string(), self.config.timeout.as_millis().to_string());
+        diagnostics.insert("max_retries".to_string(), self.config.max_retries.to_string());
+        
+        // Statistics diagnostics
+        let stats = self.get_stats().await;
+        diagnostics.insert("total_requests".to_string(), stats.total_requests().to_string());
+        diagnostics.insert("successful_requests".to_string(), stats.successful_requests().to_string());
+        diagnostics.insert("failed_requests".to_string(), stats.failed_requests().to_string());
+        diagnostics.insert("avg_response_time_ms".to_string(), stats.avg_response_time_ms().to_string());
+        diagnostics.insert("reconnect_attempts".to_string(), stats.reconnect_attempts().to_string());
+        
+        // Mode-specific diagnostics
+        match self.config.mode {
+            ModbusCommunicationMode::Tcp => {
+                if let Some(ref host) = self.config.host {
+                    diagnostics.insert("tcp_host".to_string(), host.clone());
+                }
+                if let Some(port) = self.config.tcp_port {
+                    diagnostics.insert("tcp_port".to_string(), port.to_string());
+                }
+            }
+            ModbusCommunicationMode::Rtu => {
+                if let Some(ref port) = self.config.port {
+                    diagnostics.insert("serial_port".to_string(), port.clone());
+                }
+                if let Some(baud_rate) = self.config.baud_rate {
+                    diagnostics.insert("baud_rate".to_string(), baud_rate.to_string());
+                }
+            }
+        }
+        
+        // Cache diagnostics
+        let cache_size = {
+            let cache = self.point_cache.read().await;
+            cache.len()
+        };
+        diagnostics.insert("cache_size".to_string(), cache_size.to_string());
+        
+        diagnostics
     }
 }
 
@@ -1420,7 +1619,7 @@ impl PointReader for ModbusClient {
         let mut results = Vec::new();
 
         for point in points {
-            match self.read_point(point).await {
+            match PointReader::read_point(self, point).await {
                 Ok(data) => results.push(data),
                 Err(e) => {
                     warn!("Failed to read point {}: {}", point.name, e);

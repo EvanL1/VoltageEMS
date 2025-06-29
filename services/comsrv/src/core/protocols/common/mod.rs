@@ -13,12 +13,9 @@
 //! to avoid duplication and provide a unified configuration management system.
 
 pub mod combase;
-pub mod protocol_factory;
-pub mod stats;
 
 // Re-export commonly used items (avoiding duplicates)
-pub use combase::ComBase;
-pub use protocol_factory::*;
+pub use combase::{ComBase, ProtocolFactory};
 
 // Configuration is now managed centrally in core::config
 // Use: `use crate::core::config::{BaseCommConfig, NetworkConfig, SerialConfig};`

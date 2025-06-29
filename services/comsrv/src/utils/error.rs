@@ -275,17 +275,6 @@ pub enum ComSrvError {
     #[error("Redis error: {0}")]
     RedisError(String),
 
-    /// MQTT messaging protocol errors
-    ///
-    /// MQTT broker connectivity and messaging issues.
-    ///
-    /// # Examples
-    /// - MQTT broker connection failure
-    /// - Topic subscription errors
-    /// - Message publishing failures
-    #[error("MQTT error: {0}")]
-    MqttError(String),
-
     /// Communication channel management errors
     ///
     /// Issues with creating, managing, or operating communication channels.
@@ -880,7 +869,7 @@ mod tests {
             ComSrvError::TimeoutError("timeout".to_string()),
             ComSrvError::ModbusError("modbus".to_string()),
             ComSrvError::RedisError("redis".to_string()),
-            ComSrvError::MqttError("mqtt".to_string()),
+            ComSrvError::NetworkError("mqtt".to_string()),
             ComSrvError::ChannelError("channel".to_string()),
             ComSrvError::ParsingError("parsing".to_string()),
             ComSrvError::InvalidParameter("invalid param".to_string()),

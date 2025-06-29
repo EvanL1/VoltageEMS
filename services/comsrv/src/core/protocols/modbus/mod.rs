@@ -363,6 +363,6 @@ impl ProtocolPacketParser for ModbusPacketParser {
         // Merge fields
         fields.extend(func_fields);
 
-        PacketParseResult::success("Modbus", direction, &hex_data, &description, fields)
+        PacketParseResult::success("Modbus", direction, &hex_data, &description)
     }
 }

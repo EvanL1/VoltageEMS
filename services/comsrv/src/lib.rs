@@ -505,6 +505,6 @@ pub mod service {
 
 // Re-export commonly used types and traits
 pub use core::config::ConfigManager;
-pub use core::protocols::common::combase::{ChannelStatus, ComBase, ComBaseImpl, PointData};
+pub use core::protocols::common::combase::{ChannelStatus, ComBase, DefaultProtocol, PointData};
 pub use core::protocols::common::ProtocolFactory;
 pub use utils::{ComSrvError, Result};

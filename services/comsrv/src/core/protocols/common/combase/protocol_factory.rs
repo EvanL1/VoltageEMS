@@ -655,8 +655,24 @@ impl ComBase for MockComBase {
         crate::core::protocols::common::combase::ChannelStatus::new(&self.channel_id())
     }
 
+    async fn update_status(&mut self, _status: crate::core::protocols::common::combase::ChannelStatus) -> Result<()> {
+        Ok(())
+    }
+
     async fn get_all_points(&self) -> Vec<crate::core::protocols::common::combase::PointData> {
         Vec::new()
+    }
+
+    async fn read_point(&self, _point_id: &str) -> Result<crate::core::protocols::common::combase::PointData> {
+        Err(crate::utils::ComSrvError::InvalidOperation("Mock implementation".to_string()))
+    }
+
+    async fn write_point(&mut self, _point_id: &str, _value: &str) -> Result<()> {
+        Err(crate::utils::ComSrvError::InvalidOperation("Mock implementation".to_string()))
+    }
+
+    async fn get_diagnostics(&self) -> std::collections::HashMap<String, String> {
+        std::collections::HashMap::new()
     }
 }
 
@@ -1663,6 +1679,9 @@ impl Default for ProtocolFactory {
         Self::new()
     }
 }
+
+/// Placeholder for backward compatibility - to be implemented
+// TODO: Implement proper protocol parser registry
 
 #[cfg(test)]
 mod tests {

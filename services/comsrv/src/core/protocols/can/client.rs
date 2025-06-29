@@ -9,7 +9,7 @@ use tokio::sync::RwLock;
 use chrono::Utc;
 use tracing::{debug, info};
 use crate::core::config::ChannelConfig;
-use crate::core::protocols::common::{ComBase, ComBaseImpl, ChannelStatus, PointData};
+use crate::core::protocols::common::{ComBase, DefaultProtocol, ChannelStatus, PointData};
 use crate::utils::{ComSrvError, Result};
 use super::common::*;
 use super::frame::CanFrame;
@@ -82,7 +82,7 @@ pub trait CanClient: ComBase {
 #[derive(Debug)]
 pub struct CanClientBase {
     /// Base communication implementation
-    pub base: ComBaseImpl,
+    pub base: DefaultProtocol,
     /// CAN interface configuration
     interface_type: CanInterfaceType,
     /// CAN bit rate
@@ -159,7 +159,7 @@ impl CanClientBase {
             .unwrap_or(1000);
         
         Self {
-            base: ComBaseImpl::new(name, &config.protocol.to_string(), config),
+            base: DefaultProtocol::new(name, &config.protocol.to_string(), config),
             interface_type,
             bit_rate,
             timeout_ms,

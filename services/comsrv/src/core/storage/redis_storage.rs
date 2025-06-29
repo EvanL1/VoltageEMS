@@ -380,9 +380,9 @@ impl RedisStore {
 
         let mut channel_ids = Vec::new();
         for key in keys {
-            if let Some(captures) = regex::Regex::new(r"comsrv:channel:(\d+):metadata").unwrap().captures(&key) {
-                if let Some(id_str) = captures.get(1) {
-                    if let Ok(id) = id_str.as_str().parse::<u16>() {
+            if key.starts_with("comsrv:channel:") && key.ends_with(":metadata") {
+            if let Some(id_str) = key.strip_prefix("comsrv:channel:").and_then(|s| s.strip_suffix(":metadata")) {
+                if let Ok(id) = id_str.parse::<u16>() {
                         channel_ids.push(id);
                     }
                 }
