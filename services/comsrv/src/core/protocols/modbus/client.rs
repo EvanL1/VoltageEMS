@@ -284,6 +284,8 @@ pub struct ModbusClient {
     polling_engine: Option<UniversalPollingEngine>,
     /// Channel ID for logging and identification
     channel_id: String,
+    /// Channel ID as u16 for protocol factory logging
+    channel_id_u16: u16,
 }
 
 impl ModbusClient {
@@ -291,24 +293,11 @@ impl ModbusClient {
     pub fn new(config: ModbusClientConfig, _mode: ModbusCommunicationMode) -> Result<Self> {
         debug!("Creating ModbusClient with mode: {:?}", config.mode);
 
-        let (request_sender, request_receiver) = tokio::sync::mpsc::unbounded_channel();
+        let (request_sender, _request_receiver) = tokio::sync::mpsc::unbounded_channel();
         let connection_state = Arc::new(RwLock::new(ModbusConnectionState::Disconnected));
         let stats = Arc::new(RwLock::new(ModbusClientStats::new()));
 
-        // Start the worker task
-        let worker_connection_state = Arc::clone(&connection_state);
-        let worker_stats = Arc::clone(&stats);
-        let worker_config = config.clone();
-
-        let worker_handle = tokio::spawn(async move {
-            Self::worker_task(
-                worker_config,
-                request_receiver,
-                worker_connection_state,
-                worker_stats,
-            )
-            .await;
-        });
+        // Worker task will be started during start() method
 
         // Generate channel ID based on configuration
         let channel_id = format!(
@@ -326,11 +315,12 @@ impl ModbusClient {
             stats,
             point_cache: Arc::new(RwLock::new(HashMap::new())),
             is_running: Arc::new(RwLock::new(false)),
-            worker_handle: Arc::new(RwLock::new(Some(worker_handle))),
+            worker_handle: Arc::new(RwLock::new(None)),
             polling_handle: Arc::new(RwLock::new(None)),
             command_manager: None,
             polling_engine: None,
             channel_id,
+            channel_id_u16: 0, // Will be set when created through protocol factory
         })
     }
 
@@ -345,12 +335,54 @@ impl ModbusClient {
         self
     }
 
+    /// Set channel ID (used by protocol factory)
+    pub fn with_channel_id(mut self, channel_id: u16) -> Self {
+        self.channel_id_u16 = channel_id;
+        self.channel_id = format!("modbus_channel_{}", channel_id);
+        
+        // Note: Worker task will be restarted with correct channel_id during start() method
+        
+        self
+    }
+
+    /// Write protocol message to channel log
+    fn write_channel_log(&self, level: &str, message: &str) {
+        if self.channel_id_u16 > 0 {
+            // Create log directory if it doesn't exist
+            let log_dir = format!("logs/modbus_tcp_demo");
+            if let Err(_) = std::fs::create_dir_all(&log_dir) {
+                // If we can't create the directory, just continue
+            }
+            
+            // Write to channel log file
+            let log_file_path = format!("{}/channel_{}.log", log_dir, self.channel_id_u16);
+            
+            if let Ok(mut file) = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&log_file_path) 
+            {
+                let log_entry = format!(
+                    "{{\"timestamp\":\"{}\",\"level\":\"{}\",\"channel_id\":{},\"channel_name\":\"{}\",\"message\":\"{}\"}}\n",
+                    chrono::Local::now().format("%Y-%m-%dT%H:%M:%S%.6f"),
+                    level,
+                    self.channel_id_u16,
+                    self.channel_id,
+                    message.replace("\"", "\\\"") // Escape quotes in message
+                );
+                let _ = std::io::Write::write_all(&mut file, log_entry.as_bytes());
+                let _ = std::io::Write::flush(&mut file);
+            }
+        }
+    }
+
     /// Worker task that handles all Modbus operations
     async fn worker_task(
         config: ModbusClientConfig,
         mut request_receiver: tokio::sync::mpsc::UnboundedReceiver<ModbusRequest>,
         connection_state: Arc<RwLock<ModbusConnectionState>>,
         stats: Arc<RwLock<ModbusClientStats>>,
+        channel_id: u16,
     ) {
         let mut client: Option<InternalModbusClient> = None;
 
@@ -373,9 +405,14 @@ impl ModbusClient {
                         .map(|m| m.slave_id)
                         .unwrap_or(1); // Default slave_id if not found
                     
-                    let result =
-                        Self::read_03_internal(&config, &mut client, slave_id, address, &stats)
-                            .await;
+                    let result = Self::read_03_internal_with_logging(
+                        &config, 
+                        &mut client, 
+                        slave_id, 
+                        address, 
+                        &stats,
+                        Some(channel_id)
+                    ).await;
                     let _ = responder.send(result);
                 }
                 ModbusRequest::ReadHoldingRegisters {
@@ -603,18 +640,61 @@ impl ModbusClient {
         address: u16,
         stats: &Arc<RwLock<ModbusClientStats>>,
     ) -> Result<u16> {
+        Self::read_03_internal_with_logging(config, client, slave_id, address, stats, None).await
+    }
+
+    /// Read single holding register with channel logging support
+    async fn read_03_internal_with_logging(
+        config: &ModbusClientConfig,
+        client: &mut Option<InternalModbusClient>,
+        slave_id: u8,
+        address: u16,
+        stats: &Arc<RwLock<ModbusClientStats>>,
+        channel_id: Option<u16>,
+    ) -> Result<u16> {
         let start_time = std::time::Instant::now();
 
-        // Debug: Log request details
-        debug!("📤 [MODBUS] Sending read holding register request: slave_id={}, address={}, quantity=1",
-               slave_id, address);
+        // Create channel log writer function
+        let log_to_channel = |level: &str, message: &str| {
+            if let Some(ch_id) = channel_id {
+                // Create log directory if it doesn't exist
+                let log_dir = format!("logs/modbus_tcp_demo");
+                let _ = std::fs::create_dir_all(&log_dir);
+                
+                // Write to channel log file
+                let log_file_path = format!("{}/channel_{}.log", log_dir, ch_id);
+                
+                if let Ok(mut file) = std::fs::OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(&log_file_path) 
+                {
+                    let log_entry = format!(
+                        "{{\"timestamp\":\"{}\",\"level\":\"{}\",\"channel_id\":{},\"channel_name\":\"modbus_channel_{}\",\"message\":\"{}\"}}\n",
+                        chrono::Local::now().format("%Y-%m-%dT%H:%M:%S%.6f"),
+                        level,
+                        ch_id,
+                        ch_id,
+                        message.replace("\"", "\\\"")
+                    );
+                    let _ = std::io::Write::write_all(&mut file, log_entry.as_bytes());
+                    let _ = std::io::Write::flush(&mut file);
+                }
+            }
+        };
+
+        // Log request details to both debug and channel log
+        let request_msg = format!("📤 [MODBUS] Sending read holding register request: slave_id={}, address={}, quantity=1", slave_id, address);
+        debug!("{}", request_msg);
+        log_to_channel("INFO", &request_msg);
 
         if let Some(client) = client {
             let result = match client {
                 InternalModbusClient::Tcp(tcp_client) => {
-                    // Debug: Log TCP request frame details
-                    debug!("📡 [MODBUS-TCP] Request frame: Function=03(Read Holding Registers), Unit={}, Address={}, Count=1",
-                           slave_id, address);
+                    // Log TCP request frame details
+                    let req_frame_msg = format!("📡 [MODBUS-TCP] Request frame: Function=03(Read Holding Registers), Unit={}, Address={}, Count=1", slave_id, address);
+                    debug!("{}", req_frame_msg);
+                    log_to_channel("INFO", &req_frame_msg);
 
                     let result = tcp_client
                         .read_03(slave_id, address, 1)
@@ -622,23 +702,28 @@ impl ModbusClient {
 
                     match &result {
                         Ok(values) => {
-                            debug!("📥 [MODBUS-TCP] Response received: Function=03, Unit={}, Data=[{}] (0x{:04X})",
-                                   slave_id, values[0], values[0]);
-                            debug!("🔍 [MODBUS-PARSE] Parsed value: address={}, raw_value={}, type=uint16",
-                                   address, values[0]);
+                            let resp_msg = format!("📥 [MODBUS-TCP] Response received: Function=03, Unit={}, Data=[{}] (0x{:04X})", slave_id, values[0], values[0]);
+                            let parse_msg = format!("🔍 [MODBUS-PARSE] Parsed value: address={}, raw_value={}, type=uint16", address, values[0]);
+                            
+                            debug!("{}", resp_msg);
+                            debug!("{}", parse_msg);
+                            log_to_channel("INFO", &resp_msg);
+                            log_to_channel("INFO", &parse_msg);
                         }
                         Err(e) => {
-                            debug!("❌ [MODBUS-TCP] Request failed: Function=03, Unit={}, Address={}, Error={}",
-                                   slave_id, address, e);
+                            let error_msg = format!("❌ [MODBUS-TCP] Request failed: Function=03, Unit={}, Address={}, Error={}", slave_id, address, e);
+                            debug!("{}", error_msg);
+                            log_to_channel("ERROR", &error_msg);
                         }
                     }
 
                     result.map(|values| values[0])
                 }
                 InternalModbusClient::Rtu(rtu_client) => {
-                    // Debug: Log RTU request frame details
-                    debug!("📡 [MODBUS-RTU] Request frame: Function=03(Read Holding Registers), Slave={}, Address={}, Count=1",
-                           slave_id, address);
+                    // Log RTU request frame details
+                    let req_frame_msg = format!("📡 [MODBUS-RTU] Request frame: Function=03(Read Holding Registers), Slave={}, Address={}, Count=1", slave_id, address);
+                    debug!("{}", req_frame_msg);
+                    log_to_channel("INFO", &req_frame_msg);
 
                     let result = rtu_client
                         .read_03(slave_id, address, 1)
@@ -646,14 +731,18 @@ impl ModbusClient {
 
                     match &result {
                         Ok(values) => {
-                            debug!("📥 [MODBUS-RTU] Response received: Function=03, Slave={}, Data=[{}] (0x{:04X})",
-                                   slave_id, values[0], values[0]);
-                            debug!("🔍 [MODBUS-PARSE] Parsed value: address={}, raw_value={}, type=uint16",
-                                   address, values[0]);
+                            let resp_msg = format!("📥 [MODBUS-RTU] Response received: Function=03, Slave={}, Data=[{}] (0x{:04X})", slave_id, values[0], values[0]);
+                            let parse_msg = format!("🔍 [MODBUS-PARSE] Parsed value: address={}, raw_value={}, type=uint16", address, values[0]);
+                            
+                            debug!("{}", resp_msg);
+                            debug!("{}", parse_msg);
+                            log_to_channel("INFO", &resp_msg);
+                            log_to_channel("INFO", &parse_msg);
                         }
                         Err(e) => {
-                            debug!("❌ [MODBUS-RTU] Request failed: Function=03, Slave={}, Address={}, Error={}",
-                                   slave_id, address, e);
+                            let error_msg = format!("❌ [MODBUS-RTU] Request failed: Function=03, Slave={}, Address={}, Error={}", slave_id, address, e);
+                            debug!("{}", error_msg);
+                            log_to_channel("ERROR", &error_msg);
                         }
                     }
 
@@ -662,10 +751,9 @@ impl ModbusClient {
             };
 
             let duration = start_time.elapsed();
-            debug!(
-                "⏱️ [MODBUS-TIMING] Request completed in {:.3}ms",
-                duration.as_millis()
-            );
+            let timing_msg = format!("⏱️ [MODBUS-TIMING] Request completed in {:.3}ms", duration.as_millis());
+            debug!("{}", timing_msg);
+            log_to_channel("INFO", &timing_msg);
 
             match result {
                 Ok(value) => {
@@ -1006,6 +1094,29 @@ impl ModbusClient {
     /// Start the Modbus client (internal implementation)
     async fn start_client(&mut self) -> Result<()> {
         debug!("Starting ModbusClient");
+
+        // Start worker task if not already running
+        if self.worker_handle.read().await.is_none() {
+            let (request_sender, request_receiver) = tokio::sync::mpsc::unbounded_channel();
+            let worker_connection_state = Arc::clone(&self.connection_state);
+            let worker_stats = Arc::clone(&self.stats);
+            let worker_config = self.config.clone();
+            let channel_id = self.channel_id_u16;
+
+            let worker_handle = tokio::spawn(async move {
+                Self::worker_task(
+                    worker_config,
+                    request_receiver,
+                    worker_connection_state,
+                    worker_stats,
+                    channel_id,
+                )
+                .await;
+            });
+
+            self.request_sender = Arc::new(request_sender);
+            *self.worker_handle.write().await = Some(worker_handle);
+        }
 
         // Connect to the device first
         self.connect_internal().await?;
@@ -1515,10 +1626,13 @@ impl ComBase for ModbusClient {
 #[async_trait]
 impl PointReader for ModbusClient {
     async fn read_point(&self, point: &PollingPoint) -> Result<PointData> {
-        debug!(
-            "🎯 [MODBUS-POINT] Starting point read: id={}, name={}",
-            point.id, point.name
-        );
+        // Force write a log entry to verify this method is being called
+        let test_msg = format!("🔥 [POLLING-TEST] PointReader::read_point called for: {}", point.name);
+        self.write_channel_log("INFO", &test_msg);
+        
+        let start_msg = format!("🎯 [MODBUS-POINT] Starting point read: id={}, name={}", point.id, point.name);
+        debug!("{}", start_msg);
+        self.write_channel_log("INFO", &start_msg);
 
         // Find the mapping for this point
         let mapping = self
@@ -1530,29 +1644,29 @@ impl PointReader for ModbusClient {
                 ComSrvError::ConfigError(format!("No mapping found for point: {}", point.name))
             })?;
 
-        debug!("🗺️ [MODBUS-MAPPING] Found mapping: point={}, register_type={:?}, address={}, data_type={:?}",
-               point.name, mapping.register_type, mapping.address, mapping.data_type);
+        let mapping_msg = format!("🗺️ [MODBUS-MAPPING] Found mapping: point={}, register_type={:?}, address={}, data_type={:?}", point.name, mapping.register_type, mapping.address, mapping.data_type);
+        debug!("{}", mapping_msg);
+        self.write_channel_log("INFO", &mapping_msg);
 
         // Read actual value from Modbus device based on register type
         let raw_value = match mapping.register_type {
             ModbusRegisterType::HoldingRegister | ModbusRegisterType::InputRegister => {
-                debug!(
-                    "📊 [MODBUS-READ] Reading register: type={:?}, address={}",
-                    mapping.register_type, mapping.address
-                );
+                let read_msg = format!("📊 [MODBUS-READ] Reading register: type={:?}, address={}", mapping.register_type, mapping.address);
+                debug!("{}", read_msg);
+                self.write_channel_log("INFO", &read_msg);
 
                 // Read register value
                 match self.read_register_value(mapping).await {
                     Ok(value) => {
-                        debug!(
-                            "✅ [MODBUS-RAW] Raw register value: address={}, value={} (0x{:04X})",
-                            mapping.address, value, value
-                        );
+                        let raw_msg = format!("✅ [MODBUS-RAW] Raw register value: address={}, value={} (0x{:04X})", mapping.address, value, value);
+                        debug!("{}", raw_msg);
+                        self.write_channel_log("INFO", &raw_msg);
 
                         // Apply scaling and offset
                         let scaled_value = (value as f64) * mapping.scale + mapping.offset;
-                        debug!("🔢 [MODBUS-SCALE] Applied scaling: raw={}, scale={}, offset={}, result={}",
-                               value, mapping.scale, mapping.offset, scaled_value);
+                        let scale_msg = format!("🔢 [MODBUS-SCALE] Applied scaling: raw={}, scale={}, offset={}, result={}", value, mapping.scale, mapping.offset, scaled_value);
+                        debug!("{}", scale_msg);
+                        self.write_channel_log("INFO", &scale_msg);
 
                         scaled_value.to_string()
                     }
@@ -1607,10 +1721,9 @@ impl PointReader for ModbusClient {
             timestamp: Utc::now(),
         };
 
-        debug!(
-            "📋 [MODBUS-RESULT] Point read complete: id={}, name={}, value={}, unit={}",
-            point_data.id, point_data.name, point_data.value, point_data.unit
-        );
+        let result_msg = format!("📋 [MODBUS-RESULT] Point read complete: id={}, name={}, value={}, unit={}", point_data.id, point_data.name, point_data.value, point_data.unit);
+        debug!("{}", result_msg);
+        self.write_channel_log("INFO", &result_msg);
 
         Ok(point_data)
     }
@@ -1707,22 +1820,67 @@ impl From<ChannelConfig> for ModbusClientConfig {
                     crate::core::config::ProtocolType::ModbusTcp => {
                         config.mode = ModbusCommunicationMode::Tcp;
 
+                        // 修复YAML值解析：正确提取字符串值
                         if let Some(host) = params.get("host") {
-                            if let Some(host_str) = host.as_str() {
-                                config.host = Some(host_str.to_string());
-                            }
+                            let host_str = match host {
+                                serde_yaml::Value::String(s) => s.clone(),
+                                _ => {
+                                    if let Some(s) = host.as_str() {
+                                        s.to_string()
+                                    } else {
+                                        tracing::warn!("Invalid host parameter type: {:?}, using default", host);
+                                        "127.0.0.1".to_string()
+                                    }
+                                }
+                            };
+                            config.host = Some(host_str);
+                            tracing::debug!("Parsed host parameter: {:?}", config.host);
                         }
 
                         if let Some(port) = params.get("port") {
-                            if let Some(port_num) = port.as_u64() {
-                                config.tcp_port = Some(port_num as u16);
-                            }
+                            let port_num = match port {
+                                serde_yaml::Value::Number(n) => {
+                                    if let Some(port_u64) = n.as_u64() {
+                                        port_u64 as u16
+                                    } else {
+                                        tracing::warn!("Invalid port number: {:?}", n);
+                                        502
+                                    }
+                                }
+                                _ => {
+                                    if let Some(port_u64) = port.as_u64() {
+                                        port_u64 as u16
+                                    } else {
+                                        tracing::warn!("Invalid port parameter type: {:?}", port);
+                                        502
+                                    }
+                                }
+                            };
+                            config.tcp_port = Some(port_num);
+                            tracing::debug!("Parsed port parameter: {:?}", config.tcp_port);
                         }
 
-                        if let Some(timeout) = params.get("timeout") {
-                            if let Some(timeout_ms) = timeout.as_u64() {
-                                config.timeout = Duration::from_millis(timeout_ms);
-                            }
+                        if let Some(timeout) = params.get("timeout_ms") {
+                            let timeout_ms = match timeout {
+                                serde_yaml::Value::Number(n) => {
+                                    if let Some(timeout_u64) = n.as_u64() {
+                                        timeout_u64
+                                    } else {
+                                        tracing::warn!("Invalid timeout number: {:?}", n);
+                                        5000
+                                    }
+                                }
+                                _ => {
+                                    if let Some(timeout_u64) = timeout.as_u64() {
+                                        timeout_u64
+                                    } else {
+                                        tracing::warn!("Invalid timeout parameter type: {:?}", timeout);
+                                        5000
+                                    }
+                                }
+                            };
+                            config.timeout = Duration::from_millis(timeout_ms);
+                            tracing::debug!("Parsed timeout parameter: {:?}", config.timeout);
                         }
 
                         // Note: slave_id is now handled in point mappings, not channel config
@@ -1730,23 +1888,67 @@ impl From<ChannelConfig> for ModbusClientConfig {
                     crate::core::config::ProtocolType::ModbusRtu => {
                         config.mode = ModbusCommunicationMode::Rtu;
 
-                        // 从Generic参数中提取RTU相关配置
+                        // 从Generic参数中提取RTU相关配置，修复YAML值解析
                         if let Some(port) = params.get("port") {
-                            if let Some(port_str) = port.as_str() {
-                                config.port = Some(port_str.to_string());
-                            }
+                            let port_str = match port {
+                                serde_yaml::Value::String(s) => s.clone(),
+                                _ => {
+                                    if let Some(s) = port.as_str() {
+                                        s.to_string()
+                                    } else {
+                                        tracing::warn!("Invalid port parameter type: {:?}, using default", port);
+                                        "/dev/ttyUSB0".to_string()
+                                    }
+                                }
+                            };
+                            config.port = Some(port_str);
+                            tracing::debug!("Parsed RTU port parameter: {:?}", config.port);
                         }
 
                         if let Some(baud_rate) = params.get("baud_rate") {
-                            if let Some(baud) = baud_rate.as_u64() {
-                                config.baud_rate = Some(baud as u32);
-                            }
+                            let baud = match baud_rate {
+                                serde_yaml::Value::Number(n) => {
+                                    if let Some(baud_u64) = n.as_u64() {
+                                        baud_u64 as u32
+                                    } else {
+                                        tracing::warn!("Invalid baud_rate number: {:?}", n);
+                                        9600
+                                    }
+                                }
+                                _ => {
+                                    if let Some(baud_u64) = baud_rate.as_u64() {
+                                        baud_u64 as u32
+                                    } else {
+                                        tracing::warn!("Invalid baud_rate parameter type: {:?}", baud_rate);
+                                        9600
+                                    }
+                                }
+                            };
+                            config.baud_rate = Some(baud);
+                            tracing::debug!("Parsed baud_rate parameter: {:?}", config.baud_rate);
                         }
 
                         if let Some(timeout) = params.get("timeout") {
-                            if let Some(timeout_ms) = timeout.as_u64() {
-                                config.timeout = Duration::from_millis(timeout_ms);
-                            }
+                            let timeout_ms = match timeout {
+                                serde_yaml::Value::Number(n) => {
+                                    if let Some(timeout_u64) = n.as_u64() {
+                                        timeout_u64
+                                    } else {
+                                        tracing::warn!("Invalid timeout number: {:?}", n);
+                                        5000
+                                    }
+                                }
+                                _ => {
+                                    if let Some(timeout_u64) = timeout.as_u64() {
+                                        timeout_u64
+                                    } else {
+                                        tracing::warn!("Invalid timeout parameter type: {:?}", timeout);
+                                        5000
+                                    }
+                                }
+                            };
+                            config.timeout = Duration::from_millis(timeout_ms);
+                            tracing::debug!("Parsed RTU timeout parameter: {:?}", config.timeout);
                         }
 
                         // Note: slave_id is now handled in point mappings, not channel config

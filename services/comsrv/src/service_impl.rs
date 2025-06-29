@@ -22,9 +22,120 @@ fn convert_channel_config(config: &crate::core::config::config_manager::ChannelC
         _ => crate::core::config::types::ProtocolType::Virtual, // default fallback
     };
 
-    // Convert parameters to Generic HashMap (simplified)
+    // Convert parameters from figment::value::Value to serde_yaml::Value
+    tracing::debug!("Converting parameters: {:?}", config.parameters);
     let param_map: std::collections::HashMap<String, serde_yaml::Value> = config.parameters.iter()
-        .map(|(k, v)| (k.clone(), serde_yaml::Value::String(format!("{:?}", v))))
+        .map(|(k, v)| {
+            tracing::debug!("Converting parameter: {} = {:?}", k, v);
+            let yaml_value = match v {
+                figment::value::Value::String(_, s) => serde_yaml::Value::String(s.clone()),
+                figment::value::Value::Num(_, _) => {
+                    // Try to convert to appropriate number type using figment Value methods
+                    if let Some(i) = v.to_i128() {
+                        if i >= i64::MIN as i128 && i <= i64::MAX as i128 {
+                            serde_yaml::Value::Number(serde_yaml::Number::from(i as i64))
+                        } else {
+                            serde_yaml::Value::String(i.to_string())
+                        }
+                    } else if let Some(u) = v.to_u128() {
+                        if u <= u64::MAX as u128 {
+                            serde_yaml::Value::Number(serde_yaml::Number::from(u as u64))
+                        } else {
+                            serde_yaml::Value::String(u.to_string())
+                        }
+                    } else if let Some(f) = v.to_f64() {
+                        serde_yaml::Value::Number(serde_yaml::Number::from(f))
+                    } else {
+                        // Try to get string representation if possible
+                        if let Some(s) = v.as_str() {
+                            serde_yaml::Value::String(s.to_string())
+                        } else {
+                            serde_yaml::Value::String(format!("{:?}", v))
+                        }
+                    }
+                }
+                figment::value::Value::Bool(_, b) => serde_yaml::Value::Bool(*b),
+                figment::value::Value::Array(_, arr) => {
+                    let yaml_arr: Vec<serde_yaml::Value> = arr.iter()
+                        .map(|item| {
+                            // Recursively convert array elements
+                            match item {
+                                figment::value::Value::String(_, s) => serde_yaml::Value::String(s.clone()),
+                                figment::value::Value::Num(_, _) => {
+                                    if let Some(i) = item.to_i128() {
+                                        if i >= i64::MIN as i128 && i <= i64::MAX as i128 {
+                                            serde_yaml::Value::Number(serde_yaml::Number::from(i as i64))
+                                        } else {
+                                            serde_yaml::Value::String(i.to_string())
+                                        }
+                                    } else if let Some(f) = item.to_f64() {
+                                        serde_yaml::Value::Number(serde_yaml::Number::from(f))
+                                    } else {
+                                        // Try to get string representation if possible
+                                        if let Some(s) = item.as_str() {
+                                            serde_yaml::Value::String(s.to_string())
+                                        } else {
+                                            serde_yaml::Value::String(format!("{:?}", item))
+                                        }
+                                    }
+                                }
+                                figment::value::Value::Bool(_, b) => serde_yaml::Value::Bool(*b),
+                                _ => serde_yaml::Value::String(format!("{:?}", item)),
+                            }
+                        })
+                        .collect();
+                    serde_yaml::Value::Sequence(yaml_arr)
+                }
+                figment::value::Value::Dict(_, dict) => {
+                    let yaml_map: serde_yaml::Mapping = dict.iter()
+                        .map(|(k, v)| {
+                            let key = serde_yaml::Value::String(k.clone());
+                            let value = match v {
+                                figment::value::Value::String(_, s) => serde_yaml::Value::String(s.clone()),
+                                figment::value::Value::Num(_, _) => {
+                                    if let Some(i) = v.to_i128() {
+                                        if i >= i64::MIN as i128 && i <= i64::MAX as i128 {
+                                            serde_yaml::Value::Number(serde_yaml::Number::from(i as i64))
+                                        } else {
+                                            serde_yaml::Value::String(i.to_string())
+                                        }
+                                    } else if let Some(f) = v.to_f64() {
+                                        serde_yaml::Value::Number(serde_yaml::Number::from(f))
+                                    } else {
+                                        // Try to get string representation if possible
+                                        if let Some(s) = v.as_str() {
+                                            serde_yaml::Value::String(s.to_string())
+                                        } else {
+                                            serde_yaml::Value::String(format!("{:?}", v))
+                                        }
+                                    }
+                                }
+                                figment::value::Value::Bool(_, b) => serde_yaml::Value::Bool(*b),
+                                _ => {
+                                    // Try to get string representation if possible
+                                    if let Some(s) = v.as_str() {
+                                        serde_yaml::Value::String(s.to_string())
+                                    } else {
+                                        serde_yaml::Value::String(format!("{:?}", v))
+                                    }
+                                },
+                            };
+                            (key, value)
+                        })
+                        .collect();
+                    serde_yaml::Value::Mapping(yaml_map)
+                }
+                _ => {
+                    // Try to get string representation if possible
+                    if let Some(s) = v.as_str() {
+                        serde_yaml::Value::String(s.to_string())
+                    } else {
+                        serde_yaml::Value::String(format!("{:?}", v))
+                    }
+                },
+            };
+            (k.clone(), yaml_value)
+        })
         .collect();
 
     // Convert channel logging config from the config file

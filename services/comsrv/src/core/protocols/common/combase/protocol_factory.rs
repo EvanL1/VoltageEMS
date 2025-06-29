@@ -233,7 +233,8 @@ impl ProtocolClientFactory for ModbusTcpFactory {
             }
         }
 
-        let mut client = ModbusClient::new(modbus_config, ModbusCommunicationMode::Tcp)?;
+        let mut client = ModbusClient::new(modbus_config, ModbusCommunicationMode::Tcp)?
+            .with_channel_id(config.id);
 
         // Initialize Redis store if Redis is enabled in configuration
         if let Some(cm) = config_manager {
@@ -441,7 +442,8 @@ impl ProtocolClientFactory for ModbusRtuFactory {
             }
         }
 
-        let client = ModbusClient::new(modbus_config, ModbusCommunicationMode::Rtu)?;
+        let client = ModbusClient::new(modbus_config, ModbusCommunicationMode::Rtu)?
+            .with_channel_id(config.id);
         Ok(Box::new(client))
     }
 

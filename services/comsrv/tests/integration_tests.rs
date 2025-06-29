@@ -490,4 +490,4 @@ async fn test_full_integration() -> Result<()> {
 
     info!("🎉 Full integration test completed successfully");
     Ok(())
-} 
+}
