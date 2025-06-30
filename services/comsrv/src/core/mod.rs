@@ -11,6 +11,7 @@
 //! - **`config`** - Configuration management and validation, including enhanced point table management
 //! - **`protocols`** - Protocol implementations (Modbus RTU/TCP, IEC60870, etc.)
 //! - **`storage`** - Data storage and caching mechanisms
+//! - **`transport`** - ⭐ NEW: Unified transport layer abstraction for physical communications
 //! 
 //! These components work together to provide a comprehensive communication
 //! platform that supports multiple industrial protocols with high performance
@@ -29,6 +30,31 @@
 //! The core provides a unified interface for all protocols through the
 //! ComBase trait, allowing protocols to be treated uniformly.
 //!
+//! ## Layered Architecture ⭐ NEW
+//!
+//! The system now supports a layered architecture where transport concerns
+//! are separated from protocol logic:
+//! 
+//! ```text
+//! ┌─────────────────────────────────────────┐
+//! │           Protocol Layer                │  ← Business Logic
+//! │  (Modbus, IEC60870, CAN protocols)     │
+//! └─────────────────────────────────────────┘
+//!                     │
+//!                     ▼
+//! ┌─────────────────────────────────────────┐
+//! │        Transport Interface              │  ← Abstraction
+//! │  (connect, send, receive, disconnect)   │
+//! └─────────────────────────────────────────┘
+//!                     │
+//!     ┌───────────────┼───────────────┐
+//!     ▼               ▼               ▼
+//! ┌─────────┐   ┌─────────────┐   ┌─────────┐
+//! │   TCP   │   │   Serial    │   │  Mock   │  ← Implementations
+//! │Transport│   │  Transport  │   │Transport│
+//! └─────────┘   └─────────────┘   └─────────┘
+//! ```
+//!
 //! ## Configuration Driven
 //!
 //! All behavior is controlled through configuration files, enabling
@@ -38,11 +64,14 @@
 //!
 //! The core supports easy extension with:
 //! - Pluggable protocol implementations
+//! - Pluggable transport implementations ⭐ NEW
 //! - Configurable data storage backends
 //! - Flexible point table management
 //! - Real-time monitoring and diagnostics
 //!
 //! # Example Usage
+//!
+//! ## Traditional Protocol Usage
 //!
 //! ```rust
 //! use comsrv::{ConfigManager, ProtocolFactory};
@@ -57,9 +86,28 @@
 //!     let factory = Arc::new(RwLock::new(ProtocolFactory::new()));
 //!     
 //!     // Register channels from configuration
-//!     for channel_config in config_manager.get_channels() {
-//!         let channel = factory.write().await.create_channel(channel_config.clone())?;
-//!     }
+//!     Ok(())
+//! }
+//! ```
+//!
+//! ## New Layered Architecture Usage ⭐
+//!
+//! ```rust
+//! use comsrv::core::transport::{TransportFactory, TcpTransportConfig};
+//! use comsrv::protocols::layered::LayeredModbusProtocol;
+//!
+//! async fn setup_layered_protocol() -> comsrv::Result<()> {
+//!     // Create transport layer
+//!     let transport_factory = TransportFactory::new();
+//!     let tcp_config = TcpTransportConfig {
+//!         host: "192.168.1.100".to_string(),
+//!         port: 502,
+//!         ..Default::default()
+//!     };
+//!     let transport = transport_factory.create_tcp_transport(tcp_config).await?;
+//!     
+//!     // Create protocol layer using transport
+//!     let protocol = LayeredModbusProtocol::new(transport);
 //!     
 //!     Ok(())
 //! }
@@ -70,6 +118,7 @@ pub mod config;
 
 pub mod protocols;
 pub mod storage;
+pub mod transport;
 
 // Re-export commonly used protocol components for public API
 
