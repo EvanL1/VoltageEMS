@@ -352,267 +352,227 @@ python generate_config.py --output ./my_config --modbus 3 --opcua 2 --points 30
 - Adjust configuration for production deployments.
 - Monitor system resources during load tests to avoid overload.
 
-# Modbus Native
+# Voltage Modbus
 
-[![Rust](https://img.shields.io/badge/rust-stable-brightgreen.svg)](https://www.rust-lang.org/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+A high-performance Modbus TCP/RTU/ASCII implementation for industrial automation and IoT applications, written in Rust.
 
-A high-performance, native Modbus TCP/RTU implementation in Rust designed for industrial automation and IoT applications.
+## Features
 
-## 🚀 Features
+- **Function Code Naming**: All Modbus functions use standard function codes (e.g., `read_01`, `write_06`)
+- **Callback-Based Logging**: Flexible logging system with raw packet and interpreted modes
+- **High Performance**: Asynchronous implementation with connection pooling
+- **Protocol Support**: TCP, RTU, and ASCII variants
+- **Error Handling**: Comprehensive error types with timeout and retry logic
+- **Register Bank**: Built-in register simulation for testing
+- **Connection Management**: Automatic reconnection and connection pooling
 
-- **Pure Rust Implementation**: No external C dependencies
-- **Async/Await Support**: Built on Tokio for high concurrency
-- **Protocol Support**: Both Modbus TCP and RTU (RTU coming soon)
-- **High Performance**: Optimized for throughput and low latency
-- **Error Resilience**: Comprehensive error handling and recovery
-- **Production Ready**: Extensive testing and validation
-- **Thread Safe**: All operations are thread-safe and can be used in concurrent environments
-
-## 📦 Installation
+## Quick Start
 
 Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-modbus_native = "0.1.0"
+voltage_modbus = "0.3.0"
 ```
 
-## 🛠️ Quick Start
-
-### Basic Usage
+### TCP Client Example
 
 ```rust
-use modbus_native::{ModbusTcpClient, ModbusClient};
-
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Connect to Modbus server
-    let mut client = ModbusTcpClient::new("127.0.0.1:502").await?;
-  
-    // Read holding registers
-    let values = client.read_holding_registers(1, 100, 10).await?;
-    println!("Read registers: {:?}", values);
-  
-    // Write single register
-    client.write_single_register(1, 100, 0x1234).await?;
-  
-    // Write multiple registers
-    let values = vec![0x1111, 0x2222, 0x3333];
-    client.write_multiple_registers(1, 200, &values).await?;
-  
-    // Read coils
-    let coils = client.read_coils(1, 0, 16).await?;
-    println!("Coil values: {:?}", coils);
-  
-    // Write coils
-    let coil_values = vec![true, false, true, false];
-    client.write_multiple_coils(1, 10, &coil_values).await?;
-  
-    client.close().await?;
-    Ok(())
-}
-```
-
-### Advanced Usage with Custom Timeout
-
-```rust
-use modbus_native::{ModbusTcpClient, ModbusClient};
+use voltage_modbus::{ModbusTcpClient, ModbusClient, CallbackLogger, LoggingMode};
 use std::time::Duration;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Connect with custom timeout
-    let timeout = Duration::from_secs(10);
-    let mut client = ModbusTcpClient::with_timeout("192.168.1.100:502", timeout).await?;
-  
-    // Perform operations...
-  
-    // Get connection statistics
-    let stats = client.get_stats();
-    println!("Requests sent: {}", stats.requests_sent);
-    println!("Success rate: {:.1}%", 
-        (stats.responses_received as f64 / stats.requests_sent as f64) * 100.0);
-  
+    // Create a TCP client with logging
+    let logger = CallbackLogger::console(LoggingMode::Interpreted);
+    let mut client = ModbusTcpClient::from_address_with_logging(
+        "127.0.0.1:502", 
+        Duration::from_secs(5),
+        logger
+    ).await?;
+    
+    // Read holding registers using function code naming
+    let registers = client.read_03(1, 0, 10).await?;
+    println!("Registers: {:?}", registers);
+    
+    // Write single register
+    client.write_06(1, 0, 0x1234).await?;
+    
     Ok(())
 }
 ```
 
-## 🧪 Testing
-
-The project includes comprehensive testing tools and a Python test server.
-
-### Running the Demo
-
-```bash
-# Start the test server (in one terminal)
-python3 test/modbus_test_server.py
-
-# Run the demo (in another terminal)
-cargo run --bin demo
-```
-
-### Performance Testing
-
-```bash
-# Start the test server
-python3 test/modbus_test_server.py &
-
-# Run performance tests
-cargo run --bin performance_test
-
-# Run with custom parameters
-cargo run --bin performance_test -- --server 127.0.0.1:502 --clients 20 --requests 1000
-```
-
-### Performance Test Options
-
-- `--server <ADDR>`: Server address (default: 127.0.0.1:502)
-- `--slave-id <ID>`: Slave ID (default: 1)
-- `--clients <N>`: Concurrent clients (default: 10)
-- `--requests <N>`: Requests per client (default: 100)
-- `--duration <SECS>`: Stress test duration (default: 30)
-- `--delay <MS>`: Delay between requests (default: 10)
-
-## 📊 Performance
-
-The library is designed for high performance with the following benchmarks on a typical development machine:
-
-- **Throughput**: >2000 requests/second with 10 concurrent clients
-- **Latency**: <5ms average response time on localhost
-- **Memory**: Low memory footprint with efficient connection pooling
-- **Concurrency**: Excellent scalability with increasing client count
-
-## 🔧 API Reference
-
-### ModbusClient Trait
-
-The main interface for Modbus operations:
+### RTU Client Example
 
 ```rust
-#[async_trait]
-pub trait ModbusClient: Send + Sync {
-    async fn read_coils(&mut self, slave_id: u8, address: u16, quantity: u16) -> ModbusResult<Vec<bool>>;
-    async fn read_discrete_inputs(&mut self, slave_id: u8, address: u16, quantity: u16) -> ModbusResult<Vec<bool>>;
-    async fn read_holding_registers(&mut self, slave_id: u8, address: u16, quantity: u16) -> ModbusResult<Vec<u16>>;
-    async fn read_input_registers(&mut self, slave_id: u8, address: u16, quantity: u16) -> ModbusResult<Vec<u16>>;
-    async fn write_single_coil(&mut self, slave_id: u8, address: u16, value: bool) -> ModbusResult<()>;
-    async fn write_single_register(&mut self, slave_id: u8, address: u16, value: u16) -> ModbusResult<()>;
-    async fn write_multiple_coils(&mut self, slave_id: u8, address: u16, values: &[bool]) -> ModbusResult<()>;
-    async fn write_multiple_registers(&mut self, slave_id: u8, address: u16, values: &[u16]) -> ModbusResult<()>;
-    fn is_connected(&self) -> bool;
-    async fn close(&mut self) -> ModbusResult<()>;
-    fn get_stats(&self) -> TransportStats;
+use voltage_modbus::{ModbusRtuClient, ModbusClient};
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let mut client = ModbusRtuClient::new("/dev/ttyUSB0", 9600)?;
+    
+    // Read coils using function code naming
+    let coils = client.read_01(1, 0, 8).await?;
+    println!("Coils: {:?}", coils);
+    
+    Ok(())
 }
 ```
 
-### Supported Function Codes
-
-- **0x01**: Read Coils
-- **0x02**: Read Discrete Inputs
-- **0x03**: Read Holding Registers
-- **0x04**: Read Input Registers
-- **0x05**: Write Single Coil
-- **0x06**: Write Single Register
-- **0x0F**: Write Multiple Coils
-- **0x10**: Write Multiple Registers
-
-### Data Type Utilities
-
-The library includes utilities for working with different data types:
+### Server Example
 
 ```rust
-use modbus_native::client::utils;
+use voltage_modbus::{ModbusTcpServer, RegisterBank};
 
-// Convert registers to different types
-let registers = vec![0x1234, 0x5678];
-let u32_values = utils::registers_to_u32_be(&registers);
-let f32_values = utils::registers_to_f32_be(&registers);
-
-// Convert back to registers
-let back_to_regs = utils::u32_to_registers_be(&u32_values);
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let mut register_bank = RegisterBank::new();
+    
+    // Initialize with some data
+    register_bank.write_06(0, 0x1234)?;
+    register_bank.write_05(0, true)?;
+    
+    let server = ModbusTcpServer::new("127.0.0.1:5020", register_bank).await?;
+    println!("Modbus server running on 127.0.0.1:5020");
+    
+    // Run server
+    server.run().await?;
+    
+    Ok(())
+}
 ```
 
-## 🚨 Error Handling
+## Function Code Naming
+
+All Modbus functions use standard function codes for clarity:
+
+| Function Code | Method Name | Description |
+|---------------|-------------|-------------|
+| 0x01 | `read_01` | Read Coils |
+| 0x02 | `read_02` | Read Discrete Inputs |
+| 0x03 | `read_03` | Read Holding Registers |
+| 0x04 | `read_04` | Read Input Registers |
+| 0x05 | `write_05` | Write Single Coil |
+| 0x06 | `write_06` | Write Single Register |
+| 0x0F | `write_0f` | Write Multiple Coils |
+| 0x10 | `write_10` | Write Multiple Registers |
+
+## Logging System
+
+The library provides a flexible callback-based logging system with multiple modes:
+
+### Logging Modes
+
+- **`Interpreted`**: Human-readable function names and data interpretation
+- **`Raw`**: Complete hex packet data for protocol analysis
+- **`Both`**: Interpreted at INFO level, raw at DEBUG level
+- **`Disabled`**: No packet logging
+
+### Custom Logger Example
+
+```rust
+use voltage_modbus::{CallbackLogger, LoggingMode, LogLevel};
+
+// Create a custom logger
+let logger = CallbackLogger::new(
+    LoggingMode::Both,
+    |level, message| {
+        println!("[{}] {}", level, message);
+    }
+);
+
+// Use with client
+let mut client = ModbusTcpClient::from_address_with_logging(
+    "127.0.0.1:502",
+    Duration::from_secs(5),
+    logger
+).await?;
+```
+
+### Logging Output Examples
+
+**Interpreted Mode:**
+```
+[INFO] Modbus Request -> Slave: 1, Function: Read Holding Registers (0x03), Address: 0, Quantity: 5
+[INFO] Modbus Response -> Slave: 1, Function: Read Holding Registers (0x03), Data: [0x1234, 0x5678, 0x9ABC, 0xDEF0, 0x1111]
+```
+
+**Raw Mode:**
+```
+[DEBUG] Modbus Request -> Raw: 00 01 00 00 00 06 01 03 00 00 00 05
+[DEBUG] Modbus Response -> Raw: 00 01 00 00 00 0D 01 03 0A 12 34 56 78 9A BC DE F0 11 11
+```
+
+## Error Handling
 
 The library provides comprehensive error handling:
 
 ```rust
-use modbus_native::{ModbusError, ModbusResult};
+use voltage_modbus::{ModbusError, ModbusClient};
 
-match client.read_holding_registers(1, 100, 10).await {
-    Ok(values) => println!("Success: {:?}", values),
+match client.read_03(1, 0, 10).await {
+    Ok(registers) => println!("Values: {:?}", registers),
     Err(ModbusError::Timeout { operation, timeout_ms }) => {
-        println!("Operation '{}' timed out after {}ms", operation, timeout_ms);
+        println!("Operation {} timed out after {}ms", operation, timeout_ms);
     },
-    Err(ModbusError::Protocol { message }) => {
-        println!("Protocol error: {}", message);
+    Err(ModbusError::InvalidResponse { expected, received }) => {
+        println!("Invalid response: expected {}, got {}", expected, received);
     },
     Err(e) => println!("Other error: {}", e),
 }
 ```
 
-## 🔍 Logging
+## Performance
 
-Enable logging to see detailed operation information:
+- **Async/Await**: Non-blocking I/O for high concurrency
+- **Connection Pooling**: Efficient connection reuse
+- **Zero-Copy**: Minimal memory allocations
+- **Configurable Timeouts**: Fine-grained timeout control
 
-```rust
-env_logger::init();
+## Examples
+
+The `src/bin/` directory contains various examples:
+
+- `demo.rs` - Basic client usage
+- `server_demo.rs` - TCP server implementation
+- `callback_logging_demo.rs` - Logging system demonstration
+- `full_function_test.rs` - All function codes testing
+- `performance_test.rs` - Performance benchmarking
+
+Run examples with:
+```bash
+cargo run --bin demo
+cargo run --bin callback_logging_demo
 ```
 
-Or set the `RUST_LOG` environment variable:
+## Testing
 
 ```bash
-RUST_LOG=debug cargo run --bin demo
-```
-
-## 🧩 Examples
-
-The `examples/` directory contains various usage examples:
-
-- **Basic Operations**: Simple read/write operations
-- **Concurrent Access**: Multiple clients accessing the same server
-- **Error Handling**: Comprehensive error handling examples
-- **Performance Monitoring**: Using built-in statistics
-
-## 🤝 Contributing
-
-Contributions are welcome! Please feel free to submit a Pull Request. For major changes, please open an issue first to discuss what you would like to change.
-
-### Development Setup
-
-1. Clone the repository
-2. Install Rust (latest stable)
-3. Install Python 3.7+ (for test server)
-4. Run tests: `cargo test`
-5. Run examples: `cargo run --bin demo`
-
-### Testing
-
-```bash
-# Run unit tests
+# Run all tests
 cargo test
 
-# Run integration tests with server
-python3 test/modbus_test_server.py &
-cargo run --bin performance_test
+# Run with logging
+RUST_LOG=debug cargo test
+
+# Run specific test
+cargo test test_tcp_client
 ```
 
-## 📝 License
+## License
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
-## 🙏 Acknowledgments
+## Contributing
 
-- Built with [Tokio](https://tokio.rs/) for async runtime
-- Inspired by the Modbus specification and existing implementations
-- Thanks to the Rust community for excellent crates and tools
+1. Fork the repository
+2. Create a feature branch
+3. Add tests for new functionality
+4. Ensure all tests pass
+5. Submit a pull request
 
-## 📞 Support
+## Changelog
 
-- 📚 [Documentation](https://docs.rs/modbus_native)
-- 🐛 [Issue Tracker](https://github.com/voltage-ems/modbus_native/issues)
-- 💬 [Discussions](https://github.com/voltage-ems/modbus_native/discussions)
+See [CHANGELOG.md](CHANGELOG.md) for detailed release notes.
 
 ---
 

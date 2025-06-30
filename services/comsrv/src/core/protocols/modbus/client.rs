@@ -518,7 +518,7 @@ impl ModbusClient {
                 *connection_state.write().await = ModbusConnectionState::Error(error_msg.clone());
                 error!("❌ [MODBUS-CONN] Connection failed: {}", error_msg);
                 debug!(
-                    "🚫 [MODBUS-ERROR] Connection failed: mode={:?}, error={}",
+                    "[MODBUS-ERROR] Connection failed: mode={:?}, error={}",
                     config.mode, e
                 );
                 Err(ComSrvError::CommunicationError(error_msg))
@@ -1240,7 +1240,7 @@ impl ModbusClient {
         for mapping in &self.config.point_mappings {
             let telemetry_type = match mapping.register_type {
                 ModbusRegisterType::HoldingRegister | ModbusRegisterType::InputRegister => {
-                    if mapping.access_mode.contains("write") {
+                    if mapping.is_writable() {
                         TelemetryType::Control // Can be controlled
                     } else {
                         TelemetryType::Telemetry // Read-only measurement
@@ -1274,14 +1274,13 @@ impl ModbusClient {
                 address: mapping.address as u32,
                 data_type: format!("{:?}", mapping.data_type),
                 telemetry_type,
-                scale: mapping.scale,
-                offset: mapping.offset,
-                unit: mapping.unit.clone().unwrap_or_default(),
+                scale: mapping.scale(),
+                offset: mapping.offset(),
+                unit: mapping.unit(),
                 description: mapping.description.clone().unwrap_or_default(),
-                access_mode: mapping.access_mode.clone(),
+                access_mode: mapping.access_mode(),
                 group: "modbus".to_string(),
                 protocol_params,
-                telemetry_metadata: None,
             };
 
             polling_points.push(polling_point);
@@ -1465,7 +1464,7 @@ impl ComBase for ModbusClient {
             ModbusRegisterType::HoldingRegister | ModbusRegisterType::InputRegister => {
                 match self.read_register_value(mapping).await {
                     Ok(value) => {
-                        let scaled_value = (value as f64) * mapping.scale + mapping.offset;
+                        let scaled_value = (value as f64) * mapping.scale() + mapping.offset();
                         scaled_value.to_string()
                     }
                     Err(e) => {
@@ -1487,9 +1486,9 @@ impl ComBase for ModbusClient {
 
         let point_data = PointData {
             id: mapping.name.clone(),
-            name: mapping.display_name.clone().unwrap_or_else(|| mapping.name.clone()),
+            name: mapping.display_name(),
             value: raw_value,
-            unit: mapping.unit.clone().unwrap_or_default(),
+            unit: mapping.unit(),
             description: mapping.description.clone().unwrap_or_default(),
             timestamp: Utc::now(),
         };
@@ -1524,7 +1523,7 @@ impl ComBase for ModbusClient {
                 let numeric_value: f64 = value.parse()
                     .map_err(|_| ComSrvError::InvalidParameter(format!("Invalid numeric value: {}", value)))?;
                 
-                let raw_value = ((numeric_value - mapping.offset) / mapping.scale) as u16;
+                let raw_value = ((numeric_value - mapping.offset()) / mapping.scale()) as u16;
                 
                 self.write_single_register(mapping.address, raw_value).await?;
                 
@@ -1556,9 +1555,9 @@ impl ComBase for ModbusClient {
             let mut cache = self.point_cache.write().await;
             let point_data = PointData {
                 id: mapping.name.clone(),
-                name: mapping.display_name.clone().unwrap_or_else(|| mapping.name.clone()),
+                name: mapping.display_name(),
                 value: value.to_string(),
-                unit: mapping.unit.clone().unwrap_or_default(),
+                unit: mapping.unit(),
                 description: mapping.description.clone().unwrap_or_default(),
                 timestamp: Utc::now(),
             };
@@ -1663,8 +1662,8 @@ impl PointReader for ModbusClient {
                         self.write_channel_log("INFO", &raw_msg);
 
                         // Apply scaling and offset
-                        let scaled_value = (value as f64) * mapping.scale + mapping.offset;
-                        let scale_msg = format!("🔢 [MODBUS-SCALE] Applied scaling: raw={}, scale={}, offset={}, result={}", value, mapping.scale, mapping.offset, scaled_value);
+                        let scaled_value = (value as f64) * mapping.scale() + mapping.offset();
+                        let scale_msg = format!("🔢 [MODBUS-SCALE] Applied scaling: raw={}, scale={}, offset={}, result={}", value, mapping.scale(), mapping.offset(), scaled_value);
                         debug!("{}", scale_msg);
                         self.write_channel_log("INFO", &scale_msg);
 
@@ -1675,7 +1674,7 @@ impl PointReader for ModbusClient {
                             "❌ [MODBUS-READ] Failed to read register for point {}: {}",
                             point.name, e
                         );
-                        debug!("🚫 [MODBUS-ERROR] Point read failed: point={}, mapping_address={}, error={}",
+                        debug!("[MODBUS-ERROR] Point read failed: point={}, mapping_address={}, error={}",
                                point.name, mapping.address, e);
                         "ERROR".to_string()
                     }
@@ -1683,7 +1682,7 @@ impl PointReader for ModbusClient {
             }
             ModbusRegisterType::Coil | ModbusRegisterType::DiscreteInput => {
                 debug!(
-                    "🔘 [MODBUS-READ] Reading digital: type={:?}, address={}",
+                    "[MODBUS-READ] Reading digital: type={:?}, address={}",
                     mapping.register_type, mapping.address
                 );
 
@@ -1691,17 +1690,17 @@ impl PointReader for ModbusClient {
                 match self.read_coil_value(mapping).await {
                     Ok(value) => {
                         debug!(
-                            "✅ [MODBUS-DIGITAL] Digital value: address={}, value={}",
+                            "[MODBUS-DIGITAL] Digital value: address={}, value={}",
                             mapping.address, value
                         );
                         value.to_string()
                     }
                     Err(e) => {
                         warn!(
-                            "❌ [MODBUS-READ] Failed to read coil for point {}: {}",
+                            "[MODBUS-READ] Failed to read coil for point {}: {}",
                             point.name, e
                         );
-                        debug!("🚫 [MODBUS-ERROR] Digital read failed: point={}, mapping_address={}, error={}",
+                        debug!("[MODBUS-ERROR] Digital read failed: point={}, mapping_address={}, error={}",
                                point.name, mapping.address, e);
                         "ERROR".to_string()
                     }
@@ -1711,17 +1710,14 @@ impl PointReader for ModbusClient {
 
         let point_data = PointData {
             id: mapping.name.clone(),
-            name: mapping
-                .display_name
-                .clone()
-                .unwrap_or_else(|| mapping.name.clone()),
+            name: mapping.display_name(),
             value: raw_value.clone(),
-            unit: mapping.unit.clone().unwrap_or_default(),
+            unit: mapping.unit(),
             description: mapping.description.clone().unwrap_or_default(),
             timestamp: Utc::now(),
         };
 
-        let result_msg = format!("📋 [MODBUS-RESULT] Point read complete: id={}, name={}, value={}, unit={}", point_data.id, point_data.name, point_data.value, point_data.unit);
+        let result_msg = format!("[MODBUS-RESULT] Point read complete: id={}, name={}, value={}, unit={}", point_data.id, point_data.name, point_data.value, point_data.unit);
         debug!("{}", result_msg);
         self.write_channel_log("INFO", &result_msg);
 
@@ -2031,13 +2027,13 @@ impl FourTelemetryOperations for ModbusClient {
                     match self.read_register_value(&mapping).await {
                         Ok(raw_value) => {
                             // Apply scaling and offset
-                            let scaled_value = (raw_value as f64) * mapping.scale + mapping.offset;
+                            let scaled_value = (raw_value as f64) * mapping.scale() + mapping.offset();
 
                             // Create measurement point with metadata
                             let measurement =
                                 crate::core::protocols::common::combase::MeasurementPoint {
                                     value: scaled_value,
-                                    unit: mapping.unit.clone().unwrap_or_default(),
+                                    unit: mapping.unit(),
                                     timestamp: Utc::now(),
                                 };
 
@@ -2218,7 +2214,7 @@ impl FourTelemetryOperations for ModbusClient {
             // Ensure this is a regulation point (writable holding register)
             if matches!(mapping.register_type, ModbusRegisterType::HoldingRegister) {
                 // Convert engineering value to raw register value
-                let raw_value = ((regulation_value - mapping.offset) / mapping.scale) as u16;
+                let raw_value = ((regulation_value - mapping.offset()) / mapping.scale()) as u16;
 
                 match self.write_single_register(mapping.address, raw_value).await {
                     Ok(()) => {
@@ -2286,7 +2282,7 @@ impl FourTelemetryOperations for ModbusClient {
             .iter()
             .filter(|mapping| {
                 matches!(mapping.register_type, ModbusRegisterType::HoldingRegister)
-                    && mapping.access_mode.as_str() != "read"
+                    && mapping.access_mode().as_str() != "read"
             })
             .map(|mapping| mapping.name.clone())
             .collect()
@@ -2354,7 +2350,7 @@ mod tests {
                 description: Some("Temperature measurement".to_string()),
                 access_mode: "read".to_string(),
                 group: Some("Sensors".to_string()),
-                byte_order: ByteOrder::BigEndian,
+                byte_order: ByteOrder::AB,
             },
             ModbusRegisterMapping {
                 name: "pump_control".to_string(),
@@ -2368,7 +2364,7 @@ mod tests {
                 description: Some("Pump speed control".to_string()),
                 access_mode: "read_write".to_string(),
                 group: Some("Control".to_string()),
-                byte_order: ByteOrder::BigEndian,
+                byte_order: ByteOrder::AB,
             },
         ]
     }
@@ -2499,7 +2495,7 @@ mod tests {
         assert!(pump_mapping.is_some());
         let mapping = pump_mapping.unwrap();
         assert_eq!(mapping.address, 200);
-        assert_eq!(mapping.access_mode, "read_write".to_string());
+        assert_eq!(mapping.access_mode(), "read_write".to_string());
     }
 
     #[tokio::test]
@@ -2577,7 +2573,6 @@ mod tests {
             access_mode: "read".to_string(),
             group: "sensors".to_string(),
             protocol_params,
-            telemetry_metadata: None,
         };
 
         // Should return ERROR since there's no connection
@@ -2624,7 +2619,6 @@ mod tests {
                 access_mode: "read".to_string(),
                 group: "sensors".to_string(),
                 protocol_params: protocol_params1,
-                telemetry_metadata: None,
             },
             PollingPoint {
                 id: "pump_001".to_string(),
@@ -2639,7 +2633,6 @@ mod tests {
                 access_mode: "read_write".to_string(),
                 group: "control".to_string(),
                 protocol_params: protocol_params2,
-                telemetry_metadata: None,
             },
         ];
 
@@ -2681,7 +2674,6 @@ mod tests {
             access_mode: "read".to_string(),
             group: "test".to_string(),
             protocol_params,
-            telemetry_metadata: None,
         };
 
         let result = client.read_point(&invalid_point).await;
