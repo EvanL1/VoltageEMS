@@ -179,6 +179,293 @@ impl<T> ApiResponse<T> {
     }
 }
 
+/// Enhanced point with configuration information
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct TelemetryPoint {
+    /// Point ID from CSV configuration
+    pub point_id: u32,
+    /// Point name from CSV
+    pub name: String,
+    /// Description from CSV
+    pub description: String,
+    /// Engineering unit from CSV
+    pub unit: String,
+    /// Data type from CSV (uint16, float32, etc.)
+    pub data_type: String,
+    /// Scale factor from CSV
+    pub scale: f64,
+    /// Offset value from CSV
+    pub offset: f64,
+    /// Current real-time value (changes)
+    pub current_value: Option<serde_json::Value>,
+    /// Last update timestamp
+    pub last_update: Option<DateTime<Utc>>,
+    /// Point status (connected, error, etc.)
+    pub status: String,
+    /// Protocol mapping information (serialized as JSON)
+    pub protocol_mapping: Option<serde_json::Value>,
+}
+
+/// Protocol mapping trait for different industrial protocols
+pub trait ProtocolMapping: Send + Sync + std::fmt::Debug {
+    /// Get protocol type name
+    fn protocol_type(&self) -> &str;
+    
+    /// Get unique mapping identifier for this point
+    fn mapping_id(&self) -> String;
+    
+    /// Get polling interval in milliseconds (if applicable)
+    fn polling_interval(&self) -> Option<u32>;
+    
+    /// Get protocol-specific parameters as key-value pairs
+    fn get_parameters(&self) -> std::collections::HashMap<String, String>;
+    
+    /// Serialize to JSON for API response
+    fn to_json(&self) -> serde_json::Value;
+    
+    /// Validate mapping configuration
+    fn validate(&self) -> Result<(), String>;
+}
+
+/// Default function code for Modbus (Read Holding Registers)
+fn default_function_code() -> u8 {
+    3
+}
+
+/// Modbus protocol mapping implementation
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct ModbusMapping {
+    /// Point ID that links to telemetry table
+    pub point_id: u32,
+    /// Register address for Modbus
+    pub address: u32,
+    /// Function code for Modbus (1=coils, 2=discrete, 3=holding, 4=input)
+    #[serde(default = "default_function_code")]
+    pub function_code: u8,
+    /// Slave/Unit ID
+    pub slave_id: Option<u8>,
+    /// Data format (AB, ABCD, DCBA, etc.)
+    pub data_format: String,
+    /// Number of bytes/registers
+    pub number_of_bytes: u16,
+    /// Polling interval in milliseconds
+    pub polling_interval: Option<u32>,
+}
+
+impl ProtocolMapping for ModbusMapping {
+    fn protocol_type(&self) -> &str {
+        "modbus"
+    }
+    
+    fn mapping_id(&self) -> String {
+        format!("modbus_{}_{}", self.slave_id.unwrap_or(1), self.address)
+    }
+    
+    fn polling_interval(&self) -> Option<u32> {
+        self.polling_interval
+    }
+    
+    fn get_parameters(&self) -> std::collections::HashMap<String, String> {
+        let mut params = std::collections::HashMap::new();
+        params.insert("point_id".to_string(), self.point_id.to_string());
+        params.insert("address".to_string(), self.address.to_string());
+        params.insert("function_code".to_string(), self.function_code.to_string());
+        if let Some(sid) = self.slave_id {
+            params.insert("slave_id".to_string(), sid.to_string());
+        }
+        params.insert("data_format".to_string(), self.data_format.clone());
+        params.insert("number_of_bytes".to_string(), self.number_of_bytes.to_string());
+        params
+    }
+    
+    fn to_json(&self) -> serde_json::Value {
+        serde_json::to_value(self).unwrap_or(serde_json::Value::Null)
+    }
+    
+    fn validate(&self) -> Result<(), String> {
+        if self.point_id == 0 {
+            return Err("Point ID must be > 0".to_string());
+        }
+        if self.address > 65535 {
+            return Err("Modbus address must be <= 65535".to_string());
+        }
+        // Modbus function codes: 1=ReadCoils, 2=ReadDiscreteInputs, 3=ReadHoldingRegisters, 4=ReadInputRegisters
+        // 5=WriteSingleCoil, 6=WriteSingleRegister, 15=WriteMultipleCoils, 16=WriteMultipleRegisters
+        match self.function_code {
+            1..=6 | 15 | 16 => {},  // Valid function codes
+            _ => return Err("Invalid Modbus function code, supported: 1-6, 15, 16".to_string()),
+        }
+        if self.number_of_bytes == 0 || self.number_of_bytes > 125 {
+            return Err("Number of bytes must be 1-125".to_string());
+        }
+        Ok(())
+    }
+}
+
+/// CAN protocol mapping implementation
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct CanMapping {
+    /// Point ID that links to telemetry table
+    pub point_id: u32,
+    /// CAN ID (29-bit for extended, 11-bit for standard)
+    pub can_id: u32,
+    /// Extended CAN ID flag
+    pub extended: bool,
+    /// Data byte position (0-7)
+    pub byte_position: u8,
+    /// Bit position within byte (0-7, optional for digital signals)
+    pub bit_position: Option<u8>,
+    /// Data length (1, 2, 4, or 8 bytes for multi-byte values)
+    pub data_length: u8,
+    /// Byte order (big_endian or little_endian)
+    pub byte_order: String,
+    /// Message polling interval
+    pub polling_interval: Option<u32>,
+}
+
+impl ProtocolMapping for CanMapping {
+    fn protocol_type(&self) -> &str {
+        "can"
+    }
+    
+    fn mapping_id(&self) -> String {
+        format!("can_{:X}_{}", self.can_id, self.byte_position)
+    }
+    
+    fn polling_interval(&self) -> Option<u32> {
+        self.polling_interval
+    }
+    
+    fn get_parameters(&self) -> std::collections::HashMap<String, String> {
+        let mut params = std::collections::HashMap::new();
+        params.insert("point_id".to_string(), self.point_id.to_string());
+        params.insert("can_id".to_string(), format!("0x{:X}", self.can_id));
+        params.insert("extended".to_string(), self.extended.to_string());
+        params.insert("byte_position".to_string(), self.byte_position.to_string());
+        if let Some(bit_pos) = self.bit_position {
+            params.insert("bit_position".to_string(), bit_pos.to_string());
+        }
+        params.insert("data_length".to_string(), self.data_length.to_string());
+        params.insert("byte_order".to_string(), self.byte_order.clone());
+        params
+    }
+    
+    fn to_json(&self) -> serde_json::Value {
+        serde_json::to_value(self).unwrap_or(serde_json::Value::Null)
+    }
+    
+    fn validate(&self) -> Result<(), String> {
+        if self.point_id == 0 {
+            return Err("Point ID must be > 0".to_string());
+        }
+        if !self.extended && self.can_id > 0x7FF {
+            return Err("Standard CAN ID must be <= 0x7FF".to_string());
+        }
+        if self.extended && self.can_id > 0x1FFFFFFF {
+            return Err("Extended CAN ID must be <= 0x1FFFFFFF".to_string());
+        }
+        if self.byte_position > 7 {
+            return Err("Byte position must be 0-7".to_string());
+        }
+        if let Some(bit_pos) = self.bit_position {
+            if bit_pos > 7 {
+                return Err("Bit position must be 0-7".to_string());
+            }
+        }
+        if ![1, 2, 4, 8].contains(&self.data_length) {
+            return Err("Data length must be 1, 2, 4, or 8 bytes".to_string());
+        }
+        Ok(())
+    }
+}
+
+/// IEC 60870-5-104 protocol mapping implementation  
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct IecMapping {
+    /// Point ID that links to telemetry table
+    pub point_id: u32,
+    /// Information Object Address (IOA)
+    pub ioa: u32,
+    /// Common Address of ASDU (CA)
+    pub ca: u16,
+    /// Type identification
+    pub type_id: u8,
+    /// Cause of transmission
+    pub cot: Option<u8>,
+    /// Qualifier of interrogation
+    pub qoi: Option<u8>,
+    /// Update interval for polling
+    pub polling_interval: Option<u32>,
+}
+
+impl ProtocolMapping for IecMapping {
+    fn protocol_type(&self) -> &str {
+        "iec60870"
+    }
+    
+    fn mapping_id(&self) -> String {
+        format!("iec_{}_{}", self.ca, self.ioa)
+    }
+    
+    fn polling_interval(&self) -> Option<u32> {
+        self.polling_interval
+    }
+    
+    fn get_parameters(&self) -> std::collections::HashMap<String, String> {
+        let mut params = std::collections::HashMap::new();
+        params.insert("point_id".to_string(), self.point_id.to_string());
+        params.insert("ioa".to_string(), self.ioa.to_string());
+        params.insert("ca".to_string(), self.ca.to_string());
+        params.insert("type_id".to_string(), self.type_id.to_string());
+        if let Some(cot) = self.cot {
+            params.insert("cot".to_string(), cot.to_string());
+        }
+        if let Some(qoi) = self.qoi {
+            params.insert("qoi".to_string(), qoi.to_string());
+        }
+        params
+    }
+    
+    fn to_json(&self) -> serde_json::Value {
+        serde_json::to_value(self).unwrap_or(serde_json::Value::Null)
+    }
+    
+    fn validate(&self) -> Result<(), String> {
+        if self.point_id == 0 {
+            return Err("Point ID must be > 0".to_string());
+        }
+        if self.ioa > 0xFFFFFF {
+            return Err("IOA must be <= 0xFFFFFF".to_string());
+        }
+        if self.ca == 0 {
+            return Err("Common Address must be > 0".to_string());
+        }
+        if self.type_id == 0 {
+            return Err("Type ID must be > 0".to_string());
+        }
+        Ok(())
+    }
+}
+
+/// Four-telemetry table view for frontend display
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct TelemetryTableView {
+    /// Channel ID
+    pub channel_id: u16,
+    /// Channel name
+    pub channel_name: String,
+    /// Telemetry points (遥测 - analog measurements)
+    pub telemetry: Vec<TelemetryPoint>,
+    /// Signal points (遥信 - digital status)  
+    pub signal: Vec<TelemetryPoint>,
+    /// Adjustment points (遥调 - analog setpoints)
+    pub adjustment: Vec<TelemetryPoint>,
+    /// Control points (遥控 - digital commands)
+    pub control: Vec<TelemetryPoint>,
+    /// Last refresh timestamp
+    pub timestamp: DateTime<Utc>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
