@@ -1,0 +1,30 @@
+[package]
+name = "voltage-config"
+version = "0.1.0"
+edition = "2021"
+authors = ["VoltageEMS Team"]
+license = "MIT OR Apache-2.0"
+description = "Shared configuration framework for VoltageEMS services"
+repository = "https://github.com/VoltageEMS/voltage-config"
+keywords = ["configuration", "config", "settings", "microservices"]
+categories = ["config"]
+
+[dependencies]
+figment = { version = "0.10", features = ["yaml", "toml", "json", "env"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+serde_yaml = "0.9"
+toml = "0.8"
+thiserror = "1.0"
+tracing = "0.1"
+async-trait = "0.1"
+tokio = { version = "1", features = ["full"] }
+validator = { version = "0.18", features = ["derive"] }
+regex = "1.10"
+glob = "0.3"
+walkdir = "2.4"
+
+[dev-dependencies]
+tempfile = "3.8"
+tokio-test = "0.4"
+tracing-subscriber = "0.3"
