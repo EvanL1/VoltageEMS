@@ -1,8 +1,156 @@
-# Voltage 配置框架
+# Voltage Config Framework / Voltage 配置框架
+
+[English](#english) | [中文](#chinese)
+
+## English
+
+A shared configuration management framework for VoltageEMS microservices, built on top of Figment.
+
+### Features
+
+- **Multi-format support**: YAML, TOML, JSON, and environment variables
+- **Hierarchical configuration**: Base configs with environment-specific overrides
+- **Type-safe**: Leverages Rust's type system with serde
+- **Validation**: Built-in and custom validation rules
+- **Hot-reloading**: Watch configuration files for changes
+- **Async support**: Both sync and async configuration loading
+- **Extensible**: Custom validators and configuration sources
+
+### Usage
+
+Add to your `Cargo.toml`:
+
+```toml
+[dependencies]
+voltage-config = { path = "../config-framework" }
+```
+
+Basic example:
+
+```rust
+use serde::{Deserialize, Serialize};
+use voltage_config::prelude::*;
+
+#[derive(Debug, Serialize, Deserialize)]
+struct MyConfig {
+    server: ServerConfig,
+    database: DatabaseConfig,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct ServerConfig {
+    host: String,
+    port: u16,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct DatabaseConfig {
+    url: String,
+}
+
+impl Configurable for MyConfig {
+    fn validate(&self) -> Result<()> {
+        // Custom validation logic
+        Ok(())
+    }
+    
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+}
+
+#[tokio::main]
+async fn main() -> Result<()> {
+    let loader = ConfigLoaderBuilder::new()
+        .base_path("config")
+        .add_file("app.yml")
+        .environment(Environment::from_env())
+        .env_prefix("MYAPP")
+        .build()?;
+    
+    let config: MyConfig = loader.load()?;
+    println!("Server: {}:{}", config.server.host, config.server.port);
+    
+    Ok(())
+}
+```
+
+### Configuration Loading Order
+
+1. Default values (if provided)
+2. `config/default.yml`
+3. `config/{environment}.yml`
+4. Additional files (in order added)
+5. Environment variables
+
+Later sources override earlier ones.
+
+### Environment Variables
+
+Environment variables are automatically mapped to configuration keys:
+- `MYAPP_SERVER_HOST` → `server.host`
+- `MYAPP_DATABASE_URL` → `database.url`
+
+### File Watching
+
+```rust
+let watcher = ConfigWatcher::new(loader, vec!["config".into()])
+    .with_interval(Duration::from_secs(5));
+
+watcher.start().await?;
+
+while let Some(event) = watcher.wait_for_change().await {
+    match event {
+        WatchEvent::Modified(path) => {
+            let new_config = watcher.reload::<MyConfig>().await?;
+            // Handle reloaded configuration
+        }
+        _ => {}
+    }
+}
+```
+
+### Custom Validators
+
+```rust
+struct MyValidator;
+
+#[async_trait::async_trait]
+impl ConfigValidator for MyValidator {
+    async fn validate(&self, config: &dyn Any) -> Result<()> {
+        // Custom validation logic
+        Ok(())
+    }
+    
+    fn name(&self) -> &str {
+        "MyValidator"
+    }
+}
+
+let loader = ConfigLoaderBuilder::new()
+    .add_validator(Box::new(MyValidator))
+    .build()?;
+```
+
+### Integration with VoltageEMS Services
+
+This framework is designed to standardize configuration management across all VoltageEMS services:
+
+- **comsrv**: Communication service configuration
+- **modsrv**: Model service configuration  
+- **hissrv**: Historical data service configuration
+- **netsrv**: Network service configuration
+- **alarmsrv**: Alarm service configuration
+
+Each service can extend the base configuration with service-specific settings while maintaining consistency in configuration loading and validation.
+
+---
+
+## Chinese
 
 VoltageEMS 微服务的统一配置管理框架，基于 Figment 构建。
 
-## 功能特性
+### 功能特性
 
 - **多格式支持**：支持 YAML、TOML、JSON 和环境变量
 - **分层配置**：基础配置 + 环境特定配置覆盖
@@ -12,9 +160,9 @@ VoltageEMS 微服务的统一配置管理框架，基于 Figment 构建。
 - **异步支持**：支持同步和异步配置加载
 - **可扩展**：自定义验证器和配置源
 
-## 快速开始
+### 快速开始
 
-### 添加依赖
+#### 添加依赖
 
 在你的服务 `Cargo.toml` 中添加：
 
@@ -23,7 +171,7 @@ VoltageEMS 微服务的统一配置管理框架，基于 Figment 构建。
 voltage-config = { path = "../config-framework" }
 ```
 
-### 基本使用
+#### 基本使用
 
 ```rust
 use serde::{Deserialize, Serialize};
@@ -76,7 +224,7 @@ async fn main() -> Result<()> {
 }
 ```
 
-## 配置加载顺序
+### 配置加载顺序
 
 配置按以下顺序加载，后面的会覆盖前面的：
 
@@ -86,14 +234,14 @@ async fn main() -> Result<()> {
 4. 额外指定的配置文件（按添加顺序）
 5. 环境变量
 
-## 环境变量映射
+### 环境变量映射
 
 环境变量会自动映射到配置键：
 - `MYAPP_SERVER_HOST` → `server.host`
 - `MYAPP_DATABASE_URL` → `database.url`
 - `MYAPP_SERVER_PORT` → `server.port`
 
-## 配置文件监视
+### 配置文件监视
 
 ```rust
 // 创建配置监视器
@@ -116,9 +264,9 @@ while let Some(event) = watcher.wait_for_change().await {
 }
 ```
 
-## 验证规则
+### 验证规则
 
-### 内置验证规则
+#### 内置验证规则
 
 ```rust
 use voltage_config::prelude::*;
@@ -146,7 +294,7 @@ let loader = ConfigLoaderBuilder::new()
     .build()?;
 ```
 
-### 自定义验证器
+#### 自定义验证器
 
 ```rust
 struct MyValidator;
@@ -175,9 +323,9 @@ let loader = ConfigLoaderBuilder::new()
     .build()?;
 ```
 
-## VoltageEMS 服务集成
+### VoltageEMS 服务集成
 
-### 服务配置示例
+#### 服务配置示例
 
 ```rust
 #[derive(Debug, Serialize, Deserialize)]
@@ -216,7 +364,7 @@ impl Configurable for ServiceConfig {
 }
 ```
 
-### 配置文件结构
+#### 配置文件结构
 
 ```
 config/
@@ -228,7 +376,7 @@ config/
     └── iec104.yml
 ```
 
-### 示例配置文件
+#### 示例配置文件
 
 `config/default.yml`:
 ```yaml
@@ -258,7 +406,7 @@ telemetry:
   log_level: warn
 ```
 
-## 最佳实践
+### 最佳实践
 
 1. **使用环境变量进行敏感配置**：密码、API密钥等敏感信息应通过环境变量配置
 2. **验证所有配置**：在 `validate()` 方法中实现完整的配置验证
@@ -266,16 +414,16 @@ telemetry:
 4. **使用类型安全的配置**：利用 Rust 类型系统确保配置正确性
 5. **监视配置变化**：在生产环境中启用配置监视以支持动态更新
 
-## API 文档
+### API 文档
 
 主要类型和函数的详细文档请参考源代码注释。
 
-## 示例
+### 示例
 
 - `examples/basic_usage.rs` - 基本使用示例
 - `examples/service_config.rs` - 服务配置示例
 - `examples/comsrv_integration.rs` - comsrv 集成示例
 
-## 许可证
+### 许可证
 
 MIT OR Apache-2.0
