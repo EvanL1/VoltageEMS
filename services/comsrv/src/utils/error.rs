@@ -695,6 +695,22 @@ impl From<std::net::AddrParseError> for ComSrvError {
     }
 }
 
+/// Convert from transport error to ComSrvError
+impl From<crate::core::transport::traits::TransportError> for ComSrvError {
+    fn from(err: crate::core::transport::traits::TransportError) -> Self {
+        match err {
+            crate::core::transport::traits::TransportError::ConnectionFailed(msg) => ComSrvError::ConnectionError(msg),
+            crate::core::transport::traits::TransportError::ConnectionLost(msg) => ComSrvError::ConnectionError(msg),
+            crate::core::transport::traits::TransportError::SendFailed(msg) => ComSrvError::CommunicationError(msg),
+            crate::core::transport::traits::TransportError::ReceiveFailed(msg) => ComSrvError::CommunicationError(msg),
+            crate::core::transport::traits::TransportError::Timeout(msg) => ComSrvError::TimeoutError(msg),
+            crate::core::transport::traits::TransportError::ConfigError(msg) => ComSrvError::ConfigError(msg),
+            crate::core::transport::traits::TransportError::IoError(msg) => ComSrvError::IoError(msg),
+            crate::core::transport::traits::TransportError::ProtocolError(msg) => ComSrvError::ProtocolError(msg),
+        }
+    }
+}
+
 /// Shorthand for Result with ComSrvError
 pub type Result<T> = std::result::Result<T, ComSrvError>;
 

@@ -1,6 +1,5 @@
 pub mod common;
 pub mod modbus;
-pub mod vprotocol;
 // pub mod iec60870;
 // pub mod can;
 
