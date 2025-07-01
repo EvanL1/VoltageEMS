@@ -126,6 +126,193 @@ table_config:
 
 ---
 
+### Fix #2: API层与服务层连接架构修复 (2025-06-30)
+
+#### 问题描述 - Problem Description
+
+**严重架构问题**: API层与服务层完全分离，所有API接口返回硬编码测试数据，无法获取真实的协议通信状态和数据。
+
+**具体表现**:
+
+1. **硬编码数据问题**: API返回固定的假数据（电压220V，电流15.5A），与模拟器实时数据完全不匹配
+2. **API层隔离**: `openapi_routes.rs`中所有接口都返回硬编码测试数据，无法访问真实的ProtocolFactory
+3. **状态信息错误**: API显示默认通道信息，不是配置文件中的真实通道
+4. **无法控制通道**: API无法执行真实的通道启动、停止操作
+
+#### 🔍 根本原因分析 - Root Cause Analysis
+
+**架构设计缺陷**:
+
+```rust
+// 问题代码示例 - openapi_routes.rs 中的硬编码数据
+pub async fn get_all_channels() -> Result<Json<ApiResponse<Vec<ChannelStatusResponse>>>, StatusCode> {
+    let channels = vec![
+        ChannelStatusResponse {
+            id: 1,
+            name: "Modbus TCP Channel 1".to_string(),  // 硬编码名称
+            protocol: "Modbus TCP".to_string(),
+            connected: true,  // 硬编码状态
+            // ... 更多硬编码数据
+        }
+    ];
+    Ok(Json(ApiResponse::success(channels)))
+}
+```
+
+**影响范围**:
+
+- 🚫 API层无法反映真实的通道状态
+- 🚫 无法获取真实的协议通信数据  
+- 🚫 通道控制操作无效
+- 🚫 调试和监控功能失效
+
+#### 修复方案 - Fix Solution
+
+1. **引入Axum状态管理**: 使用Axum的State机制将ProtocolFactory传递给API层
+2. **创建AppState结构**: 封装ProtocolFactory，使API能够访问真实服务
+3. **修复所有API接口**: 移除硬编码数据，连接到真实的服务层
+4. **添加ProtocolFactory方法**: 为API访问添加必要的查询方法
+
+#### 修复文件 - Fixed Files
+
+- `services/comsrv/src/api/openapi_routes.rs` - 核心API层修复
+- `services/comsrv/src/main.rs` - 状态传递修复
+- `services/comsrv/src/core/protocols/common/combase/protocol_factory.rs` - 新增元数据查询方法
+
+#### 具体修复内容 - Detailed Fixes
+
+1. **新增AppState结构**:
+
+   ```rust
+   #[derive(Clone)]
+   pub struct AppState {
+       pub factory: Arc<RwLock<ProtocolFactory>>,
+   }
+   ```
+
+2. **修复API接口函数签名**:
+
+   ```rust
+   // 修复前 - 无状态访问
+   pub async fn get_all_channels() -> Result<...>
+   
+   // 修复后 - 有状态访问
+   pub async fn get_all_channels(State(state): State<AppState>) -> Result<...>
+   ```
+
+3. **新增ProtocolFactory查询方法**:
+
+   ```rust
+   /// Get channel metadata by ID (name and protocol type)
+   pub async fn get_channel_metadata(&self, id: u16) -> Option<(String, String)>
+   ```
+
+4. **真实数据获取实现**:
+
+   ```rust
+   pub async fn get_all_channels(State(state): State<AppState>) -> Result<...> {
+       let factory = state.factory.read().await;
+       let channel_ids = factory.get_channel_ids();
+       let mut channels = Vec::new();
+       
+       for channel_id in channel_ids {
+           if let Some((name, protocol)) = factory.get_channel_metadata(channel_id).await {
+               let channel_response = ChannelStatusResponse {
+                   id: channel_id,
+                   name,  // 真实名称
+                   protocol,  // 真实协议类型
+                   connected: factory.is_channel_connected(channel_id).await,  // 真实状态
+                   // ... 真实数据
+               };
+               channels.push(channel_response);
+           }
+       }
+       Ok(Json(ApiResponse::success(channels)))
+   }
+   ```
+
+5. **通道控制真实实现**:
+
+   ```rust
+   pub async fn control_channel(
+       State(state): State<AppState>,
+       Path(id): Path<String>,
+       Json(operation): Json<ChannelOperation>,
+   ) -> Result<...> {
+       let id_u16 = id.parse::<u16>()?;
+       let factory = state.factory.read().await;
+       
+       let result = match operation.operation.as_str() {
+           "start" => factory.start_channel(id_u16).await,  // 真实启动
+           "stop" => factory.stop_channel(id_u16).await,    // 真实停止
+           // ... 真实操作
+       };
+   }
+   ```
+
+#### ✅ 验证结果 - Verification Results
+
+**API数据真实性验证**:
+
+- ✅ **真实通道信息**: 返回配置文件中的真实通道名称 `"Modbus_Test_5020"`
+- ✅ **真实协议类型**: 正确显示 `"ModbusTcp"`
+- ✅ **真实连接状态**: 显示实际连接状态 `connected: false` → `connected: true`
+- ✅ **真实统计信息**: 返回实际的协议统计和诊断信息
+
+**API功能验证**:
+
+```json
+// 服务状态 - 真实数据
+GET /api/status
+{
+  "success": true,
+  "data": {
+    "channels": 1,           // 真实通道数
+    "active_channels": 0     // 真实活跃通道数
+  }
+}
+
+// 通道列表 - 真实数据  
+GET /api/channels
+{
+  "data": [{
+    "id": 1001,
+    "name": "Modbus_Test_5020",    // 配置文件中的真实名称
+    "protocol": "ModbusTcp",       // 真实协议类型
+    "connected": true              // 实时连接状态
+  }]
+}
+
+// 通道控制 - 真实操作
+POST /api/channels/1001/control
+{
+  "data": "Channel 1001 started successfully"  // 真实启动结果
+}
+```
+
+**连接验证**:
+
+- ✅ **连接失败检测**: 连接失败时返回详细错误信息
+- ✅ **连接成功确认**: 成功建立连接后状态实时更新
+- ✅ **通道控制**: 能够真实启动/停止通道
+
+#### 📋 关键成果 - Key Achievements
+
+1. **架构统一**: API层与服务层完全连接，消除数据孤岛
+2. **真实监控**: API提供真实的通道状态和协议信息
+3. **有效控制**: 通道控制操作能够真实执行
+4. **调试能力**: 提供真实的错误信息和诊断数据
+
+#### 编译状态 - Compilation Status
+
+✅ 编译成功，无错误无警告
+
+#### 问题解决状态 - Problem Resolution Status
+
+🎯 **完全解决** - API层与服务层架构连接修复成功，实现真实数据获取和通道控制
+
+---
+
 ### Fix #4: 统一 ComBase Trait 数据访问接口修复 (2025-01-22)
 
 #### 问题描述 - Problem Description
@@ -1239,3 +1426,231 @@ pub struct UniversalPointConfig {
 ### 技术价值
 
 此次修改实现了VoltageEMS四遥点表配置的完全标准化，为工业控制系统提供了统一、可靠的配置接口，确保了文档与实现的一致性。
+
+---
+
+### Fix #3: ProtocolMapping Trait架构重构 (2025-06-30)
+
+#### 问题描述 - Problem Description
+
+**架构设计缺陷**: 原有的`ProtocolMapping`结构体只考虑了Modbus协议，采用硬编码的字段设计，无法支持多协议扩展。
+
+**具体问题**:
+1. **协议特定化**: `ProtocolMapping`结构体包含`address`、`function_code`等Modbus专用字段
+2. **不支持扩展**: 无法添加CAN、IEC 60870等其他协议的映射参数
+3. **违反开闭原则**: 添加新协议需要修改核心结构体定义
+4. **类型安全性差**: 所有协议共用一个结构体，字段语义混乱
+
+#### 🔍 根本原因分析 - Root Cause Analysis
+
+**设计问题**:
+```rust
+// 问题代码 - 硬编码的Modbus专用结构体
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct ProtocolMapping {
+    pub point_id: u32,
+    pub address: u32,           // 只适用于Modbus
+    pub function_code: Option<u8>, // 只适用于Modbus
+    pub slave_id: Option<u8>,   // 只适用于Modbus
+    pub data_format: String,
+    // ... 更多Modbus特定字段
+}
+```
+
+**架构影响**:
+- 🚫 无法支持CAN协议的ID、扩展帧、字节位置等参数
+- 🚫 无法支持IEC 60870的IOA、CA、类型标识等参数
+- 🚫 增加新协议需要破坏性修改
+- 🚫 CSV解析逻辑与特定协议耦合
+
+#### 修复方案 - Fix Solution
+
+1. **引入Trait设计模式**: 将`ProtocolMapping`从结构体改为trait
+2. **协议特定实现**: 为每个协议创建独立的映射结构体
+3. **统一接口设计**: 通过trait提供协议无关的操作接口
+4. **多态CSV处理**: 根据协议类型动态选择正确的反序列化逻辑
+
+#### 修复文件 - Fixed Files
+
+- `services/comsrv/src/api/models.rs` - 新增trait定义和协议实现
+- `services/comsrv/src/api/openapi_routes.rs` - CSV读取逻辑重构
+
+#### 具体修复内容 - Detailed Fixes
+
+1. **ProtocolMapping Trait定义**:
+   ```rust
+   /// Universal trait for protocol mapping
+   pub trait ProtocolMapping: Send + Sync + std::fmt::Debug {
+       fn protocol_type(&self) -> &str;
+       fn mapping_id(&self) -> String;
+       fn polling_interval(&self) -> Option<u32>;
+       fn get_parameters(&self) -> std::collections::HashMap<String, String>;
+       fn to_json(&self) -> serde_json::Value;
+       fn validate(&self) -> Result<(), String>;
+   }
+   ```
+
+2. **协议特定实现结构体**:
+   ```rust
+   /// Modbus协议映射
+   #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+   pub struct ModbusMapping {
+       pub point_id: u32,
+       pub address: u32,
+       pub function_code: Option<u8>,
+       pub slave_id: Option<u8>,
+       pub data_format: String,
+       pub number_of_bytes: u16,
+       pub polling_interval: Option<u32>,
+   }
+
+   /// CAN协议映射
+   #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+   pub struct CanMapping {
+       pub point_id: u32,
+       pub can_id: u32,
+       pub is_extended: bool,
+       pub byte_position: u8,
+       pub data_length: u8,
+       pub byte_order: String,
+       pub polling_interval: Option<u32>,
+   }
+
+   /// IEC 60870协议映射
+   #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+   pub struct IecMapping {
+       pub point_id: u32,
+       pub ioa: u32,          // Information Object Address
+       pub ca: u16,           // Common Address
+       pub type_id: u8,       // Type Identification
+       pub cot: u8,           // Cause of Transmission
+       pub polling_interval: Option<u32>,
+   }
+   ```
+
+3. **智能CSV处理逻辑**:
+   ```rust
+   fn read_mapping_csv(
+       file_path: &str, 
+       protocol_type: &str
+   ) -> Result<Vec<Box<dyn ProtocolMapping>>, Box<dyn std::error::Error + Send + Sync>> {
+       match protocol_type.to_lowercase().as_str() {
+           "modbus" | "modbustcp" | "modbusrtu" => {
+               for result in rdr.deserialize::<ModbusMapping>() {
+                   // Modbus特定处理逻辑
+               }
+           },
+           "can" | "canbus" => {
+               for result in rdr.deserialize::<CanMapping>() {
+                   // CAN特定处理逻辑
+               }
+           },
+           "iec60870" | "iec104" => {
+               for result in rdr.deserialize::<IecMapping>() {
+                   // IEC 60870特定处理逻辑
+               }
+           }
+       }
+   }
+   ```
+
+4. **类型安全的API设计**:
+   ```rust
+   #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+   pub struct TelemetryPoint {
+       // ... 基础字段
+       /// Protocol mapping information (serialized for API)
+       pub protocol_mapping: Option<serde_json::Value>,
+   }
+   ```
+
+#### 新增功能特性 - New Features
+
+1. **多协议支持**: 支持Modbus、CAN、IEC 60870等多种工业协议映射
+2. **类型安全**: 每个协议使用独立的类型定义，避免字段混淆
+3. **扩展性强**: 添加新协议只需实现trait，无需修改现有代码
+4. **验证机制**: 每个协议映射都有独立的验证逻辑
+5. **统一接口**: 通过trait提供协议无关的操作方法
+
+#### 协议映射对比 - Protocol Mapping Comparison
+
+| 特性 | Modbus | CAN Bus | IEC 60870 |
+|------|---------|---------|-----------|
+| 地址类型 | register_address | can_id | ioa (Information Object Address) |
+| 功能码 | function_code | - | type_id |
+| 从站标识 | slave_id | - | ca (Common Address) |
+| 特殊参数 | data_format | is_extended, byte_position | cot (Cause of Transmission) |
+| 数据长度 | number_of_bytes | data_length | 根据type_id确定 |
+
+#### 测试验证 - Test Verification
+
+✅ **编译验证**:
+```bash
+cd services/comsrv && cargo check
+# Result: 编译成功，无错误无警告
+```
+
+✅ **类型系统验证**:
+- 协议映射类型安全：每个协议使用独立结构体
+- Trait对象多态：`Vec<Box<dyn ProtocolMapping>>`正确工作
+- 序列化兼容：支持JSON序列化和反序列化
+
+✅ **功能验证**:
+- CSV读取逻辑根据协议类型正确分发
+- 每个协议的validate()方法独立工作
+- API返回类型兼容OpenAPI规范
+
+#### 📋 架构优势 - Architecture Benefits
+
+1. **开闭原则**: 对扩展开放，对修改关闭
+2. **单一职责**: 每个协议映射专注于自己的协议特性
+3. **类型安全**: 编译期检查协议参数正确性
+4. **易于测试**: 每个协议可以独立测试验证
+5. **维护性强**: 协议修改不会影响其他协议
+
+#### 应用示例 - Usage Examples
+
+```rust
+// 创建不同协议的映射
+let modbus_mapping = ModbusMapping {
+    point_id: 1001,
+    address: 40001,
+    function_code: Some(3),
+    slave_id: Some(1),
+    data_format: "float32".to_string(),
+    number_of_bytes: 4,
+    polling_interval: Some(1000),
+};
+
+let can_mapping = CanMapping {
+    point_id: 2001,
+    can_id: 0x123,
+    is_extended: false,
+    byte_position: 0,
+    data_length: 8,
+    byte_order: "big_endian".to_string(),
+    polling_interval: Some(100),
+};
+
+// 统一处理
+let mappings: Vec<Box<dyn ProtocolMapping>> = vec![
+    Box::new(modbus_mapping),
+    Box::new(can_mapping),
+];
+
+for mapping in mappings {
+    println!("Protocol: {}", mapping.protocol_type());
+    println!("ID: {}", mapping.mapping_id());
+    mapping.validate()?;
+}
+```
+
+#### 编译状态 - Compilation Status
+
+✅ 编译成功，无错误无警告
+
+#### 问题解决状态 - Problem Resolution Status
+
+🎯 **完全解决** - ProtocolMapping架构重构成功，实现了真正的多协议支持和类型安全
+
+---

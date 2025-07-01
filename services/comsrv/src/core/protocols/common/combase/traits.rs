@@ -17,8 +17,6 @@ use crate::utils::Result;
 /// implementations must provide.
 #[async_trait]
 pub trait ComBase: Send + Sync + std::fmt::Debug {
-    /// Downcast helper for dynamic protocol access
-    fn as_any(&self) -> &dyn std::any::Any;
 
     /// Get the human-readable name of the communication service
     fn name(&self) -> &str;
@@ -264,9 +262,6 @@ mod tests {
 
     #[async_trait]
     impl ComBase for MockComBase {
-        fn as_any(&self) -> &dyn std::any::Any {
-            self
-        }
 
         fn name(&self) -> &str {
             &self.name

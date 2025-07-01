@@ -1,579 +1,310 @@
-# Energy Management System (EMS)
+# VoltageEMS - 智能能源管理系统
 
-The Energy Management System is a collection of microservices used to monitor, control and optimize energy infrastructure.
+VoltageEMS 是一个基于微服务架构的工业物联网能源管理系统，专为电力监控、能源优化和设备管理而设计。系统采用 Rust 构建核心服务，提供高性能、可靠的实时数据采集和处理能力。
 
-## Service Components
+## 系统特性
 
-- **Comsrv**: communication service that collects real-time data from devices
-- **Hissrv**: historical data service that writes real-time values to a time series database
-- **Modsrv**: model service executing real-time calculations and control logic
-- **Netsrv**: network service that forwards data to external systems via multiple protocols
-- **Alarmsrv**: intelligent alarm management service with classification, Redis storage, and cloud integration
-- **Frontend Configuration Platform**: Vue.js based web application for editing service configuration
-- **API Service**: backend interface used by the frontend to read and write configuration
-- **Grafana**: visualization platform embedded in the frontend
+- 🚀 **高性能**: 基于 Rust 的异步架构，支持高并发数据处理
+- 🔌 **多协议支持**: Modbus TCP/RTU、CAN、IEC60870、GPIO 等工业协议
+- 📊 **实时监控**: 毫秒级数据采集和处理能力
+- 🌐 **云端集成**: 支持 AWS IoT Core 和阿里云 IoT 平台
+- 📈 **数据分析**: 内置时序数据库和可视化平台
+- 🔔 **智能告警**: 多级告警分类和自动处理机制
+- 🛡️ **高可靠性**: 分布式架构，支持故障转移和自动恢复
 
-### Comsrv Highlights
+## 核心服务
 
-- Supports Modbus TCP/RTU, CAN and custom protocols
-- Asynchronous architecture for high concurrency and scalability
-- REST API for channel management and status monitoring
-- YAML/CSV based configuration for channels and point tables
-- Integrated Prometheus metrics and structured logging
+- **comsrv**: 工业通信服务，支持多种工业协议的数据采集
+- **apigateway**: API 网关服务，提供统一的 REST API 接口
+- **modsrv**: 模型计算服务，执行实时计算和控制逻辑
+- **hissrv**: 历史数据服务，负责时序数据的存储和查询
+- **netsrv**: 网络转发服务，支持 MQTT/HTTP 协议的数据分发
+- **alarmsrv**: 智能告警服务，提供告警分类、存储和推送功能
 
-### Alarmsrv Highlights
 
-- **Intelligent Classification**: Automatic alarm categorization (Environmental, Power, Communication, System, Security)
-- **Redis Storage**: Multi-dimensional indexing for fast queries and persistent storage
-- **Cloud Integration**: Seamless integration with netsrv for multi-cloud platform push
-- **Auto Processing**: Real-time monitoring, escalation, and cleanup mechanisms
-- **RESTful API**: Complete alarm lifecycle management through REST API
-- **High Performance**: > 1000 alarms/second processing with < 10ms response time
+## 系统架构
 
-## System Architecture
-
-The services communicate via Redis as shown below:
-
-```mermaid
-graph TD
-    subgraph "Devices"
-        ModbusDev["MODBUS"]
-        CANDev["CAN BUS"] 
-        IECDev["IEC 60870"]
-    end
-  
-    subgraph "Communication Layer"
-        Comsrv["COMSRV"]
-    end
-  
-    subgraph "Message Broker"
-        Redis[("REDIS")]
-    end
-  
-    subgraph "Processing Services"
-        Modsrv["MODSRV"]
-        Hissrv["HISSRV"]
-        Netsrv["NETSRV"]
-        Alarmsrv["🚨 ALARMSRV"]
-    end
-  
-    subgraph "Storage Layer"
-        InfluxDB[("INFLUXDB")]
-    end
-  
-    subgraph "Application Layer"
-        API["API SERVICE"]
-        Frontend["FRONTEND"]
-    end
-  
-    subgraph "Visualization"
-        Grafana["GRAFANA"]
-    end
-  
-    subgraph "External Systems"
-        ExternalSys["EXTERNAL SYSTEMS"]
-    end
-  
-    %% Vertical data flow
-    ModbusDev --> Comsrv
-    CANDev --> Comsrv
-    IECDev --> Comsrv
-  
-    Comsrv --> Redis
-    Redis --> Modsrv
-    Redis --> Hissrv
-    Redis --> Netsrv
-    Redis --> Alarmsrv
-  
-    Hissrv --> InfluxDB
-    Modsrv --> Redis
-  
-    Redis --> API
-    API --> Frontend
-    Frontend --> Grafana
-    Grafana --> InfluxDB
-  
-    Netsrv --> ExternalSys
+```
+┌─────────────────┐     ┌─────────────────┐     ┌─────────────────┐
+│   工业设备       │     │   前端应用       │     │   第三方系统     │
+│  Modbus/CAN/... │     │   Vue.js        │     │  AWS/阿里云     │
+└────────┬────────┘     └────────┬────────┘     └────────┬────────┘
+         │                       │                        │
+         ▼                       ▼                        ▼
+┌─────────────────┐     ┌─────────────────┐     ┌─────────────────┐
+│    comsrv       │     │   apigateway    │     │    netsrv       │
+│  通信服务        │◄────│   API网关        │────►│   网络服务       │
+└────────┬────────┘     └─────────────────┘     └────────┬────────┘
+         │                       │                        │
+         ▼                       ▼                        ▼
+    ┌────────────────────────────────────────────────────────┐
+    │                        Redis                           │
+    │                    实时数据总线                          │
+    └────────────────────────────────────────────────────────┘
+         │                       │                        │
+         ▼                       ▼                        ▼
+┌─────────────────┐     ┌─────────────────┐     ┌─────────────────┐
+│    modsrv       │     │    hissrv       │     │   alarmsrv      │
+│   模型服务       │     │   历史服务       │     │   告警服务       │
+└─────────────────┘     └────────┬────────┘     └─────────────────┘
+                                 │
+                                 ▼
+                        ┌─────────────────┐
+                        │   InfluxDB      │
+                        │  时序数据库      │
+                        └─────────────────┘
 ```
 
-## Data Flow
 
-The complete data processing flow through the system is illustrated below:
+## 技术栈
 
-```mermaid
-sequenceDiagram
-    participant User as USER
-    participant API as API
-    participant Redis as REDIS
-    participant Comsrv as COMSRV
-    participant Modsrv as MODSRV
-    participant Hissrv as HISSRV
-    participant Netsrv as NETSRV
-    participant Device as DEVICE
-    participant DB as INFLUXDB
+### 后端服务
+- **语言**: Rust 1.70+
+- **框架**: Actix Web (API Gateway), Tokio (异步运行时)
+- **通信**: Redis (消息总线), gRPC (服务间通信)
+- **存储**: Redis (实时数据), InfluxDB (时序数据)
 
-    Note over User,DB: VoltageEMS Data Flow
+### 前端应用
+- **框架**: Vue.js 3 + Element Plus
+- **可视化**: Grafana (嵌入式)
+- **构建工具**: Vite
 
-    %% Configuration Phase
-    User->>API: Configure Channels
-    API->>Redis: Store Config
-    API-->>User: Config Saved
+### 基础设施
+- **容器化**: Docker, Docker Compose
+- **监控**: Prometheus + Grafana
+- **日志**: 结构化日志 (JSON)
 
-    %% Data Collection Phase
-    Comsrv->>Redis: Get Config
-    Comsrv->>Device: Connect
-    loop Data Collection
-        Device->>Comsrv: Send Data
-        Comsrv->>Redis: Publish Data
-        Note over Comsrv,Redis: Real-time data
-    end
+## 快速开始
 
-    %% Model Processing Phase
-    Modsrv->>Redis: Get Raw Data
-    loop Model Execution
-        Redis->>Modsrv: New Data
-        Modsrv->>Modsrv: Process
-        Modsrv->>Redis: Publish Results
-        Note over Modsrv,Redis: Processed data
-    end
+### 环境要求
 
-    %% Historical Storage Phase
-    Hissrv->>Redis: Get Data
-    loop Storage
-        Redis->>Hissrv: Data Update
-        Hissrv->>DB: Store Data
-        Note over Hissrv,DB: Time series storage
-    end
+- Rust 1.70+
+- Redis 6.0+
+- InfluxDB 2.0+ (可选)
+- Node.js 16+ (前端)
+- Docker & Docker Compose (推荐)
 
-    %% Network Distribution Phase
-    Netsrv->>Redis: Get Results
-    loop Distribution
-        Redis->>Netsrv: Results
-        Netsrv->>Netsrv: Format
-        Netsrv->>External: Send Data
-        Note over Netsrv,External: External forwarding
-    end
-
-    %% Monitoring & Visualization
-    User->>API: Request Data
-    API->>DB: Query
-    DB-->>API: Data
-    API-->>User: Display
-```
-
-## Technology Stack
-
-- **Comsrv**: Rust
-- **Hissrv**: Rust
-- **Modsrv**: Rust
-- **Netsrv**: Rust
-- **Alarmsrv**: Rust
-- **Frontend**: Vue.js with Element Plus
-- **API Service**: Node.js with Express
-- **Storage**: Redis and InfluxDB
-- **Visualization**: Grafana
-- **Containerization**: Docker and Docker Compose
-
-## Quick Start
-
-### Prerequisites
-
-- Docker and Docker Compose
-- Rust 1.67+ (for development)
-- Rust toolchain (for Comsrv development)
-- Node.js 16+ (for frontend and API development)
-
-### Start with Docker Compose
+### 使用 Docker Compose 启动
 
 ```bash
-# start all services
+# 克隆仓库
+git clone https://github.com/your-org/VoltageEMS.git
+cd VoltageEMS
+
+# 启动所有服务
 docker-compose up -d
 
-# view logs
+# 查看日志
 docker-compose logs -f
 
-# stop all services
+# 停止服务
 docker-compose down
 ```
 
-### Accessing Services
+### 本地开发启动
 
-- **Frontend**: http://localhost:8080
-- **Grafana**: http://localhost:8080/grafana or http://localhost:3000
-- **InfluxDB UI**: http://localhost:8086
-
-### Development Setup
-
-Each service has its own README with detailed instructions.
-
-#### Frontend Development
-
+1. **启动 Redis**
 ```bash
-cd frontend
-npm install
-npm run serve
+docker run -d -p 6379:6379 redis:latest
 ```
 
-#### API Development
-
+2. **启动后端服务**
 ```bash
-cd api
+# 构建所有服务
+cargo build --release
+
+# 启动通信服务
+cd services/comsrv
+cargo run
+
+# 启动 API 网关 (新终端)
+cd services/apigateway
+cargo run
+
+# 启动其他服务...
+```
+
+3. **启动前端**
+```bash
+cd frontend
 npm install
 npm run dev
 ```
 
-## Configuration
+### 访问地址
 
-All configuration files live under the `config` directory grouped by service:
+- **前端应用**: http://localhost:5173
+- **API 网关**: http://localhost:8080
+- **Grafana**: http://localhost:3000 (admin/admin)
+- **InfluxDB**: http://localhost:8086
 
-- **Comsrv**: `config/comsrv/`
-- **Hissrv**: `config/hissrv/`
-- **Modsrv**: `config/modsrv/modsrv.toml`
-- **Netsrv**: `config/netsrv/netsrv.json`
-- **Mosquitto**: `config/mosquitto/mosquitto.conf`
-- **Certificates**: `config/certs/`
+## 配置说明
 
-Centralizing configuration in this way keeps the system organized and easy to maintain.
+每个服务都有独立的 YAML 配置文件：
 
-### Configuration Platform
+### 通信服务配置 (comsrv.yaml)
+```yaml
+redis:
+  url: "redis://127.0.0.1:6379"
 
-The web based platform offers:
+channels:
+  - id: 1
+    name: "电表通道"
+    protocol: modbus_tcp
+    enabled: true
+    parameters:
+      modbus_tcp:
+        host: "192.168.1.100"
+        port: 502
+        slave_id: 1
+        timeout: 5000
+```
 
-1. **Intuitive UI** powered by Element Plus
-2. **Live editing** with save support
-3. **Validation** of configuration files
-4. **Visualization** via the embedded Grafana
+### API 网关配置 (apigateway.yaml)
+```yaml
+server:
+  host: "0.0.0.0"
+  port: 8080
 
-## License
+redis:
+  url: "redis://127.0.0.1:6379"
 
-[Your license]
+services:
+  comsrv_prefix: "/api/v1/comsrv"
+  modsrv_prefix: "/api/v1/modsrv"
+  # ...
+```
 
-# Communication Service Test Tools
+### 点表配置 (CSV 格式)
 
-These tools assist with developing and testing the Comsrv service.
+系统支持通过 CSV 文件配置点表：
 
-## Tool List
+**telemetry.csv** (遥测点)
+```csv
+point_id,name,address,data_type,scale,offset,unit
+1,电压A相,30001,float32,0.1,0,V
+2,电流A相,30003,float32,0.01,0,A
+```
 
-- **test_api.py** – tests the Comsrv REST API
-- **load_test.py** – performs load testing
-- **modbus_simulator.py** – Modbus TCP simulator
-- **opcua_simulator.py** – OPC UA simulator
-- **generate_config.py** – generates channel and point configurations
+## API 文档
 
-## Installing Dependencies
+API 网关提供统一的 REST 接口，详细文档请参考 [API Gateway README](services/apigateway/README.md)
+
+### 主要接口
+
+- `GET /api/v1/health` - 健康检查
+- `GET /api/v1/comsrv/channels` - 获取通道列表
+- `GET /api/v1/comsrv/points/{device_id}` - 获取设备点位
+- `POST /api/v1/comsrv/command` - 发送控制命令
+- `GET /api/v1/hissrv/query` - 查询历史数据
+- `GET /api/v1/alarmsrv/alarms` - 获取告警列表
+
+## 开发指南
+
+### 分支管理
+
+- `main` - 主分支，稳定版本
+- `develop` - 开发分支
+- `feature/*` - 功能分支
+- `hotfix/*` - 紧急修复分支
+
+### 代码规范
 
 ```bash
-# common
-pip install requests
+# 格式化代码
+cargo fmt
 
-# Modbus simulator
-pip install pymodbus
+# 代码检查
+cargo clippy -- -D warnings
 
-# OPC UA simulator
-pip install opcua
-```
-
-## Usage
-
-### API Test Script (test_api.py)
-
-```bash
-python test_api.py
-```
-
-### Load Test Script (load_test.py)
-
-```bash
-# default
-python load_test.py
-
-# custom parameters
-python load_test.py --url http://localhost:8080/api --threads 20 --requests 2000 --read-ratio 70
-```
-
-### Modbus Simulator (modbus_simulator.py)
-
-```bash
-# default
-python modbus_simulator.py
-
-# custom parameters
-python modbus_simulator.py --host 0.0.0.0 --port 502 --slave-id 1 --update-interval 2.0
-```
-
-### OPC UA Simulator (opcua_simulator.py)
-
-```bash
-# default
-python opcua_simulator.py
-
-# custom parameters
-python opcua_simulator.py --host 0.0.0.0 --port 4840 --update-interval 2.0
-```
-
-### Configuration Generator (generate_config.py)
-
-```bash
-# default
-python generate_config.py
-
-# custom parameters
-python generate_config.py --output ./my_config --modbus 3 --opcua 2 --points 30
-```
-
-## Typical Test Flow
-
-1. Generate test configuration:
-   ```bash
-   python generate_config.py --output ./test_config
-   ```
-2. Start protocol simulators:
-   ```bash
-   python modbus_simulator.py --port 502
-   python opcua_simulator.py --port 4840
-   ```
-3. Launch Comsrv pointing to the config directory:
-   ```bash
-   cargo run --bin comsrv -- --config-dir ./test_tools/test_config
-   ```
-4. Run the API tests:
-   ```bash
-   python test_api.py
-   ```
-5. Execute the load test:
-   ```bash
-   python load_test.py --threads 20 --requests 5000
-   ```
-
-## Notes
-
-- Comsrv listens on port 8080 by default.
-- The Modbus simulator uses port 502 which may require elevated privileges.
-- Adjust configuration for production deployments.
-- Monitor system resources during load tests to avoid overload.
-
-# Voltage Modbus
-
-A high-performance Modbus TCP/RTU/ASCII implementation for industrial automation and IoT applications, written in Rust.
-
-## Features
-
-- **Function Code Naming**: All Modbus functions use standard function codes (e.g., `read_01`, `write_06`)
-- **Callback-Based Logging**: Flexible logging system with raw packet and interpreted modes
-- **High Performance**: Asynchronous implementation with connection pooling
-- **Protocol Support**: TCP, RTU, and ASCII variants
-- **Error Handling**: Comprehensive error types with timeout and retry logic
-- **Register Bank**: Built-in register simulation for testing
-- **Connection Management**: Automatic reconnection and connection pooling
-
-## Quick Start
-
-Add this to your `Cargo.toml`:
-
-```toml
-[dependencies]
-voltage_modbus = "0.3.0"
-```
-
-### TCP Client Example
-
-```rust
-use voltage_modbus::{ModbusTcpClient, ModbusClient, CallbackLogger, LoggingMode};
-use std::time::Duration;
-
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Create a TCP client with logging
-    let logger = CallbackLogger::console(LoggingMode::Interpreted);
-    let mut client = ModbusTcpClient::from_address_with_logging(
-        "127.0.0.1:502", 
-        Duration::from_secs(5),
-        logger
-    ).await?;
-    
-    // Read holding registers using function code naming
-    let registers = client.read_03(1, 0, 10).await?;
-    println!("Registers: {:?}", registers);
-    
-    // Write single register
-    client.write_06(1, 0, 0x1234).await?;
-    
-    Ok(())
-}
-```
-
-### RTU Client Example
-
-```rust
-use voltage_modbus::{ModbusRtuClient, ModbusClient};
-
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let mut client = ModbusRtuClient::new("/dev/ttyUSB0", 9600)?;
-    
-    // Read coils using function code naming
-    let coils = client.read_01(1, 0, 8).await?;
-    println!("Coils: {:?}", coils);
-    
-    Ok(())
-}
-```
-
-### Server Example
-
-```rust
-use voltage_modbus::{ModbusTcpServer, RegisterBank};
-
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let mut register_bank = RegisterBank::new();
-    
-    // Initialize with some data
-    register_bank.write_06(0, 0x1234)?;
-    register_bank.write_05(0, true)?;
-    
-    let server = ModbusTcpServer::new("127.0.0.1:5020", register_bank).await?;
-    println!("Modbus server running on 127.0.0.1:5020");
-    
-    // Run server
-    server.run().await?;
-    
-    Ok(())
-}
-```
-
-## Function Code Naming
-
-All Modbus functions use standard function codes for clarity:
-
-| Function Code | Method Name | Description |
-|---------------|-------------|-------------|
-| 0x01 | `read_01` | Read Coils |
-| 0x02 | `read_02` | Read Discrete Inputs |
-| 0x03 | `read_03` | Read Holding Registers |
-| 0x04 | `read_04` | Read Input Registers |
-| 0x05 | `write_05` | Write Single Coil |
-| 0x06 | `write_06` | Write Single Register |
-| 0x0F | `write_0f` | Write Multiple Coils |
-| 0x10 | `write_10` | Write Multiple Registers |
-
-## Logging System
-
-The library provides a flexible callback-based logging system with multiple modes:
-
-### Logging Modes
-
-- **`Interpreted`**: Human-readable function names and data interpretation
-- **`Raw`**: Complete hex packet data for protocol analysis
-- **`Both`**: Interpreted at INFO level, raw at DEBUG level
-- **`Disabled`**: No packet logging
-
-### Custom Logger Example
-
-```rust
-use voltage_modbus::{CallbackLogger, LoggingMode, LogLevel};
-
-// Create a custom logger
-let logger = CallbackLogger::new(
-    LoggingMode::Both,
-    |level, message| {
-        println!("[{}] {}", level, message);
-    }
-);
-
-// Use with client
-let mut client = ModbusTcpClient::from_address_with_logging(
-    "127.0.0.1:502",
-    Duration::from_secs(5),
-    logger
-).await?;
-```
-
-### Logging Output Examples
-
-**Interpreted Mode:**
-```
-[INFO] Modbus Request -> Slave: 1, Function: Read Holding Registers (0x03), Address: 0, Quantity: 5
-[INFO] Modbus Response -> Slave: 1, Function: Read Holding Registers (0x03), Data: [0x1234, 0x5678, 0x9ABC, 0xDEF0, 0x1111]
-```
-
-**Raw Mode:**
-```
-[DEBUG] Modbus Request -> Raw: 00 01 00 00 00 06 01 03 00 00 00 05
-[DEBUG] Modbus Response -> Raw: 00 01 00 00 00 0D 01 03 0A 12 34 56 78 9A BC DE F0 11 11
-```
-
-## Error Handling
-
-The library provides comprehensive error handling:
-
-```rust
-use voltage_modbus::{ModbusError, ModbusClient};
-
-match client.read_03(1, 0, 10).await {
-    Ok(registers) => println!("Values: {:?}", registers),
-    Err(ModbusError::Timeout { operation, timeout_ms }) => {
-        println!("Operation {} timed out after {}ms", operation, timeout_ms);
-    },
-    Err(ModbusError::InvalidResponse { expected, received }) => {
-        println!("Invalid response: expected {}, got {}", expected, received);
-    },
-    Err(e) => println!("Other error: {}", e),
-}
-```
-
-## Performance
-
-- **Async/Await**: Non-blocking I/O for high concurrency
-- **Connection Pooling**: Efficient connection reuse
-- **Zero-Copy**: Minimal memory allocations
-- **Configurable Timeouts**: Fine-grained timeout control
-
-## Examples
-
-The `src/bin/` directory contains various examples:
-
-- `demo.rs` - Basic client usage
-- `server_demo.rs` - TCP server implementation
-- `callback_logging_demo.rs` - Logging system demonstration
-- `full_function_test.rs` - All function codes testing
-- `performance_test.rs` - Performance benchmarking
-
-Run examples with:
-```bash
-cargo run --bin demo
-cargo run --bin callback_logging_demo
-```
-
-## Testing
-
-```bash
-# Run all tests
+# 运行测试
 cargo test
-
-# Run with logging
-RUST_LOG=debug cargo test
-
-# Run specific test
-cargo test test_tcp_client
 ```
 
-## License
+### 提交规范
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+使用语义化提交信息：
+- `feat`: 新功能
+- `fix`: 修复问题
+- `docs`: 文档更新
+- `style`: 代码格式调整
+- `refactor`: 代码重构
+- `test`: 测试相关
+- `chore`: 构建或辅助工具的变动
 
-## Contributing
+## 性能优化
 
-1. Fork the repository
-2. Create a feature branch
-3. Add tests for new functionality
-4. Ensure all tests pass
-5. Submit a pull request
+- **异步处理**: 基于 Tokio 的异步 I/O
+- **连接池**: Redis 和数据库连接池
+- **批量处理**: 数据批量写入和查询
+- **缓存策略**: 多级缓存机制
 
-## Changelog
+## 安全特性
 
-See [CHANGELOG.md](CHANGELOG.md) for detailed release notes.
+- **认证授权**: JWT Token 认证
+- **数据加密**: TLS/SSL 加密传输
+- **访问控制**: 基于角色的访问控制
+- **审计日志**: 完整的操作日志记录
+
+## 监控运维
+
+### 日志管理
+
+```bash
+# 查看服务日志
+RUST_LOG=info cargo run
+
+# 调试模式
+RUST_LOG=debug cargo run
+
+# 查看特定模块日志
+RUST_LOG=comsrv=debug cargo run
+```
+
+### 性能监控
+
+- Prometheus 指标收集
+- Grafana 可视化监控
+- 实时告警通知
+
+## 常见问题
+
+### Q: 如何添加新的工业协议？
+
+A: 在 `comsrv/src/core/protocols/` 目录下实现新的协议模块，并注册到协议工厂中。
+
+### Q: 如何配置高可用部署？
+
+A: 使用 Redis Sentinel 或 Cluster 模式，配合服务的多实例部署实现高可用。
+
+### Q: 数据存储容量规划？
+
+A: InfluxDB 存储容量 = 点位数 × 采样频率 × 数据保留时间 × 单点数据大小
+
+## 贡献指南
+
+欢迎贡献代码！请遵循以下步骤：
+
+1. Fork 项目
+2. 创建功能分支 (`git checkout -b feature/amazing-feature`)
+3. 提交更改 (`git commit -m 'feat: add amazing feature'`)
+4. 推送到分支 (`git push origin feature/amazing-feature`)
+5. 创建 Pull Request
+
+## 技术支持
+
+- 文档：[https://docs.voltageems.io](https://docs.voltageems.io)
+- 问题反馈：[GitHub Issues](https://github.com/your-org/VoltageEMS/issues)
+- 邮件：support@voltageems.io
+
+## 许可证
+
+本项目采用 [MIT 许可证](LICENSE)
+
+## 致谢
+
+感谢所有贡献者和开源社区的支持！
 
 ---
 
-Made with ❤️ by the VoltageEMS Team
+**VoltageEMS** - 让能源管理更智能、更高效 🚀

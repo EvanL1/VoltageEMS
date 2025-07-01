@@ -14,11 +14,13 @@ pub mod stats;
 pub mod polling;
 pub mod command_manager;
 pub mod point_manager;
-pub mod forward_calc;
 pub mod protocol_factory;
 
 // Implementation modules
 pub mod impl_base;
+pub mod transport_bridge;
+pub mod enhanced_transport_bridge;
+pub mod monitoring;
 
 // Re-export commonly used types
 pub use data_types::*;
@@ -30,3 +32,6 @@ pub use command_manager::UniversalCommandManager;
 pub use point_manager::{UniversalPointManager, UniversalPointConfig, PointManagerStats};
 pub use protocol_factory::ProtocolFactory;
 pub use impl_base::ComBaseImpl;
+pub use transport_bridge::{UniversalTransportBridge, ProtocolBridgeConfig, BridgeStats};
+pub use enhanced_transport_bridge::{EnhancedTransportBridge, ConnectionPoolConfig, RetryConfig, RequestPriority};
+pub use monitoring::{BasicMonitoring, HealthChecker, HealthLevel, PerformanceMetrics, AlertManager, AlertRule};

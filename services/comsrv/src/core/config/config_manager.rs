@@ -20,6 +20,12 @@ use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::collections::HashMap;
 
+// Import the unified ChannelConfig only
+use super::types::{
+    ChannelConfig as TypesChannelConfig,
+    CombinedPoint as TypesCombinedPoint,
+};
+
 /// Application configuration using Figment
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppConfig {
@@ -29,7 +35,7 @@ pub struct AppConfig {
     
     /// Communication channels
     #[serde(default)]
-    pub channels: Vec<ChannelConfig>,
+    pub channels: Vec<TypesChannelConfig>,
     
     /// Default path configuration
     #[serde(default)]
@@ -87,8 +93,8 @@ pub struct RedisConfig {
     pub url: String,
     
     /// Database number
-    #[serde(default)]
-    pub database: u8,
+    #[serde(default, alias = "database")]
+    pub db: u8,
     
     /// Connection timeout in milliseconds
     #[serde(default = "default_redis_timeout")]
@@ -177,6 +183,62 @@ pub struct ChannelConfig {
     /// Combined points (four telemetry + protocol mapping)
     #[serde(skip)]
     pub combined_points: Vec<CombinedPoint>,
+}
+
+impl ChannelConfig {
+    /// Convert to the types ChannelConfig with combined_points populated
+    pub fn to_types_channel_config(&self) -> TypesChannelConfig {
+        // Convert the parameters from figment Map to HashMap
+        let mut parameters = HashMap::new();
+        for (key, value) in &self.parameters {
+            if let Ok(yaml_value) = serde_yaml::to_value(value) {
+                parameters.insert(key.clone(), yaml_value);
+            }
+        }
+        
+        // Convert combined_points to the types version
+        let types_combined_points: Vec<TypesCombinedPoint> = self.combined_points.iter().map(|cp| {
+            // Extract parameters from the mapping
+            let mut protocol_params = HashMap::new();
+            protocol_params.insert("address".to_string(), cp.mapping.address.to_string());
+            protocol_params.insert("data_type".to_string(), cp.mapping.data_type.clone());
+            protocol_params.insert("data_format".to_string(), cp.mapping.data_format.clone());
+            protocol_params.insert("number_of_bytes".to_string(), cp.mapping.number_of_bytes.to_string());
+            if let Some(bit_loc) = cp.mapping.bit_location {
+                protocol_params.insert("bit_location".to_string(), bit_loc.to_string());
+            }
+            
+            TypesCombinedPoint {
+                point_id: cp.telemetry.point_id,
+                signal_name: cp.telemetry.signal_name.clone(),
+                chinese_name: cp.telemetry.chinese_name.clone(),
+                telemetry_type: "YC".to_string(), // Default type, would need proper mapping
+                data_type: cp.mapping.data_type.clone(),
+                protocol_params,
+                scaling: if cp.telemetry.scale.is_some() || cp.telemetry.offset.is_some() {
+                    Some(super::types::channel::ScalingInfo {
+                        scale: cp.telemetry.scale.unwrap_or(1.0),
+                        offset: cp.telemetry.offset.unwrap_or(0.0),
+                        unit: cp.telemetry.unit.clone(),
+                    })
+                } else {
+                    None
+                },
+            }
+        }).collect();
+        
+        TypesChannelConfig {
+            id: self.id,
+            name: self.name.clone(),
+            description: self.description.clone(),
+            protocol: self.protocol.clone(),
+            parameters,
+            logging: self.logging.clone(),
+            table_config: None, // TODO: convert if needed
+            points: Vec::new(), // Legacy field
+            combined_points: types_combined_points,
+        }
+    }
 }
 
 /// Separated table configuration
@@ -276,7 +338,7 @@ fn default_api_version() -> String {
 }
 
 fn default_redis_url() -> String {
-    "redis://127.0.0.1:6379/1".to_string()
+    "redis://127.0.0.1:6379/0".to_string()
 }
 
 fn default_redis_timeout() -> u64 {
@@ -387,31 +449,31 @@ impl DataTypeRule {
         vec![
             DataTypeRule {
                 data_type: "bool".to_string(),
-                valid_formats: vec!["ABCD".to_string()],
+                valid_formats: vec!["BIT".to_string()],  // bool类型使用BIT格式
                 expected_bytes: 1,
                 max_bit_location: 16,
             },
             DataTypeRule {
                 data_type: "uint8".to_string(),
-                valid_formats: vec!["ABCD".to_string()],
+                valid_formats: vec!["RAW".to_string()],  // 单字节数据使用RAW格式
                 expected_bytes: 1,
                 max_bit_location: 8,
             },
             DataTypeRule {
                 data_type: "int8".to_string(),
-                valid_formats: vec!["ABCD".to_string()],
+                valid_formats: vec!["RAW".to_string()],  // 单字节数据使用RAW格式
                 expected_bytes: 1,
                 max_bit_location: 8,
             },
             DataTypeRule {
                 data_type: "uint16".to_string(),
-                valid_formats: vec!["ABCD".to_string(), "CDBA".to_string()],
+                valid_formats: vec!["AB".to_string(), "BA".to_string()],  // 2字节格式
                 expected_bytes: 2,
                 max_bit_location: 16,
             },
             DataTypeRule {
                 data_type: "int16".to_string(),
-                valid_formats: vec!["ABCD".to_string(), "CDBA".to_string()],
+                valid_formats: vec!["AB".to_string(), "BA".to_string()],  // 2字节格式
                 expected_bytes: 2,
                 max_bit_location: 16,
             },
@@ -435,7 +497,7 @@ impl DataTypeRule {
             },
             DataTypeRule {
                 data_type: "float64".to_string(),
-                valid_formats: vec!["ABCD".to_string(), "CDBA".to_string(), "BADC".to_string(), "DCBA".to_string()],
+                valid_formats: vec!["ABCDEFGH".to_string(), "GHEFCDAB".to_string(), "CDABEFGH".to_string(), "EFGHCDAB".to_string()],  // 8字节格式
                 expected_bytes: 8,
                 max_bit_location: 16,
             },
@@ -642,12 +704,19 @@ impl PointMapping for ModbusPointMapping {
             ));
         }
         
-        // Validate data format
-        match self.data_format.as_str() {
-            "ABCD" | "CDBA" | "BADC" | "DCBA" => {},
-            _ => return Err(ComSrvError::ConfigError(
-                format!("Invalid data format: {}. Must be ABCD, CDBA, BADC, or DCBA", self.data_format)
-            )),
+        // Validate data format using the DataTypeRule system
+        let rules = DataTypeRule::get_validation_rules();
+        let rule = rules.iter()
+            .find(|r| r.data_type == self.data_type)
+            .ok_or_else(|| ComSrvError::ConfigError(
+                format!("Unsupported data type: {}", self.data_type)
+            ))?;
+        
+        if !rule.valid_formats.contains(&self.data_format) {
+            return Err(ComSrvError::ConfigError(
+                format!("Invalid data format '{}' for data type '{}'. Valid formats: {:?}", 
+                    self.data_format, self.data_type, rule.valid_formats)
+            ));
         }
         
         // Validate bit location if specified
@@ -1150,7 +1219,7 @@ impl Default for RedisConfig {
         Self {
             enabled: default_true(),
             url: default_redis_url(),
-            database: 1,
+            db: 0,
             timeout_ms: default_redis_timeout(),
             max_connections: None,
             max_retries: default_redis_retries(),
@@ -1202,8 +1271,8 @@ impl RedisConfig {
     }
     
     /// Get database number field (alias for backward compatibility)
-    pub fn db(&self) -> u8 {
-        self.database
+    pub fn database(&self) -> u8 {
+        self.db
     }
 }
 
@@ -1584,25 +1653,93 @@ impl ConfigManager {
         Ok(points)
     }
     
-    /// Parse protocol mapping CSV file
+    /// Parse protocol mapping CSV file with updated field structure
     fn parse_protocol_mapping_csv(csv_path: &Path) -> Result<Vec<ProtocolMapping>> {
         let mut reader = csv::Reader::from_path(csv_path)
             .map_err(|e| ComSrvError::ConfigError(format!("Failed to open CSV file {}: {}", csv_path.display(), e)))?;
         
         let mut mappings = Vec::new();
         
+        // Get headers to determine the CSV format
+        let headers = reader.headers()
+            .map_err(|e| ComSrvError::ConfigError(format!("Failed to read headers from {}: {}", csv_path.display(), e)))?;
+        
+        // Check if this is the new format (without polling_interval)
+        let has_register_address = headers.iter().any(|h| h == "register_address");
+        let has_byte_order = headers.iter().any(|h| h == "byte_order");
+        let has_bit_position = headers.iter().any(|h| h == "bit_position");
+        let has_register_count = headers.iter().any(|h| h == "register_count");
+        let has_function_code = headers.iter().any(|h| h == "function_code");
+        let has_slave_id = headers.iter().any(|h| h == "slave_id");
+        
         for (row_idx, result) in reader.records().enumerate() {
             let record = result
                 .map_err(|e| ComSrvError::ConfigError(format!("CSV parse error at row {}: {}", row_idx + 2, e)))?;
             
-            if record.len() < 6 {
-                tracing::warn!("Skipping incomplete row {} in {} (need at least 6 columns)", row_idx + 2, csv_path.display());
+            if record.len() < 4 {
+                tracing::warn!("Skipping incomplete row {} in {} (need at least 4 columns)", row_idx + 2, csv_path.display());
                 continue;
             }
             
-            // Parse with better error handling
+            // Parse point_id (always first column)
             let point_id: u32 = record[0].parse()
                 .map_err(|_| ComSrvError::ConfigError(format!("Invalid point_id '{}' at row {} in {}", &record[0], row_idx + 2, csv_path.display())))?;
+            
+            let mapping = if has_register_address && has_function_code && has_slave_id {
+                // New format: point_id,register_address,function_code,slave_id,data_format,byte_order,register_count
+                // OR: point_id,register_address,function_code,slave_id,data_format,bit_position (for signals/controls)
+                if record.len() < 6 {
+                    tracing::warn!("Skipping incomplete row {} in {} (new format needs at least 6 columns)", row_idx + 2, csv_path.display());
+                    continue;
+                }
+                
+                let function_code: u8 = record[2].parse()
+                    .map_err(|_| ComSrvError::ConfigError(format!("Invalid function_code '{}' at row {} in {}", &record[2], row_idx + 2, csv_path.display())))?;
+                
+                let slave_id: u8 = record[3].parse()
+                    .map_err(|_| ComSrvError::ConfigError(format!("Invalid slave_id '{}' at row {} in {}", &record[3], row_idx + 2, csv_path.display())))?;
+                
+                let (data_format, number_of_bytes, bit_location) = if has_bit_position {
+                    // Signal/Control format: uses bit_position instead of byte_order/register_count
+                    let bit_position = if record.len() > 5 && !record[5].is_empty() {
+                        Some(record[5].parse::<u8>()
+                            .map_err(|_| ComSrvError::ConfigError(format!("Invalid bit_position '{}' at row {} in {}", &record[5], row_idx + 2, csv_path.display())))?)
+                    } else {
+                        Some(0) // Default bit position
+                    };
+                    ("BOOL".to_string(), 1u8, bit_position)
+                } else if has_byte_order && has_register_count {
+                    // Telemetry/Adjustment format: uses byte_order and register_count
+                    let byte_order = record[5].to_string();
+                    let register_count: u8 = if record.len() > 6 && !record[6].is_empty() {
+                        record[6].parse()
+                            .map_err(|_| ComSrvError::ConfigError(format!("Invalid register_count '{}' at row {} in {}", &record[6], row_idx + 2, csv_path.display())))?
+                    } else {
+                        1
+                    };
+                    let number_of_bytes = register_count * 2; // Each register is 2 bytes
+                    (byte_order, number_of_bytes, None)
+                } else {
+                    // Fallback format
+                    ("ABCD".to_string(), 2u8, None)
+                };
+                
+                ProtocolMapping {
+                    point_id,
+                    signal_name: format!("point_{}", point_id), // Generate signal name if not provided
+                    address: format!("{}:{}:{}", slave_id, function_code, &record[1]), // Format: slave_id:function_code:register_address
+                    data_type: record[4].to_string(),
+                    data_format,
+                    number_of_bytes,
+                    bit_location,
+                    description: None,
+                }
+            } else {
+                // Legacy format: point_id,signal_name,address,data_type,data_format,number_of_bytes[,bit_location]
+                if record.len() < 6 {
+                    tracing::warn!("Skipping incomplete row {} in {} (legacy format needs at least 6 columns)", row_idx + 2, csv_path.display());
+                    continue;
+                }
             
             let number_of_bytes: u8 = record[5].parse()
                 .map_err(|_| ComSrvError::ConfigError(format!("Invalid number_of_bytes '{}' at row {} in {}", &record[5], row_idx + 2, csv_path.display())))?;
@@ -1614,7 +1751,7 @@ impl ConfigManager {
                 None 
             };
             
-            let mapping = ProtocolMapping {
+                ProtocolMapping {
                 point_id,
                 signal_name: record[1].to_string(),
                 address: record[2].to_string(),
@@ -1627,6 +1764,7 @@ impl ConfigManager {
                 } else { 
                     None 
                 },
+                }
             };
             
             // 🔍 Validate mapping configuration
@@ -1686,11 +1824,6 @@ impl ConfigManager {
 
         let mut mappings = Vec::new();
         for point in &channel.points {
-            let register_type = match point.data_type() {
-                "bool" => crate::core::protocols::modbus::common::ModbusRegisterType::Coil,
-                _ => crate::core::protocols::modbus::common::ModbusRegisterType::HoldingRegister,
-            };
-
             let data_type = match point.data_type() {
                 "bool" => crate::core::protocols::modbus::common::ModbusDataType::Bool,
                 "u16" => crate::core::protocols::modbus::common::ModbusDataType::UInt16,
@@ -1704,7 +1837,6 @@ impl ConfigManager {
                 name: point.signal_name().to_string(),
                 slave_id: 1, // Default slave_id, should be read from CSV in future
                 function_code,
-                register_type: function_code.register_type(),
                 address: match point.as_legacy() {
                     Some(legacy) => legacy.address.parse().unwrap_or(0),
                     None => 0, // For protocol-specific mappings, should use their specific address methods
@@ -1954,6 +2086,111 @@ impl ConfigManager {
         
         modbus_points
     }
+
+    /// Convert combined points to UniversalPointConfig format for integration with UniversalPointManager
+    pub fn get_universal_point_configs(&self, channel_id: u16) -> Vec<super::super::protocols::common::combase::point_manager::UniversalPointConfig> {
+        use super::super::protocols::common::combase::telemetry::TelemetryType;
+        
+        let combined_points = self.get_combined_points(channel_id);
+        let mut universal_configs = Vec::new();
+
+        for cp in combined_points {
+            // Determine telemetry type based on data type and function code in address
+            let telemetry_type = match cp.mapping.data_type.to_lowercase().as_str() {
+                "bool" => {
+                    // Check if this is a control point (writable) or signal point (readable only)
+                    if cp.mapping.address.contains(":5:") || cp.mapping.address.contains(":15:") {
+                        TelemetryType::Control // YK 遥控
+                    } else {
+                        TelemetryType::Signaling // YX 遥信
+                    }
+                }
+                "uint16" | "int16" | "float32" | "uint32" | "int32" => {
+                    // Check if this is an adjustment point (writable) or telemetry point (readable only)
+                    if cp.mapping.address.contains(":16:") || cp.mapping.address.contains(":6:") {
+                        TelemetryType::Setpoint // YT 遥调
+                    } else {
+                        TelemetryType::Telemetry // YC 遥测
+                    }
+                }
+                _ => TelemetryType::Telemetry, // Default to telemetry
+            };
+
+            let universal_config = super::super::protocols::common::combase::point_manager::UniversalPointConfig {
+                point_id: cp.telemetry.point_id,
+                name: Some(cp.telemetry.chinese_name.clone()),
+                description: cp.mapping.description.clone(),
+                unit: cp.telemetry.unit.clone(),
+                data_type: cp.mapping.data_type.clone(),
+                scale: cp.telemetry.scale.unwrap_or(1.0),
+                offset: cp.telemetry.offset.unwrap_or(0.0),
+                reverse: if cp.telemetry.reverse.unwrap_or(false) { 1 } else { 0 },
+                telemetry_type: telemetry_type.clone(),
+                enabled: true,
+                readable: true,
+                writable: matches!(telemetry_type, TelemetryType::Control | TelemetryType::Setpoint),
+            };
+
+            universal_configs.push(universal_config);
+        }
+
+        universal_configs
+    }
+
+    /// Get protocol mapping configurations for Modbus integration
+    pub fn get_modbus_protocol_mappings(&self, channel_id: u16) -> Vec<ModbusProtocolMapping> {
+        let combined_points = self.get_combined_points(channel_id);
+        let mut protocol_mappings = Vec::new();
+
+        for cp in combined_points {
+            // Parse the address format: slave_id:function_code:register_address
+            // The parse_protocol_mapping_csv method formats it this way for new CSV files
+            let address_parts: Vec<&str> = cp.mapping.address.split(':').collect();
+            if address_parts.len() != 3 {
+                tracing::warn!("Invalid address format for point {}: {}", cp.telemetry.point_id, cp.mapping.address);
+                continue;
+            }
+
+            let slave_id = match address_parts[0].parse::<u8>() {
+                Ok(id) => id,
+                Err(_) => {
+                    tracing::warn!("Invalid slave_id for point {}: {}", cp.telemetry.point_id, address_parts[0]);
+                    continue;
+                }
+            };
+
+            let function_code = match address_parts[1].parse::<u8>() {
+                Ok(fc) => fc,
+                Err(_) => {
+                    tracing::warn!("Invalid function_code for point {}: {}", cp.telemetry.point_id, address_parts[1]);
+                    continue;
+                }
+            };
+
+            let register_address = match address_parts[2].parse::<u16>() {
+                Ok(addr) => addr,
+                Err(_) => {
+                    tracing::warn!("Invalid register_address for point {}: {}", cp.telemetry.point_id, address_parts[2]);
+                    continue;
+                }
+            };
+
+            let protocol_mapping = ModbusProtocolMapping {
+                point_id: cp.telemetry.point_id,
+                slave_id,
+                function_code,
+                register_address,
+                data_type: cp.mapping.data_type.clone(),
+                byte_order: cp.mapping.data_format.clone(),
+                register_count: (cp.mapping.number_of_bytes + 1) / 2, // Convert bytes to register count
+                bit_position: cp.mapping.bit_location.unwrap_or(0) as u8,
+            };
+
+            protocol_mappings.push(protocol_mapping);
+        }
+
+        protocol_mappings
+    }
 }
 
 /// Legacy Modbus point structure for backward compatibility
@@ -1969,6 +2206,27 @@ pub struct ModbusPoint {
     pub unit: Option<String>,
     pub reverse: bool,
     pub description: Option<String>,
+}
+
+/// Modbus protocol mapping configuration for integration with protocol implementations
+#[derive(Debug, Clone)]
+pub struct ModbusProtocolMapping {
+    /// Point ID (matches UniversalPointConfig)
+    pub point_id: u32,
+    /// Modbus slave ID
+    pub slave_id: u8,
+    /// Modbus function code (1,2,3,4,5,6,15,16)
+    pub function_code: u8,
+    /// Register address
+    pub register_address: u16,
+    /// Data type (uint16, int16, float32, bool, etc.)
+    pub data_type: String,
+    /// Byte order (ABCD, DCBA, BADC, CDAB)
+    pub byte_order: String,
+    /// Register count (for multi-register values)
+    pub register_count: u8,
+    /// Bit position (for bit-level operations)
+    pub bit_position: u8,
 }
 
 #[cfg(test)]
@@ -2089,21 +2347,21 @@ channels:
         
         // Create protocol mapping CSV files
         let telemetry_mapping_csv = r#"point_id,signal_name,address,data_type,data_format,number_of_bytes,bit_location,description
-1,TANK_01_LEVEL,40001,uint16,ABCD,2,,1号罐液位传感器
-2,TANK_01_TEMP,40002,int16,ABCD,2,,1号罐温度传感器"#;
+1,TANK_01_LEVEL,40001,uint16,AB,2,,1号罐液位传感器
+2,TANK_01_TEMP,40002,int16,AB,2,,1号罐温度传感器"#;
         fs::write(table_dir.join("mapping_telemetry.csv"), telemetry_mapping_csv).unwrap();
         
         let signal_mapping_csv = r#"point_id,signal_name,address,data_type,data_format,number_of_bytes,bit_location,description
-1,PUMP_01_STATUS,2001,bool,ABCD,1,1,1号泵运行状态
-2,EMERGENCY_STOP,2002,bool,ABCD,1,1,紧急停机按钮"#;
+1,PUMP_01_STATUS,2001,bool,BIT,1,1,1号泵运行状态
+2,EMERGENCY_STOP,2002,bool,BIT,1,1,紧急停机按钮"#;
         fs::write(table_dir.join("mapping_signal.csv"), signal_mapping_csv).unwrap();
         
         let adjustment_mapping_csv = r#"point_id,signal_name,address,data_type,data_format,number_of_bytes,bit_location,description
-1,PUMP_01_SPEED,40003,uint16,ABCD,2,,1号泵转速设定"#;
+1,PUMP_01_SPEED,40003,uint16,AB,2,,1号泵转速设定"#;
         fs::write(table_dir.join("mapping_adjustment.csv"), adjustment_mapping_csv).unwrap();
         
         let control_mapping_csv = r#"point_id,signal_name,address,data_type,data_format,number_of_bytes,bit_location,description
-1,PUMP_01_START,1,bool,ABCD,1,1,1号泵启动命令"#;
+1,PUMP_01_START,1,bool,BIT,1,1,1号泵启动命令"#;
         fs::write(table_dir.join("mapping_control.csv"), control_mapping_csv).unwrap();
 
         // Create main config file
@@ -2150,7 +2408,8 @@ channels:
         
         // Verify combined points were loaded
         let combined_points = manager.get_combined_points(1001);
-        assert_eq!(combined_points.len(), 6); // 2 YC + 2 YX + 1 YT + 1 YK
+        // We have 6 total points: 2 YC + 2 YX + 1 YT + 1 YK
+        assert_eq!(combined_points.len(), 6);
         
         // Test specific point retrieval
         let tank_level_point = manager.get_combined_point(1001, 1).unwrap();
@@ -2212,15 +2471,22 @@ channels:
         fs::write(table_dir.join("control.csv"), control_csv).unwrap();
         
         // Create matching mapping files
-        for (file, data_type) in [
-            ("mapping_telemetry.csv", "uint16"),
-            ("mapping_signal.csv", "bool"),
-            ("mapping_adjustment.csv", "uint16"),
-            ("mapping_control.csv", "bool"),
+        for (file, data_type, bytes, format) in [
+            ("mapping_telemetry.csv", "uint16", 2, "AB"),   // 2字节用AB格式
+            ("mapping_signal.csv", "bool", 1, "BIT"),
+            ("mapping_adjustment.csv", "uint16", 2, "AB"),   // 2字节用AB格式
+            ("mapping_control.csv", "bool", 1, "BIT"),
         ] {
+            let point_id = match file.chars().nth(8).unwrap() {
+                't' => 1, // telemetry
+                's' => 2, // signal 
+                'a' => 3, // adjustment
+                'c' => 4, // control
+                _ => 1
+            };
             let mapping_csv = format!(r#"point_id,signal_name,address,data_type,data_format,number_of_bytes,bit_location,description
-{},TEST_SIGNAL,1000,{},ABCD,2,,Test signal"#, 
-                file.chars().nth(8).unwrap().to_digit(10).unwrap_or(1), data_type);
+{},TEST_SIGNAL,1000,{},{},{},,Test signal"#, 
+                point_id, data_type, format, bytes);
             fs::write(table_dir.join(file), mapping_csv).unwrap();
         }
 

@@ -4,7 +4,6 @@
 //! including parsing requests and building responses for all standard Modbus function codes.
 
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use crate::utils::error::{ComSrvError, Result};
 
 /// Modbus function codes

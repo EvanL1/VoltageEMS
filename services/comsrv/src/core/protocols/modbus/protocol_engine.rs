@@ -10,7 +10,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::{RwLock, Semaphore};
 use std::time::{Duration, Instant};
-use tracing::{debug, warn, error, info};
+use tracing::{debug, warn, info};
 
 use crate::core::protocols::modbus::{
     pdu::{ModbusPduProcessor, ModbusFunctionCode},
@@ -56,6 +56,7 @@ pub struct ModbusControlMapping {
     pub slave_id: u8,
     pub address: u16,
     pub bit_location: Option<u8>,
+    pub coil_number: Option<u16>,
 }
 use crate::utils::error::{ComSrvError, Result};
 
@@ -270,7 +271,7 @@ impl ModbusProtocolEngine {
         transport: &UniversalTransportBridge,
     ) -> Result<()> {
         // 遥控默认使用功能码05（写单个线圈）
-        if let Some(coil_number) = mapping.coil_number {
+        if mapping.coil_number.is_some() {
             // 如果有线圈号，使用写单个线圈
             self.send_write_single_coil(
                 mapping.slave_id,
@@ -380,7 +381,10 @@ impl ModbusProtocolEngine {
         let response = transport.send_request(&frame).await?;
         
         // 解析响应帧
-        let parsed_frame = self.frame_processor.read().await.parse_frame(&response)?;
+        let parsed_frame = {
+            let mut processor = self.frame_processor.write().await;
+            processor.parse_frame(&response)?
+        };
         
         // 解析响应PDU
         let pdu_result = self.pdu_processor.parse_pdu(&parsed_frame.pdu)?;
@@ -478,11 +482,19 @@ impl ModbusProtocolEngine {
 
     /// 解析遥测值
     fn parse_telemetry_value(&self, data: &[u8], mapping: &ModbusTelemetryMapping) -> Result<f64> {
-        if data.len() < (mapping.register_count() as usize * 2) {
+        // Get register count based on data type
+        let register_count = match mapping.data_type.to_lowercase().as_str() {
+            "uint16" | "int16" => 1,
+            "uint32" | "int32" | "float32" => 2,
+            "uint64" | "int64" | "float64" => 4,
+            _ => 1,
+        };
+        
+        if data.len() < (register_count as usize * 2) {
             return Err(ComSrvError::ProtocolError("数据长度不足".to_string()));
         }
 
-        match mapping.data_format().to_lowercase().as_str() {
+        match mapping.data_type.to_lowercase().as_str() {
             "uint16" => {
                 let value = u16::from_be_bytes([data[0], data[1]]);
                 Ok(value as f64)
@@ -519,7 +531,7 @@ impl ModbusProtocolEngine {
                 Ok(value as f64)
             }
             _ => {
-                warn!("不支持的数据格式: {}", mapping.data_format());
+                warn!("不支持的数据格式: {}", mapping.data_type);
                 let value = u16::from_be_bytes([data[0], data[1]]);
                 Ok(value as f64)
             }

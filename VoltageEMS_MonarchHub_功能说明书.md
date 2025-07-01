@@ -7,10 +7,10 @@ VoltageEMS（亦称 Monarch Hub）是一套完整的工业级能源管理系统�
 ### 1.1 核心特性
 
 - **🏗️ 服务化单体架构**：模块化设计，独立部署，共享数据层，确保数据一致性
+- **容器化部署**
 - **🔌 多协议支持**：支持Modbus TCP/RTU、后续支持IEC 60870-5-104、CAN Bus等工业标准协议
 - **⚡ 实时处理**：毫秒级数据采集和处理能力，满足工业实时控制需求
 - **🔄 高可用性**：异步架构设计，支持高并发和故障自动恢复
-- **☁️ 云原生部署**：Docker容器化部署，支持Kubernetes编排和多云平台集成
 - **🎯 智能告警**：基于规则引擎的智能告警分类和自动化处理
 - **📊 可视化管理**：现代化Web界面和Electron桌面应用，支持Grafana仪表板
 
@@ -342,7 +342,7 @@ point_id,name,description,unit,data_type,scale,offset
 **字段说明**：
 
 - `point_id`：点位唯一标识符（必需，与四遥点表中对应，数字）
-- `name`：点位中文名称（可选）
+- `name`：点位名称（英文）
 - `description`：详细描述（可选）
 - `unit`：工程单位（可选）
 - `data_type`：数据类型（必需，float/int/double等）
@@ -350,12 +350,14 @@ point_id,name,description,unit,data_type,scale,offset
 - `offset`：偏移值（必需，默认为0）
 
 **遥测数据处理公式**：
+
 ```
 工程值 = (原始值 × scale) + offset
 原始值 = (工程值 - offset) ÷ scale
 ```
 
 **示例说明**：
+
 - 大多数遥测点使用scale=1.0，offset=0，直接显示原始值
 - 对于传感器数据，可能需要scale和offset进行单位转换
 - 例如：温度传感器原始值0-4095对应-50°C到+150°C，可设置scale=0.048828，offset=-50
@@ -377,7 +379,7 @@ point_id,name,description,data_type,reverse
 **字段说明**：
 
 - `point_id`：点位唯一标识符（必需，与四遥点表中对应，数字）
-- `name`：点位中文名称（可选）
+- `name`：点位名称（英文）
 - `description`：详细描述（可选）
 - `data_type`：数据类型（必需，通常为bool）
 - `reverse`：是否反位（必需，0不开启，1开启，开启后 point_data = 1 - source_data）
@@ -396,7 +398,7 @@ point_id,name,description,unit,data_type,scale,offset
 **字段说明**：
 
 - `point_id`：点位唯一标识符（必需，数字，与四遥点表中点位对应）
-- `name`：点位中文名称（可选）
+- `name`：点位名称（英文）
 - `description`：详细描述（可选）
 - `unit`：工程单位（可选）
 - `data_type`：数据类型（必需，float/int/double等）
@@ -404,12 +406,14 @@ point_id,name,description,unit,data_type,scale,offset
 - `offset`：偏移值（必需，默认为0）
 
 **遥调数据处理公式**：
+
 ```
 工程值 = (原始值 × scale) + offset
 原始值 = (工程值 - offset) ÷ scale
 ```
 
 **示例说明**：
+
 - 点位3002：功率因数范围0.00-1.00，设备原始值0-100，使用scale=0.01将原始值转换为工程值
 - 点位3003：温度范围-50°C到+100°C，设备原始值0-1500，使用scale=0.1和offset=-50进行转换
 - 点位3005：功率范围0-1000kW，设备原始值0-100，使用scale=10.0进行放大
@@ -431,7 +435,7 @@ point_id,name,description,reverse,data_type
 **字段说明**：
 
 - `point_id`：点位唯一标识符（必需，数字）
-- `name`：点位中文名称（必需）
+- `name`：点位名称（英文）
 - `description`：详细描述（可选）
 - `reverse`：是否反位（必需，0不开启，1开启，开启后 point_data = 1 - source_data）
 - `data_type`：数据类型（必需，通常为bool）
@@ -443,15 +447,15 @@ point_id,name,description,reverse,data_type
 **遥测协议映射表 (mapping_telemetry.csv)**
 
 ```csv
-point_id,register_address,function_code,slave_id,data_format,byte_order,register_count,polling_interval
-1001,1001,3,1,float32,ABCD,2,1000
-1002,1003,3,1,float32,ABCD,2,1000
-1003,1005,3,1,float32,ABCD,2,1000
-1004,1007,3,1,float32,ABCD,2,1000
-1005,1009,3,1,float32,ABCD,2,1000
-1006,2001,4,2,int16,ABCD,1,2000
-1007,2002,4,2,int16,DCBA,1,2000
-1008,2003,4,2,int16,BADC,1,5000
+point_id,register_address,function_code,slave_id,data_format,byte_order,register_count
+1001,1001,3,1,float32,ABCD,2
+1002,1003,3,1,float32,ABCD,2
+1003,1005,3,1,float32,ABCD,2
+1004,1007,3,1,float32,ABCD,2
+1005,1009,3,1,float32,ABCD,2
+1006,2001,4,2,int16,ABCD,1
+1007,2002,4,2,int16,DCBA,1
+1008,2003,4,2,int16,BADC,1
 ```
 
 **字段说明**：
@@ -471,14 +475,15 @@ point_id,register_address,function_code,slave_id,data_format,byte_order,register
 
 以32位浮点数 `0x41200000`（十进制10.0）为例：
 
-| 字节序格式 | 寄存器排列 | 字节顺序 | 适用设备 | 说明 |
-|-----------|----------|---------|---------|------|
-| `ABCD` | [0x4120, 0x0000] | AB CD | 施耐德、西门子PLC | 标准大端序，最常用 |
-| `DCBA` | [0x0000, 0x2041] | DC BA | 部分嵌入式设备 | 完全颠倒的字节序 |
-| `BADC` | [0x2041, 0x0000] | BA DC | 某些变频器 | 字节对调换位置 |
-| `CDAB` | [0x0000, 0x4120] | CD AB | 部分工控设备 | 小端序字交换 |
+| 字节序格式 | 寄存器排列       | 字节顺序 | 适用设备          | 说明               |
+| ---------- | ---------------- | -------- | ----------------- | ------------------ |
+| `ABCD`   | [0x4120, 0x0000] | AB CD    | 施耐德、西门子PLC | 标准大端序，最常用 |
+| `DCBA`   | [0x0000, 0x2041] | DC BA    | 部分嵌入式设备    | 完全颠倒的字节序   |
+| `BADC`   | [0x2041, 0x0000] | BA DC    | 某些变频器        | 字节对调换位置     |
+| `CDAB`   | [0x0000, 0x4120] | CD AB    | 部分工控设备      | 小端序字交换       |
 
 **选择建议**：
+
 - 大多数工业设备使用 `ABCD` 格式
 - 如果数据显示异常，可尝试其他字节序格式
 - 查看设备手册确认具体的字节序要求
@@ -1263,153 +1268,6 @@ curl http://127.0.0.1:3000/api/channels
 # 测试通道诊断信息
 curl http://127.0.0.1:3000/api/channels/1001/diagnostics
 # 预期响应：详细的连接状态、统计信息等
-```
-
-### 8.3 集成测试
-
-#### 多服务协同测试
-
-**1. 服务启动顺序测试**
-
-```bash
-# 按依赖顺序启动各服务
-docker-compose up redis influxdb
-docker-compose up comsrv
-docker-compose up hissrv modsrv alarmsrv netsrv
-docker-compose up frontend
-
-# 验证各服务状态
-docker-compose ps
-# 预期：所有服务状态为Up
-```
-
-**2. 数据流测试**
-
-```bash
-# 模拟设备数据，验证数据流处理
-cd services/comsrv
-python test-modbus-simulator.py --port 502
-
-# 监控Redis数据流
-redis-cli monitor | grep "comsrv"
-
-# 验证InfluxDB数据存储
-curl -G 'http://localhost:8086/query' --data-urlencode 'q=SELECT * FROM telemetry LIMIT 10'
-```
-
-### 8.4 性能压力测试
-
-#### 连接数压力测试
-
-```bash
-# 模拟大量Modbus设备连接
-for i in {502..600}; do
-  modbus-tcp-simulator --port $i &
-done
-
-# 配置comsrv连接100个设备，测试并发性能
-# 监控系统资源使用：CPU、内存、网络I/O
-htop
-iotop
-```
-
-#### 数据吞吐量测试
-
-```bash
-# 配置高频数据采集（100ms轮询间隔）
-# 验证系统处理能力和响应时间
-# 监控告警处理和云端推送性能
-```
-
-### 8.5 故障恢复测试
-
-#### 网络故障测试
-
-```bash
-# 模拟网络中断
-sudo iptables -A OUTPUT -p tcp --dport 502 -j DROP
-
-# 验证自动重连机制
-# 检查错误分类和统计信息
-# 确认故障恢复后数据完整性
-```
-
-#### 服务重启测试
-
-```bash
-# 模拟服务异常重启
-docker-compose restart comsrv
-
-# 验证状态恢复
-# 检查数据连续性
-# 确认通道自动重新连接
-```
-
-### 8.6 测试结果验证
-
-#### 功能验证检查表
-
-- ✅ **配置管理**：多源配置合并正常，YAML解析无误
-- ✅ **协议通信**：Modbus TCP/RTU连接稳定，报文格式正确
-- ✅ **日志系统**：结构化JSON日志，通道独立记录
-- ✅ **错误处理**：智能分类，详细诊断信息
-- ✅ **API服务**：REST接口响应正常，状态查询准确
-- ✅ **数据流程**：采集→处理→存储→分析链路畅通
-- ✅ **性能指标**：满足并发要求，响应时间符合预期
-- ✅ **故障恢复**：自动重连机制正常，数据完整性保证
-
-#### 关键性能指标
-
-| 测试项目       | 预期值 | 实际值 | 状态 |
-| -------------- | ------ | ------ | ---- |
-| 单通道响应时间 | <100ms | 85ms   | ✅   |
-| 并发连接数     | >1000  | 1500+  | ✅   |
-| 内存占用       | <200MB | 180MB  | ✅   |
-| CPU使用率      | <30%   | 25%    | ✅   |
-| 连接成功率     | >99%   | 99.8%  | ✅   |
-| 数据完整率     | >99.9% | 99.95% | ✅   |
-
-### 8.7 问题诊断指南
-
-#### 常见问题排查
-
-**1. 配置解析失败**
-
-```bash
-# 检查YAML语法
-yamllint services/comsrv/config/comsrv.yaml
-
-# 验证文件路径
-ls -la config/test_points/
-
-# 查看详细错误日志
-journalctl -f -u comsrv
-```
-
-**2. 协议连接失败**
-
-```bash
-# 检查网络连通性
-telnet 192.168.1.100 502
-
-# 监控协议报文
-sudo tcpdump -i any -A port 502
-
-# 查看连接状态
-netstat -an | grep 502
-```
-
-**3. 数据点加载异常**
-
-```bash
-# 验证CSV文件格式
-head -5 config/test_points/TestModbusTCP/telemetry.csv
-
-# 检查点位映射一致性
-diff <(cut -d, -f1 telemetry.csv) <(cut -d, -f1 mapping_telemetry.csv)
-
-# 查看解析日志
-grep "CSV" logs/comsrv.log
 ```
 
 ## 9. 总结

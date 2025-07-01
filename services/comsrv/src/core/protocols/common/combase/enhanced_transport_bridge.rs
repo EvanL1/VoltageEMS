@@ -7,15 +7,14 @@
 //! - 响应缓存
 //! - 连接健康检查
 
-use async_trait::async_trait;
 use std::sync::Arc;
 use tokio::sync::{RwLock, Semaphore, Mutex};
 use std::time::{Duration, Instant};
 use std::collections::{HashMap, VecDeque};
 use tokio::time::timeout;
-use tracing::{debug, warn, error, info};
+use tracing::{warn, info};
 
-use crate::core::transport::{Transport, TransportError};
+use crate::core::transport::Transport;
 use crate::utils::{Result, ComSrvError};
 
 /// 连接池配置
@@ -63,7 +62,7 @@ impl Default for RetryConfig {
 }
 
 /// 请求优先级
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum RequestPriority {
     Low = 0,
     Normal = 1,
@@ -103,8 +102,12 @@ pub struct ConnectionPool {
 
 impl ConnectionPool {
     pub fn new(config: ConnectionPoolConfig) -> Self {
+        let mut connections = Vec::with_capacity(config.max_connections);
+        for _ in 0..config.max_connections {
+            connections.push(None);
+        }
         Self {
-            connections: vec![None; config.max_connections],
+            connections,
             available_indices: (0..config.max_connections).collect(),
             config,
             next_connection_id: 0,
@@ -300,7 +303,7 @@ impl EnhancedTransportBridge {
 
             if let Some(request) = request {
                 // 获取信号量许可
-                let permit = semaphore.acquire().await.unwrap();
+                let semaphore_clone = semaphore.clone();
                 
                 // 处理请求
                 let pool_clone = pool.clone();
@@ -308,7 +311,7 @@ impl EnhancedTransportBridge {
                 let retry_config_clone = retry_config.clone();
                 
                 tokio::spawn(async move {
-                    let _permit = permit; // 确保许可在任务结束时释放
+                    let _permit = semaphore_clone.acquire().await.unwrap(); // 确保许可在任务结束时释放
                     
                     let start_time = Instant::now();
                     let result = Self::execute_request_with_retry(

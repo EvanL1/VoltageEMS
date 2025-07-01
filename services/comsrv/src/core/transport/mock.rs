@@ -6,7 +6,6 @@
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
-use std::fmt;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 use tokio::sync::RwLock;
@@ -273,7 +272,7 @@ impl Transport for MockTransport {
     }
 
     async fn stats(&self) -> TransportStats {
-        let mut state = self.state.read().await;
+        let state = self.state.read().await;
         let mut stats = state.stats.clone();
         
         // Update uptime

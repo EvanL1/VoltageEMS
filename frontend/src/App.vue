@@ -18,6 +18,21 @@
           <span>Home</span>
         </el-menu-item>
         
+        <el-menu-item index="/services">
+          <el-icon><el-icon-connection /></el-icon>
+          <span>Services</span>
+        </el-menu-item>
+        
+        <el-menu-item index="/devices">
+          <el-icon><el-icon-cpu /></el-icon>
+          <span>Devices</span>
+        </el-menu-item>
+        
+        <el-menu-item index="/alarms">
+          <el-icon><el-icon-bell /></el-icon>
+          <span>Alarms</span>
+        </el-menu-item>
+        
         <el-menu-item index="/system">
           <el-icon><el-icon-setting /></el-icon>
           <span>System</span>
@@ -26,11 +41,6 @@
         <el-menu-item index="/activity">
           <el-icon><el-icon-data-line /></el-icon>
           <span>Activity</span>
-        </el-menu-item>
-        
-        <el-menu-item index="/template-builder">
-          <el-icon><el-icon-edit /></el-icon>
-          <span>Template Builder</span>
         </el-menu-item>
       </el-menu>
       
@@ -87,9 +97,11 @@ export default {
       // Update page title based on route
       const routeMap = {
         '/': 'Home',
+        '/services': 'Services',
+        '/devices': 'Devices',
+        '/alarms': 'Alarms',
         '/system': 'System',
-        '/activity': 'Activity',
-        '/template-builder': 'Template Builder'
+        '/activity': 'Activity'
       };
       
       if (to.path.startsWith('/system/')) {

@@ -134,9 +134,6 @@ impl DefaultProtocol {
 
 #[async_trait]
 impl ComBase for DefaultProtocol {
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
-    }
 
     fn name(&self) -> &str {
         &self.name

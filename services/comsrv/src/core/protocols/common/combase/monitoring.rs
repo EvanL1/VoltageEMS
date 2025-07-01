@@ -11,9 +11,8 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use std::time::{Duration, Instant, SystemTime};
 use serde::{Serialize, Deserialize};
-use tracing::{debug, warn, error, info};
+use tracing::{warn, error, info};
 
-use crate::utils::{Result, ComSrvError};
 
 /// 健康状态等级
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -191,7 +190,7 @@ impl RequestStats {
 
 /// 健康检查器trait
 #[async_trait::async_trait]
-pub trait HealthChecker: Send + Sync {
+pub trait HealthChecker: Send + Sync + std::fmt::Debug {
     /// 执行健康检查
     async fn check_health(&self) -> HealthCheckResult;
     
@@ -203,6 +202,15 @@ pub trait HealthChecker: Send + Sync {
 pub struct ConnectionHealthChecker {
     name: String,
     check_connection: Arc<dyn Fn() -> bool + Send + Sync>,
+}
+
+impl std::fmt::Debug for ConnectionHealthChecker {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ConnectionHealthChecker")
+            .field("name", &self.name)
+            .field("check_connection", &"<function>")
+            .finish()
+    }
 }
 
 impl ConnectionHealthChecker {
@@ -249,6 +257,7 @@ impl HealthChecker for ConnectionHealthChecker {
 }
 
 /// 性能健康检查器
+#[derive(Debug)]
 pub struct PerformanceHealthChecker {
     name: String,
     monitoring: Arc<BasicMonitoring>,

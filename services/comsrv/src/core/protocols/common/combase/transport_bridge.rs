@@ -3,13 +3,12 @@
 //! 这个模块提供协议层和传输层之间的通用桥接，让所有协议都可以使用
 //! 统一的传输层接口，而不是直接使用各种第三方库
 
-use async_trait::async_trait;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use std::time::Duration;
 use std::collections::HashMap;
 
-use crate::core::transport::{Transport, TransportError};
+use crate::core::transport::Transport;
 use crate::utils::Result;
 
 /// 协议特定的配置

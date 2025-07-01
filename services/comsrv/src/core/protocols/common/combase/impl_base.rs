@@ -181,9 +181,6 @@ impl ComBaseImpl {
 
 #[async_trait]
 impl ComBase for ComBaseImpl {
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
-    }
 
     fn name(&self) -> &str {
         &self.name

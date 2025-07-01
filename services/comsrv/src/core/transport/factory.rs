@@ -4,15 +4,14 @@
 //! It allows protocols to request specific transport implementations without knowing
 //! the details of how they are created.
 
-use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fmt;
 use std::sync::Arc;
 use dashmap::DashMap;
-use tracing::{debug, error, info};
+use tracing::{debug, info};
 
-use super::traits::{Transport, TransportBuilder, TransportConfig, TransportError};
+use super::traits::{Transport, TransportConfig, TransportError};
 use super::tcp::{TcpTransport, TcpTransportBuilder, TcpTransportConfig};
 use super::serial::{SerialTransport, SerialTransportBuilder, SerialTransportConfig};
 use super::gpio::{GpioTransport, GpioTransportBuilder, GpioTransportConfig};
