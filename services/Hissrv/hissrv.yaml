@@ -1,0 +1,119 @@
+# HisSrv Configuration File
+# 历史数据服务配置文件
+
+# 服务配置 
+service:
+  name: "hissrv"
+  version: "0.2.0"
+  port: 8080
+  host: "0.0.0.0"
+
+# Redis 配置
+redis:
+  # 连接配置
+  connection:
+    host: "127.0.0.1"
+    port: 6379
+    password: ""
+    socket: ""  # Unix socket path, 如果指定则优先使用
+    database: 0
+    pool_size: 10
+    timeout: 5  # 连接超时(秒)
+  
+  # 订阅配置
+  subscription:
+    channels:
+      - "data:*"  # 订阅数据通道
+      - "events:*"  # 订阅事件通道
+    key_patterns:
+      - "*"  # 要处理的 key 模式
+
+# 存储后端配置
+storage:
+  # 默认存储后端
+  default: "influxdb"
+  
+  backends:
+    # InfluxDB 配置
+    influxdb:
+      enabled: true
+      url: "http://localhost:8086"
+      database: "hissrv_data"
+      username: ""
+      password: ""
+      retention_days: 30
+      batch_size: 1000
+      flush_interval: 10  # 秒
+    
+    # PostgreSQL 配置
+    postgresql:
+      enabled: false
+      host: "localhost"
+      port: 5432
+      database: "hissrv"
+      username: "postgres"
+      password: ""
+      pool_size: 10
+    
+    # MongoDB 配置
+    mongodb:
+      enabled: false
+      uri: "mongodb://localhost:27017"
+      database: "hissrv"
+      collection: "data"
+
+# 数据处理配置
+data:
+  # 数据过滤规则
+  filters:
+    # 默认存储策略: store, ignore
+    default_policy: "store"
+    
+    # 具体规则
+    rules:
+      - pattern: "temp:*"
+        action: "store"
+        storage: "influxdb"
+      - pattern: "log:*"
+        action: "ignore"
+      - pattern: "alarm:*"
+        action: "store"
+        storage: "postgresql"
+  
+  # 数据转换规则
+  transformations:
+    - from_pattern: "device:(\\w+):temp"
+      to_format: "temperature"
+      tags:
+        device_id: "$1"
+
+# API 配置
+api:
+  enabled: true
+  prefix: "/api/v1"
+  swagger_ui: true
+  cors:
+    enabled: true
+    origins: ["*"]
+    methods: ["GET", "POST", "PUT", "DELETE"]
+
+# 监控配置
+monitoring:
+  enabled: true
+  metrics_port: 9090
+  health_check: true
+  
+# 日志配置
+logging:
+  level: "info"  # trace, debug, info, warn, error
+  format: "json"  # json, text
+  file: "logs/hissrv.log"
+  max_size: "100MB"
+  max_files: 10
+
+# 性能配置
+performance:
+  worker_threads: 4
+  max_concurrent_requests: 1000
+  queue_size: 10000
+  batch_processing: true

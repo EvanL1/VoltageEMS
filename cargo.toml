@@ -2,7 +2,7 @@
 members = [
   "services/alarmsrv",
   "services/comsrv",
-  "services/hissrv",
+  "services/Hissrv",
   "services/modsrv",
   "services/netsrv",
 ]

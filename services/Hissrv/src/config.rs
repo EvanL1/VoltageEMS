@@ -1,61 +1,258 @@
 use crate::error::{HisSrvError, Result};
 use clap::{Parser, ArgAction};
 use regex::Regex;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::fs::{self, File};
-use std::io::{BufRead, BufReader};
+use std::fs;
 use std::path::Path;
 use std::time::SystemTime;
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Config {
-    // Redis configuration
-    pub redis_host: String,
-    pub redis_port: u16,
-    pub redis_password: String,
-    pub redis_key_pattern: String,
-    pub redis_socket: String,
-
-    // InfluxDB configuration
-    pub influxdb_url: String,
-    pub influxdb_db: String,
-    pub influxdb_user: String,
-    pub influxdb_password: String,
-
-    // Program configuration
-    pub interval_seconds: u64,
-    pub verbose: bool,
-    pub enable_influxdb: bool,
-    pub retention_days: u32,
+    pub service: ServiceConfig,
+    pub redis: RedisConfig,
+    pub storage: StorageConfig,
+    pub data: DataConfig,
+    pub api: ApiConfig,
+    pub monitoring: MonitoringConfig,
+    pub logging: LoggingConfig,
+    pub performance: PerformanceConfig,
+    
+    // Internal fields
+    #[serde(skip)]
     pub config_file: String,
+}
 
-    // Point storage configuration
-    pub point_storage_patterns: Vec<(String, bool)>,
-    pub default_point_storage: bool,
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ServiceConfig {
+    pub name: String,
+    pub version: String,
+    pub port: u16,
+    pub host: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct RedisConfig {
+    pub connection: RedisConnectionConfig,
+    pub subscription: RedisSubscriptionConfig,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct RedisConnectionConfig {
+    pub host: String,
+    pub port: u16,
+    pub password: String,
+    pub socket: String,
+    pub database: u8,
+    pub pool_size: u32,
+    pub timeout: u64,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct RedisSubscriptionConfig {
+    pub channels: Vec<String>,
+    pub key_patterns: Vec<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct StorageConfig {
+    pub default: String,
+    pub backends: StorageBackends,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct StorageBackends {
+    pub influxdb: InfluxDBConfig,
+    pub postgresql: PostgreSQLConfig,
+    pub mongodb: MongoDBConfig,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct InfluxDBConfig {
+    pub enabled: bool,
+    pub url: String,
+    pub database: String,
+    pub username: String,
+    pub password: String,
+    pub retention_days: u32,
+    pub batch_size: u32,
+    pub flush_interval: u64,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct PostgreSQLConfig {
+    pub enabled: bool,
+    pub host: String,
+    pub port: u16,
+    pub database: String,
+    pub username: String,
+    pub password: String,
+    pub pool_size: u32,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct MongoDBConfig {
+    pub enabled: bool,
+    pub uri: String,
+    pub database: String,
+    pub collection: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct DataConfig {
+    pub filters: DataFilters,
+    pub transformations: Vec<DataTransformation>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct DataFilters {
+    pub default_policy: String,
+    pub rules: Vec<FilterRule>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct FilterRule {
+    pub pattern: String,
+    pub action: String,
+    pub storage: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct DataTransformation {
+    pub from_pattern: String,
+    pub to_format: String,
+    pub tags: HashMap<String, String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ApiConfig {
+    pub enabled: bool,
+    pub prefix: String,
+    pub swagger_ui: bool,
+    pub cors: CorsConfig,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct CorsConfig {
+    pub enabled: bool,
+    pub origins: Vec<String>,
+    pub methods: Vec<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct MonitoringConfig {
+    pub enabled: bool,
+    pub metrics_port: u16,
+    pub health_check: bool,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct LoggingConfig {
+    pub level: String,
+    pub format: String,
+    pub file: String,
+    pub max_size: String,
+    pub max_files: u32,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct PerformanceConfig {
+    pub worker_threads: u32,
+    pub max_concurrent_requests: u32,
+    pub queue_size: u32,
+    pub batch_processing: bool,
 }
 
 impl Default for Config {
     fn default() -> Self {
         Config {
-            redis_host: "127.0.0.1".to_string(),
-            redis_port: 6379,
-            redis_password: String::new(),
-            redis_key_pattern: "*".to_string(),
-            redis_socket: "/var/run/redis/redis.sock".to_string(),
-
-            influxdb_url: "http://localhost:8086".to_string(),
-            influxdb_db: "mydb".to_string(),
-            influxdb_user: String::new(),
-            influxdb_password: String::new(),
-
-            interval_seconds: 10,
-            verbose: false,
-            enable_influxdb: true,
-            retention_days: 30,
-            config_file: "hissrv.conf".to_string(),
-
-            point_storage_patterns: Vec::new(),
-            default_point_storage: true,
+            service: ServiceConfig {
+                name: "hissrv".to_string(),
+                version: "0.2.0".to_string(),
+                port: 8080,
+                host: "0.0.0.0".to_string(),
+            },
+            redis: RedisConfig {
+                connection: RedisConnectionConfig {
+                    host: "127.0.0.1".to_string(),
+                    port: 6379,
+                    password: String::new(),
+                    socket: String::new(),
+                    database: 0,
+                    pool_size: 10,
+                    timeout: 5,
+                },
+                subscription: RedisSubscriptionConfig {
+                    channels: vec!["data:*".to_string(), "events:*".to_string()],
+                    key_patterns: vec!["*".to_string()],
+                },
+            },
+            storage: StorageConfig {
+                default: "influxdb".to_string(),
+                backends: StorageBackends {
+                    influxdb: InfluxDBConfig {
+                        enabled: true,
+                        url: "http://localhost:8086".to_string(),
+                        database: "hissrv_data".to_string(),
+                        username: String::new(),
+                        password: String::new(),
+                        retention_days: 30,
+                        batch_size: 1000,
+                        flush_interval: 10,
+                    },
+                    postgresql: PostgreSQLConfig {
+                        enabled: false,
+                        host: "localhost".to_string(),
+                        port: 5432,
+                        database: "hissrv".to_string(),
+                        username: "postgres".to_string(),
+                        password: String::new(),
+                        pool_size: 10,
+                    },
+                    mongodb: MongoDBConfig {
+                        enabled: false,
+                        uri: "mongodb://localhost:27017".to_string(),
+                        database: "hissrv".to_string(),
+                        collection: "data".to_string(),
+                    },
+                },
+            },
+            data: DataConfig {
+                filters: DataFilters {
+                    default_policy: "store".to_string(),
+                    rules: Vec::new(),
+                },
+                transformations: Vec::new(),
+            },
+            api: ApiConfig {
+                enabled: true,
+                prefix: "/api/v1".to_string(),
+                swagger_ui: true,
+                cors: CorsConfig {
+                    enabled: true,
+                    origins: vec!["*".to_string()],
+                    methods: vec!["GET".to_string(), "POST".to_string(), "PUT".to_string(), "DELETE".to_string()],
+                },
+            },
+            monitoring: MonitoringConfig {
+                enabled: true,
+                metrics_port: 9090,
+                health_check: true,
+            },
+            logging: LoggingConfig {
+                level: "info".to_string(),
+                format: "json".to_string(),
+                file: "logs/hissrv.log".to_string(),
+                max_size: "100MB".to_string(),
+                max_files: 10,
+            },
+            performance: PerformanceConfig {
+                worker_threads: 4,
+                max_concurrent_requests: 1000,
+                queue_size: 10000,
+                batch_processing: true,
+            },
+            config_file: "hissrv.yaml".to_string(),
         }
     }
 }
@@ -63,50 +260,35 @@ impl Default for Config {
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
 pub struct Args {
-    #[arg(long, help = "Configuration file path")]
-    config: Option<String>,
+    #[arg(long, short, help = "Configuration file path", default_value = "hissrv.yaml")]
+    config: String,
 
-    #[arg(long, help = "Redis host (default: 127.0.0.1)")]
+    #[arg(long, help = "Service host to bind to")]
+    host: Option<String>,
+
+    #[arg(long, short, help = "Service port to bind to")]
+    port: Option<u16>,
+
+    #[arg(long, help = "Redis host")]
     redis_host: Option<String>,
 
-    #[arg(long, help = "Redis port (default: 6379)")]
+    #[arg(long, help = "Redis port")]
     redis_port: Option<u16>,
 
     #[arg(long, help = "Redis password")]
     redis_password: Option<String>,
 
-    #[arg(long, help = "Redis key pattern to match (default: *)")]
-    redis_key_pattern: Option<String>,
-
-    #[arg(long, help = "Redis Unix socket path (if specified, TCP is not used)")]
-    redis_socket: Option<String>,
-
-    #[arg(long, help = "InfluxDB URL (default: http://localhost:8086)")]
-    influxdb_url: Option<String>,
-
-    #[arg(long, help = "InfluxDB database name (default: mydb)")]
-    influxdb_db: Option<String>,
-
-    #[arg(long, help = "InfluxDB username")]
-    influxdb_user: Option<String>,
-
-    #[arg(long, help = "InfluxDB password")]
-    influxdb_password: Option<String>,
-
-    #[arg(long, help = "Sync interval in seconds (default: 10)")]
-    interval: Option<u64>,
+    #[arg(long, help = "Log level (trace, debug, info, warn, error)")]
+    log_level: Option<String>,
 
     #[arg(long, action = ArgAction::SetTrue, help = "Enable verbose logging")]
     verbose: bool,
 
-    #[arg(long, action = ArgAction::SetTrue, help = "Enable writing to InfluxDB (default)")]
-    enable_influxdb: bool,
+    #[arg(long, action = ArgAction::SetTrue, help = "Enable API server")]
+    enable_api: bool,
 
-    #[arg(long, action = ArgAction::SetTrue, help = "Disable writing to InfluxDB")]
-    disable_influxdb: bool,
-
-    #[arg(long, help = "Data retention period in days (default: 30)")]
-    retention_days: Option<u32>,
+    #[arg(long, action = ArgAction::SetTrue, help = "Disable API server")]
+    disable_api: bool,
 }
 
 impl Config {
@@ -118,165 +300,105 @@ impl Config {
         let args = Args::parse();
         let mut config = Config::default();
 
-        // First load from config file if specified
-        if let Some(config_file) = &args.config {
-            config.config_file = config_file.clone();
-            config.parse_config_file(&config_file)?;
+        // Set config file path
+        config.config_file = args.config.clone();
+
+        // Load from config file
+        if Path::new(&args.config).exists() {
+            config = Self::load_from_file(&args.config)?;
+            config.config_file = args.config.clone();
         }
 
-        // Then override with command line arguments
+        // Override with command line arguments
+        if let Some(host) = args.host {
+            config.service.host = host;
+        }
+        if let Some(port) = args.port {
+            config.service.port = port;
+        }
         if let Some(host) = args.redis_host {
-            config.redis_host = host;
+            config.redis.connection.host = host;
         }
         if let Some(port) = args.redis_port {
-            config.redis_port = port;
+            config.redis.connection.port = port;
         }
         if let Some(password) = args.redis_password {
-            config.redis_password = password;
+            config.redis.connection.password = password;
         }
-        if let Some(pattern) = args.redis_key_pattern {
-            config.redis_key_pattern = pattern;
-        }
-        if let Some(socket) = args.redis_socket {
-            config.redis_socket = socket;
-        }
-        if let Some(url) = args.influxdb_url {
-            config.influxdb_url = url;
-        }
-        if let Some(db) = args.influxdb_db {
-            config.influxdb_db = db;
-        }
-        if let Some(user) = args.influxdb_user {
-            config.influxdb_user = user;
-        }
-        if let Some(password) = args.influxdb_password {
-            config.influxdb_password = password;
-        }
-        if let Some(interval) = args.interval {
-            config.interval_seconds = interval;
+        if let Some(level) = args.log_level {
+            config.logging.level = level;
         }
         if args.verbose {
-            config.verbose = true;
+            config.logging.level = "debug".to_string();
         }
-        if args.enable_influxdb {
-            config.enable_influxdb = true;
+        if args.enable_api {
+            config.api.enabled = true;
         }
-        if args.disable_influxdb {
-            config.enable_influxdb = false;
-        }
-        if let Some(days) = args.retention_days {
-            config.retention_days = days;
+        if args.disable_api {
+            config.api.enabled = false;
         }
 
         Ok(config)
     }
 
-    pub fn parse_config_file(&mut self, filename: &str) -> Result<()> {
-        let file = File::open(filename).map_err(|e| {
-            HisSrvError::ConfigError(format!("Could not open config file: {}: {}", filename, e))
-        })?;
+    pub fn load_from_file(path: &str) -> Result<Self> {
+        let content = fs::read_to_string(path)
+            .map_err(|e| HisSrvError::ConfigError(format!("Failed to read config file {}: {}", path, e)))?;
+        
+        let config: Config = serde_yaml::from_str(&content)
+            .map_err(|e| HisSrvError::ConfigError(format!("Failed to parse config file {}: {}", path, e)))?;
+        
+        Ok(config)
+    }
 
-        let reader = BufReader::new(file);
-        self.point_storage_patterns.clear();
-
-        for line in reader.lines() {
-            let line = line?;
-            let line = line.trim();
-
-            // Skip comments and empty lines
-            if line.is_empty() || line.starts_with('#') {
-                continue;
-            }
-
-            if let Some(pos) = line.find('=') {
-                let key = line[..pos].trim();
-                let value = line[pos + 1..].trim();
-
-                match key {
-                    "redis_host" => self.redis_host = value.to_string(),
-                    "redis_port" => {
-                        self.redis_port = value.parse().map_err(|_| {
-                            HisSrvError::ParseError(format!("Invalid redis_port: {}", value))
-                        })?
-                    }
-                    "redis_password" => self.redis_password = value.to_string(),
-                    "redis_key_pattern" => self.redis_key_pattern = value.to_string(),
-                    "redis_socket" => self.redis_socket = value.to_string(),
-                    "influxdb_url" => self.influxdb_url = value.to_string(),
-                    "influxdb_db" => self.influxdb_db = value.to_string(),
-                    "influxdb_user" => self.influxdb_user = value.to_string(),
-                    "influxdb_password" => self.influxdb_password = value.to_string(),
-                    "interval_seconds" => {
-                        self.interval_seconds = value.parse().map_err(|_| {
-                            HisSrvError::ParseError(format!("Invalid interval_seconds: {}", value))
-                        })?
-                    }
-                    "verbose" => {
-                        self.verbose = value == "true" || value == "1" || value == "yes";
-                    }
-                    "enable_influxdb" => {
-                        self.enable_influxdb = value == "true" || value == "1" || value == "yes";
-                    }
-                    "retention_days" => {
-                        self.retention_days = value.parse().map_err(|_| {
-                            HisSrvError::ParseError(format!("Invalid retention_days: {}", value))
-                        })?
-                    }
-                    "default_point_storage" => {
-                        self.default_point_storage = value == "true" || value == "1" || value == "yes";
-                    }
-                    "point_storage" => {
-                        // Parse point storage configuration
-                        // Format: point_pattern:true/false
-                        if let Some(colon_pos) = value.rfind(':') {
-                            let pattern = value[..colon_pos].to_string();
-                            let storage_str = &value[colon_pos + 1..];
-                            let storage = storage_str == "true" || storage_str == "1" || storage_str == "yes";
-
-                            self.point_storage_patterns.push((pattern.clone(), storage));
-
-                            if self.verbose {
-                                println!(
-                                    "Added point storage pattern: {} -> {}",
-                                    pattern,
-                                    if storage { "store" } else { "ignore" }
-                                );
-                            }
-                        }
-                    }
-                    _ => {
-                        // Unknown key, just ignore
-                    }
-                }
-            }
-        }
-
+    pub fn save_to_file(&self, path: &str) -> Result<()> {
+        let content = serde_yaml::to_string(self)
+            .map_err(|e| HisSrvError::ConfigError(format!("Failed to serialize config: {}", e)))?;
+        
+        fs::write(path, content)
+            .map_err(|e| HisSrvError::ConfigError(format!("Failed to write config file {}: {}", path, e)))?;
+        
         Ok(())
     }
 
-    pub fn should_store_point(&self, key: &str) -> bool {
-        // If global InfluxDB writing is disabled, don't store any points
-        if !self.enable_influxdb {
-            return false;
-        }
-
-        // Check against specific patterns
-        for (pattern, storage) in &self.point_storage_patterns {
-            // Convert Redis glob pattern to regex
-            let regex_pattern = pattern
+    pub fn should_store_key(&self, key: &str) -> bool {
+        // Check against specific filter rules
+        for rule in &self.data.filters.rules {
+            // Convert glob pattern to regex
+            let regex_pattern = rule.pattern
                 .replace("*", ".*")
                 .replace("?", ".");
 
             // Check if key matches pattern
             if let Ok(regex) = Regex::new(&regex_pattern) {
                 if regex.is_match(key) {
-                    return *storage;
+                    return rule.action == "store";
                 }
             }
         }
 
-        // If no pattern matched, use default
-        self.default_point_storage
+        // If no rule matched, use default policy
+        self.data.filters.default_policy == "store"
+    }
+
+    pub fn get_storage_backend(&self, key: &str) -> String {
+        // Check if any rule specifies a storage backend
+        for rule in &self.data.filters.rules {
+            let regex_pattern = rule.pattern
+                .replace("*", ".*")
+                .replace("?", ".");
+
+            if let Ok(regex) = Regex::new(&regex_pattern) {
+                if regex.is_match(key) {
+                    if let Some(storage) = &rule.storage {
+                        return storage.clone();
+                    }
+                }
+            }
+        }
+
+        // Return default storage backend
+        self.storage.default.clone()
     }
 
     pub fn config_file_changed(&self, last_mod_time: &mut SystemTime) -> Result<bool> {
