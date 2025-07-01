@@ -866,7 +866,7 @@ impl ComBase for ModbusServer {
             ModbusRegisterType::HoldingRegister => {
                 match self.register_bank.read_03(mapping.address, 1) {
                     Ok(values) if !values.is_empty() => {
-                        let scaled_value = (values[0] as f64) * mapping.scale + mapping.offset;
+                        let scaled_value = (values[0] as f64) * mapping.scale() + mapping.offset();
                         scaled_value.to_string()
                     }
                     Ok(_) => {
@@ -882,7 +882,7 @@ impl ComBase for ModbusServer {
             ModbusRegisterType::InputRegister => {
                 match self.register_bank.read_04(mapping.address, 1) {
                     Ok(values) if !values.is_empty() => {
-                        let scaled_value = (values[0] as f64) * mapping.scale + mapping.offset;
+                        let scaled_value = (values[0] as f64) * mapping.scale() + mapping.offset();
                         scaled_value.to_string()
                     }
                     Ok(_) => {
@@ -925,9 +925,9 @@ impl ComBase for ModbusServer {
 
         let point_data = PointData {
             id: mapping.name.clone(),
-            name: mapping.display_name.clone().unwrap_or_else(|| mapping.name.clone()),
+            name: mapping.display_name(),
             value: raw_value,
-            unit: mapping.unit.clone().unwrap_or_default(),
+            unit: mapping.unit(),
             description: mapping.description.clone().unwrap_or_default(),
             timestamp: Utc::now(),
         };
@@ -961,7 +961,7 @@ impl ComBase for ModbusServer {
                 let numeric_value: f64 = value.parse()
                     .map_err(|_| ComSrvError::InvalidParameter(format!("Invalid numeric value: {}", value)))?;
                 
-                let raw_value = ((numeric_value - mapping.offset) / mapping.scale) as u16;
+                let raw_value = ((numeric_value - mapping.offset()) / mapping.scale()) as u16;
                 
                 self.register_bank.write_06(mapping.address, raw_value)
                     .map_err(|e| ComSrvError::CommunicationError(format!("Failed to write holding register: {}", e)))?;
@@ -1095,18 +1095,13 @@ mod tests {
             request_timeout: Some(Duration::from_secs(10)),
             register_mappings: vec![ModbusRegisterMapping {
                 name: "test_register".to_string(),
-                display_name: Some("Test Register".to_string()),
                 slave_id: 1,
-                address: 1,
+                function_code: crate::core::protocols::modbus::common::ModbusFunctionCode::Read03,
                 register_type: ModbusRegisterType::HoldingRegister,
+                address: 1,
                 data_type: crate::core::protocols::modbus::common::ModbusDataType::UInt16,
-                scale: 1.0,
-                offset: 0.0,
-                unit: Some("uint16".to_string()),
+                byte_order: crate::core::protocols::modbus::common::ByteOrder::AB,
                 description: Some("Test register".to_string()),
-                access_mode: "read_write".to_string(),
-                group: Some("test".to_string()),
-                byte_order: crate::core::protocols::modbus::common::ByteOrder::BigEndian,
             }],
             ..Default::default()
         }

@@ -1699,31 +1699,19 @@ impl ConfigManager {
                 _ => crate::core::protocols::modbus::common::ModbusDataType::UInt16,
             };
 
+            let function_code = crate::core::protocols::modbus::common::ModbusFunctionCode::Read03;
             let mapping = crate::core::protocols::modbus::common::ModbusRegisterMapping {
                 name: point.signal_name().to_string(),
-                display_name: point.chinese_name().map(|s| s.to_string()),
                 slave_id: 1, // Default slave_id, should be read from CSV in future
-                register_type,
+                function_code,
+                register_type: function_code.register_type(),
                 address: match point.as_legacy() {
                     Some(legacy) => legacy.address.parse().unwrap_or(0),
                     None => 0, // For protocol-specific mappings, should use their specific address methods
                 },
                 data_type,
-                scale: match point {
-                    PointMappingEnum::Legacy(legacy) => legacy.scale,
-                    PointMappingEnum::Modbus(modbus) => modbus.scale,
-                    PointMappingEnum::CAN(can) => can.scale,
-                },
-                offset: match point {
-                    PointMappingEnum::Legacy(legacy) => legacy.offset,
-                    PointMappingEnum::Modbus(modbus) => modbus.offset,
-                    PointMappingEnum::CAN(can) => can.offset,
-                },
-                unit: point.unit().map(|s| s.to_string()),
+                byte_order: crate::core::protocols::modbus::common::ByteOrder::default_for_data_type(&data_type),
                 description: point.description().map(|s| s.to_string()),
-                access_mode: "read_write".to_string(),
-                group: point.group().map(|s| s.to_string()),
-                byte_order: crate::core::protocols::modbus::common::ByteOrder::BigEndian,
             };
             mappings.push(mapping);
         }

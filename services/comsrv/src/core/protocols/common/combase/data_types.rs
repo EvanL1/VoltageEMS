@@ -197,8 +197,6 @@ pub struct PollingPoint {
     pub group: String,
     /// Protocol-specific parameters
     pub protocol_params: HashMap<String, serde_json::Value>,
-    /// Extended telemetry metadata (optional)
-    pub telemetry_metadata: Option<super::telemetry::TelemetryMetadata>,
 }
 
 /// Protocol response data parsing

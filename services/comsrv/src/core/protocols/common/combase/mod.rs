@@ -17,6 +17,9 @@ pub mod point_manager;
 pub mod forward_calc;
 pub mod protocol_factory;
 
+// Implementation modules
+pub mod impl_base;
+
 // Re-export commonly used types
 pub use data_types::*;
 pub use telemetry::*;
@@ -24,6 +27,6 @@ pub use traits::{ComBase, FourTelemetryOperations, ConnectionManager, ConfigVali
 pub use default_protocol::{DefaultProtocol, PacketParseResult};
 pub use polling::{PollingEngine, UniversalPollingEngine, PointReader};
 pub use command_manager::UniversalCommandManager;
+pub use point_manager::{UniversalPointManager, UniversalPointConfig, PointManagerStats};
 pub use protocol_factory::ProtocolFactory;
-
- 
+pub use impl_base::ComBaseImpl;
