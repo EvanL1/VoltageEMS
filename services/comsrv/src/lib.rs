@@ -199,7 +199,7 @@ pub mod api;
 /// Communication Service Library
 /// Provides core functionality for protocol communication, data exchange, and management
 pub mod core;
-mod service_impl;
+pub mod service_impl;
 pub mod utils;
 
 /// Service entry point and lifecycle management

@@ -548,7 +548,6 @@ mod tests {
             access_mode: "read".to_string(),
             group: "default".to_string(),
             protocol_params: HashMap::new(),
-            telemetry_metadata: None,
         }
     }
 

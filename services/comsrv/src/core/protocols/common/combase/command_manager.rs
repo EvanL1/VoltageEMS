@@ -4,7 +4,6 @@
 //! four-telemetry commands across all protocols.
 
 
-use async_trait::async_trait;
 use futures::StreamExt;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -422,7 +421,7 @@ mod tests {
                 actual_value: Some(PointValueType::Control(ControlPoint {
                     current_state: true,
                     command_text: "Start".to_string(),
-                    execution_status: ExecutionStatus::Completed,
+                    execution_status: ExecutionStatus::Success,
                     timestamp: Utc::now(),
                 })),
                 execution_time: Utc::now(),

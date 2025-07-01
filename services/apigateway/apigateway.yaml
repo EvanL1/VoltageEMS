@@ -1,0 +1,46 @@
+# API Gateway Configuration
+server:
+  host: "0.0.0.0"
+  port: 8080
+  workers: 4
+
+redis:
+  url: "redis://127.0.0.1:6379"
+  pool_size: 10
+  timeout_seconds: 5
+
+services:
+  comsrv:
+    url: "http://localhost:8081"
+    timeout_seconds: 30
+  modsrv:
+    url: "http://localhost:8082"
+    timeout_seconds: 30
+  hissrv:
+    url: "http://localhost:8083"
+    timeout_seconds: 30
+  netsrv:
+    url: "http://localhost:8084"
+    timeout_seconds: 30
+  alarmsrv:
+    url: "http://localhost:8085"
+    timeout_seconds: 30
+
+cors:
+  allowed_origins:
+    - "http://localhost:8090"
+    - "http://localhost:3000"
+  allowed_methods:
+    - "GET"
+    - "POST"
+    - "PUT"
+    - "DELETE"
+    - "OPTIONS"
+  allowed_headers:
+    - "Content-Type"
+    - "Authorization"
+  max_age: 3600
+
+logging:
+  level: "info"
+  format: "json"
