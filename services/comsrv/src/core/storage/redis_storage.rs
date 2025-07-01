@@ -115,15 +115,15 @@ impl RedisConnectionManager {
             .map_err(|e| ComSrvError::RedisError(format!("Redis PING failed: {}", e)))?;
 
         // Select database if specified
-        if config.database > 0 {
+        if config.database() > 0 {
             redis::cmd("SELECT")
-                .arg(config.database)
+                .arg(config.database())
                 .query_async(&mut conn)
                 .await
                 .map_err(|e| {
                     ComSrvError::RedisError(format!(
                         "Failed to select database {}: {}",
-                        config.database, e
+                        config.database(), e
                     ))
                 })?;
         }
@@ -131,7 +131,7 @@ impl RedisConnectionManager {
         tracing::info!(
             "Redis connection manager created successfully: type={:?}, db={:?}, timeout={}ms",
             config.connection_type(),
-            config.database,
+            config.database(),
             config.timeout_ms
         );
 
@@ -148,15 +148,15 @@ impl RedisConnectionManager {
         })?;
 
         // Select database if specified
-        if self.config.database > 0 {
+        if self.config.database() > 0 {
             redis::cmd("SELECT")
-                .arg(self.config.database)
+                .arg(self.config.database())
                 .query_async(&mut conn)
                 .await
                 .map_err(|e| {
                     ComSrvError::RedisError(format!(
                         "Failed to select database {}: {}",
-                        self.config.database, e
+                        self.config.database(), e
                     ))
                 })?;
         }
@@ -834,7 +834,7 @@ mod tests {
         RedisConfig {
             enabled: true,
             url: "redis://127.0.0.1:6379/0".to_string(),
-            database: 0,
+            db: 0,
             timeout_ms: 5000,
             max_connections: Some(10),
             max_retries: 3,
@@ -846,7 +846,7 @@ mod tests {
         RedisConfig {
             enabled: false,
             url: "redis://127.0.0.1:6379/0".to_string(),
-            database: 0,
+            db: 0,
             timeout_ms: 5000,
             max_connections: Some(10),
             max_retries: 3,

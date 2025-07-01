@@ -46,6 +46,10 @@ Thumbs.db
 services/comsrv/config/
 config/
 
+# examples
+examples/
+figment_demo/
+
 # models
 services/modsrv/instances/
 services/modsrv/templates/
@@ -54,6 +58,7 @@ services/comsrv/PERFORMANCE_TESTING.md
 
 # voltage_modbus
 voltage_modbus/
+
 config/pressure_test_config.yaml
 MQTT_REFACTOR_SUMMARY.md
 services/comsrv/src/core/protocols/modbus/README.md

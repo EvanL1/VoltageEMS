@@ -1,7 +1,9 @@
 [workspace]
 members = [
   "services/alarmsrv",
+  "services/apigateway",
   "services/comsrv",
+  "services/config-framework",
   "services/hissrv",
   "services/modsrv",
   "services/netsrv",

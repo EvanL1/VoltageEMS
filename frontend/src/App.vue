@@ -1,16 +1,52 @@
 <template>
-  <div class="app-container flex min-h-screen bg-gray-50 dark:bg-gray-900">
-    <!-- Mobile menu button -->
-    <div class="lg:hidden fixed top-4 left-4 z-50">
-      <button
-        @click="isSidebarOpen = !isSidebarOpen"
-        class="p-2 rounded-lg bg-white dark:bg-gray-800 shadow-lg hover:shadow-xl transition-all duration-200"
-      >
-        <svg class="w-6 h-6 text-gray-600 dark:text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" 
-                :d="isSidebarOpen ? 'M6 18L18 6M6 6l12 12' : 'M4 6h16M4 12h16M4 18h16'" />
-        </svg>
-      </button>
+  <div class="app-container">
+    <!-- Left Navigation Sidebar -->
+    <div class="sidebar">
+      <div class="logo">
+        <img :src="logoSrc" alt="Voltage Logo" />
+      </div>
+      <el-menu
+        router
+        :default-active="$route.path"
+        class="el-menu-vertical"
+        background-color="#3a4654"
+        text-color="#bfcbd9"
+        active-text-color="#409EFF">
+        
+        <el-menu-item index="/">
+          <el-icon><el-icon-house /></el-icon>
+          <span>Home</span>
+        </el-menu-item>
+        
+        <el-menu-item index="/services">
+          <el-icon><el-icon-connection /></el-icon>
+          <span>Services</span>
+        </el-menu-item>
+        
+        <el-menu-item index="/devices">
+          <el-icon><el-icon-cpu /></el-icon>
+          <span>Devices</span>
+        </el-menu-item>
+        
+        <el-menu-item index="/alarms">
+          <el-icon><el-icon-bell /></el-icon>
+          <span>Alarms</span>
+        </el-menu-item>
+        
+        <el-menu-item index="/system">
+          <el-icon><el-icon-setting /></el-icon>
+          <span>System</span>
+        </el-menu-item>
+        
+        <el-menu-item index="/activity">
+          <el-icon><el-icon-data-line /></el-icon>
+          <span>Activity</span>
+        </el-menu-item>
+      </el-menu>
+      
+      <div class="sidebar-footer">
+        <p>Voltage, LLC. © 2025 - All Rights Reserved.</p>
+      </div>
     </div>
 
     <!-- Overlay for mobile -->

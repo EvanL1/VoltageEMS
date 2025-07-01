@@ -142,10 +142,6 @@ fn convert_channel_config(config: &crate::core::config::config_manager::ChannelC
     let logging_config = crate::core::config::types::ChannelLoggingConfig {
         enabled: config.logging.enabled,
         level: config.logging.level.clone(),
-        log_dir: config.logging.log_dir.clone().or_else(|| Some(format!("logs/{}", config.name))),
-        max_file_size: config.logging.max_file_size,
-        max_files: config.logging.max_files,
-        retention_days: config.logging.retention_days,
         console_output: config.logging.console_output,
         log_messages: config.logging.log_messages,
     };
@@ -154,9 +150,12 @@ fn convert_channel_config(config: &crate::core::config::config_manager::ChannelC
         id: config.id,
         name: config.name.clone(),
         description: config.description.clone(),
-        protocol: protocol_type,
-        parameters: crate::core::config::types::ChannelParameters::Generic(param_map),
+        protocol: protocol_type.to_string(),
+        parameters: param_map,
         logging: logging_config,
+        table_config: None,
+        points: Vec::new(),
+        combined_points: config.to_types_channel_config().combined_points
     }
 }
 

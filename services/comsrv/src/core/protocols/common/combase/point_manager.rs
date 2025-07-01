@@ -6,7 +6,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 
@@ -14,116 +14,133 @@ use super::data_types::PointData;
 use super::telemetry::{TelemetryType, PointValueType};
 use crate::utils::Result;
 
+/// 默认缩放因子函数
+fn default_scale() -> f64 {
+    1.0
+}
+
+/// 默认true值函数
+fn default_true() -> bool {
+    true
+}
+
+/// 默认false值函数  
+fn default_false() -> bool {
+    false
+}
+
 /// Point configuration for universal management
+/// Follows the format specified in the functional specification document
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UniversalPointConfig {
-    /// Point identifier
-    pub id: String,
-    /// Human-readable point name
-    pub name: String,
-    /// Point description
+    /// 点位唯一标识符（必需，数字，与四遥点表中点位对应）
+    pub point_id: u32,
+    /// 点位中文名称（可选）
+    #[serde(default)]
+    pub name: Option<String>,
+    /// 详细描述（可选）
+    #[serde(default)]
     pub description: Option<String>,
+    /// 工程单位（可选）
+    #[serde(default)]
+    pub unit: Option<String>,
+    /// 数据类型（必需，float/int/double等）
+    pub data_type: String,
+    /// 缩放因子（必需，默认1.0）
+    #[serde(default = "default_scale")]
+    pub scale: f64,
+    /// 偏移（必需，默认为0）
+    #[serde(default)]
+    pub offset: f64,
+    /// 是否反位（仅遥信/遥控使用，0不开启，1开启）
+    #[serde(default)]
+    pub reverse: u8,
     /// Telemetry type classification
     pub telemetry_type: TelemetryType,
-    /// Engineering unit for analog points
-    pub unit: Option<String>,
-    /// Protocol-specific address or register
-    pub address: String,
-    /// Data type (bool, i16, i32, f32, f64, etc.)
-    pub data_type: String,
-    /// Scale factor for analog values
-    pub scale_factor: Option<f64>,
-    /// Offset for analog values
-    pub offset: Option<f64>,
-    /// Minimum valid value
-    pub min_value: Option<f64>,
-    /// Maximum valid value
-    pub max_value: Option<f64>,
     /// Whether this point is enabled
+    #[serde(default = "default_true")]
     pub enabled: bool,
     /// Whether this point is readable
+    #[serde(default = "default_true")]
     pub readable: bool,
     /// Whether this point is writable
+    #[serde(default = "default_false")]
     pub writable: bool,
-    /// Additional metadata
-    pub metadata: HashMap<String, String>,
 }
 
 impl UniversalPointConfig {
     /// Create a new point configuration
-    pub fn new(id: &str, name: &str, telemetry_type: TelemetryType, address: &str) -> Self {
+    pub fn new(point_id: u32, name: &str, telemetry_type: TelemetryType) -> Self {
         let is_writable = matches!(telemetry_type, TelemetryType::Control | TelemetryType::Setpoint);
         Self {
-            id: id.to_string(),
-            name: name.to_string(),
+            point_id,
+            name: Some(name.to_string()),
             description: None,
-            telemetry_type,
             unit: None,
-            address: address.to_string(),
-            data_type: "f64".to_string(),
-            scale_factor: None,
-            offset: None,
-            min_value: None,
-            max_value: None,
+            data_type: match telemetry_type.is_analog() {
+                true => "float".to_string(),
+                false => "bool".to_string(),
+            },
+            scale: 1.0,
+            offset: 0.0,
+            reverse: 0,
+            telemetry_type,
             enabled: true,
             readable: true,
             writable: is_writable,
-            metadata: HashMap::new(),
         }
     }
 
     /// Validate the point configuration
     pub fn validate(&self) -> Result<()> {
-        if self.id.is_empty() {
+        if self.point_id == 0 {
             return Err(crate::utils::ComSrvError::InvalidParameter(
-                "Point ID cannot be empty".to_string(),
+                "Point ID cannot be 0".to_string(),
             ));
         }
 
-        if self.name.is_empty() {
+        if self.data_type.is_empty() {
             return Err(crate::utils::ComSrvError::InvalidParameter(
-                "Point name cannot be empty".to_string(),
+                "Data type cannot be empty".to_string(),
             ));
         }
 
-        if self.address.is_empty() {
+        if self.reverse > 1 {
             return Err(crate::utils::ComSrvError::InvalidParameter(
-                "Point address cannot be empty".to_string(),
+                "Reverse must be 0 or 1".to_string(),
             ));
-        }
-
-        // Validate min/max values
-        if let (Some(min), Some(max)) = (self.min_value, self.max_value) {
-            if min >= max {
-                return Err(crate::utils::ComSrvError::InvalidParameter(
-                    "Minimum value must be less than maximum value".to_string(),
-                ));
-            }
         }
 
         Ok(())
     }
 
-    /// Apply scale and offset to raw value
+    /// Apply scale and offset to raw value for analog points
+    /// Point_data = source_data * scale + offset
     pub fn process_value(&self, raw_value: f64) -> f64 {
-        let scaled = raw_value * self.scale_factor.unwrap_or(1.0);
-        scaled + self.offset.unwrap_or(0.0)
+        raw_value * self.scale + self.offset
     }
 
-    /// Check if value is within valid range
-    pub fn is_value_valid(&self, value: f64) -> bool {
-        if let Some(min) = self.min_value {
-            if value < min {
-                return false;
-            }
+    /// Apply reverse logic for digital points
+    /// reverse=1时，point_data = 1 - source_data (即取反)
+    pub fn process_digital_value(&self, source_data: bool) -> bool {
+        if self.reverse == 1 {
+            !source_data
+        } else {
+            source_data
         }
-        if let Some(max) = self.max_value {
-            if value > max {
-                return false;
-            }
-        }
-        true
     }
+
+    /// Get point ID as string for compatibility
+    pub fn id(&self) -> String {
+        self.point_id.to_string()
+    }
+
+    /// Get point name or default
+    pub fn get_name(&self) -> String {
+        self.name.clone().unwrap_or_else(|| format!("Point_{}", self.point_id))
+    }
+
+    
 }
 
 /// Point management statistics
@@ -146,7 +163,7 @@ pub struct PointManagerStats {
 }
 
 /// Universal point manager for all protocols
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct UniversalPointManager {
     /// Point configurations indexed by point ID
     points: Arc<RwLock<HashMap<String, UniversalPointConfig>>>,
@@ -200,10 +217,10 @@ impl UniversalPointManager {
             points_by_type
                 .entry(config.telemetry_type.clone())
                 .or_insert_with(Vec::new)
-                .push(config.id.clone());
+                .push(config.id());
 
             // Store configuration
-            points.insert(config.id.clone(), config);
+            points.insert(config.id(), config);
         }
 
         // Update statistics
@@ -272,13 +289,12 @@ impl UniversalPointManager {
         let value_str = match value {
             PointValueType::Analog(val) => {
                 let processed = config.process_value(val);
-                if !config.is_value_valid(processed) {
-                    warn!("Value {} for point {} is out of range", processed, point_id);
-                    self.stats.write().await.validation_errors += 1;
-                }
                 processed.to_string()
             }
-            PointValueType::Digital(val) => val.to_string(),
+            PointValueType::Digital(val) => {
+                let processed = config.process_digital_value(val);
+                processed.to_string()
+            },
             PointValueType::Measurement(ref point) => point.value.to_string(),
             PointValueType::Signaling(ref point) => point.status.to_string(),
             PointValueType::Control(ref point) => point.current_state.to_string(),
@@ -287,7 +303,7 @@ impl UniversalPointManager {
 
         let point_data = PointData {
             id: point_id.to_string(),
-            name: config.name.clone(),
+            name: config.get_name(),
             value: value_str,
             timestamp: Utc::now(),
             unit: config.unit.unwrap_or_default(),
@@ -398,7 +414,7 @@ impl UniversalPointManager {
     }
 
     /// Validate point value before writing
-    pub async fn validate_point_value(&self, point_id: &str, value: f64) -> Result<()> {
+    pub async fn validate_point_value(&self, point_id: &str, _value: f64) -> Result<()> {
         let config = self.get_point_config(point_id).await.ok_or_else(|| {
             crate::utils::ComSrvError::NotFound(format!("Point not found: {}", point_id))
         })?;
@@ -415,13 +431,8 @@ impl UniversalPointManager {
             ));
         }
 
-        let processed_value = config.process_value(value);
-        if !config.is_value_valid(processed_value) {
-                    return Err(crate::utils::ComSrvError::InvalidParameter(format!(
-            "Value {} is out of valid range for point {}",
-            processed_value, point_id
-        )));
-        }
+        // Note: Value validation can be added here if needed
+        // let processed_value = config.process_value(value);
 
         Ok(())
     }
@@ -433,20 +444,18 @@ mod tests {
 
     fn create_test_config() -> UniversalPointConfig {
         UniversalPointConfig::new(
-            "test_point_01",
+            1001,
             "Test Temperature",
             TelemetryType::Telemetry,
-            "40001",
         )
     }
 
     #[test]
     fn test_point_config_creation() {
         let config = create_test_config();
-        assert_eq!(config.id, "test_point_01");
-        assert_eq!(config.name, "Test Temperature");
+        assert_eq!(config.point_id, 1001);
+        assert_eq!(config.get_name(), "Test Temperature");
         assert_eq!(config.telemetry_type, TelemetryType::Telemetry);
-        assert_eq!(config.address, "40001");
         assert!(config.enabled);
         assert!(config.readable);
     }
@@ -457,29 +466,30 @@ mod tests {
         assert!(config.validate().is_ok());
 
         let mut invalid_config = config.clone();
-        invalid_config.id = "".to_string();
+        invalid_config.point_id = 0;
         assert!(invalid_config.validate().is_err());
     }
 
     #[test]
     fn test_value_processing() {
         let mut config = create_test_config();
-        config.scale_factor = Some(0.1);
-        config.offset = Some(10.0);
+        config.scale = 0.1;
+        config.offset = 10.0;
 
         let processed = config.process_value(100.0);
         assert_eq!(processed, 20.0); // 100 * 0.1 + 10 = 20
     }
 
     #[test]
-    fn test_value_validation() {
+    fn test_digital_value_processing() {
         let mut config = create_test_config();
-        config.min_value = Some(0.0);
-        config.max_value = Some(100.0);
+        config.reverse = 1;
 
-        assert!(config.is_value_valid(50.0));
-        assert!(!config.is_value_valid(-10.0));
-        assert!(!config.is_value_valid(150.0));
+        let processed = config.process_digital_value(true);
+        assert_eq!(processed, false); // reverse = 1, so true -> false
+        
+        let processed2 = config.process_digital_value(false);
+        assert_eq!(processed2, true); // reverse = 1, so false -> true
     }
 
     #[tokio::test]
@@ -502,7 +512,7 @@ mod tests {
         assert_eq!(stats.total_points, 1);
         assert_eq!(stats.enabled_points, 1);
 
-        let config = manager.get_point_config("test_point_01").await;
+        let config = manager.get_point_config("1001").await;
         assert!(config.is_some());
     }
 
@@ -515,7 +525,7 @@ mod tests {
 
         let telemetry_points = manager.get_points_by_type(&TelemetryType::Telemetry).await;
         assert_eq!(telemetry_points.len(), 1);
-        assert_eq!(telemetry_points[0], "test_point_01");
+        assert_eq!(telemetry_points[0], "1001");
     }
 
     #[tokio::test]
@@ -527,11 +537,11 @@ mod tests {
 
         let value = PointValueType::Analog(25.5);
         manager
-            .update_point_value("test_point_01", value)
+            .update_point_value("1001", value)
             .await
             .unwrap();
 
-        let point_data = manager.get_point_data("test_point_01").await;
+        let point_data = manager.get_point_data("1001").await;
         assert!(point_data.is_some());
 
         let data = point_data.unwrap();

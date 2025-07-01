@@ -1,6 +1,6 @@
 //! Telemetry Types and Four-Telemetry Operations
 //!
-//! This module contains all telemetry-related data structures and types
+//! This module contains essential telemetry-related data structures and types
 //! used for the four telemetry operations: measurement, signaling, control, and regulation.
 
 use chrono::{DateTime, Utc};
@@ -40,16 +40,6 @@ impl TelemetryType {
         }
     }
 
-    /// Check if this type is readable
-    pub fn is_readable(&self) -> bool {
-        matches!(self, TelemetryType::Telemetry | TelemetryType::Signaling)
-    }
-
-    /// Check if this type is writable
-    pub fn is_writable(&self) -> bool {
-        matches!(self, TelemetryType::Control | TelemetryType::Setpoint)
-    }
-
     /// Check if this type is analog
     pub fn is_analog(&self) -> bool {
         matches!(self, TelemetryType::Telemetry | TelemetryType::Setpoint)
@@ -59,6 +49,31 @@ impl TelemetryType {
     pub fn is_digital(&self) -> bool {
         matches!(self, TelemetryType::Signaling | TelemetryType::Control)
     }
+
+    /// Check if this type is readable
+    pub fn is_readable(&self) -> bool {
+        matches!(self, TelemetryType::Telemetry | TelemetryType::Signaling)
+    }
+
+    /// Check if this type is writable
+    pub fn is_writable(&self) -> bool {
+        matches!(self, TelemetryType::Control | TelemetryType::Setpoint)
+    }
+}
+
+/// Unified execution status for all operations
+#[derive(Debug, Clone, PartialEq)]
+pub enum ExecutionStatus {
+    /// 待机 - Standby
+    Standby,
+    /// 执行中 - Executing
+    Executing,
+    /// 成功 - Completed/Success
+    Success,
+    /// 失败 - Failed
+    Failed(String),
+    /// 超时 - Timeout
+    Timeout,
 }
 
 /// Extended measurement point data
@@ -107,51 +122,6 @@ pub struct RegulationPoint {
     pub in_range: bool,
     /// Timestamp
     pub timestamp: DateTime<Utc>,
-}
-
-/// General execution status
-#[derive(Debug, Clone, PartialEq)]
-pub enum ExecutionStatus {
-    /// 待机 - Standby
-    Standby,
-    /// 执行中 - Executing
-    Executing,
-    /// 成功 - Completed
-    Completed,
-    /// 失败 - Failed
-    Failed(String),
-}
-
-/// Control operation execution status
-#[derive(Debug, Clone, PartialEq)]
-pub enum ControlExecutionStatus {
-    /// 待机 - Standby
-    Standby,
-    /// 执行中 - Executing
-    Executing,
-    /// 成功 - Success
-    Success,
-    /// 失败 - Failed
-    Failed(String),
-    /// 超时 - Timeout
-    Timeout,
-}
-
-/// Regulation operation execution status
-#[derive(Debug, Clone, PartialEq)]
-pub enum RegulationExecutionStatus {
-    /// 待机 - Standby
-    Standby,
-    /// 调节中 - Regulating
-    Regulating,
-    /// 成功 - Success
-    Success,
-    /// 失败 - Failed
-    Failed(String),
-    /// 超时 - Timeout
-    Timeout,
-    /// 超出范围 - Out of Range
-    OutOfRange,
 }
 
 /// Point value type for unified handling
@@ -203,7 +173,7 @@ impl PointValueType {
     }
 }
 
-/// Remote operation type definition
+/// Remote operation type definition (simplified)
 #[derive(Debug, Clone)]
 pub enum RemoteOperationType {
     /// Digital control (遥控)
@@ -298,19 +268,7 @@ pub struct RemoteOperationResponse {
     pub execution_time: DateTime<Utc>,
 }
 
-/// Extended telemetry metadata
-#[derive(Debug, Clone)]
-pub struct TelemetryMetadata {
-    /// For signaling points: state descriptions and invert option
-    pub true_text: Option<String>,
-    pub false_text: Option<String>,
-    pub invert_signal: Option<bool>,
 
-    /// For control points: command descriptions and invert option
-    pub true_command: Option<String>,
-    pub false_command: Option<String>,
-    pub invert_control: Option<bool>,
-}
 
 #[cfg(test)]
 mod tests {
@@ -371,5 +329,14 @@ mod tests {
             step_size: None,
         };
         assert!(invalid_operation.validate().is_err());
+    }
+
+    #[test]
+    fn test_execution_status() {
+        let status = ExecutionStatus::Success;
+        assert_eq!(status, ExecutionStatus::Success);
+        
+        let failed_status = ExecutionStatus::Failed("Test error".to_string());
+        assert!(matches!(failed_status, ExecutionStatus::Failed(_)));
     }
 } 
