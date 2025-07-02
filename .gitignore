@@ -25,6 +25,9 @@ logs/
 **/build/
 **/dist/
 
+# Test
+*.PID
+
 # Dependencies
 **/node_modules/
 
@@ -78,7 +81,6 @@ Voltage_EMS_功能文档.md
 services/comsrv/docs/layered_configuration_system.md
 simple_modbus_server.py
 services/comsrv/comsrv-enhanced-redis.yaml
-.gitignore
 services/comsrv/docs/CSV_FOUR_TELEMETRY_STRUCTURE.md
 services/comsrv/docs/REDIS_MONITORING_GUIDE.md
 services/comsrv/docs/DATA_STRUCTURES.md

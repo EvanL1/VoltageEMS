@@ -23,12 +23,12 @@ if [ -f .mock-data.pid ]; then
     fi
 else
     # 尝试通过进程名停止
-    pkill -f "node mock-data-generator.js" 2>/dev/null || true
+    pkill -f "node frontend/scripts/mock-data-generator.js" 2>/dev/null || true
 fi
 
 # 停止 Docker 服务
 echo -e "${YELLOW}停止 Docker 服务...${NC}"
-docker-compose -f docker-compose.grafana.yml down
+docker-compose -f frontend/grafana/docker-compose.grafana.yml down
 
 # 停止 Docker Redis（如果存在）
 docker stop voltage-redis 2>/dev/null && docker rm voltage-redis 2>/dev/null || true

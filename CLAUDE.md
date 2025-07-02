@@ -85,7 +85,8 @@ Devices (Modbus/CAN/IEC60870) → comsrv → Redis → {modsrv, hissrv, netsrv, 
 - Supports industrial interfaces: TCP, Serial, GPIO (DI/DO), CAN bus
 - Configuration via YAML files with CSV point tables
 - Channel-based device management with point mapping
-- Built-in Prometheus metrics and structured logging
+- Built-in Prometheus metrics and optimized structured logging
+- **Enhanced logging system** with configurable file output, target filtering, and compact format
 
 ### Transport Layer Implementation
 
@@ -132,10 +133,103 @@ config/
     └── mapping_*.csv
 ```
 
+### Logging System Configuration
+
+#### Service-Level Logging
+```yaml
+service:
+  logging:
+    level: "debug"
+    file: "logs/comsrv.log"        # Configurable file path
+    max_size: 10485760             # 10MB file size limit
+    max_files: 5                   # Max number of rotated files
+    console: true                  # Enable console output
+```
+
+#### Channel-Level Logging
+```yaml
+channels:
+  - logging:
+      enabled: true
+      level: "debug"
+      log_dir: "logs/modbus_tcp_demo"    # Custom log directory
+      max_file_size: 5242880             # 5MB per file
+      max_files: 3                       # Keep 3 files
+      retention_days: 7                  # Keep for 7 days
+      console_output: true               # Also output to console
+      log_messages: true                 # Log protocol messages
+```
+
+#### Logging Features
+- **Daily log rotation** with configurable retention
+- **Compact format** without redundant target information  
+- **Mixed output** supporting both console and file simultaneously
+- **Channel-specific logs** in separate directories
+- **Configurable paths** for flexible deployment
+
 ### Important Notes
 
-- Redis runs on port 6379 as real-time database
+- Redis runs in container at port 6379 as real-time database
 - No quality attributes needed in data structures
 - Use Chinese for user-facing documentation
+- Each time you finish modifying a file, record it in the corresponding microservice’s fixlog.md.
 - Services communicate only via Redis, not direct calls
 - Support for multiple industrial protocols in single deployment
+- **Enhanced logging** provides clear, non-redundant output for debugging and monitoring
+
+### Data Structures and Optimization
+
+#### Point Management Optimization
+- Use `HashMap<u32, UniversalPointConfig>` instead of `HashMap<String, UniversalPointConfig>` for better performance
+- Implement multi-level indexes using `HashSet<u32>` for type grouping and permission checks
+- Add `name_to_id` mapping for name-based queries
+- All query operations optimized to O(1) complexity
+
+#### Protocol Mapping Structure
+Multiple mapping structures exist in the codebase:
+
+1. **ProtocolMapping** (in config_manager.rs and types/channel.rs)
+   - Does not directly contain slave_id and function_code fields
+   - These values are stored in the address string field or protocol_params HashMap
+   - Address format: `slave_id:function_code:register_address` (colon-separated)
+
+2. **ProtocolMappingRecord** (in loaders/csv_loader.rs)
+   - Directly contains slave_id, function_code, register_address fields
+   - Raw data structure loaded from CSV files
+
+3. **UnifiedPointMapping** (in types/protocol.rs)
+   - Uses ProtocolAddress enum for different protocol addresses
+   - Modbus variant includes slave_id, function_code, register, bit fields
+
+#### Address Parsing Logic
+```rust
+// Extract address from protocol_params
+let address = cp.protocol_params.get("address").unwrap_or(&default_address);
+// Parse according to "slave_id:function_code:register_address" format
+let address_parts: Vec<&str> = address.split(':').collect();
+let slave_id = address_parts[0].parse::<u8>()?;
+let function_code = address_parts[1].parse::<u8>()?;
+let register_address = address_parts[2].parse::<u16>()?;
+```
+
+#### Redis Optimization
+- Implement local cache layer with TTL management
+- Use batch operations with Pipeline mode
+- Replace KEYS command with SCAN to avoid blocking
+- Support batch update API: `batch_update_values`
+
+### Testing Tools
+
+#### Modbus Testing
+- `tests/modbus_server_simulator.py` - Full Modbus TCP server simulator
+  - Supports all four remote types (YC/YX/YK/YT)
+  - Matches comsrv configuration for slave IDs and addresses
+  - Real-time data updates with sine wave simulation
+- `tests/test_modbus_client.py` - Test client for verification
+- `scripts/start_modbus_simulator.sh` - Server startup script
+- `tests/test_comsrv_integration.sh` - Integration test script
+
+#### Performance Testing
+- `examples/optimized_points_demo.rs` - 10,000 point stress test
+- `scripts/test_optimized_points.sh` - Performance test script
+- `scripts/check_redis_points.sh` - Redis data validation script

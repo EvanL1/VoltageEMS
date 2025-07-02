@@ -44,7 +44,7 @@ start_docker_services() {
     echo -e "${YELLOW}启动 Docker 服务...${NC}"
     
     # 启动 Grafana 和 InfluxDB
-    docker-compose -f docker-compose.grafana.yml up -d
+    docker-compose -f frontend/grafana/docker-compose.grafana.yml up -d
     
     # 如果需要，启动 Redis
     if [ "$USE_DOCKER_REDIS" = true ]; then
@@ -56,7 +56,7 @@ start_docker_services() {
     sleep 10
     
     # 检查服务状态
-    docker-compose -f docker-compose.grafana.yml ps
+    docker-compose -f frontend/grafana/docker-compose.grafana.yml ps
     
     echo -e "${GREEN}✓ Docker 服务已启动${NC}"
 }
@@ -66,8 +66,8 @@ install_frontend_deps() {
     echo ""
     echo -e "${YELLOW}检查前端依赖...${NC}"
     
-    if [ ! -f "mock-data-generator.js" ]; then
-        echo -e "${RED}错误: 未找到 mock-data-generator.js${NC}"
+    if [ ! -f "frontend/scripts/mock-data-generator.js" ]; then
+        echo -e "${RED}错误: 未找到 frontend/scripts/mock-data-generator.js${NC}"
         exit 1
     fi
     
@@ -86,10 +86,10 @@ start_mock_data() {
     echo -e "${YELLOW}启动模拟数据生成器...${NC}"
     
     # 杀死之前的进程（如果存在）
-    pkill -f "node mock-data-generator.js" 2>/dev/null || true
+    pkill -f "node frontend/scripts/mock-data-generator.js" 2>/dev/null || true
     
     # 启动新的数据生成器
-    node mock-data-generator.js &
+    node frontend/scripts/mock-data-generator.js &
     MOCK_PID=$!
     echo "模拟数据生成器 PID: $MOCK_PID"
     
@@ -147,7 +147,7 @@ show_info() {
     echo "============================================"
     echo ""
     echo "📝 常用命令:"
-    echo "   查看日志: docker-compose -f docker-compose.grafana.yml logs -f"
+    echo "   查看日志: docker-compose -f frontend/grafana/docker-compose.grafana.yml logs -f"
     echo "   停止服务: ./stop-demo.sh"
     echo "   重启服务: ./restart-demo.sh"
     echo ""

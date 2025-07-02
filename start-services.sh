@@ -19,7 +19,7 @@ docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}" | grep voltage
 # 启动 Grafana 和 InfluxDB (如果没有运行)
 if ! docker ps | grep -q voltage-grafana; then
     echo "🔧 Starting Grafana and InfluxDB..."
-    docker-compose -f docker-compose.grafana.yml up -d
+    docker-compose -f frontend/grafana/docker-compose.grafana.yml up -d
     echo "⏳ Waiting for Grafana to start..."
     sleep 15
 fi
@@ -27,7 +27,7 @@ fi
 # 检查数据写入器
 if ! pgrep -f "influxdb-writer.js" > /dev/null; then
     echo "📝 Starting data writer..."
-    nohup node influxdb-writer.js > influxdb-writer.log 2>&1 &
+    nohup node frontend/scripts/influxdb-writer.js > influxdb-writer.log 2>&1 &
     echo "✅ Data writer started"
 fi
 
@@ -47,7 +47,7 @@ echo ""
 echo "📍 Access URLs:"
 echo "  Frontend:     http://localhost:8082/"
 echo "  Grafana:      http://localhost:3050/"
-echo "  Test Page:    embedded-test-proxy.html"
+echo "  Test Page:    frontend/public/test-pages/embedded-test-proxy.html"
 echo ""
 echo "💡 If you see connection refused:"
 echo "  1. Open browser with --disable-web-security flag"
