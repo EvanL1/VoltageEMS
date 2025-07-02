@@ -87,11 +87,11 @@ impl From<crate::core::protocols::common::combase::PointData> for PointValue {
     /// Convert from ComBase PointData to API PointValue
     fn from(point: crate::core::protocols::common::combase::PointData) -> Self {
         Self {
-            id: point.id,
-            name: point.name,
+            id: point.id.to_string(),
+            name: point.name.to_string(),
             value: serde_json::Value::String(point.value), // Convert string to JSON value
             timestamp: point.timestamp,
-            unit: point.unit,
+            unit: point.unit.to_string(),
             description: point.description,
         }
     }

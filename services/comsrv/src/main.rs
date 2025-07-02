@@ -9,7 +9,7 @@ use tokio::signal;
 use axum::serve;
 
 use tracing::{error, info, Level};
-use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, Layer, fmt::format::FmtSpan};
+use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 use tracing_appender::rolling::{RollingFileAppender, Rotation};
 
 use comsrv::core::config::ConfigManager;
@@ -32,8 +32,6 @@ where
         mut writer: tracing_subscriber::fmt::format::Writer<'_>,
         event: &tracing::Event<'_>,
     ) -> std::fmt::Result {
-        use std::fmt::Write;
-        
         let metadata = event.metadata();
         let level = metadata.level();
         

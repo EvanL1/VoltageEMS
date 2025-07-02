@@ -604,7 +604,7 @@ impl ProtocolClientFactory for ModbusRtuFactory {
     async fn create_client(
         &self,
         config: ChannelConfig,
-        config_manager: Option<&ConfigManager>,
+        _config_manager: Option<&ConfigManager>,
     ) -> Result<Box<dyn ComBase>> {
         let modbus_config: crate::core::protocols::modbus::common::ModbusConfig =
             config.clone().into();
@@ -643,7 +643,7 @@ impl ProtocolClientFactory for ModbusRtuFactory {
 
         // For now, just accept all ModbusRtu configurations to allow testing
         // TODO: Implement proper parameter validation
-        if let Some(map) = config.parameters.get("ModbusRtu") {
+        if let Some(_map) = config.parameters.get("ModbusRtu") {
             // For testing purposes, accept any ModbusRtu configuration
             return Ok(());
         }
@@ -914,7 +914,7 @@ impl ProtocolFactory {
     /// Enable Redis storage for this factory
     pub fn enable_redis_storage(&mut self, redis_store: crate::core::storage::redis_storage::RedisStore) -> Result<()> {
         // Migrate existing channel metadata to Redis
-        if let Some(ref redis) = self.redis_store {
+        if let Some(ref _redis) = self.redis_store {
             tracing::warn!("Redis storage is already enabled, replacing existing store");
         }
 
@@ -1891,6 +1891,7 @@ impl Default for ProtocolFactory {
 mod tests {
     use super::*;
     use crate::core::config::ProtocolType;
+    use crate::core::config::loaders::point_mapper::CombinedPoint;
 
     fn create_test_channel_config(id: u16, protocol: ProtocolType) -> ChannelConfig {
         let parameters = serde_json::json!({
@@ -1908,9 +1909,12 @@ mod tests {
             id,
             name: format!("Test Channel {}", id),
             description: Some("Test channel configuration".to_string()),
-            protocol,
+            protocol: protocol.to_string(),
             parameters: param_map,
             logging: ChannelLoggingConfig::default(),
+            table_config: None,
+            points: Vec::new(),
+            combined_points: Vec::new(),
         }
     }
 
@@ -1933,9 +1937,12 @@ mod tests {
             id,
             name: format!("Test RTU Channel {}", id),
             description: Some("Test RTU channel configuration".to_string()),
-            protocol: ProtocolType::ModbusRtu,
+            protocol: ProtocolType::ModbusRtu.to_string(),
             parameters: param_map,
             logging: ChannelLoggingConfig::default(),
+            table_config: None,
+            points: Vec::new(),
+            combined_points: Vec::new(),
         }
     }
 
@@ -1977,11 +1984,11 @@ mod tests {
 
         let modbus_config = factory.get_default_config(&ProtocolType::ModbusTcp);
         assert!(modbus_config.is_some());
-        assert_eq!(modbus_config.unwrap().protocol, ProtocolType::ModbusTcp);
+        assert_eq!(modbus_config.unwrap().protocol, ProtocolType::ModbusTcp.to_string());
 
         let modbus_rtu_config = factory.get_default_config(&ProtocolType::ModbusRtu);
         assert!(modbus_rtu_config.is_some());
-        assert_eq!(modbus_rtu_config.unwrap().protocol, ProtocolType::ModbusRtu);
+        assert_eq!(modbus_rtu_config.unwrap().protocol, ProtocolType::ModbusRtu.to_string());
 
         // Unsupported protocol should return None
         let unsupported = factory.get_default_config(&ProtocolType::Can);
@@ -2210,7 +2217,8 @@ mod tests {
         // Verify metadata was stored
         let metadata = factory.channels.get(&100).unwrap().metadata.clone();
         assert_eq!(metadata.name, config.name);
-        assert_eq!(metadata.protocol_type, config.protocol);
+        // metadata.protocol_type is ProtocolType, config.protocol is String
+        assert_eq!(metadata.protocol_type.to_string(), config.protocol);
     }
 
     #[test]

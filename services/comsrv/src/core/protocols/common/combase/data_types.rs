@@ -6,6 +6,7 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::sync::Arc;
 
 /// Channel operational status and health information
 #[derive(Debug, Clone)]
@@ -68,19 +69,20 @@ impl ChannelStatus {
 /// Real-time data point representation
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PointData {
-    /// Point ID
+    /// Point ID - kept as String for simplicity since it's not frequently shared
     pub id: String,
-    /// Point name
+    /// Point name - kept as String for better readability
     pub name: String,
     /// Point value as string
     pub value: String,
     /// Timestamp
     pub timestamp: DateTime<Utc>,
-    /// Engineering unit
+    /// Engineering unit - usually short strings like "°C", "kW"
     pub unit: String,
     /// Point description
     pub description: String,
 }
+
 
 /// Polling configuration parameters
 #[derive(Debug, Clone)]
@@ -173,13 +175,13 @@ pub enum ConnectionState {
 /// Point configuration for polling operations
 #[derive(Debug, Clone)]
 pub struct PollingPoint {
-    /// Unique point identifier
-    pub id: String,
-    /// Human-readable point name
-    pub name: String,
+    /// Unique point identifier - kept as Arc for sharing across tasks
+    pub id: Arc<str>,
+    /// Human-readable point name - kept as Arc for frequent logging/display
+    pub name: Arc<str>,
     /// Protocol-specific address (e.g., Modbus register address, IEC60870 IOA)
     pub address: u32,
-    /// Data type for value interpretation
+    /// Data type for value interpretation - usually fixed values like "float", "bool"
     pub data_type: String,
     /// Four-telemetry type classification
     pub telemetry_type: super::telemetry::TelemetryType,
@@ -187,14 +189,14 @@ pub struct PollingPoint {
     pub scale: f64,
     /// Offset applied after scaling
     pub offset: f64,
-    /// Engineering unit
+    /// Engineering unit - usually short like "°C", "kW"
     pub unit: String,
     /// Point description
     pub description: String,
-    /// Access mode (read, write, read-write)
+    /// Access mode (read, write, read-write) - fixed values
     pub access_mode: String,
-    /// Point group for batch operations
-    pub group: String,
+    /// Point group for batch operations - kept as Arc for grouping efficiency
+    pub group: Arc<str>,
     /// Protocol-specific parameters
     pub protocol_params: HashMap<String, serde_json::Value>,
 }

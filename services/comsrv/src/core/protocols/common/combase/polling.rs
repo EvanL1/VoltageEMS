@@ -17,6 +17,44 @@ use super::data_types::{PointData, PollingConfig, PollingStats, PollingPoint};
 
 use crate::utils::Result;
 
+/// Polling context containing all necessary data for polling operations
+/// This reduces the need for multiple Arc clones
+#[derive(Clone)]
+struct PollingContext {
+    config: Arc<RwLock<PollingConfig>>,
+    points: Arc<RwLock<Vec<PollingPoint>>>,
+    stats: Arc<RwLock<PollingStats>>,
+    is_running: Arc<RwLock<bool>>,
+    point_reader: Arc<dyn PointReader>,
+    protocol_name: Arc<str>,
+    data_callback: Option<Arc<dyn Fn(Vec<PointData>) + Send + Sync>>,
+    time_cache: Arc<TimeCache>,
+}
+
+impl PollingContext {
+    fn new(
+        config: Arc<RwLock<PollingConfig>>,
+        points: Arc<RwLock<Vec<PollingPoint>>>,
+        stats: Arc<RwLock<PollingStats>>,
+        is_running: Arc<RwLock<bool>>,
+        point_reader: Arc<dyn PointReader>,
+        protocol_name: String,
+        data_callback: Option<Arc<dyn Fn(Vec<PointData>) + Send + Sync>>,
+        time_cache: Arc<TimeCache>,
+    ) -> Self {
+        Self {
+            config,
+            points,
+            stats,
+            is_running,
+            point_reader,
+            protocol_name: Arc::from(protocol_name),
+            data_callback,
+            time_cache,
+        }
+    }
+}
+
 /// Time cache to reduce frequent Utc::now() calls
 struct TimeCache {
     /// Cached timestamp
@@ -102,8 +140,8 @@ pub trait PointReader: Send + Sync {
                 Err(e) => {
                     // Create error data point
                     results.push(PointData {
-                        id: point.id.clone(),
-                        name: point.name.clone(),
+                        id: point.id.to_string(),
+                        name: point.name.to_string(),
                         value: "null".to_string(),
                         timestamp: chrono::Utc::now(),
                         unit: point.unit.clone(),
@@ -125,39 +163,29 @@ pub trait PointReader: Send + Sync {
 
 /// Universal polling engine implementation
 pub struct UniversalPollingEngine {
-    /// Protocol name for logging
-    protocol_name: String,
-    /// Polling configuration
-    config: Arc<RwLock<PollingConfig>>,
-    /// Points to be polled
-    points: Arc<RwLock<Vec<PollingPoint>>>,
-    /// Polling statistics
-    stats: Arc<RwLock<PollingStats>>,
-    /// Running state
-    is_running: Arc<RwLock<bool>>,
-    /// Point reader implementation (protocol-specific)
-    point_reader: Arc<dyn PointReader>,
-    /// Data callback for storing read values
-    data_callback: Option<Arc<dyn Fn(Vec<PointData>) + Send + Sync>>,
+    /// Polling context containing all shared state
+    context: PollingContext,
     /// Task handle for polling task
     task_handle: Arc<RwLock<Option<JoinHandle<()>>>>,
-    /// Time cache for reducing frequent time calls
-    time_cache: Arc<TimeCache>,
 }
 
 impl UniversalPollingEngine {
     /// Create a new universal polling engine
     pub fn new(protocol_name: String, point_reader: Arc<dyn PointReader>) -> Self {
-        Self {
-            protocol_name,
-            config: Arc::new(RwLock::new(PollingConfig::default())),
-            points: Arc::new(RwLock::new(Vec::new())),
-            stats: Arc::new(RwLock::new(PollingStats::default())),
-            is_running: Arc::new(RwLock::new(false)),
+        let context = PollingContext::new(
+            Arc::new(RwLock::new(PollingConfig::default())),
+            Arc::new(RwLock::new(Vec::new())),
+            Arc::new(RwLock::new(PollingStats::default())),
+            Arc::new(RwLock::new(false)),
             point_reader,
-            data_callback: None,
+            protocol_name,
+            None,
+            Arc::new(TimeCache::new()),
+        );
+        
+        Self {
+            context,
             task_handle: Arc::new(RwLock::new(None)),
-            time_cache: Arc::new(TimeCache::new()),
         }
     }
 
@@ -166,14 +194,17 @@ impl UniversalPollingEngine {
     where
         F: Fn(Vec<PointData>) + Send + Sync + 'static,
     {
-        self.data_callback = Some(Arc::new(callback));
+        // Need to create a new context with the updated callback
+        let mut new_context = self.context.clone();
+        new_context.data_callback = Some(Arc::new(callback));
+        self.context = new_context;
     }
 }
 
 #[async_trait]
 impl PollingEngine for UniversalPollingEngine {
     async fn start_polling(&self, config: PollingConfig, points: Vec<PollingPoint>) -> Result<()> {
-        let mut running = self.is_running.write().await;
+        let mut running = self.context.is_running.write().await;
         if *running {
             return Err(crate::utils::ComSrvError::InvalidOperation(
                 "Polling is already running".to_string(),
@@ -181,25 +212,25 @@ impl PollingEngine for UniversalPollingEngine {
         }
 
         if !config.enabled {
-            info!("Polling is disabled for protocol: {}", self.protocol_name);
+            info!("Polling is disabled for protocol: {}", self.context.protocol_name);
             return Ok(());
         }
 
         // Update configuration and points
-        *self.config.write().await = config;
-        *self.points.write().await = points;
+        *self.context.config.write().await = config;
+        *self.context.points.write().await = points;
 
         // Start polling task
         let task_handle = self.start_polling_task().await;
         *self.task_handle.write().await = Some(task_handle);
         *running = true;
 
-        info!("Started polling for protocol: {}", self.protocol_name);
+        info!("Started polling for protocol: {}", self.context.protocol_name);
         Ok(())
     }
 
     async fn stop_polling(&self) -> Result<()> {
-        let mut running = self.is_running.write().await;
+        let mut running = self.context.is_running.write().await;
         if !*running {
             return Ok(());
         }
@@ -209,111 +240,105 @@ impl PollingEngine for UniversalPollingEngine {
             handle.abort();
             // Wait for task to finish or timeout
             match tokio::time::timeout(Duration::from_secs(5), handle).await {
-                Ok(_) => info!("Polling task stopped gracefully for protocol: {}", self.protocol_name),
-                Err(_) => warn!("Polling task stop timeout for protocol: {}", self.protocol_name),
+                Ok(_) => info!("Polling task stopped gracefully for protocol: {}", self.context.protocol_name),
+                Err(_) => warn!("Polling task stop timeout for protocol: {}", self.context.protocol_name),
             }
         }
 
         *running = false;
-        info!("Stopped polling for protocol: {}", self.protocol_name);
+        info!("Stopped polling for protocol: {}", self.context.protocol_name);
         Ok(())
     }
 
     async fn get_polling_stats(&self) -> PollingStats {
-        self.stats.read().await.clone()
+        self.context.stats.read().await.clone()
     }
 
     async fn is_polling_active(&self) -> bool {
-        *self.is_running.read().await
+        *self.context.is_running.read().await
     }
 
     async fn update_polling_config(&self, config: PollingConfig) -> Result<()> {
-        *self.config.write().await = config;
-        info!("Updated polling configuration for protocol: {}", self.protocol_name);
+        *self.context.config.write().await = config;
+        info!("Updated polling configuration for protocol: {}", self.context.protocol_name);
         Ok(())
     }
 
     async fn update_polling_points(&self, points: Vec<PollingPoint>) -> Result<()> {
-        *self.points.write().await = points;
-        info!("Updated polling points for protocol: {}", self.protocol_name);
+        *self.context.points.write().await = points;
+        info!("Updated polling points for protocol: {}", self.context.protocol_name);
         Ok(())
     }
 
     async fn read_point(&self, point: &PollingPoint) -> Result<PointData> {
-        self.point_reader.read_point(point).await
+        self.context.point_reader.read_point(point).await
     }
 
     async fn read_points_batch(&self, points: &[PollingPoint]) -> Result<Vec<PointData>> {
-        self.point_reader.read_points_batch(points).await
+        self.context.point_reader.read_points_batch(points).await
     }
 }
 
 impl UniversalPollingEngine {
     /// Start the polling task
     async fn start_polling_task(&self) -> JoinHandle<()> {
-        let config = self.config.clone();
-        let points = self.points.clone();
-        let stats = self.stats.clone();
-        let is_running = self.is_running.clone();
-        let point_reader = self.point_reader.clone();
-        let protocol_name = self.protocol_name.clone();
-        let data_callback = self.data_callback.clone();
-        let time_cache = self.time_cache.clone();
+        // Only clone the context once
+        let context = self.context.clone();
 
         tokio::spawn(async move {
             let mut cycle_number = 0u64;
-            let config_guard = config.read().await;
+            let config_guard = context.config.read().await;
             let mut polling_interval = interval(Duration::from_millis(config_guard.interval_ms));
             drop(config_guard);
 
-            while *is_running.read().await {
+            while *context.is_running.read().await {
                 polling_interval.tick().await;
                 cycle_number += 1;
 
                 let cycle_start = Instant::now();
-                let config_guard = config.read().await;
+                let config_guard = context.config.read().await;
                 let current_config = config_guard.clone();
                 drop(config_guard);
 
                 // Check if reader is connected
-                if !point_reader.is_connected().await {
-                    warn!("Point reader not connected for protocol: {}, skipping cycle", protocol_name);
-                    Self::update_stats(&stats, false, 0, cycle_start.elapsed().as_millis() as f64, &time_cache).await;
+                if !context.point_reader.is_connected().await {
+                    warn!("Point reader not connected for protocol: {}, skipping cycle", context.protocol_name);
+                    Self::update_stats(&context.stats, false, 0, cycle_start.elapsed().as_millis() as f64, &context.time_cache).await;
                     continue;
                 }
 
                 // Execute polling cycle
                 match Self::execute_polling_cycle(
                     &current_config,
-                    &points,
-                    &point_reader,
-                    &protocol_name,
+                    &context.points,
+                    &context.point_reader,
+                    &context.protocol_name,
                     cycle_number,
-                    &time_cache,
+                    &context.time_cache,
                 ).await {
                     Ok(data_points) => {
                         let points_read = data_points.len();
                         let cycle_time = cycle_start.elapsed().as_millis() as f64;
 
                         // Call data callback if set
-                        if let Some(ref callback) = data_callback {
+                        if let Some(ref callback) = context.data_callback {
                             callback(data_points);
                         }
 
-                        Self::update_stats(&stats, true, points_read, cycle_time, &time_cache).await;
+                        Self::update_stats(&context.stats, true, points_read, cycle_time, &context.time_cache).await;
                         debug!("Polling cycle {} completed: {} points read in {:.2}ms", 
                                cycle_number, points_read, cycle_time);
                     }
                     Err(e) => {
                         let cycle_time = cycle_start.elapsed().as_millis() as f64;
-                        Self::update_stats(&stats, false, 0, cycle_time, &time_cache).await;
+                        Self::update_stats(&context.stats, false, 0, cycle_time, &context.time_cache).await;
                         error!("Polling cycle {} failed for protocol {}: {}", 
-                               cycle_number, protocol_name, e);
+                               cycle_number, context.protocol_name, e);
                     }
                 }
             }
 
-            info!("Polling task stopped for protocol: {}", protocol_name);
+            info!("Polling task stopped for protocol: {}", context.protocol_name);
         })
     }
 
@@ -327,10 +352,8 @@ impl UniversalPollingEngine {
         time_cache: &Arc<TimeCache>,
     ) -> Result<Vec<PointData>> {
         let points_guard = points.read().await;
-        let points_to_read = points_guard.clone();
-        drop(points_guard);
-
-        if points_to_read.is_empty() {
+        
+        if points_guard.is_empty() {
             debug!("No points to read for protocol: {}", protocol_name);
             return Ok(Vec::new());
         }
@@ -338,11 +361,16 @@ impl UniversalPollingEngine {
         let mut all_data = Vec::new();
 
         if config.enable_batch_reading {
-            // Group points by their group attribute for batch reading
-            let grouped_points = Self::group_points_for_batch_reading(&points_to_read);
+            // Group points by their group attribute for batch reading  
+            let grouped_points = Self::group_points_for_batch_reading_ref(&*points_guard);
             
-            for (group_name, group_points) in grouped_points {
-                debug!("Reading point group '{}' with {} points", group_name, group_points.len());
+            for (group_name, group_indices) in grouped_points {
+                debug!("Reading point group '{}' with {} points", group_name, group_indices.len());
+                
+                // Collect points for this group
+                let group_points: Vec<PollingPoint> = group_indices.iter()
+                    .map(|&idx| points_guard[idx].clone())
+                    .collect();
                 
                 match point_reader.read_points_batch(&group_points).await {
                     Ok(mut batch_data) => {
@@ -353,15 +381,16 @@ impl UniversalPollingEngine {
                               group_name, e);
                         
                         // Fallback to individual reads
-                        for point in group_points {
-                            match point_reader.read_point(&point).await {
+                        for &idx in &group_indices {
+                            let point = &points_guard[idx];
+                            match point_reader.read_point(point).await {
                                 Ok(data) => all_data.push(data),
                                 Err(e) => {
                                     warn!("Failed to read point {}: {}", point.id, e);
-                                    // Create error point data
+                                    // Create error point data with Arc strings to avoid cloning
                                     all_data.push(PointData {
-                                        id: point.id.clone(),
-                                        name: point.name.clone(),
+                                        id: point.id.to_string(),
+                                        name: point.name.to_string(),
                                         value: "null".to_string(),
                                         timestamp: time_cache.now().await,
                                         unit: point.unit.clone(),
@@ -379,15 +408,15 @@ impl UniversalPollingEngine {
                 }
             }
         } else {
-            // Individual point reading
-            for point in points_to_read {
-                match point_reader.read_point(&point).await {
+            // Individual point reading - iterate by reference
+            for point in points_guard.iter() {
+                match point_reader.read_point(point).await {
                     Ok(data) => all_data.push(data),
                     Err(e) => {
                         warn!("Failed to read point {}: {}", point.id, e);
                         all_data.push(PointData {
-                            id: point.id.clone(),
-                            name: point.name.clone(),
+                            id: point.id.to_string(),
+                            name: point.name.to_string(),
                             value: "null".to_string(),
                             timestamp: time_cache.now().await,
                             unit: point.unit.clone(),
@@ -407,20 +436,20 @@ impl UniversalPollingEngine {
         Ok(all_data)
     }
 
-    /// Group points by their group attribute for batch reading
-    fn group_points_for_batch_reading(
+    /// Group points by their group attribute for batch reading, returning indices
+    fn group_points_for_batch_reading_ref(
         points: &[PollingPoint],
-    ) -> HashMap<String, Vec<PollingPoint>> {
+    ) -> HashMap<Arc<str>, Vec<usize>> {
         let mut groups = HashMap::new();
         
-        for point in points {
+        for (idx, point) in points.iter().enumerate() {
             let group_name = if point.group.is_empty() {
-                "default".to_string()
+                Arc::from("default")
             } else {
-                point.group.clone()
+                Arc::clone(&point.group)
             };
             
-            groups.entry(group_name).or_insert_with(Vec::new).push(point.clone());
+            groups.entry(group_name).or_insert_with(Vec::new).push(idx);
         }
         
         groups
@@ -516,8 +545,8 @@ mod tests {
             }
 
             Ok(PointData {
-                id: point.id.clone(),
-                name: point.name.clone(),
+                id: point.id.to_string(),
+                name: point.name.to_string(),
                 value: "123.45".to_string(),
                 timestamp: chrono::Utc::now(),
                 unit: point.unit.clone(),
@@ -536,8 +565,8 @@ mod tests {
 
     fn create_test_point(id: &str, address: u32) -> PollingPoint {
         PollingPoint {
-            id: id.to_string(),
-            name: format!("Test Point {}", id),
+            id: Arc::from(id),
+            name: Arc::from(format!("Test Point {}", id)),
             address,
             data_type: "float".to_string(),
             telemetry_type: crate::core::protocols::common::combase::telemetry::TelemetryType::Telemetry,
@@ -546,7 +575,7 @@ mod tests {
             unit: "°C".to_string(),
             description: "Test point".to_string(),
             access_mode: "read".to_string(),
-            group: "default".to_string(),
+            group: Arc::from("default"),
             protocol_params: HashMap::new(),
         }
     }
@@ -557,7 +586,7 @@ mod tests {
         let engine = UniversalPollingEngine::new("test_protocol".to_string(), reader);
         
         assert!(!engine.is_polling_active().await);
-        assert_eq!(engine.protocol_name, "test_protocol");
+        assert_eq!(&*engine.context.protocol_name, "test_protocol");
     }
 
     #[tokio::test]

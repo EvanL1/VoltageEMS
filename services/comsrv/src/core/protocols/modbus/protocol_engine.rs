@@ -190,7 +190,7 @@ impl ModbusProtocolEngine {
             name: format!("Telemetry_Point_{}", mapping.point_id),
             value: value.to_string(),
             timestamp: chrono::Utc::now(),
-            unit: "".to_string(),
+            unit: String::new(),
             description: format!("Modbus telemetry, address: {}", mapping.address),
         })
     }
@@ -220,7 +220,7 @@ impl ModbusProtocolEngine {
             name: format!("Signal_Point_{}", mapping.point_id),
             value: value.to_string(),
             timestamp: chrono::Utc::now(),
-            unit: "".to_string(),
+            unit: String::new(),
             description: format!("Modbus signal, address: {}, bit: {}", 
                 mapping.address, mapping.bit_location.unwrap_or(0)),
         })

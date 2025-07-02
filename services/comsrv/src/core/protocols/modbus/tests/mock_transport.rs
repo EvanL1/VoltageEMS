@@ -9,7 +9,6 @@ use tokio::sync::Mutex;
 use std::time::Duration;
 use tracing::{info, debug, warn};
 use crate::core::transport::traits::{Transport, TransportError, ConnectionState, TransportStats};
-use crate::utils::error::{ComSrvError, Result};
 
 /// Configuration for mock transport
 #[derive(Debug, Clone)]

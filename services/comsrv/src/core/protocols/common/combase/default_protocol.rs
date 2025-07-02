@@ -231,17 +231,21 @@ impl ComBase for DefaultProtocol {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::config::{ChannelConfig, ProtocolType, ChannelParameters};
+    use crate::core::config::ChannelConfig;
     use crate::core::config::types::ChannelLoggingConfig;
+    use crate::core::config::loaders::point_mapper::CombinedPoint;
 
     fn create_test_config() -> ChannelConfig {
         ChannelConfig {
             id: 1,
             name: "test_channel".to_string(),
             description: Some("Test channel".to_string()),
-            protocol: ProtocolType::Virtual,
-            parameters: ChannelParameters::Generic(HashMap::new()),
+            protocol: "Virtual".to_string(),
+            parameters: HashMap::new(),
             logging: ChannelLoggingConfig::default(),
+            table_config: None,
+            points: Vec::new(),
+            combined_points: Vec::new(),
         }
     }
 

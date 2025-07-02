@@ -8,7 +8,6 @@ use comsrv::core::protocols::modbus::{
 };
 use comsrv::core::transport::traits::Transport;
 use std::time::Duration;
-use tracing::{info, debug};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {

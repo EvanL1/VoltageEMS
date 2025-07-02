@@ -1,6 +1,7 @@
-//! Redis Batch Synchronization Module
+//! Redis Integration Module
 //! 
-//! Efficient batch operations for syncing point data to Redis
+//! Efficient batch operations for syncing point data to Redis.
+//! Consolidated from redis_batch_sync.rs
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -11,7 +12,7 @@ use redis::aio::MultiplexedConnection;
 use redis::Pipeline;
 use serde_json::json;
 
-use super::optimized_point_manager::OptimizedPointManager;
+use super::manager::OptimizedPointManager;
 use super::data_types::PointData;
 use crate::utils::Result;
 
@@ -260,7 +261,7 @@ impl RedisBatchSync {
             let type_key = format!("{}:type:{:?}", self.config.key_prefix, config.telemetry_type);
             type_sets.entry(type_key)
                 .or_insert_with(Vec::new)
-                .push(config.point_id.to_string());
+                .push(config.address.to_string());
         }
         
         // Store type sets in Redis
@@ -352,7 +353,7 @@ pub const LUA_BATCH_UPDATE: &str = r#"
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::protocols::common::combase::optimized_point_manager::generate_test_points;
+    use crate::core::protocols::common::manager::generate_test_points;
 
     #[tokio::test]
     async fn test_redis_batch_sync() {

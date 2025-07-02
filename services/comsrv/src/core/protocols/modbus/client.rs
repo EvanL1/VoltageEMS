@@ -420,7 +420,7 @@ impl ModbusClient {
                         name: format!("Point_{}", point_id),
                         value: "error".to_string(),
                         timestamp: chrono::Utc::now(),
-                        unit: "".to_string(),
+                        unit: String::new(),
                         description: format!("Read failed: {}", e),
                     });
                 }

@@ -7,7 +7,6 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{debug, info};
 use chrono::Utc;
-use serde::{Deserialize, Serialize};
 
 use super::data_types::PointData;
 use super::telemetry::{TelemetryType, PointValueType};
@@ -159,6 +158,15 @@ impl OptimizedPointManager {
     pub async fn get_point_config(&self, point_id: u32) -> Option<UniversalPointConfig> {
         self.points.read().await.get(&point_id).cloned()
     }
+    
+    /// Get point configuration reference for read-only access
+    pub async fn with_point_config<F, R>(&self, point_id: u32, f: F) -> Option<R>
+    where
+        F: FnOnce(&UniversalPointConfig) -> R,
+    {
+        let points = self.points.read().await;
+        points.get(&point_id).map(f)
+    }
 
     /// Get point configuration by string ID (for compatibility)
     pub async fn get_point_config_by_string(&self, point_id: &str) -> Option<UniversalPointConfig> {
@@ -182,6 +190,15 @@ impl OptimizedPointManager {
     /// Get all point configurations
     pub async fn get_all_point_configs(&self) -> Vec<UniversalPointConfig> {
         self.points.read().await.values().cloned().collect()
+    }
+    
+    /// Iterate over all point configurations without cloning
+    pub async fn with_all_point_configs<F, R>(&self, f: F) -> R
+    where
+        F: FnOnce(&HashMap<u32, UniversalPointConfig>) -> R,
+    {
+        let points = self.points.read().await;
+        f(&*points)
     }
 
     /// Get points by telemetry type (O(1) lookup)
@@ -352,6 +369,15 @@ impl OptimizedPointManager {
     /// Get statistics
     pub async fn get_stats(&self) -> OptimizedPointManagerStats {
         self.stats.read().await.clone()
+    }
+    
+    /// Access statistics without cloning
+    pub async fn with_stats<F, R>(&self, f: F) -> R
+    where
+        F: FnOnce(&OptimizedPointManagerStats) -> R,
+    {
+        let stats = self.stats.read().await;
+        f(&*stats)
     }
 
     /// Get memory usage estimate

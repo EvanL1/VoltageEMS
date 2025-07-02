@@ -8,7 +8,6 @@
 //! - Exception handling for slave devices
 
 use crate::core::config::types::protocol::TelemetryType;
-use crate::core::protocols::common::combase::data_types::PointData;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;

@@ -2,7 +2,6 @@
 //!
 //! Common utilities for Modbus protocol testing.
 
-use std::fmt;
 
 /// Create a test PDU with function code and data
 pub fn create_test_pdu(function_code: u8, data: &[u8]) -> Vec<u8> {

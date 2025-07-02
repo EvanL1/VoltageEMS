@@ -346,8 +346,9 @@ impl ComBase for ComBaseImpl {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::config::{ChannelConfig, ProtocolType, ChannelParameters};
-    use crate::core::config::types::ChannelLoggingConfig;
+    use crate::core::config::{ChannelConfig, ProtocolType};
+    use crate::core::config::types::{ChannelLoggingConfig, TableConfig};
+    use crate::core::config::loaders::point_mapper::CombinedPoint;
     use crate::core::protocols::common::combase::telemetry::TelemetryType;
 
     fn create_test_config() -> ChannelConfig {
@@ -355,9 +356,12 @@ mod tests {
             id: 1,
             name: "test_channel".to_string(),
             description: Some("Test channel".to_string()),
-            protocol: ProtocolType::Virtual,
-            parameters: ChannelParameters::Generic(HashMap::new()),
+            protocol: "Virtual".to_string(),
+            parameters: HashMap::new(),
             logging: ChannelLoggingConfig::default(),
+            table_config: None,
+            points: Vec::new(),
+            combined_points: Vec::new(),
         }
     }
 

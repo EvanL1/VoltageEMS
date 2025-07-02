@@ -309,7 +309,7 @@ impl ProtocolPacketParser for ModbusPacketParser {
         let hex_data = self.format_hex_data(data);
 
         // Parse TCP header
-        let (transaction_id, protocol_id, length, unit_id, function_code) =
+        let (transaction_id, _protocol_id, _length, unit_id, function_code) =
             match self.parse_tcp_header(data) {
                 Ok(header) => header,
                 Err(err) => {
@@ -326,7 +326,7 @@ impl ProtocolPacketParser for ModbusPacketParser {
             };
 
         // Parse function-specific data
-        let (func_description, func_fields) = if function_code & 0x80 != 0 {
+        let (func_description, _func_fields) = if function_code & 0x80 != 0 {
             // Error response
             self.parse_error_response(data, function_code)
         } else {

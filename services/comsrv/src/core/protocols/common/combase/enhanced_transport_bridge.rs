@@ -400,7 +400,7 @@ impl EnhancedTransportBridge {
 
     /// 执行单次请求
     async fn execute_single_request(
-        request: &PendingRequest,
+        _request: &PendingRequest,
         pool: &Arc<Mutex<ConnectionPool>>,
     ) -> Result<Vec<u8>> {
         // 从连接池获取连接
@@ -413,7 +413,7 @@ impl EnhancedTransportBridge {
             // 使用连接执行请求
             let result = {
                 let mut pool_guard = pool.lock().await;
-                if let Some(Some((transport, info))) = pool_guard.connections.get_mut(index) {
+                if let Some(Some((_transport, info))) = pool_guard.connections.get_mut(index) {
                     info.last_used = Instant::now();
                     info.request_count += 1;
                     
