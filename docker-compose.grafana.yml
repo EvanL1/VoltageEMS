@@ -1,0 +1,100 @@
+version: '3.8'
+
+services:
+  grafana:
+    image: grafana/grafana:latest
+    container_name: voltage-grafana
+    ports:
+      - "3050:3000"
+    environment:
+      # 基础配置
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_USERS_ALLOW_SIGN_UP=false
+      
+      # 允许匿名访问（用于嵌入）
+      - GF_AUTH_ANONYMOUS_ENABLED=true
+      - GF_AUTH_ANONYMOUS_ORG_ROLE=Viewer
+      - GF_AUTH_ANONYMOUS_HIDE_VERSION=true
+      
+      # 允许 iframe 嵌入
+      - GF_SECURITY_ALLOW_EMBEDDING=true
+      - GF_SECURITY_COOKIE_SAMESITE=none
+      - GF_SECURITY_COOKIE_SECURE=false
+      
+      # 根路径配置
+      - GF_SERVER_ROOT_URL=http://localhost:3050/
+      - GF_SERVER_SERVE_FROM_SUB_PATH=false
+      
+      # 禁用登录相关
+      - GF_AUTH_DISABLE_LOGIN_FORM=true
+      - GF_AUTH_DISABLE_SIGNOUT_MENU=true
+      
+      # 语言设置为英文
+      - GF_DEFAULT_LOCALE=en-US
+      
+      # 隐藏帮助菜单和用户菜单
+      - GF_USERS_VIEWERS_CAN_EDIT=false
+      - GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH=/var/lib/grafana/dashboards/grafana-dashboard-simple.json
+      
+      # 完全隐藏 Grafana UI 元素
+      - GF_PANELS_DISABLE_SANITIZE_HTML=true
+      - GF_SECURITY_DISABLE_BRUTE_FORCE_LOGIN_PROTECTION=true
+      
+      # iframe 嵌入配置
+      - GF_SECURITY_CONTENT_TYPE_PROTECTION=false
+      - GF_SECURITY_X_CONTENT_TYPE_OPTIONS=false
+      - GF_SECURITY_X_XSS_PROTECTION=false
+      
+    volumes:
+      # 数据持久化
+      - grafana-storage:/var/lib/grafana
+      # 预配置的数据源
+      - ./services/Hissrv/grafana/provisioning:/etc/grafana/provisioning
+      # 预定义的仪表板
+      - ./services/Hissrv/grafana/dashboards:/var/lib/grafana/dashboards
+    networks:
+      - voltage-network
+
+  # 可选：添加 InfluxDB 作为时序数据库
+  influxdb:
+    image: influxdb:2.7
+    container_name: voltage-influxdb
+    ports:
+      - "8086:8086"
+    environment:
+      - DOCKER_INFLUXDB_INIT_MODE=setup
+      - DOCKER_INFLUXDB_INIT_USERNAME=admin
+      - DOCKER_INFLUXDB_INIT_PASSWORD=password123
+      - DOCKER_INFLUXDB_INIT_ORG=voltageems
+      - DOCKER_INFLUXDB_INIT_BUCKET=history
+      - DOCKER_INFLUXDB_INIT_ADMIN_TOKEN=voltage-super-secret-auth-token
+    volumes:
+      - influxdb-data:/var/lib/influxdb2
+    networks:
+      - voltage-network
+
+  # InfluxDB 数据写入器
+  influxdb-writer:
+    build:
+      context: .
+      dockerfile: Dockerfile.influxdb-writer
+    container_name: voltage-influxdb-writer
+    environment:
+      - INFLUX_URL=http://influxdb:8086
+      - INFLUX_TOKEN=voltage-super-secret-auth-token
+      - INFLUX_ORG=voltageems
+      - INFLUX_BUCKET=history
+    depends_on:
+      - influxdb
+    networks:
+      - voltage-network
+    restart: unless-stopped
+
+networks:
+  voltage-network:
+    driver: bridge
+
+volumes:
+  grafana-storage:
+  influxdb-data:

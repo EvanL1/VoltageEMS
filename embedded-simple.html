@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>VoltageEMS - Simple Test</title>
+    <style>
+        body { margin: 0; padding: 20px; font-family: Arial, sans-serif; }
+        .container { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; height: 80vh; }
+        iframe { width: 100%; height: 100%; border: 1px solid #ccc; }
+        .status { margin: 10px 0; padding: 10px; background: #f0f0f0; }
+        button { margin: 5px; padding: 10px 15px; }
+    </style>
+</head>
+<body>
+    <h1>VoltageEMS - Simple Connection Test</h1>
+    
+    <div class="status">
+        <h3>Connection Status:</h3>
+        <div id="status">Testing connections...</div>
+    </div>
+    
+    <div>
+        <button onclick="testDirect()">Test Direct Connection</button>
+        <button onclick="testProxy()">Test Proxy Connection</button>
+        <button onclick="testFrontend()">Test Frontend</button>
+    </div>
+    
+    <div class="container">
+        <div>
+            <h3>Direct Grafana (localhost:3050)</h3>
+            <iframe id="directFrame" src="about:blank"></iframe>
+        </div>
+        <div>
+            <h3>Proxy Path (localhost:8082/grafana)</h3>
+            <iframe id="proxyFrame" src="about:blank"></iframe>
+        </div>
+    </div>
+
+    <script>
+        function updateStatus(message) {
+            document.getElementById('status').innerHTML = message;
+        }
+
+        function testDirect() {
+            updateStatus('Testing direct connection to Grafana...');
+            const url = 'http://localhost:3050/d-solo/simple-view?orgId=1&panelId=1&theme=light';
+            document.getElementById('directFrame').src = url;
+            console.log('Direct URL:', url);
+            
+            // Test connection
+            fetch(url)
+                .then(response => {
+                    if (response.ok) {
+                        updateStatus('✅ Direct connection successful!');
+                    } else {
+                        updateStatus('❌ Direct connection failed: ' + response.status);
+                    }
+                })
+                .catch(error => {
+                    updateStatus('❌ Direct connection error: ' + error.message);
+                });
+        }
+
+        function testProxy() {
+            updateStatus('Testing proxy connection...');
+            const url = 'http://localhost:8082/grafana/d-solo/simple-view?orgId=1&panelId=1&theme=light';
+            document.getElementById('proxyFrame').src = url;
+            console.log('Proxy URL:', url);
+            
+            // Test connection
+            fetch(url)
+                .then(response => {
+                    if (response.ok) {
+                        updateStatus('✅ Proxy connection successful!');
+                    } else {
+                        updateStatus('❌ Proxy connection failed: ' + response.status);
+                    }
+                })
+                .catch(error => {
+                    updateStatus('❌ Proxy connection error: ' + error.message);
+                });
+        }
+
+        function testFrontend() {
+            updateStatus('Testing frontend connection...');
+            const url = 'http://localhost:8082/';
+            
+            fetch(url)
+                .then(response => {
+                    if (response.ok) {
+                        updateStatus('✅ Frontend is running! You can access it at: ' + url);
+                        window.open(url, '_blank');
+                    } else {
+                        updateStatus('❌ Frontend connection failed: ' + response.status);
+                    }
+                })
+                .catch(error => {
+                    updateStatus('❌ Frontend connection error: ' + error.message + '<br>Make sure to run: NO_PROXY=localhost,127.0.0.1 npm run serve');
+                });
+        }
+
+        // Auto-test on load
+        window.onload = function() {
+            setTimeout(testFrontend, 1000);
+        };
+    </script>
+</body>
+</html>

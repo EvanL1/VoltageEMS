@@ -1,0 +1,217 @@
+{
+  "dashboard": {
+    "id": null,
+    "uid": "voltage-realtime",
+    "title": "Comprehensive Monitoring",
+    "timezone": "browser",
+    "schemaVersion": 16,
+    "refresh": "5s",
+    "panels": [
+      {
+        "id": 1,
+        "type": "graph",
+        "title": "Temperature Trend",
+        "datasource": "SimpleJSON",
+        "gridPos": { "x": 0, "y": 0, "w": 12, "h": 8 },
+        "targets": [
+          {
+            "target": "device_001.temperature",
+            "refId": "A",
+            "alias": "设备 1"
+          },
+          {
+            "target": "device_002.temperature",
+            "refId": "B",
+            "alias": "设备 2"
+          },
+          {
+            "target": "device_003.temperature",
+            "refId": "C",
+            "alias": "设备 3"
+          }
+        ],
+        "xaxis": {
+          "mode": "time",
+          "show": true
+        },
+        "yaxes": [
+          {
+            "label": "温度 (°C)",
+            "show": true
+          },
+          {
+            "show": false
+          }
+        ],
+        "lines": true,
+        "fill": 1,
+        "linewidth": 2,
+        "points": false,
+        "bars": false,
+        "legend": {
+          "show": true,
+          "current": true,
+          "avg": true
+        }
+      },
+      {
+        "id": 2,
+        "type": "graph",
+        "title": "Power Consumption",
+        "datasource": "SimpleJSON",
+        "gridPos": { "x": 12, "y": 0, "w": 12, "h": 8 },
+        "targets": [
+          {
+            "target": "device_001.power",
+            "refId": "A",
+            "alias": "设备 1"
+          },
+          {
+            "target": "device_002.power",
+            "refId": "B",
+            "alias": "设备 2"
+          },
+          {
+            "target": "device_003.power",
+            "refId": "C",
+            "alias": "设备 3"
+          }
+        ],
+        "xaxis": {
+          "mode": "time",
+          "show": true
+        },
+        "yaxes": [
+          {
+            "label": "功率 (W)",
+            "show": true
+          },
+          {
+            "show": false
+          }
+        ],
+        "lines": true,
+        "fill": 1,
+        "linewidth": 2,
+        "points": false,
+        "bars": false,
+        "legend": {
+          "show": true,
+          "current": true,
+          "avg": true
+        }
+      },
+      {
+        "id": 3,
+        "type": "graph",
+        "title": "Voltage Monitoring",
+        "datasource": "SimpleJSON",
+        "gridPos": { "x": 0, "y": 8, "w": 12, "h": 6 },
+        "targets": [
+          {
+            "target": "device_001.voltage",
+            "refId": "A",
+            "alias": "设备 1"
+          },
+          {
+            "target": "device_002.voltage",
+            "refId": "B",
+            "alias": "设备 2"
+          },
+          {
+            "target": "device_003.voltage",
+            "refId": "C",
+            "alias": "设备 3"
+          }
+        ],
+        "xaxis": {
+          "mode": "time",
+          "show": true
+        },
+        "yaxes": [
+          {
+            "label": "电压 (V)",
+            "show": true,
+            "min": 200,
+            "max": 240
+          },
+          {
+            "show": false
+          }
+        ],
+        "lines": true,
+        "fill": 0,
+        "linewidth": 2,
+        "points": false,
+        "bars": false,
+        "legend": {
+          "show": true,
+          "current": true
+        },
+        "thresholds": [
+          {
+            "value": 210,
+            "op": "lt",
+            "fill": true,
+            "line": true,
+            "colorMode": "critical"
+          },
+          {
+            "value": 230,
+            "op": "gt",
+            "fill": true,
+            "line": true,
+            "colorMode": "critical"
+          }
+        ]
+      },
+      {
+        "id": 4,
+        "type": "graph",
+        "title": "Current Monitoring",
+        "datasource": "SimpleJSON",
+        "gridPos": { "x": 12, "y": 8, "w": 12, "h": 6 },
+        "targets": [
+          {
+            "target": "device_001.current",
+            "refId": "A",
+            "alias": "设备 1"
+          },
+          {
+            "target": "device_002.current",
+            "refId": "B",
+            "alias": "设备 2"
+          },
+          {
+            "target": "device_003.current",
+            "refId": "C",
+            "alias": "设备 3"
+          }
+        ],
+        "xaxis": {
+          "mode": "time",
+          "show": true
+        },
+        "yaxes": [
+          {
+            "label": "电流 (A)",
+            "show": true
+          },
+          {
+            "show": false
+          }
+        ],
+        "lines": true,
+        "fill": 0,
+        "linewidth": 2,
+        "points": false,
+        "bars": false,
+        "legend": {
+          "show": true,
+          "current": true
+        }
+      }
+    ]
+  },
+  "overwrite": true
+}

@@ -1,6 +1,6 @@
 <template>
   <div class="app-container">
-    <!-- Left Navigation Sidebar -->
+    <!-- Sidebar -->
     <div class="sidebar">
       <div class="logo">
         <img :src="logoSrc" alt="Voltage Logo" />
@@ -14,144 +14,102 @@
         active-text-color="#409EFF">
         
         <el-menu-item index="/">
-          <el-icon><el-icon-house /></el-icon>
-          <span>Home</span>
+          <el-icon><House /></el-icon>
+          <span>{{ $t('nav.home') }}</span>
         </el-menu-item>
         
         <el-menu-item index="/services">
-          <el-icon><el-icon-connection /></el-icon>
-          <span>Services</span>
+          <el-icon><Connection /></el-icon>
+          <span>{{ $t('nav.services') }}</span>
         </el-menu-item>
         
         <el-menu-item index="/devices">
-          <el-icon><el-icon-cpu /></el-icon>
-          <span>Devices</span>
+          <el-icon><Monitor /></el-icon>
+          <span>{{ $t('nav.devices') }}</span>
         </el-menu-item>
         
         <el-menu-item index="/alarms">
-          <el-icon><el-icon-bell /></el-icon>
-          <span>Alarms</span>
+          <el-icon><Bell /></el-icon>
+          <span>{{ $t('nav.alarms') }}</span>
+        </el-menu-item>
+        
+        <el-menu-item index="/history">
+          <el-icon><DataAnalysis /></el-icon>
+          <span>{{ $t('nav.historyAnalysis') }}</span>
+        </el-menu-item>
+        
+        <el-menu-item index="/grafana-live">
+          <el-icon><DataLine /></el-icon>
+          <span>{{ $t('nav.liveDashboard') }}</span>
+        </el-menu-item>
+        
+        <el-menu-item index="/grafana-embedded">
+          <el-icon><Monitor /></el-icon>
+          <span>{{ $t('nav.realtimeMonitoring') }}</span>
         </el-menu-item>
         
         <el-menu-item index="/system">
-          <el-icon><el-icon-setting /></el-icon>
-          <span>System</span>
+          <el-icon><Setting /></el-icon>
+          <span>{{ $t('nav.system') }}</span>
         </el-menu-item>
         
         <el-menu-item index="/activity">
-          <el-icon><el-icon-data-line /></el-icon>
-          <span>Activity</span>
+          <el-icon><DataLine /></el-icon>
+          <span>{{ $t('nav.activity') }}</span>
         </el-menu-item>
       </el-menu>
       
       <div class="sidebar-footer">
-        <p>Voltage, LLC. © 2025 - All Rights Reserved.</p>
+        <p>{{ $t('footer.copyright') }}</p>
       </div>
     </div>
 
-    <!-- Overlay for mobile -->
-    <div
-      v-if="isSidebarOpen"
-      @click="isSidebarOpen = false"
-      class="lg:hidden fixed inset-0 bg-black bg-opacity-50 z-40 transition-opacity duration-300"
-    ></div>
-
-    <!-- Sidebar -->
-    <aside
-      :class="[
-        'fixed lg:relative inset-y-0 left-0 z-40 w-64 transform transition-transform duration-300 ease-in-out flex-shrink-0',
-        'bg-gradient-to-b from-gray-800 to-gray-900 shadow-2xl',
-        isSidebarOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'
-      ]"
-    >
-      <div class="flex flex-col h-full">
-        <!-- Logo -->
-        <div class="flex items-center justify-center h-20 bg-gray-900/50 backdrop-blur">
-          <img :src="logoSrc" alt="Voltage Logo" class="h-12 w-auto animate-fade-in" />
-          <span class="ml-3 text-xl font-bold text-white">Voltage</span>
-        </div>
-
-        <!-- Navigation -->
-        <nav class="flex-1 px-4 py-6 space-y-2 overflow-y-auto">
-          <router-link
-            v-for="item in menuItems"
-            :key="item.path"
-            :to="item.path"
-            @click="isSidebarOpen = false"
-            class="flex items-center px-4 py-3 text-gray-300 rounded-lg transition-all duration-200 hover:bg-gray-700/50 hover:text-white group"
-            :class="{ 'bg-primary-600 text-white': $route.path === item.path }"
-          >
-            <component :is="item.icon" class="w-5 h-5 mr-3 transition-transform group-hover:scale-110" />
-            <span class="font-medium">{{ item.name }}</span>
-            <span
-              v-if="$route.path === item.path"
-              class="ml-auto w-1 h-8 bg-white rounded-full"
-            ></span>
-          </router-link>
-        </nav>
-
-        <!-- Footer -->
-        <div class="p-4 text-center text-xs text-gray-500 border-t border-gray-700">
-          <p>Voltage, LLC. © 2025</p>
-          <p class="mt-1">All Rights Reserved</p>
-        </div>
-      </div>
-    </aside>
-
     <!-- Main Content -->
-    <div class="flex-1 flex flex-col transition-all duration-300">
+    <div class="main-content">
       <!-- Header -->
-      <header class="sticky top-0 z-30 bg-white/80 dark:bg-gray-800/80 backdrop-blur-lg shadow-sm">
-        <div class="flex items-center justify-between h-16 px-4 sm:px-6 lg:px-8">
-          <div class="flex items-center">
-            <h1 class="text-xl sm:text-2xl font-bold text-gray-800 dark:text-white animate-fade-in">
-              {{ pageTitle }}
-            </h1>
-          </div>
-
-          <!-- User Menu -->
-          <div class="flex items-center space-x-4">
-            <!-- Theme Toggle -->
-            <button
-              @click="toggleTheme"
-              class="p-2 rounded-lg bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors"
-            >
-              <svg v-if="isDark" class="w-5 h-5 text-gray-600 dark:text-gray-300" fill="currentColor" viewBox="0 0 20 20">
-                <path d="M10 2a1 1 0 011 1v1a1 1 0 11-2 0V3a1 1 0 011-1zm4 8a4 4 0 11-8 0 4 4 0 018 0zm-.464 4.95l.707.707a1 1 0 001.414-1.414l-.707-.707a1 1 0 00-1.414 1.414zm2.12-10.607a1 1 0 010 1.414l-.706.707a1 1 0 11-1.414-1.414l.707-.707a1 1 0 011.414 0zM17 11a1 1 0 100-2h-1a1 1 0 100 2h1zm-7 4a1 1 0 011 1v1a1 1 0 11-2 0v-1a1 1 0 011-1zM5.05 6.464A1 1 0 106.465 5.05l-.708-.707a1 1 0 00-1.414 1.414l.707.707zm1.414 8.486l-.707.707a1 1 0 01-1.414-1.414l.707-.707a1 1 0 011.414 1.414zM4 11a1 1 0 100-2H3a1 1 0 000 2h1z" />
-              </svg>
-              <svg v-else class="w-5 h-5 text-gray-600 dark:text-gray-300" fill="currentColor" viewBox="0 0 20 20">
-                <path d="M17.293 13.293A8 8 0 016.707 2.707a8.001 8.001 0 1010.586 10.586z" />
-              </svg>
-            </button>
+      <header class="header">
+        <div class="header-content">
+          <h1 class="page-title">{{ pageTitle }}</h1>
+          
+          <div class="header-actions">
+            <!-- Language Switcher -->
+            <el-dropdown trigger="click" class="language-dropdown">
+              <span class="language-info">
+                <el-icon><Switch /></el-icon>
+                <span class="language-text">{{ currentLanguageName }}</span>
+                <el-icon><ArrowDown /></el-icon>
+              </span>
+              <template #dropdown>
+                <el-dropdown-menu>
+                  <el-dropdown-item 
+                    v-for="lang in supportedLanguages" 
+                    :key="lang.code"
+                    @click="switchLanguage(lang.code)"
+                    :class="{ 'is-active': currentLocale === lang.code }"
+                  >
+                    <span class="language-flag">{{ lang.flag }}</span>
+                    {{ lang.name }}
+                  </el-dropdown-item>
+                </el-dropdown-menu>
+              </template>
+            </el-dropdown>
 
             <!-- User Dropdown -->
             <el-dropdown trigger="click" class="user-dropdown">
-              <button class="flex items-center space-x-2 px-3 py-2 rounded-lg bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors">
-                <div class="w-8 h-8 rounded-full bg-gradient-to-br from-primary-400 to-primary-600 flex items-center justify-center">
-                  <span class="text-white font-semibold">V</span>
-                </div>
-                <span class="hidden sm:block text-sm font-medium text-gray-700 dark:text-gray-300">Voltage</span>
-                <svg class="w-4 h-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
-                </svg>
-              </button>
+              <span class="user-info">
+                <el-avatar size="small">V</el-avatar>
+                <span class="username">Voltage</span>
+                <el-icon><ArrowDown /></el-icon>
+              </span>
               <template #dropdown>
                 <el-dropdown-menu>
                   <el-dropdown-item>
-                    <span class="flex items-center">
-                      <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
-                      </svg>
-                      账户设置
-                    </span>
+                    <el-icon><User /></el-icon>
+                    {{ $t('header.userDropdown.accountSettings') }}
                   </el-dropdown-item>
                   <el-dropdown-item divided>
-                    <span class="flex items-center text-red-600">
-                      <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
-                      </svg>
-                      退出登录
-                    </span>
+                    <el-icon><SwitchButton /></el-icon>
+                    {{ $t('header.userDropdown.logout') }}
                   </el-dropdown-item>
                 </el-dropdown-menu>
               </template>
@@ -161,9 +119,9 @@
       </header>
 
       <!-- Page Content -->
-      <main class="flex-1 p-4 sm:p-6 lg:p-8 animate-fade-in overflow-auto">
+      <main class="page-content">
         <router-view v-slot="{ Component }">
-          <transition name="page" mode="out-in">
+          <transition name="fade" mode="out-in">
             <component :is="Component" />
           </transition>
         </router-view>
@@ -172,133 +130,278 @@
   </div>
 </template>
 
-<script>
-import { ref, computed, watch, onMounted } from 'vue'
+<script setup>
+import { computed } from 'vue'
 import { useRoute } from 'vue-router'
+import { useI18n } from 'vue-i18n'
 import { logoBase64 } from './assets/logo'
+import { setLocale, getCurrentLocale, supportedLocales } from './i18n'
 import { 
-  House as IconHouse,
-  Setting as IconSetting,
-  DataLine as IconDataLine,
-  Edit as IconEdit,
-  Connection as IconConnection
+  House,
+  Setting,
+  DataLine,
+  DataAnalysis,
+  Connection,
+  Monitor,
+  Bell,
+  User,
+  SwitchButton,
+  ArrowDown,
+  Switch
 } from '@element-plus/icons-vue'
 
-export default {
-  name: 'AppMain',
-  setup() {
-    const route = useRoute()
-    const isSidebarOpen = ref(false)
-    const isDark = ref(false)
-    const logoSrc = logoBase64
+const route = useRoute()
+const { t: $t } = useI18n()
+const logoSrc = logoBase64
 
-    const menuItems = [
-      { path: '/', name: '首页', icon: IconHouse },
-      { path: '/system', name: '系统', icon: IconSetting },
-      { path: '/activity', name: '活动', icon: IconDataLine },
-      { path: '/template-builder', name: '模板构建器', icon: IconEdit },
-      { path: '/dag-editor', name: 'DAG 编辑器', icon: IconConnection }
-    ]
+// Language switching
+const supportedLanguages = supportedLocales
+const currentLocale = computed(() => getCurrentLocale())
+const currentLanguageName = computed(() => {
+  const lang = supportedLanguages.find(l => l.code === currentLocale.value)
+  return lang ? lang.name : 'English'
+})
 
-    const pageTitle = computed(() => {
-      const currentItem = menuItems.find(item => item.path === route.path)
-      if (currentItem) return currentItem.name
-      
-      if (route.path.startsWith('/system/')) {
-        return '系统配置'
-      }
-      
-      return '首页'
-    })
-
-    const toggleTheme = () => {
-      isDark.value = !isDark.value
-      if (isDark.value) {
-        document.documentElement.classList.add('dark')
-        localStorage.setItem('theme', 'dark')
-      } else {
-        document.documentElement.classList.remove('dark')
-        localStorage.setItem('theme', 'light')
-      }
-    }
-
-    onMounted(() => {
-      // Initialize theme
-      const savedTheme = localStorage.getItem('theme')
-      if (savedTheme === 'dark' || (!savedTheme && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
-        isDark.value = true
-        document.documentElement.classList.add('dark')
-      }
-
-      // Close sidebar on route change for mobile
-      watch(route, () => {
-        if (window.innerWidth < 1024) {
-          isSidebarOpen.value = false
-        }
-      })
-    })
-
-    return {
-      isSidebarOpen,
-      isDark,
-      logoSrc,
-      menuItems,
-      pageTitle,
-      toggleTheme
-    }
-  }
+const switchLanguage = (langCode) => {
+  setLocale(langCode)
 }
+
+const pageTitle = computed(() => {
+  const titleMap = {
+    '/': 'nav.home',
+    '/services': 'nav.services',
+    '/devices': 'nav.devices', 
+    '/alarms': 'nav.alarms',
+    '/history': 'nav.historyAnalysis',
+    '/grafana-live': 'nav.liveDashboard',
+    '/grafana-embedded': 'nav.realtimeMonitoring',
+    '/system': 'nav.system',
+    '/activity': 'nav.activity'
+  }
+  
+  return titleMap[route.path] ? $t(titleMap[route.path]) : 'Voltage EMS'
+})
 </script>
 
+<style scoped>
+.app-container {
+  display: flex;
+  height: 100vh;
+  background-color: #f5f5f5;
+}
+
+/* Sidebar Styles */
+.sidebar {
+  width: 250px;
+  background-color: #3a4654;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 2px 0 6px rgba(0, 0, 0, 0.1);
+}
+
+.logo {
+  height: 60px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background-color: #2e3742;
+  border-bottom: 1px solid #434a56;
+}
+
+.logo img {
+  height: 40px;
+}
+
+.el-menu-vertical {
+  flex: 1;
+  border-right: none;
+}
+
+.el-menu-item {
+  height: 48px;
+  line-height: 48px;
+}
+
+.el-menu-item span {
+  margin-left: 8px;
+}
+
+.sidebar-footer {
+  padding: 20px;
+  text-align: center;
+  color: #8492a6;
+  font-size: 12px;
+  border-top: 1px solid #434a56;
+}
+
+/* Main Content Styles */
+.main-content {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* Header Styles */
+.header {
+  height: 60px;
+  background-color: #fff;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.08);
+  z-index: 100;
+}
+
+.header-content {
+  height: 100%;
+  padding: 0 24px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.page-title {
+  font-size: 20px;
+  font-weight: 500;
+  color: #303133;
+  margin: 0;
+}
+
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.language-dropdown .language-info {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 4px;
+  transition: background-color 0.3s;
+  font-size: 14px;
+  color: #606266;
+}
+
+.language-dropdown .language-info:hover {
+  background-color: #f5f7fa;
+}
+
+.language-text {
+  font-size: 14px;
+}
+
+.language-flag {
+  margin-right: 8px;
+  font-size: 16px;
+}
+
+.el-dropdown-menu .is-active {
+  background-color: #ecf5ff;
+  color: #409eff;
+}
+
+.user-info {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 4px;
+  transition: background-color 0.3s;
+}
+
+.user-info:hover {
+  background-color: #f5f7fa;
+}
+
+.username {
+  font-size: 14px;
+  color: #606266;
+}
+
+/* Page Content Styles */
+.page-content {
+  flex: 1;
+  padding: 24px;
+  overflow-y: auto;
+  background-color: #f5f5f5;
+}
+
+/* Transitions */
+.fade-enter-active,
+.fade-leave-active {
+  transition: opacity 0.3s ease;
+}
+
+.fade-enter-from,
+.fade-leave-to {
+  opacity: 0;
+}
+
+/* Responsive */
+@media (max-width: 768px) {
+  .sidebar {
+    position: fixed;
+    left: -250px;
+    height: 100vh;
+    z-index: 200;
+    transition: left 0.3s;
+  }
+  
+  .sidebar.open {
+    left: 0;
+  }
+  
+  .main-content {
+    margin-left: 0;
+  }
+  
+  .page-content {
+    padding: 16px;
+  }
+}
+</style>
+
 <style>
-/* Page transitions */
-.page-enter-active,
-.page-leave-active {
-  transition: all 0.3s ease;
+/* Global Element Plus adjustments */
+.el-card {
+  border-radius: 8px;
+  border: none;
+  box-shadow: 0 2px 12px 0 rgba(0, 0, 0, 0.1);
 }
 
-.page-enter-from {
-  opacity: 0;
-  transform: translateX(30px);
+.el-card__header {
+  padding: 16px 20px;
+  border-bottom: 1px solid #ebeef5;
 }
 
-.page-leave-to {
-  opacity: 0;
-  transform: translateX(-30px);
+.el-card__body {
+  padding: 20px;
 }
 
-/* Custom scrollbar */
+/* Fix for select and date picker dropdowns */
+.el-select-dropdown,
+.el-picker-panel {
+  z-index: 2000 !important;
+}
+
+/* Scrollbar styling */
 ::-webkit-scrollbar {
   width: 8px;
   height: 8px;
 }
 
 ::-webkit-scrollbar-track {
-  @apply bg-gray-100 dark:bg-gray-800;
+  background: #f1f1f1;
 }
 
 ::-webkit-scrollbar-thumb {
-  @apply bg-gray-400 dark:bg-gray-600 rounded-full;
+  background: #c1c1c1;
+  border-radius: 4px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  @apply bg-gray-500 dark:bg-gray-500;
-}
-
-/* Element Plus overrides for better integration */
-.el-dropdown-menu {
-  @apply border-0 shadow-xl;
-}
-
-.dark .el-dropdown-menu {
-  @apply bg-gray-800;
-}
-
-.dark .el-dropdown-menu__item {
-  @apply text-gray-300 hover:bg-gray-700;
-}
-
-.dark .el-dropdown-menu__item--divided::before {
-  @apply bg-gray-700;
+  background: #a8a8a8;
 }
 </style>

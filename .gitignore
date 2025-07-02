@@ -85,3 +85,4 @@ services/comsrv/docs/DATA_STRUCTURES.md
 tools/redis_monitor.py
 services/comsrv/config_example_simplified.yaml
 services/comsrv/config_example_with_data_source.yaml
+CLAUDE.md
