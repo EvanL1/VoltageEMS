@@ -1,27 +1,31 @@
-mod config;
+mod config_new;
+mod config_api;
 mod error;
 mod formatter;
 mod network;
 mod redis;
 
-use crate::config::Config;
+use crate::config_new::NetServiceConfig;
+use crate::config_api::{ConfigState, create_config_router};
 use crate::error::Result;
-use crate::formatter::{create_formatter, default_formatter};
-use crate::network::create_client;
-use crate::redis::RedisDataFetcher;
+use crate::formatter::{create_formatter, FormatType};
+use crate::network::{NetworkClient, create_network_client};
+use crate::redis::NewRedisDataFetcher;
+use voltage_config::load_config;
 use clap::Parser;
 use tracing::{debug, error, info, warn};
 use serde_json::Value;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::mpsc;
+use tower_http::cors::CorsLayer;
 
 
 #[derive(Parser, Debug)]
 #[clap(author, version, about, long_about = None)]
 struct Args {
     /// Path to the configuration file
-    #[clap(short, long, value_parser, default_value = "netsrv.json")]
+    #[clap(short, long, value_parser, default_value = "config/netsrv.yml")]
     config: PathBuf,
 }
 
@@ -31,28 +35,50 @@ async fn main() -> Result<()> {
     let args = Args::parse();
 
     // Load configuration
-    let config = match Config::new(args.config.to_str().unwrap_or("netsrv.json")) {
+    let config = match load_config::<NetServiceConfig>(&args.config) {
         Ok(config) => config,
         Err(e) => {
             eprintln!("Failed to load configuration: {}", e);
             eprintln!("Using default configuration");
-            Config::default()
+            NetServiceConfig::default()
         }
     };
 
     // Initialize logging
     init_logging(&config);
 
-    info!("Starting Network Service");
-    info!("Redis configuration: {}:{}", config.redis.host, config.redis.port);
+    info!("Starting Network Service with Backend Configuration Management");
+    info!("Redis configuration: {}", config.base.redis.url);
     info!("Found {} network configurations", config.networks.len());
+    
+    // Create configuration state for API
+    let config_state = ConfigState::new(config.clone(), args.config.clone());
+    
+    // Start configuration management API server
+    let config_api_port = config.base.monitoring.health_check_port + 1; // Use next port after health check
+    let config_router = create_config_router(config_state.clone())
+        .layer(CorsLayer::permissive());
+    
+    let config_listener = tokio::net::TcpListener::bind(format!("0.0.0.0:{}", config_api_port)).await
+        .expect("Failed to bind configuration API server");
+    
+    info!("Configuration API server starting on port {}", config_api_port);
+    
+    tokio::spawn(async move {
+        if let Err(e) = axum::serve(config_listener, config_router).await {
+            error!("Configuration API server error: {}", e);
+        }
+    });
 
     // Create data channel
     let (tx, mut rx) = mpsc::channel::<Value>(100);
 
-    // Start Redis data fetcher
-    let redis_config = config.redis.clone();
-    let mut data_fetcher = RedisDataFetcher::new(redis_config);
+    // Start Redis data fetcher with new configuration
+    let mut data_fetcher = NewRedisDataFetcher::new(
+        config.base.redis.clone(),
+        config.data.redis_data_key.clone(),
+        config.data.redis_polling_interval_secs,
+    )?;
     
     tokio::spawn(async move {
         if let Err(e) = data_fetcher.start_polling(tx).await {
@@ -60,35 +86,41 @@ async fn main() -> Result<()> {
         }
     });
 
-    // Create network clients with their formatters
+    // Create network clients using new configuration system
     let mut clients = Vec::new();
     
     // Process all network configurations
     for network_config in &config.networks {
-        if !network_config.is_enabled() {
-            info!("Network '{}' is disabled, skipping", network_config.name());
-            continue;
-        }
+        let network_name = match network_config {
+            crate::config_new::NetworkConfig::LegacyMqtt(mqtt_config) => &mqtt_config.name,
+            crate::config_new::NetworkConfig::Http(http_config) => &http_config.name,
+            crate::config_new::NetworkConfig::CloudMqtt(cloud_config) => &cloud_config.name,
+        };
 
-        info!("Initializing network: {}", network_config.name());
+        info!("Initializing network: {}", network_name);
         
         // Create formatter based on configuration
-        let formatter = if let Some(format_type) = network_config.format_type() {
-            create_formatter(&format_type.clone().into())
-        } else {
-            // Cloud networks use JSON by default
-            default_formatter()
+        let formatter = match network_config {
+            crate::config_new::NetworkConfig::LegacyMqtt(mqtt_config) => {
+                create_formatter(&convert_format_type(&mqtt_config.format_type))
+            }
+            crate::config_new::NetworkConfig::Http(http_config) => {
+                create_formatter(&convert_format_type(&http_config.format_type))
+            }
+            crate::config_new::NetworkConfig::CloudMqtt(cloud_config) => {
+                create_formatter(&convert_format_type(&cloud_config.format_type))
+            }
         };
         
-        // Create client
-        match create_client(network_config, formatter) {
+        // Create client using new factory
+        match create_network_client(network_config, formatter) {
             Ok(client) => {
-                let client_name = network_config.name().to_string();
+                let client_name = network_name.to_string();
                 let client = Arc::new(tokio::sync::Mutex::new(client));
                 clients.push((client_name, client));
             }
             Err(e) => {
-                error!("Failed to create client for network '{}': {}", network_config.name(), e);
+                error!("Failed to create client for network '{}': {}", network_name, e);
             }
         }
     }
@@ -114,37 +146,16 @@ async fn main() -> Result<()> {
                 continue;
             }
             
-            // Format data using client's internal formatter
-            let formatted_data = if let Some(mqtt_client) = client.as_any().downcast_ref::<crate::network::MqttClient>() {
-                // For MQTT clients, use their internal formatter
-                match mqtt_client.format_data(&data) {
-                    Ok(formatted) => formatted,
-                    Err(e) => {
-                        error!("Failed to format data for network '{}': {}", name, e);
-                        continue;
-                    }
-                }
-            } else if let Some(http_client) = client.as_any().downcast_ref::<crate::network::HttpClient>() {
-                // For HTTP clients, use their internal formatter
-                match http_client.format_data(&data) {
-                    Ok(formatted) => formatted,
-                    Err(e) => {
-                        error!("Failed to format data for network '{}': {}", name, e);
-                        continue;
-                    }
-                }
-            } else {
-                // Fallback to default JSON formatting
-                match serde_json::to_string(&data) {
-                    Ok(formatted) => formatted,
-                    Err(e) => {
-                        error!("Failed to format data for network '{}': {}", name, e);
-                        continue;
-                    }
+            // Format data - the formatter is embedded in the new client
+            let formatted_data = match serde_json::to_string(&data) {
+                Ok(formatted) => formatted,
+                Err(e) => {
+                    error!("Failed to format data for network '{}': {}", name, e);
+                    continue;
                 }
             };
             
-            // Send data
+            // Send data using new client interface
             match client.send(&formatted_data).await {
                 Ok(_) => debug!("Data sent to network: {}", name),
                 Err(e) => error!("Failed to send data to network '{}': {}", name, e),
@@ -164,9 +175,9 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-fn init_logging(config: &Config) {
+fn init_logging(config: &NetServiceConfig) {
     let filter = tracing_subscriber::EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new(&config.logging.level));
+        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new(&config.base.logging.level));
     
     tracing_subscriber::fmt()
         .with_env_filter(filter)
@@ -175,7 +186,16 @@ fn init_logging(config: &Config) {
         .with_level(true)
         .init();
     
-    info!("Logging initialized at level: {}", config.logging.level);
+    info!("Logging initialized at level: {}", config.base.logging.level);
+}
+
+fn convert_format_type(format_type: &crate::config_new::FormatType) -> FormatType {
+    match format_type {
+        crate::config_new::FormatType::Json => FormatType::Json,
+        crate::config_new::FormatType::Ascii => FormatType::Ascii,
+        crate::config_new::FormatType::Binary => FormatType::Json, // Fallback to JSON
+        crate::config_new::FormatType::Protobuf => FormatType::Json, // Fallback to JSON
+    }
 }
 
  

@@ -2,7 +2,6 @@ use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::any::Any;
 use std::collections::HashMap;
-use std::time::Duration;
 use voltage_config::prelude::*;
 
 /// Network service configuration using the unified config framework
@@ -137,6 +136,10 @@ pub struct CloudMqttConfig {
     /// TLS configuration
     #[serde(default)]
     pub tls: TlsConfig,
+    
+    /// AWS-specific features
+    #[serde(default)]
+    pub aws_features: AwsIotFeatures,
 }
 
 /// Cloud provider enumeration
@@ -340,6 +343,42 @@ pub struct ConnectionSettings {
     pub max_reconnect_attempts: u32,
 }
 
+/// AWS IoT specific features configuration
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct AwsIotFeatures {
+    /// Enable AWS IoT Jobs support
+    #[serde(default)]
+    pub jobs_enabled: bool,
+    
+    /// Enable Device Shadow support
+    #[serde(default)]
+    pub device_shadow_enabled: bool,
+    
+    /// Enable Fleet Provisioning support  
+    #[serde(default)]
+    pub fleet_provisioning_enabled: bool,
+    
+    /// AWS IoT Jobs topic prefix
+    #[serde(default = "default_jobs_topic")]
+    pub jobs_topic_prefix: String,
+    
+    /// Device Shadow topic prefix
+    #[serde(default = "default_shadow_topic")]
+    pub shadow_topic_prefix: String,
+    
+    /// Fleet Provisioning template name
+    #[serde(default)]
+    pub provisioning_template: Option<String>,
+    
+    /// Auto-respond to AWS IoT Jobs
+    #[serde(default = "default_true")]
+    pub auto_respond_jobs: bool,
+    
+    /// Maximum concurrent jobs
+    #[serde(default = "default_max_jobs")]
+    pub max_concurrent_jobs: u32,
+}
+
 /// Data format type
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -395,6 +434,18 @@ fn default_reconnect_interval() -> u64 {
 
 fn default_max_reconnects() -> u32 {
     0 // 0 means infinite
+}
+
+fn default_jobs_topic() -> String {
+    "$aws/things/{thing_name}/jobs".to_string()
+}
+
+fn default_shadow_topic() -> String {
+    "$aws/things/{thing_name}/shadow".to_string()
+}
+
+fn default_max_jobs() -> u32 {
+    5
 }
 
 impl Configurable for NetServiceConfig {
@@ -480,6 +531,48 @@ impl ServiceConfig for NetServiceConfig {
     }
 }
 
+impl Default for NetServiceConfig {
+    fn default() -> Self {
+        Self {
+            base: BaseServiceConfig {
+                service: ServiceInfo {
+                    name: "netsrv".to_string(),
+                    version: "0.1.0".to_string(),
+                    description: "Network Forwarding Service".to_string(),
+                    instance_id: String::new(),
+                },
+                redis: RedisConfig {
+                    url: "redis://localhost:6379".to_string(),
+                    prefix: "voltage:net:".to_string(),
+                    pool_size: 20,
+                    database: 0,
+                    password: None,
+                },
+                logging: LoggingConfig {
+                    level: "info".to_string(),
+                    console: true,
+                    file: None,
+                    json_format: false,
+                },
+                monitoring: MonitoringConfig {
+                    metrics_enabled: true,
+                    metrics_port: 9095,
+                    health_check_enabled: true,
+                    health_check_port: 8096,
+                    health_check_interval: 30,
+                },
+            },
+            data: DataConfig {
+                redis_data_key: "voltage:data:*".to_string(),
+                redis_polling_interval_secs: 1,
+                enable_buffering: true,
+                buffer_size: 1000,
+            },
+            networks: vec![],
+        }
+    }
+}
+
 impl NetServiceConfig {
     /// Load configuration using the unified framework
     pub async fn load() -> Result<Self> {
@@ -521,7 +614,39 @@ impl NetServiceConfig {
                     "enable_buffering": true,
                     "buffer_size": 1000
                 },
-                "networks": []
+                "networks": [
+                    {
+                        "type": "cloud_mqtt",
+                        "name": "aws_iot_default",
+                        "provider": "aws",
+                        "provider_config": {
+                            "endpoint": "your-endpoint.iot.us-east-1.amazonaws.com",
+                            "port": 8883,
+                            "thing_name": "voltage_device_01"
+                        },
+                        "auth": {
+                            "type": "certificate",
+                            "cert_path": "certs/aws/device.crt",
+                            "key_path": "certs/aws/device.key",
+                            "ca_path": "certs/aws/AmazonRootCA1.pem"
+                        },
+                        "topics": {
+                            "publish_template": "voltage/devices/{thing_name}/telemetry",
+                            "subscribe_template": "voltage/devices/{thing_name}/commands",
+                            "variables": {
+                                "thing_name": "voltage_device_01"
+                            },
+                            "qos": 1
+                        },
+                        "format_type": "json",
+                        "tls": {
+                            "enabled": true,
+                            "verify_cert": true,
+                            "verify_hostname": true,
+                            "alpn_protocols": ["x-amzn-mqtt-ca"]
+                        }
+                    }
+                ]
             }))?
             .build()?;
         
@@ -601,6 +726,16 @@ impl NetServiceConfig {
                     },
                     format_type: FormatType::Json,
                     tls: TlsConfig::default(),
+                    aws_features: AwsIotFeatures {
+                        jobs_enabled: true,
+                        device_shadow_enabled: true,
+                        fleet_provisioning_enabled: false,
+                        jobs_topic_prefix: "$aws/things/voltage_device_01/jobs".to_string(),
+                        shadow_topic_prefix: "$aws/things/voltage_device_01/shadow".to_string(),
+                        provisioning_template: None,
+                        auto_respond_jobs: true,
+                        max_concurrent_jobs: 5,
+                    },
                 }),
                 
                 // Example traditional MQTT configuration

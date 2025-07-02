@@ -1,11 +1,12 @@
 use crate::config::network::{AuthConfig, CloudProvider, TlsConfig, TopicConfig};
+use crate::config_new::AwsIotFeatures;
 use crate::error::{NetSrvError, Result};
 use crate::formatter::DataFormatter;
 use crate::network::NetworkClient;
 use async_trait::async_trait;
 use chrono::Utc;
 use hmac::{Hmac, Mac};
-use log::{debug, error, info, warn};
+use tracing::{debug, error, info, warn};
 use rumqttc::{AsyncClient, Key, MqttOptions, NetworkOptions, QoS, Transport};
 use serde_json::Value;
 use sha2::Sha256;
@@ -43,6 +44,7 @@ pub struct CloudMqttConfig {
     pub tls_config: TlsConfig,
     pub keep_alive_secs: u64,
     pub connection_timeout_ms: u64,
+    pub aws_features: AwsIotFeatures,
 }
 
 impl CloudMqttConfig {

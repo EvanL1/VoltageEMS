@@ -189,14 +189,14 @@ pub mod transformers {
         // Try extracting from flat structure
         if let Some(obj) = old_config.as_object() {
             let url = obj.get("redis_url")
+                .map(|v| v.clone())
                 .or_else(|| obj.get("redis_host").map(|host| {
                     let port = obj.get("redis_port")
                         .and_then(|p| p.as_u64())
                         .unwrap_or(6379);
                     Value::String(format!("redis://{}:{}", host.as_str().unwrap_or("localhost"), port))
                 }))
-                .and_then(|v| v.as_str())
-                .map(String::from)?;
+                .and_then(|v| v.as_str().map(String::from))?;
             
             return Some(RedisConfig {
                 url,
