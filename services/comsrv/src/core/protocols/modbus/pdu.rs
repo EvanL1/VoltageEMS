@@ -4,6 +4,7 @@
 //! including parsing requests and building responses for all standard Modbus function codes.
 
 use serde::{Deserialize, Serialize};
+use tracing::{debug, info, warn};
 use crate::utils::error::{ComSrvError, Result};
 
 /// Modbus function codes
@@ -138,49 +139,103 @@ impl ModbusPduProcessor {
 
     /// Parse PDU from byte slice
     pub fn parse_pdu(&self, data: &[u8]) -> Result<PduParseResult> {
+        debug!(
+            "[PDU Parser] Starting PDU parsing - Length: {} bytes, Raw Data: {:02X?}", 
+            data.len(), 
+            data
+        );
+        
         if data.is_empty() {
+            warn!("[PDU Parser] PDU data is empty");
             return Err(ComSrvError::ProtocolError("Empty PDU".to_string()));
         }
 
         let function_code_raw = data[0];
+        debug!("[PDU Parser] Function code byte: 0x{:02X}", function_code_raw);
         
         // Check if this is an exception response
         if function_code_raw & 0x80 != 0 {
+            debug!("[PDU Parser] Exception response detected - function code high bit set");
             return self.parse_exception_response(data);
         }
 
         let function_code = ModbusFunctionCode::try_from(function_code_raw)?;
+        debug!("[PDU Parser] Function code parsed successfully: {:?} (0x{:02X})", function_code, function_code_raw);
+        
         let pdu_data = &data[1..];
+        debug!("[PDU Parser] PDU data section: {} bytes - {:02X?}", pdu_data.len(), pdu_data);
 
         let request = ModbusPduRequest {
             function_code,
             data: pdu_data.to_vec(),
         };
 
+        debug!("[PDU Parser] PDU parsing completed - Type: Request");
         Ok(PduParseResult::Request(request))
     }
 
     /// Parse exception response
     fn parse_exception_response(&self, data: &[u8]) -> Result<PduParseResult> {
+        debug!("[PDU Parser] Parsing exception response - Data: {:02X?}", data);
+        
         if data.len() < 2 {
+            warn!("[PDU Parser] Exception response length insufficient: {} < 2", data.len());
             return Err(ComSrvError::ProtocolError("Invalid exception response length".to_string()));
         }
 
         let function_code = data[0];
         let exception_code_raw = data[1];
+        
+        debug!(
+            "[PDU Parser] Exception response details - Function code: 0x{:02X}, Exception code: 0x{:02X}", 
+            function_code, exception_code_raw
+        );
 
         let exception_code = match exception_code_raw {
-            0x01 => ModbusExceptionCode::IllegalFunction,
-            0x02 => ModbusExceptionCode::IllegalDataAddress,
-            0x03 => ModbusExceptionCode::IllegalDataValue,
-            0x04 => ModbusExceptionCode::SlaveDeviceFailure,
-            0x05 => ModbusExceptionCode::Acknowledge,
-            0x06 => ModbusExceptionCode::SlaveDeviceBusy,
-            0x07 => ModbusExceptionCode::NegativeAcknowledge,
-            0x08 => ModbusExceptionCode::MemoryParityError,
-            0x0A => ModbusExceptionCode::GatewayPathUnavailable,
-            0x0B => ModbusExceptionCode::GatewayTargetDeviceFailedToRespond,
-            _ => return Err(ComSrvError::ProtocolError(format!("Invalid exception code: 0x{:02X}", exception_code_raw))),
+            0x01 => {
+                debug!("[PDU Parser] Exception type: IllegalFunction (Illegal Function)");
+                ModbusExceptionCode::IllegalFunction
+            }
+            0x02 => {
+                debug!("[PDU Parser] Exception type: IllegalDataAddress (Illegal Data Address)");
+                ModbusExceptionCode::IllegalDataAddress
+            }
+            0x03 => {
+                debug!("[PDU Parser] Exception type: IllegalDataValue (Illegal Data Value)");
+                ModbusExceptionCode::IllegalDataValue
+            }
+            0x04 => {
+                debug!("[PDU Parser] Exception type: SlaveDeviceFailure (Slave Device Failure)");
+                ModbusExceptionCode::SlaveDeviceFailure
+            }
+            0x05 => {
+                debug!("[PDU Parser] Exception type: Acknowledge (Acknowledge)");
+                ModbusExceptionCode::Acknowledge
+            }
+            0x06 => {
+                debug!("[PDU Parser] Exception type: SlaveDeviceBusy (Slave Device Busy)");
+                ModbusExceptionCode::SlaveDeviceBusy
+            }
+            0x07 => {
+                debug!("[PDU Parser] Exception type: NegativeAcknowledge (Negative Acknowledge)");
+                ModbusExceptionCode::NegativeAcknowledge
+            }
+            0x08 => {
+                debug!("[PDU Parser] Exception type: MemoryParityError (Memory Parity Error)");
+                ModbusExceptionCode::MemoryParityError
+            }
+            0x0A => {
+                debug!("[PDU Parser] Exception type: GatewayPathUnavailable (Gateway Path Unavailable)");
+                ModbusExceptionCode::GatewayPathUnavailable
+            }
+            0x0B => {
+                debug!("[PDU Parser] Exception type: GatewayTargetDeviceFailedToRespond (Gateway Target Device Failed To Respond)");
+                ModbusExceptionCode::GatewayTargetDeviceFailedToRespond
+            }
+            _ => {
+                warn!("[PDU Parser] Unknown exception code: 0x{:02X}", exception_code_raw);
+                return Err(ComSrvError::ProtocolError(format!("Invalid exception code: 0x{:02X}", exception_code_raw)));
+            }
         };
 
         let exception = ModbusPduException {
@@ -188,17 +243,26 @@ impl ModbusPduProcessor {
             exception_code,
         };
 
+        debug!("[PDU Parser] Exception response parsing completed - Function code: 0x{:02X}, Exception: {:?}", function_code, exception_code);
         Ok(PduParseResult::Exception(exception))
     }
 
     /// Parse read request (0x01, 0x02, 0x03, 0x04)
     pub fn parse_read_request(&self, data: &[u8]) -> Result<ReadRequest> {
+        debug!("[PDU Parser] Parsing read request - Data: {:02X?}", data);
+        
         if data.len() < 4 {
+            warn!("[PDU Parser] Read request length insufficient: {} < 4", data.len());
             return Err(ComSrvError::ProtocolError("Invalid read request length".to_string()));
         }
 
         let start_address = u16::from_be_bytes([data[0], data[1]]);
         let quantity = u16::from_be_bytes([data[2], data[3]]);
+        
+        debug!(
+            "[PDU Parser] Read request parsed - Start address: {}, Quantity: {}, Address range: {}-{}", 
+            start_address, quantity, start_address, start_address + quantity - 1
+        );
 
         Ok(ReadRequest {
             start_address,
@@ -208,12 +272,20 @@ impl ModbusPduProcessor {
 
     /// Parse write single request (0x05, 0x06)
     pub fn parse_write_single_request(&self, data: &[u8]) -> Result<WriteSingleRequest> {
+        debug!("[PDU Parser] Parsing write single request - Data: {:02X?}", data);
+        
         if data.len() < 4 {
+            warn!("[PDU Parser] Write single request length insufficient: {} < 4", data.len());
             return Err(ComSrvError::ProtocolError("Invalid write single request length".to_string()));
         }
 
         let address = u16::from_be_bytes([data[0], data[1]]);
         let value = u16::from_be_bytes([data[2], data[3]]);
+        
+        debug!(
+            "[PDU Parser] Write single request parsed - Address: {}, Value: {} (0x{:04X})", 
+            address, value, value
+        );
 
         Ok(WriteSingleRequest {
             address,
@@ -223,29 +295,51 @@ impl ModbusPduProcessor {
 
     /// Parse write multiple coils request (0x0F)
     pub fn parse_write_multiple_coils_request(&self, data: &[u8]) -> Result<WriteMultipleCoilsRequest> {
+        debug!("[PDU Parser] Parsing write multiple coils request - Data: {:02X?}", data);
+        
         if data.len() < 5 {
+            warn!("[PDU Parser] Write multiple coils request length insufficient: {} < 5", data.len());
             return Err(ComSrvError::ProtocolError("Invalid write multiple coils request length".to_string()));
         }
 
         let start_address = u16::from_be_bytes([data[0], data[1]]);
         let quantity = u16::from_be_bytes([data[2], data[3]]);
         let byte_count = data[4];
+        
+        debug!(
+            "[PDU Parser] Multiple coils write header - Start address: {}, Quantity: {}, Byte count: {}", 
+            start_address, quantity, byte_count
+        );
 
         if data.len() < (5 + byte_count as usize) {
+            warn!(
+                "[PDU Parser] Multiple coils write data length insufficient: {} < {}", 
+                data.len(), 5 + byte_count as usize
+            );
             return Err(ComSrvError::ProtocolError("Invalid write multiple coils data length".to_string()));
         }
 
         let coil_bytes = &data[5..5 + byte_count as usize];
+        debug!("[PDU Parser] Coil data bytes: {:02X?}", coil_bytes);
+        
         let mut values = Vec::new();
 
         // Convert bytes to individual coil values
         for (byte_idx, &byte) in coil_bytes.iter().enumerate() {
+            debug!("[PDU Parser] Processing byte {}: 0x{:02X}", byte_idx, byte);
             for bit_idx in 0..8 {
                 if byte_idx * 8 + bit_idx < quantity as usize {
-                    values.push((byte >> bit_idx) & 1 != 0);
+                    let bit_value = (byte >> bit_idx) & 1 != 0;
+                    values.push(bit_value);
+                    debug!(
+                        "  Bit {}: {} (byte position: {})", 
+                        byte_idx * 8 + bit_idx, bit_value, bit_idx
+                    );
                 }
             }
         }
+        
+        debug!("[PDU Parser] Multiple coils write parsing completed - Parsed {} coil values", values.len());
 
         Ok(WriteMultipleCoilsRequest {
             start_address,
@@ -257,27 +351,48 @@ impl ModbusPduProcessor {
 
     /// Parse write multiple registers request (0x10)
     pub fn parse_write_multiple_registers_request(&self, data: &[u8]) -> Result<WriteMultipleRegistersRequest> {
+        debug!("[PDU Parser] Parsing write multiple registers request - Data: {:02X?}", data);
+        
         if data.len() < 5 {
+            warn!("[PDU Parser] Write multiple registers request length insufficient: {} < 5", data.len());
             return Err(ComSrvError::ProtocolError("Invalid write multiple registers request length".to_string()));
         }
 
         let start_address = u16::from_be_bytes([data[0], data[1]]);
         let quantity = u16::from_be_bytes([data[2], data[3]]);
         let byte_count = data[4];
+        
+        debug!(
+            "[PDU Parser] Multiple registers write header - Start address: {}, Quantity: {}, Byte count: {}", 
+            start_address, quantity, byte_count
+        );
 
         if data.len() < (5 + byte_count as usize) {
+            warn!(
+                "[PDU Parser] Multiple registers write data length insufficient: {} < {}", 
+                data.len(), 5 + byte_count as usize
+            );
             return Err(ComSrvError::ProtocolError("Invalid write multiple registers data length".to_string()));
         }
 
         let register_bytes = &data[5..5 + byte_count as usize];
+        debug!("[PDU Parser] Register data bytes: {:02X?}", register_bytes);
+        
         let mut values = Vec::new();
 
         // Convert bytes to register values
-        for chunk in register_bytes.chunks(2) {
+        for (i, chunk) in register_bytes.chunks(2).enumerate() {
             if chunk.len() == 2 {
-                values.push(u16::from_be_bytes([chunk[0], chunk[1]]));
+                let register_value = u16::from_be_bytes([chunk[0], chunk[1]]);
+                values.push(register_value);
+                debug!(
+                    "  Register {}: {} (0x{:04X}) [bytes: {:02X} {:02X}]", 
+                    start_address + i as u16, register_value, register_value, chunk[0], chunk[1]
+                );
             }
         }
+        
+        debug!("[PDU Parser] Multiple registers write parsing completed - Parsed {} register values", values.len());
 
         Ok(WriteMultipleRegistersRequest {
             start_address,
@@ -289,10 +404,21 @@ impl ModbusPduProcessor {
 
     /// Build read response PDU (0x01, 0x02, 0x03, 0x04)
     pub fn build_read_response(&self, function_code: ModbusFunctionCode, data: &[u8]) -> Vec<u8> {
+        debug!(
+            "[PDU Builder] Building read response - Function code: {:?} (0x{:02X}), Data length: {} bytes", 
+            function_code, u8::from(function_code), data.len()
+        );
+        
         let mut pdu = Vec::new();
         pdu.push(function_code.into());
         pdu.push(data.len() as u8); // Byte count
         pdu.extend_from_slice(data);
+        
+        debug!(
+            "[PDU Builder] Read response building completed - PDU: {:02X?}, Total length: {} bytes", 
+            pdu, pdu.len()
+        );
+        
         pdu
     }
 
@@ -341,27 +467,61 @@ impl ModbusPduProcessor {
 
     /// Build exception response PDU
     pub fn build_exception_response(&self, function_code: ModbusFunctionCode, exception_code: ModbusExceptionCode) -> Vec<u8> {
+        debug!(
+            "[PDU Builder] Building exception response - Function code: {:?} (0x{:02X}), Exception code: {:?} (0x{:02X})", 
+            function_code, u8::from(function_code), exception_code, u8::from(exception_code)
+        );
+        
         let mut pdu = Vec::new();
-        pdu.push(u8::from(function_code) | 0x80); // Set error bit
+        let error_function_code = u8::from(function_code) | 0x80; // Set error bit
+        pdu.push(error_function_code);
         pdu.push(exception_code.into());
+        
+        debug!(
+            "[PDU Builder] Exception response building completed - PDU: {:02X?}, Error function code: 0x{:02X}", 
+            pdu, error_function_code
+        );
+        
         pdu
     }
 
     /// Build request PDU for read operations (0x01, 0x02, 0x03, 0x04)
     pub fn build_read_request(&self, function_code: ModbusFunctionCode, start_address: u16, quantity: u16) -> Vec<u8> {
+        debug!(
+            "[PDU Builder] Building read request - Function code: {:?} (0x{:02X}), Start address: {}, Quantity: {}", 
+            function_code, u8::from(function_code), start_address, quantity
+        );
+        
         let mut pdu = Vec::new();
         pdu.push(function_code.into());
         pdu.extend_from_slice(&start_address.to_be_bytes());
         pdu.extend_from_slice(&quantity.to_be_bytes());
+        
+        debug!(
+            "[PDU Builder] Read request building completed - PDU: {:02X?}, Address range: {}-{}", 
+            pdu, start_address, start_address + quantity - 1
+        );
+        
         pdu
     }
 
     /// Build request PDU for write single operations (0x05, 0x06)
     pub fn build_write_single_request(&self, function_code: ModbusFunctionCode, address: u16, value: u16) -> Vec<u8> {
+        debug!(
+            "[PDU Builder] Building write single request - Function code: {:?} (0x{:02X}), Address: {}, Value: {} (0x{:04X})", 
+            function_code, u8::from(function_code), address, value, value
+        );
+        
         let mut pdu = Vec::new();
         pdu.push(function_code.into());
         pdu.extend_from_slice(&address.to_be_bytes());
         pdu.extend_from_slice(&value.to_be_bytes());
+        
+        debug!(
+            "[PDU Builder] Write single request building completed - PDU: {:02X?}", 
+            pdu
+        );
+        
         pdu
     }
 

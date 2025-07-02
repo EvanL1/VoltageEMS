@@ -8,14 +8,61 @@ use tokio::sync::RwLock;
 use tokio::signal;
 use axum::serve;
 
-use tracing::{error, info};
-use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
+use tracing::{error, info, Level};
+use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, Layer, fmt::format::FmtSpan};
+use tracing_appender::rolling::{RollingFileAppender, Rotation};
 
 use comsrv::core::config::ConfigManager;
 use comsrv::core::protocols::common::combase::protocol_factory::ProtocolFactory;
 use comsrv::api::openapi_routes::create_api_routes;
 use comsrv::service_impl::{start_communication_service, start_cleanup_task, shutdown_handler};
 use comsrv::utils::error::Result;
+
+/// Custom formatter that shows target only for DEBUG and ERROR levels
+struct ConditionalTargetFormatter;
+
+impl<S, N> tracing_subscriber::fmt::FormatEvent<S, N> for ConditionalTargetFormatter
+where
+    S: tracing::Subscriber + for<'a> tracing_subscriber::registry::LookupSpan<'a>,
+    N: for<'a> tracing_subscriber::fmt::FormatFields<'a> + 'static,
+{
+    fn format_event(
+        &self,
+        ctx: &tracing_subscriber::fmt::FmtContext<'_, S, N>,
+        mut writer: tracing_subscriber::fmt::format::Writer<'_>,
+        event: &tracing::Event<'_>,
+    ) -> std::fmt::Result {
+        use std::fmt::Write;
+        
+        let metadata = event.metadata();
+        let level = metadata.level();
+        
+        // Write timestamp
+        write!(writer, "{} ", chrono::Local::now().format("%Y-%m-%dT%H:%M:%S%.6fZ"))?;
+        
+        // Write level with color
+        match *level {
+            Level::ERROR => write!(writer, "\x1b[31mERROR\x1b[0m")?,
+            Level::WARN => write!(writer, "\x1b[33m WARN\x1b[0m")?,
+            Level::INFO => write!(writer, "\x1b[32m INFO\x1b[0m")?,
+            Level::DEBUG => write!(writer, "\x1b[34mDEBUG\x1b[0m")?,
+            Level::TRACE => write!(writer, "\x1b[35mTRACE\x1b[0m")?,
+        }
+        
+        // Show target only for DEBUG and ERROR levels
+        if *level == Level::DEBUG || *level == Level::ERROR {
+            write!(writer, " \x1b[2m{}\x1b[0m", metadata.target())?;
+        }
+        
+        write!(writer, " ")?;
+        
+        // Write message
+        ctx.field_format().format_fields(writer.by_ref(), event)?;
+        
+        writeln!(writer)?;
+        Ok(())
+    }
+}
 
 /// Command line arguments for the Communication Service
 #[derive(Parser)]
@@ -38,20 +85,22 @@ async fn main() -> Result<()> {
     // Load environment variables
     dotenv().ok();
 
-    // Initialize logging/tracing
-    initialize_logging();
-
-    info!("Starting Communication Service v{}", env!("CARGO_PKG_VERSION"));
-
-    // Load configuration using ConfigManager
+    // Load configuration first to get logging settings
     info!("Loading configuration from: {}", args.config);
     let config_manager = Arc::new(
         ConfigManager::from_file(&args.config)
             .map_err(|e| {
-                error!("Failed to load configuration: {}", e);
-                e
+                eprintln!("Failed to load configuration from '{}': {}", args.config, e);
+                comsrv::utils::error::ComSrvError::ConfigError(
+                    format!("Configuration loading failed: {}", e)
+                )
             })?
     );
+
+    // Initialize logging/tracing with configuration
+    initialize_logging(&config_manager.config().service.logging)?;
+
+    info!("Starting Communication Service v{}", env!("CARGO_PKG_VERSION"));
     
     // Display configuration summary
     info!("Configuration loaded successfully:");
@@ -125,23 +174,125 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-/// Initialize logging/tracing
-fn initialize_logging() {
+/// Initialize logging/tracing with configuration
+fn initialize_logging(logging_config: &comsrv::core::config::types::LoggingConfig) -> Result<()> {
+    use std::path::Path;
+    
+    // Create log level filter - allow RUST_LOG to override, then use config, then default
     let env_filter = tracing_subscriber::EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| {
-            // Default to info level, but allow RUST_LOG to override
-            "comsrv=info,tower_http=info".into()
+            let level = &logging_config.level;
+            format!("comsrv={},tower_http=info", level).into()
         });
 
-    let fmt_layer = tracing_subscriber::fmt::layer()
-        .with_target(true)
-        .with_thread_ids(false)
-        .with_thread_names(false);
+    // Start with the registry and env filter
+    let subscriber = tracing_subscriber::registry().with(env_filter);
 
-    tracing_subscriber::registry()
-        .with(env_filter)
-        .with(fmt_layer)
-        .init();
+    // Add console layer if enabled
+    if logging_config.console && logging_config.file.is_some() {
+        // Both console and file logging
+        let console_layer = tracing_subscriber::fmt::layer()
+            .event_format(ConditionalTargetFormatter);
+
+        let log_file_path = logging_config.file.as_ref().unwrap();
+        let log_path = Path::new(log_file_path);
+        let log_dir = log_path.parent().unwrap_or_else(|| Path::new("."));
+        let log_filename = log_path.file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("comsrv");
+        
+        // Create log directory if it doesn't exist
+        if let Err(e) = std::fs::create_dir_all(log_dir) {
+            eprintln!("Warning: Could not create log directory {:?}: {}", log_dir, e);
+        }
+
+        // Create rolling file appender
+        let file_appender = RollingFileAppender::builder()
+            .rotation(Rotation::DAILY)
+            .filename_prefix(log_filename)
+            .filename_suffix("log")
+            .max_log_files(logging_config.max_files as usize)
+            .build(log_dir)
+            .map_err(|e| {
+                eprintln!("Failed to create file appender: {}", e);
+                comsrv::utils::error::ComSrvError::ConfigError(
+                    format!("Failed to create log file appender: {}", e)
+                )
+            })?;
+
+        let file_layer = tracing_subscriber::fmt::layer()
+            .with_writer(file_appender)
+            .with_target(true)
+            .with_thread_ids(true)
+            .with_thread_names(true)
+            .with_ansi(false)
+            .json(); // Use JSON format for file logs
+
+        subscriber.with(console_layer).with(file_layer).init();
+        
+        eprintln!("Logging configured:");
+        eprintln!("  - Console: enabled");
+        eprintln!("  - File: {}", log_file_path);
+        eprintln!("  - Level: {}", logging_config.level);
+        eprintln!("  - Max files: {}", logging_config.max_files);
+        
+    } else if logging_config.console {
+        // Console only
+        let console_layer = tracing_subscriber::fmt::layer()
+            .event_format(ConditionalTargetFormatter);
+
+        subscriber.with(console_layer).init();
+        eprintln!("Logging configured: Console only, Level: {}", logging_config.level);
+        
+    } else if let Some(ref log_file_path) = logging_config.file {
+        // File only
+        let log_path = Path::new(log_file_path);
+        let log_dir = log_path.parent().unwrap_or_else(|| Path::new("."));
+        let log_filename = log_path.file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("comsrv");
+        
+        // Create log directory if it doesn't exist
+        if let Err(e) = std::fs::create_dir_all(log_dir) {
+            eprintln!("Warning: Could not create log directory {:?}: {}", log_dir, e);
+        }
+
+        // Create rolling file appender
+        let file_appender = RollingFileAppender::builder()
+            .rotation(Rotation::DAILY)
+            .filename_prefix(log_filename)
+            .filename_suffix("log")
+            .max_log_files(logging_config.max_files as usize)
+            .build(log_dir)
+            .map_err(|e| {
+                eprintln!("Failed to create file appender: {}", e);
+                comsrv::utils::error::ComSrvError::ConfigError(
+                    format!("Failed to create log file appender: {}", e)
+                )
+            })?;
+
+        let file_layer = tracing_subscriber::fmt::layer()
+            .with_writer(file_appender)
+            .with_target(true)
+            .with_thread_ids(true)
+            .with_thread_names(true)
+            .with_ansi(false)
+            .json(); // Use JSON format for file logs
+
+        subscriber.with(file_layer).init();
+        
+        eprintln!("Logging configured:");
+        eprintln!("  - Console: disabled");
+        eprintln!("  - File: {}", log_file_path);
+        eprintln!("  - Level: {}", logging_config.level);
+        eprintln!("  - Max files: {}", logging_config.max_files);
+        
+    } else {
+        eprintln!("Warning: No logging outputs configured!");
+        return Ok(());
+    }
+
+    Ok(())
 }
 
 /// Wait for shutdown signal (Ctrl+C or SIGTERM)

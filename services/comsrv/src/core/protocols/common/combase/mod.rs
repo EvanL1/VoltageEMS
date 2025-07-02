@@ -14,7 +14,10 @@ pub mod stats;
 pub mod polling;
 pub mod command_manager;
 pub mod point_manager;
+pub mod optimized_point_manager;
+pub mod redis_batch_sync;
 pub mod protocol_factory;
+pub mod simplified_mapping;
 
 // Implementation modules
 pub mod impl_base;

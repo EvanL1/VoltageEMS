@@ -31,6 +31,9 @@ pub mod client;
 pub mod protocol_engine;
 pub mod server;
 pub mod common;
+pub mod modbus_polling;
+
+pub mod tests;
 
 // Re-export main types for easier usage
 pub use client::{ModbusClient, ModbusChannelConfig, ProtocolMappingTable, ConnectionState, ClientStatistics};

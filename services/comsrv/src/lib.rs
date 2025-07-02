@@ -202,6 +202,9 @@ pub mod core;
 pub mod service_impl;
 pub mod utils;
 
+/// Modbus test runner for comprehensive testing
+pub mod modbus_test_runner;
+
 /// Service entry point and lifecycle management
 ///
 /// This module contains the main service functions and lifecycle management
