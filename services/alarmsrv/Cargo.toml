@@ -36,6 +36,7 @@ anyhow = "1.0"
 
 # Configuration
 config = "0.14"
+voltage-config = { path = "../config-framework" }
 
 # Utilities
 futures = "0.3" 

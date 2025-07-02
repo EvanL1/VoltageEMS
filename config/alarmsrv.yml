@@ -1,0 +1,61 @@
+# Alarm Service Configuration
+service:
+  name: alarmsrv
+  version: 0.1.0
+  description: Intelligent Alarm Management Service for VoltageEMS
+  instance_id: alarmsrv-01
+
+redis:
+  url: redis://localhost:6379
+  prefix: "voltage:alarm:"
+  pool_size: 20
+  database: 0
+
+logging:
+  level: info
+  console: true
+  file:
+    path: logs/alarmsrv.log
+    rotation: daily
+    max_size: 100MB
+    max_files: 7
+
+monitoring:
+  metrics_enabled: true
+  metrics_port: 9094
+  health_check_enabled: true
+  health_check_port: 8095
+  health_check_interval: 30
+
+# API Server Configuration
+api:
+  host: 0.0.0.0
+  port: 8094
+  workers: 4
+
+# Alarm-specific Configuration
+alarm:
+  classification:
+    critical_threshold: 0.9
+    warning_threshold: 0.7
+    info_threshold: 0.5
+  
+  processing:
+    enable_deduplication: true
+    deduplication_window_secs: 300
+    max_alarms_per_device: 1000
+  
+  notification:
+    enabled: true
+    channels:
+      - email
+      - sms
+      - webhook
+    rate_limit_per_hour: 100
+
+# Storage Configuration
+storage:
+  retention_days: 30
+  auto_cleanup: true
+  cleanup_interval_hours: 24
+  batch_size: 100

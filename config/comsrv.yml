@@ -1,0 +1,103 @@
+# Communication Service Configuration
+service:
+  name: comsrv
+  version: 0.1.0
+  description: Industrial Communication Service for VoltageEMS
+  instance_id: comsrv-01
+
+redis:
+  url: redis://localhost:6379
+  prefix: "voltage:com:"
+  pool_size: 50
+  database: 0
+
+logging:
+  level: info
+  console: true
+  file:
+    path: logs/comsrv.log
+    rotation: daily
+    max_size: 100MB
+    max_files: 7
+
+monitoring:
+  metrics_enabled: true
+  metrics_port: 9091
+  health_check_enabled: true
+  health_check_port: 8091
+  health_check_interval: 30
+
+# API Configuration
+api:
+  enabled: true
+  host: 0.0.0.0
+  port: 8091
+  prefix: /api/v1
+
+# Default Paths
+default_paths:
+  config_dir: config
+  point_table_dir: config/point_tables
+
+# Protocol-specific Settings
+protocols:
+  modbus:
+    default_timeout: 1000
+    max_retries: 3
+    inter_frame_delay: 10
+  
+  iec104:
+    t1_timeout: 15
+    t2_timeout: 10
+    t3_timeout: 20
+    k_value: 12
+    w_value: 8
+  
+  can:
+    bitrate: 250000
+    sample_point: 0.875
+  
+  gpio:
+    polling_interval: 100
+    debounce_time: 50
+
+# Channel Configurations
+channels:
+  - id: 1
+    name: modbus_tcp_1
+    description: Modbus TCP Channel for Power Meters
+    protocol: modbus
+    parameters:
+      mode: tcp
+      host: 192.168.1.100
+      port: 502
+      unit_id: 1
+    logging:
+      level: debug
+      log_raw_data: true
+    table_config:
+      four_telemetry_files:
+        telemetry: Modbus_Test_01/telemetry.csv
+        control: Modbus_Test_01/control.csv
+        adjustment: Modbus_Test_01/adjustment.csv
+        signal: Modbus_Test_01/signal.csv
+      protocol_mapping_files:
+        modbus: Modbus_Test_01/mapping_modbus.csv
+  
+  - id: 2
+    name: iec104_1
+    description: IEC104 Channel for Substation
+    protocol: iec104
+    parameters:
+      mode: client
+      remote_host: 192.168.1.200
+      remote_port: 2404
+      asdu_address: 1
+    table_config:
+      four_telemetry_files:
+        telemetry: IEC104_Test_01/telemetry.csv
+        control: IEC104_Test_01/control.csv
+        adjustment: IEC104_Test_01/adjustment.csv
+        signal: IEC104_Test_01/signal.csv
+      protocol_mapping_files:
+        iec104: IEC104_Test_01/mapping_iec104.csv
