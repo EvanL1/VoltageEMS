@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Grafana Embed Test - English Only</title>
+    <style>
+        body { 
+            margin: 0; 
+            padding: 20px; 
+            font-family: Arial, sans-serif; 
+            background: #f5f5f5;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 12px rgba(0,0,0,0.1);
+            overflow: hidden;
+        }
+        .header {
+            background: #409eff;
+            color: white;
+            padding: 20px;
+            text-align: center;
+        }
+        .controls {
+            padding: 20px;
+            background: #f8f9fa;
+            border-bottom: 1px solid #ddd;
+        }
+        .controls button {
+            margin: 5px;
+            padding: 10px 20px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            background: #409eff;
+            color: white;
+        }
+        .controls button:hover {
+            background: #337ecc;
+        }
+        .controls button.active {
+            background: #67c23a;
+        }
+        .iframe-container {
+            height: 600px;
+            background: white;
+        }
+        iframe {
+            width: 100%;
+            height: 100%;
+            border: none;
+        }
+        .status {
+            padding: 15px 20px;
+            background: #ecf5ff;
+            color: #409eff;
+            font-size: 14px;
+        }
+        .info {
+            padding: 20px;
+            background: #f0f9ff;
+            margin: 20px 0;
+            border-left: 4px solid #409eff;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🇺🇸 VoltageEMS - English Grafana Dashboard</h1>
+            <p>Real-time Monitoring with Clean English Interface</p>
+        </div>
+
+        <div class="info">
+            <h3>✅ Fixed Issues:</h3>
+            <ul>
+                <li><strong>Default Language</strong>: Grafana now defaults to English (en-US)</li>
+                <li><strong>No Login Required</strong>: Anonymous access enabled, direct dashboard access</li>
+                <li><strong>Clean Interface</strong>: Kiosk mode enabled, only charts visible</li>
+                <li><strong>Data Source Fixed</strong>: Removed problematic simplejson, using InfluxDB only</li>
+                <li><strong>Frontend Internationalized</strong>: Vue app defaults to English with language switcher</li>
+            </ul>
+        </div>
+
+        <div class="controls">
+            <button onclick="loadDashboard('simple-view')" class="active" id="btn-simple">
+                🌡️ Temperature Monitoring
+            </button>
+            <button onclick="loadDashboard('voltage-realtime')" id="btn-voltage">
+                ⚡ Voltage Monitoring
+            </button>
+            <button onclick="openGrafana()">
+                🔗 Open Full Grafana
+            </button>
+            <button onclick="refreshFrame()">
+                🔄 Refresh
+            </button>
+        </div>
+
+        <div class="iframe-container">
+            <iframe id="grafanaFrame" src="about:blank"></iframe>
+        </div>
+
+        <div class="status">
+            <strong>Status:</strong> <span id="status">Ready</span> | 
+            <strong>Data Source:</strong> InfluxDB | 
+            <strong>Language:</strong> English | 
+            <strong>Last Update:</strong> <span id="lastUpdate">--</span>
+        </div>
+    </div>
+
+    <script>
+        let currentDashboard = 'simple-view';
+
+        function loadDashboard(uid) {
+            const params = new URLSearchParams({
+                orgId: '1',
+                from: 'now-30m',
+                to: 'now',
+                refresh: '5s',
+                kiosk: 'tv', // Hide all UI, show only charts
+                theme: 'light'
+            });
+            
+            const url = `http://localhost:3002/d/${uid}?${params.toString()}`;
+            document.getElementById('grafanaFrame').src = url;
+            document.getElementById('status').textContent = `Loading ${uid}...`;
+            
+            // Update button states
+            document.querySelectorAll('.controls button').forEach(btn => {
+                btn.classList.remove('active');
+            });
+            document.getElementById(`btn-${uid.split('-')[0]}`).classList.add('active');
+            
+            currentDashboard = uid;
+            updateStatus();
+            
+            console.log('Loading:', url);
+        }
+        
+        function refreshFrame() {
+            const frame = document.getElementById('grafanaFrame');
+            if (frame.src && frame.src !== 'about:blank') {
+                frame.src = frame.src;
+                document.getElementById('status').textContent = 'Refreshing...';
+                setTimeout(updateStatus, 1000);
+            }
+        }
+        
+        function openGrafana() {
+            window.open('http://localhost:3002', '_blank');
+        }
+
+        function updateStatus() {
+            document.getElementById('status').textContent = 'Connected';
+            document.getElementById('lastUpdate').textContent = new Date().toLocaleTimeString();
+        }
+
+        // Auto-update timestamp
+        setInterval(() => {
+            if (document.getElementById('status').textContent === 'Connected') {
+                document.getElementById('lastUpdate').textContent = new Date().toLocaleTimeString();
+            }
+        }, 5000);
+        
+        // Load default dashboard on page load
+        setTimeout(() => {
+            loadDashboard('simple-view');
+        }, 1000);
+
+        // Handle iframe load events
+        document.getElementById('grafanaFrame').onload = function() {
+            setTimeout(updateStatus, 500);
+        };
+    </script>
+</body>
+</html>

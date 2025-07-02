@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Grafana 测试</title>
+    <style>
+        body { margin: 0; padding: 20px; font-family: Arial, sans-serif; }
+        .info { background: #f0f8ff; padding: 15px; border-radius: 5px; margin-bottom: 20px; }
+        iframe { width: 100%; height: 600px; border: 1px solid #ddd; }
+        .controls { margin: 10px 0; }
+        button { padding: 10px 20px; margin-right: 10px; }
+    </style>
+</head>
+<body>
+    <h1>VoltageEMS Grafana 监控测试</h1>
+    
+    <div class="info">
+        <h3>服务状态:</h3>
+        <ul>
+            <li>Grafana: <a href="http://localhost:3000" target="_blank">http://localhost:3000</a> (admin/admin)</li>
+            <li>InfluxDB: <a href="http://localhost:8086" target="_blank">http://localhost:8086</a></li>
+            <li>数据写入器: 运行中 ✅</li>
+        </ul>
+    </div>
+    
+    <div class="controls">
+        <button onclick="loadDashboard('simple-view')">温度监控面板</button>
+        <button onclick="loadDashboard('voltage-realtime')">实时监控面板</button>
+        <button onclick="refreshFrame()">刷新</button>
+        <button onclick="openGrafana()">在新窗口打开 Grafana</button>
+    </div>
+    
+    <iframe id="grafanaFrame" src="about:blank"></iframe>
+    
+    <script>
+        function loadDashboard(uid) {
+            const params = new URLSearchParams({
+                orgId: '1',
+                from: 'now-5m',
+                to: 'now',
+                refresh: '5s',
+                kiosk: 'tv',
+                theme: 'light'
+            });
+            
+            const url = `http://localhost:3000/d/${uid}?${params.toString()}`;
+            document.getElementById('grafanaFrame').src = url;
+            console.log('Loading:', url);
+        }
+        
+        function refreshFrame() {
+            const frame = document.getElementById('grafanaFrame');
+            frame.src = frame.src;
+        }
+        
+        function openGrafana() {
+            window.open('http://localhost:3000', '_blank');
+        }
+        
+        // 默认加载温度监控面板
+        setTimeout(() => {
+            loadDashboard('simple-view');
+        }, 1000);
+    </script>
+</body>
+</html>

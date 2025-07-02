@@ -1,0 +1,193 @@
+{
+  "dashboard": {
+    "id": null,
+    "uid": "simple-view",
+    "title": "温度监控",
+    "timezone": "browser",
+    "schemaVersion": 16,
+    "refresh": "5s",
+    "panels": [
+      {
+        "id": 1,
+        "type": "graph",
+        "title": "设备温度实时监控",
+        "datasource": "SimpleJSON",
+        "gridPos": { "x": 0, "y": 0, "w": 24, "h": 8 },
+        "targets": [
+          {
+            "target": "device_001.temperature",
+            "refId": "A",
+            "alias": "设备 1"
+          },
+          {
+            "target": "device_002.temperature",
+            "refId": "B",
+            "alias": "设备 2"
+          },
+          {
+            "target": "device_003.temperature",
+            "refId": "C",
+            "alias": "设备 3"
+          }
+        ],
+        "xaxis": {
+          "mode": "time",
+          "show": true
+        },
+        "yaxes": [
+          {
+            "label": "温度 (°C)",
+            "show": true,
+            "min": 20,
+            "max": 40
+          },
+          {
+            "show": false
+          }
+        ],
+        "lines": true,
+        "fill": 1,
+        "linewidth": 2,
+        "points": false,
+        "pointradius": 5,
+        "bars": false,
+        "stack": false,
+        "percentage": false,
+        "legend": {
+          "show": true,
+          "values": true,
+          "min": true,
+          "max": true,
+          "current": true,
+          "total": false,
+          "avg": true
+        },
+        "nullPointMode": "connected",
+        "tooltip": {
+          "shared": true,
+          "value_type": "individual"
+        },
+        "aliasColors": {
+          "设备 1": "#5794F2",
+          "设备 2": "#73BF69",
+          "设备 3": "#F2CC0C"
+        }
+      },
+      {
+        "id": 2,
+        "type": "stat",
+        "title": "当前温度",
+        "datasource": "SimpleJSON",
+        "gridPos": { "x": 0, "y": 8, "w": 8, "h": 4 },
+        "targets": [
+          {
+            "target": "device_001.temperature",
+            "refId": "A"
+          }
+        ],
+        "options": {
+          "graphMode": "area",
+          "orientation": "auto",
+          "textMode": "value_and_name",
+          "colorMode": "value",
+          "reduceOptions": {
+            "values": false,
+            "fields": "",
+            "calcs": ["lastNotNull"]
+          }
+        },
+        "fieldConfig": {
+          "defaults": {
+            "displayName": "设备 1",
+            "unit": "celsius",
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                { "value": 0, "color": "green" },
+                { "value": 28, "color": "yellow" },
+                { "value": 32, "color": "red" }
+              ]
+            }
+          }
+        }
+      },
+      {
+        "id": 3,
+        "type": "stat",
+        "title": "当前温度",
+        "datasource": "SimpleJSON",
+        "gridPos": { "x": 8, "y": 8, "w": 8, "h": 4 },
+        "targets": [
+          {
+            "target": "device_002.temperature",
+            "refId": "A"
+          }
+        ],
+        "options": {
+          "graphMode": "area",
+          "orientation": "auto",
+          "textMode": "value_and_name",
+          "colorMode": "value",
+          "reduceOptions": {
+            "values": false,
+            "fields": "",
+            "calcs": ["lastNotNull"]
+          }
+        },
+        "fieldConfig": {
+          "defaults": {
+            "displayName": "设备 2",
+            "unit": "celsius",
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                { "value": 0, "color": "green" },
+                { "value": 28, "color": "yellow" },
+                { "value": 32, "color": "red" }
+              ]
+            }
+          }
+        }
+      },
+      {
+        "id": 4,
+        "type": "stat",
+        "title": "当前温度",
+        "datasource": "SimpleJSON",
+        "gridPos": { "x": 16, "y": 8, "w": 8, "h": 4 },
+        "targets": [
+          {
+            "target": "device_003.temperature",
+            "refId": "A"
+          }
+        ],
+        "options": {
+          "graphMode": "area",
+          "orientation": "auto",
+          "textMode": "value_and_name",
+          "colorMode": "value",
+          "reduceOptions": {
+            "values": false,
+            "fields": "",
+            "calcs": ["lastNotNull"]
+          }
+        },
+        "fieldConfig": {
+          "defaults": {
+            "displayName": "设备 3",
+            "unit": "celsius",
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                { "value": 0, "color": "green" },
+                { "value": 28, "color": "yellow" },
+                { "value": 32, "color": "red" }
+              ]
+            }
+          }
+        }
+      }
+    ]
+  },
+  "overwrite": true
+}

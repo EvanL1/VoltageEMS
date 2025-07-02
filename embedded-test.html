@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>VoltageEMS - Pure Dashboard Embedding Test</title>
+    <style>
+        body { 
+            margin: 0; 
+            padding: 0; 
+            font-family: Arial, sans-serif; 
+            background: #f5f5f5;
+        }
+        .header {
+            background: #409eff;
+            color: white;
+            padding: 15px 20px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .container {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+            padding: 20px;
+            height: calc(100vh - 140px);
+        }
+        .panel {
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 12px rgba(0,0,0,0.1);
+            overflow: hidden;
+        }
+        .panel-header {
+            background: #f8f9fa;
+            padding: 15px 20px;
+            border-bottom: 1px solid #e9ecef;
+            font-weight: bold;
+        }
+        .panel-content {
+            height: calc(100% - 60px);
+        }
+        iframe {
+            width: 100%;
+            height: 100%;
+            border: none;
+        }
+        .controls {
+            padding: 10px 20px;
+            background: white;
+            box-shadow: 0 -2px 4px rgba(0,0,0,0.1);
+            display: flex;
+            justify-content: center;
+            gap: 20px;
+        }
+        .controls button {
+            padding: 8px 16px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            background: #409eff;
+            color: white;
+            font-size: 14px;
+        }
+        .controls button:hover {
+            background: #337ecc;
+        }
+        .single-view {
+            grid-template-columns: 1fr;
+        }
+        .info {
+            text-align: center;
+            margin-bottom: 10px;
+            color: #666;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>🚀 VoltageEMS - Clean Dashboard Embedding</h1>
+        <div class="info">Pure Grafana charts embedded without any Grafana UI elements</div>
+    </div>
+
+    <div class="container" id="container">
+        <div class="panel">
+            <div class="panel-header">🌡️ Temperature Monitoring</div>
+            <div class="panel-content">
+                <iframe id="tempFrame" src="about:blank"></iframe>
+            </div>
+        </div>
+        
+        <div class="panel">
+            <div class="panel-header">⚡ Voltage Monitoring</div>
+            <div class="panel-content">
+                <iframe id="voltageFrame" src="about:blank"></iframe>
+            </div>
+        </div>
+    </div>
+
+    <div class="controls">
+        <button onclick="loadSingleView('simple-view', '温度监控')">🌡️ Temperature Only</button>
+        <button onclick="loadSingleView('voltage-realtime', '电压监控')">⚡ Voltage Only</button>
+        <button onclick="loadDualView()">📊 Dual View</button>
+        <button onclick="refreshAll()">🔄 Refresh All</button>
+        <button onclick="openGrafana()">🔗 Open Grafana</button>
+    </div>
+
+    <script>
+        function buildGrafanaUrl(dashboardUid, panelId = '1') {
+            const params = new URLSearchParams({
+                orgId: '1',
+                from: 'now-30m',
+                to: 'now',
+                refresh: '5s',
+                theme: 'light',
+                panelId: panelId
+            });
+            
+            // 使用 d-solo 模式完全隐藏 Grafana UI
+            return `http://localhost:3050/d-solo/${dashboardUid}?${params.toString()}`;
+        }
+
+        function loadDualView() {
+            document.getElementById('container').className = 'container';
+            
+            // 加载温度监控
+            const tempUrl = buildGrafanaUrl('simple-view', '2');
+            document.getElementById('tempFrame').src = tempUrl;
+            
+            // 加载电压监控  
+            const voltageUrl = buildGrafanaUrl('voltage-realtime', '1');
+            document.getElementById('voltageFrame').src = voltageUrl;
+            
+            console.log('温度监控:', tempUrl);
+            console.log('电压监控:', voltageUrl);
+        }
+
+        function loadSingleView(dashboardUid, title) {
+            document.getElementById('container').className = 'container single-view';
+            
+            const url = buildGrafanaUrl(dashboardUid, '1');
+            
+            // 隐藏第二个面板，在第一个面板显示选中的图表
+            document.querySelector('.panel:nth-child(2)').style.display = 'none';
+            document.querySelector('.panel:nth-child(1)').style.display = 'block';
+            document.querySelector('.panel-header').textContent = title;
+            document.getElementById('tempFrame').src = url;
+            
+            console.log('单视图加载:', url);
+        }
+
+        function refreshAll() {
+            const tempFrame = document.getElementById('tempFrame');
+            const voltageFrame = document.getElementById('voltageFrame');
+            
+            if (tempFrame.src && tempFrame.src !== 'about:blank') {
+                tempFrame.src = tempFrame.src;
+            }
+            if (voltageFrame.src && voltageFrame.src !== 'about:blank') {
+                voltageFrame.src = voltageFrame.src;
+            }
+        }
+
+        function openGrafana() {
+            window.open('http://localhost:3050', '_blank');
+        }
+
+        // 页面加载时自动显示双视图
+        window.onload = function() {
+            setTimeout(() => {
+                loadDualView();
+            }, 1000);
+        };
+
+        // 显示两个面板
+        function showBothPanels() {
+            document.querySelector('.panel:nth-child(1)').style.display = 'block';
+            document.querySelector('.panel:nth-child(2)').style.display = 'block';
+            document.querySelector('.panel-header').textContent = '🌡️ Temperature Monitoring';
+        }
+
+        // 重写 loadDualView 函数以确保显示两个面板
+        function loadDualView() {
+            document.getElementById('container').className = 'container';
+            showBothPanels();
+            
+            // 加载温度监控
+            const tempUrl = buildGrafanaUrl('simple-view', '1');
+            document.getElementById('tempFrame').src = tempUrl;
+            
+            // 加载电压监控  
+            const voltageUrl = buildGrafanaUrl('voltage-realtime', '1');
+            document.getElementById('voltageFrame').src = voltageUrl;
+            
+            console.log('温度监控:', tempUrl);
+            console.log('电压监控:', voltageUrl);
+        }
+    </script>
+</body>
+</html>

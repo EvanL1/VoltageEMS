@@ -1,0 +1,70 @@
+# HisSrv Development Configuration with InfluxDB 2.x
+# 开发环境配置 - 兼容 InfluxDB 2.x
+
+service:
+  name: "hissrv"
+  version: "0.2.0"
+  port: 8080
+  host: "0.0.0.0"
+
+redis:
+  connection:
+    host: "127.0.0.1"
+    port: 6379
+    password: ""
+    database: 0
+    pool_size: 10
+    timeout: 5
+  
+  subscription:
+    channels:
+      - "data:*"
+      - "voltage:*"
+      - "temperature:*"
+      - "power:*"
+    key_patterns:
+      - "voltage:*"
+      - "temperature:*"
+      - "power:*"
+
+# InfluxDB 2.x 配置
+influxdb2:
+  url: "http://localhost:8086"
+  token: "voltage-super-secret-auth-token"
+  org: "voltageems"
+  bucket: "history"
+  precision: "ms"
+  batch_size: 1000
+  flush_interval: 5
+
+# 数据处理配置
+data:
+  filters:
+    default_policy: "store"
+    rules:
+      - pattern: "voltage:*"
+        action: "store"
+        measurement: "voltage"
+      - pattern: "temperature:*"
+        action: "store"
+        measurement: "temperature"
+      - pattern: "power:*"
+        action: "store"
+        measurement: "power"
+
+# Grafana API 支持
+grafana_api:
+  enabled: true
+  endpoint: "/grafana"
+  
+api:
+  enabled: true
+  prefix: "/api/v1"
+  cors:
+    enabled: true
+    origins: ["*"]
+    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"]
+
+logging:
+  level: "debug"
+  format: "json"
