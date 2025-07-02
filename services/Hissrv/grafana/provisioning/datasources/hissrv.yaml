@@ -1,0 +1,17 @@
+apiVersion: 1
+
+datasources:
+  # InfluxDB 2.x 主数据源
+  - name: InfluxDB
+    type: influxdb
+    access: proxy
+    url: http://influxdb:8086
+    isDefault: true
+    jsonData:
+      version: Flux
+      organization: voltageems
+      defaultBucket: history
+      tlsSkipVerify: true
+    secureJsonData:
+      token: voltage-super-secret-auth-token
+    editable: false

@@ -31,6 +31,41 @@ const routes = [
     name: 'Activity',
     component: () => import('../views/Activity.vue')
   },
+  {
+    path: '/history',
+    name: 'HistoryAnalysis',
+    component: () => import('../views/HistoryAnalysisDemo.vue')
+  },
+  {
+    path: '/grafana-test',
+    name: 'GrafanaTest',
+    component: () => import('../views/GrafanaTest.vue')
+  },
+  {
+    path: '/grafana-live',
+    name: 'GrafanaLive',
+    component: () => import('../views/GrafanaLive.vue')
+  },
+  {
+    path: '/grafana-realtime',
+    name: 'GrafanaRealtime',
+    component: () => import('../views/GrafanaRealtime.vue')
+  },
+  {
+    path: '/simple',
+    name: 'SimpleMonitor',
+    component: () => import('../views/SimpleMonitor.vue')
+  },
+  {
+    path: '/ultra',
+    name: 'UltraSimple',
+    component: () => import('../views/UltraSimple.vue')
+  },
+  {
+    path: '/grafana-embedded',
+    name: 'GrafanaEmbedded',
+    component: () => import('../views/GrafanaEmbedded.vue')
+  },
   // Redirect old configuration page routes to system page
   {
     path: '/config/:service',

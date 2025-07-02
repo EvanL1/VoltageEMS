@@ -1,6 +1,6 @@
 <template>
   <div class="app-container">
-    <!-- Left Navigation Sidebar -->
+    <!-- Sidebar -->
     <div class="sidebar">
       <div class="logo">
         <img :src="logoSrc" alt="Voltage Logo" />
@@ -14,216 +14,394 @@
         active-text-color="#409EFF">
         
         <el-menu-item index="/">
-          <el-icon><el-icon-house /></el-icon>
-          <span>Home</span>
+          <el-icon><House /></el-icon>
+          <span>{{ $t('nav.home') }}</span>
         </el-menu-item>
         
         <el-menu-item index="/services">
-          <el-icon><el-icon-connection /></el-icon>
-          <span>Services</span>
+          <el-icon><Connection /></el-icon>
+          <span>{{ $t('nav.services') }}</span>
         </el-menu-item>
         
         <el-menu-item index="/devices">
-          <el-icon><el-icon-cpu /></el-icon>
-          <span>Devices</span>
+          <el-icon><Monitor /></el-icon>
+          <span>{{ $t('nav.devices') }}</span>
         </el-menu-item>
         
         <el-menu-item index="/alarms">
-          <el-icon><el-icon-bell /></el-icon>
-          <span>Alarms</span>
+          <el-icon><Bell /></el-icon>
+          <span>{{ $t('nav.alarms') }}</span>
+        </el-menu-item>
+        
+        <el-menu-item index="/history">
+          <el-icon><DataAnalysis /></el-icon>
+          <span>{{ $t('nav.historyAnalysis') }}</span>
+        </el-menu-item>
+        
+        <el-menu-item index="/grafana-live">
+          <el-icon><DataLine /></el-icon>
+          <span>{{ $t('nav.liveDashboard') }}</span>
+        </el-menu-item>
+        
+        <el-menu-item index="/grafana-embedded">
+          <el-icon><Monitor /></el-icon>
+          <span>{{ $t('nav.realtimeMonitoring') }}</span>
         </el-menu-item>
         
         <el-menu-item index="/system">
-          <el-icon><el-icon-setting /></el-icon>
-          <span>System</span>
+          <el-icon><Setting /></el-icon>
+          <span>{{ $t('nav.system') }}</span>
         </el-menu-item>
         
         <el-menu-item index="/activity">
-          <el-icon><el-icon-data-line /></el-icon>
-          <span>Activity</span>
+          <el-icon><DataLine /></el-icon>
+          <span>{{ $t('nav.activity') }}</span>
         </el-menu-item>
       </el-menu>
       
       <div class="sidebar-footer">
-        <p>Voltage, LLC. © 2025 - All Rights Reserved.</p>
+        <p>{{ $t('footer.copyright') }}</p>
       </div>
     </div>
-    
-    <!-- Main Content Area -->
-    <div class="main-container">
-      <!-- Header Title Bar -->
-      <header class="main-header">
-        <div class="header-left">
-          <el-icon class="menu-toggle"><el-icon-menu /></el-icon>
-          <h2>{{ pageTitle }}</h2>
-        </div>
-        <div class="header-right">
-          <el-dropdown>
-            <span class="user-info">
-              <el-icon><el-icon-user /></el-icon>
-              User: Voltage <el-icon><el-icon-arrow-down /></el-icon>
-            </span>
-            <template #dropdown>
-              <el-dropdown-menu>
-                <el-dropdown-item>Account Settings</el-dropdown-item>
-                <el-dropdown-item>Logout</el-dropdown-item>
-              </el-dropdown-menu>
-            </template>
-          </el-dropdown>
+
+    <!-- Main Content -->
+    <div class="main-content">
+      <!-- Header -->
+      <header class="header">
+        <div class="header-content">
+          <h1 class="page-title">{{ pageTitle }}</h1>
+          
+          <div class="header-actions">
+            <!-- Language Switcher -->
+            <el-dropdown trigger="click" class="language-dropdown">
+              <span class="language-info">
+                <el-icon><Switch /></el-icon>
+                <span class="language-text">{{ currentLanguageName }}</span>
+                <el-icon><ArrowDown /></el-icon>
+              </span>
+              <template #dropdown>
+                <el-dropdown-menu>
+                  <el-dropdown-item 
+                    v-for="lang in supportedLanguages" 
+                    :key="lang.code"
+                    @click="switchLanguage(lang.code)"
+                    :class="{ 'is-active': currentLocale === lang.code }"
+                  >
+                    <span class="language-flag">{{ lang.flag }}</span>
+                    {{ lang.name }}
+                  </el-dropdown-item>
+                </el-dropdown-menu>
+              </template>
+            </el-dropdown>
+
+            <!-- User Dropdown -->
+            <el-dropdown trigger="click" class="user-dropdown">
+              <span class="user-info">
+                <el-avatar size="small">V</el-avatar>
+                <span class="username">Voltage</span>
+                <el-icon><ArrowDown /></el-icon>
+              </span>
+              <template #dropdown>
+                <el-dropdown-menu>
+                  <el-dropdown-item>
+                    <el-icon><User /></el-icon>
+                    {{ $t('header.userDropdown.accountSettings') }}
+                  </el-dropdown-item>
+                  <el-dropdown-item divided>
+                    <el-icon><SwitchButton /></el-icon>
+                    {{ $t('header.userDropdown.logout') }}
+                  </el-dropdown-item>
+                </el-dropdown-menu>
+              </template>
+            </el-dropdown>
+          </div>
         </div>
       </header>
-      
-      <!-- Content Area -->
-      <main class="main-content">
-        <router-view />
+
+      <!-- Page Content -->
+      <main class="page-content">
+        <router-view v-slot="{ Component }">
+          <transition name="fade" mode="out-in">
+            <component :is="Component" />
+          </transition>
+        </router-view>
       </main>
     </div>
   </div>
 </template>
 
-<script>
+<script setup>
+import { computed } from 'vue'
+import { useRoute } from 'vue-router'
+import { useI18n } from 'vue-i18n'
 import { logoBase64 } from './assets/logo'
+import { setLocale, getCurrentLocale, supportedLocales } from './i18n'
+import { 
+  House,
+  Setting,
+  DataLine,
+  DataAnalysis,
+  Connection,
+  Monitor,
+  Bell,
+  User,
+  SwitchButton,
+  ArrowDown,
+  Switch
+} from '@element-plus/icons-vue'
 
-export default {
-  name: 'App',
-  data() {
-    return {
-      pageTitle: 'Home',
-      logoSrc: logoBase64
-    }
-  },
-  watch: {
-    $route(to) {
-      // Update page title based on route
-      const routeMap = {
-        '/': 'Home',
-        '/services': 'Services',
-        '/devices': 'Devices',
-        '/alarms': 'Alarms',
-        '/system': 'System',
-        '/activity': 'Activity'
-      };
-      
-      if (to.path.startsWith('/system/')) {
-        this.pageTitle = 'System';
-      } else {
-        this.pageTitle = routeMap[to.path] || 'Home';
-      }
-    }
-  }
+const route = useRoute()
+const { t: $t } = useI18n()
+const logoSrc = logoBase64
+
+// Language switching
+const supportedLanguages = supportedLocales
+const currentLocale = computed(() => getCurrentLocale())
+const currentLanguageName = computed(() => {
+  const lang = supportedLanguages.find(l => l.code === currentLocale.value)
+  return lang ? lang.name : 'English'
+})
+
+const switchLanguage = (langCode) => {
+  setLocale(langCode)
 }
+
+const pageTitle = computed(() => {
+  const titleMap = {
+    '/': 'nav.home',
+    '/services': 'nav.services',
+    '/devices': 'nav.devices', 
+    '/alarms': 'nav.alarms',
+    '/history': 'nav.historyAnalysis',
+    '/grafana-live': 'nav.liveDashboard',
+    '/grafana-embedded': 'nav.realtimeMonitoring',
+    '/system': 'nav.system',
+    '/activity': 'nav.activity'
+  }
+  
+  return titleMap[route.path] ? $t(titleMap[route.path]) : 'Voltage EMS'
+})
 </script>
 
-<style>
-* {
-  margin: 0;
-  padding: 0;
-  box-sizing: border-box;
-}
-
-body {
-  font-family: Arial, sans-serif;
-}
-
+<style scoped>
 .app-container {
   display: flex;
   height: 100vh;
-  width: 100vw;
-  overflow: hidden;
+  background-color: #f5f5f5;
 }
 
 /* Sidebar Styles */
 .sidebar {
-  width: 200px;
-  height: 100%;
+  width: 250px;
+  background-color: #3a4654;
   display: flex;
   flex-direction: column;
-  background-color: #3a4654;
-  color: #bfcbd9;
+  box-shadow: 2px 0 6px rgba(0, 0, 0, 0.1);
 }
 
 .logo {
-  padding: 20px;
-  text-align: center;
+  height: 60px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background-color: #2e3742;
+  border-bottom: 1px solid #434a56;
 }
 
 .logo img {
-  width: 80px;
-  height: auto;
+  height: 40px;
 }
 
 .el-menu-vertical {
-  border-right: none;
   flex: 1;
+  border-right: none;
+}
+
+.el-menu-item {
+  height: 48px;
+  line-height: 48px;
+}
+
+.el-menu-item span {
+  margin-left: 8px;
 }
 
 .sidebar-footer {
-  padding: 10px;
-  font-size: 12px;
+  padding: 20px;
   text-align: center;
-  color: #6c7983;
+  color: #8492a6;
+  font-size: 12px;
+  border-top: 1px solid #434a56;
 }
 
-/* Main Content Area Styles */
-.main-container {
+/* Main Content Styles */
+.main-content {
   flex: 1;
   display: flex;
   flex-direction: column;
+  overflow: hidden;
+}
+
+/* Header Styles */
+.header {
+  height: 60px;
+  background-color: #fff;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.08);
+  z-index: 100;
+}
+
+.header-content {
+  height: 100%;
+  padding: 0 24px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.page-title {
+  font-size: 20px;
+  font-weight: 500;
+  color: #303133;
+  margin: 0;
+}
+
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.language-dropdown .language-info {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 4px;
+  transition: background-color 0.3s;
+  font-size: 14px;
+  color: #606266;
+}
+
+.language-dropdown .language-info:hover {
   background-color: #f5f7fa;
 }
 
-.main-header {
-  height: 60px;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 0 20px;
-  background-color: #fff;
-  box-shadow: 0 1px 4px rgba(0, 21, 41, 0.08);
+.language-text {
+  font-size: 14px;
 }
 
-.header-left {
-  display: flex;
-  align-items: center;
+.language-flag {
+  margin-right: 8px;
+  font-size: 16px;
 }
 
-.header-left h2 {
-  margin-left: 15px;
-  font-size: 18px;
-  font-weight: 500;
-  color: #303133;
-}
-
-.menu-toggle {
-  font-size: 20px;
-  cursor: pointer;
-  color: #606266;
+.el-dropdown-menu .is-active {
+  background-color: #ecf5ff;
+  color: #409eff;
 }
 
 .user-info {
   display: flex;
   align-items: center;
+  gap: 8px;
   cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 4px;
+  transition: background-color 0.3s;
+}
+
+.user-info:hover {
+  background-color: #f5f7fa;
+}
+
+.username {
+  font-size: 14px;
   color: #606266;
 }
 
-.main-content {
+/* Page Content Styles */
+.page-content {
   flex: 1;
-  padding: 20px;
+  padding: 24px;
   overflow-y: auto;
+  background-color: #f5f5f5;
 }
 
-/* Global dropdown style fix to ensure text is fully visible */
-.el-select-dropdown__item {
-  white-space: normal !important;
-  height: auto !important;
-  padding: 8px 20px !important;
-  line-height: 1.5 !important;
+/* Transitions */
+.fade-enter-active,
+.fade-leave-active {
+  transition: opacity 0.3s ease;
 }
 
-.el-dropdown-menu__item {
-  white-space: normal !important;
-  line-height: 1.5 !important;
-  padding: 8px 20px !important;
+.fade-enter-from,
+.fade-leave-to {
+  opacity: 0;
 }
-</style> 
+
+/* Responsive */
+@media (max-width: 768px) {
+  .sidebar {
+    position: fixed;
+    left: -250px;
+    height: 100vh;
+    z-index: 200;
+    transition: left 0.3s;
+  }
+  
+  .sidebar.open {
+    left: 0;
+  }
+  
+  .main-content {
+    margin-left: 0;
+  }
+  
+  .page-content {
+    padding: 16px;
+  }
+}
+</style>
+
+<style>
+/* Global Element Plus adjustments */
+.el-card {
+  border-radius: 8px;
+  border: none;
+  box-shadow: 0 2px 12px 0 rgba(0, 0, 0, 0.1);
+}
+
+.el-card__header {
+  padding: 16px 20px;
+  border-bottom: 1px solid #ebeef5;
+}
+
+.el-card__body {
+  padding: 20px;
+}
+
+/* Fix for select and date picker dropdowns */
+.el-select-dropdown,
+.el-picker-panel {
+  z-index: 2000 !important;
+}
+
+/* Scrollbar styling */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: #f1f1f1;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #c1c1c1;
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #a8a8a8;
+}
+</style>

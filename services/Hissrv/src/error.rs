@@ -19,6 +19,12 @@ pub enum HisSrvError {
 
     #[error("Connection error: {0}")]
     ConnectionError(String),
+
+    #[error("Serialization error: {0}")]
+    SerializationError(String),
+
+    #[error("Storage error: {0}")]
+    StorageError(String),
 }
 
 pub type Result<T> = std::result::Result<T, HisSrvError>; 

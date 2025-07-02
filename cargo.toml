@@ -4,7 +4,7 @@ members = [
   "services/apigateway",
   "services/comsrv",
   "services/config-framework",
-  "services/hissrv",
+  "services/Hissrv",
   "services/modsrv",
   "services/netsrv",
 ]

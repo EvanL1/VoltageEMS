@@ -1,0 +1,35 @@
+.historyAnalysis {
+  height: 100%;
+}
+
+.toolbar {
+  margin-bottom: 16px;
+  padding: 16px;
+  background-color: #fafafa;
+  border-radius: 4px;
+}
+
+.dashboardContainer {
+  min-height: 600px;
+  background-color: #f0f0f0;
+  border-radius: 4px;
+  padding: 1px;
+}
+
+.customDashboards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(600px, 1fr));
+  gap: 16px;
+}
+
+.dashboardCard {
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.loading {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  min-height: 400px;
+}
