@@ -194,6 +194,154 @@ pub trait ProtocolClientFactory: Send + Sync {
 /// Built-in Modbus TCP factory implementation
 pub struct ModbusTcpFactory;
 
+impl ModbusTcpFactory {
+    /// Create ProtocolMappingTable from ChannelConfig
+    fn create_modbus_mapping_table(&self, channel_config: &crate::core::config::types::ChannelConfig) -> crate::core::protocols::modbus::client::ProtocolMappingTable {
+        use crate::core::protocols::modbus::protocol_engine::{
+            ModbusTelemetryMapping, ModbusSignalMapping,
+            ModbusAdjustmentMapping, ModbusControlMapping
+        };
+        
+        let mut mapping_table = crate::core::protocols::modbus::client::ProtocolMappingTable::default();
+        
+        // Convert combined_points to protocol mappings
+        for point in &channel_config.combined_points {
+            // Extract fields from CombinedPoint
+            let point_id = point.point_id;
+            let scale = point.scaling.as_ref().map(|s| s.scale).unwrap_or(1.0);
+            let offset = point.scaling.as_ref().map(|s| s.offset).unwrap_or(0.0);
+            
+            // Parse address from protocol_params (format: "slave_id:function_code:register_address")
+            let address = match point.protocol_params.get("address") {
+                Some(addr) => addr,
+                None => {
+                    tracing::warn!("No address parameter for point {}", point_id);
+                    continue;
+                }
+            };
+                
+            let address_parts: Vec<&str> = address.split(':').collect();
+            if address_parts.len() < 3 {
+                tracing::warn!("Invalid address format for point {}: {}", point_id, address);
+                continue;
+            }
+            
+            let slave_id = match address_parts[0].parse::<u8>() {
+                Ok(id) => id,
+                Err(_) => {
+                    tracing::warn!("Invalid slave_id for point {}: {}", point_id, address_parts[0]);
+                    continue;
+                }
+            };
+            
+            let function_code = match address_parts[1].parse::<u8>() {
+                Ok(code) => code,
+                Err(_) => {
+                    tracing::warn!("Invalid function_code for point {}: {}", point_id, address_parts[1]);
+                    continue;
+                }
+            };
+            
+            let register_address = match address_parts[2].parse::<u16>() {
+                Ok(addr) => addr,
+                Err(_) => {
+                    tracing::warn!("Invalid register_address for point {}: {}", point_id, address_parts[2]);
+                    continue;
+                }
+            };
+            
+            let data_type = point.data_type.clone();
+            let bit_location = point.protocol_params.get("bit_location")
+                .and_then(|v| v.parse::<u8>().ok());
+            
+            // Determine point type based on function code or telemetry type
+            match function_code {
+                3 | 4 => {
+                    // Read Holding Registers or Input Registers - Telemetry (YC)
+                    let mapping = ModbusTelemetryMapping {
+                        point_id,
+                        slave_id,
+                        address: register_address,
+                        data_type,
+                        scale,
+                        offset,
+                    };
+                    mapping_table.telemetry_mappings.insert(point_id, mapping);
+                }
+                1 | 2 => {
+                    // Read Coils or Discrete Inputs - Signal (YX)
+                    let mapping = ModbusSignalMapping {
+                        point_id,
+                        slave_id,
+                        address: register_address,
+                        bit_location,
+                    };
+                    mapping_table.signal_mappings.insert(point_id, mapping);
+                }
+                6 => {
+                    // Write Single Register - Adjustment (YT)
+                    let mapping = ModbusAdjustmentMapping {
+                        point_id,
+                        slave_id,
+                        address: register_address,
+                        data_type,
+                        scale,
+                        offset,
+                    };
+                    mapping_table.adjustment_mappings.insert(point_id, mapping);
+                }
+                5 => {
+                    // Write Single Coil - Control (YK)
+                    let mapping = ModbusControlMapping {
+                        point_id,
+                        slave_id,
+                        address: register_address,
+                        bit_location,
+                        coil_number: Some(register_address),
+                    };
+                    mapping_table.control_mappings.insert(point_id, mapping);
+                }
+                16 => {
+                    // Write Multiple Registers - could be YT
+                    let mapping = ModbusAdjustmentMapping {
+                        point_id,
+                        slave_id,
+                        address: register_address,
+                        data_type,
+                        scale,
+                        offset,
+                    };
+                    mapping_table.adjustment_mappings.insert(point_id, mapping);
+                }
+                15 => {
+                    // Write Multiple Coils - could be YK
+                    let mapping = ModbusControlMapping {
+                        point_id,
+                        slave_id,
+                        address: register_address,
+                        bit_location,
+                        coil_number: Some(register_address),
+                    };
+                    mapping_table.control_mappings.insert(point_id, mapping);
+                }
+                _ => {
+                    tracing::warn!("Unknown function code {} for point {}", function_code, point_id);
+                }
+            }
+        }
+        
+        tracing::info!(
+            "Created Modbus mapping table with {} telemetry, {} signal, {} adjustment, {} control points",
+            mapping_table.telemetry_mappings.len(),
+            mapping_table.signal_mappings.len(),
+            mapping_table.adjustment_mappings.len(),
+            mapping_table.control_mappings.len()
+        );
+        
+        mapping_table
+    }
+}
+
 #[async_trait]
 impl ProtocolClientFactory for ModbusTcpFactory {
     fn protocol_type(&self) -> ProtocolType {
@@ -256,7 +404,17 @@ impl ProtocolClientFactory for ModbusTcpFactory {
                 channel_config,
                 transport,
             ).await {
-                Ok(universal_client) => {
+                Ok(mut universal_client) => {
+                    // Load CSV point mappings from config
+                    if let Some(channel_cfg) = config_mgr.get_channel(config.id) {
+                        let mapping_table = self.create_modbus_mapping_table(&channel_cfg);
+                        if let Err(e) = universal_client.load_protocol_mappings(mapping_table).await {
+                            tracing::warn!("Failed to load protocol mappings for channel {}: {}", config.id, e);
+                        } else {
+                            tracing::info!("Successfully loaded CSV point mappings for channel {}", config.id);
+                        }
+                    }
+                    
                     tracing::info!("Created ModbusUniversalClient for channel {} with CSV point tables", config.id);
                     return Ok(Box::new(universal_client));
                 }
@@ -295,7 +453,16 @@ impl ProtocolClientFactory for ModbusTcpFactory {
                         max_retries: 3,
                         retry_delay: std::time::Duration::from_millis(1000),
                     };
-                    let client = crate::core::protocols::modbus::ModbusClient::new(channel_config, transport).await?;
+                    let mut client = crate::core::protocols::modbus::ModbusClient::new(channel_config, transport).await?;
+                    
+                    // Also load CSV mappings for fallback client
+                    if let Some(channel_cfg) = config_mgr.get_channel(config.id) {
+                        let mapping_table = self.create_modbus_mapping_table(&channel_cfg);
+                        if let Err(e) = client.load_protocol_mappings(mapping_table).await {
+                            tracing::warn!("Failed to load protocol mappings for fallback client {}: {}", config.id, e);
+                        }
+                    }
+                    
                     return Ok(Box::new(client));
                 }
             }
@@ -1218,8 +1385,11 @@ impl ProtocolFactory {
         
         // Create log directory if specified
         if config.logging.enabled {
-            let full_log_dir = format!("logs/channel_{}", config.id)
-                .replace("{channel_name}", &config.name);
+            let full_log_dir = if let Some(ref log_dir) = config.logging.log_dir {
+                log_dir.clone()
+            } else {
+                format!("logs/channel_{}", config.id)
+            };
             
             if let Err(e) = fs::create_dir_all(&full_log_dir) {
                 tracing::warn!("Failed to create channel log directory {}: {}", full_log_dir, e);

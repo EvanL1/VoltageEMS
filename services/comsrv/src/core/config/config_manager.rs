@@ -20,130 +20,48 @@ use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::collections::HashMap;
 
-// Import the unified ChannelConfig only
+// Import all necessary types from the types module
 use super::types::{
+    AppConfig,
+    ServiceConfig,
+    ApiConfig,
+    DefaultPathConfig,
     ChannelConfig as TypesChannelConfig,
     CombinedPoint as TypesCombinedPoint,
+    RedisConfig,
+    LoggingConfig,
+    FourTelemetryFiles,
+    ProtocolMappingFiles,
+    FourTelemetryPoint,
+    TableConfig,
+    DataType,
+    ProtocolAddress,
+    UnifiedPointMapping,
 };
 
-/// Application configuration using Figment
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AppConfig {
-    /// Service configuration
-    #[serde(default)]
-    pub service: ServiceConfig,
-    
-    /// Communication channels
-    #[serde(default)]
-    pub channels: Vec<TypesChannelConfig>,
-    
-    /// Default path configuration
-    #[serde(default)]
-    pub defaults: DefaultPathConfig,
-}
+// AppConfig is now imported from types::app
+// Commented out to avoid duplicate definition
+// pub struct AppConfig { ... }
 
-/// Service configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ServiceConfig {
-    /// Service name
-    #[serde(default = "default_service_name")]
-    pub name: String,
-    
-    /// Service description
-    pub description: Option<String>,
-    
-    /// API configuration
-    #[serde(default)]
-    pub api: ApiConfig,
-    
-    /// Redis configuration
-    #[serde(default)]
-    pub redis: RedisConfig,
-    
-    /// Logging configuration
-    #[serde(default)]
-    pub logging: LoggingConfig,
-}
+// ServiceConfig is now imported from types::app
+// Commented out to avoid duplicate definition
+// pub struct ServiceConfig { ... }
 
-/// API server configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ApiConfig {
-    /// Whether API is enabled
-    #[serde(default = "default_true")]
-    pub enabled: bool,
-    
-    /// Bind address
-    #[serde(default = "default_api_bind")]
-    pub bind_address: String,
-    
-    /// API version
-    #[serde(default = "default_api_version")]
-    pub version: String,
-}
+// ApiConfig is now imported from types::app
+// Commented out to avoid duplicate definition
+// pub struct ApiConfig { ... }
 
-/// Redis configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RedisConfig {
-    /// Whether Redis is enabled
-    #[serde(default = "default_true")]
-    pub enabled: bool,
-    
-    /// Redis URL (supports redis://, rediss://, unix://)
-    #[serde(default = "default_redis_url")]
-    pub url: String,
-    
-    /// Database number
-    #[serde(default, alias = "database")]
-    pub db: u8,
-    
-    /// Connection timeout in milliseconds
-    #[serde(default = "default_redis_timeout")]
-    pub timeout_ms: u64,
-    
-    /// Maximum connections in pool
-    pub max_connections: Option<u32>,
-    
-    /// Connection retry attempts
-    #[serde(default = "default_redis_retries")]
-    pub max_retries: u32,
-}
+// RedisConfig is now imported from types::redis
+// Commented out to avoid duplicate definition
+// pub struct RedisConfig { ... }
 
-/// Logging configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct LoggingConfig {
-    /// Log level
-    #[serde(default = "default_log_level")]
-    pub level: String,
-    
-    /// Log file path
-    pub file: Option<String>,
-    
-    /// Console logging
-    #[serde(default = "default_true")]
-    pub console: bool,
-    
-    /// Max log file size in bytes
-    #[serde(default = "default_log_max_size")]
-    pub max_size: u64,
-    
-    /// Max number of log files
-    #[serde(default = "default_log_max_files")]
-    pub max_files: u32,
-    
-    /// Log retention days (how many days to keep log files)
-    #[serde(default = "default_log_retention_days")]
-    pub retention_days: u32,
-    
-    /// Enable channel-specific logging
-    #[serde(default = "default_true")]
-    pub enable_channel_logging: bool,
-    
-    /// Channel log directory (relative to service log root)
-    #[serde(default = "default_channel_log_dir")]
-    pub channel_log_dir: String,
-}
+// LoggingConfig is now imported from types::logging
+// Commented out to avoid duplicate definition
+// pub struct LoggingConfig { ... }
 
-/// Channel configuration
+// Keep the legacy ChannelConfig for now as it has different fields
+// TODO: Merge this with TypesChannelConfig
+/// Channel configuration (legacy)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChannelConfig {
     /// Channel ID
@@ -241,53 +159,15 @@ impl ChannelConfig {
     }
 }
 
-/// Separated table configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SeparatedTableConfig {
-    /// Four telemetry route
-    pub four_telemetry_route: String,
-    
-    /// Four telemetry files
-    pub four_telemetry_files: FourTelemetryFiles,
-    
-    /// Protocol mapping route
-    pub protocol_mapping_route: String,
-    
-    /// Protocol mapping files
-    pub protocol_mapping_files: ProtocolMappingFiles,
-}
+// SeparatedTableConfig is now replaced by TableConfig from types::channel
+// Using type alias for backward compatibility
+pub type SeparatedTableConfig = TableConfig;
 
-/// Four telemetry files
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct FourTelemetryFiles {
-    /// Telemetry file (YC)
-    pub telemetry_file: String,
-    
-    /// Signal file (YX)
-    pub signal_file: String,
-    
-    /// Adjustment file (YT)
-    pub adjustment_file: String,
-    
-    /// Control file (YK)
-    pub control_file: String,
-}
+// FourTelemetryFiles is now imported from types::channel
+// Commented out to avoid duplicate definition
 
-/// Protocol mapping files
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ProtocolMappingFiles {
-    /// Telemetry mapping (YC)
-    pub telemetry_mapping: String,
-    
-    /// Signal mapping (YX)
-    pub signal_mapping: String,
-    
-    /// Adjustment mapping (YT)
-    pub adjustment_mapping: String,
-    
-    /// Control mapping (YK)
-    pub control_mapping: String,
-}
+// ProtocolMappingFiles is now imported from types::channel
+// Commented out to avoid duplicate definition
 
 /// Point table configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -304,21 +184,9 @@ pub struct PointTableConfig {
     pub files: Map<String, Value>,
 }
 
-/// Default path configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DefaultPathConfig {
-    /// Channels root directory
-    #[serde(default = "default_channels_root")]
-    pub channels_root: String,
-    
-    /// ComBase directory name
-    #[serde(default = "default_combase_dir")]
-    pub combase_dir: String,
-    
-    /// Protocol directory name
-    #[serde(default = "default_protocol_dir")]
-    pub protocol_dir: String,
-}
+// DefaultPathConfig is now imported from types::app
+// Commented out to avoid duplicate definition
+// pub struct DefaultPathConfig { ... }
 
 // Default value functions
 fn default_service_name() -> String {
@@ -381,8 +249,10 @@ fn default_protocol_dir() -> String {
     "protocol".to_string()
 }
 
-/// Four telemetry point definition (YC/YX/YT/YK)
-#[derive(Debug, Clone, Serialize, Deserialize)]
+// FourTelemetryPoint is now imported from types::channel
+// Note: The version in types::channel has additional fields
+// Commented out the beginning of the duplicate definition
+/*
 pub struct FourTelemetryPoint {
     /// Point ID (unique within table)
     pub point_id: u32,
@@ -405,8 +275,11 @@ pub struct FourTelemetryPoint {
     /// Reverse bit (for YX/YK)
     pub reverse: Option<bool>,
 }
+*/
 
-/// Protocol mapping definition
+// ProtocolMapping is similar to types::channel::ProtocolMapping but has different fields
+// Keep this for now as it has different structure
+/// Protocol mapping definition (legacy)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProtocolMapping {
     /// Point ID (matches FourTelemetryPoint)
@@ -552,7 +425,10 @@ impl ProtocolMapping {
     }
 }
 
-/// Combined point configuration
+// CombinedPoint here is different from types::channel::CombinedPoint
+// This is the legacy version that combines telemetry and mapping
+// Keep for backward compatibility
+/// Combined point configuration (legacy)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CombinedPoint {
     /// Four telemetry point
@@ -1182,6 +1058,8 @@ impl PointMappingEnum {
     }
 }
 
+// Default implementation is now in types::app
+/*
 impl Default for AppConfig {
     fn default() -> Self {
         Self {
@@ -1191,7 +1069,10 @@ impl Default for AppConfig {
         }
     }
 }
+*/
 
+// Default implementation is now in types::app
+/*
 impl Default for ServiceConfig {
     fn default() -> Self {
         Self {
@@ -1203,7 +1084,10 @@ impl Default for ServiceConfig {
         }
     }
 }
+*/
 
+// Default implementation is now in types::app
+/*
 impl Default for ApiConfig {
     fn default() -> Self {
         Self {
@@ -1213,7 +1097,10 @@ impl Default for ApiConfig {
         }
     }
 }
+*/
 
+// Default implementation is now in types::redis
+/*
 impl Default for RedisConfig {
     fn default() -> Self {
         Self {
@@ -1226,7 +1113,10 @@ impl Default for RedisConfig {
         }
     }
 }
+*/
 
+// RedisConfig impl methods are now in types::redis
+/*
 impl RedisConfig {
     /// Validate Redis configuration
     pub fn validate(&self) -> Result<()> {
@@ -1275,7 +1165,10 @@ impl RedisConfig {
         self.db
     }
 }
+*/
 
+// Default implementation is now in types::logging
+/*
 impl Default for LoggingConfig {
     fn default() -> Self {
         Self {
@@ -1290,7 +1183,10 @@ impl Default for LoggingConfig {
         }
     }
 }
+*/
 
+// Default implementation is now in types::app
+/*
 impl Default for DefaultPathConfig {
     fn default() -> Self {
         Self {
@@ -1300,6 +1196,7 @@ impl Default for DefaultPathConfig {
         }
     }
 }
+*/
 
 /// Configuration builder with multiple source support
 pub struct ConfigBuilder {
@@ -1430,6 +1327,9 @@ impl ConfigManager {
             }
             
             // 🏗️ Legacy unified CSV mapping files
+            // Note: types::ChannelConfig doesn't have mapping_files field anymore
+            // This legacy code path is deprecated
+            /*
             if channel.mapping_files.is_empty() {
                 tracing::debug!("Channel {} has no mapping files configured", channel.id);
                 continue;
@@ -1439,6 +1339,12 @@ impl ConfigManager {
                       channel.id, channel.mapping_files);
 
             for mapping_file in &channel.mapping_files {
+            */
+            // Skip legacy mapping for now
+            tracing::warn!("Channel {} has no table_config, skipping legacy mapping", channel.id);
+            continue;
+            
+            /*
                 let csv_path = if mapping_file.starts_with('/') {
                     // Absolute path
                     PathBuf::from(mapping_file)
@@ -1459,6 +1365,7 @@ impl ConfigManager {
                 tracing::info!("Loaded {} point mappings from {}", 
                           channel.points.len(), csv_path.display());
             }
+            */
         }
 
         Ok(())
@@ -1489,8 +1396,8 @@ impl ConfigManager {
     
     /// Load separated four telemetry and protocol mapping tables
     fn load_separated_tables(
-        channel: &mut ChannelConfig, 
-        table_config: &SeparatedTableConfig,
+        channel: &mut TypesChannelConfig, 
+        table_config: &TableConfig,
         config_dir: &Path
     ) -> Result<()> {
         use std::collections::HashMap;
@@ -1566,9 +1473,32 @@ impl ConfigManager {
         let mut combined_count = 0;
         for (point_id, telemetry_point) in all_telemetry_points {
             if let Some(protocol_mapping) = all_protocol_mappings.get(&point_id) {
-                let combined_point = CombinedPoint {
-                    telemetry: telemetry_point,
-                    mapping: protocol_mapping.clone(),
+                // Convert to TypesCombinedPoint
+                let mut protocol_params = HashMap::new();
+                protocol_params.insert("address".to_string(), protocol_mapping.address.to_string());
+                protocol_params.insert("data_type".to_string(), protocol_mapping.data_type.clone());
+                protocol_params.insert("data_format".to_string(), protocol_mapping.data_format.clone());
+                protocol_params.insert("number_of_bytes".to_string(), protocol_mapping.number_of_bytes.to_string());
+                if let Some(bit_loc) = protocol_mapping.bit_location {
+                    protocol_params.insert("bit_location".to_string(), bit_loc.to_string());
+                }
+                
+                let combined_point = TypesCombinedPoint {
+                    point_id: telemetry_point.point_id,
+                    signal_name: telemetry_point.signal_name.clone(),
+                    chinese_name: telemetry_point.chinese_name.clone(),
+                    telemetry_type: telemetry_point.telemetry_type.clone(),
+                    data_type: protocol_mapping.data_type.clone(),
+                    protocol_params,
+                    scaling: if telemetry_point.scale.is_some() || telemetry_point.offset.is_some() {
+                        Some(super::types::channel::ScalingInfo {
+                            scale: telemetry_point.scale.unwrap_or(1.0),
+                            offset: telemetry_point.offset.unwrap_or(0.0),
+                            unit: telemetry_point.unit.clone(),
+                        })
+                    } else {
+                        None
+                    },
                 };
                 channel.combined_points.push(combined_point);
                 combined_count += 1;
@@ -1612,10 +1542,12 @@ impl ConfigManager {
                         point_id: record[0].parse().unwrap_or(0),
                         signal_name: record[1].to_string(),
                         chinese_name: record[2].to_string(),
+                        telemetry_type: point_type.to_string(),
                         scale: if record[3].is_empty() { None } else { record[3].parse().ok() },
                         offset: if record[4].is_empty() { None } else { record[4].parse().ok() },
                         unit: if record[5].is_empty() { None } else { Some(record[5].to_string()) },
                         reverse: None,
+                        data_type: "FLOAT".to_string(), // Default data type for YC/YT
                     }
                 }
                 "YX" | "YK" => {
@@ -1629,6 +1561,7 @@ impl ConfigManager {
                         point_id: record[0].parse().unwrap_or(0),
                         signal_name: record[1].to_string(),
                         chinese_name: record[2].to_string(),
+                        telemetry_type: point_type.to_string(),
                         scale: None,
                         offset: None,
                         unit: None,
@@ -1639,6 +1572,7 @@ impl ConfigManager {
                                 _ => record[3].parse().ok()
                             }
                         },
+                        data_type: "BOOL".to_string(), // Default data type for YX/YK
                     }
                 }
                 _ => {
@@ -1798,17 +1732,17 @@ impl ConfigManager {
     }
 
     /// Get channels
-    pub fn channels(&self) -> &[ChannelConfig] {
+    pub fn channels(&self) -> &[TypesChannelConfig] {
         &self.config.channels
     }
 
     /// Get channel by ID
-    pub fn get_channel(&self, id: u16) -> Option<&ChannelConfig> {
+    pub fn get_channel(&self, id: u16) -> Option<&TypesChannelConfig> {
         self.config.channels.iter().find(|c| c.id == id)
     }
 
     /// Get all channels (for backward compatibility)
-    pub fn get_channels(&self) -> &Vec<ChannelConfig> {
+    pub fn get_channels(&self) -> &Vec<TypesChannelConfig> {
         &self.config.channels
     }
 
@@ -1824,26 +1758,26 @@ impl ConfigManager {
 
         let mut mappings = Vec::new();
         for point in &channel.points {
-            let data_type = match point.data_type() {
-                "bool" => crate::core::protocols::modbus::common::ModbusDataType::Bool,
-                "u16" => crate::core::protocols::modbus::common::ModbusDataType::UInt16,
-                "i16" => crate::core::protocols::modbus::common::ModbusDataType::Int16,
-                "f32" => crate::core::protocols::modbus::common::ModbusDataType::Float32,
+            let data_type = match &point.data_type {
+                DataType::Bool => crate::core::protocols::modbus::common::ModbusDataType::Bool,
+                DataType::UInt16 => crate::core::protocols::modbus::common::ModbusDataType::UInt16,
+                DataType::Int16 => crate::core::protocols::modbus::common::ModbusDataType::Int16,
+                DataType::Float32 => crate::core::protocols::modbus::common::ModbusDataType::Float32,
                 _ => crate::core::protocols::modbus::common::ModbusDataType::UInt16,
             };
 
             let function_code = crate::core::protocols::modbus::common::ModbusFunctionCode::Read03;
             let mapping = crate::core::protocols::modbus::common::ModbusRegisterMapping {
-                name: point.signal_name().to_string(),
+                name: point.signal_name.clone(),
                 slave_id: 1, // Default slave_id, should be read from CSV in future
                 function_code,
-                address: match point.as_legacy() {
-                    Some(legacy) => legacy.address.parse().unwrap_or(0),
-                    None => 0, // For protocol-specific mappings, should use their specific address methods
+                address: match &point.address {
+                    ProtocolAddress::Modbus { register, .. } => *register,
+                    _ => 0, // For non-modbus protocols
                 },
                 data_type,
                 byte_order: crate::core::protocols::modbus::common::ByteOrder::default_for_data_type(&data_type),
-                description: point.description().map(|s| s.to_string()),
+                description: point.metadata.get("description").cloned(),
             };
             mappings.push(mapping);
         }
@@ -1858,30 +1792,30 @@ impl ConfigManager {
     }
 
     /// Get point mappings for a specific channel
-    pub fn get_channel_points(&self, channel_id: u16) -> Vec<&PointMappingEnum> {
+    pub fn get_channel_points(&self, channel_id: u16) -> Vec<&UnifiedPointMapping> {
         self.get_channel(channel_id)
             .map(|c| c.points.iter().collect())
             .unwrap_or_default()
     }
 
     /// Get a specific point by channel ID and point ID
-    pub fn get_point(&self, channel_id: u16, point_id: u32) -> Option<&PointMappingEnum> {
+    pub fn get_point(&self, channel_id: u16, point_id: u32) -> Option<&UnifiedPointMapping> {
         self.get_channel(channel_id)?
             .points.iter()
-            .find(|p| p.point_id() == point_id)
+            .find(|p| p.point_id == point_id)
     }
 
     /// Get points by signal name (useful for CAN/named protocols)
-    pub fn get_points_by_signal(&self, channel_id: u16, signal_name: &str) -> Vec<&PointMappingEnum> {
+    pub fn get_points_by_signal(&self, channel_id: u16, signal_name: &str) -> Vec<&UnifiedPointMapping> {
         self.get_channel(channel_id)
             .map(|c| c.points.iter()
-                .filter(|p| p.signal_name() == signal_name)
+                .filter(|p| p.signal_name == signal_name)
                 .collect())
             .unwrap_or_default()
     }
 
     /// Get all Modbus register mappings for a channel (filtered by data type)
-    pub fn get_modbus_registers(&self, channel_id: u16) -> Result<Vec<&PointMappingEnum>> {
+    pub fn get_modbus_registers(&self, channel_id: u16) -> Result<Vec<&UnifiedPointMapping>> {
         let channel = self.get_channel(channel_id)
             .ok_or_else(|| ComSrvError::ConfigError(format!("Channel {} not found", channel_id)))?;
 
@@ -1896,7 +1830,7 @@ impl ConfigManager {
     }
 
     /// Get all CAN signal mappings for a channel
-    pub fn get_can_signals(&self, channel_id: u16) -> Result<Vec<&PointMappingEnum>> {
+    pub fn get_can_signals(&self, channel_id: u16) -> Result<Vec<&UnifiedPointMapping>> {
         let channel = self.get_channel(channel_id)
             .ok_or_else(|| ComSrvError::ConfigError(format!("Channel {} not found", channel_id)))?;
 
@@ -2012,7 +1946,7 @@ impl ConfigManager {
     }
     
     /// Get combined points for a channel (new separated table approach)
-    pub fn get_combined_points(&self, channel_id: u16) -> Vec<&CombinedPoint> {
+    pub fn get_combined_points(&self, channel_id: u16) -> Vec<&TypesCombinedPoint> {
         if let Some(channel) = self.get_channel(channel_id) {
             channel.combined_points.iter().collect()
         } else {
@@ -2021,43 +1955,29 @@ impl ConfigManager {
     }
     
     /// Get four telemetry points by type
-    pub fn get_four_telemetry_points(&self, channel_id: u16, point_type: &str) -> Vec<&FourTelemetryPoint> {
+    pub fn get_four_telemetry_points(&self, channel_id: u16, point_type: &str) -> Vec<&TypesCombinedPoint> {
         let combined_points = self.get_combined_points(channel_id);
         combined_points.into_iter()
-            .map(|cp| &cp.telemetry)
-            .filter(|tp| {
-                match point_type {
-                    "YC" => tp.scale.is_some() && tp.unit.is_some(),
-                    "YT" => tp.scale.is_some() && tp.unit.is_some(),
-                    "YX" => tp.reverse.is_some(),
-                    "YK" => tp.reverse.is_some(),
-                    _ => false,
-                }
-            })
+            .filter(|cp| cp.telemetry_type == point_type)
             .collect()
     }
     
     /// Get protocol mappings by point type
-    pub fn get_protocol_mappings(&self, channel_id: u16, point_type: &str) -> Vec<&ProtocolMapping> {
+    pub fn get_protocol_mappings(&self, channel_id: u16, point_type: &str) -> Vec<&TypesCombinedPoint> {
         let combined_points = self.get_combined_points(channel_id);
         combined_points.into_iter()
-            .map(|cp| &cp.mapping)
-            .filter(|pm| {
-                // Simple heuristic: bool data types are typically YX/YK
-                match point_type {
-                    "YC" | "YT" => pm.data_type != "bool",
-                    "YX" | "YK" => pm.data_type == "bool",
-                    _ => true,
-                }
+            .filter(|cp| {
+                // Filter by telemetry type
+                cp.telemetry_type == point_type
             })
             .collect()
     }
     
     /// Get combined point by point ID (table-local unique)
-    pub fn get_combined_point(&self, channel_id: u16, point_id: u32) -> Option<&CombinedPoint> {
+    pub fn get_combined_point(&self, channel_id: u16, point_id: u32) -> Option<&TypesCombinedPoint> {
         if let Some(channel) = self.get_channel(channel_id) {
             channel.combined_points.iter()
-                .find(|cp| cp.telemetry.point_id == point_id)
+                .find(|cp| cp.point_id == point_id)
         } else {
             None
         }
@@ -2070,16 +1990,16 @@ impl ConfigManager {
         
         for cp in combined_points {
             let point = ModbusPoint {
-                point_id: cp.telemetry.point_id,
-                signal_name: cp.telemetry.signal_name.clone(),
-                chinese_name: cp.telemetry.chinese_name.clone(),
-                address: cp.mapping.address.clone(),
-                data_type: cp.mapping.data_type.clone(),
-                scale: cp.telemetry.scale.unwrap_or(1.0),
-                offset: cp.telemetry.offset.unwrap_or(0.0),
-                unit: cp.telemetry.unit.clone(),
-                reverse: cp.telemetry.reverse.unwrap_or(false),
-                description: cp.mapping.description.clone(),
+                point_id: cp.point_id,
+                signal_name: cp.signal_name.clone(),
+                chinese_name: cp.chinese_name.clone(),
+                address: cp.protocol_params.get("address").unwrap_or(&"0".to_string()).clone(),
+                data_type: cp.data_type.clone(),
+                scale: cp.scaling.as_ref().map(|s| s.scale).unwrap_or(1.0),
+                offset: cp.scaling.as_ref().map(|s| s.offset).unwrap_or(0.0),
+                unit: cp.scaling.as_ref().and_then(|s| s.unit.clone()),
+                reverse: false, // Not available in new structure
+                description: None, // Not available in new structure
             };
             modbus_points.push(point);
         }
@@ -2095,36 +2015,24 @@ impl ConfigManager {
         let mut universal_configs = Vec::new();
 
         for cp in combined_points {
-            // Determine telemetry type based on data type and function code in address
-            let telemetry_type = match cp.mapping.data_type.to_lowercase().as_str() {
-                "bool" => {
-                    // Check if this is a control point (writable) or signal point (readable only)
-                    if cp.mapping.address.contains(":5:") || cp.mapping.address.contains(":15:") {
-                        TelemetryType::Control // YK 遥控
-                    } else {
-                        TelemetryType::Signaling // YX 遥信
-                    }
-                }
-                "uint16" | "int16" | "float32" | "uint32" | "int32" => {
-                    // Check if this is an adjustment point (writable) or telemetry point (readable only)
-                    if cp.mapping.address.contains(":16:") || cp.mapping.address.contains(":6:") {
-                        TelemetryType::Setpoint // YT 遥调
-                    } else {
-                        TelemetryType::Telemetry // YC 遥测
-                    }
-                }
+            // Determine telemetry type based on telemetry_type field
+            let telemetry_type = match cp.telemetry_type.as_str() {
+                "YK" => TelemetryType::Control,
+                "YX" => TelemetryType::Signaling,
+                "YT" => TelemetryType::Setpoint,
+                "YC" => TelemetryType::Telemetry,
                 _ => TelemetryType::Telemetry, // Default to telemetry
             };
 
             let universal_config = super::super::protocols::common::combase::point_manager::UniversalPointConfig {
-                point_id: cp.telemetry.point_id,
-                name: Some(cp.telemetry.chinese_name.clone()),
-                description: cp.mapping.description.clone(),
-                unit: cp.telemetry.unit.clone(),
-                data_type: cp.mapping.data_type.clone(),
-                scale: cp.telemetry.scale.unwrap_or(1.0),
-                offset: cp.telemetry.offset.unwrap_or(0.0),
-                reverse: if cp.telemetry.reverse.unwrap_or(false) { 1 } else { 0 },
+                point_id: cp.point_id,
+                name: Some(cp.chinese_name.clone()),
+                description: None, // Not available in new structure
+                unit: cp.scaling.as_ref().and_then(|s| s.unit.clone()),
+                data_type: cp.data_type.clone(),
+                scale: cp.scaling.as_ref().map(|s| s.scale).unwrap_or(1.0),
+                offset: cp.scaling.as_ref().map(|s| s.offset).unwrap_or(0.0),
+                reverse: 0, // Not available in new structure
                 telemetry_type: telemetry_type.clone(),
                 enabled: true,
                 readable: true,
@@ -2144,17 +2052,19 @@ impl ConfigManager {
 
         for cp in combined_points {
             // Parse the address format: slave_id:function_code:register_address
-            // The parse_protocol_mapping_csv method formats it this way for new CSV files
-            let address_parts: Vec<&str> = cp.mapping.address.split(':').collect();
+            // Extract address from protocol_params
+            let default_address = "0:3:0".to_string();
+            let address = cp.protocol_params.get("address").unwrap_or(&default_address);
+            let address_parts: Vec<&str> = address.split(':').collect();
             if address_parts.len() != 3 {
-                tracing::warn!("Invalid address format for point {}: {}", cp.telemetry.point_id, cp.mapping.address);
+                tracing::warn!("Invalid address format for point {}: {}", cp.point_id, address);
                 continue;
             }
 
             let slave_id = match address_parts[0].parse::<u8>() {
                 Ok(id) => id,
                 Err(_) => {
-                    tracing::warn!("Invalid slave_id for point {}: {}", cp.telemetry.point_id, address_parts[0]);
+                    tracing::warn!("Invalid slave_id for point {}: {}", cp.point_id, address_parts[0]);
                     continue;
                 }
             };
@@ -2162,7 +2072,7 @@ impl ConfigManager {
             let function_code = match address_parts[1].parse::<u8>() {
                 Ok(fc) => fc,
                 Err(_) => {
-                    tracing::warn!("Invalid function_code for point {}: {}", cp.telemetry.point_id, address_parts[1]);
+                    tracing::warn!("Invalid function_code for point {}: {}", cp.point_id, address_parts[1]);
                     continue;
                 }
             };
@@ -2170,20 +2080,20 @@ impl ConfigManager {
             let register_address = match address_parts[2].parse::<u16>() {
                 Ok(addr) => addr,
                 Err(_) => {
-                    tracing::warn!("Invalid register_address for point {}: {}", cp.telemetry.point_id, address_parts[2]);
+                    tracing::warn!("Invalid register_address for point {}: {}", cp.point_id, address_parts[2]);
                     continue;
                 }
             };
 
             let protocol_mapping = ModbusProtocolMapping {
-                point_id: cp.telemetry.point_id,
+                point_id: cp.point_id,
                 slave_id,
                 function_code,
                 register_address,
-                data_type: cp.mapping.data_type.clone(),
-                byte_order: cp.mapping.data_format.clone(),
-                register_count: (cp.mapping.number_of_bytes + 1) / 2, // Convert bytes to register count
-                bit_position: cp.mapping.bit_location.unwrap_or(0) as u8,
+                data_type: cp.data_type.clone(),
+                byte_order: cp.protocol_params.get("data_format").unwrap_or(&"ABCD".to_string()).clone(),
+                register_count: cp.protocol_params.get("number_of_bytes").and_then(|s| s.parse::<u8>().ok()).map(|bytes| (bytes + 1) / 2).unwrap_or(1),
+                bit_position: cp.protocol_params.get("bit_location").and_then(|s| s.parse::<u8>().ok()).unwrap_or(0),
             };
 
             protocol_mappings.push(protocol_mapping);

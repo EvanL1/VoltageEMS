@@ -142,6 +142,10 @@ fn convert_channel_config(config: &crate::core::config::config_manager::ChannelC
     let logging_config = crate::core::config::types::ChannelLoggingConfig {
         enabled: config.logging.enabled,
         level: config.logging.level.clone(),
+        log_dir: config.logging.log_dir.clone(),
+        max_file_size: config.logging.max_file_size,
+        max_files: config.logging.max_files,
+        retention_days: config.logging.retention_days,
         console_output: config.logging.console_output,
         log_messages: config.logging.log_messages,
     };
@@ -219,9 +223,8 @@ pub async fn start_communication_service(
         );
 
         let factory_guard = factory.write().await;
-        let converted_config = convert_channel_config(&channel_config);
         match factory_guard
-            .create_channel_with_config_manager(converted_config, Some(&*config_manager))
+            .create_channel_with_config_manager(channel_config.clone(), Some(&*config_manager))
             .await
         {
             Ok(_) => {

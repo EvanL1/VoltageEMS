@@ -1,4 +1,4 @@
-use crate::core::config::config_manager::RedisConfig;
+use crate::core::config::types::RedisConfig;
 use crate::utils::error::{ComSrvError, Result};
 use redis::aio::{Connection, PubSub};
 use redis::{AsyncCommands, Client};
@@ -115,15 +115,15 @@ impl RedisConnectionManager {
             .map_err(|e| ComSrvError::RedisError(format!("Redis PING failed: {}", e)))?;
 
         // Select database if specified
-        if config.database() > 0 {
+        if config.db > 0 {
             redis::cmd("SELECT")
-                .arg(config.database())
+                .arg(config.db)
                 .query_async(&mut conn)
                 .await
                 .map_err(|e| {
                     ComSrvError::RedisError(format!(
                         "Failed to select database {}: {}",
-                        config.database(), e
+                        config.db, e
                     ))
                 })?;
         }
@@ -131,7 +131,7 @@ impl RedisConnectionManager {
         tracing::info!(
             "Redis connection manager created successfully: type={:?}, db={:?}, timeout={}ms",
             config.connection_type(),
-            config.database(),
+            config.db,
             config.timeout_ms
         );
 
@@ -148,15 +148,15 @@ impl RedisConnectionManager {
         })?;
 
         // Select database if specified
-        if self.config.database() > 0 {
+        if self.config.db > 0 {
             redis::cmd("SELECT")
-                .arg(self.config.database())
+                .arg(self.config.db)
                 .query_async(&mut conn)
                 .await
                 .map_err(|e| {
                     ComSrvError::RedisError(format!(
                         "Failed to select database {}: {}",
-                        self.config.database(), e
+                        self.config.db, e
                     ))
                 })?;
         }
@@ -902,7 +902,7 @@ mod tests {
         let config = RedisConfig {
             enabled: true,
             url: "invalid://invalid".to_string(),
-            database: 0,
+            db: 0,
             timeout_ms: 5000,
             max_connections: Some(10),
             max_retries: 3,
@@ -918,7 +918,7 @@ mod tests {
         let tcp_config = RedisConfig {
             enabled: true,
             url: "tcp://127.0.0.1:6379".to_string(),
-            database: 1,
+            db: 1,
             timeout_ms: 5000,
             max_connections: Some(10),
             max_retries: 3,
@@ -927,7 +927,7 @@ mod tests {
         let redis_config = RedisConfig {
             enabled: true,
             url: "redis://127.0.0.1:6379".to_string(),
-            database: 2,
+            db: 2,
             timeout_ms: 5000,
             max_connections: Some(10),
             max_retries: 3,
@@ -936,7 +936,7 @@ mod tests {
         let unix_config = RedisConfig {
             enabled: true,
             url: "unix:///tmp/redis.sock".to_string(),
-            database: 3,
+            db: 3,
             timeout_ms: 5000,
             max_connections: Some(10),
             max_retries: 3,
@@ -947,11 +947,10 @@ mod tests {
         assert!(redis_config.url.starts_with("redis://"));
         assert!(unix_config.url.starts_with("unix://"));
         
-        // Test that address() method works correctly for redis:// URLs
-        assert_eq!(redis_config.address(), "127.0.0.1:6379");
-        // For non-redis URLs, address() returns default
-        assert_eq!(tcp_config.address(), "127.0.0.1:6379");
-        assert_eq!(unix_config.address(), "127.0.0.1:6379");
+        // Test that URLs are properly set
+        assert_eq!(redis_config.url, "redis://127.0.0.1:6379");
+        assert_eq!(tcp_config.url, "tcp://127.0.0.1:6379");
+        assert_eq!(unix_config.url, "unix:///tmp/redis.sock");
     }
 
     #[test]
@@ -959,7 +958,7 @@ mod tests {
         let config_with_db = RedisConfig {
             enabled: true,
             url: "redis://127.0.0.1:6379".to_string(),
-            database: 5,
+            db: 5,
             timeout_ms: 5000,
             max_connections: Some(10),
             max_retries: 3,
@@ -968,14 +967,14 @@ mod tests {
         let config_without_db = RedisConfig {
             enabled: true,
             url: "redis://127.0.0.1:6379".to_string(),
-            database: 0,
+            db: 0,
             timeout_ms: 5000,
             max_connections: Some(10),
             max_retries: 3,
         };
 
-        assert_eq!(config_with_db.db(), 5);
-        assert_eq!(config_without_db.db(), 0);
+        assert_eq!(config_with_db.db, 5);
+        assert_eq!(config_without_db.db, 0);
     }
 
     // Note: The following tests require a running Redis instance
@@ -1138,7 +1137,7 @@ mod tests {
         let config = RedisConfig {
             enabled: true,
             url: "redis://127.0.0.1:6379".to_string(),
-            database: 0,
+            db: 0,
             timeout_ms: 5000,
             max_connections: Some(10),
             max_retries: 3,
@@ -1146,8 +1145,8 @@ mod tests {
 
         let cloned_config = config.clone();
 
-        assert_eq!(config.address(), cloned_config.address());
-        assert_eq!(config.db(), cloned_config.db());
+        assert_eq!(config.url, cloned_config.url);
+        assert_eq!(config.db, cloned_config.db);
     }
 
     #[test]

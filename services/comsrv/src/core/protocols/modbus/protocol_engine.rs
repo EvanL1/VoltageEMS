@@ -187,11 +187,11 @@ impl ModbusProtocolEngine {
 
         Ok(PointData {
             id: mapping.point_id.to_string(),
-            name: format!("遥测点位_{}", mapping.point_id),
+            name: format!("Telemetry_Point_{}", mapping.point_id),
             value: value.to_string(),
             timestamp: chrono::Utc::now(),
             unit: "".to_string(),
-            description: format!("Modbus遥测，地址: {}", mapping.address),
+            description: format!("Modbus telemetry, address: {}", mapping.address),
         })
     }
 
@@ -217,11 +217,11 @@ impl ModbusProtocolEngine {
 
         Ok(PointData {
             id: mapping.point_id.to_string(),
-            name: format!("遥信点位_{}", mapping.point_id),
+            name: format!("Signal_Point_{}", mapping.point_id),
             value: value.to_string(),
             timestamp: chrono::Utc::now(),
             unit: "".to_string(),
-            description: format!("Modbus遥信，地址: {}, 位: {}", 
+            description: format!("Modbus signal, address: {}, bit: {}", 
                 mapping.address, mapping.bit_location.unwrap_or(0)),
         })
     }
@@ -259,7 +259,7 @@ impl ModbusProtocolEngine {
             ).await?;
         }
 
-        info!("成功写入遥调点位 {}: {}", mapping.point_id, value);
+        info!("Successfully wrote adjustment point {}: {}", mapping.point_id, value);
         Ok(())
     }
 
@@ -290,7 +290,7 @@ impl ModbusProtocolEngine {
             ).await?;
         }
 
-        info!("成功执行遥控点位 {}: {}", mapping.point_id, command);
+        info!("Successfully executed control point {}: {}", mapping.point_id, command);
         Ok(())
     }
 
@@ -313,7 +313,7 @@ impl ModbusProtocolEngine {
                 if !item.is_expired() {
                     let mut stats = self.stats.write().await;
                     stats.cache_hits += 1;
-                    debug!("缓存命中: {}", cache_key);
+                    debug!("Cache hit: {}", cache_key);
                     return Ok(item.data.clone());
                 }
             }
@@ -368,37 +368,67 @@ impl ModbusProtocolEngine {
         quantity: u16,
         transport: &UniversalTransportBridge,
     ) -> Result<Vec<u8>> {
-        // 零拷贝PDU构建
+        // Zero-copy PDU construction
         let request_data = self.pdu_processor.build_read_request(function_code, address, quantity);
+        debug!(
+            "[Protocol Engine] PDU construction completed - Slave: {}, Function code: {:?}, Address: {}, Quantity: {}", 
+            slave_id, function_code, address, quantity
+        );
         
-        // 获取事务ID
+        // Get transaction ID
         let transaction_id = self.transaction_id.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        debug!("[Protocol Engine] Transaction ID assigned: {}", transaction_id);
         
-        // 构建帧
+        // Build frame
         let frame = self.frame_processor.read().await.build_frame(slave_id, request_data, Some(transaction_id));
+        debug!("[Protocol Engine] Modbus frame construction completed - Frame length: {} bytes", frame.len());
         
-        // 发送请求
+        // Send request
+        debug!("[Protocol Engine] Sending Modbus request to transport layer...");
         let response = transport.send_request(&frame).await?;
+        debug!("[Protocol Engine] Received Modbus response - Response length: {} bytes", response.len());
         
-        // 解析响应帧
+        // Parse response frame
+        debug!("[Protocol Engine] Starting response frame parsing...");
         let parsed_frame = {
             let mut processor = self.frame_processor.write().await;
             processor.parse_frame(&response)?
         };
+        debug!("[Protocol Engine] Frame parsing completed - PDU length: {} bytes", parsed_frame.pdu.len());
         
-        // 解析响应PDU
+        // Parse response PDU
+        debug!("[Protocol Engine] Starting response PDU parsing...");
         let pdu_result = self.pdu_processor.parse_pdu(&parsed_frame.pdu)?;
+        debug!("[Protocol Engine] PDU parsing completed");
         
-        // 提取数据
+        // Extract data
         match pdu_result {
             crate::core::protocols::modbus::pdu::PduParseResult::Response(response) => {
-                // 更新零拷贝统计
+                debug!(
+                    "[Protocol Engine] Response data extraction successful - Data length: {} bytes, Data: {:02X?}", 
+                    response.data.len(), response.data
+                );
+                
+                // Update zero-copy statistics
                 let mut stats = self.stats.write().await;
                 stats.zero_copy_operations += 1;
                 
                 Ok(response.data)
             }
-            _ => Err(ComSrvError::ProtocolError("无效的响应".to_string())),
+            crate::core::protocols::modbus::pdu::PduParseResult::Exception(exception) => {
+                warn!(
+                    "[Protocol Engine] Received Modbus exception response - Function code: 0x{:02X}, Exception code: {:?}", 
+                    exception.function_code, exception.exception_code
+                );
+                Err(ComSrvError::ProtocolError(format!(
+                    "Modbus exception response: Function code=0x{:02X}, Exception code={:?}", 
+                    exception.function_code, exception.exception_code
+                )))
+            }
+            _ => {
+                warn!("[Protocol Engine] Invalid PDU response type");
+                Err(ComSrvError::ProtocolError("Invalid response".to_string()))
+            }
         }
     }
 
@@ -491,7 +521,7 @@ impl ModbusProtocolEngine {
         };
         
         if data.len() < (register_count as usize * 2) {
-            return Err(ComSrvError::ProtocolError("数据长度不足".to_string()));
+            return Err(ComSrvError::ProtocolError("Insufficient data length".to_string()));
         }
 
         match mapping.data_type.to_lowercase().as_str() {
@@ -505,7 +535,7 @@ impl ModbusProtocolEngine {
             }
             "uint32" => {
                 if data.len() < 4 {
-                    return Err(ComSrvError::ProtocolError("uint32数据长度不足".to_string()));
+                    return Err(ComSrvError::ProtocolError("Insufficient data length for uint32".to_string()));
                 }
                 let value = match "ABCD" {
                     "ABCD" => u32::from_be_bytes([data[0], data[1], data[2], data[3]]),
@@ -518,7 +548,7 @@ impl ModbusProtocolEngine {
             }
             "float32" => {
                 if data.len() < 4 {
-                    return Err(ComSrvError::ProtocolError("float32数据长度不足".to_string()));
+                    return Err(ComSrvError::ProtocolError("Insufficient data length for float32".to_string()));
                 }
                 let bytes = match "ABCD" {
                     "ABCD" => [data[0], data[1], data[2], data[3]],
@@ -531,7 +561,7 @@ impl ModbusProtocolEngine {
                 Ok(value as f64)
             }
             _ => {
-                warn!("不支持的数据格式: {}", mapping.data_type);
+                warn!("Unsupported data format: {}", mapping.data_type);
                 let value = u16::from_be_bytes([data[0], data[1]]);
                 Ok(value as f64)
             }
@@ -541,7 +571,7 @@ impl ModbusProtocolEngine {
     /// 解析遥信值
     fn parse_signal_value(&self, data: &[u8], mapping: &ModbusSignalMapping) -> Result<bool> {
         if data.is_empty() {
-            return Err(ComSrvError::ProtocolError("遥信数据为空".to_string()));
+            return Err(ComSrvError::ProtocolError("Signal data is empty".to_string()));
         }
 
         // 遥信点通常是位值，根据bit_location解析
@@ -552,7 +582,7 @@ impl ModbusProtocolEngine {
             if byte_index < data.len() {
                 Ok((data[byte_index] & (1 << bit_index)) != 0)
             } else {
-                Err(ComSrvError::ProtocolError("位索引超出数据范围".to_string()))
+                Err(ComSrvError::ProtocolError("Bit index exceeds data range".to_string()))
             }
         } else {
             // 没有位位置，整个字节作为布尔值
@@ -563,7 +593,7 @@ impl ModbusProtocolEngine {
                 // 单字节数据
                 Ok(data[0] != 0)
             } else {
-                Err(ComSrvError::ProtocolError("遥信数据长度不足".to_string()))
+                Err(ComSrvError::ProtocolError("Signal data length insufficient".to_string()))
             }
         }
     }
@@ -620,7 +650,7 @@ impl ModbusProtocolEngine {
                 Ok(bytes.to_vec())
             }
             _ => {
-                warn!("不支持的遥调数据格式: {}", mapping.data_type);
+                warn!("Unsupported adjustment data format: {}", mapping.data_type);
                 let int_value = raw_value as u16;
                 Ok(int_value.to_be_bytes().to_vec())
             }
@@ -640,7 +670,7 @@ impl ModbusProtocolEngine {
             cache.remove(&key);
         }
 
-        debug!("清理了 {} 个过期缓存项", cache.len());
+        debug!("Cleaned {} expired cache items", cache.len());
     }
 
     /// 获取引擎统计信息
@@ -691,7 +721,6 @@ mod tests {
             stop_bits: None,
             parity: None,
             timeout_ms: Some(5000),
-            slave_id: 1,
             points: vec![],
         }
     }
