@@ -33,7 +33,8 @@ export default {
     warning: 'Warning',
     error: 'Error',
     success: 'Success',
-    info: 'Information'
+    info: 'Information',
+    active: 'Active'
   },
 
   // Header
@@ -63,22 +64,59 @@ export default {
   grafana: {
     title: 'Real-time Monitoring System',
     selectDashboard: 'Select Dashboard',
+    loading: 'Loading dashboard...',
+    error: 'Failed to load dashboard',
+    retry: 'Retry',
+    authError: 'Authentication failed, please login again',
+    networkError: 'Network connection failed',
+    timeout: 'Loading timeout',
+    notFound: 'Dashboard not found',
+    refresh: 'Refresh',
+    fullscreen: 'Fullscreen',
+    exitFullscreen: 'Exit Fullscreen',
     timeRange: {
-      '5min': '5 Minutes',
-      '15min': '15 Minutes',
-      '30min': '30 Minutes',
-      '1hour': '1 Hour'
+      '5m': 'Last 5 minutes',
+      '15m': 'Last 15 minutes',
+      '1h': 'Last 1 hour',
+      '6h': 'Last 6 hours',
+      '24h': 'Last 24 hours',
+      '7d': 'Last 7 days',
+      custom: 'Custom'
     },
     dashboards: {
+      realtime: 'Real-time Monitoring',
+      historical: 'Historical Analysis',
+      system: 'System Overview',
+      energy: 'Energy Management',
       temperatureMonitoring: 'Temperature Monitoring',
       comprehensiveMonitoring: 'Comprehensive Monitoring'
     },
     status: {
       dataSource: 'Data Source',
       connected: 'Connected',
+      disconnected: 'Disconnected',
       autoRefresh: 'Auto Refresh',
       lastUpdate: 'Last Update',
       seconds: 'seconds'
+    },
+    controls: {
+      timeRange: 'Time Range',
+      refresh: 'Refresh Interval',
+      variables: 'Variables',
+      theme: 'Theme'
+    },
+    openInGrafana: 'Open in Grafana',
+    dataInfo: 'Data Information',
+    tabs: {
+      overview: 'Overview',
+      metrics: 'Metrics'
+    },
+    info: {
+      simulatedData: 'Simulated Data Description',
+      randomFluctuation: 'random fluctuation within range',
+      fluctuation: 'fluctuation within range',
+      variation: 'variation within range',
+      higherDaytime: 'higher power during daytime'
     }
   },
 

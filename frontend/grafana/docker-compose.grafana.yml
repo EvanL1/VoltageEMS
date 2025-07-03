@@ -22,9 +22,9 @@ services:
       - GF_SECURITY_COOKIE_SAMESITE=none
       - GF_SECURITY_COOKIE_SECURE=false
       
-      # 根路径配置
-      - GF_SERVER_ROOT_URL=http://localhost:3050/
-      - GF_SERVER_SERVE_FROM_SUB_PATH=false
+      # 根路径配置 - 设置为通过 /grafana 子路径访问
+      - GF_SERVER_ROOT_URL=http://localhost:8082/grafana/
+      - GF_SERVER_SERVE_FROM_SUB_PATH=true
       
       # 禁用登录相关
       - GF_AUTH_DISABLE_LOGIN_FORM=true

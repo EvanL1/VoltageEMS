@@ -33,7 +33,8 @@ export default {
     warning: '警告',
     error: '错误',
     success: '成功',
-    info: '信息'
+    info: '信息',
+    active: '活动'
   },
 
   // Header
@@ -63,22 +64,59 @@ export default {
   grafana: {
     title: '实时监控系统',
     selectDashboard: '选择仪表板',
+    loading: '正在加载仪表板...',
+    error: '仪表板加载失败',
+    retry: '重试',
+    authError: '认证失败，请重新登录',
+    networkError: '网络连接失败',
+    timeout: '加载超时',
+    notFound: '仪表板不存在',
+    refresh: '刷新',
+    fullscreen: '全屏',
+    exitFullscreen: '退出全屏',
     timeRange: {
-      '5min': '5分钟',
-      '15min': '15分钟',
-      '30min': '30分钟',
-      '1hour': '1小时'
+      '5m': '最近5分钟',
+      '15m': '最近15分钟',
+      '1h': '最近1小时',
+      '6h': '最近6小时',
+      '24h': '最近24小时',
+      '7d': '最近7天',
+      custom: '自定义'
     },
     dashboards: {
+      realtime: '实时监控',
+      historical: '历史分析',
+      system: '系统概览',
+      energy: '能源管理',
       temperatureMonitoring: '温度监控',
       comprehensiveMonitoring: '综合监控'
     },
     status: {
       dataSource: '数据源',
       connected: '已连接',
+      disconnected: '未连接',
       autoRefresh: '自动刷新',
       lastUpdate: '最后更新',
       seconds: '秒'
+    },
+    controls: {
+      timeRange: '时间范围',
+      refresh: '刷新间隔',
+      variables: '变量',
+      theme: '主题'
+    },
+    openInGrafana: '在 Grafana 中打开',
+    dataInfo: '数据信息',
+    tabs: {
+      overview: '概览',
+      metrics: '指标'
+    },
+    info: {
+      simulatedData: '模拟数据说明',
+      randomFluctuation: '范围内随机波动',
+      fluctuation: '范围内波动',
+      variation: '范围内变化',
+      higherDaytime: '白天功率更高'
     }
   },
 
