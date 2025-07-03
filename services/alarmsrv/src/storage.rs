@@ -159,6 +159,101 @@ impl RedisStorage {
         Ok(alarms)
     }
     
+    /// Get alarms with pagination and advanced filtering
+    pub async fn get_alarms_paginated(
+        &self,
+        category: Option<String>,
+        level: Option<AlarmLevel>,
+        status: Option<AlarmStatus>,
+        start_time: Option<String>,
+        end_time: Option<String>,
+        keyword: Option<String>,
+        offset: usize,
+        limit: usize,
+    ) -> Result<(Vec<Alarm>, usize)> {
+        let mut client = self.client.lock().await;
+        let mut all_alarms = Vec::new();
+        
+        if let Some(conn) = client.as_mut() {
+            let mut alarm_ids = Vec::new();
+            
+            // Get alarm IDs based on filters
+            if let Some(cat) = category {
+                let category_key = format!("ems:alarms:category:{}", cat);
+                alarm_ids = conn.smembers(&category_key)?;
+            } else if let Some(lvl) = level {
+                let level_key = format!("ems:alarms:level:{:?}", lvl);
+                alarm_ids = conn.smembers(&level_key)?;
+            } else if let Some(stat) = status {
+                let status_key = format!("ems:alarms:status:{:?}", stat);
+                alarm_ids = conn.smembers(&status_key)?;
+            } else {
+                // Get all alarm IDs
+                let pattern = "ems:alarms:*";
+                let keys: Vec<String> = conn.keys(pattern)?;
+                alarm_ids = keys.into_iter()
+                    .filter(|k| !k.contains(":category:") && !k.contains(":level:") && !k.contains(":status:") && !k.contains(":date:") && !k.contains(":stats:"))
+                    .map(|k| k.replace("ems:alarms:", ""))
+                    .collect();
+            }
+            
+            // Fetch all alarm data for filtering
+            for alarm_id in alarm_ids {
+                let alarm_key = format!("ems:alarms:{}", alarm_id);
+                if let Ok(alarm_data) = conn.hget::<_, _, String>(&alarm_key, "data") {
+                    if let Ok(alarm) = serde_json::from_str::<Alarm>(&alarm_data) {
+                        // Apply time filter
+                        let mut include = true;
+                        
+                        if let Some(ref start) = start_time {
+                            if let Ok(start_dt) = DateTime::parse_from_rfc3339(start) {
+                                if alarm.created_at < start_dt.with_timezone(&Utc) {
+                                    include = false;
+                                }
+                            }
+                        }
+                        
+                        if let Some(ref end) = end_time {
+                            if let Ok(end_dt) = DateTime::parse_from_rfc3339(end) {
+                                if alarm.created_at > end_dt.with_timezone(&Utc) {
+                                    include = false;
+                                }
+                            }
+                        }
+                        
+                        // Apply keyword filter
+                        if let Some(ref kw) = keyword {
+                            let kw_lower = kw.to_lowercase();
+                            if !alarm.title.to_lowercase().contains(&kw_lower) && 
+                               !alarm.description.to_lowercase().contains(&kw_lower) {
+                                include = false;
+                            }
+                        }
+                        
+                        if include {
+                            all_alarms.push(alarm);
+                        }
+                    }
+                }
+            }
+            
+            // Sort by created_at (newest first)
+            all_alarms.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+            
+            // Get total count
+            let total = all_alarms.len();
+            
+            // Apply pagination
+            let start = offset.min(total);
+            let end = (start + limit).min(total);
+            let paginated_alarms = all_alarms[start..end].to_vec();
+            
+            return Ok((paginated_alarms, total));
+        }
+        
+        Ok((vec![], 0))
+    }
+    
     /// Acknowledge alarm
     pub async fn acknowledge_alarm(&self, alarm_id: &str, user: String) -> Result<Alarm> {
         let mut client = self.client.lock().await;
@@ -375,6 +470,14 @@ impl RedisStorage {
             // Get category statistics
             let categories = self.get_category_statistics(conn).await?;
             
+            // Get today's handled alarms count
+            let today = Utc::now().format("%Y-%m-%d").to_string();
+            let today_handled_key = format!("ems:alarms:handled:{}", today);
+            let today_handled: i32 = conn.get(&today_handled_key).unwrap_or(0);
+            
+            // Calculate active alarms
+            let active = (new + acknowledged) as usize;
+            
             return Ok(AlarmStatistics {
                 total: total as usize,
                 by_status: AlarmStatusStats {
@@ -390,6 +493,8 @@ impl RedisStorage {
                     info: info as usize,
                 },
                 by_category: categories,
+                today_handled: today_handled as usize,
+                active,
             });
         }
         
@@ -437,10 +542,28 @@ impl RedisStorage {
             "acknowledged" => {
                 conn.hincr(&stats_key, "new", -1)?;
                 conn.hincr(&stats_key, "acknowledged", 1)?;
+                
+                // Update today's handled count
+                let today = Utc::now().format("%Y-%m-%d").to_string();
+                let today_handled_key = format!("ems:alarms:handled:{}", today);
+                conn.incr(&today_handled_key, 1)?;
+                // Set expiration to 7 days
+                conn.expire(&today_handled_key, 7 * 24 * 3600)?;
             }
             "resolved" => {
-                conn.hincr(&stats_key, "acknowledged", -1)?;
+                if alarm.status == AlarmStatus::Acknowledged {
+                    conn.hincr(&stats_key, "acknowledged", -1)?;
+                } else if alarm.status == AlarmStatus::New {
+                    conn.hincr(&stats_key, "new", -1)?;
+                }
                 conn.hincr(&stats_key, "resolved", 1)?;
+                
+                // Update today's handled count
+                let today = Utc::now().format("%Y-%m-%d").to_string();
+                let today_handled_key = format!("ems:alarms:handled:{}", today);
+                conn.incr(&today_handled_key, 1)?;
+                // Set expiration to 7 days
+                conn.expire(&today_handled_key, 7 * 24 * 3600)?;
             }
             "escalated" => {
                 conn.hincr(&stats_key, &format!("{:?}", alarm.level).to_lowercase(), 1)?;

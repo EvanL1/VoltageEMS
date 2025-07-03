@@ -207,7 +207,7 @@
           <el-pagination
             background
             layout="total, prev, pager, next, sizes"
-            :total="alarms.length"
+            :total="totalAlarms"
             :page-size="pageSize"
             :current-page="currentPage"
             @size-change="handleSizeChange"
@@ -263,10 +263,13 @@
 </template>
 
 <script>
+import { getAlarmStatistics, getAlarmList, acknowledgeAlarm, resolveAlarm } from '@/api/alarm'
+
 export default {
   name: 'AlarmsView',
   data() {
     return {
+      loading: false,
       filter: {
         level: '',
         category: '',
@@ -279,94 +282,45 @@ export default {
       detailDialogVisible: false,
       selectedAlarm: null,
       statistics: {
-        critical: 2,
-        major: 5,
-        minor: 8,
-        warning: 12,
-        total: 27,
-        handled: 45
+        critical: 0,
+        major: 0,
+        minor: 0,
+        warning: 0,
+        info: 0,
+        total: 0,
+        handled: 0,
+        active: 0
       },
-      alarms: [
-        {
-          id: 'ALM001',
-          level: 'critical',
-          category: 'power',
-          device: 'PCS-01',
-          message: '逆变器过载，当前负载率达到105%',
-          occurTime: '2025-01-07 10:12:30',
-          status: 'unconfirmed',
-          duration: 180,
-          value: '105%',
-          threshold: '100%',
-          suggestion: '请立即降低负载或启动备用设备',
-          records: [
-            { time: '2025-01-07 10:12:30', action: '系统自动生成告警', operator: '系统' }
-          ]
-        },
-        {
-          id: 'ALM002',
-          level: 'major',
-          category: 'environmental',
-          device: 'Battery-BMS',
-          message: '电池温度偏高，当前温度42°C',
-          occurTime: '2025-01-07 10:05:15',
-          status: 'confirmed',
-          duration: 485,
-          value: '42°C',
-          threshold: '40°C',
-          suggestion: '检查冷却系统运行状态，必要时降低充放电功率',
-          records: [
-            { time: '2025-01-07 10:05:15', action: '系统自动生成告警', operator: '系统' },
-            { time: '2025-01-07 10:08:00', action: '确认告警', operator: '张三' }
-          ]
-        },
-        {
-          id: 'ALM003',
-          level: 'minor',
-          category: 'communication',
-          device: 'Grid-Meter',
-          message: '通信延迟增加，当前延迟150ms',
-          occurTime: '2025-01-07 09:50:00',
-          status: 'processing',
-          duration: 1030,
-          value: '150ms',
-          threshold: '100ms',
-          suggestion: '检查网络连接质量',
-          records: [
-            { time: '2025-01-07 09:50:00', action: '系统自动生成告警', operator: '系统' },
-            { time: '2025-01-07 09:52:00', action: '确认告警并开始处理', operator: '李四' }
-          ]
-        }
-      ]
+      alarms: [],
+      totalAlarms: 0
     }
   },
   computed: {
     filteredAlarms() {
-      let result = [...this.alarms];
-      
-      if (this.filter.level) {
-        result = result.filter(alarm => alarm.level === this.filter.level);
-      }
-      
-      if (this.filter.category) {
-        result = result.filter(alarm => alarm.category === this.filter.category);
-      }
-      
-      if (this.filter.status) {
-        result = result.filter(alarm => alarm.status === this.filter.status);
-      }
-      
-      if (this.filter.keyword) {
-        result = result.filter(alarm => 
-          alarm.message.toLowerCase().includes(this.filter.keyword.toLowerCase()) ||
-          alarm.device.toLowerCase().includes(this.filter.keyword.toLowerCase())
-        );
-      }
-      
-      // 分页
-      const start = (this.currentPage - 1) * this.pageSize;
-      const end = start + this.pageSize;
-      return result.slice(start, end);
+      // Server-side filtering and pagination
+      return this.alarms;
+    }
+  },
+  created() {
+    this.fetchStatistics();
+    this.fetchAlarms();
+  },
+  watch: {
+    'filter.level'() {
+      this.currentPage = 1;
+      this.fetchAlarms();
+    },
+    'filter.category'() {
+      this.currentPage = 1;
+      this.fetchAlarms();
+    },
+    'filter.status'() {
+      this.currentPage = 1;
+      this.fetchAlarms();
+    },
+    'filter.keyword'() {
+      this.currentPage = 1;
+      this.fetchAlarms();
     }
   },
   methods: {
@@ -431,16 +385,34 @@ export default {
     },
     handleSizeChange(val) {
       this.pageSize = val;
+      this.currentPage = 1;
+      this.fetchAlarms();
     },
     handleCurrentChange(val) {
       this.currentPage = val;
+      this.fetchAlarms();
     },
-    confirmAlarm(alarm) {
-      this.$message.success(`告警 ${alarm.id} 已确认`);
-      alarm.status = 'confirmed';
+    async confirmAlarm(alarm) {
+      try {
+        await acknowledgeAlarm(alarm.id);
+        this.$message.success(`告警 ${alarm.id} 已确认`);
+        this.fetchAlarms();
+        this.fetchStatistics();
+      } catch (error) {
+        this.$message.error('确认告警失败');
+      }
     },
-    confirmSelected() {
-      this.$message.success(`已批量确认 ${this.selectedAlarms.length} 条告警`);
+    async confirmSelected() {
+      try {
+        const promises = this.selectedAlarms.map(alarm => acknowledgeAlarm(alarm.id));
+        await Promise.all(promises);
+        this.$message.success(`已批量确认 ${this.selectedAlarms.length} 条告警`);
+        this.fetchAlarms();
+        this.fetchStatistics();
+        this.selectedAlarms = [];
+      } catch (error) {
+        this.$message.error('批量确认失败');
+      }
     },
     viewAlarmDetail(alarm) {
       this.selectedAlarm = alarm;
@@ -459,7 +431,75 @@ export default {
       this.$message.success('告警数据已导出');
     },
     refreshAlarms() {
+      this.fetchAlarms();
+      this.fetchStatistics();
       this.$message.success('告警列表已刷新');
+    },
+    async fetchStatistics() {
+      try {
+        const stats = await getAlarmStatistics();
+        this.statistics = {
+          critical: stats.by_level.critical || 0,
+          major: stats.by_level.major || 0,
+          minor: stats.by_level.minor || 0,
+          warning: stats.by_level.warning || 0,
+          info: stats.by_level.info || 0,
+          total: stats.active || 0,
+          handled: stats.today_handled || 0,
+          active: stats.active || 0
+        };
+      } catch (error) {
+        console.error('获取统计数据失败:', error);
+      }
+    },
+    async fetchAlarms() {
+      this.loading = true;
+      try {
+        const params = {
+          offset: (this.currentPage - 1) * this.pageSize,
+          limit: this.pageSize
+        };
+        
+        if (this.filter.level) params.level = this.filter.level;
+        if (this.filter.category) params.category = this.filter.category;
+        if (this.filter.status) params.status = this.filter.status;
+        if (this.filter.keyword) params.keyword = this.filter.keyword;
+        
+        const response = await getAlarmList(params);
+        this.alarms = response.alarms.map(alarm => {
+          // 计算持续时间
+          const created = new Date(alarm.created_at);
+          const now = new Date();
+          const duration = Math.floor((now - created) / 1000);
+          
+          return {
+            ...alarm,
+            device: alarm.device || 'Unknown',
+            message: alarm.description || alarm.title,
+            occurTime: created.toLocaleString('zh-CN'),
+            status: this.mapAlarmStatus(alarm.status),
+            duration: duration,
+            value: alarm.value || 'N/A',
+            threshold: alarm.threshold || 'N/A',
+            suggestion: alarm.suggestion || '请联系系统管理员',
+            records: []
+          };
+        });
+        this.totalAlarms = response.total;
+      } catch (error) {
+        console.error('获取告警列表失败:', error);
+        this.$message.error('获取告警列表失败');
+      } finally {
+        this.loading = false;
+      }
+    },
+    mapAlarmStatus(status) {
+      const statusMap = {
+        'New': 'unconfirmed',
+        'Acknowledged': 'confirmed',
+        'Resolved': 'cleared'
+      };
+      return statusMap[status] || 'unconfirmed';
     }
   }
 }
