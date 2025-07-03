@@ -274,6 +274,10 @@ pub struct AlarmStatistics {
     pub by_level: AlarmLevelStats,
     /// Statistics by category
     pub by_category: HashMap<String, usize>,
+    /// Today's handled alarms count
+    pub today_handled: usize,
+    /// Active alarms count (new + acknowledged)
+    pub active: usize,
 }
 
 /// Alarm status statistics

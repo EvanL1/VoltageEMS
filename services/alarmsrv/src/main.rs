@@ -139,14 +139,44 @@ struct AlarmQuery {
     level: Option<AlarmLevel>,
     status: Option<AlarmStatus>,
     limit: Option<usize>,
+    offset: Option<usize>,
+    start_time: Option<String>,
+    end_time: Option<String>,
+    keyword: Option<String>,
+}
+
+/// Alarm list response with pagination info
+#[derive(Serialize)]
+struct AlarmListResponse {
+    alarms: Vec<Alarm>,
+    total: usize,
+    offset: usize,
+    limit: usize,
 }
 
 async fn list_alarms(
     State(state): State<AppState>,
     Query(query): Query<AlarmQuery>,
-) -> Result<Json<Vec<Alarm>>, StatusCode> {
-    match state.redis_storage.get_alarms(query.category, query.level, query.status, query.limit).await {
-        Ok(alarms) => Ok(Json(alarms)),
+) -> Result<Json<AlarmListResponse>, StatusCode> {
+    let offset = query.offset.unwrap_or(0);
+    let limit = query.limit.unwrap_or(10).min(100); // Max 100 items per page
+    
+    match state.redis_storage.get_alarms_paginated(
+        query.category,
+        query.level,
+        query.status,
+        query.start_time,
+        query.end_time,
+        query.keyword,
+        offset,
+        limit,
+    ).await {
+        Ok((alarms, total)) => Ok(Json(AlarmListResponse {
+            alarms,
+            total,
+            offset,
+            limit,
+        })),
         Err(e) => {
             error!("Failed to get alarms: {}", e);
             Err(StatusCode::INTERNAL_SERVER_ERROR)

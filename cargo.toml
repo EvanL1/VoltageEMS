@@ -7,4 +7,6 @@ members = [
   "services/Hissrv",
   "services/modsrv",
   "services/netsrv",
+  "services/predsrv",
+  
 ]
