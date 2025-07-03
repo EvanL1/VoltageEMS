@@ -1,6 +1,7 @@
 use actix_web::{error::ResponseError, http::StatusCode, HttpResponse};
-use serde_json::json;
 use thiserror::Error;
+
+use crate::response::error_response;
 
 #[derive(Error, Debug)]
 pub enum ApiError {
@@ -27,20 +28,24 @@ pub enum ApiError {
 
     #[error("Timeout: {0}")]
     Timeout(String),
+
+    #[error("Unauthorized: {0}")]
+    Unauthorized(String),
+
+    #[error("Forbidden: {0}")]
+    Forbidden(String),
+
+    #[error("Not found: {0}")]
+    NotFound(String),
 }
 
 impl ResponseError for ApiError {
     fn error_response(&self) -> HttpResponse {
         let status = self.status_code();
-        let error_response = json!({
-            "error": {
-                "code": status.as_u16(),
-                "message": self.to_string(),
-                "type": self.error_type(),
-            }
-        });
-
-        HttpResponse::build(status).json(error_response)
+        let error_code = self.error_code();
+        let message = self.to_string();
+        
+        error_response(status, &error_code, &message, None)
     }
 
     fn status_code(&self) -> StatusCode {
@@ -53,22 +58,28 @@ impl ResponseError for ApiError {
             ApiError::InternalError(_) => StatusCode::INTERNAL_SERVER_ERROR,
             ApiError::BadRequest(_) => StatusCode::BAD_REQUEST,
             ApiError::Timeout(_) => StatusCode::GATEWAY_TIMEOUT,
+            ApiError::Unauthorized(_) => StatusCode::UNAUTHORIZED,
+            ApiError::Forbidden(_) => StatusCode::FORBIDDEN,
+            ApiError::NotFound(_) => StatusCode::NOT_FOUND,
         }
     }
 }
 
 impl ApiError {
-    fn error_type(&self) -> &'static str {
+    fn error_code(&self) -> String {
         match self {
-            ApiError::Redis(_) => "redis_error",
-            ApiError::Request(_) => "request_error",
-            ApiError::ServiceNotFound(_) => "service_not_found",
-            ApiError::BadGateway(_) => "bad_gateway",
-            ApiError::ServiceUnavailable(_) => "service_unavailable",
-            ApiError::InternalError(_) => "internal_error",
-            ApiError::BadRequest(_) => "bad_request",
-            ApiError::Timeout(_) => "timeout",
-        }
+            ApiError::Redis(_) => "REDIS_ERROR",
+            ApiError::Request(_) => "REQUEST_ERROR",
+            ApiError::ServiceNotFound(_) => "SERVICE_NOT_FOUND",
+            ApiError::BadGateway(_) => "BAD_GATEWAY",
+            ApiError::ServiceUnavailable(_) => "SERVICE_UNAVAILABLE",
+            ApiError::InternalError(_) => "INTERNAL_ERROR",
+            ApiError::BadRequest(_) => "BAD_REQUEST",
+            ApiError::Timeout(_) => "TIMEOUT",
+            ApiError::Unauthorized(_) => "UNAUTHORIZED",
+            ApiError::Forbidden(_) => "FORBIDDEN",
+            ApiError::NotFound(_) => "NOT_FOUND",
+        }.to_string()
     }
 }
 

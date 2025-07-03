@@ -1,4 +1,5 @@
 pub mod alarmsrv;
+pub mod auth;
 pub mod comsrv;
 pub mod health;
 pub mod hissrv;

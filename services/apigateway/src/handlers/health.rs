@@ -5,17 +5,18 @@ use std::sync::Arc;
 use crate::config::Config;
 use crate::error::ApiResult;
 use crate::redis_client::RedisClient;
+use crate::response::success_response;
 
 #[get("/health")]
 pub async fn health_check() -> ApiResult<HttpResponse> {
-    Ok(HttpResponse::Ok().json(json!({
+    Ok(success_response(json!({
         "status": "healthy",
         "service": "apigateway"
     })))
 }
 
 pub async fn simple_health() -> ApiResult<HttpResponse> {
-    Ok(HttpResponse::Ok().json(json!({
+    Ok(success_response(json!({
         "status": "ok"
     })))
 }
@@ -86,5 +87,5 @@ pub async fn detailed_health(
         health_status["status"] = json!("degraded");
     }
 
-    Ok(HttpResponse::Ok().json(health_status))
+    Ok(success_response(health_status))
 }

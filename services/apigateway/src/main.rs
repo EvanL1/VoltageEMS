@@ -4,11 +4,14 @@ use env_logger::Env;
 use log::info;
 use std::sync::Arc;
 
+mod auth;
 mod config;
 mod error;
 mod handlers;
 mod redis_client;
+mod response;
 
+use auth::middleware::JwtAuthMiddleware;
 use config::Config;
 use redis_client::RedisClient;
 
@@ -53,27 +56,37 @@ async fn main() -> std::io::Result<()> {
             .wrap(middleware::Logger::default())
             .service(
                 web::scope("/api/v1")
+                    // Public endpoints (no auth required)
+                    .route("/auth/login", web::post().to(handlers::auth::login))
+                    .route("/auth/refresh", web::post().to(handlers::auth::refresh_token))
                     .service(handlers::health::health_check)
                     .service(handlers::health::detailed_health)
+                    // Protected endpoints (auth required)
                     .service(
-                        web::scope("/comsrv")
-                            .service(handlers::comsrv::proxy_handler)
-                    )
-                    .service(
-                        web::scope("/modsrv")
-                            .service(handlers::modsrv::proxy_handler)
-                    )
-                    .service(
-                        web::scope("/hissrv")
-                            .service(handlers::hissrv::proxy_handler)
-                    )
-                    .service(
-                        web::scope("/netsrv")
-                            .service(handlers::netsrv::proxy_handler)
-                    )
-                    .service(
-                        web::scope("/alarmsrv")
-                            .service(handlers::alarmsrv::proxy_handler)
+                        web::scope("")
+                            .wrap(JwtAuthMiddleware)
+                            .route("/auth/logout", web::post().to(handlers::auth::logout))
+                            .route("/auth/me", web::get().to(handlers::auth::current_user))
+                            .service(
+                                web::scope("/comsrv")
+                                    .service(handlers::comsrv::proxy_handler)
+                            )
+                            .service(
+                                web::scope("/modsrv")
+                                    .service(handlers::modsrv::proxy_handler)
+                            )
+                            .service(
+                                web::scope("/hissrv")
+                                    .service(handlers::hissrv::proxy_handler)
+                            )
+                            .service(
+                                web::scope("/netsrv")
+                                    .service(handlers::netsrv::proxy_handler)
+                            )
+                            .service(
+                                web::scope("/alarmsrv")
+                                    .service(handlers::alarmsrv::proxy_handler)
+                            )
                     ),
             )
             .route("/health", web::get().to(handlers::health::simple_health))
