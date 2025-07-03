@@ -14,6 +14,7 @@ use tracing::{info, error, warn};
 
 mod types;
 mod config;
+mod config_new;
 mod storage;
 mod classifier;
 

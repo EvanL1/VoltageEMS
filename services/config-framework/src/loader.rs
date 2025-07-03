@@ -9,7 +9,7 @@ use tracing::{debug, info, warn};
 
 use crate::{
     ConfigFormat, ConfigPath, ConfigValidator, Configurable, Environment, Result,
-    ValidationRule,
+    ValidationRule, SqliteProvider,
 };
 
 pub struct ConfigLoader {
@@ -95,6 +95,7 @@ pub struct ConfigLoaderBuilder {
     validators: Vec<Box<dyn ConfigValidator>>,
     validation_rules: HashMap<String, Vec<Box<dyn ValidationRule>>>,
     defaults: Option<serde_json::Value>,
+    sqlite_config: Option<(String, String)>, // (database_url, service_name)
 }
 
 impl ConfigLoaderBuilder {
@@ -107,6 +108,7 @@ impl ConfigLoaderBuilder {
             validators: Vec::new(),
             validation_rules: HashMap::new(),
             defaults: None,
+            sqlite_config: None,
         }
     }
 
@@ -156,6 +158,11 @@ impl ConfigLoaderBuilder {
         self.defaults = Some(serde_json::to_value(defaults)?);
         Ok(self)
     }
+    
+    pub fn add_sqlite<S: Into<String>>(mut self, database_url: S, service_name: S) -> Self {
+        self.sqlite_config = Some((database_url.into(), service_name.into()));
+        self
+    }
 
     pub fn build(self) -> Result<ConfigLoader> {
         let mut figment = Figment::new();
@@ -202,6 +209,21 @@ impl ConfigLoaderBuilder {
             }
         }
 
+        // Add SQLite provider if configured
+        if let Some((db_url, service_name)) = self.sqlite_config {
+            // Create SQLite provider asynchronously
+            let rt = tokio::runtime::Runtime::new()
+                .map_err(|e| crate::ConfigError::Custom(format!("Failed to create runtime: {}", e)))?;
+            
+            let sqlite_provider = rt.block_on(async {
+                SqliteProvider::new(&db_url, service_name)
+                    .await
+                    .map_err(|e| crate::ConfigError::Custom(format!("Failed to create SQLite provider: {}", e)))
+            })?;
+            
+            figment = figment.merge(sqlite_provider);
+        }
+        
         if let Some(prefix) = self.env_prefix {
             figment = figment.merge(Env::prefixed(&prefix).split("_"));
         } else {

@@ -6,6 +6,7 @@ pub mod validation;
 pub mod watchers;
 pub mod base;
 pub mod migration;
+pub mod sqlite_provider;
 
 pub use error::{ConfigError, Result};
 pub use loader::{ConfigLoader, ConfigLoaderBuilder};
@@ -15,6 +16,7 @@ pub use validation::{validate_config, ValidationRule, RegexRule, RangeRule};
 pub use watchers::{ConfigWatcher, WatchEvent};
 pub use base::{BaseServiceConfig, ServiceInfo, RedisConfig, LoggingConfig, MonitoringConfig, ServiceConfig};
 pub use migration::{ConfigMigrator, ValidationResults};
+pub use sqlite_provider::{SqliteProvider, AsyncSqliteProvider, PointTableEntry, ProtocolMapping};
 
 /// Convenience function to load configuration from a file
 pub fn load_config<T>(path: &std::path::Path) -> Result<T>
@@ -37,5 +39,6 @@ pub mod prelude {
         validate_config, ConfigFormat, RegexRule, RangeRule,
         BaseServiceConfig, ServiceInfo, RedisConfig, LoggingConfig, MonitoringConfig, ServiceConfig,
         ConfigMigrator, ValidationResults,
+        SqliteProvider, AsyncSqliteProvider, PointTableEntry, ProtocolMapping,
     };
 }
