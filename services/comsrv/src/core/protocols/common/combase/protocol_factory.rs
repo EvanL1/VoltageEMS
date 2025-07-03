@@ -832,19 +832,19 @@ impl ComBase for MockComBase {
         Ok(())
     }
 
-    async fn status(&self) -> crate::core::protocols::common::combase::ChannelStatus {
-        crate::core::protocols::common::combase::ChannelStatus::new(&self.channel_id())
+    async fn status(&self) -> crate::core::protocols::common::data_types::ChannelStatus {
+        crate::core::protocols::common::data_types::ChannelStatus::new(&self.channel_id())
     }
 
-    async fn update_status(&mut self, _status: crate::core::protocols::common::combase::ChannelStatus) -> Result<()> {
+    async fn update_status(&mut self, _status: crate::core::protocols::common::data_types::ChannelStatus) -> Result<()> {
         Ok(())
     }
 
-    async fn get_all_points(&self) -> Vec<crate::core::protocols::common::combase::PointData> {
+    async fn get_all_points(&self) -> Vec<crate::core::protocols::common::data_types::PointData> {
         Vec::new()
     }
 
-    async fn read_point(&self, _point_id: &str) -> Result<crate::core::protocols::common::combase::PointData> {
+    async fn read_point(&self, _point_id: &str) -> Result<crate::core::protocols::common::data_types::PointData> {
         Err(crate::utils::ComSrvError::InvalidOperation("Mock implementation".to_string()))
     }
 

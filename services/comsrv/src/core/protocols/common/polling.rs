@@ -54,7 +54,7 @@ impl UniversalPollingEngine {
     ) -> Self {
         // TODO: Fix polling context after transport trait unification
         let context = Arc::new(PollingContext {
-            config: Arc::new(config),
+            config: Arc::new(RwLock::new(config)),
             transport,
             point_manager: Arc::new(super::manager::OptimizedPointManager::new(protocol_name.clone())),
             redis_sync: None,

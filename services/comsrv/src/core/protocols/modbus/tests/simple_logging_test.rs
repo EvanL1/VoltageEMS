@@ -72,7 +72,7 @@ async fn test_pdu_processor_logging() {
     // Test PDU construction logging
     debug!("Testing PDU construction logging");
     let read_request = processor.build_read_request(
-        ModbusFunctionCode::ReadHoldingRegisters,
+        ModbusFunctionCode::Read03,
         40001,
         10
     );
@@ -137,7 +137,7 @@ async fn test_comprehensive_packet_logging() {
     // Step 2: Build request PDU
     debug!("Step 2: Building request PDU");
     let request_pdu = processor.build_read_request(
-        ModbusFunctionCode::ReadHoldingRegisters,
+        ModbusFunctionCode::Read03,
         40001,
         5
     );

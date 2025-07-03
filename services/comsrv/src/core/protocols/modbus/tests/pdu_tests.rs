@@ -9,10 +9,10 @@ mod tests {
     #[test]
     fn test_function_code_conversion() {
         // Test function code to u8 conversion
-        assert_eq!(u8::from(ModbusFunctionCode::ReadCoils), 0x01);
-        assert_eq!(u8::from(ModbusFunctionCode::ReadHoldingRegisters), 0x03);
-        assert_eq!(u8::from(ModbusFunctionCode::WriteSingleCoil), 0x05);
-        assert_eq!(u8::from(ModbusFunctionCode::WriteSingleRegister), 0x06);
+        assert_eq!(u8::from(ModbusFunctionCode::Read01), 0x01);
+        assert_eq!(u8::from(ModbusFunctionCode::Read03), 0x03);
+        assert_eq!(u8::from(ModbusFunctionCode::Write05), 0x05);
+        assert_eq!(u8::from(ModbusFunctionCode::Write06), 0x06);
     }
     
     #[test]

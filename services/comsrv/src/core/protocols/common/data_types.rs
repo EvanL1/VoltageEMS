@@ -217,7 +217,7 @@ impl From<&str> for TelemetryType {
 /// Polling context to reduce Arc clones
 #[derive(Clone)]
 pub struct PollingContext {
-    pub config: Arc<PollingConfig>,
+    pub config: Arc<tokio::sync::RwLock<PollingConfig>>,
     pub transport: Arc<dyn crate::core::transport::traits::Transport>,
     pub point_manager: Arc<crate::core::protocols::common::manager::OptimizedPointManager>,
     pub redis_sync: Option<Arc<crate::core::protocols::common::redis::RedisBatchSync>>,

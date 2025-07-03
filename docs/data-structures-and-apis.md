@@ -293,9 +293,7 @@ graph LR
     YX --> Bool
     YK --> Bool
     YC --> Float32
-    YC --> Float64
     YT --> Float32
-    YT --> Int32
 ```
 
 ## 1. 通用数据结构定义

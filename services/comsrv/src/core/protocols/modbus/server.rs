@@ -8,9 +8,9 @@ use std::sync::{Arc, Mutex};
 use tracing::info;
 
 use crate::core::protocols::modbus::{
-    pdu::{ModbusPduProcessor, ModbusFunctionCode, PduParseResult},
+    pdu::{ModbusPduProcessor, PduParseResult},
     frame::{ModbusFrameProcessor, ModbusMode},
-    common::ModbusConfig,
+    common::{ModbusConfig, ModbusFunctionCode},
 };
 use crate::core::protocols::common::combase::transport_bridge::UniversalTransportBridge;
 use crate::core::transport::traits::Transport;
@@ -243,66 +243,69 @@ impl ModbusServer {
     /// Handle a specific Modbus request (static version to avoid borrowing issues)
     async fn handle_request_static(pdu_processor: &ModbusPduProcessor, device: &mut ModbusDevice, request: &crate::core::protocols::modbus::pdu::ModbusPduRequest) -> Result<Vec<u8>> {
         match request.function_code {
-            ModbusFunctionCode::ReadCoils => {
+            ModbusFunctionCode::Read01 => {
                 let read_req = pdu_processor.parse_read_request(&request.data)?;
                 let values = device.read_coils(read_req.start_address, read_req.quantity)?;
                 let data = pdu_processor.build_coil_response_data(&values);
-                Ok(pdu_processor.build_read_response(ModbusFunctionCode::ReadCoils, &data))
+                Ok(pdu_processor.build_read_response(ModbusFunctionCode::Read01, &data))
             },
-            ModbusFunctionCode::ReadDiscreteInputs => {
+            ModbusFunctionCode::Read02 => {
                 let read_req = pdu_processor.parse_read_request(&request.data)?;
                 let values = device.read_discrete_inputs(read_req.start_address, read_req.quantity)?;
                 let data = pdu_processor.build_coil_response_data(&values);
-                Ok(pdu_processor.build_read_response(ModbusFunctionCode::ReadDiscreteInputs, &data))
+                Ok(pdu_processor.build_read_response(ModbusFunctionCode::Read02, &data))
             },
-            ModbusFunctionCode::ReadHoldingRegisters => {
+            ModbusFunctionCode::Read03 => {
                 let read_req = pdu_processor.parse_read_request(&request.data)?;
                 let values = device.read_holding_registers(read_req.start_address, read_req.quantity)?;
                 let data = pdu_processor.build_register_response_data(&values);
-                Ok(pdu_processor.build_read_response(ModbusFunctionCode::ReadHoldingRegisters, &data))
+                Ok(pdu_processor.build_read_response(ModbusFunctionCode::Read03, &data))
             },
-            ModbusFunctionCode::ReadInputRegisters => {
+            ModbusFunctionCode::Read04 => {
                 let read_req = pdu_processor.parse_read_request(&request.data)?;
                 let values = device.read_input_registers(read_req.start_address, read_req.quantity)?;
                 let data = pdu_processor.build_register_response_data(&values);
-                Ok(pdu_processor.build_read_response(ModbusFunctionCode::ReadInputRegisters, &data))
+                Ok(pdu_processor.build_read_response(ModbusFunctionCode::Read04, &data))
             },
-            ModbusFunctionCode::WriteSingleCoil => {
+            ModbusFunctionCode::Write05 => {
                 let write_req = pdu_processor.parse_write_single_request(&request.data)?;
                 let coil_value = write_req.value == 0xFF00;
                 device.write_single_coil(write_req.address, coil_value)?;
                 Ok(pdu_processor.build_write_single_response(
-                    ModbusFunctionCode::WriteSingleCoil,
+                    ModbusFunctionCode::Write05,
                     write_req.address,
                     write_req.value
                 ))
             },
-            ModbusFunctionCode::WriteSingleRegister => {
+            ModbusFunctionCode::Write06 => {
                 let write_req = pdu_processor.parse_write_single_request(&request.data)?;
                 device.write_single_register(write_req.address, write_req.value)?;
                 Ok(pdu_processor.build_write_single_response(
-                    ModbusFunctionCode::WriteSingleRegister,
+                    ModbusFunctionCode::Write06,
                     write_req.address,
                     write_req.value
                 ))
             },
-            ModbusFunctionCode::WriteMultipleCoils => {
+            ModbusFunctionCode::Write0F => {
                 let write_req = pdu_processor.parse_write_multiple_coils_request(&request.data)?;
                 device.write_multiple_coils(write_req.start_address, &write_req.values)?;
                 Ok(pdu_processor.build_write_multiple_response(
-                    ModbusFunctionCode::WriteMultipleCoils,
+                    ModbusFunctionCode::Write0F,
                     write_req.start_address,
                     write_req.quantity
                 ))
             },
-            ModbusFunctionCode::WriteMultipleRegisters => {
+            ModbusFunctionCode::Write10 => {
                 let write_req = pdu_processor.parse_write_multiple_registers_request(&request.data)?;
                 device.write_multiple_registers(write_req.start_address, &write_req.values)?;
                 Ok(pdu_processor.build_write_multiple_response(
-                    ModbusFunctionCode::WriteMultipleRegisters,
+                    ModbusFunctionCode::Write10,
                     write_req.start_address,
                     write_req.quantity
                 ))
+            },
+            ModbusFunctionCode::Custom(code) => {
+                Err(ComSrvError::ProtocolError(format!("Unsupported function code: 0x{:02X}", code)))
             },
         }
     }

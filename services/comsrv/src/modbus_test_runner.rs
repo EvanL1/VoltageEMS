@@ -7,10 +7,10 @@ use chrono;
 
 // Import core Modbus modules directly
 use crate::core::protocols::modbus::{
-    pdu::{ModbusPduProcessor, ModbusFunctionCode},
+    pdu::ModbusPduProcessor,
     tests::mock_transport::{MockTransport, MockTransportConfig},
     protocol_engine::ModbusProtocolEngine,
-    common::ModbusConfig,
+    common::{ModbusConfig, ModbusFunctionCode},
     frame::{ModbusFrameProcessor, ModbusMode},
 };
 use crate::core::transport::traits::Transport;
@@ -23,19 +23,19 @@ pub async fn test_modbus_pdu_basic() -> Result<(), Box<dyn std::error::Error>> {
     
     // Test 1: Function code conversion
     println!("Test 1: Function code conversion");
-    let fc = ModbusFunctionCode::ReadHoldingRegisters;
+    let fc = ModbusFunctionCode::Read03;
     let fc_u8: u8 = fc.into();
-    println!("  ReadHoldingRegisters -> u8: 0x{:02X}", fc_u8);
+    println!("  Read03 -> u8: 0x{:02X}", fc_u8);
     assert_eq!(fc_u8, 0x03);
     
     let fc_back = ModbusFunctionCode::try_from(0x03)?;
-    println!("  u8 0x03 -> ReadHoldingRegisters: {:?}", fc_back);
-    assert_eq!(fc_back, ModbusFunctionCode::ReadHoldingRegisters);
+    println!("  u8 0x03 -> Read03: {:?}", fc_back);
+    assert_eq!(fc_back, ModbusFunctionCode::Read03);
     
     // Test 2: Read request building
     println!("Test 2: Read request building");
     let read_request = processor.build_read_request(
-        ModbusFunctionCode::ReadHoldingRegisters,
+        ModbusFunctionCode::Read03,
         40001,
         10
     );
@@ -168,7 +168,7 @@ pub async fn test_response_building() -> Result<(), Box<dyn std::error::Error>> 
     // Test 3: Exception response
     println!("Test 3: Exception response");
     let exception_pdu = processor.build_exception_response(
-        ModbusFunctionCode::ReadHoldingRegisters,
+        ModbusFunctionCode::Read03,
         crate::core::protocols::modbus::pdu::ModbusExceptionCode::IllegalDataAddress
     );
     println!("  Exception PDU: {:02X?}", exception_pdu);

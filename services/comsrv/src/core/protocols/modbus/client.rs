@@ -13,10 +13,12 @@ use std::time::Duration;
 use tracing::{warn, error, info, debug};
 use async_trait::async_trait;
 
-use crate::core::protocols::common::combase::{
+use crate::core::protocols::common::{
     traits::ComBase,
-    data_types::{PointData, ChannelStatus, PollingPoint},
-    telemetry::TelemetryType,
+    data_types::{PointData as CommonPointData, ChannelStatus, TelemetryType},
+};
+use crate::core::protocols::common::combase::{
+    data_types::{PollingPoint, PointData},
     polling::PointReader,
 };
 use crate::core::protocols::modbus::{
@@ -294,7 +296,7 @@ impl ModbusClient {
     }
 
     /// 读取单个点位
-    pub async fn read_point(&self, point_id: u32, telemetry_type: TelemetryType) -> Result<PointData> {
+    pub async fn read_point(&self, point_id: u32, telemetry_type: TelemetryType) -> Result<CommonPointData> {
         let start_time = std::time::Instant::now();
         
         debug!(
@@ -343,20 +345,36 @@ impl ModbusClient {
     }
 
     /// 内部读取点位实现
-    async fn internal_read_point(&self, point_id: u32, telemetry_type: TelemetryType) -> Result<PointData> {
+    async fn internal_read_point(&self, point_id: u32, telemetry_type: TelemetryType) -> Result<CommonPointData> {
         let mappings = self.mappings.read().await;
         
         match telemetry_type {
             TelemetryType::Telemetry => {
                 if let Some(mapping) = mappings.telemetry_mappings.get(&point_id) {
                     self.protocol_engine.read_telemetry_point(mapping, &self.transport_bridge).await
+                        .map(|pd| CommonPointData {
+                            id: pd.id,
+                            name: pd.name,
+                            value: pd.value,
+                            timestamp: pd.timestamp,
+                            unit: pd.unit,
+                            description: pd.description,
+                        })
                 } else {
                     Err(ComSrvError::NotFound(format!("Telemetry point not found: {}", point_id)))
                 }
             }
-            TelemetryType::Signaling => {
+            TelemetryType::Signal => {
                 if let Some(mapping) = mappings.signal_mappings.get(&point_id) {
                     self.protocol_engine.read_signal_point(mapping, &self.transport_bridge).await
+                        .map(|pd| CommonPointData {
+                            id: pd.id,
+                            name: pd.name,
+                            value: pd.value,
+                            timestamp: pd.timestamp,
+                            unit: pd.unit,
+                            description: pd.description,
+                        })
                 } else {
                     Err(ComSrvError::NotFound(format!("Signal point not found: {}", point_id)))
                 }
@@ -392,7 +410,7 @@ impl ModbusClient {
     }
 
     /// 批量读取点位
-    pub async fn read_points_batch(&self, point_ids: &[u32]) -> Result<Vec<PointData>> {
+    pub async fn read_points_batch(&self, point_ids: &[u32]) -> Result<Vec<CommonPointData>> {
         let mut results = Vec::new();
         let mappings = self.mappings.read().await;
         
@@ -404,7 +422,7 @@ impl ModbusClient {
             if mappings.telemetry_mappings.contains_key(&point_id) {
                 batch_requests.push((point_id, TelemetryType::Telemetry));
             } else if mappings.signal_mappings.contains_key(&point_id) {
-                batch_requests.push((point_id, TelemetryType::Signaling));
+                batch_requests.push((point_id, TelemetryType::Signal));
             }
         }
         
@@ -415,7 +433,7 @@ impl ModbusClient {
                 Err(e) => {
                     warn!("Batch read point {} failed: {}", point_id, e);
                     // 创建错误点位数据
-                    results.push(PointData {
+                    results.push(CommonPointData {
                         id: point_id.to_string(),
                         name: format!("Point_{}", point_id),
                         value: "error".to_string(),
@@ -553,7 +571,7 @@ impl ComBase for ModbusClient {
         Ok(())
     }
 
-    async fn get_all_points(&self) -> Vec<PointData> {
+    async fn get_all_points(&self) -> Vec<CommonPointData> {
         let mappings = self.mappings.read().await;
         let mut point_ids = Vec::new();
         
@@ -571,7 +589,7 @@ impl ComBase for ModbusClient {
         }
     }
 
-    async fn read_point(&self, point_id: &str) -> Result<PointData> {
+    async fn read_point(&self, point_id: &str) -> Result<CommonPointData> {
         let id: u32 = point_id.parse()
             .map_err(|_| ComSrvError::InvalidParameter(format!("Invalid point ID: {}", point_id)))?;
         
@@ -581,7 +599,7 @@ impl ComBase for ModbusClient {
         if mappings.telemetry_mappings.contains_key(&id) {
             self.read_point(id, TelemetryType::Telemetry).await
         } else if mappings.signal_mappings.contains_key(&id) {
-            self.read_point(id, TelemetryType::Signaling).await
+            self.read_point(id, TelemetryType::Signal).await
         } else {
             Err(ComSrvError::NotFound(format!("Point not found: {}", point_id)))
         }
@@ -693,10 +711,23 @@ impl PointReader for ModbusClient {
             .map_err(|_| ComSrvError::InvalidParameter(format!("Invalid point ID: {}", point.id)))?;
         
         // Determine telemetry type from PollingPoint
-        let telemetry_type = point.telemetry_type.clone();
+        let telemetry_type = match point.telemetry_type {
+            crate::core::protocols::common::combase::telemetry::TelemetryType::Telemetry => TelemetryType::Telemetry,
+            crate::core::protocols::common::combase::telemetry::TelemetryType::Signaling => TelemetryType::Signal,
+            crate::core::protocols::common::combase::telemetry::TelemetryType::Control => TelemetryType::Control,
+            crate::core::protocols::common::combase::telemetry::TelemetryType::Setpoint => TelemetryType::Adjustment,
+        };
         
-        // Use internal read_point implementation
+        // Use internal read_point implementation and convert result
         self.read_point(point_id, telemetry_type).await
+            .map(|pd| PointData {
+                id: pd.id,
+                name: pd.name,
+                value: pd.value,
+                timestamp: pd.timestamp,
+                unit: pd.unit,
+                description: pd.description,
+            })
     }
     
     async fn read_points_batch(&self, points: &[PollingPoint]) -> Result<Vec<PointData>> {
@@ -708,8 +739,16 @@ impl PointReader for ModbusClient {
             }
         }
         
-        // Use existing batch read implementation
+        // Use existing batch read implementation and convert result
         self.read_points_batch(&point_ids).await
+            .map(|points| points.into_iter().map(|pd| PointData {
+                id: pd.id,
+                name: pd.name,
+                value: pd.value,
+                timestamp: pd.timestamp,
+                unit: pd.unit,
+                description: pd.description,
+            }).collect())
     }
     
     async fn is_connected(&self) -> bool {

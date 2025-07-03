@@ -5,18 +5,27 @@
 
 use serde::{Deserialize, Serialize};
 
-/// Modbus function codes
+/// Modbus function codes with intuitive naming
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[repr(u8)]
 pub enum ModbusFunctionCode {
+    /// Read Coils (0x01) - 读线圈
     Read01 = 0x01,
+    /// Read Discrete Inputs (0x02) - 读离散输入
     Read02 = 0x02,
+    /// Read Holding Registers (0x03) - 读保持寄存器
     Read03 = 0x03,
+    /// Read Input Registers (0x04) - 读输入寄存器
     Read04 = 0x04,
+    /// Write Single Coil (0x05) - 写单个线圈
     Write05 = 0x05,
+    /// Write Single Register (0x06) - 写单个寄存器
     Write06 = 0x06,
+    /// Write Multiple Coils (0x0F) - 写多个线圈
     Write0F = 0x0F,
+    /// Write Multiple Registers (0x10) - 写多个寄存器
     Write10 = 0x10,
+    /// Custom function code - 自定义功能码
     Custom(u8),
 }
 
@@ -469,9 +478,9 @@ mod tests {
 
     #[test]
     fn test_function_code_conversion() {
-        assert_eq!(u8::from(ModbusFunctionCode::Read01), 0x01);
-        assert_eq!(ModbusFunctionCode::from(0x03), ModbusFunctionCode::Read03);
-        assert_eq!(u8::from(ModbusFunctionCode::Write10), 0x10);
+        assert_eq!(u8::from(ModbusFunctionCode::ReadCoils), 0x01);
+        assert_eq!(ModbusFunctionCode::from(0x03), ModbusFunctionCode::ReadHoldingRegisters);
+        assert_eq!(u8::from(ModbusFunctionCode::WriteMultipleRegisters), 0x10);
         
         // Test custom function code
         let custom = ModbusFunctionCode::Custom(0x50);
@@ -551,7 +560,7 @@ mod tests {
         let mapping = ModbusRegisterMapping::new_with_validation(
             "test".to_string(),
             1,
-            ModbusFunctionCode::Read03,
+            ModbusFunctionCode::ReadHoldingRegisters,
             1000,
             ModbusDataType::Float32,
         );
@@ -561,7 +570,7 @@ mod tests {
         let mapping = ModbusRegisterMapping::new_with_validation(
             "test".to_string(),
             0,
-            ModbusFunctionCode::Read03,
+            ModbusFunctionCode::ReadHoldingRegisters,
             1000,
             ModbusDataType::Float32,
         );
@@ -571,7 +580,7 @@ mod tests {
         let mapping = ModbusRegisterMapping::new_with_validation(
             "test".to_string(),
             1,
-            ModbusFunctionCode::Read03,
+            ModbusFunctionCode::ReadHoldingRegisters,
             1000,
             ModbusDataType::Bool,
         );
@@ -591,7 +600,7 @@ mod tests {
         let mapping = ModbusRegisterMapping::new_with_validation(
             "test".to_string(),
             1,
-            ModbusFunctionCode::Read03,
+            ModbusFunctionCode::ReadHoldingRegisters,
             65534,
             ModbusDataType::Float64, // Needs 4 registers
         );

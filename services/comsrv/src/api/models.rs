@@ -83,9 +83,9 @@ pub struct PointValue {
     pub description: String,
 }
 
-impl From<crate::core::protocols::common::combase::PointData> for PointValue {
-    /// Convert from ComBase PointData to API PointValue
-    fn from(point: crate::core::protocols::common::combase::PointData) -> Self {
+impl From<crate::core::protocols::common::data_types::PointData> for PointValue {
+    /// Convert from protocols common PointData to API PointValue
+    fn from(point: crate::core::protocols::common::data_types::PointData) -> Self {
         Self {
             id: point.id.to_string(),
             name: point.name.to_string(),

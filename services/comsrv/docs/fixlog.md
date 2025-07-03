@@ -1,5 +1,54 @@
 # Comsrv Fix Log
 
+## 2025-07-03
+
+### Modbus功能码重命名和编译错误修复
+
+1. **功能码重命名** - 将所有Modbus功能码从长名称改为短名称格式
+   - `ReadCoils` → `Read01`
+   - `ReadDiscreteInputs` → `Read02`
+   - `ReadHoldingRegisters` → `Read03`
+   - `ReadInputRegisters` → `Read04`
+   - `WriteSingleCoil` → `Write05`
+   - `WriteSingleRegister` → `Write06`
+   - `WriteMultipleCoils` → `Write0F`
+   - `WriteMultipleRegisters` → `Write10`
+
+2. **修复类型系统错误**
+   - 解决了`PointData`类型在不同模块间的路径不一致问题
+   - 修复了`From<PointData>` trait实现使用错误的类型路径
+   - 在`client.rs`中添加了类型转换逻辑，确保protocol_engine返回值与ComBase trait期望类型一致
+
+3. **修复并发控制问题**
+   - 将`PollingContext`中的`Arc<PollingConfig>`改为`Arc<RwLock<PollingConfig>>`
+   - 解决了`.read()`方法调用错误
+
+4. **修复枚举变体名称**
+   - 将`TelemetryType::Signal`修正为`TelemetryType::Signaling`
+   - 将`TelemetryType::Adjustment`修正为`TelemetryType::Setpoint`
+
+5. **修复PDU解析**
+   - 将`ModbusFunctionCode::try_from()`调用改为`ModbusFunctionCode::from()`
+   - 更新了相关测试用例
+
+6. **修复配置管理器**
+   - 将`data_type: cp.data_type.clone()`改为`data_type: Some(cp.data_type.clone())`
+
+### 文件修改清单
+- `/services/comsrv/src/core/protocols/modbus/common.rs` - 功能码枚举定义
+- `/services/comsrv/src/core/protocols/modbus/protocol_engine.rs` - 协议引擎实现
+- `/services/comsrv/src/core/protocols/modbus/pdu.rs` - PDU处理逻辑
+- `/services/comsrv/src/core/protocols/modbus/server.rs` - 服务器端处理
+- `/services/comsrv/src/core/protocols/modbus/client.rs` - 客户端实现和类型转换
+- `/services/comsrv/src/core/protocols/common/combase/defaults.rs` - 默认值处理
+- `/services/comsrv/src/api/models.rs` - API模型类型转换
+- `/services/comsrv/src/core/protocols/common/data_types.rs` - PollingContext定义
+- `/services/comsrv/src/core/config/config_manager.rs` - 配置管理器类型修复
+
+### 编译结果
+✅ 所有编译错误已修复，`cargo check`成功通过
+⚠️ 剩余41个警告，主要是未使用的代码和字段
+
 ## 2025-07-02
 
 ### 代码清理：移除未使用的导入和变量
