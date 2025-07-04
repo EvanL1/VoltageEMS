@@ -192,11 +192,7 @@ impl Transport for MockTransport {
         }
         
         // Record sent packet - INFO level shows raw packet content
-        info!(
-            "[MockTransport] Send: {} bytes: {:02X?}", 
-            data.len(), 
-            data
-        );
+        info!(hex_data = ?data, length = data.len(), direction = "send", "[MockTransport] Raw packet");
         
         // DEBUG level shows more detailed parsing information
         debug!(
@@ -261,11 +257,7 @@ impl Transport for MockTransport {
             state.stats.record_bytes_received(response.len());
             
             // Record received packet - INFO level shows raw packet content
-            info!(
-                "[MockTransport] Recv: {} bytes: {:02X?}", 
-                response.len(), 
-                &response
-            );
+            info!(hex_data = ?&response, length = response.len(), direction = "recv", "[MockTransport] Raw packet");
             
             // DEBUG level shows more detailed parsing information
             debug!(

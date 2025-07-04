@@ -239,32 +239,7 @@ mod tests {
         assert!(status.has_error());
     }
 
-    #[test]
-    fn test_polling_config_default() {
-        let config = PollingConfig::default();
-        assert!(config.enabled);
-        assert_eq!(config.interval_ms, 1000);
-        assert_eq!(config.max_points_per_cycle, 100);
-        assert_eq!(config.timeout_ms, 5000);
-        assert_eq!(config.max_retries, 3);
-        assert_eq!(config.retry_delay_ms, 1000);
-        assert!(config.enable_batch_reading);
-        assert_eq!(config.point_read_delay_ms, 10);
-    }
-
-    #[test]
-    fn test_polling_stats_default() {
-        let stats = PollingStats::default();
-        assert_eq!(stats.total_cycles, 0);
-        assert_eq!(stats.successful_cycles, 0);
-        assert_eq!(stats.failed_cycles, 0);
-        assert_eq!(stats.total_points_read, 0);
-        assert_eq!(stats.total_points_failed, 0);
-        assert_eq!(stats.avg_cycle_time_ms, 0.0);
-        assert_eq!(stats.current_polling_rate, 0.0);
-        assert!(stats.last_successful_polling.is_none());
-        assert!(stats.last_polling_error.is_none());
-    }
+    // Polling tests removed - polling functionality moved to protocol-specific implementations
 
     #[test]
     fn test_connection_state_equality() {

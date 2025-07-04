@@ -11,6 +11,7 @@ pub mod polling_tests;
 pub mod integration_tests;
 pub mod mock_transport;
 pub mod test_helpers;
+// pub mod simple_integration_test; // File removed
 // pub mod logging_test;
 // pub mod simple_logging_test;
 

@@ -478,9 +478,9 @@ mod tests {
 
     #[test]
     fn test_function_code_conversion() {
-        assert_eq!(u8::from(ModbusFunctionCode::ReadCoils), 0x01);
-        assert_eq!(ModbusFunctionCode::from(0x03), ModbusFunctionCode::ReadHoldingRegisters);
-        assert_eq!(u8::from(ModbusFunctionCode::WriteMultipleRegisters), 0x10);
+        assert_eq!(u8::from(ModbusFunctionCode::Read01), 0x01);
+        assert_eq!(ModbusFunctionCode::from(0x03), ModbusFunctionCode::Read03);
+        assert_eq!(u8::from(ModbusFunctionCode::Write10), 0x10);
         
         // Test custom function code
         let custom = ModbusFunctionCode::Custom(0x50);
@@ -560,7 +560,7 @@ mod tests {
         let mapping = ModbusRegisterMapping::new_with_validation(
             "test".to_string(),
             1,
-            ModbusFunctionCode::ReadHoldingRegisters,
+            ModbusFunctionCode::Read03,
             1000,
             ModbusDataType::Float32,
         );
@@ -570,7 +570,7 @@ mod tests {
         let mapping = ModbusRegisterMapping::new_with_validation(
             "test".to_string(),
             0,
-            ModbusFunctionCode::ReadHoldingRegisters,
+            ModbusFunctionCode::Read03,
             1000,
             ModbusDataType::Float32,
         );
@@ -580,7 +580,7 @@ mod tests {
         let mapping = ModbusRegisterMapping::new_with_validation(
             "test".to_string(),
             1,
-            ModbusFunctionCode::ReadHoldingRegisters,
+            ModbusFunctionCode::Read03,
             1000,
             ModbusDataType::Bool,
         );
@@ -600,7 +600,7 @@ mod tests {
         let mapping = ModbusRegisterMapping::new_with_validation(
             "test".to_string(),
             1,
-            ModbusFunctionCode::ReadHoldingRegisters,
+            ModbusFunctionCode::Read03,
             65534,
             ModbusDataType::Float64, // Needs 4 registers
         );

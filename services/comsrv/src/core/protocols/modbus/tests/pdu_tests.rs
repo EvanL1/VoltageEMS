@@ -4,7 +4,8 @@
 
 #[cfg(test)]
 mod tests {
-    use crate::core::protocols::modbus::pdu::{ModbusFunctionCode, ModbusExceptionCode};
+    use crate::core::protocols::modbus::common::ModbusFunctionCode;
+    use crate::core::protocols::modbus::pdu::ModbusExceptionCode;
     
     #[test]
     fn test_function_code_conversion() {
@@ -16,11 +17,11 @@ mod tests {
     }
     
     #[test]
-    fn test_function_code_try_from() {
+    fn test_function_code_from() {
         // Test u8 to function code conversion
-        assert!(ModbusFunctionCode::try_from(0x01).is_ok());
-        assert!(ModbusFunctionCode::try_from(0x03).is_ok());
-        assert!(ModbusFunctionCode::try_from(0xFF).is_err()); // Invalid code
+        assert_eq!(ModbusFunctionCode::from(0x01), ModbusFunctionCode::Read01);
+        assert_eq!(ModbusFunctionCode::from(0x03), ModbusFunctionCode::Read03);
+        assert_eq!(ModbusFunctionCode::from(0xFF), ModbusFunctionCode::Custom(0xFF)); // Custom code
     }
     
     // TODO: Add more PDU tests when PDU processor is implemented

@@ -750,7 +750,7 @@ mod tests {
 
     #[test]
     fn test_combase_point_data_conversion() {
-        let combase_point = crate::core::protocols::common::combase::PointData {
+        let combase_point = crate::core::protocols::common::data_types::PointData {
             id: "point_001".to_string(),
             name: "Temperature".to_string(),
             value: "25.5".to_string(),

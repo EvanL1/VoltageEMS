@@ -293,7 +293,7 @@ impl ModbusProtocolEngine {
     }
 
     /// 优化的请求发送（包含缓存和并发控制）
-    async fn send_optimized_request(
+    pub async fn send_optimized_request(
         &self,
         slave_id: u8,
         function_code: ModbusFunctionCode,
@@ -383,7 +383,9 @@ impl ModbusProtocolEngine {
         
         // Send request
         debug!("[Protocol Engine] Sending Modbus request to transport layer...");
+        info!(hex_data = ?frame, length = frame.len(), direction = "send", "[Protocol Engine] Raw packet");
         let response = transport.send_request(&frame).await?;
+        info!(hex_data = ?response, length = response.len(), direction = "recv", "[Protocol Engine] Raw packet");
         debug!("[Protocol Engine] Received Modbus response - Response length: {} bytes", response.len());
         
         // Parse response frame

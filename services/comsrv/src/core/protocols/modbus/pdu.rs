@@ -3,7 +3,7 @@
 //! This module implements the Modbus Protocol Data Unit handling,
 //! including parsing requests and building responses for all standard Modbus function codes.
 
-use tracing::{debug, warn};
+use tracing::{debug, warn, info};
 use crate::utils::error::{ComSrvError, Result};
 use super::common::ModbusFunctionCode;
 
@@ -101,6 +101,7 @@ impl ModbusPduProcessor {
 
     /// Parse PDU from byte slice
     pub fn parse_pdu(&self, data: &[u8]) -> Result<PduParseResult> {
+        info!(hex_data = ?data, length = data.len(), "[PDU Parser] Raw PDU data");
         debug!(
             "[PDU Parser] Starting PDU parsing - Length: {} bytes, Raw Data: {:02X?}", 
             data.len(), 

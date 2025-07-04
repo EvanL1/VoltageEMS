@@ -19,7 +19,7 @@ use crate::core::protocols::common::{
 };
 use crate::core::protocols::modbus::{
     protocol_engine::ModbusProtocolEngine,
-    common::ModbusConfig,
+    common::{ModbusConfig, ModbusFunctionCode},
     modbus_polling::{ModbusPollingEngine, ModbusPollingConfig, ModbusPoint},
 };
 use crate::core::config::types::protocol::TelemetryType as ConfigTelemetryType;
@@ -118,6 +118,20 @@ pub struct ModbusClient {
 }
 
 impl ModbusClient {
+    /// Create Redis connection
+    async fn create_redis_connection(&self) -> Result<redis::aio::MultiplexedConnection> {
+        // Use default Redis URL if not configured
+        let redis_url = std::env::var("REDIS_URL").unwrap_or_else(|_| "redis://127.0.0.1:6379".to_string());
+        
+        let client = redis::Client::open(redis_url)
+            .map_err(|e| ComSrvError::ConnectionError(format!("Redis client error: {}", e)))?;
+            
+        let conn = client.get_multiplexed_async_connection().await
+            .map_err(|e| ComSrvError::ConnectionError(format!("Redis connection error: {}", e)))?;
+            
+        Ok(conn)
+    }
+    
     /// 创建新的Modbus客户端
     pub async fn new(
         config: ModbusChannelConfig,
@@ -191,10 +205,92 @@ impl ModbusClient {
     }
     
     // 启动轮询
-    pub async fn start_polling(&self) -> Result<()> {
-        // TODO: 实现轮询启动逻辑
-        // 当前版本暂时跳过复杂的轮询实现
-        info!("Modbus polling functionality pending implementation");
+    pub async fn start_polling(&mut self) -> Result<()> {
+        // Initialize polling engine if not already done
+        if self.polling_engine.is_none() {
+            let polling_config = self.config.polling.clone();
+            let mut engine = ModbusPollingEngine::new(polling_config);
+            
+            // Create Redis manager if Redis is configured
+            if let Ok(redis_conn) = self.create_redis_connection().await {
+                let redis_config = crate::core::protocols::common::redis::RedisBatchSyncConfig {
+                    batch_size: 100,
+                    sync_interval: Duration::from_millis(1000),
+                    key_prefix: format!("comsrv:{}:points", self.config.channel_name),
+                    point_ttl: None,
+                    use_pipeline: true,
+                };
+                let redis_manager = Arc::new(
+                    crate::core::protocols::common::redis::RedisBatchSync::new(redis_conn, redis_config)
+                );
+                engine.set_redis_manager(redis_manager);
+                info!("[{}] Redis storage enabled for polling", self.config.channel_name);
+            } else {
+                warn!("[{}] Redis not available, data will not be persisted", self.config.channel_name);
+            }
+            
+            self.polling_engine = Some(Arc::new(RwLock::new(engine)));
+        }
+        
+        // Create Modbus points from mappings
+        let points = self.create_modbus_points().await?;
+        
+        // Add points to polling engine
+        if let Some(engine) = &self.polling_engine {
+            let mut engine = engine.write().await;
+            engine.add_points(points);
+            
+            // Clone necessary components for polling task
+            let engine_clone = self.polling_engine.clone().unwrap();
+            let protocol_engine = self.protocol_engine.clone();
+            let channel_name = self.config.channel_name.clone();
+            let transport_bridge = self.transport_bridge.clone();
+            
+            // Start polling task
+            tokio::spawn(async move {
+                let engine = engine_clone.read().await;
+                // Use closure as read callback
+                let result = engine.start(move |slave_id, function_code, address, quantity| {
+                    let engine_clone = protocol_engine.clone();
+                    let transport_clone = transport_bridge.clone();
+                    Box::pin(async move {
+                        // Perform Modbus read operation using the raw request method
+                        match engine_clone.send_optimized_request(
+                            slave_id,
+                            match function_code {
+                                1 => ModbusFunctionCode::Read01,
+                                2 => ModbusFunctionCode::Read02,
+                                3 => ModbusFunctionCode::Read03,
+                                4 => ModbusFunctionCode::Read04,
+                                _ => return Err(format!("Unsupported function code: {}", function_code).into()),
+                            },
+                            address,
+                            quantity,
+                            &transport_clone,
+                        ).await {
+                            Ok(data) => {
+                                // Convert raw bytes to u16 values
+                                let mut values = Vec::new();
+                                for chunk in data.chunks(2) {
+                                    if chunk.len() == 2 {
+                                        values.push(u16::from_be_bytes([chunk[0], chunk[1]]));
+                                    }
+                                }
+                                Ok(values)
+                            }
+                            Err(e) => Err(e.to_string().into()),
+                        }
+                    })
+                }).await;
+                
+                if let Err(e) = result {
+                    error!("[{}] Polling error: {}", channel_name, e);
+                }
+            });
+            
+            info!("[{}] Modbus polling started", self.config.channel_name);
+        }
+        
         Ok(())
     }
     
@@ -538,7 +634,15 @@ impl ComBase for ModbusClient {
     }
 
     async fn start(&mut self) -> Result<()> {
-        self.connect().await
+        // First establish connection
+        self.connect().await?;
+        
+        // Then start polling if configured
+        if self.config.polling.default_interval_ms > 0 {
+            self.start_polling().await?;
+        }
+        
+        Ok(())
     }
 
     async fn stop(&mut self) -> Result<()> {
@@ -665,6 +769,7 @@ mod tests {
             request_timeout: Duration::from_millis(5000),
             max_retries: 3,
             retry_delay: Duration::from_millis(1000),
+            polling: ModbusPollingConfig::default(),
         }
     }
 
