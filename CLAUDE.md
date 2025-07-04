@@ -19,11 +19,16 @@ cargo run --bin alarmsrv
 cargo run --bin apigateway
 cargo run --bin netsrv
 
+# Run single test
+cargo test test_name --package package_name
+cargo test test_name --package comsrv -- --exact
+
 # Test all services
 cargo test --workspace
 
 # Format and lint
 cargo fmt
+cargo fmt --check  # Check without modifying
 cargo clippy -- -D warnings
 
 # Run specific test
@@ -68,8 +73,12 @@ npm run lint     # ESLint checking
 # Restart demo
 ./restart-demo.sh
 
+# Start services only (without demo data)
+./start-services.sh
+
 # View logs
 docker-compose logs -f {service_name}
+docker-compose -f frontend/grafana/docker-compose.grafana.yml logs -f
 
 # Rebuild specific service
 docker-compose build {service_name}
@@ -104,6 +113,10 @@ cd services/comsrv
 ./scripts/start_modbus_simulator.sh    # Start Modbus simulator
 ./scripts/integration_test.sh          # Run integration tests
 ./scripts/check_redis_points.sh        # Verify Redis data
+./scripts/test_optimized_points.sh     # Performance test
+
+# Run modbus tests specifically
+cargo test --package comsrv modbus
 ```
 
 #### ModSrv Testing
@@ -113,6 +126,7 @@ cd services/modsrv
 ./run-local-tests.sh -b        # Rebuild image
 ./run-local-tests.sh --debug   # Debug mode
 python3 test-api.py            # API tests
+python3 test-rules-api.py      # Rules engine tests
 ```
 
 #### Running Individual Services
@@ -120,6 +134,10 @@ python3 test-api.py            # API tests
 # Each service has a start script
 cd services/{service_name}
 ./start.sh
+
+# API Gateway with config service
+cd services/apigateway
+./start-with-config-service.sh
 ```
 
 ## Configuration Management
@@ -155,19 +173,21 @@ See `docs/CONFIG_CENTER_ARCHITECTURE.md` for detailed configuration management g
 
 ## Architecture Overview
 
-VoltageEMS is a microservices-based Industrial IoT Energy Management System:
+VoltageEMS is a microservices-based Industrial IoT Energy Management System designed for edge computing scenarios.
 
 ### Core Services (Rust)
 
 - **comsrv**: Industrial protocol communication (Modbus TCP/RTU, CAN, IEC60870, GPIO)
-  - Channel-based device management with CSV point tables
+  - Channel-based device management with CSV point tables (四遥: YC/YX/YK/YT)
   - Layered transport architecture with unified Transport trait
-  - Real-time data stored in Redis
+  - Real-time data stored in Redis with optimized point management
+  - Protocol-specific polling engines (ModbusPollingEngine for Modbus)
 
 - **modsrv**: Model computation service with DAG workflow engine
   - Maps communication data to internal models
   - Executes control logic and calculations
   - Supports device control dispatch
+  - Template-based model instantiation
 
 - **hissrv**: Time-series data storage
   - Subscribes to Redis real-time data
@@ -188,6 +208,7 @@ VoltageEMS is a microservices-based Industrial IoT Energy Management System:
   - JWT authentication
   - Service routing and aggregation
   - Health monitoring
+  - Config service integration
 
 - **config-framework**: Configuration center for centralized config management
 
@@ -195,10 +216,10 @@ VoltageEMS is a microservices-based Industrial IoT Energy Management System:
 
 ```
 Industrial Devices → comsrv → Redis → {modsrv, hissrv, netsrv, alarmsrv}
-                                   ↓
-                              InfluxDB ← hissrv
-                                   ↓
-                           Frontend/Grafana
+                                   ↓        ↓
+                              apigateway   InfluxDB
+                                   ↓        ↓
+                              Frontend/Grafana
 ```
 
 ### Frontend Stack
@@ -207,6 +228,7 @@ Industrial Devices → comsrv → Redis → {modsrv, hissrv, netsrv, alarmsrv}
 - Electron for desktop application
 - Embedded Grafana for visualization
 - Real-time WebSocket updates
+- Vue Flow for DAG visualization
 
 ## Key Technical Details
 
@@ -230,29 +252,49 @@ All protocols share unified `Transport` trait:
 ### Configuration Management
 
 - **Figment-based** hierarchical configuration (YAML/TOML/JSON/ENV)
-- **CSV point tables** for telemetry, control, adjustment, and signal points
+- **CSV point tables** for device mapping:
+  - `telemetry.csv` (YC): Measurement points
+  - `signal.csv` (YX): Status signals
+  - `control.csv` (YK): Control commands
+  - `adjustment.csv` (YT): Set points
 - **Channel parameters** specific to each protocol
 - Validation and type safety throughout
 - **Configuration Center Support** (hissrv, config-framework)
   - Environment variables: `CONFIG_CENTER_URL`, `ENVIRONMENT`
   - Automatic fallback to local configuration files
 
+### Protocol Implementation
+
+All protocols use unified Transport trait:
+```rust
+trait Transport {
+    async fn connect(&mut self) -> Result<()>;
+    async fn disconnect(&mut self) -> Result<()>;
+    async fn send(&mut self, data: &[u8]) -> Result<()>;
+    async fn receive(&mut self, buffer: &mut [u8]) -> Result<usize>;
+}
+```
+
 ### Redis Data Structure
 
-- Points stored with optimized HashMap<u32, UniversalPointConfig>
+- Points stored with optimized `HashMap<u32, UniversalPointConfig>`
 - Multi-level indexes for fast queries
 - Batch operations with Pipeline mode
 - Local cache with TTL management
+- Key patterns:
+  - Real-time data: `voltage:{service}:data:{point_id}`
+  - Config: `voltage:{service}:config:{item}`
+  - Status: `voltage:{service}:status:{channel_id}`
 
 ### Development Workflow
 
-- Use feature branches: `feature/{service_name}` for development
-- Merge to `develop` branch when complete
-- Merge `develop` before starting new features
-- Write English code comments and git commit messages
-- Log fixes to `{service}/docs/fixlog.md`
-- Never auto-commit changes
-- Use Chinese for user-facing documentation
+1. Feature branches: `feature/{service_name}`
+2. Merge to `develop` when complete
+3. Pull `develop` before new features
+4. Update `services/{service}/docs/fixlog.md` after changes
+5. Never auto-commit (manual commits only)
+6. Use English for code comments and git commits
+7. Use Chinese (中文) for user-facing documentation
 
 ## Testing Infrastructure
 
@@ -269,11 +311,10 @@ All protocols share unified `Transport` trait:
 ## Important Development Notes
 
 - Services communicate only via Redis (no direct service calls)
-- Use English for code comments and git commits
-- Use Chinese for user-facing documentation
 - No quality attributes in data structures
 - Enhanced logging with daily rotation and configurable paths
 - Support multiple protocols in single deployment
+- Each service has independent configuration management
 - Each time you finish modifying a file, record it in the corresponding microservice's fixlog.md
 
 ## Access URLs
@@ -361,3 +402,15 @@ The project uses a Cargo workspace with the following members:
 - services/netsrv
 
 Each service is independently deployable and communicates via Redis pub/sub.
+
+## Project Structure Key Points
+
+- `services/`: All Rust microservices
+- `frontend/`: Vue.js web application
+- `config/`: Service configuration files
+- `docs/`: Architecture and design documentation
+- Each service has:
+  - `src/`: Source code
+  - `docs/fixlog.md`: Service-specific changelog
+  - `start.sh`: Service startup script
+  - Configuration examples
