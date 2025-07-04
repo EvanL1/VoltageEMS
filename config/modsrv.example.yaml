@@ -1,0 +1,56 @@
+# Model Service Configuration Example
+# Copy this file to modsrv.yaml and adjust values as needed
+
+# Service metadata
+service:
+  name: modsrv
+  version: "1.0.0"
+  description: "Model Service for VoltageEMS"
+  instance_id: "modsrv-prod-01"
+
+# Redis configuration
+redis:
+  url: "redis://redis.voltageems.local:6379"
+  database: 0
+  key_prefix: "voltage:modsrv:"
+  pool_size: 20
+  password: "your-secure-password"
+
+# Logging configuration
+logging:
+  level: "info"
+  console: false
+  file: "/var/log/voltageems/modsrv.log"
+  log_dir: "/var/log/voltageems"
+  max_file_size: 52428800  # 50MB
+  max_files: 10
+
+# Model execution configuration
+model:
+  update_interval_ms: 500  # Faster updates for production
+  config_key_pattern: "voltage:modsrv:model:config:*"
+  data_key_pattern: "voltage:data:*"
+  output_key_pattern: "voltage:modsrv:model:output:*"
+  templates_dir: "/opt/voltageems/modsrv/templates"
+
+# Control operations configuration
+control:
+  operation_key_pattern: "voltage:control:operation:*"
+  enabled: true
+
+# API server configuration
+api:
+  host: "0.0.0.0"
+  port: 8092
+
+# Monitoring configuration
+monitoring:
+  enabled: true
+  metrics_port: 9092
+  notification_threshold_ms: 3000
+
+# Storage configuration
+storage:
+  use_redis: true
+  storage_mode: "write_through"  # Immediate Redis writes for production
+  sync_interval_secs: 30
