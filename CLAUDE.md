@@ -292,6 +292,32 @@ let register_address = address_parts[2].parse::<u16>()?;
 
 ## API Gateway Documentation
 
+### Configuration Management
+
+API Gateway now supports two configuration modes:
+
+#### 1. Config Service Mode (Recommended)
+```bash
+# Set config service URL
+export CONFIG_SERVICE_URL=http://localhost:8000
+
+# Start with config service
+cd services/apigateway
+./start-with-config-service.sh
+```
+
+Features:
+- Dynamic configuration updates every 30 seconds
+- Version management and rollback support
+- Centralized configuration for all services
+- Automatic fallback to local config if service unavailable
+
+#### 2. Local Configuration Mode (Fallback)
+```bash
+# Uses apigateway.yaml file
+cargo run
+```
+
 ### Authentication
 
 API Gateway uses JWT-based authentication. Default credentials:

@@ -6,6 +6,7 @@ use std::sync::Arc;
 
 mod auth;
 mod config;
+mod config_client;
 mod error;
 mod handlers;
 mod redis_client;
@@ -13,6 +14,7 @@ mod response;
 
 use auth::middleware::JwtAuthMiddleware;
 use config::Config;
+use config_client::ConfigClient;
 use redis_client::RedisClient;
 
 #[actix_web::main]
@@ -20,11 +22,29 @@ async fn main() -> std::io::Result<()> {
     // Initialize logger
     env_logger::init_from_env(Env::default().default_filter_or("info"));
 
-    // Load configuration
-    let config = Arc::new(Config::load().expect("Failed to load configuration"));
-    let bind_addr = format!("{}:{}", config.server.host, config.server.port);
+    // Initialize configuration client
+    let config_service_url = std::env::var("CONFIG_SERVICE_URL")
+        .unwrap_or_else(|_| "http://localhost:8000".to_string());
+    let service_name = "apigateway";
     
+    let config_client = Arc::new(ConfigClient::new(config_service_url, service_name.to_string()));
+    
+    // Fetch initial configuration from config service
+    let config = match config_client.fetch_config().await {
+        Ok(cfg) => Arc::new(cfg),
+        Err(e) => {
+            log::warn!("Failed to fetch config from service: {}, falling back to local config", e);
+            // Fallback to local configuration
+            Arc::new(Config::load().expect("Failed to load local configuration"))
+        }
+    };
+    
+    let bind_addr = format!("{}:{}", config.server.host, config.server.port);
     info!("Starting API Gateway on {}", bind_addr);
+    
+    // Start configuration watch loop
+    let update_interval = std::time::Duration::from_secs(30);
+    config_client.start_watch_loop(update_interval).await;
 
     // Initialize Redis client
     let redis_client = Arc::new(
