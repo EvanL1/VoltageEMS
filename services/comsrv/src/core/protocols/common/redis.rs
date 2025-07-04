@@ -327,6 +327,80 @@ impl RedisBatchSync {
             
         Ok(())
     }
+    
+    /// Update a single point value in Redis
+    pub async fn update_value(&self, point_data: PointData) -> Result<()> {
+        let mut conn = self.redis_conn.lock().await;
+        let key = format!("{}:{}", self.config.key_prefix, point_data.id);
+        let value = json!({
+            "id": point_data.id,
+            "name": point_data.name,
+            "value": point_data.value,
+            "unit": point_data.unit,
+            "timestamp": point_data.timestamp.to_rfc3339(),
+            "description": point_data.description,
+        });
+        
+        let _: () = redis::cmd("SET")
+            .arg(&key)
+            .arg(value.to_string())
+            .query_async(&mut *conn)
+            .await
+            .map_err(|e| crate::utils::ComSrvError::RedisError(e.to_string()))?;
+            
+        if let Some(ttl) = self.config.point_ttl {
+            let _: () = redis::cmd("EXPIRE")
+                .arg(&key)
+                .arg(ttl.as_secs())
+                .query_async(&mut *conn)
+                .await
+                .map_err(|e| crate::utils::ComSrvError::RedisError(e.to_string()))?;
+        }
+        
+        Ok(())
+    }
+    
+    /// Batch update multiple point values in Redis
+    pub async fn batch_update_values(&self, points: Vec<PointData>) -> Result<()> {
+        if points.is_empty() {
+            return Ok(());
+        }
+        
+        let mut conn = self.redis_conn.lock().await;
+        
+        if self.config.use_pipeline {
+            // Use pipeline for better performance
+            let mut pipe = Pipeline::new();
+            
+            for point_data in points {
+                let key = format!("{}:{}", self.config.key_prefix, point_data.id);
+                let value = json!({
+                    "id": point_data.id,
+                    "name": point_data.name,
+                    "value": point_data.value,
+                    "unit": point_data.unit,
+                    "timestamp": point_data.timestamp.to_rfc3339(),
+                    "description": point_data.description,
+                });
+                
+                pipe.set(&key, value.to_string());
+                
+                if let Some(ttl) = self.config.point_ttl {
+                    pipe.expire(&key, ttl.as_secs() as usize);
+                }
+            }
+            
+            pipe.query_async::<_, ()>(&mut *conn).await
+                .map_err(|e| crate::utils::ComSrvError::RedisError(e.to_string()))?;
+        } else {
+            // Update individually
+            for point_data in points {
+                self.update_value(point_data).await?;
+            }
+        }
+        
+        Ok(())
+    }
 }
 
 /// Lua script for atomic operations

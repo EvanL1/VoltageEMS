@@ -258,6 +258,7 @@ pub async fn test_modbus_client_integration() -> Result<(), Box<dyn std::error::
         request_timeout: Duration::from_secs(5),
         max_retries: 3,
         retry_delay: Duration::from_millis(100),
+        polling: crate::core::config::types::channel_parameters::ModbusPollingConfig::default(),
     };
     println!("  Config created - Channel: {}, Timeout: {}ms", config.channel_name, config.request_timeout.as_millis());
     

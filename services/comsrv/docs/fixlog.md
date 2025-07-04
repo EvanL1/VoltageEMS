@@ -2,6 +2,126 @@
 
 ## 2025-07-03
 
+### 轮询机制架构重构 - 从通用层移到协议专属实现
+
+1. **问题识别**
+   - 轮询间隔被错误地放在通用层（UniversalPollingEngine）
+   - 这是 Modbus/IEC60870 等主从协议特有的功能
+   - CAN、GPIO 等事件驱动协议不需要轮询
+
+2. **架构重构**
+   - 移除 `common/polling.rs` 和 `common/combase/polling.rs`
+   - 从 `common/data_types.rs` 移除 PollingConfig、PollingContext、PollingStats
+   - 从 `common/traits.rs` 移除 PointReader trait
+   - 创建 Modbus 专属的 `ModbusPollingEngine`
+
+3. **Modbus 轮询引擎增强**
+   - 添加 ModbusPollingStats 和 SlavePollingStats 统计结构
+   - 实现批量读取优化（连续寄存器合并）
+   - 支持从站特定配置（不同从站不同轮询间隔）
+   - 集成 Redis 数据存储
+
+4. **RedisBatchSync 增强**
+   - 添加 `update_value()` 方法支持单点更新
+   - 添加 `batch_update_values()` 方法支持批量更新
+   - 使用 Pipeline 模式提升性能
+
+5. **编译错误修复**
+   - 移除 ModbusClient 的 PointReader trait 实现
+   - 修复 Send/Sync trait 约束问题
+   - 清理未使用的导入
+
+### 文件修改清单
+- `/services/comsrv/src/core/protocols/common/data_types.rs` - 移除轮询相关结构
+- `/services/comsrv/src/core/protocols/common/traits.rs` - 移除 PointReader trait
+- `/services/comsrv/src/core/protocols/common/mod.rs` - 清理模块导出
+- `/services/comsrv/src/core/protocols/common/combase/data_types.rs` - 移除轮询结构
+- `/services/comsrv/src/core/protocols/common/combase/mod.rs` - 清理模块导出
+- `/services/comsrv/src/core/protocols/modbus/modbus_polling.rs` - 增强实现
+- `/services/comsrv/src/core/protocols/modbus/client.rs` - 移除 PointReader 实现
+- `/services/comsrv/src/core/protocols/common/redis.rs` - 添加缺失方法
+
+### 编译结果
+✅ 编译成功，0个错误，33个警告
+
+### 配置结构调整 - 轮询参数移到协议层
+
+1. **配置类型增强**
+   - 在 `channel_parameters.rs` 中添加 ModbusPollingConfig 和 SlavePollingConfig
+   - ModbusParameters 结构体新增 polling 字段
+   - 支持默认值和 serde 序列化/反序列化
+
+2. **轮询配置结构**
+   ```rust
+   pub struct ModbusPollingConfig {
+       pub default_interval_ms: u64,      // 默认轮询间隔
+       pub enable_batch_reading: bool,    // 批量读取优化
+       pub max_batch_size: u16,          // 最大批量大小
+       pub read_timeout_ms: u64,         // 读取超时
+       pub slave_configs: HashMap<u8, SlavePollingConfig>, // 从站特定配置
+   }
+   ```
+
+3. **从站特定配置**
+   ```rust
+   pub struct SlavePollingConfig {
+       pub interval_ms: Option<u64>,              // 覆盖默认间隔
+       pub max_concurrent_requests: usize,        // 最大并发请求
+       pub retry_count: u8,                       // 重试次数
+   }
+   ```
+
+4. **配置文件示例**
+   - 创建 `config/modbus_polling_example.yml` 展示配置格式
+   - 支持全局默认值和从站级别覆盖
+   - 与现有配置系统无缝集成
+
+5. **实现细节**
+   - ModbusChannelConfig 增加 polling 字段
+   - ModbusClient 从配置读取轮询参数
+   - ProtocolFactory 添加 extract_modbus_polling_config 方法
+   - 支持从 YAML 自动解析轮询配置
+
+### 文件修改清单（续）
+- `/services/comsrv/src/core/config/types/channel_parameters.rs` - 添加轮询配置类型
+- `/services/comsrv/src/core/protocols/modbus/client.rs` - 更新使用配置中的轮询参数
+- `/services/comsrv/src/core/protocols/common/combase/protocol_factory.rs` - 添加轮询配置提取
+- `/services/comsrv/src/modbus_test_runner.rs` - 修复测试配置
+- `/services/comsrv/config/modbus_polling_example.yml` - 创建示例配置文件
+
+### 架构成果
+✅ **轮询机制完全从通用层移到协议专属实现**
+- Modbus 协议拥有专属的轮询配置和实现
+- 配置系统支持协议特定参数
+- 保持向后兼容性
+- 为其他协议（IEC60870、CAN、GPIO）的特定实现铺平道路
+
+## 2025-07-04
+
+### 轮询重构后续工作 - 清理和文档更新
+
+1. **Protocol Factory 清理**
+   - 删除了 `common/combase/protocol_factory.rs` 文件（783行未使用代码）
+   - 该文件包含过时的 MockComBase 测试代码
+   - 真正的协议创建逻辑已在各协议的 client.rs 中实现
+
+2. **轮询架构重构完成总结**
+   - ✅ 成功将轮询机制从通用层移到协议专属层
+   - ✅ Modbus 协议拥有完整的专属轮询实现
+   - ✅ 配置系统支持协议特定的轮询参数
+   - ✅ 为其他协议的特定实现方式铺平道路
+
+3. **架构改进成果**
+   - **解耦性提升**: 不同协议可以使用适合自己的数据采集方式
+   - **性能优化**: 避免了事件驱动协议（CAN/GPIO）的不必要开销
+   - **可维护性**: 每个协议的实现独立演进，互不影响
+   - **扩展性**: 新协议可以选择最适合的实现模式
+
+### 文件修改清单
+- 删除 `/services/comsrv/src/core/protocols/common/combase/protocol_factory.rs`
+
+## 2025-07-03
+
 ### Modbus功能码重命名和编译错误修复
 
 1. **功能码重命名** - 将所有Modbus功能码从长名称改为短名称格式
@@ -223,7 +343,7 @@
 - 更新了 service_impl.rs 使用新的配置服务
 - 修复了配置加载和通道创建的逻辑
 
-## 2025-01-02
+## 2025-07-02
 ### 架构分析：轮询机制设计问题
 
 **问题识别**：

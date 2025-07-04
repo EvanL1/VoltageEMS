@@ -17,10 +17,6 @@ use crate::core::protocols::common::{
     traits::ComBase,
     data_types::{PointData as CommonPointData, ChannelStatus, TelemetryType},
 };
-use crate::core::protocols::common::combase::{
-    data_types::{PollingPoint, PointData},
-    polling::PointReader,
-};
 use crate::core::protocols::modbus::{
     protocol_engine::ModbusProtocolEngine,
     common::ModbusConfig,
@@ -72,6 +68,8 @@ pub struct ModbusChannelConfig {
     pub request_timeout: Duration,
     pub max_retries: u32,
     pub retry_delay: Duration,
+    /// Polling configuration (protocol-specific)
+    pub polling: ModbusPollingConfig,
 }
 
 /// 协议映射表
@@ -166,16 +164,17 @@ impl ModbusClient {
     
     // 初始化 Modbus 专属轮询引擎
     async fn initialize_modbus_polling(&mut self) -> Result<()> {
-        // 创建轮询配置
-        let config = ModbusPollingConfig {
-            default_interval_ms: 1000, // 默认1秒轮询
-            enable_batch_reading: true,
-            max_batch_size: 100,
-            read_timeout_ms: 5000,
-            slave_configs: HashMap::new(), // TODO: 可以从配置文件加载从站特定配置
-        };
+        // Use polling configuration from channel config
+        let polling_config = self.config.polling.clone();
         
-        let mut engine = ModbusPollingEngine::new(config);
+        info!("[{}] Initializing Modbus polling engine with config: interval={}ms, batch={}, max_batch_size={}", 
+            self.config.channel_name,
+            polling_config.default_interval_ms,
+            polling_config.enable_batch_reading,
+            polling_config.max_batch_size
+        );
+        
+        let mut engine = ModbusPollingEngine::new(polling_config);
         
         // TODO: 设置 Redis 管理器
         // engine.set_redis_manager(redis_manager);
@@ -702,61 +701,3 @@ impl std::fmt::Debug for ModbusClient {
     }
 }
 
-/// Implement PointReader trait for ModbusClient
-#[async_trait]
-impl PointReader for ModbusClient {
-    async fn read_point(&self, point: &PollingPoint) -> Result<PointData> {
-        // Parse protocol parameters
-        let point_id = point.id.parse::<u32>()
-            .map_err(|_| ComSrvError::InvalidParameter(format!("Invalid point ID: {}", point.id)))?;
-        
-        // Determine telemetry type from PollingPoint
-        let telemetry_type = match point.telemetry_type {
-            crate::core::protocols::common::combase::telemetry::TelemetryType::Telemetry => TelemetryType::Telemetry,
-            crate::core::protocols::common::combase::telemetry::TelemetryType::Signaling => TelemetryType::Signal,
-            crate::core::protocols::common::combase::telemetry::TelemetryType::Control => TelemetryType::Control,
-            crate::core::protocols::common::combase::telemetry::TelemetryType::Setpoint => TelemetryType::Adjustment,
-        };
-        
-        // Use internal read_point implementation and convert result
-        self.read_point(point_id, telemetry_type).await
-            .map(|pd| PointData {
-                id: pd.id,
-                name: pd.name,
-                value: pd.value,
-                timestamp: pd.timestamp,
-                unit: pd.unit,
-                description: pd.description,
-            })
-    }
-    
-    async fn read_points_batch(&self, points: &[PollingPoint]) -> Result<Vec<PointData>> {
-        // Convert PollingPoints to point IDs
-        let mut point_ids = Vec::new();
-        for point in points {
-            if let Ok(id) = point.id.parse::<u32>() {
-                point_ids.push(id);
-            }
-        }
-        
-        // Use existing batch read implementation and convert result
-        self.read_points_batch(&point_ids).await
-            .map(|points| points.into_iter().map(|pd| PointData {
-                id: pd.id,
-                name: pd.name,
-                value: pd.value,
-                timestamp: pd.timestamp,
-                unit: pd.unit,
-                description: pd.description,
-            }).collect())
-    }
-    
-    async fn is_connected(&self) -> bool {
-        let state = self.connection_state.read().await;
-        state.connected
-    }
-    
-    fn protocol_name(&self) -> &str {
-        "modbus"
-    }
-}
