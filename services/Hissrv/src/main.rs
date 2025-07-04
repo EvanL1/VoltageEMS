@@ -6,8 +6,10 @@ use crate::api::start_api_server;
 use crate::monitoring::MetricsCollector;
 use tokio::sync::{mpsc, RwLock};
 use std::sync::Arc;
+use tokio::time::{interval, Duration};
 
 mod config;
+mod config_center;
 mod error;
 mod storage;
 mod pubsub;
@@ -17,8 +19,8 @@ mod logging;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    // Parse command line arguments and load configuration first
-    let config = Config::from_args()?;
+    // Load configuration from config center or local file
+    let config = Config::load().await?;
 
     // Initialize logging with config
     if let Err(e) = crate::logging::init_logging(&config.logging) {
@@ -54,7 +56,7 @@ async fn main() -> Result<()> {
     let storage_manager = Arc::new(RwLock::new(storage_manager));
 
     // Initialize metrics collector
-    let metrics_collector = MetricsCollector::new();
+    let _metrics_collector = MetricsCollector::new();
 
     // Setup message processing pipeline
     let (message_sender, message_receiver) = mpsc::unbounded_channel();
@@ -66,6 +68,35 @@ async fn main() -> Result<()> {
     // Setup Redis subscriber
     let mut redis_subscriber = RedisSubscriber::new(config.redis.clone(), message_sender);
     redis_subscriber.connect().await?;
+
+    // Spawn configuration update watcher if using config center
+    if std::env::var("CONFIG_CENTER_URL").is_ok() {
+        tokio::spawn(async {
+            let mut interval = interval(Duration::from_secs(60)); // Check every minute
+            
+            loop {
+                interval.tick().await;
+                
+                if let Ok(client) = crate::config_center::ConfigBuilder::new().build() {
+                    match client.check_for_updates().await {
+                        Ok(Some(_new_config)) => {
+                            tracing::info!("Configuration updated from config center");
+                            // In a real implementation, you would apply the new config
+                            // For now, we just log it
+                        }
+                        Ok(None) => {
+                            tracing::debug!("No configuration updates");
+                        }
+                        Err(e) => {
+                            tracing::warn!("Failed to check configuration updates: {}", e);
+                        }
+                    }
+                }
+            }
+        });
+        
+        tracing::info!("Configuration update watcher started");
+    }
 
     // Start background tasks
     let processor_handle = tokio::spawn(async move {

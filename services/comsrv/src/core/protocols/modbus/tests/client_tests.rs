@@ -7,6 +7,7 @@ mod tests {
     use crate::core::protocols::modbus::client::{ModbusClient, ModbusChannelConfig};
     use crate::core::protocols::common::combase::traits::ComBase;
     use crate::core::protocols::modbus::tests::mock_transport::{MockTransport, MockTransportConfig};
+    use crate::core::protocols::modbus::modbus_polling::ModbusPollingConfig;
     use std::time::Duration;
     
     #[tokio::test]
@@ -29,6 +30,7 @@ mod tests {
             request_timeout: Duration::from_millis(1000),
             max_retries: 3,
             retry_delay: Duration::from_millis(100),
+            polling: ModbusPollingConfig::default(),
         };
         
         let mock_config = MockTransportConfig::default();

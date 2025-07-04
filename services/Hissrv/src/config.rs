@@ -6,6 +6,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 use std::time::SystemTime;
+use tracing::info;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Config {
@@ -294,6 +295,34 @@ pub struct Args {
 impl Config {
     pub fn new() -> Self {
         Config::default()
+    }
+    
+    /// Load configuration from config center or fall back to local file
+    pub async fn load() -> Result<Self> {
+        // Check if we should use config center
+        if let Ok(_) = std::env::var("CONFIG_CENTER_URL") {
+            info!("CONFIG_CENTER_URL found, attempting to load from config center");
+            
+            match crate::config_center::ConfigBuilder::new().build() {
+                Ok(client) => {
+                    match client.get_config().await {
+                        Ok(service_config) => {
+                            info!("Successfully loaded configuration from config center");
+                            return Ok(service_config.into());
+                        }
+                        Err(e) => {
+                            tracing::warn!("Failed to load from config center: {}, falling back to local config", e);
+                        }
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to build config client: {}, falling back to local config", e);
+                }
+            }
+        }
+        
+        // Fall back to loading from args/file
+        Self::from_args()
     }
 
     pub fn from_args() -> Result<Self> {

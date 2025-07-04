@@ -5,18 +5,27 @@
 
 use serde::{Deserialize, Serialize};
 
-/// Modbus function codes
+/// Modbus function codes with intuitive naming
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[repr(u8)]
 pub enum ModbusFunctionCode {
+    /// Read Coils (0x01) - 读线圈
     Read01 = 0x01,
+    /// Read Discrete Inputs (0x02) - 读离散输入
     Read02 = 0x02,
+    /// Read Holding Registers (0x03) - 读保持寄存器
     Read03 = 0x03,
+    /// Read Input Registers (0x04) - 读输入寄存器
     Read04 = 0x04,
+    /// Write Single Coil (0x05) - 写单个线圈
     Write05 = 0x05,
+    /// Write Single Register (0x06) - 写单个寄存器
     Write06 = 0x06,
+    /// Write Multiple Coils (0x0F) - 写多个线圈
     Write0F = 0x0F,
+    /// Write Multiple Registers (0x10) - 写多个寄存器
     Write10 = 0x10,
+    /// Custom function code - 自定义功能码
     Custom(u8),
 }
 

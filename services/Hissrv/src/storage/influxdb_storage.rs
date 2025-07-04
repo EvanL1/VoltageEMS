@@ -4,6 +4,7 @@ use crate::error::{HisSrvError, Result};
 use crate::storage::{DataPoint, DataValue, QueryFilter, QueryResult, Storage, StorageStats};
 use influxdb::{Client, WriteQuery, Timestamp, ReadQuery};
 use chrono::{DateTime, Utc};
+use base64::{Engine as _, engine::general_purpose};
 
 pub struct InfluxDBStorage {
     client: Option<Client>,
@@ -37,7 +38,7 @@ impl InfluxDBStorage {
                     tracing::info!("Created InfluxDB retention policy: {} days", self.config.retention_days);
                     Ok(())
                 }
-                Err(e) => {
+                Err(_) => {
                     // Try to alter existing policy
                     let query = format!(
                         "ALTER RETENTION POLICY \"{}_retention\" ON \"{}\" DURATION {}d REPLICATION 1 DEFAULT",
@@ -62,24 +63,24 @@ impl InfluxDBStorage {
     }
 
     fn data_point_to_write_query(&self, data_point: &DataPoint) -> WriteQuery {
-        let timestamp = Timestamp::Nanoseconds(data_point.timestamp.timestamp_nanos() as u128);
+        let timestamp = Timestamp::Nanoseconds(data_point.timestamp.timestamp_nanos_opt().unwrap_or(0) as u128);
         let mut write_query = WriteQuery::new(timestamp, "hissrv_data")
-            .add_tag("key", &data_point.key);
+            .add_tag("key", data_point.key.as_str());
 
         // Add tags
         for (tag_key, tag_value) in &data_point.tags {
-            write_query = write_query.add_tag(tag_key, tag_value);
+            write_query = write_query.add_tag(tag_key.as_str(), tag_value.as_str());
         }
 
         // Add metadata as tags
         for (meta_key, meta_value) in &data_point.metadata {
-            write_query = write_query.add_tag(&format!("meta_{}", meta_key), meta_value);
+            write_query = write_query.add_tag(&format!("meta_{}", meta_key), meta_value.as_str());
         }
 
         // Add value based on type
         match &data_point.value {
             DataValue::String(s) => {
-                write_query = write_query.add_field("text_value", s);
+                write_query = write_query.add_field("text_value", s.as_str());
             }
             DataValue::Integer(i) => {
                 write_query = write_query.add_field("int_value", *i);
@@ -96,7 +97,7 @@ impl InfluxDBStorage {
             DataValue::Binary(b) => {
                 write_query = write_query.add_field("binary_size", b.len() as i64);
                 // Store base64 encoded binary data
-                write_query = write_query.add_field("binary_value", base64::encode(b));
+                write_query = write_query.add_field("binary_value", general_purpose::STANDARD.encode(b));
             }
         }
 
@@ -235,7 +236,7 @@ impl Storage for InfluxDBStorage {
 
         let read_query = ReadQuery::new(query);
         match client.query(&read_query).await {
-            Ok(result) => {
+            Ok(_result) => {
                 // Parse InfluxDB result to DataPoint objects
                 // This is a simplified implementation
                 let data_points: Vec<DataPoint> = Vec::new(); // TODO: Parse actual results
@@ -250,7 +251,7 @@ impl Storage for InfluxDBStorage {
         }
     }
 
-    async fn delete_data_points(&mut self, filter: &QueryFilter) -> Result<u64> {
+    async fn delete_data_points(&mut self, _filter: &QueryFilter) -> Result<u64> {
         // InfluxDB deletion is limited, typically done via retention policies
         // For now, return 0 as deletion count
         Ok(0)

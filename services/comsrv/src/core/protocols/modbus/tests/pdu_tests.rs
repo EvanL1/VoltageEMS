@@ -4,23 +4,24 @@
 
 #[cfg(test)]
 mod tests {
-    use crate::core::protocols::modbus::pdu::{ModbusFunctionCode, ModbusExceptionCode};
+    use crate::core::protocols::modbus::common::ModbusFunctionCode;
+    use crate::core::protocols::modbus::pdu::ModbusExceptionCode;
     
     #[test]
     fn test_function_code_conversion() {
         // Test function code to u8 conversion
-        assert_eq!(u8::from(ModbusFunctionCode::ReadCoils), 0x01);
-        assert_eq!(u8::from(ModbusFunctionCode::ReadHoldingRegisters), 0x03);
-        assert_eq!(u8::from(ModbusFunctionCode::WriteSingleCoil), 0x05);
-        assert_eq!(u8::from(ModbusFunctionCode::WriteSingleRegister), 0x06);
+        assert_eq!(u8::from(ModbusFunctionCode::Read01), 0x01);
+        assert_eq!(u8::from(ModbusFunctionCode::Read03), 0x03);
+        assert_eq!(u8::from(ModbusFunctionCode::Write05), 0x05);
+        assert_eq!(u8::from(ModbusFunctionCode::Write06), 0x06);
     }
     
     #[test]
-    fn test_function_code_try_from() {
+    fn test_function_code_from() {
         // Test u8 to function code conversion
-        assert!(ModbusFunctionCode::try_from(0x01).is_ok());
-        assert!(ModbusFunctionCode::try_from(0x03).is_ok());
-        assert!(ModbusFunctionCode::try_from(0xFF).is_err()); // Invalid code
+        assert_eq!(ModbusFunctionCode::from(0x01), ModbusFunctionCode::Read01);
+        assert_eq!(ModbusFunctionCode::from(0x03), ModbusFunctionCode::Read03);
+        assert_eq!(ModbusFunctionCode::from(0xFF), ModbusFunctionCode::Custom(0xFF)); // Custom code
     }
     
     // TODO: Add more PDU tests when PDU processor is implemented

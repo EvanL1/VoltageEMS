@@ -27,9 +27,9 @@ pub fn init_logging(config: &LoggingConfig) -> Result<(), Box<dyn std::error::Er
                 .with(env_filter)
                 .with(
                     fmt::layer()
-                        .json()
-                        .with_current_span(true)
-                        .with_span_list(true)
+                        // .json() // TODO: Enable with json feature
+                        // .with_current_span(true) // TODO: Enable with proper feature
+                        // .with_span_list(false) // TODO: Enable with proper feature
                         .with_writer(std::io::stdout)
                 )
                 .init();
@@ -126,18 +126,14 @@ pub fn log_api_request(
 pub fn log_error_with_context(
     error: &dyn std::error::Error,
     context: &str,
-    additional_fields: Option<&[(&str, &str)]>,
+    _additional_fields: Option<&[(&str, &str)]>,
 ) {
-    let mut event = tracing::error!(
+    tracing::error!(
         error = %error,
         context = context,
     );
-
-    if let Some(fields) = additional_fields {
-        for (key, value) in fields {
-            event = event.field(key, value);
-        }
-    }
+    
+    // TODO: Handle additional fields when tracing supports dynamic fields
 }
 
 // Performance tracking

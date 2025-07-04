@@ -94,39 +94,35 @@ enum Commands {
     },
 }
 
-fn main() -> Result<()> {
+#[tokio::main]
+async fn main() -> Result<()> {
     let args = Args::parse();
 
-    // Load configuration
-    let config_path = args.config.unwrap_or_else(|| {
-        // Try to find configuration file by priority
-        // 1. Check in /etc/voltageems/config/modsrv directory
-        if std::path::Path::new("/etc/voltageems/config/modsrv/modsrv.yaml").exists() {
-            PathBuf::from("/etc/voltageems/config/modsrv/modsrv.yaml")
-        } else if std::path::Path::new("/etc/voltageems/config/modsrv/modsrv.yml").exists() {
-            PathBuf::from("/etc/voltageems/config/modsrv/modsrv.yml")
-        } else if std::path::Path::new("/etc/voltageems/config/modsrv/modsrv.toml").exists() {
-            PathBuf::from("/etc/voltageems/config/modsrv/modsrv.toml")
-        } 
-        // 2. Fall back to checking in current directory
-        else if std::path::Path::new("modsrv.yaml").exists() {
-            PathBuf::from("modsrv.yaml")
-        } else if std::path::Path::new("modsrv.yml").exists() {
-            PathBuf::from("modsrv.yml")
-        } else if std::path::Path::new("modsrv.toml").exists() {
-            PathBuf::from("modsrv.toml")
-        } else {
-            // Default to /etc/voltageems/config/modsrv/modsrv.yaml
-            PathBuf::from("/etc/voltageems/config/modsrv/modsrv.yaml")
+    // Load configuration using the new loader
+    let config = if let Some(config_path) = args.config {
+        // Use specified config file
+        let loader = config::ConfigLoader::new()
+            .with_file(config_path.to_string_lossy())
+            .with_config_center(std::env::var("CONFIG_CENTER_URL").ok())
+            .with_env_prefix("MODSRV_");
+        
+        match loader.load().await {
+            Ok(cfg) => cfg,
+            Err(e) => {
+                eprintln!("Failed to load configuration: {}", e);
+                eprintln!("Using default configuration");
+                Config::default()
+            }
         }
-    });
-    
-    let config = match Config::from_file(&config_path) {
-        Ok(config) => config,
-        Err(e) => {
-            eprintln!("Failed to load configuration from {:?}: {}", config_path, e);
-            eprintln!("Using default configuration");
-            Config::default()
+    } else {
+        // Use automatic config loading
+        match config::load_config().await {
+            Ok(cfg) => cfg,
+            Err(e) => {
+                eprintln!("Failed to load configuration: {}", e);
+                eprintln!("Using default configuration");
+                Config::default()
+            }
         }
     };
 
@@ -160,19 +156,13 @@ fn main() -> Result<()> {
         }
         Some(Commands::Service) => {
             info!("Starting service");
-            let rt = tokio::runtime::Runtime::new()?;
-            rt.block_on(run_service(&config))?;
+            run_service(&config).await?;
         }
         Some(Commands::Api) => {
             info!("Starting API server only");
-            let rt = tokio::runtime::Runtime::new()?;
-            let config_clone = config.clone();
-            
-            rt.block_on(async {
-                if let Err(e) = start_api_server(&config_clone).await {
-                    error!("API server error: {}", e);
-                }
-            });
+            if let Err(e) = start_api_server(&config).await {
+                error!("API server error: {}", e);
+            }
         }
         Some(Commands::Create { template_id, instance_id, name }) => {
             info!("Creating model instance");

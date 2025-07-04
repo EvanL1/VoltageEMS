@@ -102,30 +102,31 @@ impl Default for Config {
             },
             services: ServicesConfig {
                 comsrv: ServiceConfig {
-                    url: "http://localhost:8081".to_string(),
+                    url: "http://localhost:8001".to_string(),
                     timeout_seconds: 30,
                 },
                 modsrv: ServiceConfig {
-                    url: "http://localhost:8082".to_string(),
+                    url: "http://localhost:8002".to_string(),
                     timeout_seconds: 30,
                 },
                 hissrv: ServiceConfig {
-                    url: "http://localhost:8083".to_string(),
+                    url: "http://localhost:8003".to_string(),
                     timeout_seconds: 30,
                 },
                 netsrv: ServiceConfig {
-                    url: "http://localhost:8084".to_string(),
+                    url: "http://localhost:8004".to_string(),
                     timeout_seconds: 30,
                 },
                 alarmsrv: ServiceConfig {
-                    url: "http://localhost:8085".to_string(),
+                    url: "http://localhost:8005".to_string(),
                     timeout_seconds: 30,
                 },
             },
             cors: CorsConfig {
                 allowed_origins: vec![
-                    "http://localhost:8090".to_string(),
+                    "http://localhost:8082".to_string(),
                     "http://localhost:3000".to_string(),
+                    "http://localhost:5173".to_string(),
                 ],
                 allowed_methods: vec![
                     "GET".to_string(),

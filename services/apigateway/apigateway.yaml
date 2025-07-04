@@ -5,31 +5,32 @@ server:
   workers: 4
 
 redis:
-  url: "redis://127.0.0.1:6379"
+  url: "redis://localhost:6379"
   pool_size: 10
   timeout_seconds: 5
 
 services:
   comsrv:
-    url: "http://localhost:8081"
+    url: "http://localhost:8001"
     timeout_seconds: 30
   modsrv:
-    url: "http://localhost:8082"
+    url: "http://localhost:8002"
     timeout_seconds: 30
   hissrv:
-    url: "http://localhost:8083"
+    url: "http://localhost:8003"
     timeout_seconds: 30
   netsrv:
-    url: "http://localhost:8084"
+    url: "http://localhost:8004"
     timeout_seconds: 30
   alarmsrv:
-    url: "http://localhost:8085"
+    url: "http://localhost:8005"
     timeout_seconds: 30
 
 cors:
   allowed_origins:
-    - "http://localhost:8090"
-    - "http://localhost:3000"
+    - "http://localhost:8082"  # Frontend
+    - "http://localhost:3000"  # Dev server
+    - "http://localhost:5173"  # Vite dev
   allowed_methods:
     - "GET"
     - "POST"

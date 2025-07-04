@@ -25,12 +25,12 @@
 //! - Proper error handling and exception responses
 //! - Integrated statistics and diagnostics
 
+pub mod common;
 pub mod pdu;
 pub mod frame;
 pub mod client;
 pub mod protocol_engine;
 pub mod server;
-pub mod common;
 pub mod modbus_polling;
 
 pub mod tests;
@@ -39,7 +39,8 @@ pub mod tests;
 pub use client::{ModbusClient, ModbusChannelConfig, ProtocolMappingTable, ConnectionState, ClientStatistics};
 pub use protocol_engine::{ModbusProtocolEngine, ProtocolEngineConfig};
 pub use server::{ModbusServer, ModbusDevice};
-pub use pdu::{ModbusFunctionCode, ModbusPduProcessor, ModbusExceptionCode};
+pub use pdu::{ModbusPduProcessor, ModbusExceptionCode};
+pub use common::ModbusFunctionCode;
 pub use frame::{ModbusFrameProcessor, ModbusMode};
 pub use common::{ModbusConfig, ModbusPoint};
 

@@ -3,47 +3,9 @@
 //! This module implements the Modbus Protocol Data Unit handling,
 //! including parsing requests and building responses for all standard Modbus function codes.
 
-use serde::{Deserialize, Serialize};
-use tracing::{debug, warn};
+use tracing::{debug, warn, info};
 use crate::utils::error::{ComSrvError, Result};
-
-/// Modbus function codes
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[repr(u8)]
-pub enum ModbusFunctionCode {
-    ReadCoils = 0x01,
-    ReadDiscreteInputs = 0x02,
-    ReadHoldingRegisters = 0x03,
-    ReadInputRegisters = 0x04,
-    WriteSingleCoil = 0x05,
-    WriteSingleRegister = 0x06,
-    WriteMultipleCoils = 0x0F,
-    WriteMultipleRegisters = 0x10,
-}
-
-impl From<ModbusFunctionCode> for u8 {
-    fn from(code: ModbusFunctionCode) -> u8 {
-        code as u8
-    }
-}
-
-impl TryFrom<u8> for ModbusFunctionCode {
-    type Error = ComSrvError;
-
-    fn try_from(value: u8) -> Result<Self> {
-        match value {
-            0x01 => Ok(ModbusFunctionCode::ReadCoils),
-            0x02 => Ok(ModbusFunctionCode::ReadDiscreteInputs),
-            0x03 => Ok(ModbusFunctionCode::ReadHoldingRegisters),
-            0x04 => Ok(ModbusFunctionCode::ReadInputRegisters),
-            0x05 => Ok(ModbusFunctionCode::WriteSingleCoil),
-            0x06 => Ok(ModbusFunctionCode::WriteSingleRegister),
-            0x0F => Ok(ModbusFunctionCode::WriteMultipleCoils),
-            0x10 => Ok(ModbusFunctionCode::WriteMultipleRegisters),
-            _ => Err(ComSrvError::ProtocolError(format!("Invalid function code: 0x{:02X}", value))),
-        }
-    }
-}
+use super::common::ModbusFunctionCode;
 
 /// Modbus exception codes
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -139,6 +101,7 @@ impl ModbusPduProcessor {
 
     /// Parse PDU from byte slice
     pub fn parse_pdu(&self, data: &[u8]) -> Result<PduParseResult> {
+        info!(hex_data = ?data, length = data.len(), "[PDU Parser] Raw PDU data");
         debug!(
             "[PDU Parser] Starting PDU parsing - Length: {} bytes, Raw Data: {:02X?}", 
             data.len(), 
@@ -159,7 +122,7 @@ impl ModbusPduProcessor {
             return self.parse_exception_response(data);
         }
 
-        let function_code = ModbusFunctionCode::try_from(function_code_raw)?;
+        let function_code = ModbusFunctionCode::from(function_code_raw);
         debug!("[PDU Parser] Function code parsed successfully: {:?} (0x{:02X})", function_code, function_code_raw);
         
         let pdu_data = &data[1..];
@@ -528,7 +491,7 @@ impl ModbusPduProcessor {
     /// Build request PDU for write multiple coils (0x0F)
     pub fn build_write_multiple_coils_request(&self, start_address: u16, values: &[bool]) -> Vec<u8> {
         let mut pdu = Vec::new();
-        pdu.push(ModbusFunctionCode::WriteMultipleCoils.into());
+        pdu.push(ModbusFunctionCode::Write0F.into());
         pdu.extend_from_slice(&start_address.to_be_bytes());
         pdu.extend_from_slice(&(values.len() as u16).to_be_bytes());
         
@@ -542,7 +505,7 @@ impl ModbusPduProcessor {
     /// Build request PDU for write multiple registers (0x10)
     pub fn build_write_multiple_registers_request(&self, start_address: u16, values: &[u16]) -> Vec<u8> {
         let mut pdu = Vec::new();
-        pdu.push(ModbusFunctionCode::WriteMultipleRegisters.into());
+        pdu.push(ModbusFunctionCode::Write10.into());
         pdu.extend_from_slice(&start_address.to_be_bytes());
         pdu.extend_from_slice(&(values.len() as u16).to_be_bytes());
         
@@ -566,11 +529,11 @@ mod tests {
 
     #[test]
     fn test_function_code_conversion() {
-        assert_eq!(u8::from(ModbusFunctionCode::ReadCoils), 0x01);
-        assert_eq!(u8::from(ModbusFunctionCode::ReadHoldingRegisters), 0x03);
+        assert_eq!(u8::from(ModbusFunctionCode::Read01), 0x01);
+        assert_eq!(u8::from(ModbusFunctionCode::Read03), 0x03);
         
-        assert_eq!(ModbusFunctionCode::try_from(0x01).unwrap(), ModbusFunctionCode::ReadCoils);
-        assert_eq!(ModbusFunctionCode::try_from(0x03).unwrap(), ModbusFunctionCode::ReadHoldingRegisters);
+        assert_eq!(ModbusFunctionCode::from(0x01), ModbusFunctionCode::Read01);
+        assert_eq!(ModbusFunctionCode::from(0x03), ModbusFunctionCode::Read03);
         
         assert!(ModbusFunctionCode::try_from(0xFF).is_err());
     }
@@ -621,7 +584,7 @@ mod tests {
         let processor = ModbusPduProcessor::new();
         
         let pdu = processor.build_exception_response(
-            ModbusFunctionCode::ReadCoils,
+            ModbusFunctionCode::Read01,
             ModbusExceptionCode::IllegalDataAddress
         );
         
@@ -633,7 +596,7 @@ mod tests {
         let processor = ModbusPduProcessor::new();
         
         let pdu = processor.build_read_request(
-            ModbusFunctionCode::ReadHoldingRegisters,
+            ModbusFunctionCode::Read03,
             0x0001,
             0x000A
         );

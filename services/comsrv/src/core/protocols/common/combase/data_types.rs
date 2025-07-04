@@ -84,80 +84,11 @@ pub struct PointData {
 }
 
 
-/// Polling configuration parameters
-#[derive(Debug, Clone)]
-pub struct PollingConfig {
-    /// Enable or disable polling for this channel
-    pub enabled: bool,
-    /// Polling interval in milliseconds
-    pub interval_ms: u64,
-    /// Maximum number of points to read per polling cycle
-    pub max_points_per_cycle: u32,
-    /// Timeout for each polling operation
-    pub timeout_ms: u64,
-    /// Number of retry attempts on failure
-    pub max_retries: u32,
-    /// Delay between retries in milliseconds
-    pub retry_delay_ms: u64,
-    /// Enable batch reading optimization (protocol-specific)
-    pub enable_batch_reading: bool,
-    /// Minimum delay between individual point reads in milliseconds
-    pub point_read_delay_ms: u64,
-}
+// PollingConfig has been removed from common layer.
+// Each protocol implements its own data collection mechanism.
 
-impl Default for PollingConfig {
-    fn default() -> Self {
-        Self {
-            enabled: true,
-            interval_ms: 1000,
-            max_points_per_cycle: 100,
-            timeout_ms: 5000,
-            max_retries: 3,
-            retry_delay_ms: 1000,
-            enable_batch_reading: true,
-            point_read_delay_ms: 10,
-        }
-    }
-}
-
-/// Polling statistics information
-#[derive(Debug, Clone)]
-pub struct PollingStats {
-    /// Total number of polling cycles executed
-    pub total_cycles: u64,
-    /// Number of successful polling cycles
-    pub successful_cycles: u64,
-    /// Number of failed polling cycles
-    pub failed_cycles: u64,
-    /// Total data points read successfully
-    pub total_points_read: u64,
-    /// Total data points that failed to read
-    pub total_points_failed: u64,
-    /// Average polling cycle time in milliseconds
-    pub avg_cycle_time_ms: f64,
-    /// Current polling rate (cycles per second)
-    pub current_polling_rate: f64,
-    /// Last successful polling timestamp
-    pub last_successful_polling: Option<DateTime<Utc>>,
-    /// Last polling error message
-    pub last_polling_error: Option<String>,
-}
-
-impl Default for PollingStats {
-    fn default() -> Self {
-        Self {
-            total_cycles: 0,
-            successful_cycles: 0,
-            failed_cycles: 0,
-            total_points_read: 0,
-            total_points_failed: 0,
-            avg_cycle_time_ms: 0.0,
-            current_polling_rate: 0.0,
-            last_successful_polling: None,
-            last_polling_error: None,
-        }
-    }
-}
+// PollingStats has been removed from common layer.
+// Each protocol tracks its own statistics.
 
 /// Connection state enumeration
 #[derive(Debug, Clone, PartialEq)]
@@ -308,32 +239,7 @@ mod tests {
         assert!(status.has_error());
     }
 
-    #[test]
-    fn test_polling_config_default() {
-        let config = PollingConfig::default();
-        assert!(config.enabled);
-        assert_eq!(config.interval_ms, 1000);
-        assert_eq!(config.max_points_per_cycle, 100);
-        assert_eq!(config.timeout_ms, 5000);
-        assert_eq!(config.max_retries, 3);
-        assert_eq!(config.retry_delay_ms, 1000);
-        assert!(config.enable_batch_reading);
-        assert_eq!(config.point_read_delay_ms, 10);
-    }
-
-    #[test]
-    fn test_polling_stats_default() {
-        let stats = PollingStats::default();
-        assert_eq!(stats.total_cycles, 0);
-        assert_eq!(stats.successful_cycles, 0);
-        assert_eq!(stats.failed_cycles, 0);
-        assert_eq!(stats.total_points_read, 0);
-        assert_eq!(stats.total_points_failed, 0);
-        assert_eq!(stats.avg_cycle_time_ms, 0.0);
-        assert_eq!(stats.current_polling_rate, 0.0);
-        assert!(stats.last_successful_polling.is_none());
-        assert!(stats.last_polling_error.is_none());
-    }
+    // Polling tests removed - polling functionality moved to protocol-specific implementations
 
     #[test]
     fn test_connection_state_equality() {

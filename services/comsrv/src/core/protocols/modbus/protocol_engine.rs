@@ -13,14 +13,12 @@ use std::time::{Duration, Instant};
 use tracing::{debug, warn, info};
 
 use crate::core::protocols::modbus::{
-    pdu::{ModbusPduProcessor, ModbusFunctionCode},
+    pdu::ModbusPduProcessor,
     frame::{ModbusFrameProcessor, ModbusMode},
-    common::ModbusConfig,
+    common::{ModbusConfig, ModbusFunctionCode},
 };
-use crate::core::protocols::common::combase::{
-    data_types::PointData,
-    transport_bridge::UniversalTransportBridge,
-};
+use crate::core::protocols::common::data_types::PointData;
+use crate::core::protocols::common::combase::transport_bridge::UniversalTransportBridge;
 // 简化的映射类型定义 - 替代已删除的复杂trait系统
 #[derive(Debug, Clone)]
 pub struct ModbusTelemetryMapping {
@@ -166,7 +164,7 @@ impl ModbusProtocolEngine {
         transport: &UniversalTransportBridge,
     ) -> Result<PointData> {
         // 遥测点默认使用功能码03（读保持寄存器）
-        let function_code = ModbusFunctionCode::ReadHoldingRegisters;
+        let function_code = ModbusFunctionCode::Read03;
         
         // 根据数据类型计算寄存器数量
         let register_count = match mapping.data_type.as_str() {
@@ -202,7 +200,7 @@ impl ModbusProtocolEngine {
         transport: &UniversalTransportBridge,
     ) -> Result<PointData> {
         // 遥信点默认使用功能码01（读线圈）
-        let function_code = ModbusFunctionCode::ReadCoils;
+        let function_code = ModbusFunctionCode::Read01;
         
         let quantity = 1;  // 读取一个位
         let response_data = self.send_optimized_request(
@@ -295,7 +293,7 @@ impl ModbusProtocolEngine {
     }
 
     /// 优化的请求发送（包含缓存和并发控制）
-    async fn send_optimized_request(
+    pub async fn send_optimized_request(
         &self,
         slave_id: u8,
         function_code: ModbusFunctionCode,
@@ -304,7 +302,7 @@ impl ModbusProtocolEngine {
         transport: &UniversalTransportBridge,
     ) -> Result<Vec<u8>> {
         // 生成缓存键
-        let cache_key = format!("{}:{}:{}:{}", slave_id, function_code as u8, address, quantity);
+        let cache_key = format!("{}:{}:{}:{}", slave_id, u8::from(function_code), address, quantity);
 
         // 检查缓存
         if self.config.cache_enabled {
@@ -385,7 +383,9 @@ impl ModbusProtocolEngine {
         
         // Send request
         debug!("[Protocol Engine] Sending Modbus request to transport layer...");
+        info!(hex_data = ?frame, length = frame.len(), direction = "send", "[Protocol Engine] Raw packet");
         let response = transport.send_request(&frame).await?;
+        info!(hex_data = ?response, length = response.len(), direction = "recv", "[Protocol Engine] Raw packet");
         debug!("[Protocol Engine] Received Modbus response - Response length: {} bytes", response.len());
         
         // Parse response frame
@@ -441,7 +441,7 @@ impl ModbusProtocolEngine {
         transport: &UniversalTransportBridge,
     ) -> Result<()> {
         let request_data = self.pdu_processor.build_write_single_request(
-            ModbusFunctionCode::WriteSingleRegister, address, value
+            ModbusFunctionCode::Write06, address, value
         );
         let transaction_id = self.transaction_id.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let frame = self.frame_processor.read().await.build_frame(slave_id, request_data, Some(transaction_id));
@@ -460,7 +460,7 @@ impl ModbusProtocolEngine {
     ) -> Result<()> {
         let coil_value = if value { 0xFF00 } else { 0x0000 };
         let request_data = self.pdu_processor.build_write_single_request(
-            ModbusFunctionCode::WriteSingleCoil, address, coil_value
+            ModbusFunctionCode::Write05, address, coil_value
         );
         let transaction_id = self.transaction_id.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let frame = self.frame_processor.read().await.build_frame(slave_id, request_data, Some(transaction_id));

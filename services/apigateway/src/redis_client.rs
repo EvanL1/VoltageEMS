@@ -35,10 +35,18 @@ impl RedisClient {
         Ok(())
     }
 
+    pub async fn set_with_expiry(&self, key: &str, value: &str, seconds: u64) -> ApiResult<()> {
+        self.set_ex(key, value, seconds).await
+    }
+
     pub async fn del(&self, key: &str) -> ApiResult<()> {
         let mut conn = self.connection.lock().await;
         let _: () = conn.del(key).await?;
         Ok(())
+    }
+
+    pub async fn delete(&self, key: &str) -> ApiResult<()> {
+        self.del(key).await
     }
 
     pub async fn exists(&self, key: &str) -> ApiResult<bool> {

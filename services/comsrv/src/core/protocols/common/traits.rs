@@ -81,17 +81,8 @@ pub trait ComBase: Send + Sync + std::fmt::Debug {
         }
     }
 
-    /// Get all point configurations using unified point manager
-    /// 
-    /// This provides a default implementation that uses OptimizedPointManager
-    /// if available. Protocols can override for custom implementations.
-    async fn get_all_point_configs(&self) -> Vec<super::data_types::PollingPoint> {
-        if let Some(point_manager) = self.get_point_manager().await {
-            point_manager.get_all_point_configs().await
-        } else {
-            Vec::new()
-        }
-    }
+    // Point configuration methods have been removed.
+    // Each protocol manages its own point configurations.
 
     /// Get enabled points by telemetry type using unified point manager
     async fn get_enabled_points_by_type(&self, telemetry_type: &TelemetryType) -> Vec<String> {
@@ -165,15 +156,5 @@ pub trait ProtocolPacketParser {
     fn packet_type(&self, data: &[u8]) -> Result<String>;
 }
 
-/// Point reader trait for polling operations
-#[async_trait]
-pub trait PointReader: Send + Sync {
-    /// Read multiple points in a single operation
-    async fn read_points(&self, points: &[super::data_types::PollingPoint]) -> Result<Vec<PointData>>;
-
-    /// Read a batch of points with optimization
-    async fn read_points_batch(&self, points: &[super::data_types::PollingPoint]) -> Result<Vec<PointData>>;
-
-    /// Test if point reader is operational
-    async fn test_read(&self) -> Result<bool>;
-}
+// PointReader trait has been removed from common layer.
+// Each protocol implements its own data reading mechanism.

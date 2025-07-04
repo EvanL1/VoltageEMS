@@ -6,15 +6,16 @@ use axum::{
 use chrono::Utc;
 use serde::Deserialize;
 use std::collections::HashMap;
-use utoipa::ToSchema;
+use utoipa::{ToSchema, IntoParams};
 use uuid::Uuid;
 
 use crate::api::{
+    models::ErrorResponse,
     models_history::*,
     AppState,
 };
 
-#[derive(Deserialize, ToSchema)]
+#[derive(Deserialize, ToSchema, IntoParams)]
 pub struct SourceQuery {
     /// 数据源ID模式匹配
     pattern: Option<String>,
@@ -22,7 +23,7 @@ pub struct SourceQuery {
     include_details: Option<bool>,
 }
 
-#[derive(Deserialize, ToSchema)]
+#[derive(Deserialize, ToSchema, IntoParams)]
 pub struct StatisticsQuery {
     /// 开始时间
     start_time: chrono::DateTime<Utc>,
@@ -78,13 +79,13 @@ pub async fn query_history(
         ));
     }
 
-    let storage_manager = state.storage_manager.read().await;
+    let _storage_manager = state.storage_manager.read().await;
     
     // 这里应该实现实际的历史数据查询逻辑
     // 由于当前存储接口还需要调整，先返回示例数据
     let mock_result = create_mock_history_result(&filter, &request_id);
     
-    let execution_time = start_time.elapsed().as_millis() as u64;
+    let _execution_time = start_time.elapsed().as_millis() as u64;
     
     let mut response = HistoryApiResponse::success(mock_result);
     response.request_id = Some(request_id);
@@ -107,7 +108,7 @@ pub async fn get_data_sources(
     State(state): State<AppState>,
     Query(query): Query<SourceQuery>,
 ) -> Result<Json<HistoryApiResponse<Vec<DataSourceInfo>>>, (StatusCode, Json<ErrorResponse>)> {
-    let storage_manager = state.storage_manager.read().await;
+    let _storage_manager = state.storage_manager.read().await;
     
     // 这里应该从存储后端获取实际的数据源信息
     let mock_sources = create_mock_data_sources(&query);
@@ -133,7 +134,7 @@ pub async fn get_data_source_detail(
     State(state): State<AppState>,
     Path(source_id): Path<String>,
 ) -> Result<Json<HistoryApiResponse<DataSourceInfo>>, (StatusCode, Json<ErrorResponse>)> {
-    let storage_manager = state.storage_manager.read().await;
+    let _storage_manager = state.storage_manager.read().await;
     
     // 检查数据源是否存在
     let mock_source = create_mock_data_source(&source_id);
@@ -157,7 +158,7 @@ pub async fn get_statistics(
     State(state): State<AppState>,
     Query(query): Query<StatisticsQuery>,
 ) -> Result<Json<HistoryApiResponse<TimeSeriesStatistics>>, (StatusCode, Json<ErrorResponse>)> {
-    let storage_manager = state.storage_manager.read().await;
+    let _storage_manager = state.storage_manager.read().await;
     
     let mock_stats = create_mock_statistics(&query);
     
@@ -177,7 +178,7 @@ pub async fn get_statistics(
     )
 )]
 pub async fn create_export_job(
-    State(state): State<AppState>,
+    State(_state): State<AppState>,
     Json(request): Json<ExportRequest>,
 ) -> Result<Json<HistoryApiResponse<ExportJob>>, (StatusCode, Json<ErrorResponse>)> {
     let job_id = Uuid::new_v4().to_string();
@@ -225,7 +226,7 @@ pub async fn create_export_job(
     )
 )]
 pub async fn get_export_job_status(
-    State(state): State<AppState>,
+    State(_state): State<AppState>,
     Path(job_id): Path<String>,
 ) -> Result<Json<HistoryApiResponse<ExportJob>>, (StatusCode, Json<ErrorResponse>)> {
     // TODO: 从任务队列或数据库中获取真实的任务状态
@@ -249,7 +250,7 @@ pub async fn get_export_job_status(
 }
 
 // Mock 数据创建函数（在实际实现中应该替换为真实的数据库查询）
-fn create_mock_history_result(filter: &HistoryQueryFilter, request_id: &str) -> HistoryQueryResult {
+fn create_mock_history_result(filter: &HistoryQueryFilter, _request_id: &str) -> HistoryQueryResult {
     let time_range = TimeRange {
         start_time: filter.start_time,
         end_time: filter.end_time,
@@ -290,7 +291,7 @@ fn create_mock_history_result(filter: &HistoryQueryFilter, request_id: &str) -> 
     }
 }
 
-fn create_mock_data_sources(query: &SourceQuery) -> Vec<DataSourceInfo> {
+fn create_mock_data_sources(_query: &SourceQuery) -> Vec<DataSourceInfo> {
     vec![
         DataSourceInfo {
             source_id: "device_001".to_string(),

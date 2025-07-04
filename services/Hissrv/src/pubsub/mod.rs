@@ -3,7 +3,7 @@ use crate::error::{HisSrvError, Result};
 use crate::storage::{DataPoint, DataValue, StorageManager};
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use redis::{Client, Commands};
+use redis::Client;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use tokio::sync::mpsc;
@@ -63,11 +63,17 @@ impl RedisSubscriber {
         let client = Client::open(redis_url)?;
 
         // Test connection
-        let mut conn = client.get_connection()?;
-        let ping_result: String = conn.ping()?;
-        
-        if ping_result != "PONG" {
-            return Err(HisSrvError::ConnectionError("Redis subscriber connection test failed".to_string()));
+        // Test connection
+        match client.get_connection() {
+            Ok(mut conn) => {
+                let ping_result: String = redis::cmd("PING").query(&mut conn)?;
+                if ping_result != "PONG" {
+                    return Err(HisSrvError::ConnectionError("Redis subscriber connection test failed".to_string()));
+                }
+            }
+            Err(e) => {
+                return Err(HisSrvError::RedisError(e));
+            }
         }
 
         tracing::info!("Redis subscriber connected successfully");
@@ -83,7 +89,8 @@ impl RedisSubscriber {
         }
 
         let client = self.client.as_ref().unwrap();
-        let mut pubsub = client.get_connection()?.as_pubsub();
+        let mut conn = client.get_connection()?;
+        let mut pubsub = conn.as_pubsub();
 
         // Subscribe to configured channels
         for channel in &self.config.subscription.channels {

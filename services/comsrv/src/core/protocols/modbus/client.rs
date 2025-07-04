@@ -13,15 +13,13 @@ use std::time::Duration;
 use tracing::{warn, error, info, debug};
 use async_trait::async_trait;
 
-use crate::core::protocols::common::combase::{
+use crate::core::protocols::common::{
     traits::ComBase,
-    data_types::{PointData, ChannelStatus, PollingPoint},
-    telemetry::TelemetryType,
-    polling::PointReader,
+    data_types::{PointData as CommonPointData, ChannelStatus, TelemetryType},
 };
 use crate::core::protocols::modbus::{
     protocol_engine::ModbusProtocolEngine,
-    common::ModbusConfig,
+    common::{ModbusConfig, ModbusFunctionCode},
     modbus_polling::{ModbusPollingEngine, ModbusPollingConfig, ModbusPoint},
 };
 use crate::core::config::types::protocol::TelemetryType as ConfigTelemetryType;
@@ -70,6 +68,8 @@ pub struct ModbusChannelConfig {
     pub request_timeout: Duration,
     pub max_retries: u32,
     pub retry_delay: Duration,
+    /// Polling configuration (protocol-specific)
+    pub polling: ModbusPollingConfig,
 }
 
 /// 协议映射表
@@ -118,6 +118,20 @@ pub struct ModbusClient {
 }
 
 impl ModbusClient {
+    /// Create Redis connection
+    async fn create_redis_connection(&self) -> Result<redis::aio::MultiplexedConnection> {
+        // Use default Redis URL if not configured
+        let redis_url = std::env::var("REDIS_URL").unwrap_or_else(|_| "redis://127.0.0.1:6379".to_string());
+        
+        let client = redis::Client::open(redis_url)
+            .map_err(|e| ComSrvError::ConnectionError(format!("Redis client error: {}", e)))?;
+            
+        let conn = client.get_multiplexed_async_connection().await
+            .map_err(|e| ComSrvError::ConnectionError(format!("Redis connection error: {}", e)))?;
+            
+        Ok(conn)
+    }
+    
     /// 创建新的Modbus客户端
     pub async fn new(
         config: ModbusChannelConfig,
@@ -164,16 +178,17 @@ impl ModbusClient {
     
     // 初始化 Modbus 专属轮询引擎
     async fn initialize_modbus_polling(&mut self) -> Result<()> {
-        // 创建轮询配置
-        let config = ModbusPollingConfig {
-            default_interval_ms: 1000, // 默认1秒轮询
-            enable_batch_reading: true,
-            max_batch_size: 100,
-            read_timeout_ms: 5000,
-            slave_configs: HashMap::new(), // TODO: 可以从配置文件加载从站特定配置
-        };
+        // Use polling configuration from channel config
+        let polling_config = self.config.polling.clone();
         
-        let mut engine = ModbusPollingEngine::new(config);
+        info!("[{}] Initializing Modbus polling engine with config: interval={}ms, batch={}, max_batch_size={}", 
+            self.config.channel_name,
+            polling_config.default_interval_ms,
+            polling_config.enable_batch_reading,
+            polling_config.max_batch_size
+        );
+        
+        let mut engine = ModbusPollingEngine::new(polling_config);
         
         // TODO: 设置 Redis 管理器
         // engine.set_redis_manager(redis_manager);
@@ -190,10 +205,92 @@ impl ModbusClient {
     }
     
     // 启动轮询
-    pub async fn start_polling(&self) -> Result<()> {
-        // TODO: 实现轮询启动逻辑
-        // 当前版本暂时跳过复杂的轮询实现
-        info!("Modbus polling functionality pending implementation");
+    pub async fn start_polling(&mut self) -> Result<()> {
+        // Initialize polling engine if not already done
+        if self.polling_engine.is_none() {
+            let polling_config = self.config.polling.clone();
+            let mut engine = ModbusPollingEngine::new(polling_config);
+            
+            // Create Redis manager if Redis is configured
+            if let Ok(redis_conn) = self.create_redis_connection().await {
+                let redis_config = crate::core::protocols::common::redis::RedisBatchSyncConfig {
+                    batch_size: 100,
+                    sync_interval: Duration::from_millis(1000),
+                    key_prefix: format!("comsrv:{}:points", self.config.channel_name),
+                    point_ttl: None,
+                    use_pipeline: true,
+                };
+                let redis_manager = Arc::new(
+                    crate::core::protocols::common::redis::RedisBatchSync::new(redis_conn, redis_config)
+                );
+                engine.set_redis_manager(redis_manager);
+                info!("[{}] Redis storage enabled for polling", self.config.channel_name);
+            } else {
+                warn!("[{}] Redis not available, data will not be persisted", self.config.channel_name);
+            }
+            
+            self.polling_engine = Some(Arc::new(RwLock::new(engine)));
+        }
+        
+        // Create Modbus points from mappings
+        let points = self.create_modbus_points().await?;
+        
+        // Add points to polling engine
+        if let Some(engine) = &self.polling_engine {
+            let mut engine = engine.write().await;
+            engine.add_points(points);
+            
+            // Clone necessary components for polling task
+            let engine_clone = self.polling_engine.clone().unwrap();
+            let protocol_engine = self.protocol_engine.clone();
+            let channel_name = self.config.channel_name.clone();
+            let transport_bridge = self.transport_bridge.clone();
+            
+            // Start polling task
+            tokio::spawn(async move {
+                let engine = engine_clone.read().await;
+                // Use closure as read callback
+                let result = engine.start(move |slave_id, function_code, address, quantity| {
+                    let engine_clone = protocol_engine.clone();
+                    let transport_clone = transport_bridge.clone();
+                    Box::pin(async move {
+                        // Perform Modbus read operation using the raw request method
+                        match engine_clone.send_optimized_request(
+                            slave_id,
+                            match function_code {
+                                1 => ModbusFunctionCode::Read01,
+                                2 => ModbusFunctionCode::Read02,
+                                3 => ModbusFunctionCode::Read03,
+                                4 => ModbusFunctionCode::Read04,
+                                _ => return Err(format!("Unsupported function code: {}", function_code).into()),
+                            },
+                            address,
+                            quantity,
+                            &transport_clone,
+                        ).await {
+                            Ok(data) => {
+                                // Convert raw bytes to u16 values
+                                let mut values = Vec::new();
+                                for chunk in data.chunks(2) {
+                                    if chunk.len() == 2 {
+                                        values.push(u16::from_be_bytes([chunk[0], chunk[1]]));
+                                    }
+                                }
+                                Ok(values)
+                            }
+                            Err(e) => Err(e.to_string().into()),
+                        }
+                    })
+                }).await;
+                
+                if let Err(e) = result {
+                    error!("[{}] Polling error: {}", channel_name, e);
+                }
+            });
+            
+            info!("[{}] Modbus polling started", self.config.channel_name);
+        }
+        
         Ok(())
     }
     
@@ -294,7 +391,7 @@ impl ModbusClient {
     }
 
     /// 读取单个点位
-    pub async fn read_point(&self, point_id: u32, telemetry_type: TelemetryType) -> Result<PointData> {
+    pub async fn read_point(&self, point_id: u32, telemetry_type: TelemetryType) -> Result<CommonPointData> {
         let start_time = std::time::Instant::now();
         
         debug!(
@@ -343,20 +440,36 @@ impl ModbusClient {
     }
 
     /// 内部读取点位实现
-    async fn internal_read_point(&self, point_id: u32, telemetry_type: TelemetryType) -> Result<PointData> {
+    async fn internal_read_point(&self, point_id: u32, telemetry_type: TelemetryType) -> Result<CommonPointData> {
         let mappings = self.mappings.read().await;
         
         match telemetry_type {
             TelemetryType::Telemetry => {
                 if let Some(mapping) = mappings.telemetry_mappings.get(&point_id) {
                     self.protocol_engine.read_telemetry_point(mapping, &self.transport_bridge).await
+                        .map(|pd| CommonPointData {
+                            id: pd.id,
+                            name: pd.name,
+                            value: pd.value,
+                            timestamp: pd.timestamp,
+                            unit: pd.unit,
+                            description: pd.description,
+                        })
                 } else {
                     Err(ComSrvError::NotFound(format!("Telemetry point not found: {}", point_id)))
                 }
             }
-            TelemetryType::Signaling => {
+            TelemetryType::Signal => {
                 if let Some(mapping) = mappings.signal_mappings.get(&point_id) {
                     self.protocol_engine.read_signal_point(mapping, &self.transport_bridge).await
+                        .map(|pd| CommonPointData {
+                            id: pd.id,
+                            name: pd.name,
+                            value: pd.value,
+                            timestamp: pd.timestamp,
+                            unit: pd.unit,
+                            description: pd.description,
+                        })
                 } else {
                     Err(ComSrvError::NotFound(format!("Signal point not found: {}", point_id)))
                 }
@@ -392,7 +505,7 @@ impl ModbusClient {
     }
 
     /// 批量读取点位
-    pub async fn read_points_batch(&self, point_ids: &[u32]) -> Result<Vec<PointData>> {
+    pub async fn read_points_batch(&self, point_ids: &[u32]) -> Result<Vec<CommonPointData>> {
         let mut results = Vec::new();
         let mappings = self.mappings.read().await;
         
@@ -404,7 +517,7 @@ impl ModbusClient {
             if mappings.telemetry_mappings.contains_key(&point_id) {
                 batch_requests.push((point_id, TelemetryType::Telemetry));
             } else if mappings.signal_mappings.contains_key(&point_id) {
-                batch_requests.push((point_id, TelemetryType::Signaling));
+                batch_requests.push((point_id, TelemetryType::Signal));
             }
         }
         
@@ -415,7 +528,7 @@ impl ModbusClient {
                 Err(e) => {
                     warn!("Batch read point {} failed: {}", point_id, e);
                     // 创建错误点位数据
-                    results.push(PointData {
+                    results.push(CommonPointData {
                         id: point_id.to_string(),
                         name: format!("Point_{}", point_id),
                         value: "error".to_string(),
@@ -521,7 +634,15 @@ impl ComBase for ModbusClient {
     }
 
     async fn start(&mut self) -> Result<()> {
-        self.connect().await
+        // First establish connection
+        self.connect().await?;
+        
+        // Then start polling if configured
+        if self.config.polling.default_interval_ms > 0 {
+            self.start_polling().await?;
+        }
+        
+        Ok(())
     }
 
     async fn stop(&mut self) -> Result<()> {
@@ -553,7 +674,7 @@ impl ComBase for ModbusClient {
         Ok(())
     }
 
-    async fn get_all_points(&self) -> Vec<PointData> {
+    async fn get_all_points(&self) -> Vec<CommonPointData> {
         let mappings = self.mappings.read().await;
         let mut point_ids = Vec::new();
         
@@ -571,7 +692,7 @@ impl ComBase for ModbusClient {
         }
     }
 
-    async fn read_point(&self, point_id: &str) -> Result<PointData> {
+    async fn read_point(&self, point_id: &str) -> Result<CommonPointData> {
         let id: u32 = point_id.parse()
             .map_err(|_| ComSrvError::InvalidParameter(format!("Invalid point ID: {}", point_id)))?;
         
@@ -581,7 +702,7 @@ impl ComBase for ModbusClient {
         if mappings.telemetry_mappings.contains_key(&id) {
             self.read_point(id, TelemetryType::Telemetry).await
         } else if mappings.signal_mappings.contains_key(&id) {
-            self.read_point(id, TelemetryType::Signaling).await
+            self.read_point(id, TelemetryType::Signal).await
         } else {
             Err(ComSrvError::NotFound(format!("Point not found: {}", point_id)))
         }
@@ -648,6 +769,7 @@ mod tests {
             request_timeout: Duration::from_millis(5000),
             max_retries: 3,
             retry_delay: Duration::from_millis(1000),
+            polling: ModbusPollingConfig::default(),
         }
     }
 
@@ -684,40 +806,3 @@ impl std::fmt::Debug for ModbusClient {
     }
 }
 
-/// Implement PointReader trait for ModbusClient
-#[async_trait]
-impl PointReader for ModbusClient {
-    async fn read_point(&self, point: &PollingPoint) -> Result<PointData> {
-        // Parse protocol parameters
-        let point_id = point.id.parse::<u32>()
-            .map_err(|_| ComSrvError::InvalidParameter(format!("Invalid point ID: {}", point.id)))?;
-        
-        // Determine telemetry type from PollingPoint
-        let telemetry_type = point.telemetry_type.clone();
-        
-        // Use internal read_point implementation
-        self.read_point(point_id, telemetry_type).await
-    }
-    
-    async fn read_points_batch(&self, points: &[PollingPoint]) -> Result<Vec<PointData>> {
-        // Convert PollingPoints to point IDs
-        let mut point_ids = Vec::new();
-        for point in points {
-            if let Ok(id) = point.id.parse::<u32>() {
-                point_ids.push(id);
-            }
-        }
-        
-        // Use existing batch read implementation
-        self.read_points_batch(&point_ids).await
-    }
-    
-    async fn is_connected(&self) -> bool {
-        let state = self.connection_state.read().await;
-        state.connected
-    }
-    
-    fn protocol_name(&self) -> &str {
-        "modbus"
-    }
-}

@@ -2024,7 +2024,7 @@ impl ConfigManager {
                 name: Some(cp.chinese_name.clone()),
                 description: None, // Not available in new structure
                 unit: cp.scaling.as_ref().and_then(|s| s.unit.clone()),
-                data_type: cp.data_type.clone(),
+                data_type: Some(cp.data_type.clone()),
                 scale: cp.scaling.as_ref().map(|s| s.scale).unwrap_or(1.0),
                 offset: cp.scaling.as_ref().map(|s| s.offset).unwrap_or(0.0),
                 reverse: 0, // Not available in new structure

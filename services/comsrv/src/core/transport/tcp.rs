@@ -256,6 +256,7 @@ impl Transport for TcpTransport {
                         let mut stats = self.stats.write().await;
                         stats.record_bytes_sent(bytes_sent);
 
+                        info!(hex_data = ?data, length = bytes_sent, direction = "send", "[TCP Transport] Raw packet");
                         debug!("Sent {} bytes via TCP", bytes_sent);
                         Ok(bytes_sent)
                     }
@@ -310,6 +311,7 @@ impl Transport for TcpTransport {
                         let mut stats = self.stats.write().await;
                         stats.record_bytes_received(bytes_read);
 
+                        info!(hex_data = ?&buffer[..bytes_read], length = bytes_read, direction = "recv", "[TCP Transport] Raw packet");
                         debug!("Received {} bytes via TCP", bytes_read);
                         Ok(bytes_read)
                     }

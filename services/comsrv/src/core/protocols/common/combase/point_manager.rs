@@ -12,6 +12,7 @@ use serde::{Deserialize, Serialize};
 
 use super::data_types::PointData;
 use super::telemetry::{TelemetryType, PointValueType};
+use super::defaults::{get_default_data_type, get_default_unit, get_default_scale};
 use crate::utils::Result;
 
 /// 默认缩放因子函数
@@ -44,8 +45,9 @@ pub struct UniversalPointConfig {
     /// 工程单位（可选）
     #[serde(default)]
     pub unit: Option<String>,
-    /// 数据类型（必需，float/int/double等）
-    pub data_type: String,
+    /// 数据类型（可选，如未提供则根据telemetry_type自动推断）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub data_type: Option<String>,
     /// 缩放因子（必需，默认1.0）
     #[serde(default = "default_scale")]
     pub scale: f64,
@@ -69,19 +71,23 @@ pub struct UniversalPointConfig {
 }
 
 impl UniversalPointConfig {
-    /// Create a new point configuration
+    /// Create a new point configuration with smart defaults
     pub fn new(point_id: u32, name: &str, telemetry_type: TelemetryType) -> Self {
         let is_writable = matches!(telemetry_type, TelemetryType::Control | TelemetryType::Setpoint);
+        
+        // Try to infer unit from signal name
+        let unit = get_default_unit(name);
+        
+        // Get default scale based on unit
+        let scale = get_default_scale(unit, name);
+        
         Self {
             point_id,
             name: Some(name.to_string()),
             description: None,
-            unit: None,
-            data_type: match telemetry_type.is_analog() {
-                true => "float".to_string(),
-                false => "bool".to_string(),
-            },
-            scale: 1.0,
+            unit: unit.map(|u| u.to_string()),
+            data_type: None, // Will be inferred from telemetry_type
+            scale,
             offset: 0.0,
             reverse: 0,
             telemetry_type,
@@ -89,6 +95,13 @@ impl UniversalPointConfig {
             readable: true,
             writable: is_writable,
         }
+    }
+    
+    /// Get the actual data type (inferred if not specified)
+    pub fn get_data_type(&self) -> String {
+        self.data_type.clone().unwrap_or_else(|| {
+            get_default_data_type(&self.telemetry_type).to_string()
+        })
     }
 
     /// Validate the point configuration
@@ -99,7 +112,9 @@ impl UniversalPointConfig {
             ));
         }
 
-        if self.data_type.is_empty() {
+        // data_type is now optional, so we validate the resolved type
+        let data_type = self.get_data_type();
+        if data_type.is_empty() {
             return Err(crate::utils::ComSrvError::InvalidParameter(
                 "Data type cannot be empty".to_string(),
             ));

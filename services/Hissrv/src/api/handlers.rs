@@ -1,26 +1,26 @@
 use axum::{
-    extract::{Path, Query, State},
+    extract::{Query, State},
     http::StatusCode,
     response::Json,
 };
 use chrono::Utc;
 use serde::Deserialize;
 use std::collections::HashMap;
-use utoipa::ToSchema;
+use utoipa::{ToSchema, IntoParams};
 
 use crate::api::{
     models::*,
+    models_history::HistoryQueryFilter,
     AppState,
 };
-use crate::error::HisSrvError;
 
-#[derive(Deserialize, ToSchema)]
+#[derive(Deserialize, ToSchema, IntoParams)]
 pub struct KeysQuery {
     /// 键匹配模式
     pattern: Option<String>,
 }
 
-#[derive(Deserialize, ToSchema)]
+#[derive(Deserialize, ToSchema, IntoParams)]
 pub struct DeleteQuery {
     /// 键匹配模式
     key_pattern: Option<String>,
@@ -97,7 +97,7 @@ pub async fn store_data_point(
     Json(api_data_point): Json<ApiDataPoint>,
 ) -> Result<Json<ApiResponse<String>>, (StatusCode, Json<ErrorResponse>)> {
     let mut storage_manager = state.storage_manager.write().await;
-    let data_point = api_data_point.into();
+    let data_point: crate::storage::DataPoint = api_data_point.into();
 
     // Determine which backend to use based on the key
     let backend_name = determine_storage_backend(&data_point.key);

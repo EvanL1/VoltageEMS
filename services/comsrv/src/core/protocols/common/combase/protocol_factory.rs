@@ -391,6 +391,11 @@ impl ProtocolClientFactory for ModbusTcpFactory {
                 timeout_ms,
                 points: vec![],
             };
+            // Extract polling configuration from parameters
+            let protocol_factory = ProtocolFactory::new();
+            let polling_config = protocol_factory.extract_modbus_polling_config(&config.parameters);
+            let polling_config_clone = polling_config.clone();
+            
             let channel_config = crate::core::protocols::modbus::ModbusChannelConfig {
                 channel_id: config.id,
                 channel_name: config.name.clone(),
@@ -398,6 +403,7 @@ impl ProtocolClientFactory for ModbusTcpFactory {
                 request_timeout: std::time::Duration::from_millis(5000),
                 max_retries: 3,
                 retry_delay: std::time::Duration::from_millis(1000),
+                polling: polling_config,
             };
             
             match crate::core::protocols::modbus::ModbusClient::new(
@@ -452,6 +458,7 @@ impl ProtocolClientFactory for ModbusTcpFactory {
                         request_timeout: std::time::Duration::from_millis(5000),
                         max_retries: 3,
                         retry_delay: std::time::Duration::from_millis(1000),
+                        polling: polling_config_clone,
                     };
                     let mut client = crate::core::protocols::modbus::ModbusClient::new(channel_config, transport).await?;
                     
@@ -470,6 +477,10 @@ impl ProtocolClientFactory for ModbusTcpFactory {
 
         // Fallback to legacy client when no config manager is provided
         tracing::info!("Creating legacy ModbusClient for channel {} (no config manager)", config.id);
+        // Extract polling configuration for legacy client
+        let protocol_factory = ProtocolFactory::new();
+        let polling_config = protocol_factory.extract_modbus_polling_config(&config.parameters);
+        
         let channel_config = crate::core::protocols::modbus::ModbusChannelConfig {
             channel_id: config.id,
             channel_name: config.name.clone(),
@@ -477,6 +488,7 @@ impl ProtocolClientFactory for ModbusTcpFactory {
             request_timeout: std::time::Duration::from_millis(5000),
             max_retries: 3,
             retry_delay: std::time::Duration::from_millis(1000),
+            polling: polling_config,
         };
         let client = crate::core::protocols::modbus::ModbusClient::new(channel_config, transport).await?;
         Ok(Box::new(client))
@@ -625,6 +637,10 @@ impl ProtocolClientFactory for ModbusRtuFactory {
         };
         
         let transport = factory.create_serial_transport(transport_config).await?;
+        
+        // Extract polling configuration for RTU
+        let polling_config = ProtocolFactory::new().extract_modbus_polling_config(&config.parameters);
+        
         let channel_config = crate::core::protocols::modbus::ModbusChannelConfig {
             channel_id: config.id,
             channel_name: config.name.clone(),
@@ -632,6 +648,7 @@ impl ProtocolClientFactory for ModbusRtuFactory {
             request_timeout: std::time::Duration::from_millis(5000),
             max_retries: 3,
             retry_delay: std::time::Duration::from_millis(1000),
+            polling: polling_config,
         };
         let client = crate::core::protocols::modbus::ModbusClient::new(channel_config, transport).await?;
 
@@ -832,19 +849,19 @@ impl ComBase for MockComBase {
         Ok(())
     }
 
-    async fn status(&self) -> crate::core::protocols::common::combase::ChannelStatus {
-        crate::core::protocols::common::combase::ChannelStatus::new(&self.channel_id())
+    async fn status(&self) -> crate::core::protocols::common::data_types::ChannelStatus {
+        crate::core::protocols::common::data_types::ChannelStatus::new(&self.channel_id())
     }
 
-    async fn update_status(&mut self, _status: crate::core::protocols::common::combase::ChannelStatus) -> Result<()> {
+    async fn update_status(&mut self, _status: crate::core::protocols::common::data_types::ChannelStatus) -> Result<()> {
         Ok(())
     }
 
-    async fn get_all_points(&self) -> Vec<crate::core::protocols::common::combase::PointData> {
+    async fn get_all_points(&self) -> Vec<crate::core::protocols::common::data_types::PointData> {
         Vec::new()
     }
 
-    async fn read_point(&self, _point_id: &str) -> Result<crate::core::protocols::common::combase::PointData> {
+    async fn read_point(&self, _point_id: &str) -> Result<crate::core::protocols::common::data_types::PointData> {
         Err(crate::utils::ComSrvError::InvalidOperation("Mock implementation".to_string()))
     }
 
@@ -1160,6 +1177,21 @@ impl ProtocolFactory {
         self.protocol_factories
             .get(protocol_type)
             .map(|factory| factory.default_config())
+    }
+    
+    /// Extract Modbus polling configuration from channel parameters
+    fn extract_modbus_polling_config(&self, parameters: &std::collections::HashMap<String, serde_yaml::Value>) -> crate::core::config::types::channel_parameters::ModbusPollingConfig {
+        use crate::core::config::types::channel_parameters::ModbusPollingConfig;
+        
+        // Check if polling configuration exists in parameters
+        if let Some(polling_value) = parameters.get("polling") {
+            if let Ok(polling_config) = serde_yaml::from_value::<ModbusPollingConfig>(polling_value.clone()) {
+                return polling_config;
+            }
+        }
+        
+        // Return default configuration if not found or parsing fails
+        ModbusPollingConfig::default()
     }
 
     /// Get configuration schema for a protocol
