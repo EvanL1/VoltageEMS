@@ -19,11 +19,16 @@ cargo run --bin alarmsrv
 cargo run --bin apigateway
 cargo run --bin netsrv
 
+# Run single test
+cargo test test_name --package package_name
+cargo test test_name --package comsrv -- --exact
+
 # Test all services
 cargo test --workspace
 
 # Format and lint
 cargo fmt
+cargo fmt --check  # Check without modifying
 cargo clippy -- -D warnings
 
 # Run with logging
@@ -53,8 +58,12 @@ npm run lint     # ESLint checking
 # Restart demo
 ./restart-demo.sh
 
+# Start services only (without demo data)
+./start-services.sh
+
 # View logs
 docker-compose logs -f {service_name}
+docker-compose -f frontend/grafana/docker-compose.grafana.yml logs -f
 ```
 
 ### Service-Specific Commands
@@ -65,6 +74,10 @@ cd services/comsrv
 ./scripts/start_modbus_simulator.sh    # Start Modbus simulator
 ./scripts/integration_test.sh          # Run integration tests
 ./scripts/check_redis_points.sh        # Verify Redis data
+./scripts/test_optimized_points.sh     # Performance test
+
+# Run modbus tests specifically
+cargo test --package comsrv modbus
 ```
 
 #### ModSrv Testing
@@ -74,6 +87,7 @@ cd services/modsrv
 ./run-local-tests.sh -b        # Rebuild image
 ./run-local-tests.sh --debug   # Debug mode
 python3 test-api.py            # API tests
+python3 test-rules-api.py      # Rules engine tests
 ```
 
 #### Running Individual Services
@@ -81,6 +95,10 @@ python3 test-api.py            # API tests
 # Each service has a start script
 cd services/{service_name}
 ./start.sh
+
+# API Gateway with config service
+cd services/apigateway
+./start-with-config-service.sh
 ```
 
 ## Configuration Management
@@ -116,19 +134,21 @@ See `docs/CONFIG_CENTER_ARCHITECTURE.md` for detailed configuration management g
 
 ## Architecture Overview
 
-VoltageEMS is a microservices-based Industrial IoT Energy Management System:
+VoltageEMS is a microservices-based Industrial IoT Energy Management System designed for edge computing scenarios.
 
 ### Core Services (Rust)
 
 - **comsrv**: Industrial protocol communication (Modbus TCP/RTU, CAN, IEC60870, GPIO)
-  - Channel-based device management with CSV point tables
+  - Channel-based device management with CSV point tables (四遥: YC/YX/YK/YT)
   - Layered transport architecture with unified Transport trait
-  - Real-time data stored in Redis
+  - Real-time data stored in Redis with optimized point management
+  - Protocol-specific polling engines (ModbusPollingEngine for Modbus)
 
 - **modsrv**: Model computation service with DAG workflow engine
   - Maps communication data to internal models
   - Executes control logic and calculations
   - Supports device control dispatch
+  - Template-based model instantiation
 
 - **hissrv**: Time-series data storage
   - Subscribes to Redis real-time data
@@ -149,15 +169,16 @@ VoltageEMS is a microservices-based Industrial IoT Energy Management System:
   - JWT authentication
   - Service routing and aggregation
   - Health monitoring
+  - Config service integration
 
 ### Data Flow
 
 ```
 Industrial Devices → comsrv → Redis → {modsrv, hissrv, netsrv, alarmsrv}
-                                   ↓
-                              InfluxDB ← hissrv
-                                   ↓
-                           Frontend/Grafana
+                                   ↓        ↓
+                              apigateway   InfluxDB
+                                   ↓        ↓
+                              Frontend/Grafana
 ```
 
 ### Frontend Stack
@@ -166,6 +187,7 @@ Industrial Devices → comsrv → Redis → {modsrv, hissrv, netsrv, alarmsrv}
 - Electron for desktop application
 - Embedded Grafana for visualization
 - Real-time WebSocket updates
+- Vue Flow for DAG visualization
 
 ## Key Technical Details
 
@@ -173,10 +195,10 @@ Industrial Devices → comsrv → Redis → {modsrv, hissrv, netsrv, alarmsrv}
 
 - Hierarchical YAML/JSON configuration using Figment
 - CSV point tables for device mapping:
-  - `telemetry.csv`: Measurement points
-  - `control.csv`: Control commands
-  - `adjustment.csv`: Set points
-  - `signal.csv`: Status signals
+  - `telemetry.csv` (YC): Measurement points
+  - `signal.csv` (YX): Status signals
+  - `control.csv` (YK): Control commands
+  - `adjustment.csv` (YT): Set points
 
 ### Protocol Implementation
 
@@ -192,10 +214,14 @@ trait Transport {
 
 ### Redis Data Structure
 
-- Points stored with optimized HashMap<u32, UniversalPointConfig>
+- Points stored with optimized `HashMap<u32, UniversalPointConfig>`
 - Multi-level indexes for fast queries
 - Batch operations with Pipeline mode
 - Local cache with TTL management
+- Key patterns:
+  - Real-time data: `voltage:{service}:data:{point_id}`
+  - Config: `voltage:{service}:config:{item}`
+  - Status: `voltage:{service}:status:{channel_id}`
 
 ### Development Workflow
 
@@ -204,6 +230,8 @@ trait Transport {
 3. Pull `develop` before new features
 4. Update `services/{service}/docs/fixlog.md` after changes
 5. Never auto-commit (manual commits only)
+6. Use English for code comments and git commits
+7. Use Chinese (中文) for user-facing documentation
 
 ## Testing Infrastructure
 
@@ -220,11 +248,10 @@ trait Transport {
 ## Important Development Notes
 
 - Services communicate only via Redis (no direct service calls)
-- Use English for code comments and git commits
-- Use Chinese for user-facing documentation
 - No quality attributes in data structures
 - Enhanced logging with daily rotation and configurable paths
 - Support multiple protocols in single deployment
+- Each service has independent configuration management
 
 ## Access URLs
 
@@ -257,3 +284,15 @@ channels:
         port: 502
         timeout: 5000
 ```
+
+## Project Structure Key Points
+
+- `services/`: All Rust microservices
+- `frontend/`: Vue.js web application
+- `config/`: Service configuration files
+- `docs/`: Architecture and design documentation
+- Each service has:
+  - `src/`: Source code
+  - `docs/fixlog.md`: Service-specific changelog
+  - `start.sh`: Service startup script
+  - Configuration examples
