@@ -4,6 +4,7 @@
 //! including frame construction, parsing, and validation.
 
 use std::time::{Duration, Instant};
+use tracing::{debug, warn};
 use crate::utils::error::{ComSrvError, Result};
 
 /// Modbus transmission mode
@@ -249,6 +250,43 @@ impl ModbusFrameProcessor {
         }
     }
 
+    /// Create new frame processor with specific baud rate for RTU
+    pub fn new_with_baud_rate(mode: ModbusMode, baud_rate: u32) -> Self {
+        let rtu_frame_gap = if mode == ModbusMode::Rtu {
+            Self::calculate_frame_gap(baud_rate)
+        } else {
+            Duration::from_millis(4) // Default for TCP mode (not used)
+        };
+        
+        Self {
+            mode,
+            last_frame_time: None,
+            rtu_frame_gap,
+        }
+    }
+
+    /// Calculate RTU frame gap based on baud rate
+    /// Frame gap = 3.5 character times
+    /// Character time = (1 start + 8 data + 1 parity + 1 stop) bits / baud_rate
+    pub fn calculate_frame_gap(baud_rate: u32) -> Duration {
+        if baud_rate == 0 {
+            return Duration::from_millis(4); // Default fallback
+        }
+        
+        // For baud rates > 19200, use fixed 1.75ms as per Modbus spec
+        if baud_rate > 19200 {
+            return Duration::from_micros(1750);
+        }
+        
+        // Calculate based on 3.5 character times
+        // 1 character = 11 bits (1 start + 8 data + 1 parity + 1 stop)
+        let char_time_us = (11 * 1_000_000) / baud_rate;
+        let frame_gap_us = (char_time_us * 35) / 10; // 3.5 character times
+        
+        // Add small margin for safety
+        Duration::from_micros(frame_gap_us as u64 + 100)
+    }
+
     /// Set RTU frame gap timeout
     pub fn set_rtu_frame_gap(&mut self, gap: Duration) {
         self.rtu_frame_gap = gap;
@@ -336,9 +374,9 @@ impl ModbusFrameProcessor {
         }
     }
 
-    /// Check RTU frame completeness (requires timeout-based detection in practice)
+    /// Check RTU frame completeness
     fn check_rtu_frame_complete(&self, buffer: &[u8]) -> Result<Option<usize>> {
-        // For RTU, frame completeness is typically determined by:
+        // For RTU, frame completeness is determined by:
         // 1. Minimum frame size (4 bytes: address + function + CRC)
         // 2. Silent interval detection (3.5 character times)
         // 3. Function code specific length validation
@@ -347,11 +385,29 @@ impl ModbusFrameProcessor {
             return Ok(None);
         }
 
-        // For basic validation, we can try to determine frame length based on function code
-        // This is a simplified approach - in practice, you'd use timer-based detection
+        // Check if we have a complete frame based on function code
         if let Some(frame_length) = self.estimate_rtu_frame_length(buffer) {
             if buffer.len() >= frame_length {
-                Ok(Some(frame_length))
+                // Validate CRC before accepting the frame
+                let data_end = frame_length - 2;
+                let data = &buffer[..data_end];
+                let crc_received = u16::from_le_bytes([buffer[data_end], buffer[data_end + 1]]);
+                let crc_calculated = RtuFrame::calculate_crc(data);
+                
+                if crc_received == crc_calculated {
+                    debug!(
+                        "[Frame Processor] RTU frame complete - Length: {}, CRC valid: 0x{:04X}", 
+                        frame_length, crc_received
+                    );
+                    Ok(Some(frame_length))
+                } else {
+                    warn!(
+                        "[Frame Processor] RTU frame CRC mismatch - Expected: 0x{:04X}, Got: 0x{:04X}",
+                        crc_calculated, crc_received
+                    );
+                    // CRC mismatch - might be incomplete frame or corruption
+                    Ok(None)
+                }
             } else {
                 Ok(None)
             }
@@ -360,7 +416,7 @@ impl ModbusFrameProcessor {
         }
     }
 
-    /// Estimate RTU frame length based on function code (simplified approach)
+    /// Estimate RTU frame length based on function code
     fn estimate_rtu_frame_length(&self, buffer: &[u8]) -> Option<usize> {
         if buffer.len() < 2 {
             return None;
@@ -369,23 +425,53 @@ impl ModbusFrameProcessor {
         let _slave_address = buffer[0];
         let function_code = buffer[1];
 
+        // Check if this is an exception response
+        if function_code & 0x80 != 0 {
+            return Some(5); // Address + Exception Function + Exception Code + CRC
+        }
+
         match function_code {
-            // Read responses need byte count field
-            0x01 | 0x02 | 0x03 | 0x04 => {
+            // Read coils/discrete inputs response
+            0x01 | 0x02 => {
                 if buffer.len() < 3 {
                     return None;
                 }
                 let byte_count = buffer[2] as usize;
                 Some(3 + byte_count + 2) // Address + Function + ByteCount + Data + CRC
             },
-            // Write single responses are fixed length
-            0x05 | 0x06 => Some(8), // Address + Function + Address + Value + CRC
-            // Write multiple responses are fixed length
-            0x0F | 0x10 => Some(8), // Address + Function + Address + Quantity + CRC
-            // Exception responses are fixed length
-            0x81..=0x90 => Some(5), // Address + Function + Exception + CRC
-            // Other function codes - default minimum
-            _ => Some(8),
+            // Read holding/input registers response
+            0x03 | 0x04 => {
+                if buffer.len() < 3 {
+                    return None;
+                }
+                let byte_count = buffer[2] as usize;
+                Some(3 + byte_count + 2) // Address + Function + ByteCount + Data + CRC
+            },
+            // Write single coil response
+            0x05 => Some(8), // Address + Function + Address(2) + Value(2) + CRC(2)
+            // Write single register response
+            0x06 => Some(8), // Address + Function + Address(2) + Value(2) + CRC(2)
+            // Write multiple coils response
+            0x0F => Some(8), // Address + Function + Address(2) + Quantity(2) + CRC(2)
+            // Write multiple registers response
+            0x10 => Some(8), // Address + Function + Address(2) + Quantity(2) + CRC(2)
+            // Read device identification (if needed)
+            0x2B => {
+                if buffer.len() < 3 {
+                    return None;
+                }
+                // This is complex - just return a reasonable estimate
+                Some(64) 
+            },
+            // For requests (when parsing incoming data), we need different logic
+            // This simplified version assumes we're parsing responses
+            _ => {
+                debug!(
+                    "[Frame Processor] Unknown function code 0x{:02X}, using default frame length",
+                    function_code
+                );
+                Some(8) // Default minimum for unknown function codes
+            }
         }
     }
 
@@ -431,9 +517,20 @@ mod tests {
 
     #[test]
     fn test_rtu_crc() {
-        let data = [0x01, 0x03, 0x00, 0x01, 0x00, 0x02];
-        let crc = RtuFrame::calculate_crc(&data);
-        assert_eq!(crc, 0x95C4); // Known CRC for this data
+        // Test case 1: Read holding registers request
+        let data1 = [0x01, 0x03, 0x00, 0x01, 0x00, 0x02];
+        let crc1 = RtuFrame::calculate_crc(&data1);
+        assert_eq!(crc1, 0x95C4); // Known CRC for this data
+        
+        // Test case 2: Write single register request
+        let data2 = [0x01, 0x06, 0x00, 0x01, 0x00, 0x03];
+        let crc2 = RtuFrame::calculate_crc(&data2);
+        assert_eq!(crc2, 0x9A9B); // Known CRC for this data
+        
+        // Test case 3: Exception response
+        let data3 = [0x01, 0x83, 0x02];
+        let crc3 = RtuFrame::calculate_crc(&data3);
+        assert_eq!(crc3, 0xC0F1); // Known CRC for this data
     }
 
     #[test]
@@ -488,5 +585,47 @@ mod tests {
         assert_eq!(frame_bytes[0], 0x01);
         assert_eq!(frame_bytes[1..6], pdu);
         assert_eq!(frame_bytes.len(), 8); // 1 + 5 + 2
+        
+        // Verify CRC is correct
+        let frame_without_crc = &frame_bytes[..6];
+        let crc_calculated = RtuFrame::calculate_crc(frame_without_crc);
+        let crc_in_frame = u16::from_le_bytes([frame_bytes[6], frame_bytes[7]]);
+        assert_eq!(crc_calculated, crc_in_frame);
+    }
+
+    #[test]
+    fn test_frame_gap_calculation() {
+        // Test 9600 baud
+        let gap_9600 = ModbusFrameProcessor::calculate_frame_gap(9600);
+        // 3.5 * 11 bits / 9600 baud = ~4.01ms
+        assert!(gap_9600.as_millis() >= 4);
+        assert!(gap_9600.as_millis() <= 5);
+        
+        // Test 19200 baud
+        let gap_19200 = ModbusFrameProcessor::calculate_frame_gap(19200);
+        // 3.5 * 11 bits / 19200 baud = ~2.00ms
+        assert!(gap_19200.as_millis() >= 2);
+        assert!(gap_19200.as_millis() <= 3);
+        
+        // Test high baud rate (should use fixed 1.75ms)
+        let gap_115200 = ModbusFrameProcessor::calculate_frame_gap(115200);
+        assert_eq!(gap_115200.as_micros(), 1750);
+    }
+
+    #[test]
+    fn test_rtu_frame_completeness_check() {
+        let mut processor = ModbusFrameProcessor::new(ModbusMode::Rtu);
+        
+        // Test incomplete frame
+        let incomplete = vec![0x01, 0x03, 0x02];
+        assert_eq!(processor.check_rtu_frame_complete(&incomplete).unwrap(), None);
+        
+        // Test complete frame with valid CRC
+        let complete = vec![0x01, 0x03, 0x02, 0x00, 0x64, 0xB9, 0xF9]; // Valid response
+        assert_eq!(processor.check_rtu_frame_complete(&complete).unwrap(), Some(7));
+        
+        // Test frame with invalid CRC
+        let invalid_crc = vec![0x01, 0x03, 0x02, 0x00, 0x64, 0x00, 0x00]; // Bad CRC
+        assert_eq!(processor.check_rtu_frame_complete(&invalid_crc).unwrap(), None);
     }
 } 

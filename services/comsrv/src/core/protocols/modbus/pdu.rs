@@ -3,7 +3,7 @@
 //! This module implements the Modbus Protocol Data Unit handling,
 //! including parsing requests and building responses for all standard Modbus function codes.
 
-use tracing::{debug, warn, info};
+use tracing::{debug, warn};
 use crate::utils::error::{ComSrvError, Result};
 use super::common::ModbusFunctionCode;
 
@@ -99,13 +99,22 @@ impl ModbusPduProcessor {
         Self
     }
 
-    /// Parse PDU from byte slice
+    /// Parse PDU from byte slice (for requests)
     pub fn parse_pdu(&self, data: &[u8]) -> Result<PduParseResult> {
-        info!(hex_data = ?data, length = data.len(), "[PDU Parser] Raw PDU data");
+        self.parse_pdu_with_context(data, false)
+    }
+    
+    /// Parse response PDU from byte slice
+    pub fn parse_response_pdu(&self, data: &[u8]) -> Result<PduParseResult> {
+        self.parse_pdu_with_context(data, true)
+    }
+    
+    /// Parse PDU with context (request or response)
+    fn parse_pdu_with_context(&self, data: &[u8], is_response: bool) -> Result<PduParseResult> {
+        debug!(hex_data = %data.iter().map(|b| format!("{:02X}", b)).collect::<Vec<_>>().join(" "), length = data.len(), is_response = is_response, "[PDU Parser] Raw PDU data");
         debug!(
-            "[PDU Parser] Starting PDU parsing - Length: {} bytes, Raw Data: {:02X?}", 
-            data.len(), 
-            data
+            "[PDU Parser] Starting PDU parsing - Length: {} bytes, Type: {}", 
+            data.len(), if is_response { "Response" } else { "Request" }
         );
         
         if data.is_empty() {
@@ -128,13 +137,21 @@ impl ModbusPduProcessor {
         let pdu_data = &data[1..];
         debug!("[PDU Parser] PDU data section: {} bytes - {:02X?}", pdu_data.len(), pdu_data);
 
-        let request = ModbusPduRequest {
-            function_code,
-            data: pdu_data.to_vec(),
-        };
-
-        debug!("[PDU Parser] PDU parsing completed - Type: Request");
-        Ok(PduParseResult::Request(request))
+        if is_response {
+            let response = ModbusPduResponse {
+                function_code,
+                data: pdu_data.to_vec(),
+            };
+            debug!("[PDU Parser] PDU parsing completed - Type: Response");
+            Ok(PduParseResult::Response(response))
+        } else {
+            let request = ModbusPduRequest {
+                function_code,
+                data: pdu_data.to_vec(),
+            };
+            debug!("[PDU Parser] PDU parsing completed - Type: Request");
+            Ok(PduParseResult::Request(request))
+        }
     }
 
     /// Parse exception response

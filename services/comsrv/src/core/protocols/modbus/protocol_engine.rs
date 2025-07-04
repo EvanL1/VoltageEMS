@@ -383,9 +383,9 @@ impl ModbusProtocolEngine {
         
         // Send request
         debug!("[Protocol Engine] Sending Modbus request to transport layer...");
-        info!(hex_data = ?frame, length = frame.len(), direction = "send", "[Protocol Engine] Raw packet");
+        debug!(hex_data = %frame.iter().map(|b| format!("{:02X}", b)).collect::<Vec<_>>().join(" "), length = frame.len(), direction = "send", "[Protocol Engine] Raw packet");
         let response = transport.send_request(&frame).await?;
-        info!(hex_data = ?response, length = response.len(), direction = "recv", "[Protocol Engine] Raw packet");
+        debug!(hex_data = %response.iter().map(|b| format!("{:02X}", b)).collect::<Vec<_>>().join(" "), length = response.len(), direction = "recv", "[Protocol Engine] Raw packet");
         debug!("[Protocol Engine] Received Modbus response - Response length: {} bytes", response.len());
         
         // Parse response frame
@@ -398,7 +398,7 @@ impl ModbusProtocolEngine {
         
         // Parse response PDU
         debug!("[Protocol Engine] Starting response PDU parsing...");
-        let pdu_result = self.pdu_processor.parse_pdu(&parsed_frame.pdu)?;
+        let pdu_result = self.pdu_processor.parse_response_pdu(&parsed_frame.pdu)?;
         debug!("[Protocol Engine] PDU parsing completed");
         
         // Extract data

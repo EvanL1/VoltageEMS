@@ -48,6 +48,7 @@ pub mod config_manager;
 pub mod types;
 pub mod point;
 pub mod loaders;
+pub mod loader;  // New configuration loader
 
 // Modern distributed configuration modules
 pub mod client;
@@ -94,6 +95,9 @@ pub use point::Point;
 
 // Re-export all loaders
 pub use loaders::*;
+
+// Re-export new loader
+pub use loader::{ConfigLoader, load_config};
 
 /// 配置管理器 trait（向后兼容）
 #[async_trait::async_trait]

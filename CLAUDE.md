@@ -4,232 +4,78 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Common Development Commands
 
-### Rust Services Build & Test
+### Rust Services (comsrv, modsrv, hissrv, netsrv, alarmsrv)
 
 ```bash
-# Build all services (from project root)
-cargo build --workspace
-cargo build --release --workspace
-
 # Build individual service
 cd services/{service_name}
 cargo build
-cargo build --release    # Production build
 
-# Run specific service
-cargo run --bin comsrv
-cargo run --bin modsrv
-cargo run --bin hissrv
-cargo run --bin alarmsrv
-cargo run --bin apigateway
-cargo run --bin netsrv
+# Run individual service
+cargo run
 
-# Run individual service with logging
+# Run tests
+cargo test
+
+# Run with logging
 RUST_LOG=debug cargo run
-RUST_LOG=info,comsrv=debug cargo run  # Service-specific debug
 
-# Run single test
-cargo test test_name --package package_name
-cargo test test_name --package comsrv -- --exact
+# Check code formatting
+cargo fmt --check
 
-# Test all services
-cargo test --workspace
-
-# Format and lint
-cargo fmt
-cargo fmt --check  # Check without modifying
+# Run clippy linting
 cargo clippy -- -D warnings
 ```
 
-### Frontend Development
+### Frontend (Vue.js)
 
 ```bash
 cd frontend
 npm install
-npm run serve    # Development server at http://localhost:8083
+npm run serve    # Development server
 npm run build    # Production build
 npm run lint     # ESLint checking
 ```
 
-### Quick Start with Docker
+### Docker Development
 
 ```bash
-# Start complete demo environment (includes Grafana, InfluxDB, mock data)
-./start-demo.sh
-
-# Stop demo
-./stop-demo.sh
-
-# Restart demo
-./restart-demo.sh
-
-# Start services only (without demo data)
-./start-services.sh
-
-# Start specific service
-docker-compose -f services/{service_name}/docker-compose.yml up -d
-
-# Start Grafana and InfluxDB
-docker-compose -f frontend/grafana/docker-compose.grafana.yml up -d
+# Start all services
+docker-compose up -d
 
 # View logs
 docker-compose logs -f {service_name}
-docker-compose -f frontend/grafana/docker-compose.grafana.yml logs -f
 
 # Rebuild specific service
 docker-compose build {service_name}
-
-# Stop all services
-docker-compose down
 ```
-
-### Testing Tools
-
-```bash
-# Run Modbus simulator
-cd tests
-python modbus_server_simulator.py
-
-# Run integration tests
-./test_comsrv_integration.sh
-
-# Performance testing (10,000 points)
-cd scripts
-./test_optimized_points.sh
-
-# Check Redis data
-./check_redis_points.sh
-```
-
-### Service-Specific Commands
-
-#### ComSrv Testing
-```bash
-cd services/comsrv
-./scripts/start_modbus_simulator.sh    # Start Modbus simulator
-./scripts/integration_test.sh          # Run integration tests
-./scripts/check_redis_points.sh        # Verify Redis data
-./scripts/test_optimized_points.sh     # Performance test
-
-# Run modbus tests specifically
-cargo test --package comsrv modbus
-```
-
-#### ModSrv Testing
-```bash
-cd services/modsrv
-./run-local-tests.sh           # Basic tests
-./run-local-tests.sh -b        # Rebuild image
-./run-local-tests.sh --debug   # Debug mode
-python3 test-api.py            # API tests
-python3 test-rules-api.py      # Rules engine tests
-```
-
-#### Running Individual Services
-```bash
-# Each service has a start script
-cd services/{service_name}
-./start.sh
-
-# API Gateway with config service
-cd services/apigateway
-./start-with-config-service.sh
-```
-
-## Configuration Management
-
-VoltageEMS uses a configuration center architecture for microservices configuration:
-
-### Configuration Loading Priority
-1. Default values in code
-2. Local configuration files (YAML/JSON)
-3. Configuration center (HTTP API)
-4. Environment variable overrides
-
-### Service Configuration
-```bash
-# Using local config
-cargo run --bin {service}
-
-# Using config center
-export CONFIG_CENTER_URL=http://config-center:8080
-cargo run --bin {service}
-
-# Environment overrides
-export {SERVICE}_REDIS_URL=redis://production:6379
-export {SERVICE}_LOG_LEVEL=debug
-```
-
-### Configuration Files
-- Development: `config/{service}.yaml`
-- Production: `/etc/voltageems/config/{service}/{service}.yaml`
-- Examples: `config/{service}.example.yaml`
-
-See `docs/CONFIG_CENTER_ARCHITECTURE.md` for detailed configuration management guide.
 
 ## Architecture Overview
 
-VoltageEMS is a microservices-based Industrial IoT Energy Management System designed for edge computing scenarios.
+VoltageEMS is a microservices-based IoT Energy Management System with the following components:
 
-### Core Services (Rust)
+### Core Services (Rust-based)
 
-- **comsrv**: Industrial protocol communication (Modbus TCP/RTU, CAN, IEC60870, GPIO)
-  - Channel-based device management with CSV point tables (四遥: YC/YX/YK/YT)
-  - Layered transport architecture with unified Transport trait
-  - Real-time data stored in Redis with optimized point management
-  - Protocol-specific polling engines (ModbusPollingEngine for Modbus)
-
-- **modsrv**: Model computation service with DAG workflow engine
-  - Maps communication data to internal models
-  - Executes control logic and calculations
-  - Supports device control dispatch
-  - Template-based model instantiation
-
-- **hissrv**: Time-series data storage
-  - Subscribes to Redis real-time data
-  - Writes to InfluxDB for historical analysis
-  - Provides Grafana integration
-
-- **netsrv**: Network forwarding service
-  - MQTT/HTTP protocol support
-  - Cloud integration (AWS IoT Core, Alibaba Cloud IoT)
-  - Configurable data formatting
-
-- **alarmsrv**: Intelligent alarm management
-  - Multi-level alarm classification
-  - Redis-based storage with cloud sync
-  - Automatic alarm processing
-
-- **apigateway**: Unified REST API gateway
-  - JWT authentication
-  - Service routing and aggregation
-  - Health monitoring
-  - Config service integration
-
-- **config-framework**: Configuration center for centralized config management
+- **comsrv**: Industrial communication service supporting Modbus TCP/RTU, CAN, IEC60870, and GPIO interfaces
+- **modsrv**: Model service executing real-time calculations and control logic via DAG workflows  
+- **hissrv**: Historical data service writing Redis data to InfluxDB
+- **netsrv**: Network service forwarding data to external systems via MQTT/HTTP, supporting AWS IoT Core and Alibaba Cloud IoT
+- **alarmsrv**: Intelligent alarm management with classification, Redis storage, and cloud integration
 
 ### Frontend & Configuration
 
-- **frontend**: Vue.js 3 + Element Plus web application with embedded Grafana visualization
+- **frontend**: Vue.js + Element Plus web application with embedded Grafana visualization
 - **Electron integration**: Cross-platform desktop application wrapper
 
-### Data Flow
+### Data Flow Architecture
 
 ```
-Industrial Devices → comsrv → Redis → {modsrv, hissrv, netsrv, alarmsrv}
-                                   ↓        ↓
-                              apigateway   InfluxDB
-                                   ↓        ↓
-                              Frontend/Grafana
+Devices (Modbus/CAN/IEC60870) → comsrv → Redis → {modsrv, hissrv, netsrv, alarmsrv}
+                                              ↓
+                                         InfluxDB ← hissrv
+                                              ↓
+                                         Frontend/Grafana
 ```
-
-### Frontend Stack
-
-- Vue.js 3 + Element Plus
-- Electron for desktop application
-- Embedded Grafana for visualization
-- Real-time WebSocket updates
-- Vue Flow for DAG visualization
 
 ## Key Technical Details
 
@@ -239,7 +85,7 @@ Industrial Devices → comsrv → Redis → {modsrv, hissrv, netsrv, alarmsrv}
 - Supports industrial interfaces: TCP, Serial, GPIO (DI/DO), CAN bus
 - Configuration via YAML files with CSV point tables
 - Channel-based device management with point mapping
-- Built-in Prometheus metrics and structured logging
+- Built-in Prometheus metrics and optimized structured logging
 - **Enhanced logging system** with configurable file output, target filtering, and compact format
 
 ### Transport Layer Implementation
@@ -253,205 +99,145 @@ All protocols share unified `Transport` trait:
 ### Configuration Management
 
 - **Figment-based** hierarchical configuration (YAML/TOML/JSON/ENV)
-- **CSV point tables** for device mapping:
-  - `telemetry.csv` (YC): Measurement points
-  - `signal.csv` (YX): Status signals
-  - `control.csv` (YK): Control commands
-  - `adjustment.csv` (YT): Set points
+- **CSV point tables** for telemetry, control, adjustment, and signal points
 - **Channel parameters** specific to each protocol
 - Validation and type safety throughout
-- **Configuration Center Support** (hissrv, config-framework)
-  - Environment variables: `CONFIG_CENTER_URL`, `ENVIRONMENT`
-  - Automatic fallback to local configuration files
-
-### Protocol Implementation
-
-All protocols use unified Transport trait:
-```rust
-trait Transport {
-    async fn connect(&mut self) -> Result<()>;
-    async fn disconnect(&mut self) -> Result<()>;
-    async fn send(&mut self, data: &[u8]) -> Result<()>;
-    async fn receive(&mut self, buffer: &mut [u8]) -> Result<usize>;
-}
-```
-
-### Redis Data Structure
-
-- Points stored with optimized `HashMap<u32, UniversalPointConfig>`
-- Multi-level indexes for fast queries
-- Batch operations with Pipeline mode
-- Local cache with TTL management
-- Key patterns:
-  - Real-time data: `voltage:{service}:data:{point_id}`
-  - Config: `voltage:{service}:config:{item}`
-  - Status: `voltage:{service}:status:{channel_id}`
 
 ### Development Workflow
 
-1. Feature branches: `feature/{service_name}`
-2. Merge to `develop` when complete
-3. Pull `develop` before new features
-4. Update `services/{service}/docs/fixlog.md` after changes
-5. Never auto-commit (manual commits only)
-6. Use English for code comments and git commits
-7. Use Chinese (中文) for user-facing documentation
+- Use feature branches: `feature/{service_name}` for development
+- Merge to `develop` branch when complete
+- Merge `develop` before starting new features
+- Write English code comments and git commit messages
+- Log fixes to `{service}/docs/fixlog.md`
+- Never auto-commit changes
 
-## Testing Infrastructure
+### Testing
 
-### Modbus Testing Tools
-- `tests/modbus_server_simulator.py`: Full Modbus TCP simulator
-- `scripts/start_modbus_simulator.sh`: Quick simulator startup
-- `tests/test_comsrv_integration.sh`: End-to-end testing
+- Unit tests: `cargo test` in service directories
+- Integration tests available in `tests/` directories
+- Mock simulators: `modbus_simulator.py`, protocol-specific test tools
+- Real hardware testing supported via configuration
 
-### Performance Testing
-- `examples/optimized_points_demo.rs`: 10,000 point stress test
-- Supports concurrent channel testing
-- Real-time metrics via Prometheus
+### Configuration Structure
 
-## Important Development Notes
+```
+config/
+├── default.yml           # Global configuration
+├── point_map.yml         # Point mapping definitions
+└── {Protocol}_Test_{ID}/ # Protocol-specific CSV tables
+    ├── telemetry.csv
+    ├── control.csv
+    ├── adjustment.csv
+    ├── signal.csv
+    └── mapping_*.csv
+```
 
-- Services communicate only via Redis (no direct service calls)
-- No quality attributes in data structures
-- Enhanced logging with daily rotation and configurable paths
-- Support multiple protocols in single deployment
-- Each service has independent configuration management
-- Each time you finish modifying a file, record it in the corresponding microservice's fixlog.md
+### Logging System Configuration
 
-## Access URLs
-
-- Frontend: http://localhost:8083
-- API Gateway: http://localhost:8080
-- Grafana: http://localhost:3000 (admin/admin)
-- InfluxDB: http://localhost:8086 (admin/password123)
-
-## Configuration Examples
-
-### Service Logging
+#### Service-Level Logging
 ```yaml
 service:
   logging:
     level: "debug"
-    file: "logs/comsrv.log"
-    max_size: 10485760  # 10MB
-    console: true
+    file: "logs/comsrv.log"        # Configurable file path
+    max_size: 10485760             # 10MB file size limit
+    max_files: 5                   # Max number of rotated files
+    console: true                  # Enable console output
 ```
 
-### Channel Configuration
+#### Channel-Level Logging
 ```yaml
 channels:
-  - id: 1
-    name: "Power Meter"
-    protocol: modbus_tcp
-    parameters:
-      modbus_tcp:
-        host: "192.168.1.100"
-        port: 502
-        timeout: 5000
-    logging:
+  - logging:
       enabled: true
       level: "debug"
-      log_dir: "logs/modbus_tcp_demo"
-      max_file_size: 5242880  # 5MB per file
-      max_files: 3
-      retention_days: 7
+      log_dir: "logs/modbus_tcp_demo"    # Custom log directory
+      max_file_size: 5242880             # 5MB per file
+      max_files: 3                       # Keep 3 files
+      retention_days: 7                  # Keep for 7 days
+      console_output: true               # Also output to console
+      log_messages: true                 # Log protocol messages
 ```
 
-## HisSrv Specific Details
-
-### Configuration Center Integration
-
-HisSrv supports dynamic configuration loading from a central configuration service:
-
-```bash
-# Using configuration center
-export CONFIG_CENTER_URL=http://config-center:8080
-export ENVIRONMENT=production
-cargo run
-
-# Using local configuration (fallback)
-cargo run -- --config hissrv.yaml
-```
-
-### Storage Backend Support
-
-- **InfluxDB**: Primary time-series storage
-- **Redis**: Real-time data caching
-- **PostgreSQL**: Structured data storage (optional)
-- **MongoDB**: Document storage (optional)
-
-### API Endpoints
-
-- Query history: `GET /api/v1/history`
-- Store data: `POST /api/v1/data`
-- Delete data: `DELETE /api/v1/data`
-- Get keys: `GET /api/v1/data/keys`
-- Statistics: `GET /api/v1/admin/statistics`
-- Health check: `GET /api/v1/health`
-
-### Common Compilation Fixes
-
-When encountering compilation errors after merging branches:
-
-1. **Missing imports**: Check for `IntoParams`, `ErrorResponse`, etc.
-2. **Deprecated APIs**: Update `base64::encode()` to `general_purpose::STANDARD.encode()`
-3. **Redis async issues**: Use `redis::cmd()` for commands like `PING`, `INFO`
-4. **Type annotations**: Add explicit types when compiler can't infer
-
-## Workspace Structure
-
-The project uses a Cargo workspace with the following members:
-- services/alarmsrv
-- services/apigateway
-- services/comsrv
-- services/config-framework
-- services/hissrv
-- services/modsrv
-- services/netsrv
-
-Each service is independently deployable and communicates via Redis pub/sub.
-
-## Project Structure Key Points
-
-- `services/`: All Rust microservices
-- `frontend/`: Vue.js web application
-- `config/`: Service configuration files
-- `docs/`: Architecture and design documentation
-- Each service has:
-  - `src/`: Source code
-  - `docs/fixlog.md`: Service-specific changelog
-  - `start.sh`: Service startup script
-  - Configuration examples
+#### Logging Features
+- **Daily log rotation** with configurable retention
+- **Compact format** without redundant target information  
+- **Mixed output** supporting both console and file simultaneously
+- **Channel-specific logs** in separate directories
+- **Configurable paths** for flexible deployment
 
 ### Important Notes
 
-- Redis runs on port 6379 as real-time database
-- Services communicate only via Redis, not direct calls
+- Redis runs in container at port 6379 as real-time database
+- No quality attributes needed in data structures
 - Use Chinese for user-facing documentation
-- Record file modifications in `{service}/docs/fixlog.md`
+- Each time you finish modifying a file, record it in the corresponding microservice's fixlog.md.
+- Services communicate only via Redis, not direct calls
 - Support for multiple industrial protocols in single deployment
-- Service ports: Frontend (8083), Grafana (3000), APIs (809x series)
+- **Enhanced logging** provides clear, non-redundant output for debugging and monitoring
+
+### Data Structures and Optimization
 
 #### Point Management Optimization
-- Use `HashMap<u32, UniversalPointConfig>` for better performance
-- Implement multi-level indexes using `HashSet<u32>` for type grouping
+- Use `HashMap<u32, UniversalPointConfig>` instead of `HashMap<String, UniversalPointConfig>` for better performance
+- Implement multi-level indexes using `HashSet<u32>` for type grouping and permission checks
 - Add `name_to_id` mapping for name-based queries
 - All query operations optimized to O(1) complexity
 
 #### Protocol Mapping Structure
-- **ProtocolMapping**: Uses address string format `slave_id:function_code:register_address`
-- **UnifiedPointMapping**: Uses ProtocolAddress enum for different protocols
-- Address parsing from protocol_params HashMap
+Multiple mapping structures exist in the codebase:
 
-### Redis Key Naming Convention
-- Communication data: `voltage:com:*`
-- Model data: `voltage:mod:*`
-- Alarm data: `voltage:alarm:*`
-- Real-time data: `voltage:data:*`
+1. **ProtocolMapping** (in config_manager.rs and types/channel.rs)
+   - Does not directly contain slave_id and function_code fields
+   - These values are stored in the address string field or protocol_params HashMap
+   - Address format: `slave_id:function_code:register_address` (colon-separated)
+
+2. **ProtocolMappingRecord** (in loaders/csv_loader.rs)
+   - Directly contains slave_id, function_code, register_address fields
+   - Raw data structure loaded from CSV files
+
+3. **UnifiedPointMapping** (in types/protocol.rs)
+   - Uses ProtocolAddress enum for different protocol addresses
+   - Modbus variant includes slave_id, function_code, register, bit fields
+
+#### Address Parsing Logic
+```rust
+// Extract address from protocol_params
+let address = cp.protocol_params.get("address").unwrap_or(&default_address);
+// Parse according to "slave_id:function_code:register_address" format
+let address_parts: Vec<&str> = address.split(':').collect();
+let slave_id = address_parts[0].parse::<u8>()?;
+let function_code = address_parts[1].parse::<u8>()?;
+let register_address = address_parts[2].parse::<u16>()?;
+```
+
+#### Redis Optimization
+- Implement local cache layer with TTL management
+- Use batch operations with Pipeline mode
+- Replace KEYS command with SCAN to avoid blocking
+- Support batch update API: `batch_update_values`
 
 ### Testing Tools
 
 #### Modbus Testing
 - `tests/modbus_server_simulator.py` - Full Modbus TCP server simulator
+  - Supports all four remote types (YC/YX/YK/YT)
+  - Matches comsrv configuration for slave IDs and addresses
+  - Real-time data updates with sine wave simulation
 - `tests/test_modbus_client.py` - Test client for verification
 - `scripts/start_modbus_simulator.sh` - Server startup script
+- `tests/test_comsrv_integration.sh` - Integration test script
+
+#### Performance Testing
+- `examples/optimized_points_demo.rs` - 10,000 point stress test
+- `scripts/test_optimized_points.sh` - Performance test script
+- `scripts/check_redis_points.sh` - Redis data validation script
+# important-instruction-reminders
+Do what has been asked; nothing more, nothing less.
+NEVER create files unless they're absolutely necessary for achieving your goal.
+ALWAYS prefer editing an existing file to creating a new one.
+NEVER proactively create documentation files (*.md) or README files. Only create documentation files if explicitly requested by the User.
+
+      
+      IMPORTANT: this context may or may not be relevant to your tasks. You should not respond to this context or otherwise consider it in your response unless it is highly relevant to your task. Most of the time, it is not relevant.

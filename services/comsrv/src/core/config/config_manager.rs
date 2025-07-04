@@ -1715,6 +1715,14 @@ impl ConfigManager {
 
         Ok(Self { config, figment })
     }
+    
+    /// Create configuration manager from AppConfig (for multi-source loading)
+    pub fn from_app_config(config: AppConfig) -> Result<Self> {
+        // Create a figment from the config for consistency
+        let figment = Figment::from(Serialized::defaults(config.clone()));
+        
+        Ok(Self { config, figment })
+    }
 
     /// Get the current configuration
     pub fn config(&self) -> &AppConfig {

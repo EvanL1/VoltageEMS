@@ -12,7 +12,7 @@ use tracing::{error, info, Level};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 use tracing_appender::rolling::{RollingFileAppender, Rotation};
 
-use comsrv::core::config::ConfigManager;
+use comsrv::core::config::{ConfigManager, ConfigLoader};
 use comsrv::core::protocols::common::combase::protocol_factory::ProtocolFactory;
 use comsrv::api::openapi_routes::create_api_routes;
 use comsrv::service_impl::{start_communication_service, start_cleanup_task, shutdown_handler};
@@ -83,14 +83,29 @@ async fn main() -> Result<()> {
     // Load environment variables
     dotenv().ok();
 
-    // Load configuration first to get logging settings
-    info!("Loading configuration from: {}", args.config);
+    // Load configuration using the new loader with multi-source support
+    info!("Loading configuration...");
+    
+    // Create loader with command-line specified file (if any)
+    let loader = ConfigLoader::new()
+        .with_file(&args.config)
+        .with_config_center(std::env::var("CONFIG_CENTER_URL").ok())
+        .with_env_prefix("COMSRV_");
+    
+    // Load configuration
+    let app_config = loader.load().await
+        .map_err(|e| {
+            eprintln!("Failed to load configuration: {}", e);
+            e
+        })?;
+    
+    // Create ConfigManager from loaded AppConfig for backward compatibility
     let config_manager = Arc::new(
-        ConfigManager::from_file(&args.config)
+        ConfigManager::from_app_config(app_config)
             .map_err(|e| {
-                eprintln!("Failed to load configuration from '{}': {}", args.config, e);
+                eprintln!("Failed to create config manager: {}", e);
                 comsrv::utils::error::ComSrvError::ConfigError(
-                    format!("Configuration loading failed: {}", e)
+                    format!("Configuration manager creation failed: {}", e)
                 )
             })?
     );

@@ -255,7 +255,7 @@ impl Transport for SerialTransport {
                         let mut stats = self.stats.write().await;
                         stats.record_bytes_sent(bytes_sent);
 
-                        info!(hex_data = ?data, length = bytes_sent, direction = "send", "[Serial Transport] Raw packet");
+                        debug!(hex_data = %data.iter().map(|b| format!("{:02X}", b)).collect::<Vec<_>>().join(" "), length = bytes_sent, direction = "send", "[Serial Transport] Raw packet");
                         debug!("Sent {} bytes via serial port", bytes_sent);
                         Ok(bytes_sent)
                     }
@@ -310,7 +310,7 @@ impl Transport for SerialTransport {
                         let mut stats = self.stats.write().await;
                         stats.record_bytes_received(bytes_read);
 
-                        info!(hex_data = ?&buffer[..bytes_read], length = bytes_read, direction = "recv", "[Serial Transport] Raw packet");
+                        debug!(hex_data = %buffer[..bytes_read].iter().map(|b| format!("{:02X}", b)).collect::<Vec<_>>().join(" "), length = bytes_read, direction = "recv", "[Serial Transport] Raw packet");
                         debug!("Received {} bytes via serial port", bytes_read);
                         Ok(bytes_read)
                     }

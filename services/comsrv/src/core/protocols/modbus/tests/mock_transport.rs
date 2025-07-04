@@ -7,7 +7,7 @@ use std::collections::{VecDeque, HashMap};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use std::time::Duration;
-use tracing::{info, debug, warn};
+use tracing::{debug, warn};
 use crate::core::transport::traits::{Transport, TransportError, ConnectionState, TransportStats};
 
 /// Configuration for mock transport
@@ -192,7 +192,7 @@ impl Transport for MockTransport {
         }
         
         // Record sent packet - INFO level shows raw packet content
-        info!(hex_data = ?data, length = data.len(), direction = "send", "[MockTransport] Raw packet");
+        debug!(hex_data = %data.iter().map(|b| format!("{:02X}", b)).collect::<Vec<_>>().join(" "), length = data.len(), direction = "send", "[MockTransport] Raw packet");
         
         // DEBUG level shows more detailed parsing information
         debug!(
@@ -257,7 +257,7 @@ impl Transport for MockTransport {
             state.stats.record_bytes_received(response.len());
             
             // Record received packet - INFO level shows raw packet content
-            info!(hex_data = ?&response, length = response.len(), direction = "recv", "[MockTransport] Raw packet");
+            debug!(hex_data = %response.iter().map(|b| format!("{:02X}", b)).collect::<Vec<_>>().join(" "), length = response.len(), direction = "recv", "[MockTransport] Raw packet");
             
             // DEBUG level shows more detailed parsing information
             debug!(
