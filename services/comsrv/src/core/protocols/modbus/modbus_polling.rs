@@ -64,6 +64,8 @@ pub struct SlavePollingStats {
 pub struct ModbusPollingEngine {
     /// Polling configuration
     config: ModbusPollingConfig,
+    /// Batch optimization configuration
+    batch_config: ModbusBatchConfig,
     /// Points organized by slave ID
     points_by_slave: HashMap<u8, Vec<ModbusPoint>>,
     /// Redis manager for storing results
@@ -81,6 +83,20 @@ impl ModbusPollingEngine {
     pub fn new(config: ModbusPollingConfig) -> Self {
         Self {
             config,
+            batch_config: ModbusBatchConfig::default(),
+            points_by_slave: HashMap::new(),
+            redis_manager: None,
+            is_running: Arc::new(RwLock::new(false)),
+            task_handles: Arc::new(RwLock::new(Vec::new())),
+            stats: Arc::new(RwLock::new(ModbusPollingStats::default())),
+        }
+    }
+
+    /// Create a new Modbus polling engine with custom batch config
+    pub fn new_with_batch_config(config: ModbusPollingConfig, batch_config: ModbusBatchConfig) -> Self {
+        Self {
+            config,
+            batch_config,
             points_by_slave: HashMap::new(),
             redis_manager: None,
             is_running: Arc::new(RwLock::new(false)),
@@ -129,8 +145,8 @@ impl ModbusPollingEngine {
             let redis_manager = self.redis_manager.clone();
             let read_cb = read_callback.clone();
             let enable_batch = self.config.enable_batch_reading;
-            let max_batch_size = self.config.max_batch_size;
             let stats = self.stats.clone();
+            let batch_config = self.batch_config.clone();
 
             let handle = tokio::spawn(async move {
                 let mut ticker = interval(Duration::from_millis(interval_ms));
@@ -145,7 +161,7 @@ impl ModbusPollingEngine {
                     
                     if enable_batch {
                         // Batch reading optimization
-                        let batches = optimize_batch_reading(&points, max_batch_size);
+                        let batches = optimize_batch_reading(&points, &batch_config, slave_id);
                         for batch in batches {
                             match poll_batch(slave_id, &batch, &read_cb, &redis_manager, &stats).await {
                                 Ok(count) => points_read += count,
@@ -221,24 +237,85 @@ impl ModbusPollingEngine {
     }
 }
 
+/// Batch optimization configuration
+#[derive(Debug, Clone)]
+pub struct ModbusBatchConfig {
+    /// Maximum address gap to merge into single request
+    pub max_gap: u16,
+    /// Maximum batch size (registers/coils)
+    pub max_batch_size: u16,
+    /// Whether to merge different function codes
+    pub merge_function_codes: bool,
+    /// Device-specific limits
+    pub device_limits: std::collections::HashMap<u8, DeviceLimit>,
+}
+
+#[derive(Debug, Clone)]
+pub struct DeviceLimit {
+    /// Maximum PDU size for this device
+    pub max_pdu_size: u16,
+    /// Maximum registers per read
+    pub max_registers_per_read: u16,
+    /// Maximum coils per read
+    pub max_coils_per_read: u16,
+}
+
+impl Default for ModbusBatchConfig {
+    fn default() -> Self {
+        Self {
+            max_gap: 10, // Allow up to 10 register gap
+            max_batch_size: 125, // Standard Modbus limit
+            merge_function_codes: false,
+            device_limits: std::collections::HashMap::new(),
+        }
+    }
+}
+
 /// Optimize points into batches for efficient reading
-fn optimize_batch_reading(points: &[ModbusPoint], max_batch_size: u16) -> Vec<Vec<&ModbusPoint>> {
+fn optimize_batch_reading(
+    points: &[ModbusPoint], 
+    config: &ModbusBatchConfig,
+    slave_id: u8,
+) -> Vec<Vec<ModbusPoint>> {
     let mut batches = Vec::new();
-    let mut current_batch = Vec::new();
+    let mut current_batch: Vec<ModbusPoint> = Vec::new();
     let mut last_fc = 0u8;
     let mut last_addr = 0u16;
+    
+    // Get device-specific limits if available
+    let device_limit = config.device_limits.get(&slave_id);
+    let max_batch = device_limit
+        .map(|d| d.max_registers_per_read.min(config.max_batch_size))
+        .unwrap_or(config.max_batch_size);
 
     for point in points {
-        // Start new batch if function code changes or gap is too large
-        if !current_batch.is_empty() && 
-           (point.function_code != last_fc || 
-            point.register_address > last_addr + max_batch_size ||
-            current_batch.len() >= max_batch_size as usize) {
+        let should_start_new_batch = if current_batch.is_empty() {
+            false
+        } else {
+            // Check if we should start a new batch
+            let fc_changed = point.function_code != last_fc && !config.merge_function_codes;
+            let gap_too_large = point.register_address > last_addr + 1 + config.max_gap;
+            let batch_full = current_batch.len() >= max_batch as usize;
+            let span_too_large = point.register_address - current_batch[0].register_address + 1 > max_batch;
+            
+            fc_changed || gap_too_large || batch_full || span_too_large
+        };
+
+        if should_start_new_batch {
+            debug!(
+                "Starting new batch: fc_changed={}, gap={}, size={}, span={}",
+                point.function_code != last_fc,
+                point.register_address.saturating_sub(last_addr + 1),
+                current_batch.len(),
+                if current_batch.is_empty() { 0 } else { 
+                    point.register_address - current_batch[0].register_address + 1 
+                }
+            );
             batches.push(current_batch);
             current_batch = Vec::new();
         }
 
-        current_batch.push(point);
+        current_batch.push(point.clone());
         last_fc = point.function_code;
         last_addr = point.register_address;
     }
@@ -247,13 +324,27 @@ fn optimize_batch_reading(points: &[ModbusPoint], max_batch_size: u16) -> Vec<Ve
         batches.push(current_batch);
     }
 
+    // Log optimization results
+    let total_points = points.len();
+    let total_batches = batches.len();
+    let optimization_ratio = if total_points > 0 {
+        (total_points as f64 - total_batches as f64) / total_points as f64 * 100.0
+    } else {
+        0.0
+    };
+    
+    debug!(
+        "Batch optimization: {} points → {} batches ({}% reduction)",
+        total_points, total_batches, optimization_ratio as i32
+    );
+
     batches
 }
 
 /// Poll a batch of points
 async fn poll_batch<F>(
     slave_id: u8,
-    batch: &[&ModbusPoint],
+    batch: &[ModbusPoint],
     read_callback: &F,
     redis_manager: &Option<Arc<crate::core::protocols::common::redis::RedisBatchSync>>,
     _stats: &Arc<RwLock<ModbusPollingStats>>,
@@ -265,8 +356,8 @@ where
         return Ok(0);
     }
 
-    let first_point = batch[0];
-    let last_point = batch[batch.len() - 1];
+    let first_point = &batch[0];
+    let last_point = &batch[batch.len() - 1];
     let start_addr = first_point.register_address;
     let count = (last_point.register_address - start_addr + 1) as u16;
 
@@ -452,7 +543,76 @@ mod tests {
             },
         ];
 
-        let batches = optimize_batch_reading(&points, 10);
+        let config = ModbusBatchConfig::default();
+        let batches = optimize_batch_reading(&points, &config, 1);
         assert_eq!(batches.len(), 2); // Should split by function code
+    }
+
+    #[test]
+    fn test_batch_optimization_with_gap() {
+        let points = vec![
+            ModbusPoint {
+                point_id: "1".to_string(),
+                telemetry_type: TelemetryType::Telemetry,
+                slave_id: 1,
+                function_code: 3,
+                register_address: 100,
+                scale_factor: None,
+            },
+            ModbusPoint {
+                point_id: "2".to_string(),
+                telemetry_type: TelemetryType::Telemetry,
+                slave_id: 1,
+                function_code: 3,
+                register_address: 101,
+                scale_factor: None,
+            },
+            ModbusPoint {
+                point_id: "3".to_string(),
+                telemetry_type: TelemetryType::Telemetry,
+                slave_id: 1,
+                function_code: 3,
+                register_address: 120,
+                scale_factor: None,
+            },
+        ];
+
+        let mut config = ModbusBatchConfig::default();
+        config.max_gap = 5; // Small gap
+        let batches = optimize_batch_reading(&points, &config, 1);
+        assert_eq!(batches.len(), 2); // Should split due to gap
+
+        config.max_gap = 30; // Large gap
+        let batches = optimize_batch_reading(&points, &config, 1);
+        assert_eq!(batches.len(), 1); // Should merge into one batch
+    }
+
+    #[test]
+    fn test_batch_optimization_with_device_limit() {
+        let mut points = vec![];
+        for i in 0..200 {
+            points.push(ModbusPoint {
+                point_id: format!("{}", i),
+                telemetry_type: TelemetryType::Telemetry,
+                slave_id: 1,
+                function_code: 3,
+                register_address: 100 + i,
+                scale_factor: None,
+            });
+        }
+
+        let mut config = ModbusBatchConfig::default();
+        config.device_limits.insert(1, DeviceLimit {
+            max_pdu_size: 253,
+            max_registers_per_read: 50,
+            max_coils_per_read: 2000,
+        });
+        
+        let batches = optimize_batch_reading(&points, &config, 1);
+        // Should split into 4 batches (200 / 50)
+        assert_eq!(batches.len(), 4);
+        for batch in &batches {
+            assert!(batch.len() <= 50);
+        }
     }
 }
