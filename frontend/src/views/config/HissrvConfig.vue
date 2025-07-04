@@ -74,27 +74,151 @@ export default {
 </script>
 
 <style scoped>
+@import '@/styles/design-tokens.scss';
+
 .config-editor {
-  padding: 20px;
+  padding: var(--page-padding);
+  background: var(--color-background);
+  min-height: 100vh;
 }
 
+/* Apple Style Page Header */
 .card-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  margin-bottom: var(--spacing-xl);
+}
+
+.card-header h2 {
+  font-size: var(--font-size-page-title);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-primary);
+  margin: 0;
+  letter-spacing: -0.5px;
 }
 
 .header-actions {
   display: flex;
-  gap: 10px;
+  gap: var(--spacing-md);
 }
 
+/* Tesla Style Cards */
+.el-card {
+  background: var(--color-surface);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+  border: 1px solid var(--color-border);
+  transition: all 0.3s ease;
+}
+
+.el-card:hover {
+  box-shadow: var(--shadow-md);
+  transform: translateY(-2px);
+}
+
+:deep(.el-card__header) {
+  border-bottom: 1px solid var(--color-border);
+  padding: var(--spacing-xl);
+  background: var(--color-surface-hover);
+}
+
+:deep(.el-card__body) {
+  padding: var(--spacing-xl);
+}
+
+/* Loading and Error States */
 .loading-container, .error-container {
-  padding: 20px;
+  padding: var(--spacing-xxl);
   text-align: center;
+  min-height: 400px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
 }
 
 .mt-20 {
-  margin-top: 20px;
+  margin-top: var(--spacing-lg);
+}
+
+/* Enhanced Buttons */
+:deep(.el-button) {
+  border-radius: var(--radius-md);
+  font-weight: var(--font-weight-medium);
+  padding: var(--spacing-sm) var(--spacing-lg);
+  transition: all 0.3s ease;
+  border: none;
+  box-shadow: var(--shadow-sm);
+}
+
+:deep(.el-button--primary) {
+  background: var(--gradient-primary);
+  color: white;
+}
+
+:deep(.el-button--primary:hover) {
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-md);
+  opacity: 0.9;
+}
+
+:deep(.el-button--default) {
+  background: var(--color-surface);
+  color: var(--color-text-primary);
+  border: 1px solid var(--color-border);
+}
+
+:deep(.el-button--default:hover) {
+  background: var(--color-surface-hover);
+  border-color: var(--color-primary);
+}
+
+/* Alert Styling */
+:deep(.el-alert) {
+  border-radius: var(--radius-md);
+  border: none;
+  box-shadow: var(--shadow-sm);
+}
+
+:deep(.el-alert--error) {
+  background: linear-gradient(135deg, #fee, #fdd);
+}
+
+/* Skeleton Loading */
+:deep(.el-skeleton__item) {
+  background: linear-gradient(90deg, var(--color-surface) 25%, var(--color-surface-hover) 50%, var(--color-surface) 75%);
+  background-size: 200% 100%;
+  animation: skeleton-loading 1.4s ease infinite;
+}
+
+@keyframes skeleton-loading {
+  0% {
+    background-position: 200% 0;
+  }
+  100% {
+    background-position: -200% 0;
+  }
+}
+
+/* Responsive Design */
+@media (max-width: 768px) {
+  .config-editor {
+    padding: var(--spacing-md);
+  }
+  
+  .card-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--spacing-md);
+  }
+  
+  .header-actions {
+    width: 100%;
+  }
+  
+  .header-actions .el-button {
+    flex: 1;
+  }
 }
 </style> 

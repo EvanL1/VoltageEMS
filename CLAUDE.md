@@ -10,21 +10,19 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 # Build individual service
 cd services/{service_name}
 cargo build
+cargo build --release    # Production build
 
 # Run individual service
 cargo run
+RUST_LOG=debug cargo run    # With debug logging
 
 # Run tests
 cargo test
+cargo test -- --nocapture   # Show print output
 
-# Run with logging
-RUST_LOG=debug cargo run
-
-# Check code formatting
-cargo fmt --check
-
-# Run clippy linting
-cargo clippy -- -D warnings
+# Code quality
+cargo fmt               # Format code
+cargo clippy           # Lint code
 ```
 
 ### Frontend (Vue.js)
@@ -32,7 +30,7 @@ cargo clippy -- -D warnings
 ```bash
 cd frontend
 npm install
-npm run serve    # Development server
+npm run serve    # Development server on port 8081
 npm run build    # Production build
 npm run lint     # ESLint checking
 ```
@@ -40,14 +38,19 @@ npm run lint     # ESLint checking
 ### Docker Development
 
 ```bash
-# Start all services
-docker-compose up -d
+# Start specific service
+docker-compose -f services/{service_name}/docker-compose.yml up -d
+
+# Start Grafana and InfluxDB
+docker-compose -f frontend/grafana/docker-compose.grafana.yml up -d
 
 # View logs
 docker-compose logs -f {service_name}
 
-# Rebuild specific service
-docker-compose build {service_name}
+# Demo environment
+./start-demo.sh      # Start all services with demo data
+./stop-demo.sh       # Stop all services
+./restart-demo.sh    # Restart services
 ```
 
 ## Architecture Overview
@@ -64,7 +67,7 @@ VoltageEMS is a microservices-based IoT Energy Management System with the follow
 
 ### Frontend & Configuration
 
-- **frontend**: Vue.js + Element Plus web application with embedded Grafana visualization
+- **frontend**: Vue.js 3 + Element Plus + Tailwind CSS web application with embedded Grafana visualization
 - **Electron integration**: Cross-platform desktop application wrapper
 
 ### Data Flow Architecture
@@ -107,7 +110,7 @@ All protocols share unified `Transport` trait:
 
 - Use feature branches: `feature/{service_name}` for development
 - Merge to `develop` branch when complete
-- Merge `develop` before starting new features
+- Main branch: `feature/comsrv` (current)
 - Write English code comments and git commit messages
 - Log fixes to `{service}/docs/fixlog.md`
 - Never auto-commit changes
@@ -115,22 +118,21 @@ All protocols share unified `Transport` trait:
 ### Testing
 
 - Unit tests: `cargo test` in service directories
-- Integration tests available in `tests/` directories
-- Mock simulators: `modbus_simulator.py`, protocol-specific test tools
-- Real hardware testing supported via configuration
+- Integration tests: `tests/test_comsrv_integration.sh`
+- Mock simulators: `tests/modbus_server_simulator.py`
+- API tests: `test-api.py` scripts in service directories
+- Performance tests: `scripts/test_optimized_points.sh`
 
 ### Configuration Structure
 
 ```
 config/
-├── default.yml           # Global configuration
-├── point_map.yml         # Point mapping definitions
-└── {Protocol}_Test_{ID}/ # Protocol-specific CSV tables
+├── {service}.yml         # Service configuration
+└── point_tables/         # CSV point definitions
     ├── telemetry.csv
     ├── control.csv
     ├── adjustment.csv
-    ├── signal.csv
-    └── mapping_*.csv
+    └── signal.csv
 ```
 
 ### Logging System Configuration
@@ -156,61 +158,29 @@ channels:
       max_file_size: 5242880             # 5MB per file
       max_files: 3                       # Keep 3 files
       retention_days: 7                  # Keep for 7 days
-      console_output: true               # Also output to console
-      log_messages: true                 # Log protocol messages
 ```
-
-#### Logging Features
-- **Daily log rotation** with configurable retention
-- **Compact format** without redundant target information  
-- **Mixed output** supporting both console and file simultaneously
-- **Channel-specific logs** in separate directories
-- **Configurable paths** for flexible deployment
 
 ### Important Notes
 
-- Redis runs in container at port 6379 as real-time database
-- No quality attributes needed in data structures
-- Use Chinese for user-facing documentation
-- Each time you finish modifying a file, record it in the corresponding microservice’s fixlog.md.
+- Redis runs on port 6379 as real-time database
 - Services communicate only via Redis, not direct calls
+- Use Chinese for user-facing documentation
+- Record file modifications in `{service}/docs/fixlog.md`
 - Support for multiple industrial protocols in single deployment
-- **Enhanced logging** provides clear, non-redundant output for debugging and monitoring
+- Service ports: Frontend (8081), Grafana (3000), APIs (809x series)
 
 ### Data Structures and Optimization
 
 #### Point Management Optimization
-- Use `HashMap<u32, UniversalPointConfig>` instead of `HashMap<String, UniversalPointConfig>` for better performance
-- Implement multi-level indexes using `HashSet<u32>` for type grouping and permission checks
+- Use `HashMap<u32, UniversalPointConfig>` for better performance
+- Implement multi-level indexes using `HashSet<u32>` for type grouping
 - Add `name_to_id` mapping for name-based queries
 - All query operations optimized to O(1) complexity
 
 #### Protocol Mapping Structure
-Multiple mapping structures exist in the codebase:
-
-1. **ProtocolMapping** (in config_manager.rs and types/channel.rs)
-   - Does not directly contain slave_id and function_code fields
-   - These values are stored in the address string field or protocol_params HashMap
-   - Address format: `slave_id:function_code:register_address` (colon-separated)
-
-2. **ProtocolMappingRecord** (in loaders/csv_loader.rs)
-   - Directly contains slave_id, function_code, register_address fields
-   - Raw data structure loaded from CSV files
-
-3. **UnifiedPointMapping** (in types/protocol.rs)
-   - Uses ProtocolAddress enum for different protocol addresses
-   - Modbus variant includes slave_id, function_code, register, bit fields
-
-#### Address Parsing Logic
-```rust
-// Extract address from protocol_params
-let address = cp.protocol_params.get("address").unwrap_or(&default_address);
-// Parse according to "slave_id:function_code:register_address" format
-let address_parts: Vec<&str> = address.split(':').collect();
-let slave_id = address_parts[0].parse::<u8>()?;
-let function_code = address_parts[1].parse::<u8>()?;
-let register_address = address_parts[2].parse::<u16>()?;
-```
+- **ProtocolMapping**: Uses address string format `slave_id:function_code:register_address`
+- **UnifiedPointMapping**: Uses ProtocolAddress enum for different protocols
+- Address parsing from protocol_params HashMap
 
 #### Redis Optimization
 - Implement local cache layer with TTL management
@@ -218,16 +188,18 @@ let register_address = address_parts[2].parse::<u16>()?;
 - Replace KEYS command with SCAN to avoid blocking
 - Support batch update API: `batch_update_values`
 
+### Redis Key Naming Convention
+- Communication data: `voltage:com:*`
+- Model data: `voltage:mod:*`
+- Alarm data: `voltage:alarm:*`
+- Real-time data: `voltage:data:*`
+
 ### Testing Tools
 
 #### Modbus Testing
 - `tests/modbus_server_simulator.py` - Full Modbus TCP server simulator
-  - Supports all four remote types (YC/YX/YK/YT)
-  - Matches comsrv configuration for slave IDs and addresses
-  - Real-time data updates with sine wave simulation
 - `tests/test_modbus_client.py` - Test client for verification
 - `scripts/start_modbus_simulator.sh` - Server startup script
-- `tests/test_comsrv_integration.sh` - Integration test script
 
 #### Performance Testing
 - `examples/optimized_points_demo.rs` - 10,000 point stress test
