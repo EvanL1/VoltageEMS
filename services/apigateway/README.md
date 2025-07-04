@@ -31,8 +31,15 @@ redis:
   
 services:
   comsrv:
-    url: "http://localhost:8081"
-  # ... other services
+    url: "http://localhost:8001"
+  modsrv:
+    url: "http://localhost:8002"
+  hissrv:
+    url: "http://localhost:8003"
+  netsrv:
+    url: "http://localhost:8004"
+  alarmsrv:
+    url: "http://localhost:8005"
 ```
 
 ## API Endpoints
