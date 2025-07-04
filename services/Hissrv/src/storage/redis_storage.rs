@@ -1,10 +1,9 @@
 use async_trait::async_trait;
 use crate::config::RedisConnectionConfig;
 use crate::error::{HisSrvError, Result};
-use crate::storage::{DataPoint, DataValue, QueryFilter, QueryResult, Storage, StorageStats};
-use redis::{Client, Connection, Commands, AsyncCommands};
+use crate::storage::{DataPoint, QueryFilter, QueryResult, Storage, StorageStats};
+use redis::{Client, AsyncCommands};
 use chrono::{DateTime, Utc};
-use std::collections::HashMap;
 use serde_json;
 
 pub struct RedisStorage {
@@ -66,19 +65,18 @@ impl Storage for RedisStorage {
 
         // Test connection
         let mut conn = client.get_async_connection().await?;
-        let ping_result: String = conn.ping().await?;
+        let ping_result: String = redis::cmd("PING").query_async(&mut conn).await?;
         
         if ping_result != "PONG" {
             return Err(HisSrvError::ConnectionError("Redis connection test failed".to_string()));
         }
 
-        tracing::info!("Successfully connected to Redis at {}", 
-            if !self.config.socket.is_empty() { 
-                &self.config.socket 
-            } else { 
-                &format!("{}:{}", self.config.host, self.config.port) 
-            }
-        );
+        let redis_address = if !self.config.socket.is_empty() { 
+            self.config.socket.clone()
+        } else { 
+            format!("{}:{}", self.config.host, self.config.port) 
+        };
+        tracing::info!("Successfully connected to Redis at {}", redis_address);
 
         self.client = Some(client);
         self.connection = Some(conn);
@@ -165,11 +163,10 @@ impl Storage for RedisStorage {
     }
 
     async fn query_data_points(&self, filter: &QueryFilter) -> Result<QueryResult> {
-        if !self.connected || self.connection.is_none() {
+        if !self.connected || self.client.is_none() {
             return Err(HisSrvError::ConnectionError("Not connected to Redis".to_string()));
         }
 
-        let conn = self.connection.as_ref().unwrap();
         let mut data_points = Vec::new();
 
         // Get keys matching pattern
@@ -179,9 +176,10 @@ impl Storage for RedisStorage {
             "hissrv:data:*".to_string()
         };
 
+        // Get keys using a new connection
         let keys: Vec<String> = {
-            let mut conn_clone = conn.clone();
-            conn_clone.keys(key_pattern).await?
+            let mut temp_conn = self.client.as_ref().unwrap().get_async_connection().await?;
+            temp_conn.keys(key_pattern).await?
         };
 
         for key in keys {
@@ -203,8 +201,8 @@ impl Storage for RedisStorage {
 
             // Get data from sorted set within time range
             let results: Vec<String> = {
-                let mut conn_clone = conn.clone();
-                conn_clone.zrangebyscore(&key, start_score, end_score).await?
+                let mut temp_conn = self.client.as_ref().unwrap().get_async_connection().await?;
+                temp_conn.zrangebyscore(&key, start_score, end_score).await?
             };
 
             for json_data in results {
@@ -298,7 +296,12 @@ impl Storage for RedisStorage {
                     end_score = end_time.timestamp() as f64;
                 }
 
-                let removed: u64 = conn.zremrangebyscore(&key, start_score, end_score).await?;
+                let removed: u64 = redis::cmd("ZREMRANGEBYSCORE")
+                    .arg(&key)
+                    .arg(start_score)
+                    .arg(end_score)
+                    .query_async(conn)
+                    .await?;
                 deleted_count += removed;
             } else {
                 // Delete entire key
@@ -316,20 +319,20 @@ impl Storage for RedisStorage {
     }
 
     async fn get_keys(&self, pattern: Option<&str>) -> Result<Vec<String>> {
-        if !self.connected || self.connection.is_none() {
+        if !self.connected || self.client.is_none() {
             return Err(HisSrvError::ConnectionError("Not connected to Redis".to_string()));
         }
 
-        let conn = self.connection.as_ref().unwrap();
         let key_pattern = if let Some(p) = pattern {
             format!("hissrv:data:{}", p)
         } else {
             "hissrv:data:*".to_string()
         };
 
+        // Get keys using a new connection
         let keys: Vec<String> = {
-            let mut conn_clone = conn.clone();
-            conn_clone.keys(key_pattern).await?
+            let mut temp_conn = self.client.as_ref().unwrap().get_async_connection().await?;
+            temp_conn.keys(key_pattern).await?
         };
         
         // Remove prefix and filter out latest keys
@@ -353,11 +356,23 @@ impl Storage for RedisStorage {
             });
         }
 
-        let conn = self.connection.as_ref().unwrap();
-        
         // Get database size and key count
-        let info: String = conn.clone().info("memory").await.unwrap_or_default();
-        let keyspace: String = conn.clone().info("keyspace").await.unwrap_or_default();
+        let _info: String = {
+            let mut temp_conn = self.client.as_ref().unwrap().get_async_connection().await?;
+            redis::cmd("INFO")
+                .arg("memory")
+                .query_async(&mut temp_conn)
+                .await
+                .unwrap_or_default()
+        };
+        let _keyspace: String = {
+            let mut temp_conn = self.client.as_ref().unwrap().get_async_connection().await?;
+            redis::cmd("INFO")
+                .arg("keyspace")
+                .query_async(&mut temp_conn)
+                .await
+                .unwrap_or_default()
+        };
 
         // Parse memory usage (simplified)
         let storage_size_bytes = 0u64; // TODO: Parse from info string

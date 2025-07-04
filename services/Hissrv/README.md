@@ -22,18 +22,21 @@ HisSrv 是一个独立的、可配置的历史数据服务，专为 VoltageEMS �
 
 ## 🛠️ 安装和启动
 
-### 快速启动
+### 配置中心模式（推荐）
+
+使用配置中心进行集中化配置管理：
 
 ```bash
-# 克隆项目
-git clone <repo-url>
-cd services/Hissrv
+# 设置配置中心环境变量
+export CONFIG_CENTER_URL=http://config-center:8080
+export ENVIRONMENT=production  # 可选: development, staging, production
 
-# 使用启动脚本 (推荐)
-./start.sh
+# 构建并运行
+cargo build --release
+./target/release/hissrv-rust
 ```
 
-### 手动启动
+### 本地配置模式
 
 ```bash
 # 构建项目
@@ -46,9 +49,52 @@ cp hissrv.yaml.example hissrv.yaml
 ./target/release/hissrv-rust --config hissrv.yaml
 ```
 
+### 快速启动
+
+```bash
+# 使用启动脚本 (推荐)
+./start.sh
+```
+
 ## ⚙️ 配置
 
-HisSrv 使用 YAML 格式的配置文件。主要配置项：
+HisSrv 支持两种配置方式：
+
+### 配置中心 API
+
+当设置了 `CONFIG_CENTER_URL` 环境变量时，HisSrv 会自动从配置中心获取配置：
+
+- **获取配置**: `GET /api/v1/config/hissrv/{environment}`
+- **检查更新**: 每60秒自动检查配置更新
+- **降级模式**: 配置中心不可用时自动回退到本地配置
+
+配置中心响应格式示例：
+```json
+{
+  "service": {
+    "name": "hissrv",
+    "version": "0.2.0",
+    "description": "Historical Data Service"
+  },
+  "redis": {
+    "host": "redis-cluster",
+    "port": 6379,
+    "channels": ["data:*", "events:*"]
+  },
+  "storage": {
+    "default": "influxdb",
+    "influxdb": {
+      "enabled": true,
+      "url": "http://influxdb:8086",
+      "database": "hissrv_data"
+    }
+  }
+}
+```
+
+### 本地配置文件
+
+当未设置配置中心时，HisSrv 使用 YAML 格式的配置文件。主要配置项：
 
 ### 服务配置
 ```yaml

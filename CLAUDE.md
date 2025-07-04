@@ -26,9 +26,24 @@ cargo test --workspace
 cargo fmt
 cargo clippy -- -D warnings
 
+# Run specific test
+cargo test test_name
+
 # Run with logging
 RUST_LOG=debug cargo run
 RUST_LOG=info,comsrv=debug cargo run  # Service-specific debug
+
+# Check code formatting
+cargo fmt --check
+
+# Run clippy linting
+cargo clippy -- -D warnings
+
+# Build release version
+cargo build --release
+
+# Run release version
+./target/release/{service_name}-rust
 ```
 
 ### Frontend Development
@@ -55,6 +70,30 @@ npm run lint     # ESLint checking
 
 # View logs
 docker-compose logs -f {service_name}
+
+# Rebuild specific service
+docker-compose build {service_name}
+
+# Stop all services
+docker-compose down
+```
+
+### Testing Tools
+
+```bash
+# Run Modbus simulator
+cd tests
+python modbus_server_simulator.py
+
+# Run integration tests
+./test_comsrv_integration.sh
+
+# Performance testing (10,000 points)
+cd scripts
+./test_optimized_points.sh
+
+# Check Redis data
+./check_redis_points.sh
 ```
 
 ### Service-Specific Commands
@@ -150,6 +189,8 @@ VoltageEMS is a microservices-based Industrial IoT Energy Management System:
   - Service routing and aggregation
   - Health monitoring
 
+- **config-framework**: Configuration center for centralized config management
+
 ### Data Flow
 
 ```
@@ -169,26 +210,32 @@ Industrial Devices → comsrv → Redis → {modsrv, hissrv, netsrv, alarmsrv}
 
 ## Key Technical Details
 
+### Communication Service (comsrv)
+
+- Uses **layered transport architecture** separating protocol logic from physical transport
+- Supports industrial interfaces: TCP, Serial, GPIO (DI/DO), CAN bus
+- Configuration via YAML files with CSV point tables
+- Channel-based device management with point mapping
+- Built-in Prometheus metrics and structured logging
+- **Enhanced logging system** with configurable file output, target filtering, and compact format
+
+### Transport Layer Implementation
+
+All protocols share unified `Transport` trait:
+- `connect()`, `disconnect()`, `send()`, `receive()`
+- Factory pattern for transport creation
+- Mock transport for protocol testing
+- Industrial-grade error handling and statistics
+
 ### Configuration Management
 
-- Hierarchical YAML/JSON configuration using Figment
-- CSV point tables for device mapping:
-  - `telemetry.csv`: Measurement points
-  - `control.csv`: Control commands
-  - `adjustment.csv`: Set points
-  - `signal.csv`: Status signals
-
-### Protocol Implementation
-
-All protocols use unified Transport trait:
-```rust
-trait Transport {
-    async fn connect(&mut self) -> Result<()>;
-    async fn disconnect(&mut self) -> Result<()>;
-    async fn send(&mut self, data: &[u8]) -> Result<()>;
-    async fn receive(&mut self, buffer: &mut [u8]) -> Result<usize>;
-}
-```
+- **Figment-based** hierarchical configuration (YAML/TOML/JSON/ENV)
+- **CSV point tables** for telemetry, control, adjustment, and signal points
+- **Channel parameters** specific to each protocol
+- Validation and type safety throughout
+- **Configuration Center Support** (hissrv, config-framework)
+  - Environment variables: `CONFIG_CENTER_URL`, `ENVIRONMENT`
+  - Automatic fallback to local configuration files
 
 ### Redis Data Structure
 
@@ -199,11 +246,13 @@ trait Transport {
 
 ### Development Workflow
 
-1. Feature branches: `feature/{service_name}`
-2. Merge to `develop` when complete
-3. Pull `develop` before new features
-4. Update `services/{service}/docs/fixlog.md` after changes
-5. Never auto-commit (manual commits only)
+- Use feature branches: `feature/{service_name}` for development
+- Merge to `develop` branch when complete
+- Merge `develop` before starting new features
+- Write English code comments and git commit messages
+- Log fixes to `{service}/docs/fixlog.md`
+- Never auto-commit changes
+- Use Chinese for user-facing documentation
 
 ## Testing Infrastructure
 
@@ -225,6 +274,7 @@ trait Transport {
 - No quality attributes in data structures
 - Enhanced logging with daily rotation and configurable paths
 - Support multiple protocols in single deployment
+- Each time you finish modifying a file, record it in the corresponding microservice's fixlog.md
 
 ## Access URLs
 
@@ -257,3 +307,57 @@ channels:
         port: 502
         timeout: 5000
 ```
+
+## HisSrv Specific Details
+
+### Configuration Center Integration
+
+HisSrv supports dynamic configuration loading from a central configuration service:
+
+```bash
+# Using configuration center
+export CONFIG_CENTER_URL=http://config-center:8080
+export ENVIRONMENT=production
+cargo run
+
+# Using local configuration (fallback)
+cargo run -- --config hissrv.yaml
+```
+
+### Storage Backend Support
+
+- **InfluxDB**: Primary time-series storage
+- **Redis**: Real-time data caching
+- **PostgreSQL**: Structured data storage (optional)
+- **MongoDB**: Document storage (optional)
+
+### API Endpoints
+
+- Query history: `GET /api/v1/history`
+- Store data: `POST /api/v1/data`
+- Delete data: `DELETE /api/v1/data`
+- Get keys: `GET /api/v1/data/keys`
+- Statistics: `GET /api/v1/admin/statistics`
+- Health check: `GET /api/v1/health`
+
+### Common Compilation Fixes
+
+When encountering compilation errors after merging branches:
+
+1. **Missing imports**: Check for `IntoParams`, `ErrorResponse`, etc.
+2. **Deprecated APIs**: Update `base64::encode()` to `general_purpose::STANDARD.encode()`
+3. **Redis async issues**: Use `redis::cmd()` for commands like `PING`, `INFO`
+4. **Type annotations**: Add explicit types when compiler can't infer
+
+## Workspace Structure
+
+The project uses a Cargo workspace with the following members:
+- services/alarmsrv
+- services/apigateway
+- services/comsrv
+- services/config-framework
+- services/hissrv
+- services/modsrv
+- services/netsrv
+
+Each service is independently deployable and communicates via Redis pub/sub.

@@ -1,15 +1,10 @@
 use axum::{
-    extract::{Path, Query, State},
-    http::StatusCode,
-    response::Json,
-    routing::{get, post, delete},
+    routing::{get, post},
     Router,
 };
-use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use utoipa::{OpenApi, ToSchema};
+use utoipa::OpenApi;
 use utoipa_swagger_ui::SwaggerUi;
 
 use crate::config::Config;
@@ -42,7 +37,7 @@ pub use models_history::*;
             HistoryDataPoint,
             HistoryValue,
             HistoryQueryResult,
-            HistoryApiResponse,
+            // HistoryApiResponse is generic, can't be listed here directly
             DataSourceInfo,
             DataPointInfo,
             TimeSeriesStatistics,
