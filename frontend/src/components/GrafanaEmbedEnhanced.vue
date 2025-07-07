@@ -421,7 +421,7 @@ onUnmounted(() => {
   align-items: center;
   justify-content: center;
   min-height: 400px;
-  background-color: #fafafa;
+  background-color: var(--color-background-elevated);
 }
 
 .loading-overlay p,

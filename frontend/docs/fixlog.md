@@ -792,3 +792,30 @@ npm run serve
 - src/views/system/SystemSettings.vue - 完全实现系统设置页面
 - src/locales/zh.js - 添加系统设置相关中文翻译
 - src/locales/en.js - 添加系统设置相关英文翻译
+
+## 2025-07-07
+
+### 修复深色主题配色问题
+
+#### 修复监控页面的灰底白字问题
+- 更新了 `src/views/monitoring/Topology.vue`
+  - 将所有 `var(--color-gray-50)` 替换为 `var(--color-background-secondary)` 或 `var(--color-background-hover)`
+  - 将 `var(--color-gray-200)` 替换为 `var(--color-background-active)`
+  - 将硬编码的 `rgba(255, 255, 255, 0.95)` 替换为 `var(--color-background-elevated)`
+  - 确保所有背景色使用语义化的颜色变量，适配深色主题
+
+- 更新了 `src/views/monitoring/EnergyStats.vue`
+  - 将所有 `var(--color-gray-50)` 替换为 `var(--color-background-secondary)` 或 `var(--color-background-hover)`
+  - 修复了卡片头部背景色，使用语义化变量
+  - 修复了表格头部背景色，使用语义化变量
+  - 修复了单选按钮组的背景色
+  - 确保深色主题下没有灰底白字的对比度问题
+
+#### 关键更改
+1. **语义化颜色变量**：所有背景色都使用了语义化的CSS变量，如：
+   - `var(--color-background-secondary)` - 用于卡片头部等次要背景
+   - `var(--color-background-hover)` - 用于悬停状态
+   - `var(--color-background-active)` - 用于激活/按下状态
+   - `var(--color-background-elevated)` - 用于浮层背景
+
+2. **深色主题适配**：这些语义化变量会根据主题自动切换颜色值，确保在深色主题下有良好的对比度和可读性

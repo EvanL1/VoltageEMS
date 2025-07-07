@@ -901,7 +901,7 @@ onMounted(() => {
   :deep(.el-card__header) {
     padding: var(--space-5) var(--space-6);
     border-bottom: 1px solid var(--color-border-light);
-    background: var(--color-gray-50);
+    background: var(--color-background-secondary);
   }
   
   :deep(.el-card__body) {
@@ -935,7 +935,7 @@ onMounted(() => {
       transition: all var(--duration-fast) var(--ease-in-out);
       
       &:hover {
-        background: var(--color-gray-100);
+        background: var(--color-background-secondary);
         color: var(--color-text-primary);
       }
       
@@ -1170,7 +1170,7 @@ onMounted(() => {
     justify-content: space-between;
     align-items: center;
     padding: var(--space-5) var(--space-6);
-    background: var(--color-gray-50);
+    background: var(--color-background-secondary);
     border-bottom: 1px solid var(--color-border-light);
     
     h3 {
@@ -1189,13 +1189,13 @@ onMounted(() => {
       justify-content: space-between;
       align-items: center;
       padding: var(--space-4);
-      background-color: var(--color-gray-50);
+      background-color: var(--color-background-secondary);
       border-radius: var(--radius-lg);
       margin-bottom: var(--space-3);
       transition: all var(--duration-fast) var(--ease-in-out);
       
       &:hover {
-        background-color: var(--color-gray-100);
+        background-color: var(--color-background-tertiary);
         transform: translateX(4px);
       }
       
@@ -1239,7 +1239,7 @@ onMounted(() => {
     
     .el-table__header {
       th {
-        background: var(--color-gray-50);
+        background: var(--color-background-secondary);
         color: var(--color-text-secondary);
         font-weight: var(--font-weight-semibold);
       }

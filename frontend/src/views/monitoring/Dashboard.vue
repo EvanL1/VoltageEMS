@@ -611,7 +611,7 @@ onMounted(() => {
       :deep(.el-radio-button__inner) {
         padding: var(--space-2) var(--space-3);
         border: none;
-        background: var(--color-gray-100);
+        background: var(--color-gray-50);
         color: var(--color-text-secondary);
         font-weight: var(--font-weight-medium);
         border-radius: var(--radius-md);
@@ -664,7 +664,7 @@ onMounted(() => {
       content: '';
       position: absolute;
       inset: 0;
-      background: linear-gradient(45deg, transparent, rgba(255, 255, 255, 0.1), transparent);
+      background: linear-gradient(45deg, transparent, rgba(26, 34, 54, 0.4), transparent);
       transform: translateX(-100%);
       transition: transform 0.6s;
     }

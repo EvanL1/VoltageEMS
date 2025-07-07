@@ -607,14 +607,14 @@ onUnmounted(() => {
         }
         
         &:hover {
-          background: var(--color-gray-100);
+          background: var(--color-background-hover);
           color: var(--color-text-primary);
           border-color: var(--color-border);
           z-index: 1;
         }
         
         &:active {
-          background: var(--color-gray-200);
+          background: var(--color-background-active);
         }
       }
     }
@@ -663,7 +663,7 @@ onUnmounted(() => {
     position: absolute;
     bottom: var(--space-5);
     left: var(--space-5);
-    background: rgba(255, 255, 255, 0.95);
+    background: var(--color-background-elevated);
     backdrop-filter: blur(10px);
     -webkit-backdrop-filter: blur(10px);
     border: 1px solid var(--color-border-light);
@@ -775,7 +775,7 @@ onUnmounted(() => {
   :deep(.el-card__header) {
     padding: var(--space-4) var(--space-5);
     border-bottom: 1px solid var(--color-border-light);
-    background: var(--color-gray-50);
+    background: var(--color-background-secondary);
     
     .el-card__header {
       font-size: var(--font-size-base);

@@ -24,12 +24,12 @@
   --color-accent-light: rgba(254, 153, 0, 0.1);
   --color-accent-rgb: 254, 153, 0;
   
-  /* Neutral Colors - Dark Theme */
+  /* Neutral Colors - Dark Theme (Proper dark grays for contrast) */
   --color-gray-0: #FFFFFF;
-  --color-gray-50: rgba(255, 255, 255, 0.95);
-  --color-gray-100: rgba(255, 255, 255, 0.85);
-  --color-gray-200: rgba(255, 255, 255, 0.70);
-  --color-gray-300: rgba(255, 255, 255, 0.50);
+  --color-gray-50: #1a2236;    /* Dark blue-gray for hover states */
+  --color-gray-100: #212b42;   /* Slightly lighter for interactive elements */
+  --color-gray-200: #2a3451;   /* Medium dark for secondary surfaces */
+  --color-gray-300: #3a4565;   /* For borders and dividers */
   --color-gray-400: rgba(255, 255, 255, 0.35);
   --color-gray-500: rgba(255, 255, 255, 0.25);
   --color-gray-600: rgba(255, 255, 255, 0.15);

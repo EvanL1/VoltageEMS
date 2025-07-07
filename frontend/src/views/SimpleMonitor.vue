@@ -121,7 +121,7 @@ h2 {
 }
 
 .card {
-  background: #f5f5f5;
+  background: var(--color-gray-50);
   border-radius: 8px;
   padding: 20px;
   box-shadow: 0 2px 4px rgba(0,0,0,0.1);
@@ -137,7 +137,7 @@ h2 {
   justify-content: space-between;
   margin: 10px 0;
   padding: 5px 0;
-  border-bottom: 1px solid #e0e0e0;
+  border-bottom: 1px solid var(--color-gray-100);
 }
 
 .label {
@@ -164,7 +164,7 @@ h2 {
   height: 200px;
   gap: 5px;
   padding: 20px;
-  background: #fafafa;
+  background: var(--color-background-elevated);
   border-radius: 4px;
 }
 

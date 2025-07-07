@@ -1148,7 +1148,7 @@ onMounted(() => {
 
 /* Loading States */
 :deep(.el-loading-mask) {
-  background-color: rgba(255, 255, 255, 0.8);
+  background-color: rgba(2, 8, 26, 0.9);  /* Dark loading overlay */
   backdrop-filter: blur(5px);
 }
 

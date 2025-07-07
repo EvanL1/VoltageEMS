@@ -238,7 +238,7 @@ export default {
 
 .service-logs {
   margin-top: 20px;
-  background-color: #f5f5f5;
+  background-color: var(--color-gray-50);
   border-radius: 4px;
   padding: 10px;
 }

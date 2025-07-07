@@ -826,28 +826,33 @@ onMounted(() => {
 }
 
 :deep(.el-tag--primary) {
-  background: linear-gradient(135deg, #e3f2fd, #bbdefb);
-  color: #1565c0;
+  background: linear-gradient(135deg, var(--color-primary-light), rgba(0, 60, 113, 0.2));
+  color: var(--color-primary);
+  border: 1px solid var(--color-primary);
 }
 
 :deep(.el-tag--success) {
-  background: linear-gradient(135deg, #e8f5e9, #c8e6c9);
-  color: #2e7d32;
+  background: linear-gradient(135deg, var(--color-success-light), rgba(0, 230, 118, 0.2));
+  color: var(--color-success);
+  border: 1px solid var(--color-success);
 }
 
 :deep(.el-tag--warning) {
-  background: linear-gradient(135deg, #fff3e0, #ffe0b2);
-  color: #e65100;
+  background: linear-gradient(135deg, var(--color-warning-light), rgba(254, 153, 0, 0.2));
+  color: var(--color-warning);
+  border: 1px solid var(--color-warning);
 }
 
 :deep(.el-tag--danger) {
-  background: linear-gradient(135deg, #ffebee, #ffcdd2);
-  color: #c62828;
+  background: linear-gradient(135deg, var(--color-danger-light), rgba(255, 105, 0, 0.2));
+  color: var(--color-danger);
+  border: 1px solid var(--color-danger);
 }
 
 :deep(.el-tag--info) {
-  background: linear-gradient(135deg, #f5f5f5, #e0e0e0);
-  color: #616161;
+  background: linear-gradient(135deg, var(--color-gray-50), var(--color-gray-100));
+  color: var(--color-text-secondary);
+  border: 1px solid var(--color-border-medium);
 }
 
 /* Enhanced Buttons */

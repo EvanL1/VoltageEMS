@@ -127,7 +127,7 @@ onUnmounted(() => {
   margin: 0 auto;
   padding: 40px 20px;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-  background: #f5f5f5;
+  background: var(--color-gray-50);
   min-height: 100vh;
 }
 
@@ -207,7 +207,7 @@ h1 {
 
 .log-item {
   padding: 8px 0;
-  border-bottom: 1px solid #f0f0f0;
+  border-bottom: 1px solid var(--color-gray-50);
   font-size: 14px;
   color: #666;
   font-family: monospace;

@@ -652,7 +652,7 @@ onUnmounted(() => {
   :deep(.el-card__header) {
     padding: var(--space-5) var(--space-6);
     border-bottom: 1px solid var(--color-border-light);
-    background: var(--color-gray-50);
+    background: var(--color-background);
   }
   
   :deep(.el-card__body) {
@@ -710,7 +710,7 @@ onUnmounted(() => {
       margin-bottom: var(--space-1);
       
       &:hover {
-        background: var(--color-gray-100);
+        background: var(--color-background);
       }
       
       &.is-current {
@@ -761,7 +761,7 @@ onUnmounted(() => {
   :deep(.el-card__header) {
     padding: var(--space-5) var(--space-6);
     border-bottom: 1px solid var(--color-border-light);
-    background: var(--color-gray-50);
+    background: var(--color-background);
   }
   
   :deep(.el-card__body) {
@@ -800,7 +800,7 @@ onUnmounted(() => {
     
     .el-table__header {
       th {
-        background: var(--color-gray-50);
+        background: var(--color-background);
         color: var(--color-text-secondary);
         font-weight: var(--font-weight-semibold);
         text-transform: uppercase;
@@ -811,7 +811,7 @@ onUnmounted(() => {
     
     .el-table__row {
       &:hover {
-        background: var(--color-gray-50);
+        background: var(--color-background);
       }
       
       &.warning-row {
@@ -851,7 +851,7 @@ onUnmounted(() => {
   :deep(.el-card__header) {
     padding: var(--space-5) var(--space-6);
     border-bottom: 1px solid var(--color-border-light);
-    background: var(--color-gray-50);
+    background: var(--color-background);
   }
   
   :deep(.el-card__body) {
@@ -862,7 +862,7 @@ onUnmounted(() => {
     :deep(.el-radio-button__inner) {
       padding: var(--space-1) var(--space-3);
       border: none;
-      background: var(--color-gray-100);
+      background: var(--color-background);
       color: var(--color-text-secondary);
       font-weight: var(--font-weight-medium);
       font-size: var(--font-size-sm);

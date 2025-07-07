@@ -952,7 +952,7 @@ onUnmounted(() => {
         color: var(--color-text-secondary);
         
         &:hover {
-          background: var(--color-gray-100);
+          background: var(--color-background-secondary);
           border-color: var(--color-border);
           color: var(--color-text-primary);
         }
@@ -1121,7 +1121,7 @@ onUnmounted(() => {
   :deep(.el-card__header) {
     padding: var(--space-5);
     border-bottom: 1px solid var(--color-border-light);
-    background: var(--color-gray-50);
+    background: var(--color-background-secondary);
     
     .card-header {
       display: flex;
@@ -1169,7 +1169,7 @@ onUnmounted(() => {
   
   .el-table__header-wrapper {
     .el-table__cell {
-      background: var(--color-gray-50);
+      background: var(--color-background-secondary);
       color: var(--color-text-secondary);
       font-weight: var(--font-weight-semibold);
       border-bottom: 1px solid var(--color-border-light);
@@ -1179,7 +1179,7 @@ onUnmounted(() => {
   .el-table__row {
     &:hover {
       > td.el-table__cell {
-        background: var(--color-gray-50);
+        background: var(--color-background-secondary);
       }
     }
   }
@@ -1377,7 +1377,7 @@ onUnmounted(() => {
 .device-tag {
   margin-right: var(--space-2);
   margin-bottom: var(--space-1);
-  background: var(--color-gray-100);
+  background: var(--color-background-secondary);
   border: 1px solid var(--color-border-light);
   border-radius: var(--radius-md);
   font-weight: var(--font-weight-medium);
@@ -1388,7 +1388,7 @@ pre {
   margin: 0;
   font-family: 'SF Mono', Monaco, 'Courier New', monospace;
   font-size: var(--font-size-sm);
-  background-color: var(--color-gray-50);
+  background-color: var(--color-background-secondary);
   padding: var(--space-3);
   border-radius: var(--radius-md);
   border: 1px solid var(--color-border-light);
@@ -1450,7 +1450,7 @@ pre {
   .el-descriptions__label {
     color: var(--color-text-tertiary);
     font-weight: var(--font-weight-medium);
-    background: var(--color-gray-50);
+    background: var(--color-background-secondary);
   }
   
   .el-descriptions__content {

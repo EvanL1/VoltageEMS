@@ -386,7 +386,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watchEffect } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { 
@@ -400,11 +400,11 @@ import {
 } from '@element-plus/icons-vue'
 import dayjs from 'dayjs'
 import { useUserStore } from '@/stores/user'
-import { useAlarmStore } from '@/stores/alarm'
+// import { useAlarmStore } from '@/stores/alarm'
 
 const { t } = useI18n()
 const userStore = useUserStore()
-const alarmStore = useAlarmStore()
+// const alarmStore = useAlarmStore() // Commented out as it's not used
 
 // 统计数据
 const stats = ref({
@@ -459,8 +459,8 @@ const handleLoading = ref(false)
 // 定时器
 let refreshTimer = null
 
-// 计算属性
-const filteredAlarms = computed(() => {
+// 过滤后的全部告警（不分页）
+const filteredAllAlarms = computed(() => {
   let result = alarms.value
 
   // 按级别过滤
@@ -489,12 +489,22 @@ const filteredAlarms = computed(() => {
     })
   }
 
-  // 分页
+  return result
+})
+
+// 计算属性 - 分页后的告警
+const filteredAlarms = computed(() => {
+  const result = filteredAllAlarms.value
+  
   const start = (currentPage.value - 1) * pageSize.value
   const end = start + pageSize.value
-  totalAlarms.value = result.length
   
   return result.slice(start, end)
+})
+
+// 监听过滤结果更新总数
+watchEffect(() => {
+  totalAlarms.value = filteredAllAlarms.value.length
 })
 
 // 方法
@@ -857,7 +867,7 @@ onUnmounted(() => {
         color: var(--color-text-secondary);
         
         &:hover {
-          background: var(--color-gray-100);
+          background: var(--color-background-secondary);
           border-color: var(--color-border);
           color: var(--color-text-primary);
         }
@@ -1120,7 +1130,7 @@ onUnmounted(() => {
   
   .el-table__header-wrapper {
     .el-table__cell {
-      background: var(--color-gray-50);
+      background: var(--color-background-secondary);
       color: var(--color-text-secondary);
       font-weight: var(--font-weight-semibold);
       border-bottom: 1px solid var(--color-border-light);
@@ -1130,7 +1140,7 @@ onUnmounted(() => {
   .el-table__row {
     &:hover {
       > td.el-table__cell {
-        background: var(--color-gray-50);
+        background: var(--color-background-secondary);
       }
     }
     
@@ -1220,7 +1230,7 @@ onUnmounted(() => {
       transition: all var(--duration-fast) var(--ease-in-out);
       
       &:hover {
-        background: var(--color-gray-100);
+        background: var(--color-background-secondary);
       }
       
       &.is-active {
@@ -1312,7 +1322,7 @@ onUnmounted(() => {
   .history-remark {
     margin-top: var(--space-2);
     padding: var(--space-2) var(--space-3);
-    background: var(--color-gray-50);
+    background: var(--color-background-secondary);
     border-radius: var(--radius-md);
     color: var(--color-text-secondary);
     font-size: var(--font-size-sm);
@@ -1324,7 +1334,7 @@ onUnmounted(() => {
   .el-descriptions__label {
     color: var(--color-text-tertiary);
     font-weight: var(--font-weight-medium);
-    background: var(--color-gray-50);
+    background: var(--color-background-secondary);
   }
   
   .el-descriptions__content {

@@ -357,8 +357,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { 
   Refresh, 
   View, 
-  VideoPlay,
-  Search
+  VideoPlay
 } from '@element-plus/icons-vue'
 import dayjs from 'dayjs'
 import { useUserStore } from '@/stores/user'
@@ -471,9 +470,8 @@ const selectByType = async () => {
 
 const selectByStatus = async () => {
   try {
-    const { value } = await ElMessageBox({
+    await ElMessageBox({
       title: t('batchControl.selectByStatus'),
-      message: t('batchControl.selectDeviceStatus'),
       showCancelButton: true,
       confirmButtonText: t('common.ok'),
       cancelButtonText: t('common.cancel'),
@@ -492,6 +490,7 @@ const selectByStatus = async () => {
       dangerouslyUseHTMLString: true,
       message: `
         <div>
+          <p>${t('batchControl.selectDeviceStatus')}</p>
           <label><input type="checkbox" value="online" checked> ${t('common.online')}</label><br>
           <label><input type="checkbox" value="offline"> ${t('common.offline')}</label><br>
           <label><input type="checkbox" value="error"> ${t('common.error')}</label>
@@ -767,7 +766,7 @@ onMounted(() => {
       transition: all var(--duration-fast) var(--ease-in-out);
       
       &:hover {
-        background: var(--color-gray-100);
+        background: var(--color-background-secondary);
         border-color: var(--color-border);
         color: var(--color-text-primary);
       }
@@ -790,7 +789,7 @@ onMounted(() => {
   :deep(.el-card__header) {
     padding: var(--space-5);
     border-bottom: 1px solid var(--color-border-light);
-    background: var(--color-gray-50);
+    background: var(--color-background-secondary);
     
     .card-header {
       display: flex;
@@ -825,7 +824,7 @@ onMounted(() => {
     
     .el-button {
       height: 36px;
-      background: var(--color-gray-100);
+      background: var(--color-background-secondary);
       border: 1px solid var(--color-border-light);
       color: var(--color-text-secondary);
       border-radius: var(--radius-lg);
@@ -866,14 +865,14 @@ onMounted(() => {
     border: 1px solid var(--color-border-light);
     border-radius: var(--radius-lg);
     padding: var(--space-3);
-    background: var(--color-gray-50);
+    background: var(--color-background-secondary);
     
     &::-webkit-scrollbar {
       width: 8px;
     }
     
     &::-webkit-scrollbar-track {
-      background: var(--color-gray-100);
+      background: var(--color-background-secondary);
       border-radius: var(--radius-md);
     }
     
@@ -1059,7 +1058,7 @@ onMounted(() => {
     
     .el-table__header-wrapper {
       .el-table__cell {
-        background: var(--color-gray-50);
+        background: var(--color-background-secondary);
         color: var(--color-text-secondary);
         font-weight: var(--font-weight-semibold);
         border-bottom: 1px solid var(--color-border-light);
@@ -1069,7 +1068,7 @@ onMounted(() => {
     .el-table__row {
       &:hover {
         > td.el-table__cell {
-          background: var(--color-gray-50);
+          background: var(--color-background-secondary);
         }
       }
     }
@@ -1172,7 +1171,7 @@ onMounted(() => {
   .el-descriptions__label {
     color: var(--color-text-tertiary);
     font-weight: var(--font-weight-medium);
-    background: var(--color-gray-50);
+    background: var(--color-background-secondary);
   }
   
   .el-descriptions__content {

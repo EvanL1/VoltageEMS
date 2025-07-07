@@ -244,13 +244,13 @@ onMounted(() => {
 .toolbar {
   margin-bottom: 16px;
   padding: 16px;
-  background-color: #fafafa;
+  background-color: var(--color-background-elevated);
   border-radius: 4px;
 }
 
 .dashboard-container {
   min-height: 600px;
-  background-color: #f0f0f0;
+  background-color: var(--color-gray-50);
   border-radius: 4px;
   padding: 1px;
 }

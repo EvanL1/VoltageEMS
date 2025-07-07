@@ -269,7 +269,7 @@ onMounted(() => {
     width: 100px;
     height: 100px;
     margin-bottom: var(--space-6);
-    background: rgba(255, 255, 255, 0.1);
+    background: rgba(26, 34, 54, 0.4);
     backdrop-filter: blur(10px);
     border-radius: 30px;
     color: white;
@@ -321,8 +321,8 @@ onMounted(() => {
       width: 100%;
       height: 56px;
       padding: 0 var(--space-4);
-      background: rgba(255, 255, 255, 0.1);
-      border: 1px solid rgba(255, 255, 255, 0.2);
+      background: rgba(26, 34, 54, 0.4);
+      border: 1px solid rgba(42, 52, 81, 0.6);
       border-radius: var(--radius-lg);
       font-size: var(--font-size-base);
       color: white;
@@ -334,7 +334,7 @@ onMounted(() => {
       
       &:focus,
       &.has-value {
-        background: rgba(255, 255, 255, 0.15);
+        background: rgba(42, 52, 81, 0.5);
         border-color: rgba(255, 255, 255, 0.5);
         outline: none;
         
@@ -397,7 +397,7 @@ onMounted(() => {
   .submit-button {
     width: 100%;
     height: 56px;
-    background: rgba(255, 255, 255, 0.2);
+    background: rgba(42, 52, 81, 0.6);
     border: 1px solid rgba(255, 255, 255, 0.3);
     backdrop-filter: blur(10px);
     border-radius: var(--radius-full);
@@ -413,7 +413,7 @@ onMounted(() => {
       content: '';
       position: absolute;
       inset: 0;
-      background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.2), transparent);
+      background: linear-gradient(90deg, transparent, rgba(42, 52, 81, 0.6), transparent);
       transform: translateX(-100%);
       transition: transform 0.6s;
     }
@@ -481,8 +481,8 @@ onMounted(() => {
       align-items: center;
       gap: var(--space-2);
       padding: var(--space-3) var(--space-4);
-      background: rgba(255, 255, 255, 0.1);
-      border: 1px solid rgba(255, 255, 255, 0.2);
+      background: rgba(26, 34, 54, 0.4);
+      border: 1px solid rgba(42, 52, 81, 0.6);
       border-radius: var(--radius-lg);
       color: white;
       cursor: pointer;
@@ -494,7 +494,7 @@ onMounted(() => {
         display: flex;
         align-items: center;
         justify-content: center;
-        background: rgba(255, 255, 255, 0.2);
+        background: rgba(42, 52, 81, 0.6);
         border-radius: var(--radius-full);
       }
       
@@ -504,7 +504,7 @@ onMounted(() => {
       }
       
       &:hover {
-        background: rgba(255, 255, 255, 0.2);
+        background: rgba(42, 52, 81, 0.6);
         transform: translateY(-2px);
       }
       
@@ -533,7 +533,7 @@ onMounted(() => {
   right: var(--space-6);
   display: flex;
   gap: 2px;
-  background: rgba(255, 255, 255, 0.1);
+  background: rgba(26, 34, 54, 0.4);
   backdrop-filter: blur(10px);
   border-radius: var(--radius-full);
   padding: 2px;
@@ -554,7 +554,7 @@ onMounted(() => {
     }
     
     &.active {
-      background: rgba(255, 255, 255, 0.2);
+      background: rgba(42, 52, 81, 0.6);
       color: white;
     }
   }

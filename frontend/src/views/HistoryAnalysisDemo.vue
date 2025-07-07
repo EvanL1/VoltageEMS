@@ -293,7 +293,7 @@ const exportDashboard = () => {
   display: flex;
   align-items: center;
   justify-content: center;
-  background-color: #fafafa;
+  background-color: var(--color-background-elevated);
 }
 
 .info-content h4 {

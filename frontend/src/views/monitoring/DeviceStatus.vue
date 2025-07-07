@@ -633,7 +633,7 @@ onUnmounted(() => {
       :deep(.el-radio-button__inner) {
         padding: var(--space-2) var(--space-4);
         border: none;
-        background: var(--color-gray-100);
+        background: var(--color-background);
         color: var(--color-text-secondary);
         font-weight: var(--font-weight-medium);
         border-radius: var(--radius-lg);
@@ -963,7 +963,7 @@ onUnmounted(() => {
     
     .el-table__header {
       th {
-        background: var(--color-gray-50);
+        background: var(--color-background);
         color: var(--color-text-secondary);
         font-weight: var(--font-weight-semibold);
         text-transform: uppercase;
@@ -974,7 +974,7 @@ onUnmounted(() => {
     
     .el-table__row {
       &:hover {
-        background: var(--color-gray-50);
+        background: var(--color-background);
       }
     }
     
@@ -1047,7 +1047,7 @@ onUnmounted(() => {
     .stat-box {
       text-align: center;
       padding: var(--space-5);
-      background: var(--color-gray-50);
+      background: var(--color-background);
       border-radius: var(--radius-lg);
       border: 1px solid var(--color-border-light);
       transition: all var(--duration-fast) var(--ease-in-out);

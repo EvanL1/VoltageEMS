@@ -96,7 +96,7 @@ onMounted(async () => {
 .grafana-container {
   width: 100%;
   position: relative;
-  background-color: #f0f0f0;
+  background-color: var(--color-gray-50);
   border-radius: 4px;
   overflow: hidden;
 }
@@ -107,7 +107,7 @@ onMounted(async () => {
   align-items: center;
   justify-content: center;
   height: 400px;
-  background-color: #fafafa;
+  background-color: var(--color-background-elevated);
 }
 
 .loading-container p {

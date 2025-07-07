@@ -138,7 +138,7 @@ const grafanaFrame = ref(null)
   height: 100vh;
   display: flex;
   flex-direction: column;
-  background-color: #f5f5f5;
+  background-color: var(--color-gray-50);
 }
 
 /* 顶部工具栏 */
