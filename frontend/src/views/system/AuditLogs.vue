@@ -4,7 +4,18 @@
     <div class="page-header">
       <h1>{{ $t('auditLogs.title') }}</h1>
       <div class="header-actions">
-        <el-button @click="handleExport" v-permission="['admin']">
+        <el-button 
+          v-if="canClearLogs"
+          type="danger"
+          @click="handleClearLogs"
+        >
+          <el-icon><Delete /></el-icon>
+          {{ $t('auditLogs.clear') }}
+        </el-button>
+        <el-button 
+          v-if="canExportLogs"
+          @click="handleExport"
+        >
           <el-icon><Download /></el-icon>
           {{ $t('auditLogs.export') }}
         </el-button>
@@ -22,9 +33,16 @@
           <el-input 
             v-model="searchForm.user" 
             :placeholder="$t('auditLogs.enterUser')"
+            :disabled="!canSearchOthers"
             clearable
             @keyup.enter="handleSearch"
-          />
+          >
+            <template #append v-if="!canSearchOthers">
+              <el-tooltip :content="$t('auditLogs.onlyViewOwn')" placement="top">
+                <el-icon><InfoFilled /></el-icon>
+              </el-tooltip>
+            </template>
+          </el-input>
         </el-form-item>
         <el-form-item :label="$t('auditLogs.module')">
           <el-select 
@@ -263,16 +281,32 @@
 </template>
 
 <script setup>
-import { ref, reactive, onMounted } from 'vue'
+import { ref, reactive, onMounted, computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { 
   Download, Refresh, Search, Document, User,
-  SuccessFilled, CircleCloseFilled
+  SuccessFilled, CircleCloseFilled, Delete, InfoFilled
 } from '@element-plus/icons-vue'
 import dayjs from 'dayjs'
+import { usePermission, PERMISSIONS } from '@/composables/usePermission'
+import { useUserStore } from '@/stores/user'
 
 const { t } = useI18n()
+const userStore = useUserStore()
+const { checkPermission, isOperator } = usePermission()
+
+// 计算属性：是否可以导出日志
+const canExportLogs = computed(() => checkPermission(PERMISSIONS.SYSTEM.AUDIT_EXPORT))
+
+// 计算属性：是否可以清理日志（只有超级管理员）
+const canClearLogs = computed(() => checkPermission(PERMISSIONS.SYSTEM.AUDIT_CLEAR))
+
+// 计算属性：是否可以搜索其他用户（运维工程师只能看自己的日志）
+const canSearchOthers = computed(() => !isOperator.value)
+
+// 当前用户名
+const currentUsername = computed(() => userStore.userInfo?.username || '')
 
 // 搜索表单
 const searchForm = reactive({
@@ -405,13 +439,17 @@ const getActionType = (action) => {
 
 // 搜索
 const handleSearch = () => {
+  // 运维工程师强制只能搜索自己的日志
+  if (isOperator.value) {
+    searchForm.user = currentUsername.value
+  }
   currentPage.value = 1
   loadLogs()
 }
 
 // 重置搜索
 const handleReset = () => {
-  searchForm.user = ''
+  searchForm.user = isOperator.value ? currentUsername.value : ''
   searchForm.module = ''
   searchForm.action = ''
   searchForm.result = ''
@@ -427,6 +465,11 @@ const handleRefresh = () => {
 
 // 导出
 const handleExport = async () => {
+  if (!canExportLogs.value) {
+    ElMessage.warning(t('common.noPermission'))
+    return
+  }
+  
   try {
     await ElMessageBox.confirm(
       t('auditLogs.exportConfirm'),
@@ -446,6 +489,51 @@ const handleExport = async () => {
       link.download = `audit_logs_${dayjs().format('YYYYMMDD_HHmmss')}.csv`
       link.click()
       ElMessage.success(t('auditLogs.exportSuccess'))
+    }, 2000)
+  } catch (error) {
+    // 用户取消
+  }
+}
+
+// 清理日志
+const handleClearLogs = async () => {
+  if (!canClearLogs.value) {
+    ElMessage.warning(t('common.noPermission'))
+    return
+  }
+  
+  try {
+    await ElMessageBox.confirm(
+      t('auditLogs.clearConfirm'),
+      t('common.warning'),
+      {
+        confirmButtonText: t('common.confirm'),
+        cancelButtonText: t('common.cancel'),
+        type: 'warning',
+        dangerouslyUseHTMLString: true,
+        confirmButtonClass: 'el-button--danger'
+      }
+    )
+    
+    // 二次确认
+    await ElMessageBox.prompt(
+      t('auditLogs.clearDoubleConfirm'),
+      t('common.warning'),
+      {
+        confirmButtonText: t('common.confirm'),
+        cancelButtonText: t('common.cancel'),
+        inputPattern: /^CLEAR$/,
+        inputErrorMessage: t('auditLogs.clearInputError'),
+        type: 'warning'
+      }
+    )
+    
+    loading.value = true
+    // 模拟清理
+    setTimeout(() => {
+      ElMessage.success(t('auditLogs.clearSuccess'))
+      loading.value = false
+      loadLogs()
     }, 2000)
   } catch (error) {
     // 用户取消
@@ -479,7 +567,9 @@ const loadLogs = () => {
     // 生成模拟数据
     const modules = ['auth', 'config', 'control', 'monitoring', 'system']
     const actions = ['create', 'update', 'delete', 'login', 'logout', 'control']
-    const users = ['admin', 'engineer1', 'operator1', 'engineer2', 'operator2']
+    const users = isOperator.value 
+      ? [currentUsername.value] // 运维工程师只能看到自己的日志
+      : ['admin', 'engineer1', 'operator1', 'engineer2', 'operator2']
     const targets = [
       'Channel: Modbus_TCP_Demo',
       'Point: YC001',
@@ -525,7 +615,11 @@ const loadLogs = () => {
     
     // 筛选
     let filtered = allLogs
-    if (searchForm.user) {
+    
+    // 运维工程师强制过滤只看自己的日志
+    if (isOperator.value) {
+      filtered = filtered.filter(log => log.user === currentUsername.value)
+    } else if (searchForm.user) {
       filtered = filtered.filter(log => 
         log.user.toLowerCase().includes(searchForm.user.toLowerCase())
       )
@@ -567,6 +661,10 @@ const loadLogs = () => {
 }
 
 onMounted(() => {
+  // 运维工程师默认设置搜索条件为自己
+  if (isOperator.value) {
+    searchForm.user = currentUsername.value
+  }
   loadLogs()
 })
 </script>

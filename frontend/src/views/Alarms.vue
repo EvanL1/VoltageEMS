@@ -263,7 +263,7 @@
 </template>
 
 <script>
-import { getAlarmStatistics, getAlarmList, acknowledgeAlarm, resolveAlarm } from '@/api/alarm'
+import { getAlarmStatistics, getAlarmList, acknowledgeAlarm } from '@/api/alarm'
 
 export default {
   name: 'AlarmsView',

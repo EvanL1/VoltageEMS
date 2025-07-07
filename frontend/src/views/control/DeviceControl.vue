@@ -7,7 +7,11 @@
           <el-icon><Refresh /></el-icon>
           {{ $t('common.refresh') }}
         </el-button>
-        <el-button type="primary" @click="showBatchControlDialog = true">
+        <el-button 
+          type="primary" 
+          @click="handleShowBatchControl"
+          v-if="hasPermission(PERMISSIONS.CONTROL.BATCH_CONTROL)"
+        >
           <el-icon><Operation /></el-icon>
           {{ $t('deviceControl.batchControl') }}
         </el-button>
@@ -151,7 +155,7 @@
                     type="primary" 
                     size="small" 
                     @click.stop="showControlPanel(device)"
-                    :disabled="device.status === 'offline'"
+                    :disabled="device.status === 'offline' || !hasPermission(PERMISSIONS.CONTROL.DEVICE_CONTROL)"
                   >
                     {{ $t('deviceControl.control') }}
                   </el-button>
@@ -178,7 +182,7 @@
     <!-- 设备控制面板 -->
     <el-drawer
       v-model="showControlDrawer"
-      :title="$t('deviceControl.controlPanel')"
+      :title="controlPanelTitle"
       direction="rtl"
       size="50%"
     >
@@ -189,6 +193,16 @@
             {{ getStatusText(selectedDevice.status) }}
           </el-tag>
         </div>
+
+        <!-- 权限不足提示 -->
+        <el-alert 
+          v-if="!hasPermission(PERMISSIONS.CONTROL.DEVICE_CONTROL)"
+          :title="$t('deviceControl.noControlPermissionTip')"
+          type="info"
+          :closable="false"
+          show-icon
+          style="margin: 16px 24px;"
+        />
 
         <el-tabs v-model="activeControlTab">
           <el-tab-pane :label="$t('deviceControl.quickControl')" name="quick">
@@ -208,13 +222,13 @@
                       <el-switch 
                         v-if="point.type === 'YK'"
                         v-model="point.value"
-                        :disabled="!userStore.canControl"
+                        :disabled="!hasPermission(PERMISSIONS.CONTROL.DEVICE_CONTROL)"
                         @change="handleQuickControl(point)"
                       />
                       <el-button 
                         v-else
                         size="small"
-                        :disabled="!userStore.canControl"
+                        :disabled="!hasPermission(PERMISSIONS.CONTROL.DEVICE_CONTROL)"
                         @click="showSetValueDialog(point)"
                       >
                         {{ $t('deviceControl.setValue') }}
@@ -243,7 +257,7 @@
                     type="primary" 
                     size="small" 
                     link
-                    :disabled="!userStore.canControl"
+                    :disabled="!hasPermission(PERMISSIONS.CONTROL.DEVICE_CONTROL)"
                     @click="showControlDialog(row)"
                   >
                     {{ $t('deviceControl.control') }}
@@ -460,10 +474,11 @@ import {
   Operation,
 } from '@element-plus/icons-vue'
 import dayjs from 'dayjs'
-import { useUserStore } from '@/stores/user'
+import { usePermission } from '@/composables/usePermission'
+import { PERMISSIONS } from '@/utils/permission'
 
 const { t } = useI18n()
-const userStore = useUserStore()
+const { hasPermission } = usePermission()
 
 // 设备分组
 const activeGroup = ref('all')
@@ -580,6 +595,13 @@ const groupForm = ref({
 // 计算属性
 const allDevicesCount = computed(() => devices.value.length)
 
+const controlPanelTitle = computed(() => {
+  if (!hasPermission(PERMISSIONS.CONTROL.DEVICE_CONTROL)) {
+    return `${t('deviceControl.controlPanel')} (${t('common.viewOnly')})`
+  }
+  return t('deviceControl.controlPanel')
+})
+
 const filteredDevices = computed(() => {
   let result = devices.value
 
@@ -680,9 +702,15 @@ const selectDevice = (device) => {
 }
 
 const showControlPanel = (device) => {
+  // 允许所有用户查看控制面板，但无权限者只能查看
   selectedDevice.value = device
   showControlDrawer.value = true
   loadControlPoints(device)
+  
+  // 给无权限用户友好提示
+  if (!hasPermission(PERMISSIONS.CONTROL.DEVICE_CONTROL)) {
+    ElMessage.info(t('deviceControl.viewOnlyTip'))
+  }
 }
 
 const showDeviceDetails = (device) => {
@@ -716,8 +744,10 @@ const loadControlPoints = () => {
 }
 
 const handleQuickControl = async (point) => {
-  if (!userStore.canControl) {
+  if (!hasPermission(PERMISSIONS.CONTROL.DEVICE_CONTROL)) {
     ElMessage.warning(t('common.noPermission'))
+    // 恢复原值
+    point.value = !point.value
     return
   }
 
@@ -744,6 +774,11 @@ const handleQuickControl = async (point) => {
 }
 
 const showSetValueDialog = (point) => {
+  if (!hasPermission(PERMISSIONS.CONTROL.DEVICE_CONTROL)) {
+    ElMessage.warning(t('common.noPermission'))
+    return
+  }
+  
   controlForm.value = {
     deviceName: selectedDevice.value.name,
     pointName: point.name,
@@ -760,10 +795,21 @@ const showSetValueDialog = (point) => {
 }
 
 const showControlDialog = (point) => {
+  if (!hasPermission(PERMISSIONS.CONTROL.DEVICE_CONTROL)) {
+    ElMessage.warning(t('common.noPermission'))
+    return
+  }
   showSetValueDialog(point)
 }
 
 const submitControl = async () => {
+  // 最终执行前再次检查权限
+  if (!hasPermission(PERMISSIONS.CONTROL.DEVICE_CONTROL)) {
+    ElMessage.warning(t('common.noPermission'))
+    showSingleControlDialog.value = false
+    return
+  }
+  
   controlLoading.value = true
   try {
     // 模拟控制请求
@@ -782,6 +828,13 @@ const submitControl = async () => {
 }
 
 const submitBatchControl = async () => {
+  // 检查批量控制权限
+  if (!hasPermission(PERMISSIONS.CONTROL.BATCH_CONTROL)) {
+    ElMessage.warning(t('common.noPermission'))
+    showBatchControlDialog.value = false
+    return
+  }
+  
   if (batchControlForm.value.devices.length === 0) {
     ElMessage.warning(t('deviceControl.selectDevicesFirst'))
     return
@@ -816,6 +869,14 @@ const addGroup = () => {
   ElMessage.success(t('deviceControl.addGroupSuccess'))
   showAddGroupDialog.value = false
   groupForm.value = { name: '', description: '' }
+}
+
+const handleShowBatchControl = () => {
+  if (!hasPermission(PERMISSIONS.CONTROL.BATCH_CONTROL)) {
+    ElMessage.warning(t('common.noPermission'))
+    return
+  }
+  showBatchControlDialog.value = true
 }
 
 onMounted(() => {

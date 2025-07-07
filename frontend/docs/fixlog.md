@@ -819,3 +819,18 @@ npm run serve
    - `var(--color-background-elevated)` - 用于浮层背景
 
 2. **深色主题适配**：这些语义化变量会根据主题自动切换颜色值，确保在深色主题下有良好的对比度和可读性
+
+### 系统设置页面权限控制适配
+- 更新了 `src/views/system/SystemSettings.vue`
+  - 引入 `usePermission` 组合式函数和 `PERMISSIONS` 常量
+  - 使用权限系统替代硬编码的权限字符串
+  - 实现细粒度权限控制：
+    - 基本设置：所有人可查看，需要 `PERMISSIONS.SYSTEM.SETTINGS_EDIT` 权限才能编辑
+    - 系统参数：需要 `PERMISSIONS.SYSTEM.SETTINGS_EDIT` 权限才能编辑
+    - 告警设置：需要 `PERMISSIONS.CONFIG.ALARM_EDIT` 权限才能查看和编辑
+    - 安全设置：仅系统管理员及以上角色可查看，仅超级管理员可编辑
+    - 备份恢复：仅超级管理员可查看和操作
+  - 更新保存和重置按钮，只有有权限的用户才显示
+  - 所有需要权限的操作都增加了权限检查，无权限时显示提示
+  - 邮箱标签的关闭按钮根据权限动态显示
+  - 备份、恢复、删除等危险操作限制为仅超级管理员可执行

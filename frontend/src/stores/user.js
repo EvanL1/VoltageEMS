@@ -1,22 +1,27 @@
 import { defineStore } from 'pinia'
 import { login, getUserInfo, logout as logoutApi } from '@/api/auth'
+import { getPermissionsByRole, ROLES } from '@/utils/permission'
 
 export const useUserStore = defineStore('user', {
   state: () => ({
     token: localStorage.getItem('token') || null,
     userInfo: null,
-    role: null, // 'operator' | 'engineer' | 'admin'
+    role: null, // 使用 ROLES 常量定义的角色
     permissions: []
   }),
 
   getters: {
     isLoggedIn: (state) => !!state.token,
-    isOperator: (state) => state.role === 'operator',
-    isEngineer: (state) => state.role === 'engineer',
-    isAdmin: (state) => state.role === 'admin',
-    canControl: (state) => ['engineer', 'admin'].includes(state.role),
-    canConfig: (state) => state.role === 'admin',
-    hasPermission: (state) => (permission) => state.permissions.includes(permission)
+    isOperator: (state) => state.role === ROLES.OPS_ENGINEER,
+    isEngineer: (state) => state.role === ROLES.OPS_ENGINEER,
+    isAdmin: (state) => [ROLES.SUPER_ADMIN, ROLES.SYSTEM_ADMIN].includes(state.role),
+    isSuperAdmin: (state) => state.role === ROLES.SUPER_ADMIN,
+    canControl: (state) => [ROLES.OPS_ENGINEER, ROLES.SYSTEM_ADMIN, ROLES.SUPER_ADMIN].includes(state.role),
+    canConfig: (state) => [ROLES.SYSTEM_ADMIN, ROLES.SUPER_ADMIN].includes(state.role),
+    hasPermission: (state) => (permission) => {
+      if (state.role === ROLES.SUPER_ADMIN) return true
+      return state.permissions.includes(permission)
+    }
   },
 
   actions: {
@@ -51,46 +56,8 @@ export const useUserStore = defineStore('user', {
     },
 
     generatePermissionsByRole() {
-      const rolePermissions = {
-        operator: [
-          'monitoring.view',
-          'dashboard.view',
-          'realtime.view',
-          'devices.view',
-          'energy.view',
-          'alarms.view',
-          'topology.view'
-        ],
-        engineer: [
-          // 继承operator权限
-          'monitoring.view',
-          'dashboard.view',
-          'realtime.view',
-          'realtime.control',
-          'devices.view',
-          'devices.control',
-          'energy.view',
-          'alarms.view',
-          'alarms.handle',
-          'topology.view',
-          // 工程师特有权限
-          'control.access',
-          'batch.execute',
-          'schedule.manage',
-          'audit.view.self',
-          'services.view'
-        ],
-        admin: [
-          // 所有权限
-          '*'
-        ]
-      }
-
-      if (this.role === 'admin') {
-        this.permissions = ['*']
-      } else {
-        this.permissions = rolePermissions[this.role] || []
-      }
+      // 使用权限系统定义的角色权限映射
+      this.permissions = getPermissionsByRole(this.role)
     },
 
     async logout() {
@@ -112,7 +79,7 @@ export const useUserStore = defineStore('user', {
     },
 
     checkPermission(permission) {
-      if (this.permissions.includes('*')) return true
+      if (this.role === ROLES.SUPER_ADMIN) return true
       return this.permissions.includes(permission)
     }
   }

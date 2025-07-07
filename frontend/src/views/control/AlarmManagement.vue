@@ -10,7 +10,7 @@
         <el-button 
           type="success" 
           @click="confirmSelected"
-          :disabled="selectedAlarms.length === 0 || !userStore.canControl"
+          :disabled="selectedAlarms.length === 0 || !checkPermission(PERMISSIONS.CONTROL.ALARM_CONFIRM)"
         >
           <el-icon><CircleCheck /></el-icon>
           {{ $t('alarms.confirmSelected') }}
@@ -18,7 +18,7 @@
         <el-button 
           type="danger" 
           @click="clearSelected"
-          :disabled="selectedAlarms.length === 0 || !userStore.canControl"
+          :disabled="selectedAlarms.length === 0 || !checkPermission(PERMISSIONS.CONTROL.ALARM_DELETE)"
         >
           <el-icon><Delete /></el-icon>
           {{ $t('alarms.clearSelected') }}
@@ -148,7 +148,7 @@
         <el-table-column 
           type="selection" 
           width="55"
-          :selectable="row => userStore.canControl"
+          :selectable="row => checkAnyPermission([PERMISSIONS.CONTROL.ALARM_CONFIRM, PERMISSIONS.CONTROL.ALARM_DELETE])"
         />
         <el-table-column 
           prop="id" 
@@ -223,7 +223,7 @@
               {{ $t('common.details') }}
             </el-button>
             <el-button 
-              v-if="row.status === 'active' && userStore.canControl" 
+              v-if="row.status === 'active' && checkPermission(PERMISSIONS.CONTROL.ALARM_CONFIRM)" 
               type="success" 
               size="small" 
               link
@@ -232,7 +232,16 @@
               {{ $t('alarms.acknowledgeAlarm') }}
             </el-button>
             <el-button 
-              v-if="row.status !== 'cleared' && userStore.canControl" 
+              v-if="row.status !== 'cleared' && checkPermission(PERMISSIONS.CONTROL.ALARM_HANDLE)" 
+              type="warning" 
+              size="small" 
+              link
+              @click="handleAlarm(row)"
+            >
+              {{ $t('alarms.handleAlarm') }}
+            </el-button>
+            <el-button 
+              v-if="row.status !== 'cleared' && checkPermission(PERMISSIONS.CONTROL.ALARM_DELETE)" 
               type="danger" 
               size="small" 
               link
@@ -297,12 +306,17 @@
             <br>
             {{ $t('alarms.confirmedTime') }}: {{ formatDateTime(selectedAlarm.confirmedTime) }}
           </div>
+          <div v-if="selectedAlarm.handledBy">
+            {{ $t('alarms.handledBy') }}: {{ selectedAlarm.handledBy }}
+            <br>
+            {{ $t('alarms.handledTime') }}: {{ formatDateTime(selectedAlarm.handledTime) }}
+          </div>
           <div v-if="selectedAlarm.clearedBy">
             {{ $t('alarms.clearedBy') }}: {{ selectedAlarm.clearedBy }}
             <br>
             {{ $t('alarms.clearedTime') }}: {{ formatDateTime(selectedAlarm.clearedTime) }}
           </div>
-          <div v-if="!selectedAlarm.confirmedBy && !selectedAlarm.clearedBy">
+          <div v-if="!selectedAlarm.confirmedBy && !selectedAlarm.handledBy && !selectedAlarm.clearedBy">
             {{ $t('alarms.notHandled') }}
           </div>
         </el-descriptions-item>
@@ -332,14 +346,21 @@
       <template #footer>
         <el-button @click="showDetailsDialog = false">{{ $t('common.close') }}</el-button>
         <el-button 
-          v-if="selectedAlarm?.status === 'active' && userStore.canControl" 
+          v-if="selectedAlarm?.status === 'active' && checkPermission(PERMISSIONS.CONTROL.ALARM_CONFIRM)" 
           type="success" 
           @click="confirmAlarm(selectedAlarm)"
         >
           {{ $t('alarms.acknowledgeAlarm') }}
         </el-button>
         <el-button 
-          v-if="selectedAlarm?.status !== 'cleared' && userStore.canControl" 
+          v-if="selectedAlarm?.status !== 'cleared' && checkPermission(PERMISSIONS.CONTROL.ALARM_HANDLE)" 
+          type="warning" 
+          @click="handleAlarm(selectedAlarm)"
+        >
+          {{ $t('alarms.handleAlarm') }}
+        </el-button>
+        <el-button 
+          v-if="selectedAlarm?.status !== 'cleared' && checkPermission(PERMISSIONS.CONTROL.ALARM_DELETE)" 
           type="danger" 
           @click="clearAlarm(selectedAlarm)"
         >
@@ -351,7 +372,7 @@
     <!-- 确认/清除对话框 -->
     <el-dialog 
       v-model="showHandleDialog" 
-      :title="handleType === 'confirm' ? $t('alarms.confirmAlarmTitle') : $t('alarms.clearAlarmTitle')"
+      :title="handleType === 'confirm' ? $t('alarms.confirmAlarmTitle') : handleType === 'handle' ? $t('alarms.handleAlarmTitle') : $t('alarms.clearAlarmTitle')"
       width="500px"
     >
       <el-form :model="handleForm" label-width="100px">
@@ -374,7 +395,7 @@
       <template #footer>
         <el-button @click="showHandleDialog = false">{{ $t('common.cancel') }}</el-button>
         <el-button 
-          :type="handleType === 'confirm' ? 'success' : 'danger'" 
+          :type="handleType === 'confirm' ? 'success' : handleType === 'handle' ? 'warning' : 'danger'" 
           @click="submitHandle"
           :loading="handleLoading"
         >
@@ -400,10 +421,12 @@ import {
 } from '@element-plus/icons-vue'
 import dayjs from 'dayjs'
 import { useUserStore } from '@/stores/user'
+import { usePermission } from '@/composables/usePermission'
 // import { useAlarmStore } from '@/stores/alarm'
 
 const { t } = useI18n()
 const userStore = useUserStore()
+const { PERMISSIONS, checkPermission, checkAnyPermission } = usePermission()
 // const alarmStore = useAlarmStore() // Commented out as it's not used
 
 // 统计数据
@@ -413,6 +436,9 @@ const stats = ref({
   medium: 0,
   total: 0
 })
+
+// 计算属性 - 检查用户权限
+// 这些权限检查已经改为在具体操作时使用 checkPermission 函数
 
 // 过滤表单
 const filterForm = ref({
@@ -435,6 +461,7 @@ const alarmLevels = [
 const statusOptions = [
   { value: 'active', label: t('alarms.status.active') },
   { value: 'acknowledged', label: t('alarms.status.acknowledged') },
+  { value: 'handled', label: t('alarms.status.handled') },
   { value: 'cleared', label: t('alarms.status.cleared') }
 ]
 
@@ -523,7 +550,7 @@ const loadAlarms = async () => {
   const mockAlarms = []
   const levels = ['critical', 'high', 'medium', 'low', 'info']
   const sources = ['1F-PLC-01', '2F-SENSOR-01', 'OUT-METER-01', 'MOTOR-01']
-  const statuses = ['active', 'acknowledged', 'cleared']
+  const statuses = ['active', 'acknowledged', 'handled', 'cleared']
   
   for (let i = 1; i <= 100; i++) {
     const level = levels[Math.floor(Math.random() * levels.length)]
@@ -538,6 +565,8 @@ const loadAlarms = async () => {
       status,
       confirmedBy: status !== 'active' ? 'engineer' : null,
       confirmedTime: status !== 'active' ? Date.now() - Math.random() * 3600000 : null,
+      handledBy: (status === 'handled' || status === 'cleared') ? 'engineer' : null,
+      handledTime: (status === 'handled' || status === 'cleared') ? Date.now() - Math.random() * 2400000 : null,
       clearedBy: status === 'cleared' ? 'admin' : null,
       clearedTime: status === 'cleared' ? Date.now() - Math.random() * 1800000 : null,
       deviceName: `Device_${Math.floor(Math.random() * 10) + 1}`,
@@ -590,6 +619,16 @@ const generateHistory = (status) => {
       operator: 'engineer',
       type: 'success',
       remark: 'Inspection scheduled'
+    })
+  }
+  
+  if (status === 'handled' || status === 'cleared') {
+    history.push({
+      time: Date.now() - 2400000,
+      action: 'Alarm Handled',
+      operator: 'engineer',
+      type: 'warning',
+      remark: 'Maintenance performed'
     })
   }
   
@@ -667,6 +706,7 @@ const getStatusType = (status) => {
   const types = {
     active: 'danger',
     acknowledged: 'warning',
+    handled: 'info',
     cleared: 'success'
   }
   return types[status] || 'info'
@@ -691,6 +731,15 @@ const confirmAlarm = (alarm) => {
   showHandleDialog.value = true
 }
 
+const handleAlarm = (alarm) => {
+  handleType.value = 'handle'
+  handleForm.value = {
+    alarm,
+    remark: ''
+  }
+  showHandleDialog.value = true
+}
+
 const clearAlarm = (alarm) => {
   handleType.value = 'clear'
   handleForm.value = {
@@ -702,6 +751,12 @@ const clearAlarm = (alarm) => {
 
 const confirmSelected = async () => {
   if (selectedAlarms.value.length === 0) return
+  
+  // 检查权限
+  if (!checkPermission(PERMISSIONS.CONTROL.ALARM_CONFIRM)) {
+    ElMessage.error(t('common.noPermission'))
+    return
+  }
   
   try {
     await ElMessageBox.confirm(
@@ -732,6 +787,12 @@ const confirmSelected = async () => {
 
 const clearSelected = async () => {
   if (selectedAlarms.value.length === 0) return
+  
+  // 检查权限 - 只有管理员可以删除告警
+  if (!checkPermission(PERMISSIONS.CONTROL.ALARM_DELETE)) {
+    ElMessage.error(t('common.noPermission'))
+    return
+  }
   
   try {
     await ElMessageBox.confirm(
@@ -772,6 +833,10 @@ const submitHandle = async () => {
       alarm.status = 'acknowledged'
       alarm.confirmedBy = userStore.userInfo.name
       alarm.confirmedTime = Date.now()
+    } else if (handleType.value === 'handle') {
+      alarm.status = 'handled'
+      alarm.handledBy = userStore.userInfo.name
+      alarm.handledTime = Date.now()
     } else {
       alarm.status = 'cleared'
       alarm.clearedBy = userStore.userInfo.name
@@ -780,11 +845,21 @@ const submitHandle = async () => {
     
     // 添加历史记录
     if (!alarm.history) alarm.history = []
+    const actionMap = {
+      confirm: 'Alarm Acknowledged',
+      handle: 'Alarm Handled',
+      clear: 'Alarm Cleared'
+    }
+    const typeMap = {
+      confirm: 'success',
+      handle: 'warning',
+      clear: 'primary'
+    }
     alarm.history.push({
       time: Date.now(),
-      action: handleType.value === 'confirm' ? 'Alarm Acknowledged' : 'Alarm Cleared',
+      action: actionMap[handleType.value],
       operator: userStore.userInfo.name,
-      type: handleType.value === 'confirm' ? 'success' : 'primary',
+      type: typeMap[handleType.value],
       remark
     })
     
@@ -794,11 +869,12 @@ const submitHandle = async () => {
       showDetailsDialog.value = false
     }
     
-    ElMessage.success(
-      handleType.value === 'confirm' 
-        ? t('alarms.confirmSuccess') 
-        : t('alarms.clearSuccess')
-    )
+    const messageMap = {
+      confirm: t('alarms.confirmSuccess'),
+      handle: t('alarms.handleSuccess'),
+      clear: t('alarms.clearSuccess')
+    }
+    ElMessage.success(messageMap[handleType.value])
   } catch (error) {
     ElMessage.error(t('common.operationFailed'))
   } finally {

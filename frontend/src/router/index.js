@@ -1,7 +1,7 @@
 import { createRouter, createWebHistory } from 'vue-router'
-import { useUserStore } from '@/stores/user'
-import { ElMessage } from 'element-plus'
 import MainLayout from '@/layouts/MainLayout.vue'
+import { PERMISSIONS } from '@/utils/permission'
+import { setupPermissionGuard } from './permission'
 
 // 公共路由
 const publicRoutes = [
@@ -34,7 +34,7 @@ const authRoutes = [
         meta: { 
           title: 'menu.dashboard',
           icon: 'DataAnalysis',
-          roles: ['operator', 'engineer', 'admin']
+          permissions: [PERMISSIONS.MONITOR.DASHBOARD_VIEW]
         }
       },
       {
@@ -44,7 +44,7 @@ const authRoutes = [
         meta: { 
           title: 'menu.realtime',
           icon: 'Timer',
-          roles: ['operator', 'engineer', 'admin']
+          permissions: [PERMISSIONS.MONITOR.REALTIME_VIEW]
         }
       },
       {
@@ -54,7 +54,7 @@ const authRoutes = [
         meta: { 
           title: 'menu.devices',
           icon: 'Connection',
-          roles: ['operator', 'engineer', 'admin']
+          permissions: [PERMISSIONS.MONITOR.DEVICE_VIEW]
         }
       },
       {
@@ -64,7 +64,7 @@ const authRoutes = [
         meta: { 
           title: 'menu.energy',
           icon: 'DataLine',
-          roles: ['operator', 'engineer', 'admin']
+          permissions: [PERMISSIONS.MONITOR.STATS_VIEW]
         }
       },
       {
@@ -74,7 +74,7 @@ const authRoutes = [
         meta: { 
           title: 'menu.alarms',
           icon: 'WarnTriangleFilled',
-          roles: ['operator', 'engineer', 'admin']
+          permissions: [PERMISSIONS.CONTROL.ALARM_VIEW]
         }
       },
       {
@@ -84,7 +84,7 @@ const authRoutes = [
         meta: { 
           title: 'menu.topology',
           icon: 'Share',
-          roles: ['operator', 'engineer', 'admin']
+          permissions: [PERMISSIONS.MONITOR.TOPOLOGY_VIEW]
         }
       },
 
@@ -96,7 +96,7 @@ const authRoutes = [
         meta: { 
           title: 'menu.deviceControl',
           icon: 'SwitchButton',
-          roles: ['engineer', 'admin']
+          permissions: [PERMISSIONS.CONTROL.DEVICE_VIEW]
         }
       },
       {
@@ -106,7 +106,7 @@ const authRoutes = [
         meta: { 
           title: 'menu.alarmManagement',
           icon: 'Bell',
-          roles: ['engineer', 'admin']
+          permissions: [PERMISSIONS.CONTROL.ALARM_VIEW]
         }
       },
       {
@@ -116,7 +116,7 @@ const authRoutes = [
         meta: { 
           title: 'menu.batchControl',
           icon: 'CopyDocument',
-          roles: ['engineer', 'admin']
+          permissions: [PERMISSIONS.CONTROL.BATCH_VIEW]
         }
       },
       {
@@ -126,7 +126,7 @@ const authRoutes = [
         meta: { 
           title: 'menu.scheduledTasks',
           icon: 'Calendar',
-          roles: ['engineer', 'admin']
+          permissions: [PERMISSIONS.CONTROL.TASK_VIEW]
         }
       },
 
@@ -138,7 +138,7 @@ const authRoutes = [
         meta: { 
           title: 'menu.channelConfig',
           icon: 'Link',
-          roles: ['admin']
+          permissions: [PERMISSIONS.CONFIG.CHANNEL_VIEW]
         }
       },
       {
@@ -148,7 +148,7 @@ const authRoutes = [
         meta: { 
           title: 'menu.pointTable',
           icon: 'Grid',
-          roles: ['admin']
+          permissions: [PERMISSIONS.CONFIG.POINT_VIEW]
         }
       },
       {
@@ -158,7 +158,7 @@ const authRoutes = [
         meta: { 
           title: 'menu.modelConfig',
           icon: 'DataBoard',
-          roles: ['admin']
+          permissions: [PERMISSIONS.CONFIG.MODEL_VIEW]
         }
       },
       {
@@ -168,7 +168,7 @@ const authRoutes = [
         meta: { 
           title: 'menu.alarmRules',
           icon: 'Warning',
-          roles: ['admin']
+          permissions: [PERMISSIONS.CONFIG.ALARM_VIEW]
         }
       },
       {
@@ -178,7 +178,7 @@ const authRoutes = [
         meta: { 
           title: 'menu.storagePolicy',
           icon: 'Files',
-          roles: ['admin']
+          permissions: [PERMISSIONS.CONFIG.STORAGE_VIEW]
         }
       },
       {
@@ -188,7 +188,7 @@ const authRoutes = [
         meta: { 
           title: 'menu.networkForward',
           icon: 'Upload',
-          roles: ['admin']
+          permissions: [PERMISSIONS.CONFIG.NETWORK_VIEW]
         }
       },
 
@@ -200,7 +200,7 @@ const authRoutes = [
         meta: { 
           title: 'menu.userManagement',
           icon: 'User',
-          roles: ['admin']
+          permissions: [PERMISSIONS.SYSTEM.USER_VIEW]
         }
       },
       {
@@ -210,7 +210,7 @@ const authRoutes = [
         meta: { 
           title: 'menu.systemSettings',
           icon: 'SetUp',
-          roles: ['admin']
+          permissions: [PERMISSIONS.SYSTEM.SETTINGS_VIEW]
         }
       },
       {
@@ -220,7 +220,7 @@ const authRoutes = [
         meta: { 
           title: 'menu.auditLogs',
           icon: 'Document',
-          roles: ['engineer', 'admin']
+          permissions: [PERMISSIONS.SYSTEM.AUDIT_VIEW]
         }
       },
       {
@@ -230,7 +230,7 @@ const authRoutes = [
         meta: { 
           title: 'menu.serviceMonitor',
           icon: 'Cpu',
-          roles: ['engineer', 'admin']
+          permissions: [PERMISSIONS.SYSTEM.SERVICE_VIEW]
         }
       },
 
@@ -280,45 +280,7 @@ const router = createRouter({
   routes: [...publicRoutes, ...authRoutes]
 })
 
-// 路由守卫
-router.beforeEach(async (to, from, next) => {
-  const userStore = useUserStore()
-  
-  // 公开路由直接放行
-  if (to.meta.public) {
-    next()
-    return
-  }
-
-  // 检查是否登录
-  if (!userStore.isLoggedIn) {
-    next('/login')
-    return
-  }
-
-  // 如果没有用户信息，尝试获取
-  if (!userStore.userInfo) {
-    try {
-      await userStore.fetchUserInfo()
-    } catch (error) {
-      ElMessage.error('获取用户信息失败')
-      next('/login')
-      return
-    }
-  }
-
-  // 检查权限
-  const requiredRoles = to.meta.roles
-  if (requiredRoles && requiredRoles.length > 0) {
-    const hasRole = requiredRoles.includes(userStore.role)
-    if (!hasRole) {
-      ElMessage.error('您没有权限访问该页面')
-      next('/403')
-      return
-    }
-  }
-
-  next()
-})
+// 设置权限守卫
+setupPermissionGuard(router)
 
 export default router

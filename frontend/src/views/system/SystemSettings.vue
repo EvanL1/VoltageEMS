@@ -4,11 +4,18 @@
     <div class="page-header">
       <h1>{{ $t('systemSettings.title') }}</h1>
       <div class="header-actions">
-        <el-button type="primary" @click="handleSave" v-permission="['admin']">
+        <el-button 
+          type="primary" 
+          @click="handleSave" 
+          v-if="canEditSettings"
+        >
           <el-icon><Document /></el-icon>
           {{ $t('common.save') }}
         </el-button>
-        <el-button @click="handleReset" v-permission="['admin']">
+        <el-button 
+          @click="handleReset" 
+          v-if="canEditSettings"
+        >
           <el-icon><Refresh /></el-icon>
           {{ $t('common.reset') }}
         </el-button>
@@ -27,7 +34,7 @@
                 :placeholder="$t('systemSettings.enterSystemName')"
                 maxlength="50"
                 show-word-limit
-                :disabled="!hasPermission(['admin'])"
+                :disabled="!canEditSettings"
               />
             </el-form-item>
             <el-form-item :label="$t('systemSettings.systemLogo')">
@@ -37,7 +44,7 @@
                 :show-file-list="false"
                 :on-success="handleLogoSuccess"
                 :before-upload="beforeLogoUpload"
-                :disabled="!hasPermission(['admin'])"
+                :disabled="!canEditSettings"
               >
                 <img v-if="basicSettings.logoUrl" :src="basicSettings.logoUrl" class="logo">
                 <el-icon v-else class="logo-uploader-icon"><Plus /></el-icon>
@@ -51,21 +58,21 @@
               <el-input 
                 v-model="basicSettings.companyName" 
                 :placeholder="$t('systemSettings.enterCompanyName')"
-                :disabled="!hasPermission(['admin'])"
+                :disabled="!canEditSettings"
               />
             </el-form-item>
             <el-form-item :label="$t('systemSettings.contactEmail')">
               <el-input 
                 v-model="basicSettings.contactEmail" 
                 :placeholder="$t('systemSettings.enterContactEmail')"
-                :disabled="!hasPermission(['admin'])"
+                :disabled="!canEditSettings"
               />
             </el-form-item>
             <el-form-item :label="$t('systemSettings.contactPhone')">
               <el-input 
                 v-model="basicSettings.contactPhone" 
                 :placeholder="$t('systemSettings.enterContactPhone')"
-                :disabled="!hasPermission(['admin'])"
+                :disabled="!canEditSettings"
               />
             </el-form-item>
           </el-form>
@@ -80,7 +87,7 @@
                 v-model="systemParams.realtimeRetention" 
                 :min="1" 
                 :max="30"
-                :disabled="!hasPermission(['admin'])"
+                :disabled="!canEditSettings"
               />
               <span class="unit">{{ $t('systemSettings.days') }}</span>
             </el-form-item>
@@ -89,7 +96,7 @@
                 v-model="systemParams.historyRetention" 
                 :min="30" 
                 :max="3650"
-                :disabled="!hasPermission(['admin'])"
+                :disabled="!canEditSettings"
               />
               <span class="unit">{{ $t('systemSettings.days') }}</span>
             </el-form-item>
@@ -98,7 +105,7 @@
                 v-model="systemParams.alarmRetention" 
                 :min="30" 
                 :max="365"
-                :disabled="!hasPermission(['admin'])"
+                :disabled="!canEditSettings"
               />
               <span class="unit">{{ $t('systemSettings.days') }}</span>
             </el-form-item>
@@ -109,7 +116,7 @@
                 v-model="systemParams.queryTimeout" 
                 :min="5" 
                 :max="300"
-                :disabled="!hasPermission(['admin'])"
+                :disabled="!canEditSettings"
               />
               <span class="unit">{{ $t('systemSettings.seconds') }}</span>
             </el-form-item>
@@ -118,7 +125,7 @@
                 v-model="systemParams.maxConnections" 
                 :min="10" 
                 :max="1000"
-                :disabled="!hasPermission(['admin'])"
+                :disabled="!canEditSettings"
               />
             </el-form-item>
             <el-form-item :label="$t('systemSettings.dataCacheTime')">
@@ -126,7 +133,7 @@
                 v-model="systemParams.cacheTime" 
                 :min="0" 
                 :max="3600"
-                :disabled="!hasPermission(['admin'])"
+                :disabled="!canEditSettings"
               />
               <span class="unit">{{ $t('systemSettings.seconds') }}</span>
             </el-form-item>
@@ -134,19 +141,19 @@
         </el-tab-pane>
 
         <!-- 告警设置 -->
-        <el-tab-pane :label="$t('systemSettings.alarmSettings')" name="alarm">
+        <el-tab-pane :label="$t('systemSettings.alarmSettings')" name="alarm" v-if="canEditAlarm">
           <el-form :model="alarmSettings" label-width="180px">
             <el-form-item :label="$t('systemSettings.enableAlarmSound')">
               <el-switch 
                 v-model="alarmSettings.enableSound"
-                :disabled="!hasPermission(['admin'])"
+                :disabled="!canEditAlarm"
               />
             </el-form-item>
             <el-form-item :label="$t('systemSettings.alarmSoundFile')" v-if="alarmSettings.enableSound">
               <el-select 
                 v-model="alarmSettings.soundFile" 
                 :placeholder="$t('systemSettings.selectSoundFile')"
-                :disabled="!hasPermission(['admin'])"
+                :disabled="!canEditAlarm"
               >
                 <el-option label="Beep" value="beep.mp3" />
                 <el-option label="Alert" value="alert.mp3" />
@@ -161,14 +168,14 @@
             <el-form-item :label="$t('systemSettings.enableEmailNotification')">
               <el-switch 
                 v-model="alarmSettings.enableEmail"
-                :disabled="!hasPermission(['admin'])"
+                :disabled="!canEditAlarm"
               />
             </el-form-item>
             <el-form-item :label="$t('systemSettings.emailRecipients')" v-if="alarmSettings.enableEmail">
               <el-tag
                 v-for="email in alarmSettings.emailRecipients"
                 :key="email"
-                closable
+                :closable="canEditAlarm"
                 :disable-transitions="false"
                 @close="handleEmailRemove(email)"
                 style="margin-right: 8px; margin-bottom: 8px;"
@@ -189,7 +196,7 @@
                 v-else 
                 size="small" 
                 @click="showEmailInput"
-                :disabled="!hasPermission(['admin'])"
+                :disabled="!canEditAlarm"
               >
                 + {{ $t('systemSettings.addEmail') }}
               </el-button>
@@ -197,7 +204,7 @@
             <el-form-item :label="$t('systemSettings.alarmLevelFilter')">
               <el-checkbox-group 
                 v-model="alarmSettings.levelFilter"
-                :disabled="!hasPermission(['admin'])"
+                :disabled="!canEditAlarm"
               >
                 <el-checkbox label="critical">{{ $t('alarmManagement.critical') }}</el-checkbox>
                 <el-checkbox label="major">{{ $t('alarmManagement.major') }}</el-checkbox>
@@ -209,24 +216,24 @@
         </el-tab-pane>
 
         <!-- 安全设置 -->
-        <el-tab-pane :label="$t('systemSettings.securitySettings')" name="security">
+        <el-tab-pane :label="$t('systemSettings.securitySettings')" name="security" v-if="isSystemAdmin">
           <el-form :model="securitySettings" label-width="180px">
             <el-form-item :label="$t('systemSettings.passwordPolicy')">
               <el-checkbox 
                 v-model="securitySettings.requireUppercase"
-                :disabled="!hasPermission(['admin'])"
+                :disabled="!canEditAdvanced"
               >
                 {{ $t('systemSettings.requireUppercase') }}
               </el-checkbox>
               <el-checkbox 
                 v-model="securitySettings.requireNumber"
-                :disabled="!hasPermission(['admin'])"
+                :disabled="!canEditAdvanced"
               >
                 {{ $t('systemSettings.requireNumber') }}
               </el-checkbox>
               <el-checkbox 
                 v-model="securitySettings.requireSpecial"
-                :disabled="!hasPermission(['admin'])"
+                :disabled="!canEditAdvanced"
               >
                 {{ $t('systemSettings.requireSpecial') }}
               </el-checkbox>
@@ -236,7 +243,7 @@
                 v-model="securitySettings.minPasswordLength" 
                 :min="6" 
                 :max="20"
-                :disabled="!hasPermission(['admin'])"
+                :disabled="!canEditAdvanced"
               />
             </el-form-item>
             <el-form-item :label="$t('systemSettings.passwordExpiration')">
@@ -244,7 +251,7 @@
                 v-model="securitySettings.passwordExpiration" 
                 :min="0" 
                 :max="365"
-                :disabled="!hasPermission(['admin'])"
+                :disabled="!canEditAdvanced"
               />
               <span class="unit">{{ $t('systemSettings.days') }}</span>
               <span class="tip">{{ $t('systemSettings.passwordExpirationTip') }}</span>
@@ -254,7 +261,7 @@
                 v-model="securitySettings.sessionTimeout" 
                 :min="5" 
                 :max="1440"
-                :disabled="!hasPermission(['admin'])"
+                :disabled="!canEditAdvanced"
               />
               <span class="unit">{{ $t('systemSettings.minutes') }}</span>
             </el-form-item>
@@ -263,7 +270,7 @@
                 v-model="securitySettings.maxLoginAttempts" 
                 :min="3" 
                 :max="10"
-                :disabled="!hasPermission(['admin'])"
+                :disabled="!canEditAdvanced"
               />
               <span class="unit">{{ $t('systemSettings.times') }}</span>
             </el-form-item>
@@ -272,29 +279,29 @@
                 v-model="securitySettings.lockoutDuration" 
                 :min="5" 
                 :max="60"
-                :disabled="!hasPermission(['admin'])"
+                :disabled="!canEditAdvanced"
               />
               <span class="unit">{{ $t('systemSettings.minutes') }}</span>
             </el-form-item>
             <el-form-item :label="$t('systemSettings.enableTwoFactor')">
               <el-switch 
                 v-model="securitySettings.enableTwoFactor"
-                :disabled="!hasPermission(['admin'])"
+                :disabled="!canEditAdvanced"
               />
             </el-form-item>
           </el-form>
         </el-tab-pane>
 
         <!-- 备份恢复 -->
-        <el-tab-pane :label="$t('systemSettings.backupRestore')" name="backup" v-permission="['admin']">
+        <el-tab-pane :label="$t('systemSettings.backupRestore')" name="backup" v-if="canViewAdvanced">
           <div class="backup-section">
             <h3>{{ $t('systemSettings.dataBackup') }}</h3>
             <el-form :model="backupSettings" label-width="180px">
               <el-form-item :label="$t('systemSettings.autoBackup')">
-                <el-switch v-model="backupSettings.autoBackup" />
+                <el-switch v-model="backupSettings.autoBackup" :disabled="!canEditAdvanced" />
               </el-form-item>
               <el-form-item :label="$t('systemSettings.backupSchedule')" v-if="backupSettings.autoBackup">
-                <el-select v-model="backupSettings.schedule" :placeholder="$t('systemSettings.selectSchedule')">
+                <el-select v-model="backupSettings.schedule" :placeholder="$t('systemSettings.selectSchedule')" :disabled="!canEditAdvanced">
                   <el-option :label="$t('systemSettings.daily')" value="daily" />
                   <el-option :label="$t('systemSettings.weekly')" value="weekly" />
                   <el-option :label="$t('systemSettings.monthly')" value="monthly" />
@@ -305,6 +312,7 @@
                   v-model="backupSettings.time" 
                   format="HH:mm"
                   value-format="HH:mm"
+                  :disabled="!canEditAdvanced"
                 />
               </el-form-item>
               <el-form-item :label="$t('systemSettings.backupRetention')">
@@ -312,11 +320,12 @@
                   v-model="backupSettings.retention" 
                   :min="1" 
                   :max="365"
+                  :disabled="!canEditAdvanced"
                 />
                 <span class="unit">{{ $t('systemSettings.days') }}</span>
               </el-form-item>
               <el-form-item>
-                <el-button type="primary" @click="handleBackupNow">
+                <el-button type="primary" @click="handleBackupNow" :disabled="!canEditAdvanced">
                   <el-icon><Download /></el-icon>
                   {{ $t('systemSettings.backupNow') }}
                 </el-button>
@@ -333,6 +342,7 @@
               :before-upload="beforeRestoreUpload"
               :on-success="handleRestoreSuccess"
               accept=".zip,.tar.gz"
+              :disabled="!canEditAdvanced"
             >
               <el-icon class="el-icon--upload"><UploadFilled /></el-icon>
               <div class="el-upload__text">
@@ -374,7 +384,7 @@
                   <el-button type="primary" link size="small" @click="handleDownloadBackup(row)">
                     {{ $t('systemSettings.download') }}
                   </el-button>
-                  <el-button type="danger" link size="small" @click="handleDeleteBackup(row)">
+                  <el-button type="danger" link size="small" @click="handleDeleteBackup(row)" :disabled="!canEditAdvanced">
                     {{ $t('common.delete') }}
                   </el-button>
                 </template>
@@ -388,22 +398,23 @@
 </template>
 
 <script setup>
-import { ref, reactive, onMounted, nextTick } from 'vue'
+import { ref, reactive, onMounted, nextTick, computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { 
   Document, Refresh, Plus, VideoPlay, Download, UploadFilled
 } from '@element-plus/icons-vue'
-import { useUserStore } from '@/stores/user'
+import { usePermission, PERMISSIONS } from '@/composables/usePermission'
 import dayjs from 'dayjs'
 
 const { t } = useI18n()
-const userStore = useUserStore()
+const { can, isSuperAdmin, isSystemAdmin, checkPermission } = usePermission()
 
-// 权限判断
-const hasPermission = (roles) => {
-  return userStore.hasPermission(roles)
-}
+// 权限控制
+const canEditSettings = computed(() => can.editSettings.value)
+const canEditAlarm = computed(() => checkPermission(PERMISSIONS.CONFIG.ALARM_EDIT))
+const canViewAdvanced = computed(() => isSuperAdmin.value)
+const canEditAdvanced = computed(() => isSuperAdmin.value)
 
 // 当前选项卡
 const activeTab = ref('basic')
@@ -527,6 +538,11 @@ const getBackupStatusLabel = (status) => {
 
 // 保存设置
 const handleSave = async () => {
+  if (!canEditSettings.value) {
+    ElMessage.warning(t('common.noPermission'))
+    return
+  }
+  
   try {
     // 模拟保存
     await new Promise(resolve => setTimeout(resolve, 1000))
@@ -538,6 +554,11 @@ const handleSave = async () => {
 
 // 重置设置
 const handleReset = () => {
+  if (!canEditSettings.value) {
+    ElMessage.warning(t('common.noPermission'))
+    return
+  }
+  
   ElMessageBox.confirm(
     t('systemSettings.resetConfirm'),
     t('common.warning'),
@@ -603,6 +624,11 @@ const handleEmailConfirm = () => {
 
 // 移除邮箱
 const handleEmailRemove = (email) => {
+  if (!canEditAlarm.value) {
+    ElMessage.warning(t('common.noPermission'))
+    return
+  }
+  
   const index = alarmSettings.emailRecipients.indexOf(email)
   if (index > -1) {
     alarmSettings.emailRecipients.splice(index, 1)
@@ -611,6 +637,11 @@ const handleEmailRemove = (email) => {
 
 // 立即备份
 const handleBackupNow = () => {
+  if (!canEditAdvanced.value) {
+    ElMessage.warning(t('common.noPermission'))
+    return
+  }
+  
   ElMessageBox.confirm(
     t('systemSettings.backupConfirm'),
     t('common.confirm'),
@@ -680,6 +711,11 @@ const handleDownloadBackup = (row) => {
 
 // 删除备份
 const handleDeleteBackup = async (row) => {
+  if (!canEditAdvanced.value) {
+    ElMessage.warning(t('common.noPermission'))
+    return
+  }
+  
   try {
     await ElMessageBox.confirm(
       t('systemSettings.deleteBackupConfirm'),

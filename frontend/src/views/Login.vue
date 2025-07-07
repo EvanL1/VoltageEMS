@@ -141,15 +141,15 @@ const loginForm = reactive({
 // 演示用户
 const demoUsers = [
   {
-    username: 'operator',
-    password: 'operator123',
-    role: 'operator',
+    username: 'monitor',
+    password: 'mon123',
+    role: 'monitor',
     color: '#52c41a',
     tagType: 'success'
   },
   {
     username: 'engineer',
-    password: 'engineer123',
+    password: 'eng123',
     role: 'engineer',
     color: '#faad14',
     tagType: 'warning'

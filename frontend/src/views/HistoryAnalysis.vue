@@ -84,7 +84,6 @@ import { ref, computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import GrafanaEmbed from '@/components/GrafanaEmbed.vue'
-import { grafanaService } from '@/services/grafanaService'
 
 const route = useRoute()
 const router = useRouter()

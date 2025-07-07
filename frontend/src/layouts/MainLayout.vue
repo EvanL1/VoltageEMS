@@ -13,119 +13,41 @@
         :collapse-transition="false"
         router
         class="sidebar-menu"
+        v-if="hasVisibleMenus"
       >
-        <!-- 监控展示类菜单 -->
-        <el-sub-menu index="monitoring" v-if="hasMonitoringAccess">
-          <template #title>
-            <el-icon><Monitor /></el-icon>
-            <span>{{ $t('menu.monitoring') }}</span>
-          </template>
-          <el-menu-item index="/dashboard">
-            <el-icon><DataAnalysis /></el-icon>
-            <span>{{ $t('menu.dashboard') }}</span>
+        <!-- 动态渲染菜单 -->
+        <template v-for="menu in filteredMenus" :key="menu.index">
+          <!-- 有子菜单的情况 -->
+          <el-sub-menu v-if="menu.children && menu.children.length > 0" :index="menu.index">
+            <template #title>
+              <el-icon><component :is="menu.icon" /></el-icon>
+              <span>{{ $t(menu.title) }}</span>
+            </template>
+            <el-menu-item 
+              v-for="item in menu.children" 
+              :key="item.index" 
+              :index="item.index"
+            >
+              <el-icon><component :is="item.icon" /></el-icon>
+              <span>{{ $t(item.title) }}</span>
+            </el-menu-item>
+          </el-sub-menu>
+          
+          <!-- 没有子菜单的情况 -->
+          <el-menu-item v-else :index="menu.index">
+            <el-icon><component :is="menu.icon" /></el-icon>
+            <span>{{ $t(menu.title) }}</span>
           </el-menu-item>
-          <el-menu-item index="/monitoring/realtime">
-            <el-icon><Timer /></el-icon>
-            <span>{{ $t('menu.realtime') }}</span>
-          </el-menu-item>
-          <el-menu-item index="/monitoring/devices">
-            <el-icon><Connection /></el-icon>
-            <span>{{ $t('menu.devices') }}</span>
-          </el-menu-item>
-          <el-menu-item index="/monitoring/energy">
-            <el-icon><DataLine /></el-icon>
-            <span>{{ $t('menu.energy') }}</span>
-          </el-menu-item>
-          <el-menu-item index="/monitoring/alarms">
-            <el-icon><WarnTriangleFilled /></el-icon>
-            <span>{{ $t('menu.alarms') }}</span>
-          </el-menu-item>
-          <el-menu-item index="/monitoring/topology">
-            <el-icon><Share /></el-icon>
-            <span>{{ $t('menu.topology') }}</span>
-          </el-menu-item>
-        </el-sub-menu>
-
-        <!-- 控制操作类菜单 -->
-        <el-sub-menu index="control" v-if="hasControlAccess">
-          <template #title>
-            <el-icon><Operation /></el-icon>
-            <span>{{ $t('menu.control') }}</span>
-          </template>
-          <el-menu-item index="/control/devices">
-            <el-icon><SwitchButton /></el-icon>
-            <span>{{ $t('menu.deviceControl') }}</span>
-          </el-menu-item>
-          <el-menu-item index="/control/alarms">
-            <el-icon><Bell /></el-icon>
-            <span>{{ $t('menu.alarmManagement') }}</span>
-          </el-menu-item>
-          <el-menu-item index="/control/batch">
-            <el-icon><CopyDocument /></el-icon>
-            <span>{{ $t('menu.batchControl') }}</span>
-          </el-menu-item>
-          <el-menu-item index="/control/schedule">
-            <el-icon><Calendar /></el-icon>
-            <span>{{ $t('menu.scheduledTasks') }}</span>
-          </el-menu-item>
-        </el-sub-menu>
-
-        <!-- 配置管理类菜单 -->
-        <el-sub-menu index="config" v-if="hasConfigAccess">
-          <template #title>
-            <el-icon><Setting /></el-icon>
-            <span>{{ $t('menu.config') }}</span>
-          </template>
-          <el-menu-item index="/config/channels">
-            <el-icon><Link /></el-icon>
-            <span>{{ $t('menu.channelConfig') }}</span>
-          </el-menu-item>
-          <el-menu-item index="/config/points">
-            <el-icon><Grid /></el-icon>
-            <span>{{ $t('menu.pointTable') }}</span>
-          </el-menu-item>
-          <el-menu-item index="/config/models">
-            <el-icon><DataBoard /></el-icon>
-            <span>{{ $t('menu.modelConfig') }}</span>
-          </el-menu-item>
-          <el-menu-item index="/config/alarms">
-            <el-icon><Warning /></el-icon>
-            <span>{{ $t('menu.alarmRules') }}</span>
-          </el-menu-item>
-          <el-menu-item index="/config/storage">
-            <el-icon><Files /></el-icon>
-            <span>{{ $t('menu.storagePolicy') }}</span>
-          </el-menu-item>
-          <el-menu-item index="/config/network">
-            <el-icon><Upload /></el-icon>
-            <span>{{ $t('menu.networkForward') }}</span>
-          </el-menu-item>
-        </el-sub-menu>
-
-        <!-- 系统管理类菜单 -->
-        <el-sub-menu index="system" v-if="hasSystemAccess">
-          <template #title>
-            <el-icon><Tools /></el-icon>
-            <span>{{ $t('menu.system') }}</span>
-          </template>
-          <el-menu-item index="/system/users" v-if="isAdmin">
-            <el-icon><User /></el-icon>
-            <span>{{ $t('menu.userManagement') }}</span>
-          </el-menu-item>
-          <el-menu-item index="/system/settings" v-if="isAdmin">
-            <el-icon><SetUp /></el-icon>
-            <span>{{ $t('menu.systemSettings') }}</span>
-          </el-menu-item>
-          <el-menu-item index="/system/audit">
-            <el-icon><Document /></el-icon>
-            <span>{{ $t('menu.auditLogs') }}</span>
-          </el-menu-item>
-          <el-menu-item index="/system/services">
-            <el-icon><Cpu /></el-icon>
-            <span>{{ $t('menu.serviceMonitor') }}</span>
-          </el-menu-item>
-        </el-sub-menu>
+        </template>
       </el-menu>
+      
+      <!-- 没有任何可见菜单时的提示 -->
+      <div v-if="!hasVisibleMenus" class="no-menu-tip">
+        <el-empty 
+          :description="$t('common.noPermission')" 
+          :image-size="100"
+        />
+      </div>
     </el-aside>
 
     <el-container>
@@ -224,6 +146,40 @@ import { useI18n } from 'vue-i18n'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useUserStore } from '@/stores/user'
 import { useAlarmStore } from '@/stores/alarm'
+import { filterRoutesByPermission, PERMISSIONS } from '@/utils/permission'
+
+// 导入所有需要的图标组件
+/* eslint-disable no-unused-vars */
+import {
+  Monitor,
+  DataAnalysis,
+  Timer,
+  Connection,
+  DataLine,
+  WarnTriangleFilled,
+  Share,
+  Operation,
+  SwitchButton,
+  Bell,
+  CopyDocument,
+  Calendar,
+  Setting,
+  Link,
+  Grid,
+  DataBoard,
+  Warning,
+  Files,
+  Upload,
+  Tools,
+  User,
+  SetUp,
+  Document,
+  Cpu,
+  Search,
+  Expand,
+  Fold
+} from '@element-plus/icons-vue'
+/* eslint-enable no-unused-vars */
 
 const route = useRoute()
 const router = useRouter()
@@ -238,13 +194,192 @@ const currentLang = computed(() => locale.value)
 
 // 用户信息
 const userInfo = computed(() => userStore.userInfo || {})
-const isAdmin = computed(() => userStore.isAdmin)
 
-// 权限控制
-const hasMonitoringAccess = computed(() => true) // 所有用户都有监控权限
-const hasControlAccess = computed(() => userStore.canControl)
-const hasConfigAccess = computed(() => userStore.canConfig)
-const hasSystemAccess = computed(() => userStore.isEngineer || userStore.isAdmin)
+// 定义菜单结构
+// 注意：这里的菜单结构与路由配置保持一致
+// 每个菜单项都包含权限配置，用于动态过滤
+// 权限使用 PERMISSIONS 常量定义，确保与后端权限系统一致
+const menuRoutes = [
+  {
+    index: 'monitoring',
+    title: 'menu.monitoring',
+    icon: 'Monitor',
+    children: [
+      {
+        index: '/dashboard',
+        title: 'menu.dashboard',
+        icon: 'DataAnalysis',
+        meta: { permissions: [PERMISSIONS.MONITOR.DASHBOARD_VIEW] }
+      },
+      {
+        index: '/monitoring/realtime',
+        title: 'menu.realtime',
+        icon: 'Timer',
+        meta: { permissions: [PERMISSIONS.MONITOR.REALTIME_VIEW] }
+      },
+      {
+        index: '/monitoring/devices',
+        title: 'menu.devices',
+        icon: 'Connection',
+        meta: { permissions: [PERMISSIONS.MONITOR.DEVICE_VIEW] }
+      },
+      {
+        index: '/monitoring/energy',
+        title: 'menu.energy',
+        icon: 'DataLine',
+        meta: { permissions: [PERMISSIONS.MONITOR.STATS_VIEW] }
+      },
+      {
+        index: '/monitoring/alarms',
+        title: 'menu.alarms',
+        icon: 'WarnTriangleFilled',
+        meta: { permissions: [PERMISSIONS.CONTROL.ALARM_VIEW] }
+      },
+      {
+        index: '/monitoring/topology',
+        title: 'menu.topology',
+        icon: 'Share',
+        meta: { permissions: [PERMISSIONS.MONITOR.TOPOLOGY_VIEW] }
+      }
+    ]
+  },
+  {
+    index: 'control',
+    title: 'menu.control',
+    icon: 'Operation',
+    children: [
+      {
+        index: '/control/devices',
+        title: 'menu.deviceControl',
+        icon: 'SwitchButton',
+        meta: { permissions: [PERMISSIONS.CONTROL.DEVICE_VIEW] }
+      },
+      {
+        index: '/control/alarms',
+        title: 'menu.alarmManagement',
+        icon: 'Bell',
+        meta: { permissions: [PERMISSIONS.CONTROL.ALARM_VIEW] }
+      },
+      {
+        index: '/control/batch',
+        title: 'menu.batchControl',
+        icon: 'CopyDocument',
+        meta: { permissions: [PERMISSIONS.CONTROL.BATCH_VIEW] }
+      },
+      {
+        index: '/control/schedule',
+        title: 'menu.scheduledTasks',
+        icon: 'Calendar',
+        meta: { permissions: [PERMISSIONS.CONTROL.TASK_VIEW] }
+      }
+    ]
+  },
+  {
+    index: 'config',
+    title: 'menu.config',
+    icon: 'Setting',
+    children: [
+      {
+        index: '/config/channels',
+        title: 'menu.channelConfig',
+        icon: 'Link',
+        meta: { permissions: [PERMISSIONS.CONFIG.CHANNEL_VIEW] }
+      },
+      {
+        index: '/config/points',
+        title: 'menu.pointTable',
+        icon: 'Grid',
+        meta: { permissions: [PERMISSIONS.CONFIG.POINT_VIEW] }
+      },
+      {
+        index: '/config/models',
+        title: 'menu.modelConfig',
+        icon: 'DataBoard',
+        meta: { permissions: [PERMISSIONS.CONFIG.MODEL_VIEW] }
+      },
+      {
+        index: '/config/alarms',
+        title: 'menu.alarmRules',
+        icon: 'Warning',
+        meta: { permissions: [PERMISSIONS.CONFIG.ALARM_VIEW] }
+      },
+      {
+        index: '/config/storage',
+        title: 'menu.storagePolicy',
+        icon: 'Files',
+        meta: { permissions: [PERMISSIONS.CONFIG.STORAGE_VIEW] }
+      },
+      {
+        index: '/config/network',
+        title: 'menu.networkForward',
+        icon: 'Upload',
+        meta: { permissions: [PERMISSIONS.CONFIG.NETWORK_VIEW] }
+      }
+    ]
+  },
+  {
+    index: 'system',
+    title: 'menu.system',
+    icon: 'Tools',
+    children: [
+      {
+        index: '/system/users',
+        title: 'menu.userManagement',
+        icon: 'User',
+        meta: { permissions: [PERMISSIONS.SYSTEM.USER_VIEW] }
+      },
+      {
+        index: '/system/settings',
+        title: 'menu.systemSettings',
+        icon: 'SetUp',
+        meta: { permissions: [PERMISSIONS.SYSTEM.SETTINGS_VIEW] }
+      },
+      {
+        index: '/system/audit',
+        title: 'menu.auditLogs',
+        icon: 'Document',
+        meta: { permissions: [PERMISSIONS.SYSTEM.AUDIT_VIEW] }
+      },
+      {
+        index: '/system/services',
+        title: 'menu.serviceMonitor',
+        icon: 'Cpu',
+        meta: { permissions: [PERMISSIONS.SYSTEM.SERVICE_VIEW] }
+      }
+    ]
+  }
+]
+
+// 根据用户权限动态过滤菜单
+// 这是权限系统的核心功能之一，确保用户只能看到有权限访问的菜单
+const filteredMenus = computed(() => {
+  const userPermissions = userStore.permissions || []
+  
+  // 使用深拷贝避免修改原始数据
+  const menusToFilter = JSON.parse(JSON.stringify(menuRoutes))
+  
+  // 过滤主菜单和子菜单
+  return menusToFilter.filter(menu => {
+    // 处理有子菜单的情况
+    if (menu.children && menu.children.length > 0) {
+      // 使用 filterRoutesByPermission 函数过滤子菜单
+      menu.children = filterRoutesByPermission(menu.children, userPermissions)
+      // 如果所有子菜单都被过滤掉了，则隐藏主菜单
+      return menu.children.length > 0
+    }
+    
+    // 处理没有子菜单的单独菜单项
+    if (menu.meta && menu.meta.permissions) {
+      return filterRoutesByPermission([menu], userPermissions).length > 0
+    }
+    
+    // 如果菜单没有权限要求，默认显示
+    return true
+  })
+})
+
+// 检查是否有任何可见菜单
+const hasVisibleMenus = computed(() => filteredMenus.value.length > 0)
 
 // 角色标签类型
 const roleTagType = computed(() => {
@@ -667,6 +802,35 @@ watch(() => route.path, () => {
           display: none;
         }
       }
+    }
+    
+    .no-menu-tip {
+      :deep(.el-empty__description) {
+        display: none;
+      }
+    }
+  }
+}
+
+// 没有菜单时的提示样式
+.no-menu-tip {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-6);
+  
+  :deep(.el-empty) {
+    padding: 0;
+    
+    .el-empty__description {
+      color: var(--color-text-tertiary);
+      font-size: var(--font-size-sm);
+      margin-top: var(--space-3);
+    }
+    
+    .el-empty__image {
+      opacity: 0.3;
     }
   }
 }

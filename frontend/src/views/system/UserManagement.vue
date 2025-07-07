@@ -4,7 +4,11 @@
     <div class="page-header">
       <h1>{{ $t('userManagement.title') }}</h1>
       <div class="header-actions">
-        <el-button type="primary" @click="handleAdd" v-permission="['admin']">
+        <el-button 
+          v-permission="PERMISSIONS.SYSTEM.USER_CREATE"
+          type="primary" 
+          @click="handleAdd"
+        >
           <el-icon><Plus /></el-icon>
           {{ $t('userManagement.addUser') }}
         </el-button>
@@ -28,9 +32,12 @@
             :placeholder="$t('userManagement.selectRole')"
             clearable
           >
-            <el-option label="Operator" value="operator" />
-            <el-option label="Engineer" value="engineer" />
-            <el-option label="Admin" value="admin" />
+            <el-option 
+              v-for="(name, role) in ROLE_NAMES" 
+              :key="role"
+              :label="name" 
+              :value="role" 
+            />
           </el-select>
         </el-form-item>
         <el-form-item :label="$t('common.status')">
@@ -84,7 +91,7 @@
               active-value="active"
               inactive-value="inactive"
               @change="handleStatusChange(row)"
-              :disabled="!hasPermission(['admin']) || row.username === 'admin'"
+              :disabled="!can.editUser.value || row.role === ROLES.SUPER_ADMIN"
             />
           </template>
         </el-table-column>
@@ -101,30 +108,29 @@
         <el-table-column :label="$t('common.actions')" width="200" fixed="right">
           <template #default="{ row }">
             <el-button 
+              v-if="can.editUser.value"
               type="primary" 
               link 
               size="small" 
               @click="handleEdit(row)"
-              v-permission="['admin']"
             >
               {{ $t('common.edit') }}
             </el-button>
             <el-button 
+              v-if="canResetPassword(row)"
               type="primary" 
               link 
               size="small" 
               @click="handleResetPassword(row)"
-              v-permission="['admin']"
             >
               {{ $t('userManagement.resetPassword') }}
             </el-button>
             <el-button 
+              v-if="canDeleteUser(row)"
               type="danger" 
               link 
               size="small" 
               @click="handleDelete(row)"
-              v-permission="['admin']"
-              :disabled="row.username === 'admin'"
             >
               {{ $t('common.delete') }}
             </el-button>
@@ -182,9 +188,12 @@
         </el-form-item>
         <el-form-item :label="$t('userManagement.role')" prop="role">
           <el-select v-model="userForm.role" :placeholder="$t('userManagement.selectRole')">
-            <el-option label="Operator" value="operator" />
-            <el-option label="Engineer" value="engineer" />
-            <el-option label="Admin" value="admin" />
+            <el-option 
+              v-for="(name, role) in ROLE_NAMES" 
+              :key="role"
+              :label="name" 
+              :value="role" 
+            />
           </el-select>
         </el-form-item>
         <el-form-item :label="$t('userManagement.email')" prop="email">
@@ -260,15 +269,48 @@ import { useI18n } from 'vue-i18n'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Search, Refresh } from '@element-plus/icons-vue'
 import { useUserStore } from '@/stores/user'
+import { usePermission } from '@/composables/usePermission'
 import dayjs from 'dayjs'
 
 const { t } = useI18n()
 const userStore = useUserStore()
+const { 
+  PERMISSIONS, 
+  ROLES, 
+  ROLE_NAMES,
+  can,
+  checkPermission,
+  isSystemAdmin,
+  isSuperAdmin 
+} = usePermission()
 
-// 权限判断
-const hasPermission = (roles) => {
-  return userStore.hasPermission(roles)
+// 判断是否可以重置密码
+const canResetPassword = (user) => {
+  if (!checkPermission(PERMISSIONS.SYSTEM.USER_EDIT)) return false
+  // 系统管理员可以重置普通用户密码
+  // 超级管理员可以重置所有用户密码（除了自己）
+  if (isSuperAdmin.value) {
+    return user.id !== userStore.userInfo.id
+  }
+  if (isSystemAdmin.value) {
+    return user.role !== ROLES.SUPER_ADMIN && user.role !== ROLES.SYSTEM_ADMIN
+  }
+  return false
 }
+
+// 判断是否可以删除用户
+const canDeleteUser = (user) => {
+  if (!checkPermission(PERMISSIONS.SYSTEM.USER_DELETE)) return false
+  // 不能删除超级管理员
+  if (user.role === ROLES.SUPER_ADMIN) return false
+  // 不能删除自己
+  if (user.id === userStore.userInfo.id) return false
+  // 系统管理员不能删除其他系统管理员
+  if (!isSuperAdmin.value && user.role === ROLES.SYSTEM_ADMIN) return false
+  return true
+}
+
+// 角色选项根据权限动态生成，在具体的表单中实现
 
 // 搜索表单
 const searchForm = reactive({
@@ -399,9 +441,11 @@ const permissionTree = ref([
 // 获取角色类型
 const getRoleType = (role) => {
   const typeMap = {
-    operator: 'info',
-    engineer: 'warning',
-    admin: 'danger'
+    [ROLES.SUPER_ADMIN]: 'danger',
+    [ROLES.SYSTEM_ADMIN]: 'warning',
+    [ROLES.OPS_ENGINEER]: 'primary',
+    [ROLES.MONITOR]: 'info',
+    [ROLES.GUEST]: 'default'
   }
   return typeMap[role] || 'info'
 }

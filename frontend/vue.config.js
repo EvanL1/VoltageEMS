@@ -36,7 +36,7 @@ module.exports = defineConfig({
         changeOrigin: true,
         secure: false,
         ws: true,
-        onProxyReq: function(proxyReq, req, res) {
+        onProxyReq: function(proxyReq) {
           // 保持 /grafana 路径，因为 Grafana 配置了子路径
           proxyReq.setHeader('Origin', 'http://localhost:3050');
         }
