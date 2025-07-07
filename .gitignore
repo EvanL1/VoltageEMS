@@ -13,6 +13,8 @@
 # Logs
 *.log
 logs/
+**/logs/
+**/*.log
 
 # Environment
 .env
@@ -27,6 +29,10 @@ logs/
 
 # Test
 *.PID
+**/test_*.yml
+**/test_*.yaml
+**/simple_test.*
+**/*_old.rs
 
 # Dependencies
 **/node_modules/
@@ -44,6 +50,10 @@ logs/
 .DS_Store
 Thumbs.db 
 *.csv
+**/*-demo.*
+**/*_demo.*
+**/demo-*
+**/demo_*
 
 # Config
 services/comsrv/config/

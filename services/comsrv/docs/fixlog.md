@@ -1,5 +1,112 @@
 # Comsrv Fix Log
 
+## 2025-07-08 (续)
+
+### DevOps Documentation Updates
+- **需求描述**: 使用Mermaid图表更新DevOps文档
+- **问题修复**: 修正了Mermaid语法错误 - 连线文字必须在箭头中间而不是后面
+- **更新文件**:
+  - `/docs/DEVOPS_INTRODUCTION.md`:
+    - 转换传统开发模式问题图表
+    - 转换DevOps团队责任图表
+    - 转换CI工作流图表
+    - 转换CD工作流对比图表
+    - 转换监控和日志流程图表
+    - 转换测试金字塔图表
+    - 转换DevOps工具链图表
+    - 转换Git基本概念图表
+    - 转换Jenkins工作原理图表
+    - 转换Docker vs 虚拟机对比图表
+    - 转换Docker Registry流程图表
+    - 转换监控架构图表
+    - 转换完整DevOps流程图表
+    - 转换反馈循环图表
+  - `/docs/VOLTAGEEMS_CICD_ARCHITECTURE.md`:
+    - 转换整体CI/CD架构图表
+    - 转换触发机制流程图表
+    - 转换本地Registry架构图表
+    - 转换服务依赖关系图表
+    - 转换健康检查流程图表
+    - 转换日志收集方案图表
+    - 转换监控架构图表
+    - 转换自动备份机制图表
+    - 转换灾难恢复流程图表
+    - 转换开发人员工作流程图表
+    - 转换构建失败处理流程图表
+    - 转换故障处理流程图表
+- **改进**:
+  - 所有ASCII图表替换为Mermaid语法
+  - 图表具有更好的视觉效果和样式
+  - 提高了文档的可读性和专业性
+
+## 2025-07-08 (续)
+
+### Project Cleanup
+- **需求描述**: 清理整个项目中没有用的文档、脚本、测试用例
+- **删除的文件**:
+  - **过时文档**:
+    - `AGENT.md` - 被CLAUDE.md替代
+    - `docs/LAYERED_CONFIG_DESIGN.md` - 旧配置设计
+    - `docs/SIMPLIFIED_CONFIG_DESIGN.md` - 已过时
+    - `docs/CONFIG_EXAMPLES.md` - 已移到各服务目录
+    - `docs/PROTOCOL_CSV_FORMATS.md` - 已整合到主文档
+    - `docs/SEPARATED_TABLES_GUIDE.md` - 已整合
+    - 各服务的冗余README文件
+  - **未使用脚本**:
+    - 演示脚本 (start-demo.sh等)
+    - 简单测试脚本 (test_api.sh等)
+    - Python测试脚本 (test-api.py等)
+  - **旧示例文件**:
+    - comsrv/examples中的5个过时示例
+  - **测试相关**:
+    - 旧版本源文件 (*_old.rs)
+    - 重复的模拟器 (modbus_csv_simulator.py等)
+    - 测试配置文件 (test_*.yaml)
+    - 空的测试目录
+  - **临时文件**:
+    - 各种日志文件 (*.log)
+    - logs目录
+- **更新.gitignore**:
+  - 加强日志文件忽略规则
+  - 添加测试文件忽略规则
+  - 添加演示文件忽略规则
+  - 添加旧版本文件忽略规则
+
+## 2025-07-08
+
+### Created CI/CD Documentation Suite (已替换为简化版)
+- **需求描述**: 为整个项目建立基于Jenkins的本地DevOps CI/CD流程，包含完整文档和团队分工
+- **初始实现**:
+  - 创建了复杂的K8s版本CI/CD文档（已删除）
+  - 包含Jenkins共享库、团队角色、工作流程等
+- **问题**: 用户反馈系统将运行在边缘服务器，不需要K8s，需要简化版本
+
+### Simplified Docker CI/CD Implementation
+- **需求描述**: 创建适合边缘服务器的简化Docker CI/CD流程
+- **删除文件**:
+  - `/Jenkinsfile` (复杂K8s版本)
+  - `/jenkins/` 目录
+  - `/docs/JENKINS_CICD_GUIDE.md`
+  - `/docs/GITLAB_CICD_GUIDE.md`
+  - `/docs/CICD_TEAM_ROLES.md`
+  - `/docs/CICD_WORKFLOW_GUIDE.md`
+- **新增文件**:
+  - `/Jenkinsfile`: 简化版Pipeline（<100行）
+  - `/scripts/build-all.sh`: Docker镜像批量构建脚本
+  - `/scripts/deploy.sh`: 部署脚本
+  - `/scripts/rollback.sh`: 回滚脚本
+  - `/scripts/run-integration-tests.sh`: 集成测试脚本
+  - `/scripts/setup-local-registry.sh`: 本地Registry设置
+  - `/docker-compose.prod.yml`: 生产环境配置
+  - `/docker-compose.test.yml`: 测试环境配置
+  - `/docs/DOCKER_CICD_GUIDE.md`: 简明操作指南
+  - `/config/ci-cd.env`: CI/CD环境变量
+- **特点**:
+  - 纯Docker和docker-compose方案
+  - Shell脚本驱动，易于理解
+  - 适合单机或边缘服务器部署
+  - 5-10分钟完成整个部署流程
+
 ## 2025-07-07
 
 ### 1. 创建综合配置文档
