@@ -83,10 +83,14 @@ async fn main() -> Result<()> {
     // Load environment variables
     dotenv().ok();
 
-    // Load configuration
-    info!("Loading configuration from: {}", args.config);
+    // Load configuration (with basic console output)
+    eprintln!("Loading configuration from: {}", args.config);
+    if let Ok(url) = std::env::var("CONFIG_CENTER_URL") {
+        eprintln!("Config center URL detected: {}", url);
+    }
+    
     let config_manager = Arc::new(
-        ConfigManager::from_file(&args.config)
+        ConfigManager::load_async(&args.config).await
             .map_err(|e| {
                 eprintln!("Failed to load configuration: {}", e);
                 e

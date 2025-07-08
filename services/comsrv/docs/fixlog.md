@@ -342,3 +342,39 @@ cargo run --bin comsrv -- --config config/modbus_test.yml
 - 日志格式为JSON，包含字段：timestamp, level, channel_id, channel_name, direction, slave_id, hex, bytes
 - 使用 `RollingFileAppender` 支持每日轮转（通过手动文件管理实现）
 - 主日志文件通过FilterFn过滤掉包含"direction"字段的报文日志
+
+## 2025-01-08 配置中心集成
+
+### 新增功能
+1. **配置中心客户端模块** (`src/core/config/config_center.rs`)
+   - 实现 HTTP 配置中心客户端
+   - 支持配置缓存和降级策略
+   - 支持认证令牌
+   - 缓存到本地文件系统
+
+2. **ConfigManager 扩展** (`src/core/config/config_manager.rs`)
+   - 集成配置中心客户端
+   - 实现多源配置加载优先级
+   - 添加异步配置加载方法 `load_async`
+   - 支持获取单个配置项
+   - 自动检测CONFIG_CENTER_URL环境变量
+
+3. **配置加载优先级**
+   - 环境变量（COMSRV_前缀） > 配置中心 > 本地文件 > 默认值
+   - 自动降级：配置中心不可用时使用缓存，缓存过期时使用本地文件
+   - 缓存机制：成功获取的配置会保存到本地，带TTL管理
+
+### 环境变量支持
+- `CONFIG_CENTER_URL`: 配置中心地址
+- `CONFIG_CENTER_TOKEN`: 认证令牌（可选）
+- `CONFIG_CACHE_DIR`: 缓存目录（默认 /var/cache/comsrv）
+- `CONFIG_CACHE_TTL`: 缓存有效期，秒（默认 3600）
+
+### API 接口要求
+配置中心需要实现：
+- `GET /api/v1/config/service/{service_name}` - 获取完整配置
+- `GET /api/v1/config/service/{service_name}/item/{key}` - 获取单个配置项
+
+### 文档更新
+- 更新 `docs/comsrv配置指南.md` 添加配置中心集成章节
+- 包含使用示例、API要求、容错机制说明

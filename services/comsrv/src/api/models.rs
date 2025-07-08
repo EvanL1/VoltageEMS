@@ -87,11 +87,11 @@ impl From<crate::core::protocols::common::data_types::PointData> for PointValue 
     /// Convert from protocols common PointData to API PointValue
     fn from(point: crate::core::protocols::common::data_types::PointData) -> Self {
         Self {
-            id: point.id.to_string(),
-            name: point.name.to_string(),
-            value: serde_json::Value::String(point.value), // Convert string to JSON value
+            id: point.id,
+            name: point.name,
+            value: serde_json::Value::String(point.value),
             timestamp: point.timestamp,
-            unit: point.unit.to_string(),
+            unit: point.unit,
             description: point.description,
         }
     }
@@ -751,17 +751,19 @@ mod tests {
     #[test]
     fn test_combase_point_data_conversion() {
         let combase_point = crate::core::protocols::common::data_types::PointData {
-            id: "point_001".to_string(),
+            id: "1".to_string(),
             name: "Temperature".to_string(),
             value: "25.5".to_string(),
             timestamp: Utc::now(),
             unit: "°C".to_string(),
             description: "Ambient temperature".to_string(),
+            telemetry_type: None,
+            channel_id: None,
         };
 
         let api_point = PointValue::from(combase_point);
 
-        assert_eq!(api_point.id, "point_001");
+        assert_eq!(api_point.id, "1");
         assert_eq!(api_point.name, "Temperature");
         assert_eq!(
             api_point.value,

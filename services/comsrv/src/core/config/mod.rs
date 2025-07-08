@@ -24,6 +24,7 @@ pub mod unified_loader;
 pub mod types;
 pub mod point;
 pub mod loaders;
+pub mod config_center;
 
 // Re-export ConfigManager
 pub use config_manager::ConfigManager;

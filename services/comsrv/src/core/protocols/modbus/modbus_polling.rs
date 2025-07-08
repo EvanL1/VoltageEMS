@@ -656,6 +656,9 @@ mod tests {
                 function_code: 3,
                 register_address: 100,
                 scale_factor: None,
+                data_format: "uint16".to_string(),
+                register_count: 1,
+                byte_order: None,
             },
             ModbusPoint {
                 point_id: "2".to_string(),
@@ -664,6 +667,9 @@ mod tests {
                 function_code: 3,
                 register_address: 101,
                 scale_factor: None,
+                data_format: "uint16".to_string(),
+                register_count: 1,
+                byte_order: None,
             },
             ModbusPoint {
                 point_id: "3".to_string(),
@@ -672,6 +678,9 @@ mod tests {
                 function_code: 1,
                 register_address: 0,
                 scale_factor: None,
+                data_format: "bool".to_string(),
+                register_count: 1,
+                byte_order: None,
             },
         ];
 
@@ -690,6 +699,9 @@ mod tests {
                 function_code: 3,
                 register_address: 100,
                 scale_factor: None,
+                data_format: "uint16".to_string(),
+                register_count: 1,
+                byte_order: None,
             },
             ModbusPoint {
                 point_id: "2".to_string(),
@@ -698,6 +710,9 @@ mod tests {
                 function_code: 3,
                 register_address: 101,
                 scale_factor: None,
+                data_format: "uint16".to_string(),
+                register_count: 1,
+                byte_order: None,
             },
             ModbusPoint {
                 point_id: "3".to_string(),
@@ -706,6 +721,9 @@ mod tests {
                 function_code: 3,
                 register_address: 120,
                 scale_factor: None,
+                data_format: "uint16".to_string(),
+                register_count: 1,
+                byte_order: None,
             },
         ];
 
@@ -730,6 +748,9 @@ mod tests {
                 function_code: 3,
                 register_address: 100 + i,
                 scale_factor: None,
+                data_format: "uint16".to_string(),
+                register_count: 1,
+                byte_order: None,
             });
         }
 

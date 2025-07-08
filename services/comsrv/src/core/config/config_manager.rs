@@ -9,13 +9,14 @@ use super::types::{
     CombinedPoint,
 };
 use super::unified_loader::UnifiedCsvLoader;
+use super::config_center::ConfigCenterClient;
 use figment::{
     providers::{Format, Yaml, Toml, Json, Env},
     Figment,
 };
 use std::path::Path;
 use std::sync::Arc;
-use tracing::{info, warn};
+use tracing::{info, warn, debug};
 
 /// Simplified configuration manager
 pub struct ConfigManager {
@@ -23,42 +24,81 @@ pub struct ConfigManager {
     config: AppConfig,
     /// Figment instance for reloading
     figment: Figment,
+    /// Config center client for remote configuration
+    config_center: Option<ConfigCenterClient>,
 }
 
 impl ConfigManager {
-    /// Load configuration from file
+    /// Load configuration from file with optional config center support
     pub fn from_file<P: AsRef<Path>>(path: P) -> Result<Self> {
         let path = path.as_ref();
-        info!("Loading configuration from: {}", path.display());
+        let service_name = "comsrv"; // Could be extracted from config later
         
-        // Determine file format from extension
-        let extension = path.extension()
-            .and_then(|ext| ext.to_str())
-            .ok_or_else(|| ComSrvError::ConfigError(
-                "Configuration file must have an extension".to_string()
-            ))?;
+        // Initialize config center client from environment
+        let config_center = if std::env::var("CONFIG_CENTER_URL").is_ok() {
+            info!("Config center URL detected, initializing client");
+            Some(ConfigCenterClient::from_env(service_name.to_string())
+                .with_fallback(path.to_string_lossy().to_string()))
+        } else {
+            None
+        };
         
-        // Build Figment with appropriate provider
+        // Try to load from config center first
         let mut figment = Figment::new();
+        let mut from_config_center = false;
         
-        match extension {
-            "yaml" | "yml" => {
-                figment = figment.merge(Yaml::file(path));
-            }
-            "toml" => {
-                figment = figment.merge(Toml::file(path));
-            }
-            "json" => {
-                figment = figment.merge(Json::file(path));
-            }
-            _ => {
-                return Err(ComSrvError::ConfigError(
-                    format!("Unsupported configuration format: {}", extension)
-                ));
+        if let Some(ref cc_client) = config_center {
+            match tokio::runtime::Handle::try_current() {
+                Ok(handle) => {
+                    // We're in an async context, use it
+                    match handle.block_on(cc_client.fetch_config()) {
+                        Ok(remote_config) => {
+                            info!("Successfully loaded configuration from config center");
+                            figment = figment.merge(Json::string(&remote_config.to_string()));
+                            from_config_center = true;
+                        }
+                        Err(e) => {
+                            warn!("Failed to load from config center: {}, falling back to local file", e);
+                        }
+                    }
+                }
+                Err(_) => {
+                    // Not in async context, skip config center for now
+                    debug!("Not in async context, skipping config center");
+                }
             }
         }
         
-        // Add environment variable support
+        // Load from local file if not loaded from config center
+        if !from_config_center {
+            info!("Loading configuration from local file: {}", path.display());
+            
+            // Determine file format from extension
+            let extension = path.extension()
+                .and_then(|ext| ext.to_str())
+                .ok_or_else(|| ComSrvError::ConfigError(
+                    "Configuration file must have an extension".to_string()
+                ))?;
+            
+            match extension {
+                "yaml" | "yml" => {
+                    figment = figment.merge(Yaml::file(path));
+                }
+                "toml" => {
+                    figment = figment.merge(Toml::file(path));
+                }
+                "json" => {
+                    figment = figment.merge(Json::file(path));
+                }
+                _ => {
+                    return Err(ComSrvError::ConfigError(
+                        format!("Unsupported configuration format: {}", extension)
+                    ));
+                }
+            }
+        }
+        
+        // Always add environment variable support (highest priority)
         figment = figment.merge(
             Env::prefixed("COMSRV_")
                 .split("_")
@@ -93,6 +133,7 @@ impl ConfigManager {
         Ok(ConfigManager {
             config,
             figment,
+            config_center,
         })
     }
     
@@ -220,6 +261,106 @@ impl ConfigManager {
     /// Convert to Arc for sharing across threads
     pub fn into_arc(self) -> Arc<Self> {
         Arc::new(self)
+    }
+    
+    /// Load configuration asynchronously (supports config center)
+    pub async fn load_async<P: AsRef<Path>>(path: P) -> Result<Self> {
+        let path = path.as_ref();
+        let service_name = "comsrv";
+        
+        // Initialize config center client
+        let config_center = if std::env::var("CONFIG_CENTER_URL").is_ok() {
+            info!("Config center URL detected, initializing client");
+            Some(ConfigCenterClient::from_env(service_name.to_string())
+                .with_fallback(path.to_string_lossy().to_string()))
+        } else {
+            None
+        };
+        
+        let mut figment = Figment::new();
+        let mut from_config_center = false;
+        
+        // Try config center first
+        if let Some(ref cc_client) = config_center {
+            match cc_client.fetch_config().await {
+                Ok(remote_config) => {
+                    info!("Successfully loaded configuration from config center");
+                    figment = figment.merge(Json::string(&remote_config.to_string()));
+                    from_config_center = true;
+                }
+                Err(e) => {
+                    warn!("Failed to load from config center: {}, falling back to local file", e);
+                }
+            }
+        }
+        
+        // Load from file if needed
+        if !from_config_center {
+            info!("Loading configuration from local file: {}", path.display());
+            let extension = path.extension()
+                .and_then(|ext| ext.to_str())
+                .ok_or_else(|| ComSrvError::ConfigError(
+                    "Configuration file must have an extension".to_string()
+                ))?;
+            
+            match extension {
+                "yaml" | "yml" => figment = figment.merge(Yaml::file(path)),
+                "toml" => figment = figment.merge(Toml::file(path)),
+                "json" => figment = figment.merge(Json::file(path)),
+                _ => return Err(ComSrvError::ConfigError(
+                    format!("Unsupported configuration format: {}", extension)
+                )),
+            }
+        }
+        
+        // Add environment variables (highest priority)
+        figment = figment.merge(
+            Env::prefixed("COMSRV_")
+                .split("_")
+                .lowercase(false)
+        );
+        
+        // Extract and process configuration
+        let mut config: AppConfig = figment.extract()
+            .map_err(|e| ComSrvError::ConfigError(
+                format!("Failed to parse configuration: {}", e)
+            ))?;
+        
+        // Load CSV tables
+        let config_dir = path.parent();
+        if let Some(config_dir) = config_dir {
+            for channel in &mut config.channels {
+                if let Some(ref table_config) = channel.table_config {
+                    match UnifiedCsvLoader::load_channel_tables(table_config, config_dir) {
+                        Ok(points) => {
+                            info!("Loaded {} points for channel {} ({})", 
+                                  points.len(), channel.id, channel.name);
+                            channel.combined_points = points;
+                        }
+                        Err(e) => {
+                            warn!("Failed to load CSV tables for channel {}: {}", channel.id, e);
+                        }
+                    }
+                }
+            }
+        }
+        
+        Ok(ConfigManager {
+            config,
+            figment,
+            config_center,
+        })
+    }
+    
+    /// Get specific configuration item from config center
+    pub async fn get_config_item(&self, key: &str) -> Result<serde_json::Value> {
+        if let Some(ref cc_client) = self.config_center {
+            cc_client.fetch_item(key).await
+        } else {
+            Err(ComSrvError::ConfigError(
+                "Config center not initialized".to_string()
+            ))
+        }
     }
 }
 

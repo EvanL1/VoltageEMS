@@ -309,6 +309,98 @@ export COMSRV_CSV_BASE_PATH=/opt/comsrv/config
 4. **权限检查**：确保有日志目录的写入权限
 5. **点位唯一**：检查 point_id 在通道内不重复
 
+## 配置中心集成
+
+### 概述
+ComsRV 支持与中心化配置管理服务集成，实现配置的集中管理和动态更新。
+
+### 配置加载优先级
+系统按以下优先级加载配置（从高到低）：
+1. **环境变量**：`COMSRV_` 前缀的环境变量
+2. **配置中心**：从远程配置中心获取
+3. **本地文件**：YAML/JSON/TOML 配置文件
+4. **默认值**：代码中的默认配置
+
+### 启用配置中心
+```bash
+# 设置配置中心地址
+export CONFIG_CENTER_URL=http://config-center:8080
+
+# 设置认证令牌（可选）
+export CONFIG_CENTER_TOKEN=your-auth-token
+
+# 设置缓存目录（可选，默认 /var/cache/comsrv）
+export CONFIG_CACHE_DIR=/opt/comsrv/cache
+
+# 设置缓存有效期（秒，默认 3600）
+export CONFIG_CACHE_TTL=7200
+
+# 启动服务
+./comsrv --config config/default.yaml
+```
+
+### 配置中心 API 要求
+配置中心需要实现以下 API 接口：
+
+#### 获取完整配置
+```
+GET /api/v1/config/service/{service_name}
+Response:
+{
+    "version": "2.0.1",
+    "checksum": "md5_hash",
+    "last_modified": "2024-01-08T10:00:00Z",
+    "content": {
+        "service": {...},
+        "channels": [...]
+    }
+}
+```
+
+#### 获取配置项
+```
+GET /api/v1/config/service/{service_name}/item/{key}
+Response:
+{
+    "key": "channels.0.parameters.host",
+    "value": "192.168.1.100",
+    "type": "string"
+}
+```
+
+### 容错机制
+- **自动降级**：配置中心不可用时自动使用本地配置
+- **缓存策略**：成功获取的配置会缓存到本地
+- **版本管理**：通过 checksum 验证配置完整性
+
+### 配置示例
+
+#### 开发环境（仅本地文件）
+```bash
+./comsrv --config config/dev.yaml
+```
+
+#### 测试环境（配置中心 + 本地备份）
+```bash
+export CONFIG_CENTER_URL=http://config-test:8080
+./comsrv --config config/test.yaml
+```
+
+#### 生产环境（配置中心 + 环境变量覆盖）
+```bash
+export CONFIG_CENTER_URL=http://config.prod:8080
+export CONFIG_CENTER_TOKEN=prod-token
+export COMSRV_SERVICE_REDIS_URL=redis://redis-cluster:6379
+export COMSRV_SERVICE_LOGGING_LEVEL=warn
+./comsrv --config config/prod.yaml
+```
+
+### 动态配置更新（规划中）
+未来版本将支持：
+- WebSocket 配置变更通知
+- 热更新支持的配置项
+- 配置回滚机制
+
 ## 故障排查
 
 常见配置问题：
@@ -331,3 +423,9 @@ export COMSRV_CSV_BASE_PATH=/opt/comsrv/config
    - 核对寄存器地址
    - 确认数据格式匹配
    - 检查字节序设置
+
+5. **配置中心问题**
+   - 检查 CONFIG_CENTER_URL 是否正确
+   - 验证网络连接和防火墙
+   - 查看缓存目录权限
+   - 检查认证令牌是否有效
