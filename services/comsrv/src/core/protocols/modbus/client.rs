@@ -10,7 +10,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use std::time::Duration;
-use tracing::{warn, error, info, debug};
+use tracing::{warn, error, info, debug, info_span, Instrument};
 use async_trait::async_trait;
 
 use crate::core::protocols::common::{
@@ -141,7 +141,9 @@ impl ModbusClient {
         let transport_bridge = Arc::new(UniversalTransportBridge::new_modbus(transport));
         
         // 创建协议引擎
-        let protocol_engine = Arc::new(ModbusProtocolEngine::new(&config.connection).await?);
+        let mut engine = ModbusProtocolEngine::new(&config.connection).await?;
+        engine.set_channel_info(config.channel_id, config.channel_name.clone());
+        let protocol_engine = Arc::new(engine);
         
         info!("Creating Modbus client: {}", config.channel_name);
         
@@ -219,6 +221,7 @@ impl ModbusClient {
                     key_prefix: format!("comsrv:{}:points", self.config.channel_name),
                     point_ttl: None,
                     use_pipeline: true,
+                    channel_id: Some(self.config.channel_id),
                 };
                 let redis_manager = Arc::new(
                     crate::core::protocols::common::redis::RedisBatchSync::new(redis_conn, redis_config)
@@ -245,6 +248,9 @@ impl ModbusClient {
             let protocol_engine = self.protocol_engine.clone();
             let channel_name = self.config.channel_name.clone();
             let transport_bridge = self.transport_bridge.clone();
+            
+            // Get current span to propagate to spawned task
+            let current_span = tracing::Span::current();
             
             // Start polling task
             tokio::spawn(async move {
@@ -286,7 +292,7 @@ impl ModbusClient {
                 if let Err(e) = result {
                     error!("[{}] Polling error: {}", channel_name, e);
                 }
-            });
+            }.instrument(current_span));
             
             info!("[{}] Modbus polling started", self.config.channel_name);
         }
@@ -308,6 +314,13 @@ impl ModbusClient {
                 function_code: 3, // Read Holding Registers
                 register_address: mapping.address,
                 scale_factor: Some(mapping.scale),
+                data_format: mapping.data_type.clone(), // Use data_type field
+                register_count: match mapping.data_type.as_str() {
+                    "float32" | "int32" | "uint32" => 2,
+                    "float64" | "int64" | "uint64" => 4,
+                    _ => 1,
+                },
+                byte_order: Some("ABCD".to_string()), // Default to big-endian
             };
             points.push(point);
         }
@@ -321,6 +334,9 @@ impl ModbusClient {
                 function_code: 1, // Read Coils
                 register_address: mapping.address,
                 scale_factor: None,
+                data_format: "bool".to_string(),
+                register_count: 1,
+                byte_order: None,
             };
             points.push(point);
         }
@@ -406,7 +422,13 @@ impl ModbusClient {
             stats.last_request_time = Some(chrono::Utc::now());
         }
 
-        let result = self.internal_read_point(point_id, telemetry_type).await;
+        let mut result = self.internal_read_point(point_id, telemetry_type.clone()).await;
+        
+        // 设置channel_id和telemetry_type
+        if let Ok(ref mut data) = result {
+            data.channel_id = Some(self.config.channel_id);
+            data.telemetry_type = Some(telemetry_type.clone());
+        }
         
         // 更新统计信息和日志记录
         {
@@ -454,6 +476,8 @@ impl ModbusClient {
                             timestamp: pd.timestamp,
                             unit: pd.unit,
                             description: pd.description,
+                            telemetry_type: Some(TelemetryType::Telemetry),
+                            channel_id: Some(self.config.channel_id),
                         })
                 } else {
                     Err(ComSrvError::NotFound(format!("Telemetry point not found: {}", point_id)))
@@ -469,6 +493,8 @@ impl ModbusClient {
                             timestamp: pd.timestamp,
                             unit: pd.unit,
                             description: pd.description,
+                            telemetry_type: Some(TelemetryType::Signal),
+                            channel_id: Some(self.config.channel_id),
                         })
                 } else {
                     Err(ComSrvError::NotFound(format!("Signal point not found: {}", point_id)))
@@ -480,7 +506,7 @@ impl ModbusClient {
         }
     }
 
-    /// 写入点位
+    /// 写入点位（支持telemetry_type参数）
     pub async fn write_point(&self, point_id: u32, value: &str) -> Result<()> {
         let mappings = self.mappings.read().await;
         
@@ -502,6 +528,38 @@ impl ModbusClient {
         }
         
         Err(ComSrvError::NotFound(format!("Writable point not found: {}", point_id)))
+    }
+    
+    /// 写入点位（带telemetry_type参数的新方法）
+    pub async fn write_point_with_type(&self, point_id: u32, value: &str, telemetry_type: TelemetryType) -> Result<()> {
+        let mappings = self.mappings.read().await;
+        
+        match telemetry_type {
+            TelemetryType::Adjustment => {
+                if let Some(mapping) = mappings.adjustment_mappings.get(&point_id) {
+                    let float_value: f64 = value.parse()
+                        .map_err(|_| ComSrvError::InvalidParameter(format!("Invalid adjustment value: {}", value)))?;
+                    self.protocol_engine.write_adjustment_point(mapping, float_value, &self.transport_bridge).await
+                } else {
+                    Err(ComSrvError::NotFound(format!("Adjustment point not found: {}", point_id)))
+                }
+            }
+            TelemetryType::Control => {
+                if let Some(mapping) = mappings.control_mappings.get(&point_id) {
+                    let bool_value = match value.to_lowercase().as_str() {
+                        "true" | "1" | "on" => true,
+                        "false" | "0" | "off" => false,
+                        _ => return Err(ComSrvError::InvalidParameter(format!("Invalid control value: {}", value))),
+                    };
+                    self.protocol_engine.execute_control_point(mapping, bool_value, &self.transport_bridge).await
+                } else {
+                    Err(ComSrvError::NotFound(format!("Control point not found: {}", point_id)))
+                }
+            }
+            _ => Err(ComSrvError::ProtocolNotSupported(
+                "Write operation only supports adjustment and control types".to_string()
+            ))
+        }
     }
 
     /// 批量读取点位
@@ -535,6 +593,8 @@ impl ModbusClient {
                         timestamp: chrono::Utc::now(),
                         unit: String::new(),
                         description: format!("Read failed: {}", e),
+                        telemetry_type: None,
+                        channel_id: Some(self.config.channel_id),
                     });
                 }
             }
@@ -634,15 +694,26 @@ impl ComBase for ModbusClient {
     }
 
     async fn start(&mut self) -> Result<()> {
-        // First establish connection
-        self.connect().await?;
+        // Create channel-specific span for all operations
+        let channel_span = info_span!(
+            "modbus_channel",
+            channel_id = self.config.channel_id,
+            channel_name = %self.config.channel_name,
+            protocol = "modbus_tcp"
+        );
         
-        // Then start polling if configured
-        if self.config.polling.default_interval_ms > 0 {
-            self.start_polling().await?;
+        async move {
+            // First establish connection
+            self.connect().await?;
+            // Then start polling if configured
+            if self.config.polling.default_interval_ms > 0 {
+                self.start_polling().await?;
+            }
+            
+            Ok(())
         }
-        
-        Ok(())
+        .instrument(channel_span)
+        .await
     }
 
     async fn stop(&mut self) -> Result<()> {
@@ -693,18 +764,39 @@ impl ComBase for ModbusClient {
     }
 
     async fn read_point(&self, point_id: &str) -> Result<CommonPointData> {
-        let id: u32 = point_id.parse()
-            .map_err(|_| ComSrvError::InvalidParameter(format!("Invalid point ID: {}", point_id)))?;
-        
-        let mappings = self.mappings.read().await;
-        
-        // 确定点位类型
-        if mappings.telemetry_mappings.contains_key(&id) {
-            self.read_point(id, TelemetryType::Telemetry).await
-        } else if mappings.signal_mappings.contains_key(&id) {
-            self.read_point(id, TelemetryType::Signal).await
+        // 支持两种格式：
+        // 1. 旧格式：直接的point_id (需要自动检测类型)
+        // 2. 新格式："telemetry_type:point_id" 例如 "YC:1"
+        let (telemetry_type, id) = if point_id.contains(':') {
+            let parts: Vec<&str> = point_id.split(':').collect();
+            if parts.len() != 2 {
+                return Err(ComSrvError::InvalidParameter(format!("Invalid point ID format: {}", point_id)));
+            }
+            let telemetry_type = TelemetryType::from(parts[0]);
+            let id: u32 = parts[1].parse()
+                .map_err(|_| ComSrvError::InvalidParameter(format!("Invalid point ID: {}", parts[1])))?;
+            (Some(telemetry_type), id)
         } else {
-            Err(ComSrvError::NotFound(format!("Point not found: {}", point_id)))
+            // 旧格式，需要检测类型
+            let id: u32 = point_id.parse()
+                .map_err(|_| ComSrvError::InvalidParameter(format!("Invalid point ID: {}", point_id)))?;
+            (None, id)
+        };
+        
+        if let Some(telemetry_type) = telemetry_type {
+            // 使用指定的类型
+            self.read_point(id, telemetry_type).await
+        } else {
+            // 自动检测类型（保持向后兼容）
+            let mappings = self.mappings.read().await;
+            
+            if mappings.telemetry_mappings.contains_key(&id) {
+                self.read_point(id, TelemetryType::Telemetry).await
+            } else if mappings.signal_mappings.contains_key(&id) {
+                self.read_point(id, TelemetryType::Signal).await
+            } else {
+                Err(ComSrvError::NotFound(format!("Point not found: {}", point_id)))
+            }
         }
     }
 

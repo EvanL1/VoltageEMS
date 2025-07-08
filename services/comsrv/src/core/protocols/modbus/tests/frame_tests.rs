@@ -11,7 +11,7 @@ mod tests {
         // Test vector from Modbus specification
         let data = vec![0x01, 0x03, 0x00, 0x00, 0x00, 0x0A];
         let crc = calculate_crc16(&data);
-        assert_eq!(crc, 0x48CD);  // Expected CRC
+        assert_eq!(crc, 0xCDC5);  // Correct CRC for this data
     }
     
     #[test]

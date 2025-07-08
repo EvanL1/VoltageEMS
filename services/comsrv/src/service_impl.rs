@@ -11,169 +11,17 @@ use crate::core::protocols::common::ProtocolFactory;
 
 use crate::utils::error::Result;
 
-/// Convert new ChannelConfig to legacy types::ChannelConfig for compatibility
-fn convert_channel_config(config: &crate::core::config::config_manager::ChannelConfig) -> crate::core::config::types::ChannelConfig {
-    let protocol_type = match config.protocol.as_str() {
-        "modbus_tcp" => crate::core::config::types::ProtocolType::ModbusTcp,
-        "modbus_rtu" => crate::core::config::types::ProtocolType::ModbusRtu,
-        "can" => crate::core::config::types::ProtocolType::Can,
-        "iec104" => crate::core::config::types::ProtocolType::Iec104,
-        "virtual" => crate::core::config::types::ProtocolType::Virtual,
-        _ => crate::core::config::types::ProtocolType::Virtual, // default fallback
-    };
-
-    // Convert parameters from figment::value::Value to serde_yaml::Value
-    tracing::debug!("Converting parameters: {:?}", config.parameters);
-    let param_map: std::collections::HashMap<String, serde_yaml::Value> = config.parameters.iter()
-        .map(|(k, v)| {
-            tracing::debug!("Converting parameter: {} = {:?}", k, v);
-            let yaml_value = match v {
-                figment::value::Value::String(_, s) => serde_yaml::Value::String(s.clone()),
-                figment::value::Value::Num(_, _) => {
-                    // Try to convert to appropriate number type using figment Value methods
-                    if let Some(i) = v.to_i128() {
-                        if i >= i64::MIN as i128 && i <= i64::MAX as i128 {
-                            serde_yaml::Value::Number(serde_yaml::Number::from(i as i64))
-                        } else {
-                            serde_yaml::Value::String(i.to_string())
-                        }
-                    } else if let Some(u) = v.to_u128() {
-                        if u <= u64::MAX as u128 {
-                            serde_yaml::Value::Number(serde_yaml::Number::from(u as u64))
-                        } else {
-                            serde_yaml::Value::String(u.to_string())
-                        }
-                    } else if let Some(f) = v.to_f64() {
-                        serde_yaml::Value::Number(serde_yaml::Number::from(f))
-                    } else {
-                        // Try to get string representation if possible
-                        if let Some(s) = v.as_str() {
-                            serde_yaml::Value::String(s.to_string())
-                        } else {
-                            serde_yaml::Value::String(format!("{:?}", v))
-                        }
-                    }
-                }
-                figment::value::Value::Bool(_, b) => serde_yaml::Value::Bool(*b),
-                figment::value::Value::Array(_, arr) => {
-                    let yaml_arr: Vec<serde_yaml::Value> = arr.iter()
-                        .map(|item| {
-                            // Recursively convert array elements
-                            match item {
-                                figment::value::Value::String(_, s) => serde_yaml::Value::String(s.clone()),
-                                figment::value::Value::Num(_, _) => {
-                                    if let Some(i) = item.to_i128() {
-                                        if i >= i64::MIN as i128 && i <= i64::MAX as i128 {
-                                            serde_yaml::Value::Number(serde_yaml::Number::from(i as i64))
-                                        } else {
-                                            serde_yaml::Value::String(i.to_string())
-                                        }
-                                    } else if let Some(f) = item.to_f64() {
-                                        serde_yaml::Value::Number(serde_yaml::Number::from(f))
-                                    } else {
-                                        // Try to get string representation if possible
-                                        if let Some(s) = item.as_str() {
-                                            serde_yaml::Value::String(s.to_string())
-                                        } else {
-                                            serde_yaml::Value::String(format!("{:?}", item))
-                                        }
-                                    }
-                                }
-                                figment::value::Value::Bool(_, b) => serde_yaml::Value::Bool(*b),
-                                _ => serde_yaml::Value::String(format!("{:?}", item)),
-                            }
-                        })
-                        .collect();
-                    serde_yaml::Value::Sequence(yaml_arr)
-                }
-                figment::value::Value::Dict(_, dict) => {
-                    let yaml_map: serde_yaml::Mapping = dict.iter()
-                        .map(|(k, v)| {
-                            let key = serde_yaml::Value::String(k.clone());
-                            let value = match v {
-                                figment::value::Value::String(_, s) => serde_yaml::Value::String(s.clone()),
-                                figment::value::Value::Num(_, _) => {
-                                    if let Some(i) = v.to_i128() {
-                                        if i >= i64::MIN as i128 && i <= i64::MAX as i128 {
-                                            serde_yaml::Value::Number(serde_yaml::Number::from(i as i64))
-                                        } else {
-                                            serde_yaml::Value::String(i.to_string())
-                                        }
-                                    } else if let Some(f) = v.to_f64() {
-                                        serde_yaml::Value::Number(serde_yaml::Number::from(f))
-                                    } else {
-                                        // Try to get string representation if possible
-                                        if let Some(s) = v.as_str() {
-                                            serde_yaml::Value::String(s.to_string())
-                                        } else {
-                                            serde_yaml::Value::String(format!("{:?}", v))
-                                        }
-                                    }
-                                }
-                                figment::value::Value::Bool(_, b) => serde_yaml::Value::Bool(*b),
-                                _ => {
-                                    // Try to get string representation if possible
-                                    if let Some(s) = v.as_str() {
-                                        serde_yaml::Value::String(s.to_string())
-                                    } else {
-                                        serde_yaml::Value::String(format!("{:?}", v))
-                                    }
-                                },
-                            };
-                            (key, value)
-                        })
-                        .collect();
-                    serde_yaml::Value::Mapping(yaml_map)
-                }
-                _ => {
-                    // Try to get string representation if possible
-                    if let Some(s) = v.as_str() {
-                        serde_yaml::Value::String(s.to_string())
-                    } else {
-                        serde_yaml::Value::String(format!("{:?}", v))
-                    }
-                },
-            };
-            (k.clone(), yaml_value)
-        })
-        .collect();
-
-    // Convert channel logging config from the config file
-    let logging_config = crate::core::config::types::ChannelLoggingConfig {
-        enabled: config.logging.enabled,
-        level: config.logging.level.clone(),
-        log_dir: config.logging.log_dir.clone(),
-        max_file_size: config.logging.max_file_size,
-        max_files: config.logging.max_files,
-        retention_days: config.logging.retention_days,
-        console_output: config.logging.console_output,
-        log_messages: config.logging.log_messages,
-    };
-
-    crate::core::config::types::ChannelConfig {
-        id: config.id,
-        name: config.name.clone(),
-        description: config.description.clone(),
-        protocol: protocol_type.to_string(),
-        parameters: param_map,
-        logging: logging_config,
-        table_config: None,
-        points: Vec::new(),
-        combined_points: config.to_types_channel_config().combined_points
-    }
-}
-
 /// Start the communication service with optimized performance and monitoring.
 pub async fn start_communication_service(
     config_manager: Arc<ConfigManager>,
     factory: Arc<RwLock<ProtocolFactory>>,
 ) -> Result<()> {
     // Check if Redis is enabled and initialize Redis storage
-    let redis_config = config_manager.get_redis_config();
-    if redis_config.enabled {
+    if config_manager.is_redis_enabled() {
         info!("Redis is enabled, initializing Redis storage...");
         
-        match crate::core::storage::redis_storage::RedisStore::from_config(redis_config).await {
+        let redis_config = config_manager.service().redis.clone();
+        match crate::core::storage::redis_storage::RedisStore::from_config(&redis_config).await {
             Ok(Some(redis_store)) => {
                 info!("Redis storage initialized successfully");
                 
@@ -402,7 +250,7 @@ channels:
   - id: 1
     name: "Test Virtual Channel"
     description: "Test virtual channel for unit testing"
-    protocol: "Virtual"
+    protocol: "virtual"
     parameters:
       interval: 1000
       data_points: 10

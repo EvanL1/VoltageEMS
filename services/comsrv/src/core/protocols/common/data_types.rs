@@ -84,6 +84,12 @@ pub struct PointData {
     pub unit: String,
     /// Description or additional information
     pub description: String,
+    /// Telemetry type (YC/YX/YT/YK)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub telemetry_type: Option<TelemetryType>,
+    /// Channel ID (for multi-channel systems)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub channel_id: Option<u16>,
 }
 
 impl PointData {
@@ -96,6 +102,8 @@ impl PointData {
             timestamp: Utc::now(),
             unit,
             description: String::new(),
+            telemetry_type: None,
+            channel_id: None,
         }
     }
 
@@ -108,6 +116,8 @@ impl PointData {
             timestamp: Utc::now(),
             unit: String::new(),
             description: error,
+            telemetry_type: None,
+            channel_id: None,
         }
     }
 
@@ -174,12 +184,14 @@ impl PollingPoint {
             timestamp: Utc::now(),
             unit: self.unit.clone(),
             description: self.description.clone(),
+            telemetry_type: Some(self.telemetry_type.clone()),
+            channel_id: None,
         }
     }
 }
 
 /// Telemetry type enumeration
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum TelemetryType {
     /// 遥测 - Analog measurements
     Telemetry,

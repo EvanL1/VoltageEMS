@@ -29,6 +29,8 @@ pub struct RedisBatchSyncConfig {
     pub point_ttl: Option<Duration>,
     /// Enable pipeline mode for better performance
     pub use_pipeline: bool,
+    /// Channel ID for key generation
+    pub channel_id: Option<u16>,
 }
 
 impl Default for RedisBatchSyncConfig {
@@ -39,6 +41,7 @@ impl Default for RedisBatchSyncConfig {
             key_prefix: "comsrv:points".to_string(),
             point_ttl: None,
             use_pipeline: true,
+            channel_id: None,
         }
     }
 }
@@ -100,7 +103,7 @@ impl RedisBatchSync {
     }
 
     /// Sync a batch of points to Redis
-    async fn sync_batch(&self, point_manager: &Arc<OptimizedPointManager>) -> Result<()> {
+    async fn sync_batch(&self, point_manager: &OptimizedPointManager) -> Result<()> {
         let start_time = std::time::Instant::now();
         
         // Get all current point data
@@ -157,7 +160,14 @@ impl RedisBatchSync {
         let mut count = 0;
         
         for (id, data) in points.iter() {
-            let key = format!("{}:{}", self.config.key_prefix, id);
+            // Generate key based on channel_id and telemetry_type
+            let key = if let (Some(channel_id), Some(telemetry_type)) = (data.channel_id.or(self.config.channel_id), &data.telemetry_type) {
+                format!("comsrv:channel:{}:{}:{}", channel_id, telemetry_type, id)
+            } else {
+                // Fallback to old format if channel_id or telemetry_type is missing
+                format!("{}:{}", self.config.key_prefix, id)
+            };
+            
             let value = json!({
                 "id": data.id,
                 "name": data.name,
@@ -165,6 +175,8 @@ impl RedisBatchSync {
                 "unit": data.unit,
                 "timestamp": data.timestamp.to_rfc3339(),
                 "description": data.description,
+                "telemetry_type": data.telemetry_type,
+                "channel_id": data.channel_id,
             });
             
             pipe.set(&key, value.to_string());
@@ -209,7 +221,14 @@ impl RedisBatchSync {
         let mut count = 0;
         
         for (id, data) in points {
-            let key = format!("{}:{}", self.config.key_prefix, id);
+            // Generate key based on channel_id and telemetry_type
+            let key = if let (Some(channel_id), Some(telemetry_type)) = (data.channel_id.or(self.config.channel_id), &data.telemetry_type) {
+                format!("comsrv:channel:{}:{}:{}", channel_id, telemetry_type, id)
+            } else {
+                // Fallback to old format if channel_id or telemetry_type is missing
+                format!("{}:{}", self.config.key_prefix, id)
+            };
+            
             let value = json!({
                 "id": data.id,
                 "name": data.name,
@@ -217,6 +236,8 @@ impl RedisBatchSync {
                 "unit": data.unit,
                 "timestamp": data.timestamp.to_rfc3339(),
                 "description": data.description,
+                "telemetry_type": data.telemetry_type,
+                "channel_id": data.channel_id,
             });
             
             let _: () = redis::cmd("SET")

@@ -102,6 +102,7 @@ All protocols share unified `Transport` trait:
 - **CSV point tables** for telemetry, control, adjustment, and signal points
 - **Channel parameters** specific to each protocol
 - Validation and type safety throughout
+- **Environment variable support** for CSV base path via `COMSRV_CSV_BASE_PATH`
 
 ### Development Workflow
 

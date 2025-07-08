@@ -9,10 +9,10 @@ use tokio::signal;
 use axum::serve;
 
 use tracing::{error, info, Level};
-use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
+use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, Layer};
 use tracing_appender::rolling::{RollingFileAppender, Rotation};
 
-use comsrv::core::config::{ConfigManager, ConfigLoader};
+use comsrv::core::config::ConfigManager;
 use comsrv::core::protocols::common::combase::protocol_factory::ProtocolFactory;
 use comsrv::api::openapi_routes::create_api_routes;
 use comsrv::service_impl::{start_communication_service, start_cleanup_task, shutdown_handler};
@@ -83,35 +83,18 @@ async fn main() -> Result<()> {
     // Load environment variables
     dotenv().ok();
 
-    // Load configuration using the new loader with multi-source support
-    info!("Loading configuration...");
-    
-    // Create loader with command-line specified file (if any)
-    let loader = ConfigLoader::new()
-        .with_file(&args.config)
-        .with_config_center(std::env::var("CONFIG_CENTER_URL").ok())
-        .with_env_prefix("COMSRV_");
-    
     // Load configuration
-    let app_config = loader.load().await
-        .map_err(|e| {
-            eprintln!("Failed to load configuration: {}", e);
-            e
-        })?;
-    
-    // Create ConfigManager from loaded AppConfig for backward compatibility
+    info!("Loading configuration from: {}", args.config);
     let config_manager = Arc::new(
-        ConfigManager::from_app_config(app_config)
+        ConfigManager::from_file(&args.config)
             .map_err(|e| {
-                eprintln!("Failed to create config manager: {}", e);
-                comsrv::utils::error::ComSrvError::ConfigError(
-                    format!("Configuration manager creation failed: {}", e)
-                )
+                eprintln!("Failed to load configuration: {}", e);
+                e
             })?
     );
 
-    // Initialize logging/tracing with configuration
-    initialize_logging(&config_manager.config().service.logging)?;
+    // Initialize logging/tracing with configuration and channels
+    initialize_logging(&config_manager.config().service.logging, &config_manager.config().channels)?;
 
     info!("Starting Communication Service v{}", env!("CARGO_PKG_VERSION"));
     
@@ -188,24 +171,45 @@ async fn main() -> Result<()> {
 }
 
 /// Initialize logging/tracing with configuration
-fn initialize_logging(logging_config: &comsrv::core::config::types::LoggingConfig) -> Result<()> {
+fn initialize_logging(
+    logging_config: &comsrv::core::config::types::LoggingConfig,
+    channels: &[comsrv::core::config::types::ChannelConfig],
+) -> Result<()> {
     use std::path::Path;
+    use tracing_subscriber::filter::FilterFn;
     
     // Create log level filter - allow RUST_LOG to override, then use config, then default
     let env_filter = tracing_subscriber::EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| {
             let level = &logging_config.level;
+            // Default filter
             format!("comsrv={},tower_http=info", level).into()
         });
 
-    // Start with the registry and env filter
-    let subscriber = tracing_subscriber::registry().with(env_filter);
+    // Start with the registry 
+    let subscriber = tracing_subscriber::registry();
 
     // Add console layer if enabled
     if logging_config.console && logging_config.file.is_some() {
         // Both console and file logging
+        
+        // Create main filter - exclude channel-specific logs from main logs
+        let main_filter = FilterFn::new(|metadata| {
+            // Check if this is a modbus packet log by looking for specific field names
+            let fields = metadata.fields();
+            // Check if the field names contain "direction" which indicates a packet log
+            for field in fields.iter() {
+                if field.name() == "direction" {
+                    return false; // Exclude packet logs from main log
+                }
+            }
+            true // Include everything else
+        });
+        
+        // Console layer with filter
         let console_layer = tracing_subscriber::fmt::layer()
-            .event_format(ConditionalTargetFormatter);
+            .event_format(ConditionalTargetFormatter)
+            .with_filter(main_filter.clone());
 
         let log_file_path = logging_config.file.as_ref().unwrap();
         let log_path = Path::new(log_file_path);
@@ -219,7 +223,7 @@ fn initialize_logging(logging_config: &comsrv::core::config::types::LoggingConfi
             eprintln!("Warning: Could not create log directory {:?}: {}", log_dir, e);
         }
 
-        // Create rolling file appender
+        // Create rolling file appender for main log
         let file_appender = RollingFileAppender::builder()
             .rotation(Rotation::DAILY)
             .filename_prefix(log_filename)
@@ -233,15 +237,24 @@ fn initialize_logging(logging_config: &comsrv::core::config::types::LoggingConfi
                 )
             })?;
 
+        // File layer with filter
         let file_layer = tracing_subscriber::fmt::layer()
             .with_writer(file_appender)
             .with_target(true)
             .with_thread_ids(true)
             .with_thread_names(true)
             .with_ansi(false)
-            .json(); // Use JSON format for file logs
+            .json()
+            .with_filter(main_filter);
 
-        subscriber.with(console_layer).with(file_layer).init();
+        // Apply env filter and layers
+        let subscriber = subscriber
+            .with(env_filter)
+            .with(console_layer)
+            .with(file_layer);
+        
+        // Initialize the subscriber first
+        subscriber.init();
         
         eprintln!("Logging configured:");
         eprintln!("  - Console: enabled");
@@ -254,7 +267,10 @@ fn initialize_logging(logging_config: &comsrv::core::config::types::LoggingConfi
         let console_layer = tracing_subscriber::fmt::layer()
             .event_format(ConditionalTargetFormatter);
 
-        subscriber.with(console_layer).init();
+        subscriber
+            .with(env_filter)
+            .with(console_layer)
+            .init();
         eprintln!("Logging configured: Console only, Level: {}", logging_config.level);
         
     } else if let Some(ref log_file_path) = logging_config.file {
@@ -290,9 +306,12 @@ fn initialize_logging(logging_config: &comsrv::core::config::types::LoggingConfi
             .with_thread_ids(true)
             .with_thread_names(true)
             .with_ansi(false)
-            .json(); // Use JSON format for file logs
+            .json();
 
-        subscriber.with(file_layer).init();
+        subscriber
+            .with(env_filter)
+            .with(file_layer)
+            .init();
         
         eprintln!("Logging configured:");
         eprintln!("  - Console: disabled");

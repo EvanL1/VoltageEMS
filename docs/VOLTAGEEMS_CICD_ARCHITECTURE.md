@@ -19,8 +19,8 @@
 
 ```mermaid
 flowchart TD
-    A[开发人员] --|提交代码|--> B[GitLab 代码仓库]
-    B --|触发构建|--> C[Jenkins 自动化服务器]
+    A[开发人员] -->|提交代码| B[GitLab 代码仓库]
+    B -->|触发构建| C[Jenkins 自动化服务器]
   
     C --> D[构建阶段]
     D --> D1[拉取代码]
@@ -262,19 +262,9 @@ VoltageEMS/
 
 ```mermaid
 graph TD
-    A[Jenkins构建服务器] --|推送镜像|--> C[Docker Registry localhost:5000]
+    A[Jenkins构建服务器] --|推送镜像|--> C[Docker Registry<br/>localhost:5000]
     B[生产服务器] --|拉取镜像|--> C
-  
-    C --> D[存储所有服务镜像]
-    D --> D1[voltageems/comsrv]
-    D --> D2[voltageems/modsrv]
-    D --> D3[voltageems/hissrv]
-    D --> D4[voltageems/netsrv]
-    D --> D5[voltageems/alarmsrv]
-    D --> D6[voltageems/apigateway]
-    D --> D7[voltageems/frontend]
-  
-    style C fill:#fc9,stroke:#333,stroke-width:3px
+    C --> D[存储所有服务镜像：<br/>• voltageems/comsrv<br/>• voltageems/modsrv<br/>• voltageems/hissrv<br/>• voltageems/netsrv<br/>• voltageems/alarmsrv<br/>• voltageems/apigateway<br/>• voltageems/frontend]
 ```
 
 ### 4. 环境配置
@@ -451,14 +441,14 @@ healthcheck:
 
 ```mermaid
 flowchart TD
-    A[Docker] --|每30秒|--> B[调用健康检查]
+    A[Docker] -->|每30秒| B[调用健康检查]
     B --> C[返回状态]
     C --> D{状态异常？}
-    D --|是|--> E[重试3次]
+    D -->|是| E[重试3次]
     E --> F{仍失败？}
-    F --|是|--> G[标记为unhealthy]
-    F --|否|--> H[标记为healthy]
-    D --|否|--> H
+    F -->|是| G[标记为unhealthy]
+    F -->|否| H[标记为healthy]
+    D -->|否| H
   
     style D fill:#ffd,stroke:#333,stroke-width:2px
     style G fill:#fcc,stroke:#333,stroke-width:2px
@@ -538,8 +528,8 @@ graph LR
 
 ```mermaid
 flowchart LR
-    A[部署新版本] --> B[创建备份目录-带时间戳]
-    B --> C[备份当前docker-compose.yml]
+    A[部署新版本] --> B[创建备份目录<br/>带时间戳]
+    B --> C[备份当前<br/>docker-compose.yml]
     C --> D[备份配置文件]
     D --> E[记录运行容器状态]
     E --> F[保留最近10个备份]
@@ -565,13 +555,13 @@ tar -czf config-backup-$(date +%Y%m%d).tar.gz /opt/voltageems/config
 
 ```mermaid
 flowchart TD
-    A[1. 停止所有服务 docker-compose down] --> B[2. 恢复数据]
+    A[1. 停止所有服务<br/>docker-compose down] --> B[2. 恢复数据]
     B --> B1[Redis: 恢复dump.rdb文件]
     B --> B2[InfluxDB: 使用influx restore]
-    B1 --> C[3. 恢复配置 tar -xzf config-backup.tar.gz]
+    B1 --> C[3. 恢复配置<br/>tar -xzf config-backup.tar.gz]
     B2 --> C
-    C --> D[4. 启动服务 docker-compose up -d]
-    D --> E[5. 验证服务 执行健康检查]
+    C --> D[4. 启动服务<br/>docker-compose up -d]
+    D --> E[5. 验证服务<br/>执行健康检查]
   
     style A fill:#fcc,stroke:#333,stroke-width:2px
     style E fill:#cfc,stroke:#333,stroke-width:2px
@@ -589,9 +579,9 @@ graph LR
     B --> C[3. 提交代码]
     C --> D[4. 查看构建结果]
     D --> E{构建成功？}
-    E --|否|--> F[5. 修复问题]
+    E -->|否| F[5. 修复问题]
     F --> A
-    E --|是|--> G[完成]
+    E -->|是| G[完成]
   
     style E fill:#ffd,stroke:#333,stroke-width:2px
 ```
@@ -645,12 +635,12 @@ graph LR
 
 ```mermaid
 flowchart TD
-    A[发现问题] --> B[1. 检查服务状态 docker-compose ps]
-    B --> C[2. 查看错误日志 docker-compose logs]
-    C --> D[3. 尝试重启服务 docker-compose restart]
+    A[发现问题] --> B[1. 检查服务状态<br/>docker-compose ps]
+    B --> C[2. 查看错误日志<br/>docker-compose logs --tail=100 问题服务]
+    C --> D[3. 尝试重启服务<br/>docker-compose restart 服务名]
     D --> E{问题解决？}
-    E --|否|--> F[4. 考虑回滚 ./scripts/rollback.sh]
-    E --|是|--> G[记录问题和解决方案]
+    E -->|否| F[4. 考虑回滚<br/>./scripts/rollback.sh]
+    E -->|是| G[记录问题和解决方案]
   
     style A fill:#fcc,stroke:#333,stroke-width:2px
     style E fill:#ffd,stroke:#333,stroke-width:2px

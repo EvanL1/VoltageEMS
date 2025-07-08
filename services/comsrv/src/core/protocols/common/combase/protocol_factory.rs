@@ -196,7 +196,7 @@ pub struct ModbusTcpFactory;
 
 impl ModbusTcpFactory {
     /// Create ProtocolMappingTable from ChannelConfig
-    fn create_modbus_mapping_table(&self, channel_config: &crate::core::config::types::ChannelConfig) -> crate::core::protocols::modbus::client::ProtocolMappingTable {
+    fn create_modbus_mapping_table(&self, config: &ChannelConfig) -> crate::core::protocols::modbus::client::ProtocolMappingTable {
         use crate::core::protocols::modbus::protocol_engine::{
             ModbusTelemetryMapping, ModbusSignalMapping,
             ModbusAdjustmentMapping, ModbusControlMapping
@@ -205,7 +205,7 @@ impl ModbusTcpFactory {
         let mut mapping_table = crate::core::protocols::modbus::client::ProtocolMappingTable::default();
         
         // Convert combined_points to protocol mappings
-        for point in &channel_config.combined_points {
+        for point in &config.combined_points {
             // Extract fields from CombinedPoint
             let point_id = point.point_id;
             let scale = point.scaling.as_ref().map(|s| s.scale).unwrap_or(1.0);
@@ -372,7 +372,7 @@ impl ProtocolClientFactory for ModbusTcpFactory {
         let transport = factory.create_tcp_transport(transport_config).await?;
         
         // Check if we have a config manager with CSV point tables
-        if let Some(config_mgr) = config_manager {
+        if let Some(_config_mgr) = config_manager {
             // Try to create ModbusUniversalClient with CSV integration
             // Create ModbusChannelConfig from ChannelConfig
             // Extract Modbus configuration from parameters
@@ -412,13 +412,11 @@ impl ProtocolClientFactory for ModbusTcpFactory {
             ).await {
                 Ok(mut universal_client) => {
                     // Load CSV point mappings from config
-                    if let Some(channel_cfg) = config_mgr.get_channel(config.id) {
-                        let mapping_table = self.create_modbus_mapping_table(&channel_cfg);
-                        if let Err(e) = universal_client.load_protocol_mappings(mapping_table).await {
-                            tracing::warn!("Failed to load protocol mappings for channel {}: {}", config.id, e);
-                        } else {
-                            tracing::info!("Successfully loaded CSV point mappings for channel {}", config.id);
-                        }
+                    let mapping_table = self.create_modbus_mapping_table(&config);
+                    if let Err(e) = universal_client.load_protocol_mappings(mapping_table).await {
+                        tracing::warn!("Failed to load protocol mappings for channel {}: {}", config.id, e);
+                    } else {
+                        tracing::info!("Successfully loaded {} protocol mappings for channel {}", config.combined_points.len(), config.id);
                     }
                     
                     tracing::info!("Created ModbusUniversalClient for channel {} with CSV point tables", config.id);
@@ -463,11 +461,11 @@ impl ProtocolClientFactory for ModbusTcpFactory {
                     let mut client = crate::core::protocols::modbus::ModbusClient::new(channel_config, transport).await?;
                     
                     // Also load CSV mappings for fallback client
-                    if let Some(channel_cfg) = config_mgr.get_channel(config.id) {
-                        let mapping_table = self.create_modbus_mapping_table(&channel_cfg);
-                        if let Err(e) = client.load_protocol_mappings(mapping_table).await {
-                            tracing::warn!("Failed to load protocol mappings for fallback client {}: {}", config.id, e);
-                        }
+                    let mapping_table = self.create_modbus_mapping_table(&config);
+                    if let Err(e) = client.load_protocol_mappings(mapping_table).await {
+                        tracing::warn!("Failed to load protocol mappings for fallback client {}: {}", config.id, e);
+                    } else {
+                        tracing::info!("Successfully loaded {} protocol mappings for fallback channel {}", config.combined_points.len(), config.id);
                     }
                     
                     return Ok(Box::new(client));

@@ -552,7 +552,9 @@ mod tests {
         assert_eq!(ModbusFunctionCode::from(0x01), ModbusFunctionCode::Read01);
         assert_eq!(ModbusFunctionCode::from(0x03), ModbusFunctionCode::Read03);
         
-        assert!(ModbusFunctionCode::try_from(0xFF).is_err());
+        // Test custom function code
+        assert_eq!(ModbusFunctionCode::from(0xFF), ModbusFunctionCode::Custom(0xFF));
+        assert_eq!(u8::from(ModbusFunctionCode::Custom(0xFF)), 0xFF);
     }
 
     #[test]
@@ -582,9 +584,9 @@ mod tests {
         
         let data = processor.build_coil_response_data(&values);
         
-        // First byte: 11011001 = 0xD9 (LSB first)
-        // Second byte: 00000001 = 0x01
-        assert_eq!(data, vec![0xCD, 0x01]); // 11001101, 00000001
+        // First byte: 01001101 = 0x4D (LSB first: bit0=1, bit1=0, bit2=1, bit3=1, bit4=0, bit5=0, bit6=1, bit7=0)
+        // Second byte: 00000001 = 0x01 (bit8=1)
+        assert_eq!(data, vec![0x4D, 0x01]);
     }
 
     #[test]

@@ -520,17 +520,17 @@ mod tests {
         // Test case 1: Read holding registers request
         let data1 = [0x01, 0x03, 0x00, 0x01, 0x00, 0x02];
         let crc1 = RtuFrame::calculate_crc(&data1);
-        assert_eq!(crc1, 0x95C4); // Known CRC for this data
+        assert_eq!(crc1, 0xCB95); // Correct CRC for this data
         
         // Test case 2: Write single register request
         let data2 = [0x01, 0x06, 0x00, 0x01, 0x00, 0x03];
         let crc2 = RtuFrame::calculate_crc(&data2);
-        assert_eq!(crc2, 0x9A9B); // Known CRC for this data
+        assert_eq!(crc2, 0x0B98); // Correct CRC for this data
         
         // Test case 3: Exception response
         let data3 = [0x01, 0x83, 0x02];
         let crc3 = RtuFrame::calculate_crc(&data3);
-        assert_eq!(crc3, 0xC0F1); // Known CRC for this data
+        assert_eq!(crc3, 0xF1C0); // Correct CRC for this data
     }
 
     #[test]
@@ -621,7 +621,7 @@ mod tests {
         assert_eq!(processor.check_rtu_frame_complete(&incomplete).unwrap(), None);
         
         // Test complete frame with valid CRC
-        let complete = vec![0x01, 0x03, 0x02, 0x00, 0x64, 0xB9, 0xF9]; // Valid response
+        let complete = vec![0x01, 0x03, 0x02, 0x00, 0x64, 0xB9, 0xAF]; // Valid response
         assert_eq!(processor.check_rtu_frame_complete(&complete).unwrap(), Some(7));
         
         // Test frame with invalid CRC

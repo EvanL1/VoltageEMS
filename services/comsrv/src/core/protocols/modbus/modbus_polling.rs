@@ -8,11 +8,13 @@
 //! - Exception handling for slave devices
 
 use crate::core::config::types::protocol::TelemetryType;
+use crate::core::protocols::common::data_types::TelemetryType as CommonTelemetryType;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tokio::time::{interval, Duration};
 use tracing::{debug, error, info, warn};
+use byteorder::{BigEndian, LittleEndian, ByteOrder};
 
 /// Simplified point mapping for Modbus
 /// Only contains essential fields: point_id and telemetry type
@@ -30,6 +32,12 @@ pub struct ModbusPoint {
     pub register_address: u16,
     /// Optional data transformation
     pub scale_factor: Option<f64>,
+    /// Data format (e.g., "float32_be", "uint16", "bool")
+    pub data_format: String,
+    /// Number of registers to read (e.g., 2 for float32)
+    pub register_count: u16,
+    /// Byte order for multi-register values (e.g., "ABCD", "CDAB")
+    pub byte_order: Option<String>,
 }
 
 // Re-export configuration types from config module
@@ -296,7 +304,12 @@ fn optimize_batch_reading(
             let fc_changed = point.function_code != last_fc && !config.merge_function_codes;
             let gap_too_large = point.register_address > last_addr + 1 + config.max_gap;
             let batch_full = current_batch.len() >= max_batch as usize;
-            let span_too_large = point.register_address - current_batch[0].register_address + 1 > max_batch;
+            // Check if adding this point would exceed the batch size
+            let first_addr = current_batch[0].register_address;
+            let last_point = &current_batch[current_batch.len() - 1];
+            let _current_span = last_point.register_address - first_addr + last_point.register_count;
+            let new_span = point.register_address - first_addr + point.register_count;
+            let span_too_large = new_span > max_batch;
             
             fc_changed || gap_too_large || batch_full || span_too_large
         };
@@ -317,7 +330,7 @@ fn optimize_batch_reading(
 
         current_batch.push(point.clone());
         last_fc = point.function_code;
-        last_addr = point.register_address;
+        last_addr = point.register_address + point.register_count - 1; // Update to last register of this point
     }
 
     if !current_batch.is_empty() {
@@ -341,6 +354,93 @@ fn optimize_batch_reading(
     batches
 }
 
+/// Parse Modbus register values according to data format
+fn parse_modbus_value(registers: &[u16], data_format: &str, byte_order: Option<&str>) -> f64 {
+    match data_format {
+        "float32" | "float32_be" | "float32_le" => {
+            if registers.len() < 2 {
+                warn!("Not enough registers for float32: {} registers", registers.len());
+                return 0.0;
+            }
+            
+            // Convert two u16 registers to bytes
+            let mut bytes = [0u8; 4];
+            
+            // Handle byte order (default to big-endian for Modbus)
+            match byte_order.unwrap_or("ABCD") {
+                "ABCD" => {
+                    // Big-endian (normal Modbus order)
+                    BigEndian::write_u16(&mut bytes[0..2], registers[0]);
+                    BigEndian::write_u16(&mut bytes[2..4], registers[1]);
+                    BigEndian::read_f32(&bytes) as f64
+                },
+                "DCBA" => {
+                    // Little-endian with swapped registers
+                    BigEndian::write_u16(&mut bytes[0..2], registers[1]);
+                    BigEndian::write_u16(&mut bytes[2..4], registers[0]);
+                    LittleEndian::read_f32(&bytes) as f64
+                },
+                "BADC" => {
+                    // Middle-endian (swapped bytes within registers)
+                    LittleEndian::write_u16(&mut bytes[0..2], registers[0]);
+                    LittleEndian::write_u16(&mut bytes[2..4], registers[1]);
+                    BigEndian::read_f32(&bytes) as f64
+                },
+                "CDAB" => {
+                    // Middle-endian (swapped registers)
+                    BigEndian::write_u16(&mut bytes[0..2], registers[1]);
+                    BigEndian::write_u16(&mut bytes[2..4], registers[0]);
+                    BigEndian::read_f32(&bytes) as f64
+                },
+                _ => {
+                    // Default to big-endian
+                    BigEndian::write_u16(&mut bytes[0..2], registers[0]);
+                    BigEndian::write_u16(&mut bytes[2..4], registers[1]);
+                    BigEndian::read_f32(&bytes) as f64
+                }
+            }
+        },
+        "uint32" | "uint32_be" => {
+            if registers.len() < 2 {
+                return 0.0;
+            }
+            ((registers[0] as u32) << 16 | registers[1] as u32) as f64
+        },
+        "int32" | "int32_be" => {
+            if registers.len() < 2 {
+                return 0.0;
+            }
+            let val = ((registers[0] as u32) << 16 | registers[1] as u32) as i32;
+            val as f64
+        },
+        "uint16" => {
+            if registers.is_empty() {
+                return 0.0;
+            }
+            registers[0] as f64
+        },
+        "int16" => {
+            if registers.is_empty() {
+                return 0.0;
+            }
+            registers[0] as i16 as f64
+        },
+        "bool" => {
+            if registers.is_empty() {
+                return 0.0;
+            }
+            if registers[0] != 0 { 1.0 } else { 0.0 }
+        },
+        _ => {
+            // Default to uint16
+            if registers.is_empty() {
+                return 0.0;
+            }
+            registers[0] as f64
+        }
+    }
+}
+
 /// Poll a batch of points
 async fn poll_batch<F>(
     slave_id: u8,
@@ -359,7 +459,8 @@ where
     let first_point = &batch[0];
     let last_point = &batch[batch.len() - 1];
     let start_addr = first_point.register_address;
-    let count = (last_point.register_address - start_addr + 1) as u16;
+    // Calculate total count including the last point's register count
+    let count = (last_point.register_address - start_addr + last_point.register_count) as u16;
 
     debug!(
         "Batch reading slave {} fc {} addr {} count {}",
@@ -374,8 +475,19 @@ where
             // Map values back to points
             for point in batch {
                 let offset = (point.register_address - start_addr) as usize;
-                if offset < values.len() {
-                    let value = values[offset] as f64;
+                let reg_count = point.register_count as usize;
+                
+                if offset + reg_count <= values.len() {
+                    // Extract the required registers for this point
+                    let point_registers = &values[offset..offset + reg_count];
+                    
+                    // Parse the value according to data format
+                    let value = parse_modbus_value(
+                        point_registers, 
+                        &point.data_format, 
+                        point.byte_order.as_deref()
+                    );
+                    
                     let scaled_value = point.scale_factor.map(|s| value * s).unwrap_or(value);
                     
                     let point_data = crate::core::protocols::common::data_types::PointData {
@@ -385,6 +497,13 @@ where
                         timestamp: chrono::Utc::now(),
                         unit: String::new(),
                         description: format!("Modbus point from slave {}", slave_id),
+                        telemetry_type: Some(match point.telemetry_type {
+                            TelemetryType::Telemetry => CommonTelemetryType::Telemetry,
+                            TelemetryType::Signal => CommonTelemetryType::Signal,
+                            TelemetryType::Control => CommonTelemetryType::Control,
+                            TelemetryType::Adjustment => CommonTelemetryType::Adjustment,
+                        }),
+                        channel_id: None, // Will be set by Redis sync if configured
                     };
                     
                     point_data_list.push(point_data);
@@ -425,10 +544,16 @@ where
         point.point_id, slave_id, point.function_code, point.register_address
     );
 
-    match read_callback(slave_id, point.function_code, point.register_address, 1).await {
+    match read_callback(slave_id, point.function_code, point.register_address, point.register_count).await {
         Ok(values) => {
-            if !values.is_empty() {
-                let value = values[0] as f64;
+            if values.len() >= point.register_count as usize {
+                // Parse the value according to data format
+                let value = parse_modbus_value(
+                    &values[..point.register_count as usize], 
+                    &point.data_format, 
+                    point.byte_order.as_deref()
+                );
+                
                 let scaled_value = point.scale_factor.map(|s| value * s).unwrap_or(value);
                 
                 let point_data = crate::core::protocols::common::data_types::PointData {
@@ -438,6 +563,13 @@ where
                     timestamp: chrono::Utc::now(),
                     unit: String::new(),
                     description: format!("Modbus point from slave {}", slave_id),
+                    telemetry_type: Some(match point.telemetry_type {
+                        TelemetryType::Telemetry => CommonTelemetryType::Telemetry,
+                        TelemetryType::Signal => CommonTelemetryType::Signal,
+                        TelemetryType::Control => CommonTelemetryType::Control,
+                        TelemetryType::Adjustment => CommonTelemetryType::Adjustment,
+                    }),
+                    channel_id: None, // Will be set by Redis sync if configured
                 };
                 
                 // Store in Redis if available

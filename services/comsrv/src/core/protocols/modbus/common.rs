@@ -380,6 +380,33 @@ impl ModbusRegisterMapping {
             ));
         }
 
+        // Validate function code matches data type
+        // Bool type should use coil functions (01, 05, 15), not register functions (03, 04, 06, 16)
+        match (&self.data_type, &self.function_code) {
+            (ModbusDataType::Bool, fc) => {
+                match fc {
+                    ModbusFunctionCode::Read01 | ModbusFunctionCode::Write05 | ModbusFunctionCode::Write0F => {},
+                    _ => return Err(format!(
+                        "Invalid function code {:?} for Bool data type. Use Read01, Write05, or Write0F",
+                        fc
+                    )),
+                }
+            },
+            (_, fc) => {
+                match fc {
+                    ModbusFunctionCode::Read03 | ModbusFunctionCode::Read04 | 
+                    ModbusFunctionCode::Write06 | ModbusFunctionCode::Write10 => {},
+                    ModbusFunctionCode::Read01 | ModbusFunctionCode::Write05 | ModbusFunctionCode::Write0F => {
+                        return Err(format!(
+                            "Function code {:?} is for coils/discrete inputs, not for {:?} data type",
+                            fc, self.data_type
+                        ));
+                    },
+                    _ => {},
+                }
+            }
+        }
+
         Ok(())
     }
 

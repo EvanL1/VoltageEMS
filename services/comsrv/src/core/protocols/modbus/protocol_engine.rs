@@ -11,6 +11,11 @@ use std::sync::Arc;
 use tokio::sync::{RwLock, Semaphore};
 use std::time::{Duration, Instant};
 use tracing::{debug, warn, info};
+use std::fs::{OpenOptions, create_dir_all};
+use std::io::Write;
+use std::path::Path;
+use serde_json;
+
 
 use crate::core::protocols::modbus::{
     pdu::ModbusPduProcessor,
@@ -120,6 +125,12 @@ pub struct ModbusProtocolEngine {
     config: ProtocolEngineConfig,
     /// 性能统计
     stats: Arc<RwLock<EngineStats>>,
+    /// 通道ID（用于日志）
+    channel_id: Option<u16>,
+    /// 通道名称（用于日志）
+    channel_name: Option<String>,
+    /// 通道日志文件句柄
+    channel_log_file: Option<Arc<RwLock<std::fs::File>>>,
 }
 
 /// 引擎性能统计
@@ -154,9 +165,49 @@ impl ModbusProtocolEngine {
             cache: Arc::new(RwLock::new(HashMap::new())),
             config,
             stats: Arc::new(RwLock::new(EngineStats::default())),
+            channel_id: None,
+            channel_name: None,
+            channel_log_file: None,
         })
     }
 
+    /// 设置通道信息（用于日志）
+    pub fn set_channel_info(&mut self, channel_id: u16, channel_name: String) {
+        self.channel_id = Some(channel_id);
+        self.channel_name = Some(channel_name.clone());
+        
+        // 创建通道日志文件
+        let log_dir = Path::new("logs").join(&channel_name);
+        if let Err(e) = create_dir_all(&log_dir) {
+            warn!("Failed to create channel log directory {:?}: {}", log_dir, e);
+            return;
+        }
+        
+        let log_file_path = log_dir.join(format!("channel_{}.log", channel_id));
+        match OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&log_file_path)
+        {
+            Ok(file) => {
+                self.channel_log_file = Some(Arc::new(RwLock::new(file)));
+                info!("Created channel log file: {:?}", log_file_path);
+            }
+            Err(e) => {
+                warn!("Failed to create channel log file {:?}: {}", log_file_path, e);
+            }
+        }
+    }
+    
+    /// 写入通道日志
+    async fn write_channel_log(&self, log_entry: &str) {
+        if let Some(log_file) = &self.channel_log_file {
+            let mut file = log_file.write().await;
+            let _ = writeln!(file, "{}", log_entry);
+            let _ = file.flush();
+        }
+    }
+    
     /// 读取遥测点位
     pub async fn read_telemetry_point(
         &self,
@@ -190,6 +241,8 @@ impl ModbusProtocolEngine {
             timestamp: chrono::Utc::now(),
             unit: String::new(),
             description: format!("Modbus telemetry, address: {}", mapping.address),
+            telemetry_type: None,
+            channel_id: None,
         })
     }
 
@@ -221,6 +274,8 @@ impl ModbusProtocolEngine {
             unit: String::new(),
             description: format!("Modbus signal, address: {}, bit: {}", 
                 mapping.address, mapping.bit_location.unwrap_or(0)),
+            telemetry_type: None,
+            channel_id: None,
         })
     }
 
@@ -366,70 +421,126 @@ impl ModbusProtocolEngine {
         quantity: u16,
         transport: &UniversalTransportBridge,
     ) -> Result<Vec<u8>> {
-        // Zero-copy PDU construction
-        let request_data = self.pdu_processor.build_read_request(function_code, address, quantity);
-        debug!(
-            "[Protocol Engine] PDU construction completed - Slave: {}, Function code: {:?}, Address: {}, Quantity: {}", 
-            slave_id, function_code, address, quantity
-        );
-        
-        // Get transaction ID
-        let transaction_id = self.transaction_id.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        debug!("[Protocol Engine] Transaction ID assigned: {}", transaction_id);
-        
-        // Build frame
-        let frame = self.frame_processor.read().await.build_frame(slave_id, request_data, Some(transaction_id));
-        debug!("[Protocol Engine] Modbus frame construction completed - Frame length: {} bytes", frame.len());
-        
-        // Send request
-        debug!("[Protocol Engine] Sending Modbus request to transport layer...");
-        debug!(hex_data = %frame.iter().map(|b| format!("{:02X}", b)).collect::<Vec<_>>().join(" "), length = frame.len(), direction = "send", "[Protocol Engine] Raw packet");
-        let response = transport.send_request(&frame).await?;
-        debug!(hex_data = %response.iter().map(|b| format!("{:02X}", b)).collect::<Vec<_>>().join(" "), length = response.len(), direction = "recv", "[Protocol Engine] Raw packet");
-        debug!("[Protocol Engine] Received Modbus response - Response length: {} bytes", response.len());
-        
-        // Parse response frame
-        debug!("[Protocol Engine] Starting response frame parsing...");
-        let parsed_frame = {
-            let mut processor = self.frame_processor.write().await;
-            processor.parse_frame(&response)?
-        };
-        debug!("[Protocol Engine] Frame parsing completed - PDU length: {} bytes", parsed_frame.pdu.len());
-        
-        // Parse response PDU
-        debug!("[Protocol Engine] Starting response PDU parsing...");
-        let pdu_result = self.pdu_processor.parse_response_pdu(&parsed_frame.pdu)?;
-        debug!("[Protocol Engine] PDU parsing completed");
-        
-        // Extract data
-        match pdu_result {
-            crate::core::protocols::modbus::pdu::PduParseResult::Response(response) => {
-                debug!(
-                    "[Protocol Engine] Response data extraction successful - Data length: {} bytes, Data: {:02X?}", 
-                    response.data.len(), response.data
-                );
-                
-                // Update zero-copy statistics
-                let mut stats = self.stats.write().await;
-                stats.zero_copy_operations += 1;
-                
-                Ok(response.data)
+            // Zero-copy PDU construction
+            let request_data = self.pdu_processor.build_read_request(function_code, address, quantity);
+            debug!(
+                "[Protocol Engine] PDU construction completed - Slave: {}, Function code: {:?}, Address: {}, Quantity: {}", 
+                slave_id, function_code, address, quantity
+            );
+            
+            // Get transaction ID
+            let transaction_id = self.transaction_id.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            debug!("[Protocol Engine] Transaction ID assigned: {}", transaction_id);
+            
+            // Build frame
+            let frame = self.frame_processor.read().await.build_frame(slave_id, request_data, Some(transaction_id));
+            debug!("[Protocol Engine] Modbus frame construction completed - Frame length: {} bytes", frame.len());
+            
+            // Log outgoing request
+            let channel_id = self.channel_id.unwrap_or(0);
+            let channel_name = self.channel_name.as_deref().unwrap_or("unknown");
+            let timestamp = chrono::Local::now().format("%Y-%m-%dT%H:%M:%S%.6fZ");
+            let hex = Self::format_hex(&frame);
+            
+            info!(
+                channel_id = channel_id,
+                channel_name = %channel_name,
+                direction = "request",
+                slave_id = slave_id,
+                hex = %hex,
+                bytes = frame.len(),
+                "Modbus packet"
+            );
+            
+            // Write to channel log file
+            let log_entry = serde_json::json!({
+                "timestamp": timestamp.to_string(),
+                "level": "INFO",
+                "channel_id": channel_id,
+                "channel_name": channel_name,
+                "direction": "request",
+                "slave_id": slave_id,
+                "hex": hex,
+                "bytes": frame.len()
+            });
+            self.write_channel_log(&log_entry.to_string()).await;
+            
+            // Send request
+            debug!("[Protocol Engine] Sending Modbus request to transport layer...");
+            let response = transport.send_request(&frame).await?;
+            
+            // Log incoming response
+            let response_hex = Self::format_hex(&response);
+            let response_timestamp = chrono::Local::now().format("%Y-%m-%dT%H:%M:%S%.6fZ");
+            
+            info!(
+                channel_id = channel_id,
+                channel_name = %channel_name,
+                direction = "response",
+                slave_id = slave_id,
+                hex = %response_hex,
+                bytes = response.len(),
+                "Modbus packet"
+            );
+            
+            // Write to channel log file
+            let response_log_entry = serde_json::json!({
+                "timestamp": response_timestamp.to_string(),
+                "level": "INFO",
+                "channel_id": channel_id,
+                "channel_name": channel_name,
+                "direction": "response",
+                "slave_id": slave_id,
+                "hex": response_hex,
+                "bytes": response.len()
+            });
+            self.write_channel_log(&response_log_entry.to_string()).await;
+            debug!("[Protocol Engine] Received Modbus response - Response length: {} bytes", response.len());
+            
+            // Parse response frame
+            debug!("[Protocol Engine] Starting response frame parsing...");
+            let parsed_frame = {
+                let mut processor = self.frame_processor.write().await;
+                processor.parse_frame(&response)?
+            };
+            debug!("[Protocol Engine] Frame parsing completed - PDU length: {} bytes", parsed_frame.pdu.len());
+            
+            // Parse response PDU
+            debug!("[Protocol Engine] Starting response PDU parsing...");
+            let pdu_result = self.pdu_processor.parse_response_pdu(&parsed_frame.pdu)?;
+            debug!("[Protocol Engine] PDU parsing completed");
+            
+            // Extract data
+            match pdu_result {
+                crate::core::protocols::modbus::pdu::PduParseResult::Response(response) => {
+                    debug!(
+                        "[Protocol Engine] Response data extraction successful - Data length: {} bytes, Data: {:02X?}", 
+                        response.data.len(), response.data
+                    );
+                    
+                    // Update zero-copy statistics
+                    let mut stats = self.stats.write().await;
+                    stats.zero_copy_operations += 1;
+                    
+                    Ok(response.data)
+                }
+                crate::core::protocols::modbus::pdu::PduParseResult::Exception(exception) => {
+                    warn!(
+                        "[Protocol Engine] Received Modbus exception response - Function code: 0x{:02X}, Exception code: {:?}", 
+                        exception.function_code, exception.exception_code
+                    );
+                    
+                    
+                    Err(ComSrvError::ProtocolError(format!(
+                        "Modbus exception response: Function code=0x{:02X}, Exception code={:?}", 
+                        exception.function_code, exception.exception_code
+                    )))
+                }
+                _ => {
+                    warn!("[Protocol Engine] Invalid PDU response type");
+                    Err(ComSrvError::ProtocolError("Invalid response".to_string()))
+                }
             }
-            crate::core::protocols::modbus::pdu::PduParseResult::Exception(exception) => {
-                warn!(
-                    "[Protocol Engine] Received Modbus exception response - Function code: 0x{:02X}, Exception code: {:?}", 
-                    exception.function_code, exception.exception_code
-                );
-                Err(ComSrvError::ProtocolError(format!(
-                    "Modbus exception response: Function code=0x{:02X}, Exception code={:?}", 
-                    exception.function_code, exception.exception_code
-                )))
-            }
-            _ => {
-                warn!("[Protocol Engine] Invalid PDU response type");
-                Err(ComSrvError::ProtocolError("Invalid response".to_string()))
-            }
-        }
     }
 
     /// 写单个寄存器
@@ -684,6 +795,15 @@ impl ModbusProtocolEngine {
         let mut stats = self.stats.write().await;
         *stats = EngineStats::default();
     }
+    
+    /// 格式化字节数组为十六进制字符串
+    fn format_hex(data: &[u8]) -> String {
+        data.iter()
+            .map(|b| format!("{:02X}", b))
+            .collect::<Vec<String>>()
+            .join(" ")
+    }
+    
 
     /// 获取缓存统计
     pub async fn get_cache_stats(&self) -> HashMap<String, String> {
