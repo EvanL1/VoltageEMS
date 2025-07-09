@@ -744,7 +744,10 @@ impl ProtocolFactory {
                             .unwrap_or_else(|_| "config".to_string());
                         let base_path = std::path::Path::new(&base_path);
 
-                        match crate::core::config::unified_loader::UnifiedCsvLoader::load_channel_tables(table_config, base_path) {
+                        match crate::core::config::loaders::UnifiedCsvLoader::load_channel_tables(
+                            table_config,
+                            base_path,
+                        ) {
                             Ok(points) => {
                                 tracing::info!(
                                     "Successfully loaded {} points from CSV for channel {}",
