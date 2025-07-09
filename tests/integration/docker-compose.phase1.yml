@@ -1,0 +1,53 @@
+version: '3.8'
+
+# Phase 1: 功能测试配置 - 10个通道，500个点位
+
+services:
+  # 覆盖环境变量以设置Phase 1规模
+  modbus_tcp_simulator:
+    environment:
+      - SIMULATOR_MODE=tcp
+      - DEVICE_COUNT=3  # 3个通道
+      - POINTS_PER_DEVICE=50  # 每通道50个点
+      - LOG_LEVEL=INFO
+      - START_PORT=5020
+
+  modbus_rtu_simulator:
+    environment:
+      - SIMULATOR_MODE=rtu
+      - DEVICE_COUNT=2  # 2个通道
+      - POINTS_PER_DEVICE=50  # 每通道50个点
+      - SERIAL_PORT=/dev/ttyV0
+      - BAUD_RATE=9600
+
+  can_simulator:
+    environment:
+      - CAN_INTERFACE=vcan0
+      - NODE_COUNT=3  # 3个通道
+      - MESSAGE_RATE=100
+      - POINTS_PER_NODE=50  # 每通道50个点
+
+  iec104_simulator:
+    environment:
+      - STATION_COUNT=2  # 2个通道
+      - POINTS_PER_STATION=50  # 每通道50个点
+      - LOG_LEVEL=INFO
+
+  comsrv:
+    environment:
+      - RUST_LOG=comsrv=info
+      - REDIS_URL=redis://redis:6379
+      - CONFIG_PATH=/config/phase1
+      - COMSRV_CSV_BASE_PATH=/config/phase1/csv
+
+  test_runner:
+    environment:
+      - API_URL=http://apigateway:8080
+      - REDIS_URL=redis://redis:6379
+      - TEST_PHASE=phase1
+      - TEST_TYPE=all
+      - TEST_TIMEOUT=900  # 15分钟超时
+      - EXPECTED_CHANNELS=10
+      - EXPECTED_POINTS=500
+    volumes:
+      - ./configs/phase1:/configs:ro

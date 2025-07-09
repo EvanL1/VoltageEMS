@@ -1,0 +1,220 @@
+version: '3.8'
+
+services:
+  # Redis - 使用主机上已运行的 Redis
+  # redis:
+  #   image: redis:7-alpine
+  #   container_name: voltageems_redis
+  #   ports:
+  #     - "6379:6379"
+  #   volumes:
+  #     - redis_data:/data
+  #   networks:
+  #     - ems_network
+  #   healthcheck:
+  #     test: ["CMD", "redis-cli", "ping"]
+  #     interval: 10s
+  #     timeout: 5s
+  #     retries: 5
+
+  # Communication Service - 单实例
+  comsrv:
+    image: comsrv:test
+    container_name: voltageems_comsrv
+    environment:
+      - RUST_LOG=comsrv=info,comsrv::core::protocols=debug
+      - REDIS_URL=redis://host.docker.internal:6379
+      - CONFIG_PATH=/app/config
+      - LOG_PATH=/app/logs
+      - COMSRV_CSV_BASE_PATH=/app/config/channels
+    volumes:
+      - ./configs/phase1:/app/config:ro
+      - ./logs:/app/logs
+    network_mode: "host"
+    ports:
+      - "3000:3000"
+      - "9090:9090"
+    healthcheck:
+      test: ["CMD", "test", "-f", "/app/logs/service/comsrv.log"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # API Gateway
+  apigateway:
+    build:
+      context: ../../services/apigateway
+      dockerfile: Dockerfile
+    container_name: voltageems_apigateway
+    ports:
+      - "8080:8080"
+    environment:
+      - RUST_LOG=apigateway=debug
+      - REDIS_URL=redis://redis:6379
+    depends_on:
+      redis:
+        condition: service_healthy
+      comsrv:
+        condition: service_healthy
+    networks:
+      - ems_network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/api/v1/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Modbus TCP 模拟器
+  modbus_tcp_simulator:
+    build:
+      context: ./simulators/modbus
+      dockerfile: Dockerfile
+    container_name: modbus_tcp_sim
+    ports:
+      - "5020:502"
+    environment:
+      - SIMULATOR_MODE=tcp
+      - DEVICE_COUNT=${MODBUS_TCP_DEVICES:-10}
+      - POINTS_PER_DEVICE=${MODBUS_TCP_POINTS:-100}
+      - LOG_LEVEL=INFO
+    networks:
+      - ems_network
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket; s=socket.socket(); s.connect(('localhost', 502)); s.close()"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Modbus RTU 模拟器 (通过 socat 虚拟串口)
+  modbus_rtu_simulator:
+    build:
+      context: ./simulators/modbus
+      dockerfile: Dockerfile
+    container_name: modbus_rtu_sim
+    environment:
+      - SIMULATOR_MODE=rtu
+      - DEVICE_COUNT=${MODBUS_RTU_DEVICES:-5}
+      - POINTS_PER_DEVICE=${MODBUS_RTU_POINTS:-50}
+      - SERIAL_PORT=/dev/ttyV0
+      - BAUD_RATE=9600
+    devices:
+      - /dev/ttyV0:/dev/ttyV0
+    networks:
+      - ems_network
+    depends_on:
+      - socat_serial
+
+  # 虚拟串口服务
+  socat_serial:
+    image: alpine/socat
+    container_name: socat_serial
+    command: -d -d pty,raw,echo=0,link=/dev/ttyV0 pty,raw,echo=0,link=/dev/ttyV1
+    devices:
+      - /dev/ttyV0
+      - /dev/ttyV1
+    networks:
+      - ems_network
+
+  # CAN 总线模拟器
+  can_simulator:
+    build:
+      context: ./simulators/can
+      dockerfile: Dockerfile
+    container_name: can_sim
+    cap_add:
+      - NET_ADMIN
+    environment:
+      - CAN_INTERFACE=vcan0
+      - NODE_COUNT=${CAN_NODES:-8}
+      - MESSAGE_RATE=${CAN_MESSAGE_RATE:-100}
+      - POINTS_PER_NODE=${CAN_POINTS:-50}
+    networks:
+      - ems_network
+    command: sh -c "ip link add dev vcan0 type vcan && ip link set up vcan0 && python3 /app/can_simulator.py"
+
+  # IEC104 模拟器
+  iec104_simulator:
+    build:
+      context: ./simulators/iec104
+      dockerfile: Dockerfile
+    container_name: iec104_sim
+    ports:
+      - "2404:2404"
+    environment:
+      - STATION_COUNT=${IEC104_STATIONS:-3}
+      - POINTS_PER_STATION=${IEC104_POINTS:-200}
+      - LOG_LEVEL=INFO
+    networks:
+      - ems_network
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket; s=socket.socket(); s.connect(('localhost', 2404)); s.close()"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # 其他服务 (可选)
+  modsrv:
+    build:
+      context: ../../services/modsrv
+      dockerfile: Dockerfile
+    container_name: voltageems_modsrv
+    environment:
+      - RUST_LOG=modsrv=debug
+      - REDIS_URL=redis://redis:6379
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - ems_network
+    profiles:
+      - full
+
+  hissrv:
+    build:
+      context: ../../services/hissrv
+      dockerfile: Dockerfile
+    container_name: voltageems_hissrv
+    environment:
+      - RUST_LOG=hissrv=debug
+      - REDIS_URL=redis://redis:6379
+      - INFLUXDB_URL=http://influxdb:8086
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - ems_network
+    profiles:
+      - full
+
+  # 测试运行器
+  test_runner:
+    build:
+      context: .
+      dockerfile: Dockerfile.test
+    container_name: voltageems_test_runner
+    environment:
+      - API_URL=http://apigateway:8080
+      - REDIS_URL=redis://redis:6379
+      - TEST_PHASE=${TEST_PHASE:-phase1}
+      - TEST_TYPE=${TEST_TYPE:-all}
+    volumes:
+      - ./test_results:/test_results
+      - ./configs:/configs:ro
+      - ./scripts:/scripts:ro
+    depends_on:
+      apigateway:
+        condition: service_healthy
+      modbus_tcp_simulator:
+        condition: service_healthy
+      iec104_simulator:
+        condition: service_healthy
+    networks:
+      - ems_network
+    command: /scripts/run_integration_tests.sh
+
+volumes:
+  redis_data:
+
+networks:
+  ems_network:
+    driver: bridge

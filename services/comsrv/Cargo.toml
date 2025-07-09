@@ -80,6 +80,10 @@ futures-util = "0.3"
 # UUID generation for request tracking
 uuid = { version = "1.0", features = ["v4", "serde"] }
 
+# Plugin system dependencies
+semver = "1.0"
+regex = "1.10"
+
 # Industrial GPIO and hardware interfaces
 rppal = { version = "0.17", optional = true }  # Raspberry Pi GPIO
 gpio-cdev = { version = "0.5", optional = true }  # Linux GPIO character device

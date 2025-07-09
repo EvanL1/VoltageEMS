@@ -109,6 +109,14 @@ async fn main() -> Result<()> {
     info!("  - API enabled: {}", config_manager.config().service.api.enabled);
     info!("  - Redis enabled: {}", config_manager.config().service.redis.enabled);
 
+    // Initialize plugin system
+    info!("Initializing plugin system...");
+    comsrv::core::plugins::init_plugin_system()
+        .map_err(|e| {
+            error!("Failed to initialize plugin system: {}", e);
+            e
+        })?;
+
     // Create protocol factory
     let factory = Arc::new(RwLock::new(ProtocolFactory::new()));
 

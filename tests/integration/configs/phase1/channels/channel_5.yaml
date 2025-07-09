@@ -1,0 +1,19 @@
+channel:
+  description: Test channel for modbus_rtu protocol
+  id: 5
+  name: MODBUS_RTU Channel 2
+  protocol: modbus_rtu
+connection:
+  baudrate: 9600
+  bytesize: 8
+  parity: N
+  port: /dev/ttyV1
+  retry_count: 3
+  slave_id: 2
+  stopbits: 1
+  timeout: 3000
+point_tables:
+  adjustment: csv/channel_5/adjustment.csv
+  control: csv/channel_5/control.csv
+  signal: csv/channel_5/signal.csv
+  telemetry: csv/channel_5/telemetry.csv

@@ -201,6 +201,8 @@ pub mod api;
 pub mod core;
 pub mod service_impl;
 pub mod utils;
+/// CLI tools for protocol development
+// pub mod cli; // Temporarily disabled due to missing dependencies
 
 /// Modbus test runner for comprehensive testing
 pub mod modbus_test_runner;

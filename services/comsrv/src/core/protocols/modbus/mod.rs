@@ -35,6 +35,9 @@ pub mod modbus_polling;
 
 pub mod tests;
 
+// Plugin support
+pub mod plugin;
+
 // Re-export main types for easier usage
 pub use client::{ModbusClient, ModbusChannelConfig, ProtocolMappingTable, ConnectionState, ClientStatistics};
 pub use protocol_engine::{ModbusProtocolEngine, ProtocolEngineConfig};

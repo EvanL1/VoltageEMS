@@ -1,0 +1,16 @@
+channel:
+  description: Test channel for modbus_tcp protocol
+  id: 2
+  name: MODBUS_TCP Channel 2
+  protocol: modbus_tcp
+connection:
+  host: modbus_tcp_simulator
+  port: 502
+  retry_count: 3
+  slave_id: 2
+  timeout: 3000
+point_tables:
+  adjustment: csv/channel_2/adjustment.csv
+  control: csv/channel_2/control.csv
+  signal: csv/channel_2/signal.csv
+  telemetry: csv/channel_2/telemetry.csv

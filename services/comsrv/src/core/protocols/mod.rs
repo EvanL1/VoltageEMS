@@ -1,7 +1,8 @@
 pub mod common;
 pub mod modbus;
-// pub mod iec60870;
-// pub mod can;
+pub mod iec60870;
+pub mod can;
+pub mod virt;
 
 // TODO: Implement protocol parser registry
 // use crate::core::protocols::common::combase::get_global_parser_registry;

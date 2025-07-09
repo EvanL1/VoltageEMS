@@ -8,9 +8,11 @@ use tokio::sync::{Mutex, RwLock};
 use tokio::time::sleep;
 use chrono::Utc;
 use async_trait::async_trait;
+use tracing::info;
 
 use crate::core::config::ChannelConfig;
-use crate::core::protocols::common::combase::{ChannelStatus, ComBase, PointData};
+use crate::core::protocols::common::{ChannelStatus, PointData};
+use crate::core::protocols::common::traits::ComBase;
 use crate::core::protocols::iec60870::asdu::{ASDU, CommonAddrSize, TypeId};
 use crate::core::protocols::iec60870::common::{IecError, IecResult};
 use crate::utils::{Result, ComSrvError};
@@ -233,40 +235,34 @@ impl Iec104Client {
         let mut poll_rate = 1000;
         
         // Extract specific parameters from config
-        match &config.parameters {
-            crate::core::config::ChannelParameters::Generic(params) => {
-                if let Some(val) = params.get("host") {
-                    if let Some(s) = val.as_str() {
-                        host = s.to_string();
-                    }
-                }
-                
-                if let Some(val) = params.get("port") {
-                    if let Some(n) = val.as_u64() {
-                        port = n as u16;
-                    }
-                }
-                
-                if let Some(val) = params.get("timeout") {
-                    if let Some(n) = val.as_u64() {
-                        timeout = n;
-                    }
-                }
-                
-                if let Some(val) = params.get("max_retries") {
-                    if let Some(n) = val.as_u64() {
-                        max_retries = n as u32;
-                    }
-                }
-                
-                if let Some(val) = params.get("poll_rate") {
-                    if let Some(n) = val.as_u64() {
-                        poll_rate = n;
-                    }
-                }
-            },
-            _ => {
-                tracing::warn!("Invalid parameters for IEC-104 client, using defaults");
+        let params = &config.parameters;
+        if let Some(val) = params.get("host") {
+            if let Some(s) = val.as_str() {
+                host = s.to_string();
+            }
+        }
+        
+        if let Some(val) = params.get("port") {
+            if let Some(n) = val.as_u64() {
+                port = n as u16;
+            }
+        }
+        
+        if let Some(val) = params.get("timeout") {
+            if let Some(n) = val.as_u64() {
+                timeout = n;
+            }
+        }
+        
+        if let Some(val) = params.get("max_retries") {
+            if let Some(n) = val.as_u64() {
+                max_retries = n as u32;
+            }
+        }
+        
+        if let Some(val) = params.get("poll_rate") {
+            if let Some(n) = val.as_u64() {
+                poll_rate = n;
             }
         }
         
@@ -388,15 +384,12 @@ impl Iec104Client {
                     let err = format!("Incomplete write: {}/{} bytes", n, data.len());
                     tracing::error!("{}", err);
                     self.update_status(false, 0.0, Some(&err)).await;
-                    Err(IecError::IoError(std::io::Error::new(
-                        std::io::ErrorKind::WriteZero,
-                        err,
-                    )))
+                    Err(IecError::IoError(err))
                 },
                 Err(e) => {
                     tracing::error!("Failed to send APDU: {}", e);
                     self.update_status(false, 0.0, Some(&e.to_string())).await;
-                    Err(IecError::IoError(e))
+                    Err(IecError::IoError(e.to_string()))
                 },
             }
         } else {
@@ -483,10 +476,11 @@ impl Iec104Client {
                 id: format!("{}:{}", asdu.common_addr, "some_point_id"),
                 name: format!("IEC Point {}:{}", asdu.common_addr, "some_point_id"),
                 value: "null".to_string(), // Replace with actual value
-
                 timestamp: Utc::now(),
                 unit: "".to_string(),
                 description: format!("IEC 60870 data point {}:{}", asdu.common_addr, "some_point_id"),
+                telemetry_type: Some(crate::core::protocols::common::TelemetryType::Telemetry),
+                channel_id: Some(self.channel_id),
             };
             
             // Store point data
@@ -699,6 +693,35 @@ impl ComBase for Iec104Client {
     
     async fn get_all_points(&self) -> Vec<PointData> {
         self.point_data.read().await.clone()
+    }
+    
+    async fn update_status(&mut self, status: ChannelStatus) -> Result<()> {
+        *self.status.write().await = status;
+        Ok(())
+    }
+    
+    async fn read_point(&self, point_id: &str) -> Result<PointData> {
+        let points = self.point_data.read().await;
+        points.iter()
+            .find(|p| p.id == point_id)
+            .cloned()
+            .ok_or_else(|| ComSrvError::InvalidParameter(format!("Point {} not found", point_id)))
+    }
+    
+    async fn write_point(&mut self, point_id: &str, value: &str) -> Result<()> {
+        // TODO: Implement IEC 60870-5-104 command sending
+        info!("IEC104 write point: {} = {}", point_id, value);
+        Ok(())
+    }
+    
+    async fn get_diagnostics(&self) -> HashMap<String, String> {
+        let mut diag = HashMap::new();
+        let status = self.status.read().await;
+        diag.insert("protocol".to_string(), "IEC60870-5-104".to_string());
+        diag.insert("connected".to_string(), status.connected.to_string());
+        diag.insert("last_response_time".to_string(), status.last_response_time.to_string());
+        diag.insert("last_error".to_string(), status.last_error.clone());
+        diag
     }
 }
 

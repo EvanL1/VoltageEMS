@@ -1,0 +1,15 @@
+channel:
+  description: Test channel for can protocol
+  id: 6
+  name: CAN Channel 1
+  protocol: can
+connection:
+  bitrate: 250000
+  interface: vcan0
+  node_id: 1
+  timeout: 1000
+point_tables:
+  adjustment: csv/channel_6/adjustment.csv
+  control: csv/channel_6/control.csv
+  signal: csv/channel_6/signal.csv
+  telemetry: csv/channel_6/telemetry.csv

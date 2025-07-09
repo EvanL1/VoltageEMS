@@ -1,0 +1,71 @@
+# Git files
+.git
+.gitignore
+
+# Build artifacts
+target/
+Cargo.lock
+
+# IDE files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Test files
+tests/
+*.test
+*.spec
+test-*.yaml
+integration-test-report.txt
+comsrv-test.log
+
+# Documentation
+docs/
+*.md
+!README.md
+
+# Scripts (except necessary ones)
+scripts/
+!scripts/entrypoint.sh
+
+# Python files
+*.py
+__pycache__/
+*.pyc
+.pytest_cache/
+requirements.txt
+
+# Temporary files
+*.tmp
+*.temp
+*.log
+logs/
+
+# PID files
+.test-pids/
+*.pid
+
+# Coverage reports
+coverage/
+*.coverage
+htmlcov/
+
+# Environment files
+.env
+.env.*
+test.env
+
+# Backup files
+*.bak
+*.backup
+*~
+
+# Build scripts (not needed in container)
+build.sh
+test.sh

@@ -1,0 +1,16 @@
+channel:
+  description: Test channel for modbus_tcp protocol
+  id: 3
+  name: MODBUS_TCP Channel 3
+  protocol: modbus_tcp
+connection:
+  host: modbus_tcp_simulator
+  port: 502
+  retry_count: 3
+  slave_id: 3
+  timeout: 3000
+point_tables:
+  adjustment: csv/channel_3/adjustment.csv
+  control: csv/channel_3/control.csv
+  signal: csv/channel_3/signal.csv
+  telemetry: csv/channel_3/telemetry.csv

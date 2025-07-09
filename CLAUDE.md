@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Common Development Commands
 
-### Rust Services (comsrv, modsrv, hissrv, netsrv, alarmsrv)
+### Rust Services (comsrv, modsrv, hissrv, netsrv, alarmsrv, apigateway)
 
 ```bash
 # Build individual service
@@ -14,17 +14,27 @@ cargo build
 # Run individual service
 cargo run
 
-# Run tests
-cargo test
+# Run tests with output
+cargo test -- --nocapture
+
+# Run specific test
+cargo test test_name -- --exact
 
 # Run with logging
 RUST_LOG=debug cargo run
+RUST_LOG={service_name}=debug cargo run  # Service-specific debug
 
 # Check code formatting
 cargo fmt --check
 
 # Run clippy linting
 cargo clippy -- -D warnings
+
+# Run benchmarks
+cargo bench
+
+# Generate documentation
+cargo doc --no-deps --open
 ```
 
 ### Frontend (Vue.js)
@@ -32,14 +42,18 @@ cargo clippy -- -D warnings
 ```bash
 cd frontend
 npm install
-npm run serve    # Development server
+npm run serve    # Development server (port 5173)
 npm run build    # Production build
 npm run lint     # ESLint checking
+npm run preview  # Preview production build
 ```
 
 ### Docker Development
 
 ```bash
+# Build all services
+./scripts/build-all.sh [version] [registry]
+
 # Start all services
 docker-compose up -d
 
@@ -48,6 +62,29 @@ docker-compose logs -f {service_name}
 
 # Rebuild specific service
 docker-compose build {service_name}
+
+# Run integration tests
+./scripts/run-integration-tests.sh
+```
+
+### Protocol Plugin Development (NEW)
+
+```bash
+# Create new protocol plugin
+cd services/comsrv
+cargo run -- new {protocol_name} --output src/core/protocols/
+
+# List available plugins
+cargo run -- list --verbose
+
+# Generate protocol config template
+cargo run -- config {protocol_id} --output config/
+
+# Test protocol plugin
+cargo run -- test {protocol_id} --config test_config.yaml
+
+# Migrate configuration
+cargo run -- migrate --from yaml --to sqlite config.yaml
 ```
 
 ## Architecture Overview
@@ -56,15 +93,39 @@ VoltageEMS is a microservices-based IoT Energy Management System with the follow
 
 ### Core Services (Rust-based)
 
-- **comsrv**: Industrial communication service supporting Modbus TCP/RTU, CAN, IEC60870, and GPIO interfaces
-- **modsrv**: Model service executing real-time calculations and control logic via DAG workflows  
+- **comsrv**: Industrial communication service supporting Modbus TCP/RTU, CAN, IEC60870, Virtual (testing), and GPIO interfaces
+  - Plugin-based architecture for protocol extensibility
+  - Unified transport layer abstraction (TCP, Serial, CAN, GPIO)
+  - Enhanced logging with channel-specific outputs
+  - Real-time telemetry via Prometheus metrics
+- **apigateway**: REST API gateway providing unified access to all services
+  - JWT authentication and authorization
+  - Service routing and load balancing
+  - Request/response transformation
+  - Health monitoring endpoints
+- **modsrv**: Model service executing real-time calculations and control logic via DAG workflows
+  - Template-based model definitions
+  - Rule engine for complex logic
+  - Storage agent for data persistence
 - **hissrv**: Historical data service writing Redis data to InfluxDB
-- **netsrv**: Network service forwarding data to external systems via MQTT/HTTP, supporting AWS IoT Core and Alibaba Cloud IoT
-- **alarmsrv**: Intelligent alarm management with classification, Redis storage, and cloud integration
+  - Configurable data retention policies
+  - Grafana integration for visualization
+  - High-performance batch writing
+- **netsrv**: Network service forwarding data to external systems via MQTT/HTTP
+  - AWS IoT Core and Alibaba Cloud IoT support
+  - Configurable data formatters (JSON, ASCII)
+  - Reliable message delivery with retry logic
+- **alarmsrv**: Intelligent alarm management with classification and storage
+  - Multi-level alarm classification
+  - Redis-based real-time storage
+  - Cloud notification integration
 
 ### Frontend & Configuration
 
-- **frontend**: Vue.js + Element Plus web application with embedded Grafana visualization
+- **frontend**: Vue.js 3 + Element Plus web application
+  - Real-time data visualization
+  - Embedded Grafana dashboards
+  - Responsive design for mobile devices
 - **Electron integration**: Cross-platform desktop application wrapper
 
 ### Data Flow Architecture
@@ -127,11 +188,16 @@ config/
 ├── default.yml           # Global configuration
 ├── point_map.yml         # Point mapping definitions
 └── {Protocol}_Test_{ID}/ # Protocol-specific CSV tables
-    ├── telemetry.csv
-    ├── control.csv
-    ├── adjustment.csv
-    ├── signal.csv
-    └── mapping_*.csv
+    ├── telemetry.csv     # 遥测点 (YC) - measurements
+    ├── control.csv       # 遥控点 (YK) - commands
+    ├── adjustment.csv    # 遥调点 (YT) - setpoints
+    ├── signal.csv        # 遥信点 (YX) - status signals
+    └── mapping_*.csv     # Protocol-specific mappings
+
+# CSV Format Example (telemetry.csv):
+# point_id,name,address,data_type,scale,offset,unit
+# 1,电压A相,30001,float32,0.1,0,V
+# 2,电流A相,30003,float32,0.01,0,A
 ```
 
 ### Logging System Configuration
@@ -227,18 +293,96 @@ let register_address = address_parts[2].parse::<u16>()?;
   - Matches comsrv configuration for slave IDs and addresses
   - Real-time data updates with sine wave simulation
 - `tests/test_modbus_client.py` - Test client for verification
-- `scripts/start_modbus_simulator.sh` - Server startup script
-- `tests/test_comsrv_integration.sh` - Integration test script
+- `services/comsrv/scripts/test_modbus.sh` - Modbus-specific tests
+- `services/comsrv/scripts/run-integration-test.sh` - Full integration tests
 
 #### Performance Testing
 - `examples/optimized_points_demo.rs` - 10,000 point stress test
-- `scripts/test_optimized_points.sh` - Performance test script
-- `scripts/check_redis_points.sh` - Redis data validation script
-# important-instruction-reminders
-Do what has been asked; nothing more, nothing less.
-NEVER create files unless they're absolutely necessary for achieving your goal.
-ALWAYS prefer editing an existing file to creating a new one.
-NEVER proactively create documentation files (*.md) or README files. Only create documentation files if explicitly requested by the User.
+- `services/comsrv/scripts/test_protocol.sh` - Protocol performance tests
 
-      
-      IMPORTANT: this context may or may not be relevant to your tasks. You should not respond to this context or otherwise consider it in your response unless it is highly relevant to your task. Most of the time, it is not relevant.
+#### Test Execution Scripts
+```bash
+# Run all service tests
+cd services/{service_name}
+./scripts/run_all_tests.sh
+
+# Run integration tests with test servers
+./scripts/start-test-servers.sh
+cargo test --features integration
+./scripts/stop-test-servers.sh
+
+# Generate test report
+./scripts/generate_test_report.sh
+```
+### Plugin System Architecture (NEW)
+
+#### Creating Protocol Plugins
+The plugin system allows extending comsrv with new protocols:
+
+1. **Plugin Structure**:
+   ```
+   src/core/protocols/{protocol_name}/
+   ├── mod.rs         # Module definition
+   ├── plugin.rs      # Plugin implementation
+   ├── config.rs      # Configuration types
+   ├── client.rs      # Protocol client logic
+   └── common.rs      # Shared utilities
+   ```
+
+2. **Plugin Registration**:
+   - Implement `ProtocolPlugin` trait
+   - Register in `plugin_manager.rs`
+   - Provide configuration template
+   - Define CLI commands
+
+3. **Transport Layer Integration**:
+   - Use unified `Transport` trait
+   - Support mock transport for testing
+   - Handle connection lifecycle
+
+### API Documentation
+
+#### API Gateway Endpoints
+- Health: `GET /api/v1/health`
+- System Info: `GET /api/v1/system/info`
+- Channels: `GET /api/v1/comsrv/channels`
+- Points: `GET /api/v1/comsrv/points/{device_id}`
+- Commands: `POST /api/v1/comsrv/command`
+- History: `GET /api/v1/hissrv/query`
+- Alarms: `GET /api/v1/alarmsrv/alarms`
+
+#### Authentication
+- JWT tokens required for all endpoints except health
+- Token expiration: 24 hours
+- Refresh token support
+
+### Troubleshooting Common Issues
+
+#### Redis Connection
+```bash
+# Check Redis connectivity
+redis-cli -p 6379 ping
+
+# Monitor Redis keys
+redis-cli monitor | grep comsrv
+
+# Check point data
+redis-cli keys "point:*" | head -20
+```
+
+#### Service Debugging
+```bash
+# Enable debug logging for specific module
+RUST_LOG=comsrv::core::protocols::modbus=debug cargo run
+
+# Check channel-specific logs
+tail -f logs/channel_{id}/channel_{id}.log
+
+# Monitor Prometheus metrics
+curl http://localhost:9090/metrics | grep comsrv
+```
+
+#### Protocol Issues
+- Modbus timeout: Increase `timeout` parameter in channel config
+- CAN buffer overflow: Adjust `buffer_size` in transport config
+- IEC60870 sequence errors: Check `k`, `w` parameters

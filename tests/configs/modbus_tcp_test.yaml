@@ -1,0 +1,167 @@
+protocol: modbus_tcp
+name: "Modbus TCP Test Configuration"
+description: "Test configuration for Modbus TCP protocol testing"
+
+connection_params:
+  host: "127.0.0.1"
+  port: 5502
+  slave_id: 1
+  timeout_ms: 1000
+  retry_count: 3
+
+test_points:
+  # YC (遥测) - Input Registers
+  - id: 1
+    name: "Voltage_A"
+    data_type: "float32"
+    address: "30001"
+    pattern:
+      pattern_type: "Sine"
+      min_value: 210.0
+      max_value: 230.0
+      period_ms: 60000
+      
+  - id: 2
+    name: "Voltage_B"
+    data_type: "float32"
+    address: "30003"
+    pattern:
+      pattern_type: "Sine"
+      min_value: 210.0
+      max_value: 230.0
+      period_ms: 60000
+      
+  - id: 3
+    name: "Voltage_C"
+    data_type: "float32"
+    address: "30005"
+    pattern:
+      pattern_type: "Sine"
+      min_value: 210.0
+      max_value: 230.0
+      period_ms: 60000
+      
+  - id: 4
+    name: "Current_A"
+    data_type: "float32"
+    address: "30007"
+    pattern:
+      pattern_type: "Random"
+      min_value: 0.0
+      max_value: 100.0
+      period_ms: 1000
+      
+  - id: 5
+    name: "Active_Power"
+    data_type: "float32"
+    address: "30013"
+    pattern:
+      pattern_type: "Sine"
+      min_value: 0.0
+      max_value: 5000.0
+      period_ms: 120000
+      
+  - id: 6
+    name: "Power_Factor"
+    data_type: "float32"
+    address: "30019"
+    pattern:
+      pattern_type: "Sine"
+      min_value: 0.85
+      max_value: 0.99
+      period_ms: 180000
+      
+  # YX (遥信) - Discrete Inputs
+  - id: 10
+    name: "Breaker_Status"
+    data_type: "bool"
+    address: "10001"
+    pattern:
+      pattern_type: "Square"
+      min_value: 0.0
+      max_value: 1.0
+      period_ms: 120000
+      
+  - id: 11
+    name: "Alarm_Status"
+    data_type: "bool"
+    address: "10002"
+    pattern:
+      pattern_type: "Constant"
+      min_value: 0.0
+      max_value: 0.0
+      period_ms: 1000
+      
+  # YK (遥控) - Coils
+  - id: 20
+    name: "Control_Relay_1"
+    data_type: "bool"
+    address: "00001"
+    pattern:
+      pattern_type: "Constant"
+      min_value: 0.0
+      max_value: 0.0
+      period_ms: 1000
+      
+  # YT (遥调) - Holding Registers
+  - id: 30
+    name: "Setpoint_1"
+    data_type: "uint16"
+    address: "40001"
+    pattern:
+      pattern_type: "Constant"
+      min_value: 1000.0
+      max_value: 1000.0
+      period_ms: 1000
+
+test_scenarios:
+  - "connectivity"
+  - "read_operations"
+  - "write_operations"
+  - "concurrent_access"
+  - "error_handling"
+  - "reconnection"
+  - "performance"
+
+expected_results:
+  connectivity:
+    success_rate: 0.95
+    max_latency_ms: 100
+    min_throughput: 0
+    error_tolerance: 0.05
+    
+  read_operations:
+    success_rate: 0.98
+    max_latency_ms: 50
+    min_throughput: 1000
+    error_tolerance: 0.02
+    
+  write_operations:
+    success_rate: 0.98
+    max_latency_ms: 50
+    min_throughput: 500
+    error_tolerance: 0.02
+    
+  concurrent_access:
+    success_rate: 0.90
+    max_latency_ms: 200
+    min_throughput: 5000
+    error_tolerance: 0.10
+    
+  error_handling:
+    success_rate: 1.0  # We expect errors to be handled properly
+    max_latency_ms: 100
+    min_throughput: 0
+    error_tolerance: 0.0
+    
+  reconnection:
+    success_rate: 0.90
+    max_latency_ms: 5000
+    min_throughput: 0
+    error_tolerance: 0.10
+    
+  performance:
+    success_rate: 0.95
+    max_latency_ms: 100
+    min_throughput: 10000
+    error_tolerance: 0.05

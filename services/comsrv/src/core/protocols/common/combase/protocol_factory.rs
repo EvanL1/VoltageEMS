@@ -708,7 +708,6 @@ impl ProtocolFactory {
                 }
             }
         }
-
         // Use plugin system exclusively
         let protocol_id = config.protocol.to_lowercase();
         
@@ -734,7 +733,11 @@ impl ProtocolFactory {
             .collect();
         plugin.validate_config(&json_params)?;
         
+<<<<<<< HEAD
         // Create protocol instance with CSV points loaded
+=======
+        // Create protocol instance
+>>>>>>> origin/develop
         plugin.create_instance(config).await
     }
 

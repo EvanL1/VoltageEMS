@@ -1,0 +1,20 @@
+channel:
+  description: Test channel for iec104 protocol
+  id: 9
+  name: IEC104 Channel 1
+  protocol: iec104
+connection:
+  common_address: 1
+  host: iec104_simulator
+  k: 12
+  port: 2404
+  t1: 15
+  t2: 10
+  t3: 20
+  timeout: 5000
+  w: 8
+point_tables:
+  adjustment: csv/channel_9/adjustment.csv
+  control: csv/channel_9/control.csv
+  signal: csv/channel_9/signal.csv
+  telemetry: csv/channel_9/telemetry.csv

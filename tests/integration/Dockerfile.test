@@ -1,0 +1,45 @@
+FROM python:3.11-slim
+
+# 清除代理设置
+ENV http_proxy=""
+ENV https_proxy=""
+ENV HTTP_PROXY=""
+ENV HTTPS_PROXY=""
+
+# 安装基础工具
+RUN unset http_proxy https_proxy HTTP_PROXY HTTPS_PROXY && \
+    apt-get update && apt-get install -y \
+    curl \
+    jq \
+    bc \
+    netcat-traditional \
+    && rm -rf /var/lib/apt/lists/*
+
+# 安装Python依赖
+RUN unset http_proxy https_proxy HTTP_PROXY HTTPS_PROXY && \
+    pip install --no-cache-dir \
+    requests \
+    redis \
+    pyyaml \
+    pytest \
+    pytest-timeout \
+    pytest-html \
+    pandas \
+    numpy
+
+# 创建工作目录
+WORKDIR /app
+
+# 复制测试脚本
+COPY scripts/ /scripts/
+RUN chmod +x /scripts/*.sh
+
+# 创建结果目录
+RUN mkdir -p /test_results
+
+# 设置环境变量
+ENV PYTHONUNBUFFERED=1
+ENV TEST_RESULTS_DIR=/test_results
+
+# 默认命令
+CMD ["/scripts/run_integration_tests.sh"]

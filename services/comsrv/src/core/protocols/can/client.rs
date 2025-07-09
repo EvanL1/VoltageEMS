@@ -4,15 +4,18 @@
 //! transmission, reception, filtering, and data extraction.
 
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 use async_trait::async_trait;
 use tokio::sync::RwLock;
 use chrono::Utc;
 use tracing::{debug, info};
 use crate::core::config::ChannelConfig;
-use crate::core::protocols::common::{ComBase, DefaultProtocol, ChannelStatus, PointData};
+use crate::core::protocols::common::traits::ComBase;
+use crate::core::protocols::common::{ChannelStatus, PointData};
+use crate::core::protocols::common::combase::DefaultProtocol;
 use crate::utils::{ComSrvError, Result};
 use super::common::*;
-use super::frame::CanFrame;
+use super::frame::{CanFrame, CanId};
 use std::collections::HashMap;
 
 /// CAN client trait defining the interface for CAN bus communication
@@ -378,13 +381,15 @@ impl CanClientBase {
     
     /// Update statistics
     pub async fn update_statistics(&self, messages_sent: u64, messages_received: u64, error_count: u64) {
-        let mut stats = self.statistics.write().await;
-        stats.messages_sent += messages_sent;
-        stats.messages_received += messages_received;
-        stats.error_messages += error_count;
+        let stats = self.statistics.read().await;
+        stats.messages_sent.fetch_add(messages_sent, Ordering::Relaxed);
+        stats.messages_received.fetch_add(messages_received, Ordering::Relaxed);
+        stats.error_messages.fetch_add(error_count, Ordering::Relaxed);
         
         if error_count > 0 {
-            stats.last_error_time = Some(Utc::now());
+            drop(stats);
+            let mut stats = self.statistics.write().await;
+            stats.last_error_time = Some(std::time::SystemTime::now());
         }
     }
 }
@@ -392,11 +397,11 @@ impl CanClientBase {
 #[async_trait]
 impl ComBase for CanClientBase {
     fn name(&self) -> &str {
-        self.base.name()
+        "CAN"
     }
     
     fn channel_id(&self) -> String {
-        self.base.channel_id()
+        "CAN".to_string()
     }
     
     fn protocol_type(&self) -> &str {
@@ -412,23 +417,31 @@ impl ComBase for CanClientBase {
     }
     
     async fn is_running(&self) -> bool {
-        self.base.is_running().await
+        *self.connected.read().await
     }
     
     async fn start(&mut self) -> Result<()> {
         // Initialize CAN interface here
-        // For now, just set running state
-        self.base.start().await
+        *self.connected.write().await = true;
+        info!("Starting CAN client on interface {:?}", self.interface_type);
+        Ok(())
     }
     
     async fn stop(&mut self) -> Result<()> {
         // Clean up CAN interface here
-        // For now, just set running state
-        self.base.stop().await
+        *self.connected.write().await = false;
+        info!("Stopping CAN client");
+        Ok(())
     }
     
     async fn status(&self) -> ChannelStatus {
-        self.base.status().await
+        ChannelStatus {
+            id: self.channel_id().to_string(),
+            connected: *self.connected.read().await,
+            last_response_time: 0.0,
+            last_error: String::new(),
+            last_update_time: Utc::now(),
+        }
     }
     
     async fn get_all_points(&self) -> Vec<PointData> {
@@ -443,11 +456,65 @@ impl ComBase for CanClientBase {
                 timestamp: Utc::now(),
                 unit: mapping.unit.clone().unwrap_or_default(),
                 description: mapping.description.clone().unwrap_or_default(),
+                telemetry_type: Some(crate::core::protocols::common::TelemetryType::Telemetry),
+                channel_id: None,
             };
             points.push(point_data);
         }
         
         points
+    }
+    
+    async fn update_status(&mut self, status: ChannelStatus) -> Result<()> {
+        // Update connection status
+        *self.connected.write().await = status.connected;
+        Ok(())
+    }
+    
+    async fn read_point(&self, point_id: &str) -> Result<PointData> {
+        // Find point in mappings
+        let mappings = self.message_mappings.read().await;
+        if let Some(mapping) = mappings.iter().find(|m| m.name == point_id) {
+            Ok(PointData {
+                id: mapping.name.clone(),
+                name: mapping.display_name.clone().unwrap_or_else(|| mapping.name.clone()),
+                value: "0".to_string(), // Default value, would be from actual CAN data
+                timestamp: Utc::now(),
+                unit: mapping.unit.clone().unwrap_or_default(),
+                description: mapping.description.clone().unwrap_or_default(),
+                telemetry_type: Some(crate::core::protocols::common::TelemetryType::Telemetry),
+                channel_id: None,
+            })
+        } else {
+            Err(ComSrvError::InvalidParameter(format!("Point {} not found", point_id)))
+        }
+    }
+    
+    async fn write_point(&mut self, point_id: &str, value: &str) -> Result<()> {
+        // Find mapping and send CAN message
+        let mappings = self.message_mappings.read().await;
+        if let Some(mapping) = mappings.iter().find(|m| m.name == point_id) {
+            info!("Writing CAN point {} = {} to ID 0x{:X}", point_id, value, mapping.can_id);
+            // TODO: Encode value and send CAN frame
+            Ok(())
+        } else {
+            Err(ComSrvError::InvalidParameter(format!("Point {} not found", point_id)))
+        }
+    }
+    
+    async fn get_diagnostics(&self) -> HashMap<String, String> {
+        let mut diag = HashMap::new();
+        diag.insert("protocol".to_string(), "CAN".to_string());
+        diag.insert("interface".to_string(), format!("{:?}", self.interface_type));
+        diag.insert("bit_rate".to_string(), format!("{:?}", self.bit_rate));
+        diag.insert("connected".to_string(), self.is_running().await.to_string());
+        
+        let stats = self.statistics.read().await;
+        diag.insert("messages_sent".to_string(), stats.get_messages_sent().to_string());
+        diag.insert("messages_received".to_string(), stats.get_messages_received().to_string());
+        diag.insert("error_messages".to_string(), stats.get_error_messages().to_string());
+        diag.insert("bus_utilization".to_string(), format!("{:.2}%", stats.get_bus_utilization() * 100.0));
+        diag
     }
 }
 
@@ -512,9 +579,13 @@ mod tests {
         ChannelConfig {
             id: 1,
             name: "Test CAN Channel".to_string(),
-            description: "Test channel for CAN client".to_string(),
-            protocol: ProtocolType::Can,
-            parameters: crate::core::config::ChannelParameters::Generic(parameters),
+            description: Some("Test channel for CAN client".to_string()),
+            protocol: "can".to_string(),
+            parameters,
+            logging: Default::default(),
+            table_config: None,
+            points: Vec::new(),
+            combined_points: Vec::new(),
         }
     }
 
@@ -536,7 +607,7 @@ mod tests {
         
         // Create test frame
         let frame = CanFrame {
-            id: CanId::Standard(0x123),
+            id: CanId::Standard(0x123 as u16),
             data: vec![0x12, 0x34, 0x56, 0x78],
             rtr: false,
             err: false,
@@ -618,22 +689,22 @@ mod tests {
         let client = CanClientBase::new("TestCANClient", config);
         
         let initial_stats = client.get_statistics().await;
-        assert_eq!(initial_stats.messages_sent, 0);
-        assert_eq!(initial_stats.messages_received, 0);
+        assert_eq!(initial_stats.messages_sent.load(Ordering::SeqCst), 0);
+        assert_eq!(initial_stats.messages_received.load(Ordering::SeqCst), 0);
         
         client.update_statistics(5, 10, 1).await;
         
         let updated_stats = client.get_statistics().await;
-        assert_eq!(updated_stats.messages_sent, 5);
-        assert_eq!(updated_stats.messages_received, 10);
-        assert_eq!(updated_stats.error_messages, 1);
+        assert_eq!(updated_stats.messages_sent.load(Ordering::SeqCst), 5);
+        assert_eq!(updated_stats.messages_received.load(Ordering::SeqCst), 10);
+        assert_eq!(updated_stats.error_messages.load(Ordering::SeqCst), 1);
         assert!(updated_stats.last_error_time.is_some());
         
         client.reset_statistics().await;
         
         let reset_stats = client.get_statistics().await;
-        assert_eq!(reset_stats.messages_sent, 0);
-        assert_eq!(reset_stats.messages_received, 0);
-        assert_eq!(reset_stats.error_messages, 0);
+        assert_eq!(reset_stats.messages_sent.load(Ordering::SeqCst), 0);
+        assert_eq!(reset_stats.messages_received.load(Ordering::SeqCst), 0);
+        assert_eq!(reset_stats.error_messages.load(Ordering::SeqCst), 0);
     }
 } 

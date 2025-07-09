@@ -1,6 +1,12 @@
 pub mod common;
+pub mod config;
 pub mod iec104;
 pub mod asdu;
+
+// Plugin support
+pub mod plugin;
+
+pub use config::Iec104Config;
 
 use std::collections::HashMap;
 use crate::core::protocols::common::combase::{ProtocolPacketParser, PacketParseResult};
@@ -33,8 +39,7 @@ impl ProtocolPacketParser for Iec60870PacketParser {
                 "IEC60870",
                 direction,
                 &hex_data,
-                &description,
-                HashMap::new(),
+                &description
             );
         }
 
@@ -44,8 +49,7 @@ impl ProtocolPacketParser for Iec60870PacketParser {
                 "IEC60870",
                 direction,
                 &hex_data,
-                "IEC60870 parser disabled",
-                HashMap::new(),
+                "IEC60870 parser disabled"
             )
         }
     }
