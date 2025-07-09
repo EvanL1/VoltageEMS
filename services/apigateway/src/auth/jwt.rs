@@ -7,7 +7,8 @@ use super::{Claims, UserInfo};
 use crate::error::{ApiError, ApiResult};
 
 static JWT_SECRET: Lazy<String> = Lazy::new(|| {
-    std::env::var("JWT_SECRET").unwrap_or_else(|_| "voltage-ems-secret-key-change-this-in-production".to_string())
+    std::env::var("JWT_SECRET")
+        .unwrap_or_else(|_| "voltage-ems-secret-key-change-this-in-production".to_string())
 });
 
 static JWT_ALGORITHM: Algorithm = Algorithm::HS256;
@@ -18,7 +19,7 @@ impl JwtManager {
     pub fn generate_token(user_info: &UserInfo, duration_hours: i64) -> ApiResult<String> {
         let now = Utc::now();
         let exp = now + Duration::hours(duration_hours);
-        
+
         let claims = Claims {
             sub: user_info.id.clone(),
             username: user_info.username.clone(),
@@ -30,7 +31,7 @@ impl JwtManager {
 
         let header = Header::new(JWT_ALGORITHM);
         let encoding_key = EncodingKey::from_secret(JWT_SECRET.as_bytes());
-        
+
         encode(&header, &claims, &encoding_key)
             .map_err(|e| ApiError::InternalError(format!("Failed to generate token: {}", e)))
     }
@@ -38,7 +39,7 @@ impl JwtManager {
     pub fn verify_token(token: &str) -> ApiResult<Claims> {
         let decoding_key = DecodingKey::from_secret(JWT_SECRET.as_bytes());
         let validation = Validation::new(JWT_ALGORITHM);
-        
+
         decode::<Claims>(token, &decoding_key, &validation)
             .map(|data| data.claims)
             .map_err(|e| ApiError::BadRequest(format!("Invalid token: {}", e)))

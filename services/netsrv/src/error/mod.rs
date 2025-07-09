@@ -81,4 +81,4 @@ impl From<std::io::Error> for NetSrvError {
     fn from(err: std::io::Error) -> Self {
         NetSrvError::Io(err.to_string())
     }
-} 
+}

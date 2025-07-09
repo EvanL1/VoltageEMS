@@ -55,7 +55,7 @@ impl ConfigPath {
             .extension()
             .and_then(|ext| ext.to_str())
             .and_then(ConfigFormat::from_extension);
-        
+
         Self {
             path: path.to_path_buf(),
             format,

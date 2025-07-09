@@ -121,7 +121,7 @@ mod tests {
             timestamp: "2023-12-01T14:00:00Z".to_string(),
         };
 
-        let debug_str = format!("{:?}", value);
+        let debug_str = format!("{value:?}");
         assert!(debug_str.contains("77.7"));
         assert!(debug_str.contains("75"));
         assert!(debug_str.contains("2023-12-01T14:00:00Z"));

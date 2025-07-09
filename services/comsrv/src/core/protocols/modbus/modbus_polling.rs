@@ -126,7 +126,7 @@ impl ModbusPollingEngine {
         for point in points {
             self.points_by_slave
                 .entry(point.slave_id)
-                .or_insert_with(Vec::new)
+                .or_default()
                 .push(point);
         }
 
@@ -450,13 +450,13 @@ fn parse_modbus_value(registers: &[u16], data_format: &str, byte_order: Option<&
             if registers.len() < 2 {
                 return 0.0;
             }
-            ((registers[0] as u32) << 16 | registers[1] as u32) as f64
+            (((registers[0] as u32) << 16) | registers[1] as u32) as f64
         }
         "int32" | "int32_be" => {
             if registers.len() < 2 {
                 return 0.0;
             }
-            let val = ((registers[0] as u32) << 16 | registers[1] as u32) as i32;
+            let val = (((registers[0] as u32) << 16) | registers[1] as u32) as i32;
             val as f64
         }
         "uint16" => {
@@ -518,7 +518,7 @@ where
     let last_point = &batch[batch.len() - 1];
     let start_addr = first_point.register_address;
     // Calculate total count including the last point's register count
-    let count = (last_point.register_address - start_addr + last_point.register_count) as u16;
+    let count = last_point.register_address - start_addr + last_point.register_count;
 
     debug!(
         "Batch reading slave {} fc {} addr {} count {}",
@@ -554,7 +554,7 @@ where
                         value: scaled_value.to_string(),
                         timestamp: chrono::Utc::now(),
                         unit: String::new(),
-                        description: format!("Modbus point from slave {}", slave_id),
+                        description: format!("Modbus point from slave {slave_id}"),
                         telemetry_type: Some(match point.telemetry_type {
                             TelemetryType::Telemetry => CommonTelemetryType::Telemetry,
                             TelemetryType::Signal => CommonTelemetryType::Signal,
@@ -566,21 +566,21 @@ where
 
                     point_data_list.push(point_data);
                     points_read += 1;
-                    debug!("Point {} value: {}", point.point_id, scaled_value);
+                    debug!("Point {} value: {scaled_value}", point.point_id);
                 }
             }
 
             // Store in Redis if available
             if let Some(redis) = redis_manager {
                 if let Err(e) = redis.batch_update_values(point_data_list).await {
-                    warn!("Failed to store batch data in Redis: {}", e);
+                    warn!("Failed to store batch data in Redis: {e}");
                 }
             }
 
             Ok(points_read)
         }
         Err(e) => {
-            warn!("Batch read failed for slave {}: {}", slave_id, e);
+            warn!("Batch read failed for slave {}: {e}", slave_id);
             Err(e)
         }
     }
@@ -635,7 +635,7 @@ where
                     value: scaled_value.to_string(),
                     timestamp: chrono::Utc::now(),
                     unit: String::new(),
-                    description: format!("Modbus point from slave {}", slave_id),
+                    description: format!("Modbus point from slave {slave_id}"),
                     telemetry_type: Some(match point.telemetry_type {
                         TelemetryType::Telemetry => CommonTelemetryType::Telemetry,
                         TelemetryType::Signal => CommonTelemetryType::Signal,
@@ -648,11 +648,11 @@ where
                 // Store in Redis if available
                 if let Some(redis) = redis_manager {
                     if let Err(e) = redis.update_value(point_data).await {
-                        warn!("Failed to store point data in Redis: {}", e);
+                        warn!("Failed to store point data in Redis: {e}");
                     }
                 }
 
-                debug!("Point {} value: {}", point.point_id, scaled_value);
+                debug!("Point {} value: {scaled_value}", point.point_id);
             }
             Ok(())
         }
@@ -822,7 +822,7 @@ mod tests {
         let mut points = vec![];
         for i in 0..200 {
             points.push(ModbusPoint {
-                point_id: format!("{}", i),
+                point_id: format!("{i}"),
                 telemetry_type: TelemetryType::Telemetry,
                 slave_id: 1,
                 function_code: 3,

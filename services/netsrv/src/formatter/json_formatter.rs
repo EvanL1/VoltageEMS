@@ -12,6 +12,7 @@ impl JsonFormatter {
 
 impl DataFormatter for JsonFormatter {
     fn format(&self, data: &Value) -> Result<String> {
-        serde_json::to_string(data).map_err(|e| NetSrvError::Format(format!("JSON formatting error: {}", e)))
+        serde_json::to_string(data)
+            .map_err(|e| NetSrvError::Format(format!("JSON formatting error: {}", e)))
     }
-} 
+}

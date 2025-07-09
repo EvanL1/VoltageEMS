@@ -52,7 +52,7 @@ where
 
     fn call(&self, req: ServiceRequest) -> Self::Future {
         let service = self.service.clone();
-        
+
         Box::pin(async move {
             // Skip auth for health check endpoints
             let path = req.path();
@@ -62,12 +62,12 @@ where
 
             // Extract token from Authorization header
             let auth_header = req.headers().get(header::AUTHORIZATION);
-            
+
             if let Some(auth_value) = auth_header {
                 if let Ok(auth_str) = auth_value.to_str() {
                     if auth_str.starts_with("Bearer ") {
                         let token = &auth_str[7..];
-                        
+
                         match JwtManager::verify_token(token) {
                             Ok(claims) => {
                                 debug!("Token verified for user: {}", claims.username);
@@ -81,7 +81,7 @@ where
                     }
                 }
             }
-            
+
             Err(ErrorUnauthorized("Invalid or missing authentication token"))
         })
     }
@@ -137,14 +137,15 @@ where
     fn call(&self, req: ServiceRequest) -> Self::Future {
         let service = self.service.clone();
         let required_permission = self.permission.clone();
-        
+
         Box::pin(async move {
             // Get claims from request extensions
-            let has_permission = req.extensions()
+            let has_permission = req
+                .extensions()
                 .get::<super::Claims>()
                 .map(|claims| check_permission(&claims.roles, required_permission))
                 .unwrap_or(false);
-            
+
             if has_permission {
                 service.call(req).await
             } else {

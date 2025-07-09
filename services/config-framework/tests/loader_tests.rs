@@ -24,7 +24,7 @@ impl Configurable for TestConfig {
         }
         Ok(())
     }
-    
+
     fn as_any(&self) -> &dyn Any {
         self
     }
@@ -44,9 +44,9 @@ fn test_load_defaults() {
         .unwrap()
         .build()
         .unwrap();
-    
+
     let config: TestConfig = loader.load().unwrap();
-    
+
     assert_eq!(config.name, "test");
     assert_eq!(config.value, 42);
     assert!(config.nested.enabled);
@@ -57,8 +57,10 @@ fn test_load_defaults() {
 fn test_load_yaml() {
     let temp_dir = TempDir::new().unwrap();
     let config_path = temp_dir.path().join("test.yml");
-    
-    std::fs::write(&config_path, r#"
+
+    std::fs::write(
+        &config_path,
+        r#"
 name: yaml_test
 value: 100
 nested:
@@ -67,15 +69,17 @@ nested:
     - x
     - y
     - z
-"#).unwrap();
-    
+"#,
+    )
+    .unwrap();
+
     let loader = ConfigLoaderBuilder::new()
         .add_file(&config_path)
         .build()
         .unwrap();
-    
+
     let config: TestConfig = loader.load().unwrap();
-    
+
     assert_eq!(config.name, "yaml_test");
     assert_eq!(config.value, 100);
     assert!(!config.nested.enabled);
@@ -86,23 +90,27 @@ nested:
 fn test_load_toml() {
     let temp_dir = TempDir::new().unwrap();
     let config_path = temp_dir.path().join("test.toml");
-    
-    std::fs::write(&config_path, r#"
+
+    std::fs::write(
+        &config_path,
+        r#"
 name = "toml_test"
 value = 200
 
 [nested]
 enabled = true
 items = ["foo", "bar"]
-"#).unwrap();
-    
+"#,
+    )
+    .unwrap();
+
     let loader = ConfigLoaderBuilder::new()
         .add_file_with_format(&config_path, ConfigFormat::Toml)
         .build()
         .unwrap();
-    
+
     let config: TestConfig = loader.load().unwrap();
-    
+
     assert_eq!(config.name, "toml_test");
     assert_eq!(config.value, 200);
     assert!(config.nested.enabled);
@@ -113,23 +121,27 @@ items = ["foo", "bar"]
 fn test_load_json() {
     let temp_dir = TempDir::new().unwrap();
     let config_path = temp_dir.path().join("test.json");
-    
-    std::fs::write(&config_path, r#"{
+
+    std::fs::write(
+        &config_path,
+        r#"{
   "name": "json_test",
   "value": 300,
   "nested": {
     "enabled": false,
     "items": ["one", "two", "three"]
   }
-}"#).unwrap();
-    
+}"#,
+    )
+    .unwrap();
+
     let loader = ConfigLoaderBuilder::new()
         .add_file_with_format(&config_path, ConfigFormat::Json)
         .build()
         .unwrap();
-    
+
     let config: TestConfig = loader.load().unwrap();
-    
+
     assert_eq!(config.name, "json_test");
     assert_eq!(config.value, 300);
     assert!(!config.nested.enabled);
@@ -143,7 +155,7 @@ fn test_env_override() {
     std::env::set_var("VTEST_NAME", "env_override");
     std::env::set_var("VTEST_VALUE", "999");
     std::env::set_var("VTEST_NESTED_ENABLED", "true");
-    
+
     let loader = ConfigLoaderBuilder::new()
         .defaults(serde_json::json!({
             "name": "default",
@@ -157,13 +169,13 @@ fn test_env_override() {
         .env_prefix("VTEST")
         .build()
         .unwrap();
-    
+
     let config: TestConfig = loader.load().unwrap();
-    
+
     assert_eq!(config.name, "env_override");
     assert_eq!(config.value, 999);
     assert!(config.nested.enabled);
-    
+
     std::env::remove_var("VTEST_NAME");
     std::env::remove_var("VTEST_VALUE");
     std::env::remove_var("VTEST_NESTED_ENABLED");
@@ -183,9 +195,9 @@ fn test_validation_error() {
         .unwrap()
         .build()
         .unwrap();
-    
+
     let result: Result<TestConfig> = loader.load();
-    
+
     assert!(result.is_err());
     match result.unwrap_err() {
         ConfigError::Validation(msg) => {
@@ -198,31 +210,39 @@ fn test_validation_error() {
 #[test]
 fn test_merge_configs() {
     let temp_dir = TempDir::new().unwrap();
-    
+
     let base_config = temp_dir.path().join("base.yml");
-    std::fs::write(&base_config, r#"
+    std::fs::write(
+        &base_config,
+        r#"
 name: base
 value: 50
 nested:
   enabled: true
   items: [a, b]
-"#).unwrap();
-    
+"#,
+    )
+    .unwrap();
+
     let override_config = temp_dir.path().join("override.yml");
-    std::fs::write(&override_config, r#"
+    std::fs::write(
+        &override_config,
+        r#"
 value: 100
 nested:
   items: [x, y, z]
-"#).unwrap();
-    
+"#,
+    )
+    .unwrap();
+
     let loader = ConfigLoaderBuilder::new()
         .add_file(&base_config)
         .add_file(&override_config)
         .build()
         .unwrap();
-    
+
     let config: TestConfig = loader.load().unwrap();
-    
+
     assert_eq!(config.name, "base");
     assert_eq!(config.value, 100);
     assert!(config.nested.enabled);

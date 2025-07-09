@@ -43,22 +43,26 @@ struct MonitoringConfig {
 impl Configurable for ServiceConfig {
     fn validate(&self) -> Result<()> {
         if self.service.name.is_empty() {
-            return Err(ConfigError::Validation("Service name cannot be empty".into()));
+            return Err(ConfigError::Validation(
+                "Service name cannot be empty".into(),
+            ));
         }
-        
+
         if self.redis.pool_size == 0 {
-            return Err(ConfigError::Validation("Redis pool size must be greater than 0".into()));
+            return Err(ConfigError::Validation(
+                "Redis pool size must be greater than 0".into(),
+            ));
         }
-        
+
         for channel in &self.channels {
             if channel.id.is_empty() {
                 return Err(ConfigError::Validation("Channel ID cannot be empty".into()));
             }
         }
-        
+
         Ok(())
     }
-    
+
     fn as_any(&self) -> &dyn Any {
         self
     }
@@ -84,7 +88,7 @@ impl ConfigValidator for ProtocolValidator {
         }
         Ok(())
     }
-    
+
     fn name(&self) -> &str {
         "ProtocolValidator"
     }
@@ -93,7 +97,7 @@ impl ConfigValidator for ProtocolValidator {
 #[tokio::main]
 async fn main() -> Result<()> {
     tracing_subscriber::fmt::init();
-    
+
     let loader = ConfigLoaderBuilder::new()
         .base_path("config")
         .add_file("service.yml")
@@ -102,11 +106,7 @@ async fn main() -> Result<()> {
         .add_validator(Box::new(ProtocolValidator))
         .add_validation_rule(
             "redis.url",
-            Box::new(RegexRule::new(
-                "redis_url",
-                r"^redis://.*",
-                "redis.url",
-            )?),
+            Box::new(RegexRule::new("redis_url", r"^redis://.*", "redis.url")?),
         )
         .add_validation_rule(
             "monitoring.metrics_port",
@@ -136,9 +136,9 @@ async fn main() -> Result<()> {
             }
         }))?
         .build()?;
-    
+
     let config: ServiceConfig = loader.load_async().await?;
-    
+
     println!("Service Configuration:");
     println!("  Name: {}", config.service.name);
     println!("  Version: {}", config.service.version);
@@ -151,11 +151,13 @@ async fn main() -> Result<()> {
     println!("  Metrics Enabled: {}", config.monitoring.metrics_enabled);
     println!("  Metrics Port: {}", config.monitoring.metrics_port);
     println!("\nChannels: {}", config.channels.len());
-    
+
     for channel in &config.channels {
-        println!("  - ID: {}, Protocol: {}, Enabled: {}", 
-            channel.id, channel.protocol, channel.enabled);
+        println!(
+            "  - ID: {}, Protocol: {}, Enabled: {}",
+            channel.id, channel.protocol, channel.enabled
+        );
     }
-    
+
     Ok(())
 }

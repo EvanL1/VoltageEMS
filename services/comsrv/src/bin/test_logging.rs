@@ -63,7 +63,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let response_pdu = vec![0x03, 0x02, 0x12, 0x34];
     match processor.parse_pdu(&response_pdu) {
         Ok(_) => println!("PDU parsing successful"),
-        Err(e) => println!("PDU parsing failed: {}", e),
+        Err(e) => println!("PDU parsing failed: {e}"),
     }
 
     println!();

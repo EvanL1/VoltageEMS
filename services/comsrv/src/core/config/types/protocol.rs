@@ -117,7 +117,7 @@ pub struct ScalingConfig {
 }
 
 /// Validation configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ValidationConfig {
     /// Minimum value
     pub min: Option<f64>,
@@ -204,8 +204,7 @@ impl ProtocolAddress {
             ProtocolAddress::Modbus { function_code, .. } => {
                 if ![1, 2, 3, 4, 5, 6, 15, 16].contains(function_code) {
                     return Err(ComSrvError::ConfigError(format!(
-                        "Invalid Modbus function code: {}",
-                        function_code
+                        "Invalid Modbus function code: {function_code}"
                     )));
                 }
             }
@@ -241,9 +240,9 @@ impl ProtocolAddress {
                 bit,
             } => {
                 if let Some(bit) = bit {
-                    format!("{}:{}:{}:{}", slave_id, function_code, register, bit)
+                    format!("{}:{}:{}:{bit}", slave_id, function_code, register)
                 } else {
-                    format!("{}:{}:{}", slave_id, function_code, register)
+                    format!("{}:{}:{register}", slave_id, function_code)
                 }
             }
             ProtocolAddress::Can {
@@ -252,10 +251,10 @@ impl ProtocolAddress {
                 length,
                 ..
             } => {
-                format!("0x{:08X}:{}:{}", can_id, start_byte, length)
+                format!("0x{:08X}:{}:{length}", can_id, start_byte)
             }
             ProtocolAddress::Iec104 { ioa, ca, type_id } => {
-                format!("{}:{}:{}", ca, ioa, type_id)
+                format!("{}:{}:{type_id}", ca, ioa)
             }
             ProtocolAddress::Virtual { address } => address.clone(),
         }
@@ -270,16 +269,6 @@ impl Default for ScalingConfig {
             scale: 1.0,
             offset: 0.0,
             unit: None,
-        }
-    }
-}
-
-impl Default for ValidationConfig {
-    fn default() -> Self {
-        Self {
-            min: None,
-            max: None,
-            range_check: false,
         }
     }
 }
@@ -309,8 +298,7 @@ impl ProtocolType {
             "dio" => Ok(ProtocolType::Dio),
             "iec61850" => Ok(ProtocolType::Iec61850),
             _ => Err(ComSrvError::ConfigError(format!(
-                "Unknown protocol type: {}",
-                s
+                "Unknown protocol type: {s}"
             ))),
         }
     }

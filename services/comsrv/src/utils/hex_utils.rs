@@ -5,7 +5,7 @@
 /// Format byte slice as hex string (e.g., "00 01 02 03 AB CD EF")
 pub fn format_hex(data: &[u8]) -> String {
     data.iter()
-        .map(|b| format!("{:02X}", b))
+        .map(|b| format!("{b:02X}"))
         .collect::<Vec<_>>()
         .join(" ")
 }
@@ -13,16 +13,14 @@ pub fn format_hex(data: &[u8]) -> String {
 /// Format byte slice as hex string with prefix (e.g., "0x00 0x01 0x02")
 pub fn format_hex_with_prefix(data: &[u8]) -> String {
     data.iter()
-        .map(|b| format!("0x{:02X}", b))
+        .map(|b| format!("0x{b:02X}"))
         .collect::<Vec<_>>()
         .join(" ")
 }
 
 /// Format byte slice as compact hex string (e.g., "00010203ABCDEF")
 pub fn format_hex_compact(data: &[u8]) -> String {
-    data.iter()
-        .map(|b| format!("{:02X}", b))
-        .collect::<String>()
+    data.iter().map(|b| format!("{b:02X}")).collect::<String>()
 }
 
 #[cfg(test)]

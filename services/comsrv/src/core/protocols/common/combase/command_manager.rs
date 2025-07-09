@@ -102,22 +102,19 @@ impl UniversalCommandManager {
     ) where
         T: FourTelemetryOperations + 'static,
     {
-        info!(
-            "Starting Redis command listener for channel: {}",
-            channel_id
-        );
+        info!("Starting Redis command listener for channel: {channel_id}");
 
         // Create PubSub connection
         let mut pubsub = match redis_store.create_pubsub().await {
             Ok(pubsub) => pubsub,
             Err(e) => {
-                error!("Failed to create Redis PubSub connection: {}", e);
+                error!("Failed to create Redis PubSub connection: {e}");
                 return;
             }
         };
 
         // Subscribe to command channel
-        let command_channel = format!("commands:{}", channel_id);
+        let command_channel = format!("commands:{channel_id}");
         if let Err(e) = pubsub.subscribe(&command_channel).await {
             error!(
                 "Failed to subscribe to command channel {}: {}",
@@ -126,7 +123,7 @@ impl UniversalCommandManager {
             return;
         }
 
-        info!("Subscribed to Redis command channel: {}", command_channel);
+        info!("Subscribed to Redis command channel: {command_channel}");
 
         // Listen for commands
         while is_running.load(Ordering::SeqCst) {
@@ -135,12 +132,12 @@ impl UniversalCommandManager {
                     let command_id: String = match msg.get_payload() {
                         Ok(payload) => payload,
                         Err(e) => {
-                            warn!("Failed to parse command notification payload: {}", e);
+                            warn!("Failed to parse command notification payload: {e}");
                             continue;
                         }
                     };
 
-                    debug!("Received command notification: {}", command_id);
+                    debug!("Received command notification: {command_id}");
 
                     // Process command
                     if let Err(e) = Self::process_redis_command(
@@ -151,7 +148,7 @@ impl UniversalCommandManager {
                     )
                     .await
                     {
-                        error!("Failed to process command {}: {}", command_id, e);
+                        error!("Failed to process command {}: {e}", command_id);
                     }
                 }
                 None => {
@@ -255,7 +252,7 @@ impl UniversalCommandManager {
                 }
             }
             Err(e) => {
-                error!("Command {} execution failed: {}", command_id, e);
+                error!("Command {} execution failed: {e}", command_id);
 
                 CommandResult {
                     command_id: command.command_id.clone(),

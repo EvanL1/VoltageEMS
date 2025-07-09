@@ -134,7 +134,7 @@ async fn test_modbus_logging_basic_operations() {
             info!("✅ 遥测点读取成功: {} = {}", point_data.name, point_data.value);
         }
         Err(e) => {
-            info!("❌ 遥测点读取失败: {}", e);
+            info!("❌ 遥测点读取失败: {e}");
         }
     }
     
@@ -145,7 +145,7 @@ async fn test_modbus_logging_basic_operations() {
             info!("✅ 遥信点读取成功: {} = {}", point_data.name, point_data.value);
         }
         Err(e) => {
-            info!("❌ 遥信点读取失败: {}", e);
+            info!("❌ 遥信点读取失败: {e}");
         }
     }
     
@@ -186,7 +186,7 @@ async fn test_modbus_error_logging() {
             info!("⚠️ 意外成功 - 应该收到异常响应");
         }
         Err(e) => {
-            info!("✅ 正确处理异常响应: {}", e);
+            info!("✅ 正确处理异常响应: {e}");
         }
     }
     
@@ -233,7 +233,7 @@ async fn test_modbus_batch_logging() {
             }
         }
         Err(e) => {
-            info!("❌ 批量读取失败: {}", e);
+            info!("❌ 批量读取失败: {e}");
         }
     }
     

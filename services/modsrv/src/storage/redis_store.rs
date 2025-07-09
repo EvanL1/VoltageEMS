@@ -14,21 +14,22 @@ impl RedisStore {
     pub fn new(redis: RedisConnection) -> Self {
         Self { redis }
     }
-    
+
     /// Create a new Redis store from Arc<RedisConnection>
     pub fn from_arc(_redis: Arc<RedisConnection>) -> Self {
         // We need to create a new connection using the same configuration
         // because we can't get mutable access to the Arc<RedisConnection>
         let mut new_conn = RedisConnection::new();
         // For simplicity, we'll use the environment variable or default
-        let redis_url = std::env::var("REDIS_URL").unwrap_or_else(|_| "redis://127.0.0.1:6379".to_string());
+        let redis_url =
+            std::env::var("REDIS_URL").unwrap_or_else(|_| "redis://127.0.0.1:6379".to_string());
         if let Err(e) = new_conn.connect(&redis_url) {
             // Log error but continue with a disconnected instance
             eprintln!("Failed to connect to Redis: {}", e);
         }
         Self { redis: new_conn }
     }
-    
+
     pub fn get_connection(&self) -> Result<redis::Connection> {
         self.redis.get_raw_connection()
     }
@@ -50,7 +51,7 @@ impl super::DataStore for RedisStore {
             ModelSrvError::RedisError(format!("Failed to get string for key {}: {}", key, e))
         })
     }
-    
+
     /// Set a string value in Redis
     fn set_string(&self, key: &str, value: &str) -> Result<()> {
         let mut redis = self.redis.duplicate()?;
@@ -58,7 +59,7 @@ impl super::DataStore for RedisStore {
             ModelSrvError::RedisError(format!("Failed to set string for key {}: {}", key, e))
         })
     }
-    
+
     /// Get a hash value from Redis
     fn get_hash(&self, key: &str) -> Result<HashMap<String, String>> {
         let mut redis = self.redis.duplicate()?;
@@ -102,8 +103,8 @@ impl super::DataStore for RedisStore {
     /// Delete a key from Redis
     fn delete(&self, key: &str) -> Result<()> {
         let mut redis = self.redis.duplicate()?;
-        redis.delete(key).map_err(|e| {
-            ModelSrvError::RedisError(format!("Failed to delete key {}: {}", key, e))
-        })
+        redis
+            .delete(key)
+            .map_err(|e| ModelSrvError::RedisError(format!("Failed to delete key {}: {}", key, e)))
     }
-} 
+}

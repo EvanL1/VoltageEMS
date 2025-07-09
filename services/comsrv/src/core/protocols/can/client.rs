@@ -380,7 +380,7 @@ impl CanClientBase {
                     Err(_) => serde_json::Value::String(
                         string_bytes
                             .iter()
-                            .map(|&b| format!("{:02X}", b))
+                            .map(|&b| format!("{b:02X}"))
                             .collect::<Vec<_>>()
                             .join(""),
                     ),
@@ -617,7 +617,7 @@ impl CanClient for CanClientBase {
         _timeout_ms: u64,
     ) -> Result<Vec<CanFrame>> {
         // This would be implemented with actual CAN interface
-        debug!("Receiving CAN frames with filter: {:?}", filter_ids);
+        debug!("Receiving CAN frames with filter: {filter_ids:?}");
 
         // Return empty for now - actual implementation would read from CAN interface
         Ok(Vec::new())
@@ -710,7 +710,7 @@ mod tests {
 
         // Create test frame
         let frame = CanFrame {
-            id: CanId::Standard(0x123 as u16),
+            id: CanId::Standard(0x123),
             data: vec![0x12, 0x34, 0x56, 0x78],
             rtr: false,
             err: false,

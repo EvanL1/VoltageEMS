@@ -1,5 +1,5 @@
-use serde::{Serialize, Deserialize};
 use crate::error::Result;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::time::Duration;
 
@@ -23,33 +23,34 @@ pub fn pattern_to_regex(pattern: &str) -> regex::Regex {
         .replace(".", "\\.")
         .replace("*", ".*")
         .replace("?", ".");
-        
-    regex::Regex::new(&format!("^{}$", pattern)).unwrap_or_else(|_| regex::Regex::new(".*").unwrap())
+
+    regex::Regex::new(&format!("^{}$", pattern))
+        .unwrap_or_else(|_| regex::Regex::new(".*").unwrap())
 }
 
 /// DataStore trait for storage implementations
 pub trait DataStore {
     /// Get a string value
     fn get_string(&self, key: &str) -> Result<String>;
-    
+
     /// Set a string value
     fn set_string(&self, key: &str, value: &str) -> Result<()>;
-    
+
     /// Get a hash value
     fn get_hash(&self, key: &str) -> Result<HashMap<String, String>>;
-    
+
     /// Set a hash value
     fn set_hash(&self, key: &str, hash: &HashMap<String, String>) -> Result<()>;
-    
+
     /// Set a field in a hash
     fn set_hash_field(&self, key: &str, field: &str, value: &str) -> Result<()>;
-    
+
     /// Get keys matching a pattern
     fn get_keys(&self, pattern: &str) -> Result<Vec<String>>;
-    
+
     /// Check if a key exists
     fn exists(&self, key: &str) -> Result<bool>;
-    
+
     /// Delete a key
     fn delete(&self, key: &str) -> Result<()>;
-} 
+}

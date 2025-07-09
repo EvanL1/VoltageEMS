@@ -121,7 +121,7 @@ impl ComBase for VirtualProtocol {
     }
 
     async fn update_status(&mut self, status: ChannelStatus) -> Result<()> {
-        debug!("Virtual protocol status update: {:?}", status);
+        debug!("Virtual protocol status update: {status:?}");
         Ok(())
     }
 
@@ -170,11 +170,11 @@ impl ComBase for VirtualProtocol {
             if id > 0 && id <= data.len() {
                 Ok(PointData {
                     id: point_id.to_string(),
-                    name: format!("Telemetry {}", id),
+                    name: format!("Telemetry {id}"),
                     value: data[id - 1].to_string(),
                     timestamp: chrono::Utc::now(),
                     unit: "V".to_string(),
-                    description: format!("Simulated telemetry point {}", id),
+                    description: format!("Simulated telemetry point {id}"),
                     telemetry_type: Some(crate::core::protocols::common::TelemetryType::Telemetry),
                     channel_id: Some(self.channel_id),
                 })
@@ -189,11 +189,11 @@ impl ComBase for VirtualProtocol {
             if id > 0 && id <= signals.len() {
                 Ok(PointData {
                     id: point_id.to_string(),
-                    name: format!("Signal {}", id),
+                    name: format!("Signal {id}"),
                     value: if signals[id - 1] { "1" } else { "0" }.to_string(),
                     timestamp: chrono::Utc::now(),
                     unit: "".to_string(),
-                    description: format!("Simulated signal point {}", id),
+                    description: format!("Simulated signal point {id}"),
                     telemetry_type: Some(crate::core::protocols::common::TelemetryType::Signal),
                     channel_id: Some(self.channel_id),
                 })
@@ -210,7 +210,7 @@ impl ComBase for VirtualProtocol {
     }
 
     async fn write_point(&mut self, point_id: &str, value: &str) -> Result<()> {
-        info!("Virtual protocol write: {}={}", point_id, value);
+        info!("Virtual protocol write: {}={value}", point_id);
 
         if point_id.starts_with("YK") || point_id.starts_with("YT") {
             // Simulated control/adjustment write

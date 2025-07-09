@@ -56,8 +56,7 @@ impl std::str::FromStr for TransportType {
             "can" | "canbus" => Ok(TransportType::Can),
             "mock" => Ok(TransportType::Mock),
             _ => Err(TransportError::ConfigError(format!(
-                "Unknown transport type: {}",
-                s
+                "Unknown transport type: {s}"
             ))),
         }
     }
@@ -253,7 +252,7 @@ impl TransportFactory {
     ) -> Result<Box<dyn Transport>, TransportError> {
         let transport_type = config.transport_type();
 
-        debug!("Creating transport of type: {}", transport_type);
+        debug!("Creating transport of type: {transport_type}");
 
         // Validate configuration first
         config.validate()?;
@@ -261,8 +260,7 @@ impl TransportFactory {
         // Get the appropriate builder
         let builder = self.builders.get(&transport_type).ok_or_else(|| {
             TransportError::ConfigError(format!(
-                "No builder registered for transport type: {}",
-                transport_type
+                "No builder registered for transport type: {transport_type}"
             ))
         })?;
 

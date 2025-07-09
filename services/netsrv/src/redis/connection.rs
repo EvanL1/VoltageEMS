@@ -1,8 +1,8 @@
 use crate::config::redis_config::RedisConfig;
 use crate::error::{NetSrvError, Result};
-use tracing::info;
-use redis::{Client, Connection, Commands};
+use redis::{Client, Commands, Connection};
 use std::collections::HashMap;
+use tracing::info;
 
 pub struct RedisConnection {
     client: Option<Client>,
@@ -86,9 +86,7 @@ impl RedisConnection {
         }
 
         let conn = self.conn.as_mut().unwrap();
-        let keys: Vec<String> = redis::cmd("KEYS")
-            .arg(pattern)
-            .query(conn)?;
+        let keys: Vec<String> = redis::cmd("KEYS").arg(pattern).query(conn)?;
 
         Ok(keys)
     }
@@ -116,4 +114,4 @@ impl RedisConnection {
         let value: HashMap<String, String> = conn.hgetall(key)?;
         Ok(value)
     }
-} 
+}

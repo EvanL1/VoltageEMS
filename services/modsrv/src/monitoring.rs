@@ -1,16 +1,16 @@
-use crate::error::{Result, ModelSrvError};
+use crate::error::{ModelSrvError, Result};
 use crate::storage::redis_store::RedisStore;
 use crate::storage::DataStore;
 
+use crate::redis_handler::RedisConnection;
+use redis::Commands;
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use std::collections::HashMap;
-use std::sync::{Arc, RwLock, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::time::interval;
-use serde::{Serialize, Deserialize};
-use tracing::{info, error, warn, debug};
-use serde_json::Value;
-use redis::Commands;
-use crate::redis_handler::RedisConnection;
+use tracing::{debug, error, info, warn};
 
 /// Rule execution metrics
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -146,13 +146,16 @@ impl MonitoringService {
             memory_usage: 0,
             rules_count: 0,
             redis_connected: false,
-            timestamp: SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs(),
+            timestamp: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_secs(),
             checks: HashMap::new(),
         };
-        
+
         // Create a default Redis connection for monitoring
         let redis_conn = RedisConnection::new();
-        
+
         Self {
             store: Arc::new(RedisStore::new(redis_conn)),
             metrics: Arc::new(RwLock::new(HashMap::new())),
@@ -165,17 +168,24 @@ impl MonitoringService {
     }
 
     /// Create a new monitoring service with a shared data store
-    pub fn new_with_store(store: Arc<RedisStore>, history_limit: usize, initial_status: HealthStatus) -> Self {
+    pub fn new_with_store(
+        store: Arc<RedisStore>,
+        history_limit: usize,
+        initial_status: HealthStatus,
+    ) -> Self {
         let default_health = HealthInfo {
             status: initial_status,
             uptime: 0,
             memory_usage: 0,
             rules_count: 0,
             redis_connected: false,
-            timestamp: SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs(),
+            timestamp: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_secs(),
             checks: HashMap::new(),
         };
-        
+
         Self {
             store,
             metrics: Arc::new(RwLock::new(HashMap::new())),
@@ -186,40 +196,59 @@ impl MonitoringService {
             redis: Mutex::new(RedisConnection::new()),
         }
     }
-    
+
     /// Record metrics for a rule execution
-    pub fn record_execution(&self, rule_id: &str, duration: Duration, success: bool, context: Option<Value>, result: Option<Value>, error: Option<String>) -> Result<()> {
+    pub fn record_execution(
+        &self,
+        rule_id: &str,
+        duration: Duration,
+        success: bool,
+        context: Option<Value>,
+        result: Option<Value>,
+        error: Option<String>,
+    ) -> Result<()> {
         // Record metrics
         {
             let mut metrics_map = self.metrics.write().map_err(|_| ModelSrvError::LockError)?;
             let metrics = metrics_map.entry(rule_id.to_string()).or_default();
-            
+
             metrics.total_executions += 1;
             if success {
                 metrics.successful_executions += 1;
             } else {
                 metrics.failed_executions += 1;
             }
-            
+
             let duration_ms = duration.as_millis() as u64;
             metrics.total_execution_time_ms += duration_ms;
-            metrics.avg_execution_time_ms = metrics.total_execution_time_ms as f64 / metrics.total_executions as f64;
+            metrics.avg_execution_time_ms =
+                metrics.total_execution_time_ms as f64 / metrics.total_executions as f64;
             metrics.max_execution_time_ms = metrics.max_execution_time_ms.max(duration_ms);
             metrics.min_execution_time_ms = metrics.min_execution_time_ms.min(duration_ms);
-            metrics.last_execution = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
-            metrics.success_rate = metrics.successful_executions as f64 / metrics.total_executions as f64;
-            
+            metrics.last_execution = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_secs();
+            metrics.success_rate =
+                metrics.successful_executions as f64 / metrics.total_executions as f64;
+
             // Persist metrics to Redis
             if let Ok(metrics_json) = serde_json::to_string(metrics) {
-                if let Err(e) = self.store.set_string(&format!("metrics:rule:{}", rule_id), &metrics_json) {
+                if let Err(e) = self
+                    .store
+                    .set_string(&format!("metrics:rule:{}", rule_id), &metrics_json)
+                {
                     error!("Failed to persist metrics for rule {}: {}", rule_id, e);
                 }
             }
         }
-        
+
         // Record execution history
         {
-            let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+            let timestamp = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_secs();
             let entry = RuleExecutionEntry {
                 rule_id: rule_id.to_string(),
                 timestamp,
@@ -229,62 +258,70 @@ impl MonitoringService {
                 result,
                 error,
             };
-            
+
             let mut history = self.history.lock().map_err(|_| ModelSrvError::LockError)?;
-            
+
             // Add new entry and ensure history limit is maintained
             history.push(entry.clone());
             if history.len() > self.history_limit {
                 history.remove(0);
             }
-            
+
             // Persist history entry to Redis
             if let Ok(entry_json) = serde_json::to_string(&entry) {
                 let key = format!("history:rule:{}:{}", rule_id, timestamp);
                 if let Err(e) = self.store.set_string(&key, &entry_json) {
-                    error!("Failed to persist history entry for rule {}: {}", rule_id, e);
+                    error!(
+                        "Failed to persist history entry for rule {}: {}",
+                        rule_id, e
+                    );
                 }
             }
         }
-        
+
         Ok(())
     }
-    
+
     /// Get metrics for a specific rule
     pub fn get_rule_metrics(&self, rule_id: &str) -> Result<Option<RuleMetrics>> {
         let metrics_map = self.metrics.read().map_err(|_| ModelSrvError::LockError)?;
         Ok(metrics_map.get(rule_id).cloned())
     }
-    
+
     /// Get metrics for all rules
     pub fn get_all_metrics(&self) -> Result<HashMap<String, RuleMetrics>> {
         let metrics_map = self.metrics.read().map_err(|_| ModelSrvError::LockError)?;
         Ok(metrics_map.clone())
     }
-    
+
     /// Get execution history for a specific rule
-    pub fn get_rule_history(&self, rule_id: &str, limit: Option<usize>) -> Result<Vec<RuleExecutionEntry>> {
+    pub fn get_rule_history(
+        &self,
+        rule_id: &str,
+        limit: Option<usize>,
+    ) -> Result<Vec<RuleExecutionEntry>> {
         let history = self.history.lock().map_err(|_| ModelSrvError::LockError)?;
-        let entries: Vec<_> = history.iter()
+        let entries: Vec<_> = history
+            .iter()
             .filter(|entry| entry.rule_id == rule_id)
             .cloned()
             .collect();
-            
+
         let limit = limit.unwrap_or(entries.len());
         Ok(entries.into_iter().rev().take(limit).collect())
     }
-    
+
     /// Run a health check and update health status
     pub async fn run_health_check(&self) -> Result<HealthInfo> {
         let mut health = self.health.write().map_err(|_| ModelSrvError::LockError)?;
-        
+
         // Update uptime
         let uptime = SystemTime::now()
             .duration_since(self.start_time)
             .unwrap_or_else(|_| Duration::from_secs(0))
             .as_secs();
         health.uptime = uptime;
-        
+
         // Check Redis connectivity
         let redis_connected = if let Ok(mut _conn) = self.store.get_connection() {
             // Try a simple ping command
@@ -293,35 +330,53 @@ impl MonitoringService {
             false
         };
         health.redis_connected = redis_connected;
-        
+
         // Count loaded rules
         if let Ok(keys) = self.store.get_keys("rule:*") {
             health.rules_count = keys.len();
         }
-        
+
         // Perform specific health checks
         let mut checks = HashMap::new();
-        
+
         // Check 1: Redis health
         let redis_health = HealthCheckResult {
             name: "Redis Connection".to_string(),
-            status: if redis_connected { HealthStatus::Healthy } else { HealthStatus::Unhealthy },
-            details: Some(if redis_connected { "Connected".to_string() } else { "Disconnected".to_string() }),
-            last_success: if redis_connected { 
-                Some(SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs()) 
-            } else { 
-                None 
+            status: if redis_connected {
+                HealthStatus::Healthy
+            } else {
+                HealthStatus::Unhealthy
+            },
+            details: Some(if redis_connected {
+                "Connected".to_string()
+            } else {
+                "Disconnected".to_string()
+            }),
+            last_success: if redis_connected {
+                Some(
+                    SystemTime::now()
+                        .duration_since(UNIX_EPOCH)
+                        .unwrap()
+                        .as_secs(),
+                )
+            } else {
+                None
             },
         };
         checks.insert("redis".to_string(), redis_health);
-        
+
         // Check 2: Rules data health
         let rules_health = if health.rules_count > 0 {
             HealthCheckResult {
                 name: "Rules Data".to_string(),
                 status: HealthStatus::Healthy,
                 details: Some(format!("{} rules loaded", health.rules_count)),
-                last_success: Some(SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs()),
+                last_success: Some(
+                    SystemTime::now()
+                        .duration_since(UNIX_EPOCH)
+                        .unwrap()
+                        .as_secs(),
+                ),
             }
         } else {
             HealthCheckResult {
@@ -332,13 +387,17 @@ impl MonitoringService {
             }
         };
         checks.insert("rules_data".to_string(), rules_health);
-        
+
         // TODO: Add more health checks as needed
-        
+
         // Update overall health status
-        let any_unhealthy = checks.values().any(|check| check.status == HealthStatus::Unhealthy);
-        let any_degraded = checks.values().any(|check| check.status == HealthStatus::Degraded);
-        
+        let any_unhealthy = checks
+            .values()
+            .any(|check| check.status == HealthStatus::Unhealthy);
+        let any_degraded = checks
+            .values()
+            .any(|check| check.status == HealthStatus::Degraded);
+
         health.status = if any_unhealthy {
             HealthStatus::Unhealthy
         } else if any_degraded {
@@ -346,33 +405,36 @@ impl MonitoringService {
         } else {
             HealthStatus::Healthy
         };
-        
+
         health.checks = checks;
-        health.timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
-        
+        health.timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+
         // TODO: Implement automatic recovery actions based on health status
         if health.status == HealthStatus::Unhealthy {
             warn!("System health is UNHEALTHY - consider manual intervention");
         } else if health.status == HealthStatus::Degraded {
             warn!("System health is DEGRADED - monitoring for improvement");
         }
-        
+
         Ok(health.clone())
     }
-    
+
     /// Start the monitoring service background tasks
     pub fn start_background_tasks(&self) -> Result<()> {
         // Clone required data for the background task
         let health_lock = self.health.clone();
         let store = self.store.clone();
-        
+
         // Spawn health check task
         tokio::spawn(async move {
             let mut interval_timer = interval(Duration::from_secs(60));
-            
+
             loop {
                 interval_timer.tick().await;
-                
+
                 // Run health check
                 let mut health = match health_lock.write() {
                     Ok(health) => health,
@@ -381,14 +443,14 @@ impl MonitoringService {
                         continue;
                     }
                 };
-                
+
                 // Update uptime
                 let uptime = SystemTime::now()
                     .duration_since(UNIX_EPOCH)
                     .unwrap_or_else(|_| Duration::from_secs(0))
                     .as_secs();
                 health.uptime = uptime;
-                
+
                 // Check Redis connectivity
                 let redis_connected = if let Ok(mut _conn) = store.get_connection() {
                     // Try a simple ping command
@@ -397,7 +459,7 @@ impl MonitoringService {
                     false
                 };
                 health.redis_connected = redis_connected;
-                
+
                 // Update health status based on checks
                 if !redis_connected {
                     health.status = HealthStatus::Degraded;
@@ -406,9 +468,12 @@ impl MonitoringService {
                     health.status = HealthStatus::Healthy;
                     debug!("Health check passed - system is healthy");
                 }
-                
-                health.timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
-                
+
+                health.timestamp = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap()
+                    .as_secs();
+
                 // Attempt recovery if needed
                 if health.status != HealthStatus::Healthy {
                     info!("Attempting recovery actions");
@@ -416,10 +481,10 @@ impl MonitoringService {
                 }
             }
         });
-        
+
         Ok(())
     }
-    
+
     /// Load metrics from persistent storage
     pub async fn load_metrics(&self) -> Result<HashMap<String, RuleMetrics>> {
         let mut metrics_map = HashMap::new();
@@ -429,27 +494,30 @@ impl MonitoringService {
         for key in keys {
             if let Ok(metrics_data) = redis.get::<_, String>(&key) {
                 if let Ok(metrics) = serde_json::from_str(&metrics_data) {
-                    let rule_id = key.strip_prefix("metrics:rule:").unwrap_or(&key).to_string();
+                    let rule_id = key
+                        .strip_prefix("metrics:rule:")
+                        .unwrap_or(&key)
+                        .to_string();
                     debug!("Loading metrics for rule {}", &rule_id);
                     metrics_map.insert(rule_id.clone(), metrics);
                     debug!("Loaded metrics for rule {}", rule_id);
                 }
             }
         }
-        
+
         Ok(metrics_map)
     }
-    
+
     /// Load recent history from persistent storage
     pub async fn load_history(&self) -> Result<()> {
         // Get history keys from Redis
         if let Ok(keys) = self.store.get_keys("history:rule:*") {
             let mut history = self.history.lock().map_err(|_| ModelSrvError::LockError)?;
-            
+
             // Sort keys by timestamp (newest first)
             let mut sorted_keys = keys;
             sorted_keys.sort_by(|a, b| b.cmp(a));
-            
+
             // Take only the most recent entries up to history_limit
             for key in sorted_keys.iter().take(self.history_limit) {
                 // Load history entry from Redis
@@ -459,18 +527,18 @@ impl MonitoringService {
                     }
                 }
             }
-            
+
             // Sort history by timestamp (newest first)
             history.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
-            
+
             // Ensure history doesn't exceed limit
             if history.len() > self.history_limit {
                 history.truncate(self.history_limit);
             }
-            
+
             info!("Loaded {} history entries", history.len());
         }
-        
+
         Ok(())
     }
-} 
+}

@@ -59,8 +59,7 @@ impl MbapHeader {
 
         if protocol_id != 0 {
             return Err(ComSrvError::ProtocolError(format!(
-                "Invalid protocol ID: {}",
-                protocol_id
+                "Invalid protocol ID: {protocol_id}"
             )));
         }
 

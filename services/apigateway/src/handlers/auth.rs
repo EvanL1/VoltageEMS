@@ -89,7 +89,9 @@ pub async fn login(
 
     // Store refresh token in Redis (optional, for token revocation)
     let key = format!("refresh_token:{}", user_info.id);
-    redis.set_with_expiry(&key, &refresh_token, 30 * 24 * 3600).await?;
+    redis
+        .set_with_expiry(&key, &refresh_token, 30 * 24 * 3600)
+        .await?;
 
     let response = LoginResponse {
         access_token,
@@ -108,11 +110,11 @@ pub async fn refresh_token(
 ) -> ApiResult<HttpResponse> {
     // Verify refresh token
     let claims = JwtManager::verify_token(&req.refresh_token)?;
-    
+
     // Check if refresh token exists in Redis (optional)
     let key = format!("refresh_token:{}", claims.sub);
     let stored_token: Option<String> = redis.get(&key).await?;
-    
+
     if stored_token.is_none() || stored_token.unwrap() != req.refresh_token {
         return Err(ApiError::Unauthorized("Invalid refresh token".to_string()));
     }
@@ -123,7 +125,7 @@ pub async fn refresh_token(
         username: claims.username,
         roles: claims.roles,
     };
-    
+
     let access_token = JwtManager::generate_access_token(&user_info)?;
 
     let response = RefreshResponse {
@@ -148,9 +150,7 @@ pub async fn logout(
     })))
 }
 
-pub async fn current_user(
-    claims: web::ReqData<crate::auth::Claims>,
-) -> ApiResult<HttpResponse> {
+pub async fn current_user(claims: web::ReqData<crate::auth::Claims>) -> ApiResult<HttpResponse> {
     let user_info = UserInfo {
         id: claims.sub.clone(),
         username: claims.username.clone(),

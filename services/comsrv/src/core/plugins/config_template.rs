@@ -272,7 +272,7 @@ impl ConfigValidator {
                         if n < *min_val {
                             result.add_error(ValidationError {
                                 parameter: key.to_string(),
-                                message: format!("Value {} is less than minimum {}", n, min_val),
+                                message: format!("Value {} is less than minimum {min_val}", n),
                                 severity: ErrorSeverity::Error,
                             });
                         }
@@ -281,7 +281,7 @@ impl ConfigValidator {
                         if n > *max_val {
                             result.add_error(ValidationError {
                                 parameter: key.to_string(),
-                                message: format!("Value {} is greater than maximum {}", n, max_val),
+                                message: format!("Value {} is greater than maximum {max_val}", n),
                                 severity: ErrorSeverity::Error,
                             });
                         }
@@ -343,7 +343,7 @@ impl ConfigValidator {
         if let Some(pattern) = &validation.pattern {
             if let Some(s) = value.as_str() {
                 let regex = Regex::new(pattern)
-                    .map_err(|e| Error::ConfigError(format!("Invalid regex pattern: {}", e)))?;
+                    .map_err(|e| Error::ConfigError(format!("Invalid regex pattern: {e}")))?;
                 if !regex.is_match(s) {
                     result.add_error(ValidationError {
                         parameter: key.to_string(),
@@ -375,7 +375,7 @@ impl ConfigValidator {
                 if s.len() > max_len {
                     result.add_error(ValidationError {
                         parameter: key.to_string(),
-                        message: format!("Value length {} exceeds maximum {}", s.len(), max_len),
+                        message: format!("Value length {} exceeds maximum {max_len}", s.len()),
                         severity: ErrorSeverity::Error,
                     });
                 }
@@ -550,7 +550,7 @@ impl ConfigGenerator {
                 ));
             }
 
-            yaml.push_str("\n");
+            yaml.push('\n');
         }
 
         yaml

@@ -90,11 +90,11 @@ async fn main() -> Result<()> {
     // Load configuration (with basic console output)
     eprintln!("Loading configuration from: {}", args.config);
     if let Ok(url) = std::env::var("CONFIG_CENTER_URL") {
-        eprintln!("Config center URL detected: {}", url);
+        eprintln!("Config center URL detected: {url}");
     }
 
     let config_manager = Arc::new(ConfigManager::load_async(&args.config).await.map_err(|e| {
-        eprintln!("Failed to load configuration: {}", e);
+        eprintln!("Failed to load configuration: {e}");
         e
     })?);
 
@@ -128,7 +128,7 @@ async fn main() -> Result<()> {
     // Initialize plugin system
     info!("Initializing plugin system...");
     comsrv::core::plugins::init_plugin_system().map_err(|e| {
-        error!("Failed to initialize plugin system: {}", e);
+        error!("Failed to initialize plugin system: {e}");
         e
     })?;
 
@@ -143,7 +143,7 @@ async fn main() -> Result<()> {
     let cleanup_factory = factory.clone();
     let cleanup_handle = tokio::spawn(async move {
         if let Err(e) = start_cleanup_task(cleanup_factory).await {
-            error!("Cleanup task error: {}", e);
+            error!("Cleanup task error: {e}");
         }
     });
 
@@ -151,21 +151,18 @@ async fn main() -> Result<()> {
     let api_handle = if config_manager.config().service.api.enabled {
         let bind_address = &config_manager.config().service.api.bind_address;
         let addr: SocketAddr = bind_address.parse().map_err(|e| {
-            error!("Invalid API bind address '{}': {}", bind_address, e);
-            comsrv::utils::error::ComSrvError::ConfigError(format!(
-                "Invalid API bind address: {}",
-                e
-            ))
+            error!("Invalid API bind address '{}': {e}", bind_address);
+            comsrv::utils::error::ComSrvError::ConfigError(format!("Invalid API bind address: {e}"))
         })?;
 
-        info!("Starting API server on {}", addr);
+        info!("Starting API server on {addr}");
 
         let app = create_api_routes(factory.clone());
         let listener = tokio::net::TcpListener::bind(addr).await?;
 
         Some(tokio::spawn(async move {
             if let Err(e) = serve(listener, app).await {
-                error!("API server error: {}", e);
+                error!("API server error: {e}");
             }
         }))
     } else {
@@ -261,10 +258,9 @@ fn initialize_logging(
             .max_log_files(logging_config.max_files as usize)
             .build(log_dir)
             .map_err(|e| {
-                eprintln!("Failed to create file appender: {}", e);
+                eprintln!("Failed to create file appender: {e}");
                 comsrv::utils::error::ComSrvError::ConfigError(format!(
-                    "Failed to create log file appender: {}",
-                    e
+                    "Failed to create log file appender: {e}"
                 ))
             })?;
 
@@ -289,7 +285,7 @@ fn initialize_logging(
 
         eprintln!("Logging configured:");
         eprintln!("  - Console: enabled");
-        eprintln!("  - File: {}", log_file_path);
+        eprintln!("  - File: {log_file_path}");
         eprintln!("  - Level: {}", logging_config.level);
         eprintln!("  - Max files: {}", logging_config.max_files);
     } else if logging_config.console {
@@ -327,10 +323,9 @@ fn initialize_logging(
             .max_log_files(logging_config.max_files as usize)
             .build(log_dir)
             .map_err(|e| {
-                eprintln!("Failed to create file appender: {}", e);
+                eprintln!("Failed to create file appender: {e}");
                 comsrv::utils::error::ComSrvError::ConfigError(format!(
-                    "Failed to create log file appender: {}",
-                    e
+                    "Failed to create log file appender: {e}"
                 ))
             })?;
 
@@ -346,7 +341,7 @@ fn initialize_logging(
 
         eprintln!("Logging configured:");
         eprintln!("  - Console: disabled");
-        eprintln!("  - File: {}", log_file_path);
+        eprintln!("  - File: {log_file_path}");
         eprintln!("  - Level: {}", logging_config.level);
         eprintln!("  - Max files: {}", logging_config.max_files);
     } else {

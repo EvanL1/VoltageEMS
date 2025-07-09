@@ -83,7 +83,7 @@ impl RedisBatchSync {
                 sync_interval.tick().await;
 
                 if let Err(e) = self.sync_batch(&point_manager).await {
-                    error!("Redis sync error: {}", e);
+                    error!("Redis sync error: {e}");
                     self.stats.write().await.failed_syncs += 1;
                 }
             }
@@ -157,7 +157,7 @@ impl RedisBatchSync {
         let mut count = 0;
 
         for (id, data) in points.iter() {
-            let key = format!("{}:{}", self.config.key_prefix, id);
+            let key = format!("{}:{id}", self.config.key_prefix);
             let value = json!({
                 "id": data.id,
                 "name": data.name,
@@ -211,7 +211,7 @@ impl RedisBatchSync {
         let mut count = 0;
 
         for (id, data) in points {
-            let key = format!("{}:{}", self.config.key_prefix, id);
+            let key = format!("{}:{id}", self.config.key_prefix);
             let value = json!({
                 "id": data.id,
                 "name": data.name,
@@ -269,7 +269,7 @@ impl RedisBatchSync {
             );
             type_sets
                 .entry(type_key)
-                .or_insert_with(Vec::new)
+                .or_default()
                 .push(config.point_id.to_string());
         }
 
@@ -325,7 +325,7 @@ impl RedisBatchSync {
         let mut conn = self.redis_conn.lock().await;
         let keys: Vec<String> = point_ids
             .iter()
-            .map(|id| format!("{}:{}", self.config.key_prefix, id))
+            .map(|id| format!("{}:{id}", self.config.key_prefix))
             .collect();
 
         let _: () = redis::cmd("DEL")

@@ -43,8 +43,8 @@ impl PluginManager {
         let registry = PluginRegistry::global();
         let reg = registry.read().unwrap();
 
-        if let Some(metadata) = reg.get_plugin_metadata(plugin_id) {
-            Some(format!(
+        reg.get_plugin_metadata(plugin_id).map(|metadata| {
+            format!(
                 "Plugin: {} ({})\nVersion: {}\nDescription: {}\nAuthor: {}\nFeatures: {:?}",
                 metadata.name,
                 metadata.id,
@@ -52,10 +52,8 @@ impl PluginManager {
                 metadata.description,
                 metadata.author,
                 metadata.features
-            ))
-        } else {
-            None
-        }
+            )
+        })
     }
 
     /// Check if a plugin is available
@@ -65,7 +63,7 @@ impl PluginManager {
 
         // Try to load from factory if not already loaded
         if let Err(e) = reg.load_plugin_from_factory(plugin_id) {
-            warn!("Failed to load plugin '{}': {}", plugin_id, e);
+            warn!("Failed to load plugin '{}': {e}", plugin_id);
             false
         } else {
             true

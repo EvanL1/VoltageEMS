@@ -1,25 +1,24 @@
-mod config_new;
 mod config_api;
+mod config_new;
 mod error;
 mod formatter;
 mod network;
 mod redis;
 
+use crate::config_api::{create_config_router, ConfigState};
 use crate::config_new::NetServiceConfig;
-use crate::config_api::{ConfigState, create_config_router};
 use crate::error::Result;
 use crate::formatter::{create_formatter, FormatType};
-use crate::network::{NetworkClient, create_network_client};
+use crate::network::{create_network_client, NetworkClient};
 use crate::redis::NewRedisDataFetcher;
-use voltage_config::load_config;
 use clap::Parser;
-use tracing::{debug, error, info, warn};
 use serde_json::Value;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 use tower_http::cors::CorsLayer;
-
+use tracing::{debug, error, info, warn};
+use voltage_config::load_config;
 
 #[derive(Parser, Debug)]
 #[clap(author, version, about, long_about = None)]
@@ -50,20 +49,23 @@ async fn main() -> Result<()> {
     info!("Starting Network Service with Backend Configuration Management");
     info!("Redis configuration: {}", config.base.redis.url);
     info!("Found {} network configurations", config.networks.len());
-    
+
     // Create configuration state for API
     let config_state = ConfigState::new(config.clone(), args.config.clone());
-    
+
     // Start configuration management API server
     let config_api_port = config.base.monitoring.health_check_port + 1; // Use next port after health check
-    let config_router = create_config_router(config_state.clone())
-        .layer(CorsLayer::permissive());
-    
-    let config_listener = tokio::net::TcpListener::bind(format!("0.0.0.0:{}", config_api_port)).await
+    let config_router = create_config_router(config_state.clone()).layer(CorsLayer::permissive());
+
+    let config_listener = tokio::net::TcpListener::bind(format!("0.0.0.0:{}", config_api_port))
+        .await
         .expect("Failed to bind configuration API server");
-    
-    info!("Configuration API server starting on port {}", config_api_port);
-    
+
+    info!(
+        "Configuration API server starting on port {}",
+        config_api_port
+    );
+
     tokio::spawn(async move {
         if let Err(e) = axum::serve(config_listener, config_router).await {
             error!("Configuration API server error: {}", e);
@@ -79,7 +81,7 @@ async fn main() -> Result<()> {
         config.data.redis_data_key.clone(),
         config.data.redis_polling_interval_secs,
     )?;
-    
+
     tokio::spawn(async move {
         if let Err(e) = data_fetcher.start_polling(tx).await {
             error!("Redis data fetcher error: {}", e);
@@ -88,7 +90,7 @@ async fn main() -> Result<()> {
 
     // Create network clients using new configuration system
     let mut clients = Vec::new();
-    
+
     // Process all network configurations
     for network_config in &config.networks {
         let network_name = match network_config {
@@ -98,7 +100,7 @@ async fn main() -> Result<()> {
         };
 
         info!("Initializing network: {}", network_name);
-        
+
         // Create formatter based on configuration
         let formatter = match network_config {
             crate::config_new::NetworkConfig::LegacyMqtt(mqtt_config) => {
@@ -111,7 +113,7 @@ async fn main() -> Result<()> {
                 create_formatter(&convert_format_type(&cloud_config.format_type))
             }
         };
-        
+
         // Create client using new factory
         match create_network_client(network_config, formatter) {
             Ok(client) => {
@@ -120,7 +122,10 @@ async fn main() -> Result<()> {
                 clients.push((client_name, client));
             }
             Err(e) => {
-                error!("Failed to create client for network '{}': {}", network_name, e);
+                error!(
+                    "Failed to create client for network '{}': {}",
+                    network_name, e
+                );
             }
         }
     }
@@ -137,15 +142,15 @@ async fn main() -> Result<()> {
     // Main loop: Receive data and send to all networks
     while let Some(data) = rx.recv().await {
         debug!("Received data from Redis: {:?}", data);
-        
+
         for (name, client) in &clients {
             let client = client.lock().await;
-            
+
             if !client.is_connected() {
                 warn!("Client '{}' is not connected, skipping", name);
                 continue;
             }
-            
+
             // Format data - the formatter is embedded in the new client
             let formatted_data = match serde_json::to_string(&data) {
                 Ok(formatted) => formatted,
@@ -154,7 +159,7 @@ async fn main() -> Result<()> {
                     continue;
                 }
             };
-            
+
             // Send data using new client interface
             match client.send(&formatted_data).await {
                 Ok(_) => debug!("Data sent to network: {}", name),
@@ -178,15 +183,18 @@ async fn main() -> Result<()> {
 fn init_logging(config: &NetServiceConfig) {
     let filter = tracing_subscriber::EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new(&config.base.logging.level));
-    
+
     tracing_subscriber::fmt()
         .with_env_filter(filter)
         .with_target(false)
         .with_thread_ids(true)
         .with_level(true)
         .init();
-    
-    info!("Logging initialized at level: {}", config.base.logging.level);
+
+    info!(
+        "Logging initialized at level: {}",
+        config.base.logging.level
+    );
 }
 
 fn convert_format_type(format_type: &crate::config_new::FormatType) -> FormatType {
@@ -197,5 +205,3 @@ fn convert_format_type(format_type: &crate::config_new::FormatType) -> FormatTyp
         crate::config_new::FormatType::Protobuf => FormatType::Json, // Fallback to JSON
     }
 }
-
- 

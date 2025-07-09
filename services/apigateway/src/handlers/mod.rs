@@ -29,12 +29,10 @@ pub async fn proxy_request(
         .get_service_url(service_name)
         .ok_or_else(|| ApiError::ServiceNotFound(service_name.to_string()))?;
 
-    let timeout_seconds = config
-        .get_service_timeout(service_name)
-        .unwrap_or(30);
+    let timeout_seconds = config.get_service_timeout(service_name).unwrap_or(30);
 
     let full_url = format!("{}{}", service_url, path);
-    
+
     debug!("Proxying {} request to {}", method, full_url);
 
     let mut request = match method.to_uppercase().as_str() {
@@ -43,7 +41,12 @@ pub async fn proxy_request(
         "PUT" => client.put(&full_url),
         "DELETE" => client.delete(&full_url),
         "PATCH" => client.patch(&full_url),
-        _ => return Err(ApiError::BadRequest(format!("Unsupported method: {}", method))),
+        _ => {
+            return Err(ApiError::BadRequest(format!(
+                "Unsupported method: {}",
+                method
+            )))
+        }
     };
 
     // Copy headers from original request
@@ -75,7 +78,7 @@ pub async fn proxy_request(
 
             // Build response
             let mut res = HttpResponse::build(status);
-            
+
             // Copy response headers
             for (name, value) in headers {
                 if let Some(name) = name {
@@ -90,11 +93,20 @@ pub async fn proxy_request(
         Err(e) => {
             error!("Failed to proxy request to {}: {}", service_name, e);
             if e.is_timeout() {
-                Err(ApiError::Timeout(format!("Request to {} timed out", service_name)))
+                Err(ApiError::Timeout(format!(
+                    "Request to {} timed out",
+                    service_name
+                )))
             } else if e.is_connect() {
-                Err(ApiError::ServiceUnavailable(format!("{} is unavailable", service_name)))
+                Err(ApiError::ServiceUnavailable(format!(
+                    "{} is unavailable",
+                    service_name
+                )))
             } else {
-                Err(ApiError::BadGateway(format!("Failed to communicate with {}", service_name)))
+                Err(ApiError::BadGateway(format!(
+                    "Failed to communicate with {}",
+                    service_name
+                )))
             }
         }
     }

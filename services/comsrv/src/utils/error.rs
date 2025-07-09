@@ -128,15 +128,15 @@
 //!     if let Err(e) = result {
 //!         match &e {
 //!             ComSrvError::ConfigError(msg) => {
-//!                 error!("Configuration error: {}", msg);
+//!                 error!("Configuration error: {msg}");
 //!                 // Might need service restart
 //!             },
 //!             ComSrvError::TimeoutError(msg) => {
-//!                 warn!("Timeout occurred: {}", msg);
+//!                 warn!("Timeout occurred: {msg}");
 //!                 // Usually recoverable
 //!             },
 //!             _ => {
-//!                 error!("Unexpected error: {}", e);
+//!                 error!("Unexpected error: {e}");
 //!             }
 //!         }
 //!     }
@@ -604,7 +604,7 @@ impl<T, E: std::error::Error + Send + Sync + 'static> ErrorExt<T> for std::resul
     where
         C: AsRef<str>,
     {
-        self.map_err(|e| ComSrvError::UnknownError(format!("{}: {}", context.as_ref(), e)))
+        self.map_err(|e| ComSrvError::UnknownError(format!("{}: {e}", context.as_ref())))
     }
 
     fn with_context<C, F>(self, f: F) -> Result<T>
@@ -612,28 +612,28 @@ impl<T, E: std::error::Error + Send + Sync + 'static> ErrorExt<T> for std::resul
         C: AsRef<str>,
         F: FnOnce() -> C,
     {
-        self.map_err(|e| ComSrvError::UnknownError(format!("{}: {}", f().as_ref(), e)))
+        self.map_err(|e| ComSrvError::UnknownError(format!("{}: {e}", f().as_ref())))
     }
 
     fn config_error<C>(self, context: C) -> Result<T>
     where
         C: AsRef<str>,
     {
-        self.map_err(|e| ComSrvError::ConfigError(format!("{}: {}", context.as_ref(), e)))
+        self.map_err(|e| ComSrvError::ConfigError(format!("{}: {e}", context.as_ref())))
     }
 
     fn protocol_error<C>(self, context: C) -> Result<T>
     where
         C: AsRef<str>,
     {
-        self.map_err(|e| ComSrvError::ProtocolError(format!("{}: {}", context.as_ref(), e)))
+        self.map_err(|e| ComSrvError::ProtocolError(format!("{}: {e}", context.as_ref())))
     }
 
     fn connection_error<C>(self, context: C) -> Result<T>
     where
         C: AsRef<str>,
     {
-        self.map_err(|e| ComSrvError::ConnectionError(format!("{}: {}", context.as_ref(), e)))
+        self.map_err(|e| ComSrvError::ConnectionError(format!("{}: {e}", context.as_ref())))
     }
 }
 
@@ -677,21 +677,21 @@ impl From<serde_json::Error> for ComSrvError {
 /// Convert from tokio_serial error to ComSrvError
 impl From<tokio_serial::Error> for ComSrvError {
     fn from(err: tokio_serial::Error) -> Self {
-        ComSrvError::CommunicationError(format!("Serial port error: {}", err))
+        ComSrvError::CommunicationError(format!("Serial port error: {err}"))
     }
 }
 
 /// Convert from axum HTTP error to ComSrvError
 impl From<axum::http::Error> for ComSrvError {
     fn from(error: axum::http::Error) -> Self {
-        ComSrvError::InternalError(format!("HTTP error: {}", error))
+        ComSrvError::InternalError(format!("HTTP error: {error}"))
     }
 }
 
 /// Convert from address parse error to ComSrvError
 impl From<std::net::AddrParseError> for ComSrvError {
     fn from(err: std::net::AddrParseError) -> Self {
-        ComSrvError::ConfigError(format!("Address parse error: {}", err))
+        ComSrvError::ConfigError(format!("Address parse error: {err}"))
     }
 }
 

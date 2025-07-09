@@ -186,7 +186,7 @@ impl PollingPoint {
             timestamp: Utc::now(),
             unit: self.unit.clone(),
             description: self.description.clone(),
-            telemetry_type: Some(self.telemetry_type.clone()),
+            telemetry_type: Some(self.telemetry_type),
             channel_id: None,
         }
     }

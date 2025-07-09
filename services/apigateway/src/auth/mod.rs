@@ -6,12 +6,12 @@ use uuid::Uuid;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Claims {
-    pub sub: String,          // User ID
-    pub username: String,     // Username
-    pub roles: Vec<String>,   // User roles
-    pub exp: usize,          // Expiration time (as UTC timestamp)
-    pub iat: usize,          // Issued at (as UTC timestamp)
-    pub jti: Uuid,           // JWT ID (unique identifier)
+    pub sub: String,        // User ID
+    pub username: String,   // Username
+    pub roles: Vec<String>, // User roles
+    pub exp: usize,         // Expiration time (as UTC timestamp)
+    pub iat: usize,         // Issued at (as UTC timestamp)
+    pub jti: Uuid,          // JWT ID (unique identifier)
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -53,7 +53,10 @@ pub fn check_permission(roles: &[String], required_permission: Permission) -> bo
 fn has_permission(role: &str, permission: &Permission) -> bool {
     match role {
         "admin" => true, // Admin has all permissions
-        "operator" => matches!(permission, Permission::Read | Permission::Write | Permission::Control),
+        "operator" => matches!(
+            permission,
+            Permission::Read | Permission::Write | Permission::Control
+        ),
         "engineer" => matches!(permission, Permission::Read | Permission::Write),
         "viewer" => matches!(permission, Permission::Read),
         _ => false,

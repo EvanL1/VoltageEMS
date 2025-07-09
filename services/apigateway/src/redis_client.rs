@@ -1,7 +1,7 @@
 use crate::error::ApiResult;
 use redis::{aio::ConnectionManager, AsyncCommands};
-use tokio::sync::Mutex;
 use std::sync::Arc;
+use tokio::sync::Mutex;
 
 pub struct RedisClient {
     connection: Arc<Mutex<ConnectionManager>>,
@@ -11,9 +11,9 @@ impl RedisClient {
     pub async fn new(redis_url: &str) -> ApiResult<Self> {
         let client = redis::Client::open(redis_url)?;
         let connection = ConnectionManager::new(client).await?;
-        
-        Ok(Self { 
-            connection: Arc::new(Mutex::new(connection))
+
+        Ok(Self {
+            connection: Arc::new(Mutex::new(connection)),
         })
     }
 

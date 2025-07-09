@@ -1,6 +1,6 @@
+use crate::{ConfigError, Configurable, Result};
 use serde::{Deserialize, Serialize};
 use std::any::Any;
-use crate::{Configurable, Result, ConfigError};
 
 /// Base configuration shared by all VoltageEMS services
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -132,43 +132,55 @@ impl Configurable for BaseServiceConfig {
     fn validate(&self) -> Result<()> {
         // Validate service info
         if self.service.name.is_empty() {
-            return Err(ConfigError::Validation("Service name cannot be empty".into()));
+            return Err(ConfigError::Validation(
+                "Service name cannot be empty".into(),
+            ));
         }
-        
+
         if self.service.version.is_empty() {
-            return Err(ConfigError::Validation("Service version cannot be empty".into()));
+            return Err(ConfigError::Validation(
+                "Service version cannot be empty".into(),
+            ));
         }
-        
+
         // Validate Redis config
         if !self.redis.url.starts_with("redis://") {
-            return Err(ConfigError::Validation("Redis URL must start with redis://".into()));
+            return Err(ConfigError::Validation(
+                "Redis URL must start with redis://".into(),
+            ));
         }
-        
+
         if self.redis.pool_size == 0 {
-            return Err(ConfigError::Validation("Redis pool size must be greater than 0".into()));
+            return Err(ConfigError::Validation(
+                "Redis pool size must be greater than 0".into(),
+            ));
         }
-        
+
         // Validate logging config
         match self.logging.level.as_str() {
             "trace" | "debug" | "info" | "warn" | "error" => {}
-            _ => return Err(ConfigError::Validation(format!(
-                "Invalid log level: {}. Must be one of: trace, debug, info, warn, error",
-                self.logging.level
-            ))),
+            _ => {
+                return Err(ConfigError::Validation(format!(
+                    "Invalid log level: {}. Must be one of: trace, debug, info, warn, error",
+                    self.logging.level
+                )))
+            }
         }
-        
+
         // Validate monitoring config
         if self.monitoring.metrics_port == 0 {
             return Err(ConfigError::Validation("Metrics port cannot be 0".into()));
         }
-        
+
         if self.monitoring.health_check_port == 0 {
-            return Err(ConfigError::Validation("Health check port cannot be 0".into()));
+            return Err(ConfigError::Validation(
+                "Health check port cannot be 0".into(),
+            ));
         }
-        
+
         Ok(())
     }
-    
+
     fn as_any(&self) -> &dyn Any {
         self
     }
@@ -178,18 +190,18 @@ impl Configurable for BaseServiceConfig {
 pub trait ServiceConfig: Configurable {
     /// Get the base service configuration
     fn base(&self) -> &BaseServiceConfig;
-    
+
     /// Get mutable reference to base service configuration
     fn base_mut(&mut self) -> &mut BaseServiceConfig;
-    
+
     /// Validate the complete configuration including base and service-specific parts
     fn validate_all(&self) -> Result<()> {
         // First validate base configuration
         self.base().validate()?;
-        
+
         // Then validate service-specific configuration
         self.validate()?;
-        
+
         Ok(())
     }
 }
@@ -197,7 +209,7 @@ pub trait ServiceConfig: Configurable {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_base_config_validation() {
         let mut config = BaseServiceConfig {
@@ -228,19 +240,19 @@ mod tests {
                 health_check_interval: 30,
             },
         };
-        
+
         assert!(config.validate().is_ok());
-        
+
         // Test invalid service name
         config.service.name = "".to_string();
         assert!(config.validate().is_err());
         config.service.name = "test-service".to_string();
-        
+
         // Test invalid Redis URL
         config.redis.url = "invalid-url".to_string();
         assert!(config.validate().is_err());
         config.redis.url = "redis://localhost:6379".to_string();
-        
+
         // Test invalid log level
         config.logging.level = "invalid".to_string();
         assert!(config.validate().is_err());

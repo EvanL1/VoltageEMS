@@ -29,7 +29,7 @@ pub struct ConfigWatcher {
 impl ConfigWatcher {
     pub fn new(loader: ConfigLoader, watch_paths: Vec<PathBuf>) -> Self {
         let (sender, receiver) = mpsc::channel(100);
-        
+
         Self {
             loader: Arc::new(Mutex::new(loader)),
             watch_paths,
@@ -47,26 +47,29 @@ impl ConfigWatcher {
 
     pub async fn start(&self) -> Result<()> {
         self.initialize_file_states().await?;
-        
+
         let _loader = Arc::clone(&self.loader);
         let watch_paths = self.watch_paths.clone();
         let interval = self.interval;
         let sender = self.sender.clone();
         let file_states = Arc::clone(&self.file_states);
-        
+
         tokio::spawn(async move {
             let mut interval_timer = time::interval(interval);
-            
+
             loop {
                 interval_timer.tick().await;
-                
+
                 if let Err(e) = check_for_changes(&watch_paths, &file_states, &sender).await {
                     error!("Error checking for file changes: {}", e);
                 }
             }
         });
-        
-        info!("Configuration watcher started with interval: {:?}", self.interval);
+
+        info!(
+            "Configuration watcher started with interval: {:?}",
+            self.interval
+        );
         Ok(())
     }
 
@@ -81,18 +84,18 @@ impl ConfigWatcher {
     {
         let mut loader = self.loader.lock().await;
         let config = loader.reload()?;
-        
+
         self.sender
             .send(WatchEvent::Reloaded)
             .await
             .map_err(|e| ConfigError::Watch(format!("Failed to send reload event: {}", e)))?;
-        
+
         Ok(config)
     }
 
     async fn initialize_file_states(&self) -> Result<()> {
         let mut states = self.file_states.lock().await;
-        
+
         for watch_path in &self.watch_paths {
             if watch_path.is_dir() {
                 for entry in WalkDir::new(watch_path)
@@ -116,7 +119,7 @@ impl ConfigWatcher {
                 }
             }
         }
-        
+
         debug!("Initialized file states for {} files", states.len());
         Ok(())
     }
@@ -129,7 +132,7 @@ async fn check_for_changes(
 ) -> Result<()> {
     let mut states = file_states.lock().await;
     let mut changes = Vec::new();
-    
+
     for watch_path in watch_paths {
         if watch_path.is_dir() {
             for entry in WalkDir::new(watch_path)
@@ -139,7 +142,7 @@ async fn check_for_changes(
             {
                 if entry.file_type().is_file() {
                     let path = entry.path().to_path_buf();
-                    
+
                     if let Ok(metadata) = entry.metadata() {
                         if let Ok(modified) = metadata.modified() {
                             match states.get(&path) {
@@ -178,18 +181,18 @@ async fn check_for_changes(
             }
         }
     }
-    
+
     let to_remove: Vec<_> = states
         .keys()
         .filter(|path| !path.exists())
         .cloned()
         .collect();
-    
+
     for path in to_remove {
         states.remove(&path);
         changes.push(WatchEvent::Deleted(path));
     }
-    
+
     for change in changes {
         debug!("Detected change: {:?}", change);
         sender
@@ -197,6 +200,6 @@ async fn check_for_changes(
             .await
             .map_err(|e| ConfigError::Watch(format!("Failed to send change event: {}", e)))?;
     }
-    
+
     Ok(())
 }

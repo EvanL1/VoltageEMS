@@ -1,16 +1,16 @@
 //! SQLite configuration provider for Figment
-//! 
+//!
 //! This provider loads configuration from a SQLite database,
 //! allowing for dynamic configuration management.
 
+use async_trait::async_trait;
 use figment::{
     value::{Dict, Map, Value},
     Metadata, Profile, Provider,
 };
+use serde_json;
 use sqlx::{sqlite::SqlitePool, Row};
 use std::collections::HashMap;
-use async_trait::async_trait;
-use serde_json;
 use tracing::{debug, error, info, warn};
 
 /// SQLite configuration provider
@@ -25,77 +25,76 @@ pub struct SqliteProvider {
 
 impl SqliteProvider {
     /// Create a new SQLite provider
-    pub async fn new(database_url: &str, service_name: impl Into<String>) -> Result<Self, sqlx::Error> {
+    pub async fn new(
+        database_url: &str,
+        service_name: impl Into<String>,
+    ) -> Result<Self, sqlx::Error> {
         let pool = SqlitePool::connect(database_url).await?;
-        
+
         Ok(Self {
             pool,
             service_name: service_name.into(),
             profile: Profile::Default,
         })
     }
-    
+
     /// Create a new SQLite provider with a specific profile
     pub async fn with_profile(
-        database_url: &str, 
+        database_url: &str,
         service_name: impl Into<String>,
-        profile: Profile
+        profile: Profile,
     ) -> Result<Self, sqlx::Error> {
         let pool = SqlitePool::connect(database_url).await?;
-        
+
         Ok(Self {
             pool,
             service_name: service_name.into(),
             profile,
         })
     }
-    
+
     /// Initialize the database schema
     pub async fn init_schema(&self) -> Result<(), sqlx::Error> {
         let schema = include_str!("../schema/sqlite_schema.sql");
         let statements: Vec<&str> = schema.split(';').collect();
-        
+
         for statement in statements {
             let trimmed = statement.trim();
             if !trimmed.is_empty() {
-                sqlx::query(trimmed)
-                    .execute(&self.pool)
-                    .await?;
+                sqlx::query(trimmed).execute(&self.pool).await?;
             }
         }
-        
+
         info!("SQLite schema initialized successfully");
         Ok(())
     }
-    
+
     /// Load configuration from database
     async fn load_config(&self) -> Result<Map<String, Value>, sqlx::Error> {
         let configs = sqlx::query(
             "SELECT key, value, type FROM configs 
              WHERE service = ? AND is_active = 1
-             ORDER BY key"
+             ORDER BY key",
         )
         .bind(&self.service_name)
         .fetch_all(&self.pool)
         .await?;
-        
+
         let mut result = Map::new();
-        
+
         for row in configs {
             let key: String = row.get("key");
             let value_str: String = row.get("value");
             let value_type: String = row.get("type");
-            
+
             let value = match value_type.as_str() {
-                "json" => {
-                    match serde_json::from_str::<serde_json::Value>(&value_str) {
-                        Ok(json_val) => self.json_to_figment_value(json_val),
-                        Err(e) => {
-                            error!("Failed to parse JSON value for key {}: {}", key, e);
-                            continue;
-                        }
+                "json" => match serde_json::from_str::<serde_json::Value>(&value_str) {
+                    Ok(json_val) => self.json_to_figment_value(json_val),
+                    Err(e) => {
+                        error!("Failed to parse JSON value for key {}: {}", key, e);
+                        continue;
                     }
-                }
+                },
                 "string" => Value::from(value_str),
                 "number" => {
                     if let Ok(n) = value_str.parse::<i64>() {
@@ -103,34 +102,45 @@ impl SqliteProvider {
                     } else if let Ok(f) = value_str.parse::<f64>() {
                         Value::from(f)
                     } else {
-                        error!("Failed to parse number value for key {}: {}", key, value_str);
+                        error!(
+                            "Failed to parse number value for key {}: {}",
+                            key, value_str
+                        );
                         continue;
                     }
                 }
-                "boolean" => {
-                    match value_str.to_lowercase().as_str() {
-                        "true" | "1" | "yes" | "on" => Value::from(true),
-                        "false" | "0" | "no" | "off" => Value::from(false),
-                        _ => {
-                            error!("Failed to parse boolean value for key {}: {}", key, value_str);
-                            continue;
-                        }
+                "boolean" => match value_str.to_lowercase().as_str() {
+                    "true" | "1" | "yes" | "on" => Value::from(true),
+                    "false" | "0" | "no" | "off" => Value::from(false),
+                    _ => {
+                        error!(
+                            "Failed to parse boolean value for key {}: {}",
+                            key, value_str
+                        );
+                        continue;
                     }
-                }
+                },
                 _ => {
-                    warn!("Unknown type {} for key {}, treating as string", value_type, key);
+                    warn!(
+                        "Unknown type {} for key {}, treating as string",
+                        value_type, key
+                    );
                     Value::from(value_str)
                 }
             };
-            
+
             // Handle nested keys (e.g., "redis.host" -> { redis: { host: value } })
             self.insert_nested(&mut result, &key, value);
         }
-        
-        debug!("Loaded {} configuration items for service {}", result.len(), self.service_name);
+
+        debug!(
+            "Loaded {} configuration items for service {}",
+            result.len(),
+            self.service_name
+        );
         Ok(result)
     }
-    
+
     /// Convert serde_json::Value to figment::Value
     fn json_to_figment_value(&self, json: serde_json::Value) -> Value {
         match json {
@@ -147,7 +157,8 @@ impl SqliteProvider {
             }
             serde_json::Value::String(s) => Value::from(s),
             serde_json::Value::Array(arr) => {
-                let values: Vec<Value> = arr.into_iter()
+                let values: Vec<Value> = arr
+                    .into_iter()
                     .map(|v| self.json_to_figment_value(v))
                     .collect();
                 Value::from(values)
@@ -161,29 +172,33 @@ impl SqliteProvider {
             }
         }
     }
-    
+
     /// Insert a value into a nested map structure
     fn insert_nested(&self, map: &mut Map<String, Value>, key: &str, value: Value) {
         let parts: Vec<&str> = key.split('.').collect();
-        
+
         if parts.len() == 1 {
             map.insert(key.to_string(), value);
             return;
         }
-        
+
         let mut current = map;
-        
+
         for (i, part) in parts.iter().enumerate() {
             if i == parts.len() - 1 {
                 current.insert(part.to_string(), value.clone());
             } else {
-                let entry = current.entry(part.to_string())
+                let entry = current
+                    .entry(part.to_string())
                     .or_insert_with(|| Value::from(Map::new()));
-                
+
                 if let Value::Dict(_, dict) = entry {
                     current = dict;
                 } else {
-                    error!("Cannot create nested structure for key {}: conflict at {}", key, part);
+                    error!(
+                        "Cannot create nested structure for key {}: conflict at {}",
+                        key, part
+                    );
                     return;
                 }
             }
@@ -197,34 +212,35 @@ impl Provider for SqliteProvider {
             .source(format!("sqlite:{}", self.service_name))
             .interpolater(|profile, map| {
                 let mut result = Map::new();
-                
+
                 if let Some(("sqlite", rest)) = profile.starts_with_any(&["sqlite"]) {
                     if !rest.is_empty() {
                         result.insert("service".to_string(), Value::from(rest));
                     }
                 }
-                
+
                 for (k, v) in map {
                     result.insert(k.clone(), v.clone());
                 }
-                
+
                 result
             })
     }
-    
+
     fn data(&self) -> Result<Map<Profile, Dict>, figment::Error> {
         // This is a sync method, but we need to load async data
         // We'll use a runtime handle to execute the async operation
         let rt = tokio::runtime::Handle::current();
-        
+
         let config = rt.block_on(async {
-            self.load_config().await
+            self.load_config()
+                .await
                 .map_err(|e| figment::Error::from(e.to_string()))
         })?;
-        
+
         let mut result = Map::new();
         result.insert(self.profile.clone(), config);
-        
+
         Ok(result)
     }
 }
@@ -233,14 +249,23 @@ impl Provider for SqliteProvider {
 #[async_trait]
 pub trait AsyncSqliteProvider {
     /// Load point table data
-    async fn load_point_tables(&self, channel_id: i32) -> Result<Vec<PointTableEntry>, sqlx::Error>;
-    
+    async fn load_point_tables(&self, channel_id: i32)
+        -> Result<Vec<PointTableEntry>, sqlx::Error>;
+
     /// Load protocol mappings
-    async fn load_protocol_mappings(&self, channel_id: i32) -> Result<Vec<ProtocolMapping>, sqlx::Error>;
-    
+    async fn load_protocol_mappings(
+        &self,
+        channel_id: i32,
+    ) -> Result<Vec<ProtocolMapping>, sqlx::Error>;
+
     /// Save configuration
-    async fn save_config(&self, key: &str, value: &str, value_type: &str) -> Result<(), sqlx::Error>;
-    
+    async fn save_config(
+        &self,
+        key: &str,
+        value: &str,
+        value_type: &str,
+    ) -> Result<(), sqlx::Error>;
+
     /// Delete configuration
     async fn delete_config(&self, key: &str) -> Result<(), sqlx::Error>;
 }
@@ -275,7 +300,10 @@ pub struct ProtocolMapping {
 
 #[async_trait]
 impl AsyncSqliteProvider for SqliteProvider {
-    async fn load_point_tables(&self, channel_id: i32) -> Result<Vec<PointTableEntry>, sqlx::Error> {
+    async fn load_point_tables(
+        &self,
+        channel_id: i32,
+    ) -> Result<Vec<PointTableEntry>, sqlx::Error> {
         let entries = sqlx::query_as!(
             PointTableEntry,
             r#"
@@ -299,12 +327,19 @@ impl AsyncSqliteProvider for SqliteProvider {
         )
         .fetch_all(&self.pool)
         .await?;
-        
-        info!("Loaded {} point table entries for channel {}", entries.len(), channel_id);
+
+        info!(
+            "Loaded {} point table entries for channel {}",
+            entries.len(),
+            channel_id
+        );
         Ok(entries)
     }
-    
-    async fn load_protocol_mappings(&self, channel_id: i32) -> Result<Vec<ProtocolMapping>, sqlx::Error> {
+
+    async fn load_protocol_mappings(
+        &self,
+        channel_id: i32,
+    ) -> Result<Vec<ProtocolMapping>, sqlx::Error> {
         let mappings = sqlx::query_as!(
             ProtocolMapping,
             r#"
@@ -324,12 +359,21 @@ impl AsyncSqliteProvider for SqliteProvider {
         )
         .fetch_all(&self.pool)
         .await?;
-        
-        info!("Loaded {} protocol mappings for channel {}", mappings.len(), channel_id);
+
+        info!(
+            "Loaded {} protocol mappings for channel {}",
+            mappings.len(),
+            channel_id
+        );
         Ok(mappings)
     }
-    
-    async fn save_config(&self, key: &str, value: &str, value_type: &str) -> Result<(), sqlx::Error> {
+
+    async fn save_config(
+        &self,
+        key: &str,
+        value: &str,
+        value_type: &str,
+    ) -> Result<(), sqlx::Error> {
         sqlx::query(
             r#"
             INSERT INTO configs (service, key, value, type)
@@ -339,7 +383,7 @@ impl AsyncSqliteProvider for SqliteProvider {
                 type = excluded.type,
                 version = version + 1,
                 updated_at = CURRENT_TIMESTAMP
-            "#
+            "#,
         )
         .bind(&self.service_name)
         .bind(key)
@@ -347,21 +391,25 @@ impl AsyncSqliteProvider for SqliteProvider {
         .bind(value_type)
         .execute(&self.pool)
         .await?;
-        
-        info!("Saved configuration: service={}, key={}", self.service_name, key);
+
+        info!(
+            "Saved configuration: service={}, key={}",
+            self.service_name, key
+        );
         Ok(())
     }
-    
+
     async fn delete_config(&self, key: &str) -> Result<(), sqlx::Error> {
-        sqlx::query(
-            "UPDATE configs SET is_active = 0 WHERE service = ? AND key = ?"
-        )
-        .bind(&self.service_name)
-        .bind(key)
-        .execute(&self.pool)
-        .await?;
-        
-        info!("Deleted configuration: service={}, key={}", self.service_name, key);
+        sqlx::query("UPDATE configs SET is_active = 0 WHERE service = ? AND key = ?")
+            .bind(&self.service_name)
+            .bind(key)
+            .execute(&self.pool)
+            .await?;
+
+        info!(
+            "Deleted configuration: service={}, key={}",
+            self.service_name, key
+        );
         Ok(())
     }
 }
@@ -370,27 +418,34 @@ impl AsyncSqliteProvider for SqliteProvider {
 mod tests {
     use super::*;
     use tempfile::NamedTempFile;
-    
+
     #[tokio::test]
     async fn test_sqlite_provider() {
         let temp_file = NamedTempFile::new().unwrap();
         let db_url = format!("sqlite:{}", temp_file.path().display());
-        
-        let provider = SqliteProvider::new(&db_url, "test_service")
+
+        let provider = SqliteProvider::new(&db_url, "test_service").await.unwrap();
+
+        provider.init_schema().await.unwrap();
+
+        // Test saving configuration
+        provider
+            .save_config("test.key", "test_value", "string")
             .await
             .unwrap();
-        
-        provider.init_schema().await.unwrap();
-        
-        // Test saving configuration
-        provider.save_config("test.key", "test_value", "string").await.unwrap();
-        provider.save_config("test.number", "42", "number").await.unwrap();
-        provider.save_config("test.bool", "true", "boolean").await.unwrap();
-        
+        provider
+            .save_config("test.number", "42", "number")
+            .await
+            .unwrap();
+        provider
+            .save_config("test.bool", "true", "boolean")
+            .await
+            .unwrap();
+
         // Test loading configuration
         let config = provider.load_config().await.unwrap();
         assert_eq!(config.len(), 1); // Should have one top-level key "test"
-        
+
         if let Some(Value::Dict(_, test_dict)) = config.get("test") {
             assert_eq!(test_dict.get("key"), Some(&Value::from("test_value")));
             assert_eq!(test_dict.get("number"), Some(&Value::from(42)));

@@ -39,7 +39,7 @@ impl ConfigMigration {
     
     /// Migrate a configuration file
     pub async fn migrate_file(&self, input_path: &Path, output_path: &Path) -> Result<()> {
-        info!("Migrating configuration from {:?} to {:?}", input_path, output_path);
+        info!("Migrating configuration from {:?} to {output_path:?}", input_path);
         
         // Read old configuration
         let content = std::fs::read_to_string(input_path)?;
@@ -50,7 +50,7 @@ impl ConfigMigration {
         
         // Write new configuration
         if self.dry_run {
-            info!("Dry run mode - would write configuration to {:?}", output_path);
+            info!("Dry run mode - would write configuration to {output_path:?}");
             println!("Migrated configuration:");
             println!("{}", serde_yaml::to_string(&new_config)?);
         } else {
@@ -93,7 +93,7 @@ impl ConfigMigration {
             "IEC104" | "iec104" | "iec60870-5-104" => self.migrate_iec104(channel_map)?,
             "CAN" | "can" => self.migrate_can(channel_map)?,
             "Virtual" | "virtual" => self.migrate_virtual(channel_map)?,
-            _ => warn!("Unknown protocol type: {}", protocol),
+            _ => warn!("Unknown protocol type: {protocol}"),
         }
         
         // Normalize protocol name
@@ -290,7 +290,7 @@ pub async fn handle_migrate_command(input: &str, output: &str, dry_run: bool) ->
     let output_path = Path::new(output);
     
     if !input_path.exists() {
-        return Err(anyhow!("Input file does not exist: {:?}", input_path));
+        return Err(anyhow!("Input file does not exist: {input_path:?}"));
     }
     
     migration.migrate_file(input_path, output_path).await?;

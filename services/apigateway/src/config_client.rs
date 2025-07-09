@@ -1,8 +1,8 @@
-use std::sync::Arc;
-use tokio::sync::RwLock;
-use std::time::Duration;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::sync::Arc;
+use std::time::Duration;
+use tokio::sync::RwLock;
 
 use crate::config::Config;
 use crate::error::ApiGatewayError;
@@ -64,9 +64,13 @@ impl ConfigClient {
 
     /// Fetch configuration from config service
     pub async fn fetch_config(&self) -> Result<Config, ApiGatewayError> {
-        let url = format!("{}/api/v1/config/{}", self.config_service_url, self.service_name);
-        
-        let response = self.http_client
+        let url = format!(
+            "{}/api/v1/config/{}",
+            self.config_service_url, self.service_name
+        );
+
+        let response = self
+            .http_client
             .get(&url)
             .header("X-Service-Name", &self.service_name)
             .send()
@@ -74,9 +78,10 @@ impl ConfigClient {
             .map_err(|e| ApiGatewayError::ConfigFetchError(e.to_string()))?;
 
         if !response.status().is_success() {
-            return Err(ApiGatewayError::ConfigFetchError(
-                format!("Config service returned: {}", response.status())
-            ));
+            return Err(ApiGatewayError::ConfigFetchError(format!(
+                "Config service returned: {}",
+                response.status()
+            )));
         }
 
         let config_response: ConfigResponse = response
@@ -94,7 +99,7 @@ impl ConfigClient {
 
         // Convert to internal Config structure
         let config = self.convert_config(config_response.data)?;
-        
+
         // Update cache
         *self.cached_config.write().await = Some(config.clone());
 
@@ -104,12 +109,12 @@ impl ConfigClient {
     /// Check for configuration updates
     pub async fn check_for_updates(&self) -> Result<bool, ApiGatewayError> {
         let url = format!(
-            "{}/api/v1/config/{}/version", 
-            self.config_service_url, 
-            self.service_name
+            "{}/api/v1/config/{}/version",
+            self.config_service_url, self.service_name
         );
 
-        let response = self.http_client
+        let response = self
+            .http_client
             .get(&url)
             .header("X-Service-Name", &self.service_name)
             .send()
@@ -128,17 +133,17 @@ impl ConfigClient {
     /// Start configuration watch loop
     pub async fn start_watch_loop(&self, update_interval: Duration) {
         let client = self.clone();
-        
+
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(update_interval);
-            
+
             loop {
                 interval.tick().await;
-                
+
                 match client.check_for_updates().await {
                     Ok(true) => {
                         tracing::info!("Configuration update detected, fetching new config");
-                        
+
                         match client.fetch_config().await {
                             Ok(_) => {
                                 tracing::info!("Configuration updated successfully");
@@ -166,16 +171,24 @@ impl ConfigClient {
     }
 
     /// Update specific configuration
-    pub async fn update_config(&self, key: &str, value: serde_json::Value) -> Result<(), ApiGatewayError> {
-        let url = format!("{}/api/v1/config/{}/update", self.config_service_url, self.service_name);
-        
+    pub async fn update_config(
+        &self,
+        key: &str,
+        value: serde_json::Value,
+    ) -> Result<(), ApiGatewayError> {
+        let url = format!(
+            "{}/api/v1/config/{}/update",
+            self.config_service_url, self.service_name
+        );
+
         let update_request = ConfigUpdateRequest {
             key: key.to_string(),
             value,
             reason: "Updated via API Gateway".to_string(),
         };
 
-        let response = self.http_client
+        let response = self
+            .http_client
             .put(&url)
             .header("X-Service-Name", &self.service_name)
             .json(&update_request)
@@ -184,28 +197,33 @@ impl ConfigClient {
             .map_err(|e| ApiGatewayError::ConfigUpdateError(e.to_string()))?;
 
         if !response.status().is_success() {
-            return Err(ApiGatewayError::ConfigUpdateError(
-                format!("Config service returned: {}", response.status())
-            ));
+            return Err(ApiGatewayError::ConfigUpdateError(format!(
+                "Config service returned: {}",
+                response.status()
+            )));
         }
 
         // Fetch updated configuration
         self.fetch_config().await?;
-        
+
         Ok(())
     }
 
     /// Register for configuration change notifications
-    pub async fn register_for_notifications(&self, callback_url: &str) -> Result<(), ApiGatewayError> {
+    pub async fn register_for_notifications(
+        &self,
+        callback_url: &str,
+    ) -> Result<(), ApiGatewayError> {
         let url = format!("{}/api/v1/config/subscribe", self.config_service_url);
-        
+
         let subscription = NotificationSubscription {
             service: self.service_name.clone(),
             callback_url: callback_url.to_string(),
             events: vec!["update".to_string(), "delete".to_string()],
         };
 
-        let response = self.http_client
+        let response = self
+            .http_client
             .post(&url)
             .json(&subscription)
             .send()
@@ -213,9 +231,10 @@ impl ConfigClient {
             .map_err(|e| ApiGatewayError::ConfigSubscriptionError(e.to_string()))?;
 
         if !response.status().is_success() {
-            return Err(ApiGatewayError::ConfigSubscriptionError(
-                format!("Failed to subscribe: {}", response.status())
-            ));
+            return Err(ApiGatewayError::ConfigSubscriptionError(format!(
+                "Failed to subscribe: {}",
+                response.status()
+            )));
         }
 
         Ok(())
@@ -225,7 +244,7 @@ impl ConfigClient {
     fn convert_config(&self, data: ConfigData) -> Result<Config, ApiGatewayError> {
         // Convert from ConfigData to internal Config structure
         // This handles any format differences between config service and API Gateway
-        
+
         let config = Config {
             server: crate::config::ServerConfig {
                 host: data.server.host,

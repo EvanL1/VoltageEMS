@@ -8,8 +8,8 @@ use std::path::{Path, PathBuf};
 use tracing::{debug, info, warn};
 
 use crate::{
-    ConfigFormat, ConfigPath, ConfigValidator, Configurable, Environment, Result,
-    ValidationRule, SqliteProvider,
+    ConfigFormat, ConfigPath, ConfigValidator, Configurable, Environment, Result, SqliteProvider,
+    ValidationRule,
 };
 
 pub struct ConfigLoader {
@@ -28,26 +28,29 @@ impl ConfigLoader {
     where
         T: Configurable + for<'de> Deserialize<'de> + 'static,
     {
-        info!("Loading configuration for environment: {}", self.environment);
-        
+        info!(
+            "Loading configuration for environment: {}",
+            self.environment
+        );
+
         let config: T = self.figment.extract()?;
-        
+
         config.validate()?;
-        
+
         for (path, rules) in &self.validation_rules {
             debug!("Validating field: {}", path);
             for rule in rules {
                 rule.validate(&config as &dyn std::any::Any)?;
             }
         }
-        
+
         for validator in &self.validators {
             debug!("Running validator: {}", validator.name());
             tokio::runtime::Runtime::new()
                 .unwrap()
                 .block_on(validator.validate(&config as &(dyn std::any::Any + Send + Sync)))?;
         }
-        
+
         info!("Configuration loaded and validated successfully");
         Ok(config)
     }
@@ -56,24 +59,29 @@ impl ConfigLoader {
     where
         T: Configurable + for<'de> Deserialize<'de> + 'static,
     {
-        info!("Loading configuration asynchronously for environment: {}", self.environment);
-        
+        info!(
+            "Loading configuration asynchronously for environment: {}",
+            self.environment
+        );
+
         let config: T = self.figment.extract()?;
-        
+
         config.validate()?;
-        
+
         for (path, rules) in &self.validation_rules {
             debug!("Validating field: {}", path);
             for rule in rules {
                 rule.validate(&config as &dyn std::any::Any)?;
             }
         }
-        
+
         for validator in &self.validators {
             debug!("Running async validator: {}", validator.name());
-            validator.validate(&config as &(dyn std::any::Any + Send + Sync)).await?;
+            validator
+                .validate(&config as &(dyn std::any::Any + Send + Sync))
+                .await?;
         }
-        
+
         info!("Configuration loaded and validated successfully");
         Ok(config)
     }
@@ -123,7 +131,8 @@ impl ConfigLoaderBuilder {
     }
 
     pub fn add_file_with_format<P: AsRef<Path>>(mut self, path: P, format: ConfigFormat) -> Self {
-        self.config_files.push(ConfigPath::with_format(path, format));
+        self.config_files
+            .push(ConfigPath::with_format(path, format));
         self
     }
 
@@ -158,7 +167,7 @@ impl ConfigLoaderBuilder {
         self.defaults = Some(serde_json::to_value(defaults)?);
         Ok(self)
     }
-    
+
     pub fn add_sqlite<S: Into<String>>(mut self, database_url: S, service_name: S) -> Self {
         self.sqlite_config = Some((database_url.into(), service_name.into()));
         self
@@ -173,13 +182,11 @@ impl ConfigLoaderBuilder {
 
         let base_path = self.base_path.unwrap_or_else(|| PathBuf::from("config"));
 
-        figment = figment.merge(
-            Yaml::file(base_path.join("default.yml"))
-        );
+        figment = figment.merge(Yaml::file(base_path.join("default.yml")));
 
-        figment = figment.merge(
-            Yaml::file(base_path.join(format!("{}.yml", self.environment.as_str())))
-        );
+        figment = figment.merge(Yaml::file(
+            base_path.join(format!("{}.yml", self.environment.as_str())),
+        ));
 
         for config_path in self.config_files {
             if !config_path.exists() {
@@ -212,18 +219,24 @@ impl ConfigLoaderBuilder {
         // Add SQLite provider if configured
         if let Some((db_url, service_name)) = self.sqlite_config {
             // Create SQLite provider asynchronously
-            let rt = tokio::runtime::Runtime::new()
-                .map_err(|e| crate::ConfigError::Custom(format!("Failed to create runtime: {}", e)))?;
-            
+            let rt = tokio::runtime::Runtime::new().map_err(|e| {
+                crate::ConfigError::Custom(format!("Failed to create runtime: {}", e))
+            })?;
+
             let sqlite_provider = rt.block_on(async {
                 SqliteProvider::new(&db_url, service_name)
                     .await
-                    .map_err(|e| crate::ConfigError::Custom(format!("Failed to create SQLite provider: {}", e)))
+                    .map_err(|e| {
+                        crate::ConfigError::Custom(format!(
+                            "Failed to create SQLite provider: {}",
+                            e
+                        ))
+                    })
             })?;
-            
+
             figment = figment.merge(sqlite_provider);
         }
-        
+
         if let Some(prefix) = self.env_prefix {
             figment = figment.merge(Env::prefixed(&prefix).split("_"));
         } else {

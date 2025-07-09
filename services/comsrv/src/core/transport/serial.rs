@@ -214,7 +214,7 @@ impl Transport for SerialTransport {
                 // Set timeouts
                 #[cfg(unix)]
                 port.set_exclusive(false).map_err(|e| {
-                    TransportError::IoError(format!("Failed to set exclusive mode: {}", e))
+                    TransportError::IoError(format!("Failed to set exclusive mode: {e}"))
                 })?;
 
                 // Store the connection
@@ -230,8 +230,8 @@ impl Transport for SerialTransport {
                 Ok(())
             }
             Err(e) => {
-                let error_msg = format!("Failed to open serial port {}: {}", self.config.port, e);
-                error!("{}", error_msg);
+                let error_msg = format!("Failed to open serial port {}: {e}", self.config.port);
+                error!("{error_msg}");
 
                 let mut stats = self.stats.write().await;
                 stats.record_failed_connection();
@@ -272,13 +272,13 @@ impl Transport for SerialTransport {
                         let mut stats = self.stats.write().await;
                         stats.record_bytes_sent(bytes_sent);
 
-                        debug!(hex_data = %data.iter().map(|b| format!("{:02X}", b)).collect::<Vec<_>>().join(" "), length = bytes_sent, direction = "send", "[Serial Transport] Raw packet");
+                        debug!(hex_data = %data.iter().map(|b| format!("{b:02X}")).collect::<Vec<_>>().join(" "), length = bytes_sent, direction = "send", "[Serial Transport] Raw packet");
                         debug!("Sent {} bytes via serial port", bytes_sent);
                         Ok(bytes_sent)
                     }
                     Ok(Err(e)) => {
-                        let error_msg = format!("Failed to send data: {}", e);
-                        error!("{}", error_msg);
+                        let error_msg = format!("Failed to send data: {e}");
+                        error!("{error_msg}");
 
                         // Connection might be broken, remove it
                         *conn = None;
@@ -294,7 +294,7 @@ impl Transport for SerialTransport {
                             "Send operation timed out after {:?}",
                             self.config.write_timeout
                         );
-                        warn!("{}", error_msg);
+                        warn!("{error_msg}");
                         Err(TransportError::Timeout(error_msg))
                     }
                 }
@@ -330,13 +330,13 @@ impl Transport for SerialTransport {
                         let mut stats = self.stats.write().await;
                         stats.record_bytes_received(bytes_read);
 
-                        debug!(hex_data = %buffer[..bytes_read].iter().map(|b| format!("{:02X}", b)).collect::<Vec<_>>().join(" "), length = bytes_read, direction = "recv", "[Serial Transport] Raw packet");
+                        debug!(hex_data = %buffer[..bytes_read].iter().map(|b| format!("{b:02X}")).collect::<Vec<_>>().join(" "), length = bytes_read, direction = "recv", "[Serial Transport] Raw packet");
                         debug!("Received {} bytes via serial port", bytes_read);
                         Ok(bytes_read)
                     }
                     Ok(Err(e)) => {
-                        let error_msg = format!("Failed to receive data: {}", e);
-                        error!("{}", error_msg);
+                        let error_msg = format!("Failed to receive data: {e}");
+                        error!("{error_msg}");
 
                         // Connection might be broken, remove it
                         *conn = None;
@@ -349,8 +349,8 @@ impl Transport for SerialTransport {
                     }
                     Err(_) => {
                         let error_msg =
-                            format!("Receive operation timed out after {:?}", receive_timeout);
-                        debug!("{}", error_msg); // Debug level for timeout, as it's often expected
+                            format!("Receive operation timed out after {receive_timeout:?}");
+                        debug!("{error_msg}"); // Debug level for timeout, as it's often expected
                         Err(TransportError::Timeout(error_msg))
                     }
                 }

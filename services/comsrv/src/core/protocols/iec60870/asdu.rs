@@ -197,19 +197,19 @@ impl TypeId {
     /// Check if this type ID is for a command
     pub fn is_command(self) -> bool {
         let val = self as u8;
-        val >= 45 && val <= 107
+        (45..=107).contains(&val)
     }
 
     /// Check if this type ID is for a parameter
     pub fn is_parameter(self) -> bool {
         let val = self as u8;
-        val >= 110 && val <= 113
+        (110..=113).contains(&val)
     }
 
     /// Check if this type ID is for a file transfer
     pub fn is_file_transfer(self) -> bool {
         let val = self as u8;
-        val >= 120 && val <= 127
+        (120..=127).contains(&val)
     }
 }
 
@@ -303,7 +303,7 @@ impl ASDU {
         // Read type ID
         let type_id_byte = cursor.read_u8()?;
         let type_id = TypeId::from_byte(type_id_byte)
-            .ok_or_else(|| IecError::ProtocolError(format!("Unknown TypeId: {}", type_id_byte)))?;
+            .ok_or_else(|| IecError::ProtocolError(format!("Unknown TypeId: {type_id_byte}")))?;
 
         // Read VSQ
         let vsq = cursor.read_u8()?;
@@ -311,7 +311,7 @@ impl ASDU {
         // Read COT with originator
         let cot_byte = cursor.read_u8()?;
         let cot = CauseOfTransmission::from_byte(cot_byte)
-            .ok_or_else(|| IecError::ProtocolError(format!("Unknown COT: {}", cot_byte)))?;
+            .ok_or_else(|| IecError::ProtocolError(format!("Unknown COT: {cot_byte}")))?;
         let originator = cursor.read_u8()?;
 
         // Read common address

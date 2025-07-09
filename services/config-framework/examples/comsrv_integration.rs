@@ -54,22 +54,28 @@ struct TelemetryConfig {
 impl Configurable for ComsrvConfig {
     fn validate(&self) -> Result<()> {
         if self.service.name.is_empty() {
-            return Err(ConfigError::Validation("Service name cannot be empty".into()));
+            return Err(ConfigError::Validation(
+                "Service name cannot be empty".into(),
+            ));
         }
-        
+
         if !self.redis.url.starts_with("redis://") {
-            return Err(ConfigError::Validation("Redis URL must start with redis://".into()));
+            return Err(ConfigError::Validation(
+                "Redis URL must start with redis://".into(),
+            ));
         }
-        
+
         if self.redis.pool_size == 0 {
-            return Err(ConfigError::Validation("Redis pool size must be greater than 0".into()));
+            return Err(ConfigError::Validation(
+                "Redis pool size must be greater than 0".into(),
+            ));
         }
-        
+
         for channel in &self.channels {
             if channel.id.is_empty() {
                 return Err(ConfigError::Validation("Channel ID cannot be empty".into()));
             }
-            
+
             match channel.protocol.as_str() {
                 "modbus_tcp" | "modbus_rtu" | "can" | "iec104" | "gpio" => {}
                 _ => {
@@ -80,10 +86,10 @@ impl Configurable for ComsrvConfig {
                 }
             }
         }
-        
+
         Ok(())
     }
-    
+
     fn as_any(&self) -> &dyn Any {
         self
     }
@@ -92,9 +98,9 @@ impl Configurable for ComsrvConfig {
 #[tokio::main]
 async fn main() -> Result<()> {
     tracing_subscriber::fmt::init();
-    
+
     let config_dir = std::env::current_dir()?.join("config");
-    
+
     let loader = ConfigLoaderBuilder::new()
         .base_path(&config_dir)
         .add_file("comsrv.yml")
@@ -145,11 +151,14 @@ async fn main() -> Result<()> {
             }
         }))?
         .build()?;
-    
+
     let config: ComsrvConfig = loader.load_async().await?;
-    
+
     println!("=== Comsrv Configuration ===");
-    println!("Service: {} v{}", config.service.name, config.service.version);
+    println!(
+        "Service: {} v{}",
+        config.service.name, config.service.version
+    );
     println!("Description: {}", config.service.description);
     println!("\nRedis:");
     println!("  URL: {}", config.redis.url);
@@ -166,7 +175,7 @@ async fn main() -> Result<()> {
     println!("  Adjustment: {}", config.point_map.adjustment_csv);
     println!("  Signal: {}", config.point_map.signal_csv);
     println!("\nChannels: {}", config.channels.len());
-    
+
     for channel in &config.channels {
         println!("  - Channel ID: {}", channel.id);
         println!("    Protocol: {}", channel.protocol);
@@ -175,14 +184,14 @@ async fn main() -> Result<()> {
             println!("    Point Table: {}", path);
         }
     }
-    
+
     let watcher = ConfigWatcher::new(loader, vec![config_dir])
         .with_interval(std::time::Duration::from_secs(5));
-    
+
     watcher.start().await?;
-    
+
     println!("\nWatching for configuration changes (press Ctrl+C to exit)...");
-    
+
     while let Some(event) = watcher.wait_for_change().await {
         match event {
             WatchEvent::Modified(path) => {
@@ -198,6 +207,6 @@ async fn main() -> Result<()> {
             _ => {}
         }
     }
-    
+
     Ok(())
 }

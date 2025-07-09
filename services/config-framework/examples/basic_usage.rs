@@ -35,14 +35,16 @@ impl Configurable for AppConfig {
         if self.server.port == 0 {
             return Err(ConfigError::Validation("Server port cannot be 0".into()));
         }
-        
+
         if self.database.max_connections == 0 {
-            return Err(ConfigError::Validation("Max connections must be greater than 0".into()));
+            return Err(ConfigError::Validation(
+                "Max connections must be greater than 0".into(),
+            ));
         }
-        
+
         Ok(())
     }
-    
+
     fn as_any(&self) -> &dyn Any {
         self
     }
@@ -51,7 +53,7 @@ impl Configurable for AppConfig {
 #[tokio::main]
 async fn main() -> Result<()> {
     tracing_subscriber::fmt::init();
-    
+
     let loader = ConfigLoaderBuilder::new()
         .base_path("config")
         .add_file("app.yml")
@@ -76,21 +78,21 @@ async fn main() -> Result<()> {
             }
         }))?
         .build()?;
-    
+
     let config: AppConfig = loader.load()?;
-    
+
     println!("Loaded configuration:");
     println!("Server: {}:{}", config.server.host, config.server.port);
     println!("Database URL: {}", config.database.url);
     println!("Log level: {}", config.logging.level);
-    
+
     let watcher = ConfigWatcher::new(loader, vec!["config".into()])
         .with_interval(std::time::Duration::from_secs(2));
-    
+
     watcher.start().await?;
-    
+
     println!("\nWatching for configuration changes (press Ctrl+C to exit)...");
-    
+
     while let Some(event) = watcher.wait_for_change().await {
         match event {
             WatchEvent::Modified(path) => {
@@ -114,6 +116,6 @@ async fn main() -> Result<()> {
             }
         }
     }
-    
+
     Ok(())
 }

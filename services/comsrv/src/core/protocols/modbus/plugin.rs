@@ -50,14 +50,14 @@ impl ModbusTcpPlugin {
             let address = match point.protocol_params.get("address") {
                 Some(addr) => addr,
                 None => {
-                    tracing::warn!("No address parameter for point {}", point_id);
+                    tracing::warn!("No address parameter for point {point_id}");
                     continue;
                 }
             };
 
             let address_parts: Vec<&str> = address.split(':').collect();
             if address_parts.len() < 3 {
-                tracing::warn!("Invalid address format for point {}: {}", point_id, address);
+                tracing::warn!("Invalid address format for point {}: {address}", point_id);
                 continue;
             }
 
@@ -305,7 +305,7 @@ impl ProtocolPlugin for ModbusTcpPlugin {
 
         // Extract Modbus configuration from channel config
         let params = &channel_config.parameters;
-        tracing::debug!("ModbusTcpPlugin: Parameters: {:?}", params);
+        tracing::debug!("ModbusTcpPlugin: Parameters: {params:?}");
 
         let host = params
             .get("host")
@@ -346,7 +346,7 @@ impl ProtocolPlugin for ModbusTcpPlugin {
             .create_tcp_transport(transport_config)
             .await
             .map_err(|e| {
-                tracing::error!("ModbusTcpPlugin: Failed to create TCP transport: {}", e);
+                tracing::error!("ModbusTcpPlugin: Failed to create TCP transport: {e}");
                 e
             })?;
         tracing::info!("ModbusTcpPlugin: TCP transport created successfully");
@@ -400,7 +400,7 @@ impl ProtocolPlugin for ModbusTcpPlugin {
         let mut client = ModbusClient::new(modbus_channel_config, transport)
             .await
             .map_err(|e| {
-                tracing::error!("ModbusTcpPlugin: Failed to create Modbus client: {}", e);
+                tracing::error!("ModbusTcpPlugin: Failed to create Modbus client: {e}");
                 e
             })?;
         tracing::info!("ModbusTcpPlugin: Modbus client created successfully");
@@ -417,7 +417,7 @@ impl ProtocolPlugin for ModbusTcpPlugin {
             let mapping_table = self.create_modbus_mapping_table(&channel_config);
 
             if let Err(e) = client.load_protocol_mappings(mapping_table).await {
-                tracing::warn!("ModbusTcpPlugin: Failed to load protocol mappings: {}", e);
+                tracing::warn!("ModbusTcpPlugin: Failed to load protocol mappings: {e}");
             } else {
                 tracing::info!("ModbusTcpPlugin: Successfully loaded protocol mappings");
             }
@@ -767,7 +767,7 @@ impl ProtocolPlugin for ModbusRtuPlugin {
             device_path: Some(device_path),
             baud_rate: Some(baud_rate),
             data_bits: Some(data_bits),
-            stop_bits: Some(stop_bits as u8),
+            stop_bits: Some(stop_bits),
             parity: Some(parity),
             timeout_ms: Some(timeout_ms),
             points: vec![], // Points will be configured later
@@ -816,7 +816,7 @@ impl ProtocolPlugin for ModbusRtuPlugin {
                 ModbusTcpPlugin::create_modbus_mapping_table(&Default::default(), &channel_config);
 
             if let Err(e) = client.load_protocol_mappings(mapping_table).await {
-                tracing::warn!("ModbusRtuPlugin: Failed to load protocol mappings: {}", e);
+                tracing::warn!("ModbusRtuPlugin: Failed to load protocol mappings: {e}");
             } else {
                 tracing::info!("ModbusRtuPlugin: Successfully loaded protocol mappings");
             }

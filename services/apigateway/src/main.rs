@@ -23,25 +23,31 @@ async fn main() -> std::io::Result<()> {
     env_logger::init_from_env(Env::default().default_filter_or("info"));
 
     // Initialize configuration client
-    let config_service_url = std::env::var("CONFIG_SERVICE_URL")
-        .unwrap_or_else(|_| "http://localhost:8000".to_string());
+    let config_service_url =
+        std::env::var("CONFIG_SERVICE_URL").unwrap_or_else(|_| "http://localhost:8000".to_string());
     let service_name = "apigateway";
-    
-    let config_client = Arc::new(ConfigClient::new(config_service_url, service_name.to_string()));
-    
+
+    let config_client = Arc::new(ConfigClient::new(
+        config_service_url,
+        service_name.to_string(),
+    ));
+
     // Fetch initial configuration from config service
     let config = match config_client.fetch_config().await {
         Ok(cfg) => Arc::new(cfg),
         Err(e) => {
-            log::warn!("Failed to fetch config from service: {}, falling back to local config", e);
+            log::warn!(
+                "Failed to fetch config from service: {}, falling back to local config",
+                e
+            );
             // Fallback to local configuration
             Arc::new(Config::load().expect("Failed to load local configuration"))
         }
     };
-    
+
     let bind_addr = format!("{}:{}", config.server.host, config.server.port);
     info!("Starting API Gateway on {}", bind_addr);
-    
+
     // Start configuration watch loop
     let update_interval = std::time::Duration::from_secs(30);
     config_client.start_watch_loop(update_interval).await;
@@ -78,7 +84,10 @@ async fn main() -> std::io::Result<()> {
                 web::scope("/api/v1")
                     // Public endpoints (no auth required)
                     .route("/auth/login", web::post().to(handlers::auth::login))
-                    .route("/auth/refresh", web::post().to(handlers::auth::refresh_token))
+                    .route(
+                        "/auth/refresh",
+                        web::post().to(handlers::auth::refresh_token),
+                    )
                     .service(handlers::health::health_check)
                     .service(handlers::health::detailed_health)
                     // Protected endpoints (auth required)
@@ -87,26 +96,13 @@ async fn main() -> std::io::Result<()> {
                             .wrap(JwtAuthMiddleware)
                             .route("/auth/logout", web::post().to(handlers::auth::logout))
                             .route("/auth/me", web::get().to(handlers::auth::current_user))
+                            .service(web::scope("/comsrv").service(handlers::comsrv::proxy_handler))
+                            .service(web::scope("/modsrv").service(handlers::modsrv::proxy_handler))
+                            .service(web::scope("/hissrv").service(handlers::hissrv::proxy_handler))
+                            .service(web::scope("/netsrv").service(handlers::netsrv::proxy_handler))
                             .service(
-                                web::scope("/comsrv")
-                                    .service(handlers::comsrv::proxy_handler)
-                            )
-                            .service(
-                                web::scope("/modsrv")
-                                    .service(handlers::modsrv::proxy_handler)
-                            )
-                            .service(
-                                web::scope("/hissrv")
-                                    .service(handlers::hissrv::proxy_handler)
-                            )
-                            .service(
-                                web::scope("/netsrv")
-                                    .service(handlers::netsrv::proxy_handler)
-                            )
-                            .service(
-                                web::scope("/alarmsrv")
-                                    .service(handlers::alarmsrv::proxy_handler)
-                            )
+                                web::scope("/alarmsrv").service(handlers::alarmsrv::proxy_handler),
+                            ),
                     ),
             )
             .route("/health", web::get().to(handlers::health::simple_health))

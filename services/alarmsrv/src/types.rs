@@ -138,7 +138,7 @@ impl Alarm {
             AlarmLevel::Major => AlarmLevel::Critical,
             AlarmLevel::Critical => AlarmLevel::Critical, // Already at max
         };
-        
+
         if new_level != self.level {
             self.level = new_level;
             self.updated_at = Utc::now();
@@ -242,9 +242,12 @@ impl CloudAlarm {
         let mut cloud_metadata = HashMap::new();
         cloud_metadata.insert("service".to_string(), "alarmsrv".to_string());
         cloud_metadata.insert("version".to_string(), "1.0".to_string());
-        cloud_metadata.insert("confidence".to_string(), alarm.classification.confidence.to_string());
+        cloud_metadata.insert(
+            "confidence".to_string(),
+            alarm.classification.confidence.to_string(),
+        );
         cloud_metadata.insert("reason".to_string(), alarm.classification.reason.clone());
-        
+
         Self {
             id: alarm.id.to_string(),
             title: alarm.title.clone(),
@@ -334,7 +337,7 @@ mod tests {
         );
 
         alarm.acknowledge("Test User".to_string());
-        
+
         assert_eq!(alarm.status, AlarmStatus::Acknowledged);
         assert!(alarm.acknowledged_by.is_some());
         assert!(alarm.acknowledged_at.is_some());
@@ -350,7 +353,7 @@ mod tests {
         );
 
         alarm.resolve("Test User".to_string());
-        
+
         assert_eq!(alarm.status, AlarmStatus::Resolved);
         assert!(alarm.resolved_by.is_some());
         assert!(alarm.resolved_at.is_some());
@@ -367,13 +370,13 @@ mod tests {
 
         alarm.escalate();
         assert_eq!(alarm.level, AlarmLevel::Minor);
-        
+
         alarm.escalate();
         assert_eq!(alarm.level, AlarmLevel::Major);
-        
+
         alarm.escalate();
         assert_eq!(alarm.level, AlarmLevel::Critical);
-        
+
         // Should stay at Critical
         alarm.escalate();
         assert_eq!(alarm.level, AlarmLevel::Critical);
@@ -394,15 +397,15 @@ mod tests {
             confidence: 0.9,
             reason: "Test classification".to_string(),
         };
-        
+
         alarm.set_classification(classification);
-        
+
         let cloud_alarm = CloudAlarm::from_alarm(&alarm);
-        
+
         assert_eq!(cloud_alarm.title, "Test Alarm");
         assert_eq!(cloud_alarm.category, "test");
         assert_eq!(cloud_alarm.priority, 75);
         assert_eq!(cloud_alarm.tags.len(), 2);
         assert!(cloud_alarm.cloud_metadata.contains_key("confidence"));
     }
-} 
+}

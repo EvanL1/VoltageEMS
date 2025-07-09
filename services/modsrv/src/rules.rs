@@ -1,6 +1,6 @@
 use crate::error::{ModelSrvError, Result};
 use crate::redis_handler::RedisConnection;
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::sync::Arc;
 use tracing::info;
@@ -97,41 +97,39 @@ pub struct RuleEngine {
 impl RuleEngine {
     /// Create a new rule engine
     pub fn new(redis: Arc<RedisConnection>) -> Self {
-        Self {
-            redis,
-        }
+        Self { redis }
     }
-    
+
     /// Get mutable connection
     fn get_mutable_connection(&self) -> Result<RedisConnection> {
         self.redis.clone().duplicate()
     }
-    
+
     /// Execute a rule
     pub async fn execute_rule(&self, rule_id: &str) -> Result<Value> {
         info!("Executing rule: {}", rule_id);
-        
+
         // Get rule from Redis
         let mut redis = self.get_mutable_connection()?;
         let key = format!("rule:{}", rule_id);
-        
+
         if !redis.exists(&key)? {
             return Err(ModelSrvError::RuleNotFound(rule_id.to_string()));
         }
-        
+
         let rule_json = redis.get_string(&key)?;
         let rule: DagRule = serde_json::from_str(&rule_json)?;
-        
+
         if !rule.enabled {
             return Err(ModelSrvError::RuleDisabled(rule_id.to_string()));
         }
-        
+
         // TODO: Implement rule execution logic
-        
+
         Ok(json!({
             "status": "executed",
             "rule_id": rule_id,
             "message": "Rule executed successfully"
         }))
     }
-} 
+}

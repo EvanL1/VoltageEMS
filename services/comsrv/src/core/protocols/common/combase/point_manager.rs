@@ -291,7 +291,7 @@ impl UniversalPointManager {
     /// Update point value in cache
     pub async fn update_point_value(&self, point_id: &str, value: PointValueType) -> Result<()> {
         let config = self.get_point_config(point_id).await.ok_or_else(|| {
-            crate::utils::ComSrvError::NotFound(format!("Point not found: {}", point_id))
+            crate::utils::ComSrvError::NotFound(format!("Point not found: {point_id}"))
         })?;
 
         if !config.enabled {
@@ -386,8 +386,7 @@ impl UniversalPointManager {
             Ok(())
         } else {
             Err(crate::utils::ComSrvError::NotFound(format!(
-                "Point not found: {}",
-                point_id
+                "Point not found: {point_id}"
             )))
         }
     }
@@ -435,7 +434,7 @@ impl UniversalPointManager {
     /// Validate point value before writing
     pub async fn validate_point_value(&self, point_id: &str, _value: f64) -> Result<()> {
         let config = self.get_point_config(point_id).await.ok_or_else(|| {
-            crate::utils::ComSrvError::NotFound(format!("Point not found: {}", point_id))
+            crate::utils::ComSrvError::NotFound(format!("Point not found: {point_id}"))
         })?;
 
         if !config.enabled {

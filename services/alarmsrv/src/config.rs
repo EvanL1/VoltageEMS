@@ -59,7 +59,12 @@ impl RedisConfig {
                 } else {
                     String::new()
                 };
-                format!("redis://{}{}/{}", auth, format!("{}:{}", self.host, self.port), self.database)
+                format!(
+                    "redis://{}{}/{}",
+                    auth,
+                    format!("{}:{}", self.host, self.port),
+                    self.database
+                )
             }
             RedisConnectionType::Unix => {
                 if let Some(ref path) = self.socket_path {
@@ -71,7 +76,12 @@ impl RedisConfig {
                     } else {
                         String::new()
                     };
-                    format!("redis://{}{}/{}", auth, format!("{}:{}", self.host, self.port), self.database)
+                    format!(
+                        "redis://{}{}/{}",
+                        auth,
+                        format!("{}:{}", self.host, self.port),
+                        self.database
+                    )
                 }
             }
         }
@@ -139,7 +149,8 @@ impl AlarmConfig {
                 connection_type: match std::env::var("REDIS_CONNECTION_TYPE")
                     .unwrap_or_else(|_| "tcp".to_string())
                     .to_lowercase()
-                    .as_str() {
+                    .as_str()
+                {
                     "unix" => RedisConnectionType::Unix,
                     _ => RedisConnectionType::Tcp,
                 },
@@ -184,7 +195,8 @@ impl AlarmConfig {
     /// Generate default configuration file
     pub fn generate_default_config() -> String {
         let config = Self::default();
-        serde_yaml::to_string(&config).unwrap_or_else(|_| "# Failed to generate config file".to_string())
+        serde_yaml::to_string(&config)
+            .unwrap_or_else(|_| "# Failed to generate config file".to_string())
     }
 }
 
@@ -230,7 +242,7 @@ mod tests {
             password: None,
             database: 0,
         };
-        
+
         let url = config.get_connection_url();
         assert_eq!(url, "redis://127.0.0.1:6379/0");
     }
@@ -245,7 +257,7 @@ mod tests {
             password: Some("mypassword".to_string()),
             database: 1,
         };
-        
+
         let url = config.get_connection_url();
         assert_eq!(url, "redis://:mypassword@127.0.0.1:6379/1");
     }
@@ -260,7 +272,7 @@ mod tests {
             password: None,
             database: 2,
         };
-        
+
         let url = config.get_connection_url();
         assert_eq!(url, "unix:///tmp/redis.sock?db=2");
     }
@@ -269,14 +281,14 @@ mod tests {
     fn test_redis_connection_url_unix_fallback() {
         let config = RedisConfig {
             connection_type: RedisConnectionType::Unix,
-            host: "localhost".to_string(), 
+            host: "localhost".to_string(),
             port: 6379,
             socket_path: None, // No socket path provided
             password: None,
             database: 0,
         };
-        
+
         let url = config.get_connection_url();
         assert_eq!(url, "redis://localhost:6379/0");
     }
-} 
+}

@@ -199,7 +199,7 @@ impl ModbusProtocolEngine {
         {
             Ok(file) => {
                 self.channel_log_file = Some(Arc::new(RwLock::new(file)));
-                info!("Created channel log file: {:?}", log_file_path);
+                info!("Created channel log file: {log_file_path:?}");
             }
             Err(e) => {
                 warn!(
@@ -214,7 +214,7 @@ impl ModbusProtocolEngine {
     async fn write_channel_log(&self, log_entry: &str) {
         if let Some(log_file) = &self.channel_log_file {
             let mut file = log_file.write().await;
-            let _ = writeln!(file, "{}", log_entry);
+            let _ = writeln!(file, "{log_entry}");
             let _ = file.flush();
         }
     }
@@ -390,7 +390,7 @@ impl ModbusProtocolEngine {
                 if !item.is_expired() {
                     let mut stats = self.stats.write().await;
                     stats.cache_hits += 1;
-                    debug!("Cache hit: {}", cache_key);
+                    debug!("Cache hit: {cache_key}");
                     return Ok(item.data.clone());
                 }
             }
@@ -458,10 +458,7 @@ impl ModbusProtocolEngine {
         let transaction_id = self
             .transaction_id
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        debug!(
-            "[Protocol Engine] Transaction ID assigned: {}",
-            transaction_id
-        );
+        debug!("[Protocol Engine] Transaction ID assigned: {transaction_id}");
 
         // Build frame
         let frame = self.frame_processor.read().await.build_frame(
@@ -894,7 +891,7 @@ impl ModbusProtocolEngine {
     /// 格式化字节数组为十六进制字符串
     fn format_hex(data: &[u8]) -> String {
         data.iter()
-            .map(|b| format!("{:02X}", b))
+            .map(|b| format!("{b:02X}"))
             .collect::<Vec<String>>()
             .join(" ")
     }

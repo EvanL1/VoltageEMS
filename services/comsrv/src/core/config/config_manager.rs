@@ -97,8 +97,7 @@ impl ConfigManager {
                 }
                 _ => {
                     return Err(ComSrvError::ConfigError(format!(
-                        "Unsupported configuration format: {}",
-                        extension
+                        "Unsupported configuration format: {extension}"
                     )));
                 }
             }
@@ -108,9 +107,9 @@ impl ConfigManager {
         figment = figment.merge(Env::prefixed("COMSRV_").split("_").lowercase(false));
 
         // Extract configuration
-        let mut config: AppConfig = figment.extract().map_err(|e| {
-            ComSrvError::ConfigError(format!("Failed to parse configuration: {}", e))
-        })?;
+        let mut config: AppConfig = figment
+            .extract()
+            .map_err(|e| ComSrvError::ConfigError(format!("Failed to parse configuration: {e}")))?;
 
         // Load CSV tables for each channel if configured
         let config_dir = path.parent();
@@ -150,7 +149,7 @@ impl ConfigManager {
         info!("Reloading configuration");
 
         let mut config: AppConfig = self.figment.extract().map_err(|e| {
-            ComSrvError::ConfigError(format!("Failed to reload configuration: {}", e))
+            ComSrvError::ConfigError(format!("Failed to reload configuration: {e}"))
         })?;
 
         // Preserve loaded CSV data during reload
@@ -327,8 +326,7 @@ impl ConfigManager {
                 "json" => figment = figment.merge(Json::file(path)),
                 _ => {
                     return Err(ComSrvError::ConfigError(format!(
-                        "Unsupported configuration format: {}",
-                        extension
+                        "Unsupported configuration format: {extension}"
                     )))
                 }
             }
@@ -338,9 +336,9 @@ impl ConfigManager {
         figment = figment.merge(Env::prefixed("COMSRV_").split("_").lowercase(false));
 
         // Extract and process configuration
-        let mut config: AppConfig = figment.extract().map_err(|e| {
-            ComSrvError::ConfigError(format!("Failed to parse configuration: {}", e))
-        })?;
+        let mut config: AppConfig = figment
+            .extract()
+            .map_err(|e| ComSrvError::ConfigError(format!("Failed to parse configuration: {e}")))?;
 
         // Load CSV tables
         let config_dir = path.parent();

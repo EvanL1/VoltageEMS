@@ -133,12 +133,12 @@ impl TcpTransport {
 
             // Enable TCP keep-alive
             if let Err(e) = socket.set_keepalive(true) {
-                warn!("Failed to set keep-alive: {}", e);
+                warn!("Failed to set keep-alive: {e}");
             }
 
             // Set TCP_NODELAY to disable Nagle's algorithm
             if let Err(e) = socket.set_nodelay(true) {
-                warn!("Failed to set TCP_NODELAY: {}", e);
+                warn!("Failed to set TCP_NODELAY: {e}");
             }
 
             // Forget the socket to avoid closing the file descriptor
@@ -152,12 +152,12 @@ impl TcpTransport {
 
             // Enable TCP keep-alive
             if let Err(e) = socket.set_keepalive(true) {
-                warn!("Failed to set keep-alive: {}", e);
+                warn!("Failed to set keep-alive: {e}");
             }
 
             // Set TCP_NODELAY to disable Nagle's algorithm
             if let Err(e) = socket.set_nodelay(true) {
-                warn!("Failed to set TCP_NODELAY: {}", e);
+                warn!("Failed to set TCP_NODELAY: {e}");
             }
 
             // Forget the socket to avoid closing the socket handle
@@ -185,7 +185,7 @@ impl Transport for TcpTransport {
         drop(stats);
 
         let addr = self.socket_addr()?;
-        debug!("Connecting to TCP endpoint: {}", addr);
+        debug!("Connecting to TCP endpoint: {addr}");
 
         // Attempt connection with timeout
         let connection_result = timeout(self.config.timeout, TcpStream::connect(&addr)).await;
@@ -204,12 +204,12 @@ impl Transport for TcpTransport {
                 let mut stats = self.stats.write().await;
                 stats.record_successful_connection();
 
-                info!("Successfully connected to TCP endpoint: {}", addr);
+                info!("Successfully connected to TCP endpoint: {addr}");
                 Ok(())
             }
             Ok(Err(e)) => {
-                let error_msg = format!("Failed to connect to {}: {}", addr, e);
-                error!("{}", error_msg);
+                let error_msg = format!("Failed to connect to {}: {e}", addr);
+                error!("{error_msg}");
 
                 let mut stats = self.stats.write().await;
                 stats.record_failed_connection();
@@ -218,7 +218,7 @@ impl Transport for TcpTransport {
             }
             Err(_) => {
                 let error_msg = format!("Connection to {} timed out", addr);
-                warn!("{}", error_msg);
+                warn!("{error_msg}");
 
                 let mut stats = self.stats.write().await;
                 stats.record_failed_connection();
@@ -232,7 +232,7 @@ impl Transport for TcpTransport {
         let mut conn = self.connection.write().await;
         if let Some(mut stream) = conn.take() {
             if let Err(e) = stream.shutdown().await {
-                warn!("Error during TCP shutdown: {}", e);
+                warn!("Error during TCP shutdown: {e}");
             }
         }
 
@@ -256,13 +256,13 @@ impl Transport for TcpTransport {
                         let mut stats = self.stats.write().await;
                         stats.record_bytes_sent(bytes_sent);
 
-                        debug!(hex_data = %data.iter().map(|b| format!("{:02X}", b)).collect::<Vec<_>>().join(" "), length = bytes_sent, direction = "send", "[TCP Transport] Raw packet");
+                        debug!(hex_data = %data.iter().map(|b| format!("{b:02X}")).collect::<Vec<_>>().join(" "), length = bytes_sent, direction = "send", "[TCP Transport] Raw packet");
                         debug!("Sent {} bytes via TCP", bytes_sent);
                         Ok(bytes_sent)
                     }
                     Err(e) => {
-                        let error_msg = format!("Failed to send data: {}", e);
-                        error!("{}", error_msg);
+                        let error_msg = format!("Failed to send data: {e}");
+                        error!("{error_msg}");
 
                         // Connection might be broken, remove it
                         *conn = None;
@@ -311,13 +311,13 @@ impl Transport for TcpTransport {
                         let mut stats = self.stats.write().await;
                         stats.record_bytes_received(bytes_read);
 
-                        debug!(hex_data = %buffer[..bytes_read].iter().map(|b| format!("{:02X}", b)).collect::<Vec<_>>().join(" "), length = bytes_read, direction = "recv", "[TCP Transport] Raw packet");
+                        debug!(hex_data = %buffer[..bytes_read].iter().map(|b| format!("{b:02X}")).collect::<Vec<_>>().join(" "), length = bytes_read, direction = "recv", "[TCP Transport] Raw packet");
                         debug!("Received {} bytes via TCP", bytes_read);
                         Ok(bytes_read)
                     }
                     Ok(Err(e)) => {
-                        let error_msg = format!("Failed to receive data: {}", e);
-                        error!("{}", error_msg);
+                        let error_msg = format!("Failed to receive data: {e}");
+                        error!("{error_msg}");
 
                         // Connection might be broken, remove it
                         *conn = None;
@@ -330,8 +330,8 @@ impl Transport for TcpTransport {
                     }
                     Err(_) => {
                         let error_msg =
-                            format!("Receive operation timed out after {:?}", receive_timeout);
-                        warn!("{}", error_msg);
+                            format!("Receive operation timed out after {receive_timeout:?}");
+                        warn!("{error_msg}");
                         Err(TransportError::Timeout(error_msg))
                     }
                 }

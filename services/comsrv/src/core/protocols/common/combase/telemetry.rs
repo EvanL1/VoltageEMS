@@ -213,28 +213,26 @@ impl RemoteOperationType {
     /// Validate the operation parameters
     pub fn validate(&self) -> crate::utils::Result<()> {
         use crate::utils::ComSrvError;
-        match self {
-            RemoteOperationType::ExtendedRegulation {
-                target_value,
-                min_value,
-                max_value,
-                ..
-            } => {
-                if let (Some(min), Some(max)) = (min_value, max_value) {
-                    if min >= max {
-                        return Err(ComSrvError::InvalidParameter(
-                            "min_value must be less than max_value".to_string(),
-                        ));
-                    }
-                    if target_value < min || target_value > max {
-                        return Err(ComSrvError::InvalidParameter(format!(
-                            "target_value {} is out of range [{}, {}]",
-                            target_value, min, max
-                        )));
-                    }
+        if let RemoteOperationType::ExtendedRegulation {
+            target_value,
+            min_value,
+            max_value,
+            ..
+        } = self
+        {
+            if let (Some(min), Some(max)) = (min_value, max_value) {
+                if min >= max {
+                    return Err(ComSrvError::InvalidParameter(
+                        "min_value must be less than max_value".to_string(),
+                    ));
+                }
+                if target_value < min || target_value > max {
+                    return Err(ComSrvError::InvalidParameter(format!(
+                        "target_value {} is out of range [{}, {}]",
+                        target_value, min, max
+                    )));
                 }
             }
-            _ => {}
         }
         Ok(())
     }

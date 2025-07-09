@@ -1,8 +1,8 @@
 use crate::config::redis_config::RedisConfig;
 use crate::error::{NetSrvError, Result};
 use crate::redis::RedisConnection;
-use tracing::{debug, error};
 use serde_json::{json, Value};
+use tracing::{debug, error};
 
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -124,4 +124,4 @@ impl RedisDataFetcher {
         // if all failed, return an empty object
         Err(NetSrvError::Data(format!("No data found for key: {}", key)))
     }
-} 
+}

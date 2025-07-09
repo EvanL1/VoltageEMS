@@ -1,18 +1,18 @@
 //! # Configuration Management for Model Service
-//! 
+//!
 //! This module provides comprehensive configuration management for the Model Service (ModSrv),
 //! supporting multiple configuration sources:
 //! 1. Local configuration files (YAML/JSON)
 //! 2. Configuration center service (HTTP)
 //! 3. Environment variables (override)
 
+use crate::error::ModelSrvError;
 use crate::error::Result;
+use crate::storage::SyncMode;
+use anyhow::Context;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 use std::time::Duration;
-use crate::storage::SyncMode;
-use crate::error::ModelSrvError;
-use anyhow::Context;
 
 /// Service identification and metadata
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -94,7 +94,7 @@ pub struct ApiConfig {
     /// API server host address
     #[serde(default = "default_api_host")]
     pub host: String,
-    
+
     /// API server port number
     #[serde(default = "default_api_port")]
     pub port: u16,
@@ -148,11 +148,11 @@ pub struct StorageConfig {
     /// Whether to use Redis storage backend
     #[serde(default = "default_use_redis")]
     pub use_redis: bool,
-    
+
     /// Storage backend mode (memory, redis, hybrid)
     #[serde(default = "default_storage_mode")]
     pub storage_mode: String,
-    
+
     /// Data synchronization interval in seconds
     #[serde(default = "default_sync_interval_secs")]
     pub sync_interval_secs: u64,
@@ -181,7 +181,7 @@ pub struct Config {
     /// Storage configuration
     #[serde(default)]
     pub storage: StorageConfig,
-    
+
     // Legacy fields for compatibility
     #[serde(skip)]
     pub templates_dir: String,
@@ -205,28 +205,58 @@ fn default_service_info() -> ServiceInfo {
     }
 }
 
-fn default_redis_prefix() -> String { "voltage:modsrv:".to_string() }
-fn default_pool_size() -> u32 { 10 }
-fn default_log_level() -> String { "info".to_string() }
-fn default_log_console() -> bool { true }
-fn default_log_dir() -> String { "logs".to_string() }
-fn default_max_file_size() -> u64 { 10 * 1024 * 1024 } // 10MB
-fn default_max_files() -> u32 { 5 }
-fn default_api_host() -> String { "0.0.0.0".to_string() }
-fn default_api_port() -> u16 { 8092 }
-fn default_metrics_port() -> u16 { 9092 }
-fn default_templates_dir() -> String { "templates".to_string() }
-fn default_control_enabled() -> bool { true }
-fn default_use_redis() -> bool { true }
-fn default_storage_mode() -> String { "hybrid".to_string() }
-fn default_sync_interval_secs() -> u64 { 60 }
+fn default_redis_prefix() -> String {
+    "voltage:modsrv:".to_string()
+}
+fn default_pool_size() -> u32 {
+    10
+}
+fn default_log_level() -> String {
+    "info".to_string()
+}
+fn default_log_console() -> bool {
+    true
+}
+fn default_log_dir() -> String {
+    "logs".to_string()
+}
+fn default_max_file_size() -> u64 {
+    10 * 1024 * 1024
+} // 10MB
+fn default_max_files() -> u32 {
+    5
+}
+fn default_api_host() -> String {
+    "0.0.0.0".to_string()
+}
+fn default_api_port() -> u16 {
+    8092
+}
+fn default_metrics_port() -> u16 {
+    9092
+}
+fn default_templates_dir() -> String {
+    "templates".to_string()
+}
+fn default_control_enabled() -> bool {
+    true
+}
+fn default_use_redis() -> bool {
+    true
+}
+fn default_storage_mode() -> String {
+    "hybrid".to_string()
+}
+fn default_sync_interval_secs() -> u64 {
+    60
+}
 
 impl Config {
     /// Create configuration from file (legacy method)
     pub fn new(config_file: &str) -> Result<Self> {
         Self::from_file(config_file)
     }
-    
+
     /// Load configuration from file
     pub fn from_file<P: AsRef<Path>>(path: P) -> Result<Self> {
         let path_ref = path.as_ref();
@@ -236,10 +266,11 @@ impl Config {
                 path_ref.display()
             )));
         }
-        
-        let content = std::fs::read_to_string(path_ref)
-            .map_err(|e| ModelSrvError::ConfigError(format!("Failed to read config file: {}", e)))?;
-        
+
+        let content = std::fs::read_to_string(path_ref).map_err(|e| {
+            ModelSrvError::ConfigError(format!("Failed to read config file: {}", e))
+        })?;
+
         let mut config: Config = if path_ref.extension().and_then(|s| s.to_str()) == Some("json") {
             serde_json::from_str(&content)
                 .map_err(|e| ModelSrvError::ConfigError(format!("Failed to parse JSON: {}", e)))?
@@ -247,7 +278,7 @@ impl Config {
             serde_yaml::from_str(&content)
                 .map_err(|e| ModelSrvError::ConfigError(format!("Failed to parse YAML: {}", e)))?
         };
-        
+
         // Handle legacy Redis config
         if config.redis.url.is_empty() {
             if let (Some(host), Some(port)) = (&config.redis.host, &config.redis.port) {
@@ -256,14 +287,14 @@ impl Config {
                 config.redis.url = "redis://localhost:6379".to_string();
             }
         }
-        
+
         // Set legacy fields for compatibility
         config.templates_dir = config.model.templates_dir.clone();
         config.log_level = config.logging.level.clone();
         config.use_redis = config.storage.use_redis;
         config.storage_mode = config.storage.storage_mode.clone();
         config.sync_interval_secs = config.storage.sync_interval_secs;
-        
+
         Ok(config)
     }
 
@@ -305,7 +336,7 @@ impl Config {
             storage_mode: default_storage_mode(),
             sync_interval_secs: default_sync_interval_secs(),
         };
-        
+
         Config {
             service,
             redis,
@@ -326,7 +357,9 @@ impl Config {
     pub fn get_sync_mode(&self) -> SyncMode {
         match self.storage.storage_mode.as_str() {
             "write_through" => SyncMode::WriteThrough,
-            "write_back" => SyncMode::WriteBack(Duration::from_secs(self.storage.sync_interval_secs)),
+            "write_back" => {
+                SyncMode::WriteBack(Duration::from_secs(self.storage.sync_interval_secs))
+            }
             "on_demand" => SyncMode::OnDemand,
             _ => SyncMode::WriteThrough,
         }
@@ -348,158 +381,176 @@ impl ConfigLoader {
             env_prefix: "MODSRV_".to_string(),
         }
     }
-    
+
     pub fn with_file(mut self, path: impl Into<String>) -> Self {
         self.config_file = Some(path.into());
         self
     }
-    
+
     pub fn with_config_center(mut self, url: impl Into<String>) -> Self {
         self.config_center_url = Some(url.into());
         self
     }
-    
+
     pub fn with_env_prefix(mut self, prefix: impl Into<String>) -> Self {
         self.env_prefix = prefix.into();
         self
     }
-    
+
     /// Load configuration from all sources
     pub async fn load(&self) -> Result<Config> {
         // 1. Start with default configuration
         let mut config = Config::default();
-        
+
         // 2. Load from local file if specified
         if let Some(file_path) = &self.config_file {
             if Path::new(file_path).exists() {
                 config = Config::from_file(file_path)?;
                 tracing::info!("Loaded configuration from file: {}", file_path);
             } else {
-                tracing::warn!("Configuration file not found: {}, using defaults", file_path);
+                tracing::warn!(
+                    "Configuration file not found: {}, using defaults",
+                    file_path
+                );
             }
         }
-        
+
         // 3. Try to load from config center
         if let Some(config_center_url) = &self.config_center_url {
             match self.load_from_config_center(config_center_url).await {
                 Ok(center_config) => {
                     config = center_config;
-                    tracing::info!("Loaded configuration from config center: {}", config_center_url);
+                    tracing::info!(
+                        "Loaded configuration from config center: {}",
+                        config_center_url
+                    );
                 }
                 Err(e) => {
                     tracing::warn!("Failed to load from config center: {}", e);
                 }
             }
         }
-        
+
         // 4. Apply environment variable overrides
         config = self.apply_env_overrides(config)?;
-        
+
         // 5. Validate configuration
         self.validate_config(&config)?;
-        
+
         Ok(config)
     }
-    
+
     /// Load configuration from config center
     async fn load_from_config_center(&self, base_url: &str) -> Result<Config> {
         let url = format!("{}/api/v1/config/modsrv", base_url);
         let client = reqwest::Client::new();
-        
+
         let response = client
             .get(&url)
             .header("Accept", "application/json")
             .timeout(Duration::from_secs(10))
             .send()
             .await
-            .map_err(|e| ModelSrvError::ConfigError(format!("Failed to contact config center: {}", e)))?;
-        
+            .map_err(|e| {
+                ModelSrvError::ConfigError(format!("Failed to contact config center: {}", e))
+            })?;
+
         if !response.status().is_success() {
             return Err(ModelSrvError::ConfigError(format!(
                 "Config center returned error: {}",
                 response.status()
             )));
         }
-        
-        let mut config: Config = response
-            .json()
-            .await
-            .map_err(|e| ModelSrvError::ConfigError(format!("Failed to parse config center response: {}", e)))?;
-        
+
+        let mut config: Config = response.json().await.map_err(|e| {
+            ModelSrvError::ConfigError(format!("Failed to parse config center response: {}", e))
+        })?;
+
         // Set legacy fields
         config.templates_dir = config.model.templates_dir.clone();
         config.log_level = config.logging.level.clone();
         config.use_redis = config.storage.use_redis;
         config.storage_mode = config.storage.storage_mode.clone();
         config.sync_interval_secs = config.storage.sync_interval_secs;
-        
+
         Ok(config)
     }
-    
+
     /// Apply environment variable overrides
     fn apply_env_overrides(&self, mut config: Config) -> Result<Config> {
         // Redis URL
         if let Ok(url) = std::env::var(format!("{}REDIS_URL", self.env_prefix)) {
             config.redis.url = url;
         }
-        
+
         // API host and port
         if let Ok(host) = std::env::var(format!("{}API_HOST", self.env_prefix)) {
             config.api.host = host;
         }
         if let Ok(port) = std::env::var(format!("{}API_PORT", self.env_prefix)) {
-            config.api.port = port.parse()
+            config.api.port = port
+                .parse()
                 .map_err(|_| ModelSrvError::ConfigError("Invalid API port".to_string()))?;
         }
-        
+
         // Log level
         if let Ok(level) = std::env::var(format!("{}LOG_LEVEL", self.env_prefix)) {
             config.logging.level = level.clone();
             config.log_level = level;
         }
-        
+
         // Model update interval
-        if let Ok(interval) = std::env::var(format!("{}MODEL_UPDATE_INTERVAL_MS", self.env_prefix)) {
-            config.model.update_interval_ms = interval.parse()
+        if let Ok(interval) = std::env::var(format!("{}MODEL_UPDATE_INTERVAL_MS", self.env_prefix))
+        {
+            config.model.update_interval_ms = interval
+                .parse()
                 .map_err(|_| ModelSrvError::ConfigError("Invalid update interval".to_string()))?;
         }
-        
+
         Ok(config)
     }
-    
+
     /// Validate configuration
     fn validate_config(&self, config: &Config) -> Result<()> {
         // Validate service info
         if config.service.name.is_empty() {
-            return Err(ModelSrvError::ConfigError("Service name cannot be empty".to_string()));
+            return Err(ModelSrvError::ConfigError(
+                "Service name cannot be empty".to_string(),
+            ));
         }
-        
+
         // Validate Redis URL
         if !config.redis.url.starts_with("redis://") {
-            return Err(ModelSrvError::ConfigError("Redis URL must start with redis://".to_string()));
+            return Err(ModelSrvError::ConfigError(
+                "Redis URL must start with redis://".to_string(),
+            ));
         }
-        
+
         // Validate API port
         if config.api.port == 0 {
-            return Err(ModelSrvError::ConfigError("API port cannot be 0".to_string()));
+            return Err(ModelSrvError::ConfigError(
+                "API port cannot be 0".to_string(),
+            ));
         }
-        
+
         // Validate log level
         match config.logging.level.as_str() {
             "trace" | "debug" | "info" | "warn" | "error" => {}
-            _ => return Err(ModelSrvError::ConfigError(format!(
-                "Invalid log level: {}",
-                config.logging.level
-            ))),
+            _ => {
+                return Err(ModelSrvError::ConfigError(format!(
+                    "Invalid log level: {}",
+                    config.logging.level
+                )))
+            }
         }
-        
+
         // Validate model update interval
         if config.model.update_interval_ms == 0 {
             return Err(ModelSrvError::ConfigError(
-                "Model update interval must be greater than 0".to_string()
+                "Model update interval must be greater than 0".to_string(),
             ));
         }
-        
+
         Ok(())
     }
 }
@@ -508,23 +559,20 @@ impl ConfigLoader {
 pub async fn load_config() -> Result<Config> {
     // Load .env file if exists
     dotenv::dotenv().ok();
-    
+
     let loader = ConfigLoader::new()
         .with_file(
             std::env::var("MODSRV_CONFIG_FILE")
-                .unwrap_or_else(|_| "config/modsrv.yaml".to_string())
+                .unwrap_or_else(|_| "config/modsrv.yaml".to_string()),
         )
-        .with_config_center(
-            std::env::var("CONFIG_CENTER_URL").ok()
-        )
+        .with_config_center(std::env::var("CONFIG_CENTER_URL").ok())
         .with_env_prefix("MODSRV_");
-    
+
     loader.load().await
 }
 
 /// Generate default configuration file
 pub fn generate_default_config() -> String {
     let config = Config::default();
-    serde_yaml::to_string(&config)
-        .unwrap_or_else(|_| "# Failed to generate config".to_string())
+    serde_yaml::to_string(&config).unwrap_or_else(|_| "# Failed to generate config".to_string())
 }

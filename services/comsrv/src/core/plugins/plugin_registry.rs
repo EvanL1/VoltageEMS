@@ -38,6 +38,12 @@ struct PluginEntry {
     metadata: ProtocolMetadata,
 }
 
+impl Default for PluginRegistry {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl PluginRegistry {
     /// Create a new plugin registry
     pub fn new() -> Self {
@@ -97,7 +103,7 @@ impl PluginRegistry {
             )));
         }
 
-        info!("Registering plugin factory for: {}", plugin_id);
+        info!("Registering plugin factory for: {plugin_id}");
         self.factories.insert(plugin_id, factory);
 
         Ok(())
@@ -171,7 +177,7 @@ impl PluginRegistry {
     pub fn unregister_plugin(&mut self, plugin_id: &str) -> Result<()> {
         if self.plugins.remove(plugin_id).is_some() {
             self.load_order.retain(|id| id != plugin_id);
-            info!("Unregistered plugin: {}", plugin_id);
+            info!("Unregistered plugin: {plugin_id}");
             Ok(())
         } else {
             Err(Error::ConfigError(format!(
@@ -257,10 +263,7 @@ pub mod discovery {
     /// Discover plugins in a directory
     pub fn discover_plugins(plugin_dir: &Path) -> Result<Vec<String>> {
         // TODO: Implement dynamic library loading
-        warn!(
-            "Plugin discovery not yet implemented for directory: {:?}",
-            plugin_dir
-        );
+        warn!("Plugin discovery not yet implemented for directory: {plugin_dir:?}");
         Ok(Vec::new())
     }
 

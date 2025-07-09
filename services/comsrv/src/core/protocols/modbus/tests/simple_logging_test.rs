@@ -37,7 +37,7 @@ async fn test_mock_transport_logging() {
     debug!("Testing connection operation logging");
     match mock_transport.connect().await {
         Ok(_) => debug!("Connection successful"),
-        Err(e) => debug!("Connection failed: {:?}", e),
+        Err(e) => debug!("Connection failed: {e:?}"),
     }
     
     // Test send logging
@@ -45,7 +45,7 @@ async fn test_mock_transport_logging() {
     let test_data = vec![0x01, 0x03, 0x00, 0x01, 0x00, 0x01]; // 模拟 Modbus 请求
     match mock_transport.send(&test_data).await {
         Ok(len) => debug!("Send successful, length: {} bytes", len),
-        Err(e) => debug!("Send failed: {:?}", e),
+        Err(e) => debug!("Send failed: {e:?}"),
     }
     
     // Test receive logging
@@ -56,7 +56,7 @@ async fn test_mock_transport_logging() {
             debug!("Receive successful, length: {} bytes", len);
             debug!("Received data: {:02X?}", &buffer[..len]);
         }
-        Err(e) => debug!("Receive failed: {:?}", e),
+        Err(e) => debug!("Receive failed: {e:?}"),
     }
     
     debug!("MockTransport logging test completed");
@@ -84,10 +84,10 @@ async fn test_pdu_processor_logging() {
     match processor.parse_pdu(&response_pdu) {
         Ok(result) => {
             debug!("PDU parsing successful");
-            debug!("Parse result: {:?}", result);
+            debug!("Parse result: {result:?}");
         }
         Err(e) => {
-            debug!("PDU parsing failed: {}", e);
+            debug!("PDU parsing failed: {e}");
         }
     }
     
@@ -97,10 +97,10 @@ async fn test_pdu_processor_logging() {
     match processor.parse_pdu(&exception_pdu) {
         Ok(result) => {
             debug!("Exception PDU parsing successful");
-            debug!("Exception parse result: {:?}", result);
+            debug!("Exception parse result: {result:?}");
         }
         Err(e) => {
-            debug!("Exception PDU parsing failed: {}", e);
+            debug!("Exception PDU parsing failed: {e}");
         }
     }
     
@@ -113,7 +113,7 @@ async fn test_pdu_processor_logging() {
             debug!("Read request: start_address={}, quantity={}", request.start_address, request.quantity);
         }
         Err(e) => {
-            debug!("Read request parsing failed: {}", e);
+            debug!("Read request parsing failed: {e}");
         }
     }
     
@@ -163,7 +163,7 @@ async fn test_comprehensive_packet_logging() {
             debug!("Request sent successfully: {} bytes", sent_len);
         }
         Err(e) => {
-            debug!("Request send failed: {:?}", e);
+            debug!("Request send failed: {e:?}");
             return;
         }
     }
@@ -182,15 +182,15 @@ async fn test_comprehensive_packet_logging() {
             match processor.parse_pdu(received_data) {
                 Ok(pdu_result) => {
                     debug!("PDU parsing successful");
-                    debug!("Parsed PDU result: {:?}", pdu_result);
+                    debug!("Parsed PDU result: {pdu_result:?}");
                 }
                 Err(e) => {
-                    debug!("PDU parsing failed: {}", e);
+                    debug!("PDU parsing failed: {e}");
                 }
             }
         }
         Err(e) => {
-            debug!("Response receive failed: {:?}", e);
+            debug!("Response receive failed: {e:?}");
         }
     }
     

@@ -218,7 +218,7 @@ impl GpioTransport {
                     pin_state.current_value = Some(value);
                     pin_state.last_change = Some(SystemTime::now());
 
-                    debug!("Set GPIO pin {} to {}", pin, value);
+                    debug!("Set GPIO pin {} to {value}", pin);
                     Ok(())
                 }
                 _ => Err(TransportError::ConfigError(format!(
@@ -251,7 +251,7 @@ impl GpioTransport {
                 | GpioPinMode::DigitalInputPullDown => {
                     // In a real implementation, this would read from the actual GPIO
                     let value = pin_state.current_value.unwrap_or(false);
-                    debug!("Read GPIO pin {}: {}", pin, value);
+                    debug!("Read GPIO pin {}: {value}", pin);
                     Ok(value)
                 }
                 _ => Err(TransportError::ConfigError(format!(

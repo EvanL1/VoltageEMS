@@ -118,7 +118,7 @@ impl TestFramework {
                     name: test.name().to_string(),
                     status: TestStatus::Failed,
                     duration: start.elapsed(),
-                    message: Some(format!("Failed to create protocol: {}", e)),
+                    message: Some(format!("Failed to create protocol: {e}")),
                 };
                 self.test_results.push(result);
                 println!("{}", "FAILED".red());
@@ -134,7 +134,7 @@ impl TestFramework {
             }
             Err(e) => {
                 println!("{}", "FAILED".red());
-                println!("  Error: {}", e);
+                println!("  Error: {e}");
                 TestStatus::Failed
             }
         };
@@ -242,7 +242,7 @@ impl TestFramework {
             );
             
             if let Some(msg) = &result.message {
-                println!("  {}", msg);
+                println!("  {msg}");
             }
         }
         

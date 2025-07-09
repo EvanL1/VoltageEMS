@@ -519,13 +519,13 @@ impl EnhancedTransportBridge {
         // 检查连接池状态
         let pool_status = self.get_pool_status().await;
         for (key, value) in pool_status {
-            health.insert(format!("pool_{}", key), value);
+            health.insert(format!("pool_{key}"), value);
         }
 
         // 检查队列状态
         let queue_status = self.get_queue_status().await;
         for (key, value) in queue_status {
-            health.insert(format!("queue_{}", key), value);
+            health.insert(format!("queue_{key}"), value);
         }
 
         // 检查统计信息

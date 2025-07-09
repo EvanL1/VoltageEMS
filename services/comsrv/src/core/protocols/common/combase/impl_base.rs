@@ -267,7 +267,7 @@ impl ComBase for ComBaseImpl {
             point_manager
                 .get_point_data(point_id)
                 .await
-                .ok_or_else(|| ComSrvError::NotFound(format!("Point not found: {}", point_id)))
+                .ok_or_else(|| ComSrvError::NotFound(format!("Point not found: {point_id}")))
         } else {
             Err(ComSrvError::InvalidOperation(
                 "No point manager available for point reading".to_string(),

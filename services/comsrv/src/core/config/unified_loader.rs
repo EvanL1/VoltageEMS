@@ -138,7 +138,7 @@ impl UnifiedCsvLoader {
                 let combined = Self::combine_point(telemetry, mapping);
                 combined_points.push(combined);
             } else {
-                warn!("No protocol mapping found for point {}", point_id);
+                warn!("No protocol mapping found for point {point_id}");
             }
         }
 
@@ -163,7 +163,7 @@ impl UnifiedCsvLoader {
             .has_headers(true)
             .from_path(path)
             .map_err(|e| {
-                ComSrvError::ConfigError(format!("Failed to open CSV {}: {}", path.display(), e))
+                ComSrvError::ConfigError(format!("Failed to open CSV {}: {e}", path.display()))
             })?;
 
         let mut points = Vec::new();
@@ -171,12 +171,12 @@ impl UnifiedCsvLoader {
         // Check header count to determine format
         let headers = reader
             .headers()
-            .map_err(|e| ComSrvError::ConfigError(format!("Failed to read headers: {}", e)))?;
+            .map_err(|e| ComSrvError::ConfigError(format!("Failed to read headers: {e}")))?;
         let header_count = headers.len();
 
         for (idx, result) in reader.records().enumerate() {
             let record = result.map_err(|e| {
-                ComSrvError::ConfigError(format!("CSV error at row {}: {}", idx + 2, e))
+                ComSrvError::ConfigError(format!("CSV error at row {}: {e}", idx + 2))
             })?;
 
             let point = if header_count >= 9 {
@@ -248,14 +248,14 @@ impl UnifiedCsvLoader {
             .has_headers(true)
             .from_path(path)
             .map_err(|e| {
-                ComSrvError::ConfigError(format!("Failed to open CSV {}: {}", path.display(), e))
+                ComSrvError::ConfigError(format!("Failed to open CSV {}: {e}", path.display()))
             })?;
 
         let mut points = Vec::new();
 
         for (idx, result) in reader.records().enumerate() {
             let record = result.map_err(|e| {
-                ComSrvError::ConfigError(format!("CSV error at row {}: {}", idx + 2, e))
+                ComSrvError::ConfigError(format!("CSV error at row {}: {e}", idx + 2))
             })?;
 
             // Signal format: point_id,signal_name,chinese_name,data_type,reverse
@@ -297,14 +297,14 @@ impl UnifiedCsvLoader {
             .has_headers(true)
             .from_path(path)
             .map_err(|e| {
-                ComSrvError::ConfigError(format!("Failed to open CSV {}: {}", path.display(), e))
+                ComSrvError::ConfigError(format!("Failed to open CSV {}: {e}", path.display()))
             })?;
 
         let mut mappings = HashMap::new();
 
         for (idx, result) in reader.records().enumerate() {
             let record = result.map_err(|e| {
-                ComSrvError::ConfigError(format!("CSV error at row {}: {}", idx + 2, e))
+                ComSrvError::ConfigError(format!("CSV error at row {}: {e}", idx + 2))
             })?;
 
             // New format: point_id,signal_name,slave_id,function_code,register_address,data_format,bit_position,byte_order,register_count

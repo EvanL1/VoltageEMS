@@ -78,7 +78,7 @@ pub fn assert_bytes_eq(actual: &[u8], expected: &[u8]) {
 pub fn format_bytes(bytes: &[u8]) -> String {
     bytes
         .iter()
-        .map(|b| format!("{:02X}", b))
+        .map(|b| format!("{b:02X}"))
         .collect::<Vec<_>>()
         .join(" ")
 }
@@ -106,6 +106,12 @@ fn format_diff(expected: &[u8], actual: &[u8]) -> String {
 /// Test data generator for various data types
 pub struct TestDataGenerator {
     seed: u64,
+}
+
+impl Default for TestDataGenerator {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl TestDataGenerator {
@@ -139,6 +145,12 @@ pub struct TestConfigBuilder {
     slave_id: u8,
     timeout_ms: u64,
     max_retries: u32,
+}
+
+impl Default for TestConfigBuilder {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl TestConfigBuilder {
@@ -197,7 +209,7 @@ impl PerfMeasure {
 
     pub fn stop(self) -> std::time::Duration {
         let duration = self.start.elapsed();
-        println!("{}: {:?}", self.name, duration);
+        println!("{}: {duration:?}", self.name);
         duration
     }
 }

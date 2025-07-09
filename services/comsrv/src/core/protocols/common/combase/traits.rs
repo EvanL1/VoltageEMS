@@ -77,9 +77,9 @@ pub trait ComBase: Send + Sync + std::fmt::Debug {
             point_manager.get_point_data_by_type(telemetry_type).await
         } else {
             // Fallback to protocol-specific implementation
-            let all_points = self.get_all_points().await;
+
             // Filter points by telemetry type if needed (requires protocol-specific logic)
-            all_points
+            self.get_all_points().await
         }
     }
 
@@ -168,7 +168,7 @@ pub trait FourTelemetryOperations: Send + Sync {
         let points_to_read = if let Some(names) = point_names {
             names.to_vec()
         } else {
-            self.get_points_by_type(&telemetry_type).await
+            self.get_points_by_type(telemetry_type).await
         };
 
         match *telemetry_type {

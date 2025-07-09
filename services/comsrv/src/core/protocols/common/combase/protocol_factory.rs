@@ -20,7 +20,7 @@ pub type ConfigValue = serde_json::Value;
 /// Convert YAML string to JSON Value for internal processing
 pub fn yaml_to_json(yaml_str: &str) -> Result<ConfigValue> {
     let yaml_value: serde_yaml::Value = serde_yaml::from_str(yaml_str)
-        .map_err(|e| ComSrvError::ConfigError(format!("Failed to parse YAML: {}", e)))?;
+        .map_err(|e| ComSrvError::ConfigError(format!("Failed to parse YAML: {e}")))?;
 
     yaml_value_to_json(yaml_value)
 }
@@ -29,7 +29,7 @@ pub fn yaml_to_json(yaml_str: &str) -> Result<ConfigValue> {
 pub fn json_to_yaml(json_value: &ConfigValue) -> Result<String> {
     let yaml_value = json_value_to_yaml(json_value.clone())?;
     serde_yaml::to_string(&yaml_value)
-        .map_err(|e| ComSrvError::ConfigError(format!("Failed to serialize to YAML: {}", e)))
+        .map_err(|e| ComSrvError::ConfigError(format!("Failed to serialize to YAML: {e}")))
 }
 
 /// Convert serde_yaml::Value to serde_json::Value
@@ -507,7 +507,7 @@ impl ProtocolFactory {
         let protocol_type = factory.protocol_type();
         self.protocol_factories
             .insert(protocol_type.clone(), factory);
-        tracing::info!("Registered protocol factory for {:?}", protocol_type);
+        tracing::info!("Registered protocol factory for {protocol_type:?}");
     }
 
     /// Unregister a protocol factory for hot-swappable protocol support
@@ -541,7 +541,7 @@ impl ProtocolFactory {
     /// match factory.unregister_protocol_factory(&ProtocolType::ModbusTcp) {
     ///     Ok(true) => println!("Factory unregistered successfully"),
     ///     Ok(false) => println!("No factory found for this protocol"),
-    ///     Err(e) => println!("Cannot unregister: {}", e),
+    ///     Err(e) => println!("Cannot unregister: {e}"),
     /// }
     /// ```
     pub fn unregister_protocol_factory(&self, protocol_type: &ProtocolType) -> Result<bool> {
@@ -570,16 +570,12 @@ impl ProtocolFactory {
         // Safe to remove the factory
         match self.protocol_factories.remove(protocol_type) {
             Some(_) => {
-                tracing::info!(
-                    "Protocol factory unregistered successfully: {:?}",
-                    protocol_type
-                );
+                tracing::info!("Protocol factory unregistered successfully: {protocol_type:?}");
                 Ok(true)
             }
             None => {
                 tracing::warn!(
-                    "Attempted to unregister non-existent protocol factory: {:?}",
-                    protocol_type
+                    "Attempted to unregister non-existent protocol factory: {protocol_type:?}"
                 );
                 Ok(false)
             }
@@ -770,10 +766,7 @@ impl ProtocolFactory {
         // Use plugin system exclusively
         let protocol_id = config.protocol.to_lowercase();
 
-        tracing::info!(
-            "Creating protocol instance using plugin system: {}",
-            protocol_id
-        );
+        tracing::info!("Creating protocol instance using plugin system: {protocol_id}");
 
         // Get plugin instance from registry
         let plugin =
@@ -933,8 +926,7 @@ impl ProtocolFactory {
                 Ok(())
             }
             dashmap::mapref::entry::Entry::Occupied(_) => Err(ComSrvError::ConfigError(format!(
-                "Channel ID already exists: {}",
-                channel_id
+                "Channel ID already exists: {channel_id}"
             ))),
         }
     }
@@ -989,12 +981,7 @@ impl ProtocolFactory {
             );
 
             // Also create a debug log file if debug logging is enabled
-            if config
-                .logging
-                .level
-                .as_ref()
-                .map_or(false, |l| l == "debug")
-            {
+            if config.logging.level.as_ref().is_some_and(|l| l == "debug") {
                 let debug_log_path = format!("{}/channel_{}_debug.log", full_log_dir, config.id);
                 if let Ok(mut file) = OpenOptions::new()
                     .create(true)
@@ -1073,11 +1060,11 @@ impl ProtocolFactory {
                     let mut channel = channel_entry.channel.write().await;
                     match channel.start().await {
                         Ok(_) => {
-                            tracing::info!("Channel started successfully: channel_id={}", id);
+                            tracing::info!("Channel started successfully: channel_id={id}");
                             Ok(())
                         }
                         Err(e) => {
-                            tracing::error!("Failed to start channel {}: {}", id, e);
+                            tracing::error!("Failed to start channel {}: {e}", id);
                             Err(e)
                         }
                     }
@@ -1144,7 +1131,7 @@ impl ProtocolFactory {
                         tracing::info!("Channel {} stopped successfully", id);
                     },
                     Err(e) => {
-                        tracing::warn!("Channel {}: Failed to stop channel - continuing with other channels: {}", id, e);
+                        tracing::warn!("Channel {}: Failed to stop channel - continuing with other channels: {e}", id);
                         // Continue stopping other channels even if one fails
                     }
                 }
@@ -1356,7 +1343,7 @@ impl ProtocolFactory {
         {
             let mut channel = old_channel.write().await;
             if let Err(e) = channel.stop().await {
-                tracing::warn!("Failed to stop channel {} during update: {}", id, e);
+                tracing::warn!("Failed to stop channel {} during update: {e}", id);
             }
         }
 
@@ -1387,7 +1374,7 @@ impl ProtocolFactory {
         {
             let mut channel = new_channel_wrapper.write().await;
             if let Err(e) = channel.start().await {
-                tracing::error!("Failed to start updated channel {}: {}", id, e);
+                tracing::error!("Failed to start updated channel {}: {e}", id);
                 return Err(ComSrvError::ChannelError(format!(
                     "Failed to start updated channel {}: {}",
                     id, e
@@ -1482,7 +1469,7 @@ mod tests {
 
         ChannelConfig {
             id,
-            name: format!("Test Channel {}", id),
+            name: format!("Test Channel {id}"),
             description: Some("Test channel configuration".to_string()),
             protocol: protocol.to_string(),
             parameters: param_map,
@@ -1510,7 +1497,7 @@ mod tests {
 
         ChannelConfig {
             id,
-            name: format!("Test RTU Channel {}", id),
+            name: format!("Test RTU Channel {id}"),
             description: Some("Test RTU channel configuration".to_string()),
             protocol: ProtocolType::ModbusRtu.to_string(),
             parameters: param_map,

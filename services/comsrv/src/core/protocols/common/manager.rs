@@ -107,7 +107,7 @@ impl OptimizedPointManager {
 
             // Add to type index
             points_by_type
-                .entry(config.telemetry_type.clone())
+                .entry(config.telemetry_type)
                 .or_insert_with(HashSet::new)
                 .insert(point_id);
 
@@ -133,7 +133,7 @@ impl OptimizedPointManager {
         for (telemetry_type, point_set) in points_by_type.iter() {
             stats
                 .points_by_type
-                .insert(telemetry_type.clone(), point_set.len());
+                .insert(*telemetry_type, point_set.len());
         }
         stats.last_update = Utc::now();
 
@@ -322,7 +322,7 @@ impl OptimizedPointManager {
         F: FnOnce(&HashMap<u32, PollingPoint>) -> R,
     {
         let points = self.points.read().await;
-        f(&*points)
+        f(&points)
     }
 
     /// Access statistics without cloning
@@ -331,7 +331,7 @@ impl OptimizedPointManager {
         F: FnOnce(&PointManagerStats) -> R,
     {
         let stats = self.stats.read().await;
-        f(&*stats)
+        f(&stats)
     }
 }
 
@@ -348,15 +348,15 @@ pub fn generate_test_points(count: usize) -> Vec<PollingPoint> {
         };
 
         let point = PollingPoint {
-            id: Arc::from(format!("point_{}", i)),
-            name: Arc::from(format!("Test Point {}", i)),
+            id: Arc::from(format!("point_{i}")),
+            name: Arc::from(format!("Test Point {i}")),
             address: i as u32 + 1000,
             data_type: "float".to_string(),
             telemetry_type,
             scale: 1.0,
             offset: 0.0,
             unit: "V".to_string(),
-            description: format!("Test point number {}", i),
+            description: format!("Test point number {i}"),
             access_mode: "rw".to_string(),
             group: Arc::from("test"),
             protocol_params: HashMap::new(),
@@ -420,8 +420,8 @@ mod tests {
             .await;
         let query_time = start.elapsed();
 
-        println!("Load time for 10k points: {:?}", load_time);
-        println!("Query time for telemetry points: {:?}", query_time);
+        println!("Load time for 10k points: {load_time:?}");
+        println!("Query time for telemetry points: {query_time:?}");
 
         // Query should be very fast with indices
         assert!(query_time.as_millis() < 10);

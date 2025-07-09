@@ -16,10 +16,14 @@ pub struct RegexRule {
 }
 
 impl RegexRule {
-    pub fn new(name: impl Into<String>, pattern: &str, field_path: impl Into<String>) -> Result<Self> {
+    pub fn new(
+        name: impl Into<String>,
+        pattern: &str,
+        field_path: impl Into<String>,
+    ) -> Result<Self> {
         let regex = Regex::new(pattern)
             .map_err(|e| ConfigError::Validation(format!("Invalid regex pattern: {}", e)))?;
-        
+
         Ok(Self {
             name: name.into(),
             regex,
@@ -34,7 +38,8 @@ impl ValidationRule for RegexRule {
             if !self.regex.is_match(s) {
                 return Err(ConfigError::Validation(format!(
                     "Field '{}' does not match pattern: {}",
-                    self.field_path, self.regex.as_str()
+                    self.field_path,
+                    self.regex.as_str()
                 )));
             }
         }

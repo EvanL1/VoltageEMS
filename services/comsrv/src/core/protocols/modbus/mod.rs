@@ -59,6 +59,12 @@ use std::collections::HashMap;
 /// providing human-readable interpretation of packet structure and data.
 pub struct ModbusPacketParser;
 
+impl Default for ModbusPacketParser {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ModbusPacketParser {
     /// Create a new Modbus packet parser
     pub fn new() -> Self {
@@ -68,7 +74,7 @@ impl ModbusPacketParser {
     /// Format hex data
     fn format_hex_data(&self, data: &[u8]) -> String {
         data.iter()
-            .map(|b| format!("{:02X}", b))
+            .map(|b| format!("{b:02X}"))
             .collect::<Vec<String>>()
             .join(" ")
     }
@@ -224,10 +230,10 @@ impl ModbusPacketParser {
             0x05 => {
                 let coil_value = if value == 0xFF00 { "ON" } else { "OFF" };
                 fields.insert("coil_value".to_string(), coil_value.to_string());
-                format!("Write coil at address {} to {}", address, coil_value)
+                format!("Write coil at address {} to {coil_value}", address)
             }
-            0x06 => format!("Write register at address {} to {}", address, value),
-            _ => format!("Write single at address {} to {}", address, value),
+            0x06 => format!("Write register at address {} to {value}", address),
+            _ => format!("Write single at address {} to {value}", address),
         };
 
         (description, fields)
@@ -263,7 +269,7 @@ impl ModbusPacketParser {
                 "Confirmed write register at address {} to {}",
                 address, value
             ),
-            _ => format!("Confirmed write single at address {} to {}", address, value),
+            _ => format!("Confirmed write single at address {} to {value}", address),
         };
 
         (description, fields)

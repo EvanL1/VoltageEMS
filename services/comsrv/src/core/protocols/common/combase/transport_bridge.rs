@@ -175,7 +175,7 @@ impl UniversalTransportBridge {
         }
 
         result.map_err(|e| {
-            crate::utils::ComSrvError::ConnectionError(format!("Disconnect failed: {}", e))
+            crate::utils::ComSrvError::ConnectionError(format!("Disconnect failed: {e}"))
         })
     }
 

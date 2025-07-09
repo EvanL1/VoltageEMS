@@ -118,19 +118,19 @@ impl KeyPrefixCache {
     }
 
     fn channel_key(&self, channel_id: u16, suffix: &str) -> String {
-        format!("{}{}{}", self.channel_prefix, channel_id, suffix)
+        format!("{}{}{suffix}", self.channel_prefix, channel_id)
     }
 
     fn config_key(&self, config_type: &str) -> String {
-        format!("{}{}", self.config_prefix, config_type)
+        format!("{}{config_type}", self.config_prefix)
     }
 
     fn stats_key(&self, stats_type: &str) -> String {
-        format!("{}{}", self.stats_prefix, stats_type)
+        format!("{}{stats_type}", self.stats_prefix)
     }
 
     fn pool_key(&self, protocol: &str, address: &str) -> String {
-        format!("{}{}.{}", self.pool_prefix, protocol, address)
+        format!("{}{}.{address}", self.pool_prefix, protocol)
     }
 }
 
@@ -143,18 +143,18 @@ impl RedisConnectionManager {
         tracing::debug!("Creating Redis connection manager with URL: {}", &url);
 
         let client = Client::open(url.clone())
-            .map_err(|e| ComSrvError::RedisError(format!("Invalid Redis URL '{}': {}", url, e)))?;
+            .map_err(|e| ComSrvError::RedisError(format!("Invalid Redis URL '{}': {e}", url)))?;
 
         // Test the connection
         let mut conn = client
             .get_async_connection()
             .await
-            .map_err(|e| ComSrvError::RedisError(format!("Redis connection test failed: {}", e)))?;
+            .map_err(|e| ComSrvError::RedisError(format!("Redis connection test failed: {e}")))?;
 
         let _: String = redis::cmd("PING")
             .query_async(&mut conn)
             .await
-            .map_err(|e| ComSrvError::RedisError(format!("Redis PING failed: {}", e)))?;
+            .map_err(|e| ComSrvError::RedisError(format!("Redis PING failed: {e}")))?;
 
         // Select database if specified
         if config.db > 0 {
@@ -196,7 +196,7 @@ impl RedisConnectionManager {
 
         // Create new connection if pool is empty
         let mut conn = self.client.get_async_connection().await.map_err(|e| {
-            ComSrvError::RedisError(format!("Failed to create Redis connection: {}", e))
+            ComSrvError::RedisError(format!("Failed to create Redis connection: {e}"))
         })?;
 
         // Select database if specified
@@ -227,7 +227,7 @@ impl RedisConnectionManager {
     /// Get synchronous connection for blocking operations
     pub fn get_sync_connection(&self) -> Result<redis::Connection> {
         self.client.get_connection().map_err(|e| {
-            ComSrvError::RedisError(format!("Failed to create sync Redis connection: {}", e))
+            ComSrvError::RedisError(format!("Failed to create sync Redis connection: {e}"))
         })
     }
 
@@ -242,12 +242,12 @@ impl RedisConnectionManager {
             Ok(mut conn) => match redis::cmd("PING").query_async::<_, String>(&mut conn).await {
                 Ok(_) => Ok(true),
                 Err(e) => {
-                    tracing::warn!("Redis health check failed: {}", e);
+                    tracing::warn!("Redis health check failed: {e}");
                     Ok(false)
                 }
             },
             Err(e) => {
-                tracing::warn!("Redis connection failed: {}", e);
+                tracing::warn!("Redis connection failed: {e}");
                 Ok(false)
             }
         }
@@ -293,7 +293,7 @@ impl RedisStore {
 
         for (key, value) in values {
             let val_str = serde_json::to_string(value).map_err(|e| {
-                ComSrvError::RedisError(format!("Serialize RealtimeValue error: {}", e))
+                ComSrvError::RedisError(format!("Serialize RealtimeValue error: {e}"))
             })?;
             pipe.set(key.as_str(), val_str);
         }
@@ -301,7 +301,7 @@ impl RedisStore {
         let mut conn = self.manager.get_connection().await?;
         pipe.query_async(&mut conn)
             .await
-            .map_err(|e| ComSrvError::RedisError(format!("Redis batch set error: {}", e)))?;
+            .map_err(|e| ComSrvError::RedisError(format!("Redis batch set error: {e}")))?;
 
         self.manager.return_connection(conn).await;
         Ok(())
@@ -321,7 +321,7 @@ impl RedisStore {
             .arg(keys)
             .query_async(&mut conn)
             .await
-            .map_err(|e| ComSrvError::RedisError(format!("Redis batch get error: {}", e)))?;
+            .map_err(|e| ComSrvError::RedisError(format!("Redis batch get error: {e}")))?;
 
         self.manager.return_connection(conn).await;
 
@@ -329,7 +329,7 @@ impl RedisStore {
         for val_opt in values {
             if let Some(json_str) = val_opt {
                 let parsed = serde_json::from_str(&json_str).map_err(|e| {
-                    ComSrvError::RedisError(format!("Deserialize RealtimeValue error: {}", e))
+                    ComSrvError::RedisError(format!("Deserialize RealtimeValue error: {e}"))
                 })?;
                 results.push(Some(parsed));
             } else {
@@ -344,9 +344,8 @@ impl RedisStore {
 
     /// write realtime value to Redis
     pub async fn set_realtime_value(&self, key: &str, value: &RealtimeValue) -> Result<()> {
-        let val_str = serde_json::to_string(value).map_err(|e| {
-            ComSrvError::RedisError(format!("Serialize RealtimeValue error: {}", e))
-        })?;
+        let val_str = serde_json::to_string(value)
+            .map_err(|e| ComSrvError::RedisError(format!("Serialize RealtimeValue error: {e}")))?;
 
         // Use retry mechanism for robustness
         let mut last_error = None;
@@ -355,16 +354,16 @@ impl RedisStore {
                 Ok(mut conn) => match conn.set::<&str, String, ()>(key, val_str.clone()).await {
                     Ok(_) => {
                         if attempt > 1 {
-                            tracing::info!("Redis set succeeded on attempt {}", attempt);
+                            tracing::info!("Redis set succeeded on attempt {attempt}");
                         }
                         return Ok(());
                     }
                     Err(e) => {
-                        last_error = Some(format!("Redis set error: {}", e));
+                        last_error = Some(format!("Redis set error: {e}"));
                     }
                 },
                 Err(e) => {
-                    last_error = Some(format!("Connection error: {}", e));
+                    last_error = Some(format!("Connection error: {e}"));
                 }
             }
 
@@ -392,9 +391,8 @@ impl RedisStore {
         value: &RealtimeValue,
         expire_secs: usize,
     ) -> Result<()> {
-        let val_str = serde_json::to_string(value).map_err(|e| {
-            ComSrvError::RedisError(format!("Serialize RealtimeValue error: {}", e))
-        })?;
+        let val_str = serde_json::to_string(value)
+            .map_err(|e| ComSrvError::RedisError(format!("Serialize RealtimeValue error: {e}")))?;
 
         // Use retry mechanism for robustness
         let mut last_error = None;
@@ -407,17 +405,17 @@ impl RedisStore {
                     {
                         Ok(_) => {
                             if attempt > 1 {
-                                tracing::info!("Redis set_ex succeeded on attempt {}", attempt);
+                                tracing::info!("Redis set_ex succeeded on attempt {attempt}");
                             }
                             return Ok(());
                         }
                         Err(e) => {
-                            last_error = Some(format!("Redis set_ex error: {}", e));
+                            last_error = Some(format!("Redis set_ex error: {e}"));
                         }
                     }
                 }
                 Err(e) => {
-                    last_error = Some(format!("Connection error: {}", e));
+                    last_error = Some(format!("Connection error: {e}"));
                 }
             }
 
@@ -445,11 +443,11 @@ impl RedisStore {
         let val: Option<String> = conn
             .get(key)
             .await
-            .map_err(|e| ComSrvError::RedisError(format!("Redis get error: {}", e)))?;
+            .map_err(|e| ComSrvError::RedisError(format!("Redis get error: {e}")))?;
 
         if let Some(json_str) = val {
             let parsed = serde_json::from_str(&json_str).map_err(|e| {
-                ComSrvError::RedisError(format!("Deserialize RealtimeValue error: {}", e))
+                ComSrvError::RedisError(format!("Deserialize RealtimeValue error: {e}"))
             })?;
             Ok(Some(parsed))
         } else {
@@ -467,15 +465,13 @@ impl RedisStore {
     ) -> Result<()> {
         let key = self.manager.key_cache.channel_key(channel_id, ":metadata");
         let val_str = serde_json::to_string(metadata).map_err(|e| {
-            ComSrvError::RedisError(format!("Serialize channel metadata error: {}", e))
+            ComSrvError::RedisError(format!("Serialize channel metadata error: {e}"))
         })?;
 
         let mut conn = self.manager.get_connection().await?;
         conn.set::<&str, String, ()>(&key, val_str)
             .await
-            .map_err(|e| {
-                ComSrvError::RedisError(format!("Redis set channel metadata error: {}", e))
-            })
+            .map_err(|e| ComSrvError::RedisError(format!("Redis set channel metadata error: {e}")))
     }
 
     /// Get channel metadata from Redis
@@ -487,12 +483,12 @@ impl RedisStore {
         let mut conn = self.manager.get_connection().await?;
 
         let val: Option<String> = conn.get(&key).await.map_err(|e| {
-            ComSrvError::RedisError(format!("Redis get channel metadata error: {}", e))
+            ComSrvError::RedisError(format!("Redis get channel metadata error: {e}"))
         })?;
 
         if let Some(json_str) = val {
             let parsed = serde_json::from_str(&json_str).map_err(|e| {
-                ComSrvError::RedisError(format!("Deserialize channel metadata error: {}", e))
+                ComSrvError::RedisError(format!("Deserialize channel metadata error: {e}"))
             })?;
             Ok(Some(parsed))
         } else {
@@ -516,7 +512,7 @@ impl RedisStore {
                 .arg(100)
                 .query_async(&mut conn)
                 .await
-                .map_err(|e| ComSrvError::RedisError(format!("Redis SCAN error: {}", e)))?;
+                .map_err(|e| ComSrvError::RedisError(format!("Redis SCAN error: {e}")))?;
 
             keys.extend(batch);
 
@@ -552,7 +548,7 @@ impl RedisStore {
         let mut conn = self.manager.get_connection().await?;
 
         let _: () = conn.del(&key).await.map_err(|e| {
-            ComSrvError::RedisError(format!("Redis delete channel metadata error: {}", e))
+            ComSrvError::RedisError(format!("Redis delete channel metadata error: {e}"))
         })?;
 
         Ok(())
@@ -568,12 +564,12 @@ impl RedisStore {
     ) -> Result<()> {
         let key = self.manager.key_cache.config_key(config_name);
         let val_str = serde_json::to_string(config_data)
-            .map_err(|e| ComSrvError::RedisError(format!("Serialize config data error: {}", e)))?;
+            .map_err(|e| ComSrvError::RedisError(format!("Serialize config data error: {e}")))?;
 
         let mut conn = self.manager.get_connection().await?;
         conn.set::<&str, String, ()>(&key, val_str)
             .await
-            .map_err(|e| ComSrvError::RedisError(format!("Redis set config data error: {}", e)))?;
+            .map_err(|e| ComSrvError::RedisError(format!("Redis set config data error: {e}")))?;
         self.manager.return_connection(conn).await;
         Ok(())
     }
@@ -586,13 +582,13 @@ impl RedisStore {
         let val: Option<String> = conn
             .get(&key)
             .await
-            .map_err(|e| ComSrvError::RedisError(format!("Redis get config data error: {}", e)))?;
+            .map_err(|e| ComSrvError::RedisError(format!("Redis get config data error: {e}")))?;
 
         self.manager.return_connection(conn).await;
 
         if let Some(json_str) = val {
             let parsed = serde_json::from_str(&json_str).map_err(|e| {
-                ComSrvError::RedisError(format!("Deserialize config data error: {}", e))
+                ComSrvError::RedisError(format!("Deserialize config data error: {e}"))
             })?;
             Ok(Some(parsed))
         } else {
@@ -616,7 +612,7 @@ impl RedisStore {
                 .arg(100)
                 .query_async(&mut conn)
                 .await
-                .map_err(|e| ComSrvError::RedisError(format!("Redis SCAN error: {}", e)))?;
+                .map_err(|e| ComSrvError::RedisError(format!("Redis SCAN error: {e}")))?;
 
             keys.extend(batch);
 
@@ -646,15 +642,13 @@ impl RedisStore {
     ) -> Result<()> {
         let key = self.manager.key_cache.pool_key(connection_key, "");
         let val_str = serde_json::to_string(entry).map_err(|e| {
-            ComSrvError::RedisError(format!("Serialize connection entry error: {}", e))
+            ComSrvError::RedisError(format!("Serialize connection entry error: {e}"))
         })?;
 
         let mut conn = self.manager.get_connection().await?;
         conn.set::<&str, String, ()>(&key, val_str)
             .await
-            .map_err(|e| {
-                ComSrvError::RedisError(format!("Redis set connection entry error: {}", e))
-            })
+            .map_err(|e| ComSrvError::RedisError(format!("Redis set connection entry error: {e}")))
     }
 
     /// Get connection pool entry
@@ -666,12 +660,12 @@ impl RedisStore {
         let mut conn = self.manager.get_connection().await?;
 
         let val: Option<String> = conn.get(&key).await.map_err(|e| {
-            ComSrvError::RedisError(format!("Redis get connection entry error: {}", e))
+            ComSrvError::RedisError(format!("Redis get connection entry error: {e}"))
         })?;
 
         if let Some(json_str) = val {
             let parsed = serde_json::from_str(&json_str).map_err(|e| {
-                ComSrvError::RedisError(format!("Deserialize connection entry error: {}", e))
+                ComSrvError::RedisError(format!("Deserialize connection entry error: {e}"))
             })?;
             Ok(Some(parsed))
         } else {
@@ -695,7 +689,7 @@ impl RedisStore {
                 .arg(100)
                 .query_async(&mut conn)
                 .await
-                .map_err(|e| ComSrvError::RedisError(format!("Redis SCAN error: {}", e)))?;
+                .map_err(|e| ComSrvError::RedisError(format!("Redis SCAN error: {e}")))?;
 
             keys.extend(batch);
 
@@ -721,7 +715,7 @@ impl RedisStore {
         let mut conn = self.manager.get_connection().await?;
 
         let _: () = conn.del(&key).await.map_err(|e| {
-            ComSrvError::RedisError(format!("Redis delete connection entry error: {}", e))
+            ComSrvError::RedisError(format!("Redis delete connection entry error: {e}"))
         })?;
 
         Ok(())
@@ -733,12 +727,12 @@ impl RedisStore {
     pub async fn set_stats_data(&self, stats_key: &str, stats_data: &RedisStatsData) -> Result<()> {
         let key = self.manager.key_cache.stats_key(stats_key);
         let val_str = serde_json::to_string(stats_data)
-            .map_err(|e| ComSrvError::RedisError(format!("Serialize stats data error: {}", e)))?;
+            .map_err(|e| ComSrvError::RedisError(format!("Serialize stats data error: {e}")))?;
 
         let mut conn = self.manager.get_connection().await?;
         conn.set::<&str, String, ()>(&key, val_str)
             .await
-            .map_err(|e| ComSrvError::RedisError(format!("Redis set stats data error: {}", e)))?;
+            .map_err(|e| ComSrvError::RedisError(format!("Redis set stats data error: {e}")))?;
         self.manager.return_connection(conn).await;
         Ok(())
     }
@@ -751,13 +745,13 @@ impl RedisStore {
         let val: Option<String> = conn
             .get(&key)
             .await
-            .map_err(|e| ComSrvError::RedisError(format!("Redis get stats data error: {}", e)))?;
+            .map_err(|e| ComSrvError::RedisError(format!("Redis get stats data error: {e}")))?;
 
         self.manager.return_connection(conn).await;
 
         if let Some(json_str) = val {
             let parsed = serde_json::from_str(&json_str).map_err(|e| {
-                ComSrvError::RedisError(format!("Deserialize stats data error: {}", e))
+                ComSrvError::RedisError(format!("Deserialize stats data error: {e}"))
             })?;
             Ok(Some(parsed))
         } else {
@@ -781,7 +775,7 @@ impl RedisStore {
                 .arg(100)
                 .query_async(&mut conn)
                 .await
-                .map_err(|e| ComSrvError::RedisError(format!("Redis SCAN error: {}", e)))?;
+                .map_err(|e| ComSrvError::RedisError(format!("Redis SCAN error: {e}")))?;
 
             keys.extend(batch);
 
@@ -811,7 +805,7 @@ impl RedisStore {
         expire_secs: Option<Duration>,
     ) -> Result<()> {
         let val_str = serde_json::to_string(data)
-            .map_err(|e| ComSrvError::RedisError(format!("Serialize data error: {}", e)))?;
+            .map_err(|e| ComSrvError::RedisError(format!("Serialize data error: {e}")))?;
 
         let mut conn = self.manager.get_connection().await?;
 
@@ -819,12 +813,12 @@ impl RedisStore {
             conn.set_ex::<&str, String, ()>(key, val_str, duration.as_secs() as usize)
                 .await
                 .map_err(|e| {
-                    ComSrvError::RedisError(format!("Redis set data with expire error: {}", e))
+                    ComSrvError::RedisError(format!("Redis set data with expire error: {e}"))
                 })?;
         } else {
             conn.set::<&str, String, ()>(key, val_str)
                 .await
-                .map_err(|e| ComSrvError::RedisError(format!("Redis set data error: {}", e)))?;
+                .map_err(|e| ComSrvError::RedisError(format!("Redis set data error: {e}")))?;
         }
         self.manager.return_connection(conn).await;
         Ok(())
@@ -837,13 +831,13 @@ impl RedisStore {
         let val: Option<String> = conn
             .get(key)
             .await
-            .map_err(|e| ComSrvError::RedisError(format!("Redis get data error: {}", e)))?;
+            .map_err(|e| ComSrvError::RedisError(format!("Redis get data error: {e}")))?;
 
         self.manager.return_connection(conn).await;
 
         if let Some(json_str) = val {
             let parsed = serde_json::from_str(&json_str)
-                .map_err(|e| ComSrvError::RedisError(format!("Deserialize data error: {}", e)))?;
+                .map_err(|e| ComSrvError::RedisError(format!("Deserialize data error: {e}")))?;
             Ok(Some(parsed))
         } else {
             Ok(None)
@@ -857,7 +851,7 @@ impl RedisStore {
         let _: () = conn
             .del(key)
             .await
-            .map_err(|e| ComSrvError::RedisError(format!("Redis delete key error: {}", e)))?;
+            .map_err(|e| ComSrvError::RedisError(format!("Redis delete key error: {e}")))?;
 
         self.manager.return_connection(conn).await;
         Ok(())
@@ -870,7 +864,7 @@ impl RedisStore {
         let exists: bool = conn
             .exists(key)
             .await
-            .map_err(|e| ComSrvError::RedisError(format!("Redis exists error: {}", e)))?;
+            .map_err(|e| ComSrvError::RedisError(format!("Redis exists error: {e}")))?;
 
         Ok(exists)
     }
@@ -890,7 +884,7 @@ impl RedisStore {
                 .arg(100)
                 .query_async(&mut conn)
                 .await
-                .map_err(|e| ComSrvError::RedisError(format!("Redis SCAN error: {}", e)))?;
+                .map_err(|e| ComSrvError::RedisError(format!("Redis SCAN error: {e}")))?;
 
             keys.extend(batch);
 
@@ -911,7 +905,7 @@ impl RedisStore {
         let _: () = conn
             .expire(key, seconds)
             .await
-            .map_err(|e| ComSrvError::RedisError(format!("Redis expire error: {}", e)))?;
+            .map_err(|e| ComSrvError::RedisError(format!("Redis expire error: {e}")))?;
 
         Ok(())
     }
@@ -921,12 +915,12 @@ impl RedisStore {
     /// Set hash field
     pub async fn hset<T: Serialize>(&self, key: &str, field: &str, value: &T) -> Result<()> {
         let val_str = serde_json::to_string(value)
-            .map_err(|e| ComSrvError::RedisError(format!("Serialize hash value error: {}", e)))?;
+            .map_err(|e| ComSrvError::RedisError(format!("Serialize hash value error: {e}")))?;
 
         let mut conn = self.manager.get_connection().await?;
         conn.hset::<&str, &str, String, ()>(key, field, val_str)
             .await
-            .map_err(|e| ComSrvError::RedisError(format!("Redis hset error: {}", e)))
+            .map_err(|e| ComSrvError::RedisError(format!("Redis hset error: {e}")))
     }
 
     /// Get hash field
@@ -940,11 +934,11 @@ impl RedisStore {
         let val: Option<String> = conn
             .hget(key, field)
             .await
-            .map_err(|e| ComSrvError::RedisError(format!("Redis hget error: {}", e)))?;
+            .map_err(|e| ComSrvError::RedisError(format!("Redis hget error: {e}")))?;
 
         if let Some(json_str) = val {
             let parsed = serde_json::from_str(&json_str).map_err(|e| {
-                ComSrvError::RedisError(format!("Deserialize hash value error: {}", e))
+                ComSrvError::RedisError(format!("Deserialize hash value error: {e}"))
             })?;
             Ok(Some(parsed))
         } else {
@@ -959,7 +953,7 @@ impl RedisStore {
         let hash: HashMap<String, String> = conn
             .hgetall(key)
             .await
-            .map_err(|e| ComSrvError::RedisError(format!("Redis hgetall error: {}", e)))?;
+            .map_err(|e| ComSrvError::RedisError(format!("Redis hgetall error: {e}")))?;
 
         Ok(hash)
     }
@@ -971,7 +965,7 @@ impl RedisStore {
         let _: () = conn
             .hdel(key, field)
             .await
-            .map_err(|e| ComSrvError::RedisError(format!("Redis hdel error: {}", e)))?;
+            .map_err(|e| ComSrvError::RedisError(format!("Redis hdel error: {e}")))?;
 
         Ok(())
     }
@@ -981,13 +975,13 @@ impl RedisStore {
     /// 发布遥控/遥调指令到指定通道
     pub async fn publish_command(&self, channel: &str, command: &RemoteCommand) -> Result<()> {
         let command_str = serde_json::to_string(command)
-            .map_err(|e| ComSrvError::RedisError(format!("Serialize command error: {}", e)))?;
+            .map_err(|e| ComSrvError::RedisError(format!("Serialize command error: {e}")))?;
 
         let mut conn = self.manager.get_connection().await?;
         let _: () = conn
             .publish(channel, command_str)
             .await
-            .map_err(|e| ComSrvError::RedisError(format!("Redis publish error: {}", e)))?;
+            .map_err(|e| ComSrvError::RedisError(format!("Redis publish error: {e}")))?;
 
         Ok(())
     }
@@ -996,21 +990,21 @@ impl RedisStore {
     pub async fn set_command(&self, channel_id: &str, command: &RemoteCommand) -> Result<()> {
         let command_key = format!("cmd:{}:{}", channel_id, command.command_id);
         let command_str = serde_json::to_string(command)
-            .map_err(|e| ComSrvError::RedisError(format!("Serialize command error: {}", e)))?;
+            .map_err(|e| ComSrvError::RedisError(format!("Serialize command error: {e}")))?;
 
         let mut conn = self.manager.get_connection().await?;
         // 设置指令，带过期时间（5分钟）
         conn.set_ex::<&str, String, ()>(&command_key, command_str, 300)
             .await
-            .map_err(|e| ComSrvError::RedisError(format!("Redis set command error: {}", e)))?;
+            .map_err(|e| ComSrvError::RedisError(format!("Redis set command error: {e}")))?;
 
         // 同时发布到指令通道通知
-        let notify_channel = format!("commands:{}", channel_id);
+        let notify_channel = format!("commands:{channel_id}");
         let _: () = conn
             .publish(&notify_channel, &command.command_id)
             .await
             .map_err(|e| {
-                ComSrvError::RedisError(format!("Redis publish command notification error: {}", e))
+                ComSrvError::RedisError(format!("Redis publish command notification error: {e}"))
             })?;
 
         Ok(())
@@ -1022,18 +1016,17 @@ impl RedisStore {
         channel_id: &str,
         command_id: &str,
     ) -> Result<Option<RemoteCommand>> {
-        let command_key = format!("cmd:{}:{}", channel_id, command_id);
+        let command_key = format!("cmd:{}:{command_id}", channel_id);
 
         let mut conn = self.manager.get_connection().await?;
         let val: Option<String> = conn
             .get(&command_key)
             .await
-            .map_err(|e| ComSrvError::RedisError(format!("Redis get command error: {}", e)))?;
+            .map_err(|e| ComSrvError::RedisError(format!("Redis get command error: {e}")))?;
 
         if let Some(json_str) = val {
-            let parsed = serde_json::from_str(&json_str).map_err(|e| {
-                ComSrvError::RedisError(format!("Deserialize command error: {}", e))
-            })?;
+            let parsed = serde_json::from_str(&json_str)
+                .map_err(|e| ComSrvError::RedisError(format!("Deserialize command error: {e}")))?;
             Ok(Some(parsed))
         } else {
             Ok(None)
@@ -1042,13 +1035,13 @@ impl RedisStore {
 
     /// 删除已执行的指令
     pub async fn delete_command(&self, channel_id: &str, command_id: &str) -> Result<()> {
-        let command_key = format!("cmd:{}:{}", channel_id, command_id);
+        let command_key = format!("cmd:{}:{command_id}", channel_id);
 
         let mut conn = self.manager.get_connection().await?;
         let _: () = conn
             .del(&command_key)
             .await
-            .map_err(|e| ComSrvError::RedisError(format!("Redis delete command error: {}", e)))?;
+            .map_err(|e| ComSrvError::RedisError(format!("Redis delete command error: {e}")))?;
 
         Ok(())
     }
@@ -1056,17 +1049,14 @@ impl RedisStore {
     /// 设置指令执行结果
     pub async fn set_command_result(&self, channel_id: &str, result: &CommandResult) -> Result<()> {
         let result_key = format!("result:{}:{}", channel_id, result.command_id);
-        let result_str = serde_json::to_string(result).map_err(|e| {
-            ComSrvError::RedisError(format!("Serialize command result error: {}", e))
-        })?;
+        let result_str = serde_json::to_string(result)
+            .map_err(|e| ComSrvError::RedisError(format!("Serialize command result error: {e}")))?;
 
         let mut conn = self.manager.get_connection().await?;
         // 设置结果，带过期时间（1小时）
         conn.set_ex::<&str, String, ()>(&result_key, result_str, 3600)
             .await
-            .map_err(|e| {
-                ComSrvError::RedisError(format!("Redis set command result error: {}", e))
-            })?;
+            .map_err(|e| ComSrvError::RedisError(format!("Redis set command result error: {e}")))?;
 
         Ok(())
     }
@@ -1090,7 +1080,7 @@ impl RedisStore {
         let _: () = conn
             .publish(channel, message)
             .await
-            .map_err(|e| ComSrvError::RedisError(format!("Redis publish error: {}", e)))?;
+            .map_err(|e| ComSrvError::RedisError(format!("Redis publish error: {e}")))?;
 
         Ok(())
     }
@@ -1435,7 +1425,7 @@ mod tests {
     #[test]
     fn test_realtime_value_debug() {
         let value = create_test_realtime_value();
-        let debug_str = format!("{:?}", value);
+        let debug_str = format!("{value:?}");
 
         assert!(debug_str.contains("RealtimeValue"));
         assert!(debug_str.contains("123.45"));

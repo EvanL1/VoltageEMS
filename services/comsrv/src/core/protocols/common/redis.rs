@@ -87,7 +87,7 @@ impl RedisBatchSync {
                 sync_interval.tick().await;
 
                 if let Err(e) = self.sync_batch(&point_manager).await {
-                    error!("Redis sync error: {}", e);
+                    error!("Redis sync error: {e}");
                     self.stats.write().await.failed_syncs += 1;
                 }
             }
@@ -166,10 +166,10 @@ impl RedisBatchSync {
                 data.channel_id.or(self.config.channel_id),
                 &data.telemetry_type,
             ) {
-                format!("comsrv:channel:{}:{}:{}", channel_id, telemetry_type, id)
+                format!("comsrv:channel:{}:{}:{id}", channel_id, telemetry_type)
             } else {
                 // Fallback to old format if channel_id or telemetry_type is missing
-                format!("{}:{}", self.config.key_prefix, id)
+                format!("{}:{id}", self.config.key_prefix)
             };
 
             let value = json!({
@@ -232,10 +232,10 @@ impl RedisBatchSync {
                 data.channel_id.or(self.config.channel_id),
                 &data.telemetry_type,
             ) {
-                format!("comsrv:channel:{}:{}:{}", channel_id, telemetry_type, id)
+                format!("comsrv:channel:{}:{}:{id}", channel_id, telemetry_type)
             } else {
                 // Fallback to old format if channel_id or telemetry_type is missing
-                format!("{}:{}", self.config.key_prefix, id)
+                format!("{}:{id}", self.config.key_prefix)
             };
 
             let value = json!({
@@ -297,7 +297,7 @@ impl RedisBatchSync {
             );
             type_sets
                 .entry(type_key)
-                .or_insert_with(Vec::new)
+                .or_default()
                 .push(config.address.to_string());
         }
 
@@ -353,7 +353,7 @@ impl RedisBatchSync {
         let mut conn = self.redis_conn.lock().await;
         let keys: Vec<String> = point_ids
             .iter()
-            .map(|id| format!("{}:{}", self.config.key_prefix, id))
+            .map(|id| format!("{}:{id}", self.config.key_prefix))
             .collect();
 
         let _: () = redis::cmd("DEL")

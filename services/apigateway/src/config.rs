@@ -60,7 +60,7 @@ impl Config {
             // Override with environment variables
             .add_source(config::Environment::with_prefix("APIGATEWAY").separator("_"))
             .build()?;
-        
+
         settings.try_deserialize()
     }
 
@@ -135,10 +135,7 @@ impl Default for Config {
                     "DELETE".to_string(),
                     "OPTIONS".to_string(),
                 ],
-                allowed_headers: vec![
-                    "Content-Type".to_string(),
-                    "Authorization".to_string(),
-                ],
+                allowed_headers: vec!["Content-Type".to_string(), "Authorization".to_string()],
                 max_age: 3600,
             },
             logging: LoggingConfig {

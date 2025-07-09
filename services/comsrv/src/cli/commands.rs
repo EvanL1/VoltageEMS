@@ -35,7 +35,7 @@ pub async fn new_protocol(name: &str, output: &Path, template: Option<&str>) -> 
     println!("  1. cd {}", output.join(name).display());
     println!("  2. cargo build");
     println!("  3. cargo test");
-    println!("  4. comsrv-cli test {}", name);
+    println!("  4. comsrv-cli test {name}");
     
     Ok(())
 }
@@ -83,7 +83,7 @@ pub async fn list_protocols(verbose: bool) -> Result<()> {
         println!("  Enabled plugins: {}", stats.enabled_plugins);
         println!("  Plugin types:");
         for (ptype, count) in &stats.plugin_types {
-            println!("    - {}: {}", ptype, count);
+            println!("    - {}: {count}", ptype);
         }
     } else {
         // Simple list
@@ -128,7 +128,7 @@ pub async fn generate_config(
         fs::write(path, output_str)?;
         println!("{} Configuration written to: {}", "✅".green(), path.display());
     } else {
-        println!("\n{}", output_str);
+        println!("\n{output_str}");
     }
     
     Ok(())
@@ -175,7 +175,7 @@ pub async fn validate_config(config_path: &Path, protocol: Option<&str>) -> Resu
         }
         Err(e) => {
             println!("{} Configuration validation failed:", "❌".red());
-            println!("  {}", e);
+            println!("  {e}");
             return Err(e);
         }
     }

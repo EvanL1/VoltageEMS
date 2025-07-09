@@ -21,7 +21,7 @@ pub struct ErrorInfo {
     pub details: Option<String>,
 }
 
-impl<T> ApiResponse<T> 
+impl<T> ApiResponse<T>
 where
     T: Serialize,
 {
@@ -65,11 +65,21 @@ pub fn success_response<T: Serialize>(data: T) -> HttpResponse {
     ApiResponse::success(data).into_response()
 }
 
-pub fn error_response(status: actix_web::http::StatusCode, code: &str, message: &str, details: Option<String>) -> HttpResponse {
+pub fn error_response(
+    status: actix_web::http::StatusCode,
+    code: &str,
+    message: &str,
+    details: Option<String>,
+) -> HttpResponse {
     HttpResponse::build(status).json(ApiResponse::<()>::error(code, message, details))
 }
 
-pub fn paginated_response<T: Serialize>(data: Vec<T>, total: usize, offset: usize, limit: usize) -> HttpResponse {
+pub fn paginated_response<T: Serialize>(
+    data: Vec<T>,
+    total: usize,
+    offset: usize,
+    limit: usize,
+) -> HttpResponse {
     success_response(json!({
         "items": data,
         "pagination": {

@@ -1,7 +1,7 @@
-use std::sync::Arc;
-use chrono::Timelike;
 use crate::config::AlarmConfig;
 use crate::types::*;
+use chrono::Timelike;
+use std::sync::Arc;
 
 /// Alarm classifier with rule-based classification and escalation
 pub struct AlarmClassifier {
@@ -20,11 +20,11 @@ impl AlarmClassifier {
             escalation_rules: Vec::new(),
             categories: Vec::new(),
         };
-        
+
         classifier.initialize_default_rules();
         classifier
     }
-    
+
     /// Classify an alarm based on its content and rules
     pub async fn classify(&self, alarm: &Alarm) -> AlarmClassification {
         // Apply classification rules
@@ -39,7 +39,7 @@ impl AlarmClassifier {
                 };
             }
         }
-        
+
         // Default classification for unmatched alarms
         AlarmClassification {
             category: "unclassified".to_string(),
@@ -49,22 +49,22 @@ impl AlarmClassifier {
             reason: "No matching classification rule found".to_string(),
         }
     }
-    
+
     /// Get all alarm categories
     pub fn get_categories(&self) -> Vec<AlarmCategory> {
         self.categories.clone()
     }
-    
+
     /// Get number of classification rules
     pub fn get_rule_count(&self) -> usize {
         self.classification_rules.len()
     }
-    
+
     /// Get escalation rules
     pub fn get_escalation_rules(&self) -> Vec<EscalationRule> {
         self.escalation_rules.clone()
     }
-    
+
     /// Initialize default classification rules
     fn initialize_default_rules(&mut self) {
         // Temperature-related alarms
@@ -79,12 +79,16 @@ impl AlarmClassifier {
             confidence: 0.9,
             reason: "Temperature-related alarm detected".to_string(),
         });
-        
+
         // Power-related alarms
         self.classification_rules.push(ClassificationRule {
             name: "power_failure".to_string(),
             category: "power".to_string(),
-            title_patterns: vec!["power".to_string(), "voltage".to_string(), "current".to_string()],
+            title_patterns: vec![
+                "power".to_string(),
+                "voltage".to_string(),
+                "current".to_string(),
+            ],
             description_patterns: vec!["power failure".to_string(), "voltage drop".to_string()],
             level_filter: Some(vec![AlarmLevel::Critical, AlarmLevel::Major]),
             priority_boost: 2,
@@ -92,12 +96,16 @@ impl AlarmClassifier {
             confidence: 0.95,
             reason: "Power system alarm detected".to_string(),
         });
-        
+
         // Communication alarms
         self.classification_rules.push(ClassificationRule {
             name: "communication_failure".to_string(),
             category: "communication".to_string(),
-            title_patterns: vec!["connection".to_string(), "communication".to_string(), "network".to_string()],
+            title_patterns: vec![
+                "connection".to_string(),
+                "communication".to_string(),
+                "network".to_string(),
+            ],
             description_patterns: vec!["connection lost".to_string(), "timeout".to_string()],
             level_filter: None,
             priority_boost: 0,
@@ -105,12 +113,16 @@ impl AlarmClassifier {
             confidence: 0.8,
             reason: "Communication alarm detected".to_string(),
         });
-        
+
         // System alarms
         self.classification_rules.push(ClassificationRule {
             name: "system_error".to_string(),
             category: "system".to_string(),
-            title_patterns: vec!["system".to_string(), "error".to_string(), "fault".to_string()],
+            title_patterns: vec![
+                "system".to_string(),
+                "error".to_string(),
+                "fault".to_string(),
+            ],
             description_patterns: vec!["system error".to_string(), "malfunction".to_string()],
             level_filter: None,
             priority_boost: 1,
@@ -118,7 +130,7 @@ impl AlarmClassifier {
             confidence: 0.85,
             reason: "System error alarm detected".to_string(),
         });
-        
+
         // Initialize escalation rules
         self.escalation_rules.push(EscalationRule {
             name: "new_to_major".to_string(),
@@ -128,7 +140,7 @@ impl AlarmClassifier {
             duration_minutes: 30,
             condition: "Unacknowledged warning alarms after 30 minutes".to_string(),
         });
-        
+
         self.escalation_rules.push(EscalationRule {
             name: "major_to_critical".to_string(),
             from_status: AlarmStatus::New,
@@ -137,7 +149,7 @@ impl AlarmClassifier {
             duration_minutes: 60,
             condition: "Unacknowledged major alarms after 1 hour".to_string(),
         });
-        
+
         // Initialize categories
         self.categories = vec![
             AlarmCategory {
@@ -184,7 +196,7 @@ impl AlarmClassifier {
             },
         ];
     }
-    
+
     /// Check if alarm matches classification rule
     fn matches_rule(&self, alarm: &Alarm, rule: &ClassificationRule) -> bool {
         // Check level filter
@@ -193,23 +205,25 @@ impl AlarmClassifier {
                 return false;
             }
         }
-        
+
         // Check title patterns
         let title_lower = alarm.title.to_lowercase();
-        let title_matches = rule.title_patterns.iter().any(|pattern| {
-            title_lower.contains(&pattern.to_lowercase())
-        });
-        
+        let title_matches = rule
+            .title_patterns
+            .iter()
+            .any(|pattern| title_lower.contains(&pattern.to_lowercase()));
+
         // Check description patterns
         let desc_lower = alarm.description.to_lowercase();
-        let desc_matches = rule.description_patterns.iter().any(|pattern| {
-            desc_lower.contains(&pattern.to_lowercase())
-        });
-        
+        let desc_matches = rule
+            .description_patterns
+            .iter()
+            .any(|pattern| desc_lower.contains(&pattern.to_lowercase()));
+
         // Rule matches if either title or description matches
         title_matches || desc_matches
     }
-    
+
     /// Calculate priority based on alarm level and rule
     fn calculate_priority(&self, alarm: &Alarm, rule: &ClassificationRule) -> u32 {
         let base_priority = match alarm.level {
@@ -219,39 +233,41 @@ impl AlarmClassifier {
             AlarmLevel::Warning => 40,
             AlarmLevel::Info => 20,
         };
-        
+
         // Apply category weight
-        let category_weight = self.categories.iter()
+        let category_weight = self
+            .categories
+            .iter()
             .find(|c| c.name == rule.category)
             .map(|c| c.priority_weight)
             .unwrap_or(1.0);
-        
+
         ((base_priority as f32 * category_weight) as u32) + (rule.priority_boost * 10)
     }
-    
+
     /// Extract tags based on alarm content and rule
     fn extract_tags(&self, alarm: &Alarm, rule: &ClassificationRule) -> Vec<String> {
         let mut tags = rule.tags.clone();
-        
+
         // Add level-based tag
         tags.push(format!("{:?}", alarm.level).to_lowercase());
-        
+
         // Add time-based tag
         let hour = alarm.created_at.hour();
         if hour >= 18 || hour < 6 {
             tags.push("off-hours".to_string());
         }
-        
+
         // Add urgency tag for critical alarms
         if alarm.level == AlarmLevel::Critical {
             tags.push("urgent".to_string());
         }
-        
+
         tags.sort();
         tags.dedup();
         tags
     }
-    
+
     /// Get default priority for alarm level
     fn default_priority_for_level(&self, level: AlarmLevel) -> u32 {
         match level {
@@ -262,4 +278,4 @@ impl AlarmClassifier {
             AlarmLevel::Info => 10,
         }
     }
-} 
+}

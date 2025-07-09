@@ -1,23 +1,23 @@
 use crate::error::ModelSrvError;
-use crate::storage::redis_store::RedisStore;
+use crate::monitoring::{HealthStatus, MonitoringService};
 use crate::rules_engine::RuleExecutor;
-use serde_json::{self, json, Value};
-use tracing::{info, error};
-use std::sync::Arc;
+use crate::storage::redis_store::RedisStore;
+use crate::template::TemplateManager;
+use crate::StorageAgent;
 use axum::{
     extract::{Path, State},
     http::StatusCode,
     response::Json,
-    routing::{get, post, put, delete},
+    routing::{delete, get, post, put},
     Router,
 };
-use serde::{Serialize, Deserialize};
-use crate::monitoring::{MonitoringService, HealthStatus};
-use crate::StorageAgent;
-use std::collections::HashMap;
-use crate::template::TemplateManager;
 use rand;
+use serde::{Deserialize, Serialize};
+use serde_json::{self, json, Value};
+use std::collections::HashMap;
+use std::sync::Arc;
 use tower_http::cors::CorsLayer;
+use tracing::{error, info};
 use utoipa::{OpenApi, ToSchema};
 // SwaggerUi removed due to compatibility issues
 
@@ -70,13 +70,13 @@ pub struct ApiDoc;
 struct CreateInstanceRequest {
     template_id: String,
     instance_id: String,
-    config: Value
+    config: Value,
 }
 
 #[derive(Deserialize, Debug, ToSchema)]
 struct ExecuteOperationRequest {
     instance_id: String,
-    parameters: Value
+    parameters: Value,
 }
 
 #[derive(Deserialize, Debug, ToSchema)]
@@ -148,10 +148,10 @@ pub struct ApiServer {
 impl ApiServer {
     /// Create a new API server
     pub fn new(
-        store: Arc<RedisStore>, 
+        store: Arc<RedisStore>,
         agent: Arc<StorageAgent>,
         rule_executor: Arc<RuleExecutor>,
-        port: u16
+        port: u16,
     ) -> Self {
         let monitoring = Arc::new(MonitoringService::new(HealthStatus::Healthy));
         let state = AppState {
@@ -160,48 +160,44 @@ impl ApiServer {
             rule_executor,
             monitoring,
         };
-        Self {
-            state,
-            port,
-        }
+        Self { state, port }
     }
-    
+
     /// Start the API server
     pub async fn start(&self) -> Result<(), std::io::Error> {
         let app = Router::new()
             // Health endpoints
             .route("/health", get(health_check))
-            
             // Rule endpoints
             .route("/api/rules", get(list_rules).post(create_rule))
-            .route("/api/rules/:id", get(get_rule).put(update_rule).delete(delete_rule))
+            .route(
+                "/api/rules/:id",
+                get(get_rule).put(update_rule).delete(delete_rule),
+            )
             .route("/api/rules/:id/execute", post(execute_rule))
-            
             // Template endpoints
             .route("/api/templates", get(list_templates))
             .route("/api/templates/:id", get(get_template))
-            
             // Instance endpoints
             .route("/api/instances", post(create_instance))
-            
             // Control operation endpoints
-            .route("/api/control/operations", get(list_operations).post(control_operation))
+            .route(
+                "/api/control/operations",
+                get(list_operations).post(control_operation),
+            )
             .route("/api/control/execute/:operation", post(execute_operation))
-            
             // OpenAPI spec endpoint
             .route("/api-docs/openapi.json", get(serve_openapi_spec))
-            
             // CORS
             .layer(CorsLayer::permissive())
-            
             // State
             .with_state(self.state.clone());
-        
+
         let listener = tokio::net::TcpListener::bind(format!("0.0.0.0:{}", self.port)).await?;
         info!("Starting API server on port {}", self.port);
-        
+
         axum::serve(listener, app).await?;
-        
+
         Ok(())
     }
 }
@@ -232,19 +228,26 @@ async fn health_check() -> Json<HealthResponse> {
     ),
     tag = "rules"
 )]
-async fn list_rules(State(state): State<AppState>) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
+async fn list_rules(
+    State(state): State<AppState>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
     // TODO: Implement list_rules method in RedisStore
-    match Ok(serde_json::Value::Array(vec![])) as Result<serde_json::Value, crate::error::ModelSrvError> {
+    match Ok(serde_json::Value::Array(vec![]))
+        as Result<serde_json::Value, crate::error::ModelSrvError>
+    {
         Ok(rules) => Ok(Json(json!({
             "status": "success",
             "rules": rules
         }))),
         Err(e) => {
             error!("Failed to list rules: {}", e);
-            Err((StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse {
-                error: "InternalError".to_string(),
-                message: format!("Failed to list rules: {}", e),
-            })))
+            Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: "InternalError".to_string(),
+                    message: format!("Failed to list rules: {}", e),
+                }),
+            ))
         }
     }
 }
@@ -264,7 +267,7 @@ async fn list_rules(State(state): State<AppState>) -> Result<Json<serde_json::Va
 )]
 async fn get_rule(
     Path(id): Path<String>,
-    State(state): State<AppState>
+    State(state): State<AppState>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
     // TODO: Implement get_rule method in RedisStore
     match Ok(None) as Result<Option<serde_json::Value>, crate::error::ModelSrvError> {
@@ -272,16 +275,22 @@ async fn get_rule(
             "status": "success",
             "rule": rule
         }))),
-        Ok(None) => Err((StatusCode::NOT_FOUND, Json(ErrorResponse {
-            error: "NotFound".to_string(),
-            message: format!("Rule with ID '{}' not found", id),
-        }))),
+        Ok(None) => Err((
+            StatusCode::NOT_FOUND,
+            Json(ErrorResponse {
+                error: "NotFound".to_string(),
+                message: format!("Rule with ID '{}' not found", id),
+            }),
+        )),
         Err(e) => {
             error!("Failed to get rule {}: {}", id, e);
-            Err((StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse {
-                error: "InternalError".to_string(),
-                message: format!("Failed to get rule: {}", e),
-            })))
+            Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: "InternalError".to_string(),
+                    message: format!("Failed to get rule: {}", e),
+                }),
+            ))
         }
     }
 }
@@ -299,10 +308,12 @@ async fn get_rule(
 )]
 async fn create_rule(
     State(state): State<AppState>,
-    Json(rule_data): Json<serde_json::Value>
+    Json(rule_data): Json<serde_json::Value>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
     // TODO: Implement create_rule method in RedisStore
-    match Ok(format!("rule_{}", rand::random::<u32>())) as Result<String, crate::error::ModelSrvError> {
+    match Ok(format!("rule_{}", rand::random::<u32>()))
+        as Result<String, crate::error::ModelSrvError>
+    {
         Ok(rule_id) => Ok(Json(json!({
             "status": "success",
             "message": "Rule created successfully",
@@ -310,10 +321,13 @@ async fn create_rule(
         }))),
         Err(e) => {
             error!("Failed to create rule: {}", e);
-            Err((StatusCode::BAD_REQUEST, Json(ErrorResponse {
-                error: "BadRequest".to_string(),
-                message: format!("Failed to create rule: {}", e),
-            })))
+            Err((
+                StatusCode::BAD_REQUEST,
+                Json(ErrorResponse {
+                    error: "BadRequest".to_string(),
+                    message: format!("Failed to create rule: {}", e),
+                }),
+            ))
         }
     }
 }
@@ -335,7 +349,7 @@ async fn create_rule(
 async fn update_rule(
     Path(id): Path<String>,
     State(state): State<AppState>,
-    Json(rule_data): Json<serde_json::Value>
+    Json(rule_data): Json<serde_json::Value>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
     // TODO: Implement update_rule method in RedisStore
     match Ok(()) as Result<(), crate::error::ModelSrvError> {
@@ -345,10 +359,13 @@ async fn update_rule(
         }))),
         Err(e) => {
             error!("Failed to update rule {}: {}", id, e);
-            Err((StatusCode::NOT_FOUND, Json(ErrorResponse {
-                error: "NotFound".to_string(),
-                message: format!("Failed to update rule: {}", e),
-            })))
+            Err((
+                StatusCode::NOT_FOUND,
+                Json(ErrorResponse {
+                    error: "NotFound".to_string(),
+                    message: format!("Failed to update rule: {}", e),
+                }),
+            ))
         }
     }
 }
@@ -368,7 +385,7 @@ async fn update_rule(
 )]
 async fn delete_rule(
     Path(id): Path<String>,
-    State(state): State<AppState>
+    State(state): State<AppState>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
     // TODO: Implement delete_rule method in RedisStore
     match Ok(()) as Result<(), crate::error::ModelSrvError> {
@@ -378,10 +395,13 @@ async fn delete_rule(
         }))),
         Err(e) => {
             error!("Failed to delete rule {}: {}", id, e);
-            Err((StatusCode::NOT_FOUND, Json(ErrorResponse {
-                error: "NotFound".to_string(),
-                message: format!("Failed to delete rule: {}", e),
-            })))
+            Err((
+                StatusCode::NOT_FOUND,
+                Json(ErrorResponse {
+                    error: "NotFound".to_string(),
+                    message: format!("Failed to delete rule: {}", e),
+                }),
+            ))
         }
     }
 }
@@ -403,16 +423,19 @@ async fn delete_rule(
 async fn execute_rule(
     Path(id): Path<String>,
     State(state): State<AppState>,
-    Json(input): Json<serde_json::Value>
+    Json(input): Json<serde_json::Value>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
     match state.rule_executor.execute_rule(&id, Some(input)).await {
         Ok(result) => Ok(Json(result)),
         Err(e) => {
             error!("Failed to execute rule {}: {}", id, e);
-            Err((StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse {
-                error: "ExecutionError".to_string(),
-                message: format!("Failed to execute rule: {}", e),
-            })))
+            Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: "ExecutionError".to_string(),
+                    message: format!("Failed to execute rule: {}", e),
+                }),
+            ))
         }
     }
 }
@@ -427,7 +450,9 @@ async fn execute_rule(
     ),
     tag = "templates"
 )]
-async fn list_templates(State(_state): State<AppState>) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
+async fn list_templates(
+    State(_state): State<AppState>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
     // TODO: Implement template manager functionality
     Ok(Json(json!({
         "status": "success",
@@ -450,13 +475,16 @@ async fn list_templates(State(_state): State<AppState>) -> Result<Json<serde_jso
 )]
 async fn get_template(
     Path(id): Path<String>,
-    State(_state): State<AppState>
+    State(_state): State<AppState>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
     // TODO: Implement template manager functionality
-    Err((StatusCode::NOT_FOUND, Json(ErrorResponse {
-        error: "NotFound".to_string(),
-        message: format!("Template with ID '{}' not found", id),
-    })))
+    Err((
+        StatusCode::NOT_FOUND,
+        Json(ErrorResponse {
+            error: "NotFound".to_string(),
+            message: format!("Template with ID '{}' not found", id),
+        }),
+    ))
 }
 
 /// Create a new instance
@@ -472,7 +500,7 @@ async fn get_template(
 )]
 async fn create_instance(
     State(_state): State<AppState>,
-    Json(req): Json<CreateInstanceRequest>
+    Json(req): Json<CreateInstanceRequest>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
     // TODO: Implement template manager functionality
     Ok(Json(json!({
@@ -493,9 +521,9 @@ async fn create_instance(
 )]
 async fn list_operations(State(_state): State<AppState>) -> Json<Vec<String>> {
     Json(vec![
-        "start_motor".to_string(), 
-        "stop_motor".to_string(), 
-        "change_speed".to_string()
+        "start_motor".to_string(),
+        "stop_motor".to_string(),
+        "change_speed".to_string(),
     ])
 }
 
@@ -512,7 +540,7 @@ async fn list_operations(State(_state): State<AppState>) -> Json<Vec<String>> {
 )]
 async fn control_operation(
     State(_state): State<AppState>,
-    Json(req): Json<ExecuteOperationRequest>
+    Json(req): Json<ExecuteOperationRequest>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
     // Placeholder implementation
     Ok(Json(json!({
@@ -538,7 +566,7 @@ async fn control_operation(
 async fn execute_operation(
     Path(operation): Path<String>,
     State(_state): State<AppState>,
-    Json(req): Json<ExecuteOperationRequest>
+    Json(req): Json<ExecuteOperationRequest>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
     // Placeholder implementation
     Ok(Json(json!({
@@ -556,14 +584,14 @@ async fn serve_openapi_spec() -> Json<utoipa::openapi::OpenApi> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_health_response_serialization() {
         let response = HealthResponse {
             status: "ok".to_string(),
             version: "1.0.0".to_string(),
         };
-        
+
         let json = serde_json::to_string(&response).unwrap();
         assert!(json.contains("\"status\":\"ok\""));
         assert!(json.contains("\"version\":\"1.0.0\""));

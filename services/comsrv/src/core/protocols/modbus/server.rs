@@ -56,12 +56,12 @@ impl ModbusDevice {
 
         // Set some holding registers
         for i in 0..16 {
-            self.holding_registers.insert(i, (i * 100) as u16);
+            self.holding_registers.insert(i, i * 100);
         }
 
         // Set some input registers
         for i in 0..16 {
-            self.input_registers.insert(i, (i * 200 + 1000) as u16);
+            self.input_registers.insert(i, i * 200 + 1000);
         }
     }
 
@@ -181,7 +181,7 @@ impl ModbusServer {
         device.init_test_data(); // Initialize with test data
         let unit_id = device.unit_id; // Save unit_id before moving device
         self.devices.insert(device.unit_id, device);
-        info!("Added Modbus device with unit ID {}", unit_id);
+        info!("Added Modbus device with unit ID {unit_id}");
     }
 
     /// Start the server
@@ -322,8 +322,7 @@ impl ModbusServer {
                 ))
             }
             ModbusFunctionCode::Custom(code) => Err(ComSrvError::ProtocolError(format!(
-                "Unsupported function code: 0x{:02X}",
-                code
+                "Unsupported function code: 0x{code:02X}"
             ))),
         }
     }

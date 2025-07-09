@@ -10,11 +10,11 @@ pub struct NetServiceConfig {
     /// Base service configuration (flattened)
     #[serde(flatten)]
     pub base: BaseServiceConfig,
-    
+
     /// Network configurations
     #[serde(default)]
     pub networks: Vec<NetworkConfig>,
-    
+
     /// Data processing configuration
     pub data: DataConfig,
 }
@@ -25,15 +25,15 @@ pub struct DataConfig {
     /// Redis data key pattern
     #[serde(default = "default_data_key_pattern")]
     pub redis_data_key: String,
-    
+
     /// Redis polling interval in seconds
     #[serde(default = "default_polling_interval")]
     pub redis_polling_interval_secs: u64,
-    
+
     /// Enable data buffering
     #[serde(default = "default_true")]
     pub enable_buffering: bool,
-    
+
     /// Buffer size
     #[serde(default = "default_buffer_size")]
     pub buffer_size: usize,
@@ -45,10 +45,10 @@ pub struct DataConfig {
 pub enum NetworkConfig {
     /// Legacy MQTT configuration
     LegacyMqtt(LegacyMqttConfig),
-    
+
     /// HTTP REST API configuration
     Http(HttpConfig),
-    
+
     /// Cloud MQTT configuration
     CloudMqtt(CloudMqttConfig),
 }
@@ -58,24 +58,24 @@ pub enum NetworkConfig {
 pub struct LegacyMqttConfig {
     /// Network name
     pub name: String,
-    
+
     /// Broker address
     pub broker: String,
-    
+
     /// Client ID
     pub client_id: String,
-    
+
     /// Authentication
     #[serde(default)]
     pub auth: Option<BasicAuth>,
-    
+
     /// Topics configuration
     pub topics: TopicConfig,
-    
+
     /// Data format
     #[serde(default)]
     pub format_type: FormatType,
-    
+
     /// Connection settings
     #[serde(default)]
     pub connection: ConnectionSettings,
@@ -86,26 +86,26 @@ pub struct LegacyMqttConfig {
 pub struct HttpConfig {
     /// Network name
     pub name: String,
-    
+
     /// Base URL
     pub url: String,
-    
+
     /// HTTP method
     #[serde(default = "default_http_method")]
     pub method: String,
-    
+
     /// Authentication
     #[serde(default)]
     pub auth: Option<HttpAuth>,
-    
+
     /// Headers
     #[serde(default)]
     pub headers: HashMap<String, String>,
-    
+
     /// Timeout in seconds
     #[serde(default = "default_http_timeout")]
     pub timeout_secs: u64,
-    
+
     /// Data format
     #[serde(default)]
     pub format_type: FormatType,
@@ -116,27 +116,27 @@ pub struct HttpConfig {
 pub struct CloudMqttConfig {
     /// Network name
     pub name: String,
-    
+
     /// Cloud provider
     pub provider: CloudProvider,
-    
+
     /// Provider-specific configuration
     pub provider_config: ProviderConfig,
-    
+
     /// Authentication configuration
     pub auth: AuthConfig,
-    
+
     /// Topics configuration
     pub topics: CloudTopicConfig,
-    
+
     /// Data format
     #[serde(default)]
     pub format_type: FormatType,
-    
+
     /// TLS configuration
     #[serde(default)]
     pub tls: TlsConfig,
-    
+
     /// AWS-specific features
     #[serde(default)]
     pub aws_features: AwsIotFeatures,
@@ -164,7 +164,7 @@ pub enum ProviderConfig {
         port: u16,
         thing_name: String,
     },
-    
+
     /// Aliyun IoT configuration
     Aliyun {
         endpoint: String,
@@ -172,13 +172,10 @@ pub enum ProviderConfig {
         product_key: String,
         device_name: String,
     },
-    
+
     /// Azure IoT Hub configuration
-    Azure {
-        hostname: String,
-        device_id: String,
-    },
-    
+    Azure { hostname: String, device_id: String },
+
     /// Tencent IoT configuration
     Tencent {
         endpoint: String,
@@ -186,14 +183,14 @@ pub enum ProviderConfig {
         product_id: String,
         device_name: String,
     },
-    
+
     /// Huawei IoT configuration
     Huawei {
         endpoint: String,
         port: u16,
         device_id: String,
     },
-    
+
     /// Custom provider configuration
     Custom {
         broker: String,
@@ -213,27 +210,24 @@ pub enum AuthConfig {
         #[serde(default)]
         ca_path: Option<String>,
     },
-    
+
     /// Device secret authentication (Aliyun)
     DeviceSecret {
         product_key: String,
         device_name: String,
         device_secret: String,
     },
-    
+
     /// SAS token authentication (Azure)
     SasToken {
         token: String,
         #[serde(default)]
         expires_at: Option<u64>,
     },
-    
+
     /// Username/password authentication
-    UsernamePassword {
-        username: String,
-        password: String,
-    },
-    
+    UsernamePassword { username: String, password: String },
+
     /// Custom authentication
     Custom {
         #[serde(flatten)]
@@ -270,15 +264,15 @@ pub enum HttpAuth {
 pub struct TopicConfig {
     /// Publish topic
     pub publish: String,
-    
+
     /// Subscribe topic
     #[serde(default)]
     pub subscribe: Option<String>,
-    
+
     /// QoS level
     #[serde(default)]
     pub qos: u8,
-    
+
     /// Retain flag
     #[serde(default)]
     pub retain: bool,
@@ -289,15 +283,15 @@ pub struct TopicConfig {
 pub struct CloudTopicConfig {
     /// Publish topic template
     pub publish_template: String,
-    
+
     /// Subscribe topic template
     #[serde(default)]
     pub subscribe_template: Option<String>,
-    
+
     /// Topic variables
     #[serde(default)]
     pub variables: HashMap<String, String>,
-    
+
     /// QoS level
     #[serde(default)]
     pub qos: u8,
@@ -309,15 +303,15 @@ pub struct TlsConfig {
     /// Enable TLS
     #[serde(default = "default_true")]
     pub enabled: bool,
-    
+
     /// Verify server certificate
     #[serde(default = "default_true")]
     pub verify_cert: bool,
-    
+
     /// Verify hostname
     #[serde(default = "default_true")]
     pub verify_hostname: bool,
-    
+
     /// ALPN protocols
     #[serde(default)]
     pub alpn_protocols: Vec<String>,
@@ -329,15 +323,15 @@ pub struct ConnectionSettings {
     /// Keep alive interval in seconds
     #[serde(default = "default_keep_alive")]
     pub keep_alive_secs: u64,
-    
+
     /// Connection timeout in seconds
     #[serde(default = "default_connection_timeout")]
     pub timeout_secs: u64,
-    
+
     /// Reconnect interval in seconds
     #[serde(default = "default_reconnect_interval")]
     pub reconnect_interval_secs: u64,
-    
+
     /// Maximum reconnect attempts
     #[serde(default = "default_max_reconnects")]
     pub max_reconnect_attempts: u32,
@@ -349,31 +343,31 @@ pub struct AwsIotFeatures {
     /// Enable AWS IoT Jobs support
     #[serde(default)]
     pub jobs_enabled: bool,
-    
+
     /// Enable Device Shadow support
     #[serde(default)]
     pub device_shadow_enabled: bool,
-    
+
     /// Enable Fleet Provisioning support  
     #[serde(default)]
     pub fleet_provisioning_enabled: bool,
-    
+
     /// AWS IoT Jobs topic prefix
     #[serde(default = "default_jobs_topic")]
     pub jobs_topic_prefix: String,
-    
+
     /// Device Shadow topic prefix
     #[serde(default = "default_shadow_topic")]
     pub shadow_topic_prefix: String,
-    
+
     /// Fleet Provisioning template name
     #[serde(default)]
     pub provisioning_template: Option<String>,
-    
+
     /// Auto-respond to AWS IoT Jobs
     #[serde(default = "default_true")]
     pub auto_respond_jobs: bool,
-    
+
     /// Maximum concurrent jobs
     #[serde(default = "default_max_jobs")]
     pub max_concurrent_jobs: u32,
@@ -453,51 +447,51 @@ impl Configurable for NetServiceConfig {
         // Validate data configuration
         if self.data.redis_polling_interval_secs == 0 {
             return Err(ConfigError::Validation(
-                "Redis polling interval cannot be 0".into()
+                "Redis polling interval cannot be 0".into(),
             ));
         }
-        
+
         if self.data.enable_buffering && self.data.buffer_size == 0 {
             return Err(ConfigError::Validation(
-                "Buffer size cannot be 0 when buffering is enabled".into()
+                "Buffer size cannot be 0 when buffering is enabled".into(),
             ));
         }
-        
+
         // Validate each network configuration
         for (idx, network) in self.networks.iter().enumerate() {
             match network {
                 NetworkConfig::CloudMqtt(config) => {
                     // Validate provider-specific requirements
                     match (&config.provider, &config.auth) {
-                        (CloudProvider::Aws, AuthConfig::Certificate { .. }) => {},
+                        (CloudProvider::Aws, AuthConfig::Certificate { .. }) => {}
                         (CloudProvider::Aws, _) => {
                             return Err(ConfigError::Validation(format!(
                                 "Network {}: AWS IoT requires certificate authentication",
                                 idx
                             )));
                         }
-                        
-                        (CloudProvider::Aliyun, AuthConfig::DeviceSecret { .. }) => {},
+
+                        (CloudProvider::Aliyun, AuthConfig::DeviceSecret { .. }) => {}
                         (CloudProvider::Aliyun, _) => {
                             return Err(ConfigError::Validation(format!(
                                 "Network {}: Aliyun IoT requires device secret authentication",
                                 idx
                             )));
                         }
-                        
-                        (CloudProvider::Azure, AuthConfig::SasToken { .. }) => {},
-                        (CloudProvider::Azure, AuthConfig::UsernamePassword { .. }) => {},
+
+                        (CloudProvider::Azure, AuthConfig::SasToken { .. }) => {}
+                        (CloudProvider::Azure, AuthConfig::UsernamePassword { .. }) => {}
                         (CloudProvider::Azure, _) => {
                             return Err(ConfigError::Validation(format!(
                                 "Network {}: Azure IoT Hub requires SAS token or username/password authentication",
                                 idx
                             )));
                         }
-                        
+
                         _ => {} // Other providers are more flexible
                     }
                 }
-                
+
                 NetworkConfig::Http(config) => {
                     // Validate HTTP method
                     let valid_methods = ["GET", "POST", "PUT", "DELETE", "PATCH"];
@@ -508,14 +502,14 @@ impl Configurable for NetServiceConfig {
                         )));
                     }
                 }
-                
+
                 _ => {} // Legacy MQTT has fewer restrictions
             }
         }
-        
+
         Ok(())
     }
-    
+
     fn as_any(&self) -> &dyn Any {
         self
     }
@@ -525,7 +519,7 @@ impl ServiceConfig for NetServiceConfig {
     fn base(&self) -> &BaseServiceConfig {
         &self.base
     }
-    
+
     fn base_mut(&mut self) -> &mut BaseServiceConfig {
         &mut self.base
     }
@@ -649,17 +643,20 @@ impl NetServiceConfig {
                 ]
             }))?
             .build()?;
-        
-        let config: NetServiceConfig = loader.load_async().await
+
+        let config: NetServiceConfig = loader
+            .load_async()
+            .await
             .map_err(|e| anyhow::anyhow!("Failed to load configuration: {}", e))?;
-        
+
         // Validate complete configuration
-        config.validate_all()
+        config
+            .validate_all()
             .map_err(|e| anyhow::anyhow!("Configuration validation failed: {}", e))?;
-        
+
         Ok(config)
     }
-    
+
     /// Generate default configuration file
     pub fn generate_default_config() -> String {
         let config = NetServiceConfig {
@@ -719,9 +716,12 @@ impl NetServiceConfig {
                     },
                     topics: CloudTopicConfig {
                         publish_template: "voltage/devices/{thing_name}/telemetry".to_string(),
-                        subscribe_template: Some("voltage/devices/{thing_name}/commands".to_string()),
+                        subscribe_template: Some(
+                            "voltage/devices/{thing_name}/commands".to_string(),
+                        ),
                         variables: [("thing_name".to_string(), "voltage_device_01".to_string())]
-                            .into_iter().collect(),
+                            .into_iter()
+                            .collect(),
                         qos: 1,
                     },
                     format_type: FormatType::Json,
@@ -737,7 +737,6 @@ impl NetServiceConfig {
                         max_concurrent_jobs: 5,
                     },
                 }),
-                
                 // Example traditional MQTT configuration
                 NetworkConfig::LegacyMqtt(LegacyMqttConfig {
                     name: "local_mqtt".to_string(),
@@ -758,15 +757,16 @@ impl NetServiceConfig {
                 }),
             ],
         };
-        
-        serde_yaml::to_string(&config).unwrap_or_else(|_| "# Failed to generate config file".to_string())
+
+        serde_yaml::to_string(&config)
+            .unwrap_or_else(|_| "# Failed to generate config file".to_string())
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_cloud_provider_validation() {
         let mut config = NetServiceConfig {
@@ -777,35 +777,33 @@ mod tests {
                 enable_buffering: true,
                 buffer_size: 1000,
             },
-            networks: vec![
-                NetworkConfig::CloudMqtt(CloudMqttConfig {
-                    name: "aws_test".to_string(),
-                    provider: CloudProvider::Aws,
-                    provider_config: ProviderConfig::Aws {
-                        endpoint: "test.iot.amazonaws.com".to_string(),
-                        port: 8883,
-                        thing_name: "test_thing".to_string(),
-                    },
-                    auth: AuthConfig::Certificate {
-                        cert_path: "cert.pem".to_string(),
-                        key_path: "key.pem".to_string(),
-                        ca_path: None,
-                    },
-                    topics: CloudTopicConfig {
-                        publish_template: "test/topic".to_string(),
-                        subscribe_template: None,
-                        variables: HashMap::new(),
-                        qos: 1,
-                    },
-                    format_type: FormatType::Json,
-                    tls: TlsConfig::default(),
-                }),
-            ],
+            networks: vec![NetworkConfig::CloudMqtt(CloudMqttConfig {
+                name: "aws_test".to_string(),
+                provider: CloudProvider::Aws,
+                provider_config: ProviderConfig::Aws {
+                    endpoint: "test.iot.amazonaws.com".to_string(),
+                    port: 8883,
+                    thing_name: "test_thing".to_string(),
+                },
+                auth: AuthConfig::Certificate {
+                    cert_path: "cert.pem".to_string(),
+                    key_path: "key.pem".to_string(),
+                    ca_path: None,
+                },
+                topics: CloudTopicConfig {
+                    publish_template: "test/topic".to_string(),
+                    subscribe_template: None,
+                    variables: HashMap::new(),
+                    qos: 1,
+                },
+                format_type: FormatType::Json,
+                tls: TlsConfig::default(),
+            })],
         };
-        
+
         // Valid AWS configuration should pass
         assert!(config.validate().is_ok());
-        
+
         // AWS with wrong auth type should fail
         if let NetworkConfig::CloudMqtt(ref mut cloud_config) = config.networks[0] {
             cloud_config.auth = AuthConfig::UsernamePassword {
@@ -815,7 +813,7 @@ mod tests {
         }
         assert!(config.validate().is_err());
     }
-    
+
     #[test]
     fn test_http_method_validation() {
         let config = NetServiceConfig {
@@ -826,19 +824,17 @@ mod tests {
                 enable_buffering: true,
                 buffer_size: 1000,
             },
-            networks: vec![
-                NetworkConfig::Http(HttpConfig {
-                    name: "http_test".to_string(),
-                    url: "https://api.example.com/data".to_string(),
-                    method: "INVALID".to_string(),
-                    auth: None,
-                    headers: HashMap::new(),
-                    timeout_secs: 30,
-                    format_type: FormatType::Json,
-                }),
-            ],
+            networks: vec![NetworkConfig::Http(HttpConfig {
+                name: "http_test".to_string(),
+                url: "https://api.example.com/data".to_string(),
+                method: "INVALID".to_string(),
+                auth: None,
+                headers: HashMap::new(),
+                timeout_secs: 30,
+                format_type: FormatType::Json,
+            })],
         };
-        
+
         // Invalid HTTP method should fail
         assert!(config.validate().is_err());
     }

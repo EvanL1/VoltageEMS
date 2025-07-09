@@ -25,11 +25,11 @@ pub async fn test_modbus_pdu_basic() -> Result<(), Box<dyn std::error::Error>> {
     println!("Test 1: Function code conversion");
     let fc = ModbusFunctionCode::Read03;
     let fc_u8: u8 = fc.into();
-    println!("  Read03 -> u8: 0x{:02X}", fc_u8);
+    println!("  Read03 -> u8: 0x{fc_u8:02X}");
     assert_eq!(fc_u8, 0x03);
 
     let fc_back = ModbusFunctionCode::try_from(0x03)?;
-    println!("  u8 0x03 -> Read03: {:?}", fc_back);
+    println!("  u8 0x03 -> Read03: {fc_back:?}");
     assert_eq!(fc_back, ModbusFunctionCode::Read03);
 
     // Test 2: Read request building
@@ -163,7 +163,7 @@ pub async fn test_response_building() -> Result<(), Box<dyn std::error::Error>> 
     println!("Test 1: Coil response data");
     let coil_values = [true, false, true, true, false, false, true, false, true];
     let coil_data = processor.build_coil_response_data(&coil_values);
-    println!("  Coil values: {:?}", coil_values);
+    println!("  Coil values: {coil_values:?}");
     println!("  Coil data: {:02X?}", coil_data);
     assert_eq!(coil_data.len(), 2); // 9 bits = 2 bytes
 

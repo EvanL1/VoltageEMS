@@ -45,7 +45,7 @@ impl SimpleMappingTable {
         // Add to type index
         self.by_type
             .entry(telemetry_type)
-            .or_insert_with(Vec::new)
+            .or_default()
             .push(point_id);
     }
 

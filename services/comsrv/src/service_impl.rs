@@ -29,7 +29,7 @@ pub async fn start_communication_service(
                 {
                     let mut factory_guard = factory.write().await;
                     if let Err(e) = factory_guard.enable_redis_storage(redis_store.clone()) {
-                        warn!("Failed to enable Redis storage for ProtocolFactory: {}", e);
+                        warn!("Failed to enable Redis storage for ProtocolFactory: {e}");
                     } else {
                         info!("Redis storage enabled for ProtocolFactory");
                     }
@@ -80,7 +80,7 @@ pub async fn start_communication_service(
                 successful_channels += 1;
             }
             Err(e) => {
-                error!("Failed to create channel {}: {}", channel_config.id, e);
+                error!("Failed to create channel {}: {e}", channel_config.id);
                 failed_channels += 1;
 
                 // Continue with other channels instead of failing completely
@@ -98,7 +98,7 @@ pub async fn start_communication_service(
     // Start all channels with improved performance
     let factory_guard = factory.read().await;
     if let Err(e) = factory_guard.start_all_channels().await {
-        error!("Failed to start some channels: {}", e);
+        error!("Failed to start some channels: {e}");
         // Log but don't fail - some channels might have started successfully
     }
 
@@ -122,7 +122,7 @@ pub async fn start_communication_service(
         drop(factory_guard);
         let mut factory_guard = factory.write().await;
         if let Err(e) = factory_guard.sync_channel_metadata().await {
-            warn!("Failed to sync channel metadata to Redis: {}", e);
+            warn!("Failed to sync channel metadata to Redis: {e}");
         } else {
             info!("Channel metadata synchronized to Redis");
         }
@@ -137,7 +137,7 @@ pub async fn shutdown_handler(factory: Arc<RwLock<ProtocolFactory>>) {
 
     let factory_guard = factory.read().await;
     if let Err(e) = factory_guard.stop_all_channels().await {
-        error!("Error during channel shutdown: {}", e);
+        error!("Error during channel shutdown: {e}");
     }
     drop(factory_guard);
 

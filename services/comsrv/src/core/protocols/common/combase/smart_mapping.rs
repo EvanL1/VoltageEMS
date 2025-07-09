@@ -56,7 +56,7 @@ impl SmartProtocolMapping {
             .ok_or_else(|| "No address specified in protocol_params".to_string())
             .and_then(|s| {
                 s.parse::<u16>()
-                    .map_err(|_| format!("Invalid address format: {}", s))
+                    .map_err(|_| format!("Invalid address format: {s}"))
             })
     }
 

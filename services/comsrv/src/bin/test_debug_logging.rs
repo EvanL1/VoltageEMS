@@ -52,8 +52,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Parse a simple PDU
     let pdu_data = vec![0x03, 0x02, 0x12, 0x34]; // Function code + response data
     match processor.parse_pdu(&pdu_data) {
-        Ok(result) => println!("PDU parsing succeeded: {:?}", result),
-        Err(e) => println!("PDU parsing failed: {}", e),
+        Ok(result) => println!("PDU parsing succeeded: {result:?}"),
+        Err(e) => println!("PDU parsing failed: {e}"),
     }
 
     // Parse a read request
@@ -63,7 +63,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             "Read request parsed: start={}, quantity={}",
             request.start_address, request.quantity
         ),
-        Err(e) => println!("Read request parsing failed: {}", e),
+        Err(e) => println!("Read request parsing failed: {e}"),
     }
 
     println!();

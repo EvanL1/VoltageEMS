@@ -230,10 +230,11 @@ impl ModbusConfig {
 /// - 16-bit (1 register): AB, BA
 /// - 32-bit (2 registers): ABCD, DCBA, BADC, CDAB  
 /// - 64-bit (4 registers): All combinations + additional patterns
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum ByteOrder {
     // 16-bit patterns (1 register)
     /// AB - Big Endian for 16-bit values
+    #[default]
     AB,
     /// BA - Little Endian for 16-bit values  
     BA,
@@ -257,12 +258,6 @@ pub enum ByteOrder {
     BADCFEHG,
     /// GHEFCDAB - Double Word Swapped for 64-bit values
     GHEFCDAB,
-}
-
-impl Default for ByteOrder {
-    fn default() -> Self {
-        ByteOrder::AB
-    }
 }
 
 impl ByteOrder {
@@ -330,7 +325,8 @@ impl ModbusRegisterMapping {
     /// Create a new mapping with basic validation (automatically derives register_type from function_code)
     pub fn new(address: u16, data_type: ModbusDataType, name: String) -> Self {
         let function_code = ModbusFunctionCode::Read03;
-        let mapping = Self {
+
+        Self {
             name,
             slave_id: 1,
             function_code,
@@ -338,8 +334,7 @@ impl ModbusRegisterMapping {
             data_type,
             byte_order: ByteOrder::default_for_data_type(&data_type),
             description: None,
-        };
-        mapping
+        }
     }
 
     /// Get the number of registers this mapping occupies

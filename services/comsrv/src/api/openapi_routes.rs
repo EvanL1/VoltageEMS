@@ -155,7 +155,7 @@ pub async fn get_all_channels(
             let (name, protocol) = factory
                 .get_channel_metadata(channel_id)
                 .await
-                .unwrap_or_else(|| (format!("Channel {}", channel_id), "Unknown".to_string()));
+                .unwrap_or_else(|| (format!("Channel {channel_id}"), "Unknown".to_string()));
 
             // Get real channel status
             let channel_guard = channel.read().await;
@@ -206,7 +206,7 @@ pub async fn get_channel_status(
         let (name, protocol) = factory
             .get_channel_metadata(id_u16)
             .await
-            .unwrap_or_else(|| (format!("Channel {}", id_u16), "Unknown".to_string()));
+            .unwrap_or_else(|| (format!("Channel {id_u16}"), "Unknown".to_string()));
 
         // Get real channel status
         let channel_guard = channel.read().await;
@@ -273,14 +273,14 @@ pub async fn control_channel(
             let mut channel_guard = channel.write().await;
             match channel_guard.start().await {
                 Ok(_) => format!("Channel {} started successfully", id_u16),
-                Err(e) => format!("Failed to start channel {}: {}", id_u16, e),
+                Err(e) => format!("Failed to start channel {}: {e}", id_u16),
             }
         }
         "stop" => {
             let mut channel_guard = channel.write().await;
             match channel_guard.stop().await {
                 Ok(_) => format!("Channel {} stopped successfully", id_u16),
-                Err(e) => format!("Failed to stop channel {}: {}", id_u16, e),
+                Err(e) => format!("Failed to stop channel {}: {e}", id_u16),
             }
         }
         "restart" => {
@@ -300,7 +300,7 @@ pub async fn control_channel(
             // Then start it again
             match channel_guard.start().await {
                 Ok(_) => format!("Channel {} restarted successfully", id_u16),
-                Err(e) => format!("Failed to restart channel {}: {}", id_u16, e),
+                Err(e) => format!("Failed to restart channel {}: {e}", id_u16),
             }
         }
         _ => {
@@ -345,7 +345,7 @@ pub async fn read_point(
         let channel_guard = channel.read().await;
 
         // Build point ID from table and name
-        let point_id = format!("{}_{}", point_table, point_name);
+        let point_id = format!("{}_{point_name}", point_table);
 
         match channel_guard.read_point(&point_id).await {
             Ok(point_data) => {
@@ -395,7 +395,7 @@ pub async fn write_point(
         let mut channel_guard = channel.write().await;
 
         // Build point ID from table and name
-        let point_id = format!("{}_{}", point_table, point_name);
+        let point_id = format!("{}_{point_name}", point_table);
 
         // Convert JSON value to string for writing
         let value_str = match value.value {
@@ -485,16 +485,16 @@ pub async fn get_channel_telemetry_tables(
         let config_route = "config/test_points/ModbusTCP_Demo";
 
         // Read four-telemetry CSV files
-        let telemetry_points = read_telemetry_csv(&config_route, "telemetry")
+        let telemetry_points = read_telemetry_csv(config_route, "telemetry")
             .await
             .unwrap_or_default();
-        let signal_points = read_telemetry_csv(&config_route, "signal")
+        let signal_points = read_telemetry_csv(config_route, "signal")
             .await
             .unwrap_or_default();
-        let adjustment_points = read_telemetry_csv(&config_route, "adjustment")
+        let adjustment_points = read_telemetry_csv(config_route, "adjustment")
             .await
             .unwrap_or_default();
-        let control_points = read_telemetry_csv(&config_route, "control")
+        let control_points = read_telemetry_csv(config_route, "control")
             .await
             .unwrap_or_default();
 
@@ -547,7 +547,7 @@ async fn read_channel_csv_config(
     channel_id: u16,
     channel_name: &str,
 ) -> Result<TelemetryTableView, Box<dyn std::error::Error + Send + Sync>> {
-    let config_base_path = format!("config/{}", channel_name);
+    let config_base_path = format!("config/{channel_name}");
 
     // Read telemetry points from CSV
     let telemetry_points = read_telemetry_csv(&config_base_path, "telemetry").await?;
@@ -673,7 +673,7 @@ fn read_mapping_csv(
                 let modbus_mapping =
                     result.map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)?;
                 if let Err(e) = modbus_mapping.validate() {
-                    eprintln!("Warning: Invalid Modbus mapping: {}", e);
+                    eprintln!("Warning: Invalid Modbus mapping: {e}");
                     continue;
                 }
                 mappings.push(Box::new(modbus_mapping) as Box<dyn ProtocolMapping>);
@@ -684,7 +684,7 @@ fn read_mapping_csv(
                 let can_mapping =
                     result.map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)?;
                 if let Err(e) = can_mapping.validate() {
-                    eprintln!("Warning: Invalid CAN mapping: {}", e);
+                    eprintln!("Warning: Invalid CAN mapping: {e}");
                     continue;
                 }
                 mappings.push(Box::new(can_mapping) as Box<dyn ProtocolMapping>);
@@ -695,14 +695,14 @@ fn read_mapping_csv(
                 let iec_mapping =
                     result.map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)?;
                 if let Err(e) = iec_mapping.validate() {
-                    eprintln!("Warning: Invalid IEC mapping: {}", e);
+                    eprintln!("Warning: Invalid IEC mapping: {e}");
                     continue;
                 }
                 mappings.push(Box::new(iec_mapping) as Box<dyn ProtocolMapping>);
             }
         }
         _ => {
-            eprintln!("Warning: Unsupported protocol type: {}", protocol_type);
+            eprintln!("Warning: Unsupported protocol type: {protocol_type}");
         }
     }
 

@@ -5,7 +5,14 @@ use crate::config::Config;
 use crate::error::ApiResult;
 use crate::handlers::proxy_request;
 
-#[actix_web::route("{path:.*}", method = "GET", method = "POST", method = "PUT", method = "DELETE", method = "PATCH")]
+#[actix_web::route(
+    "{path:.*}",
+    method = "GET",
+    method = "POST",
+    method = "PUT",
+    method = "DELETE",
+    method = "PATCH"
+)]
 pub async fn proxy_handler(
     req: HttpRequest,
     path: web::Path<String>,
@@ -15,7 +22,7 @@ pub async fn proxy_handler(
 ) -> ApiResult<HttpResponse> {
     let method = req.method().as_str();
     let path_str = format!("/{}", path.as_str());
-    
+
     proxy_request(
         "modsrv",
         &path_str,

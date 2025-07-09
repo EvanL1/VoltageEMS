@@ -72,25 +72,25 @@ impl HttpConfigClient {
 #[async_trait]
 impl ConfigSource for HttpConfigClient {
     async fn fetch_config(&self, service_name: &str) -> Result<ConfigResponse> {
-        let url = format!("{}/api/v1/config/service/{}", self.base_url, service_name);
+        let url = format!("{}/api/v1/config/service/{service_name}", self.base_url);
 
-        info!("Fetching configuration from: {}", url);
+        info!("Fetching configuration from: {url}");
 
         let mut request = self.client.get(&url);
 
         // Add auth header if token is provided
         if let Some(token) = &self.auth_token {
-            request = request.header("Authorization", format!("Bearer {}", token));
+            request = request.header("Authorization", format!("Bearer {token}"));
         }
 
         let response = request
             .send()
             .await
-            .map_err(|e| ComSrvError::ConfigError(format!("Failed to fetch config: {}", e)))?;
+            .map_err(|e| ComSrvError::ConfigError(format!("Failed to fetch config: {e}")))?;
 
         if response.status().is_success() {
             let config: ConfigResponse = response.json().await.map_err(|e| {
-                ComSrvError::ConfigError(format!("Failed to parse config response: {}", e))
+                ComSrvError::ConfigError(format!("Failed to parse config response: {e}"))
             })?;
 
             debug!("Successfully fetched config version: {}", config.version);
@@ -109,22 +109,22 @@ impl ConfigSource for HttpConfigClient {
             self.base_url, service_name, key
         );
 
-        debug!("Fetching config item from: {}", url);
+        debug!("Fetching config item from: {url}");
 
         let mut request = self.client.get(&url);
 
         if let Some(token) = &self.auth_token {
-            request = request.header("Authorization", format!("Bearer {}", token));
+            request = request.header("Authorization", format!("Bearer {token}"));
         }
 
         let response = request
             .send()
             .await
-            .map_err(|e| ComSrvError::ConfigError(format!("Failed to fetch config item: {}", e)))?;
+            .map_err(|e| ComSrvError::ConfigError(format!("Failed to fetch config item: {e}")))?;
 
         if response.status().is_success() {
             let item: ConfigItemResponse = response.json().await.map_err(|e| {
-                ComSrvError::ConfigError(format!("Failed to parse config item response: {}", e))
+                ComSrvError::ConfigError(format!("Failed to parse config item response: {e}"))
             })?;
 
             Ok(item)
@@ -164,7 +164,7 @@ impl ConfigCache {
     pub async fn save(&self, service_name: &str, config: &ConfigResponse) -> Result<()> {
         // Ensure cache directory exists
         fs::create_dir_all(&self.cache_dir).await.map_err(|e| {
-            ComSrvError::ConfigError(format!("Failed to create cache directory: {}", e))
+            ComSrvError::ConfigError(format!("Failed to create cache directory: {e}"))
         })?;
 
         let cache_path = self.cache_path(service_name);
@@ -177,11 +177,11 @@ impl ConfigCache {
         });
 
         let content = serde_json::to_string_pretty(&cache_entry)
-            .map_err(|e| ComSrvError::ConfigError(format!("Failed to serialize cache: {}", e)))?;
+            .map_err(|e| ComSrvError::ConfigError(format!("Failed to serialize cache: {e}")))?;
 
         fs::write(&cache_path, content)
             .await
-            .map_err(|e| ComSrvError::ConfigError(format!("Failed to write cache file: {}", e)))?;
+            .map_err(|e| ComSrvError::ConfigError(format!("Failed to write cache file: {e}")))?;
 
         debug!("Saved config cache to: {}", cache_path.display());
         Ok(())
@@ -197,10 +197,10 @@ impl ConfigCache {
 
         let content = fs::read_to_string(&cache_path)
             .await
-            .map_err(|e| ComSrvError::ConfigError(format!("Failed to read cache file: {}", e)))?;
+            .map_err(|e| ComSrvError::ConfigError(format!("Failed to read cache file: {e}")))?;
 
         let cache_entry: serde_json::Value = serde_json::from_str(&content)
-            .map_err(|e| ComSrvError::ConfigError(format!("Failed to parse cache file: {}", e)))?;
+            .map_err(|e| ComSrvError::ConfigError(format!("Failed to parse cache file: {e}")))?;
 
         // Check if cache is expired
         if let Some(cached_at_str) = cache_entry["cached_at"].as_str() {
@@ -215,7 +215,7 @@ impl ConfigCache {
         // Extract config from cache entry
         let config: ConfigResponse = serde_json::from_value(cache_entry["config"].clone())
             .map_err(|e| {
-                ComSrvError::ConfigError(format!("Failed to extract config from cache: {}", e))
+                ComSrvError::ConfigError(format!("Failed to extract config from cache: {e}"))
             })?;
 
         debug!("Loaded config from cache: {}", cache_path.display());
@@ -227,7 +227,7 @@ impl ConfigCache {
         let cache_path = self.cache_path(service_name);
         if cache_path.exists() {
             fs::remove_file(&cache_path).await.map_err(|e| {
-                ComSrvError::ConfigError(format!("Failed to remove cache file: {}", e))
+                ComSrvError::ConfigError(format!("Failed to remove cache file: {e}"))
             })?;
         }
         Ok(())
@@ -310,13 +310,13 @@ impl ConfigCenterClient {
 
                     // Save to cache
                     if let Err(e) = self.cache.save(&self.service_name, &config).await {
-                        warn!("Failed to save config to cache: {}", e);
+                        warn!("Failed to save config to cache: {e}");
                     }
 
                     return Ok(config.content);
                 }
                 Err(e) => {
-                    warn!("Failed to fetch from config center: {}", e);
+                    warn!("Failed to fetch from config center: {e}");
                 }
             }
         }
@@ -328,13 +328,13 @@ impl ConfigCenterClient {
                 return Ok(config.content);
             }
             Err(e) => {
-                debug!("Cache not available: {}", e);
+                debug!("Cache not available: {e}");
             }
         }
 
         // Try local file as last resort
         if let Some(path) = &self.fallback_config_path {
-            warn!("Falling back to local config file: {}", path);
+            warn!("Falling back to local config file: {path}");
             return Err(ComSrvError::ConfigError(
                 "Config center and cache unavailable, use local file".to_string(),
             ));
@@ -350,11 +350,11 @@ impl ConfigCenterClient {
         if let Some(source) = &self.source {
             match source.fetch_item(&self.service_name, key).await {
                 Ok(item) => {
-                    debug!("Successfully fetched config item: {}", key);
+                    debug!("Successfully fetched config item: {key}");
                     return Ok(item.value);
                 }
                 Err(e) => {
-                    warn!("Failed to fetch config item: {}", e);
+                    warn!("Failed to fetch config item: {e}");
                 }
             }
         }
@@ -370,12 +370,12 @@ impl ConfigCenterClient {
             if let Ok(index) = part.parse::<usize>() {
                 // Array index
                 current = current.get(index).ok_or_else(|| {
-                    ComSrvError::ConfigError(format!("Config key not found: {}", key))
+                    ComSrvError::ConfigError(format!("Config key not found: {key}"))
                 })?;
             } else {
                 // Object key
                 current = current.get(part).ok_or_else(|| {
-                    ComSrvError::ConfigError(format!("Config key not found: {}", key))
+                    ComSrvError::ConfigError(format!("Config key not found: {key}"))
                 })?;
             }
         }

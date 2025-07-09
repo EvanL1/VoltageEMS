@@ -44,6 +44,12 @@ pub struct CachedCsvLoader {
     stats: Arc<RwLock<CsvCacheStats>>,
 }
 
+impl Default for CachedCsvLoader {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl CachedCsvLoader {
     /// Create a new cached CSV loader
     pub fn new() -> Self {
@@ -62,10 +68,10 @@ impl CachedCsvLoader {
 
         // Get file modified time
         let metadata = std::fs::metadata(&path)
-            .map_err(|e| ComSrvError::IoError(format!("Failed to get file metadata: {}", e)))?;
+            .map_err(|e| ComSrvError::IoError(format!("Failed to get file metadata: {e}")))?;
         let current_modified = metadata
             .modified()
-            .map_err(|e| ComSrvError::IoError(format!("Failed to get modified time: {}", e)))?;
+            .map_err(|e| ComSrvError::IoError(format!("Failed to get modified time: {e}")))?;
 
         // Check cache
         {
@@ -83,8 +89,7 @@ impl CachedCsvLoader {
                         .map(|v| {
                             serde_json::from_value(v.clone()).map_err(|e| {
                                 ComSrvError::ConfigError(format!(
-                                    "Failed to deserialize cached data: {}",
-                                    e
+                                    "Failed to deserialize cached data: {e}"
                                 ))
                             })
                         })

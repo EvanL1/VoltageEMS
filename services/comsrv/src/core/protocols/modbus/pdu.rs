@@ -111,7 +111,7 @@ impl ModbusPduProcessor {
 
     /// Parse PDU with context (request or response)
     fn parse_pdu_with_context(&self, data: &[u8], is_response: bool) -> Result<PduParseResult> {
-        debug!(hex_data = %data.iter().map(|b| format!("{:02X}", b)).collect::<Vec<_>>().join(" "), length = data.len(), is_response = is_response, "[PDU Parser] Raw PDU data");
+        debug!(hex_data = %data.iter().map(|b| format!("{b:02X}")).collect::<Vec<_>>().join(" "), length = data.len(), is_response = is_response, "[PDU Parser] Raw PDU data");
         debug!(
             "[PDU Parser] Starting PDU parsing - Length: {} bytes, Type: {}",
             data.len(),
@@ -124,10 +124,7 @@ impl ModbusPduProcessor {
         }
 
         let function_code_raw = data[0];
-        debug!(
-            "[PDU Parser] Function code byte: 0x{:02X}",
-            function_code_raw
-        );
+        debug!("[PDU Parser] Function code byte: 0x{function_code_raw:02X}");
 
         // Check if this is an exception response
         if function_code_raw & 0x80 != 0 {
@@ -232,13 +229,9 @@ impl ModbusPduProcessor {
                 ModbusExceptionCode::GatewayTargetDeviceFailedToRespond
             }
             _ => {
-                warn!(
-                    "[PDU Parser] Unknown exception code: 0x{:02X}",
-                    exception_code_raw
-                );
+                warn!("[PDU Parser] Unknown exception code: 0x{exception_code_raw:02X}");
                 return Err(ComSrvError::ProtocolError(format!(
-                    "Invalid exception code: 0x{:02X}",
-                    exception_code_raw
+                    "Invalid exception code: 0x{exception_code_raw:02X}"
                 )));
             }
         };
@@ -248,7 +241,7 @@ impl ModbusPduProcessor {
             exception_code,
         };
 
-        debug!("[PDU Parser] Exception response parsing completed - Function code: 0x{:02X}, Exception: {:?}", function_code, exception_code);
+        debug!("[PDU Parser] Exception response parsing completed - Function code: 0x{:02X}, Exception: {exception_code:?}", function_code);
         Ok(PduParseResult::Exception(exception))
     }
 
@@ -355,7 +348,7 @@ impl ModbusPduProcessor {
 
         // Convert bytes to individual coil values
         for (byte_idx, &byte) in coil_bytes.iter().enumerate() {
-            debug!("[PDU Parser] Processing byte {}: 0x{:02X}", byte_idx, byte);
+            debug!("[PDU Parser] Processing byte {}: 0x{byte:02X}", byte_idx);
             for bit_idx in 0..8 {
                 if byte_idx * 8 + bit_idx < quantity as usize {
                     let bit_value = (byte >> bit_idx) & 1 != 0;

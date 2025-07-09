@@ -1,16 +1,16 @@
 use crate::error::{ModelSrvError, Result};
-use crate::redis_handler::RedisConnection;
-use tracing::{debug, error, info, warn};
-use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use crate::storage::DataStore;
 use crate::model::{self};
-use uuid;
-use std::sync::{Arc, Mutex};
-use serde_json::{json, Value};
+use crate::redis_handler::RedisConnection;
 use crate::rules_engine::ActionHandler;
+use crate::storage::DataStore;
 use async_trait::async_trait;
+use serde::{Deserialize, Serialize};
+use serde_json::{json, Value};
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use tracing::{debug, error, info, warn};
+use uuid;
 
 /// Control operation type
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
@@ -118,17 +118,21 @@ impl ControlOperation {
 /// Control operation executor trait
 pub trait ControlOperationExecutor {
     /// Execute a control operation
-    fn execute(&mut self,
-               redis: &mut RedisConnection,
-               operation: &ControlOperation,
-               channel: &str,
-               point: &str,
-               value: &str) -> Result<String>;
-    
+    fn execute(
+        &mut self,
+        redis: &mut RedisConnection,
+        operation: &ControlOperation,
+        channel: &str,
+        point: &str,
+        value: &str,
+    ) -> Result<String>;
+
     /// Check if operation can be executed
-    fn can_execute(&self, 
-                  redis: &mut RedisConnection, 
-                  operation: &ControlOperation) -> Result<bool>;
+    fn can_execute(
+        &self,
+        redis: &mut RedisConnection,
+        operation: &ControlOperation,
+    ) -> Result<bool>;
 }
 
 /// Device control operation executor
@@ -142,18 +146,18 @@ pub struct DeviceControlExecutor {
 impl DeviceControlExecutor {
     pub fn new(redis_prefix: &str) -> Self {
         let mut operation_point_map = HashMap::new();
-        
+
         // Initialize operation type to point mapping
         operation_point_map.insert(ControlOperationType::Start, "start_command".to_string());
         operation_point_map.insert(ControlOperationType::Stop, "stop_command".to_string());
         operation_point_map.insert(ControlOperationType::Reset, "reset_command".to_string());
-        
+
         DeviceControlExecutor {
             redis_prefix: redis_prefix.to_string(),
             operation_point_map,
         }
     }
-    
+
     /// Get operation point
     fn get_operation_point(&self, operation_type: &ControlOperationType) -> Option<&String> {
         self.operation_point_map.get(operation_type)
@@ -172,13 +176,13 @@ impl DeviceControlExecutor {
             r#"{{"id":"{}","channel":"{}","point":"{}","value":{}}}"#,
             command_id, channel_name, point, value
         );
-        
+
         redis.publish("device:control", &command)?;
         debug!("Published control command: {}", command);
-        
+
         Ok(command_id)
     }
-    
+
     /// send remote adjust command (numeric value)
     fn send_remote_adjust(
         &mut self,
@@ -192,10 +196,10 @@ impl DeviceControlExecutor {
             r#"{{"id":"{}","channel":"{}","point":"{}","value":{}}}"#,
             command_id, channel_name, point, value
         );
-        
+
         redis.publish("device:adjust", &command)?;
         debug!("Published adjust command: {}", command);
-        
+
         Ok(command_id)
     }
 
@@ -209,96 +213,83 @@ impl DeviceControlExecutor {
         value: &str,
     ) -> Result<String> {
         match operation.operation_type {
-            ControlOperationType::Start | 
-            ControlOperationType::Stop | 
-            ControlOperationType::Pause | 
-            ControlOperationType::Resume | 
-            ControlOperationType::Reset => {
+            ControlOperationType::Start
+            | ControlOperationType::Stop
+            | ControlOperationType::Pause
+            | ControlOperationType::Resume
+            | ControlOperationType::Reset => {
                 // These operations are typically boolean values
                 let bool_value = value.parse::<bool>().unwrap_or(true);
-                self.send_remote_control(
-                    redis,
-                    channel_name,
-                    point,
-                    bool_value,
-                )
-            },
-            ControlOperationType::Adjust | 
-            ControlOperationType::Custom(_) => {
+                self.send_remote_control(redis, channel_name, point, bool_value)
+            }
+            ControlOperationType::Adjust | ControlOperationType::Custom(_) => {
                 // These operations are typically numeric values
                 let float_value = value.parse::<f64>().unwrap_or(0.0);
-                self.send_remote_adjust(
-                    redis,
-                    channel_name,
-                    point,
-                    float_value,
-                )
+                self.send_remote_adjust(redis, channel_name, point, float_value)
             }
         }
     }
 }
 
 impl ControlOperationExecutor for DeviceControlExecutor {
-    fn execute(&mut self,
-               redis: &mut RedisConnection,
-               operation: &ControlOperation,
-               channel: &str,
-               point: &str,
-               value: &str) -> Result<String> {
+    fn execute(
+        &mut self,
+        redis: &mut RedisConnection,
+        operation: &ControlOperation,
+        channel: &str,
+        point: &str,
+        value: &str,
+    ) -> Result<String> {
         match operation.operation_type {
-            ControlOperationType::Start | 
-            ControlOperationType::Stop | 
-            ControlOperationType::Pause | 
-            ControlOperationType::Resume | 
-            ControlOperationType::Reset => {
+            ControlOperationType::Start
+            | ControlOperationType::Stop
+            | ControlOperationType::Pause
+            | ControlOperationType::Resume
+            | ControlOperationType::Reset => {
                 // These operations are typically boolean values
                 let bool_value = value.parse::<bool>().unwrap_or(true);
-                self.send_remote_control(
-                    redis,
-                    channel,
-                    point,
-                    bool_value,
-                )
-            },
-            ControlOperationType::Adjust | 
-            ControlOperationType::Custom(_) => {
+                self.send_remote_control(redis, channel, point, bool_value)
+            }
+            ControlOperationType::Adjust | ControlOperationType::Custom(_) => {
                 // These operations are typically numeric values
                 let float_value = value.parse::<f64>().unwrap_or(0.0);
-                self.send_remote_adjust(
-                    redis,
-                    channel,
-                    point,
-                    float_value,
-                )
+                self.send_remote_adjust(redis, channel, point, float_value)
             }
         }
     }
-    
-    fn can_execute(&self, 
-                  _redis: &mut RedisConnection, 
-                  operation: &ControlOperation) -> Result<bool> {
+
+    fn can_execute(
+        &self,
+        _redis: &mut RedisConnection,
+        operation: &ControlOperation,
+    ) -> Result<bool> {
         // Check if operation is enabled
         if !operation.enabled {
             return Ok(false);
         }
-        
+
         // Check cooldown time
-        if let (Some(cooldown), Some(last_executed)) = (operation.cooldown_ms, operation.last_executed_at) {
+        if let (Some(cooldown), Some(last_executed)) =
+            (operation.cooldown_ms, operation.last_executed_at)
+        {
             let now = SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .unwrap_or(Duration::from_secs(0))
                 .as_millis() as i64;
-                
+
             if now - last_executed < cooldown as i64 {
                 return Ok(false);
             }
         }
-        
+
         // Check if device and operation are supported
-        if !self.operation_point_map.contains_key(&operation.operation_type) {
+        if !self
+            .operation_point_map
+            .contains_key(&operation.operation_type)
+        {
             return Ok(false);
         }
-        
+
         Ok(true)
     }
 }
@@ -322,54 +313,61 @@ impl ControlManager {
             executed_operations: HashMap::new(),
         }
     }
-    
+
     /// Load control operations
     pub fn load_operations<T: DataStore>(&mut self, store: &T, pattern: &str) -> Result<()> {
         // Clear existing operations
         self.operations.clear();
-        
+
         // Get all control operation configuration keys
         let operation_keys = store.get_keys(pattern)?;
         info!("Found {} control operations", operation_keys.len());
-        
+
         for key in &operation_keys {
             match self.load_operation_from_store(store, &key) {
                 Ok(operation) => {
                     if operation.enabled {
-                        info!("Loaded control operation: {} ({})", operation.name, operation.id);
+                        info!(
+                            "Loaded control operation: {} ({})",
+                            operation.name, operation.id
+                        );
                         self.operations.insert(operation.id.clone(), operation);
                     } else {
                         debug!("Skipped disabled control operation: {}", key);
                     }
-                },
+                }
                 Err(e) => {
                     error!("Failed to load control operation from {}: {}", key, e);
                 }
             }
         }
-        
+
         info!("Loaded {} control operations", self.operations.len());
-        
+
         Ok(())
     }
-    
+
     /// Load control operation from store
-    fn load_operation_from_store<T: DataStore>(&self, store: &T, key: &str) -> Result<ControlOperation> {
+    fn load_operation_from_store<T: DataStore>(
+        &self,
+        store: &T,
+        key: &str,
+    ) -> Result<ControlOperation> {
         // Get operation definition from store
         let json_str = store.get_string(key)?;
-        
+
         // Parse JSON to ControlOperation
-        let operation: ControlOperation = serde_json::from_str(&json_str)
-            .map_err(|e| ModelSrvError::JsonError(e.to_string()))?;
-            
+        let operation: ControlOperation =
+            serde_json::from_str(&json_str).map_err(|e| ModelSrvError::JsonError(e.to_string()))?;
+
         Ok(operation)
     }
-    
+
     /// Check and execute control operations
     pub fn check_and_execute_operations<T: DataStore>(&mut self, store: &T) -> Result<()> {
         // create a copy of operation IDs to avoid mutable borrow conflicts
         let operation_ids: Vec<String> = self.operations.keys().cloned().collect();
-        
+
         // check and execute operations
         for op_id in &operation_ids {
             if let Some(operation) = self.operations.get(op_id) {
@@ -377,12 +375,14 @@ impl ControlManager {
                 if !operation.enabled {
                     continue;
                 }
-                
+
                 // Check if operation has been executed
                 if let Some(last_executed) = self.executed_operations.get(&operation.id) {
                     let now = SystemTime::now();
-                    let elapsed = now.duration_since(*last_executed).unwrap_or(Duration::from_secs(0));
-                    
+                    let elapsed = now
+                        .duration_since(*last_executed)
+                        .unwrap_or(Duration::from_secs(0));
+
                     // Skip if operation is in cooldown period
                     if let Some(cooldown_ms) = operation.cooldown_ms {
                         if elapsed < Duration::from_millis(cooldown_ms) {
@@ -390,10 +390,10 @@ impl ControlManager {
                         }
                     }
                 }
-                
+
                 // create a clone of operation to avoid mutable borrow conflicts
                 let operation_clone = operation.clone();
-                
+
                 // Check operation conditions
                 if self.check_operation_conditions(store, &operation_clone)? {
                     // Execute operation
@@ -401,23 +401,28 @@ impl ControlManager {
                         error!("Failed to execute operation {}: {}", operation_clone.id, e);
                     } else {
                         // Update execution time
-                        self.executed_operations.insert(operation_clone.id.clone(), SystemTime::now());
+                        self.executed_operations
+                            .insert(operation_clone.id.clone(), SystemTime::now());
                     }
                 }
             }
         }
-        
+
         Ok(())
     }
-    
+
     /// check if operation conditions are met
-    fn check_operation_conditions<T: DataStore>(&self, store: &T, operation: &ControlOperation) -> Result<bool> {
+    fn check_operation_conditions<T: DataStore>(
+        &self,
+        store: &T,
+        operation: &ControlOperation,
+    ) -> Result<bool> {
         if operation.conditions.is_empty() {
             return Ok(true);
         }
-        
+
         let now = SystemTime::now();
-        
+
         for condition in &operation.conditions {
             let field_key = &condition.field;
             let field_value = match store.get_string(field_key) {
@@ -427,28 +432,28 @@ impl ControlManager {
                     return Ok(false);
                 }
             };
-            
+
             let condition_met = match condition.operator.as_str() {
                 ">" => {
                     let field_num = field_value.parse::<f64>().unwrap_or(0.0);
                     let value_num = condition.value.parse::<f64>().unwrap_or(0.0);
                     field_num > value_num
-                },
+                }
                 "<" => {
                     let field_num = field_value.parse::<f64>().unwrap_or(0.0);
                     let value_num = condition.value.parse::<f64>().unwrap_or(0.0);
                     field_num < value_num
-                },
+                }
                 ">=" => {
                     let field_num = field_value.parse::<f64>().unwrap_or(0.0);
                     let value_num = condition.value.parse::<f64>().unwrap_or(0.0);
                     field_num >= value_num
-                },
+                }
                 "<=" => {
                     let field_num = field_value.parse::<f64>().unwrap_or(0.0);
                     let value_num = condition.value.parse::<f64>().unwrap_or(0.0);
                     field_num <= value_num
-                },
+                }
                 "==" => field_value == condition.value,
                 "!=" => field_value != condition.value,
                 _ => {
@@ -456,19 +461,19 @@ impl ControlManager {
                     false
                 }
             };
-            
+
             // if there is a duration requirement, check if the condition is met for the specified duration
             if let Some(duration) = condition.duration_ms {
                 let condition_key = format!("{}:{}", condition.id, condition.field);
-                
+
                 // use HashMap to store condition states
                 let mut condition_states = HashMap::new();
                 let state_entry = condition_states.entry(condition_key.clone());
-                
+
                 match state_entry {
                     std::collections::hash_map::Entry::Occupied(mut entry) => {
                         let (current_state, start_time) = entry.get_mut();
-                        
+
                         if *current_state != condition_met {
                             // state changed, reset start time
                             *current_state = condition_met;
@@ -477,7 +482,8 @@ impl ControlManager {
                         } else if condition_met {
                             // state not changed and condition met, check duration
                             if let Some(start) = *start_time {
-                                let elapsed = now.duration_since(start).unwrap_or(Duration::from_secs(0));
+                                let elapsed =
+                                    now.duration_since(start).unwrap_or(Duration::from_secs(0));
                                 if elapsed.as_millis() < duration as u128 {
                                     return Ok(false);
                                 }
@@ -486,7 +492,7 @@ impl ControlManager {
                             // state not changed but condition not met, return false
                             return Ok(false);
                         }
-                    },
+                    }
                     std::collections::hash_map::Entry::Vacant(entry) => {
                         // first check this condition
                         entry.insert((condition_met, Some(now)));
@@ -498,126 +504,147 @@ impl ControlManager {
                 return Ok(false);
             }
         }
-        
+
         // all conditions are met
         Ok(true)
     }
-    
+
     /// execute control operation
-    fn execute_operation<T: DataStore>(&mut self, store: &T, operation: &ControlOperation) -> Result<()> {
+    fn execute_operation<T: DataStore>(
+        &mut self,
+        store: &T,
+        operation: &ControlOperation,
+    ) -> Result<()> {
         info!("Executing operation: {} ({})", operation.name, operation.id);
-        
+
         // execute different operations based on operation type and target type
         match operation.target_type {
             ControlTargetType::Device => {
                 // get device control executor
                 let mut executor = DeviceControlExecutor::new(&self.key_prefix);
-                
+
                 // get operation parameters
-                let channel_name = operation.get_parameter("channel")
-                    .ok_or_else(|| ModelSrvError::InvalidOperation(
-                        format!("Missing channel parameter for device operation: {}", operation.id)
-                    ))?;
-                
-                let point = operation.get_parameter("point")
-                    .ok_or_else(|| ModelSrvError::InvalidOperation(
-                        format!("Missing point parameter for device operation: {}", operation.id)
-                    ))?;
-                
+                let channel_name = operation.get_parameter("channel").ok_or_else(|| {
+                    ModelSrvError::InvalidOperation(format!(
+                        "Missing channel parameter for device operation: {}",
+                        operation.id
+                    ))
+                })?;
+
+                let point = operation.get_parameter("point").ok_or_else(|| {
+                    ModelSrvError::InvalidOperation(format!(
+                        "Missing point parameter for device operation: {}",
+                        operation.id
+                    ))
+                })?;
+
                 // use let binding to create a longer lifetime value
                 let default_value = "true".to_string();
-                let value = operation.get_parameter("value")
-                    .unwrap_or(&default_value);
-                
+                let value = operation.get_parameter("value").unwrap_or(&default_value);
+
                 // get Redis connection
                 let mut redis = RedisConnection::new();
-                let redis_url = format!("redis://{}:{}", 
-                    store.get_string("redis.host")?, 
+                let redis_url = format!(
+                    "redis://{}:{}",
+                    store.get_string("redis.host")?,
                     store.get_string("redis.port")?
                 );
                 redis.connect(&redis_url)?;
-                
+
                 // execute operation
-                let command_id = executor.execute(&mut redis, operation, channel_name, point, value)?;
-                
+                let command_id =
+                    executor.execute(&mut redis, operation, channel_name, point, value)?;
+
                 // record operation execution result
                 let result_key = format!("{}control:result:{}", self.key_prefix, operation.id);
                 let result = format!(
                     r#"{{"operation_id":"{}","command_id":"{}","executed_at":{}}}"#,
-                    operation.id, command_id, SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs()
+                    operation.id,
+                    command_id,
+                    SystemTime::now()
+                        .duration_since(UNIX_EPOCH)
+                        .unwrap()
+                        .as_secs()
                 );
-                
+
                 redis.set_string(&result_key, &result)?;
-            },
+            }
             ControlTargetType::Model => {
                 // model control operation
                 let model_id = &operation.target_id;
                 let model_key = format!("{}model:config:{}", self.key_prefix, model_id);
-                
+
                 if !store.exists(&model_key)? {
-                    return Err(ModelSrvError::InvalidOperation(
-                        format!("Model not found: {}", model_id)
-                    ));
+                    return Err(ModelSrvError::InvalidOperation(format!(
+                        "Model not found: {}",
+                        model_id
+                    )));
                 }
-                
+
                 // execute different model operations based on operation type
                 match operation.operation_type {
                     ControlOperationType::Start => {
                         // enable model
                         let model_json = store.get_string(&model_key)?;
-                        let mut model: model::ModelDefinition = serde_json::from_str(&model_json)
-                            .map_err(|e| ModelSrvError::JsonError(e.to_string()))?;
-                        
+                        let mut model: model::ModelDefinition =
+                            serde_json::from_str(&model_json)
+                                .map_err(|e| ModelSrvError::JsonError(e.to_string()))?;
+
                         model.enabled = true;
-                        
+
                         let updated_json = serde_json::to_string(&model)
                             .map_err(|e| ModelSrvError::JsonError(e.to_string()))?;
-                        
+
                         // update model config
                         let mut redis = RedisConnection::new();
-                        let redis_url = format!("redis://{}:{}", 
-                            store.get_string("redis.host")?, 
+                        let redis_url = format!(
+                            "redis://{}:{}",
+                            store.get_string("redis.host")?,
                             store.get_string("redis.port")?
                         );
                         redis.connect(&redis_url)?;
-                        
+
                         redis.set_string(&model_key, &updated_json)?;
-                    },
+                    }
                     ControlOperationType::Stop => {
                         // disable model
                         let model_json = store.get_string(&model_key)?;
-                        let mut model: model::ModelDefinition = serde_json::from_str(&model_json)
-                            .map_err(|e| ModelSrvError::JsonError(e.to_string()))?;
-                        
+                        let mut model: model::ModelDefinition =
+                            serde_json::from_str(&model_json)
+                                .map_err(|e| ModelSrvError::JsonError(e.to_string()))?;
+
                         model.enabled = false;
-                        
+
                         let updated_json = serde_json::to_string(&model)
                             .map_err(|e| ModelSrvError::JsonError(e.to_string()))?;
-                        
+
                         // update model config
                         let mut redis = RedisConnection::new();
-                        let redis_url = format!("redis://{}:{}", 
-                            store.get_string("redis.host")?, 
+                        let redis_url = format!(
+                            "redis://{}:{}",
+                            store.get_string("redis.host")?,
                             store.get_string("redis.port")?
                         );
                         redis.connect(&redis_url)?;
-                        
+
                         redis.set_string(&model_key, &updated_json)?;
-                    },
+                    }
                     _ => {
-                        return Err(ModelSrvError::InvalidOperation(
-                            format!("Unsupported operation type for model: {:?}", operation.operation_type)
-                        ));
+                        return Err(ModelSrvError::InvalidOperation(format!(
+                            "Unsupported operation type for model: {:?}",
+                            operation.operation_type
+                        )));
                     }
                 }
-            },
+            }
             _ => {
-                return Err(ModelSrvError::InvalidOperation(
-                    format!("Unsupported target type: {:?}", operation.target_type)
-                ));
+                return Err(ModelSrvError::InvalidOperation(format!(
+                    "Unsupported target type: {:?}",
+                    operation.target_type
+                )));
             }
         }
-        
+
         Ok(())
     }
 
@@ -679,75 +706,84 @@ impl ControlActionHandler {
                     operation_status_cache: HashMap::new(),
                     key_prefix: key_prefix.to_string(),
                 })
-            },
+            }
             Err(e) => {
                 error!("Failed to connect to Redis: {}", e);
                 Err(e)
             }
         }
     }
-    
+
     /// Load control operations
     pub fn load_operations<T: DataStore>(&mut self, store: &T, pattern: &str) -> Result<()> {
         // Load operations from store to control manager
         self.control_manager.load_operations(store, pattern)?;
-        
+
         // Also load operation status into cache
         self.refresh_status_cache(store)?;
-        
+
         Ok(())
     }
-    
+
     /// Refresh the operation status cache from store
     pub fn refresh_status_cache<T: DataStore>(&mut self, store: &T) -> Result<()> {
         let status_pattern = format!("{}control:status:*", self.key_prefix);
         let status_keys = store.get_keys(&status_pattern)?;
-        
+
         self.operation_status_cache.clear();
-        
+
         for key in status_keys {
             if let Ok(status_json) = store.get_string(&key) {
                 if let Ok(status) = serde_json::from_str::<OperationStatusRecord>(&status_json) {
                     // Extract operation ID from the key
-                    if let Some(op_id) = key.strip_prefix(&format!("{}control:status:", self.key_prefix)) {
-                        self.operation_status_cache.insert(op_id.to_string(), status);
+                    if let Some(op_id) =
+                        key.strip_prefix(&format!("{}control:status:", self.key_prefix))
+                    {
+                        self.operation_status_cache
+                            .insert(op_id.to_string(), status);
                     }
                 }
             }
         }
-        
-        debug!("Loaded {} operation statuses into cache", self.operation_status_cache.len());
+
+        debug!(
+            "Loaded {} operation statuses into cache",
+            self.operation_status_cache.len()
+        );
         Ok(())
     }
-    
+
     /// Update operation status in both cache and store
-    async fn update_operation_status<T: DataStore + Sync>(&mut self, 
-                                             store: &T, 
-                                             operation_id: &str, 
-                                             status: OperationStatus, 
-                                             message: Option<String>) -> Result<()> {
+    async fn update_operation_status<T: DataStore + Sync>(
+        &mut self,
+        store: &T,
+        operation_id: &str,
+        status: OperationStatus,
+        message: Option<String>,
+    ) -> Result<()> {
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or(Duration::from_secs(0))
             .as_secs();
-            
+
         let status_record = OperationStatusRecord {
             operation_id: operation_id.to_string(),
             status,
             timestamp,
             message,
         };
-        
+
         // Update cache
-        self.operation_status_cache.insert(operation_id.to_string(), status_record.clone());
-        
+        self.operation_status_cache
+            .insert(operation_id.to_string(), status_record.clone());
+
         // Update store
         let status_key = format!("{}control:status:{}", self.key_prefix, operation_id);
         let status_json = serde_json::to_string(&status_record)
             .map_err(|e| ModelSrvError::JsonError(e.to_string()))?;
-            
+
         store.set_string(&status_key, &status_json)?;
-        
+
         Ok(())
     }
 }
@@ -757,33 +793,41 @@ impl ActionHandler for ControlActionHandler {
     fn can_handle(&self, action_type: &str) -> bool {
         matches!(action_type, "control" | "device_control" | "model_control")
     }
-    
+
     fn name(&self) -> &str {
         "ControlActionHandler"
     }
-    
+
     fn handler_type(&self) -> String {
         "control".to_string()
     }
-    
-    async fn execute_action(&self, action_type: &str, config: &serde_json::Value) -> Result<String> {
+
+    async fn execute_action(
+        &self,
+        action_type: &str,
+        config: &serde_json::Value,
+    ) -> Result<String> {
         // 因为trait定义有区别，这里需要调整实现
         // 原实现是&mut self，现在是&self
         // 我们需要创建结构的克隆或使用内部可变性
         let mut redis = self.redis.clone();
-        
+
         match action_type {
             "control" => {
                 // Execute control operation by ID
                 if let Some(control_id) = config.get("control_id").and_then(|v| v.as_str()) {
                     // Try to find the control operation in the control manager
                     let operations = self.control_manager.get_operations();
-                    let operation = operations.iter()
+                    let operation = operations
+                        .iter()
                         .find(|op| op.id == control_id)
-                        .ok_or_else(|| ModelSrvError::InvalidOperation(
-                            format!("Control operation not found: {}", control_id)
-                        ))?;
-                    
+                        .ok_or_else(|| {
+                            ModelSrvError::InvalidOperation(format!(
+                                "Control operation not found: {}",
+                                control_id
+                            ))
+                        })?;
+
                     // Update operation status to Executing
                     if let Some(_store) = config.get("store").and_then(|v| v.as_object()) {
                         // This is a bit of a hack to get a DataStore from a JSON value
@@ -791,51 +835,57 @@ impl ActionHandler for ControlActionHandler {
                         // Let's assume we can't do that here and just log the status change
                         debug!("Setting operation {} status to Executing", control_id);
                     }
-                    
+
                     // Execute the operation directly
-                    let channel = operation.get_parameter("channel")
-                        .ok_or_else(|| ModelSrvError::InvalidOperation(
-                            format!("Missing channel parameter for operation: {}", control_id)
-                        ))?;
-                    
-                    let point = operation.get_parameter("point")
-                        .ok_or_else(|| ModelSrvError::InvalidOperation(
-                            format!("Missing point parameter for operation: {}", control_id)
-                        ))?;
-                    
+                    let channel = operation.get_parameter("channel").ok_or_else(|| {
+                        ModelSrvError::InvalidOperation(format!(
+                            "Missing channel parameter for operation: {}",
+                            control_id
+                        ))
+                    })?;
+
+                    let point = operation.get_parameter("point").ok_or_else(|| {
+                        ModelSrvError::InvalidOperation(format!(
+                            "Missing point parameter for operation: {}",
+                            control_id
+                        ))
+                    })?;
+
                     let default_value = "true".to_string();
                     let value = operation.get_parameter("value").unwrap_or(&default_value);
-                    
+
                     // Execute based on target type
                     let result = match operation.target_type {
                         ControlTargetType::Device => {
-                            let mut executor = DeviceControlExecutor::new(&self.control_manager.key_prefix);
+                            let mut executor =
+                                DeviceControlExecutor::new(&self.control_manager.key_prefix);
                             executor.execute(&mut redis, operation, channel, point, value)
-                        },
-                        _ => Err(ModelSrvError::InvalidOperation(
-                            format!("Unsupported target type: {:?}", operation.target_type)
-                        ))
+                        }
+                        _ => Err(ModelSrvError::InvalidOperation(format!(
+                            "Unsupported target type: {:?}",
+                            operation.target_type
+                        ))),
                     };
-                    
+
                     // Update operation status based on result
                     if let Some(_store) = config.get("store").and_then(|v| v.as_object()) {
                         match &result {
                             Ok(_) => {
                                 debug!("Setting operation {} status to Executed", control_id);
                                 // In a real implementation, we'd update the status in the store
-                            },
+                            }
                             Err(e) => {
                                 debug!("Setting operation {} status to Failed: {}", control_id, e);
                                 // In a real implementation, we'd update the status in the store
                             }
                         }
                     }
-                    
+
                     result
                 } else if let (Some(operation_type), Some(target_type), Some(target_id)) = (
                     config.get("operation_type").and_then(|v| v.as_str()),
                     config.get("target_type").and_then(|v| v.as_str()),
-                    config.get("target_id").and_then(|v| v.as_str())
+                    config.get("target_id").and_then(|v| v.as_str()),
                 ) {
                     // Create a temporary operation from config
                     let operation_type_enum = match operation_type {
@@ -847,14 +897,14 @@ impl ActionHandler for ControlActionHandler {
                         "adjust" => ControlOperationType::Adjust,
                         custom => ControlOperationType::Custom(custom.to_string()),
                     };
-                    
+
                     let target_type_enum = match target_type {
                         "device" => ControlTargetType::Device,
                         "system" => ControlTargetType::System,
                         "model" => ControlTargetType::Model,
                         custom => ControlTargetType::Custom(custom.to_string()),
                     };
-                    
+
                     // Extract parameters from config
                     let mut parameters = Vec::new();
                     if let Some(params) = config.get("parameters").and_then(|v| v.as_object()) {
@@ -866,7 +916,7 @@ impl ActionHandler for ControlActionHandler {
                             });
                         }
                     }
-                    
+
                     // Create and execute temporary operation
                     let operation_id = format!("temp_{}", uuid::Uuid::new_v4());
                     let operation = ControlOperation {
@@ -883,73 +933,88 @@ impl ActionHandler for ControlActionHandler {
                         cooldown_ms: None,
                         last_executed_at: None,
                     };
-                    
+
                     // Update operation status to Executing
                     if let Some(_store) = config.get("store").and_then(|v| v.as_object()) {
-                        debug!("Setting temporary operation {} status to Executing", operation_id);
+                        debug!(
+                            "Setting temporary operation {} status to Executing",
+                            operation_id
+                        );
                     }
-                    
+
                     // Get channel and point from parameters
-                    let channel = operation.get_parameter("channel")
-                        .ok_or_else(|| ModelSrvError::InvalidOperation(
-                            "Missing channel parameter".to_string()
-                        ))?;
-                    
-                    let point = operation.get_parameter("point")
-                        .ok_or_else(|| ModelSrvError::InvalidOperation(
-                            "Missing point parameter".to_string()
-                        ))?;
-                    
+                    let channel = operation.get_parameter("channel").ok_or_else(|| {
+                        ModelSrvError::InvalidOperation("Missing channel parameter".to_string())
+                    })?;
+
+                    let point = operation.get_parameter("point").ok_or_else(|| {
+                        ModelSrvError::InvalidOperation("Missing point parameter".to_string())
+                    })?;
+
                     let default_value = "true".to_string();
                     let value = operation.get_parameter("value").unwrap_or(&default_value);
-                    
+
                     // Execute based on target type
                     let result = match operation.target_type {
                         ControlTargetType::Device => {
-                            let mut executor = DeviceControlExecutor::new(&self.control_manager.key_prefix);
+                            let mut executor =
+                                DeviceControlExecutor::new(&self.control_manager.key_prefix);
                             executor.execute(&mut redis, &operation, channel, point, value)
-                        },
-                        _ => Err(ModelSrvError::InvalidOperation(
-                            format!("Unsupported target type: {:?}", operation.target_type)
-                        ))
+                        }
+                        _ => Err(ModelSrvError::InvalidOperation(format!(
+                            "Unsupported target type: {:?}",
+                            operation.target_type
+                        ))),
                     };
-                    
+
                     // Update operation status based on result
                     if let Some(_store) = config.get("store").and_then(|v| v.as_object()) {
                         match &result {
                             Ok(_) => {
-                                debug!("Setting temporary operation {} status to Executed", operation_id);
-                            },
+                                debug!(
+                                    "Setting temporary operation {} status to Executed",
+                                    operation_id
+                                );
+                            }
                             Err(e) => {
-                                debug!("Setting temporary operation {} status to Failed: {}", operation_id, e);
+                                debug!(
+                                    "Setting temporary operation {} status to Failed: {}",
+                                    operation_id, e
+                                );
                             }
                         }
                     }
-                    
+
                     result
                 } else {
                     Err(ModelSrvError::InvalidOperation(
-                        "Invalid control operation configuration".to_string()
+                        "Invalid control operation configuration".to_string(),
                     ))
                 }
-            },
+            }
             "device_control" => {
                 // Direct device control
-                let channel = config.get("channel").and_then(|v| v.as_str())
-                    .ok_or_else(|| ModelSrvError::InvalidOperation(
-                        "Missing channel parameter".to_string()
-                    ))?;
-                
-                let point = config.get("point").and_then(|v| v.as_str())
-                    .ok_or_else(|| ModelSrvError::InvalidOperation(
-                        "Missing point parameter".to_string()
-                    ))?;
-                
-                let value = config.get("value").and_then(|v| v.as_str())
+                let channel = config
+                    .get("channel")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| {
+                        ModelSrvError::InvalidOperation("Missing channel parameter".to_string())
+                    })?;
+
+                let point = config
+                    .get("point")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| {
+                        ModelSrvError::InvalidOperation("Missing point parameter".to_string())
+                    })?;
+
+                let value = config
+                    .get("value")
+                    .and_then(|v| v.as_str())
                     .unwrap_or("true");
-                
+
                 let mut executor = DeviceControlExecutor::new(&self.control_manager.key_prefix);
-                
+
                 // Create a temporary operation
                 let operation_id = format!("temp_{}", uuid::Uuid::new_v4());
                 let operation = ControlOperation {
@@ -982,49 +1047,68 @@ impl ActionHandler for ControlActionHandler {
                     cooldown_ms: None,
                     last_executed_at: None,
                 };
-                
+
                 // Update operation status to Executing
                 if let Some(_store) = config.get("store").and_then(|v| v.as_object()) {
-                    debug!("Setting device control operation {} status to Executing", operation_id);
+                    debug!(
+                        "Setting device control operation {} status to Executing",
+                        operation_id
+                    );
                 }
-                
+
                 let result = executor.execute(&mut redis, &operation, channel, point, value);
-                
+
                 // Update operation status based on result
                 if let Some(_store) = config.get("store").and_then(|v| v.as_object()) {
                     match &result {
                         Ok(_) => {
-                            debug!("Setting device control operation {} status to Executed", operation_id);
-                        },
+                            debug!(
+                                "Setting device control operation {} status to Executed",
+                                operation_id
+                            );
+                        }
                         Err(e) => {
-                            debug!("Setting device control operation {} status to Failed: {}", operation_id, e);
+                            debug!(
+                                "Setting device control operation {} status to Failed: {}",
+                                operation_id, e
+                            );
                         }
                     }
                 }
-                
+
                 result
-            },
+            }
             "model_control" => {
                 // Model control
-                let model_id = config.get("model_id").and_then(|v| v.as_str())
-                    .ok_or_else(|| ModelSrvError::InvalidOperation(
-                        "Missing model_id parameter".to_string()
-                    ))?;
-                
-                let action = config.get("action").and_then(|v| v.as_str())
-                    .ok_or_else(|| ModelSrvError::InvalidOperation(
-                        "Missing action parameter".to_string()
-                    ))?;
-                
+                let model_id =
+                    config
+                        .get("model_id")
+                        .and_then(|v| v.as_str())
+                        .ok_or_else(|| {
+                            ModelSrvError::InvalidOperation(
+                                "Missing model_id parameter".to_string(),
+                            )
+                        })?;
+
+                let action = config
+                    .get("action")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| {
+                        ModelSrvError::InvalidOperation("Missing action parameter".to_string())
+                    })?;
+
                 // Create a temporary operation
                 let operation_type = match action {
                     "start" => ControlOperationType::Start,
                     "stop" => ControlOperationType::Stop,
-                    _ => return Err(ModelSrvError::InvalidOperation(
-                        format!("Unsupported model action: {}", action)
-                    )),
+                    _ => {
+                        return Err(ModelSrvError::InvalidOperation(format!(
+                            "Unsupported model action: {}",
+                            action
+                        )))
+                    }
                 };
-                
+
                 let operation_id = format!("temp_{}", uuid::Uuid::new_v4());
                 let operation = ControlOperation {
                     id: operation_id.clone(),
@@ -1040,26 +1124,33 @@ impl ActionHandler for ControlActionHandler {
                     cooldown_ms: None,
                     last_executed_at: None,
                 };
-                
+
                 // Update operation status to Executing
                 if let Some(_store) = config.get("store").and_then(|v| v.as_object()) {
-                    debug!("Setting model control operation {} status to Executing", operation_id);
+                    debug!(
+                        "Setting model control operation {} status to Executing",
+                        operation_id
+                    );
                 }
-                
+
                 // Use control manager to execute the operation
                 // This is not ideal - we should use a proper model control executor
                 // But for simplicity, just return the operation ID
-                
+
                 // Update operation status to Executed
                 if let Some(_store) = config.get("store").and_then(|v| v.as_object()) {
-                    debug!("Setting model control operation {} status to Executed", operation_id);
+                    debug!(
+                        "Setting model control operation {} status to Executed",
+                        operation_id
+                    );
                 }
-                
+
                 Ok(operation.id.clone())
-            },
-            _ => Err(ModelSrvError::InvalidOperation(
-                format!("Unsupported action type: {}", action_type)
-            )),
+            }
+            _ => Err(ModelSrvError::InvalidOperation(format!(
+                "Unsupported action type: {}",
+                action_type
+            ))),
         }
     }
-} 
+}

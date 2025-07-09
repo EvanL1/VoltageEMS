@@ -200,7 +200,7 @@ impl OptimizedPointManager {
         F: FnOnce(&HashMap<u32, UniversalPointConfig>) -> R,
     {
         let points = self.points.read().await;
-        f(&*points)
+        f(&points)
     }
 
     /// Get points by telemetry type (O(1) lookup)
@@ -239,7 +239,7 @@ impl OptimizedPointManager {
         }
 
         let config = self.get_point_config(point_id).await.ok_or_else(|| {
-            crate::utils::ComSrvError::NotFound(format!("Point not found: {}", point_id))
+            crate::utils::ComSrvError::NotFound(format!("Point not found: {point_id}"))
         })?;
 
         // Convert PointValueType to string representation
@@ -380,7 +380,7 @@ impl OptimizedPointManager {
         F: FnOnce(&OptimizedPointManagerStats) -> R,
     {
         let stats = self.stats.read().await;
-        f(&*stats)
+        f(&stats)
     }
 
     /// Get memory usage estimate
@@ -421,7 +421,7 @@ pub fn generate_test_points(count: usize) -> Vec<UniversalPointConfig> {
         };
 
         let point_id = 1000 + i as u32;
-        let name = format!("Point_{:04}", point_id);
+        let name = format!("Point_{point_id:04}");
 
         let mut config = UniversalPointConfig::new(point_id, &name, telemetry_type.clone());
 
@@ -440,7 +440,7 @@ pub fn generate_test_points(count: usize) -> Vec<UniversalPointConfig> {
             config.offset = (i % 3) as f64 * 10.0;
         }
 
-        config.description = Some(format!("Test point for {:?}", telemetry_type));
+        config.description = Some(format!("Test point for {telemetry_type:?}"));
 
         points.push(config);
     }
@@ -494,7 +494,7 @@ mod tests {
         manager.load_points(points).await.unwrap();
         let load_time = start.elapsed();
 
-        println!("Load 10000 points: {:?}", load_time);
+        println!("Load 10000 points: {load_time:?}");
 
         // Test lookup performance
         let start = Instant::now();
@@ -503,7 +503,7 @@ mod tests {
         }
         let lookup_time = start.elapsed();
 
-        println!("1000 enabled checks: {:?}", lookup_time);
+        println!("1000 enabled checks: {lookup_time:?}");
 
         // Test batch update performance
         let updates: Vec<(u32, PointValueType)> = (1000..2000)
@@ -514,6 +514,6 @@ mod tests {
         manager.batch_update_values(updates).await.unwrap();
         let update_time = start.elapsed();
 
-        println!("1000 batch updates: {:?}", update_time);
+        println!("1000 batch updates: {update_time:?}");
     }
 }

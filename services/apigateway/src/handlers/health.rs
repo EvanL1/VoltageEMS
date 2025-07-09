@@ -55,11 +55,16 @@ pub async fn detailed_health(
     // Check backend services
     let mut services_status = json!({});
     let services = vec!["comsrv", "modsrv", "hissrv", "netsrv", "alarmsrv"];
-    
+
     for service in services {
         if let Some(service_url) = config.get_service_url(service) {
             let health_url = format!("{}/health", service_url);
-            let status = match http_client.get(&health_url).timeout(std::time::Duration::from_secs(5)).send().await {
+            let status = match http_client
+                .get(&health_url)
+                .timeout(std::time::Duration::from_secs(5))
+                .send()
+                .await
+            {
                 Ok(response) if response.status().is_success() => json!({
                     "status": "healthy",
                     "message": format!("{} is responding", service)
@@ -82,7 +87,7 @@ pub async fn detailed_health(
 
     // Determine overall health
     let is_healthy = health_status["dependencies"]["redis"]["status"] == "healthy";
-    
+
     if !is_healthy {
         health_status["status"] = json!("degraded");
     }

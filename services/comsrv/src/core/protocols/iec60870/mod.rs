@@ -16,6 +16,12 @@ use crate::core::protocols::common::combase::{PacketParseResult, ProtocolPacketP
 /// when the `iec60870` feature is enabled.
 pub struct Iec60870PacketParser;
 
+impl Default for Iec60870PacketParser {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Iec60870PacketParser {
     /// Create a new IEC60870 packet parser
     pub fn new() -> Self {

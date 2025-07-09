@@ -17,10 +17,10 @@ pub trait Configurable: Serialize + for<'de> Deserialize<'de> + Send + Sync {
     {
         let other_value = serde_json::to_value(other)?;
         let self_value = serde_json::to_value(&*self)?;
-        
+
         let merged = merge_json_values(self_value, other_value);
         *self = serde_json::from_value(merged)?;
-        
+
         Ok(())
     }
 
@@ -30,9 +30,9 @@ pub trait Configurable: Serialize + for<'de> Deserialize<'de> + Send + Sync {
 #[async_trait]
 pub trait ConfigSource: Send + Sync {
     async fn load(&self, path: &Path) -> Result<Box<dyn Any + Send + Sync>>;
-    
+
     fn supports_format(&self, format: &str) -> bool;
-    
+
     fn priority(&self) -> i32 {
         0
     }
@@ -41,13 +41,13 @@ pub trait ConfigSource: Send + Sync {
 #[async_trait]
 pub trait ConfigValidator: Send + Sync {
     async fn validate(&self, config: &(dyn Any + Send + Sync)) -> Result<()>;
-    
+
     fn name(&self) -> &str;
 }
 
 fn merge_json_values(base: serde_json::Value, other: serde_json::Value) -> serde_json::Value {
     use serde_json::Value;
-    
+
     match (base, other) {
         (Value::Object(mut base_map), Value::Object(other_map)) => {
             for (key, value) in other_map {

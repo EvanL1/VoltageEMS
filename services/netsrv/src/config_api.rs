@@ -3,7 +3,7 @@ use axum::{
     extract::{Path, State},
     http::StatusCode,
     response::Json,
-    routing::{get, post, put, delete},
+    routing::{delete, get, post, put},
     Router,
 };
 use serde::{Deserialize, Serialize};
@@ -79,7 +79,7 @@ async fn get_current_config(
     State(state): State<ConfigState>,
 ) -> Result<Json<ConfigResponse>, StatusCode> {
     let config = state.current_config.read().await;
-    
+
     Ok(Json(ConfigResponse {
         success: true,
         message: "Current configuration retrieved".to_string(),
@@ -100,17 +100,21 @@ async fn update_config(
             data: None,
         }));
     }
-    
+
     // Save as version if requested
     if let Some(version_name) = request.save_as_version {
         let current_config = state.current_config.read().await.clone();
-        state.config_versions.write().await.insert(version_name.clone(), current_config);
+        state
+            .config_versions
+            .write()
+            .await
+            .insert(version_name.clone(), current_config);
         info!("Saved current config as version: {}", version_name);
     }
-    
+
     // Update current configuration
     *state.current_config.write().await = request.config;
-    
+
     // Save to file
     if let Err(e) = save_config_to_file(&state).await {
         error!("Failed to save configuration to file: {}", e);
@@ -120,9 +124,9 @@ async fn update_config(
             data: None,
         }));
     }
-    
+
     info!("Configuration updated successfully");
-    
+
     Ok(Json(ConfigResponse {
         success: true,
         message: "Configuration updated successfully".to_string(),
@@ -156,7 +160,7 @@ async fn reload_config(
         Ok(new_config) => {
             *state.current_config.write().await = new_config;
             info!("Configuration reloaded from file");
-            
+
             Ok(Json(ConfigResponse {
                 success: true,
                 message: "Configuration reloaded successfully".to_string(),
@@ -180,7 +184,7 @@ async fn list_config_versions(
 ) -> Result<Json<ConfigResponse>, StatusCode> {
     let versions = state.config_versions.read().await;
     let version_names: Vec<String> = versions.keys().cloned().collect();
-    
+
     Ok(Json(ConfigResponse {
         success: true,
         message: format!("Found {} configuration versions", version_names.len()),
@@ -194,7 +198,7 @@ async fn get_config_version(
     Path(version): Path<String>,
 ) -> Result<Json<ConfigResponse>, StatusCode> {
     let versions = state.config_versions.read().await;
-    
+
     if let Some(config) = versions.get(&version) {
         Ok(Json(ConfigResponse {
             success: true,
@@ -216,10 +220,14 @@ async fn save_config_version(
     Path(version): Path<String>,
 ) -> Result<Json<ConfigResponse>, StatusCode> {
     let current_config = state.current_config.read().await.clone();
-    state.config_versions.write().await.insert(version.clone(), current_config);
-    
+    state
+        .config_versions
+        .write()
+        .await
+        .insert(version.clone(), current_config);
+
     info!("Saved configuration version: {}", version);
-    
+
     Ok(Json(ConfigResponse {
         success: true,
         message: format!("Configuration saved as version '{}'", version),
@@ -233,7 +241,7 @@ async fn delete_config_version(
     Path(version): Path<String>,
 ) -> Result<Json<ConfigResponse>, StatusCode> {
     let mut versions = state.config_versions.write().await;
-    
+
     if versions.remove(&version).is_some() {
         info!("Deleted configuration version: {}", version);
         Ok(Json(ConfigResponse {
@@ -256,18 +264,25 @@ async fn rollback_to_version(
     Path(version): Path<String>,
 ) -> Result<Json<ConfigResponse>, StatusCode> {
     let versions = state.config_versions.read().await;
-    
+
     if let Some(config) = versions.get(&version) {
         // Save current config as backup before rollback
         let current_config = state.current_config.read().await.clone();
         drop(versions); // Release read lock
-        
-        let backup_name = format!("backup_before_rollback_{}", chrono::Utc::now().format("%Y%m%d_%H%M%S"));
-        state.config_versions.write().await.insert(backup_name.clone(), current_config);
-        
+
+        let backup_name = format!(
+            "backup_before_rollback_{}",
+            chrono::Utc::now().format("%Y%m%d_%H%M%S")
+        );
+        state
+            .config_versions
+            .write()
+            .await
+            .insert(backup_name.clone(), current_config);
+
         // Perform rollback
         *state.current_config.write().await = config.clone();
-        
+
         // Save to file
         if let Err(e) = save_config_to_file(&state).await {
             error!("Failed to save configuration during rollback: {}", e);
@@ -277,13 +292,16 @@ async fn rollback_to_version(
                 data: None,
             }));
         }
-        
+
         info!("Rolled back to configuration version: {}", version);
         info!("Current config backed up as: {}", backup_name);
-        
+
         Ok(Json(ConfigResponse {
             success: true,
-            message: format!("Rolled back to version '{}', backup saved as '{}'", version, backup_name),
+            message: format!(
+                "Rolled back to version '{}', backup saved as '{}'",
+                version, backup_name
+            ),
             data: None,
         }))
     } else {
@@ -300,19 +318,19 @@ async fn export_config(
     State(state): State<ConfigState>,
 ) -> Result<Json<ConfigResponse>, StatusCode> {
     let config = state.current_config.read().await;
-    
+
     let mut exports = HashMap::new();
-    
+
     // Export as YAML
     if let Ok(yaml) = serde_yaml::to_string(&*config) {
         exports.insert("yaml", yaml);
     }
-    
+
     // Export as JSON
     if let Ok(json) = serde_json::to_string_pretty(&*config) {
         exports.insert("json", json);
     }
-    
+
     Ok(Json(ConfigResponse {
         success: true,
         message: "Configuration exported".to_string(),
@@ -325,7 +343,7 @@ async fn optimize_for_aws(
     State(state): State<ConfigState>,
 ) -> Result<Json<ConfigResponse>, StatusCode> {
     let mut config = state.current_config.write().await;
-    
+
     // Enable AWS features for cloud MQTT configurations
     for network in &mut config.networks {
         if let crate::config_new::NetworkConfig::CloudMqtt(cloud_config) = network {
@@ -333,15 +351,18 @@ async fn optimize_for_aws(
                 cloud_config.aws_features.jobs_enabled = true;
                 cloud_config.aws_features.device_shadow_enabled = true;
                 cloud_config.aws_features.auto_respond_jobs = true;
-                
+
                 // Set AWS-optimized ALPN protocols
                 cloud_config.tls.alpn_protocols = vec!["x-amzn-mqtt-ca".to_string()];
-                
-                info!("Optimized AWS IoT configuration for network: {}", cloud_config.name);
+
+                info!(
+                    "Optimized AWS IoT configuration for network: {}",
+                    cloud_config.name
+                );
             }
         }
     }
-    
+
     // Save optimized configuration
     if let Err(e) = save_config_to_file(&state).await {
         error!("Failed to save AWS-optimized configuration: {}", e);
@@ -351,7 +372,7 @@ async fn optimize_for_aws(
             data: None,
         }));
     }
-    
+
     Ok(Json(ConfigResponse {
         success: true,
         message: "Configuration optimized for AWS IoT".to_string(),
@@ -360,7 +381,9 @@ async fn optimize_for_aws(
 }
 
 /// Save current configuration to file
-async fn save_config_to_file(state: &ConfigState) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+async fn save_config_to_file(
+    state: &ConfigState,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let config = state.current_config.read().await;
     let yaml_content = serde_yaml::to_string(&*config)?;
     tokio::fs::write(&state.config_path, yaml_content).await?;

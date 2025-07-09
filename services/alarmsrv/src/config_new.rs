@@ -7,10 +7,10 @@ pub struct AlarmServiceConfig {
     /// Base service configuration (flattened)
     #[serde(flatten)]
     pub base: BaseServiceConfig,
-    
+
     /// API configuration
     pub api: ApiConfig,
-    
+
     /// Storage configuration
     pub storage: StorageConfig,
 }
@@ -93,19 +93,23 @@ impl Configurable for AlarmServiceConfig {
         if self.api.port == 0 {
             return Err(ConfigError::Validation("API port cannot be 0".into()));
         }
-        
+
         // Validate storage configuration
         if self.storage.retention_days == 0 {
-            return Err(ConfigError::Validation("Retention days must be greater than 0".into()));
+            return Err(ConfigError::Validation(
+                "Retention days must be greater than 0".into(),
+            ));
         }
-        
+
         if self.storage.cleanup_interval_hours == 0 {
-            return Err(ConfigError::Validation("Cleanup interval must be greater than 0".into()));
+            return Err(ConfigError::Validation(
+                "Cleanup interval must be greater than 0".into(),
+            ));
         }
-        
+
         // Validate base configuration
         self.base.validate()?;
-        
+
         Ok(())
     }
 }
@@ -119,14 +123,15 @@ pub async fn load_config() -> anyhow::Result<AlarmServiceConfig> {
         .add_env_prefix("ALARMSRV_")
         .build()?
         .load::<AlarmServiceConfig>()?;
-    
+
     Ok(config)
 }
 
 /// Helper function to generate default configuration file
 pub fn generate_default_config() -> String {
     let config = AlarmServiceConfig::default();
-    serde_yaml::to_string(&config).unwrap_or_else(|_| "# Failed to generate config file".to_string())
+    serde_yaml::to_string(&config)
+        .unwrap_or_else(|_| "# Failed to generate config file".to_string())
 }
 
 #[cfg(test)]
@@ -142,29 +147,29 @@ mod tests {
         assert_eq!(config.storage.retention_days, 30);
         assert!(config.storage.auto_cleanup);
     }
-    
+
     #[test]
     fn test_config_validation() {
         let mut config = AlarmServiceConfig::default();
-        
+
         // Valid config should pass
         assert!(config.validate().is_ok());
-        
+
         // Invalid API port
         config.api.port = 0;
         assert!(config.validate().is_err());
         config.api.port = 8094;
-        
+
         // Invalid retention days
         config.storage.retention_days = 0;
         assert!(config.validate().is_err());
         config.storage.retention_days = 30;
-        
+
         // Invalid cleanup interval
         config.storage.cleanup_interval_hours = 0;
         assert!(config.validate().is_err());
     }
-    
+
     #[test]
     fn test_generate_default_config() {
         let yaml = generate_default_config();

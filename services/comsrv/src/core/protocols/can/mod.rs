@@ -24,6 +24,12 @@ use crate::core::protocols::common::combase::{PacketParseResult, ProtocolPacketP
 /// implemented when the `can` feature is enabled.
 pub struct CanPacketParser;
 
+impl Default for CanPacketParser {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl CanPacketParser {
     /// Create a new CAN packet parser
     pub fn new() -> Self {

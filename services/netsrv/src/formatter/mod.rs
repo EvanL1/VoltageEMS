@@ -1,5 +1,5 @@
-mod json_formatter;
 mod ascii_formatter;
+mod json_formatter;
 
 use crate::error::Result;
 use serde_json::Value;
@@ -11,8 +11,8 @@ pub trait DataFormatter: Send + Sync {
     fn format(&self, data: &Value) -> Result<String>;
 }
 
-pub use json_formatter::JsonFormatter;
 pub use ascii_formatter::AsciiFormatter;
+pub use json_formatter::JsonFormatter;
 
 /// Format types supported by the system
 #[derive(Debug, Clone, PartialEq)]
@@ -32,4 +32,4 @@ pub fn create_formatter(format_type: &FormatType) -> Box<dyn DataFormatter> {
 /// Create default JSON formatter
 pub fn default_formatter() -> Box<dyn DataFormatter> {
     Box::new(JsonFormatter::new())
-} 
+}
