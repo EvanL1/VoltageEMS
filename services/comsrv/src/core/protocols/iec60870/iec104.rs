@@ -60,7 +60,9 @@ impl Apdu {
     /// Create a new S-format APDU
     pub fn new_s_frame(recv_seq: u16) -> Self {
         Self {
-            apci: ApciType::SFrame { _recv_seq: recv_seq },
+            apci: ApciType::SFrame {
+                _recv_seq: recv_seq,
+            },
             asdu: None,
         }
     }
