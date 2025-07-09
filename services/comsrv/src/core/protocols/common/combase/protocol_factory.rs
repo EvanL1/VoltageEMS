@@ -191,570 +191,6 @@ pub trait ProtocolClientFactory: Send + Sync {
     fn config_schema(&self) -> ConfigValue;
 }
 
-/// Built-in Modbus TCP factory implementation
-pub struct ModbusTcpFactory;
-
-impl ModbusTcpFactory {
-    /// Create ProtocolMappingTable from ChannelConfig
-    fn create_modbus_mapping_table(&self, config: &ChannelConfig) -> crate::core::protocols::modbus::client::ProtocolMappingTable {
-        use crate::core::protocols::modbus::protocol_engine::{
-            ModbusTelemetryMapping, ModbusSignalMapping,
-            ModbusAdjustmentMapping, ModbusControlMapping
-        };
-        
-        let mut mapping_table = crate::core::protocols::modbus::client::ProtocolMappingTable::default();
-        
-        // Convert combined_points to protocol mappings
-        for point in &config.combined_points {
-            // Extract fields from CombinedPoint
-            let point_id = point.point_id;
-            let scale = point.scaling.as_ref().map(|s| s.scale).unwrap_or(1.0);
-            let offset = point.scaling.as_ref().map(|s| s.offset).unwrap_or(0.0);
-            
-            // Parse address from protocol_params (format: "slave_id:function_code:register_address")
-            let address = match point.protocol_params.get("address") {
-                Some(addr) => addr,
-                None => {
-                    tracing::warn!("No address parameter for point {}", point_id);
-                    continue;
-                }
-            };
-                
-            let address_parts: Vec<&str> = address.split(':').collect();
-            if address_parts.len() < 3 {
-                tracing::warn!("Invalid address format for point {}: {}", point_id, address);
-                continue;
-            }
-            
-            let slave_id = match address_parts[0].parse::<u8>() {
-                Ok(id) => id,
-                Err(_) => {
-                    tracing::warn!("Invalid slave_id for point {}: {}", point_id, address_parts[0]);
-                    continue;
-                }
-            };
-            
-            let function_code = match address_parts[1].parse::<u8>() {
-                Ok(code) => code,
-                Err(_) => {
-                    tracing::warn!("Invalid function_code for point {}: {}", point_id, address_parts[1]);
-                    continue;
-                }
-            };
-            
-            let register_address = match address_parts[2].parse::<u16>() {
-                Ok(addr) => addr,
-                Err(_) => {
-                    tracing::warn!("Invalid register_address for point {}: {}", point_id, address_parts[2]);
-                    continue;
-                }
-            };
-            
-            let data_type = point.data_type.clone();
-            let bit_location = point.protocol_params.get("bit_location")
-                .and_then(|v| v.parse::<u8>().ok());
-            
-            // Determine point type based on function code or telemetry type
-            match function_code {
-                3 | 4 => {
-                    // Read Holding Registers or Input Registers - Telemetry (YC)
-                    let mapping = ModbusTelemetryMapping {
-                        point_id,
-                        slave_id,
-                        address: register_address,
-                        data_type,
-                        scale,
-                        offset,
-                    };
-                    mapping_table.telemetry_mappings.insert(point_id, mapping);
-                }
-                1 | 2 => {
-                    // Read Coils or Discrete Inputs - Signal (YX)
-                    let mapping = ModbusSignalMapping {
-                        point_id,
-                        slave_id,
-                        address: register_address,
-                        bit_location,
-                    };
-                    mapping_table.signal_mappings.insert(point_id, mapping);
-                }
-                6 => {
-                    // Write Single Register - Adjustment (YT)
-                    let mapping = ModbusAdjustmentMapping {
-                        point_id,
-                        slave_id,
-                        address: register_address,
-                        data_type,
-                        scale,
-                        offset,
-                    };
-                    mapping_table.adjustment_mappings.insert(point_id, mapping);
-                }
-                5 => {
-                    // Write Single Coil - Control (YK)
-                    let mapping = ModbusControlMapping {
-                        point_id,
-                        slave_id,
-                        address: register_address,
-                        bit_location,
-                        coil_number: Some(register_address),
-                    };
-                    mapping_table.control_mappings.insert(point_id, mapping);
-                }
-                16 => {
-                    // Write Multiple Registers - could be YT
-                    let mapping = ModbusAdjustmentMapping {
-                        point_id,
-                        slave_id,
-                        address: register_address,
-                        data_type,
-                        scale,
-                        offset,
-                    };
-                    mapping_table.adjustment_mappings.insert(point_id, mapping);
-                }
-                15 => {
-                    // Write Multiple Coils - could be YK
-                    let mapping = ModbusControlMapping {
-                        point_id,
-                        slave_id,
-                        address: register_address,
-                        bit_location,
-                        coil_number: Some(register_address),
-                    };
-                    mapping_table.control_mappings.insert(point_id, mapping);
-                }
-                _ => {
-                    tracing::warn!("Unknown function code {} for point {}", function_code, point_id);
-                }
-            }
-        }
-        
-        tracing::info!(
-            "Created Modbus mapping table with {} telemetry, {} signal, {} adjustment, {} control points",
-            mapping_table.telemetry_mappings.len(),
-            mapping_table.signal_mappings.len(),
-            mapping_table.adjustment_mappings.len(),
-            mapping_table.control_mappings.len()
-        );
-        
-        mapping_table
-    }
-}
-
-#[async_trait]
-impl ProtocolClientFactory for ModbusTcpFactory {
-    fn protocol_type(&self) -> ProtocolType {
-        ProtocolType::ModbusTcp
-    }
-
-    async fn create_client(
-        &self,
-        config: ChannelConfig,
-        config_manager: Option<&ConfigManager>,
-    ) -> Result<Box<dyn ComBase>> {
-        let modbus_config: crate::core::protocols::modbus::common::ModbusConfig =
-            config.clone().into();
-
-        // Create transport based on configuration
-        let factory = crate::core::transport::factory::TransportFactory::new();
-        let transport_config = crate::core::transport::tcp::TcpTransportConfig {
-            host: modbus_config.host.clone().unwrap_or_else(|| "127.0.0.1".to_string()),
-            port: modbus_config.port.unwrap_or(502),
-            timeout: std::time::Duration::from_millis(modbus_config.timeout_ms.unwrap_or(5000)),
-            max_retries: 3,
-            keep_alive: Some(std::time::Duration::from_secs(60)),
-            recv_buffer_size: None,
-            send_buffer_size: None,
-            no_delay: true,
-        };
-        
-        let transport = factory.create_tcp_transport(transport_config).await?;
-        
-        // Check if we have a config manager with CSV point tables
-        if let Some(_config_mgr) = config_manager {
-            // Try to create ModbusUniversalClient with CSV integration
-            // Create ModbusChannelConfig from ChannelConfig
-            // Extract Modbus configuration from parameters
-            let timeout_ms = config.parameters.get("timeout_ms").and_then(|v| v.as_u64());
-            let host = config.parameters.get("host").and_then(|v| v.as_str()).map(String::from);
-            let port = config.parameters.get("port").and_then(|v| v.as_u64()).map(|p| p as u16);
-            let modbus_config = crate::core::protocols::modbus::common::ModbusConfig {
-                protocol_type: config.protocol.clone(),
-                host: host.clone(),
-                port,
-                device_path: config.parameters.get("device_path").and_then(|v| v.as_str()).map(String::from),
-                baud_rate: config.parameters.get("baud_rate").and_then(|v| v.as_u64()).map(|b| b as u32),
-                data_bits: config.parameters.get("data_bits").and_then(|v| v.as_u64()).map(|d| d as u8),
-                stop_bits: config.parameters.get("stop_bits").and_then(|v| v.as_u64()).map(|s| s as u8),
-                parity: config.parameters.get("parity").and_then(|v| v.as_str()).map(String::from),
-                timeout_ms,
-                points: vec![],
-            };
-            // Extract polling configuration from parameters
-            let protocol_factory = ProtocolFactory::new();
-            let polling_config = protocol_factory.extract_modbus_polling_config(&config.parameters);
-            let polling_config_clone = polling_config.clone();
-            
-            let channel_config = crate::core::protocols::modbus::ModbusChannelConfig {
-                channel_id: config.id,
-                channel_name: config.name.clone(),
-                connection: modbus_config,
-                request_timeout: std::time::Duration::from_millis(5000),
-                max_retries: 3,
-                retry_delay: std::time::Duration::from_millis(1000),
-                polling: polling_config,
-            };
-            
-            match crate::core::protocols::modbus::ModbusClient::new(
-                channel_config,
-                transport,
-            ).await {
-                Ok(mut universal_client) => {
-                    // Load CSV point mappings from config
-                    let mapping_table = self.create_modbus_mapping_table(&config);
-                    if let Err(e) = universal_client.load_protocol_mappings(mapping_table).await {
-                        tracing::warn!("Failed to load protocol mappings for channel {}: {}", config.id, e);
-                    } else {
-                        tracing::info!("Successfully loaded {} protocol mappings for channel {}", config.combined_points.len(), config.id);
-                    }
-                    
-                    tracing::info!("Created ModbusUniversalClient for channel {} with CSV point tables", config.id);
-                    return Ok(Box::new(universal_client));
-                }
-                Err(e) => {
-                    tracing::warn!("Failed to create ModbusUniversalClient for channel {}, falling back to legacy client: {}", config.id, e);
-                    // Fall back to legacy client if universal client creation fails
-                    let transport_config_fallback = crate::core::transport::tcp::TcpTransportConfig {
-                        host: host.clone().unwrap_or_else(|| "127.0.0.1".to_string()),
-                        port: port.unwrap_or(502),
-                        timeout: std::time::Duration::from_millis(timeout_ms.unwrap_or(5000)),
-                        max_retries: 3,
-                        keep_alive: Some(std::time::Duration::from_secs(60)),
-                        recv_buffer_size: None,
-                        send_buffer_size: None,
-                        no_delay: true,
-                    };
-                    let transport = factory.create_tcp_transport(transport_config_fallback).await?;
-                    // Recreate modbus_config for fallback
-                    let fallback_modbus_config = crate::core::protocols::modbus::common::ModbusConfig {
-                        protocol_type: config.protocol.clone(),
-                        host: host.clone(),
-                        port,
-                        device_path: config.parameters.get("device_path").and_then(|v| v.as_str()).map(String::from),
-                        baud_rate: config.parameters.get("baud_rate").and_then(|v| v.as_u64()).map(|b| b as u32),
-                        data_bits: config.parameters.get("data_bits").and_then(|v| v.as_u64()).map(|d| d as u8),
-                        stop_bits: config.parameters.get("stop_bits").and_then(|v| v.as_u64()).map(|s| s as u8),
-                        parity: config.parameters.get("parity").and_then(|v| v.as_str()).map(String::from),
-                        timeout_ms,
-                        points: vec![],
-                    };
-                    let channel_config = crate::core::protocols::modbus::ModbusChannelConfig {
-                        channel_id: config.id,
-                        channel_name: config.name.clone(),
-                        connection: fallback_modbus_config,
-                        request_timeout: std::time::Duration::from_millis(5000),
-                        max_retries: 3,
-                        retry_delay: std::time::Duration::from_millis(1000),
-                        polling: polling_config_clone,
-                    };
-                    let mut client = crate::core::protocols::modbus::ModbusClient::new(channel_config, transport).await?;
-                    
-                    // Also load CSV mappings for fallback client
-                    let mapping_table = self.create_modbus_mapping_table(&config);
-                    if let Err(e) = client.load_protocol_mappings(mapping_table).await {
-                        tracing::warn!("Failed to load protocol mappings for fallback client {}: {}", config.id, e);
-                    } else {
-                        tracing::info!("Successfully loaded {} protocol mappings for fallback channel {}", config.combined_points.len(), config.id);
-                    }
-                    
-                    return Ok(Box::new(client));
-                }
-            }
-        }
-
-        // Fallback to legacy client when no config manager is provided
-        tracing::info!("Creating legacy ModbusClient for channel {} (no config manager)", config.id);
-        // Extract polling configuration for legacy client
-        let protocol_factory = ProtocolFactory::new();
-        let polling_config = protocol_factory.extract_modbus_polling_config(&config.parameters);
-        
-        let channel_config = crate::core::protocols::modbus::ModbusChannelConfig {
-            channel_id: config.id,
-            channel_name: config.name.clone(),
-            connection: modbus_config,
-            request_timeout: std::time::Duration::from_millis(5000),
-            max_retries: 3,
-            retry_delay: std::time::Duration::from_millis(1000),
-            polling: polling_config,
-        };
-        let client = crate::core::protocols::modbus::ModbusClient::new(channel_config, transport).await?;
-        Ok(Box::new(client))
-    }
-
-    fn validate_config(&self, config: &ChannelConfig) -> Result<()> {
-        tracing::debug!("ModbusTcp validate_config: config = {:?}", config);
-        
-        // Check if parameters are nested under protocol name
-        if config.parameters.get("ModbusTcp").is_some() {
-            tracing::debug!("ModbusTcp validate_config: Found ModbusTcp nested parameters");
-            return Ok(());
-        }
-        
-        // Modern configuration: require host, port is optional (defaults to 502)
-        if config.parameters.get("host").is_some() {
-            tracing::debug!("ModbusTcp validate_config: Found host parameter");
-            return Ok(());
-        }
-        
-        // Legacy compatibility: still support address for existing configurations
-        if config.parameters.get("address").is_some() {
-            tracing::warn!("ModbusTcp validate_config: Using legacy 'address' parameter. Consider using 'host' and 'port' parameters instead.");
-            return Ok(());
-        }
-        
-        Err(ComSrvError::InvalidParameter(
-            "host parameter is required (or legacy address parameter)".to_string(),
-        ))
-    }
-
-    fn default_config(&self) -> ChannelConfig {
-        let parameters = serde_json::json!({
-            "host": "127.0.0.1",
-            "port": 502,
-            "timeout": 5000,
-            "slave_id": 1,
-            "max_retries": 3,
-            "poll_rate": 1000
-        });
-
-        // Convert JSON to HashMap<String, serde_yaml::Value> for compatibility
-        let param_map = json_to_yaml_params(parameters);
-
-        ChannelConfig {
-            id: 0,
-            name: "Modbus TCP Channel".to_string(),
-            description: Some("Modbus TCP communication channel".to_string()),
-            protocol: "modbus_tcp".to_string(),
-            parameters: param_map,
-            logging: ChannelLoggingConfig::default(),
-            table_config: None,
-            points: Vec::new(),
-            combined_points: Vec::new(),
-        }
-    }
-
-    fn config_schema(&self) -> ConfigValue {
-        serde_json::json!({
-            "type": "object",
-            "properties": {
-                "host": {
-                    "type": "string",
-                    "description": "Target device hostname or IP address",
-                    "examples": ["192.168.1.100", "plc.local", "127.0.0.1"],
-                    "required": true
-                },
-                "port": {
-                    "type": "integer",
-                    "description": "TCP port number",
-                    "minimum": 1,
-                    "maximum": 65535,
-                    "default": 502
-                },
-                "timeout": {
-                    "type": "integer",
-                    "description": "Communication timeout in milliseconds",
-                    "minimum": 100,
-                    "maximum": 30000,
-                    "default": 5000
-                },
-                "slave_id": {
-                    "type": "integer",
-                    "description": "Modbus slave/unit ID",
-                    "minimum": 1,
-                    "maximum": 247,
-                    "default": 1
-                },
-                "max_retries": {
-                    "type": "integer",
-                    "description": "Maximum retry attempts for failed operations",
-                    "minimum": 0,
-                    "maximum": 10,
-                    "default": 3
-                },
-                "poll_rate": {
-                    "type": "integer",
-                    "description": "Polling interval in milliseconds",
-                    "minimum": 100,
-                    "maximum": 3600000,
-                    "default": 1000
-                },
-                "address": {
-                    "type": "string",
-                    "description": "Legacy address format 'host:port' (deprecated, use host+port instead)",
-                    "examples": ["192.168.1.100:502"],
-                    "deprecated": true
-                }
-            },
-            "required": ["host"],
-            "additionalProperties": false
-        })
-    }
-}
-
-/// Built-in Modbus RTU factory implementation
-pub struct ModbusRtuFactory;
-
-#[async_trait]
-impl ProtocolClientFactory for ModbusRtuFactory {
-    fn protocol_type(&self) -> ProtocolType {
-        ProtocolType::ModbusRtu
-    }
-
-    async fn create_client(
-        &self,
-        config: ChannelConfig,
-        _config_manager: Option<&ConfigManager>,
-    ) -> Result<Box<dyn ComBase>> {
-        let modbus_config: crate::core::protocols::modbus::common::ModbusConfig =
-            config.clone().into();
-
-        // Create transport based on configuration (RTU uses serial transport)
-        let factory = crate::core::transport::factory::TransportFactory::new();
-        let transport_config = crate::core::transport::serial::SerialTransportConfig {
-            port: modbus_config.device_path.clone().unwrap_or_else(|| "/dev/ttyUSB0".to_string()),
-            baud_rate: modbus_config.baud_rate.unwrap_or(9600),
-            data_bits: modbus_config.data_bits.unwrap_or(8),
-            stop_bits: modbus_config.stop_bits.unwrap_or(1),
-            parity: modbus_config.parity.clone().unwrap_or_else(|| "None".to_string()),
-            flow_control: "None".to_string(),
-            timeout: std::time::Duration::from_millis(modbus_config.timeout_ms.unwrap_or(5000)),
-            max_retries: 3,
-            read_timeout: std::time::Duration::from_millis(1000),
-            write_timeout: std::time::Duration::from_millis(1000),
-        };
-        
-        let transport = factory.create_serial_transport(transport_config).await?;
-        
-        // Extract polling configuration for RTU
-        let polling_config = ProtocolFactory::new().extract_modbus_polling_config(&config.parameters);
-        
-        let channel_config = crate::core::protocols::modbus::ModbusChannelConfig {
-            channel_id: config.id,
-            channel_name: config.name.clone(),
-            connection: modbus_config,
-            request_timeout: std::time::Duration::from_millis(5000),
-            max_retries: 3,
-            retry_delay: std::time::Duration::from_millis(1000),
-            polling: polling_config,
-        };
-        let client = crate::core::protocols::modbus::ModbusClient::new(channel_config, transport).await?;
-
-        Ok(Box::new(client))
-    }
-
-    fn validate_config(&self, config: &ChannelConfig) -> Result<()> {
-        
-
-        // For now, just accept all ModbusRtu configurations to allow testing
-        // TODO: Implement proper parameter validation
-        if let Some(_map) = config.parameters.get("ModbusRtu") {
-            // For testing purposes, accept any ModbusRtu configuration
-            return Ok(());
-        }
-        
-        // Check for direct port parameter
-        if config.parameters.get("port").is_some() {
-            return Ok(());
-        }
-        
-        Err(ComSrvError::InvalidParameter(
-            "port parameter is required".to_string(),
-        ))
-    }
-
-    fn default_config(&self) -> ChannelConfig {
-        let parameters = serde_json::json!({
-            "port": "/dev/ttyUSB0",
-            "baud_rate": 9600,
-            "data_bits": 8,
-            "stop_bits": 1,
-            "parity": "None",
-            "slave_id": 1,
-            "timeout": 1000,
-            "retry_count": 3
-        });
-
-        // Convert JSON to HashMap<String, serde_yaml::Value> for compatibility
-        let param_map = json_to_yaml_params(parameters);
-
-        ChannelConfig {
-            id: 0,
-            name: "Modbus RTU Channel".to_string(),
-            description: Some("Modbus RTU serial communication channel".to_string()),
-            protocol: "modbus_rtu".to_string(),
-            parameters: param_map,
-            logging: ChannelLoggingConfig::default(),
-            table_config: None,
-            points: Vec::new(),
-            combined_points: Vec::new(),
-        }
-    }
-
-    fn config_schema(&self) -> ConfigValue {
-        serde_json::json!({
-            "type": "object",
-            "properties": {
-                "port": {
-                    "type": "string",
-                    "description": "Serial port device path",
-                    "example": "/dev/ttyUSB0",
-                    "required": true
-                },
-                "baud_rate": {
-                    "type": "integer",
-                    "description": "Serial communication baud rate",
-                    "enum": [9600, 19200, 38400, 57600, 115200],
-                    "default": 9600
-                },
-                "data_bits": {
-                    "type": "integer",
-                    "description": "Number of data bits",
-                    "enum": [7, 8],
-                    "default": 8
-                },
-                "stop_bits": {
-                    "type": "integer",
-                    "description": "Number of stop bits",
-                    "enum": [1, 2],
-                    "default": 1
-                },
-                "parity": {
-                    "type": "string",
-                    "description": "Parity checking mode",
-                    "enum": ["None", "Even", "Odd"],
-                    "default": "None"
-                },
-                "slave_id": {
-                    "type": "integer",
-                    "description": "Modbus slave device ID",
-                    "minimum": 1,
-                    "maximum": 247,
-                    "default": 1
-                },
-                "timeout": {
-                    "type": "integer",
-                    "description": "Communication timeout in milliseconds",
-                    "minimum": 100,
-                    "maximum": 10000,
-                    "default": 1000
-                }
-            },
-            "required": ["port"]
-        })
-    }
-}
-
 /// Mock ComBase implementation for testing
 #[derive(Debug)]
 struct MockComBase {
@@ -765,6 +201,8 @@ struct MockComBase {
     should_fail_start: AtomicBool,
     should_fail_stop: AtomicBool,
 }
+
+
 
 impl MockComBase {
     fn new(name: &str, channel_id: u16, protocol_type: &str) -> Self {
@@ -902,28 +340,20 @@ struct ChannelMetadata {
 impl ProtocolFactory {
     /// Create a new protocol factory with optimized data structures
     pub fn new() -> Self {
-        let factory = Self {
+        Self {
             channels: DashMap::with_hasher(ahash::RandomState::new()),
             protocol_factories: DashMap::with_hasher(ahash::RandomState::new()),
             redis_store: None,
-        };
-
-        // Register built-in protocol factories by default
-        factory.register_builtin_factories();
-        factory
+        }
     }
 
     /// Create a new protocol factory with Redis storage support
     pub fn new_with_redis(redis_store: crate::core::storage::redis_storage::RedisStore) -> Self {
-        let factory = Self {
+        Self {
             channels: DashMap::with_hasher(ahash::RandomState::new()),
             protocol_factories: DashMap::with_hasher(ahash::RandomState::new()),
             redis_store: Some(redis_store),
-        };
-
-        // Register built-in protocol factories by default
-        factory.register_builtin_factories();
-        factory
+        }
     }
 
     /// Enable Redis storage for this factory
@@ -1017,12 +447,6 @@ impl ProtocolFactory {
         Ok(())
     }
 
-    /// Register built-in protocol factories
-    fn register_builtin_factories(&self) {
-        self.register_protocol_factory(Arc::new(ModbusTcpFactory));
-        self.register_protocol_factory(Arc::new(ModbusRtuFactory));
-        tracing::info!("Registered built-in protocol factories");
-    }
 
     /// Register a protocol factory
     ///
@@ -1131,36 +555,43 @@ impl ProtocolFactory {
     ///
     /// * `config` - Channel configuration to validate
     pub fn validate_config(&self, config: &ChannelConfig) -> Result<()> {
-        // Convert string protocol to ProtocolType
-        let protocol_type = match config.protocol.as_str() {
-            "modbus_tcp" => ProtocolType::ModbusTcp,
-            "modbus_rtu" => ProtocolType::ModbusRtu,
-            "can" => ProtocolType::Can,
-            "iec104" => ProtocolType::Iec104,
-            "virtual" => ProtocolType::Virtual,
-            "dio" => ProtocolType::Dio,
-            "iec61850" => ProtocolType::Iec61850,
-            _ => return Err(ComSrvError::ProtocolNotSupported(config.protocol.clone())),
-        };
+        let protocol_id = config.protocol.to_lowercase();
         
-        match self.protocol_factories.get(&protocol_type) {
-            Some(factory) => factory.validate_config(config),
-            None => {
-                // Allow certain protocols that have fallback implementations
-                match protocol_type {
-                    ProtocolType::Virtual => {
-                        // Virtual protocol has basic validation - just check required fields
-                        if config.name.is_empty() {
-                            return Err(ComSrvError::ConfigError(
-                                "Channel name cannot be empty".to_string(),
-                            ));
-                        }
-                        Ok(())
+        // Use plugin system for validation
+        if let Some(plugin) = crate::core::plugins::PluginRegistry::get_global(&protocol_id) {
+            // Convert serde_yaml::Value to serde_json::Value for plugin validation
+            let json_params: std::collections::HashMap<String, serde_json::Value> = config.parameters
+                .iter()
+                .map(|(k, v)| {
+                    let json_str = serde_yaml::to_string(v).unwrap_or_default();
+                    let json_val = serde_yaml::from_str(&json_str).unwrap_or(serde_json::Value::Null);
+                    (k.clone(), json_val)
+                })
+                .collect();
+            
+            // Use plugin's validate_config method
+            plugin.validate_config(&json_params)?;
+            Ok(())
+        } else {
+            // Handle special cases
+            match protocol_id.as_str() {
+                "virtual" => {
+                    // Virtual protocol has basic validation
+                    if config.name.is_empty() {
+                        return Err(ComSrvError::ConfigError(
+                            "Channel name cannot be empty".to_string(),
+                        ));
                     }
-                    _ => Err(ComSrvError::ProtocolNotSupported(format!(
-                        "Protocol type not supported: {:?}",
-                        config.protocol
-                    ))),
+                    Ok(())
+                }
+                _ => {
+                    // List available plugins for better error message
+                    let available_plugins = crate::core::plugins::PluginManager::list_plugins();
+                    Err(ComSrvError::ProtocolNotSupported(format!(
+                        "Plugin '{}' not found. Available plugins: {:?}",
+                        protocol_id,
+                        available_plugins
+                    )))
                 }
             }
         }
@@ -1226,71 +657,87 @@ impl ProtocolFactory {
     /// * `config_manager` - Config manager for loading point tables
     pub async fn create_protocol_with_config_manager(
         &self,
-        config: ChannelConfig,
+        mut config: ChannelConfig,
         config_manager: Option<&ConfigManager>,
     ) -> Result<Box<dyn ComBase>> {
         // First validate the configuration
         self.validate_config(&config)?;
 
-        // Parse protocol type from string
-        let protocol_type = ProtocolType::from_str(&config.protocol)?;
+        // Load CSV points from config manager if available and not already loaded
+        if config.combined_points.is_empty() {
+            if let Some(cm) = config_manager {
+                if let Some(channel_config) = cm.get_channel(config.id) {
+                    if !channel_config.combined_points.is_empty() {
+                        tracing::info!(
+                            "Loading {} CSV points from ConfigManager for channel {} ({})",
+                            channel_config.combined_points.len(),
+                            config.id,
+                            config.name
+                        );
+                        config.combined_points = channel_config.combined_points.clone();
+                    } else if let Some(ref table_config) = channel_config.table_config {
+                        // If ConfigManager has table_config but no loaded points, try loading them
+                        tracing::info!(
+                            "ConfigManager has table_config but no loaded points for channel {}, attempting to load CSV",
+                            config.id
+                        );
+                        
+                        // Get base path from environment or use default
+                        let base_path = std::env::var("COMSRV_CSV_BASE_PATH")
+                            .unwrap_or_else(|_| "config".to_string());
+                        let base_path = std::path::Path::new(&base_path);
+                        
+                        match crate::core::config::unified_loader::UnifiedCsvLoader::load_channel_tables(table_config, base_path) {
+                            Ok(points) => {
+                                tracing::info!(
+                                    "Successfully loaded {} points from CSV for channel {}",
+                                    points.len(),
+                                    config.id
+                                );
+                                config.combined_points = points;
+                            }
+                            Err(e) => {
+                                tracing::warn!(
+                                    "Failed to load CSV tables for channel {}: {}",
+                                    config.id,
+                                    e
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Use plugin system exclusively
+        let protocol_id = config.protocol.to_lowercase();
         
-        // Try to use registered factory first
-        if let Some(factory) = self.protocol_factories.get(&protocol_type) {
-            tracing::info!(
-                "Creating protocol instance using registered factory: {:?}",
-                protocol_type
-            );
-            return factory.create_client(config, config_manager).await;
-        }
-
-        // Fallback to legacy implementation for backward compatibility
-        match protocol_type {
-            ProtocolType::ModbusTcp | ProtocolType::ModbusRtu => {
-                self.create_modbus_rtu_with_config_manager(config, config_manager)
-                    .await
-            }
-            ProtocolType::Virtual => self.create_virtual(config).await,
-            // For other protocol types that don't have registered factories
-            ProtocolType::Dio | ProtocolType::Can | ProtocolType::Iec61850 => {
-                Err(ComSrvError::ProtocolNotSupported(format!(
-                    "Protocol type not supported: {:?}",
-                    protocol_type
-                )))
-            }
-            // ModbusTcp and Iec104 should be handled by registered factories
-            _ => Err(ComSrvError::ProtocolNotSupported(format!(
-                "Protocol factory not found: {:?}",
-                protocol_type
-            ))),
-        }
+        tracing::info!("Creating protocol instance using plugin system: {}", protocol_id);
+        
+        // Get plugin instance from registry
+        let plugin = crate::core::plugins::PluginRegistry::get_global(&protocol_id)
+            .ok_or_else(|| ComSrvError::ProtocolNotSupported(format!(
+                "Plugin {} not found in registry. Available plugins: {:?}",
+                protocol_id,
+                crate::core::plugins::PluginManager::list_plugins()
+            )))?;
+        
+        // Validate configuration
+        // Convert serde_yaml::Value to serde_json::Value
+        let json_params: std::collections::HashMap<String, serde_json::Value> = config.parameters
+            .iter()
+            .map(|(k, v)| {
+                let json_str = serde_yaml::to_string(v).unwrap_or_default();
+                let json_val = serde_yaml::from_str(&json_str).unwrap_or(serde_json::Value::Null);
+                (k.clone(), json_val)
+            })
+            .collect();
+        plugin.validate_config(&json_params)?;
+        
+        // Create protocol instance with CSV points loaded
+        plugin.create_instance(config).await
     }
 
-    // Create Modbus RTU client (now using factory)
-    #[inline]
-    async fn create_modbus_rtu_with_config_manager(
-        &self,
-        config: ChannelConfig,
-        config_manager: Option<&ConfigManager>,
-    ) -> Result<Box<dyn ComBase>> {
-        // Try to use registered factory first
-        if let Some(factory) = self.protocol_factories.get(&ProtocolType::ModbusRtu) {
-            return factory.create_client(config, config_manager).await;
-        }
-
-        // Fallback error
-        Err(ComSrvError::ProtocolNotSupported(
-            "Modbus RTU factory not registered".to_string(),
-        ))
-    }
-
-    // Create virtual channel
-    #[inline]
-    async fn create_virtual(&self, config: ChannelConfig) -> Result<Box<dyn ComBase>> {
-        // Create a virtual mock channel for testing purposes
-        let mock = MockComBase::new(&config.name, config.id, "Virtual");
-        Ok(Box::new(mock) as Box<dyn ComBase>)
-    }
 
     /// Create multiple protocols in parallel for improved performance
     ///
@@ -2303,22 +1750,13 @@ mod tests {
         assert!(!factory.is_protocol_supported(&ProtocolType::ModbusRtu));
     }
 
-    #[test]
-    fn test_hot_swappable_protocol_factory() {
-        let factory = ProtocolFactory::new();
-
-        // Verify initial state
-        assert!(factory.is_protocol_supported(&ProtocolType::ModbusTcp));
-
-        // Unregister and re-register
-        let _ = factory.unregister_protocol_factory(&ProtocolType::ModbusTcp);
-        assert!(!factory.is_protocol_supported(&ProtocolType::ModbusTcp));
-
-        // Re-register with new factory
-        let new_factory = Arc::new(ModbusTcpFactory);
-        factory.register_protocol_factory(new_factory);
-        assert!(factory.is_protocol_supported(&ProtocolType::ModbusTcp));
-    }
+    // This test is commented out because we now use plugin system exclusively
+    // #[test]
+    // fn test_hot_swappable_protocol_factory() {
+    //     let factory = ProtocolFactory::new();
+    //
+    //     // Plugin system is now used instead of built-in factories
+    // }
 
     #[tokio::test]
     async fn test_mock_combase_functionality() {

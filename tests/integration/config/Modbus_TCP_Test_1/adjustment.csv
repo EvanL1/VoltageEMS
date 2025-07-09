@@ -1,0 +1,3 @@
+point_id,signal_name,chinese_name,data_type,scale,offset,unit
+301,power_setpoint,功率设定值,float32,1.0,0,kW
+302,voltage_setpoint,电压设定值,float32,0.1,0,V

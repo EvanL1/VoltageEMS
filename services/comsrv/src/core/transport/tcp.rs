@@ -5,7 +5,7 @@
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
-use std::net::SocketAddr;
+use std::net::{SocketAddr, ToSocketAddrs};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -70,10 +70,8 @@ impl TransportConfig for TcpTransportConfig {
             return Err(TransportError::ConfigError("Timeout must be greater than zero".to_string()));
         }
 
-        // Try to parse the address to validate format
-        let _addr: SocketAddr = format!("{}:{}", self.host, self.port)
-            .parse()
-            .map_err(|e| TransportError::ConfigError(format!("Invalid host:port format: {}", e)))?;
+        // No need to parse address here - it will be resolved during connection
+        // This allows hostname support (e.g., "modbus_tcp_simulator" instead of IP)
 
         Ok(())
     }
@@ -114,10 +112,8 @@ impl TcpTransport {
     }
 
     /// Get the socket address for connection
-    fn socket_addr(&self) -> Result<SocketAddr, TransportError> {
-        format!("{}:{}", self.config.host, self.config.port)
-            .parse()
-            .map_err(|e| TransportError::ConfigError(format!("Invalid address: {}", e)))
+    fn socket_addr(&self) -> Result<String, TransportError> {
+        Ok(format!("{}:{}", self.config.host, self.config.port))
     }
 
     /// Configure TCP socket options
@@ -187,7 +183,7 @@ impl Transport for TcpTransport {
         // Attempt connection with timeout
         let connection_result = timeout(
             self.config.timeout,
-            TcpStream::connect(addr)
+            TcpStream::connect(&addr)
         ).await;
 
         match connection_result {

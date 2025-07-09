@@ -1,0 +1,6 @@
+point_id,signal_name,chinese_name,data_type,scale,offset,unit
+1,voltage_a,A相电压,float32,0.1,0,V
+2,current_a,A相电流,float32,0.01,0,A
+3,power,有功功率,float32,1.0,0,kW
+4,frequency,频率,float32,0.01,0,Hz
+5,temperature,温度,float32,0.1,0,°C
