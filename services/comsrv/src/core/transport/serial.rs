@@ -495,10 +495,10 @@ mod tests {
     #[test]
     fn test_serial_transport_creation() {
         let config = SerialTransportConfig::default();
-        let transport = SerialTransport::new(config);
+        let _transport = SerialTransport::new(config);
         assert!(transport.is_ok());
 
-        let transport = transport.unwrap();
+        let _transport = transport.unwrap();
         assert_eq!(transport.transport_type(), "serial");
         assert_eq!(transport.name(), "Serial Transport");
     }
@@ -506,7 +506,7 @@ mod tests {
     #[tokio::test]
     async fn test_serial_transport_not_connected_initially() {
         let config = SerialTransportConfig::default();
-        let transport = SerialTransport::new(config).unwrap();
+        let _transport = SerialTransport::new(config).unwrap();
 
         assert!(!transport.is_connected().await);
         assert_eq!(
@@ -537,7 +537,7 @@ mod tests {
         assert_eq!(config.port, "/dev/ttyUSB0");
         assert_eq!(config.baud_rate, 9600);
 
-        let transport = builder.build(config).await;
+        let _transport = builder.build(config).await;
         assert!(transport.is_ok());
     }
 
@@ -551,7 +551,7 @@ mod tests {
             ..Default::default()
         };
 
-        let transport = SerialTransport::new(config).unwrap();
+        let _transport = SerialTransport::new(config).unwrap();
         assert_eq!(transport.parse_parity(), tokio_serial::Parity::Even);
         assert_eq!(
             transport.parse_flow_control(),

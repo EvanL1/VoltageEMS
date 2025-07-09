@@ -275,20 +275,9 @@ impl Default for ScalingConfig {
 
 impl ProtocolType {
     /// Convert to string representation for protocol identification
-    pub fn to_string(&self) -> String {
-        match self {
-            ProtocolType::ModbusTcp => "modbus_tcp".to_string(),
-            ProtocolType::ModbusRtu => "modbus_rtu".to_string(),
-            ProtocolType::Can => "can".to_string(),
-            ProtocolType::Iec104 => "iec104".to_string(),
-            ProtocolType::Virtual => "virtual".to_string(),
-            ProtocolType::Dio => "dio".to_string(),
-            ProtocolType::Iec61850 => "iec61850".to_string(),
-        }
-    }
 
     /// Parse from string
-    pub fn from_str(s: &str) -> Result<Self> {
+    pub fn parse_protocol_type(s: &str) -> Result<Self> {
         match s.to_lowercase().as_str() {
             "modbus_tcp" | "modbustcp" => Ok(ProtocolType::ModbusTcp),
             "modbus_rtu" | "modbusrtu" => Ok(ProtocolType::ModbusRtu),
@@ -314,5 +303,11 @@ impl ProtocolType {
             ProtocolType::Dio => "dio",
             ProtocolType::Iec61850 => "iec61850",
         }
+    }
+}
+
+impl std::fmt::Display for ProtocolType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.as_str())
     }
 }

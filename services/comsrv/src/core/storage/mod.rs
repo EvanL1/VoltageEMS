@@ -133,6 +133,8 @@ mod tests {
         use crate::core::storage::redis_storage::RealtimeValue;
 
         // Simulate the process of storing and retrieving data
+        #[allow(dead_code)]
+
         async fn simulate_data_flow() -> Result<RealtimeValue, crate::utils::error::ComSrvError> {
             // Create a value (simulate sensor reading)
             let value = RealtimeValue {

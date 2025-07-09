@@ -152,7 +152,7 @@ impl RedisConnectionManager {
             .map_err(|e| ComSrvError::RedisError(format!("Redis connection test failed: {e}")))?;
 
         let _: String = redis::cmd("PING")
-            .query_async(&mut conn)
+            .query_async::<()>(&mut conn)
             .await
             .map_err(|e| ComSrvError::RedisError(format!("Redis PING failed: {e}")))?;
 
@@ -160,7 +160,7 @@ impl RedisConnectionManager {
         if config.db > 0 {
             redis::cmd("SELECT")
                 .arg(config.db)
-                .query_async(&mut conn)
+                .query_async::<()>(&mut conn)
                 .await
                 .map_err(|e| {
                     ComSrvError::RedisError(format!(
@@ -203,7 +203,7 @@ impl RedisConnectionManager {
         if self.config.db > 0 {
             redis::cmd("SELECT")
                 .arg(self.config.db)
-                .query_async(&mut conn)
+                .query_async::<()>(&mut conn)
                 .await
                 .map_err(|e| {
                     ComSrvError::RedisError(format!(
@@ -299,7 +299,7 @@ impl RedisStore {
         }
 
         let mut conn = self.manager.get_connection().await?;
-        pipe.query_async(&mut conn)
+        pipe.query_async::<()>(&mut conn)
             .await
             .map_err(|e| ComSrvError::RedisError(format!("Redis batch set error: {e}")))?;
 
@@ -319,7 +319,7 @@ impl RedisStore {
         let mut conn = self.manager.get_connection().await?;
         let values: Vec<Option<String>> = redis::cmd("MGET")
             .arg(keys)
-            .query_async(&mut conn)
+            .query_async::<()>(&mut conn)
             .await
             .map_err(|e| ComSrvError::RedisError(format!("Redis batch get error: {e}")))?;
 
@@ -510,7 +510,7 @@ impl RedisStore {
                 .arg(pattern)
                 .arg("COUNT")
                 .arg(100)
-                .query_async(&mut conn)
+                .query_async::<()>(&mut conn)
                 .await
                 .map_err(|e| ComSrvError::RedisError(format!("Redis SCAN error: {e}")))?;
 
@@ -610,7 +610,7 @@ impl RedisStore {
                 .arg(pattern)
                 .arg("COUNT")
                 .arg(100)
-                .query_async(&mut conn)
+                .query_async::<()>(&mut conn)
                 .await
                 .map_err(|e| ComSrvError::RedisError(format!("Redis SCAN error: {e}")))?;
 
@@ -687,7 +687,7 @@ impl RedisStore {
                 .arg(pattern)
                 .arg("COUNT")
                 .arg(100)
-                .query_async(&mut conn)
+                .query_async::<()>(&mut conn)
                 .await
                 .map_err(|e| ComSrvError::RedisError(format!("Redis SCAN error: {e}")))?;
 
@@ -773,7 +773,7 @@ impl RedisStore {
                 .arg(pattern)
                 .arg("COUNT")
                 .arg(100)
-                .query_async(&mut conn)
+                .query_async::<()>(&mut conn)
                 .await
                 .map_err(|e| ComSrvError::RedisError(format!("Redis SCAN error: {e}")))?;
 
@@ -882,7 +882,7 @@ impl RedisStore {
                 .arg(pattern)
                 .arg("COUNT")
                 .arg(100)
-                .query_async(&mut conn)
+                .query_async::<()>(&mut conn)
                 .await
                 .map_err(|e| ComSrvError::RedisError(format!("Redis SCAN error: {e}")))?;
 

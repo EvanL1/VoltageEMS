@@ -113,9 +113,9 @@ impl ModbusClient {
     }
 
     /// 创建新的Modbus客户端
-    pub async fn new(config: ModbusChannelConfig, transport: Box<dyn Transport>) -> Result<Self> {
+    pub async fn new(config: ModbusChannelConfig, _transport: Box<dyn Transport>) -> Result<Self> {
         // 创建传输桥接
-        let transport_bridge = Arc::new(UniversalTransportBridge::new_modbus(transport));
+        let transport_bridge = Arc::new(UniversalTransportBridge::new_modbus(_transport));
 
         // 创建协议引擎
         let mut engine = ModbusProtocolEngine::new(&config.connection).await?;
@@ -949,7 +949,7 @@ mod tests {
     async fn test_unified_client_creation() {
         let config = create_test_config();
         let mock_config = crate::core::transport::mock::MockTransportConfig::default();
-        let transport = Box::new(MockTransport::new(mock_config).unwrap());
+        let _transport = Box::new(MockTransport::new(mock_config).unwrap());
 
         let client = ModbusClient::new(config, transport).await;
         assert!(client.is_ok());
@@ -959,7 +959,7 @@ mod tests {
     async fn test_statistics_tracking() {
         let config = create_test_config();
         let mock_config = crate::core::transport::mock::MockTransportConfig::default();
-        let transport = Box::new(MockTransport::new(mock_config).unwrap());
+        let _transport = Box::new(MockTransport::new(mock_config).unwrap());
 
         let client = ModbusClient::new(config, transport).await.unwrap();
         let stats = client.get_statistics().await;

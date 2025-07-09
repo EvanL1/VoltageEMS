@@ -306,10 +306,10 @@ impl ProtocolPlugin for Iec104Plugin {
             no_delay: true,
         };
 
-        let transport = factory.create_tcp_transport(transport_config).await?;
+        let _transport = factory.create_tcp_transport(transport_config).await?;
 
         // Create IEC 104 configuration
-        let iec104_config = Iec104Config {
+        let _iec104_config = Iec104Config {
             host,
             port,
             common_addr,

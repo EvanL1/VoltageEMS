@@ -112,6 +112,7 @@ trait TransportBuilderRegistry: Send + Sync + std::fmt::Debug {
 
 /// Concrete transport builder implementations
 #[derive(Debug)]
+#[allow(dead_code)]
 struct TcpBuilderImpl {
     builder: TcpTransportBuilder,
 }
@@ -125,6 +126,7 @@ impl TcpBuilderImpl {
 }
 
 #[derive(Debug)]
+#[allow(dead_code)]
 struct SerialBuilderImpl {
     builder: SerialTransportBuilder,
 }
@@ -151,6 +153,7 @@ impl MockBuilderImpl {
 }
 
 #[derive(Debug)]
+#[allow(dead_code)]
 struct GpioBuilderImpl {
     builder: GpioTransportBuilder,
 }
@@ -164,6 +167,7 @@ impl GpioBuilderImpl {
 }
 
 #[derive(Debug)]
+#[allow(dead_code)]
 struct CanBuilderImpl {
     builder: CanTransportBuilder,
 }
@@ -265,7 +269,7 @@ impl TransportFactory {
         })?;
 
         // Build the transport
-        let transport = builder.build_transport(config)?;
+        let _transport = builder.build_transport(config)?;
 
         // Update statistics
         self.stats
@@ -346,7 +350,7 @@ impl TransportBuilderRegistry for TcpBuilderImpl {
     ) -> Result<Box<dyn Transport>, TransportError> {
         match config {
             AnyTransportConfig::Tcp(tcp_config) => {
-                let transport = TcpTransport::new(tcp_config)?;
+                let _transport = TcpTransport::new(tcp_config)?;
                 Ok(Box::new(transport))
             }
             _ => Err(TransportError::ConfigError(
@@ -363,7 +367,7 @@ impl TransportBuilderRegistry for SerialBuilderImpl {
     ) -> Result<Box<dyn Transport>, TransportError> {
         match config {
             AnyTransportConfig::Serial(serial_config) => {
-                let transport = SerialTransport::new(serial_config)?;
+                let _transport = SerialTransport::new(serial_config)?;
                 Ok(Box::new(transport))
             }
             _ => Err(TransportError::ConfigError(
@@ -380,7 +384,7 @@ impl TransportBuilderRegistry for MockBuilderImpl {
     ) -> Result<Box<dyn Transport>, TransportError> {
         match config {
             AnyTransportConfig::Mock(mock_config) => {
-                let transport = MockTransport::new(mock_config)?;
+                let _transport = MockTransport::new(mock_config)?;
                 Ok(Box::new(transport))
             }
             _ => Err(TransportError::ConfigError(
@@ -397,7 +401,7 @@ impl TransportBuilderRegistry for GpioBuilderImpl {
     ) -> Result<Box<dyn Transport>, TransportError> {
         match config {
             AnyTransportConfig::Gpio(gpio_config) => {
-                let transport = GpioTransport::new(gpio_config)?;
+                let _transport = GpioTransport::new(gpio_config)?;
                 Ok(Box::new(transport))
             }
             _ => Err(TransportError::ConfigError(
@@ -414,7 +418,7 @@ impl TransportBuilderRegistry for CanBuilderImpl {
     ) -> Result<Box<dyn Transport>, TransportError> {
         match config {
             AnyTransportConfig::Can(can_config) => {
-                let transport = CanTransport::new(can_config)?;
+                let _transport = CanTransport::new(can_config)?;
                 Ok(Box::new(transport))
             }
             _ => Err(TransportError::ConfigError(
@@ -491,10 +495,10 @@ mod tests {
         let factory = TransportFactory::new();
         let config = TcpTransportConfig::default();
 
-        let transport = factory.create_tcp_transport(config).await;
+        let _transport = factory.create_tcp_transport(config).await;
         assert!(transport.is_ok());
 
-        let transport = transport.unwrap();
+        let _transport = transport.unwrap();
         assert_eq!(transport.transport_type(), "tcp");
     }
 
@@ -503,10 +507,10 @@ mod tests {
         let factory = TransportFactory::new();
         let config = SerialTransportConfig::default();
 
-        let transport = factory.create_serial_transport(config).await;
+        let _transport = factory.create_serial_transport(config).await;
         assert!(transport.is_ok());
 
-        let transport = transport.unwrap();
+        let _transport = transport.unwrap();
         assert_eq!(transport.transport_type(), "serial");
     }
 
@@ -515,10 +519,10 @@ mod tests {
         let factory = TransportFactory::new();
         let config = MockTransportConfig::default();
 
-        let transport = factory.create_mock_transport(config).await;
+        let _transport = factory.create_mock_transport(config).await;
         assert!(transport.is_ok());
 
-        let transport = transport.unwrap();
+        let _transport = transport.unwrap();
         assert_eq!(transport.transport_type(), "mock");
     }
 
@@ -573,7 +577,7 @@ mod tests {
         assert_eq!(gpio_config.transport_type(), TransportType::Gpio);
         assert!(gpio_config.validate().is_ok());
 
-        let can_config = AnyTransportConfig::Can(CanTransportConfig::default());
+        let _can_config = AnyTransportConfig::Can(CanTransportConfig::default());
         assert_eq!(can_config.transport_type(), TransportType::Can);
         assert!(can_config.validate().is_ok());
 

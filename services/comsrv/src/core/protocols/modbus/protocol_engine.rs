@@ -223,7 +223,7 @@ impl ModbusProtocolEngine {
     pub async fn read_telemetry_point(
         &self,
         mapping: &ModbusTelemetryMapping,
-        transport: &UniversalTransportBridge,
+        _transport: &UniversalTransportBridge,
     ) -> Result<PointData> {
         // 遥测点默认使用功能码03（读保持寄存器）
         let function_code = ModbusFunctionCode::Read03;
@@ -241,7 +241,7 @@ impl ModbusProtocolEngine {
                 function_code,
                 mapping.address,
                 register_count,
-                transport,
+                _transport,
             )
             .await?;
 
@@ -263,7 +263,7 @@ impl ModbusProtocolEngine {
     pub async fn read_signal_point(
         &self,
         mapping: &ModbusSignalMapping,
-        transport: &UniversalTransportBridge,
+        _transport: &UniversalTransportBridge,
     ) -> Result<PointData> {
         // 遥信点默认使用功能码01（读线圈）
         let function_code = ModbusFunctionCode::Read01;
@@ -275,7 +275,7 @@ impl ModbusProtocolEngine {
                 function_code,
                 mapping.address,
                 quantity,
-                transport,
+                _transport,
             )
             .await?;
 
@@ -302,7 +302,7 @@ impl ModbusProtocolEngine {
         &self,
         mapping: &ModbusAdjustmentMapping,
         value: f64,
-        transport: &UniversalTransportBridge,
+        _transport: &UniversalTransportBridge,
     ) -> Result<()> {
         let write_data = self.convert_adjustment_value(value, mapping)?;
 
@@ -319,7 +319,7 @@ impl ModbusProtocolEngine {
                 mapping.slave_id,
                 mapping.address,
                 register_value,
-                transport,
+                _transport,
             )
             .await?;
         } else {
@@ -327,7 +327,7 @@ impl ModbusProtocolEngine {
                 mapping.slave_id,
                 mapping.address,
                 &write_data,
-                transport,
+                _transport,
             )
             .await?;
         }
@@ -344,17 +344,17 @@ impl ModbusProtocolEngine {
         &self,
         mapping: &ModbusControlMapping,
         command: bool,
-        transport: &UniversalTransportBridge,
+        _transport: &UniversalTransportBridge,
     ) -> Result<()> {
         // 遥控默认使用功能码05（写单个线圈）
         if mapping.coil_number.is_some() {
             // 如果有线圈号，使用写单个线圈
-            self.send_write_single_coil(mapping.slave_id, mapping.address, command, transport)
+            self.send_write_single_coil(mapping.slave_id, mapping.address, command, _transport)
                 .await?;
         } else {
             // 否则写寄存器
             let value = if command { 1u16 } else { 0u16 };
-            self.send_write_single_register(mapping.slave_id, mapping.address, value, transport)
+            self.send_write_single_register(mapping.slave_id, mapping.address, value, _transport)
                 .await?;
         }
 
@@ -372,7 +372,7 @@ impl ModbusProtocolEngine {
         function_code: ModbusFunctionCode,
         address: u16,
         quantity: u16,
-        transport: &UniversalTransportBridge,
+        _transport: &UniversalTransportBridge,
     ) -> Result<Vec<u8>> {
         // 生成缓存键
         let cache_key = format!(
@@ -408,7 +408,7 @@ impl ModbusProtocolEngine {
 
         // 执行实际请求
         let result = self
-            .send_raw_request(slave_id, function_code, address, quantity, transport)
+            .send_raw_request(slave_id, function_code, address, quantity, _transport)
             .await;
 
         // 更新缓存
@@ -443,7 +443,7 @@ impl ModbusProtocolEngine {
         function_code: ModbusFunctionCode,
         address: u16,
         quantity: u16,
-        transport: &UniversalTransportBridge,
+        _transport: &UniversalTransportBridge,
     ) -> Result<Vec<u8>> {
         // Zero-copy PDU construction
         let request_data = self
@@ -502,7 +502,7 @@ impl ModbusProtocolEngine {
 
         // Send request
         debug!("[Protocol Engine] Sending Modbus request to transport layer...");
-        let response = transport.send_request(&frame).await?;
+        let response = _transport.send_request(&frame).await?;
 
         // Log incoming response
         let response_hex = Self::format_hex(&response);
@@ -590,7 +590,7 @@ impl ModbusProtocolEngine {
         slave_id: u8,
         address: u16,
         value: u16,
-        transport: &UniversalTransportBridge,
+        _transport: &UniversalTransportBridge,
     ) -> Result<()> {
         let request_data = self.pdu_processor.build_write_single_request(
             ModbusFunctionCode::Write06,
@@ -606,7 +606,7 @@ impl ModbusProtocolEngine {
             Some(transaction_id),
         );
 
-        transport.send_request(&frame).await?;
+        _transport.send_request(&frame).await?;
         Ok(())
     }
 
@@ -616,7 +616,7 @@ impl ModbusProtocolEngine {
         slave_id: u8,
         address: u16,
         value: bool,
-        transport: &UniversalTransportBridge,
+        _transport: &UniversalTransportBridge,
     ) -> Result<()> {
         let coil_value = if value { 0xFF00 } else { 0x0000 };
         let request_data = self.pdu_processor.build_write_single_request(
@@ -633,7 +633,7 @@ impl ModbusProtocolEngine {
             Some(transaction_id),
         );
 
-        transport.send_request(&frame).await?;
+        _transport.send_request(&frame).await?;
         Ok(())
     }
 
@@ -643,7 +643,7 @@ impl ModbusProtocolEngine {
         slave_id: u8,
         address: u16,
         data: &[u8],
-        transport: &UniversalTransportBridge,
+        _transport: &UniversalTransportBridge,
     ) -> Result<()> {
         let values: Vec<u16> = data
             .chunks(2)
@@ -668,17 +668,19 @@ impl ModbusProtocolEngine {
             Some(transaction_id),
         );
 
-        transport.send_request(&frame).await?;
+        _transport.send_request(&frame).await?;
         Ok(())
     }
 
     /// 写多个线圈
+    #[allow(dead_code)]
+
     async fn send_write_multiple_coils(
         &self,
         slave_id: u8,
         address: u16,
         data: &[u8],
-        transport: &UniversalTransportBridge,
+        _transport: &UniversalTransportBridge,
     ) -> Result<()> {
         let values: Vec<bool> = data.iter().map(|&b| b != 0).collect();
         let request_data = self
@@ -693,7 +695,7 @@ impl ModbusProtocolEngine {
             Some(transaction_id),
         );
 
-        transport.send_request(&frame).await?;
+        _transport.send_request(&frame).await?;
         Ok(())
     }
 

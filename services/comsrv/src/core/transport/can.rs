@@ -588,10 +588,10 @@ mod tests {
     #[tokio::test]
     async fn test_can_transport_creation() {
         let config = CanTransportConfig::default();
-        let transport = CanTransport::new(config);
+        let _transport = CanTransport::new(config);
         assert!(transport.is_ok());
 
-        let transport = transport.unwrap();
+        let _transport = transport.unwrap();
         assert_eq!(transport.transport_type(), "can");
         assert_eq!(transport.name(), "CAN Transport");
         assert_eq!(transport.interface(), "can0");
@@ -637,7 +637,7 @@ mod tests {
         let config = builder.default_config();
         assert_eq!(config.interface, "can0");
 
-        let transport = builder.build(config).await;
+        let _transport = builder.build(config).await;
         assert!(transport.is_ok());
     }
 

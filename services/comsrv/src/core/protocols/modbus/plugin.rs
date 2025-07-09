@@ -342,11 +342,11 @@ impl ProtocolPlugin for ModbusTcpPlugin {
             host,
             port
         );
-        let transport = factory
+        let _transport = factory
             .create_tcp_transport(transport_config)
             .await
             .map_err(|e| {
-                tracing::error!("ModbusTcpPlugin: Failed to create TCP transport: {e}");
+                tracing::error!("ModbusTcpPlugin: Failed to create TCP _transport: {e}");
                 e
             })?;
         tracing::info!("ModbusTcpPlugin: TCP transport created successfully");
@@ -757,7 +757,7 @@ impl ProtocolPlugin for ModbusRtuPlugin {
             write_timeout: std::time::Duration::from_millis(timeout_ms),
         };
 
-        let transport = factory.create_serial_transport(transport_config).await?;
+        let _transport = factory.create_serial_transport(transport_config).await?;
 
         // Create Modbus configuration
         let modbus_config = ModbusConfig {

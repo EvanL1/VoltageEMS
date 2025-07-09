@@ -38,6 +38,8 @@ impl VirtualProtocol {
     }
 
     /// Simulate data changes
+    #[allow(dead_code)]
+
     async fn simulate_data(&self) {
         let mut data = self.telemetry_data.write().await;
         for (i, value) in data.iter_mut().enumerate() {

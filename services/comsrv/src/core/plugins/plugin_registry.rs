@@ -27,6 +27,7 @@ pub struct PluginRegistry {
 }
 
 /// Entry for a registered plugin
+#[allow(dead_code)]
 struct PluginEntry {
     /// Plugin instance
     plugin: Box<dyn ProtocolPlugin>,

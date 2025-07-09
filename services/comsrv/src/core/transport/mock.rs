@@ -391,10 +391,10 @@ mod tests {
     #[test]
     fn test_mock_transport_creation() {
         let config = MockTransportConfig::default();
-        let transport = MockTransport::new(config);
+        let _transport = MockTransport::new(config);
         assert!(transport.is_ok());
 
-        let transport = transport.unwrap();
+        let _transport = transport.unwrap();
         assert_eq!(transport.transport_type(), "mock");
         assert_eq!(transport.name(), "Mock Transport");
     }
@@ -488,7 +488,7 @@ mod tests {
         let config = builder.default_config();
         assert_eq!(config.name, "Mock Transport");
 
-        let transport = builder.build(config).await;
+        let _transport = builder.build(config).await;
         assert!(transport.is_ok());
     }
 }

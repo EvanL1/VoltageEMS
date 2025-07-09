@@ -65,7 +65,7 @@ impl Storage for RedisStorage {
 
         // Test connection
         let mut conn = client.get_async_connection().await?;
-        let ping_result: String = redis::cmd("PING").query_async(&mut conn).await?;
+        let ping_result: String = redis::cmd("PING").query_async::<()>(&mut conn).await?;
         
         if ping_result != "PONG" {
             return Err(HisSrvError::ConnectionError("Redis connection test failed".to_string()));

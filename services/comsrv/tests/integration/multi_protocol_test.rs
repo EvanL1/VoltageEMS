@@ -141,7 +141,7 @@ impl MultiProtocolTester {
             protocol: protocol_id.to_string(),
             enabled: true,
             parameters,
-            transport: TransportConfig::Tcp {
+            _transport: TransportConfig::Tcp {
                 host: "127.0.0.1".to_string(),
                 port: 5020 + instance_id as u16,
             },

@@ -36,7 +36,7 @@ mod tests {
         };
 
         let mock_config = MockTransportConfig::default();
-        let transport = Box::new(MockTransport::new(mock_config));
+        let _transport = Box::new(MockTransport::new(mock_config));
 
         let client = ModbusClient::new(channel_config, transport).await;
         assert!(client.is_ok());

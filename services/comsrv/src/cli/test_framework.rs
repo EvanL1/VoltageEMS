@@ -187,7 +187,7 @@ impl TestFramework {
             protocol: self.protocol_id.clone(),
             enabled: true,
             parameters: config_map,
-            transport: crate::core::config::types::channel::TransportConfig::Tcp {
+            _transport: crate::core::config::types::channel::TransportConfig::Tcp {
                 host: "127.0.0.1".to_string(),
                 port: 8080,
             },

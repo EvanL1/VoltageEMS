@@ -207,70 +207,7 @@ pub mod modbus_test_runner;
 pub mod service_impl;
 pub mod utils;
 
-/// Service entry point and lifecycle management
-///
-/// This module contains the main service functions and lifecycle management
-/// utilities that are used by the binary executable. These functions are
-/// also exposed here for library users who want to embed the service.
-///
-/// # Service Functions
-///
-/// The main service functions provide complete lifecycle management:
-/// - Service initialization and startup
-/// - Graceful shutdown handling
-/// - Background task management
-/// - Configuration and environment handling
-///
-/// # Examples
-///
-/// ## Embedding the Service
-///
-/// ```rust,no_run
-/// use comsrv::service::{start_communication_service, shutdown_handler};
-/// use comsrv::{ConfigManager, ProtocolFactory};
-/// use std::sync::Arc;
-/// use tokio::sync::RwLock;
-///
-/// #[tokio::main]
-/// async fn main() -> comsrv::Result<()> {
-///     // Initialize service components
-///     let config_manager = Arc::new(ConfigManager::from_file("config.yaml")?);
-///     let factory = Arc::new(RwLock::new(ProtocolFactory::new()));
-///     
-///     // Start the communication service
-///     start_communication_service(config_manager, factory.clone()).await?;
-///     
-///     // Setup shutdown handling
-///     tokio::signal::ctrl_c().await.unwrap();
-///     shutdown_handler(factory).await;
-///     
-///     Ok(())
-/// }
-/// ```
-///
-/// ## Custom Service Integration
-///
-/// ```rust,no_run
-/// use comsrv::service::start_cleanup_task;
-/// use comsrv::ProtocolFactory;
-/// use std::sync::Arc;
-/// use tokio::sync::RwLock;
-///
-/// async fn setup_monitoring(factory: Arc<RwLock<ProtocolFactory>>) {
-///     // Start background cleanup task
-///     let cleanup_handle = start_cleanup_task(factory);
-///     
-///     // Your custom monitoring logic here
-///     tokio::spawn(async move {
-///         // Custom monitoring implementation
-///     });
-/// }
-/// ```
 pub mod service {
-    //! Service lifecycle management and main entry points
-    //!
-    //! This module provides the core service functions that manage the complete
-    //! lifecycle of the communication service, from initialization to shutdown.
 
     use crate::core::config::ConfigManager;
     use crate::core::protocols::common::ProtocolFactory;

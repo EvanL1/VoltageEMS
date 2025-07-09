@@ -154,7 +154,7 @@ pub struct ModbusServer {
 
 impl ModbusServer {
     /// Create new Modbus server
-    pub fn new(config: ModbusConfig, transport: Box<dyn Transport>) -> Result<Self> {
+    pub fn new(config: ModbusConfig, _transport: Box<dyn Transport>) -> Result<Self> {
         let mode = if config.is_tcp() {
             ModbusMode::Tcp
         } else {
@@ -403,7 +403,7 @@ mod tests {
     async fn test_modbus_server_creation() {
         let config = create_test_config();
         let mock_config = crate::core::transport::mock::MockTransportConfig::default();
-        let transport = Box::new(MockTransport::new(mock_config).unwrap());
+        let _transport = Box::new(MockTransport::new(mock_config).unwrap());
 
         let mut server = ModbusServer::new(config, transport).unwrap();
         server.add_device(ModbusDevice::new(1));

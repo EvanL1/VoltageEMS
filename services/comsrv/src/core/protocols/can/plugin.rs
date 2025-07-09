@@ -281,14 +281,14 @@ impl ProtocolPlugin for CanPlugin {
                 .collect(),
         };
 
-        let transport = factory
+        let _transport = factory
             .create_transport(crate::core::transport::factory::AnyTransportConfig::Can(
                 transport_config,
             ))
             .await?;
 
         // Create CAN configuration
-        let can_config = CanConfig {
+        let _can_config = CanConfig {
             interface,
             bitrate,
             use_extended_id,

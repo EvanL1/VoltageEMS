@@ -192,6 +192,7 @@ pub trait ProtocolClientFactory: Send + Sync {
 
 /// Mock ComBase implementation for testing
 #[derive(Debug)]
+#[allow(dead_code)]
 struct MockComBase {
     name: String,
     channel_id: u16,
@@ -656,6 +657,8 @@ impl ProtocolFactory {
     }
 
     /// Extract Modbus polling configuration from channel parameters
+    #[allow(dead_code)]
+
     fn extract_modbus_polling_config(
         &self,
         parameters: &std::collections::HashMap<String, serde_yaml::Value>,

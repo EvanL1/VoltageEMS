@@ -45,7 +45,7 @@ impl Default for ProtocolBridgeConfig {
 #[derive(Debug)]
 pub struct UniversalTransportBridge {
     /// 底层传输实现
-    transport: Arc<RwLock<Box<dyn Transport>>>,
+    _transport: Arc<RwLock<Box<dyn Transport>>>,
     /// 桥接配置
     config: ProtocolBridgeConfig,
     /// 连接状态
@@ -75,7 +75,7 @@ impl UniversalTransportBridge {
     /// 创建新的通用传输桥接
     pub fn new(transport: Box<dyn Transport>, config: ProtocolBridgeConfig) -> Self {
         Self {
-            transport: Arc::new(RwLock::new(transport)),
+            _transport: Arc::new(RwLock::new(transport)),
             config,
             connected: Arc::new(RwLock::new(false)),
             stats: Arc::new(RwLock::new(BridgeStats::default())),

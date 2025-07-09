@@ -29,9 +29,9 @@ const TEST_FR_CON: u8 = 0x83; // Test frame confirmation
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ApciType {
     /// I-format (information transfer format)
-    IFrame { send_seq: u16, recv_seq: u16 },
+    IFrame { send_seq: u16, _recv_seq: u16 },
     /// S-format (supervisory format)
-    SFrame { recv_seq: u16 },
+    SFrame { _recv_seq: u16 },
     /// U-format (unnumbered control format)
     UFrame(u8),
 }
@@ -47,9 +47,12 @@ pub struct Apdu {
 
 impl Apdu {
     /// Create a new I-format APDU
-    pub fn new_i_frame(send_seq: u16, recv_seq: u16, asdu: ASDU) -> Self {
+    pub fn new_i_frame(send_seq: u16, _recv_seq: u16, asdu: ASDU) -> Self {
         Self {
-            apci: ApciType::IFrame { send_seq, recv_seq },
+            apci: ApciType::IFrame {
+                send_seq,
+                _recv_seq,
+            },
             asdu: Some(asdu),
         }
     }
@@ -57,7 +60,7 @@ impl Apdu {
     /// Create a new S-format APDU
     pub fn new_s_frame(recv_seq: u16) -> Self {
         Self {
-            apci: ApciType::SFrame { recv_seq },
+            apci: ApciType::SFrame { _recv_seq: recv_seq },
             asdu: None,
         }
     }
@@ -81,12 +84,15 @@ impl Apdu {
         buffer.push(0);
 
         match self.apci {
-            ApciType::IFrame { send_seq, recv_seq } => {
+            ApciType::IFrame {
+                send_seq,
+                _recv_seq,
+            } => {
                 // Control fields for I-frame
                 buffer.push(((send_seq << 1) & 0xFE) as u8);
                 buffer.push((send_seq >> 7) as u8);
-                buffer.push(((recv_seq << 1) & 0xFE) as u8);
-                buffer.push((recv_seq >> 7) as u8);
+                buffer.push(((_recv_seq << 1) & 0xFE) as u8);
+                buffer.push((_recv_seq >> 7) as u8);
 
                 // Add ASDU if present
                 if let Some(asdu) = &self.asdu {
@@ -94,12 +100,12 @@ impl Apdu {
                     buffer.extend_from_slice(&asdu_bytes);
                 }
             }
-            ApciType::SFrame { recv_seq } => {
+            ApciType::SFrame { _recv_seq } => {
                 // Control fields for S-frame
                 buffer.push(0x01);
                 buffer.push(0x00);
-                buffer.push(((recv_seq << 1) & 0xFE) as u8);
-                buffer.push((recv_seq >> 7) as u8);
+                buffer.push(((_recv_seq << 1) & 0xFE) as u8);
+                buffer.push((_recv_seq >> 7) as u8);
             }
             ApciType::UFrame(code) => {
                 // Control fields for U-frame
@@ -147,7 +153,7 @@ impl Apdu {
         if (control1 & 0x01) == 0 {
             // I-format
             let send_seq = (((data[3] as u16) << 7) | ((control1 as u16) >> 1)) & 0x7FFF;
-            let recv_seq = (((data[5] as u16) << 7) | ((data[4] as u16) >> 1)) & 0x7FFF;
+            let _recv_seq = (((data[5] as u16) << 7) | ((data[4] as u16) >> 1)) & 0x7FFF;
 
             // Decode ASDU if present
             let asdu = if data.len() > 6 {
@@ -157,15 +163,18 @@ impl Apdu {
             };
 
             Ok(Self {
-                apci: ApciType::IFrame { send_seq, recv_seq },
+                apci: ApciType::IFrame {
+                    send_seq,
+                    _recv_seq,
+                },
                 asdu,
             })
         } else if (control1 & 0x03) == 0x01 {
             // S-format
-            let recv_seq = (((data[5] as u16) << 7) | ((data[4] as u16) >> 1)) & 0x7FFF;
+            let _recv_seq = (((data[5] as u16) << 7) | ((data[4] as u16) >> 1)) & 0x7FFF;
 
             Ok(Self {
-                apci: ApciType::SFrame { recv_seq },
+                apci: ApciType::SFrame { _recv_seq },
                 asdu: None,
             })
         } else if (control1 & 0x03) == 0x03 {
@@ -184,6 +193,7 @@ impl Apdu {
 
 /// IEC-104 client implementation
 #[derive(Debug)]
+#[allow(dead_code)]
 pub struct Iec104Client {
     /// Service name
     name: String,
@@ -210,7 +220,7 @@ pub struct Iec104Client {
     /// Send sequence number counter
     send_seq: Arc<Mutex<u16>>,
     /// Receive sequence number counter
-    recv_seq: Arc<Mutex<u16>>,
+    _recv_seq: Arc<Mutex<u16>>,
     /// Common address size
     common_addr_size: CommonAddrSize,
     /// Saved real-time point data
@@ -275,13 +285,15 @@ impl Iec104Client {
             status: Arc::new(RwLock::new(status)),
             running: Arc::new(RwLock::new(false)),
             send_seq: Arc::new(Mutex::new(0)),
-            recv_seq: Arc::new(Mutex::new(0)),
+            _recv_seq: Arc::new(Mutex::new(0)),
             common_addr_size: CommonAddrSize::TwoOctets,
             point_data: Arc::new(RwLock::new(Vec::new())),
         }
     }
 
     /// Get the next send sequence number
+    #[allow(dead_code)]
+
     async fn next_send_seq(&self) -> u16 {
         let mut send_seq = self.send_seq.lock().await;
         let result = *send_seq;
@@ -290,14 +302,18 @@ impl Iec104Client {
     }
 
     /// Get the current receive sequence number
+    #[allow(dead_code)]
+
     async fn current_recv_seq(&self) -> u16 {
-        let recv_seq = self.recv_seq.lock().await;
+        let recv_seq = self._recv_seq.lock().await;
         *recv_seq
     }
 
     /// Update the receive sequence number
+    #[allow(dead_code)]
+
     async fn update_recv_seq(&self, new_recv_seq: u16) {
-        let mut recv_seq = self.recv_seq.lock().await;
+        let mut recv_seq = self._recv_seq.lock().await;
         *recv_seq = new_recv_seq;
     }
 
@@ -327,7 +343,7 @@ impl Iec104Client {
                     // Reset sequence numbers
                     let mut send_seq = self.send_seq.lock().await;
                     *send_seq = 0;
-                    let mut recv_seq = self.recv_seq.lock().await;
+                    let mut recv_seq = self._recv_seq.lock().await;
                     *recv_seq = 0;
 
                     // Update status
@@ -414,9 +430,14 @@ impl Iec104Client {
     }
 
     /// Handle incoming APDU
+    #[allow(dead_code)]
+
     async fn handle_apdu(&self, apdu: Apdu) -> IecResult<()> {
         match apdu.apci {
-            ApciType::IFrame { send_seq, recv_seq } => {
+            ApciType::IFrame {
+                send_seq,
+                _recv_seq,
+            } => {
                 // Update receive sequence
                 self.update_recv_seq((send_seq + 1) % 32768).await;
 
@@ -430,9 +451,9 @@ impl Iec104Client {
                 let s_frame = Apdu::new_s_frame(self.current_recv_seq().await);
                 self.send_apdu(&s_frame).await?;
             }
-            ApciType::SFrame { recv_seq } => {
+            ApciType::SFrame { _recv_seq } => {
                 // No action needed, just log
-                tracing::debug!("Received S-frame with recv_seq = {recv_seq}");
+                tracing::debug!("Received S-frame with recv_seq = {_recv_seq}");
             }
             ApciType::UFrame(code) => {
                 match code {
@@ -466,6 +487,8 @@ impl Iec104Client {
     }
 
     /// Handle incoming ASDU
+    #[allow(dead_code)]
+
     async fn handle_asdu(&self, asdu: ASDU) -> IecResult<()> {
         // Example of processing a measured value (type 13)
         if asdu.type_id == TypeId::MeasuredValueFloat {
@@ -777,11 +800,13 @@ async fn send_test_frame(
 }
 
 /// Handle incoming APDU (worker task helper)
+#[allow(dead_code)]
+
 async fn handle_apdu(apdu: &Apdu, status: &Arc<RwLock<ChannelStatus>>) -> IecResult<()> {
     match apdu.apci {
         ApciType::IFrame {
             send_seq: _,
-            recv_seq: _,
+            _recv_seq: _,
         } => {
             // Update status
             let mut status_locked = status.write().await;
@@ -790,7 +815,7 @@ async fn handle_apdu(apdu: &Apdu, status: &Arc<RwLock<ChannelStatus>>) -> IecRes
 
             // Further processing would be done in the client's handle_apdu method
         }
-        ApciType::SFrame { recv_seq: _ } => {
+        ApciType::SFrame { _recv_seq: _ } => {
             // Update status
             let mut status_locked = status.write().await;
             status_locked.connected = true;

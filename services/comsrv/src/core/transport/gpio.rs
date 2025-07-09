@@ -564,10 +564,10 @@ mod tests {
             label: Some("LED".to_string()),
         });
 
-        let transport = GpioTransport::new(config);
+        let _transport = GpioTransport::new(config);
         assert!(transport.is_ok());
 
-        let transport = transport.unwrap();
+        let _transport = transport.unwrap();
         assert_eq!(transport.transport_type(), "gpio");
         assert_eq!(transport.name(), "GPIO Transport");
     }
@@ -623,7 +623,7 @@ mod tests {
             label: Some("Test LED".to_string()),
         });
 
-        let transport = builder.build(config).await;
+        let _transport = builder.build(config).await;
         assert!(transport.is_ok());
     }
 }

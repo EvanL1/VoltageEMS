@@ -108,7 +108,7 @@ async fn test_modbus_logging_basic_operations() {
     
     // 创建 Modbus 客户端
     let config = create_test_channel_config();
-    let transport = Box::new(mock_transport);
+    let _transport = Box::new(mock_transport);
     let mut client = ModbusClient::new(config, transport).await
         .expect("Failed to create Modbus client");
     
@@ -168,7 +168,7 @@ async fn test_modbus_error_logging() {
     mock_transport.queue_response(exception_response).await;
     
     let config = create_test_channel_config();
-    let transport = Box::new(mock_transport);
+    let _transport = Box::new(mock_transport);
     let mut client = ModbusClient::new(config, transport).await
         .expect("Failed to create Modbus client");
     
@@ -211,7 +211,7 @@ async fn test_modbus_batch_logging() {
     mock_transport.queue_responses(responses).await;
     
     let config = create_test_channel_config();
-    let transport = Box::new(mock_transport);
+    let _transport = Box::new(mock_transport);
     let mut client = ModbusClient::new(config, transport).await
         .expect("Failed to create Modbus client");
     

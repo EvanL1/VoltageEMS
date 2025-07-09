@@ -455,10 +455,10 @@ mod tests {
     #[test]
     fn test_tcp_transport_creation() {
         let config = TcpTransportConfig::default();
-        let transport = TcpTransport::new(config);
+        let _transport = TcpTransport::new(config);
         assert!(transport.is_ok());
 
-        let transport = transport.unwrap();
+        let _transport = transport.unwrap();
         assert_eq!(transport.transport_type(), "tcp");
         assert_eq!(transport.name(), "TCP Transport");
     }
@@ -466,7 +466,7 @@ mod tests {
     #[tokio::test]
     async fn test_tcp_transport_not_connected_initially() {
         let config = TcpTransportConfig::default();
-        let transport = TcpTransport::new(config).unwrap();
+        let _transport = TcpTransport::new(config).unwrap();
 
         assert!(!transport.is_connected().await);
         assert_eq!(
@@ -497,7 +497,7 @@ mod tests {
         assert_eq!(config.host, "127.0.0.1");
         assert_eq!(config.port, 502);
 
-        let transport = builder.build(config).await;
+        let _transport = builder.build(config).await;
         assert!(transport.is_ok());
     }
 }
