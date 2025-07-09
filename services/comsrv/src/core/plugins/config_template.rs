@@ -3,12 +3,12 @@
 //! This module provides a flexible configuration template system for protocol plugins,
 //! including validation, generation, and documentation capabilities.
 
-use serde::{Serialize, Deserialize};
+use regex::Regex;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
-use regex::Regex;
 
-use crate::utils::{Result, ComSrvError as Error};
+use crate::utils::{ComSrvError as Error, Result};
 
 /// Configuration schema for protocol plugins
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -60,12 +60,24 @@ pub struct ConfigParameter {
 #[serde(tag = "type")]
 pub enum ParameterType {
     String,
-    Integer { min: Option<i64>, max: Option<i64> },
-    Float { min: Option<f64>, max: Option<f64> },
+    Integer {
+        min: Option<i64>,
+        max: Option<i64>,
+    },
+    Float {
+        min: Option<f64>,
+        max: Option<f64>,
+    },
     Boolean,
-    Enum { values: Vec<EnumValue> },
-    Array { item_type: Box<ParameterType> },
-    Object { properties: HashMap<String, ParameterType> },
+    Enum {
+        values: Vec<EnumValue>,
+    },
+    Array {
+        item_type: Box<ParameterType>,
+    },
+    Object {
+        properties: HashMap<String, ParameterType>,
+    },
     Duration, // In seconds
     IpAddress,
     Port,
@@ -134,7 +146,7 @@ impl ConfigTemplateBuilder {
             current_section: None,
         }
     }
-    
+
     /// Add a new section
     pub fn add_section(mut self, name: &str, description: &str) -> Self {
         self.schema.sections.push(ConfigSection {
@@ -145,7 +157,7 @@ impl ConfigTemplateBuilder {
         self.current_section = Some(self.schema.sections.len() - 1);
         self
     }
-    
+
     /// Add a parameter to the current section
     pub fn add_parameter(mut self, param: ConfigParameter) -> Self {
         if let Some(idx) = self.current_section {
@@ -153,7 +165,7 @@ impl ConfigTemplateBuilder {
         }
         self
     }
-    
+
     /// Build the configuration schema
     pub fn build(self) -> ConfigSchema {
         self.schema
@@ -170,21 +182,21 @@ impl ConfigValidator {
     pub fn new(schema: ConfigSchema) -> Self {
         Self { schema }
     }
-    
+
     /// Validate a configuration against the schema
     pub fn validate(&self, config: &HashMap<String, Value>) -> Result<ValidationResult> {
         let mut result = ValidationResult::new();
-        
+
         // Check all sections and parameters
         for section in &self.schema.sections {
             for param in &section.parameters {
                 self.validate_parameter(param, config, &mut result)?;
             }
         }
-        
+
         Ok(result)
     }
-    
+
     /// Validate a single parameter
     fn validate_parameter(
         &self,
@@ -193,7 +205,7 @@ impl ConfigValidator {
         result: &mut ValidationResult,
     ) -> Result<()> {
         let value = config.get(&param.key);
-        
+
         // Check required parameters
         if param.required && value.is_none() {
             result.add_error(ValidationError {
@@ -203,14 +215,14 @@ impl ConfigValidator {
             });
             return Ok(());
         }
-        
+
         // Skip validation if not present and not required
         if value.is_none() {
             return Ok(());
         }
-        
+
         let value = value.unwrap();
-        
+
         // Check dependencies
         if let Some(dep) = &param.depends_on {
             if !self.check_dependency(dep, config) {
@@ -224,18 +236,18 @@ impl ConfigValidator {
                 return Ok(());
             }
         }
-        
+
         // Validate type
         self.validate_type(&param.key, value, &param.param_type, result)?;
-        
+
         // Apply validation rules
         if let Some(validation) = &param.validation {
             self.apply_validation_rules(&param.key, value, validation, result)?;
         }
-        
+
         Ok(())
     }
-    
+
     /// Validate parameter type
     fn validate_type(
         &self,
@@ -315,10 +327,10 @@ impl ConfigValidator {
             // TODO: Implement other type validations
             _ => {}
         }
-        
+
         Ok(())
     }
-    
+
     /// Apply custom validation rules
     fn apply_validation_rules(
         &self,
@@ -330,9 +342,8 @@ impl ConfigValidator {
         // Pattern validation
         if let Some(pattern) = &validation.pattern {
             if let Some(s) = value.as_str() {
-                let regex = Regex::new(pattern).map_err(|e| {
-                    Error::ConfigError(format!("Invalid regex pattern: {}", e))
-                })?;
+                let regex = Regex::new(pattern)
+                    .map_err(|e| Error::ConfigError(format!("Invalid regex pattern: {}", e)))?;
                 if !regex.is_match(s) {
                     result.add_error(ValidationError {
                         parameter: key.to_string(),
@@ -344,14 +355,18 @@ impl ConfigValidator {
                 }
             }
         }
-        
+
         // Length validation
         if let Some(s) = value.as_str() {
             if let Some(min_len) = validation.min_length {
                 if s.len() < min_len {
                     result.add_error(ValidationError {
                         parameter: key.to_string(),
-                        message: format!("Value length {} is less than minimum {}", s.len(), min_len),
+                        message: format!(
+                            "Value length {} is less than minimum {}",
+                            s.len(),
+                            min_len
+                        ),
                         severity: ErrorSeverity::Error,
                     });
                 }
@@ -366,10 +381,10 @@ impl ConfigValidator {
                 }
             }
         }
-        
+
         Ok(())
     }
-    
+
     /// Check parameter dependency
     fn check_dependency(&self, dep: &ParameterDependency, config: &HashMap<String, Value>) -> bool {
         if let Some(dep_value) = config.get(&dep.parameter) {
@@ -397,17 +412,17 @@ impl ValidationResult {
     pub fn new() -> Self {
         Self::default()
     }
-    
+
     /// Check if validation passed (no errors)
     pub fn is_valid(&self) -> bool {
         self.errors.is_empty()
     }
-    
+
     /// Add an error
     pub fn add_error(&mut self, error: ValidationError) {
         self.errors.push(error);
     }
-    
+
     /// Add a warning
     pub fn add_warning(&mut self, warning: ValidationWarning) {
         self.warnings.push(warning);
@@ -447,25 +462,28 @@ impl ConfigGenerator {
     pub fn new(schema: ConfigSchema) -> Self {
         Self { schema }
     }
-    
+
     /// Generate a default configuration
     pub fn generate_default(&self) -> HashMap<String, Value> {
         let mut config = HashMap::new();
-        
+
         for section in &self.schema.sections {
             for param in &section.parameters {
                 if let Some(default) = &param.default {
                     config.insert(param.key.clone(), default.clone());
                 } else if param.required {
                     // Generate sensible defaults for required fields
-                    config.insert(param.key.clone(), self.generate_default_value(&param.param_type));
+                    config.insert(
+                        param.key.clone(),
+                        self.generate_default_value(&param.param_type),
+                    );
                 }
             }
         }
-        
+
         config
     }
-    
+
     /// Generate a default value for a parameter type
     fn generate_default_value(&self, param_type: &ParameterType) -> Value {
         match param_type {
@@ -488,47 +506,53 @@ impl ConfigGenerator {
             _ => Value::Null,
         }
     }
-    
+
     /// Generate example configuration with comments
     pub fn generate_example_yaml(&self) -> String {
         let mut yaml = String::new();
-        yaml.push_str(&format!("# Configuration for {} protocol\n", self.schema.protocol_id));
+        yaml.push_str(&format!(
+            "# Configuration for {} protocol\n",
+            self.schema.protocol_id
+        ));
         yaml.push_str(&format!("# Schema version: {}\n\n", self.schema.version));
-        
+
         for section in &self.schema.sections {
             yaml.push_str(&format!("# {}\n", section.description));
             yaml.push_str(&format!("# {}\n", "=".repeat(section.description.len())));
-            
+
             for param in &section.parameters {
                 yaml.push_str(&format!("\n# {}\n", param.description));
                 if param.required {
                     yaml.push_str("# (Required)\n");
                 }
-                
+
                 // Add type information
                 yaml.push_str(&format!("# Type: {:?}\n", param.param_type));
-                
+
                 // Add validation info if present
                 if let Some(validation) = &param.validation {
                     if let Some(pattern) = &validation.pattern {
                         yaml.push_str(&format!("# Pattern: {}\n", pattern));
                     }
                 }
-                
+
                 // Add the parameter with default or example value
                 let value = if let Some(default) = &param.default {
                     default.clone()
                 } else {
                     self.generate_default_value(&param.param_type)
                 };
-                
-                yaml.push_str(&format!("{}: {}\n", param.key, 
-                    serde_yaml::to_string(&value).unwrap().trim()));
+
+                yaml.push_str(&format!(
+                    "{}: {}\n",
+                    param.key,
+                    serde_yaml::to_string(&value).unwrap().trim()
+                ));
             }
-            
+
             yaml.push_str("\n");
         }
-        
+
         yaml
     }
 }

@@ -1,12 +1,12 @@
 //! PDU (Protocol Data Unit) processing tests
-//! 
+//!
 //! Tests for Modbus PDU building and parsing functionality.
 
 #[cfg(test)]
 mod tests {
     use crate::core::protocols::modbus::common::ModbusFunctionCode;
     use crate::core::protocols::modbus::pdu::ModbusExceptionCode;
-    
+
     #[test]
     fn test_function_code_conversion() {
         // Test function code to u8 conversion
@@ -15,14 +15,17 @@ mod tests {
         assert_eq!(u8::from(ModbusFunctionCode::Write05), 0x05);
         assert_eq!(u8::from(ModbusFunctionCode::Write06), 0x06);
     }
-    
+
     #[test]
     fn test_function_code_from() {
         // Test u8 to function code conversion
         assert_eq!(ModbusFunctionCode::from(0x01), ModbusFunctionCode::Read01);
         assert_eq!(ModbusFunctionCode::from(0x03), ModbusFunctionCode::Read03);
-        assert_eq!(ModbusFunctionCode::from(0xFF), ModbusFunctionCode::Custom(0xFF)); // Custom code
+        assert_eq!(
+            ModbusFunctionCode::from(0xFF),
+            ModbusFunctionCode::Custom(0xFF)
+        ); // Custom code
     }
-    
+
     // TODO: Add more PDU tests when PDU processor is implemented
 }

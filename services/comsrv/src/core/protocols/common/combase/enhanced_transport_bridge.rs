@@ -7,15 +7,15 @@
 //! - 响应缓存
 //! - 连接健康检查
 
-use std::sync::Arc;
-use tokio::sync::{RwLock, Semaphore, Mutex};
-use std::time::{Duration, Instant};
 use std::collections::{HashMap, VecDeque};
+use std::sync::Arc;
+use std::time::{Duration, Instant};
+use tokio::sync::{Mutex, RwLock, Semaphore};
 use tokio::time::timeout;
-use tracing::{warn, info};
+use tracing::{info, warn};
 
 use crate::core::transport::Transport;
-use crate::utils::{Result, ComSrvError};
+use crate::utils::{ComSrvError, Result};
 
 /// 连接池配置
 #[derive(Debug, Clone)]
@@ -127,7 +127,10 @@ impl ConnectionPool {
     }
 
     /// 创建新连接
-    pub async fn create_connection(&mut self, transport_factory: Box<dyn Fn() -> Box<dyn Transport>>) -> Result<usize> {
+    pub async fn create_connection(
+        &mut self,
+        transport_factory: Box<dyn Fn() -> Box<dyn Transport>>,
+    ) -> Result<usize> {
         if let Some(index) = self.acquire_connection().await {
             let transport = transport_factory();
             let info = ConnectionInfo {
@@ -138,7 +141,7 @@ impl ConnectionPool {
                 is_healthy: false,
             };
             self.next_connection_id += 1;
-            
+
             self.connections[index] = Some((transport, info));
             Ok(index)
         } else {
@@ -151,12 +154,24 @@ impl ConnectionPool {
         let mut stats = HashMap::new();
         let active_connections = self.connections.iter().filter(|c| c.is_some()).count();
         let available_connections = self.available_indices.len();
-        
-        stats.insert("total_connections".to_string(), self.connections.len().to_string());
-        stats.insert("active_connections".to_string(), active_connections.to_string());
-        stats.insert("available_connections".to_string(), available_connections.to_string());
-        stats.insert("max_connections".to_string(), self.config.max_connections.to_string());
-        
+
+        stats.insert(
+            "total_connections".to_string(),
+            self.connections.len().to_string(),
+        );
+        stats.insert(
+            "active_connections".to_string(),
+            active_connections.to_string(),
+        );
+        stats.insert(
+            "available_connections".to_string(),
+            available_connections.to_string(),
+        );
+        stats.insert(
+            "max_connections".to_string(),
+            self.config.max_connections.to_string(),
+        );
+
         stats
     }
 }
@@ -201,7 +216,7 @@ impl EnhancedTransportBridge {
     ) -> Self {
         let connection_pool = Arc::new(Mutex::new(ConnectionPool::new(pool_config)));
         let semaphore = Arc::new(Semaphore::new(max_concurrent_requests));
-        
+
         Self {
             connection_pool,
             retry_config,
@@ -215,8 +230,9 @@ impl EnhancedTransportBridge {
 
     /// 启动桥接服务
     pub async fn start(&self) -> Result<()> {
-        self.running.store(true, std::sync::atomic::Ordering::Relaxed);
-        
+        self.running
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+
         // 启动请求处理任务
         let queue = self.request_queue.clone();
         let pool = self.connection_pool.clone();
@@ -224,18 +240,19 @@ impl EnhancedTransportBridge {
         let running = self.running.clone();
         let semaphore = self.semaphore.clone();
         let retry_config = self.retry_config.clone();
-        
+
         tokio::spawn(async move {
             Self::request_processor(queue, pool, stats, running, semaphore, retry_config).await;
         });
-        
+
         info!("增强传输桥接已启动");
         Ok(())
     }
 
     /// 停止桥接服务
     pub async fn stop(&self) -> Result<()> {
-        self.running.store(false, std::sync::atomic::Ordering::Relaxed);
+        self.running
+            .store(false, std::sync::atomic::Ordering::Relaxed);
         info!("增强传输桥接已停止");
         Ok(())
     }
@@ -248,8 +265,10 @@ impl EnhancedTransportBridge {
         timeout_duration: Duration,
     ) -> Result<Vec<u8>> {
         let (tx, rx) = tokio::sync::oneshot::channel();
-        let request_id = self.request_counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        
+        let request_id = self
+            .request_counter
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+
         let request = PendingRequest {
             id: request_id,
             data: data.to_vec(),
@@ -264,7 +283,9 @@ impl EnhancedTransportBridge {
             let mut queue = self.request_queue.lock().await;
             queue.push_back(request);
             // 按优先级排序
-            queue.make_contiguous().sort_by(|a, b| b.priority.cmp(&a.priority));
+            queue
+                .make_contiguous()
+                .sort_by(|a, b| b.priority.cmp(&a.priority));
         }
 
         // 等待响应
@@ -277,12 +298,14 @@ impl EnhancedTransportBridge {
 
     /// 发送普通请求
     pub async fn send_request(&self, data: &[u8]) -> Result<Vec<u8>> {
-        self.send_request_with_priority(data, RequestPriority::Normal, Duration::from_secs(5)).await
+        self.send_request_with_priority(data, RequestPriority::Normal, Duration::from_secs(5))
+            .await
     }
 
     /// 发送高优先级请求
     pub async fn send_urgent_request(&self, data: &[u8]) -> Result<Vec<u8>> {
-        self.send_request_with_priority(data, RequestPriority::High, Duration::from_secs(10)).await
+        self.send_request_with_priority(data, RequestPriority::High, Duration::from_secs(10))
+            .await
     }
 
     /// 请求处理器
@@ -304,39 +327,39 @@ impl EnhancedTransportBridge {
             if let Some(request) = request {
                 // 获取信号量许可
                 let semaphore_clone = semaphore.clone();
-                
+
                 // 处理请求
                 let pool_clone = pool.clone();
                 let stats_clone = stats.clone();
                 let retry_config_clone = retry_config.clone();
-                
+
                 tokio::spawn(async move {
                     let _permit = semaphore_clone.acquire().await.unwrap(); // 确保许可在任务结束时释放
-                    
+
                     let start_time = Instant::now();
-                    let result = Self::execute_request_with_retry(
-                        &request,
-                        pool_clone,
-                        retry_config_clone,
-                    ).await;
-                    
+                    let result =
+                        Self::execute_request_with_retry(&request, pool_clone, retry_config_clone)
+                            .await;
+
                     // 更新统计
                     let mut stats_guard = stats_clone.write().await;
                     stats_guard.total_requests += 1;
-                    
+
                     match &result {
                         Ok(_) => {
                             stats_guard.successful_requests += 1;
                             let response_time = start_time.elapsed().as_millis() as f64;
-                            stats_guard.average_response_time_ms = 
-                                (stats_guard.average_response_time_ms * (stats_guard.successful_requests - 1) as f64 + response_time) / 
-                                stats_guard.successful_requests as f64;
+                            stats_guard.average_response_time_ms = (stats_guard
+                                .average_response_time_ms
+                                * (stats_guard.successful_requests - 1) as f64
+                                + response_time)
+                                / stats_guard.successful_requests as f64;
                         }
                         Err(_) => {
                             stats_guard.failed_requests += 1;
                         }
                     }
-                    
+
                     // 发送响应
                     let _ = request.response_sender.send(result);
                 });
@@ -361,7 +384,7 @@ impl EnhancedTransportBridge {
                 Ok(response) => return Ok(response),
                 Err(e) => {
                     attempts += 1;
-                    
+
                     if attempts > retry_config.max_retries {
                         return Err(e);
                     }
@@ -375,19 +398,24 @@ impl EnhancedTransportBridge {
                     if retry_config.jitter {
                         let jitter = 0.05; // 5% fixed jitter
                         delay = Duration::from_millis(
-                            (delay.as_millis() as f64 * (1.0 + jitter)) as u64
+                            (delay.as_millis() as f64 * (1.0 + jitter)) as u64,
                         );
                     }
 
-                    warn!("请求失败，{} 毫秒后重试 (尝试 {}/{}): {}", 
-                          delay.as_millis(), attempts, retry_config.max_retries, e);
-                    
+                    warn!(
+                        "请求失败，{} 毫秒后重试 (尝试 {}/{}): {}",
+                        delay.as_millis(),
+                        attempts,
+                        retry_config.max_retries,
+                        e
+                    );
+
                     tokio::time::sleep(delay).await;
-                    
+
                     // 计算下次延迟
                     delay = std::cmp::min(
                         Duration::from_millis(
-                            (delay.as_millis() as f64 * retry_config.backoff_multiplier) as u64
+                            (delay.as_millis() as f64 * retry_config.backoff_multiplier) as u64,
                         ),
                         retry_config.max_delay,
                     );
@@ -416,7 +444,7 @@ impl EnhancedTransportBridge {
                 if let Some(Some((_transport, info))) = pool_guard.connections.get_mut(index) {
                     info.last_used = Instant::now();
                     info.request_count += 1;
-                    
+
                     // 执行传输操作（这里需要具体的传输实现）
                     // 为了示例，我们返回一个模拟响应
                     Ok(vec![0x01, 0x02, 0x03, 0x04]) // 模拟响应数据
@@ -463,56 +491,65 @@ impl EnhancedTransportBridge {
     pub async fn get_queue_status(&self) -> HashMap<String, String> {
         let queue = self.request_queue.lock().await;
         let mut status = HashMap::new();
-        
+
         status.insert("queue_length".to_string(), queue.len().to_string());
-        
+
         // 按优先级统计
         let mut priority_counts = HashMap::new();
         for request in queue.iter() {
             let count = priority_counts.entry(request.priority).or_insert(0);
             *count += 1;
         }
-        
+
         for (priority, count) in priority_counts {
             status.insert(format!("priority_{:?}_count", priority), count.to_string());
         }
-        
+
         status
     }
 
     /// 健康检查
     pub async fn health_check(&self) -> Result<HashMap<String, String>> {
         let mut health = HashMap::new();
-        
+
         // 检查运行状态
         let is_running = self.running.load(std::sync::atomic::Ordering::Relaxed);
         health.insert("running".to_string(), is_running.to_string());
-        
+
         // 检查连接池状态
         let pool_status = self.get_pool_status().await;
         for (key, value) in pool_status {
             health.insert(format!("pool_{}", key), value);
         }
-        
+
         // 检查队列状态
         let queue_status = self.get_queue_status().await;
         for (key, value) in queue_status {
             health.insert(format!("queue_{}", key), value);
         }
-        
+
         // 检查统计信息
         let stats = self.get_stats().await;
-        health.insert("total_requests".to_string(), stats.total_requests.to_string());
-        health.insert("success_rate".to_string(), 
+        health.insert(
+            "total_requests".to_string(),
+            stats.total_requests.to_string(),
+        );
+        health.insert(
+            "success_rate".to_string(),
             if stats.total_requests > 0 {
-                format!("{:.2}%", (stats.successful_requests as f64 / stats.total_requests as f64) * 100.0)
+                format!(
+                    "{:.2}%",
+                    (stats.successful_requests as f64 / stats.total_requests as f64) * 100.0
+                )
             } else {
                 "N/A".to_string()
-            }
+            },
         );
-        health.insert("avg_response_time_ms".to_string(), 
-                     format!("{:.2}", stats.average_response_time_ms));
-        
+        health.insert(
+            "avg_response_time_ms".to_string(),
+            format!("{:.2}", stats.average_response_time_ms),
+        );
+
         Ok(health)
     }
 }
@@ -525,7 +562,7 @@ mod tests {
     async fn test_enhanced_bridge_creation() {
         let pool_config = ConnectionPoolConfig::default();
         let retry_config = RetryConfig::default();
-        
+
         let bridge = EnhancedTransportBridge::new(pool_config, retry_config, 10);
         assert!(!bridge.running.load(std::sync::atomic::Ordering::Relaxed));
     }
@@ -534,7 +571,7 @@ mod tests {
     async fn test_connection_pool() {
         let config = ConnectionPoolConfig::default();
         let mut pool = ConnectionPool::new(config);
-        
+
         let stats = pool.get_stats();
         assert_eq!(stats.get("total_connections").unwrap(), "5");
         assert_eq!(stats.get("active_connections").unwrap(), "0");
@@ -545,7 +582,7 @@ mod tests {
         let low = RequestPriority::Low;
         let high = RequestPriority::High;
         let critical = RequestPriority::Critical;
-        
+
         assert!(critical > high);
         assert!(high > low);
     }

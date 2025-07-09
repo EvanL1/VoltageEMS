@@ -1,14 +1,14 @@
 //! CAN (Controller Area Network) Protocol Implementation
-//! 
+//!
 //! This module provides comprehensive CAN bus communication functionality including:
 //! - CAN frame handling and parsing
 //! - Message filtering and routing
 //! - Error detection and handling
 //! - Multiple CAN interface support (SocketCAN, Peak CAN, etc.)
 
+pub mod client;
 pub mod common;
 pub mod config;
-pub mod client;
 pub mod frame;
 
 // Plugin support
@@ -16,8 +16,8 @@ pub mod plugin;
 
 pub use config::CanConfig;
 
+use crate::core::protocols::common::combase::{PacketParseResult, ProtocolPacketParser};
 use std::collections::HashMap;
-use crate::core::protocols::common::combase::{ProtocolPacketParser, PacketParseResult};
 
 /// CAN protocol packet parser
 ///
@@ -48,12 +48,7 @@ impl ProtocolPacketParser for CanPacketParser {
 
         #[cfg(not(feature = "can"))]
         {
-            PacketParseResult::success(
-                "CAN",
-                direction,
-                &hex_data,
-                "CAN parser disabled"
-            )
+            PacketParseResult::success("CAN", direction, &hex_data, "CAN parser disabled")
         }
     }
 }

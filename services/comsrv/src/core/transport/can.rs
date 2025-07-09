@@ -10,7 +10,9 @@ use std::time::{Duration, SystemTime};
 use tokio::sync::RwLock;
 use tracing::{debug, info, warn};
 
-use super::traits::{ConnectionState, Transport, TransportBuilder, TransportConfig, TransportError, TransportStats};
+use super::traits::{
+    ConnectionState, Transport, TransportBuilder, TransportConfig, TransportError, TransportStats,
+};
 
 /// CAN frame type
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -66,12 +68,16 @@ impl CanFrame {
     /// Create new standard CAN frame
     pub fn new_standard(id: u16, data: Vec<u8>) -> Result<Self, TransportError> {
         if id > 0x7FF {
-            return Err(TransportError::ConfigError("Standard CAN ID must be <= 0x7FF".to_string()));
+            return Err(TransportError::ConfigError(
+                "Standard CAN ID must be <= 0x7FF".to_string(),
+            ));
         }
         if data.len() > 8 {
-            return Err(TransportError::ConfigError("CAN 2.0 data must be <= 8 bytes".to_string()));
+            return Err(TransportError::ConfigError(
+                "CAN 2.0 data must be <= 8 bytes".to_string(),
+            ));
         }
-        
+
         Ok(Self {
             id: id as u32,
             frame_type: CanFrameType::Standard,
@@ -83,12 +89,16 @@ impl CanFrame {
     /// Create new extended CAN frame
     pub fn new_extended(id: u32, data: Vec<u8>) -> Result<Self, TransportError> {
         if id > 0x1FFFFFFF {
-            return Err(TransportError::ConfigError("Extended CAN ID must be <= 0x1FFFFFFF".to_string()));
+            return Err(TransportError::ConfigError(
+                "Extended CAN ID must be <= 0x1FFFFFFF".to_string(),
+            ));
         }
         if data.len() > 8 {
-            return Err(TransportError::ConfigError("CAN 2.0 data must be <= 8 bytes".to_string()));
+            return Err(TransportError::ConfigError(
+                "CAN 2.0 data must be <= 8 bytes".to_string(),
+            ));
         }
-        
+
         Ok(Self {
             id,
             frame_type: CanFrameType::Extended,
@@ -165,19 +175,27 @@ impl TransportConfig for CanTransportConfig {
 
     fn validate(&self) -> Result<(), TransportError> {
         if self.name.is_empty() {
-            return Err(TransportError::ConfigError("Name cannot be empty".to_string()));
+            return Err(TransportError::ConfigError(
+                "Name cannot be empty".to_string(),
+            ));
         }
 
         if self.interface.is_empty() {
-            return Err(TransportError::ConfigError("Interface cannot be empty".to_string()));
+            return Err(TransportError::ConfigError(
+                "Interface cannot be empty".to_string(),
+            ));
         }
 
         if self.timeout.is_zero() {
-            return Err(TransportError::ConfigError("Timeout must be greater than zero".to_string()));
+            return Err(TransportError::ConfigError(
+                "Timeout must be greater than zero".to_string(),
+            ));
         }
 
         if self.recv_buffer_size == 0 || self.send_buffer_size == 0 {
-            return Err(TransportError::ConfigError("Buffer sizes must be greater than zero".to_string()));
+            return Err(TransportError::ConfigError(
+                "Buffer sizes must be greater than zero".to_string(),
+            ));
         }
 
         Ok(())
@@ -239,7 +257,7 @@ impl CanTransport {
     /// Send CAN frame
     pub async fn send_frame(&self, frame: CanFrame) -> Result<(), TransportError> {
         let state = self.state.read().await;
-        
+
         if !state.connected {
             return Err(TransportError::SendFailed("CAN not connected".to_string()));
         }
@@ -248,30 +266,41 @@ impl CanTransport {
         #[cfg(feature = "can")]
         {
             // In a real implementation, this would send the frame via socketcan
-            debug!("Sending CAN frame: ID=0x{:X}, Data={:?}", frame.id, frame.data);
+            debug!(
+                "Sending CAN frame: ID=0x{:X}, Data={:?}",
+                frame.id, frame.data
+            );
         }
         #[cfg(not(feature = "can"))]
         {
-            debug!("Mock: Sending CAN frame: ID=0x{:X}, Data={:?}", frame.id, frame.data);
+            debug!(
+                "Mock: Sending CAN frame: ID=0x{:X}, Data={:?}",
+                frame.id, frame.data
+            );
         }
 
         let mut state = self.state.write().await;
         state.stats.record_bytes_sent(frame.data.len() + 8); // 8 bytes for CAN header
-        
+
         Ok(())
     }
 
     /// Receive CAN frame
     pub async fn receive_frame(&self) -> Result<Option<CanFrame>, TransportError> {
         let mut state = self.state.write().await;
-        
+
         if !state.connected {
-            return Err(TransportError::ReceiveFailed("CAN not connected".to_string()));
+            return Err(TransportError::ReceiveFailed(
+                "CAN not connected".to_string(),
+            ));
         }
 
         if let Some(frame) = state.receive_queue.pop_front() {
             state.stats.record_bytes_received(frame.data.len() + 8);
-            debug!("Received CAN frame: ID=0x{:X}, Data={:?}", frame.id, frame.data);
+            debug!(
+                "Received CAN frame: ID=0x{:X}, Data={:?}",
+                frame.id, frame.data
+            );
             Ok(Some(frame))
         } else {
             Ok(None)
@@ -325,17 +354,23 @@ impl Transport for CanTransport {
             // 2. Bind to the interface
             // 3. Set bit rate and filters
             // 4. Start receiving frames
-            info!("CAN transport connected to interface: {}", self.config.interface);
+            info!(
+                "CAN transport connected to interface: {}",
+                self.config.interface
+            );
         }
         #[cfg(not(feature = "can"))]
         {
             warn!("CAN feature not enabled, using mock implementation");
-            info!("Mock CAN transport connected to interface: {}", self.config.interface);
+            info!(
+                "Mock CAN transport connected to interface: {}",
+                self.config.interface
+            );
         }
 
         state.connected = true;
         state.stats.record_successful_connection();
-        
+
         Ok(())
     }
 
@@ -344,27 +379,34 @@ impl Transport for CanTransport {
         if state.connected {
             state.connected = false;
             state.stats.record_disconnection();
-            info!("CAN transport disconnected from interface: {}", self.config.interface);
+            info!(
+                "CAN transport disconnected from interface: {}",
+                self.config.interface
+            );
         }
         Ok(())
     }
 
     async fn send(&mut self, data: &[u8]) -> Result<usize, TransportError> {
         if data.len() < 4 {
-            return Err(TransportError::SendFailed("Invalid CAN frame format".to_string()));
+            return Err(TransportError::SendFailed(
+                "Invalid CAN frame format".to_string(),
+            ));
         }
 
         // Parse CAN frame from raw data
         // Format: [ID(4 bytes)][data_len(1 byte)][data(0-8 bytes)]
         let id = u32::from_be_bytes([data[0], data[1], data[2], data[3]]);
         let data_len = data[4] as usize;
-        
+
         if data.len() < 5 + data_len {
-            return Err(TransportError::SendFailed("Incomplete CAN frame data".to_string()));
+            return Err(TransportError::SendFailed(
+                "Incomplete CAN frame data".to_string(),
+            ));
         }
 
-        let frame_data = data[5..5+data_len].to_vec();
-        
+        let frame_data = data[5..5 + data_len].to_vec();
+
         let frame = if id <= 0x7FF {
             CanFrame::new_standard(id as u16, frame_data)?
         } else {
@@ -376,21 +418,23 @@ impl Transport for CanTransport {
     }
 
     async fn receive(
-        &mut self, 
-        buffer: &mut [u8], 
-        _timeout: Option<Duration>
+        &mut self,
+        buffer: &mut [u8],
+        _timeout: Option<Duration>,
     ) -> Result<usize, TransportError> {
         if let Some(frame) = self.receive_frame().await? {
             // Serialize CAN frame to raw data
             // Format: [ID(4 bytes)][data_len(1 byte)][data(0-8 bytes)]
             if buffer.len() < 5 + frame.data.len() {
-                return Err(TransportError::ReceiveFailed("Buffer too small for CAN frame".to_string()));
+                return Err(TransportError::ReceiveFailed(
+                    "Buffer too small for CAN frame".to_string(),
+                ));
             }
 
             let id_bytes = frame.id.to_be_bytes();
             buffer[0..4].copy_from_slice(&id_bytes);
             buffer[4] = frame.data.len() as u8;
-            buffer[5..5+frame.data.len()].copy_from_slice(&frame.data);
+            buffer[5..5 + frame.data.len()].copy_from_slice(&frame.data);
 
             Ok(5 + frame.data.len())
         } else {
@@ -411,7 +455,7 @@ impl Transport for CanTransport {
     async fn stats(&self) -> TransportStats {
         let state = self.state.read().await;
         let mut stats = state.stats.clone();
-        
+
         // Update uptime
         if let Ok(elapsed) = self.start_time.elapsed() {
             stats.uptime = elapsed;
@@ -428,18 +472,39 @@ impl Transport for CanTransport {
     async fn diagnostics(&self) -> std::collections::HashMap<String, String> {
         let mut diag = std::collections::HashMap::new();
         let state = self.state.read().await;
-        
-        diag.insert("transport_type".to_string(), self.transport_type().to_string());
+
+        diag.insert(
+            "transport_type".to_string(),
+            self.transport_type().to_string(),
+        );
         diag.insert("name".to_string(), self.name().to_string());
         diag.insert("connected".to_string(), state.connected.to_string());
-        diag.insert("connection_state".to_string(), format!("{:?}", state.stats.connection_state));
+        diag.insert(
+            "connection_state".to_string(),
+            format!("{:?}", state.stats.connection_state),
+        );
         diag.insert("interface".to_string(), self.config.interface.clone());
-        diag.insert("bit_rate_bps".to_string(), self.config.bit_rate.to_bps().to_string());
+        diag.insert(
+            "bit_rate_bps".to_string(),
+            self.config.bit_rate.to_bps().to_string(),
+        );
         diag.insert("can_fd".to_string(), self.config.can_fd.to_string());
-        diag.insert("recv_buffer_size".to_string(), self.config.recv_buffer_size.to_string());
-        diag.insert("send_buffer_size".to_string(), self.config.send_buffer_size.to_string());
-        diag.insert("filter_count".to_string(), self.config.filters.len().to_string());
-        diag.insert("receive_queue_length".to_string(), state.receive_queue.len().to_string());
+        diag.insert(
+            "recv_buffer_size".to_string(),
+            self.config.recv_buffer_size.to_string(),
+        );
+        diag.insert(
+            "send_buffer_size".to_string(),
+            self.config.send_buffer_size.to_string(),
+        );
+        diag.insert(
+            "filter_count".to_string(),
+            self.config.filters.len().to_string(),
+        );
+        diag.insert(
+            "receive_queue_length".to_string(),
+            state.receive_queue.len().to_string(),
+        );
 
         diag
     }
@@ -536,12 +601,12 @@ mod tests {
     async fn test_can_transport_connect_disconnect() {
         let config = CanTransportConfig::default();
         let mut transport = CanTransport::new(config).unwrap();
-        
+
         assert!(!transport.is_connected().await);
-        
+
         assert!(transport.connect().await.is_ok());
         assert!(transport.is_connected().await);
-        
+
         assert!(transport.disconnect().await.is_ok());
         assert!(!transport.is_connected().await);
     }
@@ -551,16 +616,16 @@ mod tests {
         let config = CanTransportConfig::default();
         let mut transport = CanTransport::new(config).unwrap();
         transport.connect().await.unwrap();
-        
+
         // Test frame sending
         let frame = CanFrame::new_standard(0x123, vec![1, 2, 3, 4]).unwrap();
         assert!(transport.send_frame(frame.clone()).await.is_ok());
-        
+
         // Test frame receiving (mock)
         transport.add_receive_frame(frame).await;
         let received = transport.receive_frame().await.unwrap();
         assert!(received.is_some());
-        
+
         let received_frame = received.unwrap();
         assert_eq!(received_frame.id, 0x123);
         assert_eq!(received_frame.data, vec![1, 2, 3, 4]);
@@ -584,4 +649,4 @@ mod tests {
         assert_eq!(CanBitRate::Mbps1.to_bps(), 1_000_000);
         assert_eq!(CanBitRate::Custom(800_000).to_bps(), 800_000);
     }
-} 
+}

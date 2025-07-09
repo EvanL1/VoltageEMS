@@ -83,7 +83,6 @@ pub struct PointData {
     pub description: String,
 }
 
-
 // PollingConfig has been removed from common layer.
 // Each protocol implements its own data collection mechanism.
 
@@ -169,13 +168,13 @@ impl RawProtocolValue {
     pub fn get_register(&self, index: usize) -> crate::utils::Result<u16> {
         use crate::utils::ComSrvError;
         match self {
-            Self::Registers(regs) => {
-                regs.get(index)
-                    .copied()
-                    .ok_or_else(|| ComSrvError::InvalidParameter(format!("Register index {} out of bounds", index)))
-            }
+            Self::Registers(regs) => regs.get(index).copied().ok_or_else(|| {
+                ComSrvError::InvalidParameter(format!("Register index {} out of bounds", index))
+            }),
             Self::SingleRegister(val) if index == 0 => Ok(*val),
-            _ => Err(ComSrvError::InvalidParameter("Not a register value".to_string())),
+            _ => Err(ComSrvError::InvalidParameter(
+                "Not a register value".to_string(),
+            )),
         }
     }
 
@@ -183,11 +182,9 @@ impl RawProtocolValue {
     pub fn get_bit(&self, index: usize) -> crate::utils::Result<bool> {
         use crate::utils::ComSrvError;
         match self {
-            Self::Bits(bits) => {
-                bits.get(index)
-                    .copied()
-                    .ok_or_else(|| ComSrvError::InvalidParameter(format!("Bit index {} out of bounds", index)))
-            }
+            Self::Bits(bits) => bits.get(index).copied().ok_or_else(|| {
+                ComSrvError::InvalidParameter(format!("Bit index {} out of bounds", index))
+            }),
             Self::SingleBit(val) if index == 0 => Ok(*val),
             _ => Err(ComSrvError::InvalidParameter("Not a bit value".to_string())),
         }
@@ -196,12 +193,8 @@ impl RawProtocolValue {
     /// Convert to f64 value
     pub fn to_f64(&self, index: usize) -> crate::utils::Result<f64> {
         match self {
-            Self::Registers(_) | Self::SingleRegister(_) => {
-                Ok(self.get_register(index)? as f64)
-            }
-            Self::Bits(_) | Self::SingleBit(_) => {
-                Ok(if self.get_bit(index)? { 1.0 } else { 0.0 })
-            }
+            Self::Registers(_) | Self::SingleRegister(_) => Ok(self.get_register(index)? as f64),
+            Self::Bits(_) | Self::SingleBit(_) => Ok(if self.get_bit(index)? { 1.0 } else { 0.0 }),
         }
     }
 
@@ -209,9 +202,7 @@ impl RawProtocolValue {
     pub fn to_bool(&self, index: usize) -> crate::utils::Result<bool> {
         match self {
             Self::Bits(_) | Self::SingleBit(_) => self.get_bit(index),
-            Self::Registers(_) | Self::SingleRegister(_) => {
-                Ok(self.get_register(index)? != 0)
-            }
+            Self::Registers(_) | Self::SingleRegister(_) => Ok(self.get_register(index)? != 0),
         }
     }
 }
@@ -255,4 +246,4 @@ mod tests {
             ConnectionState::Error("test2".to_string())
         );
     }
-} 
+}

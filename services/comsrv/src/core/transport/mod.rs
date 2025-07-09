@@ -50,25 +50,25 @@
 //! - **Extensibility**: New transport types automatically available to all protocols
 //! - **Industrial Ready**: Comprehensive support for edge device interfaces
 
-pub mod traits;
-pub mod tcp;
-pub mod serial;
-pub mod gpio;
 pub mod can;
 pub mod factory;
+pub mod gpio;
 pub mod mock;
+pub mod serial;
+pub mod tcp;
+pub mod traits;
 
 // Re-export commonly used types
-pub use traits::{Transport, TransportConfig, TransportStats, TransportError};
-pub use factory::{TransportFactory, TransportType};
-pub use tcp::TcpTransport;
-pub use serial::SerialTransport;
-pub use gpio::GpioTransport;
 pub use can::CanTransport;
+pub use factory::{TransportFactory, TransportType};
+pub use gpio::GpioTransport;
 pub use mock::MockTransport;
+pub use serial::SerialTransport;
+pub use tcp::TcpTransport;
+pub use traits::{Transport, TransportConfig, TransportError, TransportStats};
 
 /// Transport module initialization
 pub fn init_transport_layer() {
     tracing::info!("Initializing transport layer with layered architecture");
     tracing::info!("Supported transports: TCP, Serial, GPIO (DI/DO), CAN, Mock");
-} 
+}

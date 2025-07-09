@@ -1,12 +1,12 @@
 //! CAN Protocol Common Types and Definitions
-//! 
+//!
 //! This module contains common data structures, enums, and utilities
 //! used across the CAN protocol implementation.
 
-use serde::{Serialize, Deserialize};
+use crate::utils::error::ComSrvError;
+use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::sync::atomic::{AtomicU64, Ordering};
-use crate::utils::error::ComSrvError;
 
 /// CAN message ID type
 pub type CanId = u32;
@@ -242,7 +242,8 @@ impl CanStatistics {
 
     /// Update bus utilization
     pub fn update_bus_utilization(&self, utilization: f64) {
-        self.bus_utilization.store((utilization * 100.0) as u64, Ordering::Relaxed);
+        self.bus_utilization
+            .store((utilization * 100.0) as u64, Ordering::Relaxed);
     }
 
     /// Get total messages sent
@@ -267,11 +268,12 @@ impl CanStatistics {
 
     /// Get last error time
     pub fn get_last_error_time(&self) -> Option<chrono::DateTime<chrono::Utc>> {
-        self.last_error_time
-            .and_then(|st| chrono::DateTime::from_timestamp(
+        self.last_error_time.and_then(|st| {
+            chrono::DateTime::from_timestamp(
                 st.duration_since(std::time::UNIX_EPOCH).ok()?.as_secs() as i64,
-                0
-            ))
+                0,
+            )
+        })
     }
 }
 
@@ -308,10 +310,16 @@ mod tests {
     #[test]
     fn test_can_error_display() {
         let error = CanError::InvalidParameter(format!("Invalid CAN ID: 0x{:X}", 0x123));
-        assert_eq!(error.to_string(), "Invalid parameter: Invalid CAN ID: 0x123");
-        
+        assert_eq!(
+            error.to_string(),
+            "Invalid parameter: Invalid CAN ID: 0x123"
+        );
+
         let error = CanError::ProtocolError(format!("CAN interface not available: {}", "can0"));
-        assert_eq!(error.to_string(), "Protocol error: CAN interface not available: can0");
+        assert_eq!(
+            error.to_string(),
+            "Protocol error: CAN interface not available: can0"
+        );
     }
 
     #[test]
@@ -338,9 +346,9 @@ mod tests {
 
         let json = serde_json::to_string(&mapping).unwrap();
         let deserialized: CanMessageMapping = serde_json::from_str(&json).unwrap();
-        
+
         assert_eq!(mapping.name, deserialized.name);
         assert_eq!(mapping.can_id, deserialized.can_id);
         assert_eq!(mapping.scale, deserialized.scale);
     }
-} 
+}

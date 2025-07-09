@@ -4,16 +4,15 @@
 //! used for testing and simulation purposes.
 
 use async_trait::async_trait;
-use std::collections::HashMap;
 use serde_json::{json, Value};
+use std::collections::HashMap;
 
-use crate::core::plugins::protocol_plugin::{
-    ProtocolPlugin, ProtocolMetadata, ConfigTemplate, ValidationRule,
-    CliCommand, CliArgument,
-};
 use crate::core::config::types::channel::ChannelConfig;
+use crate::core::plugins::protocol_plugin::{
+    CliArgument, CliCommand, ConfigTemplate, ProtocolMetadata, ProtocolPlugin, ValidationRule,
+};
 use crate::core::protocols::common::traits::ComBase;
-use crate::utils::{Result, ComSrvError as Error};
+use crate::utils::{ComSrvError as Error, Result};
 
 use super::VirtualProtocol;
 
@@ -33,8 +32,8 @@ impl Default for VirtualPlugin {
                 author: "VoltageEMS Team".to_string(),
                 license: "MIT".to_string(),
                 features: vec![
-                    "telemetry".to_string(), 
-                    "control".to_string(), 
+                    "telemetry".to_string(),
+                    "control".to_string(),
                     "signal".to_string(),
                     "adjustment".to_string(),
                     "simulation".to_string(),
@@ -50,7 +49,7 @@ impl ProtocolPlugin for VirtualPlugin {
     fn metadata(&self) -> ProtocolMetadata {
         self.metadata.clone()
     }
-    
+
     fn config_template(&self) -> Vec<ConfigTemplate> {
         vec![
             ConfigTemplate {
@@ -85,30 +84,25 @@ impl ProtocolPlugin for VirtualPlugin {
             },
         ]
     }
-    
+
     fn validate_config(&self, _config: &HashMap<String, Value>) -> Result<()> {
         // Virtual protocol accepts any configuration
         Ok(())
     }
-    
-    async fn create_instance(
-        &self,
-        channel_config: ChannelConfig,
-    ) -> Result<Box<dyn ComBase>> {
+
+    async fn create_instance(&self, channel_config: ChannelConfig) -> Result<Box<dyn ComBase>> {
         let protocol = VirtualProtocol::new(channel_config)?;
         Ok(Box::new(protocol))
     }
-    
+
     fn cli_commands(&self) -> Vec<CliCommand> {
-        vec![
-            CliCommand {
-                name: "test".to_string(),
-                description: "Test virtual protocol".to_string(),
-                args: vec![],
-            },
-        ]
+        vec![CliCommand {
+            name: "test".to_string(),
+            description: "Test virtual protocol".to_string(),
+            args: vec![],
+        }]
     }
-    
+
     fn documentation(&self) -> &str {
         r#"
 # Virtual Protocol

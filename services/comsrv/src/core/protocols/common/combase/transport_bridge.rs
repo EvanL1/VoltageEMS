@@ -1,12 +1,12 @@
 //! 通用传输层桥接适配器
-//! 
+//!
 //! 这个模块提供协议层和传输层之间的通用桥接，让所有协议都可以使用
 //! 统一的传输层接口，而不是直接使用各种第三方库
 
-use std::sync::Arc;
-use tokio::sync::RwLock;
-use std::time::Duration;
 use std::collections::HashMap;
+use std::sync::Arc;
+use std::time::Duration;
+use tokio::sync::RwLock;
 
 use crate::core::transport::Transport;
 use crate::utils::Result;
@@ -39,7 +39,7 @@ impl Default for ProtocolBridgeConfig {
 }
 
 /// 通用传输层桥接适配器
-/// 
+///
 /// 这个适配器让任何协议都可以使用标准的Transport trait
 /// 提供统一的连接管理、数据发送/接收等功能
 #[derive(Debug)]
@@ -114,43 +114,52 @@ impl UniversalTransportBridge {
     /// 连接到远程端点
     pub async fn connect(&self) -> Result<()> {
         let mut retries = 0;
-        
+
         while retries < self.config.max_retries {
             let mut transport = self.transport.write().await;
             let result = transport.connect().await;
-            
+
             match result {
                 Ok(_) => {
                     let mut connected = self.connected.write().await;
                     *connected = true;
-                    
+
                     // 更新统计
                     let mut stats = self.stats.write().await;
                     stats.last_activity = Some(std::time::SystemTime::now());
-                    
-                    tracing::info!("Successfully connected {} protocol via transport bridge", self.config.protocol_name);
+
+                    tracing::info!(
+                        "Successfully connected {} protocol via transport bridge",
+                        self.config.protocol_name
+                    );
                     return Ok(());
-                },
+                }
                 Err(e) => {
                     retries += 1;
                     let mut stats = self.stats.write().await;
                     stats.connection_retries = retries;
-                    
+
                     if retries >= self.config.max_retries {
-                        return Err(crate::utils::ComSrvError::ConnectionError(
-                            format!("Transport connection failed after {} retries: {}", retries, e)
-                        ));
+                        return Err(crate::utils::ComSrvError::ConnectionError(format!(
+                            "Transport connection failed after {} retries: {}",
+                            retries, e
+                        )));
                     }
-                    
-                    tracing::warn!("Connection attempt {} failed for {}: {}", retries, self.config.protocol_name, e);
+
+                    tracing::warn!(
+                        "Connection attempt {} failed for {}: {}",
+                        retries,
+                        self.config.protocol_name,
+                        e
+                    );
                     drop(transport); // 释放锁
                     tokio::time::sleep(Duration::from_millis(1000 * retries as u64)).await;
                 }
             }
         }
-        
+
         Err(crate::utils::ComSrvError::ConnectionError(
-            "Max retries exceeded".to_string()
+            "Max retries exceeded".to_string(),
         ))
     }
 
@@ -158,58 +167,68 @@ impl UniversalTransportBridge {
     pub async fn disconnect(&self) -> Result<()> {
         let mut transport = self.transport.write().await;
         let result = transport.disconnect().await;
-        
+
         if result.is_ok() {
             let mut connected = self.connected.write().await;
             *connected = false;
             tracing::info!("Disconnected {} protocol", self.config.protocol_name);
         }
-        
-        result.map_err(|e| crate::utils::ComSrvError::ConnectionError(
-            format!("Disconnect failed: {}", e)
-        ))
+
+        result.map_err(|e| {
+            crate::utils::ComSrvError::ConnectionError(format!("Disconnect failed: {}", e))
+        })
     }
 
     /// 发送请求并接收响应
     pub async fn send_request(&self, data: &[u8]) -> Result<Vec<u8>> {
-        self.send_request_with_timeout(data, self.config.default_timeout).await
+        self.send_request_with_timeout(data, self.config.default_timeout)
+            .await
     }
 
     /// 发送请求并接收响应（指定超时）
-    pub async fn send_request_with_timeout(&self, data: &[u8], timeout: Duration) -> Result<Vec<u8>> {
+    pub async fn send_request_with_timeout(
+        &self,
+        data: &[u8],
+        timeout: Duration,
+    ) -> Result<Vec<u8>> {
         let mut transport = self.transport.write().await;
-        
+
         // 发送数据
-        let bytes_sent = transport.send(data).await
-            .map_err(|e| {
-                let mut stats = self.stats.try_write().unwrap();
-                stats.failed_requests += 1;
-                crate::utils::ComSrvError::NetworkError(
-                    format!("Failed to send {} data: {}", self.config.protocol_name, e)
-                )
-            })?;
-            
+        let bytes_sent = transport.send(data).await.map_err(|e| {
+            let mut stats = self.stats.try_write().unwrap();
+            stats.failed_requests += 1;
+            crate::utils::ComSrvError::NetworkError(format!(
+                "Failed to send {} data: {}",
+                self.config.protocol_name, e
+            ))
+        })?;
+
         if bytes_sent != data.len() {
             let mut stats = self.stats.write().await;
             stats.failed_requests += 1;
-            return Err(crate::utils::ComSrvError::NetworkError(
-                format!("Incomplete send: {} of {} bytes", bytes_sent, data.len())
-            ));
+            return Err(crate::utils::ComSrvError::NetworkError(format!(
+                "Incomplete send: {} of {} bytes",
+                bytes_sent,
+                data.len()
+            )));
         }
 
         // 接收响应
         let mut buffer = vec![0u8; self.config.max_buffer_size];
-        let bytes_received = transport.receive(&mut buffer, Some(timeout)).await
+        let bytes_received = transport
+            .receive(&mut buffer, Some(timeout))
+            .await
             .map_err(|e| {
                 let mut stats = self.stats.try_write().unwrap();
                 stats.failed_requests += 1;
-                crate::utils::ComSrvError::NetworkError(
-                    format!("Failed to receive {} response: {}", self.config.protocol_name, e)
-                )
+                crate::utils::ComSrvError::NetworkError(format!(
+                    "Failed to receive {} response: {}",
+                    self.config.protocol_name, e
+                ))
             })?;
 
         buffer.truncate(bytes_received);
-        
+
         // 更新统计
         let mut stats = self.stats.write().await;
         stats.bytes_sent += bytes_sent as u64;
@@ -217,20 +236,26 @@ impl UniversalTransportBridge {
         stats.successful_requests += 1;
         stats.last_activity = Some(std::time::SystemTime::now());
 
-        tracing::debug!("Successfully exchanged {} protocol data: sent {}, received {} bytes", 
-                   self.config.protocol_name, bytes_sent, bytes_received);
-        
+        tracing::debug!(
+            "Successfully exchanged {} protocol data: sent {}, received {} bytes",
+            self.config.protocol_name,
+            bytes_sent,
+            bytes_received
+        );
+
         Ok(buffer)
     }
 
     /// 只发送数据（不等待响应）
     pub async fn send_only(&self, data: &[u8]) -> Result<usize> {
         let mut transport = self.transport.write().await;
-        
-        let bytes_sent = transport.send(data).await
-            .map_err(|e| crate::utils::ComSrvError::NetworkError(
-                format!("Failed to send {} data: {}", self.config.protocol_name, e)
-            ))?;
+
+        let bytes_sent = transport.send(data).await.map_err(|e| {
+            crate::utils::ComSrvError::NetworkError(format!(
+                "Failed to send {} data: {}",
+                self.config.protocol_name, e
+            ))
+        })?;
 
         // 更新统计
         let mut stats = self.stats.write().await;
@@ -267,17 +292,35 @@ impl UniversalTransportBridge {
     pub async fn diagnostics(&self) -> HashMap<String, String> {
         let transport = self.transport.read().await;
         let mut diag = transport.diagnostics().await;
-        
+
         // 添加桥接层信息
-        diag.insert("bridge_protocol".to_string(), self.config.protocol_name.clone());
-        diag.insert("bridge_connected".to_string(), self.is_connected().await.to_string());
-        
+        diag.insert(
+            "bridge_protocol".to_string(),
+            self.config.protocol_name.clone(),
+        );
+        diag.insert(
+            "bridge_connected".to_string(),
+            self.is_connected().await.to_string(),
+        );
+
         let stats = self.stats.read().await;
-        diag.insert("bridge_bytes_sent".to_string(), stats.bytes_sent.to_string());
-        diag.insert("bridge_bytes_received".to_string(), stats.bytes_received.to_string());
-        diag.insert("bridge_successful_requests".to_string(), stats.successful_requests.to_string());
-        diag.insert("bridge_failed_requests".to_string(), stats.failed_requests.to_string());
-        
+        diag.insert(
+            "bridge_bytes_sent".to_string(),
+            stats.bytes_sent.to_string(),
+        );
+        diag.insert(
+            "bridge_bytes_received".to_string(),
+            stats.bytes_received.to_string(),
+        );
+        diag.insert(
+            "bridge_successful_requests".to_string(),
+            stats.successful_requests.to_string(),
+        );
+        diag.insert(
+            "bridge_failed_requests".to_string(),
+            stats.failed_requests.to_string(),
+        );
+
         diag
     }
 }
@@ -291,9 +334,9 @@ mod tests {
     async fn test_universal_bridge_creation() {
         let mock_config = MockTransportConfig::default();
         let mock_transport = MockTransport::new(mock_config).unwrap();
-        
+
         let bridge = UniversalTransportBridge::new_modbus(Box::new(mock_transport));
-        
+
         assert_eq!(bridge.config().protocol_name, "modbus");
         assert!(!bridge.is_connected().await);
     }
@@ -302,12 +345,12 @@ mod tests {
     async fn test_universal_bridge_stats() {
         let mock_config = MockTransportConfig::default();
         let mock_transport = MockTransport::new(mock_config).unwrap();
-        
+
         let bridge = UniversalTransportBridge::new_iec60870(Box::new(mock_transport));
         let stats = bridge.stats().await;
-        
+
         assert_eq!(stats.bytes_sent, 0);
         assert_eq!(stats.bytes_received, 0);
         assert_eq!(stats.successful_requests, 0);
     }
-} 
+}

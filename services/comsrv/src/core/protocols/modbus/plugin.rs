@@ -4,21 +4,20 @@
 //! enabling dynamic protocol loading through the plugin system.
 
 use async_trait::async_trait;
-use std::collections::HashMap;
 use serde_json::{json, Value};
+use std::collections::HashMap;
 
-use crate::core::plugins::protocol_plugin::{
-    ProtocolPlugin, ProtocolMetadata, ConfigTemplate, ValidationRule,
-    CliCommand, CliArgument,
-};
 use crate::core::config::types::channel::ChannelConfig;
+use crate::core::plugins::protocol_plugin::{
+    CliArgument, CliCommand, ConfigTemplate, ProtocolMetadata, ProtocolPlugin, ValidationRule,
+};
 use crate::core::protocols::common::traits::ComBase;
-use crate::utils::{Result, ComSrvError as Error};
 use crate::core::transport::factory::TransportFactory;
-use crate::core::transport::tcp::TcpTransportConfig;
 use crate::core::transport::serial::SerialTransportConfig;
+use crate::core::transport::tcp::TcpTransportConfig;
+use crate::utils::{ComSrvError as Error, Result};
 
-use super::client::{ModbusClient, ModbusChannelConfig};
+use super::client::{ModbusChannelConfig, ModbusClient};
 use super::common::ModbusConfig;
 use super::modbus_polling::ModbusPollingConfig;
 
@@ -29,21 +28,24 @@ pub struct ModbusTcpPlugin {
 
 impl ModbusTcpPlugin {
     /// Create Modbus mapping table from combined points
-    fn create_modbus_mapping_table(&self, config: &ChannelConfig) -> super::client::ProtocolMappingTable {
+    fn create_modbus_mapping_table(
+        &self,
+        config: &ChannelConfig,
+    ) -> super::client::ProtocolMappingTable {
         use super::protocol_engine::{
-            ModbusTelemetryMapping, ModbusSignalMapping,
-            ModbusAdjustmentMapping, ModbusControlMapping
+            ModbusAdjustmentMapping, ModbusControlMapping, ModbusSignalMapping,
+            ModbusTelemetryMapping,
         };
-        
+
         let mut mapping_table = super::client::ProtocolMappingTable::default();
-        
+
         // Convert combined_points to protocol mappings
         for point in &config.combined_points {
             // Extract fields from CombinedPoint
             let point_id = point.point_id;
             let scale = point.scaling.as_ref().map(|s| s.scale).unwrap_or(1.0);
             let offset = point.scaling.as_ref().map(|s| s.offset).unwrap_or(0.0);
-            
+
             // Parse address from protocol_params (format: "slave_id:function_code:register_address")
             let address = match point.protocol_params.get("address") {
                 Some(addr) => addr,
@@ -52,41 +54,55 @@ impl ModbusTcpPlugin {
                     continue;
                 }
             };
-                
+
             let address_parts: Vec<&str> = address.split(':').collect();
             if address_parts.len() < 3 {
                 tracing::warn!("Invalid address format for point {}: {}", point_id, address);
                 continue;
             }
-            
+
             let slave_id = match address_parts[0].parse::<u8>() {
                 Ok(id) => id,
                 Err(_) => {
-                    tracing::warn!("Invalid slave_id for point {}: {}", point_id, address_parts[0]);
+                    tracing::warn!(
+                        "Invalid slave_id for point {}: {}",
+                        point_id,
+                        address_parts[0]
+                    );
                     continue;
                 }
             };
-            
+
             let function_code = match address_parts[1].parse::<u8>() {
                 Ok(code) => code,
                 Err(_) => {
-                    tracing::warn!("Invalid function_code for point {}: {}", point_id, address_parts[1]);
+                    tracing::warn!(
+                        "Invalid function_code for point {}: {}",
+                        point_id,
+                        address_parts[1]
+                    );
                     continue;
                 }
             };
-            
+
             let register_address = match address_parts[2].parse::<u16>() {
                 Ok(addr) => addr,
                 Err(_) => {
-                    tracing::warn!("Invalid register_address for point {}: {}", point_id, address_parts[2]);
+                    tracing::warn!(
+                        "Invalid register_address for point {}: {}",
+                        point_id,
+                        address_parts[2]
+                    );
                     continue;
                 }
             };
-            
+
             let data_type = point.data_type.clone();
-            let bit_location = point.protocol_params.get("bit_location")
+            let bit_location = point
+                .protocol_params
+                .get("bit_location")
                 .and_then(|v| v.parse::<u8>().ok());
-            
+
             // Determine point type based on function code or telemetry type
             match function_code {
                 3 | 4 => {
@@ -135,23 +151,28 @@ impl ModbusTcpPlugin {
                     mapping_table.control_mappings.insert(point_id, mapping);
                 }
                 _ => {
-                    tracing::warn!("Unsupported function code {} for point {}", function_code, point_id);
+                    tracing::warn!(
+                        "Unsupported function code {} for point {}",
+                        function_code,
+                        point_id
+                    );
                 }
             }
         }
-        
-        let total = mapping_table.telemetry_mappings.len() 
+
+        let total = mapping_table.telemetry_mappings.len()
             + mapping_table.signal_mappings.len()
             + mapping_table.adjustment_mappings.len()
             + mapping_table.control_mappings.len();
-        tracing::info!("Created {} Modbus mappings (YC:{}, YX:{}, YT:{}, YK:{})", 
+        tracing::info!(
+            "Created {} Modbus mappings (YC:{}, YX:{}, YT:{}, YK:{})",
             total,
             mapping_table.telemetry_mappings.len(),
             mapping_table.signal_mappings.len(),
             mapping_table.adjustment_mappings.len(),
             mapping_table.control_mappings.len()
         );
-        
+
         mapping_table
     }
 }
@@ -166,7 +187,12 @@ impl Default for ModbusTcpPlugin {
                 description: "Modbus TCP protocol implementation".to_string(),
                 author: "VoltageEMS Team".to_string(),
                 license: "MIT".to_string(),
-                features: vec!["telemetry".to_string(), "control".to_string(), "adjustment".to_string(), "signal".to_string()],
+                features: vec![
+                    "telemetry".to_string(),
+                    "control".to_string(),
+                    "adjustment".to_string(),
+                    "signal".to_string(),
+                ],
                 dependencies: HashMap::new(),
             },
         }
@@ -178,7 +204,7 @@ impl ProtocolPlugin for ModbusTcpPlugin {
     fn metadata(&self) -> ProtocolMetadata {
         self.metadata.clone()
     }
-    
+
     fn config_template(&self) -> Vec<ConfigTemplate> {
         vec![
             ConfigTemplate {
@@ -235,58 +261,69 @@ impl ProtocolPlugin for ModbusTcpPlugin {
             },
         ]
     }
-    
+
     fn validate_config(&self, config: &HashMap<String, Value>) -> Result<()> {
         // Check required parameters
         if !config.contains_key("host") {
-            return Err(Error::ConfigError("Missing required parameter: host".to_string()));
+            return Err(Error::ConfigError(
+                "Missing required parameter: host".to_string(),
+            ));
         }
-        
+
         // Validate host
         if let Some(host) = config.get("host") {
             if !host.is_string() {
-                return Err(Error::ConfigError("Parameter 'host' must be a string".to_string()));
+                return Err(Error::ConfigError(
+                    "Parameter 'host' must be a string".to_string(),
+                ));
             }
         }
-        
+
         // Validate port
         if let Some(port) = config.get("port") {
             if let Some(port_num) = port.as_u64() {
                 if port_num == 0 || port_num > 65535 {
-                    return Err(Error::ConfigError("Port must be between 1 and 65535".to_string()));
+                    return Err(Error::ConfigError(
+                        "Port must be between 1 and 65535".to_string(),
+                    ));
                 }
             } else {
-                return Err(Error::ConfigError("Parameter 'port' must be a number".to_string()));
+                return Err(Error::ConfigError(
+                    "Parameter 'port' must be a number".to_string(),
+                ));
             }
         }
-        
+
         Ok(())
     }
-    
-    async fn create_instance(
-        &self,
-        channel_config: ChannelConfig,
-    ) -> Result<Box<dyn ComBase>> {
-        tracing::info!("ModbusTcpPlugin: Starting to create instance for channel {}", channel_config.name);
-        
+
+    async fn create_instance(&self, channel_config: ChannelConfig) -> Result<Box<dyn ComBase>> {
+        tracing::info!(
+            "ModbusTcpPlugin: Starting to create instance for channel {}",
+            channel_config.name
+        );
+
         // Extract Modbus configuration from channel config
         let params = &channel_config.parameters;
         tracing::debug!("ModbusTcpPlugin: Parameters: {:?}", params);
-        
-        let host = params.get("host")
+
+        let host = params
+            .get("host")
             .and_then(|v| v.as_str())
             .ok_or_else(|| Error::ConfigError("Missing host parameter".to_string()))?
             .to_string();
-            
-        let port = params.get("port")
+
+        let port = params
+            .get("port")
             .and_then(|v| v.as_u64())
             .map(|p| p as u16)
             .unwrap_or(502);
-            
-        let timeout_ms = params.get("timeout")
+
+        let timeout_ms = params
+            .get("timeout")
             .and_then(|v| v.as_u64())
             .unwrap_or(5000);
-            
+
         // Create transport
         let factory = TransportFactory::new();
         let transport_config = TcpTransportConfig {
@@ -299,15 +336,21 @@ impl ProtocolPlugin for ModbusTcpPlugin {
             send_buffer_size: None,
             no_delay: true,
         };
-        
-        tracing::info!("ModbusTcpPlugin: Creating TCP transport to {}:{}", host, port);
-        let transport = factory.create_tcp_transport(transport_config).await
+
+        tracing::info!(
+            "ModbusTcpPlugin: Creating TCP transport to {}:{}",
+            host,
+            port
+        );
+        let transport = factory
+            .create_tcp_transport(transport_config)
+            .await
             .map_err(|e| {
                 tracing::error!("ModbusTcpPlugin: Failed to create TCP transport: {}", e);
                 e
             })?;
         tracing::info!("ModbusTcpPlugin: TCP transport created successfully");
-        
+
         // Create Modbus configuration
         let modbus_config = ModbusConfig {
             protocol_type: "ModbusTcp".to_string(),
@@ -321,7 +364,7 @@ impl ProtocolPlugin for ModbusTcpPlugin {
             timeout_ms: Some(timeout_ms),
             points: vec![], // Points will be configured later
         };
-        
+
         // Create channel configuration
         let modbus_channel_config = ModbusChannelConfig {
             channel_id: channel_config.id,
@@ -331,13 +374,16 @@ impl ProtocolPlugin for ModbusTcpPlugin {
             max_retries: 3,
             retry_delay: std::time::Duration::from_millis(1000),
             polling: ModbusPollingConfig {
-                default_interval_ms: params.get("polling_interval")
+                default_interval_ms: params
+                    .get("polling_interval")
                     .and_then(|v| v.as_u64())
                     .unwrap_or(1000), // Default 1 second
-                enable_batch_reading: params.get("enable_batch_reading")
+                enable_batch_reading: params
+                    .get("enable_batch_reading")
                     .and_then(|v| v.as_bool())
                     .unwrap_or(true),
-                max_batch_size: params.get("batch_size")
+                max_batch_size: params
+                    .get("batch_size")
                     .and_then(|v| v.as_u64())
                     .map(|s| s as u16)
                     .unwrap_or(125),
@@ -345,36 +391,46 @@ impl ProtocolPlugin for ModbusTcpPlugin {
                 slave_configs: HashMap::new(),
             },
         };
-        
+
         // Create Modbus client
-        tracing::info!("ModbusTcpPlugin: Creating Modbus client for channel {}", modbus_channel_config.channel_name);
-        let mut client = ModbusClient::new(modbus_channel_config, transport).await
+        tracing::info!(
+            "ModbusTcpPlugin: Creating Modbus client for channel {}",
+            modbus_channel_config.channel_name
+        );
+        let mut client = ModbusClient::new(modbus_channel_config, transport)
+            .await
             .map_err(|e| {
                 tracing::error!("ModbusTcpPlugin: Failed to create Modbus client: {}", e);
                 e
             })?;
         tracing::info!("ModbusTcpPlugin: Modbus client created successfully");
-        
+
         // Load protocol mappings if combined_points are available
         if !channel_config.combined_points.is_empty() {
-            tracing::info!("ModbusTcpPlugin: Loading {} protocol mappings for channel {}", 
-                channel_config.combined_points.len(), channel_config.name);
-            
+            tracing::info!(
+                "ModbusTcpPlugin: Loading {} protocol mappings for channel {}",
+                channel_config.combined_points.len(),
+                channel_config.name
+            );
+
             // Create mapping table from combined points
             let mapping_table = self.create_modbus_mapping_table(&channel_config);
-            
+
             if let Err(e) = client.load_protocol_mappings(mapping_table).await {
                 tracing::warn!("ModbusTcpPlugin: Failed to load protocol mappings: {}", e);
             } else {
                 tracing::info!("ModbusTcpPlugin: Successfully loaded protocol mappings");
             }
         } else {
-            tracing::info!("ModbusTcpPlugin: No combined_points to load for channel {}", channel_config.name);
+            tracing::info!(
+                "ModbusTcpPlugin: No combined_points to load for channel {}",
+                channel_config.name
+            );
         }
-        
+
         Ok(Box::new(client))
     }
-    
+
     fn cli_commands(&self) -> Vec<CliCommand> {
         vec![
             CliCommand {
@@ -415,7 +471,7 @@ impl ProtocolPlugin for ModbusTcpPlugin {
             },
         ]
     }
-    
+
     fn documentation(&self) -> &str {
         r#"
 # Modbus TCP Protocol
@@ -493,7 +549,12 @@ impl Default for ModbusRtuPlugin {
                 description: "Modbus RTU protocol implementation".to_string(),
                 author: "VoltageEMS Team".to_string(),
                 license: "MIT".to_string(),
-                features: vec!["telemetry".to_string(), "control".to_string(), "adjustment".to_string(), "signal".to_string()],
+                features: vec![
+                    "telemetry".to_string(),
+                    "control".to_string(),
+                    "adjustment".to_string(),
+                    "signal".to_string(),
+                ],
                 dependencies: HashMap::new(),
             },
         }
@@ -505,7 +566,7 @@ impl ProtocolPlugin for ModbusRtuPlugin {
     fn metadata(&self) -> ProtocolMetadata {
         self.metadata.clone()
     }
-    
+
     fn config_template(&self) -> Vec<ConfigTemplate> {
         vec![
             ConfigTemplate {
@@ -526,9 +587,16 @@ impl ProtocolPlugin for ModbusRtuPlugin {
                     min: None,
                     max: None,
                     pattern: None,
-                    allowed_values: Some(vec!["1200".to_string(), "2400".to_string(), "4800".to_string(), 
-                                           "9600".to_string(), "19200".to_string(), "38400".to_string(),
-                                           "57600".to_string(), "115200".to_string()]),
+                    allowed_values: Some(vec![
+                        "1200".to_string(),
+                        "2400".to_string(),
+                        "4800".to_string(),
+                        "9600".to_string(),
+                        "19200".to_string(),
+                        "38400".to_string(),
+                        "57600".to_string(),
+                        "115200".to_string(),
+                    ]),
                 }),
             },
             ConfigTemplate {
@@ -567,7 +635,11 @@ impl ProtocolPlugin for ModbusRtuPlugin {
                     min: None,
                     max: None,
                     pattern: None,
-                    allowed_values: Some(vec!["None".to_string(), "Even".to_string(), "Odd".to_string()]),
+                    allowed_values: Some(vec![
+                        "None".to_string(),
+                        "Even".to_string(),
+                        "Odd".to_string(),
+                    ]),
                 }),
             },
             ConfigTemplate {
@@ -598,67 +670,78 @@ impl ProtocolPlugin for ModbusRtuPlugin {
             },
         ]
     }
-    
+
     fn validate_config(&self, config: &HashMap<String, Value>) -> Result<()> {
         // Check required parameters
         if !config.contains_key("device_path") {
-            return Err(Error::ConfigError("Missing required parameter: device_path".to_string()));
+            return Err(Error::ConfigError(
+                "Missing required parameter: device_path".to_string(),
+            ));
         }
-        
+
         // Validate device_path
         if let Some(path) = config.get("device_path") {
             if !path.is_string() {
-                return Err(Error::ConfigError("Parameter 'device_path' must be a string".to_string()));
+                return Err(Error::ConfigError(
+                    "Parameter 'device_path' must be a string".to_string(),
+                ));
             }
         }
-        
+
         // Validate baud_rate
         if let Some(baud) = config.get("baud_rate") {
             if !baud.is_u64() {
-                return Err(Error::ConfigError("Parameter 'baud_rate' must be a number".to_string()));
+                return Err(Error::ConfigError(
+                    "Parameter 'baud_rate' must be a number".to_string(),
+                ));
             }
         }
-        
+
         Ok(())
     }
-    
-    async fn create_instance(
-        &self,
-        channel_config: ChannelConfig,
-    ) -> Result<Box<dyn ComBase>> {
+
+    async fn create_instance(&self, channel_config: ChannelConfig) -> Result<Box<dyn ComBase>> {
         // Extract Modbus RTU configuration from channel config
         let params = &channel_config.parameters;
-        
-        let device_path = params.get("device_path")
-            .or_else(|| params.get("port_name"))  // 也支持 port_name 参数
+
+        let device_path = params
+            .get("device_path")
+            .or_else(|| params.get("port_name")) // 也支持 port_name 参数
             .and_then(|v| v.as_str())
-            .ok_or_else(|| Error::ConfigError("Missing device_path or port_name parameter".to_string()))?
+            .ok_or_else(|| {
+                Error::ConfigError("Missing device_path or port_name parameter".to_string())
+            })?
             .to_string();
-            
-        let baud_rate = params.get("baud_rate")
+
+        let baud_rate = params
+            .get("baud_rate")
             .and_then(|v| v.as_u64())
             .map(|b| b as u32)
             .unwrap_or(9600);
-            
-        let data_bits = params.get("data_bits")
+
+        let data_bits = params
+            .get("data_bits")
             .and_then(|v| v.as_u64())
             .map(|d| d as u8)
             .unwrap_or(8);
-            
-        let stop_bits = params.get("stop_bits")
+
+        let stop_bits = params
+            .get("stop_bits")
             .and_then(|v| v.as_u64())
             .map(|s| s as u8)
             .unwrap_or(1);
-            
-        let parity = params.get("parity")
+
+        let parity = params
+            .get("parity")
             .and_then(|v| v.as_str())
             .unwrap_or("None")
             .to_string();
-            
-        let timeout_ms = params.get("timeout_ms")
+
+        let timeout_ms = params
+            .get("timeout_ms")
             .and_then(|v| v.as_u64())
             .unwrap_or(1000);
-            
+
         // Create transport
         let factory = TransportFactory::new();
         let transport_config = SerialTransportConfig {
@@ -673,9 +756,9 @@ impl ProtocolPlugin for ModbusRtuPlugin {
             read_timeout: std::time::Duration::from_millis(timeout_ms),
             write_timeout: std::time::Duration::from_millis(timeout_ms),
         };
-        
+
         let transport = factory.create_serial_transport(transport_config).await?;
-        
+
         // Create Modbus configuration
         let modbus_config = ModbusConfig {
             protocol_type: "ModbusRtu".to_string(),
@@ -689,7 +772,7 @@ impl ProtocolPlugin for ModbusRtuPlugin {
             timeout_ms: Some(timeout_ms),
             points: vec![], // Points will be configured later
         };
-        
+
         // Create channel configuration
         let rtu_channel_config = ModbusChannelConfig {
             channel_id: channel_config.id,
@@ -699,13 +782,16 @@ impl ProtocolPlugin for ModbusRtuPlugin {
             max_retries: 3,
             retry_delay: std::time::Duration::from_millis(1000),
             polling: ModbusPollingConfig {
-                default_interval_ms: params.get("polling_interval")
+                default_interval_ms: params
+                    .get("polling_interval")
                     .and_then(|v| v.as_u64())
                     .unwrap_or(1000), // Default 1 second
-                enable_batch_reading: params.get("enable_batch_reading")
+                enable_batch_reading: params
+                    .get("enable_batch_reading")
                     .and_then(|v| v.as_bool())
                     .unwrap_or(true),
-                max_batch_size: params.get("batch_size")
+                max_batch_size: params
+                    .get("batch_size")
                     .and_then(|v| v.as_u64())
                     .map(|s| s as u16)
                     .unwrap_or(125),
@@ -713,51 +799,53 @@ impl ProtocolPlugin for ModbusRtuPlugin {
                 slave_configs: HashMap::new(),
             },
         };
-        
+
         // Create Modbus client
         let mut client = ModbusClient::new(rtu_channel_config, transport).await?;
-        
+
         // Load protocol mappings if combined_points are available
         if !channel_config.combined_points.is_empty() {
-            tracing::info!("ModbusRtuPlugin: Loading {} protocol mappings for channel {}", 
-                channel_config.combined_points.len(), channel_config.name);
-            
+            tracing::info!(
+                "ModbusRtuPlugin: Loading {} protocol mappings for channel {}",
+                channel_config.combined_points.len(),
+                channel_config.name
+            );
+
             // Create mapping table from combined points
-            let mapping_table = ModbusTcpPlugin::create_modbus_mapping_table(&Default::default(), &channel_config);
-            
+            let mapping_table =
+                ModbusTcpPlugin::create_modbus_mapping_table(&Default::default(), &channel_config);
+
             if let Err(e) = client.load_protocol_mappings(mapping_table).await {
                 tracing::warn!("ModbusRtuPlugin: Failed to load protocol mappings: {}", e);
             } else {
                 tracing::info!("ModbusRtuPlugin: Successfully loaded protocol mappings");
             }
         }
-        
+
         Ok(Box::new(client))
     }
-    
+
     fn cli_commands(&self) -> Vec<CliCommand> {
-        vec![
-            CliCommand {
-                name: "scan-devices".to_string(),
-                description: "Scan for Modbus RTU devices on the bus".to_string(),
-                args: vec![
-                    CliArgument {
-                        name: "start-id".to_string(),
-                        description: "Starting slave ID".to_string(),
-                        required: false,
-                        default: Some("1".to_string()),
-                    },
-                    CliArgument {
-                        name: "end-id".to_string(),
-                        description: "Ending slave ID".to_string(),
-                        required: false,
-                        default: Some("247".to_string()),
-                    },
-                ],
-            },
-        ]
+        vec![CliCommand {
+            name: "scan-devices".to_string(),
+            description: "Scan for Modbus RTU devices on the bus".to_string(),
+            args: vec![
+                CliArgument {
+                    name: "start-id".to_string(),
+                    description: "Starting slave ID".to_string(),
+                    required: false,
+                    default: Some("1".to_string()),
+                },
+                CliArgument {
+                    name: "end-id".to_string(),
+                    description: "Ending slave ID".to_string(),
+                    required: false,
+                    default: Some("247".to_string()),
+                },
+            ],
+        }]
     }
-    
+
     fn documentation(&self) -> &str {
         r#"
 # Modbus RTU Protocol

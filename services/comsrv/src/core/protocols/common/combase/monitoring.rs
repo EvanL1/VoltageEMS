@@ -6,13 +6,12 @@
 //! - 诊断报告生成
 //! - 异常检测和告警
 
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::RwLock;
 use std::time::{Duration, Instant, SystemTime};
-use serde::{Serialize, Deserialize};
-use tracing::{warn, error, info};
-
+use tokio::sync::RwLock;
+use tracing::{error, info, warn};
 
 /// 健康状态等级
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -100,7 +99,7 @@ impl ResponseTimeStats {
 
         let mut sorted = self.samples.clone();
         sorted.sort_unstable();
-        
+
         let index = ((percentile / 100.0) * (sorted.len() - 1) as f64) as usize;
         sorted[index.min(sorted.len() - 1)] as f64
     }
@@ -109,7 +108,7 @@ impl ResponseTimeStats {
         if self.samples.is_empty() {
             return 0.0;
         }
-        
+
         self.samples.iter().sum::<u64>() as f64 / self.samples.len() as f64
     }
 }
@@ -149,11 +148,11 @@ impl RequestStats {
         } else {
             self.failed_requests += 1;
         }
-        
+
         let now = Instant::now();
         self.last_request_time = Some(now);
         self.request_times.push(now);
-        
+
         // 保留最近1分钟的请求记录
         let cutoff = now - Duration::from_secs(60);
         self.request_times.retain(|&time| time > cutoff);
@@ -163,13 +162,15 @@ impl RequestStats {
         if self.request_times.len() < 2 {
             return 0.0;
         }
-        
+
         let now = Instant::now();
         let one_minute_ago = now - Duration::from_secs(60);
-        let recent_requests = self.request_times.iter()
+        let recent_requests = self
+            .request_times
+            .iter()
             .filter(|&&time| time > one_minute_ago)
             .count();
-        
+
         recent_requests as f64 / 60.0 // 每秒请求数
     }
 
@@ -193,7 +194,7 @@ impl RequestStats {
 pub trait HealthChecker: Send + Sync + std::fmt::Debug {
     /// 执行健康检查
     async fn check_health(&self) -> HealthCheckResult;
-    
+
     /// 获取检查器名称
     fn name(&self) -> &str;
 }
@@ -214,8 +215,8 @@ impl std::fmt::Debug for ConnectionHealthChecker {
 }
 
 impl ConnectionHealthChecker {
-    pub fn new<F>(name: String, check_fn: F) -> Self 
-    where 
+    pub fn new<F>(name: String, check_fn: F) -> Self
+    where
         F: Fn() -> bool + Send + Sync + 'static,
     {
         Self {
@@ -267,25 +268,29 @@ pub struct PerformanceHealthChecker {
 /// 性能阈值配置
 #[derive(Debug, Clone)]
 pub struct PerformanceThresholds {
-    pub max_error_rate: f64,         // 最大错误率（百分比）
-    pub max_response_time_ms: f64,   // 最大响应时间（毫秒）
-    pub min_success_rate: f64,       // 最小成功率（百分比）
-    pub max_memory_usage_mb: f64,    // 最大内存使用（MB）
+    pub max_error_rate: f64,       // 最大错误率（百分比）
+    pub max_response_time_ms: f64, // 最大响应时间（毫秒）
+    pub min_success_rate: f64,     // 最小成功率（百分比）
+    pub max_memory_usage_mb: f64,  // 最大内存使用（MB）
 }
 
 impl Default for PerformanceThresholds {
     fn default() -> Self {
         Self {
-            max_error_rate: 5.0,        // 5%
+            max_error_rate: 5.0,          // 5%
             max_response_time_ms: 5000.0, // 5秒
-            min_success_rate: 95.0,     // 95%
-            max_memory_usage_mb: 1024.0, // 1GB
+            min_success_rate: 95.0,       // 95%
+            max_memory_usage_mb: 1024.0,  // 1GB
         }
     }
 }
 
 impl PerformanceHealthChecker {
-    pub fn new(name: String, monitoring: Arc<BasicMonitoring>, thresholds: PerformanceThresholds) -> Self {
+    pub fn new(
+        name: String,
+        monitoring: Arc<BasicMonitoring>,
+        thresholds: PerformanceThresholds,
+    ) -> Self {
         Self {
             name,
             monitoring,
@@ -310,21 +315,33 @@ impl HealthChecker for PerformanceHealthChecker {
             level = HealthLevel::Warning;
             messages.push(format!("错误率过高: {:.1}%", metrics.error_rate));
         }
-        details.insert("error_rate".to_string(), format!("{:.1}%", metrics.error_rate));
+        details.insert(
+            "error_rate".to_string(),
+            format!("{:.1}%", metrics.error_rate),
+        );
 
         // 检查响应时间
         if metrics.avg_response_time_ms > self.thresholds.max_response_time_ms {
             level = HealthLevel::Warning;
-            messages.push(format!("响应时间过长: {:.1}ms", metrics.avg_response_time_ms));
+            messages.push(format!(
+                "响应时间过长: {:.1}ms",
+                metrics.avg_response_time_ms
+            ));
         }
-        details.insert("avg_response_time_ms".to_string(), format!("{:.1}", metrics.avg_response_time_ms));
+        details.insert(
+            "avg_response_time_ms".to_string(),
+            format!("{:.1}", metrics.avg_response_time_ms),
+        );
 
         // 检查成功率
         if metrics.success_rate < self.thresholds.min_success_rate {
             level = HealthLevel::Critical;
             messages.push(format!("成功率过低: {:.1}%", metrics.success_rate));
         }
-        details.insert("success_rate".to_string(), format!("{:.1}%", metrics.success_rate));
+        details.insert(
+            "success_rate".to_string(),
+            format!("{:.1}%", metrics.success_rate),
+        );
 
         // 检查内存使用
         let memory_mb = metrics.memory_usage_bytes as f64 / 1024.0 / 1024.0;
@@ -432,29 +449,45 @@ impl AlertManager {
             // 检查条件
             let should_trigger = match &rule.condition {
                 AlertCondition::ErrorRateAbove(threshold) => metrics.error_rate > *threshold,
-                AlertCondition::ResponseTimeAbove(threshold) => metrics.avg_response_time_ms > *threshold,
+                AlertCondition::ResponseTimeAbove(threshold) => {
+                    metrics.avg_response_time_ms > *threshold
+                }
                 AlertCondition::SuccessRateBelow(threshold) => metrics.success_rate < *threshold,
                 AlertCondition::ConnectionDown => metrics.active_connections == 0,
             };
 
             if should_trigger {
                 rule.last_triggered = Some(now);
-                
+
                 let message = match &rule.condition {
-                    AlertCondition::ErrorRateAbove(threshold) => 
-                        format!("错误率 {:.1}% 超过阈值 {:.1}%", metrics.error_rate, threshold),
-                    AlertCondition::ResponseTimeAbove(threshold) => 
-                        format!("响应时间 {:.1}ms 超过阈值 {:.1}ms", metrics.avg_response_time_ms, threshold),
-                    AlertCondition::SuccessRateBelow(threshold) => 
-                        format!("成功率 {:.1}% 低于阈值 {:.1}%", metrics.success_rate, threshold),
-                    AlertCondition::ConnectionDown => 
-                        "连接已断开".to_string(),
+                    AlertCondition::ErrorRateAbove(threshold) => format!(
+                        "错误率 {:.1}% 超过阈值 {:.1}%",
+                        metrics.error_rate, threshold
+                    ),
+                    AlertCondition::ResponseTimeAbove(threshold) => format!(
+                        "响应时间 {:.1}ms 超过阈值 {:.1}ms",
+                        metrics.avg_response_time_ms, threshold
+                    ),
+                    AlertCondition::SuccessRateBelow(threshold) => format!(
+                        "成功率 {:.1}% 低于阈值 {:.1}%",
+                        metrics.success_rate, threshold
+                    ),
+                    AlertCondition::ConnectionDown => "连接已断开".to_string(),
                 };
 
                 let mut details = HashMap::new();
-                details.insert("error_rate".to_string(), format!("{:.1}%", metrics.error_rate));
-                details.insert("response_time_ms".to_string(), format!("{:.1}", metrics.avg_response_time_ms));
-                details.insert("success_rate".to_string(), format!("{:.1}%", metrics.success_rate));
+                details.insert(
+                    "error_rate".to_string(),
+                    format!("{:.1}%", metrics.error_rate),
+                );
+                details.insert(
+                    "response_time_ms".to_string(),
+                    format!("{:.1}", metrics.avg_response_time_ms),
+                );
+                details.insert(
+                    "success_rate".to_string(),
+                    format!("{:.1}%", metrics.success_rate),
+                );
 
                 let event = AlertEvent {
                     rule_name: rule.name.clone(),
@@ -465,7 +498,7 @@ impl AlertManager {
                 };
 
                 events.push(event.clone());
-                
+
                 // 限制事件数量
                 if events.len() > self.max_events {
                     events.remove(0);
@@ -484,11 +517,7 @@ impl AlertManager {
     /// 获取最近的告警事件
     pub async fn get_recent_events(&self, limit: usize) -> Vec<AlertEvent> {
         let events = self.events.read().await;
-        events.iter()
-            .rev()
-            .take(limit)
-            .cloned()
-            .collect()
+        events.iter().rev().take(limit).cloned().collect()
     }
 }
 
@@ -511,7 +540,7 @@ impl BasicMonitoring {
             let mut stats = self.request_stats.write().await;
             stats.add_request(success);
         }
-        
+
         {
             let mut response_stats = self.response_time_stats.write().await;
             response_stats.add_sample(response_time_ms);
@@ -537,8 +566,8 @@ impl BasicMonitoring {
             p99_response_time_ms: response_stats.get_percentile(99.0),
             error_rate: request_stats.get_error_rate(),
             uptime_seconds: self.start_time.elapsed().as_secs(),
-            active_connections: 1, // 简化实现
-            memory_usage_bytes: 0, // 需要具体实现
+            active_connections: 1,  // 简化实现
+            memory_usage_bytes: 0,  // 需要具体实现
             cpu_usage_percent: 0.0, // 需要具体实现
         }
     }
@@ -559,19 +588,40 @@ impl BasicMonitoring {
     /// 获取系统状态
     pub async fn get_system_status(&self) -> HashMap<String, String> {
         let mut status = HashMap::new();
-        
+
         status.insert("component".to_string(), self.component_name.clone());
-        status.insert("uptime_seconds".to_string(), self.start_time.elapsed().as_secs().to_string());
-        
+        status.insert(
+            "uptime_seconds".to_string(),
+            self.start_time.elapsed().as_secs().to_string(),
+        );
+
         let metrics = self.get_performance_metrics().await;
-        status.insert("request_rate".to_string(), format!("{:.2}", metrics.request_rate));
-        status.insert("success_rate".to_string(), format!("{:.1}%", metrics.success_rate));
-        status.insert("avg_response_time_ms".to_string(), format!("{:.1}", metrics.avg_response_time_ms));
-        status.insert("error_rate".to_string(), format!("{:.1}%", metrics.error_rate));
+        status.insert(
+            "request_rate".to_string(),
+            format!("{:.2}", metrics.request_rate),
+        );
+        status.insert(
+            "success_rate".to_string(),
+            format!("{:.1}%", metrics.success_rate),
+        );
+        status.insert(
+            "avg_response_time_ms".to_string(),
+            format!("{:.1}", metrics.avg_response_time_ms),
+        );
+        status.insert(
+            "error_rate".to_string(),
+            format!("{:.1}%", metrics.error_rate),
+        );
 
         let health_results = self.health_check().await;
-        let healthy_count = health_results.iter().filter(|r| r.level == HealthLevel::Healthy).count();
-        status.insert("health_checks_passed".to_string(), format!("{}/{}", healthy_count, health_results.len()));
+        let healthy_count = health_results
+            .iter()
+            .filter(|r| r.level == HealthLevel::Healthy)
+            .count();
+        status.insert(
+            "health_checks_passed".to_string(),
+            format!("{}/{}", healthy_count, health_results.len()),
+        );
 
         status
     }
@@ -590,15 +640,15 @@ impl BasicMonitoring {
 
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(Duration::from_secs(60));
-            
+
             loop {
                 interval.tick().await;
-                
+
                 // 计算当前指标
                 let metrics = {
                     let req_stats = request_stats.read().await;
                     let resp_stats = response_stats.read().await;
-                    
+
                     PerformanceMetrics {
                         request_rate: req_stats.get_request_rate(),
                         success_rate: req_stats.get_success_rate(),
@@ -612,7 +662,7 @@ impl BasicMonitoring {
                         cpu_usage_percent: 0.0,
                     }
                 };
-                
+
                 // 检查告警
                 alert_manager.check_alerts(&metrics).await;
             }
@@ -627,12 +677,12 @@ mod tests {
     #[tokio::test]
     async fn test_basic_monitoring() {
         let monitoring = BasicMonitoring::new("test_component".to_string());
-        
+
         // 记录一些请求
         monitoring.record_request(true, 100).await;
         monitoring.record_request(true, 200).await;
         monitoring.record_request(false, 500).await;
-        
+
         let metrics = monitoring.get_performance_metrics().await;
         assert_eq!(metrics.success_rate, 66.66666666666667); // 2/3 * 100
         assert_eq!(metrics.error_rate, 33.333333333333336); // 1/3 * 100
@@ -640,11 +690,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_health_checker() {
-        let checker = ConnectionHealthChecker::new(
-            "test_connection".to_string(),
-            || true
-        );
-        
+        let checker = ConnectionHealthChecker::new("test_connection".to_string(), || true);
+
         let result = checker.check_health().await;
         assert_eq!(result.level, HealthLevel::Healthy);
         assert_eq!(result.component, "test_connection");
@@ -653,7 +700,7 @@ mod tests {
     #[tokio::test]
     async fn test_alert_manager() {
         let alert_manager = AlertManager::new(100);
-        
+
         let rule = AlertRule {
             name: "high_error_rate".to_string(),
             condition: AlertCondition::ErrorRateAbove(10.0),
@@ -661,16 +708,16 @@ mod tests {
             cooldown: Duration::from_secs(60),
             last_triggered: None,
         };
-        
+
         alert_manager.add_rule(rule).await;
-        
+
         let metrics = PerformanceMetrics {
             error_rate: 15.0, // 超过阈值
             ..Default::default()
         };
-        
+
         alert_manager.check_alerts(&metrics).await;
-        
+
         let events = alert_manager.get_recent_events(10).await;
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].rule_name, "high_error_rate");

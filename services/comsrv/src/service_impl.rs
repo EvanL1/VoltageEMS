@@ -2,9 +2,9 @@
 // Contains concrete functions for starting, shutting down, and cleaning up the
 // communication service.
 
-use tracing::{error, info, warn};
 use std::sync::Arc;
 use tokio::sync::RwLock;
+use tracing::{error, info, warn};
 
 use crate::core::config::ConfigManager;
 use crate::core::protocols::common::ProtocolFactory;
@@ -19,12 +19,12 @@ pub async fn start_communication_service(
     // Check if Redis is enabled and initialize Redis storage
     if config_manager.is_redis_enabled() {
         info!("Redis is enabled, initializing Redis storage...");
-        
+
         let redis_config = config_manager.service().redis.clone();
         match crate::core::storage::redis_storage::RedisStore::from_config(&redis_config).await {
             Ok(Some(redis_store)) => {
                 info!("Redis storage initialized successfully");
-                
+
                 // Enable Redis storage for the protocol factory
                 {
                     let mut factory_guard = factory.write().await;
@@ -34,7 +34,7 @@ pub async fn start_communication_service(
                         info!("Redis storage enabled for ProtocolFactory");
                     }
                 }
-                
+
                 // Note: ConfigManager Redis storage would be enabled separately if needed
                 // This would require making config_manager mutable, which we avoid here
                 // to maintain the current API compatibility
@@ -105,13 +105,17 @@ pub async fn start_communication_service(
     let stats = factory_guard.get_channel_stats().await;
     info!(
         "Communication service started with {} channels (Protocol distribution: {:?}){}",
-        stats.total_channels, 
+        stats.total_channels,
         stats.protocol_counts,
-        if factory_guard.is_redis_enabled() { " [Redis storage enabled]" } else { " [Memory storage only]" }
+        if factory_guard.is_redis_enabled() {
+            " [Redis storage enabled]"
+        } else {
+            " [Memory storage only]"
+        }
     );
-    
+
     drop(factory_guard);
-    
+
     // Sync channel metadata if Redis is enabled
     let factory_guard = factory.read().await;
     if factory_guard.is_redis_enabled() {

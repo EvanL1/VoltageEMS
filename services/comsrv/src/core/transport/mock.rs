@@ -11,7 +11,9 @@ use std::time::{Duration, SystemTime};
 use tokio::sync::RwLock;
 use tracing::debug;
 
-use super::traits::{ConnectionState, Transport, TransportBuilder, TransportConfig, TransportError, TransportStats};
+use super::traits::{
+    ConnectionState, Transport, TransportBuilder, TransportConfig, TransportError, TransportStats,
+};
 
 /// Mock transport configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -59,7 +61,9 @@ impl TransportConfig for MockTransportConfig {
 
     fn validate(&self) -> Result<(), TransportError> {
         if self.name.is_empty() {
-            return Err(TransportError::ConfigError("Name cannot be empty".to_string()));
+            return Err(TransportError::ConfigError(
+                "Name cannot be empty".to_string(),
+            ));
         }
         Ok(())
     }
@@ -170,22 +174,27 @@ impl Transport for MockTransport {
         state.stats.connection_state = ConnectionState::Connecting;
         drop(state);
 
-        debug!("Mock transport connecting with delay: {:?}", self.config.connection_delay);
-        
+        debug!(
+            "Mock transport connecting with delay: {:?}",
+            self.config.connection_delay
+        );
+
         // Simulate connection delay
         tokio::time::sleep(self.config.connection_delay).await;
 
         let mut state = self.state.write().await;
-        
+
         if self.config.should_fail_connection {
             state.stats.record_failed_connection();
-            return Err(TransportError::ConnectionFailed("Mock connection failure".to_string()));
+            return Err(TransportError::ConnectionFailed(
+                "Mock connection failure".to_string(),
+            ));
         }
 
         state.connected = true;
         state.stats.record_successful_connection();
         debug!("Mock transport connected successfully");
-        
+
         Ok(())
     }
 
@@ -201,7 +210,7 @@ impl Transport for MockTransport {
 
     async fn send(&mut self, data: &[u8]) -> Result<usize, TransportError> {
         let mut state = self.state.write().await;
-        
+
         if !state.connected {
             return Err(TransportError::SendFailed("Not connected".to_string()));
         }
@@ -226,24 +235,26 @@ impl Transport for MockTransport {
     }
 
     async fn receive(
-        &mut self, 
-        buffer: &mut [u8], 
-        _timeout: Option<Duration>
+        &mut self,
+        buffer: &mut [u8],
+        _timeout: Option<Duration>,
     ) -> Result<usize, TransportError> {
         let mut state = self.state.write().await;
-        
+
         if !state.connected {
             return Err(TransportError::ReceiveFailed("Not connected".to_string()));
         }
 
         if self.config.should_fail_receive {
             state.stats.connection_state = ConnectionState::Error;
-            return Err(TransportError::ReceiveFailed("Mock receive failure".to_string()));
+            return Err(TransportError::ReceiveFailed(
+                "Mock receive failure".to_string(),
+            ));
         }
 
         if let Some(data) = state.receive_queue.pop_front() {
             drop(state);
-            
+
             // Simulate receive delay
             tokio::time::sleep(self.config.receive_delay).await;
 
@@ -274,7 +285,7 @@ impl Transport for MockTransport {
     async fn stats(&self) -> TransportStats {
         let state = self.state.read().await;
         let mut stats = state.stats.clone();
-        
+
         // Update uptime
         if let Ok(elapsed) = self.start_time.elapsed() {
             stats.uptime = elapsed;
@@ -291,19 +302,49 @@ impl Transport for MockTransport {
     async fn diagnostics(&self) -> std::collections::HashMap<String, String> {
         let mut diag = std::collections::HashMap::new();
         let state = self.state.read().await;
-        
-        diag.insert("transport_type".to_string(), self.transport_type().to_string());
+
+        diag.insert(
+            "transport_type".to_string(),
+            self.transport_type().to_string(),
+        );
         diag.insert("name".to_string(), self.name().to_string());
         diag.insert("connected".to_string(), state.connected.to_string());
-        diag.insert("connection_state".to_string(), format!("{:?}", state.stats.connection_state));
-        diag.insert("connection_delay_ms".to_string(), self.config.connection_delay.as_millis().to_string());
-        diag.insert("send_delay_ms".to_string(), self.config.send_delay.as_millis().to_string());
-        diag.insert("receive_delay_ms".to_string(), self.config.receive_delay.as_millis().to_string());
-        diag.insert("should_fail_connection".to_string(), self.config.should_fail_connection.to_string());
-        diag.insert("should_fail_send".to_string(), self.config.should_fail_send.to_string());
-        diag.insert("should_fail_receive".to_string(), self.config.should_fail_receive.to_string());
-        diag.insert("receive_queue_length".to_string(), state.receive_queue.len().to_string());
-        diag.insert("sent_data_count".to_string(), state.sent_data.len().to_string());
+        diag.insert(
+            "connection_state".to_string(),
+            format!("{:?}", state.stats.connection_state),
+        );
+        diag.insert(
+            "connection_delay_ms".to_string(),
+            self.config.connection_delay.as_millis().to_string(),
+        );
+        diag.insert(
+            "send_delay_ms".to_string(),
+            self.config.send_delay.as_millis().to_string(),
+        );
+        diag.insert(
+            "receive_delay_ms".to_string(),
+            self.config.receive_delay.as_millis().to_string(),
+        );
+        diag.insert(
+            "should_fail_connection".to_string(),
+            self.config.should_fail_connection.to_string(),
+        );
+        diag.insert(
+            "should_fail_send".to_string(),
+            self.config.should_fail_send.to_string(),
+        );
+        diag.insert(
+            "should_fail_receive".to_string(),
+            self.config.should_fail_receive.to_string(),
+        );
+        diag.insert(
+            "receive_queue_length".to_string(),
+            state.receive_queue.len().to_string(),
+        );
+        diag.insert(
+            "sent_data_count".to_string(),
+            state.sent_data.len().to_string(),
+        );
 
         diag
     }
@@ -362,12 +403,12 @@ mod tests {
     async fn test_mock_transport_connect_disconnect() {
         let config = MockTransportConfig::default();
         let mut transport = MockTransport::new(config).unwrap();
-        
+
         assert!(!transport.is_connected().await);
-        
+
         assert!(transport.connect().await.is_ok());
         assert!(transport.is_connected().await);
-        
+
         assert!(transport.disconnect().await.is_ok());
         assert!(!transport.is_connected().await);
     }
@@ -376,23 +417,23 @@ mod tests {
     async fn test_mock_transport_send_receive() {
         let config = MockTransportConfig::default();
         let mut transport = MockTransport::new(config).unwrap();
-        
+
         // Connect first
         transport.connect().await.unwrap();
-        
+
         // Add data to receive queue
         transport.add_receive_data(vec![1, 2, 3, 4]).await;
-        
+
         // Send data
         let send_data = vec![0xAA, 0xBB];
         let bytes_sent = transport.send(&send_data).await.unwrap();
         assert_eq!(bytes_sent, 2);
-        
+
         // Verify sent data
         let sent_data = transport.get_sent_data().await;
         assert_eq!(sent_data.len(), 1);
         assert_eq!(sent_data[0], send_data);
-        
+
         // Receive data
         let mut buffer = [0u8; 10];
         let bytes_received = transport.receive(&mut buffer, None).await.unwrap();
@@ -404,9 +445,9 @@ mod tests {
     async fn test_mock_transport_connection_failure() {
         let mut config = MockTransportConfig::default();
         config.should_fail_connection = true;
-        
+
         let mut transport = MockTransport::new(config).unwrap();
-        
+
         let result = transport.connect().await;
         assert!(result.is_err());
         assert!(!transport.is_connected().await);
@@ -416,10 +457,10 @@ mod tests {
     async fn test_mock_transport_send_failure() {
         let mut config = MockTransportConfig::default();
         config.should_fail_send = true;
-        
+
         let mut transport = MockTransport::new(config).unwrap();
         transport.connect().await.unwrap();
-        
+
         let send_data = vec![1, 2, 3];
         let result = transport.send(&send_data).await;
         assert!(result.is_err());
@@ -429,12 +470,12 @@ mod tests {
     async fn test_mock_transport_stats() {
         let config = MockTransportConfig::default();
         let mut transport = MockTransport::new(config).unwrap();
-        
+
         let stats = transport.stats().await;
         assert_eq!(stats.connection_attempts, 0);
         assert_eq!(stats.bytes_sent, 0);
         assert_eq!(stats.bytes_received, 0);
-        
+
         transport.connect().await.unwrap();
         let stats = transport.stats().await;
         assert_eq!(stats.connection_attempts, 1);

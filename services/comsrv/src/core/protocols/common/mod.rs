@@ -5,18 +5,20 @@
 
 // Core modules
 pub mod data_types;
-pub mod traits;
 pub mod manager;
 pub mod redis;
+pub mod traits;
 
 // Legacy combase module (to be removed after migration)
 pub mod combase;
 
 // Re-export commonly used types
 pub use data_types::*;
-pub use traits::{ComBase, FourTelemetryOperations, ConnectionManager, ConfigValidator, ProtocolPacketParser};
 pub use manager::{OptimizedPointManager, PointManagerStats};
 pub use redis::{RedisBatchSync, RedisBatchSyncConfig, RedisSyncStats};
+pub use traits::{
+    ComBase, ConfigValidator, ConnectionManager, FourTelemetryOperations, ProtocolPacketParser,
+};
 
 // Legacy re-exports for backward compatibility
 pub use combase::ProtocolFactory;

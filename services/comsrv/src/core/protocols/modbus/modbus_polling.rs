@@ -1,5 +1,5 @@
 //! Modbus-specific polling engine
-//! 
+//!
 //! This module implements a polling mechanism specifically designed for Modbus protocol.
 //! Unlike generic polling, this takes advantage of Modbus-specific features like:
 //! - Batch reading optimization for consecutive registers
@@ -9,12 +9,12 @@
 
 use crate::core::config::types::protocol::TelemetryType;
 use crate::core::protocols::common::data_types::TelemetryType as CommonTelemetryType;
+use byteorder::{BigEndian, ByteOrder, LittleEndian};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tokio::time::{interval, Duration};
 use tracing::{debug, error, info, warn};
-use byteorder::{BigEndian, LittleEndian, ByteOrder};
 
 /// Simplified point mapping for Modbus
 /// Only contains essential fields: point_id and telemetry type
@@ -41,10 +41,7 @@ pub struct ModbusPoint {
 }
 
 // Re-export configuration types from config module
-pub use crate::core::config::types::channel_parameters::{
-    ModbusPollingConfig,
-    SlavePollingConfig,
-};
+pub use crate::core::config::types::channel_parameters::{ModbusPollingConfig, SlavePollingConfig};
 
 /// Modbus polling statistics
 #[derive(Debug, Clone, Default)]
@@ -101,7 +98,10 @@ impl ModbusPollingEngine {
     }
 
     /// Create a new Modbus polling engine with custom batch config
-    pub fn new_with_batch_config(config: ModbusPollingConfig, batch_config: ModbusBatchConfig) -> Self {
+    pub fn new_with_batch_config(
+        config: ModbusPollingConfig,
+        batch_config: ModbusBatchConfig,
+    ) -> Self {
         Self {
             config,
             batch_config,
@@ -114,7 +114,10 @@ impl ModbusPollingEngine {
     }
 
     /// Set Redis manager for storing polled data
-    pub fn set_redis_manager(&mut self, redis_manager: Arc<crate::core::protocols::common::redis::RedisBatchSync>) {
+    pub fn set_redis_manager(
+        &mut self,
+        redis_manager: Arc<crate::core::protocols::common::redis::RedisBatchSync>,
+    ) {
         self.redis_manager = Some(redis_manager);
     }
 
@@ -134,16 +137,32 @@ impl ModbusPollingEngine {
     }
 
     /// Start polling for all configured slaves
-    pub async fn start<F>(&self, read_callback: F) -> Result<(), Box<dyn std::error::Error + Send + Sync>>
+    pub async fn start<F>(
+        &self,
+        read_callback: F,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>>
     where
-        F: Fn(u8, u8, u16, u16) -> futures::future::BoxFuture<'static, Result<Vec<u16>, Box<dyn std::error::Error + Send + Sync>>> 
-            + Send + Sync + 'static + Clone,
+        F: Fn(
+                u8,
+                u8,
+                u16,
+                u16,
+            ) -> futures::future::BoxFuture<
+                'static,
+                Result<Vec<u16>, Box<dyn std::error::Error + Send + Sync>>,
+            >
+            + Send
+            + Sync
+            + 'static
+            + Clone,
     {
         *self.is_running.write().await = true;
         let mut handles = vec![];
 
         for (&slave_id, points) in &self.points_by_slave {
-            let interval_ms = self.config.slave_configs
+            let interval_ms = self
+                .config
+                .slave_configs
                 .get(&slave_id)
                 .and_then(|cfg| cfg.interval_ms)
                 .unwrap_or(self.config.default_interval_ms);
@@ -162,42 +181,60 @@ impl ModbusPollingEngine {
 
                 while *is_running.read().await {
                     ticker.tick().await;
-                    
+
                     let poll_start = std::time::Instant::now();
                     let mut points_read = 0;
                     let mut poll_success = true;
-                    
+
                     if enable_batch {
                         // Batch reading optimization
                         let batches = optimize_batch_reading(&points, &batch_config, slave_id);
                         for batch in batches {
-                            match poll_batch(slave_id, &batch, &read_cb, &redis_manager, &stats).await {
+                            match poll_batch(slave_id, &batch, &read_cb, &redis_manager, &stats)
+                                .await
+                            {
                                 Ok(count) => points_read += count,
                                 Err(e) => {
                                     let err_msg = e.to_string();
                                     drop(e); // Explicitly drop e to satisfy Send requirement
-                                    error!("Failed to poll batch for slave {}: {}", slave_id, err_msg);
+                                    error!(
+                                        "Failed to poll batch for slave {}: {}",
+                                        slave_id, err_msg
+                                    );
                                     poll_success = false;
-                                    update_slave_stats(&stats, slave_id, false, 0.0, Some(err_msg)).await;
+                                    update_slave_stats(&stats, slave_id, false, 0.0, Some(err_msg))
+                                        .await;
                                 }
                             }
                         }
                     } else {
                         // Individual point reading
                         for point in &points {
-                            match poll_single_point(slave_id, point, &read_cb, &redis_manager, &stats).await {
+                            match poll_single_point(
+                                slave_id,
+                                point,
+                                &read_cb,
+                                &redis_manager,
+                                &stats,
+                            )
+                            .await
+                            {
                                 Ok(_) => points_read += 1,
                                 Err(e) => {
                                     let err_msg = e.to_string();
                                     drop(e); // Explicitly drop e to satisfy Send requirement
-                                    error!("Failed to poll point {} for slave {}: {}", point.point_id, slave_id, err_msg);
+                                    error!(
+                                        "Failed to poll point {} for slave {}: {}",
+                                        point.point_id, slave_id, err_msg
+                                    );
                                     poll_success = false;
-                                    update_slave_stats(&stats, slave_id, false, 0.0, Some(err_msg)).await;
+                                    update_slave_stats(&stats, slave_id, false, 0.0, Some(err_msg))
+                                        .await;
                                 }
                             }
                         }
                     }
-                    
+
                     let poll_duration = poll_start.elapsed().as_millis() as f64;
                     update_global_stats(&stats, poll_success, points_read, poll_duration).await;
                     update_slave_stats(&stats, slave_id, poll_success, poll_duration, None).await;
@@ -208,37 +245,40 @@ impl ModbusPollingEngine {
         }
 
         *self.task_handles.write().await = handles;
-        info!("Modbus polling engine started for {} slaves", self.points_by_slave.len());
+        info!(
+            "Modbus polling engine started for {} slaves",
+            self.points_by_slave.len()
+        );
         Ok(())
     }
 
     /// Stop polling
     pub async fn stop(&self) {
         *self.is_running.write().await = false;
-        
+
         let handles = std::mem::take(&mut *self.task_handles.write().await);
         for handle in handles {
             let _ = handle.await;
         }
-        
+
         info!("Modbus polling engine stopped");
     }
-    
+
     /// Get polling statistics
     pub async fn get_stats(&self) -> ModbusPollingStats {
         self.stats.read().await.clone()
     }
-    
+
     /// Reset polling statistics
     pub async fn reset_stats(&self) {
         *self.stats.write().await = ModbusPollingStats::default();
     }
-    
+
     /// Check if polling is active
     pub async fn is_running(&self) -> bool {
         *self.is_running.read().await
     }
-    
+
     /// Get points by slave ID
     pub fn get_points_by_slave(&self, slave_id: u8) -> Option<&Vec<ModbusPoint>> {
         self.points_by_slave.get(&slave_id)
@@ -271,7 +311,7 @@ pub struct DeviceLimit {
 impl Default for ModbusBatchConfig {
     fn default() -> Self {
         Self {
-            max_gap: 10, // Allow up to 10 register gap
+            max_gap: 10,         // Allow up to 10 register gap
             max_batch_size: 125, // Standard Modbus limit
             merge_function_codes: false,
             device_limits: std::collections::HashMap::new(),
@@ -281,7 +321,7 @@ impl Default for ModbusBatchConfig {
 
 /// Optimize points into batches for efficient reading
 fn optimize_batch_reading(
-    points: &[ModbusPoint], 
+    points: &[ModbusPoint],
     config: &ModbusBatchConfig,
     slave_id: u8,
 ) -> Vec<Vec<ModbusPoint>> {
@@ -289,7 +329,7 @@ fn optimize_batch_reading(
     let mut current_batch: Vec<ModbusPoint> = Vec::new();
     let mut last_fc = 0u8;
     let mut last_addr = 0u16;
-    
+
     // Get device-specific limits if available
     let device_limit = config.device_limits.get(&slave_id);
     let max_batch = device_limit
@@ -307,10 +347,11 @@ fn optimize_batch_reading(
             // Check if adding this point would exceed the batch size
             let first_addr = current_batch[0].register_address;
             let last_point = &current_batch[current_batch.len() - 1];
-            let _current_span = last_point.register_address - first_addr + last_point.register_count;
+            let _current_span =
+                last_point.register_address - first_addr + last_point.register_count;
             let new_span = point.register_address - first_addr + point.register_count;
             let span_too_large = new_span > max_batch;
-            
+
             fc_changed || gap_too_large || batch_full || span_too_large
         };
 
@@ -320,8 +361,10 @@ fn optimize_batch_reading(
                 point.function_code != last_fc,
                 point.register_address.saturating_sub(last_addr + 1),
                 current_batch.len(),
-                if current_batch.is_empty() { 0 } else { 
-                    point.register_address - current_batch[0].register_address + 1 
+                if current_batch.is_empty() {
+                    0
+                } else {
+                    point.register_address - current_batch[0].register_address + 1
                 }
             );
             batches.push(current_batch);
@@ -345,7 +388,7 @@ fn optimize_batch_reading(
     } else {
         0.0
     };
-    
+
     debug!(
         "Batch optimization: {} points → {} batches ({}% reduction)",
         total_points, total_batches, optimization_ratio as i32
@@ -359,13 +402,16 @@ fn parse_modbus_value(registers: &[u16], data_format: &str, byte_order: Option<&
     match data_format {
         "float32" | "float32_be" | "float32_le" => {
             if registers.len() < 2 {
-                warn!("Not enough registers for float32: {} registers", registers.len());
+                warn!(
+                    "Not enough registers for float32: {} registers",
+                    registers.len()
+                );
                 return 0.0;
             }
-            
+
             // Convert two u16 registers to bytes
             let mut bytes = [0u8; 4];
-            
+
             // Handle byte order (default to big-endian for Modbus)
             match byte_order.unwrap_or("ABCD") {
                 "ABCD" => {
@@ -373,25 +419,25 @@ fn parse_modbus_value(registers: &[u16], data_format: &str, byte_order: Option<&
                     BigEndian::write_u16(&mut bytes[0..2], registers[0]);
                     BigEndian::write_u16(&mut bytes[2..4], registers[1]);
                     BigEndian::read_f32(&bytes) as f64
-                },
+                }
                 "DCBA" => {
                     // Little-endian with swapped registers
                     BigEndian::write_u16(&mut bytes[0..2], registers[1]);
                     BigEndian::write_u16(&mut bytes[2..4], registers[0]);
                     LittleEndian::read_f32(&bytes) as f64
-                },
+                }
                 "BADC" => {
                     // Middle-endian (swapped bytes within registers)
                     LittleEndian::write_u16(&mut bytes[0..2], registers[0]);
                     LittleEndian::write_u16(&mut bytes[2..4], registers[1]);
                     BigEndian::read_f32(&bytes) as f64
-                },
+                }
                 "CDAB" => {
                     // Middle-endian (swapped registers)
                     BigEndian::write_u16(&mut bytes[0..2], registers[1]);
                     BigEndian::write_u16(&mut bytes[2..4], registers[0]);
                     BigEndian::read_f32(&bytes) as f64
-                },
+                }
                 _ => {
                     // Default to big-endian
                     BigEndian::write_u16(&mut bytes[0..2], registers[0]);
@@ -399,38 +445,42 @@ fn parse_modbus_value(registers: &[u16], data_format: &str, byte_order: Option<&
                     BigEndian::read_f32(&bytes) as f64
                 }
             }
-        },
+        }
         "uint32" | "uint32_be" => {
             if registers.len() < 2 {
                 return 0.0;
             }
             ((registers[0] as u32) << 16 | registers[1] as u32) as f64
-        },
+        }
         "int32" | "int32_be" => {
             if registers.len() < 2 {
                 return 0.0;
             }
             let val = ((registers[0] as u32) << 16 | registers[1] as u32) as i32;
             val as f64
-        },
+        }
         "uint16" => {
             if registers.is_empty() {
                 return 0.0;
             }
             registers[0] as f64
-        },
+        }
         "int16" => {
             if registers.is_empty() {
                 return 0.0;
             }
             registers[0] as i16 as f64
-        },
+        }
         "bool" => {
             if registers.is_empty() {
                 return 0.0;
             }
-            if registers[0] != 0 { 1.0 } else { 0.0 }
-        },
+            if registers[0] != 0 {
+                1.0
+            } else {
+                0.0
+            }
+        }
         _ => {
             // Default to uint16
             if registers.is_empty() {
@@ -450,7 +500,15 @@ async fn poll_batch<F>(
     _stats: &Arc<RwLock<ModbusPollingStats>>,
 ) -> Result<usize, Box<dyn std::error::Error + Send + Sync>>
 where
-    F: Fn(u8, u8, u16, u16) -> futures::future::BoxFuture<'static, Result<Vec<u16>, Box<dyn std::error::Error + Send + Sync>>>,
+    F: Fn(
+        u8,
+        u8,
+        u16,
+        u16,
+    ) -> futures::future::BoxFuture<
+        'static,
+        Result<Vec<u16>, Box<dyn std::error::Error + Send + Sync>>,
+    >,
 {
     if batch.is_empty() {
         return Ok(0);
@@ -471,25 +529,25 @@ where
         Ok(values) => {
             let mut point_data_list = Vec::new();
             let mut points_read = 0;
-            
+
             // Map values back to points
             for point in batch {
                 let offset = (point.register_address - start_addr) as usize;
                 let reg_count = point.register_count as usize;
-                
+
                 if offset + reg_count <= values.len() {
                     // Extract the required registers for this point
                     let point_registers = &values[offset..offset + reg_count];
-                    
+
                     // Parse the value according to data format
                     let value = parse_modbus_value(
-                        point_registers, 
-                        &point.data_format, 
-                        point.byte_order.as_deref()
+                        point_registers,
+                        &point.data_format,
+                        point.byte_order.as_deref(),
                     );
-                    
+
                     let scaled_value = point.scale_factor.map(|s| value * s).unwrap_or(value);
-                    
+
                     let point_data = crate::core::protocols::common::data_types::PointData {
                         id: point.point_id.clone(),
                         name: format!("Point_{}", point.point_id),
@@ -505,20 +563,20 @@ where
                         }),
                         channel_id: None, // Will be set by Redis sync if configured
                     };
-                    
+
                     point_data_list.push(point_data);
                     points_read += 1;
                     debug!("Point {} value: {}", point.point_id, scaled_value);
                 }
             }
-            
+
             // Store in Redis if available
             if let Some(redis) = redis_manager {
                 if let Err(e) = redis.batch_update_values(point_data_list).await {
                     warn!("Failed to store batch data in Redis: {}", e);
                 }
             }
-            
+
             Ok(points_read)
         }
         Err(e) => {
@@ -537,25 +595,40 @@ async fn poll_single_point<F>(
     _stats: &Arc<RwLock<ModbusPollingStats>>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>>
 where
-    F: Fn(u8, u8, u16, u16) -> futures::future::BoxFuture<'static, Result<Vec<u16>, Box<dyn std::error::Error + Send + Sync>>>,
+    F: Fn(
+        u8,
+        u8,
+        u16,
+        u16,
+    ) -> futures::future::BoxFuture<
+        'static,
+        Result<Vec<u16>, Box<dyn std::error::Error + Send + Sync>>,
+    >,
 {
     debug!(
         "Reading point {} from slave {} fc {} addr {}",
         point.point_id, slave_id, point.function_code, point.register_address
     );
 
-    match read_callback(slave_id, point.function_code, point.register_address, point.register_count).await {
+    match read_callback(
+        slave_id,
+        point.function_code,
+        point.register_address,
+        point.register_count,
+    )
+    .await
+    {
         Ok(values) => {
             if values.len() >= point.register_count as usize {
                 // Parse the value according to data format
                 let value = parse_modbus_value(
-                    &values[..point.register_count as usize], 
-                    &point.data_format, 
-                    point.byte_order.as_deref()
+                    &values[..point.register_count as usize],
+                    &point.data_format,
+                    point.byte_order.as_deref(),
                 );
-                
+
                 let scaled_value = point.scale_factor.map(|s| value * s).unwrap_or(value);
-                
+
                 let point_data = crate::core::protocols::common::data_types::PointData {
                     id: point.point_id.clone(),
                     name: format!("Point_{}", point.point_id),
@@ -571,20 +644,23 @@ where
                     }),
                     channel_id: None, // Will be set by Redis sync if configured
                 };
-                
+
                 // Store in Redis if available
                 if let Some(redis) = redis_manager {
                     if let Err(e) = redis.update_value(point_data).await {
                         warn!("Failed to store point data in Redis: {}", e);
                     }
                 }
-                
+
                 debug!("Point {} value: {}", point.point_id, scaled_value);
             }
             Ok(())
         }
         Err(e) => {
-            warn!("Failed to read point {} from slave {}: {}", point.point_id, slave_id, e);
+            warn!(
+                "Failed to read point {} from slave {}: {}",
+                point.point_id, slave_id, e
+            );
             Err(e)
         }
     }
@@ -599,18 +675,18 @@ async fn update_global_stats(
 ) {
     let mut stats = _stats.write().await;
     stats.total_polls += 1;
-    
+
     if success {
         stats.successful_polls += 1;
         stats.total_points_read += points_read as u64;
     } else {
         stats.failed_polls += 1;
     }
-    
+
     // Update average poll time
     let total_time = stats.average_poll_time_ms * (stats.total_polls - 1) as f64 + duration_ms;
     stats.average_poll_time_ms = total_time / stats.total_polls as f64;
-    
+
     stats.last_poll_time = Some(chrono::Utc::now());
 }
 
@@ -623,10 +699,13 @@ async fn update_slave_stats(
     error: Option<String>,
 ) {
     let mut stats = _stats.write().await;
-    let slave_stats = stats.slave_stats.entry(slave_id).or_insert_with(SlavePollingStats::default);
-    
+    let slave_stats = stats
+        .slave_stats
+        .entry(slave_id)
+        .or_insert_with(SlavePollingStats::default);
+
     slave_stats.total_requests += 1;
-    
+
     if success {
         slave_stats.successful_requests += 1;
         slave_stats.last_error = None;
@@ -636,9 +715,10 @@ async fn update_slave_stats(
             slave_stats.last_error = Some(err);
         }
     }
-    
+
     // Update average response time
-    let total_time = slave_stats.average_response_time_ms * (slave_stats.total_requests - 1) as f64 + duration_ms;
+    let total_time = slave_stats.average_response_time_ms * (slave_stats.total_requests - 1) as f64
+        + duration_ms;
     slave_stats.average_response_time_ms = total_time / slave_stats.total_requests as f64;
 }
 
@@ -755,12 +835,15 @@ mod tests {
         }
 
         let mut config = ModbusBatchConfig::default();
-        config.device_limits.insert(1, DeviceLimit {
-            max_pdu_size: 253,
-            max_registers_per_read: 50,
-            max_coils_per_read: 2000,
-        });
-        
+        config.device_limits.insert(
+            1,
+            DeviceLimit {
+                max_pdu_size: 253,
+                max_registers_per_read: 50,
+                max_coils_per_read: 2000,
+            },
+        );
+
         let batches = optimize_batch_reading(&points, &config, 1);
         // Should split into 4 batches (200 / 50)
         assert_eq!(batches.len(), 4);

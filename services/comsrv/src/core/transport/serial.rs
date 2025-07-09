@@ -12,7 +12,9 @@ use tokio::time::timeout;
 use tokio_serial::{SerialPortBuilderExt, SerialStream};
 use tracing::{debug, error, info, warn};
 
-use super::traits::{ConnectionState, Transport, TransportBuilder, TransportConfig, TransportError, TransportStats};
+use super::traits::{
+    ConnectionState, Transport, TransportBuilder, TransportConfig, TransportError, TransportStats,
+};
 
 /// Serial port configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -63,31 +65,45 @@ impl TransportConfig for SerialTransportConfig {
 
     fn validate(&self) -> Result<(), TransportError> {
         if self.port.is_empty() {
-            return Err(TransportError::ConfigError("Port path cannot be empty".to_string()));
+            return Err(TransportError::ConfigError(
+                "Port path cannot be empty".to_string(),
+            ));
         }
 
         if self.baud_rate == 0 {
-            return Err(TransportError::ConfigError("Baud rate must be greater than zero".to_string()));
+            return Err(TransportError::ConfigError(
+                "Baud rate must be greater than zero".to_string(),
+            ));
         }
 
         if ![5, 6, 7, 8].contains(&self.data_bits) {
-            return Err(TransportError::ConfigError("Data bits must be 5, 6, 7, or 8".to_string()));
+            return Err(TransportError::ConfigError(
+                "Data bits must be 5, 6, 7, or 8".to_string(),
+            ));
         }
 
         if ![1, 2].contains(&self.stop_bits) {
-            return Err(TransportError::ConfigError("Stop bits must be 1 or 2".to_string()));
+            return Err(TransportError::ConfigError(
+                "Stop bits must be 1 or 2".to_string(),
+            ));
         }
 
         if !["None", "Even", "Odd"].contains(&self.parity.as_str()) {
-            return Err(TransportError::ConfigError("Parity must be None, Even, or Odd".to_string()));
+            return Err(TransportError::ConfigError(
+                "Parity must be None, Even, or Odd".to_string(),
+            ));
         }
 
         if !["None", "Software", "Hardware"].contains(&self.flow_control.as_str()) {
-            return Err(TransportError::ConfigError("Flow control must be None, Software, or Hardware".to_string()));
+            return Err(TransportError::ConfigError(
+                "Flow control must be None, Software, or Hardware".to_string(),
+            ));
         }
 
         if self.timeout.is_zero() {
-            return Err(TransportError::ConfigError("Timeout must be greater than zero".to_string()));
+            return Err(TransportError::ConfigError(
+                "Timeout must be greater than zero".to_string(),
+            ));
         }
 
         Ok(())
@@ -197,8 +213,9 @@ impl Transport for SerialTransport {
             Ok(mut port) => {
                 // Set timeouts
                 #[cfg(unix)]
-                port.set_exclusive(false)
-                    .map_err(|e| TransportError::IoError(format!("Failed to set exclusive mode: {}", e)))?;
+                port.set_exclusive(false).map_err(|e| {
+                    TransportError::IoError(format!("Failed to set exclusive mode: {}", e))
+                })?;
 
                 // Store the connection
                 let mut conn = self.connection.write().await;
@@ -273,22 +290,25 @@ impl Transport for SerialTransport {
                         Err(TransportError::SendFailed(error_msg))
                     }
                     Err(_) => {
-                        let error_msg = format!("Send operation timed out after {:?}", self.config.write_timeout);
+                        let error_msg = format!(
+                            "Send operation timed out after {:?}",
+                            self.config.write_timeout
+                        );
                         warn!("{}", error_msg);
                         Err(TransportError::Timeout(error_msg))
                     }
                 }
             }
-            None => {
-                Err(TransportError::SendFailed("Serial port not connected".to_string()))
-            }
+            None => Err(TransportError::SendFailed(
+                "Serial port not connected".to_string(),
+            )),
         }
     }
 
     async fn receive(
-        &mut self, 
-        buffer: &mut [u8], 
-        timeout_duration: Option<Duration>
+        &mut self,
+        buffer: &mut [u8],
+        timeout_duration: Option<Duration>,
     ) -> Result<usize, TransportError> {
         use tokio::io::AsyncReadExt;
 
@@ -296,7 +316,7 @@ impl Transport for SerialTransport {
         match conn.as_mut() {
             Some(port) => {
                 let receive_timeout = timeout_duration.unwrap_or(self.config.read_timeout);
-                
+
                 match timeout(receive_timeout, port.read(buffer)).await {
                     Ok(Ok(bytes_read)) => {
                         if bytes_read == 0 {
@@ -328,15 +348,16 @@ impl Transport for SerialTransport {
                         Err(TransportError::ReceiveFailed(error_msg))
                     }
                     Err(_) => {
-                        let error_msg = format!("Receive operation timed out after {:?}", receive_timeout);
+                        let error_msg =
+                            format!("Receive operation timed out after {:?}", receive_timeout);
                         debug!("{}", error_msg); // Debug level for timeout, as it's often expected
                         Err(TransportError::Timeout(error_msg))
                     }
                 }
             }
-            None => {
-                Err(TransportError::ReceiveFailed("Serial port not connected".to_string()))
-            }
+            None => Err(TransportError::ReceiveFailed(
+                "Serial port not connected".to_string(),
+            )),
         }
     }
 
@@ -352,7 +373,7 @@ impl Transport for SerialTransport {
 
     async fn stats(&self) -> TransportStats {
         let mut stats = self.stats.read().await.clone();
-        
+
         // Update uptime
         if let Ok(elapsed) = self.start_time.elapsed() {
             stats.uptime = elapsed;
@@ -368,8 +389,11 @@ impl Transport for SerialTransport {
 
     async fn diagnostics(&self) -> std::collections::HashMap<String, String> {
         let mut diag = std::collections::HashMap::new();
-        
-        diag.insert("transport_type".to_string(), self.transport_type().to_string());
+
+        diag.insert(
+            "transport_type".to_string(),
+            self.transport_type().to_string(),
+        );
         diag.insert("name".to_string(), self.name().to_string());
         diag.insert("port".to_string(), self.config.port.clone());
         diag.insert("baud_rate".to_string(), self.config.baud_rate.to_string());
@@ -377,12 +401,30 @@ impl Transport for SerialTransport {
         diag.insert("stop_bits".to_string(), self.config.stop_bits.to_string());
         diag.insert("parity".to_string(), self.config.parity.clone());
         diag.insert("flow_control".to_string(), self.config.flow_control.clone());
-        diag.insert("timeout_ms".to_string(), self.config.timeout.as_millis().to_string());
-        diag.insert("read_timeout_ms".to_string(), self.config.read_timeout.as_millis().to_string());
-        diag.insert("write_timeout_ms".to_string(), self.config.write_timeout.as_millis().to_string());
-        diag.insert("max_retries".to_string(), self.config.max_retries.to_string());
-        diag.insert("connected".to_string(), self.is_connected().await.to_string());
-        diag.insert("connection_state".to_string(), format!("{:?}", self.connection_state().await));
+        diag.insert(
+            "timeout_ms".to_string(),
+            self.config.timeout.as_millis().to_string(),
+        );
+        diag.insert(
+            "read_timeout_ms".to_string(),
+            self.config.read_timeout.as_millis().to_string(),
+        );
+        diag.insert(
+            "write_timeout_ms".to_string(),
+            self.config.write_timeout.as_millis().to_string(),
+        );
+        diag.insert(
+            "max_retries".to_string(),
+            self.config.max_retries.to_string(),
+        );
+        diag.insert(
+            "connected".to_string(),
+            self.is_connected().await.to_string(),
+        );
+        diag.insert(
+            "connection_state".to_string(),
+            format!("{:?}", self.connection_state().await),
+        );
 
         diag
     }
@@ -465,16 +507,19 @@ mod tests {
     async fn test_serial_transport_not_connected_initially() {
         let config = SerialTransportConfig::default();
         let transport = SerialTransport::new(config).unwrap();
-        
+
         assert!(!transport.is_connected().await);
-        assert_eq!(transport.connection_state().await, ConnectionState::Disconnected);
+        assert_eq!(
+            transport.connection_state().await,
+            ConnectionState::Disconnected
+        );
     }
 
     #[tokio::test]
     async fn test_serial_transport_stats() {
         let config = SerialTransportConfig::default();
         let mut transport = SerialTransport::new(config).unwrap();
-        
+
         let stats = transport.stats().await;
         assert_eq!(stats.connection_attempts, 0);
         assert_eq!(stats.bytes_sent, 0);
@@ -505,11 +550,14 @@ mod tests {
             stop_bits: 2,
             ..Default::default()
         };
-        
+
         let transport = SerialTransport::new(config).unwrap();
         assert_eq!(transport.parse_parity(), tokio_serial::Parity::Even);
-        assert_eq!(transport.parse_flow_control(), tokio_serial::FlowControl::Hardware);
+        assert_eq!(
+            transport.parse_flow_control(),
+            tokio_serial::FlowControl::Hardware
+        );
         assert_eq!(transport.parse_data_bits(), tokio_serial::DataBits::Seven);
         assert_eq!(transport.parse_stop_bits(), tokio_serial::StopBits::Two);
     }
-} 
+}

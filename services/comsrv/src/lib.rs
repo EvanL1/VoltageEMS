@@ -199,13 +199,13 @@ pub mod api;
 /// Communication Service Library
 /// Provides core functionality for protocol communication, data exchange, and management
 pub mod core;
-pub mod service_impl;
-pub mod utils;
 /// CLI tools for protocol development
 // pub mod cli; // Temporarily disabled due to missing dependencies
 
 /// Modbus test runner for comprehensive testing
 pub mod modbus_test_runner;
+pub mod service_impl;
+pub mod utils;
 
 /// Service entry point and lifecycle management
 ///
@@ -272,10 +272,10 @@ pub mod service {
     //! This module provides the core service functions that manage the complete
     //! lifecycle of the communication service, from initialization to shutdown.
 
-    use crate::service_impl as impls;
-    use crate::utils::Result;
     use crate::core::config::ConfigManager;
     use crate::core::protocols::common::ProtocolFactory;
+    use crate::service_impl as impls;
+    use crate::utils::Result;
     use std::sync::Arc;
     use tokio::sync::RwLock;
 

@@ -4,19 +4,19 @@
 //! It allows protocols to request specific transport implementations without knowing
 //! the details of how they are created.
 
+use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fmt;
 use std::sync::Arc;
-use dashmap::DashMap;
 use tracing::{debug, info};
 
-use super::traits::{Transport, TransportConfig, TransportError};
-use super::tcp::{TcpTransport, TcpTransportBuilder, TcpTransportConfig};
-use super::serial::{SerialTransport, SerialTransportBuilder, SerialTransportConfig};
-use super::gpio::{GpioTransport, GpioTransportBuilder, GpioTransportConfig};
 use super::can::{CanTransport, CanTransportBuilder, CanTransportConfig};
+use super::gpio::{GpioTransport, GpioTransportBuilder, GpioTransportConfig};
 use super::mock::{MockTransport, MockTransportBuilder, MockTransportConfig};
+use super::serial::{SerialTransport, SerialTransportBuilder, SerialTransportConfig};
+use super::tcp::{TcpTransport, TcpTransportBuilder, TcpTransportConfig};
+use super::traits::{Transport, TransportConfig, TransportError};
 
 /// Supported transport types
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -220,7 +220,8 @@ impl TransportFactory {
     /// Register serial transport builder
     fn register_serial_builder(&mut self) {
         let builder = SerialBuilderImpl::new();
-        self.builders.insert(TransportType::Serial, Box::new(builder));
+        self.builders
+            .insert(TransportType::Serial, Box::new(builder));
         info!("Registered Serial transport builder");
     }
 
@@ -251,9 +252,9 @@ impl TransportFactory {
         config: AnyTransportConfig,
     ) -> Result<Box<dyn Transport>, TransportError> {
         let transport_type = config.transport_type();
-        
+
         debug!("Creating transport of type: {}", transport_type);
-        
+
         // Validate configuration first
         config.validate()?;
 
@@ -291,7 +292,8 @@ impl TransportFactory {
         &self,
         config: SerialTransportConfig,
     ) -> Result<Box<dyn Transport>, TransportError> {
-        self.create_transport(AnyTransportConfig::Serial(config)).await
+        self.create_transport(AnyTransportConfig::Serial(config))
+            .await
     }
 
     /// Create a mock transport with given configuration
@@ -299,7 +301,8 @@ impl TransportFactory {
         &self,
         config: MockTransportConfig,
     ) -> Result<Box<dyn Transport>, TransportError> {
-        self.create_transport(AnyTransportConfig::Mock(config)).await
+        self.create_transport(AnyTransportConfig::Mock(config))
+            .await
     }
 
     /// Get list of supported transport types
@@ -314,7 +317,10 @@ impl TransportFactory {
 
     /// Get creation statistics
     pub fn get_creation_stats(&self) -> HashMap<TransportType, u64> {
-        self.stats.iter().map(|entry| (*entry.key(), *entry.value())).collect()
+        self.stats
+            .iter()
+            .map(|entry| (*entry.key(), *entry.value()))
+            .collect()
     }
 
     /// Reset creation statistics
@@ -437,29 +443,47 @@ mod tests {
     fn test_transport_type_from_str() {
         assert_eq!("tcp".parse::<TransportType>().unwrap(), TransportType::Tcp);
         assert_eq!("TCP".parse::<TransportType>().unwrap(), TransportType::Tcp);
-        assert_eq!("serial".parse::<TransportType>().unwrap(), TransportType::Serial);
-        assert_eq!("rtu".parse::<TransportType>().unwrap(), TransportType::Serial);
-        assert_eq!("gpio".parse::<TransportType>().unwrap(), TransportType::Gpio);
+        assert_eq!(
+            "serial".parse::<TransportType>().unwrap(),
+            TransportType::Serial
+        );
+        assert_eq!(
+            "rtu".parse::<TransportType>().unwrap(),
+            TransportType::Serial
+        );
+        assert_eq!(
+            "gpio".parse::<TransportType>().unwrap(),
+            TransportType::Gpio
+        );
         assert_eq!("di".parse::<TransportType>().unwrap(), TransportType::Gpio);
         assert_eq!("do".parse::<TransportType>().unwrap(), TransportType::Gpio);
-        assert_eq!("digital".parse::<TransportType>().unwrap(), TransportType::Gpio);
+        assert_eq!(
+            "digital".parse::<TransportType>().unwrap(),
+            TransportType::Gpio
+        );
         assert_eq!("can".parse::<TransportType>().unwrap(), TransportType::Can);
-        assert_eq!("canbus".parse::<TransportType>().unwrap(), TransportType::Can);
-        assert_eq!("mock".parse::<TransportType>().unwrap(), TransportType::Mock);
-        
+        assert_eq!(
+            "canbus".parse::<TransportType>().unwrap(),
+            TransportType::Can
+        );
+        assert_eq!(
+            "mock".parse::<TransportType>().unwrap(),
+            TransportType::Mock
+        );
+
         assert!("invalid".parse::<TransportType>().is_err());
     }
 
     #[test]
     fn test_transport_factory_creation() {
         let factory = TransportFactory::new();
-        
+
         assert!(factory.is_transport_supported(TransportType::Tcp));
         assert!(factory.is_transport_supported(TransportType::Serial));
         assert!(factory.is_transport_supported(TransportType::Gpio));
         assert!(factory.is_transport_supported(TransportType::Can));
         assert!(factory.is_transport_supported(TransportType::Mock));
-        
+
         let supported_types = factory.supported_transport_types();
         assert_eq!(supported_types.len(), 5);
     }
@@ -468,10 +492,10 @@ mod tests {
     async fn test_create_tcp_transport() {
         let factory = TransportFactory::new();
         let config = TcpTransportConfig::default();
-        
+
         let transport = factory.create_tcp_transport(config).await;
         assert!(transport.is_ok());
-        
+
         let transport = transport.unwrap();
         assert_eq!(transport.transport_type(), "tcp");
     }
@@ -480,10 +504,10 @@ mod tests {
     async fn test_create_serial_transport() {
         let factory = TransportFactory::new();
         let config = SerialTransportConfig::default();
-        
+
         let transport = factory.create_serial_transport(config).await;
         assert!(transport.is_ok());
-        
+
         let transport = transport.unwrap();
         assert_eq!(transport.transport_type(), "serial");
     }
@@ -492,10 +516,10 @@ mod tests {
     async fn test_create_mock_transport() {
         let factory = TransportFactory::new();
         let config = MockTransportConfig::default();
-        
+
         let transport = factory.create_mock_transport(config).await;
         assert!(transport.is_ok());
-        
+
         let transport = transport.unwrap();
         assert_eq!(transport.transport_type(), "mock");
     }
@@ -503,19 +527,25 @@ mod tests {
     #[tokio::test]
     async fn test_creation_stats() {
         let factory = TransportFactory::new();
-        
+
         // Create some transports
-        let _ = factory.create_tcp_transport(TcpTransportConfig::default()).await;
-        let _ = factory.create_mock_transport(MockTransportConfig::default()).await;
-        let _ = factory.create_mock_transport(MockTransportConfig::default()).await;
-        
+        let _ = factory
+            .create_tcp_transport(TcpTransportConfig::default())
+            .await;
+        let _ = factory
+            .create_mock_transport(MockTransportConfig::default())
+            .await;
+        let _ = factory
+            .create_mock_transport(MockTransportConfig::default())
+            .await;
+
         let stats = factory.get_creation_stats();
         assert_eq!(stats.get(&TransportType::Tcp), Some(&1));
         assert_eq!(stats.get(&TransportType::Mock), Some(&2));
         assert_eq!(stats.get(&TransportType::Serial), None);
         assert_eq!(stats.get(&TransportType::Gpio), None);
         assert_eq!(stats.get(&TransportType::Can), None);
-        
+
         factory.reset_stats();
         let stats = factory.get_creation_stats();
         assert!(stats.is_empty());
@@ -526,27 +556,29 @@ mod tests {
         let tcp_config = AnyTransportConfig::Tcp(TcpTransportConfig::default());
         assert_eq!(tcp_config.transport_type(), TransportType::Tcp);
         assert!(tcp_config.validate().is_ok());
-        
+
         let serial_config = AnyTransportConfig::Serial(SerialTransportConfig::default());
         assert_eq!(serial_config.transport_type(), TransportType::Serial);
         assert!(serial_config.validate().is_ok());
-        
+
         let mut gpio_test_config = GpioTransportConfig::default();
-        gpio_test_config.pins.push(crate::core::transport::gpio::GpioPinConfig {
-            pin: 18,
-            mode: crate::core::transport::gpio::GpioPinMode::DigitalOutput,
-            initial_value: Some(false),
-            debounce_ms: None,
-            label: Some("Test LED".to_string()),
-        });
+        gpio_test_config
+            .pins
+            .push(crate::core::transport::gpio::GpioPinConfig {
+                pin: 18,
+                mode: crate::core::transport::gpio::GpioPinMode::DigitalOutput,
+                initial_value: Some(false),
+                debounce_ms: None,
+                label: Some("Test LED".to_string()),
+            });
         let gpio_config = AnyTransportConfig::Gpio(gpio_test_config);
         assert_eq!(gpio_config.transport_type(), TransportType::Gpio);
         assert!(gpio_config.validate().is_ok());
-        
+
         let can_config = AnyTransportConfig::Can(CanTransportConfig::default());
         assert_eq!(can_config.transport_type(), TransportType::Can);
         assert!(can_config.validate().is_ok());
-        
+
         let mock_config = AnyTransportConfig::Mock(MockTransportConfig::default());
         assert_eq!(mock_config.transport_type(), TransportType::Mock);
         assert!(mock_config.validate().is_ok());
@@ -555,19 +587,19 @@ mod tests {
     #[test]
     fn test_default_configurations() {
         let factory = TransportFactory::new();
-        
+
         let tcp_default = factory.get_default_config(TransportType::Tcp);
         assert!(matches!(tcp_default, AnyTransportConfig::Tcp(_)));
-        
+
         let serial_default = factory.get_default_config(TransportType::Serial);
         assert!(matches!(serial_default, AnyTransportConfig::Serial(_)));
-        
+
         let gpio_default = factory.get_default_config(TransportType::Gpio);
         assert!(matches!(gpio_default, AnyTransportConfig::Gpio(_)));
-        
+
         let can_default = factory.get_default_config(TransportType::Can);
         assert!(matches!(can_default, AnyTransportConfig::Can(_)));
-        
+
         let mock_default = factory.get_default_config(TransportType::Mock);
         assert!(matches!(mock_default, AnyTransportConfig::Mock(_)));
     }

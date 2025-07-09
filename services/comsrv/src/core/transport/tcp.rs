@@ -14,7 +14,9 @@ use tokio::sync::RwLock;
 use tokio::time::timeout;
 use tracing::{debug, error, info, warn};
 
-use super::traits::{ConnectionState, Transport, TransportBuilder, TransportConfig, TransportError, TransportStats};
+use super::traits::{
+    ConnectionState, Transport, TransportBuilder, TransportConfig, TransportError, TransportStats,
+};
 
 /// TCP transport configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -59,15 +61,21 @@ impl TransportConfig for TcpTransportConfig {
 
     fn validate(&self) -> Result<(), TransportError> {
         if self.host.is_empty() {
-            return Err(TransportError::ConfigError("Host cannot be empty".to_string()));
+            return Err(TransportError::ConfigError(
+                "Host cannot be empty".to_string(),
+            ));
         }
-        
+
         if self.port == 0 {
-            return Err(TransportError::ConfigError("Port cannot be zero".to_string()));
+            return Err(TransportError::ConfigError(
+                "Port cannot be zero".to_string(),
+            ));
         }
 
         if self.timeout.is_zero() {
-            return Err(TransportError::ConfigError("Timeout must be greater than zero".to_string()));
+            return Err(TransportError::ConfigError(
+                "Timeout must be greater than zero".to_string(),
+            ));
         }
 
         // No need to parse address here - it will be resolved during connection
@@ -123,36 +131,36 @@ impl TcpTransport {
         {
             use std::os::unix::io::{AsRawFd, FromRawFd};
             let socket = unsafe { socket2::Socket::from_raw_fd(stream.as_raw_fd()) };
-            
+
             // Enable TCP keep-alive
             if let Err(e) = socket.set_keepalive(true) {
                 warn!("Failed to set keep-alive: {}", e);
             }
-            
+
             // Set TCP_NODELAY to disable Nagle's algorithm
             if let Err(e) = socket.set_nodelay(true) {
                 warn!("Failed to set TCP_NODELAY: {}", e);
             }
-            
+
             // Forget the socket to avoid closing the file descriptor
             std::mem::forget(socket);
         }
-        
+
         #[cfg(windows)]
         {
             use std::os::windows::io::{AsRawSocket, FromRawSocket};
             let socket = unsafe { socket2::Socket::from_raw_socket(stream.as_raw_socket()) };
-            
+
             // Enable TCP keep-alive
             if let Err(e) = socket.set_keepalive(true) {
                 warn!("Failed to set keep-alive: {}", e);
             }
-            
+
             // Set TCP_NODELAY to disable Nagle's algorithm
             if let Err(e) = socket.set_nodelay(true) {
                 warn!("Failed to set TCP_NODELAY: {}", e);
             }
-            
+
             // Forget the socket to avoid closing the socket handle
             std::mem::forget(socket);
         }
@@ -181,10 +189,7 @@ impl Transport for TcpTransport {
         debug!("Connecting to TCP endpoint: {}", addr);
 
         // Attempt connection with timeout
-        let connection_result = timeout(
-            self.config.timeout,
-            TcpStream::connect(&addr)
-        ).await;
+        let connection_result = timeout(self.config.timeout, TcpStream::connect(&addr)).await;
 
         match connection_result {
             Ok(Ok(stream)) => {
@@ -271,22 +276,20 @@ impl Transport for TcpTransport {
                     }
                 }
             }
-            None => {
-                Err(TransportError::SendFailed("Not connected".to_string()))
-            }
+            None => Err(TransportError::SendFailed("Not connected".to_string())),
         }
     }
 
     async fn receive(
-        &mut self, 
-        buffer: &mut [u8], 
-        timeout_duration: Option<Duration>
+        &mut self,
+        buffer: &mut [u8],
+        timeout_duration: Option<Duration>,
     ) -> Result<usize, TransportError> {
         let mut conn = self.connection.write().await;
         match conn.as_mut() {
             Some(stream) => {
                 let receive_timeout = timeout_duration.unwrap_or(self.config.timeout);
-                
+
                 match timeout(receive_timeout, stream.read(buffer)).await {
                     Ok(Ok(bytes_read)) => {
                         if bytes_read == 0 {
@@ -298,7 +301,9 @@ impl Transport for TcpTransport {
                             let mut stats = self.stats.write().await;
                             stats.record_disconnection();
 
-                            return Err(TransportError::ConnectionLost("Connection closed by peer".to_string()));
+                            return Err(TransportError::ConnectionLost(
+                                "Connection closed by peer".to_string(),
+                            ));
                         }
 
                         drop(conn);
@@ -325,15 +330,14 @@ impl Transport for TcpTransport {
                         Err(TransportError::ReceiveFailed(error_msg))
                     }
                     Err(_) => {
-                        let error_msg = format!("Receive operation timed out after {:?}", receive_timeout);
+                        let error_msg =
+                            format!("Receive operation timed out after {:?}", receive_timeout);
                         warn!("{}", error_msg);
                         Err(TransportError::Timeout(error_msg))
                     }
                 }
             }
-            None => {
-                Err(TransportError::ReceiveFailed("Not connected".to_string()))
-            }
+            None => Err(TransportError::ReceiveFailed("Not connected".to_string())),
         }
     }
 
@@ -349,7 +353,7 @@ impl Transport for TcpTransport {
 
     async fn stats(&self) -> TransportStats {
         let mut stats = self.stats.read().await.clone();
-        
+
         // Update uptime
         if let Ok(elapsed) = self.start_time.elapsed() {
             stats.uptime = elapsed;
@@ -365,19 +369,37 @@ impl Transport for TcpTransport {
 
     async fn diagnostics(&self) -> std::collections::HashMap<String, String> {
         let mut diag = std::collections::HashMap::new();
-        
-        diag.insert("transport_type".to_string(), self.transport_type().to_string());
+
+        diag.insert(
+            "transport_type".to_string(),
+            self.transport_type().to_string(),
+        );
         diag.insert("name".to_string(), self.name().to_string());
         diag.insert("host".to_string(), self.config.host.clone());
         diag.insert("port".to_string(), self.config.port.to_string());
-        diag.insert("timeout_ms".to_string(), self.config.timeout.as_millis().to_string());
-        diag.insert("max_retries".to_string(), self.config.max_retries.to_string());
+        diag.insert(
+            "timeout_ms".to_string(),
+            self.config.timeout.as_millis().to_string(),
+        );
+        diag.insert(
+            "max_retries".to_string(),
+            self.config.max_retries.to_string(),
+        );
         diag.insert("no_delay".to_string(), self.config.no_delay.to_string());
-        diag.insert("connected".to_string(), self.is_connected().await.to_string());
-        diag.insert("connection_state".to_string(), format!("{:?}", self.connection_state().await));
+        diag.insert(
+            "connected".to_string(),
+            self.is_connected().await.to_string(),
+        );
+        diag.insert(
+            "connection_state".to_string(),
+            format!("{:?}", self.connection_state().await),
+        );
 
         if let Some(keep_alive) = self.config.keep_alive {
-            diag.insert("keep_alive_secs".to_string(), keep_alive.as_secs().to_string());
+            diag.insert(
+                "keep_alive_secs".to_string(),
+                keep_alive.as_secs().to_string(),
+            );
         }
 
         diag
@@ -446,16 +468,19 @@ mod tests {
     async fn test_tcp_transport_not_connected_initially() {
         let config = TcpTransportConfig::default();
         let transport = TcpTransport::new(config).unwrap();
-        
+
         assert!(!transport.is_connected().await);
-        assert_eq!(transport.connection_state().await, ConnectionState::Disconnected);
+        assert_eq!(
+            transport.connection_state().await,
+            ConnectionState::Disconnected
+        );
     }
 
     #[tokio::test]
     async fn test_tcp_transport_stats() {
         let config = TcpTransportConfig::default();
         let mut transport = TcpTransport::new(config).unwrap();
-        
+
         let stats = transport.stats().await;
         assert_eq!(stats.connection_attempts, 0);
         assert_eq!(stats.bytes_sent, 0);
@@ -476,4 +501,4 @@ mod tests {
         let transport = builder.build(config).await;
         assert!(transport.is_ok());
     }
-} 
+}

@@ -1,15 +1,15 @@
+pub mod asdu;
 pub mod common;
 pub mod config;
 pub mod iec104;
-pub mod asdu;
 
 // Plugin support
 pub mod plugin;
 
 pub use config::Iec104Config;
 
+use crate::core::protocols::common::combase::{PacketParseResult, ProtocolPacketParser};
 use std::collections::HashMap;
-use crate::core::protocols::common::combase::{ProtocolPacketParser, PacketParseResult};
 
 /// IEC60870 protocol packet parser
 ///
@@ -35,22 +35,12 @@ impl ProtocolPacketParser for Iec60870PacketParser {
         #[cfg(feature = "iec60870")]
         {
             let description = format!("IEC60870 packet, {} bytes", data.len());
-            return PacketParseResult::success(
-                "IEC60870",
-                direction,
-                &hex_data,
-                &description
-            );
+            return PacketParseResult::success("IEC60870", direction, &hex_data, &description);
         }
 
         #[cfg(not(feature = "iec60870"))]
         {
-            PacketParseResult::success(
-                "IEC60870",
-                direction,
-                &hex_data,
-                "IEC60870 parser disabled"
-            )
+            PacketParseResult::success("IEC60870", direction, &hex_data, "IEC60870 parser disabled")
         }
     }
 }

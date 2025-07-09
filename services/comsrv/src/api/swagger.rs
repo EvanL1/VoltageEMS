@@ -44,11 +44,11 @@ pub fn swagger_routes() -> Router {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_openapi_generation() {
         let openapi = ApiDoc::openapi();
         assert_eq!(openapi.info.title, "Communication Service API");
         assert_eq!(openapi.info.version, "0.1.0");
     }
-} 
+}

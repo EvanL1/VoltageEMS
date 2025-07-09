@@ -4,21 +4,20 @@
 //! enabling SCADA communication through the plugin system.
 
 use async_trait::async_trait;
-use std::collections::HashMap;
 use serde_json::{json, Value};
+use std::collections::HashMap;
 
-use crate::core::plugins::protocol_plugin::{
-    ProtocolPlugin, ProtocolMetadata, ConfigTemplate, ValidationRule,
-    CliCommand, CliArgument,
-};
 use crate::core::config::types::channel::ChannelConfig;
+use crate::core::plugins::protocol_plugin::{
+    CliArgument, CliCommand, ConfigTemplate, ProtocolMetadata, ProtocolPlugin, ValidationRule,
+};
 use crate::core::protocols::common::traits::ComBase;
-use crate::utils::{Result, ComSrvError as Error};
 use crate::core::transport::factory::TransportFactory;
 use crate::core::transport::tcp::TcpTransportConfig;
+use crate::utils::{ComSrvError as Error, Result};
 
-use super::iec104::Iec104Client;
 use super::config::Iec104Config;
+use super::iec104::Iec104Client;
 
 /// IEC 60870-5-104 Protocol Plugin
 pub struct Iec104Plugin {
@@ -36,8 +35,8 @@ impl Default for Iec104Plugin {
                 author: "VoltageEMS Team".to_string(),
                 license: "MIT".to_string(),
                 features: vec![
-                    "telemetry".to_string(), 
-                    "control".to_string(), 
+                    "telemetry".to_string(),
+                    "control".to_string(),
                     "signal".to_string(),
                     "time_sync".to_string(),
                     "file_transfer".to_string(),
@@ -53,7 +52,7 @@ impl ProtocolPlugin for Iec104Plugin {
     fn metadata(&self) -> ProtocolMetadata {
         self.metadata.clone()
     }
-    
+
     fn config_template(&self) -> Vec<ConfigTemplate> {
         vec![
             // Connection parameters
@@ -218,76 +217,87 @@ impl ProtocolPlugin for Iec104Plugin {
             },
         ]
     }
-    
+
     fn validate_config(&self, config: &HashMap<String, Value>) -> Result<()> {
         // Check required parameters
         if !config.contains_key("host") {
-            return Err(Error::ConfigError("Missing required parameter: host".to_string()));
+            return Err(Error::ConfigError(
+                "Missing required parameter: host".to_string(),
+            ));
         }
-        
+
         if !config.contains_key("common_addr") {
-            return Err(Error::ConfigError("Missing required parameter: common_addr".to_string()));
+            return Err(Error::ConfigError(
+                "Missing required parameter: common_addr".to_string(),
+            ));
         }
-        
+
         // Validate host
         if let Some(host) = config.get("host") {
             if !host.is_string() {
-                return Err(Error::ConfigError("Parameter 'host' must be a string".to_string()));
+                return Err(Error::ConfigError(
+                    "Parameter 'host' must be a string".to_string(),
+                ));
             }
         }
-        
+
         // Validate timing parameters relationship
         if let (Some(t1), Some(t2)) = (config.get("t1_timeout"), config.get("t2_timeout")) {
             if let (Some(t1_val), Some(t2_val)) = (t1.as_u64(), t2.as_u64()) {
                 if t2_val >= t1_val {
-                    return Err(Error::ConfigError("t2_timeout must be less than t1_timeout".to_string()));
+                    return Err(Error::ConfigError(
+                        "t2_timeout must be less than t1_timeout".to_string(),
+                    ));
                 }
             }
         }
-        
+
         // Validate k and w relationship
         if let (Some(k), Some(w)) = (config.get("k_value"), config.get("w_value")) {
             if let (Some(k_val), Some(w_val)) = (k.as_u64(), w.as_u64()) {
                 if w_val > k_val {
-                    return Err(Error::ConfigError("w_value must be less than or equal to k_value".to_string()));
+                    return Err(Error::ConfigError(
+                        "w_value must be less than or equal to k_value".to_string(),
+                    ));
                 }
             }
         }
-        
+
         Ok(())
     }
-    
-    async fn create_instance(
-        &self,
-        channel_config: ChannelConfig,
-    ) -> Result<Box<dyn ComBase>> {
+
+    async fn create_instance(&self, channel_config: ChannelConfig) -> Result<Box<dyn ComBase>> {
         // Extract IEC 104 configuration from channel config
         let params = &channel_config.parameters;
-        
-        let host = params.get("host")
+
+        let host = params
+            .get("host")
             .and_then(|v| v.as_str())
             .ok_or_else(|| Error::ConfigError("Missing host parameter".to_string()))?
             .to_string();
-            
-        let port = params.get("port")
+
+        let port = params
+            .get("port")
             .and_then(|v| v.as_u64())
             .map(|p| p as u16)
             .unwrap_or(2404);
-            
-        let common_addr = params.get("common_addr")
+
+        let common_addr = params
+            .get("common_addr")
             .and_then(|v| v.as_u64())
             .map(|a| a as u16)
             .ok_or_else(|| Error::ConfigError("Missing common_addr parameter".to_string()))?;
-            
+
         // Create transport
         let factory = TransportFactory::new();
         let transport_config = TcpTransportConfig {
             host: host.clone(),
             port,
             timeout: std::time::Duration::from_millis(
-                params.get("t0_timeout")
+                params
+                    .get("t0_timeout")
                     .and_then(|v| v.as_u64())
-                    .unwrap_or(30000)
+                    .unwrap_or(30000),
             ),
             max_retries: 3,
             keep_alive: Some(std::time::Duration::from_secs(60)),
@@ -295,54 +305,63 @@ impl ProtocolPlugin for Iec104Plugin {
             send_buffer_size: None,
             no_delay: true,
         };
-        
+
         let transport = factory.create_tcp_transport(transport_config).await?;
-        
+
         // Create IEC 104 configuration
         let iec104_config = Iec104Config {
             host,
             port,
             common_addr,
-            cot_size: params.get("cot_size")
+            cot_size: params
+                .get("cot_size")
                 .and_then(|v| v.as_u64())
                 .map(|s| s as u8)
                 .unwrap_or(2),
-            coa_size: params.get("coa_size")
+            coa_size: params
+                .get("coa_size")
                 .and_then(|v| v.as_u64())
                 .map(|s| s as u8)
                 .unwrap_or(2),
-            ioa_size: params.get("ioa_size")
+            ioa_size: params
+                .get("ioa_size")
                 .and_then(|v| v.as_u64())
                 .map(|s| s as u8)
                 .unwrap_or(3),
-            t0_timeout: params.get("t0_timeout")
+            t0_timeout: params
+                .get("t0_timeout")
                 .and_then(|v| v.as_u64())
                 .unwrap_or(30000),
-            t1_timeout: params.get("t1_timeout")
+            t1_timeout: params
+                .get("t1_timeout")
                 .and_then(|v| v.as_u64())
                 .unwrap_or(15000),
-            t2_timeout: params.get("t2_timeout")
+            t2_timeout: params
+                .get("t2_timeout")
                 .and_then(|v| v.as_u64())
                 .unwrap_or(10000),
-            t3_timeout: params.get("t3_timeout")
+            t3_timeout: params
+                .get("t3_timeout")
                 .and_then(|v| v.as_u64())
                 .unwrap_or(20000),
-            k_value: params.get("k_value")
+            k_value: params
+                .get("k_value")
                 .and_then(|v| v.as_u64())
                 .map(|k| k as u16)
                 .unwrap_or(12),
-            w_value: params.get("w_value")
+            w_value: params
+                .get("w_value")
                 .and_then(|v| v.as_u64())
                 .map(|w| w as u16)
                 .unwrap_or(8),
         };
-        
+
         // Create IEC 104 client
         let client = Iec104Client::new(channel_config);
-        
+
         Ok(Box::new(client))
     }
-    
+
     fn cli_commands(&self) -> Vec<CliCommand> {
         vec![
             CliCommand {
@@ -388,7 +407,7 @@ impl ProtocolPlugin for Iec104Plugin {
             },
         ]
     }
-    
+
     fn documentation(&self) -> &str {
         r#"
 # IEC 60870-5-104 Protocol

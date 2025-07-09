@@ -4,18 +4,17 @@
 //! enabling vehicle and industrial CAN communication through the plugin system.
 
 use async_trait::async_trait;
-use std::collections::HashMap;
 use serde_json::{json, Value};
+use std::collections::HashMap;
 
-use crate::core::plugins::protocol_plugin::{
-    ProtocolPlugin, ProtocolMetadata, ConfigTemplate, ValidationRule,
-    CliCommand, CliArgument,
-};
 use crate::core::config::types::channel::ChannelConfig;
+use crate::core::plugins::protocol_plugin::{
+    CliArgument, CliCommand, ConfigTemplate, ProtocolMetadata, ProtocolPlugin, ValidationRule,
+};
 use crate::core::protocols::common::traits::ComBase;
-use crate::utils::{Result, ComSrvError as Error};
-use crate::core::transport::factory::TransportFactory;
 use crate::core::transport::can::CanTransportConfig;
+use crate::core::transport::factory::TransportFactory;
+use crate::utils::{ComSrvError as Error, Result};
 
 use super::client::CanClientBase;
 use super::config::CanConfig;
@@ -32,12 +31,13 @@ impl Default for CanPlugin {
                 id: "can".to_string(),
                 name: "CAN Bus".to_string(),
                 version: "1.0.0".to_string(),
-                description: "Controller Area Network (CAN) bus protocol implementation".to_string(),
+                description: "Controller Area Network (CAN) bus protocol implementation"
+                    .to_string(),
                 author: "VoltageEMS Team".to_string(),
                 license: "MIT".to_string(),
                 features: vec![
-                    "telemetry".to_string(), 
-                    "control".to_string(), 
+                    "telemetry".to_string(),
+                    "control".to_string(),
                     "diagnostics".to_string(),
                     "broadcast".to_string(),
                 ],
@@ -52,7 +52,7 @@ impl ProtocolPlugin for CanPlugin {
     fn metadata(&self) -> ProtocolMetadata {
         self.metadata.clone()
     }
-    
+
     fn config_template(&self) -> Vec<ConfigTemplate> {
         vec![
             // Interface parameters
@@ -80,9 +80,15 @@ impl ProtocolPlugin for CanPlugin {
                     max: None,
                     pattern: None,
                     allowed_values: Some(vec![
-                        "10000".to_string(), "20000".to_string(), "50000".to_string(),
-                        "100000".to_string(), "125000".to_string(), "250000".to_string(),
-                        "500000".to_string(), "800000".to_string(), "1000000".to_string(),
+                        "10000".to_string(),
+                        "20000".to_string(),
+                        "50000".to_string(),
+                        "100000".to_string(),
+                        "125000".to_string(),
+                        "250000".to_string(),
+                        "500000".to_string(),
+                        "800000".to_string(),
+                        "1000000".to_string(),
                     ]),
                 }),
             },
@@ -155,27 +161,33 @@ impl ProtocolPlugin for CanPlugin {
             },
         ]
     }
-    
+
     fn validate_config(&self, config: &HashMap<String, Value>) -> Result<()> {
         // Check required parameters
         if !config.contains_key("interface") {
-            return Err(Error::ConfigError("Missing required parameter: interface".to_string()));
+            return Err(Error::ConfigError(
+                "Missing required parameter: interface".to_string(),
+            ));
         }
-        
+
         // Validate interface
         if let Some(interface) = config.get("interface") {
             if !interface.is_string() {
-                return Err(Error::ConfigError("Parameter 'interface' must be a string".to_string()));
+                return Err(Error::ConfigError(
+                    "Parameter 'interface' must be a string".to_string(),
+                ));
             }
         }
-        
+
         // Validate filters if provided
         if let Some(filters) = config.get("filters") {
             if !filters.is_array() {
-                return Err(Error::ConfigError("Parameter 'filters' must be an array".to_string()));
+                return Err(Error::ConfigError(
+                    "Parameter 'filters' must be an array".to_string(),
+                ));
             }
         }
-        
+
         // Validate CAN FD data rate if FD is enabled
         if let Some(use_fd) = config.get("use_fd") {
             if use_fd.as_bool() == Some(true) {
@@ -183,54 +195,58 @@ impl ProtocolPlugin for CanPlugin {
                     if let Some(rate) = bitrate.as_u64() {
                         if rate < 500000 {
                             return Err(Error::ConfigError(
-                                "CAN FD requires bitrate of at least 500kbps".to_string()
+                                "CAN FD requires bitrate of at least 500kbps".to_string(),
                             ));
                         }
                     }
                 }
             }
         }
-        
+
         Ok(())
     }
-    
-    async fn create_instance(
-        &self,
-        channel_config: ChannelConfig,
-    ) -> Result<Box<dyn ComBase>> {
+
+    async fn create_instance(&self, channel_config: ChannelConfig) -> Result<Box<dyn ComBase>> {
         // Extract CAN configuration from channel config
         let params = &channel_config.parameters;
-        
-        let interface = params.get("interface")
+
+        let interface = params
+            .get("interface")
             .and_then(|v| v.as_str())
             .ok_or_else(|| Error::ConfigError("Missing interface parameter".to_string()))?
             .to_string();
-            
-        let bitrate = params.get("bitrate")
+
+        let bitrate = params
+            .get("bitrate")
             .and_then(|v| v.as_u64())
             .map(|b| b as u32)
             .unwrap_or(500000);
-            
-        let use_extended_id = params.get("use_extended_id")
+
+        let use_extended_id = params
+            .get("use_extended_id")
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
-            
-        let use_fd = params.get("use_fd")
+
+        let use_fd = params
+            .get("use_fd")
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
-            
-        let timeout_ms = params.get("timeout_ms")
+
+        let timeout_ms = params
+            .get("timeout_ms")
             .and_then(|v| v.as_u64())
             .unwrap_or(1000);
-            
+
         // Parse filters
         let filters = if let Some(filters_val) = params.get("filters") {
             if let Some(filters_arr) = filters_val.as_sequence() {
-                filters_arr.iter()
+                filters_arr
+                    .iter()
                     .filter_map(|f| {
-                        if let (Some(id), Some(mask)) = 
-                            (f.get("id").and_then(|v| v.as_u64()),
-                             f.get("mask").and_then(|v| v.as_u64())) {
+                        if let (Some(id), Some(mask)) = (
+                            f.get("id").and_then(|v| v.as_u64()),
+                            f.get("mask").and_then(|v| v.as_u64()),
+                        ) {
                             Some((id as u32, mask as u32))
                         } else {
                             None
@@ -243,7 +259,7 @@ impl ProtocolPlugin for CanPlugin {
         } else {
             Vec::new()
         };
-            
+
         // Create transport
         let factory = TransportFactory::new();
         let transport_config = CanTransportConfig {
@@ -255,17 +271,22 @@ impl ProtocolPlugin for CanPlugin {
             max_retries: 3,
             recv_buffer_size: 1024,
             send_buffer_size: 1024,
-            filters: filters.into_iter().map(|(id, mask)| crate::core::transport::can::CanFilter {
-                id,
-                mask,
-                extended: use_extended_id,
-            }).collect(),
+            filters: filters
+                .into_iter()
+                .map(|(id, mask)| crate::core::transport::can::CanFilter {
+                    id,
+                    mask,
+                    extended: use_extended_id,
+                })
+                .collect(),
         };
-        
-        let transport = factory.create_transport(
-            crate::core::transport::factory::AnyTransportConfig::Can(transport_config)
-        ).await?;
-        
+
+        let transport = factory
+            .create_transport(crate::core::transport::factory::AnyTransportConfig::Can(
+                transport_config,
+            ))
+            .await?;
+
         // Create CAN configuration
         let can_config = CanConfig {
             interface,
@@ -273,18 +294,19 @@ impl ProtocolPlugin for CanPlugin {
             use_extended_id,
             use_fd,
             timeout_ms,
-            send_queue_size: params.get("send_queue_size")
+            send_queue_size: params
+                .get("send_queue_size")
                 .and_then(|v| v.as_u64())
                 .map(|s| s as usize)
                 .unwrap_or(100),
         };
-        
+
         // Create CAN client
         let client = CanClientBase::new(&channel_config.name, channel_config.clone());
-        
+
         Ok(Box::new(client))
     }
-    
+
     fn cli_commands(&self) -> Vec<CliCommand> {
         vec![
             CliCommand {
@@ -343,7 +365,7 @@ impl ProtocolPlugin for CanPlugin {
             },
         ]
     }
-    
+
     fn documentation(&self) -> &str {
         r#"
 # CAN Bus Protocol

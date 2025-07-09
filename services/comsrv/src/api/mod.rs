@@ -54,7 +54,7 @@
 //! # Request/Response Examples
 //!
 //! ## Get Service Status
-//! 
+//!
 //! ```http
 //! GET /api/v1/status
 //! ```
@@ -63,7 +63,7 @@
 //! ```json
 //! {
 //!   "name": "ComsrvRust",
-//!   "version": "0.1.0", 
+//!   "version": "0.1.0",
 //!   "uptime": 3600,
 //!   "channels": 5,
 //!   "active_channels": 3

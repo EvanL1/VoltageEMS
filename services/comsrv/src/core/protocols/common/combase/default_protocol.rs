@@ -75,7 +75,6 @@ impl std::fmt::Debug for DefaultProtocol {
             .field("name", &self.name)
             .field("protocol_type", &self.protocol_type)
             .field("running", &self.running)
-
             .field("logger", &"<logger>")
             .finish()
     }
@@ -134,7 +133,6 @@ impl DefaultProtocol {
 
 #[async_trait]
 impl ComBase for DefaultProtocol {
-
     fn name(&self) -> &str {
         &self.name
     }
@@ -163,25 +161,25 @@ impl ComBase for DefaultProtocol {
     async fn start(&mut self) -> Result<()> {
         info!("Starting communication service: {}", self.name);
         *self.running.write() = true;
-        
+
         // Update status
         let mut status = self.status.write();
         status.connected = true;
         status.last_update_time = Utc::now();
         status.last_error.clear();
-        
+
         Ok(())
     }
 
     async fn stop(&mut self) -> Result<()> {
         info!("Stopping communication service: {}", self.name);
         *self.running.write() = false;
-        
+
         // Update status
         let mut status = self.status.write();
         status.connected = false;
         status.last_update_time = Utc::now();
-        
+
         Ok(())
     }
 
@@ -217,13 +215,16 @@ impl ComBase for DefaultProtocol {
         diagnostics.insert("service_name".to_string(), self.name.to_string());
         diagnostics.insert("protocol_type".to_string(), self.protocol_type.to_string());
         diagnostics.insert("running".to_string(), self.is_running().await.to_string());
-        
+
         let status = self.status.read();
         diagnostics.insert("connected".to_string(), status.is_connected().to_string());
-        diagnostics.insert("last_response_time".to_string(), status.response_time().to_string());
+        diagnostics.insert(
+            "last_response_time".to_string(),
+            status.response_time().to_string(),
+        );
         diagnostics.insert("last_error".to_string(), status.error_ref().to_string());
         diagnostics.insert("last_update".to_string(), status.last_update().to_rfc3339());
-        
+
         diagnostics
     }
 }
@@ -231,9 +232,9 @@ impl ComBase for DefaultProtocol {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::config::ChannelConfig;
-    use crate::core::config::types::ChannelLoggingConfig;
     use crate::core::config::loaders::point_mapper::CombinedPoint;
+    use crate::core::config::types::ChannelLoggingConfig;
+    use crate::core::config::ChannelConfig;
 
     fn create_test_config() -> ChannelConfig {
         ChannelConfig {
@@ -253,7 +254,7 @@ mod tests {
     async fn test_combase_impl_creation() {
         let config = create_test_config();
         let service = DefaultProtocol::new("Test Service", "test_protocol", config);
-        
+
         assert_eq!(service.name(), "Test Service");
         assert_eq!(service.protocol_type(), "test_protocol");
         assert_eq!(service.channel_id(), "1");
@@ -264,19 +265,19 @@ mod tests {
     async fn test_combase_impl_lifecycle() {
         let config = create_test_config();
         let mut service = DefaultProtocol::new("Test Service", "test_protocol", config);
-        
+
         // Test start
         service.start().await.unwrap();
         assert!(service.is_running().await);
-        
+
         let status = service.status().await;
         assert!(status.connected);
-        
+
         // Test stop
         service.stop().await.unwrap();
         assert!(!service.is_running().await);
-        
+
         let status = service.status().await;
         assert!(!status.connected);
     }
-} 
+}

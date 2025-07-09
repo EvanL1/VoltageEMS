@@ -1,18 +1,18 @@
 //! Redis Batch Synchronization Module
-//! 
+//!
 //! Efficient batch operations for syncing point data to Redis
 
-use std::collections::HashMap;
-use std::sync::Arc;
-use tokio::sync::{RwLock, Mutex};
-use tokio::time::{interval, Duration};
-use tracing::{info, error};
 use redis::aio::MultiplexedConnection;
 use redis::Pipeline;
 use serde_json::json;
+use std::collections::HashMap;
+use std::sync::Arc;
+use tokio::sync::{Mutex, RwLock};
+use tokio::time::{interval, Duration};
+use tracing::{error, info};
 
-use super::optimized_point_manager::OptimizedPointManager;
 use super::data_types::PointData;
+use super::optimized_point_manager::OptimizedPointManager;
 use crate::utils::Result;
 
 /// Configuration for Redis batch sync
@@ -78,10 +78,10 @@ impl RedisBatchSync {
     pub fn start_sync_task(self: Arc<Self>, point_manager: Arc<OptimizedPointManager>) {
         tokio::spawn(async move {
             let mut sync_interval = interval(self.config.sync_interval);
-            
+
             loop {
                 sync_interval.tick().await;
-                
+
                 if let Err(e) = self.sync_batch(&point_manager).await {
                     error!("Redis sync error: {}", e);
                     self.stats.write().await.failed_syncs += 1;
@@ -101,15 +101,15 @@ impl RedisBatchSync {
     /// Sync a batch of points to Redis
     async fn sync_batch(&self, point_manager: &Arc<OptimizedPointManager>) -> Result<()> {
         let start_time = std::time::Instant::now();
-        
+
         // Get all current point data
         let all_data = point_manager.get_all_point_data().await;
-        
+
         // Take updates from buffer
         let mut buffer = self.update_buffer.write().await;
         let updates: Vec<(u32, PointData)> = buffer.drain().collect();
         drop(buffer);
-        
+
         // Combine with current data
         let mut to_sync = HashMap::new();
         for data in all_data {
@@ -120,41 +120,42 @@ impl RedisBatchSync {
         for (id, data) in updates {
             to_sync.insert(id, data);
         }
-        
+
         if to_sync.is_empty() {
             return Ok(());
         }
-        
+
         // Sync to Redis
         let mut conn = self.redis_conn.lock().await;
-        
+
         if self.config.use_pipeline {
             self.sync_with_pipeline(&mut conn, to_sync).await?;
         } else {
             self.sync_individually(&mut conn, to_sync).await?;
         }
-        
+
         // Update stats
         let elapsed = start_time.elapsed();
         let mut stats = self.stats.write().await;
         stats.batch_count += 1;
         stats.last_sync_time = Some(chrono::Utc::now());
-        stats.average_batch_time_ms = 
-            (stats.average_batch_time_ms * (stats.batch_count - 1) as f64 + elapsed.as_millis() as f64) 
+        stats.average_batch_time_ms = (stats.average_batch_time_ms
+            * (stats.batch_count - 1) as f64
+            + elapsed.as_millis() as f64)
             / stats.batch_count as f64;
-        
+
         Ok(())
     }
 
     /// Sync using Redis pipeline for better performance
     async fn sync_with_pipeline(
-        &self, 
-        conn: &mut MultiplexedConnection, 
-        points: HashMap<u32, PointData>
+        &self,
+        conn: &mut MultiplexedConnection,
+        points: HashMap<u32, PointData>,
     ) -> Result<()> {
         let mut pipe = Pipeline::new();
         let mut count = 0;
-        
+
         for (id, data) in points.iter() {
             let key = format!("{}:{}", self.config.key_prefix, id);
             let value = json!({
@@ -165,37 +166,39 @@ impl RedisBatchSync {
                 "timestamp": data.timestamp.to_rfc3339(),
                 "description": data.description,
             });
-            
+
             pipe.set(&key, value.to_string());
-            
+
             if let Some(ttl) = self.config.point_ttl {
                 pipe.expire(&key, ttl.as_secs() as usize);
             }
-            
+
             count += 1;
-            
+
             // Execute pipeline in batches
             if count >= self.config.batch_size {
-                pipe.query_async::<_, ()>(conn).await
+                pipe.query_async::<_, ()>(conn)
+                    .await
                     .map_err(|e| crate::utils::ComSrvError::RedisError(e.to_string()))?;
-                    
+
                 self.stats.write().await.total_synced += count as u64;
-                
+
                 pipe = Pipeline::new();
                 count = 0;
             }
         }
-        
+
         // Execute remaining items
         if count > 0 {
-            pipe.query_async::<_, ()>(conn).await
+            pipe.query_async::<_, ()>(conn)
+                .await
                 .map_err(|e| crate::utils::ComSrvError::RedisError(e.to_string()))?;
-                
+
             self.stats.write().await.total_synced += count as u64;
         }
-        
+
         info!("Synced {} points to Redis using pipeline", points.len());
-        
+
         Ok(())
     }
 
@@ -203,10 +206,10 @@ impl RedisBatchSync {
     async fn sync_individually(
         &self,
         conn: &mut MultiplexedConnection,
-        points: HashMap<u32, PointData>
+        points: HashMap<u32, PointData>,
     ) -> Result<()> {
         let mut count = 0;
-        
+
         for (id, data) in points {
             let key = format!("{}:{}", self.config.key_prefix, id);
             let value = json!({
@@ -217,14 +220,14 @@ impl RedisBatchSync {
                 "timestamp": data.timestamp.to_rfc3339(),
                 "description": data.description,
             });
-            
+
             let _: () = redis::cmd("SET")
                 .arg(&key)
                 .arg(value.to_string())
                 .query_async(conn)
                 .await
                 .map_err(|e| crate::utils::ComSrvError::RedisError(e.to_string()))?;
-                
+
             if let Some(ttl) = self.config.point_ttl {
                 let _: () = redis::cmd("EXPIRE")
                     .arg(&key)
@@ -233,13 +236,13 @@ impl RedisBatchSync {
                     .await
                     .map_err(|e| crate::utils::ComSrvError::RedisError(e.to_string()))?;
             }
-            
+
             count += 1;
         }
-        
+
         self.stats.write().await.total_synced += count;
         info!("Synced {} points to Redis individually", count);
-        
+
         Ok(())
     }
 
@@ -249,20 +252,27 @@ impl RedisBatchSync {
     }
 
     /// Create indices in Redis for fast lookups
-    pub async fn create_redis_indices(&self, point_manager: &Arc<OptimizedPointManager>) -> Result<()> {
+    pub async fn create_redis_indices(
+        &self,
+        point_manager: &Arc<OptimizedPointManager>,
+    ) -> Result<()> {
         let mut conn = self.redis_conn.lock().await;
-        
+
         // Create sets for different point types
         let all_configs = point_manager.get_all_point_configs().await;
         let mut type_sets: HashMap<String, Vec<String>> = HashMap::new();
-        
+
         for config in all_configs {
-            let type_key = format!("{}:type:{:?}", self.config.key_prefix, config.telemetry_type);
-            type_sets.entry(type_key)
+            let type_key = format!(
+                "{}:type:{:?}",
+                self.config.key_prefix, config.telemetry_type
+            );
+            type_sets
+                .entry(type_key)
                 .or_insert_with(Vec::new)
                 .push(config.point_id.to_string());
         }
-        
+
         // Store type sets in Redis
         for (key, members) in type_sets {
             let _: () = redis::cmd("SADD")
@@ -272,7 +282,7 @@ impl RedisBatchSync {
                 .await
                 .map_err(|e| crate::utils::ComSrvError::RedisError(e.to_string()))?;
         }
-        
+
         info!("Created Redis indices for point lookups");
         Ok(())
     }
@@ -283,7 +293,7 @@ impl RedisBatchSync {
         let pattern = format!("{}:*", self.config.key_prefix);
         let mut cursor = 0;
         let mut all_keys = Vec::new();
-        
+
         loop {
             let (new_cursor, keys): (u64, Vec<String>) = redis::cmd("SCAN")
                 .arg(cursor)
@@ -294,15 +304,15 @@ impl RedisBatchSync {
                 .query_async(&mut *conn)
                 .await
                 .map_err(|e| crate::utils::ComSrvError::RedisError(e.to_string()))?;
-                
+
             all_keys.extend(keys);
-            
+
             if new_cursor == 0 {
                 break;
             }
             cursor = new_cursor;
         }
-        
+
         Ok(all_keys)
     }
 
@@ -311,19 +321,19 @@ impl RedisBatchSync {
         if point_ids.is_empty() {
             return Ok(());
         }
-        
+
         let mut conn = self.redis_conn.lock().await;
         let keys: Vec<String> = point_ids
             .iter()
             .map(|id| format!("{}:{}", self.config.key_prefix, id))
             .collect();
-            
+
         let _: () = redis::cmd("DEL")
             .arg(keys)
             .query_async(&mut *conn)
             .await
             .map_err(|e| crate::utils::ComSrvError::RedisError(e.to_string()))?;
-            
+
         Ok(())
     }
 }
@@ -364,20 +374,20 @@ mod tests {
                     sync_interval: Duration::from_millis(50),
                     ..Default::default()
                 };
-                
+
                 let sync = Arc::new(RedisBatchSync::new(conn, config));
                 let manager = Arc::new(OptimizedPointManager::new("test".to_string()));
-                
+
                 // Load test points
                 let points = generate_test_points(500);
                 manager.load_points(points).await.unwrap();
-                
+
                 // Start sync task
                 sync.clone().start_sync_task(manager.clone());
-                
+
                 // Wait for sync
                 tokio::time::sleep(Duration::from_millis(200)).await;
-                
+
                 // Check stats
                 let stats = sync.get_stats().await;
                 assert!(stats.total_synced > 0);

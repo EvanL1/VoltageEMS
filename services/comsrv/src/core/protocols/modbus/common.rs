@@ -126,26 +126,22 @@ impl From<crate::core::config::types::ChannelConfig> for ModbusConfig {
     fn from(config: crate::core::config::types::ChannelConfig) -> Self {
         // Extract parameters from config
         let host = match &config.get_parameters() {
-            crate::core::config::ChannelParameters::Generic(map) => {
-                map.get("host").and_then(|v| {
-                    if let serde_yaml::Value::String(s) = v {
-                        Some(s.clone())
-                    } else {
-                        None
-                    }
-                })
-            }
+            crate::core::config::ChannelParameters::Generic(map) => map.get("host").and_then(|v| {
+                if let serde_yaml::Value::String(s) = v {
+                    Some(s.clone())
+                } else {
+                    None
+                }
+            }),
             _ => None,
         };
-        
+
         let port = match &config.get_parameters() {
             crate::core::config::ChannelParameters::Generic(map) => {
-                map.get("port").and_then(|v| {
-                    match v {
-                        serde_yaml::Value::Number(n) => n.as_u64().map(|n| n as u16),
-                        serde_yaml::Value::String(s) => s.parse().ok(),
-                        _ => None,
-                    }
+                map.get("port").and_then(|v| match v {
+                    serde_yaml::Value::Number(n) => n.as_u64().map(|n| n as u16),
+                    serde_yaml::Value::String(s) => s.parse().ok(),
+                    _ => None,
                 })
             }
             _ => None,
@@ -168,7 +164,7 @@ impl From<crate::core::config::types::ChannelConfig> for ModbusConfig {
             stop_bits: None,
             parity: None,
             timeout_ms: Some(5000), // Default timeout
-            points: Vec::new(), // Will be populated later if needed
+            points: Vec::new(),     // Will be populated later if needed
         }
     }
 }
@@ -229,7 +225,7 @@ impl ModbusConfig {
 }
 
 /// Byte order for multi-register values
-/// 
+///
 /// Different data types support different byte ordering options:
 /// - 16-bit (1 register): AB, BA
 /// - 32-bit (2 registers): ABCD, DCBA, BADC, CDAB  
@@ -241,7 +237,7 @@ pub enum ByteOrder {
     AB,
     /// BA - Little Endian for 16-bit values  
     BA,
-    
+
     // 32-bit patterns (2 registers)
     /// ABCD - Big Endian for 32-bit values
     ABCD,
@@ -251,8 +247,8 @@ pub enum ByteOrder {
     BADC,
     /// CDAB - Little Endian Word Swapped for 32-bit values
     CDAB,
-    
-    // 64-bit patterns (4 registers) 
+
+    // 64-bit patterns (4 registers)
     /// ABCDEFGH - Big Endian for 64-bit values
     ABCDEFGH,
     /// HGFEDCBA - Little Endian for 64-bit values
@@ -297,18 +293,22 @@ impl ByteOrder {
             }
         }
     }
-    
+
     /// Check if this byte order is valid for the given data type
     pub fn is_valid_for(&self, data_type: &ModbusDataType) -> bool {
         Self::valid_for_data_type(data_type).contains(self)
     }
-    
+
     /// Get default byte order for a data type
     pub fn default_for_data_type(data_type: &ModbusDataType) -> ByteOrder {
         match data_type {
             ModbusDataType::Bool | ModbusDataType::Int16 | ModbusDataType::UInt16 => ByteOrder::AB,
-            ModbusDataType::Int32 | ModbusDataType::UInt32 | ModbusDataType::Float32 => ByteOrder::ABCD,
-            ModbusDataType::Int64 | ModbusDataType::UInt64 | ModbusDataType::Float64 => ByteOrder::ABCDEFGH,
+            ModbusDataType::Int32 | ModbusDataType::UInt32 | ModbusDataType::Float32 => {
+                ByteOrder::ABCD
+            }
+            ModbusDataType::Int64 | ModbusDataType::UInt64 | ModbusDataType::Float64 => {
+                ByteOrder::ABCDEFGH
+            }
             ModbusDataType::String(_) => ByteOrder::AB,
         }
     }
@@ -356,7 +356,10 @@ impl ModbusRegisterMapping {
     pub fn validate(&self) -> Result<(), String> {
         // Validate slave ID range
         if self.slave_id == 0 || self.slave_id > 247 {
-            return Err(format!("Invalid slave_id: {}. Must be between 1 and 247", self.slave_id));
+            return Err(format!(
+                "Invalid slave_id: {}. Must be between 1 and 247",
+                self.slave_id
+            ));
         }
 
         // address is u16, so it's always <= 65535
@@ -394,7 +397,7 @@ impl ModbusRegisterMapping {
             },
             (_, fc) => {
                 match fc {
-                    ModbusFunctionCode::Read03 | ModbusFunctionCode::Read04 | 
+                    ModbusFunctionCode::Read03 | ModbusFunctionCode::Read04 |
                     ModbusFunctionCode::Write06 | ModbusFunctionCode::Write10 => {},
                     ModbusFunctionCode::Read01 | ModbusFunctionCode::Write05 | ModbusFunctionCode::Write0F => {
                         return Err(format!(
@@ -427,7 +430,7 @@ impl ModbusRegisterMapping {
             byte_order: ByteOrder::default_for_data_type(&data_type),
             description: None,
         };
-        
+
         mapping.validate()?;
         Ok(mapping)
     }
@@ -456,8 +459,10 @@ impl ModbusRegisterMapping {
     pub fn is_writable(&self) -> bool {
         matches!(
             self.function_code,
-            ModbusFunctionCode::Write05 | ModbusFunctionCode::Write06 
-            | ModbusFunctionCode::Write0F | ModbusFunctionCode::Write10
+            ModbusFunctionCode::Write05
+                | ModbusFunctionCode::Write06
+                | ModbusFunctionCode::Write0F
+                | ModbusFunctionCode::Write10
         )
     }
 
@@ -474,14 +479,13 @@ impl ModbusRegisterMapping {
     pub fn display_name(&self) -> String {
         self.name.clone()
     }
-
 }
 
 /// Calculate CRC16 for Modbus RTU
-/// 
+///
 /// # Arguments
 /// * `data` - The data bytes to calculate CRC for
-/// 
+///
 /// # Returns
 /// * `u16` - The calculated CRC16 value
 pub fn crc16_modbus(data: &[u8]) -> u16 {
@@ -508,13 +512,11 @@ mod tests {
         assert_eq!(u8::from(ModbusFunctionCode::Read01), 0x01);
         assert_eq!(ModbusFunctionCode::from(0x03), ModbusFunctionCode::Read03);
         assert_eq!(u8::from(ModbusFunctionCode::Write10), 0x10);
-        
+
         // Test custom function code
         let custom = ModbusFunctionCode::Custom(0x50);
         assert_eq!(u8::from(custom), 0x50);
     }
-
-
 
     #[test]
     fn test_data_type_register_count() {
@@ -539,13 +541,16 @@ mod tests {
         let data = [0x01, 0x03, 0x00, 0x00, 0x00, 0x02];
         let crc = crc16_modbus(&data);
         // For debugging, let's see what we actually get
-        println!("CRC for [0x01, 0x03, 0x00, 0x00, 0x00, 0x02]: 0x{:04X} (decimal: {})", crc, crc);
-        
-        // Test another case: simple data [0x02, 0x07] 
+        println!(
+            "CRC for [0x01, 0x03, 0x00, 0x00, 0x00, 0x02]: 0x{:04X} (decimal: {})",
+            crc, crc
+        );
+
+        // Test another case: simple data [0x02, 0x07]
         let data2 = [0x02, 0x07];
         let crc2 = crc16_modbus(&data2);
         println!("CRC for [0x02, 0x07]: 0x{:04X} (decimal: {})", crc2, crc2);
-        
+
         // Based on the test failure, the actual value is 3012 (0x0BC4)
         // Let's use that for now and verify later
         assert_eq!(crc, 0x0BC4);
@@ -576,9 +581,18 @@ mod tests {
 
     #[test]
     fn test_default_byte_order_for_data_type() {
-        assert_eq!(ByteOrder::default_for_data_type(&ModbusDataType::UInt16), ByteOrder::AB);
-        assert_eq!(ByteOrder::default_for_data_type(&ModbusDataType::Float32), ByteOrder::ABCD);
-        assert_eq!(ByteOrder::default_for_data_type(&ModbusDataType::Float64), ByteOrder::ABCDEFGH);
+        assert_eq!(
+            ByteOrder::default_for_data_type(&ModbusDataType::UInt16),
+            ByteOrder::AB
+        );
+        assert_eq!(
+            ByteOrder::default_for_data_type(&ModbusDataType::Float32),
+            ByteOrder::ABCD
+        );
+        assert_eq!(
+            ByteOrder::default_for_data_type(&ModbusDataType::Float64),
+            ByteOrder::ABCDEFGH
+        );
     }
 
     #[test]
@@ -636,8 +650,9 @@ mod tests {
 
     #[test]
     fn test_byte_order_validation_in_mapping() {
-        let mut mapping = ModbusRegisterMapping::new(1000, ModbusDataType::Float32, "test".to_string());
-        
+        let mut mapping =
+            ModbusRegisterMapping::new(1000, ModbusDataType::Float32, "test".to_string());
+
         // Valid byte order for Float32
         let result = mapping.clone().with_byte_order(ByteOrder::ABCD);
         assert!(result.is_ok());
@@ -646,8 +661,4 @@ mod tests {
         let result = mapping.with_byte_order(ByteOrder::AB);
         assert!(result.is_err());
     }
-
-
-
-
-} 
+}

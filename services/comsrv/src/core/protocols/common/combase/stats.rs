@@ -90,7 +90,10 @@ impl BaseCommStats {
 
     /// Increment specific error counter
     pub fn increment_error_counter(&mut self, error_type: &str) {
-        *self.error_counters.entry(error_type.to_string()).or_insert(0) += 1;
+        *self
+            .error_counters
+            .entry(error_type.to_string())
+            .or_insert(0) += 1;
     }
 }
 

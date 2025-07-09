@@ -25,9 +25,9 @@ path = "src/bin/test_logging.rs"
 name = "test_debug_logging"
 path = "src/bin/test_debug_logging.rs"
 
-[[example]]
-name = "optimized_points_demo"
-path = "examples/optimized_points_demo.rs"
+# [[example]]
+# name = "optimized_points_demo"
+# path = "examples/optimized_points_demo.rs"
 
 [dependencies]
 tokio = { version = "1.35", features = ["full"] }

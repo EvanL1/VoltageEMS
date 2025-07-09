@@ -51,7 +51,11 @@ impl From<crate::core::protocols::common::combase::ChannelStatus> for ChannelSta
             running: false, // Will be filled by handler
             last_update: status.last_update_time,
             error_count: if status.has_error() { 1 } else { 0 }, // Estimate from error state
-            last_error: if status.has_error() { Some(status.last_error) } else { None },
+            last_error: if status.has_error() {
+                Some(status.last_error)
+            } else {
+                None
+            },
             statistics: HashMap::new(), // ComBase doesn't provide statistics, will be filled by handler
         }
     }
@@ -210,19 +214,19 @@ pub struct TelemetryPoint {
 pub trait ProtocolMapping: Send + Sync + std::fmt::Debug {
     /// Get protocol type name
     fn protocol_type(&self) -> &str;
-    
+
     /// Get unique mapping identifier for this point
     fn mapping_id(&self) -> String;
-    
+
     /// Get polling interval in milliseconds (if applicable)
     fn polling_interval(&self) -> Option<u32>;
-    
+
     /// Get protocol-specific parameters as key-value pairs
     fn get_parameters(&self) -> std::collections::HashMap<String, String>;
-    
+
     /// Serialize to JSON for API response
     fn to_json(&self) -> serde_json::Value;
-    
+
     /// Validate mapping configuration
     fn validate(&self) -> Result<(), String>;
 }
@@ -256,15 +260,15 @@ impl ProtocolMapping for ModbusMapping {
     fn protocol_type(&self) -> &str {
         "modbus"
     }
-    
+
     fn mapping_id(&self) -> String {
         format!("modbus_{}_{}", self.slave_id.unwrap_or(1), self.address)
     }
-    
+
     fn polling_interval(&self) -> Option<u32> {
         self.polling_interval
     }
-    
+
     fn get_parameters(&self) -> std::collections::HashMap<String, String> {
         let mut params = std::collections::HashMap::new();
         params.insert("point_id".to_string(), self.point_id.to_string());
@@ -274,14 +278,17 @@ impl ProtocolMapping for ModbusMapping {
             params.insert("slave_id".to_string(), sid.to_string());
         }
         params.insert("data_format".to_string(), self.data_format.clone());
-        params.insert("number_of_bytes".to_string(), self.number_of_bytes.to_string());
+        params.insert(
+            "number_of_bytes".to_string(),
+            self.number_of_bytes.to_string(),
+        );
         params
     }
-    
+
     fn to_json(&self) -> serde_json::Value {
         serde_json::to_value(self).unwrap_or(serde_json::Value::Null)
     }
-    
+
     fn validate(&self) -> Result<(), String> {
         if self.point_id == 0 {
             return Err("Point ID must be > 0".to_string());
@@ -292,7 +299,7 @@ impl ProtocolMapping for ModbusMapping {
         // Modbus function codes: 1=ReadCoils, 2=ReadDiscreteInputs, 3=ReadHoldingRegisters, 4=ReadInputRegisters
         // 5=WriteSingleCoil, 6=WriteSingleRegister, 15=WriteMultipleCoils, 16=WriteMultipleRegisters
         match self.function_code {
-            1..=6 | 15 | 16 => {},  // Valid function codes
+            1..=6 | 15 | 16 => {} // Valid function codes
             _ => return Err("Invalid Modbus function code, supported: 1-6, 15, 16".to_string()),
         }
         if self.number_of_bytes == 0 || self.number_of_bytes > 125 {
@@ -327,15 +334,15 @@ impl ProtocolMapping for CanMapping {
     fn protocol_type(&self) -> &str {
         "can"
     }
-    
+
     fn mapping_id(&self) -> String {
         format!("can_{:X}_{}", self.can_id, self.byte_position)
     }
-    
+
     fn polling_interval(&self) -> Option<u32> {
         self.polling_interval
     }
-    
+
     fn get_parameters(&self) -> std::collections::HashMap<String, String> {
         let mut params = std::collections::HashMap::new();
         params.insert("point_id".to_string(), self.point_id.to_string());
@@ -349,11 +356,11 @@ impl ProtocolMapping for CanMapping {
         params.insert("byte_order".to_string(), self.byte_order.clone());
         params
     }
-    
+
     fn to_json(&self) -> serde_json::Value {
         serde_json::to_value(self).unwrap_or(serde_json::Value::Null)
     }
-    
+
     fn validate(&self) -> Result<(), String> {
         if self.point_id == 0 {
             return Err("Point ID must be > 0".to_string());
@@ -402,15 +409,15 @@ impl ProtocolMapping for IecMapping {
     fn protocol_type(&self) -> &str {
         "iec60870"
     }
-    
+
     fn mapping_id(&self) -> String {
         format!("iec_{}_{}", self.ca, self.ioa)
     }
-    
+
     fn polling_interval(&self) -> Option<u32> {
         self.polling_interval
     }
-    
+
     fn get_parameters(&self) -> std::collections::HashMap<String, String> {
         let mut params = std::collections::HashMap::new();
         params.insert("point_id".to_string(), self.point_id.to_string());
@@ -425,11 +432,11 @@ impl ProtocolMapping for IecMapping {
         }
         params
     }
-    
+
     fn to_json(&self) -> serde_json::Value {
         serde_json::to_value(self).unwrap_or(serde_json::Value::Null)
     }
-    
+
     fn validate(&self) -> Result<(), String> {
         if self.point_id == 0 {
             return Err("Point ID must be > 0".to_string());

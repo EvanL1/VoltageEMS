@@ -6,9 +6,11 @@
 use async_trait::async_trait;
 use std::collections::HashMap;
 
-use super::data_types::{ChannelStatus, PointData, ConnectionState};
-use super::telemetry::{TelemetryType, PointValueType, RemoteOperationRequest, RemoteOperationResponse};
+use super::data_types::{ChannelStatus, ConnectionState, PointData};
 use super::point_manager::UniversalPointManager;
+use super::telemetry::{
+    PointValueType, RemoteOperationRequest, RemoteOperationResponse, TelemetryType,
+};
 use crate::utils::Result;
 
 /// Main communication service trait
@@ -17,7 +19,6 @@ use crate::utils::Result;
 /// implementations must provide.
 #[async_trait]
 pub trait ComBase: Send + Sync + std::fmt::Debug {
-
     /// Get the human-readable name of the communication service
     fn name(&self) -> &str;
 
@@ -58,7 +59,7 @@ pub trait ComBase: Send + Sync + std::fmt::Debug {
     async fn get_diagnostics(&self) -> HashMap<String, String>;
 
     /// Get the universal point manager if available
-    /// 
+    ///
     /// This method allows access to the unified point management system.
     /// Protocols that use UniversalPointManager should return it here.
     /// Protocols with custom point management can return None.
@@ -67,7 +68,7 @@ pub trait ComBase: Send + Sync + std::fmt::Debug {
     }
 
     /// Get points by telemetry type using unified point manager
-    /// 
+    ///
     /// This provides a default implementation that uses UniversalPointManager
     /// if available, otherwise returns empty list. Protocols can override
     /// this method to provide custom implementations.
@@ -83,7 +84,7 @@ pub trait ComBase: Send + Sync + std::fmt::Debug {
     }
 
     /// Get all point configurations using unified point manager
-    /// 
+    ///
     /// This provides a default implementation that uses UniversalPointManager
     /// if available. Protocols can override for custom implementations.
     async fn get_all_point_configs(&self) -> Vec<super::point_manager::UniversalPointConfig> {
@@ -97,7 +98,9 @@ pub trait ComBase: Send + Sync + std::fmt::Debug {
     /// Get enabled points by telemetry type using unified point manager
     async fn get_enabled_points_by_type(&self, telemetry_type: &TelemetryType) -> Vec<String> {
         if let Some(point_manager) = self.get_point_manager().await {
-            point_manager.get_enabled_points_by_type(telemetry_type).await
+            point_manager
+                .get_enabled_points_by_type(telemetry_type)
+                .await
         } else {
             Vec::new()
         }
@@ -218,7 +221,11 @@ pub trait ProtocolPacketParser: Send + Sync {
     fn protocol_name(&self) -> &str;
 
     /// Parse a packet and return human-readable interpretation
-    fn parse_packet(&self, data: &[u8], direction: &str) -> super::default_protocol::PacketParseResult;
+    fn parse_packet(
+        &self,
+        data: &[u8],
+        direction: &str,
+    ) -> super::default_protocol::PacketParseResult;
 
     /// Convert bytes to hexadecimal string
     fn format_hex_data(&self, data: &[u8]) -> String {
@@ -262,7 +269,6 @@ mod tests {
 
     #[async_trait]
     impl ComBase for MockComBase {
-
         fn name(&self) -> &str {
             &self.name
         }
@@ -343,4 +349,4 @@ mod tests {
         mock.stop().await.unwrap();
         assert!(!mock.is_running().await);
     }
-} 
+}

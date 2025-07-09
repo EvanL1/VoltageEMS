@@ -4,13 +4,13 @@
 //! enabling dynamic protocol loading and standardized protocol implementation.
 
 use async_trait::async_trait;
-use std::collections::HashMap;
-use std::any::Any;
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::any::Any;
+use std::collections::HashMap;
 
-use crate::core::protocols::common::traits::ComBase;
 use crate::core::config::types::channel::ChannelConfig;
+use crate::core::protocols::common::traits::ComBase;
 use crate::utils::Result;
 
 /// Protocol plugin metadata
@@ -72,24 +72,21 @@ pub struct ValidationRule {
 pub trait ProtocolPlugin: Send + Sync + Any {
     /// Get protocol metadata
     fn metadata(&self) -> ProtocolMetadata;
-    
+
     /// Get configuration template
     fn config_template(&self) -> Vec<ConfigTemplate>;
-    
+
     /// Validate configuration
     fn validate_config(&self, config: &HashMap<String, Value>) -> Result<()>;
-    
+
     /// Create a new protocol instance
-    async fn create_instance(
-        &self,
-        channel_config: ChannelConfig,
-    ) -> Result<Box<dyn ComBase>>;
-    
+    async fn create_instance(&self, channel_config: ChannelConfig) -> Result<Box<dyn ComBase>>;
+
     /// Get protocol-specific CLI commands
     fn cli_commands(&self) -> Vec<CliCommand> {
         vec![]
     }
-    
+
     /// Generate example configuration
     fn generate_example_config(&self) -> HashMap<String, Value> {
         let mut config = HashMap::new();
@@ -100,7 +97,7 @@ pub trait ProtocolPlugin: Send + Sync + Any {
         }
         config
     }
-    
+
     /// Get protocol documentation
     fn documentation(&self) -> &str {
         ""
@@ -180,7 +177,7 @@ macro_rules! protocol_plugin {
         config: [$($config_item:tt),*]
     ) => {
         pub struct PluginMetadataImpl;
-        
+
         impl PluginMetadataImpl {
             pub fn metadata() -> $crate::core::plugins::protocol_plugin::ProtocolMetadata {
                 $crate::core::plugins::protocol_plugin::ProtocolMetadata {
@@ -194,7 +191,7 @@ macro_rules! protocol_plugin {
                     dependencies: std::collections::HashMap::new(),
                 }
             }
-            
+
             pub fn config_template() -> Vec<$crate::core::plugins::protocol_plugin::ConfigTemplate> {
                 vec![
                     $(protocol_plugin!(@config_item $config_item)),*
@@ -202,7 +199,7 @@ macro_rules! protocol_plugin {
             }
         }
     };
-    
+
     (@config_item {
         name: $name:expr,
         description: $description:expr,
@@ -220,10 +217,10 @@ macro_rules! protocol_plugin {
             validation: protocol_plugin!(@validation $($validation)?),
         }
     };
-    
+
     (@default) => { None };
     (@default $default:expr) => { Some(serde_json::json!($default)) };
-    
+
     (@validation) => { None };
     (@validation { $($field:ident: $value:expr),* }) => {
         Some($crate::core::plugins::protocol_plugin::ValidationRule {
@@ -233,7 +230,7 @@ macro_rules! protocol_plugin {
             ..Default::default()
         })
     };
-    
+
     (@validation_field min, $value:expr) => { Some($value as f64) };
     (@validation_field max, $value:expr) => { Some($value as f64) };
     (@validation_field pattern, $value:expr) => { Some($value.to_string()) };

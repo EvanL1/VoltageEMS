@@ -11,7 +11,9 @@ use std::time::{Duration, SystemTime};
 use tokio::sync::RwLock;
 use tracing::{debug, info, warn};
 
-use super::traits::{ConnectionState, Transport, TransportBuilder, TransportConfig, TransportError, TransportStats};
+use super::traits::{
+    ConnectionState, Transport, TransportBuilder, TransportConfig, TransportError, TransportStats,
+};
 
 /// GPIO pin mode configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -96,25 +98,32 @@ impl TransportConfig for GpioTransportConfig {
 
     fn validate(&self) -> Result<(), TransportError> {
         if self.name.is_empty() {
-            return Err(TransportError::ConfigError("Name cannot be empty".to_string()));
+            return Err(TransportError::ConfigError(
+                "Name cannot be empty".to_string(),
+            ));
         }
 
         if self.pins.is_empty() {
-            return Err(TransportError::ConfigError("At least one pin must be configured".to_string()));
+            return Err(TransportError::ConfigError(
+                "At least one pin must be configured".to_string(),
+            ));
         }
 
         // Validate pin numbers are unique
         let mut pin_numbers = std::collections::HashSet::new();
         for pin_config in &self.pins {
             if !pin_numbers.insert(pin_config.pin) {
-                return Err(TransportError::ConfigError(
-                    format!("Duplicate pin number: {}", pin_config.pin)
-                ));
+                return Err(TransportError::ConfigError(format!(
+                    "Duplicate pin number: {}",
+                    pin_config.pin
+                )));
             }
         }
 
         if self.timeout.is_zero() {
-            return Err(TransportError::ConfigError("Timeout must be greater than zero".to_string()));
+            return Err(TransportError::ConfigError(
+                "Timeout must be greater than zero".to_string(),
+            ));
         }
 
         Ok(())
@@ -151,7 +160,7 @@ struct GpioTransportState {
 impl GpioTransportState {
     fn new(pin_configs: Vec<GpioPinConfig>) -> Self {
         let mut pin_states = HashMap::new();
-        
+
         for config in pin_configs {
             let state = GpioPinState {
                 config: config.clone(),
@@ -197,7 +206,7 @@ impl GpioTransport {
     /// Set digital output pin value
     pub async fn set_digital_output(&self, pin: u8, value: bool) -> Result<(), TransportError> {
         let mut state = self.state.write().await;
-        
+
         if !state.connected {
             return Err(TransportError::SendFailed("GPIO not connected".to_string()));
         }
@@ -208,60 +217,71 @@ impl GpioTransport {
                     // In a real implementation, this would write to the actual GPIO
                     pin_state.current_value = Some(value);
                     pin_state.last_change = Some(SystemTime::now());
-                    
+
                     debug!("Set GPIO pin {} to {}", pin, value);
                     Ok(())
                 }
-                _ => Err(TransportError::ConfigError(
-                    format!("Pin {} is not configured as output", pin)
-                ))
+                _ => Err(TransportError::ConfigError(format!(
+                    "Pin {} is not configured as output",
+                    pin
+                ))),
             }
         } else {
-            Err(TransportError::ConfigError(
-                format!("Pin {} not configured", pin)
-            ))
+            Err(TransportError::ConfigError(format!(
+                "Pin {} not configured",
+                pin
+            )))
         }
     }
 
     /// Read digital input pin value
     pub async fn read_digital_input(&self, pin: u8) -> Result<bool, TransportError> {
         let state = self.state.read().await;
-        
+
         if !state.connected {
-            return Err(TransportError::ReceiveFailed("GPIO not connected".to_string()));
+            return Err(TransportError::ReceiveFailed(
+                "GPIO not connected".to_string(),
+            ));
         }
 
         if let Some(pin_state) = state.pin_states.get(&pin) {
             match pin_state.config.mode {
-                GpioPinMode::DigitalInput | 
-                GpioPinMode::DigitalInputPullUp | 
-                GpioPinMode::DigitalInputPullDown => {
+                GpioPinMode::DigitalInput
+                | GpioPinMode::DigitalInputPullUp
+                | GpioPinMode::DigitalInputPullDown => {
                     // In a real implementation, this would read from the actual GPIO
                     let value = pin_state.current_value.unwrap_or(false);
                     debug!("Read GPIO pin {}: {}", pin, value);
                     Ok(value)
                 }
-                _ => Err(TransportError::ConfigError(
-                    format!("Pin {} is not configured as input", pin)
-                ))
+                _ => Err(TransportError::ConfigError(format!(
+                    "Pin {} is not configured as input",
+                    pin
+                ))),
             }
         } else {
-            Err(TransportError::ConfigError(
-                format!("Pin {} not configured", pin)
-            ))
+            Err(TransportError::ConfigError(format!(
+                "Pin {} not configured",
+                pin
+            )))
         }
     }
 
     /// Get all pin states
     pub async fn get_all_pin_states(&self) -> HashMap<u8, Option<bool>> {
         let state = self.state.read().await;
-        state.pin_states.iter()
+        state
+            .pin_states
+            .iter()
             .map(|(pin, state)| (*pin, state.current_value))
             .collect()
     }
 
     /// Set multiple outputs atomically
-    pub async fn set_multiple_outputs(&self, values: HashMap<u8, bool>) -> Result<(), TransportError> {
+    pub async fn set_multiple_outputs(
+        &self,
+        values: HashMap<u8, bool>,
+    ) -> Result<(), TransportError> {
         for (pin, value) in values {
             self.set_digital_output(pin, value).await?;
         }
@@ -269,7 +289,10 @@ impl GpioTransport {
     }
 
     /// Read multiple inputs
-    pub async fn read_multiple_inputs(&self, pins: &[u8]) -> Result<HashMap<u8, bool>, TransportError> {
+    pub async fn read_multiple_inputs(
+        &self,
+        pins: &[u8],
+    ) -> Result<HashMap<u8, bool>, TransportError> {
         let mut results = HashMap::new();
         for &pin in pins {
             let value = self.read_digital_input(pin).await?;
@@ -294,7 +317,10 @@ impl Transport for GpioTransport {
         state.stats.record_connection_attempt();
         state.stats.connection_state = ConnectionState::Connecting;
 
-        debug!("Initializing GPIO transport with {} pins", state.pin_states.len());
+        debug!(
+            "Initializing GPIO transport with {} pins",
+            state.pin_states.len()
+        );
 
         // Initialize GPIO based on backend type
         match self.config.backend {
@@ -327,7 +353,7 @@ impl Transport for GpioTransport {
 
         state.connected = true;
         state.stats.record_successful_connection();
-        
+
         Ok(())
     }
 
@@ -343,53 +369,63 @@ impl Transport for GpioTransport {
 
     async fn send(&mut self, data: &[u8]) -> Result<usize, TransportError> {
         if data.len() < 2 {
-            return Err(TransportError::SendFailed("Invalid GPIO command format".to_string()));
+            return Err(TransportError::SendFailed(
+                "Invalid GPIO command format".to_string(),
+            ));
         }
 
         let pin = data[0];
         let value = data[1] != 0;
-        
+
         self.set_digital_output(pin, value).await?;
-        
+
         let mut state = self.state.write().await;
         state.stats.record_bytes_sent(data.len());
-        
+
         Ok(data.len())
     }
 
     async fn receive(
-        &mut self, 
-        buffer: &mut [u8], 
-        _timeout: Option<Duration>
+        &mut self,
+        buffer: &mut [u8],
+        _timeout: Option<Duration>,
     ) -> Result<usize, TransportError> {
         if buffer.len() < 2 {
-            return Err(TransportError::ReceiveFailed("Buffer too small".to_string()));
+            return Err(TransportError::ReceiveFailed(
+                "Buffer too small".to_string(),
+            ));
         }
 
         // For simplicity, read the first configured input pin
         let state = self.state.read().await;
-        let input_pin = state.pin_states.iter()
-            .find(|(_, pin_state)| matches!(
-                pin_state.config.mode, 
-                GpioPinMode::DigitalInput | 
-                GpioPinMode::DigitalInputPullUp | 
-                GpioPinMode::DigitalInputPullDown
-            ))
+        let input_pin = state
+            .pin_states
+            .iter()
+            .find(|(_, pin_state)| {
+                matches!(
+                    pin_state.config.mode,
+                    GpioPinMode::DigitalInput
+                        | GpioPinMode::DigitalInputPullUp
+                        | GpioPinMode::DigitalInputPullDown
+                )
+            })
             .map(|(pin, _)| *pin);
 
         if let Some(pin) = input_pin {
             drop(state);
             let value = self.read_digital_input(pin).await?;
-            
+
             buffer[0] = pin;
             buffer[1] = if value { 1 } else { 0 };
-            
+
             let mut state = self.state.write().await;
             state.stats.record_bytes_received(2);
-            
+
             Ok(2)
         } else {
-            Err(TransportError::ReceiveFailed("No input pins configured".to_string()))
+            Err(TransportError::ReceiveFailed(
+                "No input pins configured".to_string(),
+            ))
         }
     }
 
@@ -406,7 +442,7 @@ impl Transport for GpioTransport {
     async fn stats(&self) -> TransportStats {
         let state = self.state.read().await;
         let mut stats = state.stats.clone();
-        
+
         // Update uptime
         if let Ok(elapsed) = self.start_time.elapsed() {
             stats.uptime = elapsed;
@@ -423,15 +459,24 @@ impl Transport for GpioTransport {
     async fn diagnostics(&self) -> std::collections::HashMap<String, String> {
         let mut diag = std::collections::HashMap::new();
         let state = self.state.read().await;
-        
-        diag.insert("transport_type".to_string(), self.transport_type().to_string());
+
+        diag.insert(
+            "transport_type".to_string(),
+            self.transport_type().to_string(),
+        );
         diag.insert("name".to_string(), self.name().to_string());
         diag.insert("connected".to_string(), state.connected.to_string());
-        diag.insert("connection_state".to_string(), format!("{:?}", state.stats.connection_state));
+        diag.insert(
+            "connection_state".to_string(),
+            format!("{:?}", state.stats.connection_state),
+        );
         diag.insert("backend".to_string(), format!("{:?}", self.config.backend));
         diag.insert("pin_count".to_string(), state.pin_states.len().to_string());
-        diag.insert("poll_interval_ms".to_string(), self.config.poll_interval.as_millis().to_string());
-        
+        diag.insert(
+            "poll_interval_ms".to_string(),
+            self.config.poll_interval.as_millis().to_string(),
+        );
+
         if let Some(device_path) = &self.config.device_path {
             diag.insert("device_path".to_string(), device_path.clone());
         }
@@ -439,8 +484,8 @@ impl Transport for GpioTransport {
         // Add pin states
         for (pin, pin_state) in &state.pin_states {
             diag.insert(
-                format!("pin_{}_mode", pin), 
-                format!("{:?}", pin_state.config.mode)
+                format!("pin_{}_mode", pin),
+                format!("{:?}", pin_state.config.mode),
             );
             if let Some(value) = pin_state.current_value {
                 diag.insert(format!("pin_{}_value", pin), value.to_string());
@@ -483,10 +528,10 @@ mod tests {
     #[test]
     fn test_gpio_config_validation() {
         let mut config = GpioTransportConfig::default();
-        
+
         // Empty pins should fail
         assert!(config.validate().is_err());
-        
+
         // Add valid pin config
         config.pins.push(GpioPinConfig {
             pin: 18,
@@ -496,10 +541,10 @@ mod tests {
             label: Some("LED".to_string()),
         });
         assert!(config.validate().is_ok());
-        
+
         // Duplicate pin should fail
         config.pins.push(GpioPinConfig {
-            pin: 18,  // Duplicate
+            pin: 18, // Duplicate
             mode: GpioPinMode::DigitalInput,
             initial_value: None,
             debounce_ms: Some(50),
@@ -547,19 +592,19 @@ mod tests {
 
         let mut transport = GpioTransport::new(config).unwrap();
         transport.connect().await.unwrap();
-        
+
         // Test digital output
         assert!(transport.set_digital_output(18, true).await.is_ok());
-        
+
         // Test digital input (will return default false since it's mock)
         let input_value = transport.read_digital_input(19).await.unwrap();
-        assert!(!input_value);  // Default mock value
-        
+        assert!(!input_value); // Default mock value
+
         // Test multiple operations
         let mut outputs = HashMap::new();
         outputs.insert(18, false);
         assert!(transport.set_multiple_outputs(outputs).await.is_ok());
-        
+
         let inputs = transport.read_multiple_inputs(&[19]).await.unwrap();
         assert_eq!(inputs.len(), 1);
         assert_eq!(inputs[&19], false);
@@ -569,7 +614,7 @@ mod tests {
     async fn test_gpio_transport_builder() {
         let builder = GpioTransportBuilder::new();
         let mut config = builder.default_config();
-        
+
         config.pins.push(GpioPinConfig {
             pin: 18,
             mode: GpioPinMode::DigitalOutput,
@@ -581,4 +626,4 @@ mod tests {
         let transport = builder.build(config).await;
         assert!(transport.is_ok());
     }
-} 
+}

@@ -1,22 +1,19 @@
 //! Command Manager Module
 //!
-//! This module contains the universal command manager implementation for handling 
+//! This module contains the universal command manager implementation for handling
 //! four-telemetry commands across all protocols.
 
-
+use chrono::Utc;
 use futures::StreamExt;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::RwLock;
 use tracing::{debug, error, info, trace, warn};
-use chrono::Utc;
 
-use super::traits::FourTelemetryOperations;
-use super::telemetry::{
-    RemoteOperationRequest, RemoteOperationType, PointValueType
-};
 use super::data_types::PointData;
+use super::telemetry::{PointValueType, RemoteOperationRequest, RemoteOperationType};
+use super::traits::FourTelemetryOperations;
 use crate::utils::Result;
 
 /// Universal Redis command manager for handling four-telemetry commands across all protocols
@@ -271,9 +268,7 @@ impl UniversalCommandManager {
         };
 
         // Store result back to Redis
-        redis_store
-            .set_command_result(channel_id, &result)
-            .await?;
+        redis_store.set_command_result(channel_id, &result).await?;
 
         Ok(())
     }
@@ -288,11 +283,13 @@ impl UniversalCommandManager {
                     processed: point.value.parse().unwrap_or(0.0),
                     timestamp: point.timestamp.format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string(),
                 };
-                
+
                 let key = format!("{}:point:{}", self.channel_id, point.id);
-                redis_store.set_realtime_value(&key, &realtime_value).await?;
+                redis_store
+                    .set_realtime_value(&key, &realtime_value)
+                    .await?;
             }
-            
+
             debug!(
                 "Synced {} data points to Redis for channel: {}",
                 data_points.len(),
@@ -321,13 +318,13 @@ impl UniversalCommandManager {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Arc;
-    use std::collections::HashMap;
-    use async_trait::async_trait;
     use crate::core::protocols::common::combase::telemetry::{
-        MeasurementPoint, SignalingPoint, ControlPoint, RegulationPoint, RemoteOperationResponse,
-        ExecutionStatus,
+        ControlPoint, ExecutionStatus, MeasurementPoint, RegulationPoint, RemoteOperationResponse,
+        SignalingPoint,
     };
+    use async_trait::async_trait;
+    use std::collections::HashMap;
+    use std::sync::Arc;
 
     struct MockFourTelemetryOperations {
         measurement_points: HashMap<String, f64>,
@@ -364,7 +361,9 @@ mod tests {
             point_names: &[String],
         ) -> Result<Vec<(String, PointValueType)>> {
             if self.should_fail {
-                return Err(crate::utils::ComSrvError::InvalidOperation("Mock failure".to_string()));
+                return Err(crate::utils::ComSrvError::InvalidOperation(
+                    "Mock failure".to_string(),
+                ));
             }
 
             let mut results = Vec::new();
@@ -388,7 +387,9 @@ mod tests {
             point_names: &[String],
         ) -> Result<Vec<(String, PointValueType)>> {
             if self.should_fail {
-                return Err(crate::utils::ComSrvError::InvalidOperation("Mock failure".to_string()));
+                return Err(crate::utils::ComSrvError::InvalidOperation(
+                    "Mock failure".to_string(),
+                ));
             }
 
             let mut results = Vec::new();
@@ -412,7 +413,9 @@ mod tests {
             _request: RemoteOperationRequest,
         ) -> Result<RemoteOperationResponse> {
             if self.should_fail {
-                return Err(crate::utils::ComSrvError::InvalidOperation("Mock failure".to_string()));
+                return Err(crate::utils::ComSrvError::InvalidOperation(
+                    "Mock failure".to_string(),
+                ));
             }
 
             Ok(RemoteOperationResponse {
@@ -434,7 +437,9 @@ mod tests {
             _request: RemoteOperationRequest,
         ) -> Result<RemoteOperationResponse> {
             if self.should_fail {
-                return Err(crate::utils::ComSrvError::InvalidOperation("Mock failure".to_string()));
+                return Err(crate::utils::ComSrvError::InvalidOperation(
+                    "Mock failure".to_string(),
+                ));
             }
 
             Ok(RemoteOperationResponse {
@@ -490,19 +495,17 @@ mod tests {
     #[tokio::test]
     async fn test_sync_data_without_redis() {
         let manager = UniversalCommandManager::new("test_channel".to_string());
-        let data_points = vec![
-            PointData {
-                id: "test_1".to_string(),
-                name: "Test Point 1".to_string(),
-                value: "123.45".to_string(),
-                timestamp: Utc::now(),
-                unit: "°C".to_string(),
-                description: "Test description".to_string(),
-            }
-        ];
+        let data_points = vec![PointData {
+            id: "test_1".to_string(),
+            name: "Test Point 1".to_string(),
+            value: "123.45".to_string(),
+            timestamp: Utc::now(),
+            unit: "°C".to_string(),
+            description: "Test description".to_string(),
+        }];
 
         // Should succeed but do nothing without Redis
         let result = manager.sync_data_to_redis(&data_points).await;
         assert!(result.is_ok());
     }
-} 
+}

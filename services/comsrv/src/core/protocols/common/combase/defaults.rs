@@ -12,18 +12,18 @@ pub mod defaults {
     pub const DEFAULT_TIMEOUT_MS: u32 = 3000;
     pub const DEFAULT_RETRY_COUNT: u32 = 3;
     pub const DEFAULT_RETRY_INTERVAL_MS: u32 = 1000;
-    
+
     // Data processing defaults
     pub const DEFAULT_SCALE: f64 = 1.0;
     pub const DEFAULT_OFFSET: f64 = 0.0;
     pub const DEFAULT_REVERSE: u8 = 0;
-    
+
     // Polling defaults
     pub const DEFAULT_POLLING_INTERVAL_MS: u64 = 1000;
     pub const DEFAULT_BATCH_SIZE: u32 = 100;
     pub const DEFAULT_MAX_POINTS_PER_CYCLE: u32 = 100;
     pub const DEFAULT_POINT_READ_DELAY_MS: u64 = 10;
-    
+
     // Modbus function codes
     pub const FC_READ_COILS: u8 = 1;
     pub const FC_READ_DISCRETE_INPUTS: u8 = 2;
@@ -33,7 +33,7 @@ pub mod defaults {
     pub const FC_WRITE_SINGLE_REGISTER: u8 = 6;
     pub const FC_WRITE_MULTIPLE_COILS: u8 = 15;
     pub const FC_WRITE_MULTIPLE_REGISTERS: u8 = 16;
-    
+
     // Channel defaults
     pub const DEFAULT_CHANNEL_ENABLED: bool = true;
     pub const DEFAULT_CHANNEL_LOG_LEVEL: &str = "info";
@@ -41,7 +41,7 @@ pub mod defaults {
     pub const DEFAULT_MAX_LOG_FILE_SIZE: u64 = 10485760; // 10MB
     pub const DEFAULT_MAX_LOG_FILES: u32 = 5;
     pub const DEFAULT_LOG_RETENTION_DAYS: u32 = 7;
-    
+
     // Connection defaults
     pub const DEFAULT_TCP_PORT: u16 = 502;
     pub const DEFAULT_SERIAL_BAUD: u32 = 9600;
@@ -71,17 +71,17 @@ pub fn get_default_function_code(telemetry_type: &TelemetryType) -> ModbusFuncti
 /// Get default unit for common measurement types
 pub fn get_default_unit(signal_name: &str) -> Option<&'static str> {
     let name_lower = signal_name.to_lowercase();
-    
+
     // Voltage related
     if name_lower.contains("voltage") || name_lower.contains("电压") {
         return Some("V");
     }
-    
+
     // Current related
     if name_lower.contains("current") || name_lower.contains("电流") {
         return Some("A");
     }
-    
+
     // Power related
     if name_lower.contains("power") || name_lower.contains("功率") {
         if name_lower.contains("reactive") || name_lower.contains("无功") {
@@ -92,37 +92,39 @@ pub fn get_default_unit(signal_name: &str) -> Option<&'static str> {
             return Some("kW");
         }
     }
-    
+
     // Energy related
-    if name_lower.contains("energy") || name_lower.contains("电能") || name_lower.contains("电量") {
+    if name_lower.contains("energy") || name_lower.contains("电能") || name_lower.contains("电量")
+    {
         return Some("kWh");
     }
-    
+
     // Frequency
     if name_lower.contains("frequency") || name_lower.contains("频率") {
         return Some("Hz");
     }
-    
+
     // Temperature
     if name_lower.contains("temperature") || name_lower.contains("温度") {
         return Some("°C");
     }
-    
+
     // Pressure
     if name_lower.contains("pressure") || name_lower.contains("压力") {
         return Some("bar");
     }
-    
+
     // Flow
     if name_lower.contains("flow") || name_lower.contains("流量") {
         return Some("m³/h");
     }
-    
+
     // Percentage
-    if name_lower.contains("percent") || name_lower.contains("百分") || name_lower.contains("率") {
+    if name_lower.contains("percent") || name_lower.contains("百分") || name_lower.contains("率")
+    {
         return Some("%");
     }
-    
+
     None
 }
 
@@ -151,21 +153,48 @@ pub fn get_default_scale(unit: Option<&str>, signal_name: &str) -> f64 {
 /// Channel parameter defaults based on protocol
 pub fn get_channel_defaults(protocol: &str) -> std::collections::HashMap<String, String> {
     let mut params = std::collections::HashMap::new();
-    
+
     match protocol.to_lowercase().as_str() {
         "modbus_tcp" => {
             params.insert("port".to_string(), defaults::DEFAULT_TCP_PORT.to_string());
-            params.insert("timeout".to_string(), defaults::DEFAULT_TIMEOUT_MS.to_string());
-            params.insert("retry_count".to_string(), defaults::DEFAULT_RETRY_COUNT.to_string());
-            params.insert("retry_interval".to_string(), defaults::DEFAULT_RETRY_INTERVAL_MS.to_string());
+            params.insert(
+                "timeout".to_string(),
+                defaults::DEFAULT_TIMEOUT_MS.to_string(),
+            );
+            params.insert(
+                "retry_count".to_string(),
+                defaults::DEFAULT_RETRY_COUNT.to_string(),
+            );
+            params.insert(
+                "retry_interval".to_string(),
+                defaults::DEFAULT_RETRY_INTERVAL_MS.to_string(),
+            );
         }
         "modbus_rtu" => {
-            params.insert("baud_rate".to_string(), defaults::DEFAULT_SERIAL_BAUD.to_string());
-            params.insert("data_bits".to_string(), defaults::DEFAULT_SERIAL_DATA_BITS.to_string());
-            params.insert("stop_bits".to_string(), defaults::DEFAULT_SERIAL_STOP_BITS.to_string());
-            params.insert("parity".to_string(), defaults::DEFAULT_SERIAL_PARITY.to_string());
-            params.insert("timeout".to_string(), defaults::DEFAULT_TIMEOUT_MS.to_string());
-            params.insert("retry_count".to_string(), defaults::DEFAULT_RETRY_COUNT.to_string());
+            params.insert(
+                "baud_rate".to_string(),
+                defaults::DEFAULT_SERIAL_BAUD.to_string(),
+            );
+            params.insert(
+                "data_bits".to_string(),
+                defaults::DEFAULT_SERIAL_DATA_BITS.to_string(),
+            );
+            params.insert(
+                "stop_bits".to_string(),
+                defaults::DEFAULT_SERIAL_STOP_BITS.to_string(),
+            );
+            params.insert(
+                "parity".to_string(),
+                defaults::DEFAULT_SERIAL_PARITY.to_string(),
+            );
+            params.insert(
+                "timeout".to_string(),
+                defaults::DEFAULT_TIMEOUT_MS.to_string(),
+            );
+            params.insert(
+                "retry_count".to_string(),
+                defaults::DEFAULT_RETRY_COUNT.to_string(),
+            );
         }
         "iec104" => {
             params.insert("port".to_string(), "2404".to_string());
@@ -181,7 +210,7 @@ pub fn get_channel_defaults(protocol: &str) -> std::collections::HashMap<String,
         }
         _ => {}
     }
-    
+
     params
 }
 
@@ -199,10 +228,22 @@ mod tests {
 
     #[test]
     fn test_default_function_code() {
-        assert_eq!(get_default_function_code(&TelemetryType::Telemetry), ModbusFunctionCode::Read03);
-        assert_eq!(get_default_function_code(&TelemetryType::Signaling), ModbusFunctionCode::Read02);
-        assert_eq!(get_default_function_code(&TelemetryType::Control), ModbusFunctionCode::Write05);
-        assert_eq!(get_default_function_code(&TelemetryType::Setpoint), ModbusFunctionCode::Write06);
+        assert_eq!(
+            get_default_function_code(&TelemetryType::Telemetry),
+            ModbusFunctionCode::Read03
+        );
+        assert_eq!(
+            get_default_function_code(&TelemetryType::Signaling),
+            ModbusFunctionCode::Read02
+        );
+        assert_eq!(
+            get_default_function_code(&TelemetryType::Control),
+            ModbusFunctionCode::Write05
+        );
+        assert_eq!(
+            get_default_function_code(&TelemetryType::Setpoint),
+            ModbusFunctionCode::Write06
+        );
     }
 
     #[test]
@@ -219,10 +260,16 @@ mod tests {
     fn test_channel_defaults() {
         let modbus_tcp_defaults = get_channel_defaults("modbus_tcp");
         assert_eq!(modbus_tcp_defaults.get("port"), Some(&"502".to_string()));
-        assert_eq!(modbus_tcp_defaults.get("timeout"), Some(&"3000".to_string()));
-        
+        assert_eq!(
+            modbus_tcp_defaults.get("timeout"),
+            Some(&"3000".to_string())
+        );
+
         let modbus_rtu_defaults = get_channel_defaults("modbus_rtu");
-        assert_eq!(modbus_rtu_defaults.get("baud_rate"), Some(&"9600".to_string()));
+        assert_eq!(
+            modbus_rtu_defaults.get("baud_rate"),
+            Some(&"9600".to_string())
+        );
         assert_eq!(modbus_rtu_defaults.get("parity"), Some(&"none".to_string()));
     }
 }

@@ -168,64 +168,64 @@ pub trait Transport: Send + Sync + fmt::Debug {
     fn name(&self) -> &str;
 
     /// Connect to the remote endpoint
-    /// 
+    ///
     /// # Returns
-    /// 
+    ///
     /// `Ok(())` if connection successful, `Err` otherwise
     async fn connect(&mut self) -> std::result::Result<(), TransportError>;
 
     /// Disconnect from the remote endpoint
-    /// 
+    ///
     /// # Returns
-    /// 
+    ///
     /// `Ok(())` if disconnection successful, `Err` otherwise
     async fn disconnect(&mut self) -> std::result::Result<(), TransportError>;
 
     /// Send data to the remote endpoint
-    /// 
+    ///
     /// # Arguments
-    /// 
+    ///
     /// * `data` - Data bytes to send
-    /// 
+    ///
     /// # Returns
-    /// 
+    ///
     /// `Ok(bytes_sent)` if successful, `Err` otherwise
     async fn send(&mut self, data: &[u8]) -> std::result::Result<usize, TransportError>;
 
     /// Receive data from the remote endpoint
-    /// 
+    ///
     /// # Arguments
-    /// 
+    ///
     /// * `buffer` - Buffer to store received data
     /// * `timeout` - Optional timeout for the receive operation
-    /// 
+    ///
     /// # Returns
-    /// 
+    ///
     /// `Ok(bytes_received)` if successful, `Err` otherwise
     async fn receive(
-        &mut self, 
-        buffer: &mut [u8], 
-        timeout: Option<Duration>
+        &mut self,
+        buffer: &mut [u8],
+        timeout: Option<Duration>,
     ) -> std::result::Result<usize, TransportError>;
 
     /// Check if transport is currently connected
-    /// 
+    ///
     /// # Returns
-    /// 
+    ///
     /// `true` if connected, `false` otherwise
     async fn is_connected(&self) -> bool;
 
     /// Get current connection state
-    /// 
+    ///
     /// # Returns
-    /// 
+    ///
     /// Current connection state
     async fn connection_state(&self) -> ConnectionState;
 
     /// Get transport statistics
-    /// 
+    ///
     /// # Returns
-    /// 
+    ///
     /// Current transport statistics
     async fn stats(&self) -> TransportStats;
 
@@ -233,7 +233,7 @@ pub trait Transport: Send + Sync + fmt::Debug {
     async fn reset_stats(&mut self);
 
     /// Close the transport and clean up resources
-    /// 
+    ///
     /// This method should be called when the transport is no longer needed.
     /// It performs any necessary cleanup and ensures resources are properly released.
     async fn close(&mut self) -> std::result::Result<(), TransportError> {
@@ -241,16 +241,25 @@ pub trait Transport: Send + Sync + fmt::Debug {
     }
 
     /// Get transport-specific diagnostic information
-    /// 
+    ///
     /// # Returns
-    /// 
+    ///
     /// Key-value pairs of diagnostic information
     async fn diagnostics(&self) -> std::collections::HashMap<String, String> {
         let mut diag = std::collections::HashMap::new();
-        diag.insert("transport_type".to_string(), self.transport_type().to_string());
+        diag.insert(
+            "transport_type".to_string(),
+            self.transport_type().to_string(),
+        );
         diag.insert("name".to_string(), self.name().to_string());
-        diag.insert("connected".to_string(), self.is_connected().await.to_string());
-        diag.insert("connection_state".to_string(), format!("{:?}", self.connection_state().await));
+        diag.insert(
+            "connected".to_string(),
+            self.is_connected().await.to_string(),
+        );
+        diag.insert(
+            "connection_state".to_string(),
+            format!("{:?}", self.connection_state().await),
+        );
         diag
     }
 }
@@ -264,24 +273,27 @@ pub trait TransportBuilder: Send + Sync {
     type Transport: Transport;
 
     /// Create a new transport instance with the given configuration
-    /// 
+    ///
     /// # Arguments
-    /// 
+    ///
     /// * `config` - Transport configuration
-    /// 
+    ///
     /// # Returns
-    /// 
+    ///
     /// New transport instance
-    async fn build(&self, config: Self::Config) -> std::result::Result<Self::Transport, TransportError>;
+    async fn build(
+        &self,
+        config: Self::Config,
+    ) -> std::result::Result<Self::Transport, TransportError>;
 
     /// Validate configuration without creating transport
-    /// 
+    ///
     /// # Arguments
-    /// 
+    ///
     /// * `config` - Configuration to validate
-    /// 
+    ///
     /// # Returns
-    /// 
+    ///
     /// `Ok(())` if valid, `Err` with details if invalid
     fn validate_config(&self, config: &Self::Config) -> std::result::Result<(), TransportError> {
         config.validate()
@@ -325,4 +337,4 @@ mod tests {
         assert!(error.to_string().contains("Connection failed"));
         assert!(error.to_string().contains("Test error"));
     }
-} 
+}

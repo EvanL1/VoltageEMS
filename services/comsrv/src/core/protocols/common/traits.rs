@@ -16,7 +16,6 @@ use crate::utils::Result;
 /// implementations must provide.
 #[async_trait]
 pub trait ComBase: Send + Sync + std::fmt::Debug {
-
     /// Get the human-readable name of the communication service
     fn name(&self) -> &str;
 
@@ -57,16 +56,18 @@ pub trait ComBase: Send + Sync + std::fmt::Debug {
     async fn get_diagnostics(&self) -> HashMap<String, String>;
 
     /// Get the optimized point manager if available
-    /// 
+    ///
     /// This method allows access to the unified point management system.
     /// Protocols that use OptimizedPointManager should return it here.
     /// Protocols with custom point management can return None.
-    async fn get_point_manager(&self) -> Option<std::sync::Arc<super::manager::OptimizedPointManager>> {
+    async fn get_point_manager(
+        &self,
+    ) -> Option<std::sync::Arc<super::manager::OptimizedPointManager>> {
         None
     }
 
     /// Get points by telemetry type using unified point manager
-    /// 
+    ///
     /// This provides a default implementation that uses OptimizedPointManager
     /// if available, otherwise returns empty list. Protocols can override
     /// this method to provide custom implementations.
@@ -87,7 +88,9 @@ pub trait ComBase: Send + Sync + std::fmt::Debug {
     /// Get enabled points by telemetry type using unified point manager
     async fn get_enabled_points_by_type(&self, telemetry_type: &TelemetryType) -> Vec<String> {
         if let Some(point_manager) = self.get_point_manager().await {
-            point_manager.get_enabled_points_by_type(telemetry_type).await
+            point_manager
+                .get_enabled_points_by_type(telemetry_type)
+                .await
         } else {
             Vec::new()
         }

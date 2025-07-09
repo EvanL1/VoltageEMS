@@ -3,19 +3,18 @@
 //! This module provides centralized plugin registration and management,
 //! including dynamic loading, version management, and lifecycle control.
 
+use once_cell::sync::Lazy;
+use semver::Version;
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
-use once_cell::sync::Lazy;
-use tracing::{info, warn, error};
-use semver::Version;
+use tracing::{error, info, warn};
 
-use super::protocol_plugin::{ProtocolPlugin, ProtocolMetadata, PluginFactory};
-use crate::utils::{Result, ComSrvError as Error};
+use super::protocol_plugin::{PluginFactory, ProtocolMetadata, ProtocolPlugin};
+use crate::utils::{ComSrvError as Error, Result};
 
 /// Global plugin registry instance
-static PLUGIN_REGISTRY: Lazy<Arc<RwLock<PluginRegistry>>> = Lazy::new(|| {
-    Arc::new(RwLock::new(PluginRegistry::new()))
-});
+static PLUGIN_REGISTRY: Lazy<Arc<RwLock<PluginRegistry>>> =
+    Lazy::new(|| Arc::new(RwLock::new(PluginRegistry::new())));
 
 /// Plugin registry for managing protocol plugins
 pub struct PluginRegistry {
@@ -48,15 +47,12 @@ impl PluginRegistry {
             load_order: Vec::new(),
         }
     }
-    
+
     /// Register a plugin with the registry
-    pub fn register_plugin(
-        &mut self,
-        plugin: Box<dyn ProtocolPlugin>,
-    ) -> Result<()> {
+    pub fn register_plugin(&mut self, plugin: Box<dyn ProtocolPlugin>) -> Result<()> {
         let metadata = plugin.metadata();
         let plugin_id = metadata.id.clone();
-        
+
         // Check for duplicate registration
         if self.plugins.contains_key(&plugin_id) {
             return Err(Error::ConfigError(format!(
@@ -64,7 +60,7 @@ impl PluginRegistry {
                 plugin_id
             )));
         }
-        
+
         // Validate plugin version
         if let Err(e) = Version::parse(&metadata.version) {
             return Err(Error::ConfigError(format!(
@@ -72,12 +68,12 @@ impl PluginRegistry {
                 metadata.version, plugin_id, e
             )));
         }
-        
+
         info!(
             "Registering protocol plugin: {} v{} - {}",
             metadata.id, metadata.version, metadata.description
         );
-        
+
         // Create plugin entry
         let entry = PluginEntry {
             plugin,
@@ -85,32 +81,28 @@ impl PluginRegistry {
             enabled: true,
             metadata,
         };
-        
+
         self.plugins.insert(plugin_id.clone(), entry);
         self.load_order.push(plugin_id);
-        
+
         Ok(())
     }
-    
+
     /// Register a plugin factory for lazy loading
-    pub fn register_factory(
-        &mut self,
-        plugin_id: String,
-        factory: PluginFactory,
-    ) -> Result<()> {
+    pub fn register_factory(&mut self, plugin_id: String, factory: PluginFactory) -> Result<()> {
         if self.factories.contains_key(&plugin_id) {
             return Err(Error::ConfigError(format!(
                 "Factory for plugin '{}' is already registered",
                 plugin_id
             )));
         }
-        
+
         info!("Registering plugin factory for: {}", plugin_id);
         self.factories.insert(plugin_id, factory);
-        
+
         Ok(())
     }
-    
+
     /// Get a plugin by ID
     pub fn get_plugin(&self, plugin_id: &str) -> Option<&dyn ProtocolPlugin> {
         self.plugins
@@ -118,7 +110,7 @@ impl PluginRegistry {
             .filter(|entry| entry.enabled)
             .map(|entry| entry.plugin.as_ref())
     }
-    
+
     /// Get all registered plugins
     pub fn get_all_plugins(&self) -> Vec<&dyn ProtocolPlugin> {
         self.plugins
@@ -127,37 +119,42 @@ impl PluginRegistry {
             .map(|entry| entry.plugin.as_ref())
             .collect()
     }
-    
+
     /// Get plugin metadata
     pub fn get_plugin_metadata(&self, plugin_id: &str) -> Option<&ProtocolMetadata> {
-        self.plugins
-            .get(plugin_id)
-            .map(|entry| &entry.metadata)
+        self.plugins.get(plugin_id).map(|entry| &entry.metadata)
     }
-    
+
     /// List all registered plugin IDs
     pub fn list_plugin_ids(&self) -> Vec<String> {
         self.plugins.keys().cloned().collect()
     }
-    
+
     /// Enable or disable a plugin
     pub fn set_plugin_enabled(&mut self, plugin_id: &str, enabled: bool) -> Result<()> {
         match self.plugins.get_mut(plugin_id) {
             Some(entry) => {
                 entry.enabled = enabled;
-                info!("Plugin '{}' {}", plugin_id, if enabled { "enabled" } else { "disabled" });
+                info!(
+                    "Plugin '{}' {}",
+                    plugin_id,
+                    if enabled { "enabled" } else { "disabled" }
+                );
                 Ok(())
             }
-            None => Err(Error::ConfigError(format!("Plugin '{}' not found", plugin_id))),
+            None => Err(Error::ConfigError(format!(
+                "Plugin '{}' not found",
+                plugin_id
+            ))),
         }
     }
-    
+
     /// Load a plugin from factory
     pub fn load_plugin_from_factory(&mut self, plugin_id: &str) -> Result<()> {
         if self.plugins.contains_key(plugin_id) {
             return Ok(()); // Already loaded
         }
-        
+
         match self.factories.get(plugin_id) {
             Some(factory) => {
                 let plugin = factory();
@@ -169,7 +166,7 @@ impl PluginRegistry {
             ))),
         }
     }
-    
+
     /// Unregister a plugin
     pub fn unregister_plugin(&mut self, plugin_id: &str) -> Result<()> {
         if self.plugins.remove(plugin_id).is_some() {
@@ -177,10 +174,13 @@ impl PluginRegistry {
             info!("Unregistered plugin: {}", plugin_id);
             Ok(())
         } else {
-            Err(Error::ConfigError(format!("Plugin '{}' not found", plugin_id)))
+            Err(Error::ConfigError(format!(
+                "Plugin '{}' not found",
+                plugin_id
+            )))
         }
     }
-    
+
     /// Get plugin statistics
     pub fn get_statistics(&self) -> PluginStatistics {
         PluginStatistics {
@@ -190,7 +190,7 @@ impl PluginRegistry {
             plugin_types: self.count_plugin_types(),
         }
     }
-    
+
     /// Count plugins by type (based on features)
     fn count_plugin_types(&self) -> HashMap<String, usize> {
         let mut types = HashMap::new();
@@ -218,19 +218,19 @@ impl PluginRegistry {
     pub fn global() -> Arc<RwLock<PluginRegistry>> {
         PLUGIN_REGISTRY.clone()
     }
-    
+
     /// Register a plugin globally
     pub fn register_global(plugin: Box<dyn ProtocolPlugin>) -> Result<()> {
         let mut registry = PLUGIN_REGISTRY.write().unwrap();
         registry.register_plugin(plugin)
     }
-    
+
     /// Register a factory globally
     pub fn register_factory_global(plugin_id: String, factory: PluginFactory) -> Result<()> {
         let mut registry = PLUGIN_REGISTRY.write().unwrap();
         registry.register_factory(plugin_id, factory)
     }
-    
+
     /// Get a plugin from the global registry
     pub fn get_global(plugin_id: &str) -> Option<Box<dyn ProtocolPlugin>> {
         // First check if factory exists
@@ -238,7 +238,7 @@ impl PluginRegistry {
             let registry = PLUGIN_REGISTRY.read().unwrap();
             registry.factories.contains_key(plugin_id)
         };
-        
+
         if has_factory {
             // Create a new instance from factory
             let registry = PLUGIN_REGISTRY.read().unwrap();
@@ -253,68 +253,66 @@ impl PluginRegistry {
 pub mod discovery {
     use super::*;
     use std::path::Path;
-    
+
     /// Discover plugins in a directory
     pub fn discover_plugins(plugin_dir: &Path) -> Result<Vec<String>> {
         // TODO: Implement dynamic library loading
-        warn!("Plugin discovery not yet implemented for directory: {:?}", plugin_dir);
+        warn!(
+            "Plugin discovery not yet implemented for directory: {:?}",
+            plugin_dir
+        );
         Ok(Vec::new())
     }
-    
+
     /// Load all discovered plugins
     pub fn load_all_plugins() -> Result<()> {
         // Built-in plugin registration
         register_builtin_plugins()?;
-        
+
         // TODO: Load external plugins
-        
+
         Ok(())
     }
-    
+
     /// Register built-in plugins
     fn register_builtin_plugins() -> Result<()> {
         info!("Registering built-in protocol plugins");
-        
+
         // Register Modbus plugins
         {
-            use crate::core::protocols::modbus::plugin::{ModbusTcpPlugin, ModbusRtuPlugin};
-            PluginRegistry::register_factory_global(
-                "modbus_tcp".to_string(),
-                || Box::new(ModbusTcpPlugin::default()),
-            )?;
-            PluginRegistry::register_factory_global(
-                "modbus_rtu".to_string(),
-                || Box::new(ModbusRtuPlugin::default()),
-            )?;
+            use crate::core::protocols::modbus::plugin::{ModbusRtuPlugin, ModbusTcpPlugin};
+            PluginRegistry::register_factory_global("modbus_tcp".to_string(), || {
+                Box::new(ModbusTcpPlugin::default())
+            })?;
+            PluginRegistry::register_factory_global("modbus_rtu".to_string(), || {
+                Box::new(ModbusRtuPlugin::default())
+            })?;
         }
-        
+
         // Register IEC 60870-5-104 plugin
         {
             use crate::core::protocols::iec60870::plugin::Iec104Plugin;
-            PluginRegistry::register_factory_global(
-                "iec104".to_string(),
-                || Box::new(Iec104Plugin::default()),
-            )?;
+            PluginRegistry::register_factory_global("iec104".to_string(), || {
+                Box::new(Iec104Plugin::default())
+            })?;
         }
-        
+
         // Register CAN plugin
         {
             use crate::core::protocols::can::plugin::CanPlugin;
-            PluginRegistry::register_factory_global(
-                "can".to_string(),
-                || Box::new(CanPlugin::default()),
-            )?;
+            PluginRegistry::register_factory_global("can".to_string(), || {
+                Box::new(CanPlugin::default())
+            })?;
         }
-        
+
         // Register Virtual plugin
         {
             use crate::core::protocols::virt::plugin::VirtualPlugin;
-            PluginRegistry::register_factory_global(
-                "virtual".to_string(),
-                || Box::new(VirtualPlugin::default()),
-            )?;
+            PluginRegistry::register_factory_global("virtual".to_string(), || {
+                Box::new(VirtualPlugin::default())
+            })?;
         }
-        
+
         Ok(())
     }
 }
@@ -334,11 +332,11 @@ macro_rules! register_plugin {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_plugin_registry() {
         let mut registry = PluginRegistry::new();
-        
+
         // Test registration
         // TODO: Add test plugin implementation
     }

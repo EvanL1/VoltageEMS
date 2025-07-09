@@ -7,8 +7,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
-use crate::core::config::{ChannelConfig, ConfigManager, ProtocolType};
 use crate::core::config::types::ChannelLoggingConfig;
+use crate::core::config::{ChannelConfig, ConfigManager, ProtocolType};
 use crate::core::protocols::common::ComBase;
 
 // use crate::core::protocols::iec60870::iec104::Iec104Client;
@@ -202,8 +202,6 @@ struct MockComBase {
     should_fail_stop: AtomicBool,
 }
 
-
-
 impl MockComBase {
     fn new(name: &str, channel_id: u16, protocol_type: &str) -> Self {
         Self {
@@ -241,7 +239,6 @@ impl MockComBase {
 
 #[async_trait::async_trait]
 impl ComBase for MockComBase {
-
     fn name(&self) -> &str {
         &self.name
     }
@@ -289,7 +286,10 @@ impl ComBase for MockComBase {
         crate::core::protocols::common::data_types::ChannelStatus::new(&self.channel_id())
     }
 
-    async fn update_status(&mut self, _status: crate::core::protocols::common::data_types::ChannelStatus) -> Result<()> {
+    async fn update_status(
+        &mut self,
+        _status: crate::core::protocols::common::data_types::ChannelStatus,
+    ) -> Result<()> {
         Ok(())
     }
 
@@ -297,12 +297,19 @@ impl ComBase for MockComBase {
         Vec::new()
     }
 
-    async fn read_point(&self, _point_id: &str) -> Result<crate::core::protocols::common::data_types::PointData> {
-        Err(crate::utils::ComSrvError::InvalidOperation("Mock implementation".to_string()))
+    async fn read_point(
+        &self,
+        _point_id: &str,
+    ) -> Result<crate::core::protocols::common::data_types::PointData> {
+        Err(crate::utils::ComSrvError::InvalidOperation(
+            "Mock implementation".to_string(),
+        ))
     }
 
     async fn write_point(&mut self, _point_id: &str, _value: &str) -> Result<()> {
-        Err(crate::utils::ComSrvError::InvalidOperation("Mock implementation".to_string()))
+        Err(crate::utils::ComSrvError::InvalidOperation(
+            "Mock implementation".to_string(),
+        ))
     }
 
     async fn get_diagnostics(&self) -> std::collections::HashMap<String, String> {
@@ -357,24 +364,37 @@ impl ProtocolFactory {
     }
 
     /// Enable Redis storage for this factory
-    pub fn enable_redis_storage(&mut self, redis_store: crate::core::storage::redis_storage::RedisStore) -> Result<()> {
+    pub fn enable_redis_storage(
+        &mut self,
+        redis_store: crate::core::storage::redis_storage::RedisStore,
+    ) -> Result<()> {
         // Migrate existing channel metadata to Redis
         if let Some(ref _redis) = self.redis_store {
             tracing::warn!("Redis storage is already enabled, replacing existing store");
         }
 
         // Store existing channels to Redis
-        let channel_entries: Vec<_> = self.channels.iter().map(|entry| {
-            let (id, channel_entry) = (*entry.key(), entry.value().clone());
-            (id, channel_entry)
-        }).collect();
+        let channel_entries: Vec<_> = self
+            .channels
+            .iter()
+            .map(|entry| {
+                let (id, channel_entry) = (*entry.key(), entry.value().clone());
+                (id, channel_entry)
+            })
+            .collect();
 
         for (channel_id, channel_entry) in channel_entries {
             let metadata = crate::core::storage::redis_storage::RedisChannelMetadata {
                 name: channel_entry.metadata.name.clone(),
                 protocol_type: format!("{:?}", channel_entry.metadata.protocol_type),
-                created_at: chrono::DateTime::<chrono::Local>::from(std::time::UNIX_EPOCH + channel_entry.metadata.created_at.elapsed()).format("%Y-%m-%dT%H:%M:%S%.3f").to_string(),
-                last_accessed: chrono::Local::now().format("%Y-%m-%dT%H:%M:%S%.3f").to_string(),
+                created_at: chrono::DateTime::<chrono::Local>::from(
+                    std::time::UNIX_EPOCH + channel_entry.metadata.created_at.elapsed(),
+                )
+                .format("%Y-%m-%dT%H:%M:%S%.3f")
+                .to_string(),
+                last_accessed: chrono::Local::now()
+                    .format("%Y-%m-%dT%H:%M:%S%.3f")
+                    .to_string(),
                 running: false, // Will be updated when channels are started
                 parameters: std::collections::HashMap::new(),
             };
@@ -382,14 +402,24 @@ impl ProtocolFactory {
             // Store to Redis asynchronously (fire and forget for now)
             let redis_clone = redis_store.clone();
             tokio::spawn(async move {
-                if let Err(e) = redis_clone.set_channel_metadata(channel_id, &metadata).await {
-                    tracing::error!("Failed to migrate channel {} metadata to Redis: {}", channel_id, e);
+                if let Err(e) = redis_clone
+                    .set_channel_metadata(channel_id, &metadata)
+                    .await
+                {
+                    tracing::error!(
+                        "Failed to migrate channel {} metadata to Redis: {}",
+                        channel_id,
+                        e
+                    );
                 }
             });
         }
 
         self.redis_store = Some(redis_store);
-        tracing::info!("Redis storage enabled for ProtocolFactory with {} existing channels", self.channels.len());
+        tracing::info!(
+            "Redis storage enabled for ProtocolFactory with {} existing channels",
+            self.channels.len()
+        );
         Ok(())
     }
 
@@ -397,7 +427,9 @@ impl ProtocolFactory {
     pub fn disable_redis_storage(&mut self) {
         if self.redis_store.is_some() {
             self.redis_store = None;
-            tracing::info!("Redis storage disabled for ProtocolFactory, using in-memory storage only");
+            tracing::info!(
+                "Redis storage disabled for ProtocolFactory, using in-memory storage only"
+            );
         }
     }
 
@@ -419,34 +451,53 @@ impl ProtocolFactory {
 
             for entry in self.channels.iter() {
                 let (channel_id, channel_entry) = (*entry.key(), entry.value());
-                
+
                 let metadata = crate::core::storage::redis_storage::RedisChannelMetadata {
                     name: channel_entry.metadata.name.clone(),
                     protocol_type: format!("{:?}", channel_entry.metadata.protocol_type),
-                    created_at: chrono::DateTime::<chrono::Local>::from(std::time::UNIX_EPOCH + channel_entry.metadata.created_at.elapsed()).format("%Y-%m-%dT%H:%M:%S%.3f").to_string(),
-                    last_accessed: chrono::Local::now().format("%Y-%m-%dT%H:%M:%S%.3f").to_string(),
+                    created_at: chrono::DateTime::<chrono::Local>::from(
+                        std::time::UNIX_EPOCH + channel_entry.metadata.created_at.elapsed(),
+                    )
+                    .format("%Y-%m-%dT%H:%M:%S%.3f")
+                    .to_string(),
+                    last_accessed: chrono::Local::now()
+                        .format("%Y-%m-%dT%H:%M:%S%.3f")
+                        .to_string(),
                     running: channel_entry.channel.read().await.is_running().await,
                     parameters: std::collections::HashMap::new(),
                 };
 
-                match redis_store.set_channel_metadata(channel_id, &metadata).await {
+                match redis_store
+                    .set_channel_metadata(channel_id, &metadata)
+                    .await
+                {
                     Ok(_) => sync_count += 1,
                     Err(e) => {
-                        tracing::error!("Failed to sync channel {} metadata to Redis: {}", channel_id, e);
+                        tracing::error!(
+                            "Failed to sync channel {} metadata to Redis: {}",
+                            channel_id,
+                            e
+                        );
                         error_count += 1;
                     }
                 }
             }
 
-            tracing::info!("Channel metadata sync completed: {} successful, {} errors", sync_count, error_count);
-            
+            tracing::info!(
+                "Channel metadata sync completed: {} successful, {} errors",
+                sync_count,
+                error_count
+            );
+
             if error_count > 0 {
-                return Err(ComSrvError::RedisError(format!("Failed to sync {} channel metadata entries to Redis", error_count)));
+                return Err(ComSrvError::RedisError(format!(
+                    "Failed to sync {} channel metadata entries to Redis",
+                    error_count
+                )));
             }
         }
         Ok(())
     }
-
 
     /// Register a protocol factory
     ///
@@ -556,19 +607,21 @@ impl ProtocolFactory {
     /// * `config` - Channel configuration to validate
     pub fn validate_config(&self, config: &ChannelConfig) -> Result<()> {
         let protocol_id = config.protocol.to_lowercase();
-        
+
         // Use plugin system for validation
         if let Some(plugin) = crate::core::plugins::PluginRegistry::get_global(&protocol_id) {
             // Convert serde_yaml::Value to serde_json::Value for plugin validation
-            let json_params: std::collections::HashMap<String, serde_json::Value> = config.parameters
+            let json_params: std::collections::HashMap<String, serde_json::Value> = config
+                .parameters
                 .iter()
                 .map(|(k, v)| {
                     let json_str = serde_yaml::to_string(v).unwrap_or_default();
-                    let json_val = serde_yaml::from_str(&json_str).unwrap_or(serde_json::Value::Null);
+                    let json_val =
+                        serde_yaml::from_str(&json_str).unwrap_or(serde_json::Value::Null);
                     (k.clone(), json_val)
                 })
                 .collect();
-            
+
             // Use plugin's validate_config method
             plugin.validate_config(&json_params)?;
             Ok(())
@@ -589,8 +642,7 @@ impl ProtocolFactory {
                     let available_plugins = crate::core::plugins::PluginManager::list_plugins();
                     Err(ComSrvError::ProtocolNotSupported(format!(
                         "Plugin '{}' not found. Available plugins: {:?}",
-                        protocol_id,
-                        available_plugins
+                        protocol_id, available_plugins
                     )))
                 }
             }
@@ -607,18 +659,23 @@ impl ProtocolFactory {
             .get(protocol_type)
             .map(|factory| factory.default_config())
     }
-    
+
     /// Extract Modbus polling configuration from channel parameters
-    fn extract_modbus_polling_config(&self, parameters: &std::collections::HashMap<String, serde_yaml::Value>) -> crate::core::config::types::channel_parameters::ModbusPollingConfig {
+    fn extract_modbus_polling_config(
+        &self,
+        parameters: &std::collections::HashMap<String, serde_yaml::Value>,
+    ) -> crate::core::config::types::channel_parameters::ModbusPollingConfig {
         use crate::core::config::types::channel_parameters::ModbusPollingConfig;
-        
+
         // Check if polling configuration exists in parameters
         if let Some(polling_value) = parameters.get("polling") {
-            if let Ok(polling_config) = serde_yaml::from_value::<ModbusPollingConfig>(polling_value.clone()) {
+            if let Ok(polling_config) =
+                serde_yaml::from_value::<ModbusPollingConfig>(polling_value.clone())
+            {
                 return polling_config;
             }
         }
-        
+
         // Return default configuration if not found or parsing fails
         ModbusPollingConfig::default()
     }
@@ -681,12 +738,12 @@ impl ProtocolFactory {
                             "ConfigManager has table_config but no loaded points for channel {}, attempting to load CSV",
                             config.id
                         );
-                        
+
                         // Get base path from environment or use default
                         let base_path = std::env::var("COMSRV_CSV_BASE_PATH")
                             .unwrap_or_else(|_| "config".to_string());
                         let base_path = std::path::Path::new(&base_path);
-                        
+
                         match crate::core::config::unified_loader::UnifiedCsvLoader::load_channel_tables(table_config, base_path) {
                             Ok(points) => {
                                 tracing::info!(
@@ -710,20 +767,26 @@ impl ProtocolFactory {
         }
         // Use plugin system exclusively
         let protocol_id = config.protocol.to_lowercase();
-        
-        tracing::info!("Creating protocol instance using plugin system: {}", protocol_id);
-        
+
+        tracing::info!(
+            "Creating protocol instance using plugin system: {}",
+            protocol_id
+        );
+
         // Get plugin instance from registry
-        let plugin = crate::core::plugins::PluginRegistry::get_global(&protocol_id)
-            .ok_or_else(|| ComSrvError::ProtocolNotSupported(format!(
-                "Plugin {} not found in registry. Available plugins: {:?}",
-                protocol_id,
-                crate::core::plugins::PluginManager::list_plugins()
-            )))?;
-        
+        let plugin =
+            crate::core::plugins::PluginRegistry::get_global(&protocol_id).ok_or_else(|| {
+                ComSrvError::ProtocolNotSupported(format!(
+                    "Plugin {} not found in registry. Available plugins: {:?}",
+                    protocol_id,
+                    crate::core::plugins::PluginManager::list_plugins()
+                ))
+            })?;
+
         // Validate configuration
         // Convert serde_yaml::Value to serde_json::Value
-        let json_params: std::collections::HashMap<String, serde_json::Value> = config.parameters
+        let json_params: std::collections::HashMap<String, serde_json::Value> = config
+            .parameters
             .iter()
             .map(|(k, v)| {
                 let json_str = serde_yaml::to_string(v).unwrap_or_default();
@@ -732,15 +795,10 @@ impl ProtocolFactory {
             })
             .collect();
         plugin.validate_config(&json_params)?;
-        
-<<<<<<< HEAD
+
         // Create protocol instance with CSV points loaded
-=======
-        // Create protocol instance
->>>>>>> origin/develop
         plugin.create_instance(config).await
     }
-
 
     /// Create multiple protocols in parallel for improved performance
     ///
@@ -820,23 +878,40 @@ impl ProtocolFactory {
         match self.channels.entry(channel_id) {
             dashmap::mapref::entry::Entry::Vacant(vacant) => {
                 vacant.insert(entry);
-                
+
                 // Store to Redis if enabled
                 if let Some(ref redis_store) = self.redis_store {
-                    let redis_metadata = crate::core::storage::redis_storage::RedisChannelMetadata {
-                        name: metadata.name.clone(),
-                        protocol_type: format!("{:?}", metadata.protocol_type),
-                        created_at: chrono::Local::now().format("%Y-%m-%dT%H:%M:%S%.3f").to_string(),
-                        last_accessed: chrono::Local::now().format("%Y-%m-%dT%H:%M:%S%.3f").to_string(),
-                        running: false,
-                        parameters: config.parameters.iter().map(|(k, v)| {
-                            let json_value = serde_json::to_value(v).unwrap_or(serde_json::Value::Null);
-                            (k.clone(), json_value)
-                        }).collect(),
-                    };
+                    let redis_metadata =
+                        crate::core::storage::redis_storage::RedisChannelMetadata {
+                            name: metadata.name.clone(),
+                            protocol_type: format!("{:?}", metadata.protocol_type),
+                            created_at: chrono::Local::now()
+                                .format("%Y-%m-%dT%H:%M:%S%.3f")
+                                .to_string(),
+                            last_accessed: chrono::Local::now()
+                                .format("%Y-%m-%dT%H:%M:%S%.3f")
+                                .to_string(),
+                            running: false,
+                            parameters: config
+                                .parameters
+                                .iter()
+                                .map(|(k, v)| {
+                                    let json_value =
+                                        serde_json::to_value(v).unwrap_or(serde_json::Value::Null);
+                                    (k.clone(), json_value)
+                                })
+                                .collect(),
+                        };
 
-                    if let Err(e) = redis_store.set_channel_metadata(channel_id, &redis_metadata).await {
-                        tracing::warn!("Failed to store channel {} metadata to Redis: {}", channel_id, e);
+                    if let Err(e) = redis_store
+                        .set_channel_metadata(channel_id, &redis_metadata)
+                        .await
+                    {
+                        tracing::warn!(
+                            "Failed to store channel {} metadata to Redis: {}",
+                            channel_id,
+                            e
+                        );
                     } else {
                         tracing::debug!("Stored channel {} metadata to Redis", channel_id);
                     }
@@ -846,7 +921,11 @@ impl ProtocolFactory {
                     "Created channel {} with protocol {:?}{} [Channel-{}]",
                     channel_id,
                     config.protocol,
-                    if self.redis_store.is_some() { " (with Redis storage)" } else { "" },
+                    if self.redis_store.is_some() {
+                        " (with Redis storage)"
+                    } else {
+                        ""
+                    },
                     channel_id
                 );
                 Ok(())
@@ -862,7 +941,7 @@ impl ProtocolFactory {
     /// Creates dedicated log files for each channel based on configuration
     fn setup_channel_logging(&self, config: &ChannelConfig) -> Result<()> {
         use std::fs;
-        
+
         // Create log directory if specified
         if config.logging.enabled {
             let full_log_dir = if let Some(ref log_dir) = config.logging.log_dir {
@@ -870,21 +949,25 @@ impl ProtocolFactory {
             } else {
                 format!("logs/channel_{}", config.id)
             };
-            
+
             if let Err(e) = fs::create_dir_all(&full_log_dir) {
-                tracing::warn!("Failed to create channel log directory {}: {}", full_log_dir, e);
+                tracing::warn!(
+                    "Failed to create channel log directory {}: {}",
+                    full_log_dir,
+                    e
+                );
                 return Err(ComSrvError::ConfigError(format!(
                     "Failed to create channel log directory {}: {}",
                     full_log_dir, e
                 )));
             }
-            
+
             // Create initial log file for the channel
             let log_file_path = format!("{}/channel_{}.log", full_log_dir, config.id);
             if let Ok(mut file) = OpenOptions::new()
                 .create(true)
                 .append(true)
-                .open(&log_file_path) 
+                .open(&log_file_path)
             {
                 let init_message = format!(
                     "{{\"timestamp\":\"{}\",\"level\":\"INFO\",\"channel_id\":{},\"channel_name\":\"{}\",\"message\":\"Channel log initialized\"}}\n",
@@ -895,19 +978,26 @@ impl ProtocolFactory {
                 let _ = file.write_all(init_message.as_bytes());
                 let _ = file.flush();
             }
-            
+
             tracing::info!(
                 "Created channel log directory: {} for channel {} ({})",
-                full_log_dir, config.id, config.name
+                full_log_dir,
+                config.id,
+                config.name
             );
-            
+
             // Also create a debug log file if debug logging is enabled
-            if config.logging.level.as_ref().map_or(false, |l| l == "debug") {
+            if config
+                .logging
+                .level
+                .as_ref()
+                .map_or(false, |l| l == "debug")
+            {
                 let debug_log_path = format!("{}/channel_{}_debug.log", full_log_dir, config.id);
                 if let Ok(mut file) = OpenOptions::new()
                     .create(true)
                     .append(true)
-                    .open(&debug_log_path) 
+                    .open(&debug_log_path)
                 {
                     let debug_message = format!(
                         "{{\"timestamp\":\"{}\",\"level\":\"DEBUG\",\"channel_id\":{},\"channel_name\":\"{}\",\"message\":\"Debug logging enabled for channel\"}}\n",
@@ -920,7 +1010,7 @@ impl ProtocolFactory {
                 }
             }
         }
-        
+
         Ok(())
     }
 
@@ -932,11 +1022,11 @@ impl ProtocolFactory {
             // Try to write to the channel log file if it exists
             let log_dir = format!("logs/{}", channel_entry.metadata.name);
             let log_file_path = format!("{}/channel_{}.log", log_dir, channel_id);
-            
+
             if let Ok(mut file) = OpenOptions::new()
                 .create(true)
                 .append(true)
-                .open(&log_file_path) 
+                .open(&log_file_path)
             {
                 let log_entry = format!(
                     "{{\"timestamp\":\"{}\",\"level\":\"{}\",\"channel_id\":{},\"channel_name\":\"{}\",\"message\":\"{}\"}}\n",
@@ -950,7 +1040,7 @@ impl ProtocolFactory {
                 let _ = file.flush();
             }
         }
-        
+
         Ok(())
     }
 
@@ -1311,7 +1401,10 @@ impl ProtocolFactory {
     pub async fn get_channel_metadata(&self, id: u16) -> Option<(String, String)> {
         if let Some(entry) = self.channels.get(&id) {
             let metadata = &entry.metadata;
-            Some((metadata.name.clone(), format!("{:?}", metadata.protocol_type)))
+            Some((
+                metadata.name.clone(),
+                format!("{:?}", metadata.protocol_type),
+            ))
         } else {
             None
         }
@@ -1370,8 +1463,8 @@ impl Default for ProtocolFactory {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::config::ProtocolType;
     use crate::core::config::loaders::point_mapper::CombinedPoint;
+    use crate::core::config::ProtocolType;
 
     fn create_test_channel_config(id: u16, protocol: ProtocolType) -> ChannelConfig {
         let parameters = serde_json::json!({
@@ -1464,11 +1557,17 @@ mod tests {
 
         let modbus_config = factory.get_default_config(&ProtocolType::ModbusTcp);
         assert!(modbus_config.is_some());
-        assert_eq!(modbus_config.unwrap().protocol, ProtocolType::ModbusTcp.to_string());
+        assert_eq!(
+            modbus_config.unwrap().protocol,
+            ProtocolType::ModbusTcp.to_string()
+        );
 
         let modbus_rtu_config = factory.get_default_config(&ProtocolType::ModbusRtu);
         assert!(modbus_rtu_config.is_some());
-        assert_eq!(modbus_rtu_config.unwrap().protocol, ProtocolType::ModbusRtu.to_string());
+        assert_eq!(
+            modbus_rtu_config.unwrap().protocol,
+            ProtocolType::ModbusRtu.to_string()
+        );
 
         // Unsupported protocol should return None
         let unsupported = factory.get_default_config(&ProtocolType::Can);
@@ -1640,16 +1739,20 @@ mod tests {
         // In a real environment, channels would be started successfully
 
         // Check protocol counts - use the actual protocol type string representation
-        let modbus_tcp_count = stats.protocol_counts.get("ModbusTcp")
+        let modbus_tcp_count = stats
+            .protocol_counts
+            .get("ModbusTcp")
             .or_else(|| stats.protocol_counts.get("modbus_tcp"))
             .or_else(|| stats.protocol_counts.get("Modbus TCP"));
-        let modbus_rtu_count = stats.protocol_counts.get("ModbusRtu")
+        let modbus_rtu_count = stats
+            .protocol_counts
+            .get("ModbusRtu")
             .or_else(|| stats.protocol_counts.get("modbus_rtu"))
             .or_else(|| stats.protocol_counts.get("Modbus RTU"));
-        
+
         // For debugging, print all protocol counts
         println!("Protocol counts: {:?}", stats.protocol_counts);
-        
+
         // Adjust test expectations based on actual implementation
         assert!(modbus_tcp_count.unwrap_or(&0) >= &1); // At least 1 TCP protocol
         assert!(modbus_rtu_count.unwrap_or(&0) >= &1); // At least 1 RTU protocol

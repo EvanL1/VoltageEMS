@@ -1,15 +1,15 @@
 //! Point Manager Module
-//! 
+//!
 //! High-performance point manager with optimized data structures and indices.
 //! Consolidated from point_manager.rs and optimized_point_manager.rs
 
+use chrono::Utc;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::info;
-use chrono::Utc;
 
-use super::data_types::{PointData, TelemetryType, PollingPoint};
+use super::data_types::{PointData, PollingPoint, TelemetryType};
 use crate::utils::Result;
 
 /// Point manager statistics
@@ -38,28 +38,28 @@ pub struct PointManagerStats {
 pub struct OptimizedPointManager {
     /// Point configurations indexed by numeric point ID (primary storage)
     points: Arc<RwLock<HashMap<u32, PollingPoint>>>,
-    
+
     /// Real-time point data cache indexed by numeric point ID
     realtime_cache: Arc<RwLock<HashMap<u32, PointData>>>,
-    
+
     /// Points grouped by telemetry type using HashSet for O(1) lookups
     points_by_type: Arc<RwLock<HashMap<TelemetryType, HashSet<u32>>>>,
-    
+
     /// Name to ID mapping for fast name-based lookups
     name_to_id: Arc<RwLock<HashMap<String, u32>>>,
-    
+
     /// Enabled points set for quick filtering
     enabled_points: Arc<RwLock<HashSet<u32>>>,
-    
+
     /// Readable points set
     readable_points: Arc<RwLock<HashSet<u32>>>,
-    
+
     /// Writable points set
     writable_points: Arc<RwLock<HashSet<u32>>>,
-    
+
     /// Statistics
     stats: Arc<RwLock<PointManagerStats>>,
-    
+
     /// Channel ID
     channel_id: String,
 }
@@ -101,16 +101,16 @@ impl OptimizedPointManager {
         // Build indices
         for config in configs {
             let point_id = config.address; // Use address as point ID for simplicity
-            
+
             // Add to name mapping
             name_to_id.insert(config.name.to_string(), point_id);
-            
+
             // Add to type index
             points_by_type
                 .entry(config.telemetry_type.clone())
                 .or_insert_with(HashSet::new)
                 .insert(point_id);
-            
+
             // Add to access mode indices
             if config.access_mode.contains('r') {
                 readable_points.insert(point_id);
@@ -118,10 +118,10 @@ impl OptimizedPointManager {
             if config.access_mode.contains('w') {
                 writable_points.insert(point_id);
             }
-            
+
             // Add to enabled points (assume all loaded points are enabled)
             enabled_points.insert(point_id);
-            
+
             // Store the configuration
             points.insert(point_id, config);
         }
@@ -131,7 +131,9 @@ impl OptimizedPointManager {
         stats.enabled_points = enabled_points.len();
         stats.points_by_type.clear();
         for (telemetry_type, point_set) in points_by_type.iter() {
-            stats.points_by_type.insert(telemetry_type.clone(), point_set.len());
+            stats
+                .points_by_type
+                .insert(telemetry_type.clone(), point_set.len());
         }
         stats.last_update = Utc::now();
 
@@ -148,7 +150,7 @@ impl OptimizedPointManager {
     pub async fn get_point_data_by_type(&self, telemetry_type: &TelemetryType) -> Vec<PointData> {
         let points_by_type = self.points_by_type.read().await;
         let realtime_cache = self.realtime_cache.read().await;
-        
+
         if let Some(point_ids) = points_by_type.get(telemetry_type) {
             let mut result = Vec::with_capacity(point_ids.len());
             for &point_id in point_ids {
@@ -173,7 +175,7 @@ impl OptimizedPointManager {
         let points_by_type = self.points_by_type.read().await;
         let enabled_points = self.enabled_points.read().await;
         let points = self.points.read().await;
-        
+
         if let Some(type_points) = points_by_type.get(telemetry_type) {
             let mut result = Vec::new();
             for &point_id in type_points {
@@ -193,11 +195,11 @@ impl OptimizedPointManager {
     pub async fn update_point_data(&self, point_id: u32, data: PointData) -> Result<()> {
         let mut cache = self.realtime_cache.write().await;
         cache.insert(point_id, data);
-        
+
         // Update statistics
         let mut stats = self.stats.write().await;
         stats.write_operations += 1;
-        
+
         Ok(())
     }
 
@@ -205,7 +207,7 @@ impl OptimizedPointManager {
     pub async fn get_point_data(&self, point_id: u32) -> Option<PointData> {
         let cache = self.realtime_cache.read().await;
         let mut stats = self.stats.write().await;
-        
+
         if let Some(data) = cache.get(&point_id) {
             stats.cache_hits += 1;
             Some(data.clone())
@@ -256,7 +258,7 @@ impl OptimizedPointManager {
         let points = self.points.read().await;
         let readable_points = self.readable_points.read().await;
         let enabled_points = self.enabled_points.read().await;
-        
+
         let mut result = Vec::new();
         for &point_id in readable_points.iter() {
             if enabled_points.contains(&point_id) {
@@ -272,7 +274,7 @@ impl OptimizedPointManager {
     pub async fn get_points_by_ids(&self, point_ids: &[u32]) -> Vec<PollingPoint> {
         let points = self.points.read().await;
         let mut result = Vec::with_capacity(point_ids.len());
-        
+
         for &point_id in point_ids {
             if let Some(config) = points.get(&point_id) {
                 result.push(config.clone());
@@ -285,11 +287,11 @@ impl OptimizedPointManager {
     pub async fn batch_update_point_data(&self, updates: Vec<(u32, PointData)>) -> Result<()> {
         let mut cache = self.realtime_cache.write().await;
         let mut stats = self.stats.write().await;
-        
+
         for (point_id, data) in updates {
             cache.insert(point_id, data);
         }
-        
+
         stats.write_operations += 1;
         Ok(())
     }
@@ -336,7 +338,7 @@ impl OptimizedPointManager {
 /// Generate test points for performance testing
 pub fn generate_test_points(count: usize) -> Vec<PollingPoint> {
     let mut points = Vec::with_capacity(count);
-    
+
     for i in 0..count {
         let telemetry_type = match i % 4 {
             0 => TelemetryType::Telemetry,
@@ -344,7 +346,7 @@ pub fn generate_test_points(count: usize) -> Vec<PollingPoint> {
             2 => TelemetryType::Control,
             _ => TelemetryType::Adjustment,
         };
-        
+
         let point = PollingPoint {
             id: Arc::from(format!("point_{}", i)),
             name: Arc::from(format!("Test Point {}", i)),
@@ -359,10 +361,10 @@ pub fn generate_test_points(count: usize) -> Vec<PollingPoint> {
             group: Arc::from("test"),
             protocol_params: HashMap::new(),
         };
-        
+
         points.push(point);
     }
-    
+
     points
 }
 
@@ -373,25 +375,29 @@ mod tests {
     #[tokio::test]
     async fn test_optimized_point_manager() {
         let manager = OptimizedPointManager::new("test_channel".to_string());
-        
+
         // Generate test points
         let test_points = generate_test_points(100);
-        
+
         // Load points
         manager.load_points(test_points).await.unwrap();
-        
+
         // Test statistics
         let stats = manager.get_stats().await;
         assert_eq!(stats.total_points, 100);
         assert_eq!(stats.enabled_points, 100);
-        
+
         // Test by type queries
-        let telemetry_points = manager.get_point_data_by_type(&TelemetryType::Telemetry).await;
+        let telemetry_points = manager
+            .get_point_data_by_type(&TelemetryType::Telemetry)
+            .await;
         assert_eq!(telemetry_points.len(), 0); // No data in cache yet
-        
-        let enabled_telemetry = manager.get_enabled_points_by_type(&TelemetryType::Telemetry).await;
+
+        let enabled_telemetry = manager
+            .get_enabled_points_by_type(&TelemetryType::Telemetry)
+            .await;
         assert_eq!(enabled_telemetry.len(), 25); // 25% of points are telemetry
-        
+
         // Test readable points
         let readable_points = manager.get_readable_points().await;
         assert_eq!(readable_points.len(), 100); // All points are readable (rw)
@@ -400,21 +406,23 @@ mod tests {
     #[tokio::test]
     async fn test_performance_comparison() {
         let manager = OptimizedPointManager::new("perf_test".to_string());
-        
+
         // Load large number of points
         let test_points = generate_test_points(10000);
         let start = std::time::Instant::now();
         manager.load_points(test_points).await.unwrap();
         let load_time = start.elapsed();
-        
+
         // Test query performance
         let start = std::time::Instant::now();
-        let _telemetry_points = manager.get_enabled_points_by_type(&TelemetryType::Telemetry).await;
+        let _telemetry_points = manager
+            .get_enabled_points_by_type(&TelemetryType::Telemetry)
+            .await;
         let query_time = start.elapsed();
-        
+
         println!("Load time for 10k points: {:?}", load_time);
         println!("Query time for telemetry points: {:?}", query_time);
-        
+
         // Query should be very fast with indices
         assert!(query_time.as_millis() < 10);
     }

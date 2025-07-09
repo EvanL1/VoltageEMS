@@ -3,7 +3,7 @@
 #[cfg(test)]
 mod tests {
     use std::time::Duration;
-    
+
     /// Check if Modbus simulator is running
     async fn is_simulator_running() -> bool {
         match tokio::net::TcpStream::connect("127.0.0.1:5502").await {
@@ -11,7 +11,7 @@ mod tests {
             Err(_) => false,
         }
     }
-    
+
     #[tokio::test]
     async fn test_simulator_availability() {
         if !is_simulator_running().await {
@@ -21,6 +21,6 @@ mod tests {
             println!("Modbus simulator is available for testing");
         }
     }
-    
+
     // TODO: Add full integration tests when all components are ready
 }

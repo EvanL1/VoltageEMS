@@ -3,16 +3,16 @@
 //! This module contains the universal point manager implementation for handling
 //! data points across all protocols with four-telemetry classification.
 
+use chrono::Utc;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{debug, info};
-use chrono::Utc;
-use serde::{Deserialize, Serialize};
 
 use super::data_types::PointData;
-use super::telemetry::{TelemetryType, PointValueType};
-use super::defaults::{get_default_data_type, get_default_unit, get_default_scale};
+use super::defaults::{get_default_data_type, get_default_scale, get_default_unit};
+use super::telemetry::{PointValueType, TelemetryType};
 use crate::utils::Result;
 
 /// 默认缩放因子函数
@@ -73,14 +73,17 @@ pub struct UniversalPointConfig {
 impl UniversalPointConfig {
     /// Create a new point configuration with smart defaults
     pub fn new(point_id: u32, name: &str, telemetry_type: TelemetryType) -> Self {
-        let is_writable = matches!(telemetry_type, TelemetryType::Control | TelemetryType::Setpoint);
-        
+        let is_writable = matches!(
+            telemetry_type,
+            TelemetryType::Control | TelemetryType::Setpoint
+        );
+
         // Try to infer unit from signal name
         let unit = get_default_unit(name);
-        
+
         // Get default scale based on unit
         let scale = get_default_scale(unit, name);
-        
+
         Self {
             point_id,
             name: Some(name.to_string()),
@@ -96,12 +99,12 @@ impl UniversalPointConfig {
             writable: is_writable,
         }
     }
-    
+
     /// Get the actual data type (inferred if not specified)
     pub fn get_data_type(&self) -> String {
-        self.data_type.clone().unwrap_or_else(|| {
-            get_default_data_type(&self.telemetry_type).to_string()
-        })
+        self.data_type
+            .clone()
+            .unwrap_or_else(|| get_default_data_type(&self.telemetry_type).to_string())
     }
 
     /// Validate the point configuration
@@ -152,10 +155,10 @@ impl UniversalPointConfig {
 
     /// Get point name or default
     pub fn get_name(&self) -> String {
-        self.name.clone().unwrap_or_else(|| format!("Point_{}", self.point_id))
+        self.name
+            .clone()
+            .unwrap_or_else(|| format!("Point_{}", self.point_id))
     }
-
-    
 }
 
 /// Point management statistics
@@ -226,7 +229,9 @@ impl UniversalPointManager {
             }
 
             // Count by type
-            *type_counts.entry(config.telemetry_type.clone()).or_insert(0) += 1;
+            *type_counts
+                .entry(config.telemetry_type.clone())
+                .or_insert(0) += 1;
 
             // Group by telemetry type
             points_by_type
@@ -279,12 +284,7 @@ impl UniversalPointManager {
 
         point_ids
             .into_iter()
-            .filter(|id| {
-                points
-                    .get(id)
-                    .map(|config| config.enabled)
-                    .unwrap_or(false)
-            })
+            .filter(|id| points.get(id).map(|config| config.enabled).unwrap_or(false))
             .collect()
     }
 
@@ -295,9 +295,10 @@ impl UniversalPointManager {
         })?;
 
         if !config.enabled {
-            return Err(crate::utils::ComSrvError::InvalidOperation(
-                format!("Point {} is disabled", point_id),
-            ));
+            return Err(crate::utils::ComSrvError::InvalidOperation(format!(
+                "Point {} is disabled",
+                point_id
+            )));
         }
 
         // Convert PointValueType to string representation
@@ -309,7 +310,7 @@ impl UniversalPointManager {
             PointValueType::Digital(val) => {
                 let processed = config.process_digital_value(val);
                 processed.to_string()
-            },
+            }
             PointValueType::Measurement(ref point) => point.value.to_string(),
             PointValueType::Signaling(ref point) => point.status.to_string(),
             PointValueType::Control(ref point) => point.current_state.to_string(),
@@ -378,7 +379,10 @@ impl UniversalPointManager {
             // Remove from cache
             cache.remove(point_id);
 
-            info!("Removed point {} from channel {}", point_id, self.channel_id);
+            info!(
+                "Removed point {} from channel {}",
+                point_id, self.channel_id
+            );
             Ok(())
         } else {
             Err(crate::utils::ComSrvError::NotFound(format!(
@@ -435,15 +439,17 @@ impl UniversalPointManager {
         })?;
 
         if !config.enabled {
-            return Err(crate::utils::ComSrvError::InvalidOperation(
-                format!("Point {} is disabled", point_id),
-            ));
+            return Err(crate::utils::ComSrvError::InvalidOperation(format!(
+                "Point {} is disabled",
+                point_id
+            )));
         }
 
         if !config.writable {
-            return Err(crate::utils::ComSrvError::InvalidOperation(
-                format!("Point {} is not writable", point_id),
-            ));
+            return Err(crate::utils::ComSrvError::InvalidOperation(format!(
+                "Point {} is not writable",
+                point_id
+            )));
         }
 
         // Note: Value validation can be added here if needed
@@ -458,11 +464,7 @@ mod tests {
     use super::*;
 
     fn create_test_config() -> UniversalPointConfig {
-        UniversalPointConfig::new(
-            1001,
-            "Test Temperature",
-            TelemetryType::Telemetry,
-        )
+        UniversalPointConfig::new(1001, "Test Temperature", TelemetryType::Telemetry)
     }
 
     #[test]
@@ -502,7 +504,7 @@ mod tests {
 
         let processed = config.process_digital_value(true);
         assert_eq!(processed, false); // reverse = 1, so true -> false
-        
+
         let processed2 = config.process_digital_value(false);
         assert_eq!(processed2, true); // reverse = 1, so false -> true
     }
@@ -551,10 +553,7 @@ mod tests {
         manager.load_points(configs).await.unwrap();
 
         let value = PointValueType::Analog(25.5);
-        manager
-            .update_point_value("1001", value)
-            .await
-            .unwrap();
+        manager.update_point_value("1001", value).await.unwrap();
 
         let point_data = manager.get_point_data("1001").await;
         assert!(point_data.is_some());
@@ -562,4 +561,4 @@ mod tests {
         let data = point_data.unwrap();
         assert_eq!(data.value, "25.5");
     }
-} 
+}

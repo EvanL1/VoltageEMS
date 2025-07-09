@@ -205,9 +205,8 @@ impl RemoteOperationType {
             RemoteOperationType::Control { .. } | RemoteOperationType::ExtendedControl { .. } => {
                 TelemetryType::Control
             }
-            RemoteOperationType::Regulation { .. } | RemoteOperationType::ExtendedRegulation { .. } => {
-                TelemetryType::Setpoint
-            }
+            RemoteOperationType::Regulation { .. }
+            | RemoteOperationType::ExtendedRegulation { .. } => TelemetryType::Setpoint,
         }
     }
 
@@ -223,10 +222,15 @@ impl RemoteOperationType {
             } => {
                 if let (Some(min), Some(max)) = (min_value, max_value) {
                     if min >= max {
-                        return Err(ComSrvError::InvalidParameter("min_value must be less than max_value".to_string()));
+                        return Err(ComSrvError::InvalidParameter(
+                            "min_value must be less than max_value".to_string(),
+                        ));
                     }
                     if target_value < min || target_value > max {
-                        return Err(ComSrvError::InvalidParameter(format!("target_value {} is out of range [{}, {}]", target_value, min, max)));
+                        return Err(ComSrvError::InvalidParameter(format!(
+                            "target_value {} is out of range [{}, {}]",
+                            target_value, min, max
+                        )));
                     }
                 }
             }
@@ -267,8 +271,6 @@ pub struct RemoteOperationResponse {
     /// Execution completion timestamp
     pub execution_time: DateTime<Utc>,
 }
-
-
 
 #[cfg(test)]
 mod tests {
@@ -335,8 +337,8 @@ mod tests {
     fn test_execution_status() {
         let status = ExecutionStatus::Success;
         assert_eq!(status, ExecutionStatus::Success);
-        
+
         let failed_status = ExecutionStatus::Failed("Test error".to_string());
         assert!(matches!(failed_status, ExecutionStatus::Failed(_)));
     }
-} 
+}

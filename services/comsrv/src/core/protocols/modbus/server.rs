@@ -7,12 +7,12 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use tracing::info;
 
-use crate::core::protocols::modbus::{
-    pdu::{ModbusPduProcessor, PduParseResult},
-    frame::{ModbusFrameProcessor, ModbusMode},
-    common::{ModbusConfig, ModbusFunctionCode},
-};
 use crate::core::protocols::common::combase::transport_bridge::UniversalTransportBridge;
+use crate::core::protocols::modbus::{
+    common::{ModbusConfig, ModbusFunctionCode},
+    frame::{ModbusFrameProcessor, ModbusMode},
+    pdu::{ModbusPduProcessor, PduParseResult},
+};
 use crate::core::transport::traits::Transport;
 use crate::utils::error::{ComSrvError, Result};
 
@@ -163,9 +163,8 @@ impl ModbusServer {
 
         let pdu_processor = ModbusPduProcessor::new();
         let frame_processor = Arc::new(Mutex::new(ModbusFrameProcessor::new(mode)));
-        let transport_bridge = Arc::new(Mutex::new(
-            UniversalTransportBridge::new_modbus(transport)
-        ));
+        let transport_bridge =
+            Arc::new(Mutex::new(UniversalTransportBridge::new_modbus(transport)));
 
         Ok(Self {
             config,
@@ -197,7 +196,7 @@ impl ModbusServer {
 
         // Server main loop would go here in a real implementation
         // For now, this is just a basic structure
-        
+
         Ok(())
     }
 
@@ -211,22 +210,32 @@ impl ModbusServer {
     /// Process a received request and generate response
     pub async fn process_request(&mut self, request_data: &[u8]) -> Result<Vec<u8>> {
         // Parse frame
-        let parsed_frame = self.frame_processor.lock().unwrap().parse_frame(request_data)?;
-        
+        let parsed_frame = self
+            .frame_processor
+            .lock()
+            .unwrap()
+            .parse_frame(request_data)?;
+
         // Parse PDU
         let pdu_result = self.pdu_processor.parse_pdu(&parsed_frame.pdu)?;
-        
+
         let response_pdu = match pdu_result {
             PduParseResult::Request(request) => {
                 // Find target device
-                let device = self.devices.get_mut(&parsed_frame.unit_id)
-                    .ok_or_else(|| ComSrvError::ProtocolError(format!("Device not found: {}", parsed_frame.unit_id)))?;
-                
+                let device = self.devices.get_mut(&parsed_frame.unit_id).ok_or_else(|| {
+                    ComSrvError::ProtocolError(format!(
+                        "Device not found: {}",
+                        parsed_frame.unit_id
+                    ))
+                })?;
+
                 // Handle request without borrowing self
                 Self::handle_request_static(&self.pdu_processor, device, &request).await?
-            },
+            }
             _ => {
-                return Err(ComSrvError::ProtocolError("Expected request PDU".to_string()));
+                return Err(ComSrvError::ProtocolError(
+                    "Expected request PDU".to_string(),
+                ));
             }
         };
 
@@ -234,39 +243,46 @@ impl ModbusServer {
         let response_frame = self.frame_processor.lock().unwrap().build_frame(
             parsed_frame.unit_id,
             response_pdu,
-            parsed_frame.transaction_id
+            parsed_frame.transaction_id,
         );
 
         Ok(response_frame)
     }
 
     /// Handle a specific Modbus request (static version to avoid borrowing issues)
-    async fn handle_request_static(pdu_processor: &ModbusPduProcessor, device: &mut ModbusDevice, request: &crate::core::protocols::modbus::pdu::ModbusPduRequest) -> Result<Vec<u8>> {
+    async fn handle_request_static(
+        pdu_processor: &ModbusPduProcessor,
+        device: &mut ModbusDevice,
+        request: &crate::core::protocols::modbus::pdu::ModbusPduRequest,
+    ) -> Result<Vec<u8>> {
         match request.function_code {
             ModbusFunctionCode::Read01 => {
                 let read_req = pdu_processor.parse_read_request(&request.data)?;
                 let values = device.read_coils(read_req.start_address, read_req.quantity)?;
                 let data = pdu_processor.build_coil_response_data(&values);
                 Ok(pdu_processor.build_read_response(ModbusFunctionCode::Read01, &data))
-            },
+            }
             ModbusFunctionCode::Read02 => {
                 let read_req = pdu_processor.parse_read_request(&request.data)?;
-                let values = device.read_discrete_inputs(read_req.start_address, read_req.quantity)?;
+                let values =
+                    device.read_discrete_inputs(read_req.start_address, read_req.quantity)?;
                 let data = pdu_processor.build_coil_response_data(&values);
                 Ok(pdu_processor.build_read_response(ModbusFunctionCode::Read02, &data))
-            },
+            }
             ModbusFunctionCode::Read03 => {
                 let read_req = pdu_processor.parse_read_request(&request.data)?;
-                let values = device.read_holding_registers(read_req.start_address, read_req.quantity)?;
+                let values =
+                    device.read_holding_registers(read_req.start_address, read_req.quantity)?;
                 let data = pdu_processor.build_register_response_data(&values);
                 Ok(pdu_processor.build_read_response(ModbusFunctionCode::Read03, &data))
-            },
+            }
             ModbusFunctionCode::Read04 => {
                 let read_req = pdu_processor.parse_read_request(&request.data)?;
-                let values = device.read_input_registers(read_req.start_address, read_req.quantity)?;
+                let values =
+                    device.read_input_registers(read_req.start_address, read_req.quantity)?;
                 let data = pdu_processor.build_register_response_data(&values);
                 Ok(pdu_processor.build_read_response(ModbusFunctionCode::Read04, &data))
-            },
+            }
             ModbusFunctionCode::Write05 => {
                 let write_req = pdu_processor.parse_write_single_request(&request.data)?;
                 let coil_value = write_req.value == 0xFF00;
@@ -274,39 +290,41 @@ impl ModbusServer {
                 Ok(pdu_processor.build_write_single_response(
                     ModbusFunctionCode::Write05,
                     write_req.address,
-                    write_req.value
+                    write_req.value,
                 ))
-            },
+            }
             ModbusFunctionCode::Write06 => {
                 let write_req = pdu_processor.parse_write_single_request(&request.data)?;
                 device.write_single_register(write_req.address, write_req.value)?;
                 Ok(pdu_processor.build_write_single_response(
                     ModbusFunctionCode::Write06,
                     write_req.address,
-                    write_req.value
+                    write_req.value,
                 ))
-            },
+            }
             ModbusFunctionCode::Write0F => {
                 let write_req = pdu_processor.parse_write_multiple_coils_request(&request.data)?;
                 device.write_multiple_coils(write_req.start_address, &write_req.values)?;
                 Ok(pdu_processor.build_write_multiple_response(
                     ModbusFunctionCode::Write0F,
                     write_req.start_address,
-                    write_req.quantity
+                    write_req.quantity,
                 ))
-            },
+            }
             ModbusFunctionCode::Write10 => {
-                let write_req = pdu_processor.parse_write_multiple_registers_request(&request.data)?;
+                let write_req =
+                    pdu_processor.parse_write_multiple_registers_request(&request.data)?;
                 device.write_multiple_registers(write_req.start_address, &write_req.values)?;
                 Ok(pdu_processor.build_write_multiple_response(
                     ModbusFunctionCode::Write10,
                     write_req.start_address,
-                    write_req.quantity
+                    write_req.quantity,
                 ))
-            },
-            ModbusFunctionCode::Custom(code) => {
-                Err(ComSrvError::ProtocolError(format!("Unsupported function code: 0x{:02X}", code)))
-            },
+            }
+            ModbusFunctionCode::Custom(code) => Err(ComSrvError::ProtocolError(format!(
+                "Unsupported function code: 0x{:02X}",
+                code
+            ))),
         }
     }
 
@@ -345,7 +363,7 @@ mod tests {
     fn test_modbus_device_creation() {
         let mut device = ModbusDevice::new(1);
         device.init_test_data();
-        
+
         assert_eq!(device.unit_id, 1);
         assert!(device.coils.len() > 0);
         assert!(device.holding_registers.len() > 0);
@@ -355,27 +373,27 @@ mod tests {
     fn test_device_read_operations() {
         let mut device = ModbusDevice::new(1);
         device.init_test_data();
-        
+
         // Test reading coils
         let coils = device.read_coils(0, 8).unwrap();
         assert_eq!(coils.len(), 8);
-        
+
         // Test reading holding registers
         let registers = device.read_holding_registers(0, 4).unwrap();
         assert_eq!(registers.len(), 4);
-        assert_eq!(registers[0], 0);   // 0 * 100
+        assert_eq!(registers[0], 0); // 0 * 100
         assert_eq!(registers[1], 100); // 1 * 100
     }
 
     #[test]
     fn test_device_write_operations() {
         let mut device = ModbusDevice::new(1);
-        
+
         // Test writing single coil
         device.write_single_coil(10, true).unwrap();
         let coils = device.read_coils(10, 1).unwrap();
         assert_eq!(coils[0], true);
-        
+
         // Test writing single register
         device.write_single_register(10, 12345).unwrap();
         let registers = device.read_holding_registers(10, 1).unwrap();
@@ -387,11 +405,11 @@ mod tests {
         let config = create_test_config();
         let mock_config = crate::core::transport::mock::MockTransportConfig::default();
         let transport = Box::new(MockTransport::new(mock_config).unwrap());
-        
+
         let mut server = ModbusServer::new(config, transport).unwrap();
         server.add_device(ModbusDevice::new(1));
-        
+
         assert_eq!(server.device_count(), 1);
         assert!(!server.is_running());
     }
-} 
+}

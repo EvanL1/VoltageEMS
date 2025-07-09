@@ -123,7 +123,9 @@ impl PointData {
 
     /// Check if this point represents an error
     pub fn is_error(&self) -> bool {
-        self.value == "ERROR" || self.description.contains("error") || self.description.contains("Error")
+        self.value == "ERROR"
+            || self.description.contains("error")
+            || self.description.contains("Error")
     }
 }
 

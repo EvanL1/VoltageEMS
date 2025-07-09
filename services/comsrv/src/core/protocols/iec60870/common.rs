@@ -1,6 +1,6 @@
+use crate::utils::error::ComSrvError;
 /// IEC60870 Constants and Common Data Types
 use std::fmt;
-use crate::utils::error::ComSrvError;
 
 /// IEC60870 protocol versions
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -52,7 +52,7 @@ impl QualityDescriptor {
             invalid: false,
         }
     }
-    
+
     /// Create a quality descriptor from a byte
     pub fn from_byte(value: u8) -> Self {
         Self {
@@ -63,15 +63,25 @@ impl QualityDescriptor {
             invalid: (value & 0x80) != 0,
         }
     }
-    
+
     /// Convert quality descriptor to a byte
     pub fn to_byte(&self) -> u8 {
         let mut value = 0u8;
-        if self.reserved { value |= 0x01; }
-        if self.blocked { value |= 0x10; }
-        if self.substituted { value |= 0x20; }
-        if self.not_topical { value |= 0x40; }
-        if self.invalid { value |= 0x80; }
+        if self.reserved {
+            value |= 0x01;
+        }
+        if self.blocked {
+            value |= 0x10;
+        }
+        if self.substituted {
+            value |= 0x20;
+        }
+        if self.not_topical {
+            value |= 0x40;
+        }
+        if self.invalid {
+            value |= 0x80;
+        }
         value
     }
 }
@@ -220,9 +230,9 @@ impl CauseOfTransmission {
             _ => None,
         }
     }
-    
+
     /// Convert COT to a byte
     pub fn to_byte(&self) -> u8 {
         *self as u8
     }
-} 
+}

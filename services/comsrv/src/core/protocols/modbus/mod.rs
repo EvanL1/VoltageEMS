@@ -25,13 +25,13 @@
 //! - Proper error handling and exception responses
 //! - Integrated statistics and diagnostics
 
-pub mod common;
-pub mod pdu;
-pub mod frame;
 pub mod client;
+pub mod common;
+pub mod frame;
+pub mod modbus_polling;
+pub mod pdu;
 pub mod protocol_engine;
 pub mod server;
-pub mod modbus_polling;
 
 pub mod tests;
 
@@ -39,17 +39,19 @@ pub mod tests;
 pub mod plugin;
 
 // Re-export main types for easier usage
-pub use client::{ModbusClient, ModbusChannelConfig, ProtocolMappingTable, ConnectionState, ClientStatistics};
-pub use protocol_engine::{ModbusProtocolEngine, ProtocolEngineConfig};
-pub use server::{ModbusServer, ModbusDevice};
-pub use pdu::{ModbusPduProcessor, ModbusExceptionCode};
+pub use client::{
+    ClientStatistics, ConnectionState, ModbusChannelConfig, ModbusClient, ProtocolMappingTable,
+};
 pub use common::ModbusFunctionCode;
-pub use frame::{ModbusFrameProcessor, ModbusMode};
 pub use common::{ModbusConfig, ModbusPoint};
+pub use frame::{ModbusFrameProcessor, ModbusMode};
+pub use pdu::{ModbusExceptionCode, ModbusPduProcessor};
+pub use protocol_engine::{ModbusProtocolEngine, ProtocolEngineConfig};
+pub use server::{ModbusDevice, ModbusServer};
 
 use crate::core::protocols::common::combase::{PacketParseResult, ProtocolPacketParser};
-use std::collections::HashMap;
 use chrono::Utc;
+use std::collections::HashMap;
 
 /// Modbus protocol packet parser
 ///
@@ -252,9 +254,15 @@ impl ModbusPacketParser {
             0x05 => {
                 let coil_value = if value == 0xFF00 { "ON" } else { "OFF" };
                 fields.insert("coil_value".to_string(), coil_value.to_string());
-                format!("Confirmed write coil at address {} to {}", address, coil_value)
+                format!(
+                    "Confirmed write coil at address {} to {}",
+                    address, coil_value
+                )
             }
-            0x06 => format!("Confirmed write register at address {} to {}", address, value),
+            0x06 => format!(
+                "Confirmed write register at address {} to {}",
+                address, value
+            ),
             _ => format!("Confirmed write single at address {} to {}", address, value),
         };
 
@@ -289,7 +297,10 @@ impl ModbusPacketParser {
         };
 
         let mut fields = HashMap::new();
-        fields.insert("original_function".to_string(), original_function.to_string());
+        fields.insert(
+            "original_function".to_string(),
+            original_function.to_string(),
+        );
         fields.insert("exception_code".to_string(), exception_code.to_string());
         fields.insert("exception_name".to_string(), exception_name.to_string());
 
@@ -350,7 +361,11 @@ impl ProtocolPacketParser for ModbusPacketParser {
                     }
                 }
                 _ => (
-                    format!("Function {} (0x{:02X})", Self::function_code_name(function_code), function_code),
+                    format!(
+                        "Function {} (0x{:02X})",
+                        Self::function_code_name(function_code),
+                        function_code
+                    ),
                     HashMap::new(),
                 ),
             }

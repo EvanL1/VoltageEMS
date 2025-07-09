@@ -1,7 +1,7 @@
+use crate::core::protocols::iec60870::common::{CauseOfTransmission, IecError, IecResult};
+use byteorder::ReadBytesExt;
 /// ASDU - Application Service Data Unit Implementation
 use std::io::Cursor;
-use byteorder::ReadBytesExt;
-use crate::core::protocols::iec60870::common::{CauseOfTransmission, IecError, IecResult};
 
 /// Information Object Addresses can be 1, 2, or 3 bytes
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -69,9 +69,8 @@ pub enum TypeId {
     PackedSinglePointWithScd = 20,
     /// Measured value, normalized value without quality descriptor (M_ME_ND_1)
     MeasuredValueNormalNoQuality = 21,
-    
+
     // ...additional types for supervisory, parameter, file transfer...
-    
     /// Single command (C_SC_NA_1)
     SingleCommand = 45,
     /// Double command (C_DC_NA_1)
@@ -86,9 +85,8 @@ pub enum TypeId {
     SetpointCommandFloat = 50,
     /// Bitstring of 32 bits (C_BO_NA_1)
     Bitstring32BitCommand = 51,
-    
+
     // ... more command types ...
-    
     /// Interrogation command (C_IC_NA_1)
     InterrogationCommand = 100,
     /// Counter interrogation command (C_CI_NA_1)
@@ -105,9 +103,8 @@ pub enum TypeId {
     DelayAcquisitionCommand = 106,
     /// Test command with time tag (C_TS_TA_1)
     TestCommandWithTime = 107,
-    
+
     // ... more system types ...
-    
     /// Parameter of measured value, normalized value (P_ME_NA_1)
     ParameterNormalValue = 110,
     /// Parameter of measured value, scaled value (P_ME_NB_1)
@@ -116,9 +113,8 @@ pub enum TypeId {
     ParameterFloatValue = 112,
     /// Parameter activation (P_AC_NA_1)
     ParameterActivation = 113,
-    
+
     // ... file transfer types ...
-    
     /// File ready (F_FR_NA_1)
     FileReady = 120,
     /// Section ready (F_SR_NA_1)
@@ -192,24 +188,24 @@ impl TypeId {
             _ => None,
         }
     }
-    
+
     /// Convert TypeId to a byte
     pub fn to_byte(self) -> u8 {
         self as u8
     }
-    
+
     /// Check if this type ID is for a command
     pub fn is_command(self) -> bool {
         let val = self as u8;
         val >= 45 && val <= 107
     }
-    
+
     /// Check if this type ID is for a parameter
     pub fn is_parameter(self) -> bool {
         let val = self as u8;
         val >= 110 && val <= 113
     }
-    
+
     /// Check if this type ID is for a file transfer
     pub fn is_file_transfer(self) -> bool {
         let val = self as u8;
@@ -253,35 +249,32 @@ impl ASDU {
             data,
         }
     }
-    
+
     /// Get the number of objects from VSQ
     pub fn num_objects(&self) -> u8 {
         self.vsq & 0x7F
     }
-    
+
     /// Check if the sequential addressing bit is set in VSQ
     pub fn is_sequence(&self) -> bool {
         (self.vsq & 0x80) != 0
     }
-    
+
     /// Encode ASDU to bytes using the specified sizes for addresses
-    pub fn encode(
-        &self,
-        common_addr_size: CommonAddrSize,
-    ) -> IecResult<Vec<u8>> {
+    pub fn encode(&self, common_addr_size: CommonAddrSize) -> IecResult<Vec<u8>> {
         let mut buffer = Vec::new();
-        
+
         // Write type ID
         buffer.push(self.type_id as u8);
-        
+
         // Write VSQ
         buffer.push(self.vsq);
-        
+
         // Write COT with originator
         let cot_byte = self.cot.to_byte();
         buffer.push(cot_byte);
         buffer.push(self.originator);
-        
+
         // Write common address
         match common_addr_size {
             CommonAddrSize::OneOctet => {
@@ -292,42 +285,35 @@ impl ASDU {
                 buffer.push(((self.common_addr >> 8) & 0xFF) as u8);
             }
         }
-        
+
         // Append information object data
         buffer.extend_from_slice(&self.data);
-        
+
         Ok(buffer)
     }
-    
+
     /// Decode ASDU from bytes using the specified sizes for addresses
-    pub fn decode(
-        data: &[u8],
-        common_addr_size: CommonAddrSize,
-    ) -> IecResult<Self> {
+    pub fn decode(data: &[u8], common_addr_size: CommonAddrSize) -> IecResult<Self> {
         if data.len() < 4 + common_addr_size as usize {
-            return Err(IecError::ProtocolError(
-                "ASDU data too short".to_string(),
-            ));
+            return Err(IecError::ProtocolError("ASDU data too short".to_string()));
         }
-        
+
         let mut cursor = Cursor::new(data);
-        
+
         // Read type ID
         let type_id_byte = cursor.read_u8()?;
-        let type_id = TypeId::from_byte(type_id_byte).ok_or_else(|| {
-            IecError::ProtocolError(format!("Unknown TypeId: {}", type_id_byte))
-        })?;
-        
+        let type_id = TypeId::from_byte(type_id_byte)
+            .ok_or_else(|| IecError::ProtocolError(format!("Unknown TypeId: {}", type_id_byte)))?;
+
         // Read VSQ
         let vsq = cursor.read_u8()?;
-        
+
         // Read COT with originator
         let cot_byte = cursor.read_u8()?;
-        let cot = CauseOfTransmission::from_byte(cot_byte).ok_or_else(|| {
-            IecError::ProtocolError(format!("Unknown COT: {}", cot_byte))
-        })?;
+        let cot = CauseOfTransmission::from_byte(cot_byte)
+            .ok_or_else(|| IecError::ProtocolError(format!("Unknown COT: {}", cot_byte)))?;
         let originator = cursor.read_u8()?;
-        
+
         // Read common address
         let common_addr = match common_addr_size {
             CommonAddrSize::OneOctet => cursor.read_u8()? as u16,
@@ -337,12 +323,12 @@ impl ASDU {
                 low | (high << 8)
             }
         };
-        
+
         // Read remaining data as information objects
         let position = cursor.position() as usize;
         let data_slice = &data[position..];
         let data = data_slice.to_vec();
-        
+
         Ok(Self {
             type_id,
             vsq,
@@ -352,4 +338,4 @@ impl ASDU {
             data,
         })
     }
-} 
+}

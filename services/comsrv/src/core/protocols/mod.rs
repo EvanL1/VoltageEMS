@@ -1,7 +1,7 @@
-pub mod common;
-pub mod modbus;
-pub mod iec60870;
 pub mod can;
+pub mod common;
+pub mod iec60870;
+pub mod modbus;
 pub mod virt;
 
 // TODO: Implement protocol parser registry

@@ -4,12 +4,14 @@
 
 #[cfg(test)]
 mod tests {
-    use crate::core::protocols::modbus::client::{ModbusClient, ModbusChannelConfig};
     use crate::core::protocols::common::combase::traits::ComBase;
-    use crate::core::protocols::modbus::tests::mock_transport::{MockTransport, MockTransportConfig};
+    use crate::core::protocols::modbus::client::{ModbusChannelConfig, ModbusClient};
     use crate::core::protocols::modbus::modbus_polling::ModbusPollingConfig;
+    use crate::core::protocols::modbus::tests::mock_transport::{
+        MockTransport, MockTransportConfig,
+    };
     use std::time::Duration;
-    
+
     #[tokio::test]
     async fn test_client_creation() {
         let channel_config = ModbusChannelConfig {
@@ -32,13 +34,13 @@ mod tests {
             retry_delay: Duration::from_millis(100),
             polling: ModbusPollingConfig::default(),
         };
-        
+
         let mock_config = MockTransportConfig::default();
         let transport = Box::new(MockTransport::new(mock_config));
-        
+
         let client = ModbusClient::new(channel_config, transport).await;
         assert!(client.is_ok());
     }
-    
+
     // TODO: Add more client tests when all dependencies are ready
 }

@@ -6,24 +6,24 @@
 //! - 连接池管理和智能重试机制
 //! - 内置监控和诊断功能
 
+use async_trait::async_trait;
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::RwLock;
 use std::time::Duration;
-use tracing::{warn, error, info, debug, info_span, Instrument};
-use async_trait::async_trait;
+use tokio::sync::RwLock;
+use tracing::{debug, error, info, info_span, warn, Instrument};
 
-use crate::core::protocols::common::{
-    traits::ComBase,
-    data_types::{PointData as CommonPointData, ChannelStatus, TelemetryType},
-};
-use crate::core::protocols::modbus::{
-    protocol_engine::ModbusProtocolEngine,
-    common::{ModbusConfig, ModbusFunctionCode},
-    modbus_polling::{ModbusPollingEngine, ModbusPollingConfig, ModbusPoint},
-};
 use crate::core::config::types::protocol::TelemetryType as ConfigTelemetryType;
 use crate::core::protocols::common::combase::transport_bridge::UniversalTransportBridge;
+use crate::core::protocols::common::{
+    data_types::{ChannelStatus, PointData as CommonPointData, TelemetryType},
+    traits::ComBase,
+};
+use crate::core::protocols::modbus::{
+    common::{ModbusConfig, ModbusFunctionCode},
+    modbus_polling::{ModbusPoint, ModbusPollingConfig, ModbusPollingEngine},
+    protocol_engine::ModbusProtocolEngine,
+};
 use crate::core::transport::traits::Transport;
 use crate::utils::error::{ComSrvError, Result};
 
@@ -94,8 +94,7 @@ impl Default for ProtocolMappingTable {
 
 /// 简化的映射结构
 use crate::core::protocols::modbus::protocol_engine::{
-    ModbusTelemetryMapping, ModbusSignalMapping, 
-    ModbusAdjustmentMapping, ModbusControlMapping
+    ModbusAdjustmentMapping, ModbusControlMapping, ModbusSignalMapping, ModbusTelemetryMapping,
 };
 
 /// Modbus客户端
@@ -104,15 +103,15 @@ pub struct ModbusClient {
     /// 核心组件
     transport_bridge: Arc<UniversalTransportBridge>,
     protocol_engine: Arc<ModbusProtocolEngine>,
-    
+
     /// 配置管理
     config: ModbusChannelConfig,
     mappings: Arc<RwLock<ProtocolMappingTable>>,
-    
+
     /// 状态管理
     connection_state: Arc<RwLock<ConnectionState>>,
     statistics: Arc<RwLock<ClientStatistics>>,
-    
+
     // Modbus专属轮询引擎
     polling_engine: Option<Arc<RwLock<ModbusPollingEngine>>>,
 }
@@ -121,32 +120,32 @@ impl ModbusClient {
     /// Create Redis connection
     async fn create_redis_connection(&self) -> Result<redis::aio::MultiplexedConnection> {
         // Use default Redis URL if not configured
-        let redis_url = std::env::var("REDIS_URL").unwrap_or_else(|_| "redis://127.0.0.1:6379".to_string());
-        
+        let redis_url =
+            std::env::var("REDIS_URL").unwrap_or_else(|_| "redis://127.0.0.1:6379".to_string());
+
         let client = redis::Client::open(redis_url)
             .map_err(|e| ComSrvError::ConnectionError(format!("Redis client error: {}", e)))?;
-            
-        let conn = client.get_multiplexed_async_connection().await
+
+        let conn = client
+            .get_multiplexed_async_connection()
+            .await
             .map_err(|e| ComSrvError::ConnectionError(format!("Redis connection error: {}", e)))?;
-            
+
         Ok(conn)
     }
-    
+
     /// 创建新的Modbus客户端
-    pub async fn new(
-        config: ModbusChannelConfig,
-        transport: Box<dyn Transport>,
-    ) -> Result<Self> {
+    pub async fn new(config: ModbusChannelConfig, transport: Box<dyn Transport>) -> Result<Self> {
         // 创建传输桥接
         let transport_bridge = Arc::new(UniversalTransportBridge::new_modbus(transport));
-        
+
         // 创建协议引擎
         let mut engine = ModbusProtocolEngine::new(&config.connection).await?;
         engine.set_channel_info(config.channel_id, config.channel_name.clone());
         let protocol_engine = Arc::new(engine);
-        
+
         info!("Creating Modbus client: {}", config.channel_name);
-        
+
         Ok(Self {
             transport_bridge,
             protocol_engine,
@@ -163,56 +162,59 @@ impl ModbusClient {
         let total_mappings = {
             let mut current_mappings = self.mappings.write().await;
             *current_mappings = mappings;
-            
-            current_mappings.telemetry_mappings.len() +
-            current_mappings.signal_mappings.len() +
-            current_mappings.adjustment_mappings.len() +
-            current_mappings.control_mappings.len()
+
+            current_mappings.telemetry_mappings.len()
+                + current_mappings.signal_mappings.len()
+                + current_mappings.adjustment_mappings.len()
+                + current_mappings.control_mappings.len()
         }; // 释放写锁
-        
-        info!("Loaded {} protocol mappings to client {}", total_mappings, self.config.channel_name);
-        
+
+        info!(
+            "Loaded {} protocol mappings to client {}",
+            total_mappings, self.config.channel_name
+        );
+
         // 初始化 Modbus 专属轮询引擎
         self.initialize_modbus_polling().await?;
-        
+
         Ok(())
     }
-    
+
     // 初始化 Modbus 专属轮询引擎
     async fn initialize_modbus_polling(&mut self) -> Result<()> {
         // Use polling configuration from channel config
         let polling_config = self.config.polling.clone();
-        
+
         info!("[{}] Initializing Modbus polling engine with config: interval={}ms, batch={}, max_batch_size={}", 
             self.config.channel_name,
             polling_config.default_interval_ms,
             polling_config.enable_batch_reading,
             polling_config.max_batch_size
         );
-        
+
         let mut engine = ModbusPollingEngine::new(polling_config);
-        
+
         // TODO: 设置 Redis 管理器
         // engine.set_redis_manager(redis_manager);
-        
+
         // 从映射表创建 Modbus 点位
         let modbus_points = self.create_modbus_points().await?;
         engine.add_points(modbus_points);
-        
+
         // 存储引擎实例
         self.polling_engine = Some(Arc::new(RwLock::new(engine)));
-        
+
         debug!("Modbus polling engine initialized");
         Ok(())
     }
-    
+
     // 启动轮询
     pub async fn start_polling(&mut self) -> Result<()> {
         // Initialize polling engine if not already done
         if self.polling_engine.is_none() {
             let polling_config = self.config.polling.clone();
             let mut engine = ModbusPollingEngine::new(polling_config);
-            
+
             // Create Redis manager if Redis is configured
             if let Ok(redis_conn) = self.create_redis_connection().await {
                 let redis_config = crate::core::protocols::common::redis::RedisBatchSyncConfig {
@@ -223,88 +225,111 @@ impl ModbusClient {
                     use_pipeline: true,
                     channel_id: Some(self.config.channel_id),
                 };
-                let redis_manager = Arc::new(
-                    crate::core::protocols::common::redis::RedisBatchSync::new(redis_conn, redis_config)
-                );
+                let redis_manager =
+                    Arc::new(crate::core::protocols::common::redis::RedisBatchSync::new(
+                        redis_conn,
+                        redis_config,
+                    ));
                 engine.set_redis_manager(redis_manager);
-                info!("[{}] Redis storage enabled for polling", self.config.channel_name);
+                info!(
+                    "[{}] Redis storage enabled for polling",
+                    self.config.channel_name
+                );
             } else {
-                warn!("[{}] Redis not available, data will not be persisted", self.config.channel_name);
+                warn!(
+                    "[{}] Redis not available, data will not be persisted",
+                    self.config.channel_name
+                );
             }
-            
+
             self.polling_engine = Some(Arc::new(RwLock::new(engine)));
         }
-        
+
         // Create Modbus points from mappings
         let points = self.create_modbus_points().await?;
-        
+
         // Add points to polling engine
         if let Some(engine) = &self.polling_engine {
             let mut engine = engine.write().await;
             engine.add_points(points);
-            
+
             // Clone necessary components for polling task
             let engine_clone = self.polling_engine.clone().unwrap();
             let protocol_engine = self.protocol_engine.clone();
             let channel_name = self.config.channel_name.clone();
             let transport_bridge = self.transport_bridge.clone();
-            
+
             // Get current span to propagate to spawned task
             let current_span = tracing::Span::current();
-            
+
             // Start polling task
-            tokio::spawn(async move {
-                let engine = engine_clone.read().await;
-                // Use closure as read callback
-                let result = engine.start(move |slave_id, function_code, address, quantity| {
-                    let engine_clone = protocol_engine.clone();
-                    let transport_clone = transport_bridge.clone();
-                    Box::pin(async move {
-                        // Perform Modbus read operation using the raw request method
-                        match engine_clone.send_optimized_request(
-                            slave_id,
-                            match function_code {
-                                1 => ModbusFunctionCode::Read01,
-                                2 => ModbusFunctionCode::Read02,
-                                3 => ModbusFunctionCode::Read03,
-                                4 => ModbusFunctionCode::Read04,
-                                _ => return Err(format!("Unsupported function code: {}", function_code).into()),
-                            },
-                            address,
-                            quantity,
-                            &transport_clone,
-                        ).await {
-                            Ok(data) => {
-                                // Convert raw bytes to u16 values
-                                let mut values = Vec::new();
-                                for chunk in data.chunks(2) {
-                                    if chunk.len() == 2 {
-                                        values.push(u16::from_be_bytes([chunk[0], chunk[1]]));
+            tokio::spawn(
+                async move {
+                    let engine = engine_clone.read().await;
+                    // Use closure as read callback
+                    let result = engine
+                        .start(move |slave_id, function_code, address, quantity| {
+                            let engine_clone = protocol_engine.clone();
+                            let transport_clone = transport_bridge.clone();
+                            Box::pin(async move {
+                                // Perform Modbus read operation using the raw request method
+                                match engine_clone
+                                    .send_optimized_request(
+                                        slave_id,
+                                        match function_code {
+                                            1 => ModbusFunctionCode::Read01,
+                                            2 => ModbusFunctionCode::Read02,
+                                            3 => ModbusFunctionCode::Read03,
+                                            4 => ModbusFunctionCode::Read04,
+                                            _ => {
+                                                return Err(format!(
+                                                    "Unsupported function code: {}",
+                                                    function_code
+                                                )
+                                                .into())
+                                            }
+                                        },
+                                        address,
+                                        quantity,
+                                        &transport_clone,
+                                    )
+                                    .await
+                                {
+                                    Ok(data) => {
+                                        // Convert raw bytes to u16 values
+                                        let mut values = Vec::new();
+                                        for chunk in data.chunks(2) {
+                                            if chunk.len() == 2 {
+                                                values
+                                                    .push(u16::from_be_bytes([chunk[0], chunk[1]]));
+                                            }
+                                        }
+                                        Ok(values)
                                     }
+                                    Err(e) => Err(e.to_string().into()),
                                 }
-                                Ok(values)
-                            }
-                            Err(e) => Err(e.to_string().into()),
-                        }
-                    })
-                }).await;
-                
-                if let Err(e) = result {
-                    error!("[{}] Polling error: {}", channel_name, e);
+                            })
+                        })
+                        .await;
+
+                    if let Err(e) = result {
+                        error!("[{}] Polling error: {}", channel_name, e);
+                    }
                 }
-            }.instrument(current_span));
-            
+                .instrument(current_span),
+            );
+
             info!("[{}] Modbus polling started", self.config.channel_name);
         }
-        
+
         Ok(())
     }
-    
+
     // 从映射表创建 Modbus 点位
     async fn create_modbus_points(&self) -> Result<Vec<ModbusPoint>> {
         let mut points = Vec::new();
         let mappings = self.mappings.read().await;
-        
+
         // 处理遥测点 (YC)
         for (point_id, mapping) in &mappings.telemetry_mappings {
             let point = ModbusPoint {
@@ -324,7 +349,7 @@ impl ModbusClient {
             };
             points.push(point);
         }
-        
+
         // 处理遥信点 (YX)
         for (point_id, mapping) in &mappings.signal_mappings {
             let point = ModbusPoint {
@@ -340,7 +365,7 @@ impl ModbusClient {
             };
             points.push(point);
         }
-        
+
         debug!("Created {} Modbus polling points", points.len());
         Ok(points)
     }
@@ -348,25 +373,25 @@ impl ModbusClient {
     /// 连接到设备
     pub async fn connect(&self) -> Result<()> {
         let mut state = self.connection_state.write().await;
-        
+
         debug!(
-            "[{}] Starting Modbus device connection - Protocol: {}, Host: {:?}, Port: {:?}", 
-            self.config.channel_name, 
+            "[{}] Starting Modbus device connection - Protocol: {}, Host: {:?}, Port: {:?}",
+            self.config.channel_name,
             self.config.connection.protocol_type,
             self.config.connection.host,
             self.config.connection.port
         );
-        
+
         match self.transport_bridge.connect().await {
             Ok(_) => {
                 state.connected = true;
                 state.last_connect_time = Some(chrono::Utc::now());
                 state.last_error = None;
                 state.retry_count = 0;
-                
+
                 debug!(
-                    "[{}] Modbus device connection successful - Protocol: {}, Retry: {}", 
-                    self.config.channel_name, 
+                    "[{}] Modbus device connection successful - Protocol: {}, Retry: {}",
+                    self.config.channel_name,
                     self.config.connection.protocol_type,
                     state.retry_count
                 );
@@ -376,10 +401,10 @@ impl ModbusClient {
                 state.connected = false;
                 state.last_error = Some(e.to_string());
                 state.retry_count += 1;
-                
+
                 error!(
-                    "[{}] Modbus device connection failed - Protocol: {}, Retry: {}, Error: {}", 
-                    self.config.channel_name, 
+                    "[{}] Modbus device connection failed - Protocol: {}, Retry: {}, Error: {}",
+                    self.config.channel_name,
                     self.config.connection.protocol_type,
                     state.retry_count,
                     e
@@ -392,29 +417,39 @@ impl ModbusClient {
     /// 断开连接
     pub async fn disconnect(&self) -> Result<()> {
         let mut state = self.connection_state.write().await;
-        
+
         match self.transport_bridge.disconnect().await {
             Ok(_) => {
                 state.connected = false;
-                info!("Disconnected Modbus device connection: {}", self.config.channel_name);
+                info!(
+                    "Disconnected Modbus device connection: {}",
+                    self.config.channel_name
+                );
                 Ok(())
             }
             Err(e) => {
-                error!("Failed to disconnect Modbus device connection: {} - {}", self.config.channel_name, e);
+                error!(
+                    "Failed to disconnect Modbus device connection: {} - {}",
+                    self.config.channel_name, e
+                );
                 Err(e)
             }
         }
     }
 
     /// 读取单个点位
-    pub async fn read_point(&self, point_id: u32, telemetry_type: TelemetryType) -> Result<CommonPointData> {
+    pub async fn read_point(
+        &self,
+        point_id: u32,
+        telemetry_type: TelemetryType,
+    ) -> Result<CommonPointData> {
         let start_time = std::time::Instant::now();
-        
+
         debug!(
-            "[{}] Starting point read - Point ID: {}, Type: {:?}", 
+            "[{}] Starting point read - Point ID: {}, Type: {:?}",
             self.config.channel_name, point_id, telemetry_type
         );
-        
+
         // 更新统计信息
         {
             let mut stats = self.statistics.write().await;
@@ -422,36 +457,39 @@ impl ModbusClient {
             stats.last_request_time = Some(chrono::Utc::now());
         }
 
-        let mut result = self.internal_read_point(point_id, telemetry_type.clone()).await;
-        
+        let mut result = self
+            .internal_read_point(point_id, telemetry_type.clone())
+            .await;
+
         // 设置channel_id和telemetry_type
         if let Ok(ref mut data) = result {
             data.channel_id = Some(self.config.channel_id);
             data.telemetry_type = Some(telemetry_type.clone());
         }
-        
+
         // 更新统计信息和日志记录
         {
             let mut stats = self.statistics.write().await;
             let elapsed = start_time.elapsed().as_millis() as f64;
-            
+
             match &result {
                 Ok(data) => {
                     stats.successful_requests += 1;
                     // 更新平均响应时间
-                    stats.average_response_time_ms = 
-                        (stats.average_response_time_ms * (stats.successful_requests - 1) as f64 + elapsed) / 
-                        stats.successful_requests as f64;
-                    
+                    stats.average_response_time_ms = (stats.average_response_time_ms
+                        * (stats.successful_requests - 1) as f64
+                        + elapsed)
+                        / stats.successful_requests as f64;
+
                     debug!(
-                        "[{}] Point read successful - Point ID: {}, Value: {}, Duration: {:.2}ms", 
+                        "[{}] Point read successful - Point ID: {}, Value: {}, Duration: {:.2}ms",
                         self.config.channel_name, point_id, data.value, elapsed
                     );
                 }
                 Err(e) => {
                     stats.failed_requests += 1;
                     warn!(
-                        "[{}] Point read failed - Point ID: {}, Error: {}, Duration: {:.2}ms", 
+                        "[{}] Point read failed - Point ID: {}, Error: {}, Duration: {:.2}ms",
                         self.config.channel_name, point_id, e, elapsed
                     );
                 }
@@ -462,13 +500,19 @@ impl ModbusClient {
     }
 
     /// 内部读取点位实现
-    async fn internal_read_point(&self, point_id: u32, telemetry_type: TelemetryType) -> Result<CommonPointData> {
+    async fn internal_read_point(
+        &self,
+        point_id: u32,
+        telemetry_type: TelemetryType,
+    ) -> Result<CommonPointData> {
         let mappings = self.mappings.read().await;
-        
+
         match telemetry_type {
             TelemetryType::Telemetry => {
                 if let Some(mapping) = mappings.telemetry_mappings.get(&point_id) {
-                    self.protocol_engine.read_telemetry_point(mapping, &self.transport_bridge).await
+                    self.protocol_engine
+                        .read_telemetry_point(mapping, &self.transport_bridge)
+                        .await
                         .map(|pd| CommonPointData {
                             id: pd.id,
                             name: pd.name,
@@ -480,12 +524,17 @@ impl ModbusClient {
                             channel_id: Some(self.config.channel_id),
                         })
                 } else {
-                    Err(ComSrvError::NotFound(format!("Telemetry point not found: {}", point_id)))
+                    Err(ComSrvError::NotFound(format!(
+                        "Telemetry point not found: {}",
+                        point_id
+                    )))
                 }
             }
             TelemetryType::Signal => {
                 if let Some(mapping) = mappings.signal_mappings.get(&point_id) {
-                    self.protocol_engine.read_signal_point(mapping, &self.transport_bridge).await
+                    self.protocol_engine
+                        .read_signal_point(mapping, &self.transport_bridge)
+                        .await
                         .map(|pd| CommonPointData {
                             id: pd.id,
                             name: pd.name,
@@ -497,51 +546,83 @@ impl ModbusClient {
                             channel_id: Some(self.config.channel_id),
                         })
                 } else {
-                    Err(ComSrvError::NotFound(format!("Signal point not found: {}", point_id)))
+                    Err(ComSrvError::NotFound(format!(
+                        "Signal point not found: {}",
+                        point_id
+                    )))
                 }
             }
             _ => Err(ComSrvError::ProtocolNotSupported(
-                "Read operation does not support adjustment and control types".to_string()
-            ))
+                "Read operation does not support adjustment and control types".to_string(),
+            )),
         }
     }
 
     /// 写入点位（支持telemetry_type参数）
     pub async fn write_point(&self, point_id: u32, value: &str) -> Result<()> {
         let mappings = self.mappings.read().await;
-        
+
         // 尝试遥调操作
         if let Some(mapping) = mappings.adjustment_mappings.get(&point_id) {
-            let float_value: f64 = value.parse()
-                .map_err(|_| ComSrvError::InvalidParameter(format!("Invalid adjustment value: {}", value)))?;
-            return self.protocol_engine.write_adjustment_point(mapping, float_value, &self.transport_bridge).await;
+            let float_value: f64 = value.parse().map_err(|_| {
+                ComSrvError::InvalidParameter(format!("Invalid adjustment value: {}", value))
+            })?;
+            return self
+                .protocol_engine
+                .write_adjustment_point(mapping, float_value, &self.transport_bridge)
+                .await;
         }
-        
+
         // 尝试遥控操作
         if let Some(mapping) = mappings.control_mappings.get(&point_id) {
             let bool_value = match value.to_lowercase().as_str() {
                 "true" | "1" | "on" => true,
                 "false" | "0" | "off" => false,
-                _ => return Err(ComSrvError::InvalidParameter(format!("Invalid control value: {}", value))),
+                _ => {
+                    return Err(ComSrvError::InvalidParameter(format!(
+                        "Invalid control value: {}",
+                        value
+                    )))
+                }
             };
-            return self.protocol_engine.execute_control_point(mapping, bool_value, &self.transport_bridge).await;
+            return self
+                .protocol_engine
+                .execute_control_point(mapping, bool_value, &self.transport_bridge)
+                .await;
         }
-        
-        Err(ComSrvError::NotFound(format!("Writable point not found: {}", point_id)))
+
+        Err(ComSrvError::NotFound(format!(
+            "Writable point not found: {}",
+            point_id
+        )))
     }
-    
+
     /// 写入点位（带telemetry_type参数的新方法）
-    pub async fn write_point_with_type(&self, point_id: u32, value: &str, telemetry_type: TelemetryType) -> Result<()> {
+    pub async fn write_point_with_type(
+        &self,
+        point_id: u32,
+        value: &str,
+        telemetry_type: TelemetryType,
+    ) -> Result<()> {
         let mappings = self.mappings.read().await;
-        
+
         match telemetry_type {
             TelemetryType::Adjustment => {
                 if let Some(mapping) = mappings.adjustment_mappings.get(&point_id) {
-                    let float_value: f64 = value.parse()
-                        .map_err(|_| ComSrvError::InvalidParameter(format!("Invalid adjustment value: {}", value)))?;
-                    self.protocol_engine.write_adjustment_point(mapping, float_value, &self.transport_bridge).await
+                    let float_value: f64 = value.parse().map_err(|_| {
+                        ComSrvError::InvalidParameter(format!(
+                            "Invalid adjustment value: {}",
+                            value
+                        ))
+                    })?;
+                    self.protocol_engine
+                        .write_adjustment_point(mapping, float_value, &self.transport_bridge)
+                        .await
                 } else {
-                    Err(ComSrvError::NotFound(format!("Adjustment point not found: {}", point_id)))
+                    Err(ComSrvError::NotFound(format!(
+                        "Adjustment point not found: {}",
+                        point_id
+                    )))
                 }
             }
             TelemetryType::Control => {
@@ -549,16 +630,26 @@ impl ModbusClient {
                     let bool_value = match value.to_lowercase().as_str() {
                         "true" | "1" | "on" => true,
                         "false" | "0" | "off" => false,
-                        _ => return Err(ComSrvError::InvalidParameter(format!("Invalid control value: {}", value))),
+                        _ => {
+                            return Err(ComSrvError::InvalidParameter(format!(
+                                "Invalid control value: {}",
+                                value
+                            )))
+                        }
                     };
-                    self.protocol_engine.execute_control_point(mapping, bool_value, &self.transport_bridge).await
+                    self.protocol_engine
+                        .execute_control_point(mapping, bool_value, &self.transport_bridge)
+                        .await
                 } else {
-                    Err(ComSrvError::NotFound(format!("Control point not found: {}", point_id)))
+                    Err(ComSrvError::NotFound(format!(
+                        "Control point not found: {}",
+                        point_id
+                    )))
                 }
             }
             _ => Err(ComSrvError::ProtocolNotSupported(
-                "Write operation only supports adjustment and control types".to_string()
-            ))
+                "Write operation only supports adjustment and control types".to_string(),
+            )),
         }
     }
 
@@ -566,10 +657,10 @@ impl ModbusClient {
     pub async fn read_points_batch(&self, point_ids: &[u32]) -> Result<Vec<CommonPointData>> {
         let mut results = Vec::new();
         let mappings = self.mappings.read().await;
-        
+
         // 构建批量读取请求
         let mut batch_requests = Vec::new();
-        
+
         for &point_id in point_ids {
             // 检查点位类型并添加到批量请求
             if mappings.telemetry_mappings.contains_key(&point_id) {
@@ -578,7 +669,7 @@ impl ModbusClient {
                 batch_requests.push((point_id, TelemetryType::Signal));
             }
         }
-        
+
         // 执行批量读取（可以在这里优化为真正的批量操作）
         for (point_id, telemetry_type) in batch_requests {
             match self.read_point(point_id, telemetry_type).await {
@@ -599,7 +690,7 @@ impl ModbusClient {
                 }
             }
         }
-        
+
         Ok(results)
     }
 
@@ -635,30 +726,42 @@ impl ModbusClient {
     /// 健康检查
     pub async fn health_check(&self) -> Result<HashMap<String, String>> {
         let mut health = HashMap::new();
-        
+
         // 检查连接状态
         let state = self.connection_state.read().await;
         health.insert("connected".to_string(), state.connected.to_string());
-        
+
         // 检查传输层状态
         let transport_connected = self.transport_bridge.is_connected().await;
-        health.insert("transport_connected".to_string(), transport_connected.to_string());
-        
+        health.insert(
+            "transport_connected".to_string(),
+            transport_connected.to_string(),
+        );
+
         // 检查统计信息
         let stats = self.statistics.read().await;
-        health.insert("total_requests".to_string(), stats.total_requests.to_string());
-        health.insert("success_rate".to_string(), 
+        health.insert(
+            "total_requests".to_string(),
+            stats.total_requests.to_string(),
+        );
+        health.insert(
+            "success_rate".to_string(),
             if stats.total_requests > 0 {
-                format!("{:.2}%", (stats.successful_requests as f64 / stats.total_requests as f64) * 100.0)
+                format!(
+                    "{:.2}%",
+                    (stats.successful_requests as f64 / stats.total_requests as f64) * 100.0
+                )
             } else {
                 "N/A".to_string()
-            }
+            },
         );
-        
+
         // 检查平均响应时间
-        health.insert("avg_response_time_ms".to_string(), 
-            format!("{:.2}", stats.average_response_time_ms));
-        
+        health.insert(
+            "avg_response_time_ms".to_string(),
+            format!("{:.2}", stats.average_response_time_ms),
+        );
+
         Ok(health)
     }
 }
@@ -666,7 +769,6 @@ impl ModbusClient {
 /// 实现ComBase trait以保持兼容性
 #[async_trait]
 impl ComBase for ModbusClient {
-
     fn name(&self) -> &str {
         &self.config.channel_name
     }
@@ -683,8 +785,14 @@ impl ComBase for ModbusClient {
         let mut params = HashMap::new();
         params.insert("channel_id".to_string(), self.config.channel_id.to_string());
         params.insert("channel_name".to_string(), self.config.channel_name.clone());
-        params.insert("timeout_ms".to_string(), self.config.request_timeout.as_millis().to_string());
-        params.insert("max_retries".to_string(), self.config.max_retries.to_string());
+        params.insert(
+            "timeout_ms".to_string(),
+            self.config.request_timeout.as_millis().to_string(),
+        );
+        params.insert(
+            "max_retries".to_string(),
+            self.config.max_retries.to_string(),
+        );
         params
     }
 
@@ -701,7 +809,7 @@ impl ComBase for ModbusClient {
             channel_name = %self.config.channel_name,
             protocol = "modbus_tcp"
         );
-        
+
         async move {
             // First establish connection
             self.connect().await?;
@@ -709,7 +817,7 @@ impl ComBase for ModbusClient {
             if self.config.polling.default_interval_ms > 0 {
                 self.start_polling().await?;
             }
-            
+
             Ok(())
         }
         .instrument(channel_span)
@@ -723,14 +831,14 @@ impl ComBase for ModbusClient {
             engine.stop().await;
             info!("Modbus polling engine stopped");
         }
-        
+
         self.disconnect().await
     }
 
     async fn status(&self) -> ChannelStatus {
         let state = self.connection_state.read().await;
         let stats = self.statistics.read().await;
-        
+
         ChannelStatus {
             id: self.config.channel_id.to_string(),
             connected: state.connected,
@@ -748,11 +856,11 @@ impl ComBase for ModbusClient {
     async fn get_all_points(&self) -> Vec<CommonPointData> {
         let mappings = self.mappings.read().await;
         let mut point_ids = Vec::new();
-        
+
         // 收集所有点位ID
         point_ids.extend(mappings.telemetry_mappings.keys());
         point_ids.extend(mappings.signal_mappings.keys());
-        
+
         // 批量读取
         match self.read_points_batch(&point_ids).await {
             Ok(points) => points,
@@ -770,69 +878,78 @@ impl ComBase for ModbusClient {
         let (telemetry_type, id) = if point_id.contains(':') {
             let parts: Vec<&str> = point_id.split(':').collect();
             if parts.len() != 2 {
-                return Err(ComSrvError::InvalidParameter(format!("Invalid point ID format: {}", point_id)));
+                return Err(ComSrvError::InvalidParameter(format!(
+                    "Invalid point ID format: {}",
+                    point_id
+                )));
             }
             let telemetry_type = TelemetryType::from(parts[0]);
-            let id: u32 = parts[1].parse()
-                .map_err(|_| ComSrvError::InvalidParameter(format!("Invalid point ID: {}", parts[1])))?;
+            let id: u32 = parts[1].parse().map_err(|_| {
+                ComSrvError::InvalidParameter(format!("Invalid point ID: {}", parts[1]))
+            })?;
             (Some(telemetry_type), id)
         } else {
             // 旧格式，需要检测类型
-            let id: u32 = point_id.parse()
-                .map_err(|_| ComSrvError::InvalidParameter(format!("Invalid point ID: {}", point_id)))?;
+            let id: u32 = point_id.parse().map_err(|_| {
+                ComSrvError::InvalidParameter(format!("Invalid point ID: {}", point_id))
+            })?;
             (None, id)
         };
-        
+
         if let Some(telemetry_type) = telemetry_type {
             // 使用指定的类型
             self.read_point(id, telemetry_type).await
         } else {
             // 自动检测类型（保持向后兼容）
             let mappings = self.mappings.read().await;
-            
+
             if mappings.telemetry_mappings.contains_key(&id) {
                 self.read_point(id, TelemetryType::Telemetry).await
             } else if mappings.signal_mappings.contains_key(&id) {
                 self.read_point(id, TelemetryType::Signal).await
             } else {
-                Err(ComSrvError::NotFound(format!("Point not found: {}", point_id)))
+                Err(ComSrvError::NotFound(format!(
+                    "Point not found: {}",
+                    point_id
+                )))
             }
         }
     }
 
     async fn write_point(&mut self, point_id: &str, value: &str) -> Result<()> {
-        let id: u32 = point_id.parse()
-            .map_err(|_| ComSrvError::InvalidParameter(format!("Invalid point ID: {}", point_id)))?;
-        
+        let id: u32 = point_id.parse().map_err(|_| {
+            ComSrvError::InvalidParameter(format!("Invalid point ID: {}", point_id))
+        })?;
+
         // Call the non-trait method directly
         ModbusClient::write_point(self, id, value).await
     }
 
     async fn get_diagnostics(&self) -> HashMap<String, String> {
         let mut diagnostics = HashMap::new();
-        
+
         // 基本信息
         diagnostics.insert("protocol".to_string(), "modbus".to_string());
         diagnostics.insert("channel_id".to_string(), self.config.channel_id.to_string());
         diagnostics.insert("channel_name".to_string(), self.config.channel_name.clone());
-        
+
         // 健康检查信息
         if let Ok(health) = self.health_check().await {
             diagnostics.extend(health);
         }
-        
+
         // 映射统计
         let counts = self.get_mapping_counts().await;
         for (telemetry_type, count) in counts {
             diagnostics.insert(format!("{}_mappings", telemetry_type), count.to_string());
         }
-        
+
         // 传输层诊断
         let transport_diag = self.transport_bridge.diagnostics().await;
         for (key, value) in transport_diag {
             diagnostics.insert(format!("transport_{}", key), value);
         }
-        
+
         diagnostics
     }
 }
@@ -870,7 +987,7 @@ mod tests {
         let config = create_test_config();
         let mock_config = crate::core::transport::mock::MockTransportConfig::default();
         let transport = Box::new(MockTransport::new(mock_config).unwrap());
-        
+
         let client = ModbusClient::new(config, transport).await;
         assert!(client.is_ok());
     }
@@ -880,10 +997,10 @@ mod tests {
         let config = create_test_config();
         let mock_config = crate::core::transport::mock::MockTransportConfig::default();
         let transport = Box::new(MockTransport::new(mock_config).unwrap());
-        
+
         let client = ModbusClient::new(config, transport).await.unwrap();
         let stats = client.get_statistics().await;
-        
+
         assert_eq!(stats.total_requests, 0);
         assert_eq!(stats.successful_requests, 0);
         assert_eq!(stats.failed_requests, 0);
@@ -897,4 +1014,3 @@ impl std::fmt::Debug for ModbusClient {
             .finish()
     }
 }
-
