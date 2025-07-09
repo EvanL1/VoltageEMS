@@ -5,8 +5,7 @@
 
 use super::config_center::ConfigCenterClient;
 use super::types::{AppConfig, ChannelConfig, CombinedPoint, ServiceConfig};
-// use super::unified_loader::UnifiedCsvLoader;
-use super::loaders::UnifiedCsvLoader;
+use super::unified_loader::UnifiedCsvLoader;
 use crate::utils::error::{ComSrvError, Result};
 use figment::{
     providers::{Env, Format, Json, Toml, Yaml},

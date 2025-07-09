@@ -3,8 +3,7 @@
 //! This module provides high-level plugin management functionality,
 //! including plugin discovery, loading, and lifecycle management.
 
-use std::sync::Arc;
-use tracing::{error, info, warn};
+use tracing::{info, warn};
 
 use super::plugin_registry::{discovery, PluginRegistry};
 use crate::utils::Result;

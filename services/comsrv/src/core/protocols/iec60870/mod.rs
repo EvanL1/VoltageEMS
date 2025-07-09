@@ -9,7 +9,6 @@ pub mod plugin;
 pub use config::Iec104Config;
 
 use crate::core::protocols::common::combase::{PacketParseResult, ProtocolPacketParser};
-use std::collections::HashMap;
 
 /// IEC60870 protocol packet parser
 ///

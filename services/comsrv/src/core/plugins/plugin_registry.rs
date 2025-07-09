@@ -7,7 +7,7 @@ use once_cell::sync::Lazy;
 use semver::Version;
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
-use tracing::{error, info, warn};
+use tracing::{info, warn};
 
 use super::protocol_plugin::{PluginFactory, ProtocolMetadata, ProtocolPlugin};
 use crate::utils::{ComSrvError as Error, Result};

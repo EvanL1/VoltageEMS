@@ -7,7 +7,6 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
-use crate::core::config::types::ChannelLoggingConfig;
 use crate::core::config::{ChannelConfig, ConfigManager, ProtocolType};
 use crate::core::protocols::common::ComBase;
 
@@ -744,7 +743,7 @@ impl ProtocolFactory {
                             .unwrap_or_else(|_| "config".to_string());
                         let base_path = std::path::Path::new(&base_path);
 
-                        match crate::core::config::loaders::UnifiedCsvLoader::load_channel_tables(
+                        match crate::core::config::unified_loader::UnifiedCsvLoader::load_channel_tables(
                             table_config,
                             base_path,
                         ) {

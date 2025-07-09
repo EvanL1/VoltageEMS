@@ -4,7 +4,7 @@
 //! transmission, reception, filtering, and data extraction.
 
 use super::common::*;
-use super::frame::{CanFrame, CanId};
+use super::frame::CanFrame;
 use crate::core::config::ChannelConfig;
 use crate::core::protocols::common::combase::DefaultProtocol;
 use crate::core::protocols::common::traits::ComBase;

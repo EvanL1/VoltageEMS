@@ -5,7 +5,6 @@
 
 use crate::utils::error::ComSrvError;
 use serde::{Deserialize, Serialize};
-use std::fmt;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 /// CAN message ID type

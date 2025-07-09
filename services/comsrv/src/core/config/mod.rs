@@ -19,12 +19,12 @@
 //! ```
 
 // Core modules
-pub mod config_manager;
-// pub mod unified_loader;
 pub mod config_center;
+pub mod config_manager;
 pub mod loaders;
 pub mod point;
 pub mod types;
+pub mod unified_loader;
 
 // Re-export ConfigManager
 pub use config_manager::ConfigManager;

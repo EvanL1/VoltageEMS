@@ -17,7 +17,6 @@ pub mod plugin;
 pub use config::CanConfig;
 
 use crate::core::protocols::common::combase::{PacketParseResult, ProtocolPacketParser};
-use std::collections::HashMap;
 
 /// CAN protocol packet parser
 ///

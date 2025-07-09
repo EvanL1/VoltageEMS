@@ -9,10 +9,10 @@ use std::collections::HashMap;
 
 use crate::core::config::types::channel::ChannelConfig;
 use crate::core::plugins::protocol_plugin::{
-    CliArgument, CliCommand, ConfigTemplate, ProtocolMetadata, ProtocolPlugin, ValidationRule,
+    CliCommand, ConfigTemplate, ProtocolMetadata, ProtocolPlugin, ValidationRule,
 };
 use crate::core::protocols::common::traits::ComBase;
-use crate::utils::{ComSrvError as Error, Result};
+use crate::utils::Result;
 
 use super::VirtualProtocol;
 
