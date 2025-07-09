@@ -1,38 +1,19 @@
 # Clippy configuration for comsrv
 
-# 允许的警告
-allow = [
-    # 参数过多在复杂系统中很常见
-    "too_many_arguments",
-    # 复杂类型在异步代码中难以避免
-    "type_complexity", 
-    # 模块同名在某些组织结构中是合理的
-    "module_inception",
-    # 大型 enum 变体在协议实现中很常见
-    "large_enum_variant",
-]
-
-# 警告级别（不阻塞 CI）
-warn = [
-    "missing_docs",
-    "trivial_casts",
-    "trivial_numeric_casts",
-    "unused_extern_crates",
-    "unused_import_braces",
-    "unused_results",
-]
-
-# 错误级别（阻塞 CI）
-deny = [
-    # 正确性问题必须修复
-    "correctness",
-    # 可疑代码必须检查
-    "suspicious",
-    # 已弃用的 API 不应使用
-    "deprecated",
-]
-
-# 具体配置
+# 认知复杂度阈值 - 工业控制系统的某些功能确实会比较复杂
 cognitive-complexity-threshold = 30
+
+# 类型复杂度阈值 - 异步代码和状态机会产生复杂类型
 type-complexity-threshold = 400
+
+# 参数数量阈值 - 某些协议函数需要多个参数
 too-many-arguments-threshold = 8
+
+# 行数限制
+too-many-lines-threshold = 1000
+
+# 单个二进制文件的大小限制
+single-char-binding-names-threshold = 4
+
+# 避免在大型枚举上使用过度的匹配分支警告
+enum-variant-size-threshold = 200

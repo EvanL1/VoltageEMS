@@ -1,3 +1,4 @@
+#[cfg(all(target_os = "linux", feature = "can"))]
 pub mod can;
 pub mod common;
 pub mod iec60870;

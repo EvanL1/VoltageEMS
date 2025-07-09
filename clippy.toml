@@ -13,30 +13,8 @@ too-many-arguments-threshold = 8
 # 行数限制
 too-many-lines-threshold = 1000
 
-# 允许的规则
-allow = [
-    # 在协议实现中，大的枚举变体是常见的
-    "large_enum_variant",
-    # 模块同名在某些组织结构中是合理的
-    "module_inception", 
-    # Result 类型不总是需要 must_use
-    "must_use_candidate",
-    # 不是所有函数都需要文档
-    "missing_errors_doc",
-    "missing_panics_doc",
-]
+# 单个字符绑定名称的阈值
+single-char-binding-names-threshold = 4
 
-# 警告级别
-warn = [
-    "missing_docs",
-    "trivial_casts",
-    "trivial_numeric_casts", 
-    "unused_extern_crates",
-    "unused_import_braces",
-    "unused_results",
-]
-
-# 拒绝级别 - 这些必须修复
-deny = [
-    "unsafe_code",  # 除非明确需要，否则不使用 unsafe
-]
+# 枚举变体大小阈值
+enum-variant-size-threshold = 200

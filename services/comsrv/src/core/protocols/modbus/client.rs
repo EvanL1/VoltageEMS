@@ -951,7 +951,7 @@ mod tests {
         let mock_config = crate::core::transport::mock::MockTransportConfig::default();
         let _transport = Box::new(MockTransport::new(mock_config).unwrap());
 
-        let client = ModbusClient::new(config, transport).await;
+        let client = ModbusClient::new(config, _transport).await;
         assert!(client.is_ok());
     }
 
@@ -961,7 +961,7 @@ mod tests {
         let mock_config = crate::core::transport::mock::MockTransportConfig::default();
         let _transport = Box::new(MockTransport::new(mock_config).unwrap());
 
-        let client = ModbusClient::new(config, transport).await.unwrap();
+        let client = ModbusClient::new(config, _transport).await.unwrap();
         let stats = client.get_statistics().await;
 
         assert_eq!(stats.total_requests, 0);

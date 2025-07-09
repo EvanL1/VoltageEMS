@@ -50,7 +50,10 @@
 //! - **Extensibility**: New transport types automatically available to all protocols
 //! - **Industrial Ready**: Comprehensive support for edge device interfaces
 
+// CAN module is only available on Linux
+#[cfg(all(target_os = "linux", feature = "can"))]
 pub mod can;
+
 pub mod factory;
 pub mod gpio;
 pub mod mock;
@@ -59,7 +62,9 @@ pub mod tcp;
 pub mod traits;
 
 // Re-export commonly used types
+#[cfg(all(target_os = "linux", feature = "can"))]
 pub use can::CanTransport;
+
 pub use factory::{TransportFactory, TransportType};
 pub use gpio::GpioTransport;
 pub use mock::MockTransport;

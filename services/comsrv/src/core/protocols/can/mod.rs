@@ -5,6 +5,8 @@
 //! - Message filtering and routing
 //! - Error detection and handling
 //! - Multiple CAN interface support (SocketCAN, Peak CAN, etc.)
+//!
+//! Note: This module is only available on Linux systems with the "can" feature enabled.
 
 pub mod client;
 pub mod common;

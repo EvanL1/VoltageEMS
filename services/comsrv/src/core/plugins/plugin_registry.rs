@@ -301,7 +301,8 @@ pub mod discovery {
             })?;
         }
 
-        // Register CAN plugin
+        // Register CAN plugin (Linux only)
+        #[cfg(all(target_os = "linux", feature = "can"))]
         {
             use crate::core::protocols::can::plugin::CanPlugin;
             PluginRegistry::register_factory_global("can".to_string(), || {

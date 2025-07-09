@@ -7,7 +7,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
-use crate::core::config::{ChannelConfig, ConfigManager, ProtocolType};
+use crate::core::config::{ChannelConfig, ChannelLoggingConfig, ConfigManager, ProtocolType};
 use crate::core::protocols::common::ComBase;
 
 // use crate::core::protocols::iec60870::iec104::Iec104Client;

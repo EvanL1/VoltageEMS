@@ -11,6 +11,7 @@ use std::fmt;
 use std::sync::Arc;
 use tracing::{debug, info};
 
+#[cfg(all(target_os = "linux", feature = "can"))]
 use super::can::{CanTransport, CanTransportBuilder, CanTransportConfig};
 use super::gpio::{GpioTransport, GpioTransportBuilder, GpioTransportConfig};
 use super::mock::{MockTransport, MockTransportBuilder, MockTransportConfig};
@@ -28,6 +29,7 @@ pub enum TransportType {
     /// GPIO transport for DI/DO
     Gpio,
     /// CAN bus transport
+    #[cfg(all(target_os = "linux", feature = "can"))]
     Can,
     /// Mock transport for testing
     Mock,
@@ -39,6 +41,7 @@ impl fmt::Display for TransportType {
             TransportType::Tcp => write!(f, "tcp"),
             TransportType::Serial => write!(f, "serial"),
             TransportType::Gpio => write!(f, "gpio"),
+            #[cfg(all(target_os = "linux", feature = "can"))]
             TransportType::Can => write!(f, "can"),
             TransportType::Mock => write!(f, "mock"),
         }
@@ -53,6 +56,7 @@ impl std::str::FromStr for TransportType {
             "tcp" => Ok(TransportType::Tcp),
             "serial" | "rtu" => Ok(TransportType::Serial),
             "gpio" | "di" | "do" | "digital" => Ok(TransportType::Gpio),
+            #[cfg(all(target_os = "linux", feature = "can"))]
             "can" | "canbus" => Ok(TransportType::Can),
             "mock" => Ok(TransportType::Mock),
             _ => Err(TransportError::ConfigError(format!(
@@ -72,6 +76,7 @@ pub enum AnyTransportConfig {
     /// GPIO transport configuration
     Gpio(GpioTransportConfig),
     /// CAN transport configuration
+    #[cfg(all(target_os = "linux", feature = "can"))]
     Can(CanTransportConfig),
     /// Mock transport configuration
     Mock(MockTransportConfig),
@@ -84,6 +89,7 @@ impl AnyTransportConfig {
             AnyTransportConfig::Tcp(_) => TransportType::Tcp,
             AnyTransportConfig::Serial(_) => TransportType::Serial,
             AnyTransportConfig::Gpio(_) => TransportType::Gpio,
+            #[cfg(all(target_os = "linux", feature = "can"))]
             AnyTransportConfig::Can(_) => TransportType::Can,
             AnyTransportConfig::Mock(_) => TransportType::Mock,
         }
@@ -95,6 +101,7 @@ impl AnyTransportConfig {
             AnyTransportConfig::Tcp(config) => config.validate(),
             AnyTransportConfig::Serial(config) => config.validate(),
             AnyTransportConfig::Gpio(config) => config.validate(),
+            #[cfg(all(target_os = "linux", feature = "can"))]
             AnyTransportConfig::Can(config) => config.validate(),
             AnyTransportConfig::Mock(config) => config.validate(),
         }
@@ -167,11 +174,13 @@ impl GpioBuilderImpl {
 }
 
 #[derive(Debug)]
+#[cfg(all(target_os = "linux", feature = "can"))]
 #[allow(dead_code)]
 struct CanBuilderImpl {
     builder: CanTransportBuilder,
 }
 
+#[cfg(all(target_os = "linux", feature = "can"))]
 impl CanBuilderImpl {
     fn new() -> Self {
         Self {
@@ -208,6 +217,7 @@ impl TransportFactory {
         factory.register_serial_builder();
         factory.register_mock_builder();
         factory.register_gpio_builder();
+        #[cfg(all(target_os = "linux", feature = "can"))]
         factory.register_can_builder();
 
         factory
@@ -243,6 +253,7 @@ impl TransportFactory {
     }
 
     /// Register CAN transport builder
+    #[cfg(all(target_os = "linux", feature = "can"))]
     fn register_can_builder(&mut self) {
         let builder = CanBuilderImpl::new();
         self.builders.insert(TransportType::Can, Box::new(builder));
@@ -336,6 +347,7 @@ impl TransportFactory {
             TransportType::Tcp => AnyTransportConfig::Tcp(TcpTransportConfig::default()),
             TransportType::Serial => AnyTransportConfig::Serial(SerialTransportConfig::default()),
             TransportType::Gpio => AnyTransportConfig::Gpio(GpioTransportConfig::default()),
+            #[cfg(all(target_os = "linux", feature = "can"))]
             TransportType::Can => AnyTransportConfig::Can(CanTransportConfig::default()),
             TransportType::Mock => AnyTransportConfig::Mock(MockTransportConfig::default()),
         }
@@ -411,12 +423,14 @@ impl TransportBuilderRegistry for GpioBuilderImpl {
     }
 }
 
+#[cfg(all(target_os = "linux", feature = "can"))]
 impl TransportBuilderRegistry for CanBuilderImpl {
     fn build_transport(
         &self,
         config: AnyTransportConfig,
     ) -> Result<Box<dyn Transport>, TransportError> {
         match config {
+            #[cfg(all(target_os = "linux", feature = "can"))]
             AnyTransportConfig::Can(can_config) => {
                 let _transport = CanTransport::new(can_config)?;
                 Ok(Box::new(_transport))
@@ -437,6 +451,7 @@ mod tests {
         assert_eq!(TransportType::Tcp.to_string(), "tcp");
         assert_eq!(TransportType::Serial.to_string(), "serial");
         assert_eq!(TransportType::Gpio.to_string(), "gpio");
+        #[cfg(all(target_os = "linux", feature = "can"))]
         assert_eq!(TransportType::Can.to_string(), "can");
         assert_eq!(TransportType::Mock.to_string(), "mock");
     }
@@ -463,6 +478,7 @@ mod tests {
             "digital".parse::<TransportType>().unwrap(),
             TransportType::Gpio
         );
+        #[cfg(all(target_os = "linux", feature = "can"))]
         assert_eq!("can".parse::<TransportType>().unwrap(), TransportType::Can);
         assert_eq!(
             "canbus".parse::<TransportType>().unwrap(),
@@ -483,11 +499,15 @@ mod tests {
         assert!(factory.is_transport_supported(TransportType::Tcp));
         assert!(factory.is_transport_supported(TransportType::Serial));
         assert!(factory.is_transport_supported(TransportType::Gpio));
+        #[cfg(all(target_os = "linux", feature = "can"))]
         assert!(factory.is_transport_supported(TransportType::Can));
         assert!(factory.is_transport_supported(TransportType::Mock));
 
         let supported_types = factory.supported_transport_types();
+        #[cfg(all(target_os = "linux", feature = "can"))]
         assert_eq!(supported_types.len(), 5);
+        #[cfg(not(all(target_os = "linux", feature = "can")))]
+        assert_eq!(supported_types.len(), 4);
     }
 
     #[tokio::test]
@@ -577,9 +597,12 @@ mod tests {
         assert_eq!(gpio_config.transport_type(), TransportType::Gpio);
         assert!(gpio_config.validate().is_ok());
 
-        let _can_config = AnyTransportConfig::Can(CanTransportConfig::default());
-        assert_eq!(can_config.transport_type(), TransportType::Can);
-        assert!(can_config.validate().is_ok());
+        #[cfg(all(target_os = "linux", feature = "can"))]
+        {
+            let can_config = AnyTransportConfig::Can(CanTransportConfig::default());
+            assert_eq!(can_config.transport_type(), TransportType::Can);
+            assert!(can_config.validate().is_ok());
+        }
 
         let mock_config = AnyTransportConfig::Mock(MockTransportConfig::default());
         assert_eq!(mock_config.transport_type(), TransportType::Mock);
@@ -599,8 +622,11 @@ mod tests {
         let gpio_default = factory.get_default_config(TransportType::Gpio);
         assert!(matches!(gpio_default, AnyTransportConfig::Gpio(_)));
 
-        let can_default = factory.get_default_config(TransportType::Can);
-        assert!(matches!(can_default, AnyTransportConfig::Can(_)));
+        #[cfg(all(target_os = "linux", feature = "can"))]
+        {
+            let can_default = factory.get_default_config(TransportType::Can);
+            assert!(matches!(can_default, AnyTransportConfig::Can(_)));
+        }
 
         let mock_default = factory.get_default_config(TransportType::Mock);
         assert!(matches!(mock_default, AnyTransportConfig::Mock(_)));
