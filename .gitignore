@@ -58,7 +58,7 @@ Thumbs.db
 
 # Config
 services/comsrv/config/
-config/
+/config/
 
 # examples
 examples/

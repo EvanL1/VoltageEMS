@@ -1,0 +1,112 @@
+# PredSrv Configuration File
+# Power Load Prediction Service with NPU Optimization
+
+server:
+  host: "0.0.0.0"
+  port: 8085
+  workers: 4
+
+redis:
+  url: "redis://127.0.0.1:6379"
+  pool_size: 10
+  subscribe_patterns:
+    - "telemetry:power:*"
+    - "telemetry:voltage:*"
+    - "telemetry:current:*"
+  publish_prefix: "prediction:"
+
+influxdb:
+  url: "http://localhost:8086"
+  org: "voltageems"
+  bucket: "voltage_data"
+  token: "${INFLUXDB_TOKEN}"
+
+prediction:
+  # Prediction horizons in minutes
+  horizons:
+    - 15
+    - 30
+    - 60
+    - 1440  # 24 hours
+  
+  # Update interval in seconds
+  update_interval: 300  # 5 minutes
+  
+  # Historical data window for prediction (hours)
+  history_window: 168  # 7 days
+  
+  # Batch size for NPU inference
+  batch_size: 32
+  
+  # Model configuration
+  model:
+    path: "models/load_forecast.onnx"
+    input_features: 24  # Number of input features
+    sequence_length: 96  # 24 hours at 15-min intervals
+    quantization: "int8"
+    
+npu:
+  # NPU backend configuration
+  backend: "tensorrt"  # Options: tensorrt, cuda, cpu
+  device_id: 0
+  memory_limit: 512  # MB
+  optimization_level: 3
+  
+  # TensorRT specific options
+  tensorrt:
+    fp16_mode: true
+    int8_mode: true
+    max_batch_size: 64
+    workspace_size: 256  # MB
+
+cache:
+  # Local time-series cache
+  max_size: 10000  # Maximum number of data points
+  ttl: 3600  # Time to live in seconds
+  
+  # Sliding window configuration
+  window_size: 2016  # 7 days at 5-min intervals
+  overlap: 0.5  # 50% overlap
+
+api:
+  # API rate limiting
+  rate_limit:
+    requests_per_minute: 60
+    burst: 10
+  
+  # CORS configuration
+  cors:
+    allowed_origins:
+      - "http://localhost:8080"
+      - "http://localhost:8081"
+    allowed_methods:
+      - "GET"
+      - "POST"
+      - "OPTIONS"
+
+monitoring:
+  # Prometheus metrics
+  metrics_path: "/metrics"
+  
+  # Health check
+  health_path: "/health"
+  
+  # Custom metrics
+  prediction_metrics:
+    - "prediction_latency_ms"
+    - "prediction_accuracy_mape"
+    - "npu_utilization_percent"
+    - "cache_hit_rate"
+
+logging:
+  level: "info"
+  format: "json"
+  file: "logs/predsrv.log"
+  max_size: 10485760  # 10MB
+  max_files: 5
+  
+  # Component-specific log levels
+  components:
+    prediction: "debug"
+    npu: "info"
+    redis: "warn"
