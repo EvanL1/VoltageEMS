@@ -5,8 +5,8 @@
 
 use serde::{Serialize, Deserialize};
 use std::fmt;
+use std::sync::atomic::{AtomicU64, Ordering};
 use crate::utils::error::ComSrvError;
-use crate::core::protocols::common::stats::{BaseCommStats, BaseConnectionStats};
 
 /// CAN message ID type
 pub type CanId = u32;
@@ -172,83 +172,102 @@ pub enum CanByteOrder {
 /// CAN-specific error type that wraps the base communication error
 pub type CanError = ComSrvError;
 
-/// CAN bus statistics using unified base components
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// CAN bus statistics
+#[derive(Debug, Serialize, Deserialize)]
 pub struct CanStatistics {
-    /// Base communication statistics
-    pub base_stats: BaseCommStats,
-    /// Connection-specific statistics  
-    pub connection_stats: BaseConnectionStats,
+    /// Total messages sent
+    #[serde(skip)]
+    pub messages_sent: AtomicU64,
+    /// Total messages received
+    #[serde(skip)]
+    pub messages_received: AtomicU64,
+    /// Error message count
+    #[serde(skip)]
+    pub error_messages: AtomicU64,
+    /// Bus utilization percentage
+    #[serde(skip)]
+    pub bus_utilization: AtomicU64,
+    /// Last error time
+    pub last_error_time: Option<std::time::SystemTime>,
+}
+
+impl Clone for CanStatistics {
+    fn clone(&self) -> Self {
+        Self {
+            messages_sent: AtomicU64::new(self.messages_sent.load(Ordering::Relaxed)),
+            messages_received: AtomicU64::new(self.messages_received.load(Ordering::Relaxed)),
+            error_messages: AtomicU64::new(self.error_messages.load(Ordering::Relaxed)),
+            bus_utilization: AtomicU64::new(self.bus_utilization.load(Ordering::Relaxed)),
+            last_error_time: self.last_error_time,
+        }
+    }
 }
 
 impl CanStatistics {
     /// Create new CAN statistics
     pub fn new() -> Self {
         Self {
-            base_stats: BaseCommStats::new(),
-            connection_stats: BaseConnectionStats::new(),
+            messages_sent: AtomicU64::new(0),
+            messages_received: AtomicU64::new(0),
+            error_messages: AtomicU64::new(0),
+            bus_utilization: AtomicU64::new(0),
+            last_error_time: None,
         }
     }
 
     /// Reset all statistics
     pub fn reset(&mut self) {
-        self.base_stats.reset();
-        self.connection_stats.reset();
+        self.messages_sent.store(0, Ordering::Relaxed);
+        self.messages_received.store(0, Ordering::Relaxed);
+        self.error_messages.store(0, Ordering::Relaxed);
+        self.bus_utilization.store(0, Ordering::Relaxed);
+        self.last_error_time = None;
     }
 
     /// Record a sent message
-    pub fn record_message_sent(&mut self) {
-        self.base_stats.successful_requests += 1;
-        self.base_stats.total_requests += 1;
+    pub fn record_message_sent(&self) {
+        self.messages_sent.fetch_add(1, Ordering::Relaxed);
     }
 
     /// Record a received message
-    pub fn record_message_received(&mut self) {
-        self.base_stats.successful_requests += 1;
-        self.base_stats.total_requests += 1;
+    pub fn record_message_received(&self) {
+        self.messages_received.fetch_add(1, Ordering::Relaxed);
     }
 
     /// Record an error message
-    pub fn record_error_message(&mut self, error_type: &str) {
-        self.base_stats.failed_requests += 1;
-        self.base_stats.total_requests += 1;
-        self.base_stats.increment_error_counter(error_type);
+    pub fn record_error_message(&mut self, _error_type: &str) {
+        self.error_messages.fetch_add(1, Ordering::Relaxed);
+        self.last_error_time = Some(std::time::SystemTime::now());
     }
 
     /// Update bus utilization
-    pub fn update_bus_utilization(&mut self, utilization: f64) {
-        // Store in error_counters as a special metric
-        self.base_stats.error_counters.insert("bus_utilization".to_string(), utilization as u64);
+    pub fn update_bus_utilization(&self, utilization: f64) {
+        self.bus_utilization.store((utilization * 100.0) as u64, Ordering::Relaxed);
     }
 
-    // Convenience accessors for backward compatibility
-    
     /// Get total messages sent
-    pub fn messages_sent(&self) -> u64 {
-        self.base_stats.successful_requests
+    pub fn get_messages_sent(&self) -> u64 {
+        self.messages_sent.load(Ordering::Relaxed)
     }
 
     /// Get total messages received
-    pub fn messages_received(&self) -> u64 {
-        self.base_stats.successful_requests
+    pub fn get_messages_received(&self) -> u64 {
+        self.messages_received.load(Ordering::Relaxed)
     }
 
     /// Get error message count
-    pub fn error_messages(&self) -> u64 {
-        self.base_stats.failed_requests
+    pub fn get_error_messages(&self) -> u64 {
+        self.error_messages.load(Ordering::Relaxed)
     }
 
     /// Get bus utilization percentage
-    pub fn bus_utilization(&self) -> f64 {
-        self.base_stats.error_counters.get("bus_utilization")
-            .map(|&v| v as f64)
-            .unwrap_or(0.0)
+    pub fn get_bus_utilization(&self) -> f64 {
+        self.bus_utilization.load(Ordering::Relaxed) as f64 / 100.0
     }
 
     /// Get last error time
-    pub fn last_error_time(&self) -> Option<chrono::DateTime<chrono::Utc>> {
-        // Convert from SystemTime to chrono::DateTime
-        self.base_stats.start_time
+    pub fn get_last_error_time(&self) -> Option<chrono::DateTime<chrono::Utc>> {
+        self.last_error_time
             .and_then(|st| chrono::DateTime::from_timestamp(
                 st.duration_since(std::time::UNIX_EPOCH).ok()?.as_secs() as i64,
                 0
@@ -288,11 +307,11 @@ mod tests {
 
     #[test]
     fn test_can_error_display() {
-        let error = CanError::InvalidCanId(0x123);
-        assert_eq!(error.to_string(), "Invalid CAN ID: 0x123");
+        let error = CanError::InvalidParameter(format!("Invalid CAN ID: 0x{:X}", 0x123));
+        assert_eq!(error.to_string(), "Invalid parameter: Invalid CAN ID: 0x123");
         
-        let error = CanError::InterfaceNotAvailable("can0".to_string());
-        assert_eq!(error.to_string(), "CAN interface not available: can0");
+        let error = CanError::ProtocolError(format!("CAN interface not available: {}", "can0"));
+        assert_eq!(error.to_string(), "Protocol error: CAN interface not available: can0");
     }
 
     #[test]

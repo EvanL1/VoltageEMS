@@ -146,9 +146,12 @@ pub struct EngineStats {
 impl ModbusProtocolEngine {
     /// 创建新的协议引擎
     pub async fn new(modbus_config: &ModbusConfig) -> Result<Self> {
+        tracing::debug!("Creating ModbusProtocolEngine with protocol_type: {}", modbus_config.protocol_type);
         let mode = if modbus_config.is_tcp() {
+            tracing::debug!("Selected ModbusMode::Tcp");
             ModbusMode::Tcp
         } else {
+            tracing::debug!("Selected ModbusMode::Rtu");
             ModbusMode::Rtu
         };
 

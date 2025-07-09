@@ -1,0 +1,169 @@
+# IEC 60870-5-104协议测试配置
+
+protocol: iec60870_5_104
+name: "IEC 60870-5-104 Test Configuration"
+
+# 连接参数
+connection:
+  host: "127.0.0.1"
+  port: 2404
+  common_address: 1
+  originator_address: 0
+  
+  # 超时设置
+  t1_timeout: 15000  # 发送或测试APDU的超时 (毫秒)
+  t2_timeout: 10000  # 无数据报文时确认的超时 (毫秒)
+  t3_timeout: 20000  # 长期空闲状态下发送测试帧的超时 (毫秒)
+  
+  # 参数设置
+  k_value: 12  # 未被确认的I格式APDU最大数目
+  w_value: 8   # 接收方最迟确认接收的I格式APDU数目
+
+# 信息对象配置
+information_objects:
+  # 单点信息
+  - ioa: 100
+    type: M_SP_NA_1
+    name: "Single Point 1"
+    expected_value: 1
+    quality: 0x00  # Good
+  
+  - ioa: 101
+    type: M_SP_NA_1
+    name: "Single Point 2"
+    expected_value: 0
+    quality: 0x00
+  
+  # 双点信息
+  - ioa: 200
+    type: M_DP_NA_1
+    name: "Double Point 1"
+    expected_value: 2  # 合位
+    quality: 0x00
+  
+  # 测量值（归一化）
+  - ioa: 300
+    type: M_ME_NA_1
+    name: "Normalized Value 1"
+    expected_value: 0.5
+    quality: 0x00
+  
+  # 测量值（标度化）
+  - ioa: 400
+    type: M_ME_NB_1
+    name: "Scaled Value 1"
+    expected_value: 1000
+    quality: 0x00
+  
+  # 测量值（短浮点数）
+  - ioa: 500
+    type: M_ME_NC_1
+    name: "Float Value 1"
+    expected_value: 123.45
+    quality: 0x00
+
+# 测试场景
+test_scenarios:
+  - name: "Connection Test"
+    description: "Test connection establishment and initialization"
+    operations:
+      - type: connect
+        expected_success: true
+      
+      - type: send_startdt_act
+        expected_response: startdt_con
+        timeout_ms: 5000
+      
+      - type: interrogation_command
+        cause: 6  # Activation
+        expected_response: activation_con
+        timeout_ms: 10000
+  
+  - name: "Data Acquisition Test"
+    description: "Test data acquisition"
+    operations:
+      - type: read_single_points
+        ioa_start: 100
+        ioa_end: 102
+        expected_count: 3
+      
+      - type: read_measured_values
+        ioa_start: 300
+        ioa_end: 500
+        expected_count: 3
+  
+  - name: "Control Test"
+    description: "Test control commands"
+    operations:
+      - type: single_command
+        ioa: 1000
+        value: 1  # ON
+        select: true
+        execute: true
+        expected_success: true
+      
+      - type: double_command
+        ioa: 1100
+        value: 2  # Close
+        select: false
+        execute: true
+        expected_success: true
+      
+      - type: setpoint_normalized
+        ioa: 1200
+        value: 0.75
+        select: false
+        execute: true
+        expected_success: true
+  
+  - name: "Time Synchronization Test"
+    description: "Test time synchronization"
+    operations:
+      - type: clock_sync_command
+        expected_success: true
+        max_time_diff_ms: 1000
+  
+  - name: "Error Handling Test"
+    description: "Test error conditions"
+    operations:
+      - type: single_command
+        ioa: 99999  # Invalid IOA
+        value: 1
+        expected_success: false
+        expected_cause: 44  # Unknown information object address
+      
+      - type: disconnect
+        reconnect_delay_ms: 5000
+        expected_reconnect: true
+  
+  - name: "Performance Test"
+    description: "Test performance under load"
+    operations:
+      - type: cyclic_transmission
+        duration_seconds: 60
+        interval_ms: 100
+        points_per_cycle: 50
+        max_latency_ms: 200
+        min_success_rate: 0.99
+
+# 验证规则
+validations:
+  - name: "Protocol Compliance"
+    description: "Verify IEC 60870-5-104 compliance"
+    checks:
+      - apdu_format_validation: true
+      - sequence_number_validation: true
+      - timeout_handling_validation: true
+  
+  - name: "Data Integrity"
+    description: "Verify data integrity"
+    cyclic_read_interval_ms: 5000
+    max_value_change_rate: 0.01  # 1% per interval
+    quality_bit_monitoring: true
+  
+  - name: "Connection Stability"
+    description: "Verify connection stability"
+    test_frame_interval_ms: 20000  # T3 timeout
+    max_test_frame_failures: 3
+    auto_reconnect: true
+    max_reconnect_attempts: 5

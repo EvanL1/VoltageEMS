@@ -208,12 +208,12 @@ impl ModbusConfig {
 
     /// Check if this is TCP configuration
     pub fn is_tcp(&self) -> bool {
-        self.protocol_type.contains("tcp")
+        self.protocol_type.to_lowercase().contains("tcp")
     }
 
     /// Check if this is RTU configuration
     pub fn is_rtu(&self) -> bool {
-        self.protocol_type.contains("rtu")
+        self.protocol_type.to_lowercase().contains("rtu")
     }
 
     /// Add point to configuration

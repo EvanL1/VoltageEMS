@@ -7,8 +7,14 @@
 //! - Multiple CAN interface support (SocketCAN, Peak CAN, etc.)
 
 pub mod common;
+pub mod config;
 pub mod client;
 pub mod frame;
+
+// Plugin support
+pub mod plugin;
+
+pub use config::CanConfig;
 
 use std::collections::HashMap;
 use crate::core::protocols::common::combase::{ProtocolPacketParser, PacketParseResult};
@@ -37,7 +43,7 @@ impl ProtocolPacketParser for CanPacketParser {
         #[cfg(feature = "can")]
         {
             let description = format!("CAN frame, {} bytes", data.len());
-            return PacketParseResult::success("CAN", direction, &hex_data, &description, HashMap::new());
+            return PacketParseResult::success("CAN", direction, &hex_data, &description);
         }
 
         #[cfg(not(feature = "can"))]
@@ -46,8 +52,7 @@ impl ProtocolPacketParser for CanPacketParser {
                 "CAN",
                 direction,
                 &hex_data,
-                "CAN parser disabled",
-                HashMap::new(),
+                "CAN parser disabled"
             )
         }
     }
