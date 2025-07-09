@@ -5,6 +5,7 @@
 
 use super::common::ModbusFunctionCode;
 use crate::utils::error::{ComSrvError, Result};
+use crate::utils::hex::format_hex_pretty;
 use tracing::{debug, warn};
 
 /// Modbus exception codes
@@ -111,7 +112,7 @@ impl ModbusPduProcessor {
 
     /// Parse PDU with context (request or response)
     fn parse_pdu_with_context(&self, data: &[u8], is_response: bool) -> Result<PduParseResult> {
-        debug!(hex_data = %data.iter().map(|b| format!("{:02X}", b)).collect::<Vec<_>>().join(" "), length = data.len(), is_response = is_response, "[PDU Parser] Raw PDU data");
+        debug!(hex_data = %format_hex_pretty(data), length = data.len(), is_response = is_response, "[PDU Parser] Raw PDU data");
         debug!(
             "[PDU Parser] Starting PDU parsing - Length: {} bytes, Type: {}",
             data.len(),

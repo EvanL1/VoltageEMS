@@ -12,7 +12,7 @@ use tokio::net::TcpStream;
 use tokio::sync::RwLock;
 use tokio::time::timeout;
 use tracing::{debug, error, info, warn};
-use hex;
+use crate::utils::hex::format_hex_pretty;
 
 use super::traits::{
     ConnectionState, Transport, TransportBuilder, TransportConfig, TransportError, TransportStats,
@@ -257,8 +257,7 @@ impl Transport for TcpTransport {
                         let mut stats = self.stats.write().await;
                         stats.record_bytes_sent(bytes_sent);
 
-                        let hex_str = data.iter().map(|b| format!("{:02X}", b)).collect::<Vec<_>>().join(" ");
-                        debug!(hex_data = %hex_str, length = bytes_sent, direction = "send", "[TCP Transport] Raw packet");
+                        debug!(hex_data = %format_hex_pretty(data), length = bytes_sent, direction = "send", "[TCP Transport] Raw packet");
                         debug!("Sent {} bytes via TCP", bytes_sent);
                         Ok(bytes_sent)
                     }
@@ -313,8 +312,7 @@ impl Transport for TcpTransport {
                         let mut stats = self.stats.write().await;
                         stats.record_bytes_received(bytes_read);
 
-                        let hex_str = buffer[..bytes_read].iter().map(|b| format!("{:02X}", b)).collect::<Vec<_>>().join(" ");
-                        debug!(hex_data = %hex_str, length = bytes_read, direction = "recv", "[TCP Transport] Raw packet");
+                        debug!(hex_data = %format_hex_pretty(&buffer[..bytes_read]), length = bytes_read, direction = "recv", "[TCP Transport] Raw packet");
                         debug!("Received {} bytes via TCP", bytes_read);
                         Ok(bytes_read)
                     }
@@ -459,11 +457,11 @@ mod tests {
     fn test_tcp_transport_creation() {
         let config = TcpTransportConfig::default();
         let _transport = TcpTransport::new(config);
-        assert!(transport.is_ok());
+        assert!(_transport.is_ok());
 
-        let _transport = transport.unwrap();
-        assert_eq!(transport.transport_type(), "tcp");
-        assert_eq!(transport.name(), "TCP Transport");
+        let _transport = _transport.unwrap();
+        assert_eq!(_transport.transport_type(), "tcp");
+        assert_eq!(_transport.name(), "TCP Transport");
     }
 
     #[tokio::test]
@@ -471,9 +469,9 @@ mod tests {
         let config = TcpTransportConfig::default();
         let _transport = TcpTransport::new(config).unwrap();
 
-        assert!(!transport.is_connected().await);
+        assert!(!_transport.is_connected().await);
         assert_eq!(
-            transport.connection_state().await,
+            _transport.connection_state().await,
             ConnectionState::Disconnected
         );
     }

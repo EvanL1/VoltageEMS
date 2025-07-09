@@ -2,6 +2,8 @@
 //!
 //! Common utilities for Modbus protocol testing.
 
+use crate::utils::hex::format_hex_pretty;
+
 /// Create a test PDU with function code and data
 pub fn create_test_pdu(function_code: u8, data: &[u8]) -> Vec<u8> {
     let mut pdu = vec![function_code];
@@ -76,11 +78,7 @@ pub fn assert_bytes_eq(actual: &[u8], expected: &[u8]) {
 
 /// Format bytes as hex string
 pub fn format_bytes(bytes: &[u8]) -> String {
-    bytes
-        .iter()
-        .map(|b| format!("{:02X}", b))
-        .collect::<Vec<_>>()
-        .join(" ")
+    format_hex_pretty(bytes)
 }
 
 /// Format diff between two byte arrays

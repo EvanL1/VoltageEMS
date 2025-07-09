@@ -10,6 +10,7 @@ use crate::core::protocols::common::combase::DefaultProtocol;
 use crate::core::protocols::common::traits::ComBase;
 use crate::core::protocols::common::{ChannelStatus, PointData};
 use crate::utils::{ComSrvError, Result};
+use crate::utils::hex::format_hex;
 use async_trait::async_trait;
 use chrono::Utc;
 use std::collections::HashMap;
@@ -377,13 +378,7 @@ impl CanClientBase {
 
                 match String::from_utf8(string_bytes.to_vec()) {
                     Ok(s) => serde_json::Value::String(s),
-                    Err(_) => serde_json::Value::String(
-                        string_bytes
-                            .iter()
-                            .map(|&b| format!("{:02X}", b))
-                            .collect::<Vec<_>>()
-                            .join(""),
-                    ),
+                    Err(_) => serde_json::Value::String(format_hex(string_bytes)),
                 }
             }
             _ => {

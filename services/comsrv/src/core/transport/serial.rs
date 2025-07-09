@@ -11,7 +11,7 @@ use tokio::sync::RwLock;
 use tokio::time::timeout;
 use tokio_serial::{SerialPortBuilderExt, SerialStream};
 use tracing::{debug, error, info, warn};
-use hex;
+use crate::utils::hex::format_hex_pretty;
 
 use super::traits::{
     ConnectionState, Transport, TransportBuilder, TransportConfig, TransportError, TransportStats,
@@ -273,8 +273,7 @@ impl Transport for SerialTransport {
                         let mut stats = self.stats.write().await;
                         stats.record_bytes_sent(bytes_sent);
 
-                        let hex_str = data.iter().map(|b| format!("{:02X}", b)).collect::<Vec<_>>().join(" ");
-                        debug!(hex_data = %hex_str, length = bytes_sent, direction = "send", "[Serial Transport] Raw packet");
+                        debug!(hex_data = %format_hex_pretty(data), length = bytes_sent, direction = "send", "[Serial Transport] Raw packet");
                         debug!("Sent {} bytes via serial port", bytes_sent);
                         Ok(bytes_sent)
                     }
@@ -332,8 +331,7 @@ impl Transport for SerialTransport {
                         let mut stats = self.stats.write().await;
                         stats.record_bytes_received(bytes_read);
 
-                        let hex_str = buffer[..bytes_read].iter().map(|b| format!("{:02X}", b)).collect::<Vec<_>>().join(" ");
-                        debug!(hex_data = %hex_str, length = bytes_read, direction = "recv", "[Serial Transport] Raw packet");
+                        debug!(hex_data = %format_hex_pretty(&buffer[..bytes_read]), length = bytes_read, direction = "recv", "[Serial Transport] Raw packet");
                         debug!("Received {} bytes via serial port", bytes_read);
                         Ok(bytes_read)
                     }
@@ -499,11 +497,11 @@ mod tests {
     fn test_serial_transport_creation() {
         let config = SerialTransportConfig::default();
         let _transport = SerialTransport::new(config);
-        assert!(transport.is_ok());
+        assert!(_transport.is_ok());
 
-        let _transport = transport.unwrap();
-        assert_eq!(transport.transport_type(), "serial");
-        assert_eq!(transport.name(), "Serial Transport");
+        let _transport = _transport.unwrap();
+        assert_eq!(_transport.transport_type(), "serial");
+        assert_eq!(_transport.name(), "Serial Transport");
     }
 
     #[tokio::test]
@@ -511,9 +509,9 @@ mod tests {
         let config = SerialTransportConfig::default();
         let _transport = SerialTransport::new(config).unwrap();
 
-        assert!(!transport.is_connected().await);
+        assert!(!_transport.is_connected().await);
         assert_eq!(
-            transport.connection_state().await,
+            _transport.connection_state().await,
             ConnectionState::Disconnected
         );
     }
@@ -555,12 +553,12 @@ mod tests {
         };
 
         let _transport = SerialTransport::new(config).unwrap();
-        assert_eq!(transport.parse_parity(), tokio_serial::Parity::Even);
+        assert_eq!(_transport.parse_parity(), tokio_serial::Parity::Even);
         assert_eq!(
-            transport.parse_flow_control(),
+            _transport.parse_flow_control(),
             tokio_serial::FlowControl::Hardware
         );
-        assert_eq!(transport.parse_data_bits(), tokio_serial::DataBits::Seven);
-        assert_eq!(transport.parse_stop_bits(), tokio_serial::StopBits::Two);
+        assert_eq!(_transport.parse_data_bits(), tokio_serial::DataBits::Seven);
+        assert_eq!(_transport.parse_stop_bits(), tokio_serial::StopBits::Two);
     }
 }

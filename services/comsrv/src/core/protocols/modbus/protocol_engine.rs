@@ -61,6 +61,7 @@ pub struct ModbusControlMapping {
     pub coil_number: Option<u16>,
 }
 use crate::utils::error::{ComSrvError, Result};
+use crate::utils::hex::format_hex_pretty;
 
 /// 批量请求信息
 #[derive(Debug, Clone)]
@@ -893,10 +894,7 @@ impl ModbusProtocolEngine {
 
     /// 格式化字节数组为十六进制字符串
     fn format_hex(data: &[u8]) -> String {
-        data.iter()
-            .map(|b| format!("{:02X}", b))
-            .collect::<Vec<String>>()
-            .join(" ")
+        format_hex_pretty(data)
     }
 
     /// 获取缓存统计

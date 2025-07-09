@@ -9,7 +9,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::Mutex;
 use tracing::{debug, warn};
-use hex;
+use crate::utils::hex::format_hex_pretty;
 
 /// Configuration for mock transport
 #[derive(Debug, Clone)]
@@ -205,16 +205,13 @@ impl Transport for MockTransport {
         }
 
         // Record sent packet - INFO level shows raw packet content
-        let hex_str = data.iter().map(|b| format!("{:02X}", b)).collect::<Vec<_>>().join(" ");
+        let hex_str = format_hex_pretty(data);
         debug!(hex_data = %hex_str, length = data.len(), direction = "send", "[MockTransport] Raw packet");
 
         // DEBUG level shows more detailed parsing information
         debug!(
             "[MockTransport] Send packet details - Hex: {}, ASCII: {:?}",
-            data.iter()
-                .map(|b| format!("{:02X}", b))
-                .collect::<Vec<_>>()
-                .join(" "),
+            format_hex_pretty(data),
             String::from_utf8_lossy(data)
         );
 
@@ -293,17 +290,13 @@ impl Transport for MockTransport {
             state.stats.record_bytes_received(response.len());
 
             // Record received packet - INFO level shows raw packet content
-            let hex_str = response.iter().map(|b| format!("{:02X}", b)).collect::<Vec<_>>().join(" ");
+            let hex_str = format_hex_pretty(&response);
             debug!(hex_data = %hex_str, length = response.len(), direction = "recv", "[MockTransport] Raw packet");
 
             // DEBUG level shows more detailed parsing information
             debug!(
                 "[MockTransport] Receive response details - Hex: {}, ASCII: {:?}",
-                response
-                    .iter()
-                    .map(|b| format!("{:02X}", b))
-                    .collect::<Vec<_>>()
-                    .join(" "),
+                format_hex_pretty(&response),
                 String::from_utf8_lossy(&response)
             );
 

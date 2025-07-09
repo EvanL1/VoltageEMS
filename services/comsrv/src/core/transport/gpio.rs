@@ -565,11 +565,11 @@ mod tests {
         });
 
         let _transport = GpioTransport::new(config);
-        assert!(transport.is_ok());
+        assert!(_transport.is_ok());
 
-        let _transport = transport.unwrap();
-        assert_eq!(transport.transport_type(), "gpio");
-        assert_eq!(transport.name(), "GPIO Transport");
+        let _transport = _transport.unwrap();
+        assert_eq!(_transport.transport_type(), "gpio");
+        assert_eq!(_transport.name(), "GPIO Transport");
     }
 
     #[tokio::test]

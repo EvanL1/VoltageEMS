@@ -29,6 +29,7 @@
 //! ```
 
 pub mod error;
+pub mod hex;
 
 // Re-export commonly used items for convenience
 pub use error::{ComSrvError, Result};

@@ -392,11 +392,11 @@ mod tests {
     fn test_mock_transport_creation() {
         let config = MockTransportConfig::default();
         let _transport = MockTransport::new(config);
-        assert!(transport.is_ok());
+        assert!(_transport.is_ok());
 
-        let _transport = transport.unwrap();
-        assert_eq!(transport.transport_type(), "mock");
-        assert_eq!(transport.name(), "Mock Transport");
+        let _transport = _transport.unwrap();
+        assert_eq!(_transport.transport_type(), "mock");
+        assert_eq!(_transport.name(), "Mock Transport");
     }
 
     #[tokio::test]

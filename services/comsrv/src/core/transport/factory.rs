@@ -479,11 +479,13 @@ mod tests {
             TransportType::Gpio
         );
         #[cfg(all(target_os = "linux", feature = "can"))]
-        assert_eq!("can".parse::<TransportType>().unwrap(), TransportType::Can);
-        assert_eq!(
-            "canbus".parse::<TransportType>().unwrap(),
-            TransportType::Can
-        );
+        {
+            assert_eq!("can".parse::<TransportType>().unwrap(), TransportType::Can);
+            assert_eq!(
+                "canbus".parse::<TransportType>().unwrap(),
+                TransportType::Can
+            );
+        }
         assert_eq!(
             "mock".parse::<TransportType>().unwrap(),
             TransportType::Mock
@@ -516,10 +518,10 @@ mod tests {
         let config = TcpTransportConfig::default();
 
         let _transport = factory.create_tcp_transport(config).await;
-        assert!(transport.is_ok());
+        assert!(_transport.is_ok());
 
-        let _transport = transport.unwrap();
-        assert_eq!(transport.transport_type(), "tcp");
+        let _transport = _transport.unwrap();
+        assert_eq!(_transport.transport_type(), "tcp");
     }
 
     #[tokio::test]
@@ -528,10 +530,10 @@ mod tests {
         let config = SerialTransportConfig::default();
 
         let _transport = factory.create_serial_transport(config).await;
-        assert!(transport.is_ok());
+        assert!(_transport.is_ok());
 
-        let _transport = transport.unwrap();
-        assert_eq!(transport.transport_type(), "serial");
+        let _transport = _transport.unwrap();
+        assert_eq!(_transport.transport_type(), "serial");
     }
 
     #[tokio::test]
@@ -540,10 +542,10 @@ mod tests {
         let config = MockTransportConfig::default();
 
         let _transport = factory.create_mock_transport(config).await;
-        assert!(transport.is_ok());
+        assert!(_transport.is_ok());
 
-        let _transport = transport.unwrap();
-        assert_eq!(transport.transport_type(), "mock");
+        let _transport = _transport.unwrap();
+        assert_eq!(_transport.transport_type(), "mock");
     }
 
     #[tokio::test]
@@ -566,6 +568,7 @@ mod tests {
         assert_eq!(stats.get(&TransportType::Mock), Some(&2));
         assert_eq!(stats.get(&TransportType::Serial), None);
         assert_eq!(stats.get(&TransportType::Gpio), None);
+        #[cfg(all(target_os = "linux", feature = "can"))]
         assert_eq!(stats.get(&TransportType::Can), None);
 
         factory.reset_stats();
