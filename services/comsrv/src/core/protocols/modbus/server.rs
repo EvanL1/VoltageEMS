@@ -164,7 +164,7 @@ impl ModbusServer {
         let pdu_processor = ModbusPduProcessor::new();
         let frame_processor = Arc::new(Mutex::new(ModbusFrameProcessor::new(mode)));
         let transport_bridge =
-            Arc::new(Mutex::new(UniversalTransportBridge::new_modbus(transport)));
+            Arc::new(Mutex::new(UniversalTransportBridge::new_modbus(_transport)));
 
         Ok(Self {
             config,
@@ -405,7 +405,7 @@ mod tests {
         let mock_config = crate::core::transport::mock::MockTransportConfig::default();
         let _transport = Box::new(MockTransport::new(mock_config).unwrap());
 
-        let mut server = ModbusServer::new(config, transport).unwrap();
+        let mut server = ModbusServer::new(config, _transport).unwrap();
         server.add_device(ModbusDevice::new(1));
 
         assert_eq!(server.device_count(), 1);

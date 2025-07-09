@@ -278,7 +278,7 @@ impl TransportFactory {
             .or_insert(1);
 
         info!("Successfully created {} transport", transport_type);
-        Ok(transport)
+        Ok(_transport)
     }
 
     /// Create a TCP transport with given configuration
@@ -351,7 +351,7 @@ impl TransportBuilderRegistry for TcpBuilderImpl {
         match config {
             AnyTransportConfig::Tcp(tcp_config) => {
                 let _transport = TcpTransport::new(tcp_config)?;
-                Ok(Box::new(transport))
+                Ok(Box::new(_transport))
             }
             _ => Err(TransportError::ConfigError(
                 "Invalid config type for TCP transport".to_string(),
@@ -368,7 +368,7 @@ impl TransportBuilderRegistry for SerialBuilderImpl {
         match config {
             AnyTransportConfig::Serial(serial_config) => {
                 let _transport = SerialTransport::new(serial_config)?;
-                Ok(Box::new(transport))
+                Ok(Box::new(_transport))
             }
             _ => Err(TransportError::ConfigError(
                 "Invalid config type for Serial transport".to_string(),
@@ -385,7 +385,7 @@ impl TransportBuilderRegistry for MockBuilderImpl {
         match config {
             AnyTransportConfig::Mock(mock_config) => {
                 let _transport = MockTransport::new(mock_config)?;
-                Ok(Box::new(transport))
+                Ok(Box::new(_transport))
             }
             _ => Err(TransportError::ConfigError(
                 "Invalid config type for Mock transport".to_string(),
@@ -402,7 +402,7 @@ impl TransportBuilderRegistry for GpioBuilderImpl {
         match config {
             AnyTransportConfig::Gpio(gpio_config) => {
                 let _transport = GpioTransport::new(gpio_config)?;
-                Ok(Box::new(transport))
+                Ok(Box::new(_transport))
             }
             _ => Err(TransportError::ConfigError(
                 "GPIO builder requires GPIO configuration".to_string(),
@@ -419,7 +419,7 @@ impl TransportBuilderRegistry for CanBuilderImpl {
         match config {
             AnyTransportConfig::Can(can_config) => {
                 let _transport = CanTransport::new(can_config)?;
-                Ok(Box::new(transport))
+                Ok(Box::new(_transport))
             }
             _ => Err(TransportError::ConfigError(
                 "CAN builder requires CAN configuration".to_string(),

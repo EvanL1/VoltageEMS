@@ -1,0 +1,38 @@
+# Clippy configuration for comsrv
+
+# 允许的警告
+allow = [
+    # 参数过多在复杂系统中很常见
+    "too_many_arguments",
+    # 复杂类型在异步代码中难以避免
+    "type_complexity", 
+    # 模块同名在某些组织结构中是合理的
+    "module_inception",
+    # 大型 enum 变体在协议实现中很常见
+    "large_enum_variant",
+]
+
+# 警告级别（不阻塞 CI）
+warn = [
+    "missing_docs",
+    "trivial_casts",
+    "trivial_numeric_casts",
+    "unused_extern_crates",
+    "unused_import_braces",
+    "unused_results",
+]
+
+# 错误级别（阻塞 CI）
+deny = [
+    # 正确性问题必须修复
+    "correctness",
+    # 可疑代码必须检查
+    "suspicious",
+    # 已弃用的 API 不应使用
+    "deprecated",
+]
+
+# 具体配置
+cognitive-complexity-threshold = 30
+type-complexity-threshold = 400
+too-many-arguments-threshold = 8

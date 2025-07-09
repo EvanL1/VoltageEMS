@@ -397,7 +397,7 @@ impl ProtocolPlugin for ModbusTcpPlugin {
             "ModbusTcpPlugin: Creating Modbus client for channel {}",
             modbus_channel_config.channel_name
         );
-        let mut client = ModbusClient::new(modbus_channel_config, transport)
+        let mut client = ModbusClient::new(modbus_channel_config, _transport)
             .await
             .map_err(|e| {
                 tracing::error!("ModbusTcpPlugin: Failed to create Modbus client: {e}");
@@ -801,7 +801,7 @@ impl ProtocolPlugin for ModbusRtuPlugin {
         };
 
         // Create Modbus client
-        let mut client = ModbusClient::new(rtu_channel_config, transport).await?;
+        let mut client = ModbusClient::new(rtu_channel_config, _transport).await?;
 
         // Load protocol mappings if combined_points are available
         if !channel_config.combined_points.is_empty() {

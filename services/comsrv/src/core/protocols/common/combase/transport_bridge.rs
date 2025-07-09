@@ -116,7 +116,7 @@ impl UniversalTransportBridge {
         let mut retries = 0;
 
         while retries < self.config.max_retries {
-            let mut transport = self.transport.write().await;
+            let mut transport = self._transport.write().await;
             let result = transport.connect().await;
 
             match result {
@@ -165,7 +165,7 @@ impl UniversalTransportBridge {
 
     /// 断开连接
     pub async fn disconnect(&self) -> Result<()> {
-        let mut transport = self.transport.write().await;
+        let mut transport = self._transport.write().await;
         let result = transport.disconnect().await;
 
         if result.is_ok() {
@@ -191,7 +191,7 @@ impl UniversalTransportBridge {
         data: &[u8],
         timeout: Duration,
     ) -> Result<Vec<u8>> {
-        let mut transport = self.transport.write().await;
+        let mut transport = self._transport.write().await;
 
         // 发送数据
         let bytes_sent = transport.send(data).await.map_err(|e| {
@@ -248,7 +248,7 @@ impl UniversalTransportBridge {
 
     /// 只发送数据（不等待响应）
     pub async fn send_only(&self, data: &[u8]) -> Result<usize> {
-        let mut transport = self.transport.write().await;
+        let mut transport = self._transport.write().await;
 
         let bytes_sent = transport.send(data).await.map_err(|e| {
             crate::utils::ComSrvError::NetworkError(format!(
@@ -267,7 +267,7 @@ impl UniversalTransportBridge {
 
     /// 检查连接状态
     pub async fn is_connected(&self) -> bool {
-        let transport = self.transport.read().await;
+        let transport = self._transport.read().await;
         transport.is_connected().await
     }
 
@@ -290,7 +290,7 @@ impl UniversalTransportBridge {
 
     /// 获取传输层诊断信息
     pub async fn diagnostics(&self) -> HashMap<String, String> {
-        let transport = self.transport.read().await;
+        let transport = self._transport.read().await;
         let mut diag = transport.diagnostics().await;
 
         // 添加桥接层信息

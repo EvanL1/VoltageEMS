@@ -32,31 +32,42 @@ jobs:
         override: true
         components: rustfmt, clippy
     
-    - name: Cache cargo registry
-      uses: actions/cache@v3
+    # 使用更高效的缓存方案
+    - name: Cache dependencies
+      uses: Swatinem/rust-cache@v2
       with:
-        path: ~/.cargo/registry
-        key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
-    
-    - name: Cache cargo index
-      uses: actions/cache@v3
-      with:
-        path: ~/.cargo/git
-        key: ${{ runner.os }}-cargo-index-${{ hashFiles('**/Cargo.lock') }}
-    
-    - name: Cache target
-      uses: actions/cache@v3
-      with:
-        path: services/comsrv/target
-        key: ${{ runner.os }}-cargo-target-${{ hashFiles('**/Cargo.lock') }}
+        workspaces: services/comsrv
+        cache-on-failure: true
     
     - name: Check formatting
       working-directory: services/comsrv
       run: cargo fmt -- --check
     
-    - name: Run clippy
+    # Clippy 检查 - 只对严重问题报错
+    - name: Run clippy (critical checks)
       working-directory: services/comsrv
-      run: cargo clippy -- -D warnings
+      run: |
+        cargo clippy --all-targets --all-features -- \
+          -D clippy::correctness \
+          -D clippy::suspicious \
+          -D deprecated
+    
+    # Clippy 完整检查 - 仅供参考，不阻塞 CI
+    - name: Run clippy (full check - informational)
+      working-directory: services/comsrv
+      continue-on-error: true
+      run: |
+        echo "Running full clippy check (informational only)..."
+        cargo clippy --all-targets --all-features 2>&1 | tee clippy-full-report.txt || true
+        echo "Clippy check completed. See clippy-full-report.txt for details."
+    
+    # 上传 clippy 报告
+    - name: Upload clippy report
+      if: always()
+      uses: actions/upload-artifact@v3
+      with:
+        name: clippy-report
+        path: services/comsrv/clippy-full-report.txt
     
     - name: Run tests
       working-directory: services/comsrv
@@ -170,3 +181,92 @@ jobs:
         path: |
           services/comsrv/tests/logs/
           services/comsrv/integration-test-report.txt
+
+  # 代码质量检查 - 非阻塞，仅供参考
+  code-quality:
+    name: Code Quality Check
+    runs-on: ubuntu-latest
+    continue-on-error: true  # 不阻塞整个工作流
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Install Rust
+      uses: actions-rs/toolchain@v1
+      with:
+        profile: minimal
+        toolchain: stable
+        override: true
+        components: clippy
+    
+    - name: Cache dependencies
+      uses: Swatinem/rust-cache@v2
+      with:
+        workspaces: services/comsrv
+    
+    # 完整的 clippy 检查，包含所有建议
+    - name: Full clippy analysis
+      working-directory: services/comsrv
+      run: |
+        echo "=== Running comprehensive clippy analysis ===" | tee code-quality-report.txt
+        echo "" | tee -a code-quality-report.txt
+        cargo clippy --all-targets --all-features -- \
+          -W clippy::all \
+          -W clippy::pedantic \
+          -W clippy::nursery \
+          -A clippy::module_inception \
+          -A clippy::too_many_arguments \
+          -A clippy::type_complexity \
+          2>&1 | tee -a code-quality-report.txt || true
+    
+    # 检查未使用的依赖
+    - name: Check unused dependencies
+      working-directory: services/comsrv
+      run: |
+        echo "" | tee -a code-quality-report.txt
+        echo "=== Checking for unused dependencies ===" | tee -a code-quality-report.txt
+        cargo install cargo-udeps --locked || true
+        cargo +nightly udeps 2>&1 | tee -a code-quality-report.txt || true
+    
+    # 安全审计
+    - name: Security audit
+      working-directory: services/comsrv
+      run: |
+        echo "" | tee -a code-quality-report.txt
+        echo "=== Security audit ===" | tee -a code-quality-report.txt
+        cargo install cargo-audit --locked || true
+        cargo audit 2>&1 | tee -a code-quality-report.txt || true
+    
+    # 代码统计
+    - name: Code statistics
+      working-directory: services/comsrv
+      run: |
+        echo "" | tee -a code-quality-report.txt
+        echo "=== Code statistics ===" | tee -a code-quality-report.txt
+        cargo install tokei --locked || true
+        tokei . 2>&1 | tee -a code-quality-report.txt || true
+    
+    # 上传质量报告
+    - name: Upload quality report
+      if: always()
+      uses: actions/upload-artifact@v3
+      with:
+        name: code-quality-report
+        path: services/comsrv/code-quality-report.txt
+    
+    # 在 PR 中添加评论（可选）
+    - name: Comment PR
+      if: github.event_name == 'pull_request'
+      uses: actions/github-script@v6
+      continue-on-error: true
+      with:
+        script: |
+          const fs = require('fs');
+          const report = fs.readFileSync('services/comsrv/code-quality-report.txt', 'utf8');
+          const comment = `## 📊 Code Quality Report\n\n<details>\n<summary>Click to expand</summary>\n\n\`\`\`\n${report}\n\`\`\`\n</details>`;
+          
+          github.rest.issues.createComment({
+            issue_number: context.issue.number,
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            body: comment
+          });

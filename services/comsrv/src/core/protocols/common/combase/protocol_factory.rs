@@ -859,7 +859,7 @@ impl ProtocolFactory {
         // Create metadata
         let metadata = ChannelMetadata {
             name: config.name.clone(),
-            protocol_type: ProtocolType::from_str(&config.protocol)?,
+            protocol_type: ProtocolType::parse_protocol_type(&config.protocol)?,
             created_at: std::time::Instant::now(),
             last_accessed: Arc::new(RwLock::new(std::time::Instant::now())),
         };
@@ -1358,7 +1358,7 @@ impl ProtocolFactory {
         // Create new metadata
         let new_metadata = ChannelMetadata {
             name: new_config.name.clone(),
-            protocol_type: ProtocolType::from_str(&new_config.protocol)?,
+            protocol_type: ProtocolType::parse_protocol_type(&new_config.protocol)?,
             created_at: std::time::Instant::now(),
             last_accessed: Arc::new(RwLock::new(std::time::Instant::now())),
         };

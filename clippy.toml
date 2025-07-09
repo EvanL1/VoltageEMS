@@ -1,0 +1,42 @@
+# VoltageEMS 项目 Clippy 配置
+# 平衡代码质量和开发效率
+
+# 认知复杂度阈值 - 工业控制系统的某些功能确实会比较复杂
+cognitive-complexity-threshold = 30
+
+# 类型复杂度阈值 - 异步代码和状态机会产生复杂类型
+type-complexity-threshold = 400
+
+# 参数数量阈值 - 某些协议函数需要多个参数
+too-many-arguments-threshold = 8
+
+# 行数限制
+too-many-lines-threshold = 1000
+
+# 允许的规则
+allow = [
+    # 在协议实现中，大的枚举变体是常见的
+    "large_enum_variant",
+    # 模块同名在某些组织结构中是合理的
+    "module_inception", 
+    # Result 类型不总是需要 must_use
+    "must_use_candidate",
+    # 不是所有函数都需要文档
+    "missing_errors_doc",
+    "missing_panics_doc",
+]
+
+# 警告级别
+warn = [
+    "missing_docs",
+    "trivial_casts",
+    "trivial_numeric_casts", 
+    "unused_extern_crates",
+    "unused_import_braces",
+    "unused_results",
+]
+
+# 拒绝级别 - 这些必须修复
+deny = [
+    "unsafe_code",  # 除非明确需要，否则不使用 unsafe
+]
