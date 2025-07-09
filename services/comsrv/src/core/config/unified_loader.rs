@@ -12,6 +12,7 @@ use std::path::Path;
 use tracing::{debug, info, warn};
 
 /// Unified CSV loader that supports multiple formats
+#[derive(Debug)]
 pub struct UnifiedCsvLoader;
 
 /// Four telemetry point from CSV

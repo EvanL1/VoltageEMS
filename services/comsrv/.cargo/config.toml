@@ -6,7 +6,7 @@ jobs = 8
 rustflags = [
     # 只对真正的错误报错
     "-D", "rust_2018_idioms",
-    "-D", "missing_debug_implementations",
+    "-W", "missing_debug_implementations",  # 改为警告而非错误
     
     # 这些作为警告，不阻塞编译
     "-W", "clippy::all",

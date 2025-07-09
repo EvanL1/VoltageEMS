@@ -177,6 +177,7 @@ impl ConnectionPool {
 }
 
 /// 增强的传输层桥接适配器
+#[derive(Debug)]
 pub struct EnhancedTransportBridge {
     /// 连接池
     connection_pool: Arc<Mutex<ConnectionPool>>,

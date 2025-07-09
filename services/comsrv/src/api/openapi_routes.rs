@@ -64,10 +64,11 @@ use crate::core::protocols::common::combase::protocol_factory::ProtocolFactory;
         (name = "Telemetry", description = "Telemetry table endpoints")
     )
 )]
+#[derive(Debug)]
 pub struct ApiDoc;
 
 /// Application state containing the protocol factory
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct AppState {
     pub factory: Arc<RwLock<ProtocolFactory>>,
 }

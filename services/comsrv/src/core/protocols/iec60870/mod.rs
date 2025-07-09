@@ -14,6 +14,7 @@ use crate::core::protocols::common::combase::{PacketParseResult, ProtocolPacketP
 ///
 /// Provides minimal packet interpretation. Detailed parsing is available
 /// when the `iec60870` feature is enabled.
+#[derive(Debug)]
 pub struct Iec60870PacketParser;
 
 impl Default for Iec60870PacketParser {

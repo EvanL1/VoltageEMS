@@ -11,6 +11,7 @@ use tokio::sync::RwLock;
 use tokio::time::timeout;
 use tokio_serial::{SerialPortBuilderExt, SerialStream};
 use tracing::{debug, error, info, warn};
+use hex;
 
 use super::traits::{
     ConnectionState, Transport, TransportBuilder, TransportConfig, TransportError, TransportStats,
@@ -272,7 +273,8 @@ impl Transport for SerialTransport {
                         let mut stats = self.stats.write().await;
                         stats.record_bytes_sent(bytes_sent);
 
-                        debug!(hex_data = %data.iter().map(|b| format!("{b:02X}")).collect::<Vec<_>>().join(" "), length = bytes_sent, direction = "send", "[Serial Transport] Raw packet");
+                        let hex_str = data.iter().map(|b| format!("{:02X}", b)).collect::<Vec<_>>().join(" ");
+                        debug!(hex_data = %hex_str, length = bytes_sent, direction = "send", "[Serial Transport] Raw packet");
                         debug!("Sent {} bytes via serial port", bytes_sent);
                         Ok(bytes_sent)
                     }
@@ -330,7 +332,8 @@ impl Transport for SerialTransport {
                         let mut stats = self.stats.write().await;
                         stats.record_bytes_received(bytes_read);
 
-                        debug!(hex_data = %buffer[..bytes_read].iter().map(|b| format!("{b:02X}")).collect::<Vec<_>>().join(" "), length = bytes_read, direction = "recv", "[Serial Transport] Raw packet");
+                        let hex_str = buffer[..bytes_read].iter().map(|b| format!("{:02X}", b)).collect::<Vec<_>>().join(" ");
+                        debug!(hex_data = %hex_str, length = bytes_read, direction = "recv", "[Serial Transport] Raw packet");
                         debug!("Received {} bytes via serial port", bytes_read);
                         Ok(bytes_read)
                     }

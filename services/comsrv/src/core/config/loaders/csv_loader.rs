@@ -39,6 +39,7 @@ impl CsvCacheStats {
 }
 
 /// Cached CSV loader that avoids re-reading unchanged files
+#[derive(Debug)]
 pub struct CachedCsvLoader {
     cache: Arc<RwLock<HashMap<PathBuf, CsvCacheEntry<serde_json::Value>>>>,
     stats: Arc<RwLock<CsvCacheStats>>,
@@ -142,6 +143,7 @@ impl CachedCsvLoader {
 }
 
 /// Generic CSV loader for different point types
+#[derive(Debug)]
 pub struct CsvLoader;
 
 impl CsvLoader {

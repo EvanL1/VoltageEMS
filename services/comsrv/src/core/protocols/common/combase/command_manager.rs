@@ -17,7 +17,7 @@ use super::traits::FourTelemetryOperations;
 use crate::utils::Result;
 
 /// Universal Redis command manager for handling four-telemetry commands across all protocols
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct UniversalCommandManager {
     /// Redis store for command handling
     redis_store: Option<crate::core::storage::redis_storage::RedisStore>,

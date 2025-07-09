@@ -38,6 +38,7 @@ pub struct CombinedPoint {
 }
 
 /// Point mapper utility
+#[derive(Debug)]
 pub struct PointMapper;
 
 impl PointMapper {

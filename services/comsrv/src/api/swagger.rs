@@ -21,6 +21,7 @@ use utoipa::OpenApi;
         (name = "point-tables", description = "Point table management endpoints")
     )
 )]
+#[derive(Debug)]
 pub struct ApiDoc;
 
 /// Generate OpenAPI JSON specification

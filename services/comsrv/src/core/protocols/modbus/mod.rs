@@ -57,6 +57,7 @@ use std::collections::HashMap;
 ///
 /// Implements protocol-specific parsing for Modbus TCP packets,
 /// providing human-readable interpretation of packet structure and data.
+#[derive(Debug)]
 pub struct ModbusPacketParser;
 
 impl Default for ModbusPacketParser {
@@ -74,7 +75,7 @@ impl ModbusPacketParser {
     /// Format hex data
     fn format_hex_data(&self, data: &[u8]) -> String {
         data.iter()
-            .map(|b| format!("{b:02X}"))
+            .map(|b| format!("{:02X}", b))
             .collect::<Vec<String>>()
             .join(" ")
     }

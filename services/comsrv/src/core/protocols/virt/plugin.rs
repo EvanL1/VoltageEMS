@@ -17,6 +17,7 @@ use crate::utils::Result;
 use super::VirtualProtocol;
 
 /// Virtual Protocol Plugin
+#[derive(Debug)]
 pub struct VirtualPlugin {
     metadata: ProtocolMetadata,
 }

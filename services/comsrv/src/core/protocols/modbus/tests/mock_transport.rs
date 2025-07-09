@@ -9,6 +9,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::Mutex;
 use tracing::{debug, warn};
+use hex;
 
 /// Configuration for mock transport
 #[derive(Debug, Clone)]
@@ -204,13 +205,14 @@ impl Transport for MockTransport {
         }
 
         // Record sent packet - INFO level shows raw packet content
-        debug!(hex_data = %data.iter().map(|b| format!("{b:02X}")).collect::<Vec<_>>().join(" "), length = data.len(), direction = "send", "[MockTransport] Raw packet");
+        let hex_str = data.iter().map(|b| format!("{:02X}", b)).collect::<Vec<_>>().join(" ");
+        debug!(hex_data = %hex_str, length = data.len(), direction = "send", "[MockTransport] Raw packet");
 
         // DEBUG level shows more detailed parsing information
         debug!(
             "[MockTransport] Send packet details - Hex: {}, ASCII: {:?}",
             data.iter()
-                .map(|b| format!("{b:02X}"))
+                .map(|b| format!("{:02X}", b))
                 .collect::<Vec<_>>()
                 .join(" "),
             String::from_utf8_lossy(data)
@@ -291,14 +293,15 @@ impl Transport for MockTransport {
             state.stats.record_bytes_received(response.len());
 
             // Record received packet - INFO level shows raw packet content
-            debug!(hex_data = %response.iter().map(|b| format!("{b:02X}")).collect::<Vec<_>>().join(" "), length = response.len(), direction = "recv", "[MockTransport] Raw packet");
+            let hex_str = response.iter().map(|b| format!("{:02X}", b)).collect::<Vec<_>>().join(" ");
+            debug!(hex_data = %hex_str, length = response.len(), direction = "recv", "[MockTransport] Raw packet");
 
             // DEBUG level shows more detailed parsing information
             debug!(
                 "[MockTransport] Receive response details - Hex: {}, ASCII: {:?}",
                 response
                     .iter()
-                    .map(|b| format!("{b:02X}"))
+                    .map(|b| format!("{:02X}", b))
                     .collect::<Vec<_>>()
                     .join(" "),
                 String::from_utf8_lossy(&response)

@@ -20,6 +20,7 @@ use super::config::Iec104Config;
 use super::iec104::Iec104Client;
 
 /// IEC 60870-5-104 Protocol Plugin
+#[derive(Debug)]
 pub struct Iec104Plugin {
     metadata: ProtocolMetadata,
 }

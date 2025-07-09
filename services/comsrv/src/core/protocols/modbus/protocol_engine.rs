@@ -109,6 +109,7 @@ impl Default for ProtocolEngineConfig {
 }
 
 /// Modbus协议引擎
+#[derive(Debug)]
 pub struct ModbusProtocolEngine {
     /// PDU处理器
     pdu_processor: Arc<ModbusPduProcessor>,
@@ -893,7 +894,7 @@ impl ModbusProtocolEngine {
     /// 格式化字节数组为十六进制字符串
     fn format_hex(data: &[u8]) -> String {
         data.iter()
-            .map(|b| format!("{b:02X}"))
+            .map(|b| format!("{:02X}", b))
             .collect::<Vec<String>>()
             .join(" ")
     }

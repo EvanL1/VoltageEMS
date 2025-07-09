@@ -56,6 +56,16 @@ pub struct HttpConfigClient {
     auth_token: Option<String>,
 }
 
+impl std::fmt::Debug for HttpConfigClient {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("HttpConfigClient")
+            .field("base_url", &self.base_url)
+            .field("client", &"<reqwest::Client>")
+            .field("auth_token", &self.auth_token.is_some())
+            .finish()
+    }
+}
+
 impl HttpConfigClient {
     pub fn new(base_url: String, auth_token: Option<String>) -> Self {
         Self {
@@ -142,6 +152,7 @@ impl ConfigSource for HttpConfigClient {
 }
 
 /// Configuration cache manager
+#[derive(Debug)]
 pub struct ConfigCache {
     cache_dir: String,
     ttl_seconds: u64,
@@ -240,6 +251,17 @@ pub struct ConfigCenterClient {
     source: Option<Box<dyn ConfigSource>>,
     cache: ConfigCache,
     fallback_config_path: Option<String>,
+}
+
+impl std::fmt::Debug for ConfigCenterClient {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ConfigCenterClient")
+            .field("service_name", &self.service_name)
+            .field("source", &"<ConfigSource>")
+            .field("cache", &self.cache)
+            .field("fallback_config_path", &self.fallback_config_path)
+            .finish()
+    }
 }
 
 impl ConfigCenterClient {

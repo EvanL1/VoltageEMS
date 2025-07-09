@@ -9,6 +9,7 @@ use super::plugin_registry::{discovery, PluginRegistry};
 use crate::utils::Result;
 
 /// Plugin manager for coordinating plugin operations
+#[derive(Debug)]
 pub struct PluginManager;
 
 impl PluginManager {

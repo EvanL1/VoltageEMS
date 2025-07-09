@@ -66,6 +66,7 @@ pub struct SlavePollingStats {
 }
 
 /// Modbus polling engine
+#[derive(Debug)]
 pub struct ModbusPollingEngine {
     /// Polling configuration
     config: ModbusPollingConfig,

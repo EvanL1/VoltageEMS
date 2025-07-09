@@ -17,6 +17,7 @@ static PLUGIN_REGISTRY: Lazy<Arc<RwLock<PluginRegistry>>> =
     Lazy::new(|| Arc::new(RwLock::new(PluginRegistry::new())));
 
 /// Plugin registry for managing protocol plugins
+#[derive(Debug)]
 pub struct PluginRegistry {
     /// Registered plugins by ID
     plugins: HashMap<String, PluginEntry>,
@@ -37,6 +38,17 @@ struct PluginEntry {
     enabled: bool,
     /// Plugin metadata cache
     metadata: ProtocolMetadata,
+}
+
+impl std::fmt::Debug for PluginEntry {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PluginEntry")
+            .field("plugin", &"<ProtocolPlugin>")
+            .field("registered_at", &self.registered_at)
+            .field("enabled", &self.enabled)
+            .field("metadata", &self.metadata)
+            .finish()
+    }
 }
 
 impl Default for PluginRegistry {

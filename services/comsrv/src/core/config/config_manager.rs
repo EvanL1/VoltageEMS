@@ -16,6 +16,7 @@ use std::sync::Arc;
 use tracing::{debug, info, warn};
 
 /// Simplified configuration manager
+#[derive(Debug)]
 pub struct ConfigManager {
     /// The loaded application configuration
     config: AppConfig,

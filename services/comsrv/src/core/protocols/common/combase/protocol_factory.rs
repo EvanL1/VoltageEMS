@@ -324,6 +324,15 @@ struct ChannelEntry {
     metadata: ChannelMetadata,
 }
 
+impl std::fmt::Debug for ChannelEntry {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ChannelEntry")
+            .field("channel", &"<ComBase>")
+            .field("metadata", &self.metadata)
+            .finish()
+    }
+}
+
 /// High-performance protocol factory for creating communication protocol instances
 pub struct ProtocolFactory {
     /// Store created channels using DashMap for concurrent access
@@ -333,6 +342,16 @@ pub struct ProtocolFactory {
     protocol_factories: DashMap<ProtocolType, Arc<dyn ProtocolClientFactory>, ahash::RandomState>,
     /// Optional Redis storage for channel metadata and state
     redis_store: Option<crate::core::storage::redis_storage::RedisStore>,
+}
+
+impl std::fmt::Debug for ProtocolFactory {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ProtocolFactory")
+            .field("channels", &self.channels.len())
+            .field("protocol_factories", &self.protocol_factories.len())
+            .field("redis_store", &self.redis_store.is_some())
+            .finish()
+    }
 }
 
 /// Channel metadata for quick access

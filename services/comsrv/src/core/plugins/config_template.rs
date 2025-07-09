@@ -129,6 +129,7 @@ pub enum DependencyCondition {
 }
 
 /// Configuration template builder
+#[derive(Debug)]
 pub struct ConfigTemplateBuilder {
     schema: ConfigSchema,
     current_section: Option<usize>,
@@ -173,6 +174,7 @@ impl ConfigTemplateBuilder {
 }
 
 /// Configuration validator
+#[derive(Debug)]
 pub struct ConfigValidator {
     schema: ConfigSchema,
 }
@@ -453,6 +455,7 @@ pub enum ErrorSeverity {
 }
 
 /// Configuration generator
+#[derive(Debug)]
 pub struct ConfigGenerator {
     schema: ConfigSchema,
 }

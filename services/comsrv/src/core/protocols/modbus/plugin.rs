@@ -22,6 +22,7 @@ use super::common::ModbusConfig;
 use super::modbus_polling::ModbusPollingConfig;
 
 /// Modbus TCP Protocol Plugin
+#[derive(Debug)]
 pub struct ModbusTcpPlugin {
     metadata: ProtocolMetadata,
 }
@@ -535,6 +536,7 @@ point_id,name,description,unit,min,max,step,data_type
 }
 
 /// Modbus RTU Protocol Plugin
+#[derive(Debug)]
 pub struct ModbusRtuPlugin {
     metadata: ProtocolMetadata,
 }

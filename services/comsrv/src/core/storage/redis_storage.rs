@@ -99,7 +99,18 @@ pub struct RedisConnectionManager {
     key_cache: Arc<KeyPrefixCache>,
 }
 
+impl std::fmt::Debug for RedisConnectionManager {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RedisConnectionManager")
+            .field("config", &self.config)
+            .field("conn_pool", &"<pool>")
+            .field("key_cache", &self.key_cache)
+            .finish()
+    }
+}
+
 /// Key prefix cache to avoid repeated string formatting
+#[derive(Debug)]
 struct KeyPrefixCache {
     channel_prefix: String,
     config_prefix: String,
@@ -255,7 +266,7 @@ impl RedisConnectionManager {
 }
 
 /// Redis storage structure with enhanced connection management
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct RedisStore {
     manager: RedisConnectionManager,
 }

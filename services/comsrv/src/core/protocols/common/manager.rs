@@ -34,7 +34,7 @@ pub struct PointManagerStats {
 }
 
 /// Optimized universal point manager with u32 keys and multiple indices
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct OptimizedPointManager {
     /// Point configurations indexed by numeric point ID (primary storage)
     points: Arc<RwLock<HashMap<u32, PollingPoint>>>,

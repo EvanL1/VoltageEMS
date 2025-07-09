@@ -380,7 +380,7 @@ impl CanClientBase {
                     Err(_) => serde_json::Value::String(
                         string_bytes
                             .iter()
-                            .map(|&b| format!("{b:02X}"))
+                            .map(|&b| format!("{:02X}", b))
                             .collect::<Vec<_>>()
                             .join(""),
                     ),

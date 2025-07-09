@@ -17,6 +17,7 @@ use crate::core::transport::traits::Transport;
 use crate::utils::error::{ComSrvError, Result};
 
 /// Modbus server device simulation
+#[derive(Debug)]
 pub struct ModbusDevice {
     /// Unit ID for this device
     unit_id: u8,
@@ -137,6 +138,7 @@ impl ModbusDevice {
 }
 
 /// Modbus server implementation
+#[derive(Debug)]
 pub struct ModbusServer {
     /// Server configuration
     config: ModbusConfig,

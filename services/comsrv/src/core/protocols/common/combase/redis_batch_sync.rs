@@ -16,7 +16,7 @@ use super::optimized_point_manager::OptimizedPointManager;
 use crate::utils::Result;
 
 /// Configuration for Redis batch sync
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct RedisBatchSyncConfig {
     /// Maximum number of points to sync in one batch
     pub batch_size: usize,
@@ -54,7 +54,18 @@ pub struct RedisBatchSync {
     stats: Arc<RwLock<RedisSyncStats>>,
 }
 
-#[derive(Default, Clone)]
+impl std::fmt::Debug for RedisBatchSync {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RedisBatchSync")
+            .field("redis_conn", &"<MultiplexedConnection>")
+            .field("config", &self.config)
+            .field("update_buffer", &"<buffer>")
+            .field("stats", &self.stats)
+            .finish()
+    }
+}
+
+#[derive(Default, Clone, Debug)]
 pub struct RedisSyncStats {
     pub total_synced: u64,
     pub batch_count: u64,
