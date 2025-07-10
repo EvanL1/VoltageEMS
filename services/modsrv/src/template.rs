@@ -1,7 +1,6 @@
 use crate::error::{ModelSrvError, Result};
 use crate::model::{ControlAction, ModelDefinition, ModelWithActions};
 use crate::redis_handler::RedisConnection;
-use crate::storage::DataStore;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
@@ -261,9 +260,9 @@ impl TemplateManager {
     }
 
     /// Create a new instance from a template
-    pub fn create_instance<T: DataStore>(
+    pub fn create_instance(
         &mut self,
-        store: &T,
+        redis_conn: &mut RedisConnection,
         template_id: &str,
         instance_id: &str,
         instance_name: Option<&str>,
@@ -286,7 +285,7 @@ impl TemplateManager {
         let instance_key = format!("{}model:config:{}", self.key_prefix, instance_id);
 
         // Check if instance already exists
-        if store.exists(&instance_key)? {
+        if redis_conn.exists(&instance_key)? {
             return Err(ModelSrvError::TemplateError(format!(
                 "Instance already exists: {}",
                 instance_id
@@ -340,7 +339,7 @@ impl TemplateManager {
             // Store model as JSON string
             let model_json = serde_json::to_string(model)
                 .map_err(|e| ModelSrvError::JsonError(e.to_string()))?;
-            store.set_string(&model_key, &model_json)?;
+            redis_conn.set_string(&model_key, &model_json)?;
 
             // Store reference to model definition in config key
             instance_hash.insert("model_key".to_string(), model_key);
@@ -366,7 +365,7 @@ impl TemplateManager {
         }
 
         // Store hash table
-        store.set_hash(&instance_key, &instance_hash)?;
+        redis_conn.set_hash(&instance_key, &instance_hash)?;
 
         // Store actions separately
         if let Some(actions) = model_with_actions.get("actions") {
@@ -376,11 +375,11 @@ impl TemplateManager {
                         format!("{}model:action:{}:{}", self.key_prefix, instance_id, i);
                     let action_json = serde_json::to_string(action)
                         .map_err(|e| ModelSrvError::JsonError(e.to_string()))?;
-                    store.set_string(&action_key, &action_json)?;
+                    redis_conn.set_string(&action_key, &action_json)?;
                 }
 
                 // Store action count in config
-                store.set_hash_field(
+                redis_conn.set_hash_field(
                     &instance_key,
                     "action_count",
                     &actions_array.len().to_string(),
@@ -404,9 +403,9 @@ impl TemplateManager {
     }
 
     /// Batch create template instances
-    pub fn create_instances<T: DataStore>(
+    pub fn create_instances(
         &mut self,
-        store: &T,
+        redis_conn: &mut RedisConnection,
         template_id: &str,
         count: usize,
         prefix: &str,
@@ -418,7 +417,7 @@ impl TemplateManager {
             let instance_id = format!("{}_{}", prefix, i);
             let instance_name = format!("{} #{}", template_id, i);
 
-            self.create_instance(store, template_id, &instance_id, Some(&instance_name))?;
+            self.create_instance(redis_conn, template_id, &instance_id, Some(&instance_name))?;
 
             instance_ids.push(instance_id);
         }
@@ -475,9 +474,9 @@ impl TemplateManager {
     }
 
     /// Save instance to store
-    fn save_instance_to_store<T: DataStore>(
+    fn save_instance_to_store(
         &self,
-        store: &T,
+        redis_conn: &mut RedisConnection,
         instance: &ModelWithActions,
         instance_id: &str,
     ) -> Result<()> {
@@ -488,7 +487,7 @@ impl TemplateManager {
             serde_yaml::to_string(instance).map_err(|e| ModelSrvError::YamlError(e.to_string()))?;
 
         // Save to store
-        store.set_string(&key, &yaml)?;
+        redis_conn.set_string(&key, &yaml)?;
 
         Ok(())
     }

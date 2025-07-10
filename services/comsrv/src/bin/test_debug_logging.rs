@@ -2,75 +2,91 @@
 //!
 //! This test shows the difference between INFO and DEBUG logging levels
 
-use comsrv::core::protocols::modbus::{
-    pdu::ModbusPduProcessor,
-    tests::mock_transport::{MockTransport, MockTransportConfig},
-};
-use comsrv::core::transport::traits::Transport;
-use std::time::Duration;
-
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Initialize tracing with DEBUG level
     tracing_subscriber::fmt().with_env_filter("debug").init();
 
     println!("=== Testing DEBUG Level Logging ===");
-    println!("You should see both INFO and DEBUG level logs below:");
-    println!();
 
-    // Test MockTransport with actual data processing
-    let config = MockTransportConfig {
-        connect_success: true,
-        latency_ms: 0,
-        max_message_size: 260,
-        fail_after_operations: 0,
-        timeout: Duration::from_secs(5),
-    };
+    #[cfg(feature = "modbus")]
+    {
+        use comsrv::core::transport::traits::Transport;
+        use comsrv::plugins::protocols::modbus::{
+            pdu::ModbusPduProcessor,
+            tests::mock_transport::{MockTransport, MockTransportConfig},
+        };
+        use std::time::Duration;
 
-    let mut transport = MockTransport::new(config);
+        println!("You should see both INFO and DEBUG level logs below:");
+        println!();
 
-    // Queue some response data
-    let response_data = vec![0x01, 0x03, 0x02, 0x12, 0x34];
-    transport.queue_response(response_data).await;
+        // Create mock transport with configuration
+        let config = MockTransportConfig {
+            connect_success: true,
+            latency_ms: 0,
+            max_message_size: 260,
+            fail_after_operations: 0,
+            timeout: Duration::from_secs(5),
+        };
 
-    // Connect and send data (this will trigger INFO logs)
-    transport.connect().await?;
-    let request = vec![0x01, 0x03, 0x00, 0x01, 0x00, 0x01];
-    transport.send(&request).await?;
+        let mut transport = MockTransport::new(config);
 
-    let mut buffer = vec![0; 10];
-    transport
-        .receive(&mut buffer, Some(Duration::from_secs(1)))
-        .await?;
+        // Queue multiple responses for testing
+        let responses = vec![
+            vec![0x01, 0x03, 0x02, 0x12, 0x34], // Read holding registers response
+            vec![0x01, 0x06, 0x00, 0x01, 0x00, 0x02], // Write single register response
+        ];
+        transport.queue_responses(responses).await;
 
-    println!();
-    println!("Now testing PDU parsing (this should trigger DEBUG logs):");
+        // Connect - should show DEBUG logs
+        println!("=== Connect Test ===");
+        transport.connect().await?;
+        println!();
 
-    // Test PDU processing (this should trigger DEBUG logs)
-    let processor = ModbusPduProcessor::new();
+        // Send/Receive - should show both INFO (hex data) and DEBUG (parsing details)
+        println!("=== Send/Receive Test ===");
+        let request1 = vec![0x01, 0x03, 0x00, 0x01, 0x00, 0x01];
+        transport.send(&request1).await?;
 
-    // Parse a simple PDU
-    let pdu_data = vec![0x03, 0x02, 0x12, 0x34]; // Function code + response data
-    match processor.parse_pdu(&pdu_data) {
-        Ok(result) => println!("PDU parsing succeeded: {result:?}"),
-        Err(e) => println!("PDU parsing failed: {e}"),
+        let mut buffer = vec![0; 10];
+        let len = transport
+            .receive(&mut buffer, Some(Duration::from_secs(1)))
+            .await?;
+        println!("Received {} bytes", len);
+        println!();
+
+        // Test PDU processing with DEBUG logging
+        println!("=== PDU Processing Test ===");
+        let processor = ModbusPduProcessor::new();
+
+        // Build a read request
+        let read_pdu = processor.build_read_request(
+            comsrv::plugins::protocols::modbus::common::ModbusFunctionCode::Read03,
+            0x0001,
+            0x0002,
+        );
+        println!("Built PDU: {:02X?}", read_pdu);
+
+        // Parse response
+        let response_pdu = vec![0x03, 0x04, 0x00, 0x01, 0x00, 0x02];
+        match processor.parse_pdu(&response_pdu) {
+            Ok(result) => println!("PDU parsed successfully: {:?}", result),
+            Err(e) => println!("PDU parsing error: {}", e),
+        }
+        println!();
+
+        println!("=== Test Complete ===");
+        println!("DEBUG level logs show:");
+        println!("- Detailed connection process");
+        println!("- Packet parsing details");
+        println!("- Internal state changes");
     }
 
-    // Parse a read request
-    let read_request_data = vec![0x00, 0x01, 0x00, 0x0A]; // Start address 1, quantity 10
-    match processor.parse_read_request(&read_request_data) {
-        Ok(request) => println!(
-            "Read request parsed: start={}, quantity={}",
-            request.start_address, request.quantity
-        ),
-        Err(e) => println!("Read request parsing failed: {e}"),
+    #[cfg(not(feature = "modbus"))]
+    {
+        println!("Modbus feature not enabled. Run with --features modbus to test debug logging.");
     }
-
-    println!();
-    println!("=== Logging Test Complete ===");
-    println!("Expected behavior:");
-    println!("- INFO logs: Only raw packet data (Send/Recv)");
-    println!("- DEBUG logs: Detailed parsing process with function codes, addresses, etc.");
 
     Ok(())
 }

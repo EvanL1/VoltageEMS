@@ -8,12 +8,12 @@ use utoipa::OpenApi;
 use utoipa_swagger_ui::SwaggerUi;
 
 use crate::config::Config;
-use crate::storage::StorageManager;
 use crate::error::{HisSrvError, Result};
+use crate::storage::StorageManager;
 
 pub mod handlers;
-pub mod models;
 pub mod handlers_history;
+pub mod models;
 pub mod models_history;
 
 pub use models::*;
@@ -85,23 +85,24 @@ pub fn create_router(state: AppState) -> Router {
         // 历史数据查询 endpoints
         .route("/history/query", get(handlers_history::query_history))
         .route("/history/sources", get(handlers_history::get_data_sources))
-        .route("/history/sources/:source_id", get(handlers_history::get_data_source_detail))
+        .route(
+            "/history/sources/:source_id",
+            get(handlers_history::get_data_source_detail),
+        )
         .route("/history/statistics", get(handlers_history::get_statistics))
-        
         // 数据导出 endpoints
         .route("/history/export", post(handlers_history::create_export_job))
-        .route("/history/export/:job_id", get(handlers_history::get_export_job_status))
-        
+        .route(
+            "/history/export/:job_id",
+            get(handlers_history::get_export_job_status),
+        )
         // 管理和监控 endpoints
         .route("/admin/config", get(handlers::get_config))
         .route("/admin/storage-stats", get(handlers::get_statistics))
-        
         // 健康检查 endpoint
         .route("/health", get(handlers::health_check))
-        
         // Swagger UI
         .merge(SwaggerUi::new("/swagger-ui").url("/api-docs/openapi.json", ApiDoc::openapi()))
-        
         .with_state(state)
 }
 

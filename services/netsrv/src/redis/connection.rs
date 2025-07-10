@@ -1,12 +1,11 @@
-use crate::config::redis_config::RedisConfig;
+use voltage_config::RedisConfig;
 use crate::error::{NetSrvError, Result};
-use redis::{Client, Commands, Connection};
+use voltage_common::redis::RedisSyncClient;
 use std::collections::HashMap;
 use tracing::info;
 
 pub struct RedisConnection {
-    client: Option<Client>,
-    conn: Option<Connection>,
+    client: Option<RedisSyncClient>,
     connected: bool,
 }
 
@@ -14,7 +13,6 @@ impl RedisConnection {
     pub fn new() -> Self {
         RedisConnection {
             client: None,
-            conn: None,
             connected: false,
         }
     }
@@ -23,53 +21,30 @@ impl RedisConnection {
         // Disconnect if already connected
         self.disconnect();
 
-        let client = if !config.socket.is_empty() {
-            // Connect using Unix socket
-            Client::open(format!("unix://{}", config.socket))?
-        } else {
-            // Connect using TCP
-            let redis_url = if config.password.is_empty() {
-                format!("redis://{}:{}", config.host, config.port)
-            } else {
-                format!(
-                    "redis://:{}@{}:{}",
-                    config.password, config.host, config.port
-                )
-            };
-            Client::open(redis_url)?
-        };
-
-        let mut conn = client.get_connection()?;
+        // Use the URL directly from voltage_config RedisConfig
+        let url = config.url.clone();
+        let client = RedisSyncClient::new(&url)
+            .map_err(|e| NetSrvError::Connection(format!("Failed to create Redis client: {}", e)))?;
 
         // Test connection with PING
-        let ping_result: String = redis::cmd("PING").query(&mut conn)?;
+        let ping_result = client.ping()
+            .map_err(|e| NetSrvError::Connection(format!("Redis ping failed: {}", e)))?;
+        
         if ping_result != "PONG" {
             return Err(NetSrvError::Connection(
                 "Redis connection test failed".to_string(),
             ));
         }
 
-        if !config.socket.is_empty() {
-            info!(
-                "Successfully connected to Redis via Unix socket: {}",
-                config.socket
-            );
-        } else {
-            info!(
-                "Successfully connected to Redis at {}:{}",
-                config.host, config.port
-            );
-        }
+        info!("Successfully connected to Redis at {}", config.url);
 
         self.client = Some(client);
-        self.conn = Some(conn);
         self.connected = true;
 
         Ok(())
     }
 
     pub fn disconnect(&mut self) {
-        self.conn = None;
         self.client = None;
         self.connected = false;
     }
@@ -79,39 +54,77 @@ impl RedisConnection {
     }
 
     pub fn get_keys(&mut self, pattern: &str) -> Result<Vec<String>> {
-        if !self.connected || self.conn.is_none() {
+        if !self.connected || self.client.is_none() {
             return Err(NetSrvError::Connection(
                 "Not connected to Redis".to_string(),
             ));
         }
 
-        let conn = self.conn.as_mut().unwrap();
-        let keys: Vec<String> = redis::cmd("KEYS").arg(pattern).query(conn)?;
+        let client = self.client.as_mut().unwrap();
+        let keys = client.keys(pattern)
+            .map_err(|e| NetSrvError::Redis(format!("Failed to get keys: {}", e)))?;
 
         Ok(keys)
     }
 
     pub fn get_string(&mut self, key: &str) -> Result<String> {
-        if !self.connected || self.conn.is_none() {
+        if !self.connected || self.client.is_none() {
             return Err(NetSrvError::Connection(
                 "Not connected to Redis".to_string(),
             ));
         }
 
-        let conn = self.conn.as_mut().unwrap();
-        let value: String = conn.get(key)?;
-        Ok(value)
+        let client = self.client.as_mut().unwrap();
+        match client.get(key) {
+            Ok(Some(value)) => Ok(value),
+            Ok(None) => Err(NetSrvError::Redis(format!("Key not found: {}", key))),
+            Err(e) => Err(NetSrvError::Redis(format!("Failed to get string: {}", e))),
+        }
     }
 
     pub fn get_hash(&mut self, key: &str) -> Result<HashMap<String, String>> {
-        if !self.connected || self.conn.is_none() {
+        if !self.connected || self.client.is_none() {
             return Err(NetSrvError::Connection(
                 "Not connected to Redis".to_string(),
             ));
         }
 
-        let conn = self.conn.as_mut().unwrap();
-        let value: HashMap<String, String> = conn.hgetall(key)?;
+        let client = self.client.as_mut().unwrap();
+        let value = client.hgetall(key)
+            .map_err(|e| NetSrvError::Redis(format!("Failed to get hash: {}", e)))?;
         Ok(value)
+    }
+
+    pub fn set_hash_field(&mut self, key: &str, field: &str, value: &str) -> Result<()> {
+        if !self.connected || self.client.is_none() {
+            return Err(NetSrvError::Connection(
+                "Not connected to Redis".to_string(),
+            ));
+        }
+
+        let client = self.client.as_mut().unwrap();
+        client.hset(key, field, value)
+            .map_err(|e| NetSrvError::Redis(format!("Failed to set hash field: {}", e)))?;
+        Ok(())
+    }
+
+    pub fn set_hash_multiple(&mut self, key: &str, fields: Vec<(&str, &str)>) -> Result<()> {
+        if !self.connected || self.client.is_none() {
+            return Err(NetSrvError::Connection(
+                "Not connected to Redis".to_string(),
+            ));
+        }
+
+        let client = self.client.as_mut().unwrap();
+        
+        // Use pipeline for batch updates
+        let mut pipe = client.pipeline();
+        for (field, value) in fields {
+            pipe.hset(key, field, value);
+        }
+        
+        pipe.execute()
+            .map_err(|e| NetSrvError::Redis(format!("Failed to set hash fields: {}", e)))?;
+        Ok(())
     }
 }

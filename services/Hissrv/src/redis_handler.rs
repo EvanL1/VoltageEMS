@@ -1,13 +1,11 @@
 use crate::config::Config;
 use crate::error::{HisSrvError, Result};
-use crate::influxdb_handler::{InfluxDBConnection, try_parse_numeric};
-use redis::{Client, Connection, Commands, RedisResult, Value};
+use crate::influxdb_handler::{try_parse_numeric, InfluxDBConnection};
 use std::collections::{HashMap, HashSet};
+use voltage_common::redis::{RedisClient, RedisConfig, RedisType as CommonRedisType};
 
 pub struct RedisConnection {
-    client: Option<Client>,
-    conn: Option<Connection>,
-    connected: bool,
+    client: Option<RedisClient>,
 }
 
 #[derive(Debug, PartialEq)]
@@ -20,39 +18,70 @@ pub enum RedisType {
     None,
 }
 
-impl RedisConnection {
-    pub fn new() -> Self {
-        RedisConnection {
-            client: None,
-            conn: None,
-            connected: false,
+impl From<CommonRedisType> for RedisType {
+    fn from(common_type: CommonRedisType) -> Self {
+        match common_type {
+            CommonRedisType::String => RedisType::String,
+            CommonRedisType::List => RedisType::List,
+            CommonRedisType::Set => RedisType::Set,
+            CommonRedisType::ZSet => RedisType::ZSet,
+            CommonRedisType::Hash => RedisType::Hash,
+            CommonRedisType::None => RedisType::None,
+            CommonRedisType::Stream => RedisType::None, // Stream not supported in old enum
         }
     }
+}
 
-    pub fn connect(&mut self, config: &Config) -> Result<()> {
+impl RedisConnection {
+    pub fn new() -> Self {
+        RedisConnection { client: None }
+    }
+
+    pub async fn connect(&mut self, config: &Config) -> Result<()> {
         // Disconnect if already connected
         self.disconnect();
 
-        let client = if !config.redis_socket.is_empty() {
-            // Connect using Unix socket
-            Client::open(format!("unix://{}", config.redis_socket))?
+        let redis_config = if !config.redis_socket.is_empty() {
+            RedisConfig {
+                host: String::new(),
+                port: 0,
+                password: if config.redis_password.is_empty() {
+                    None
+                } else {
+                    Some(config.redis_password.clone())
+                },
+                socket: Some(config.redis_socket.clone()),
+                database: 0,
+                connection_timeout: 10,
+                max_retries: 3,
+            }
         } else {
-            // Connect using TCP
-            let redis_url = if config.redis_password.is_empty() {
-                format!("redis://{}:{}", config.redis_host, config.redis_port)
-            } else {
-                format!(
-                    "redis://:{}@{}:{}",
-                    config.redis_password, config.redis_host, config.redis_port
-                )
-            };
-            Client::open(redis_url)?
+            RedisConfig {
+                host: config.redis_host.clone(),
+                port: config.redis_port,
+                password: if config.redis_password.is_empty() {
+                    None
+                } else {
+                    Some(config.redis_password.clone())
+                },
+                socket: None,
+                database: 0,
+                connection_timeout: 10,
+                max_retries: 3,
+            }
         };
 
-        let mut conn = client.get_connection()?;
+        let url = redis_config.to_url();
+        let client = RedisClient::new(&url).await.map_err(|e| {
+            HisSrvError::ConnectionError(format!("Failed to create Redis client: {}", e))
+        })?;
 
         // Test connection with PING
-        let ping_result: String = redis::cmd("PING").query(&mut conn)?;
+        let ping_result = client
+            .ping()
+            .await
+            .map_err(|e| HisSrvError::ConnectionError(format!("Redis ping failed: {}", e)))?;
+
         if ping_result != "PONG" {
             return Err(HisSrvError::ConnectionError(
                 "Redis connection test failed".to_string(),
@@ -72,117 +101,181 @@ impl RedisConnection {
         }
 
         self.client = Some(client);
-        self.conn = Some(conn);
-        self.connected = true;
-
         Ok(())
     }
 
     pub fn disconnect(&mut self) {
-        self.conn = None;
         self.client = None;
-        self.connected = false;
     }
 
     pub fn is_connected(&self) -> bool {
-        self.connected
+        self.client.is_some()
     }
 
-    pub fn get_keys(&mut self, pattern: &str) -> Result<Vec<String>> {
-        if !self.connected || self.conn.is_none() {
-            return Err(HisSrvError::ConnectionError(
-                "Not connected to Redis".to_string(),
-            ));
-        }
+    pub async fn get_keys(&self, pattern: &str) -> Result<Vec<String>> {
+        let client = self
+            .client
+            .as_ref()
+            .ok_or_else(|| HisSrvError::ConnectionError("Not connected to Redis".to_string()))?;
 
-        let conn = self.conn.as_mut().unwrap();
-        let keys: Vec<String> = redis::cmd("KEYS")
-            .arg(pattern)
-            .query(conn)?;
-
-        Ok(keys)
+        client
+            .keys(pattern)
+            .await
+            .map_err(|e| HisSrvError::ConnectionError(format!("Failed to get keys: {}", e)))
     }
 
-    pub fn get_type(&mut self, key: &str) -> Result<RedisType> {
-        if !self.connected || self.conn.is_none() {
-            return Err(HisSrvError::ConnectionError(
-                "Not connected to Redis".to_string(),
-            ));
-        }
+    pub async fn get_type(&self, key: &str) -> Result<RedisType> {
+        let client = self
+            .client
+            .as_ref()
+            .ok_or_else(|| HisSrvError::ConnectionError("Not connected to Redis".to_string()))?;
 
-        let conn = self.conn.as_mut().unwrap();
-        let type_str: String = redis::cmd("TYPE")
-            .arg(key)
-            .query(conn)?;
+        let common_type = client
+            .key_type(key)
+            .await
+            .map_err(|e| HisSrvError::ConnectionError(format!("Failed to get type: {}", e)))?;
 
-        match type_str.as_str() {
-            "string" => Ok(RedisType::String),
-            "list" => Ok(RedisType::List),
-            "set" => Ok(RedisType::Set),
-            "hash" => Ok(RedisType::Hash),
-            "zset" => Ok(RedisType::ZSet),
-            _ => Ok(RedisType::None),
+        Ok(RedisType::from(common_type))
+    }
+
+    pub async fn get_string(&self, key: &str) -> Result<String> {
+        let client = self
+            .client
+            .as_ref()
+            .ok_or_else(|| HisSrvError::ConnectionError("Not connected to Redis".to_string()))?;
+
+        match client.get(key).await {
+            Ok(Some(value)) => Ok(value),
+            Ok(None) => Err(HisSrvError::NotFound(format!("Key not found: {}", key))),
+            Err(e) => Err(HisSrvError::ConnectionError(format!(
+                "Failed to get string: {}",
+                e
+            ))),
         }
     }
 
-    pub fn get_string(&mut self, key: &str) -> Result<String> {
-        if !self.connected || self.conn.is_none() {
-            return Err(HisSrvError::ConnectionError(
-                "Not connected to Redis".to_string(),
-            ));
-        }
+    pub async fn get_hash(&self, key: &str) -> Result<HashMap<String, String>> {
+        let client = self
+            .client
+            .as_ref()
+            .ok_or_else(|| HisSrvError::ConnectionError("Not connected to Redis".to_string()))?;
 
-        let conn = self.conn.as_mut().unwrap();
-        let value: String = conn.get(key)?;
-        Ok(value)
+        client
+            .hgetall(key)
+            .await
+            .map_err(|e| HisSrvError::ConnectionError(format!("Failed to get hash: {}", e)))
     }
 
-    pub fn get_hash(&mut self, key: &str) -> Result<HashMap<String, String>> {
-        if !self.connected || self.conn.is_none() {
-            return Err(HisSrvError::ConnectionError(
-                "Not connected to Redis".to_string(),
-            ));
-        }
+    pub async fn get_list(&self, key: &str) -> Result<Vec<String>> {
+        let client = self
+            .client
+            .as_ref()
+            .ok_or_else(|| HisSrvError::ConnectionError("Not connected to Redis".to_string()))?;
 
-        let conn = self.conn.as_mut().unwrap();
-        let hash: HashMap<String, String> = conn.hgetall(key)?;
-        Ok(hash)
+        client
+            .lrange(key, 0, -1)
+            .await
+            .map_err(|e| HisSrvError::ConnectionError(format!("Failed to get list: {}", e)))
     }
 
-    pub fn get_list(&mut self, key: &str) -> Result<Vec<String>> {
-        if !self.connected || self.conn.is_none() {
-            return Err(HisSrvError::ConnectionError(
-                "Not connected to Redis".to_string(),
-            ));
-        }
+    pub async fn get_set(&self, key: &str) -> Result<HashSet<String>> {
+        let client = self
+            .client
+            .as_ref()
+            .ok_or_else(|| HisSrvError::ConnectionError("Not connected to Redis".to_string()))?;
 
-        let conn = self.conn.as_mut().unwrap();
-        let list: Vec<String> = conn.lrange(key, 0, -1)?;
-        Ok(list)
+        client
+            .smembers(key)
+            .await
+            .map_err(|e| HisSrvError::ConnectionError(format!("Failed to get set: {}", e)))
     }
 
-    pub fn get_set(&mut self, key: &str) -> Result<HashSet<String>> {
-        if !self.connected || self.conn.is_none() {
-            return Err(HisSrvError::ConnectionError(
-                "Not connected to Redis".to_string(),
-            ));
-        }
+    pub async fn get_zset(&self, key: &str) -> Result<Vec<(String, f64)>> {
+        let client = self
+            .client
+            .as_ref()
+            .ok_or_else(|| HisSrvError::ConnectionError("Not connected to Redis".to_string()))?;
 
-        let conn = self.conn.as_mut().unwrap();
-        let set: HashSet<String> = conn.smembers(key)?;
-        Ok(set)
+        client
+            .zrange_withscores(key, 0, -1)
+            .await
+            .map_err(|e| HisSrvError::ConnectionError(format!("Failed to get sorted set: {}", e)))
     }
 
-    pub fn get_zset(&mut self, key: &str) -> Result<Vec<(String, f64)>> {
-        if !self.connected || self.conn.is_none() {
-            return Err(HisSrvError::ConnectionError(
-                "Not connected to Redis".to_string(),
-            ));
+    /// Get real-time data from comsrv channel using optimized Hash structure
+    pub async fn get_channel_realtime_data(
+        &self,
+        channel_id: u16,
+    ) -> Result<HashMap<String, serde_json::Value>> {
+        let client = self
+            .client
+            .as_ref()
+            .ok_or_else(|| HisSrvError::ConnectionError("Not connected to Redis".to_string()))?;
+
+        let hash_key = format!("comsrv:realtime:channel:{}", channel_id);
+        let raw_data = client.hgetall(&hash_key).await.map_err(|e| {
+            HisSrvError::ConnectionError(format!("Failed to get channel data: {}", e))
+        })?;
+
+        let mut result = HashMap::new();
+        for (field, value) in raw_data {
+            if let Ok(json_value) = serde_json::from_str::<serde_json::Value>(&value) {
+                result.insert(field, json_value);
+            }
         }
 
-        let conn = self.conn.as_mut().unwrap();
-        let zset: Vec<(String, f64)> = conn.zrange_withscores(key, 0, -1)?;
-        Ok(zset)
+        Ok(result)
+    }
+
+    /// Get real-time data from modsrv module using optimized Hash structure
+    pub async fn get_module_realtime_data(
+        &self,
+        module_id: &str,
+    ) -> Result<HashMap<String, serde_json::Value>> {
+        let client = self
+            .client
+            .as_ref()
+            .ok_or_else(|| HisSrvError::ConnectionError("Not connected to Redis".to_string()))?;
+
+        let hash_key = format!("modsrv:realtime:module:{}", module_id);
+        let raw_data = client.hgetall(&hash_key).await.map_err(|e| {
+            HisSrvError::ConnectionError(format!("Failed to get module data: {}", e))
+        })?;
+
+        let mut result = HashMap::new();
+        for (field, value) in raw_data {
+            if let Ok(json_value) = serde_json::from_str::<serde_json::Value>(&value) {
+                result.insert(field, json_value);
+            }
+        }
+
+        Ok(result)
+    }
+
+    /// Get multiple channels data in batch using Pipeline
+    pub async fn get_channels_batch(
+        &self,
+        channel_ids: &[u16],
+    ) -> Result<HashMap<u16, HashMap<String, serde_json::Value>>> {
+        if channel_ids.is_empty() {
+            return Ok(HashMap::new());
+        }
+
+        let mut result = HashMap::new();
+
+        // Process each channel (could be optimized with pipeline in future)
+        for &channel_id in channel_ids {
+            match self.get_channel_realtime_data(channel_id).await {
+                Ok(data) => {
+                    result.insert(channel_id, data);
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to get data for channel {}: {}", channel_id, e);
+                }
+            }
+        }
+
+        Ok(result)
     }
 }
 
@@ -203,7 +296,7 @@ pub async fn process_redis_data(
 
     if !redis.is_connected() {
         println!("Redis connection lost. Attempting to reconnect...");
-        if let Err(e) = redis.connect(config) {
+        if let Err(e) = redis.connect(config).await {
             println!("Failed to reconnect to Redis: {}", e);
             return Err(HisSrvError::ConnectionError(
                 "Failed to reconnect to Redis".to_string(),
@@ -211,237 +304,156 @@ pub async fn process_redis_data(
         }
     }
 
-    // Get matching Redis keys
-    let keys = redis.get_keys(&config.redis_key_pattern)?;
-
-    if config.verbose {
-        println!(
-            "Found {} keys matching pattern: {}",
-            keys.len(),
-            config.redis_key_pattern
-        );
-    }
-
     let mut stored_points = 0;
     let mut skipped_points = 0;
 
-    // Process each key
-    for key in &keys {
-        // Check if this point should be stored
-        if !config.should_store_point(key) {
-            skipped_points += 1;
-            if config.verbose {
-                println!("Skipping key (not configured for storage): {}", key);
-            }
-            continue;
-        }
+    // Check if we should process comsrv channels
+    if config
+        .redis_key_pattern
+        .contains("comsrv:realtime:channel:")
+    {
+        // Extract channel IDs from pattern or use predefined list
+        let channel_ids: Vec<u16> = vec![1, 2, 3]; // TODO: Make configurable
 
-        // Get key type
-        match redis.get_type(key) {
-            Ok(RedisType::String) => {
-                // Process string type
-                match redis.get_string(key) {
-                    Ok(value) => {
-                        // Try to parse value as numeric
-                        let (is_numeric, numeric_value) = try_parse_numeric(&value);
+        for channel_id in channel_ids {
+            match redis.get_channel_realtime_data(channel_id).await {
+                Ok(channel_data) => {
+                    if config.verbose {
+                        println!(
+                            "Processing channel {} with {} points",
+                            channel_id,
+                            channel_data.len()
+                        );
+                    }
 
-                        // Write to InfluxDB
-                        if let Err(e) = influxdb
-                            .write_point(
-                                key,
-                                "string",
-                                None,
-                                is_numeric,
-                                numeric_value,
-                                if is_numeric { None } else { Some(&value) },
-                                None,
-                            )
-                            .await
-                        {
-                            println!("Error writing string point to InfluxDB: {}", e);
-                        } else {
-                            stored_points += 1;
-                            if config.verbose {
-                                println!("Transferred string key: {}", key);
+                    // Convert to format expected by InfluxDB
+                    let mut hash_data = HashMap::new();
+                    for (field, value) in channel_data {
+                        hash_data.insert(field, value.to_string());
+                    }
+
+                    let key = format!("comsrv:realtime:channel:{}", channel_id);
+                    match influxdb.write_hash_data(&key, hash_data, config).await {
+                        Ok(points) => {
+                            stored_points += points;
+                            if config.verbose > 1 {
+                                println!("Stored {} points from channel {}", points, channel_id);
                             }
                         }
-                    }
-                    Err(e) => {
-                        println!("Error getting string value for key {}: {}", key, e);
+                        Err(e) => {
+                            println!("Failed to write data for channel {}: {}", channel_id, e);
+                            skipped_points += 1;
+                        }
                     }
                 }
-            }
-            Ok(RedisType::Hash) => {
-                // Process hash type
-                match redis.get_hash(key) {
-                    Ok(hash_values) => {
-                        let hash_len = hash_values.len();
-                        for (field, value) in hash_values {
-                            // Try to parse value as numeric
-                            let (is_numeric, numeric_value) = try_parse_numeric(&value);
-
-                            // Write to InfluxDB
-                            if let Err(e) = influxdb
-                                .write_point(
-                                    key,
-                                    "hash",
-                                    Some(&field),
-                                    is_numeric,
-                                    numeric_value,
-                                    if is_numeric { None } else { Some(&value) },
-                                    None,
-                                )
-                                .await
-                            {
-                                println!("Error writing hash point to InfluxDB: {}", e);
-                            }
-                        }
-                        stored_points += 1;
-                        if config.verbose {
-                            println!(
-                                "Transferred hash key: {} with {} fields",
-                                key,
-                                hash_len
-                            );
-                        }
-                    }
-                    Err(e) => {
-                        println!("Error getting hash values for key {}: {}", key, e);
-                    }
+                Err(e) => {
+                    println!("Failed to get data for channel {}: {}", channel_id, e);
+                    skipped_points += 1;
                 }
-            }
-            Ok(RedisType::List) => {
-                // Process list type
-                match redis.get_list(key) {
-                    Ok(list_values) => {
-                        for (i, value) in list_values.iter().enumerate() {
-                            // Try to parse value as numeric
-                            let (is_numeric, numeric_value) = try_parse_numeric(value);
-
-                            // Write to InfluxDB
-                            if let Err(e) = influxdb
-                                .write_point(
-                                    key,
-                                    "list",
-                                    Some(&i.to_string()),
-                                    is_numeric,
-                                    numeric_value,
-                                    if is_numeric { None } else { Some(value) },
-                                    None,
-                                )
-                                .await
-                            {
-                                println!("Error writing list point to InfluxDB: {}", e);
-                            }
-                        }
-                        stored_points += 1;
-                        if config.verbose {
-                            println!(
-                                "Transferred list key: {} with {} items",
-                                key,
-                                list_values.len()
-                            );
-                        }
-                    }
-                    Err(e) => {
-                        println!("Error getting list values for key {}: {}", key, e);
-                    }
-                }
-            }
-            Ok(RedisType::Set) => {
-                // Process set type
-                match redis.get_set(key) {
-                    Ok(set_values) => {
-                        let set_len = set_values.len();
-                        for value in set_values {
-                            // Try to parse value as numeric
-                            let (is_numeric, numeric_value) = try_parse_numeric(&value);
-
-                            // Write to InfluxDB
-                            if let Err(e) = influxdb
-                                .write_point(
-                                    key,
-                                    "set",
-                                    None,
-                                    is_numeric,
-                                    numeric_value,
-                                    if is_numeric { None } else { Some(&value) },
-                                    None,
-                                )
-                                .await
-                            {
-                                println!("Error writing set point to InfluxDB: {}", e);
-                            }
-                        }
-                        stored_points += 1;
-                        if config.verbose {
-                            println!(
-                                "Transferred set key: {} with {} members",
-                                key,
-                                set_len
-                            );
-                        }
-                    }
-                    Err(e) => {
-                        println!("Error getting set values for key {}: {}", key, e);
-                    }
-                }
-            }
-            Ok(RedisType::ZSet) => {
-                // Process sorted set type
-                match redis.get_zset(key) {
-                    Ok(zset_values) => {
-                        let zset_len = zset_values.len();
-                        for (member, score) in zset_values {
-                            // Try to parse value as numeric
-                            let (is_numeric, numeric_value) = try_parse_numeric(&member);
-
-                            // Write to InfluxDB
-                            if let Err(e) = influxdb
-                                .write_point(
-                                    key,
-                                    "zset",
-                                    None,
-                                    is_numeric,
-                                    numeric_value,
-                                    if is_numeric { None } else { Some(&member) },
-                                    Some(score),
-                                )
-                                .await
-                            {
-                                println!("Error writing zset point to InfluxDB: {}", e);
-                            }
-                        }
-                        stored_points += 1;
-                        if config.verbose {
-                            println!(
-                                "Transferred sorted set key: {} with {} members",
-                                key,
-                                zset_len
-                            );
-                        }
-                    }
-                    Err(e) => {
-                        println!("Error getting zset values for key {}: {}", key, e);
-                    }
-                }
-            }
-            Ok(RedisType::None) => {
-                println!("Key {} has no type or does not exist", key);
-            }
-            Err(e) => {
-                println!("Error getting type for key {}: {}", key, e);
             }
         }
     }
 
-    println!(
-        "Completed data transfer cycle. Found {} keys, stored {}, skipped {}. Waiting {} seconds for next cycle...",
-        keys.len(),
-        stored_points,
-        skipped_points,
-        config.interval_seconds
-    );
+    // Check if we should process modsrv modules
+    if config.redis_key_pattern.contains("modsrv:realtime:module:") {
+        // Extract module IDs from pattern or use predefined list
+        let module_ids: Vec<&str> = vec!["calc_module_1", "calc_module_2"]; // TODO: Make configurable
+
+        for module_id in module_ids {
+            match redis.get_module_realtime_data(module_id).await {
+                Ok(module_data) => {
+                    if config.verbose {
+                        println!(
+                            "Processing module {} with {} points",
+                            module_id,
+                            module_data.len()
+                        );
+                    }
+
+                    // Convert to format expected by InfluxDB
+                    let mut hash_data = HashMap::new();
+                    for (field, value) in module_data {
+                        hash_data.insert(field, value.to_string());
+                    }
+
+                    let key = format!("modsrv:realtime:module:{}", module_id);
+                    match influxdb.write_hash_data(&key, hash_data, config).await {
+                        Ok(points) => {
+                            stored_points += points;
+                            if config.verbose > 1 {
+                                println!("Stored {} points from module {}", points, module_id);
+                            }
+                        }
+                        Err(e) => {
+                            println!("Failed to write data for module {}: {}", module_id, e);
+                            skipped_points += 1;
+                        }
+                    }
+                }
+                Err(e) => {
+                    println!("Failed to get data for module {}: {}", module_id, e);
+                    skipped_points += 1;
+                }
+            }
+        }
+    }
+
+    // Fall back to old pattern-based processing for backward compatibility
+    if !config.redis_key_pattern.contains("comsrv:realtime:")
+        && !config.redis_key_pattern.contains("modsrv:realtime:")
+    {
+        let keys = redis.get_keys(&config.redis_key_pattern).await?;
+
+        if config.verbose {
+            println!(
+                "Found {} keys matching pattern: {}",
+                keys.len(),
+                config.redis_key_pattern
+            );
+        }
+
+        for key in &keys {
+            if config.verbose > 1 {
+                println!("Processing key: {}", key);
+            }
+
+            let key_type = redis.get_type(key).await?;
+
+            match key_type {
+                RedisType::Hash => match redis.get_hash(key).await {
+                    Ok(hash_data) => match influxdb.write_hash_data(key, hash_data, config).await {
+                        Ok(points) => {
+                            stored_points += points;
+                            if config.verbose > 1 {
+                                println!("Stored {} points from key: {}", points, key);
+                            }
+                        }
+                        Err(e) => {
+                            println!("Failed to write data for key {}: {}", key, e);
+                            skipped_points += 1;
+                        }
+                    },
+                    Err(e) => {
+                        println!("Failed to get hash data for key {}: {}", key, e);
+                        skipped_points += 1;
+                    }
+                },
+                _ => {
+                    if config.verbose > 1 {
+                        println!("Skipping non-hash key: {} (type: {:?})", key, key_type);
+                    }
+                    skipped_points += 1;
+                }
+            }
+        }
+    }
+
+    if config.verbose {
+        println!(
+            "Processed {} points, skipped {} keys",
+            stored_points, skipped_points
+        );
+    }
 
     Ok(())
-} 
+}

@@ -106,7 +106,6 @@ pub struct StorageConfig {
 pub enum StorageMode {
     Memory,
     Redis,
-    Hybrid,
 }
 
 impl Default for StorageMode {
@@ -225,9 +224,6 @@ impl Configurable for ModServiceConfig {
                         "Memory storage mode should have use_redis set to false".into()
                     ));
                 }
-            }
-            StorageMode::Hybrid => {
-                // Hybrid can work with or without Redis
             }
         }
         
@@ -460,7 +456,6 @@ impl ModServiceConfig {
                 mode: match old_config.storage_mode.as_str() {
                     "memory" => StorageMode::Memory,
                     "redis" => StorageMode::Redis,
-                    "hybrid" => StorageMode::Hybrid,
                     _ => StorageMode::Redis,
                 },
                 use_redis: old_config.use_redis,
@@ -586,11 +581,9 @@ mod tests {
         config.storage.use_redis = true;
         assert!(config.validate().is_err());
         
-        // Hybrid mode can work with either setting
-        config.storage.mode = StorageMode::Hybrid;
+        // Redis mode requires use_redis to be true
+        config.storage.mode = StorageMode::Redis;
         config.storage.use_redis = true;
-        assert!(config.validate().is_ok());
-        config.storage.use_redis = false;
         assert!(config.validate().is_ok());
     }
 }

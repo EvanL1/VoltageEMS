@@ -2,8 +2,8 @@ services:
   # 通信服务
   comsrv:
     build:
-      context: .
-      dockerfile: Dockerfile
+      context: ../..
+      dockerfile: services/comsrv/Dockerfile
     container_name: voltage-comsrv
     restart: unless-stopped
     ports:
@@ -13,33 +13,18 @@ services:
       - RUST_LOG=info
       - CONFIG_PATH=/app/config
       - LOG_PATH=/app/logs
+      - COMSRV_CONFIG=/app/config/comsrv-docker.yaml
     volumes:
       - ./config:/app/config
       - ./logs:/app/logs
       - ./test:/app/test
+      - ./scripts:/app/scripts
     networks:
       - voltage-network
     depends_on:
       - redis
       - modbus-simulator
-      - virtual-channel
-    command: /app/start.sh
-
-  # 虚拟通道模拟器
-  virtual-channel:
-    image: python:latest
-    container_name: voltage-virtual-channel
-    restart: unless-stopped
-    ports:
-      - "9000:9000"  # 虚拟通道端口
-    volumes:
-      - ./test:/app
-      - ./logs:/app/logs
-    working_dir: /app
-    command: >
-      bash -c "python3 virtual_channel_simulator.py --host 0.0.0.0 --port 9000 -v --log-dir /app/logs"
-    networks:
-      - voltage-network
+    command: /app/scripts/start.sh
 
   # Redis服务
   redis:
@@ -56,18 +41,14 @@ services:
 
   # Modbus模拟器
   modbus-simulator:
-    image: python:latest
+    build:
+      context: ./tests
+      dockerfile: Dockerfile.modbus
     container_name: voltage-modbus-simulator
     restart: unless-stopped
     ports:
-      - "502:502"
-    volumes:
-      - ./test:/app
-    working_dir: /app
-    command: >
-      bash -c "pip install 'pymodbus>=3.8.0,<3.9.0' 'setuptools>=65.5.1' 'wheel>=0.38.0' && 
-      python -c 'import pymodbus; print(f\"pymodbus version: {pymodbus.__version__}\")' && 
-      python modbus_simulator.py --host 0.0.0.0 --port 502"
+      - "5502:5502"
+      - "5503:5503"
     networks:
       - voltage-network
 
@@ -79,7 +60,7 @@ services:
     ports:
       - "9091:9090"
     volumes:
-      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+      - ./config/prometheus.yml:/etc/prometheus/prometheus.yml
       - prometheus-data:/prometheus
     networks:
       - voltage-network

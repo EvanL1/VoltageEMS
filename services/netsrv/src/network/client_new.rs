@@ -1,13 +1,8 @@
-use crate::config_new::{
-    AwsIotFeatures, CloudMqttConfig, HttpConfig, LegacyMqttConfig, NetworkConfig,
-};
+use crate::config_new::{CloudMqttConfig, HttpConfig, LegacyMqttConfig, NetworkConfig};
 use crate::error::Result;
 use crate::formatter::DataFormatter;
 use async_trait::async_trait;
-use serde_json::Value;
 use std::any::Any;
-use std::sync::Arc;
-use tokio::sync::Mutex;
 use tracing::{debug, error, info, warn};
 
 /// Modern network client trait that works directly with new configuration
@@ -295,7 +290,7 @@ impl CloudMqttClient {
         })
     }
 
-    fn setup_aws_iot_options(&self, mqttoptions: &mut rumqttc::MqttOptions) -> Result<()> {
+    fn setup_aws_iot_options(&self, _mqttoptions: &mut rumqttc::MqttOptions) -> Result<()> {
         // AWS IoT specific configuration
         if let crate::config_new::CloudProvider::Aws = self.config.provider {
             // Set ALPN protocols for AWS IoT
@@ -312,8 +307,8 @@ impl CloudMqttClient {
             // Set up certificate authentication
             if let crate::config_new::AuthConfig::Certificate {
                 cert_path,
-                key_path,
-                ca_path,
+                key_path: _,
+                ca_path: _,
             } = &self.config.auth
             {
                 // Load certificates for AWS IoT
@@ -350,9 +345,11 @@ impl NetworkClient for CloudMqttClient {
 
         // Configure TLS
         if self.config.tls.enabled {
-            mqttoptions.set_transport(rumqttc::Transport::tls_with_config(
-                rumqttc::ClientConfig::default(),
-            ));
+            mqttoptions.set_transport(rumqttc::Transport::Tls(rumqttc::TlsConfiguration::Simple {
+                ca: Vec::new(),
+                alpn: None,
+                client_auth: None,
+            }));
         }
 
         // AWS IoT specific setup

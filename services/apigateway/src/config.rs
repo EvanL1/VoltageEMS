@@ -30,6 +30,7 @@ pub struct ServicesConfig {
     pub hissrv: ServiceConfig,
     pub netsrv: ServiceConfig,
     pub alarmsrv: ServiceConfig,
+    pub rulesrv: ServiceConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -71,6 +72,7 @@ impl Config {
             "hissrv" => Some(&self.services.hissrv.url),
             "netsrv" => Some(&self.services.netsrv.url),
             "alarmsrv" => Some(&self.services.alarmsrv.url),
+            "rulesrv" => Some(&self.services.rulesrv.url),
             _ => None,
         }
     }
@@ -82,6 +84,7 @@ impl Config {
             "hissrv" => Some(self.services.hissrv.timeout_seconds),
             "netsrv" => Some(self.services.netsrv.timeout_seconds),
             "alarmsrv" => Some(self.services.alarmsrv.timeout_seconds),
+            "rulesrv" => Some(self.services.rulesrv.timeout_seconds),
             _ => None,
         }
     }
@@ -119,6 +122,10 @@ impl Default for Config {
                 },
                 alarmsrv: ServiceConfig {
                     url: "http://localhost:8005".to_string(),
+                    timeout_seconds: 30,
+                },
+                rulesrv: ServiceConfig {
+                    url: "http://localhost:8084".to_string(),
                     timeout_seconds: 30,
                 },
             },

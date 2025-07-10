@@ -6,25 +6,30 @@ authors = ["Evan Liu <Evan.Liu@voltageenergy.com>"]
 description = "Redis to InfluxDB data transfer service"
 
 [dependencies]
-redis = { version = "0.22.1", features = ["tokio-comp"] }
+# Internal dependencies
+voltage-common = { workspace = true, features = ["async"] }
+
+# External dependencies
+redis = { version = "0.29", features = ["tokio-comp"], default-features = false } # Only for PubSub types
 influxdb = { version = "0.5.2", features = ["derive"] }
-tokio = { version = "1.24.2", features = ["full"] }
+tokio = { workspace = true }
+futures-util = "0.3"
 clap = { version = "4.1.8", features = ["derive"] }
 regex = "1.7.1"
-serde = { version = "1.0.152", features = ["derive"] }
-serde_json = "1.0.93"
-serde_yaml = "0.9"
-chrono = { version = "0.4.23", features = ["serde"] }
-anyhow = "1.0.69"
-thiserror = "1.0.38"
-tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde_yaml = { workspace = true }
+chrono = { workspace = true }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
 axum = "0.6"
-tower = "0.4"
-uuid = { version = "1.0", features = ["v4"] }
+tower = { workspace = true }
+uuid = { workspace = true }
 dashmap = "5.4"
-async-trait = "0.1"
+async-trait = { workspace = true }
 utoipa = { version = "4.0", features = ["axum_extras"] }
 utoipa-swagger-ui = { version = "4.0", features = ["axum"] }
 base64 = "0.21"
-reqwest = { version = "0.11", features = ["json"] } 
+reqwest = { workspace = true } 

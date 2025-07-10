@@ -3,7 +3,7 @@ use crate::storage::redis_store::RedisStore;
 use crate::storage::DataStore;
 
 use crate::redis_handler::RedisConnection;
-use redis::Commands;
+// Redis commands are now accessed through voltage_common
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
@@ -323,11 +323,15 @@ impl MonitoringService {
         health.uptime = uptime;
 
         // Check Redis connectivity
-        let redis_connected = if let Ok(mut _conn) = self.store.get_connection() {
-            // Try a simple ping command
-            true
-        } else {
-            false
+        // Try to perform a test operation to check connectivity
+        let test_key = "health:check:test";
+        let redis_connected = match self.store.set_string(test_key, "ok") {
+            Ok(_) => {
+                // Clean up test key
+                let _ = self.store.delete(test_key);
+                true
+            }
+            Err(_) => false,
         };
         health.redis_connected = redis_connected;
 
@@ -452,11 +456,15 @@ impl MonitoringService {
                 health.uptime = uptime;
 
                 // Check Redis connectivity
-                let redis_connected = if let Ok(mut _conn) = store.get_connection() {
-                    // Try a simple ping command
-                    true
-                } else {
-                    false
+                // Try to perform a test operation to check connectivity
+                let test_key = "health:check:test";
+                let redis_connected = match store.set_string(test_key, "ok") {
+                    Ok(_) => {
+                        // Clean up test key
+                        let _ = store.delete(test_key);
+                        true
+                    }
+                    Err(_) => false,
                 };
                 health.redis_connected = redis_connected;
 
@@ -490,10 +498,10 @@ impl MonitoringService {
         let mut metrics_map = HashMap::new();
         let mut redis = self.redis.lock().unwrap();
 
-        let keys: Vec<String> = redis.keys("metrics:rule:*")?;
+        let keys: Vec<String> = redis.get_keys("metrics:rule:*")?;
         for key in keys {
-            if let Ok(metrics_data) = redis.get::<_, String>(&key) {
-                if let Ok(metrics) = serde_json::from_str(&metrics_data) {
+            if let Ok(metrics_data) = redis.get_string(&key) {
+                if let Ok(metrics) = serde_json::from_str::<RuleMetrics>(&metrics_data) {
                     let rule_id = key
                         .strip_prefix("metrics:rule:")
                         .unwrap_or(&key)

@@ -1,0 +1,13 @@
+FROM python:3.11-slim
+
+# 安装 pymodbus
+RUN pip install --no-cache-dir pymodbus==3.6.0
+
+# 创建工作目录
+WORKDIR /app
+
+# 复制模拟器脚本
+COPY modbus_simulator.py /app/
+
+# 默认命令
+CMD ["python", "modbus_simulator.py", "--host", "0.0.0.0", "--port", "5502"]

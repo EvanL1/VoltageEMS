@@ -489,6 +489,6 @@ mod tests {
         assert_eq!(config.name, "Mock Transport");
 
         let _transport = builder.build(config).await;
-        assert!(transport.is_ok());
+        assert!(_transport.is_ok());
     }
 }

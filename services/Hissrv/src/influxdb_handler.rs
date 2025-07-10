@@ -1,7 +1,7 @@
 use crate::config::Config;
 use crate::error::{HisSrvError, Result};
-use influxdb::{Client, InfluxDbWriteable, WriteQuery, Timestamp};
 use chrono::Utc;
+use influxdb::{Client, InfluxDbWriteable, Timestamp, WriteQuery};
 
 pub struct InfluxDBConnection {
     client: Option<Client>,
@@ -25,8 +25,10 @@ impl InfluxDBConnection {
         }
 
         let client = if !config.influxdb_user.is_empty() && !config.influxdb_password.is_empty() {
-            Client::new(config.influxdb_url.clone(), config.influxdb_db.clone())
-                .with_auth(config.influxdb_user.clone(), config.influxdb_password.clone())
+            Client::new(config.influxdb_url.clone(), config.influxdb_db.clone()).with_auth(
+                config.influxdb_user.clone(),
+                config.influxdb_password.clone(),
+            )
         } else {
             Client::new(config.influxdb_url.clone(), config.influxdb_db.clone())
         };
@@ -34,7 +36,10 @@ impl InfluxDBConnection {
         // Test connection with ping
         match client.ping().await {
             Ok(_) => {
-                println!("Successfully connected to InfluxDB at {}", config.influxdb_url);
+                println!(
+                    "Successfully connected to InfluxDB at {}",
+                    config.influxdb_url
+                );
                 self.client = Some(client);
                 self.connected = true;
                 self.db_name = config.influxdb_db.clone();
@@ -114,8 +119,8 @@ impl InfluxDBConnection {
         }
 
         let client = self.client.as_ref().unwrap();
-        
-        // Create WriteQuery using the builder pattern for InfluxDB 0.5.x  
+
+        // Create WriteQuery using the builder pattern for InfluxDB 0.5.x
         let timestamp = Utc::now();
         let mut write_query = WriteQuery::new(timestamp.into(), "rtdb_data")
             .add_tag("key", key)
@@ -147,4 +152,4 @@ pub fn try_parse_numeric(value: &str) -> (bool, f64) {
         Ok(num) => (true, num),
         Err(_) => (false, 0.0),
     }
-} 
+}

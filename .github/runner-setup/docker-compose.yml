@@ -1,0 +1,96 @@
+version: '3.8'
+
+services:
+  # GitHub Actions Runner - 通用任务
+  runner-general:
+    build:
+      context: .
+      dockerfile: runner.Dockerfile
+    environment:
+      - GITHUB_URL=https://github.com/${GITHUB_ORG}/${GITHUB_REPO}
+      - GITHUB_TOKEN=${RUNNER_TOKEN}
+      - RUNNER_NAME=docker-runner-general
+      - RUNNER_LABELS=self-hosted,linux,x64,docker,general
+    volumes:
+      # Docker-in-Docker
+      - /var/run/docker.sock:/var/run/docker.sock
+      # 缓存目录
+      - runner-cargo-cache:/home/runner/.cargo
+      - runner-work:/home/runner/actions-runner/_work
+    restart: unless-stopped
+
+  # GitHub Actions Runner - 硬件测试（需要特权模式）
+  runner-hardware:
+    build:
+      context: .
+      dockerfile: runner.Dockerfile
+    environment:
+      - GITHUB_URL=https://github.com/${GITHUB_ORG}/${GITHUB_REPO}
+      - GITHUB_TOKEN=${RUNNER_TOKEN}
+      - RUNNER_NAME=docker-runner-hardware
+      - RUNNER_LABELS=self-hosted,linux,x64,docker,hw-test,gpio,serial
+    privileged: true  # 硬件访问需要
+    devices:
+      # 串口设备映射
+      - /dev/ttyS0:/dev/ttyS0
+      - /dev/ttyUSB0:/dev/ttyUSB0
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - runner-cargo-cache:/home/runner/.cargo
+      - runner-hw-work:/home/runner/actions-runner/_work
+      # GPIO访问
+      - /sys/class/gpio:/sys/class/gpio
+      - /sys/devices:/sys/devices
+    restart: unless-stopped
+
+  # GitHub Actions Runner - 集成测试
+  runner-integration:
+    build:
+      context: .
+      dockerfile: runner.Dockerfile
+    environment:
+      - GITHUB_URL=https://github.com/${GITHUB_ORG}/${GITHUB_REPO}
+      - GITHUB_TOKEN=${RUNNER_TOKEN}
+      - RUNNER_NAME=docker-runner-integration
+      - RUNNER_LABELS=self-hosted,linux,x64,docker,integration
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - runner-cargo-cache:/home/runner/.cargo
+      - runner-int-work:/home/runner/actions-runner/_work
+    networks:
+      - test-network
+    restart: unless-stopped
+
+  # Redis（用于测试）
+  redis:
+    image: redis:7-alpine
+    networks:
+      - test-network
+    volumes:
+      - redis-data:/data
+
+  # InfluxDB（用于测试）
+  influxdb:
+    image: influxdb:2.7-alpine
+    environment:
+      - DOCKER_INFLUXDB_INIT_MODE=setup
+      - DOCKER_INFLUXDB_INIT_USERNAME=admin
+      - DOCKER_INFLUXDB_INIT_PASSWORD=password123
+      - DOCKER_INFLUXDB_INIT_ORG=voltageems
+      - DOCKER_INFLUXDB_INIT_BUCKET=iot_data
+    networks:
+      - test-network
+    volumes:
+      - influxdb-data:/var/lib/influxdb2
+
+volumes:
+  runner-cargo-cache:
+  runner-work:
+  runner-hw-work:
+  runner-int-work:
+  redis-data:
+  influxdb-data:
+
+networks:
+  test-network:
+    driver: bridge

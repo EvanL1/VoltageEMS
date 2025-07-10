@@ -6,28 +6,30 @@ authors = ["Your Name <your.email@voltageenergy.com>"]
 description = "Real-time model execution service"
 
 [dependencies]
-redis = { version = "0.22.1", features = ["tokio-comp"] }
-tokio = { version = "1.24.2", features = ["full"] }
-serde = { version = "1.0.152", features = ["derive"] }
-serde_json = "1.0.93"
-serde_yaml = "0.9.25"
-clap = { version = "4.1.8", features = ["derive"] }
-config = { version = "0.13.1", features = ["yaml"] }
-reqwest = { version = "0.11", features = ["json"] }
+# Local dependencies
+voltage-common = { workspace = true, features = ["async", "sync"] }
+
+# Core dependencies (use voltage-common where possible)
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde_yaml = { workspace = true }
+clap = { version = "4.0", features = ["derive"] }
+reqwest = { workspace = true }
 dotenv = "0.15"
-anyhow = "1.0.69"
-thiserror = "1.0.38"
-tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-chrono = "0.4.23"
-async-trait = "0.1.64"
-futures = "0.3.26"
-uuid = { version = "1.3.0", features = ["v4"] }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+chrono = { workspace = true }
+async-trait = { workspace = true }
+futures = { workspace = true }
+uuid = { workspace = true }
 regex = "1.10.2"
-axum = { version = "0.7", features = ["macros"] }
+axum = { workspace = true }
 utoipa = { version = "4.0", features = ["axum_extras"] }
 utoipa-swagger-ui = { version = "4.0", features = ["axum"] }
-tower = "0.4"
+tower = { workspace = true }
 tower-http = { version = "0.5", features = ["cors"] }
 petgraph = "0.6.4"
 rand = "0.8.5"

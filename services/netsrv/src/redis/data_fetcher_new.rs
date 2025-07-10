@@ -1,14 +1,14 @@
 use crate::error::{NetSrvError, Result};
-use redis::{AsyncCommands, Client, Connection};
-use serde_json::{json, Value};
+use serde_json::Value;
 use tracing::{debug, error};
+use voltage_common::redis::RedisClient;
 use voltage_config::RedisConfig;
 
 use std::time::{Duration, Instant};
 use tokio::time;
 
 pub struct RedisDataFetcher {
-    client: redis::Client,
+    client: Option<RedisClient>,
     config: RedisConfig,
     data_key_pattern: String,
     poll_interval: Duration,
@@ -21,11 +21,8 @@ impl RedisDataFetcher {
         data_key_pattern: String,
         poll_interval_secs: u64,
     ) -> Result<Self> {
-        let client = Client::open(config.url.clone())
-            .map_err(|e| NetSrvError::Redis(format!("Failed to create Redis client: {}", e)))?;
-
         Ok(RedisDataFetcher {
-            client,
+            client: None,
             config,
             data_key_pattern,
             poll_interval: Duration::from_secs(poll_interval_secs),
@@ -33,18 +30,24 @@ impl RedisDataFetcher {
         })
     }
 
-    pub async fn connect(&self) -> Result<redis::aio::Connection> {
-        self.client
-            .get_async_connection()
+    pub async fn connect(&mut self) -> Result<()> {
+        let client = RedisClient::new(&self.config.url)
             .await
-            .map_err(|e| NetSrvError::Redis(format!("Failed to connect to Redis: {}", e)))
+            .map_err(|e| NetSrvError::Redis(format!("Failed to connect to Redis: {}", e)))?;
+
+        self.client = Some(client);
+        Ok(())
     }
 
     pub async fn fetch_data(&mut self) -> Result<Value> {
-        let mut conn = self.connect().await?;
+        if self.client.is_none() {
+            self.connect().await?;
+        }
+
+        let client = self.client.as_ref().unwrap();
 
         // 获取匹配的所有键
-        let keys: Vec<String> = conn
+        let keys: Vec<String> = client
             .keys(&self.data_key_pattern)
             .await
             .map_err(|e| NetSrvError::Redis(format!("Failed to get keys: {}", e)))?;
@@ -55,76 +58,84 @@ impl RedisDataFetcher {
             self.data_key_pattern
         );
 
-        let mut all_data = json!({});
+        let mut data = json!({});
+        let data_obj = data.as_object_mut().unwrap();
 
         for key in keys {
-            match self.get_data_for_key(&mut conn, &key).await {
-                Ok(data) => {
-                    // 移除前缀
-                    let key_without_prefix = if key.starts_with(&self.config.prefix) {
-                        key[self.config.prefix.len()..].to_string()
-                    } else {
-                        key.clone()
-                    };
-
-                    all_data[key_without_prefix] = data;
+            match self.fetch_key_data(&key).await {
+                Ok(value) => {
+                    data_obj.insert(key, value);
                 }
                 Err(e) => {
-                    error!("Failed to get data for key {}: {}", key, e);
+                    error!("Failed to fetch data for key {}: {}", key, e);
                 }
             }
         }
 
         self.last_fetch_time = Instant::now();
-        Ok(all_data)
+        Ok(data)
+    }
+
+    async fn fetch_key_data(&self, key: &str) -> Result<Value> {
+        let client = self.client.as_ref().unwrap();
+
+        // Try to get as string first
+        match client.get(key).await {
+            Ok(Some(value)) => {
+                // Try to parse as JSON
+                if let Ok(json_value) = serde_json::from_str::<Value>(&value) {
+                    Ok(json_value)
+                } else {
+                    Ok(json!(value))
+                }
+            }
+            Ok(None) => Ok(json!(null)),
+            Err(_) => {
+                // If string get fails, try as hash
+                match client.hgetall(key).await {
+                    Ok(hash_map) => Ok(json!(hash_map)),
+                    Err(e) => Err(NetSrvError::Redis(format!(
+                        "Failed to get value for key {}: {}",
+                        key, e
+                    ))),
+                }
+            }
+        }
+    }
+
+    pub fn should_fetch(&self) -> bool {
+        self.last_fetch_time.elapsed() >= self.poll_interval
+    }
+
+    pub async fn wait_for_next_poll(&self) {
+        let elapsed = self.last_fetch_time.elapsed();
+        if elapsed < self.poll_interval {
+            let remaining = self.poll_interval - elapsed;
+            time::sleep(remaining).await;
+        }
     }
 
     pub async fn start_polling(&mut self, tx: tokio::sync::mpsc::Sender<Value>) -> Result<()> {
-        let mut interval = time::interval(self.poll_interval);
-
         loop {
-            interval.tick().await;
-
-            match self.fetch_data().await {
-                Ok(data) => {
-                    if let Err(e) = tx.send(data).await {
-                        error!("Failed to send data to channel: {}", e);
+            if self.should_fetch() {
+                match self.fetch_data().await {
+                    Ok(data) => {
+                        if let Err(e) = tx.send(data).await {
+                            error!("Failed to send data to channel: {}", e);
+                        }
+                    }
+                    Err(e) => {
+                        error!("Failed to fetch data from Redis: {}", e);
+                        // Try to reconnect
+                        if let Err(conn_err) = self.connect().await {
+                            error!("Failed to reconnect to Redis: {}", conn_err);
+                            // Wait before trying again
+                            time::sleep(Duration::from_secs(5)).await;
+                        }
                     }
                 }
-                Err(e) => {
-                    error!("Failed to fetch data from Redis: {}", e);
-                    // 等待一段时间后重试
-                    time::sleep(Duration::from_secs(5)).await;
-                }
             }
+            self.wait_for_next_poll().await;
         }
-    }
-
-    async fn get_data_for_key(
-        &self,
-        conn: &mut redis::aio::Connection,
-        key: &str,
-    ) -> Result<Value> {
-        // 尝试获取哈希表
-        let hash_result: redis::RedisResult<std::collections::HashMap<String, String>> =
-            conn.hgetall(key).await;
-        if let Ok(hash) = hash_result {
-            if !hash.is_empty() {
-                return Ok(json!(hash));
-            }
-        }
-
-        // 如果不是哈希表，尝试获取字符串
-        let string_result: redis::RedisResult<String> = conn.get(key).await;
-        if let Ok(string_value) = string_result {
-            // 尝试解析为JSON
-            if let Ok(json_value) = serde_json::from_str::<Value>(&string_value) {
-                return Ok(json_value);
-            }
-            // 如果不是JSON，返回字符串
-            return Ok(json!(string_value));
-        }
-
-        Err(NetSrvError::Data(format!("No data found for key: {}", key)))
     }
 }

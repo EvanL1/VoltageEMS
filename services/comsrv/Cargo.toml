@@ -30,43 +30,60 @@ path = "src/bin/test_debug_logging.rs"
 # path = "examples/optimized_points_demo.rs"
 
 [dependencies]
-tokio = { version = "1.35", features = ["full"] }
-tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter", "json", "chrono", "time"] }
-tracing-appender = "0.2"
+# Local dependencies
+voltage-common = { workspace = true, features = ["async"] }
 
-serde = { version = "1.0", features = ["derive", "rc"] }
-serde_yaml = "0.9"
-serde_json = "1.0"
+# Core async runtime
+tokio = { workspace = true }
+async-trait = { workspace = true }
+futures = { workspace = true }
+
+# Logging (will migrate to voltage-common)
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+tracing-appender = { workspace = true }
+
+# Serialization
+serde = { workspace = true }
+serde_yaml = { workspace = true }
+serde_json = { workspace = true }
 csv = "1.3"
-thiserror = "1.0"
-anyhow = "1.0"
+
+# Error handling (will migrate to voltage-common)
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+
+# Industrial communication
 tokio-serial = "5.4"
 socket2 = { version = "0.5", features = ["all"] }
-axum = { version = "0.7", features = ["macros"] }
+byteorder = "1.4"
+
+# Web framework
+axum = { workspace = true }
 utoipa = { version = "4.0", features = ["axum_extras"] }
-chrono = { version = "0.4", features = ["serde"] }
+
+# Data structures
 dashmap = { version = "5.5", features = ["serde"] }
 ahash = "0.8"
-hex = "0.4"
-async-trait = "0.1"
-futures = "0.3"
+parking_lot = "0.12"
+bytes = { workspace = true }
 
+# Utils
+chrono = { workspace = true }
+hex = "0.4"
+once_cell = "1.19"
 dotenv = "0.15"
 clap = { version = "4.0", features = ["derive"] }
 
-redis = { version = "0.22", features = ["tokio-comp", "async-std-comp"] }
-byteorder = "1.4"
-parking_lot = "0.12"
-bytes = "1.5"
-once_cell = "1.19"
+# Configuration (will migrate to voltage-common)
+figment = { workspace = true }
+tempfile = { workspace = true }
 
-# Configuration management with Figment
-figment = { version = "0.10", features = ["yaml", "env", "toml", "json"] }
-tempfile = "3.9"
+# HTTP client
+reqwest = { workspace = true }
 
-# HTTP client for config service
-reqwest = { version = "0.11", features = ["json"] }
+# Redis client
+redis = { workspace = true }
 
 # WebSocket and UUID dependencies removed - not currently used
 
@@ -75,20 +92,20 @@ semver = "1.0"
 regex = "1.10"
 
 # Industrial GPIO and hardware interfaces
-rppal = { version = "0.17", optional = true }  # Raspberry Pi GPIO
-# gpio-cdev removed - not currently used
 i2cdev = { version = "0.6", optional = true }  # I2C device support
 spidev = { version = "0.6", optional = true }  # SPI device support
 
 # Platform-specific dependencies
 [target.'cfg(target_os = "linux")'.dependencies]
 socketcan = { version = "3.0", optional = true }  # CAN bus support (Linux only)
+rppal = { version = "0.17", optional = true }  # Raspberry Pi GPIO (Linux only)
 
 [dev-dependencies]
 tracing-test = "0.2"
 
 [features]
 default = []
+modbus = []
 can = ["socketcan"]
 iec60870 = []
 gpio = ["rppal"]  # GPIO support for embedded systems (Raspberry Pi)

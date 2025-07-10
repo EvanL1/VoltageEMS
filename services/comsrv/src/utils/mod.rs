@@ -1,38 +1,18 @@
 //! Utility Functions and Common Components
 //!
-//! This module provides essential utilities, error handling, and shared
+//! This module provides essential utilities and shared
 //! components used throughout the communication service library.
 //!
 //! # Modules
 //!
-//! - [`error`] - Comprehensive error types and error handling utilities
-//!
-//! # Key Components
-//!
-//! ## Error Handling
-//!
-//! The [`ComSrvError`] enum provides comprehensive error classification for all
-//! possible error conditions in the system. The [`error::ErrorExt`] trait adds convenient
-//! error conversion methods to `Result` types.
-//!
-//! # Examples
-//!
-//! ```rust
-//! use comsrv::utils::{ComSrvError, Result};
-//! use comsrv::utils::error::ErrorExt;
-//!
-//! // Error handling
-//! fn example_function() -> Result<String> {
-//!     std::fs::read_to_string("config.yaml")
-//!         .config_error("Failed to read configuration file")
-//! }
-//! ```
+//! - [`error`] - Error handling and result types
+//! - [`hex`] - Hex encoding/decoding utilities
 
 pub mod error;
 pub mod hex;
 
-// Re-export commonly used items for convenience
-pub use error::{ComSrvError, Result};
+// Re-export error types for convenience
+pub use error::{ComSrvError, ErrorExt, Result};
 
 #[cfg(test)]
 mod tests {
@@ -113,8 +93,7 @@ mod tests {
             ComSrvError::ProtocolError("protocol".to_string()),
             ComSrvError::ConnectionError("connection".to_string()),
             ComSrvError::TimeoutError("timeout".to_string()),
-            ComSrvError::NetworkError("network".to_string()),
-            ComSrvError::UnknownError("unknown".to_string()),
+            ComSrvError::InternalError("internal".to_string()),
         ];
 
         for error in errors {
@@ -130,7 +109,7 @@ mod tests {
             ComSrvError::ConnectionError("connection error".to_string()),
             ComSrvError::TimeoutError("timeout error".to_string()),
             ComSrvError::ProtocolError("protocol error".to_string()),
-            ComSrvError::NetworkError("network error".to_string()),
+            ComSrvError::InternalError("internal error".to_string()),
         ];
 
         for error in errors {

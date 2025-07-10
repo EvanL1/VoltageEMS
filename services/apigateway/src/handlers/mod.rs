@@ -5,6 +5,7 @@ pub mod health;
 pub mod hissrv;
 pub mod modsrv;
 pub mod netsrv;
+pub mod rulesrv;
 
 use actix_web::{web, HttpRequest, HttpResponse};
 use log::{debug, error};
@@ -27,7 +28,7 @@ pub async fn proxy_request(
 ) -> ApiResult<HttpResponse> {
     let service_url = config
         .get_service_url(service_name)
-        .ok_or_else(|| ApiError::ServiceNotFound(service_name.to_string()))?;
+        .ok_or_else(|| ApiError::NotFound(format!("Service not found: {}", service_name)))?;
 
     let timeout_seconds = config.get_service_timeout(service_name).unwrap_or(30);
 
@@ -73,7 +74,7 @@ pub async fn proxy_request(
             let headers = response.headers().clone();
             let body = response.bytes().await.map_err(|e| {
                 error!("Failed to read response body: {}", e);
-                ApiError::BadGateway(format!("Failed to read response from {}", service_name))
+                ApiError::ServiceError(format!("Failed to read response from {}", service_name))
             })?;
 
             // Build response
@@ -93,7 +94,7 @@ pub async fn proxy_request(
         Err(e) => {
             error!("Failed to proxy request to {}: {}", service_name, e);
             if e.is_timeout() {
-                Err(ApiError::Timeout(format!(
+                Err(ApiError::ServiceTimeout(format!(
                     "Request to {} timed out",
                     service_name
                 )))
@@ -103,7 +104,7 @@ pub async fn proxy_request(
                     service_name
                 )))
             } else {
-                Err(ApiError::BadGateway(format!(
+                Err(ApiError::ServiceError(format!(
                     "Failed to communicate with {}",
                     service_name
                 )))

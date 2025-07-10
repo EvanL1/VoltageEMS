@@ -1,21 +1,26 @@
+use crate::api::start_api_server;
 use crate::config::Config;
 use crate::error::Result;
-use crate::storage::{StorageManager, influxdb_storage::InfluxDBStorage, redis_storage::RedisStorage};
-use crate::pubsub::{RedisSubscriber, MessageProcessor};
-use crate::api::start_api_server;
 use crate::monitoring::MetricsCollector;
-use tokio::sync::{mpsc, RwLock};
+use crate::pubsub::{MessageProcessor, RedisSubscriber};
+use crate::storage::{
+    influxdb_storage::InfluxDBStorage, redis_storage::RedisStorage, StorageManager,
+};
 use std::sync::Arc;
+use tokio::sync::{mpsc, RwLock};
 use tokio::time::{interval, Duration};
 
 mod config;
-mod config_center;
-mod error;
-mod storage;
-mod pubsub;
+// mod config_center; // TODO: Implement config center support
 mod api;
-mod monitoring;
+mod error;
+mod influxdb_handler;
 mod logging;
+mod monitoring;
+mod optimized_reader;
+mod pubsub;
+mod redis_handler;
+mod storage;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -27,7 +32,7 @@ async fn main() -> Result<()> {
         eprintln!("Failed to initialize logging: {}", e);
         std::process::exit(1);
     }
-    
+
     tracing::info!("Starting HisSrv v{}", config.service.version);
     tracing::info!("Configuration loaded from: {}", config.config_file);
 
@@ -63,20 +68,23 @@ async fn main() -> Result<()> {
 
     // Clone storage_manager for the message processor
     let storage_manager_for_processor = Arc::clone(&storage_manager);
-    let mut message_processor = MessageProcessor::new(storage_manager_for_processor, message_receiver);
+    let mut message_processor =
+        MessageProcessor::new(storage_manager_for_processor, message_receiver);
 
     // Setup Redis subscriber
     let mut redis_subscriber = RedisSubscriber::new(config.redis.clone(), message_sender);
     redis_subscriber.connect().await?;
 
+    // TODO: Implement config center support
     // Spawn configuration update watcher if using config center
+    /*
     if std::env::var("CONFIG_CENTER_URL").is_ok() {
         tokio::spawn(async {
             let mut interval = interval(Duration::from_secs(60)); // Check every minute
-            
+
             loop {
                 interval.tick().await;
-                
+
                 if let Ok(client) = crate::config_center::ConfigBuilder::new().build() {
                     match client.check_for_updates().await {
                         Ok(Some(_new_config)) => {
@@ -94,9 +102,10 @@ async fn main() -> Result<()> {
                 }
             }
         });
-        
+
         tracing::info!("Configuration update watcher started");
     }
+    */
 
     // Start background tasks
     let processor_handle = tokio::spawn(async move {
@@ -115,15 +124,23 @@ async fn main() -> Result<()> {
     if config.api.enabled {
         let api_config = config.clone();
         let api_storage_manager = Arc::clone(&storage_manager);
-        
+
         let api_handle = tokio::spawn(async move {
             if let Err(e) = start_api_server(api_config, api_storage_manager).await {
                 tracing::error!("API server error: {}", e);
             }
         });
 
-        tracing::info!("API server started on {}:{}", config.service.host, config.service.port);
-        tracing::info!("Swagger UI available at: http://{}:{}/api/v1/swagger-ui", config.service.host, config.service.port);
+        tracing::info!(
+            "API server started on {}:{}",
+            config.service.host,
+            config.service.port
+        );
+        tracing::info!(
+            "Swagger UI available at: http://{}:{}/api/v1/swagger-ui",
+            config.service.host,
+            config.service.port
+        );
 
         // Wait for all tasks
         tokio::select! {
@@ -133,7 +150,7 @@ async fn main() -> Result<()> {
         }
     } else {
         tracing::info!("API server is disabled");
-        
+
         // Wait for background tasks only
         tokio::select! {
             _ = processor_handle => tracing::info!("Message processor stopped"),
@@ -146,4 +163,4 @@ async fn main() -> Result<()> {
     tracing::info!("HisSrv shutdown complete");
 
     Ok(())
-} 
+}

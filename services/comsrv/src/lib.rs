@@ -196,21 +196,22 @@
 //! - Pub/sub messaging for distributed scenarios
 
 pub mod api;
-/// Communication Service Library
-/// Provides core functionality for protocol communication, data exchange, and management
+/// Core functionality for protocol communication, data exchange, and management
 pub mod core;
-/// CLI tools for protocol development
-// pub mod cli; // Temporarily disabled due to missing dependencies
-
-/// Modbus test runner for comprehensive testing
-pub mod modbus_test_runner;
+/// Plugin system for protocol implementations
+pub mod plugins;
+/// Service implementation
 pub mod service_impl;
+/// Utility functions
 pub mod utils;
+
+/// Error handling is now in utils module
+pub use utils::error;
 
 pub mod service {
 
     use crate::core::config::ConfigManager;
-    use crate::core::protocols::common::ProtocolFactory;
+    use crate::core::framework::factory::ProtocolFactory;
     use crate::service_impl as impls;
     use crate::utils::Result;
     use std::sync::Arc;
@@ -447,6 +448,8 @@ pub mod service {
 
 // Re-export commonly used types and traits
 pub use core::config::ConfigManager;
-pub use core::protocols::common::combase::{ChannelStatus, ComBase, DefaultProtocol, PointData};
-pub use core::protocols::common::ProtocolFactory;
-pub use utils::{ComSrvError, Result};
+pub use core::framework::{ChannelStatus, ComBase, DefaultProtocol, PointData, ProtocolFactory};
+pub use utils::error::{ComSrvError, Result};
+
+// #[cfg(test)]
+// mod test_plugin_debug; // Moved to tests directory

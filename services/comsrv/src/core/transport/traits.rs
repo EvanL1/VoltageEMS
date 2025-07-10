@@ -303,6 +303,63 @@ pub trait TransportBuilder: Send + Sync {
     fn default_config(&self) -> Self::Config;
 }
 
+/// Implementation of Transport trait for Box<dyn Transport>
+/// This allows Box<dyn Transport> to be used where Transport trait is required
+#[async_trait]
+impl Transport for Box<dyn Transport> {
+    fn transport_type(&self) -> &str {
+        self.as_ref().transport_type()
+    }
+
+    fn name(&self) -> &str {
+        self.as_ref().name()
+    }
+
+    async fn connect(&mut self) -> std::result::Result<(), TransportError> {
+        self.as_mut().connect().await
+    }
+
+    async fn disconnect(&mut self) -> std::result::Result<(), TransportError> {
+        self.as_mut().disconnect().await
+    }
+
+    async fn send(&mut self, data: &[u8]) -> std::result::Result<usize, TransportError> {
+        self.as_mut().send(data).await
+    }
+
+    async fn receive(
+        &mut self,
+        buffer: &mut [u8],
+        timeout: Option<Duration>,
+    ) -> std::result::Result<usize, TransportError> {
+        self.as_mut().receive(buffer, timeout).await
+    }
+
+    async fn is_connected(&self) -> bool {
+        self.as_ref().is_connected().await
+    }
+
+    async fn connection_state(&self) -> ConnectionState {
+        self.as_ref().connection_state().await
+    }
+
+    async fn stats(&self) -> TransportStats {
+        self.as_ref().stats().await
+    }
+
+    async fn reset_stats(&mut self) {
+        self.as_mut().reset_stats().await
+    }
+
+    async fn close(&mut self) -> std::result::Result<(), TransportError> {
+        self.as_mut().close().await
+    }
+
+    async fn diagnostics(&self) -> std::collections::HashMap<String, String> {
+        self.as_ref().diagnostics().await
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

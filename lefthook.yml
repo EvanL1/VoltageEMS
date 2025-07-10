@@ -1,0 +1,95 @@
+# Lefthook configuration for VoltageEMS
+# https://github.com/evilmartians/lefthook
+
+# 颜色输出
+colors: true
+
+# 跳过配置
+skip_output:
+  - meta
+  - summary
+
+# 预提交钩子
+pre-commit:
+  parallel: true
+  commands:
+    # Rust 格式化检查
+    rust-fmt:
+      glob: "*.rs"
+      run: cargo fmt --all -- --check
+      
+    # 快速检查（替代 clippy）
+    quick-check:
+      run: ./scripts/quick-check.sh
+      
+    # TOML 文件检查
+    toml-check:
+      glob: "*.toml"
+      run: |
+        if command -v taplo &> /dev/null; then
+          taplo fmt --check {staged_files}
+        else
+          echo "Warning: taplo not installed, skipping TOML formatting check"
+        fi
+      
+    # YAML 文件检查
+    yaml-check:
+      glob: "*.{yml,yaml}"
+      run: |
+        if command -v yamllint &> /dev/null; then
+          yamllint {staged_files}
+        else
+          echo "Warning: yamllint not installed, skipping YAML check"
+        fi
+        
+    # Markdown 文件检查
+    markdown-check:
+      glob: "*.md"
+      run: |
+        if command -v markdownlint &> /dev/null; then
+          markdownlint {staged_files}
+        else
+          echo "Warning: markdownlint not installed, skipping Markdown check"
+        fi
+
+# 提交消息检查
+commit-msg:
+  commands:
+    conventional:
+      run: |
+        # 检查提交消息格式
+        commit_regex='^(feat|fix|docs|style|refactor|perf|test|chore|build|ci)(\(.+\))?: .{1,100}$'
+        if ! grep -qE "$commit_regex" "$1"; then
+          echo "提交消息格式错误！"
+          echo "正确格式: <type>(<scope>): <subject>"
+          echo "类型: feat, fix, docs, style, refactor, perf, test, chore, build, ci"
+          echo "示例: feat(comsrv): add new modbus protocol support"
+          exit 1
+        fi
+
+# 推送前检查
+pre-push:
+  parallel: false
+  commands:
+    # 运行推送前检查脚本
+    pre-push-check:
+      run: ./scripts/pre-push-check.sh
+
+# 自定义脚本
+scripts:
+  # 安装开发工具
+  "install:tools":
+    runner: bash
+    run: |
+      echo "安装开发工具..."
+      cargo install taplo-cli
+      cargo install cargo-nextest
+      brew install yamllint
+      npm install -g markdownlint-cli
+      
+  # 运行完整的 CI 检查
+  "ci:local":
+    runner: bash
+    run: |
+      echo "运行本地 CI 检查..."
+      earthly +ci

@@ -1,27 +1,18 @@
 mod api;
 mod config;
-mod control;
 mod error;
 mod model;
 mod monitoring;
 mod redis_handler;
-mod rules;
-mod rules_engine;
-mod storage;
-mod storage_agent;
 mod template;
 
 use crate::api::ApiServer;
-use crate::redis_handler::RedisType;
-use crate::storage::DataStore;
+use crate::redis_handler::{RedisConnection, RedisType};
 use config::Config;
-use control::ControlManager;
 use error::{ModelSrvError, Result};
 use model::ModelEngine;
-use storage_agent::StorageAgent;
+use template::TemplateManager;
 
-use crate::storage::hybrid_store::HybridStore;
-use crate::storage::SyncMode;
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -85,13 +76,6 @@ enum Commands {
         #[arg(short, long, default_value = "modsrv:*")]
         pattern: String,
     },
-
-    /// View memory store data
-    Memory {
-        /// Key pattern to search for
-        #[arg(short, long, default_value = "modsrv:*")]
-        pattern: String,
-    },
 }
 
 #[tokio::main]
@@ -101,10 +85,13 @@ async fn main() -> Result<()> {
     // Load configuration using the new loader
     let config = if let Some(config_path) = args.config {
         // Use specified config file
-        let loader = config::ConfigLoader::new()
+        let mut loader = config::ConfigLoader::new()
             .with_file(config_path.to_string_lossy())
-            .with_config_center(std::env::var("CONFIG_CENTER_URL").ok())
             .with_env_prefix("MODSRV_");
+
+        if let Ok(config_center_url) = std::env::var("CONFIG_CENTER_URL") {
+            loader = loader.with_config_center(config_center_url);
+        }
 
         match loader.load().await {
             Ok(cfg) => cfg,
@@ -126,33 +113,29 @@ async fn main() -> Result<()> {
         }
     };
 
-    // Initialize tracing
-    use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
+    // Initialize logging using voltage-common
+    let log_config = voltage_common::logging::LogConfig {
+        level: config.log_level.clone(),
+        console: true,
+        file: None,
+        format: voltage_common::logging::LogFormat::Pretty,
+        ansi: true,
+        span_events: false,
+    };
 
-    tracing_subscriber::registry()
-        .with(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new(&config.log_level)),
-        )
-        .with(tracing_subscriber::fmt::layer())
-        .init();
+    let _log_guard = voltage_common::logging::init_logging(&log_config)
+        .map_err(|e| ModelSrvError::ConfigError(format!("Failed to initialize logging: {}", e)))?;
 
     info!("Starting Model Service");
 
-    // Create storage agent
-    let storage_agent = match StorageAgent::new(config.clone()) {
-        Ok(agent) => agent,
-        Err(e) => {
-            error!("Failed to create storage agent: {}", e);
-            return Err(e);
-        }
-    };
+    // Create Redis connection
+    let redis_conn = RedisConnection::new();
 
     // Run command
     match args.command {
         Some(Commands::Info) => {
             info!("Displaying model information");
-            display_model_info(&config, &storage_agent)?;
+            display_model_info(&config, &redis_conn)?;
         }
         Some(Commands::Service) => {
             info!("Starting service");
@@ -186,13 +169,10 @@ async fn main() -> Result<()> {
         Some(Commands::Debug { pattern }) => {
             debug_redis_data(&config, &pattern)?;
         }
-        Some(Commands::Memory { pattern }) => {
-            view_memory_data(&pattern)?;
-        }
         None => {
             // Default to Info
             info!("Displaying model information (default)");
-            display_model_info(&config, &storage_agent)?;
+            display_model_info(&config, &redis_conn)?;
         }
     }
 
@@ -203,84 +183,19 @@ async fn main() -> Result<()> {
 async fn run_service(config: &Config) -> Result<()> {
     info!("Starting Model Service");
 
-    // Create storage agent
-    let storage_agent = StorageAgent::new(config.clone())?;
-    let store = storage_agent.store();
+    // Create Redis connection
+    let mut redis_conn = RedisConnection::new();
 
     // Initialize model engine
     let mut model_engine = ModelEngine::new();
-
-    // Initialize control manager
-    let mut control_manager = ControlManager::new(&config.redis.key_prefix);
 
     // Main service loop
     let update_interval = Duration::from_millis(config.model.update_interval_ms);
     let mut interval = time::interval(update_interval);
 
     // Start API server
-    let store_arc = Arc::new(HybridStore::new(config, SyncMode::WriteThrough)?);
-    let storage_agent_arc = Arc::new(storage_agent);
-
-    // Create rule executor
-    let rule_executor = Arc::new(rules_engine::RuleExecutor::new(store_arc.clone()));
-
-    // Initialize and register post-processors
-    if config.monitoring.enabled {
-        // Create and register notification post-processor if threshold is configured
-        if let Some(threshold_ms) = config.monitoring.notification_threshold_ms {
-            let mut notification_processor = rules_engine::NotificationPostProcessor::new(
-                threshold_ms,
-                &config.redis.key_prefix,
-            );
-
-            // Initialize Redis connection if available
-            if let Ok(redis_url) = std::env::var("REDIS_URL") {
-                if let Err(e) = notification_processor.init(&redis_url) {
-                    error!("Failed to initialize notification post-processor: {}", e);
-                } else {
-                    if let Err(e) = rule_executor.register_post_processor(notification_processor) {
-                        error!("Failed to register notification post-processor: {}", e);
-                    } else {
-                        info!("Notification post-processor registered");
-                    }
-                }
-            }
-        }
-    }
-
-    // Initialize control action handler
-    if let Ok(redis_url) = std::env::var("REDIS_URL") {
-        match control::ControlActionHandler::new(&redis_url, &config.redis.key_prefix) {
-            Ok(mut handler) => {
-                // Load control operations
-                if let Err(e) =
-                    handler.load_operations(&*store_arc, &config.control.operation_key_pattern)
-                {
-                    error!("Failed to load control operations: {}", e);
-                }
-
-                // Register handler with rule executor
-                if let Err(e) = rule_executor.register_action_handler(handler) {
-                    error!("Failed to register control action handler: {}", e);
-                } else {
-                    info!("Control action handler registered successfully");
-                }
-            }
-            Err(e) => {
-                error!("Failed to create control action handler: {}", e);
-            }
-        }
-    } else {
-        warn!("REDIS_URL environment variable not set, control actions will not be available");
-    }
-
-    // Create and start API server
-    let api_server = ApiServer::new(
-        store_arc.clone(),
-        storage_agent_arc,
-        rule_executor.clone(),
-        config.api.port,
-    );
+    let redis_conn_arc = Arc::new(RedisConnection::new());
+    let api_server = ApiServer::new(redis_conn_arc, config.api.port);
 
     tokio::spawn(async move {
         if let Err(e) = api_server.start().await {
@@ -297,30 +212,15 @@ async fn run_service(config: &Config) -> Result<()> {
         interval.tick().await;
 
         // Load model configurations
-        if let Err(e) = model_engine.load_models(&*store, &config.model.config_key_pattern) {
+        if let Err(e) = model_engine.load_models(&mut redis_conn, &config.model.config_key_pattern)
+        {
             error!("Failed to load models: {}", e);
             continue;
         }
 
-        // Load control operations if enabled
-        if config.control.enabled {
-            if let Err(e) =
-                control_manager.load_operations(&*store, &config.control.operation_key_pattern)
-            {
-                error!("Failed to load control operations: {}", e);
-            }
-        }
-
         // Execute models
-        if let Err(e) = model_engine.execute_models(&*store) {
+        if let Err(e) = model_engine.execute_models(&mut redis_conn) {
             error!("Failed to execute models: {}", e);
-        }
-
-        // Check and execute control operations if enabled
-        if config.control.enabled {
-            if let Err(e) = control_manager.check_and_execute_operations(&*store) {
-                error!("Failed to execute control operations: {}", e);
-            }
         }
     }
 }
@@ -352,16 +252,15 @@ fn create_instance(
     instance_id: &str,
     instance_name: Option<&str>,
 ) -> Result<()> {
-    // Create storage agent
-    let storage_agent = StorageAgent::new(config.clone())?;
-    let store = storage_agent.store();
+    // Create Redis connection
+    let mut redis_conn = RedisConnection::new();
 
     // Initialize template manager
     let mut template_manager =
         TemplateManager::new(&config.model.templates_dir, &config.redis.key_prefix);
 
     // Create instance
-    template_manager.create_instance(&*store, template_id, instance_id, instance_name)?;
+    template_manager.create_instance(&mut redis_conn, template_id, instance_id, instance_name)?;
 
     println!(
         "Successfully created instance {} from template {}",
@@ -379,17 +278,21 @@ fn create_instances(
     prefix: &str,
     start_index: usize,
 ) -> Result<()> {
-    // Create storage agent
-    let storage_agent = StorageAgent::new(config.clone())?;
-    let store = storage_agent.store();
+    // Create Redis connection
+    let mut redis_conn = RedisConnection::new();
 
     // Initialize template manager
     let mut template_manager =
         TemplateManager::new(&config.model.templates_dir, &config.redis.key_prefix);
 
     // Create instances
-    let instance_ids =
-        template_manager.create_instances(&*store, template_id, count, prefix, start_index)?;
+    let instance_ids = template_manager.create_instances(
+        &mut redis_conn,
+        template_id,
+        count,
+        prefix,
+        start_index,
+    )?;
 
     println!(
         "Successfully created {} instances from template {}:",
@@ -403,8 +306,8 @@ fn create_instances(
 }
 
 /// Display model information in terminal
-fn display_model_info(config: &Config, storage_agent: &StorageAgent) -> Result<()> {
-    let store = storage_agent.store();
+fn display_model_info(config: &Config, redis_conn: &RedisConnection) -> Result<()> {
+    let mut redis_conn = redis_conn.clone();
 
     // Display templates
     println!("=== Available Templates ===");
@@ -435,7 +338,7 @@ fn display_model_info(config: &Config, storage_agent: &StorageAgent) -> Result<(
     println!("\n=== Running Models ===");
     let model_pattern = &config.model.config_key_pattern;
 
-    match store.get_keys(model_pattern) {
+    match redis_conn.get_keys(model_pattern) {
         Ok(keys) => {
             if keys.is_empty() {
                 println!("No running models");
@@ -445,82 +348,41 @@ fn display_model_info(config: &Config, storage_agent: &StorageAgent) -> Result<(
                     let id = key.split(':').last().unwrap_or("unknown");
 
                     // Try to get model details
-                    match store.get_string(&key) {
+                    match redis_conn.get_string(&key) {
                         Ok(json_str) => {
-                            // Try to parse as ModelWithActions
-                            let model_with_actions =
-                                if key.ends_with(".yaml") || key.ends_with(".yml") {
-                                    serde_yaml::from_str::<model::ModelWithActions>(&json_str)
-                                        .map_err(ModelSrvError::from)
-                                } else {
-                                    serde_json::from_str::<model::ModelWithActions>(&json_str)
-                                        .map_err(ModelSrvError::from)
-                                };
+                            // Try to parse as ModelDefinition
+                            let model = if key.ends_with(".yaml") || key.ends_with(".yml") {
+                                serde_yaml::from_str::<model::ModelDefinition>(&json_str)
+                                    .map_err(ModelSrvError::from)
+                            } else {
+                                serde_json::from_str::<model::ModelDefinition>(&json_str)
+                                    .map_err(ModelSrvError::from)
+                            };
 
-                            match model_with_actions {
-                                Ok(model_with_actions) => {
+                            match model {
+                                Ok(model) => {
                                     println!(
                                         "  - {} ({}): {}",
-                                        model_with_actions.model.id,
-                                        model_with_actions.model.name,
-                                        model_with_actions.model.description
+                                        model.id, model.name, model.description
                                     );
 
                                     // Show input mappings
                                     println!("    Input Mappings:");
-                                    for mapping in &model_with_actions.model.input_mappings {
+                                    for mapping in &model.input_mappings {
                                         println!(
                                             "      - {} -> {}",
                                             mapping.source_field, mapping.target_field
                                         );
                                     }
 
-                                    // Show actions
-                                    if !model_with_actions.actions.is_empty() {
-                                        println!("    Actions:");
-                                        for action in &model_with_actions.actions {
-                                            println!("      - {} ({})", action.id, action.name);
-                                        }
-                                    }
-
                                     // Try to get latest output
                                     let output_key =
                                         format!("{}model:output:{}", config.redis.key_prefix, id);
-                                    if let Ok(output) = store.get_string(&output_key) {
+                                    if let Ok(output) = redis_conn.get_string(&output_key) {
                                         println!("    Latest Output: {}", output);
                                     }
                                 }
-                                Err(_) => {
-                                    // Try to parse as ModelDefinition
-                                    let model = if key.ends_with(".yaml") || key.ends_with(".yml") {
-                                        serde_yaml::from_str::<model::ModelDefinition>(&json_str)
-                                            .map_err(ModelSrvError::from)
-                                    } else {
-                                        serde_json::from_str::<model::ModelDefinition>(&json_str)
-                                            .map_err(ModelSrvError::from)
-                                    };
-
-                                    match model {
-                                        Ok(model) => {
-                                            println!(
-                                                "  - {} ({}): {}",
-                                                model.id, model.name, model.description
-                                            );
-
-                                            // Show input mappings
-                                            println!("    Input Mappings:");
-                                            for mapping in &model.input_mappings {
-                                                println!(
-                                                    "      - {} -> {}",
-                                                    mapping.source_field, mapping.target_field
-                                                );
-                                            }
-                                        }
-                                        Err(e) => {
-                                            println!("  - {}: Error parsing model: {}", id, e)
-                                        }
-                                    }
-                                }
+                                Err(e) => println!("  - {}: Error parsing model: {}", id, e),
                             }
                         }
                         Err(e) => println!("  - {}: Error: {}", id, e),
@@ -534,64 +396,16 @@ fn display_model_info(config: &Config, storage_agent: &StorageAgent) -> Result<(
         }
     }
 
-    // Display control operations
-    println!("\n=== Control Operations ===");
-    let operation_pattern = &config.control.operation_key_pattern;
-
-    match store.get_keys(operation_pattern) {
-        Ok(keys) => {
-            if keys.is_empty() {
-                println!("No control operations");
-            } else {
-                for key in keys {
-                    // Extract operation ID from key
-                    let id = key.split(':').last().unwrap_or("unknown");
-
-                    // Try to get operation details
-                    match store.get_string(&key) {
-                        Ok(json_str) => {
-                            match serde_json::from_str::<control::ControlOperation>(&json_str) {
-                                Ok(operation) => {
-                                    println!(
-                                        "  - {} ({}): {}",
-                                        operation.id,
-                                        operation.name,
-                                        operation.description.as_deref().unwrap_or("")
-                                    );
-
-                                    // Show parameters
-                                    if !operation.parameters.is_empty() {
-                                        println!("    Parameters:");
-                                        for param in &operation.parameters {
-                                            println!("      - {}: {}", param.name, param.value);
-                                        }
-                                    }
-                                }
-                                Err(e) => println!("  - {}: Error parsing operation: {}", id, e),
-                            }
-                        }
-                        Err(e) => println!("  - {}: Error: {}", id, e),
-                    }
-                }
-            }
-        }
-        Err(e) => {
-            println!("Error getting operation keys: {}", e);
-            println!("No control operations");
-        }
-    }
-
     Ok(())
 }
 
 /// Debug Redis data
 fn debug_redis_data(config: &Config, pattern: &str) -> Result<()> {
-    // Create storage agent
-    let storage_agent = StorageAgent::new(config.clone())?;
+    // Create Redis connection
+    let mut redis_conn = RedisConnection::new();
 
     // Get all keys matching the pattern
-    let store = storage_agent.store();
-    let keys = store.get_keys(pattern)?;
+    let keys = redis_conn.get_keys(pattern)?;
 
     println!("Found {} keys matching pattern '{}'", keys.len(), pattern);
 
@@ -599,69 +413,22 @@ fn debug_redis_data(config: &Config, pattern: &str) -> Result<()> {
         println!("\nKey: {}", key);
 
         // Get key type
-        let store_ref = store.as_ref();
-        if let Some(redis) = &store_ref.redis_store() {
-            let key_type = redis.get_type(key)?;
-            println!("Type: {:?}", key_type);
+        let key_type = redis_conn.get_type(key)?;
+        println!("Type: {:?}", key_type);
 
-            match key_type {
-                RedisType::String => {
-                    let value = store_ref.get_string(key)?;
-                    println!("Value: {}", value);
-                }
-                RedisType::Hash => {
-                    let hash = store_ref.get_hash(key)?;
-                    for (k, v) in hash {
-                        println!("{}: {}", k, v);
-                    }
-                }
-                _ => {
-                    println!("Unsupported type");
-                }
-            }
-        } else {
-            // Handle the case when Redis is not available
-            debug!("Redis not available for key type check: {}", key);
-            // Try to get it from memory instead
-            if let Ok(value) = store_ref.get_string(key) {
-                println!("Type: String (from memory)");
+        match key_type {
+            RedisType::String => {
+                let value = redis_conn.get_string(key)?;
                 println!("Value: {}", value);
-            } else if let Ok(hash) = store_ref.get_hash(key) {
-                println!("Type: Hash (from memory)");
+            }
+            RedisType::Hash => {
+                let hash = redis_conn.get_hash(key)?;
                 for (k, v) in hash {
                     println!("{}: {}", k, v);
                 }
-            } else {
-                println!("Key not found or unsupported type");
             }
-        }
-    }
-
-    Ok(())
-}
-
-/// View memory store data
-fn view_memory_data(pattern: &str) -> Result<()> {
-    let config = Config::default();
-    let store = HybridStore::new(&config, SyncMode::WriteThrough)?;
-
-    info!("Retrieving memory data with pattern: {}", pattern);
-
-    // Get data from memory store
-    let keys = store.get_keys(pattern)?;
-    if keys.is_empty() {
-        println!("No data found matching pattern: {}", pattern);
-        return Ok(());
-    }
-
-    println!("Memory data ({}): ", keys.len());
-    for key in keys {
-        match store.get_string(&key) {
-            Ok(value) => {
-                println!("{}: {}", key, value);
-            }
-            Err(e) => {
-                println!("{}: Error: {}", key, e);
+            _ => {
+                println!("Unsupported type");
             }
         }
     }
@@ -671,15 +438,11 @@ fn view_memory_data(pattern: &str) -> Result<()> {
 
 /// Start the API server
 async fn start_api_server(config: &Config) -> Result<()> {
-    // Create storage agent
-    let storage_agent = Arc::new(StorageAgent::new(config.clone())?);
-    let store = Arc::new(HybridStore::new(config, SyncMode::WriteThrough)?);
-
-    // Create rule executor
-    let rule_executor = Arc::new(rules_engine::RuleExecutor::new(store.clone()));
+    // Create Redis connection
+    let redis_conn = Arc::new(RedisConnection::new());
 
     // Create API server
-    let api_server = ApiServer::new(store, storage_agent, rule_executor, config.api.port);
+    let api_server = ApiServer::new(redis_conn, config.api.port);
 
     // Start API server
     api_server

@@ -3,6 +3,7 @@
 //! This module provides a serial port-based transport implementation that abstracts
 //! serial communication details from protocol logic.
 
+use crate::utils::hex::format_hex_pretty;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -11,7 +12,6 @@ use tokio::sync::RwLock;
 use tokio::time::timeout;
 use tokio_serial::{SerialPortBuilderExt, SerialStream};
 use tracing::{debug, error, info, warn};
-use crate::utils::hex::format_hex_pretty;
 
 use super::traits::{
     ConnectionState, Transport, TransportBuilder, TransportConfig, TransportError, TransportStats,
@@ -539,7 +539,7 @@ mod tests {
         assert_eq!(config.baud_rate, 9600);
 
         let _transport = builder.build(config).await;
-        assert!(transport.is_ok());
+        assert!(_transport.is_ok());
     }
 
     #[test]

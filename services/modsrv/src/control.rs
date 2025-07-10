@@ -1,13 +1,10 @@
 use crate::error::{ModelSrvError, Result};
 use crate::model::{self};
 use crate::redis_handler::RedisConnection;
-use crate::rules_engine::ActionHandler;
-use crate::storage::DataStore;
-use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::Value;
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tracing::{debug, error, info, warn};
 use uuid;
@@ -315,16 +312,16 @@ impl ControlManager {
     }
 
     /// Load control operations
-    pub fn load_operations<T: DataStore>(&mut self, store: &T, pattern: &str) -> Result<()> {
+    pub fn load_operations(&mut self, redis_conn: &mut RedisConnection, pattern: &str) -> Result<()> {
         // Clear existing operations
         self.operations.clear();
 
         // Get all control operation configuration keys
-        let operation_keys = store.get_keys(pattern)?;
+        let operation_keys = redis_conn.get_keys(pattern)?;
         info!("Found {} control operations", operation_keys.len());
 
         for key in &operation_keys {
-            match self.load_operation_from_store(store, &key) {
+            match self.load_operation_from_store(redis_conn, &key) {
                 Ok(operation) => {
                     if operation.enabled {
                         info!(
@@ -348,13 +345,13 @@ impl ControlManager {
     }
 
     /// Load control operation from store
-    fn load_operation_from_store<T: DataStore>(
+    fn load_operation_from_store(
         &self,
-        store: &T,
+        redis_conn: &mut RedisConnection,
         key: &str,
     ) -> Result<ControlOperation> {
         // Get operation definition from store
-        let json_str = store.get_string(key)?;
+        let json_str = redis_conn.get_string(key)?;
 
         // Parse JSON to ControlOperation
         let operation: ControlOperation =
@@ -364,7 +361,7 @@ impl ControlManager {
     }
 
     /// Check and execute control operations
-    pub fn check_and_execute_operations<T: DataStore>(&mut self, store: &T) -> Result<()> {
+    pub fn check_and_execute_operations(&mut self, redis_conn: &mut RedisConnection) -> Result<()> {
         // create a copy of operation IDs to avoid mutable borrow conflicts
         let operation_ids: Vec<String> = self.operations.keys().cloned().collect();
 
@@ -395,9 +392,9 @@ impl ControlManager {
                 let operation_clone = operation.clone();
 
                 // Check operation conditions
-                if self.check_operation_conditions(store, &operation_clone)? {
+                if self.check_operation_conditions(redis_conn, &operation_clone)? {
                     // Execute operation
-                    if let Err(e) = self.execute_operation(store, &operation_clone) {
+                    if let Err(e) = self.execute_operation(redis_conn, &operation_clone) {
                         error!("Failed to execute operation {}: {}", operation_clone.id, e);
                     } else {
                         // Update execution time
@@ -412,9 +409,9 @@ impl ControlManager {
     }
 
     /// check if operation conditions are met
-    fn check_operation_conditions<T: DataStore>(
+    fn check_operation_conditions(
         &self,
-        store: &T,
+        redis_conn: &mut RedisConnection,
         operation: &ControlOperation,
     ) -> Result<bool> {
         if operation.conditions.is_empty() {
@@ -425,7 +422,7 @@ impl ControlManager {
 
         for condition in &operation.conditions {
             let field_key = &condition.field;
-            let field_value = match store.get_string(field_key) {
+            let field_value = match redis_conn.get_string(field_key) {
                 Ok(value) => value,
                 Err(e) => {
                     warn!("Failed to get field value for condition: {}", e);
@@ -510,9 +507,9 @@ impl ControlManager {
     }
 
     /// execute control operation
-    fn execute_operation<T: DataStore>(
+    fn execute_operation(
         &mut self,
-        store: &T,
+        redis_conn: &mut RedisConnection,
         operation: &ControlOperation,
     ) -> Result<()> {
         info!("Executing operation: {} ({})", operation.name, operation.id);
@@ -546,8 +543,8 @@ impl ControlManager {
                 let mut redis = RedisConnection::new();
                 let redis_url = format!(
                     "redis://{}:{}",
-                    store.get_string("redis.host")?,
-                    store.get_string("redis.port")?
+                    redis_conn.get_string("redis.host")?,
+                    redis_conn.get_string("redis.port")?
                 );
                 redis.connect(&redis_url)?;
 
@@ -567,14 +564,14 @@ impl ControlManager {
                         .as_secs()
                 );
 
-                redis.set_string(&result_key, &result)?;
+                redis_conn.set_string(&result_key, &result)?;
             }
             ControlTargetType::Model => {
                 // model control operation
                 let model_id = &operation.target_id;
                 let model_key = format!("{}model:config:{}", self.key_prefix, model_id);
 
-                if !store.exists(&model_key)? {
+                if !redis_conn.exists(&model_key)? {
                     return Err(ModelSrvError::InvalidOperation(format!(
                         "Model not found: {}",
                         model_id
@@ -585,7 +582,7 @@ impl ControlManager {
                 match operation.operation_type {
                     ControlOperationType::Start => {
                         // enable model
-                        let model_json = store.get_string(&model_key)?;
+                        let model_json = redis_conn.get_string(&model_key)?;
                         let mut model: model::ModelDefinition =
                             serde_json::from_str(&model_json)
                                 .map_err(|e| ModelSrvError::JsonError(e.to_string()))?;
@@ -596,19 +593,11 @@ impl ControlManager {
                             .map_err(|e| ModelSrvError::JsonError(e.to_string()))?;
 
                         // update model config
-                        let mut redis = RedisConnection::new();
-                        let redis_url = format!(
-                            "redis://{}:{}",
-                            store.get_string("redis.host")?,
-                            store.get_string("redis.port")?
-                        );
-                        redis.connect(&redis_url)?;
-
-                        redis.set_string(&model_key, &updated_json)?;
+                        redis_conn.set_string(&model_key, &updated_json)?;
                     }
                     ControlOperationType::Stop => {
                         // disable model
-                        let model_json = store.get_string(&model_key)?;
+                        let model_json = redis_conn.get_string(&model_key)?;
                         let mut model: model::ModelDefinition =
                             serde_json::from_str(&model_json)
                                 .map_err(|e| ModelSrvError::JsonError(e.to_string()))?;
@@ -619,15 +608,7 @@ impl ControlManager {
                             .map_err(|e| ModelSrvError::JsonError(e.to_string()))?;
 
                         // update model config
-                        let mut redis = RedisConnection::new();
-                        let redis_url = format!(
-                            "redis://{}:{}",
-                            store.get_string("redis.host")?,
-                            store.get_string("redis.port")?
-                        );
-                        redis.connect(&redis_url)?;
-
-                        redis.set_string(&model_key, &updated_json)?;
+                        redis_conn.set_string(&model_key, &updated_json)?;
                     }
                     _ => {
                         return Err(ModelSrvError::InvalidOperation(format!(
@@ -681,7 +662,11 @@ pub struct OperationStatusRecord {
     pub message: Option<String>,
 }
 
-/// Control action handler implementation
+/// Control action handler implementation - REMOVED (moved to rulesrv)
+// The ControlActionHandler has been removed as it implements ActionHandler
+// which is now part of the rules service (rulesrv)
+
+/*
 pub struct ControlActionHandler {
     /// Control manager reference
     control_manager: ControlManager,
@@ -733,7 +718,7 @@ impl ControlActionHandler {
         self.operation_status_cache.clear();
 
         for key in status_keys {
-            if let Ok(status_json) = store.get_string(&key) {
+            if let Ok(status_json) = redis_conn.get_string(&key) {
                 if let Ok(status) = serde_json::from_str::<OperationStatusRecord>(&status_json) {
                     // Extract operation ID from the key
                     if let Some(op_id) =
@@ -782,12 +767,21 @@ impl ControlActionHandler {
         let status_json = serde_json::to_string(&status_record)
             .map_err(|e| ModelSrvError::JsonError(e.to_string()))?;
 
-        store.set_string(&status_key, &status_json)?;
+        redis_conn.set_string(&status_key, &status_json)?;
 
         Ok(())
     }
+
+    /// Get all loaded operations
+    pub fn get_operations(&self) -> Vec<&ControlOperation> {
+        self.operations.values().collect()
+    }
 }
 
+*/
+
+// ActionHandler implementation removed - moved to rulesrv
+/*
 #[async_trait]
 impl ActionHandler for ControlActionHandler {
     fn can_handle(&self, action_type: &str) -> bool {
@@ -1154,3 +1148,4 @@ impl ActionHandler for ControlActionHandler {
         }
     }
 }
+*/

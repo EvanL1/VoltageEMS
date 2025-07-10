@@ -1,4 +1,4 @@
-use crate::config::redis_config::RedisConfig;
+use voltage_config::RedisConfig;
 use crate::error::{NetSrvError, Result};
 use crate::redis::RedisConnection;
 use serde_json::{json, Value};
@@ -123,5 +123,49 @@ impl RedisDataFetcher {
 
         // if all failed, return an empty object
         Err(NetSrvError::Data(format!("No data found for key: {}", key)))
+    }
+
+    /// Get data from optimized Hash structures (comsrv channels and modsrv modules)
+    pub async fn fetch_optimized_data(&mut self) -> Result<Value> {
+        // check if connected
+        if !self.is_connected() {
+            self.connect().await?;
+        }
+
+        let mut all_data = json!({});
+        let mut conn = self.connection.lock().unwrap();
+
+        // Fetch comsrv channel data
+        let channel_ids: Vec<u16> = vec![1, 2, 3]; // TODO: Make configurable
+        for channel_id in channel_ids {
+            let key = format!("comsrv:realtime:channel:{}", channel_id);
+            match self.get_data_for_key(&mut conn, &key) {
+                Ok(data) => {
+                    all_data[format!("channel_{}", channel_id)] = data;
+                }
+                Err(e) => {
+                    debug!("No data for channel {}: {}", channel_id, e);
+                }
+            }
+        }
+
+        // Fetch modsrv module data
+        let module_ids: Vec<&str> = vec!["calc_module_1", "calc_module_2"]; // TODO: Make configurable
+        for module_id in module_ids {
+            let key = format!("modsrv:realtime:module:{}", module_id);
+            match self.get_data_for_key(&mut conn, &key) {
+                Ok(data) => {
+                    all_data[module_id] = data;
+                }
+                Err(e) => {
+                    debug!("No data for module {}: {}", module_id, e);
+                }
+            }
+        }
+
+        // update the last fetch time
+        self.last_fetch_time = Instant::now();
+
+        Ok(all_data)
     }
 }

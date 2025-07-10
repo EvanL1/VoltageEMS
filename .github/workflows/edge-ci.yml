@@ -1,0 +1,317 @@
+name: Edge Device CI
+
+on:
+  push:
+    branches: [develop, main]
+    paths:
+      - 'services/**'
+      - 'tests/**'
+      - '.github/workflows/edge-ci.yml'
+  pull_request:
+    branches: [develop, main]
+    paths:
+      - 'services/**'
+      - 'tests/**'
+  schedule:
+    # 每日凌晨2点运行长时间稳定性测试
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+    inputs:
+      test_type:
+        description: '测试类型'
+        required: true
+        default: 'all'
+        type: choice
+        options:
+          - all
+          - hardware-only
+          - integration-only
+          - performance-only
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  # 阶段1: 快速检查 (GitHub hosted runner)
+  quick-check:
+    name: Quick Quality Checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Setup Rust
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        components: rustfmt, clippy
+    
+    - name: Cache Dependencies
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.cargo/registry
+          ~/.cargo/git
+          target
+        key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+    
+    - name: Format Check
+      run: cargo fmt --all -- --check
+    
+    - name: Clippy Check
+      run: |
+        cargo clippy --workspace --no-default-features -- \
+          -D clippy::correctness \
+          -D clippy::suspicious \
+          -D deprecated
+    
+    - name: Build Check
+      run: cargo build --workspace --no-default-features
+    
+    - name: Unit Tests
+      run: cargo test --workspace --lib --no-default-features
+
+  # 阶段2: 硬件测试 (self-hosted runner)
+  hardware-tests:
+    name: Hardware Tests - ${{ matrix.device }}
+    needs: quick-check
+    if: |
+      github.event_name != 'workflow_dispatch' || 
+      github.event.inputs.test_type == 'all' || 
+      github.event.inputs.test_type == 'hardware-only'
+    runs-on: [self-hosted, linux, hw-test, '${{ matrix.device }}']
+    timeout-minutes: 30
+    
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - device: gpio
+            feature: gpio
+            service: comsrv
+          - device: can
+            feature: can
+            service: comsrv
+          - device: serial
+            feature: serial
+            service: comsrv
+          - device: modbus
+            feature: modbus
+            service: comsrv
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Check Hardware Availability
+      run: |
+        echo "检查 ${{ matrix.device }} 硬件可用性..."
+        ./scripts/hardware-tests/check-${{ matrix.device }}.sh
+    
+    - name: Setup Test Environment
+      run: |
+        # 清理可能的残留进程
+        ./scripts/hardware-tests/cleanup-${{ matrix.device }}.sh || true
+        
+        # 准备测试环境
+        ./scripts/hardware-tests/setup-${{ matrix.device }}.sh
+    
+    - name: Build with Hardware Support
+      working-directory: services/${{ matrix.service }}
+      run: |
+        cargo build --features ${{ matrix.feature }}
+    
+    - name: Run Hardware Tests
+      working-directory: services/${{ matrix.service }}
+      run: |
+        sudo -E cargo test --features ${{ matrix.feature }} \
+          --test "*${{ matrix.device }}*" -- \
+          --nocapture --test-threads=1
+    
+    - name: Collect Hardware Logs
+      if: always()
+      run: |
+        mkdir -p artifacts/${{ matrix.device }}
+        
+        # 收集系统日志
+        sudo dmesg | tail -n 1000 > artifacts/${{ matrix.device }}/dmesg.log
+        
+        # 收集硬件特定日志
+        ./scripts/hardware-tests/collect-logs-${{ matrix.device }}.sh artifacts/${{ matrix.device }}
+        
+        # 收集测试输出
+        find . -name "*.log" -type f -exec cp {} artifacts/${{ matrix.device }}/ \; 2>/dev/null || true
+    
+    - name: Upload Test Artifacts
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: hw-test-${{ matrix.device }}-${{ github.sha }}
+        path: artifacts/${{ matrix.device }}/
+        retention-days: 7
+
+  # 阶段3: 集成测试
+  integration-tests:
+    name: Integration Tests
+    needs: hardware-tests
+    if: |
+      github.event_name != 'workflow_dispatch' || 
+      github.event.inputs.test_type == 'all' || 
+      github.event.inputs.test_type == 'integration-only'
+    runs-on: [self-hosted, linux, hw-test, integration]
+    timeout-minutes: 45
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Start Test Infrastructure
+      run: |
+        # 启动测试环境
+        docker-compose -f docker-compose.test.yml up -d
+        
+        # 等待服务就绪
+        ./scripts/wait-for-services.sh
+    
+    - name: Run Integration Tests
+      run: |
+        # 运行集成测试套件
+        cd tests/integration
+        cargo test --features all-tests -- --test-threads=1
+    
+    - name: Run Protocol Tests
+      run: |
+        # 测试各种协议
+        ./tests/run_all_protocol_tests.sh
+    
+    - name: Collect Integration Logs
+      if: always()
+      run: |
+        mkdir -p artifacts/integration
+        
+        # 收集Docker日志
+        docker-compose -f docker-compose.test.yml logs > artifacts/integration/docker-compose.log
+        
+        # 收集测试报告
+        cp -r test_results/* artifacts/integration/ 2>/dev/null || true
+    
+    - name: Cleanup
+      if: always()
+      run: |
+        docker-compose -f docker-compose.test.yml down -v
+        ./scripts/cleanup-test-env.sh
+    
+    - name: Upload Integration Artifacts
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: integration-test-${{ github.sha }}
+        path: artifacts/integration/
+        retention-days: 7
+
+  # 阶段4: 性能测试 (仅定时任务或手动触发)
+  performance-tests:
+    name: Performance Tests
+    needs: integration-tests
+    if: |
+      github.event_name == 'schedule' || 
+      (github.event_name == 'workflow_dispatch' && github.event.inputs.test_type == 'performance-only')
+    runs-on: [self-hosted, linux, hw-test, performance]
+    timeout-minutes: 120
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Setup Performance Test Environment
+      run: |
+        # 配置性能测试环境
+        ./scripts/performance/setup-perf-env.sh
+    
+    - name: Run Benchmark Tests
+      run: |
+        cd services/comsrv
+        cargo bench --features bench
+    
+    - name: Run Stress Tests
+      run: |
+        # 10000点压力测试
+        ./tests/performance/stress_test_10k_points.sh
+        
+        # 长时间稳定性测试
+        ./tests/performance/long_running_test.sh
+    
+    - name: Generate Performance Report
+      run: |
+        ./scripts/performance/generate-report.sh > performance-report.md
+    
+    - name: Upload Performance Results
+      uses: actions/upload-artifact@v4
+      with:
+        name: performance-test-${{ github.sha }}
+        path: |
+          performance-report.md
+          target/criterion/
+          test_results/performance/
+        retention-days: 30
+
+  # 阶段5: 部署 (仅主分支)
+  deploy:
+    name: Deploy to Edge Devices
+    needs: [integration-tests]
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: [self-hosted, linux, production]
+    environment: production
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Build Release Binaries
+      run: |
+        cargo build --release --workspace --features production
+    
+    - name: Create Deployment Package
+      run: |
+        ./scripts/create-deployment-package.sh
+    
+    - name: Deploy to Edge Devices
+      run: |
+        # 蓝绿部署
+        ./deploy/blue-green-deploy.sh
+        
+        # 健康检查
+        ./deploy/health-check.sh
+    
+    - name: Smoke Tests
+      run: |
+        ./tests/smoke/run-production-smoke-tests.sh
+    
+    - name: Notify Deployment
+      if: always()
+      run: |
+        ./scripts/notify-deployment.sh ${{ job.status }}
+
+  # 汇总报告
+  test-summary:
+    name: Test Summary
+    needs: [quick-check, hardware-tests, integration-tests]
+    if: always()
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Download All Artifacts
+      uses: actions/download-artifact@v4
+      with:
+        path: all-artifacts
+    
+    - name: Generate Summary Report
+      run: |
+        echo "# CI/CD 测试报告" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "## 测试结果" >> $GITHUB_STEP_SUMMARY
+        echo "- 快速检查: ${{ needs.quick-check.result }}" >> $GITHUB_STEP_SUMMARY
+        echo "- 硬件测试: ${{ needs.hardware-tests.result }}" >> $GITHUB_STEP_SUMMARY
+        echo "- 集成测试: ${{ needs.integration-tests.result }}" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "## 构建信息" >> $GITHUB_STEP_SUMMARY
+        echo "- 提交: ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
+        echo "- 分支: ${{ github.ref }}" >> $GITHUB_STEP_SUMMARY
+        echo "- 触发: ${{ github.event_name }}" >> $GITHUB_STEP_SUMMARY

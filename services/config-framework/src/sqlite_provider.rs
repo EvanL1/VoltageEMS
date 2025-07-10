@@ -10,7 +10,6 @@ use figment::{
 };
 use serde_json;
 use sqlx::{sqlite::SqlitePool, Row};
-use std::collections::HashMap;
 use tracing::{debug, error, info, warn};
 
 /// SQLite configuration provider
@@ -144,7 +143,7 @@ impl SqliteProvider {
     /// Convert serde_json::Value to figment::Value
     fn json_to_figment_value(&self, json: serde_json::Value) -> Value {
         match json {
-            serde_json::Value::Null => Value::from(()),
+            serde_json::Value::Null => Value::from(""),
             serde_json::Value::Bool(b) => Value::from(b),
             serde_json::Value::Number(n) => {
                 if let Some(i) = n.as_i64() {
@@ -190,7 +189,7 @@ impl SqliteProvider {
             } else {
                 let entry = current
                     .entry(part.to_string())
-                    .or_insert_with(|| Value::from(Map::new()));
+                    .or_insert_with(|| Value::from(Map::<String, Value>::new()));
 
                 if let Value::Dict(_, dict) = entry {
                     current = dict;
@@ -210,21 +209,7 @@ impl Provider for SqliteProvider {
     fn metadata(&self) -> Metadata {
         Metadata::named("SQLite Provider")
             .source(format!("sqlite:{}", self.service_name))
-            .interpolater(|profile, map| {
-                let mut result = Map::new();
-
-                if let Some(("sqlite", rest)) = profile.starts_with_any(&["sqlite"]) {
-                    if !rest.is_empty() {
-                        result.insert("service".to_string(), Value::from(rest));
-                    }
-                }
-
-                for (k, v) in map {
-                    result.insert(k.clone(), v.clone());
-                }
-
-                result
-            })
+            .interpolater(|_profile, _map| String::from("sqlite"))
     }
 
     fn data(&self) -> Result<Map<Profile, Dict>, figment::Error> {
@@ -304,8 +289,7 @@ impl AsyncSqliteProvider for SqliteProvider {
         &self,
         channel_id: i32,
     ) -> Result<Vec<PointTableEntry>, sqlx::Error> {
-        let entries = sqlx::query_as!(
-            PointTableEntry,
+        let entries = sqlx::query(
             r#"
             SELECT 
                 point_id,
@@ -323,8 +307,24 @@ impl AsyncSqliteProvider for SqliteProvider {
             WHERE channel_id = ? AND is_active = 1
             ORDER BY point_id
             "#,
-            channel_id
         )
+        .bind(channel_id)
+        .map(|row: sqlx::sqlite::SqliteRow| {
+            use sqlx::Row;
+            PointTableEntry {
+                point_id: row.get("point_id"),
+                point_name: row.get("point_name"),
+                point_type: row.get("point_type"),
+                data_type: row.get("data_type"),
+                unit: row.get("unit"),
+                scale: row.get("scale"),
+                offset: row.get("offset"),
+                min_value: row.get("min_value"),
+                max_value: row.get("max_value"),
+                description: row.get("description"),
+                metadata: row.get("metadata"),
+            }
+        })
         .fetch_all(&self.pool)
         .await?;
 
@@ -340,8 +340,7 @@ impl AsyncSqliteProvider for SqliteProvider {
         &self,
         channel_id: i32,
     ) -> Result<Vec<ProtocolMapping>, sqlx::Error> {
-        let mappings = sqlx::query_as!(
-            ProtocolMapping,
+        let mappings = sqlx::query(
             r#"
             SELECT 
                 point_id,
@@ -355,8 +354,20 @@ impl AsyncSqliteProvider for SqliteProvider {
             WHERE channel_id = ? AND is_active = 1
             ORDER BY point_id
             "#,
-            channel_id
         )
+        .bind(channel_id)
+        .map(|row: sqlx::sqlite::SqliteRow| {
+            use sqlx::Row;
+            ProtocolMapping {
+                point_id: row.get("point_id"),
+                protocol: row.get("protocol"),
+                address: row.get("address"),
+                params: row.get("params"),
+                slave_id: row.get("slave_id"),
+                function_code: row.get("function_code"),
+                register_address: row.get("register_address"),
+            }
+        })
         .fetch_all(&self.pool)
         .await?;
 

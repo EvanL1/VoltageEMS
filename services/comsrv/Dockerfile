@@ -5,7 +5,7 @@
 # -----------------------------------------------------------------------------
 # Build stage
 # -----------------------------------------------------------------------------
-FROM rust:1.75 AS builder
+FROM rust:1.88-bullseye AS builder
 
 # Install system dependencies
 RUN apt-get update && apt-get install -y \
@@ -17,23 +17,24 @@ RUN apt-get update && apt-get install -y \
 # Set working directory
 WORKDIR /app
 
-# Copy dependency files first for better caching
-COPY Cargo.toml Cargo.lock ./
+# Copy workspace files (this assumes Docker build context is at repository root)
+COPY cargo.toml /workspace/Cargo.toml
+COPY Cargo.lock /workspace/
+COPY libs /workspace/libs/
+COPY services /workspace/services/
 
-# Create a dummy main.rs to build dependencies
-RUN mkdir src && echo "fn main() {}" > src/main.rs
+WORKDIR /workspace
 
-# Build dependencies (this layer will be cached unless Cargo.* files change)
-RUN cargo build --release && rm src/main.rs target/release/deps/comsrv*
+# Build only the comsrv service
+RUN unset http_proxy https_proxy HTTP_PROXY HTTPS_PROXY && \
+    cargo build --release -p comsrv
 
-# Copy source code
-COPY src ./src
-
-# Build the application
-RUN cargo build --release
+# Copy the binary to app directory
+WORKDIR /app
+RUN cp /workspace/target/release/comsrv .
 
 # Strip the binary to reduce size
-RUN strip target/release/comsrv
+RUN strip comsrv
 
 # -----------------------------------------------------------------------------
 # Runtime stage
@@ -41,10 +42,11 @@ RUN strip target/release/comsrv
 FROM debian:bullseye-slim
 
 # Install runtime dependencies
-RUN apt-get update && apt-get install -y \
+RUN sed -i 's/deb.debian.org/mirrors.aliyun.com/g' /etc/apt/sources.list
+RUN unset http_proxy https_proxy HTTP_PROXY HTTPS_PROXY && \
+    apt-get update && apt-get install -y \
     ca-certificates \
     tzdata \
-    curl \
     && rm -rf /var/lib/apt/lists/*
 
 # Create a non-root user
@@ -58,13 +60,14 @@ RUN mkdir -p /app/config /app/logs /app/data && \
 WORKDIR /app
 
 # Copy the binary from builder stage
-COPY --from=builder /app/target/release/comsrv /app/bin/comsrv
+COPY --from=builder /app/comsrv /app/bin/comsrv
 
-# Copy configuration template
-COPY config/comsrv.example.yaml /app/config/comsrv.example.yaml
+# Copy configuration files and scripts
+COPY config /app/config/
+COPY scripts /app/scripts/
 
-# Make binary executable
-RUN chmod +x /app/bin/comsrv
+# Make binary and scripts executable
+RUN chmod +x /app/bin/comsrv /app/scripts/*.sh
 
 # Switch to non-root user
 USER comsrv

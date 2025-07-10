@@ -6,13 +6,9 @@ use axum::{
 use chrono::Utc;
 use serde::Deserialize;
 use std::collections::HashMap;
-use utoipa::{ToSchema, IntoParams};
+use utoipa::{IntoParams, ToSchema};
 
-use crate::api::{
-    models::*,
-    models_history::HistoryQueryFilter,
-    AppState,
-};
+use crate::api::{models::*, models_history::HistoryQueryFilter, AppState};
 
 #[derive(Deserialize, ToSchema, IntoParams)]
 pub struct KeysQuery {
@@ -101,15 +97,13 @@ pub async fn store_data_point(
 
     // Determine which backend to use based on the key
     let backend_name = determine_storage_backend(&data_point.key);
-    
+
     if let Some(backend) = storage_manager.get_backend(Some(&backend_name)) {
         match backend.store_data_point(&data_point).await {
-            Ok(_) => {
-                Ok(Json(ApiResponse::success_with_message(
-                    "数据存储成功".to_string(),
-                    format!("数据点已存储到 {} 后端", backend_name),
-                )))
-            }
+            Ok(_) => Ok(Json(ApiResponse::success_with_message(
+                "数据存储成功".to_string(),
+                format!("数据点已存储到 {} 后端", backend_name),
+            ))),
             Err(e) => {
                 tracing::error!("Failed to store data point: {}", e);
                 Err((
@@ -151,7 +145,7 @@ pub async fn delete_data_points(
     Query(query): Query<DeleteQuery>,
 ) -> Result<Json<ApiResponse<u64>>, (StatusCode, Json<ErrorResponse>)> {
     let mut storage_manager = state.storage_manager.write().await;
-    
+
     let filter = crate::storage::QueryFilter {
         key_pattern: query.key_pattern,
         start_time: query.start_time,
@@ -164,12 +158,10 @@ pub async fn delete_data_points(
     // Use default storage backend for deletion
     if let Some(backend) = storage_manager.get_backend(None) {
         match backend.delete_data_points(&filter).await {
-            Ok(deleted_count) => {
-                Ok(Json(ApiResponse::success_with_message(
-                    deleted_count,
-                    format!("已删除 {} 个数据点", deleted_count),
-                )))
-            }
+            Ok(deleted_count) => Ok(Json(ApiResponse::success_with_message(
+                deleted_count,
+                format!("已删除 {} 个数据点", deleted_count),
+            ))),
             Err(e) => {
                 tracing::error!("Failed to delete data points: {}", e);
                 Err((
@@ -214,12 +206,10 @@ pub async fn get_keys(
     // Use default storage backend
     if let Some(backend) = storage_manager.get_backend_readonly(None) {
         match backend.get_keys(query.pattern.as_deref()).await {
-            Ok(keys) => {
-                Ok(Json(ApiResponse::success_with_message(
-                    keys.clone(),
-                    format!("找到 {} 个数据键", keys.len()),
-                )))
-            }
+            Ok(keys) => Ok(Json(ApiResponse::success_with_message(
+                keys.clone(),
+                format!("找到 {} 个数据键", keys.len()),
+            ))),
             Err(e) => {
                 tracing::error!("Failed to get keys: {}", e);
                 Err((
@@ -258,7 +248,7 @@ pub async fn get_statistics(
     State(state): State<AppState>,
 ) -> Result<Json<ApiResponse<Vec<StorageStatistics>>>, (StatusCode, Json<ErrorResponse>)> {
     let storage_manager = state.storage_manager.read().await;
-    
+
     let all_stats = storage_manager.get_all_statistics().await;
     let mut statistics = Vec::new();
 
@@ -283,12 +273,10 @@ pub async fn get_statistics(
         (status = 200, description = "获取成功", body = ApiResponse<serde_json::Value>),
     )
 )]
-pub async fn get_config(
-    State(state): State<AppState>,
-) -> Json<ApiResponse<serde_json::Value>> {
+pub async fn get_config(State(state): State<AppState>) -> Json<ApiResponse<serde_json::Value>> {
     // Return sanitized config (without sensitive data)
     let mut config_json = serde_json::to_value(&*state.config).unwrap_or_default();
-    
+
     // Remove sensitive information
     if let Some(redis) = config_json.get_mut("redis") {
         if let Some(connection) = redis.get_mut("connection") {
@@ -297,7 +285,7 @@ pub async fn get_config(
             }
         }
     }
-    
+
     if let Some(storage) = config_json.get_mut("storage") {
         if let Some(backends) = storage.get_mut("backends") {
             if let Some(influxdb) = backends.get_mut("influxdb") {
@@ -328,12 +316,10 @@ pub async fn get_config(
         (status = 200, description = "服务健康", body = ApiResponse<HealthStatus>),
     )
 )]
-pub async fn health_check(
-    State(state): State<AppState>,
-) -> Json<ApiResponse<HealthStatus>> {
+pub async fn health_check(State(state): State<AppState>) -> Json<ApiResponse<HealthStatus>> {
     let storage_manager = state.storage_manager.read().await;
     let all_stats = storage_manager.get_all_statistics().await;
-    
+
     let mut storage_backends = HashMap::new();
     for (backend_name, stats) in all_stats {
         storage_backends.insert(backend_name, stats.connection_status);

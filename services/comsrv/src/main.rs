@@ -14,9 +14,9 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, Layer};
 
 use comsrv::api::openapi_routes::create_api_routes;
 use comsrv::core::config::ConfigManager;
-use comsrv::core::protocols::common::combase::protocol_factory::ProtocolFactory;
+use comsrv::core::framework::factory::ProtocolFactory;
 use comsrv::service_impl::{shutdown_handler, start_cleanup_task, start_communication_service};
-use comsrv::utils::error::Result;
+use comsrv::{ComSrvError, Result};
 
 /// Custom formatter that shows target only for DEBUG and ERROR levels
 struct ConditionalTargetFormatter;
@@ -127,7 +127,7 @@ async fn main() -> Result<()> {
 
     // Initialize plugin system
     info!("Initializing plugin system...");
-    comsrv::core::plugins::init_plugin_system().map_err(|e| {
+    comsrv::plugins::init_plugin_system().map_err(|e| {
         error!("Failed to initialize plugin system: {e}");
         e
     })?;
@@ -152,7 +152,7 @@ async fn main() -> Result<()> {
         let bind_address = &config_manager.config().service.api.bind_address;
         let addr: SocketAddr = bind_address.parse().map_err(|e| {
             error!("Invalid API bind address '{}': {e}", bind_address);
-            comsrv::utils::error::ComSrvError::ConfigError(format!("Invalid API bind address: {e}"))
+            ComSrvError::ConfigError(format!("Invalid API bind address: {e}"))
         })?;
 
         info!("Starting API server on {addr}");
@@ -197,7 +197,7 @@ async fn main() -> Result<()> {
 /// Initialize logging/tracing with configuration
 fn initialize_logging(
     logging_config: &comsrv::core::config::types::LoggingConfig,
-    channels: &[comsrv::core::config::types::ChannelConfig],
+    _channels: &[comsrv::core::config::types::ChannelConfig],
 ) -> Result<()> {
     use std::path::Path;
     use tracing_subscriber::filter::FilterFn;
@@ -259,9 +259,7 @@ fn initialize_logging(
             .build(log_dir)
             .map_err(|e| {
                 eprintln!("Failed to create file appender: {e}");
-                comsrv::utils::error::ComSrvError::ConfigError(format!(
-                    "Failed to create log file appender: {e}"
-                ))
+                ComSrvError::ConfigError(format!("Failed to create log file appender: {e}"))
             })?;
 
         // File layer with filter
@@ -324,9 +322,7 @@ fn initialize_logging(
             .build(log_dir)
             .map_err(|e| {
                 eprintln!("Failed to create file appender: {e}");
-                comsrv::utils::error::ComSrvError::ConfigError(format!(
-                    "Failed to create log file appender: {e}"
-                ))
+                ComSrvError::ConfigError(format!("Failed to create log file appender: {e}"))
             })?;
 
         let file_layer = tracing_subscriber::fmt::layer()

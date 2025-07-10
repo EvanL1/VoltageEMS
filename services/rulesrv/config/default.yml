@@ -1,0 +1,75 @@
+# Rulesrv Configuration
+service:
+  name: "rulesrv"
+  host: "0.0.0.0"
+  port: 8084
+
+# Redis Configuration
+redis:
+  url: "redis://localhost:6379"
+  prefix: "ems:rules:"
+  # Subscribe to modsrv outputs for rule triggers
+  subscribe_patterns:
+    - "modsrv:model:*"
+    - "modsrv:calculation:*"
+    - "device:telemetry:*"
+    - "device:status:*"
+
+# Rule Engine Configuration
+rule_engine:
+  # Maximum concurrent rule executions
+  max_concurrent_executions: 10
+  # Default timeout for rule execution (seconds)
+  default_timeout: 30
+  # Enable rule execution metrics
+  enable_metrics: true
+  # Rule storage pattern
+  rule_pattern: "rule:*"
+  # Execution history retention (days)
+  history_retention_days: 7
+
+# API Configuration
+api:
+  host: "0.0.0.0"
+  port: 8084
+  # Enable OpenAPI documentation
+  enable_docs: true
+  # API key for authentication (optional)
+  # api_key: "your-api-key-here"
+
+# Logging Configuration
+logging:
+  level: "info"
+  file: "logs/rulesrv.log"
+  max_size: "100MB"
+  max_files: 10
+  format: "json"
+
+# Monitoring Configuration
+monitoring:
+  # Health check interval (seconds)
+  health_check_interval: 60
+  # Metrics export interval (seconds)
+  metrics_export_interval: 30
+  # Enable Prometheus metrics endpoint
+  prometheus_enabled: true
+  prometheus_port: 9094
+
+# Action Handlers Configuration
+action_handlers:
+  # Enable built-in action handlers
+  enable_device_control: true
+  enable_model_control: true
+  enable_notification: true
+  # Custom action handler paths
+  custom_handlers: []
+
+# Post-Processors Configuration
+post_processors:
+  # Enable logging post-processor
+  enable_logging: true
+  # Enable notification post-processor
+  enable_notification: true
+  notification_threshold_ms: 5000
+  # Enable metrics post-processor
+  enable_metrics: true

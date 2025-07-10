@@ -1,0 +1,71 @@
+[package]
+name = "voltage-common"
+version = "0.1.0"
+edition = "2021"
+authors = ["VoltageEMS Team"]
+license = "MIT OR Apache-2.0"
+description = "Common utilities and shared code for VoltageEMS services"
+repository = "https://github.com/VoltageEMS/voltage-common"
+keywords = ["voltageems", "common", "utilities", "microservices"]
+categories = ["data-structures", "encoding", "rust-patterns"]
+
+[dependencies]
+# Async runtime
+tokio = { workspace = true }
+async-trait = { workspace = true }
+
+# Serialization
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde_yaml = { workspace = true }
+toml = { workspace = true }
+
+# Error handling
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+
+# Logging and tracing
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+tracing-appender = { workspace = true }
+
+# Time handling
+chrono = { workspace = true }
+
+# Configuration (re-export from config-framework)
+figment = { workspace = true }
+
+# Metrics
+prometheus = { version = "0.13", optional = true }
+
+# Utils
+uuid = { workspace = true }
+once_cell = "1.21"
+hex = "0.4"
+rand = "0.8"
+
+# Storage
+redis = { version = "0.29", features = [] }
+
+# HTTP
+axum = { version = "0.7", optional = true }
+tower = { version = "0.4", optional = true }
+tower-http = { version = "0.5", features = ["cors", "trace"], optional = true }
+
+# Optional dependencies
+lazy_static = { version = "1.5", optional = true }
+tempfile = { version = "3.14", optional = true }
+
+[dev-dependencies]
+tokio-test = { workspace = true }
+criterion = "0.5"
+tempfile = { workspace = true }
+
+[features]
+default = ["async"]
+async = ["redis/tokio-comp", "redis/connection-manager"]
+sync = []
+unix-socket = []
+metrics = ["prometheus", "lazy_static"]
+http = ["axum", "tower", "tower-http"]
+test-utils = ["tempfile"]

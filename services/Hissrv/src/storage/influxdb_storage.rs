@@ -1,10 +1,10 @@
-use async_trait::async_trait;
 use crate::config::InfluxDBConfig;
 use crate::error::{HisSrvError, Result};
 use crate::storage::{DataPoint, DataValue, QueryFilter, QueryResult, Storage, StorageStats};
-use influxdb::{Client, WriteQuery, Timestamp, ReadQuery};
+use async_trait::async_trait;
+use base64::{engine::general_purpose, Engine as _};
 use chrono::{DateTime, Utc};
-use base64::{Engine as _, engine::general_purpose};
+use influxdb::{Client, ReadQuery, Timestamp, WriteQuery};
 
 pub struct InfluxDBStorage {
     client: Option<Client>,
@@ -35,7 +35,10 @@ impl InfluxDBStorage {
             let read_query = ReadQuery::new(query);
             match client.query(&read_query).await {
                 Ok(_) => {
-                    tracing::info!("Created InfluxDB retention policy: {} days", self.config.retention_days);
+                    tracing::info!(
+                        "Created InfluxDB retention policy: {} days",
+                        self.config.retention_days
+                    );
                     Ok(())
                 }
                 Err(_) => {
@@ -47,7 +50,10 @@ impl InfluxDBStorage {
                     let read_query = ReadQuery::new(query);
                     match client.query(&read_query).await {
                         Ok(_) => {
-                            tracing::info!("Updated InfluxDB retention policy: {} days", self.config.retention_days);
+                            tracing::info!(
+                                "Updated InfluxDB retention policy: {} days",
+                                self.config.retention_days
+                            );
                             Ok(())
                         }
                         Err(e2) => {
@@ -58,14 +64,17 @@ impl InfluxDBStorage {
                 }
             }
         } else {
-            Err(HisSrvError::ConnectionError("InfluxDB client not initialized".to_string()))
+            Err(HisSrvError::ConnectionError(
+                "InfluxDB client not initialized".to_string(),
+            ))
         }
     }
 
     fn data_point_to_write_query(&self, data_point: &DataPoint) -> WriteQuery {
-        let timestamp = Timestamp::Nanoseconds(data_point.timestamp.timestamp_nanos_opt().unwrap_or(0) as u128);
-        let mut write_query = WriteQuery::new(timestamp, "hissrv_data")
-            .add_tag("key", data_point.key.as_str());
+        let timestamp =
+            Timestamp::Nanoseconds(data_point.timestamp.timestamp_nanos_opt().unwrap_or(0) as u128);
+        let mut write_query =
+            WriteQuery::new(timestamp, "hissrv_data").add_tag("key", data_point.key.as_str());
 
         // Add tags
         for (tag_key, tag_value) in &data_point.tags {
@@ -97,7 +106,8 @@ impl InfluxDBStorage {
             DataValue::Binary(b) => {
                 write_query = write_query.add_field("binary_size", b.len() as i64);
                 // Store base64 encoded binary data
-                write_query = write_query.add_field("binary_value", general_purpose::STANDARD.encode(b));
+                write_query =
+                    write_query.add_field("binary_value", general_purpose::STANDARD.encode(b));
             }
         }
 
@@ -132,7 +142,10 @@ impl Storage for InfluxDBStorage {
             }
             Err(e) => {
                 tracing::error!("Failed to connect to InfluxDB: {}", e);
-                Err(HisSrvError::ConnectionError(format!("Failed to connect to InfluxDB: {}", e)))
+                Err(HisSrvError::ConnectionError(format!(
+                    "Failed to connect to InfluxDB: {}",
+                    e
+                )))
             }
         }
     }
@@ -150,7 +163,9 @@ impl Storage for InfluxDBStorage {
 
     async fn store_data_point(&mut self, data_point: &DataPoint) -> Result<()> {
         if !self.connected || self.client.is_none() {
-            return Err(HisSrvError::ConnectionError("Not connected to InfluxDB".to_string()));
+            return Err(HisSrvError::ConnectionError(
+                "Not connected to InfluxDB".to_string(),
+            ));
         }
 
         let client = self.client.as_ref().unwrap();
@@ -167,7 +182,9 @@ impl Storage for InfluxDBStorage {
 
     async fn store_data_points(&mut self, data_points: &[DataPoint]) -> Result<()> {
         if !self.connected || self.client.is_none() {
-            return Err(HisSrvError::ConnectionError("Not connected to InfluxDB".to_string()));
+            return Err(HisSrvError::ConnectionError(
+                "Not connected to InfluxDB".to_string(),
+            ));
         }
 
         let client = self.client.as_ref().unwrap();
@@ -194,7 +211,9 @@ impl Storage for InfluxDBStorage {
 
     async fn query_data_points(&self, filter: &QueryFilter) -> Result<QueryResult> {
         if !self.connected || self.client.is_none() {
-            return Err(HisSrvError::ConnectionError("Not connected to InfluxDB".to_string()));
+            return Err(HisSrvError::ConnectionError(
+                "Not connected to InfluxDB".to_string(),
+            ));
         }
 
         let client = self.client.as_ref().unwrap();
@@ -240,7 +259,7 @@ impl Storage for InfluxDBStorage {
                 // Parse InfluxDB result to DataPoint objects
                 // This is a simplified implementation
                 let data_points: Vec<DataPoint> = Vec::new(); // TODO: Parse actual results
-                
+
                 Ok(QueryResult {
                     data_points,
                     total_count: None,
@@ -259,11 +278,16 @@ impl Storage for InfluxDBStorage {
 
     async fn get_keys(&self, pattern: Option<&str>) -> Result<Vec<String>> {
         if !self.connected || self.client.is_none() {
-            return Err(HisSrvError::ConnectionError("Not connected to InfluxDB".to_string()));
+            return Err(HisSrvError::ConnectionError(
+                "Not connected to InfluxDB".to_string(),
+            ));
         }
 
         let query = if let Some(p) = pattern {
-            format!("SHOW TAG VALUES FROM hissrv_data WITH KEY = \"key\" WHERE key =~ /{}/", p.replace("*", ".*"))
+            format!(
+                "SHOW TAG VALUES FROM hissrv_data WITH KEY = \"key\" WHERE key =~ /{}/",
+                p.replace("*", ".*")
+            )
         } else {
             "SHOW TAG VALUES FROM hissrv_data WITH KEY = \"key\"".to_string()
         };
@@ -281,11 +305,15 @@ impl Storage for InfluxDBStorage {
 
     async fn get_statistics(&self) -> Result<StorageStats> {
         Ok(StorageStats {
-            total_data_points: 0, // TODO: Implement actual counting
+            total_data_points: 0,  // TODO: Implement actual counting
             storage_size_bytes: 0, // TODO: Get database size
             last_write_time: self.last_write_time,
             last_read_time: self.last_read_time,
-            connection_status: if self.connected { "connected".to_string() } else { "disconnected".to_string() },
+            connection_status: if self.connected {
+                "connected".to_string()
+            } else {
+                "disconnected".to_string()
+            },
         })
     }
 

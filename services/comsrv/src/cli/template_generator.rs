@@ -163,11 +163,11 @@ use async_trait::async_trait;
 use std::collections::HashMap;
 use serde_json::Value;
 
-use comsrv::core::plugins::{
+use comsrv::plugins::{
     ProtocolPlugin, ProtocolMetadata, ConfigTemplate, ValidationRule,
     protocol_plugin,
 };
-use comsrv::core::protocols::common::traits::ComBase;
+use comsrv::core::framework::traits::ComBase;
 use comsrv::core::config::types::channel::ChannelConfig;
 use comsrv::utils::Result;
 
@@ -281,9 +281,9 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{info, debug, error};
 
-use comsrv::core::protocols::common::{
+use comsrv::core::framework::{
     traits::ComBase,
-    data_types::{ChannelStatus, PointData},
+    types::{ChannelStatus, PointData},
 };
 use comsrv::core::config::types::channel::ChannelConfig;
 use comsrv::utils::{Result, Error};
@@ -401,7 +401,7 @@ impl ComBase for {{struct_name}}Protocol {
         let template = r#"//! Integration tests for {{name}} protocol
 
 use {{name}}::{{"{"}}{{struct_name}}Plugin, {{struct_name}}Protocol{{"}"}};
-use comsrv::core::plugins::ProtocolPlugin;
+use comsrv::plugins::ProtocolPlugin;
 
 #[tokio::test]
 async fn test_plugin_metadata() {
@@ -438,7 +438,7 @@ async fn test_config_validation() {
         let template = r#"//! Example usage of {{name}} protocol
 
 use {{name}}::{{struct_name}}Plugin;
-use comsrv::core::plugins::ProtocolPlugin;
+use comsrv::plugins::ProtocolPlugin;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {

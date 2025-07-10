@@ -10,8 +10,8 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use tracing::{error, info, warn};
-use voltage_config::load_config;
+use tracing::{error, info};
+use voltage_config::{load_config, Configurable};
 
 /// Configuration management state
 #[derive(Clone)]
@@ -264,11 +264,12 @@ async fn rollback_to_version(
     Path(version): Path<String>,
 ) -> Result<Json<ConfigResponse>, StatusCode> {
     let versions = state.config_versions.read().await;
+    let config_to_rollback = versions.get(&version).cloned();
+    drop(versions); // Release read lock
 
-    if let Some(config) = versions.get(&version) {
+    if let Some(config) = config_to_rollback {
         // Save current config as backup before rollback
         let current_config = state.current_config.read().await.clone();
-        drop(versions); // Release read lock
 
         let backup_name = format!(
             "backup_before_rollback_{}",

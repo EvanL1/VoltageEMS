@@ -1,3 +1,4 @@
+mod cloud_status;
 mod config_api;
 mod config_new;
 mod error;
@@ -9,7 +10,7 @@ use crate::config_api::{create_config_router, ConfigState};
 use crate::config_new::NetServiceConfig;
 use crate::error::Result;
 use crate::formatter::{create_formatter, FormatType};
-use crate::network::{create_network_client, NetworkClient};
+use crate::network::create_network_client;
 use crate::redis::NewRedisDataFetcher;
 use clap::Parser;
 use serde_json::Value;
@@ -75,6 +76,17 @@ async fn main() -> Result<()> {
     // Create data channel
     let (tx, mut rx) = mpsc::channel::<Value>(100);
 
+    // Create cloud status manager
+    let redis_conn = crate::redis::RedisConnection::new();
+    let mut cloud_status_manager = crate::cloud_status::CloudStatusManager::new(redis_conn);
+
+    // Connect cloud status manager to Redis
+    {
+        let mut redis_conn = crate::redis::RedisConnection::new();
+        redis_conn.connect(&config.base.redis)?;
+        cloud_status_manager = crate::cloud_status::CloudStatusManager::new(redis_conn);
+    }
+
     // Start Redis data fetcher with new configuration
     let mut data_fetcher = NewRedisDataFetcher::new(
         config.base.redis.clone(),
@@ -130,12 +142,24 @@ async fn main() -> Result<()> {
         }
     }
 
-    // Connect all clients
+    // Connect all clients and update cloud status
     for (name, client) in &clients {
         let mut client = client.lock().await;
         match client.connect().await {
-            Ok(_) => info!("Connected to network: {}", name),
-            Err(e) => error!("Failed to connect to network '{}': {}", name, e),
+            Ok(_) => {
+                info!("Connected to network: {}", name);
+                // Update cloud status
+                if let Err(e) = cloud_status_manager.update_connection_status(name, true) {
+                    error!("Failed to update cloud status for '{}': {}", name, e);
+                }
+            }
+            Err(e) => {
+                error!("Failed to connect to network '{}': {}", name, e);
+                // Update cloud status
+                if let Err(e) = cloud_status_manager.update_connection_status(name, false) {
+                    error!("Failed to update cloud status for '{}': {}", name, e);
+                }
+            }
         }
     }
 
@@ -162,8 +186,20 @@ async fn main() -> Result<()> {
 
             // Send data using new client interface
             match client.send(&formatted_data).await {
-                Ok(_) => debug!("Data sent to network: {}", name),
-                Err(e) => error!("Failed to send data to network '{}': {}", name, e),
+                Ok(_) => {
+                    debug!("Data sent to network: {}", name);
+                    // Record successful send
+                    if let Err(e) = cloud_status_manager.record_success(name) {
+                        error!("Failed to record success for '{}': {}", name, e);
+                    }
+                }
+                Err(e) => {
+                    error!("Failed to send data to network '{}': {}", name, e);
+                    // Record failed send
+                    if let Err(e) = cloud_status_manager.record_failure(name, &e.to_string()) {
+                        error!("Failed to record failure for '{}': {}", name, e);
+                    }
+                }
             }
         }
     }

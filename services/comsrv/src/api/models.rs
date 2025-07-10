@@ -40,9 +40,9 @@ pub struct ChannelStatus {
     pub statistics: HashMap<String, serde_json::Value>,
 }
 
-impl From<crate::core::protocols::common::combase::ChannelStatus> for ChannelStatus {
+impl From<crate::core::framework::ChannelStatus> for ChannelStatus {
     /// Convert from ComBase ChannelStatus to API ChannelStatus
-    fn from(status: crate::core::protocols::common::combase::ChannelStatus) -> Self {
+    fn from(status: crate::core::framework::ChannelStatus) -> Self {
         Self {
             id: status.id.parse().unwrap_or(0), // Convert string ID to u16
             name: "Unknown".to_string(), // ComBase doesn't provide name, will be filled by handler
@@ -87,9 +87,9 @@ pub struct PointValue {
     pub description: String,
 }
 
-impl From<crate::core::protocols::common::data_types::PointData> for PointValue {
+impl From<crate::core::framework::types::PointData> for PointValue {
     /// Convert from protocols common PointData to API PointValue
-    fn from(point: crate::core::protocols::common::data_types::PointData) -> Self {
+    fn from(point: crate::core::framework::types::PointData) -> Self {
         Self {
             id: point.id,
             name: point.name,
@@ -742,8 +742,7 @@ mod tests {
 
     #[test]
     fn test_combase_channel_status_conversion() {
-        let combase_status =
-            crate::core::protocols::common::combase::ChannelStatus::new("test_001");
+        let combase_status = crate::core::framework::ChannelStatus::new("test_001");
         let api_status = ChannelStatus::from(combase_status);
 
         assert_eq!(api_status.id, 0); // Updated: test_001 cannot parse as u16, so returns 0
@@ -757,7 +756,7 @@ mod tests {
 
     #[test]
     fn test_combase_point_data_conversion() {
-        let combase_point = crate::core::protocols::common::data_types::PointData {
+        let combase_point = crate::core::framework::types::PointData {
             id: "1".to_string(),
             name: "Temperature".to_string(),
             value: "25.5".to_string(),

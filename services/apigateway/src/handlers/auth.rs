@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::auth::{jwt::JwtManager, UserInfo};
 use crate::error::{ApiError, ApiResult};
-use crate::redis_client::RedisClient;
+use crate::redis_client::{RedisClient, RedisClientExt};
 use crate::response::success_response;
 
 #[derive(Deserialize)]
@@ -42,7 +42,7 @@ pub async fn login(
     let user_info = match req.username.as_str() {
         "admin" => {
             if req.password != "admin123" {
-                return Err(ApiError::Unauthorized("Invalid credentials".to_string()));
+                return Err(ApiError::BadRequest("Invalid credentials".to_string()));
             }
             UserInfo {
                 id: "1".to_string(),
@@ -52,7 +52,7 @@ pub async fn login(
         }
         "operator" => {
             if req.password != "operator123" {
-                return Err(ApiError::Unauthorized("Invalid credentials".to_string()));
+                return Err(ApiError::BadRequest("Invalid credentials".to_string()));
             }
             UserInfo {
                 id: "2".to_string(),
@@ -62,7 +62,7 @@ pub async fn login(
         }
         "engineer" => {
             if req.password != "engineer123" {
-                return Err(ApiError::Unauthorized("Invalid credentials".to_string()));
+                return Err(ApiError::BadRequest("Invalid credentials".to_string()));
             }
             UserInfo {
                 id: "3".to_string(),
@@ -72,7 +72,7 @@ pub async fn login(
         }
         "viewer" => {
             if req.password != "viewer123" {
-                return Err(ApiError::Unauthorized("Invalid credentials".to_string()));
+                return Err(ApiError::BadRequest("Invalid credentials".to_string()));
             }
             UserInfo {
                 id: "4".to_string(),
@@ -80,7 +80,7 @@ pub async fn login(
                 roles: vec!["viewer".to_string()],
             }
         }
-        _ => return Err(ApiError::Unauthorized("Invalid credentials".to_string())),
+        _ => return Err(ApiError::BadRequest("Invalid credentials".to_string())),
     };
 
     // Generate tokens
@@ -90,7 +90,7 @@ pub async fn login(
     // Store refresh token in Redis (optional, for token revocation)
     let key = format!("refresh_token:{}", user_info.id);
     redis
-        .set_with_expiry(&key, &refresh_token, 30 * 24 * 3600)
+        .set_ex_api(&key, &refresh_token, 30 * 24 * 3600)
         .await?;
 
     let response = LoginResponse {
@@ -113,10 +113,10 @@ pub async fn refresh_token(
 
     // Check if refresh token exists in Redis (optional)
     let key = format!("refresh_token:{}", claims.sub);
-    let stored_token: Option<String> = redis.get(&key).await?;
+    let stored_token: Option<String> = redis.get_api(&key).await?;
 
     if stored_token.is_none() || stored_token.unwrap() != req.refresh_token {
-        return Err(ApiError::Unauthorized("Invalid refresh token".to_string()));
+        return Err(ApiError::InvalidToken("Invalid refresh token".to_string()));
     }
 
     // Generate new access token
@@ -143,7 +143,7 @@ pub async fn logout(
 ) -> ApiResult<HttpResponse> {
     // Remove refresh token from Redis
     let key = format!("refresh_token:{}", claims.sub);
-    redis.delete(&key).await?;
+    redis.del_api(&key).await?;
 
     Ok(success_response(serde_json::json!({
         "message": "Logged out successfully"

@@ -19,6 +19,8 @@ pub enum NetSrvError {
     Io(String),
     /// Data errors
     Data(String),
+    /// Network errors
+    Network(String),
 }
 
 impl fmt::Display for NetSrvError {
@@ -32,6 +34,7 @@ impl fmt::Display for NetSrvError {
             NetSrvError::Http(msg) => write!(f, "HTTP error: {}", msg),
             NetSrvError::Io(msg) => write!(f, "I/O error: {}", msg),
             NetSrvError::Data(msg) => write!(f, "Data error: {}", msg),
+            NetSrvError::Network(msg) => write!(f, "Network error: {}", msg),
         }
     }
 }
@@ -41,12 +44,7 @@ impl std::error::Error for NetSrvError {}
 /// Result type alias for convenience
 pub type Result<T> = std::result::Result<T, NetSrvError>;
 
-// Convert from Redis error
-impl From<redis::RedisError> for NetSrvError {
-    fn from(err: redis::RedisError) -> Self {
-        NetSrvError::Redis(err.to_string())
-    }
-}
+// Redis error conversion removed - using voltage-common
 
 // Convert from Config error
 impl From<config::ConfigError> for NetSrvError {

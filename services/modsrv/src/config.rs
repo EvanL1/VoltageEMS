@@ -158,6 +158,16 @@ pub struct StorageConfig {
     pub sync_interval_secs: u64,
 }
 
+impl Default for StorageConfig {
+    fn default() -> Self {
+        Self {
+            use_redis: default_use_redis(),
+            storage_mode: default_storage_mode(),
+            sync_interval_secs: default_sync_interval_secs(),
+        }
+    }
+}
+
 /// Configuration for the Model Service
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct Config {
@@ -565,7 +575,7 @@ pub async fn load_config() -> Result<Config> {
             std::env::var("MODSRV_CONFIG_FILE")
                 .unwrap_or_else(|_| "config/modsrv.yaml".to_string()),
         )
-        .with_config_center(std::env::var("CONFIG_CENTER_URL").ok())
+        .with_config_center(std::env::var("CONFIG_CENTER_URL").ok().unwrap_or_default())
         .with_env_prefix("MODSRV_");
 
     loader.load().await

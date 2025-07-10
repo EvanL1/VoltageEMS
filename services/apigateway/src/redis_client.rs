@@ -1,99 +1,101 @@
-use crate::error::ApiResult;
-use redis::{aio::ConnectionManager, AsyncCommands};
-use std::sync::Arc;
-use tokio::sync::Mutex;
+use crate::error::{ApiGatewayError, ApiResult};
 
-pub struct RedisClient {
-    connection: Arc<Mutex<ConnectionManager>>,
+// Re-export RedisClient from voltage-common
+pub use voltage_common::redis::RedisClient;
+
+// Extension trait to adapt voltage_common::Result to ApiResult
+pub trait RedisClientExt {
+    async fn get_api(&self, key: &str) -> ApiResult<Option<String>>;
+    async fn set_api(&self, key: &str, value: &str) -> ApiResult<()>;
+    async fn set_ex_api(&self, key: &str, value: &str, seconds: u64) -> ApiResult<()>;
+    async fn del_api(&self, key: &str) -> ApiResult<()>;
+    async fn exists_api(&self, key: &str) -> ApiResult<bool>;
+    async fn expire_api(&self, key: &str, seconds: i64) -> ApiResult<bool>;
+    async fn keys_api(&self, pattern: &str) -> ApiResult<Vec<String>>;
+    async fn hget_api(&self, key: &str, field: &str) -> ApiResult<Option<String>>;
+    async fn hset_api(&self, key: &str, field: &str, value: &str) -> ApiResult<()>;
+    async fn hgetall_api(&self, key: &str) -> ApiResult<Vec<(String, String)>>;
+    async fn ping_api(&self) -> ApiResult<bool>;
+    async fn info_api(&self) -> ApiResult<String>;
 }
 
-impl RedisClient {
-    pub async fn new(redis_url: &str) -> ApiResult<Self> {
-        let client = redis::Client::open(redis_url)?;
-        let connection = ConnectionManager::new(client).await?;
-
-        Ok(Self {
-            connection: Arc::new(Mutex::new(connection)),
-        })
+impl RedisClientExt for RedisClient {
+    async fn get_api(&self, key: &str) -> ApiResult<Option<String>> {
+        self.get(key)
+            .await
+            .map_err(|e| ApiGatewayError::RedisError(e.to_string()))
     }
 
-    pub async fn get(&self, key: &str) -> ApiResult<Option<String>> {
-        let mut conn = self.connection.lock().await;
-        let value: Option<String> = conn.get(key).await?;
-        Ok(value)
+    async fn set_api(&self, key: &str, value: &str) -> ApiResult<()> {
+        self.set(key, value)
+            .await
+            .map_err(|e| ApiGatewayError::RedisError(e.to_string()))
     }
 
-    pub async fn set(&self, key: &str, value: &str) -> ApiResult<()> {
-        let mut conn = self.connection.lock().await;
-        let _: () = conn.set(key, value).await?;
-        Ok(())
+    async fn set_ex_api(&self, key: &str, value: &str, seconds: u64) -> ApiResult<()> {
+        self.set_ex(key, value, seconds)
+            .await
+            .map_err(|e| ApiGatewayError::RedisError(e.to_string()))
     }
 
-    pub async fn set_ex(&self, key: &str, value: &str, seconds: u64) -> ApiResult<()> {
-        let mut conn = self.connection.lock().await;
-        let _: () = conn.set_ex(key, value, seconds as usize).await?;
-        Ok(())
+    async fn del_api(&self, key: &str) -> ApiResult<()> {
+        self.del(key)
+            .await
+            .map_err(|e| ApiGatewayError::RedisError(e.to_string()))
     }
 
-    pub async fn set_with_expiry(&self, key: &str, value: &str, seconds: u64) -> ApiResult<()> {
-        self.set_ex(key, value, seconds).await
+    async fn exists_api(&self, key: &str) -> ApiResult<bool> {
+        self.exists(key)
+            .await
+            .map_err(|e| ApiGatewayError::RedisError(e.to_string()))
     }
 
-    pub async fn del(&self, key: &str) -> ApiResult<()> {
-        let mut conn = self.connection.lock().await;
-        let _: () = conn.del(key).await?;
-        Ok(())
+    async fn expire_api(&self, key: &str, seconds: i64) -> ApiResult<bool> {
+        self.expire(key, seconds)
+            .await
+            .map_err(|e| ApiGatewayError::RedisError(e.to_string()))
     }
 
-    pub async fn delete(&self, key: &str) -> ApiResult<()> {
-        self.del(key).await
+    async fn keys_api(&self, pattern: &str) -> ApiResult<Vec<String>> {
+        self.keys(pattern)
+            .await
+            .map_err(|e| ApiGatewayError::RedisError(e.to_string()))
     }
 
-    pub async fn exists(&self, key: &str) -> ApiResult<bool> {
-        let mut conn = self.connection.lock().await;
-        let exists: bool = conn.exists(key).await?;
-        Ok(exists)
+    async fn hget_api(&self, key: &str, field: &str) -> ApiResult<Option<String>> {
+        self.hget(key, field)
+            .await
+            .map_err(|e| ApiGatewayError::RedisError(e.to_string()))
     }
 
-    pub async fn expire(&self, key: &str, seconds: i64) -> ApiResult<bool> {
-        let mut conn = self.connection.lock().await;
-        let result: bool = conn.expire(key, seconds as usize).await?;
-        Ok(result)
+    async fn hset_api(&self, key: &str, field: &str, value: &str) -> ApiResult<()> {
+        self.hset(key, field, value)
+            .await
+            .map_err(|e| ApiGatewayError::RedisError(e.to_string()))
     }
 
-    pub async fn keys(&self, pattern: &str) -> ApiResult<Vec<String>> {
-        let mut conn = self.connection.lock().await;
-        let keys: Vec<String> = conn.keys(pattern).await?;
-        Ok(keys)
+    async fn hgetall_api(&self, key: &str) -> ApiResult<Vec<(String, String)>> {
+        self.hgetall(key)
+            .await
+            .map_err(|e| ApiGatewayError::RedisError(e.to_string()))
     }
 
-    pub async fn hget(&self, key: &str, field: &str) -> ApiResult<Option<String>> {
-        let mut conn = self.connection.lock().await;
-        let value: Option<String> = conn.hget(key, field).await?;
-        Ok(value)
+    async fn ping_api(&self) -> ApiResult<bool> {
+        self.ping()
+            .await
+            .map_err(|e| ApiGatewayError::RedisError(e.to_string()))
     }
 
-    pub async fn hset(&self, key: &str, field: &str, value: &str) -> ApiResult<()> {
-        let mut conn = self.connection.lock().await;
-        let _: () = conn.hset(key, field, value).await?;
-        Ok(())
+    async fn info_api(&self) -> ApiResult<String> {
+        self.info()
+            .await
+            .map_err(|e| ApiGatewayError::RedisError(e.to_string()))
     }
+}
 
-    pub async fn hgetall(&self, key: &str) -> ApiResult<Vec<(String, String)>> {
-        let mut conn = self.connection.lock().await;
-        let result: Vec<(String, String)> = conn.hgetall(key).await?;
-        Ok(result)
-    }
-
-    pub async fn ping(&self) -> ApiResult<bool> {
-        let mut conn = self.connection.lock().await;
-        let pong: String = redis::cmd("PING").query_async(&mut *conn).await?;
-        Ok(pong == "PONG")
-    }
-
-    pub async fn info(&self) -> ApiResult<String> {
-        let mut conn = self.connection.lock().await;
-        let info: String = redis::cmd("INFO").query_async(&mut *conn).await?;
-        Ok(info)
-    }
+// Backward compatibility aliases
+pub async fn new_redis_client(redis_url: &str) -> ApiResult<RedisClient> {
+    RedisClient::new(redis_url)
+        .await
+        .map_err(|e| ApiGatewayError::RedisError(e.to_string()))
 }

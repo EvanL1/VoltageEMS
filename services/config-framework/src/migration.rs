@@ -316,7 +316,7 @@ impl ValidationResults {
 #[cfg(test)]
 mod tests {
     use super::transformers::*;
-    use super::*;
+    use std::collections::HashMap;
 
     #[test]
     fn test_env_to_base_config() {

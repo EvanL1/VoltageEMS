@@ -1,14 +1,14 @@
 use crate::config::RedisConfig;
 use crate::error::{HisSrvError, Result};
 use crate::storage::{DataPoint, DataValue, StorageManager};
-use std::sync::Arc;
-use tokio::sync::RwLock;
-use redis::Client;
+use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::sync::Arc;
 use tokio::sync::mpsc;
-use chrono::Utc;
+use tokio::sync::RwLock;
 use uuid::Uuid;
+use voltage_common::redis::{RedisClient, RedisConfig as CommonRedisConfig};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PubSubMessage {
@@ -39,17 +39,14 @@ pub enum MessageData {
 }
 
 pub struct RedisSubscriber {
-    client: Option<Client>,
+    client: Option<RedisClient>,
     config: RedisConfig,
     message_sender: mpsc::UnboundedSender<PubSubMessage>,
     connected: bool,
 }
 
 impl RedisSubscriber {
-    pub fn new(
-        config: RedisConfig,
-        message_sender: mpsc::UnboundedSender<PubSubMessage>,
-    ) -> Self {
+    pub fn new(config: RedisConfig, message_sender: mpsc::UnboundedSender<PubSubMessage>) -> Self {
         Self {
             client: None,
             config,
@@ -59,21 +56,52 @@ impl RedisSubscriber {
     }
 
     pub async fn connect(&mut self) -> Result<()> {
-        let redis_url = self.get_redis_url();
-        let client = Client::open(redis_url)?;
+        let conn_config = &self.config.connection;
+        let redis_config = if !conn_config.socket.is_empty() {
+            CommonRedisConfig {
+                host: String::new(),
+                port: 0,
+                password: if conn_config.password.is_empty() {
+                    None
+                } else {
+                    Some(conn_config.password.clone())
+                },
+                socket: Some(conn_config.socket.clone()),
+                database: conn_config.database,
+                connection_timeout: 10,
+                max_retries: 3,
+            }
+        } else {
+            CommonRedisConfig {
+                host: conn_config.host.clone(),
+                port: conn_config.port,
+                password: if conn_config.password.is_empty() {
+                    None
+                } else {
+                    Some(conn_config.password.clone())
+                },
+                socket: None,
+                database: conn_config.database,
+                connection_timeout: 10,
+                max_retries: 3,
+            }
+        };
 
-        // Test connection
-        // Test connection
-        match client.get_connection() {
-            Ok(mut conn) => {
-                let ping_result: String = redis::cmd("PING").query(&mut conn)?;
-                if ping_result != "PONG" {
-                    return Err(HisSrvError::ConnectionError("Redis subscriber connection test failed".to_string()));
-                }
-            }
-            Err(e) => {
-                return Err(HisSrvError::RedisError(e));
-            }
+        let url = redis_config.to_url();
+        let client = RedisClient::new(&url).await.map_err(|e| {
+            HisSrvError::ConnectionError(format!("Failed to create Redis client: {}", e))
+        })?;
+
+        // Test connection with PING
+        let ping_result = client
+            .ping()
+            .await
+            .map_err(|e| HisSrvError::ConnectionError(format!("Redis ping failed: {}", e)))?;
+
+        if ping_result != "PONG" {
+            return Err(HisSrvError::ConnectionError(
+                "Redis subscriber connection test failed".to_string(),
+            ));
         }
 
         tracing::info!("Redis subscriber connected successfully");
@@ -85,67 +113,69 @@ impl RedisSubscriber {
 
     pub async fn start_listening(&mut self) -> Result<()> {
         if !self.connected || self.client.is_none() {
-            return Err(HisSrvError::ConnectionError("Redis subscriber not connected".to_string()));
+            return Err(HisSrvError::ConnectionError(
+                "Redis subscriber not connected".to_string(),
+            ));
         }
 
         let client = self.client.as_ref().unwrap();
-        let mut conn = client.get_connection()?;
-        let mut pubsub = conn.as_pubsub();
 
-        // Subscribe to configured channels
+        // Get PubSub handle from voltage-common
+        let mut pubsub = client
+            .subscribe(&[])
+            .await
+            .map_err(|e| HisSrvError::RedisError(format!("Failed to create pubsub: {}", e)))?;
+
+        // Subscribe to configured channels using redis PubSub directly
+        use redis::AsyncCommands;
         for channel in &self.config.subscription.channels {
             tracing::info!("Subscribing to Redis channel: {}", channel);
             if channel.contains('*') {
-                pubsub.psubscribe(channel)?;
+                pubsub.psubscribe(channel).await.map_err(|e| {
+                    HisSrvError::RedisError(format!("Failed to pattern subscribe: {}", e))
+                })?;
             } else {
-                pubsub.subscribe(channel)?;
+                pubsub
+                    .subscribe(channel)
+                    .await
+                    .map_err(|e| HisSrvError::RedisError(format!("Failed to subscribe: {}", e)))?;
             }
         }
 
         tracing::info!("Starting Redis subscription listener");
 
-        // Listen for messages in a loop
-        loop {
-            match pubsub.get_message() {
-                Ok(msg) => {
-                    let channel_name = msg.get_channel_name();
-                    let payload: String = msg.get_payload()?;
+        // Use redis pubsub stream to get messages
+        use futures_util::StreamExt;
+        let mut pubsub_stream = pubsub.into_on_message();
 
+        while let Some(msg) = pubsub_stream.next().await {
+            let channel_name = msg.get_channel_name();
+            match msg.get_payload::<String>() {
+                Ok(payload) => {
                     tracing::debug!("Received message on channel {}: {}", channel_name, payload);
 
-                    match self.parse_message(channel_name, &payload) {
+                    match self.parse_message(&channel_name, &payload) {
                         Ok(pubsub_message) => {
                             if let Err(e) = self.message_sender.send(pubsub_message) {
                                 tracing::error!("Failed to send message to processor: {}", e);
                             }
                         }
                         Err(e) => {
-                            tracing::warn!("Failed to parse message from channel {}: {}", channel_name, e);
+                            tracing::warn!(
+                                "Failed to parse message from channel {}: {}",
+                                channel_name,
+                                e
+                            );
                         }
                     }
                 }
                 Err(e) => {
-                    tracing::error!("Error receiving message from Redis: {}", e);
-                    tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+                    tracing::error!("Error parsing message payload from Redis: {}", e);
                 }
             }
         }
-    }
 
-    fn get_redis_url(&self) -> String {
-        let conn_config = &self.config.connection;
-        if !conn_config.socket.is_empty() {
-            format!("unix://{}", conn_config.socket)
-        } else {
-            if conn_config.password.is_empty() {
-                format!("redis://{}:{}/{}", conn_config.host, conn_config.port, conn_config.database)
-            } else {
-                format!(
-                    "redis://:{}@{}:{}/{}",
-                    conn_config.password, conn_config.host, conn_config.port, conn_config.database
-                )
-            }
-        }
+        Ok(())
     }
 
     fn parse_message(&self, channel: &str, payload: &str) -> Result<PubSubMessage> {
@@ -172,8 +202,12 @@ impl RedisSubscriber {
             }
         } else if channel.starts_with("events:") {
             MessageData::EventNotification {
-                event_type: channel.strip_prefix("events:").unwrap_or(channel).to_string(),
-                event_data: serde_json::from_str(payload).unwrap_or(serde_json::Value::String(payload.to_string())),
+                event_type: channel
+                    .strip_prefix("events:")
+                    .unwrap_or(channel)
+                    .to_string(),
+                event_data: serde_json::from_str(payload)
+                    .unwrap_or(serde_json::Value::String(payload.to_string())),
             }
         } else {
             MessageData::SystemStatus {
@@ -240,17 +274,30 @@ impl MessageProcessor {
     }
 
     async fn process_message(&mut self, message: PubSubMessage) -> Result<()> {
-        tracing::debug!("Processing message: {} from channel {}", message.id, message.channel);
+        tracing::debug!(
+            "Processing message: {} from channel {}",
+            message.id,
+            message.channel
+        );
 
         match &message.data {
             MessageData::DataUpdate { key, value, tags } => {
                 self.handle_data_update(&message, key, value, tags).await?;
             }
-            MessageData::EventNotification { event_type, event_data } => {
-                self.handle_event_notification(&message, event_type, event_data).await?;
+            MessageData::EventNotification {
+                event_type,
+                event_data,
+            } => {
+                self.handle_event_notification(&message, event_type, event_data)
+                    .await?;
             }
-            MessageData::SystemStatus { service, status, details } => {
-                self.handle_system_status(&message, service, status, details).await?;
+            MessageData::SystemStatus {
+                service,
+                status,
+                details,
+            } => {
+                self.handle_system_status(&message, service, status, details)
+                    .await?;
             }
         }
 
@@ -274,17 +321,27 @@ impl MessageProcessor {
         };
 
         // Add message source and channel as metadata
-        data_point.metadata.insert("source".to_string(), message.source.clone());
-        data_point.metadata.insert("channel".to_string(), message.channel.clone());
-        data_point.metadata.insert("message_id".to_string(), message.id.clone());
+        data_point
+            .metadata
+            .insert("source".to_string(), message.source.clone());
+        data_point
+            .metadata
+            .insert("channel".to_string(), message.channel.clone());
+        data_point
+            .metadata
+            .insert("message_id".to_string(), message.id.clone());
 
         // Determine storage backend
         let backend_name = self.determine_storage_backend(key);
-        
+
         let mut storage_manager = self.storage_manager.write().await;
         if let Some(backend) = storage_manager.get_backend(Some(&backend_name)) {
             backend.store_data_point(&data_point).await?;
-            tracing::debug!("Stored data point for key {} in backend {}", key, backend_name);
+            tracing::debug!(
+                "Stored data point for key {} in backend {}",
+                key,
+                backend_name
+            );
         } else {
             tracing::warn!("No storage backend found for key {}", key);
         }

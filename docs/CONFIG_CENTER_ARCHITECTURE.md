@@ -17,19 +17,19 @@ VoltageEMS 采用配置中心架构来管理微服务配置，实现了配置的
 
 ```
 ┌─────────────────┐
-│   默认配置      │ (最低优先级)
+│   默认配置       │ (最低优先级)
 └────────┬────────┘
          │
 ┌────────▼────────┐
-│  本地配置文件   │ 
+│  本地配置文件     │ 
 └────────┬────────┘
          │
 ┌────────▼────────┐
-│   配置中心      │
+│   配置中心       │
 └────────┬────────┘
          │
 ┌────────▼────────┐
-│   环境变量      │ (最高优先级)
+│   环境变量       │ (最高优先级)
 └─────────────────┘
 ```
 
@@ -76,11 +76,13 @@ monitoring:
 配置中心提供 RESTful API 来管理配置：
 
 #### 获取服务配置
+
 ```
 GET /api/v1/config/{service_name}
 ```
 
 响应示例：
+
 ```json
 {
   "service": {
@@ -95,6 +97,7 @@ GET /api/v1/config/{service_name}
 ```
 
 #### 更新服务配置
+
 ```
 PUT /api/v1/config/{service_name}
 Content-Type: application/json
@@ -105,6 +108,7 @@ Content-Type: application/json
 ```
 
 #### 获取所有服务配置列表
+
 ```
 GET /api/v1/config
 ```
@@ -135,6 +139,7 @@ let config = loader.load().await?;
 - `{SERVICE}_LOG_LEVEL` → `logging.level`
 
 示例：
+
 ```bash
 export MODSRV_REDIS_URL=redis://production:6379
 export MODSRV_API_PORT=8092
@@ -215,21 +220,22 @@ services:
 ### 从 config-framework 迁移
 
 1. **移除依赖**
+
    ```toml
    # 删除
    voltage-config = { path = "../config-framework" }
    ```
-
 2. **更新配置加载代码**
+
    ```rust
    // 旧代码
    let config = voltage_config::load_config()?;
-   
+
    // 新代码
    let config = config::load_config().await?;
    ```
-
 3. **更新配置文件结构**
+
    - 添加 `service` 部分
    - 调整字段名称符合新结构
 
@@ -243,21 +249,22 @@ services:
 ## 最佳实践
 
 1. **配置分离**
+
    - 敏感信息使用环境变量
    - 通用配置使用配置中心
    - 默认值保证服务可启动
-
 2. **配置验证**
+
    - 启动时验证必需配置
    - 提供清晰的错误信息
    - 支持配置检查命令
-
 3. **配置文档**
+
    - 在配置文件中添加注释
    - 记录所有环境变量
    - 提供配置模板
-
 4. **安全考虑**
+
    - 配置中心使用 HTTPS
    - 敏感配置加密存储
    - 访问控制和审计
@@ -267,19 +274,21 @@ services:
 ### 常见问题
 
 1. **配置加载失败**
+
    ```
    Failed to load configuration: ...
    ```
+
    - 检查配置文件路径
    - 验证 YAML/JSON 语法
    - 确认配置中心可访问
-
 2. **环境变量未生效**
+
    - 检查变量名前缀
    - 确认变量已导出
    - 查看启动日志
-
 3. **配置中心连接超时**
+
    - 检查网络连接
    - 验证 CONFIG_CENTER_URL
    - 查看配置中心日志

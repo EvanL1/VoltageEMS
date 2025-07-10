@@ -17,7 +17,7 @@ use crate::api::models::{
     IecMapping, ModbusMapping, PointValue, ProtocolMapping, ServiceStatus, TelemetryPoint,
     TelemetryTableView, WritePointRequest,
 };
-use crate::core::protocols::common::combase::protocol_factory::ProtocolFactory;
+use crate::core::framework::factory::ProtocolFactory;
 
 /// OpenAPI documentation
 #[derive(OpenApi)]

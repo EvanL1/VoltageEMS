@@ -3,7 +3,7 @@ use thiserror::Error;
 #[derive(Error, Debug)]
 pub enum HisSrvError {
     #[error("Redis error: {0}")]
-    RedisError(#[from] redis::RedisError),
+    RedisError(String),
 
     #[error("InfluxDB error: {0}")]
     InfluxDBError(#[from] influxdb::Error),
@@ -25,6 +25,9 @@ pub enum HisSrvError {
 
     #[error("Storage error: {0}")]
     StorageError(String),
+
+    #[error("Not found: {0}")]
+    NotFound(String),
 }
 
-pub type Result<T> = std::result::Result<T, HisSrvError>; 
+pub type Result<T> = std::result::Result<T, HisSrvError>;

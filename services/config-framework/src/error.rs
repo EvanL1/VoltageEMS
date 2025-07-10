@@ -37,6 +37,9 @@ pub enum ConfigError {
 
     #[error("Other error: {0}")]
     Other(String),
+
+    #[error("Custom error: {0}")]
+    Custom(String),
 }
 
 pub type Result<T> = std::result::Result<T, ConfigError>;

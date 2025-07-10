@@ -102,6 +102,9 @@ async fn main() -> std::io::Result<()> {
                             .service(web::scope("/netsrv").service(handlers::netsrv::proxy_handler))
                             .service(
                                 web::scope("/alarmsrv").service(handlers::alarmsrv::proxy_handler),
+                            )
+                            .service(
+                                web::scope("/rulesrv").service(handlers::rulesrv::proxy_handler),
                             ),
                     ),
             )

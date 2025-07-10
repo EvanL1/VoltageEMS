@@ -1,8 +1,8 @@
+use base64::{engine::general_purpose, Engine as _};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use utoipa::ToSchema;
-use base64::{Engine as _, engine::general_purpose};
 
 use crate::storage::{DataPoint, DataValue, QueryFilter, QueryResult, StorageStats};
 
@@ -159,12 +159,10 @@ impl From<ApiDataValue> for DataValue {
             ApiDataValue::Float(f) => DataValue::Float(f),
             ApiDataValue::Boolean(b) => DataValue::Boolean(b),
             ApiDataValue::Json(j) => DataValue::Json(j),
-            ApiDataValue::Binary(b) => {
-                match general_purpose::STANDARD.decode(&b) {
-                    Ok(bytes) => DataValue::Binary(bytes),
-                    Err(_) => DataValue::String(b),
-                }
-            }
+            ApiDataValue::Binary(b) => match general_purpose::STANDARD.decode(&b) {
+                Ok(bytes) => DataValue::Binary(bytes),
+                Err(_) => DataValue::String(b),
+            },
         }
     }
 }

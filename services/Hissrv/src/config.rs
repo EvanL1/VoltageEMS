@@ -1,5 +1,5 @@
 use crate::error::{HisSrvError, Result};
-use clap::{Parser, ArgAction};
+use clap::{ArgAction, Parser};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -18,7 +18,7 @@ pub struct Config {
     pub monitoring: MonitoringConfig,
     pub logging: LoggingConfig,
     pub performance: PerformanceConfig,
-    
+
     // Internal fields
     #[serde(skip)]
     pub config_file: String,
@@ -232,7 +232,12 @@ impl Default for Config {
                 cors: CorsConfig {
                     enabled: true,
                     origins: vec!["*".to_string()],
-                    methods: vec!["GET".to_string(), "POST".to_string(), "PUT".to_string(), "DELETE".to_string()],
+                    methods: vec![
+                        "GET".to_string(),
+                        "POST".to_string(),
+                        "PUT".to_string(),
+                        "DELETE".to_string(),
+                    ],
                 },
             },
             monitoring: MonitoringConfig {
@@ -261,7 +266,12 @@ impl Default for Config {
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
 pub struct Args {
-    #[arg(long, short, help = "Configuration file path", default_value = "hissrv.yaml")]
+    #[arg(
+        long,
+        short,
+        help = "Configuration file path",
+        default_value = "hissrv.yaml"
+    )]
     config: String,
 
     #[arg(long, help = "Service host to bind to")]
@@ -296,13 +306,15 @@ impl Config {
     pub fn new() -> Self {
         Config::default()
     }
-    
+
     /// Load configuration from config center or fall back to local file
     pub async fn load() -> Result<Self> {
         // Check if we should use config center
         if let Ok(_) = std::env::var("CONFIG_CENTER_URL") {
             info!("CONFIG_CENTER_URL found, attempting to load from config center");
-            
+
+            // TODO: Implement config center support
+            /*
             match crate::config_center::ConfigBuilder::new().build() {
                 Ok(client) => {
                     match client.get_config().await {
@@ -319,8 +331,9 @@ impl Config {
                     tracing::warn!("Failed to build config client: {}, falling back to local config", e);
                 }
             }
+            */
         }
-        
+
         // Fall back to loading from args/file
         Self::from_args()
     }
@@ -371,22 +384,25 @@ impl Config {
     }
 
     pub fn load_from_file(path: &str) -> Result<Self> {
-        let content = fs::read_to_string(path)
-            .map_err(|e| HisSrvError::ConfigError(format!("Failed to read config file {}: {}", path, e)))?;
-        
-        let config: Config = serde_yaml::from_str(&content)
-            .map_err(|e| HisSrvError::ConfigError(format!("Failed to parse config file {}: {}", path, e)))?;
-        
+        let content = fs::read_to_string(path).map_err(|e| {
+            HisSrvError::ConfigError(format!("Failed to read config file {}: {}", path, e))
+        })?;
+
+        let config: Config = serde_yaml::from_str(&content).map_err(|e| {
+            HisSrvError::ConfigError(format!("Failed to parse config file {}: {}", path, e))
+        })?;
+
         Ok(config)
     }
 
     pub fn save_to_file(&self, path: &str) -> Result<()> {
         let content = serde_yaml::to_string(self)
             .map_err(|e| HisSrvError::ConfigError(format!("Failed to serialize config: {}", e)))?;
-        
-        fs::write(path, content)
-            .map_err(|e| HisSrvError::ConfigError(format!("Failed to write config file {}: {}", path, e)))?;
-        
+
+        fs::write(path, content).map_err(|e| {
+            HisSrvError::ConfigError(format!("Failed to write config file {}: {}", path, e))
+        })?;
+
         Ok(())
     }
 
@@ -394,9 +410,7 @@ impl Config {
         // Check against specific filter rules
         for rule in &self.data.filters.rules {
             // Convert glob pattern to regex
-            let regex_pattern = rule.pattern
-                .replace("*", ".*")
-                .replace("?", ".");
+            let regex_pattern = rule.pattern.replace("*", ".*").replace("?", ".");
 
             // Check if key matches pattern
             if let Ok(regex) = Regex::new(&regex_pattern) {
@@ -413,9 +427,7 @@ impl Config {
     pub fn get_storage_backend(&self, key: &str) -> String {
         // Check if any rule specifies a storage backend
         for rule in &self.data.filters.rules {
-            let regex_pattern = rule.pattern
-                .replace("*", ".*")
-                .replace("?", ".");
+            let regex_pattern = rule.pattern.replace("*", ".*").replace("?", ".");
 
             if let Ok(regex) = Regex::new(&regex_pattern) {
                 if regex.is_match(key) {
@@ -432,14 +444,14 @@ impl Config {
 
     pub fn config_file_changed(&self, last_mod_time: &mut SystemTime) -> Result<bool> {
         let metadata = fs::metadata(&self.config_file)?;
-        
+
         if let Ok(modified) = metadata.modified() {
             if modified > *last_mod_time {
                 *last_mod_time = modified;
                 return Ok(true);
             }
         }
-        
+
         Ok(false)
     }
-} 
+}

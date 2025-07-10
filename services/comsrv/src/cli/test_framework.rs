@@ -9,8 +9,8 @@ use std::collections::HashMap;
 use colored::*;
 use async_trait::async_trait;
 
-use crate::core::plugins::PluginRegistry;
-use crate::core::protocols::common::traits::ComBase;
+use crate::plugins::PluginRegistry;
+use crate::core::framework::traits::ComBase;
 use crate::utils::{Result, Error};
 
 /// Test framework for protocol plugins

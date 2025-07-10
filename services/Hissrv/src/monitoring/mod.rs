@@ -69,12 +69,12 @@ impl MetricsCollector {
 
     pub async fn record_message_processed(&self) {
         use std::sync::atomic::Ordering;
-        
+
         self.total_messages.fetch_add(1, Ordering::Relaxed);
-        
+
         let mut timestamps = self.message_timestamps.write().await;
         let now = Instant::now();
-        
+
         // Keep only timestamps from the last minute
         timestamps.retain(|&ts| now.duration_since(ts) < Duration::from_secs(60));
         timestamps.push(now);
@@ -82,12 +82,12 @@ impl MetricsCollector {
 
     pub async fn record_api_request(&self) {
         use std::sync::atomic::Ordering;
-        
+
         self.total_api_requests.fetch_add(1, Ordering::Relaxed);
-        
+
         let mut timestamps = self.api_timestamps.write().await;
         let now = Instant::now();
-        
+
         // Keep only timestamps from the last minute
         timestamps.retain(|&ts| now.duration_since(ts) < Duration::from_secs(60));
         timestamps.push(now);
@@ -95,7 +95,7 @@ impl MetricsCollector {
 
     pub async fn get_metrics(&self, storage_manager: &StorageManager) -> Metrics {
         use std::sync::atomic::Ordering;
-        
+
         let uptime = self.start_time.elapsed().as_secs();
         let total_messages = self.total_messages.load(Ordering::Relaxed);
         let total_api_requests = self.total_api_requests.load(Ordering::Relaxed);
@@ -103,7 +103,7 @@ impl MetricsCollector {
         // Calculate rates based on recent activity
         let message_timestamps = self.message_timestamps.read().await;
         let api_timestamps = self.api_timestamps.read().await;
-        
+
         let messages_per_second = message_timestamps.len() as f64 / 60.0;
         let api_requests_per_second = api_timestamps.len() as f64 / 60.0;
 
@@ -131,20 +131,23 @@ impl MetricsCollector {
         (0, 0.0)
     }
 
-    async fn collect_storage_metrics(&self, storage_manager: &StorageManager) -> HashMap<String, StorageBackendMetrics> {
+    async fn collect_storage_metrics(
+        &self,
+        storage_manager: &StorageManager,
+    ) -> HashMap<String, StorageBackendMetrics> {
         let mut metrics = HashMap::new();
 
         let all_stats = storage_manager.get_all_statistics().await;
-        
+
         for (backend_name, stats) in all_stats {
             let backend_metrics = StorageBackendMetrics {
                 connection_status: stats.connection_status,
-                total_operations: 0, // TODO: Implement operation counting
+                total_operations: 0,        // TODO: Implement operation counting
                 operations_per_second: 0.0, // TODO: Implement operation rate tracking
                 last_operation: stats.last_write_time.or(stats.last_read_time),
                 error_count: 0, // TODO: Implement error counting
             };
-            
+
             metrics.insert(backend_name, backend_metrics);
         }
 

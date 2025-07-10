@@ -3,6 +3,7 @@
 //! This module provides a TCP-based transport implementation that abstracts
 //! network communication details from protocol logic.
 
+use crate::utils::hex::format_hex_pretty;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -12,7 +13,6 @@ use tokio::net::TcpStream;
 use tokio::sync::RwLock;
 use tokio::time::timeout;
 use tracing::{debug, error, info, warn};
-use crate::utils::hex::format_hex_pretty;
 
 use super::traits::{
     ConnectionState, Transport, TransportBuilder, TransportConfig, TransportError, TransportStats,
@@ -499,6 +499,6 @@ mod tests {
         assert_eq!(config.port, 502);
 
         let _transport = builder.build(config).await;
-        assert!(transport.is_ok());
+        assert!(_transport.is_ok());
     }
 }

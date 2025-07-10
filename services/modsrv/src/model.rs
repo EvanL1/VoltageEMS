@@ -1,6 +1,5 @@
 use crate::error::{ModelSrvError, Result};
 use crate::redis_handler::RedisConnection;
-use crate::storage::DataStore;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -115,17 +114,17 @@ impl ModelEngine {
         }
     }
 
-    pub fn load_models<T: DataStore>(&mut self, store: &T, pattern: &str) -> Result<()> {
+    pub fn load_models(&mut self, redis_conn: &mut RedisConnection, pattern: &str) -> Result<()> {
         // Clear existing models
         self.models.clear();
         self.actions.clear();
 
         // Get all model configuration keys
-        let model_keys = store.get_keys(pattern)?;
+        let model_keys = redis_conn.get_keys(pattern)?;
         info!("Found {} model configurations", model_keys.len());
 
         for key in model_keys {
-            match self.load_model_from_store(store, &key) {
+            match self.load_model_from_store(redis_conn, &key) {
                 Ok((model, actions)) => {
                     if model.enabled {
                         info!("Loaded model: {} ({})", model.name, model.id);
@@ -145,18 +144,18 @@ impl ModelEngine {
         Ok(())
     }
 
-    fn load_model_from_store<T: DataStore>(
+    fn load_model_from_store(
         &self,
-        store: &T,
+        redis_conn: &mut RedisConnection,
         key: &str,
     ) -> Result<(ModelDefinition, Vec<ControlAction>)> {
         // Try to load the model from hash table
-        let model_hash = match store.get_hash(key) {
+        let model_hash = match redis_conn.get_hash(key) {
             Ok(hash) => hash,
             Err(e) => {
                 debug!("Failed to load model as hash, trying string format: {}", e);
                 // If hash table loading fails, try old string format
-                let model_json = store.get_string(key)?;
+                let model_json = redis_conn.get_string(key)?;
 
                 // Try to parse as model with control actions
                 let model_with_actions = serde_json::from_str::<ModelWithActions>(&model_json);
@@ -263,20 +262,20 @@ impl ModelEngine {
         Ok((model, actions))
     }
 
-    pub fn execute_models<T: DataStore>(&self, store: &T) -> Result<()> {
+    pub fn execute_models(&self, redis_conn: &mut RedisConnection) -> Result<()> {
         for (id, model) in &self.models {
             if !model.enabled {
                 debug!("Skipping disabled model: {}", id);
                 continue;
             }
 
-            match self.execute_model(store, model) {
+            match self.execute_model(redis_conn, model) {
                 Ok(_) => {
                     debug!("Successfully executed model: {}", id);
 
                     // Check if control actions need to be triggered after model execution
                     if let Some(_actions) = self.actions.get(id) {
-                        self.check_and_execute_actions(store, id)?;
+                        self.check_and_execute_actions(redis_conn, id)?;
                     }
                 }
                 Err(e) => {
@@ -288,13 +287,17 @@ impl ModelEngine {
         Ok(())
     }
 
-    fn execute_model<T: DataStore>(&self, store: &T, model: &ModelDefinition) -> Result<()> {
+    fn execute_model(
+        &self,
+        redis_conn: &mut RedisConnection,
+        model: &ModelDefinition,
+    ) -> Result<()> {
         // Collect input data based on mappings
         let mut model_inputs: HashMap<String, String> = HashMap::new();
 
         for mapping in &model.input_mappings {
             // Get the source data
-            if let Ok(value) = store.get_string(&mapping.source_key) {
+            if let Ok(value) = redis_conn.get_string(&mapping.source_key) {
                 let transformed_value = self.apply_transform(value, &mapping.transform)?;
                 model_inputs.insert(mapping.source_field.clone(), transformed_value);
             } else {
@@ -312,11 +315,11 @@ impl ModelEngine {
         let output_json = serde_json::to_string(&model_outputs)
             .map_err(|e| ModelSrvError::JsonError(e.to_string()))?;
 
-        store.set_string(&model.output_key, &output_json)?;
+        redis_conn.set_string(&model.output_key, &output_json)?;
 
         // Check and execute control actions
         if let Some(_actions) = self.actions.get(&format!("model:config:{}", model.id)) {
-            if let Err(e) = self.check_and_execute_actions(store, &model.id) {
+            if let Err(e) = self.check_and_execute_actions(redis_conn, &model.id) {
                 error!("Failed to execute actions for model {}: {}", model.id, e);
             }
         }
@@ -381,9 +384,13 @@ impl ModelEngine {
     }
 
     /// Check and execute model actions
-    pub fn check_and_execute_actions<T: DataStore>(&self, store: &T, model_id: &str) -> Result<()> {
+    pub fn check_and_execute_actions(
+        &self,
+        redis_conn: &mut RedisConnection,
+        model_id: &str,
+    ) -> Result<()> {
         let model_key = format!("{}model:config:{}", self.key_prefix, model_id);
-        let model_json = store.get_string(&model_key)?;
+        let model_json = redis_conn.get_string(&model_key)?;
 
         // Try to parse as model with control actions
         let model_with_actions = serde_json::from_str::<ModelWithActions>(&model_json);
@@ -405,7 +412,7 @@ impl ModelEngine {
 
         // Get model output
         let output_key = &model.output_key;
-        let output_json = match store.get_string(output_key) {
+        let output_json = match redis_conn.get_string(output_key) {
             Ok(json) => json,
             Err(_) => {
                 debug!("No output found for model {}", model_id);
@@ -517,9 +524,9 @@ impl ModelEngine {
     }
 
     /// Send remote control command
-    pub fn send_remote_control<T: DataStore>(
+    pub fn send_remote_control(
         &self,
-        _store: &T,
+        _redis_conn: &mut RedisConnection,
         channel: &str,
         point: &str,
         value: bool,
@@ -534,9 +541,9 @@ impl ModelEngine {
     }
 
     /// Send remote adjustment command
-    pub fn send_remote_adjust<T: DataStore>(
+    pub fn send_remote_adjust(
         &self,
-        _store: &T,
+        _redis_conn: &mut RedisConnection,
         channel: &str,
         point: &str,
         value: f64,
@@ -551,9 +558,9 @@ impl ModelEngine {
     }
 
     /// Get command status
-    pub fn get_command_status<T: DataStore>(
+    pub fn get_command_status(
         &self,
-        _store: &T,
+        _redis_conn: &mut RedisConnection,
         _command_id: &str,
     ) -> Result<CommandStatus> {
         // Simplified implementation, always return completed
@@ -561,7 +568,11 @@ impl ModelEngine {
     }
 
     /// Cancel command
-    pub fn cancel_command<T: DataStore>(&self, _store: &T, command_id: &str) -> Result<()> {
+    pub fn cancel_command(
+        &self,
+        _redis_conn: &mut RedisConnection,
+        command_id: &str,
+    ) -> Result<()> {
         // Simplified implementation, just log the operation
         info!("Cancel command: {}", command_id);
         Ok(())

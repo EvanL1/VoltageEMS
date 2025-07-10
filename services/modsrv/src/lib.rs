@@ -43,7 +43,7 @@
 //! use modsrv::{
 //!     template::{TemplateDefinition, TemplateDataMapping},
 //!     model::{ModelDefinition, DataMapping},
-//!     storage::memory_store::MemoryStore,
+//!     storage::redis_store::RedisStore,
 //!     Result
 //! };
 //! use std::collections::HashMap;
@@ -135,7 +135,7 @@
 /// Configuration management and validation
 ///
 /// Provides configuration structures and file loading for the model service,
-/// including Redis settings, model parameters, and control configurations.
+/// including Redis settings and model parameters.
 pub mod config;
 
 /// Error types and result handling
@@ -154,14 +154,8 @@ pub mod model;
 /// Redis connection and data handling
 ///
 /// Redis client wrapper with connection management, error handling,
-/// and data serialization for integration with Redis-based storage.
+/// and data serialization for integration with Redis.
 pub mod redis_handler;
-
-/// Control operations and automation
-///
-/// Automated control system with condition-based actions, remote control
-/// capabilities, and integration with model outputs for decision making.
-pub mod control;
 
 /// Template management system
 ///
@@ -169,35 +163,11 @@ pub mod control;
 /// with configurable parameters and standardized interfaces.
 pub mod template;
 
-/// Data storage abstraction layer
-///
-/// Multi-backend storage system supporting Redis, memory, and hybrid
-/// storage modes with consistent interfaces and synchronization options.
-pub mod storage;
-
-/// Storage agent for backend management
-///
-/// High-level storage management with automatic backend selection,
-/// connection pooling, and performance optimization.
-pub mod storage_agent;
-
 /// RESTful API endpoints
 ///
 /// Complete HTTP API for model management, template operations,
 /// system monitoring, and real-time data access.
 pub mod api;
-
-/// Rules and conditions system
-///
-/// Rule-based logic system for complex decision making, condition
-/// evaluation, and automated responses to system state changes.
-pub mod rules;
-
-/// Rules execution engine
-///
-/// Runtime engine for executing rules, managing rule lifecycles,
-/// and coordinating rule-based control actions.
-pub mod rules_engine;
 
 /// System monitoring and metrics
 ///
@@ -207,6 +177,3 @@ pub mod monitoring;
 
 // Re-export commonly used types for convenience
 pub use error::{ModelSrvError, Result};
-pub use storage::DataStore;
-pub use storage::SyncMode;
-pub use storage_agent::StorageAgent;

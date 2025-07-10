@@ -1,5 +1,4 @@
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::RwLock;
@@ -294,7 +293,7 @@ impl ConfigClient {
     }
 
     /// Verify configuration checksum
-    fn verify_checksum(&self, response: &ConfigResponse) -> bool {
+    fn verify_checksum(&self, _response: &ConfigResponse) -> bool {
         // TODO: Implement checksum verification
         // For now, just return true
         true

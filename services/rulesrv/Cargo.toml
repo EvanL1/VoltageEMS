@@ -1,0 +1,42 @@
+[package]
+name = "rulesrv"
+version = "0.1.0"
+edition = "2021"
+authors = ["VoltageEMS Team <team@voltageenergy.com>"]
+description = "Rule execution service for VoltageEMS"
+
+[[bin]]
+name = "rulesrv"
+path = "src/main.rs"
+
+[dependencies]
+# Local dependencies
+voltage-common = { workspace = true, features = ["async", "sync"] }
+
+# Core dependencies
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde_yaml = { workspace = true }
+clap = { version = "4.0", features = ["derive"] }
+reqwest = { workspace = true }
+dotenv = "0.15"
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+chrono = { workspace = true }
+async-trait = { workspace = true }
+futures = { workspace = true }
+uuid = { workspace = true }
+regex = "1.10.2"
+axum = { workspace = true }
+utoipa = { version = "4.0", features = ["axum_extras"] }
+utoipa-swagger-ui = { version = "4.0", features = ["axum"] }
+tower = { workspace = true }
+tower-http = { version = "0.5", features = ["cors"] }
+petgraph = "0.6.4"
+rand = "0.8.5"
+
+[features]
+default = []

@@ -6,14 +6,10 @@ use axum::{
 use chrono::Utc;
 use serde::Deserialize;
 use std::collections::HashMap;
-use utoipa::{ToSchema, IntoParams};
+use utoipa::{IntoParams, ToSchema};
 use uuid::Uuid;
 
-use crate::api::{
-    models::ErrorResponse,
-    models_history::*,
-    AppState,
-};
+use crate::api::{models::ErrorResponse, models_history::*, AppState};
 
 #[derive(Deserialize, ToSchema, IntoParams)]
 pub struct SourceQuery {
@@ -53,7 +49,7 @@ pub async fn query_history(
 ) -> Result<Json<HistoryApiResponse<HistoryQueryResult>>, (StatusCode, Json<ErrorResponse>)> {
     let request_id = Uuid::new_v4().to_string();
     let start_time = std::time::Instant::now();
-    
+
     // 验证查询参数
     if filter.start_time >= filter.end_time {
         return Err((
@@ -80,16 +76,16 @@ pub async fn query_history(
     }
 
     let _storage_manager = state.storage_manager.read().await;
-    
+
     // 这里应该实现实际的历史数据查询逻辑
     // 由于当前存储接口还需要调整，先返回示例数据
     let mock_result = create_mock_history_result(&filter, &request_id);
-    
+
     let _execution_time = start_time.elapsed().as_millis() as u64;
-    
+
     let mut response = HistoryApiResponse::success(mock_result);
     response.request_id = Some(request_id);
-    
+
     Ok(Json(response))
 }
 
@@ -109,10 +105,10 @@ pub async fn get_data_sources(
     Query(query): Query<SourceQuery>,
 ) -> Result<Json<HistoryApiResponse<Vec<DataSourceInfo>>>, (StatusCode, Json<ErrorResponse>)> {
     let _storage_manager = state.storage_manager.read().await;
-    
+
     // 这里应该从存储后端获取实际的数据源信息
     let mock_sources = create_mock_data_sources(&query);
-    
+
     Ok(Json(HistoryApiResponse::success(mock_sources)))
 }
 
@@ -135,10 +131,10 @@ pub async fn get_data_source_detail(
     Path(source_id): Path<String>,
 ) -> Result<Json<HistoryApiResponse<DataSourceInfo>>, (StatusCode, Json<ErrorResponse>)> {
     let _storage_manager = state.storage_manager.read().await;
-    
+
     // 检查数据源是否存在
     let mock_source = create_mock_data_source(&source_id);
-    
+
     Ok(Json(HistoryApiResponse::success(mock_source)))
 }
 
@@ -159,9 +155,9 @@ pub async fn get_statistics(
     Query(query): Query<StatisticsQuery>,
 ) -> Result<Json<HistoryApiResponse<TimeSeriesStatistics>>, (StatusCode, Json<ErrorResponse>)> {
     let _storage_manager = state.storage_manager.read().await;
-    
+
     let mock_stats = create_mock_statistics(&query);
-    
+
     Ok(Json(HistoryApiResponse::success(mock_stats)))
 }
 
@@ -182,7 +178,7 @@ pub async fn create_export_job(
     Json(request): Json<ExportRequest>,
 ) -> Result<Json<HistoryApiResponse<ExportJob>>, (StatusCode, Json<ErrorResponse>)> {
     let job_id = Uuid::new_v4().to_string();
-    
+
     // 验证导出请求
     if !["csv", "json", "parquet"].contains(&request.format.as_str()) {
         return Err((
@@ -194,7 +190,7 @@ pub async fn create_export_job(
             }),
         ));
     }
-    
+
     let export_job = ExportJob {
         job_id: job_id.clone(),
         status: "pending".to_string(),
@@ -205,9 +201,9 @@ pub async fn create_export_job(
         progress: Some(0.0),
         error_message: None,
     };
-    
+
     // TODO: 实际的导出任务应该异步执行
-    
+
     Ok(Json(HistoryApiResponse::success(export_job)))
 }
 
@@ -245,39 +241,40 @@ pub async fn get_export_job_status(
         progress: Some(100.0),
         error_message: None,
     };
-    
+
     Ok(Json(HistoryApiResponse::success(mock_job)))
 }
 
 // Mock 数据创建函数（在实际实现中应该替换为真实的数据库查询）
-fn create_mock_history_result(filter: &HistoryQueryFilter, _request_id: &str) -> HistoryQueryResult {
+fn create_mock_history_result(
+    filter: &HistoryQueryFilter,
+    _request_id: &str,
+) -> HistoryQueryResult {
     let time_range = TimeRange {
         start_time: filter.start_time,
         end_time: filter.end_time,
         duration_seconds: (filter.end_time - filter.start_time).num_seconds() as u64,
     };
-    
+
     let query_summary = QuerySummary {
         time_range,
         source_count: 1,
         point_count: 100,
         execution_time_ms: 50,
     };
-    
-    let data_points = vec![
-        HistoryDataPoint {
-            timestamp: filter.start_time,
-            source_id: "device_001".to_string(),
-            point_name: "temperature".to_string(),
-            value: HistoryValue::Numeric(25.5),
-            quality: Some("good".to_string()),
-            tags: HashMap::from([
-                ("location".to_string(), "room_a".to_string()),
-                ("unit".to_string(), "celsius".to_string()),
-            ]),
-        }
-    ];
-    
+
+    let data_points = vec![HistoryDataPoint {
+        timestamp: filter.start_time,
+        source_id: "device_001".to_string(),
+        point_name: "temperature".to_string(),
+        value: HistoryValue::Numeric(25.5),
+        quality: Some("good".to_string()),
+        tags: HashMap::from([
+            ("location".to_string(), "room_a".to_string()),
+            ("unit".to_string(), "celsius".to_string()),
+        ]),
+    }];
+
     HistoryQueryResult {
         query_summary,
         data_points,
@@ -292,24 +289,20 @@ fn create_mock_history_result(filter: &HistoryQueryFilter, _request_id: &str) ->
 }
 
 fn create_mock_data_sources(_query: &SourceQuery) -> Vec<DataSourceInfo> {
-    vec![
-        DataSourceInfo {
-            source_id: "device_001".to_string(),
-            source_name: Some("温度传感器001".to_string()),
-            points: vec![
-                DataPointInfo {
-                    point_name: "temperature".to_string(),
-                    data_type: "float".to_string(),
-                    latest_value: Some(HistoryValue::Numeric(25.5)),
-                    latest_timestamp: Some(Utc::now()),
-                    count: 1000,
-                }
-            ],
-            first_data_time: Some(Utc::now() - chrono::Duration::days(30)),
-            last_data_time: Some(Utc::now()),
-            total_points: 1000,
-        }
-    ]
+    vec![DataSourceInfo {
+        source_id: "device_001".to_string(),
+        source_name: Some("温度传感器001".to_string()),
+        points: vec![DataPointInfo {
+            point_name: "temperature".to_string(),
+            data_type: "float".to_string(),
+            latest_value: Some(HistoryValue::Numeric(25.5)),
+            latest_timestamp: Some(Utc::now()),
+            count: 1000,
+        }],
+        first_data_time: Some(Utc::now() - chrono::Duration::days(30)),
+        last_data_time: Some(Utc::now()),
+        total_points: 1000,
+    }]
 }
 
 fn create_mock_data_source(source_id: &str) -> DataSourceInfo {
@@ -329,17 +322,15 @@ fn create_mock_statistics(query: &StatisticsQuery) -> TimeSeriesStatistics {
         end_time: query.end_time,
         duration_seconds: (query.end_time - query.start_time).num_seconds() as u64,
     };
-    
+
     TimeSeriesStatistics {
         time_range,
-        sources: vec![
-            SourceStatistics {
-                source_id: "device_001".to_string(),
-                point_count: 1000,
-                avg_sample_rate: 60.0,
-                data_completeness: 98.5,
-            }
-        ],
+        sources: vec![SourceStatistics {
+            source_id: "device_001".to_string(),
+            point_count: 1000,
+            avg_sample_rate: 60.0,
+            data_completeness: 98.5,
+        }],
         overall: OverallStatistics {
             total_sources: 1,
             total_points: 1000,

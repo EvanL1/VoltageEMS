@@ -1,9 +1,7 @@
 use crate::error::ModelSrvError;
 use crate::monitoring::{HealthStatus, MonitoringService};
-use crate::rules_engine::RuleExecutor;
-use crate::storage::redis_store::RedisStore;
+use crate::redis_handler::RedisConnection;
 use crate::template::TemplateManager;
-use crate::StorageAgent;
 use axum::{
     extract::{Path, State},
     http::StatusCode,
@@ -129,12 +127,8 @@ struct ErrorResponse {
 /// Application state
 #[derive(Clone)]
 pub struct AppState {
-    /// Data store
-    store: Arc<RedisStore>,
-    /// Storage agent
-    agent: Arc<StorageAgent>,
-    /// Rule executor for running rules
-    rule_executor: Arc<RuleExecutor>,
+    /// Redis connection
+    redis_conn: Arc<RedisConnection>,
     /// Monitoring service
     monitoring: Arc<MonitoringService>,
 }
@@ -147,17 +141,10 @@ pub struct ApiServer {
 
 impl ApiServer {
     /// Create a new API server
-    pub fn new(
-        store: Arc<RedisStore>,
-        agent: Arc<StorageAgent>,
-        rule_executor: Arc<RuleExecutor>,
-        port: u16,
-    ) -> Self {
+    pub fn new(redis_conn: Arc<RedisConnection>, port: u16) -> Self {
         let monitoring = Arc::new(MonitoringService::new(HealthStatus::Healthy));
         let state = AppState {
-            store,
-            agent,
-            rule_executor,
+            redis_conn,
             monitoring,
         };
         Self { state, port }
@@ -168,13 +155,6 @@ impl ApiServer {
         let app = Router::new()
             // Health endpoints
             .route("/health", get(health_check))
-            // Rule endpoints
-            .route("/api/rules", get(list_rules).post(create_rule))
-            .route(
-                "/api/rules/:id",
-                get(get_rule).put(update_rule).delete(delete_rule),
-            )
-            .route("/api/rules/:id/execute", post(execute_rule))
             // Template endpoints
             .route("/api/templates", get(list_templates))
             .route("/api/templates/:id", get(get_template))
@@ -229,7 +209,7 @@ async fn health_check() -> Json<HealthResponse> {
     tag = "rules"
 )]
 async fn list_rules(
-    State(state): State<AppState>,
+    State(_state): State<AppState>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
     // TODO: Implement list_rules method in RedisStore
     match Ok(serde_json::Value::Array(vec![]))
@@ -267,7 +247,7 @@ async fn list_rules(
 )]
 async fn get_rule(
     Path(id): Path<String>,
-    State(state): State<AppState>,
+    State(_state): State<AppState>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
     // TODO: Implement get_rule method in RedisStore
     match Ok(None) as Result<Option<serde_json::Value>, crate::error::ModelSrvError> {
@@ -307,8 +287,8 @@ async fn get_rule(
     tag = "rules"
 )]
 async fn create_rule(
-    State(state): State<AppState>,
-    Json(rule_data): Json<serde_json::Value>,
+    State(_state): State<AppState>,
+    Json(_rule_data): Json<serde_json::Value>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
     // TODO: Implement create_rule method in RedisStore
     match Ok(format!("rule_{}", rand::random::<u32>()))
@@ -348,8 +328,8 @@ async fn create_rule(
 )]
 async fn update_rule(
     Path(id): Path<String>,
-    State(state): State<AppState>,
-    Json(rule_data): Json<serde_json::Value>,
+    State(_state): State<AppState>,
+    Json(_rule_data): Json<serde_json::Value>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
     // TODO: Implement update_rule method in RedisStore
     match Ok(()) as Result<(), crate::error::ModelSrvError> {
@@ -385,7 +365,7 @@ async fn update_rule(
 )]
 async fn delete_rule(
     Path(id): Path<String>,
-    State(state): State<AppState>,
+    State(_state): State<AppState>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
     // TODO: Implement delete_rule method in RedisStore
     match Ok(()) as Result<(), crate::error::ModelSrvError> {
@@ -422,10 +402,10 @@ async fn delete_rule(
 )]
 async fn execute_rule(
     Path(id): Path<String>,
-    State(state): State<AppState>,
+    State(_state): State<AppState>,
     Json(input): Json<serde_json::Value>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
-    match state.rule_executor.execute_rule(&id, Some(input)).await {
+    match _state.rule_executor.execute_rule(&id, Some(input)).await {
         Ok(result) => Ok(Json(result)),
         Err(e) => {
             error!("Failed to execute rule {}: {}", id, e);

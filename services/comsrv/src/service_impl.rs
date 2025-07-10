@@ -7,7 +7,7 @@ use tokio::sync::RwLock;
 use tracing::{error, info, warn};
 
 use crate::core::config::ConfigManager;
-use crate::core::protocols::common::ProtocolFactory;
+use crate::core::framework::ProtocolFactory;
 
 use crate::utils::error::Result;
 
@@ -21,7 +21,7 @@ pub async fn start_communication_service(
         info!("Redis is enabled, initializing Redis storage...");
 
         let redis_config = config_manager.service().redis.clone();
-        match crate::core::storage::redis_storage::RedisStore::from_config(&redis_config).await {
+        match crate::core::redis::redis_storage::RedisStore::from_config(&redis_config).await {
             Ok(Some(redis_store)) => {
                 info!("Redis storage initialized successfully");
 

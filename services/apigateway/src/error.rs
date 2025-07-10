@@ -1,7 +1,11 @@
 use actix_web::{error::ResponseError, http::StatusCode, HttpResponse};
 use std::fmt;
 
-use crate::response::{ApiResponse, ErrorInfo};
+use crate::response::ApiResponse;
+
+// Type aliases for backward compatibility
+pub type ApiError = ApiGatewayError;
+pub type ApiResult<T> = Result<T, ApiGatewayError>;
 
 #[derive(Debug)]
 pub enum ApiGatewayError {
@@ -117,13 +121,7 @@ impl ResponseError for ApiGatewayError {
             ),
         };
 
-        let error_info = ErrorInfo {
-            code: code.to_string(),
-            message: self.to_string(),
-            details: None,
-        };
-
-        let response: ApiResponse<()> = ApiResponse::error(error_info);
+        let response = ApiResponse::<()>::error(code, &self.to_string(), None);
 
         HttpResponse::build(status).json(response)
     }
@@ -161,12 +159,6 @@ impl From<reqwest::Error> for ApiGatewayError {
     }
 }
 
-impl From<redis::RedisError> for ApiGatewayError {
-    fn from(err: redis::RedisError) -> Self {
-        ApiGatewayError::RedisError(err.to_string())
-    }
-}
-
 impl From<serde_json::Error> for ApiGatewayError {
     fn from(err: serde_json::Error) -> Self {
         ApiGatewayError::InternalError(format!("JSON error: {}", err))
@@ -176,5 +168,16 @@ impl From<serde_json::Error> for ApiGatewayError {
 impl From<std::io::Error> for ApiGatewayError {
     fn from(err: std::io::Error) -> Self {
         ApiGatewayError::InternalError(format!("IO error: {}", err))
+    }
+}
+
+impl From<voltage_common::Error> for ApiGatewayError {
+    fn from(err: voltage_common::Error) -> Self {
+        match err {
+            voltage_common::Error::Storage(msg) => ApiGatewayError::RedisError(msg),
+            voltage_common::Error::Network(msg) => ApiGatewayError::ServiceError(msg),
+            voltage_common::Error::Config(msg) => ApiGatewayError::ConfigParseError(msg),
+            _ => ApiGatewayError::InternalError(err.to_string()),
+        }
     }
 }

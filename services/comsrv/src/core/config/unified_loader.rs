@@ -62,42 +62,42 @@ impl UnifiedCsvLoader {
         // Load telemetry files
         let base_path = base_dir.join(&table_config.four_telemetry_route);
 
-        // YC - Telemetry
-        if let Some(yc_points) = Self::load_telemetry_file(
+        // Measurement (遥测)
+        if let Some(measurement_points) = Self::load_telemetry_file(
             &base_path.join(&table_config.four_telemetry_files.telemetry_file),
-            "YC",
+            "Measurement",
         )? {
-            for point in yc_points {
+            for point in measurement_points {
                 all_telemetry.insert(point.point_id, point);
             }
         }
 
-        // YX - Signal
-        if let Some(yx_points) = Self::load_signal_file(
+        // Signal (遥信)
+        if let Some(signal_points) = Self::load_signal_file(
             &base_path.join(&table_config.four_telemetry_files.signal_file),
-            "YX",
+            "Signal",
         )? {
-            for point in yx_points {
+            for point in signal_points {
                 all_telemetry.insert(point.point_id, point);
             }
         }
 
-        // YT - Adjustment
-        if let Some(yt_points) = Self::load_telemetry_file(
+        // Adjustment (遥调)
+        if let Some(adjustment_points) = Self::load_telemetry_file(
             &base_path.join(&table_config.four_telemetry_files.adjustment_file),
-            "YT",
+            "Adjustment",
         )? {
-            for point in yt_points {
+            for point in adjustment_points {
                 all_telemetry.insert(point.point_id, point);
             }
         }
 
-        // YK - Control
-        if let Some(yk_points) = Self::load_signal_file(
+        // Control (遥控)
+        if let Some(control_points) = Self::load_signal_file(
             &base_path.join(&table_config.four_telemetry_files.control_file),
-            "YK",
+            "Control",
         )? {
-            for point in yk_points {
+            for point in control_points {
                 all_telemetry.insert(point.point_id, point);
             }
         }
@@ -373,7 +373,7 @@ impl UnifiedCsvLoader {
         }
 
         // Add reverse flag for signal/control types
-        if matches!(telemetry.telemetry_type.as_str(), "YX" | "YK") {
+        if matches!(telemetry.telemetry_type.as_str(), "Signal" | "Control") {
             if let Some(reverse) = telemetry.reverse {
                 protocol_params.insert("reverse".to_string(), reverse.to_string());
             }
@@ -386,8 +386,10 @@ impl UnifiedCsvLoader {
             telemetry_type: telemetry.telemetry_type.clone(),
             data_type: telemetry.data_type,
             protocol_params,
-            scaling: if matches!(telemetry.telemetry_type.as_str(), "YC" | "YT")
-                && (telemetry.scale.is_some() || telemetry.offset.is_some())
+            scaling: if matches!(
+                telemetry.telemetry_type.as_str(),
+                "Measurement" | "Adjustment"
+            ) && (telemetry.scale.is_some() || telemetry.offset.is_some())
             {
                 Some(super::types::ScalingInfo {
                     scale: telemetry.scale.unwrap_or(1.0),

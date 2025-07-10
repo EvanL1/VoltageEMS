@@ -1,13 +1,7 @@
 use crate::config::LoggingConfig;
-use tracing_subscriber::{
-    fmt,
-    layer::SubscriberExt,
-    util::SubscriberInitExt,
-    EnvFilter,
-    Registry,
-};
 use std::fs;
 use std::path::Path;
+use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter, Registry};
 
 pub fn init_logging(config: &LoggingConfig) -> Result<(), Box<dyn std::error::Error>> {
     // Create logs directory if it doesn't exist
@@ -16,8 +10,8 @@ pub fn init_logging(config: &LoggingConfig) -> Result<(), Box<dyn std::error::Er
     }
 
     // Set up the environment filter
-    let env_filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| EnvFilter::new(&config.level));
+    let env_filter =
+        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(&config.level));
 
     // Create the subscriber based on format preference
     match config.format.as_str() {
@@ -30,7 +24,7 @@ pub fn init_logging(config: &LoggingConfig) -> Result<(), Box<dyn std::error::Er
                         // .json() // TODO: Enable with json feature
                         // .with_current_span(true) // TODO: Enable with proper feature
                         // .with_span_list(false) // TODO: Enable with proper feature
-                        .with_writer(std::io::stdout)
+                        .with_writer(std::io::stdout),
                 )
                 .init();
         }
@@ -44,14 +38,18 @@ pub fn init_logging(config: &LoggingConfig) -> Result<(), Box<dyn std::error::Er
                         .with_thread_ids(true)
                         .with_file(true)
                         .with_line_number(true)
-                        .with_writer(std::io::stdout)
+                        .with_writer(std::io::stdout),
                 )
                 .init();
         }
     }
 
-    tracing::info!("Logging initialized with level: {}, format: {}", config.level, config.format);
-    
+    tracing::info!(
+        "Logging initialized with level: {}, format: {}",
+        config.level,
+        config.format
+    );
+
     Ok(())
 }
 
@@ -132,7 +130,7 @@ pub fn log_error_with_context(
         error = %error,
         context = context,
     );
-    
+
     // TODO: Handle additional fields when tracing supports dynamic fields
 }
 
@@ -154,13 +152,13 @@ impl PerformanceTracker {
     pub fn complete(self) -> u64 {
         let duration = self.start_time.elapsed();
         let duration_ms = duration.as_millis() as u64;
-        
+
         tracing::debug!(
             operation = %self.operation,
             duration_ms = duration_ms,
             "Operation completed"
         );
-        
+
         duration_ms
     }
 
@@ -170,7 +168,7 @@ impl PerformanceTracker {
     {
         let duration = self.start_time.elapsed();
         let duration_ms = duration.as_millis() as u64;
-        
+
         match result {
             Ok(_) => {
                 tracing::debug!(
@@ -188,7 +186,7 @@ impl PerformanceTracker {
                 );
             }
         }
-        
+
         duration_ms
     }
 }

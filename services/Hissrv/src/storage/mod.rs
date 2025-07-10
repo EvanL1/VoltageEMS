@@ -1,8 +1,8 @@
-use async_trait::async_trait;
 use crate::error::Result;
+use async_trait::async_trait;
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use chrono::{DateTime, Utc};
 
 pub mod influxdb_storage;
 pub mod redis_storage;
@@ -50,16 +50,16 @@ pub trait Storage {
     async fn connect(&mut self) -> Result<()>;
     async fn disconnect(&mut self) -> Result<()>;
     async fn is_connected(&self) -> bool;
-    
+
     async fn store_data_point(&mut self, data_point: &DataPoint) -> Result<()>;
     async fn store_data_points(&mut self, data_points: &[DataPoint]) -> Result<()>;
-    
+
     async fn query_data_points(&self, filter: &QueryFilter) -> Result<QueryResult>;
     async fn delete_data_points(&mut self, filter: &QueryFilter) -> Result<u64>;
-    
+
     async fn get_keys(&self, pattern: Option<&str>) -> Result<Vec<String>>;
     async fn get_statistics(&self) -> Result<StorageStats>;
-    
+
     fn get_name(&self) -> &str;
     fn get_config(&self) -> serde_json::Value;
 }

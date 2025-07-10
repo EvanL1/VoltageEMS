@@ -4,385 +4,254 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Common Development Commands
 
-### Rust Services (comsrv, modsrv, hissrv, netsrv, alarmsrv, apigateway)
+### Workspace-Level Commands
 
 ```bash
-# Build individual service
+# Format all code
+cargo fmt --all
+
+# Run clippy linting on all services
+cargo clippy --all-targets --all-features -- -D warnings
+
+# Build entire workspace
+cargo build --workspace
+
+# Run all tests
+cargo test --workspace
+
+# Run specific service tests
+cargo test -p {service_name}
+
+# Build in release mode
+cargo build --release --workspace
+
+# Run local CI checks
+./scripts/local-ci.sh
+
+# Run all services locally
+./scripts/run-all.sh start
+./scripts/run-all.sh stop
+./scripts/run-all.sh status
+```
+
+### Service-Specific Commands
+
+```bash
+# Build and run individual service
 cd services/{service_name}
 cargo build
-
-# Run individual service
 cargo run
+
+# Run with specific log level
+RUST_LOG=debug cargo run
+RUST_LOG={service_name}=debug cargo run
 
 # Run tests with output
 cargo test -- --nocapture
 
 # Run specific test
-cargo test test_name -- --exact
+cargo test test_name -- --exact --nocapture
 
-# Run with logging
-RUST_LOG=debug cargo run
-RUST_LOG={service_name}=debug cargo run  # Service-specific debug
-
-# Check code formatting
-cargo fmt --check
-
-# Run clippy linting
-cargo clippy -- -D warnings
-
-# Run benchmarks
-cargo bench
-
-# Generate documentation
-cargo doc --no-deps --open
+# Watch for changes and auto-rebuild
+cargo watch -x run
 ```
 
-### Frontend (Vue.js)
+### Redis Operations
 
 ```bash
-cd frontend
-npm install
-npm run serve    # Development server (port 5173)
-npm run build    # Production build
-npm run lint     # ESLint checking
-npm run preview  # Preview production build
-```
+# Start Redis for development
+docker run -d --name redis-dev -p 6379:6379 redis:7-alpine
 
-### Docker Development
+# Monitor Redis activity
+redis-cli monitor | grep {service_name}
 
-```bash
-# Build all services
-./scripts/build-all.sh [version] [registry]
-
-# Start all services
-docker-compose up -d
-
-# View logs
-docker-compose logs -f {service_name}
-
-# Rebuild specific service
-docker-compose build {service_name}
-
-# Run integration tests
-./scripts/run-integration-tests.sh
-```
-
-### Protocol Plugin Development (NEW)
-
-```bash
-# Create new protocol plugin
-cd services/comsrv
-cargo run -- new {protocol_name} --output src/core/protocols/
-
-# List available plugins
-cargo run -- list --verbose
-
-# Generate protocol config template
-cargo run -- config {protocol_id} --output config/
-
-# Test protocol plugin
-cargo run -- test {protocol_id} --config test_config.yaml
-
-# Migrate configuration
-cargo run -- migrate --from yaml --to sqlite config.yaml
+# Check specific keys
+redis-cli keys "point:*" | head -20
+redis-cli hgetall "point:1"
 ```
 
 ## Architecture Overview
 
-VoltageEMS is a microservices-based IoT Energy Management System with the following components:
+VoltageEMS is a Rust-based microservices architecture for industrial IoT energy management. The system uses Redis as a central message bus and data store, with each service handling specific responsibilities.
 
-### Core Services (Rust-based)
+### Service Communication Pattern
 
-- **comsrv**: Industrial communication service supporting Modbus TCP/RTU, CAN, IEC60870, Virtual (testing), and GPIO interfaces
-  - Plugin-based architecture for protocol extensibility
-  - Unified transport layer abstraction (TCP, Serial, CAN, GPIO)
-  - Enhanced logging with channel-specific outputs
-  - Real-time telemetry via Prometheus metrics
-- **apigateway**: REST API gateway providing unified access to all services
-  - JWT authentication and authorization
-  - Service routing and load balancing
-  - Request/response transformation
-  - Health monitoring endpoints
-- **modsrv**: Model service executing real-time calculations and control logic via DAG workflows
-  - Template-based model definitions
-  - Rule engine for complex logic
-  - Storage agent for data persistence
-- **hissrv**: Historical data service writing Redis data to InfluxDB
-  - Configurable data retention policies
-  - Grafana integration for visualization
-  - High-performance batch writing
-- **netsrv**: Network service forwarding data to external systems via MQTT/HTTP
-  - AWS IoT Core and Alibaba Cloud IoT support
-  - Configurable data formatters (JSON, ASCII)
-  - Reliable message delivery with retry logic
-- **alarmsrv**: Intelligent alarm management with classification and storage
-  - Multi-level alarm classification
-  - Redis-based real-time storage
-  - Cloud notification integration
+All services communicate exclusively through Redis pub/sub and key-value storage:
+- No direct service-to-service HTTP calls
+- Real-time data flows through Redis channels
+- State persistence in Redis with optional InfluxDB for historical data
 
-### Frontend & Configuration
+### Core Services
 
-- **frontend**: Vue.js 3 + Element Plus web application
-  - Real-time data visualization
-  - Embedded Grafana dashboards
-  - Responsive design for mobile devices
-- **Electron integration**: Cross-platform desktop application wrapper
+**comsrv** - Industrial Protocol Gateway
+- Manages all device communication (Modbus, CAN, IEC60870)
+- Plugin architecture for protocol extensibility
+- Unified transport layer supporting TCP, Serial, CAN, GPIO
+- Publishes telemetry to Redis: `point:{id}` keys
+- Subscribes to control commands: `cmd:*` channels
 
-### Data Flow Architecture
+**modsrv** - Computation Engine
+- Executes DAG-based calculation workflows
+- Subscribes to telemetry updates from Redis
+- Publishes calculated values back to Redis
+- No longer uses hybrid_store or memory_store - Redis only
 
-```
-Devices (Modbus/CAN/IEC60870) → comsrv → Redis → {modsrv, hissrv, netsrv, alarmsrv}
-                                              ↓
-                                         InfluxDB ← hissrv
-                                              ↓
-                                         Frontend/Grafana
-```
+**hissrv** - Historical Data Service
+- Bridges Redis real-time data to InfluxDB
+- Batch writes for performance
+- Manages data retention policies
+- Provides query API for historical data
 
-## Key Technical Details
+**netsrv** - Cloud Gateway
+- Forwards data to external systems (AWS IoT, Alibaba Cloud)
+- Protocol transformation (MQTT, HTTP)
+- Configurable data formatting and filtering
+- Retry logic for reliability
 
-### Communication Service (comsrv)
+**alarmsrv** - Alarm Management
+- Real-time alarm detection and classification
+- Stores alarm state in Redis
+- Manages alarm lifecycle and notifications
 
-- Uses **layered transport architecture** separating protocol logic from physical transport
-- Supports industrial interfaces: TCP, Serial, GPIO (DI/DO), CAN bus
-- Configuration via YAML files with CSV point tables
-- Channel-based device management with point mapping
-- Built-in Prometheus metrics and optimized structured logging
-- **Enhanced logging system** with configurable file output, target filtering, and compact format
+**apigateway** - REST API Gateway
+- Single entry point for frontend
+- JWT authentication
+- Routes requests to appropriate services via Redis
+- Note: Uses actix-web while other services use axum
 
-### Transport Layer Implementation
+### Shared Libraries
 
-All protocols share unified `Transport` trait:
-- `connect()`, `disconnect()`, `send()`, `receive()`
-- Factory pattern for transport creation
-- Mock transport for protocol testing
-- Industrial-grade error handling and statistics
+**voltage-common** (`libs/voltage-common`)
+- Unified error handling
+- Redis client wrapper (async/sync)
+- Logging configuration
+- Common data types
+- Metrics collection
 
-### Configuration Management
+### Key Design Patterns
 
-- **Figment-based** hierarchical configuration (YAML/TOML/JSON/ENV)
-- **CSV point tables** for telemetry, control, adjustment, and signal points
-- **Channel parameters** specific to each protocol
-- Validation and type safety throughout
-- **Environment variable support** for CSV base path via `COMSRV_CSV_BASE_PATH`
+1. **Protocol Plugin System** (comsrv)
+   - Each protocol implements `ProtocolPlugin` trait
+   - Transport abstraction allows mock testing
+   - Configuration via YAML + CSV point tables
 
-### Development Workflow
+2. **Point Management**
+   - Points identified by u32 IDs for performance
+   - Multi-level indexing for O(1) lookups
+   - Point data includes value, quality, timestamp
 
-- Use feature branches: `feature/{service_name}` for development
-- Merge to `develop` branch when complete
-- Merge `develop` before starting new features
-- Write English code comments and git commit messages
-- Log fixes to `{service}/docs/fixlog.md`
-- Never auto-commit changes
+3. **Configuration Hierarchy**
+   - Figment-based configuration merging
+   - Environment variables override files
+   - CSV files for point mappings
 
-### Testing
+4. **Logging Architecture**
+   - Service-level and channel-level configuration
+   - Daily rotation with retention policies
+   - Separate log files per channel
 
-- Unit tests: `cargo test` in service directories
-- Integration tests available in `tests/` directories
-- Mock simulators: `modbus_simulator.py`, protocol-specific test tools
-- Real hardware testing supported via configuration
+## Protocol Address Format
 
-### Configuration Structure
+Modbus addresses use colon-separated format: `slave_id:function_code:register_address`
 
-```
-config/
-├── default.yml           # Global configuration
-├── point_map.yml         # Point mapping definitions
-└── {Protocol}_Test_{ID}/ # Protocol-specific CSV tables
-    ├── telemetry.csv     # 遥测点 (YC) - measurements
-    ├── control.csv       # 遥控点 (YK) - commands
-    ├── adjustment.csv    # 遥调点 (YT) - setpoints
-    ├── signal.csv        # 遥信点 (YX) - status signals
-    └── mapping_*.csv     # Protocol-specific mappings
-
-# CSV Format Example (telemetry.csv):
-# point_id,name,address,data_type,scale,offset,unit
-# 1,电压A相,30001,float32,0.1,0,V
-# 2,电流A相,30003,float32,0.01,0,A
-```
-
-### Logging System Configuration
-
-#### Service-Level Logging
-```yaml
-service:
-  logging:
-    level: "debug"
-    file: "logs/comsrv.log"        # Configurable file path
-    max_size: 10485760             # 10MB file size limit
-    max_files: 5                   # Max number of rotated files
-    console: true                  # Enable console output
-```
-
-#### Channel-Level Logging
-```yaml
-channels:
-  - logging:
-      enabled: true
-      level: "debug"
-      log_dir: "logs/modbus_tcp_demo"    # Custom log directory
-      max_file_size: 5242880             # 5MB per file
-      max_files: 3                       # Keep 3 files
-      retention_days: 7                  # Keep for 7 days
-      console_output: true               # Also output to console
-      log_messages: true                 # Log protocol messages
-```
-
-#### Logging Features
-- **Daily log rotation** with configurable retention
-- **Compact format** without redundant target information  
-- **Mixed output** supporting both console and file simultaneously
-- **Channel-specific logs** in separate directories
-- **Configurable paths** for flexible deployment
-
-### Important Notes
-
-- Redis runs in container at port 6379 as real-time database
-- No quality attributes needed in data structures
-- Use Chinese for user-facing documentation
-- Each time you finish modifying a file, record it in the corresponding microservice's fixlog.md.
-- Services communicate only via Redis, not direct calls
-- Support for multiple industrial protocols in single deployment
-- **Enhanced logging** provides clear, non-redundant output for debugging and monitoring
-
-### Data Structures and Optimization
-
-#### Point Management Optimization
-- Use `HashMap<u32, UniversalPointConfig>` instead of `HashMap<String, UniversalPointConfig>` for better performance
-- Implement multi-level indexes using `HashSet<u32>` for type grouping and permission checks
-- Add `name_to_id` mapping for name-based queries
-- All query operations optimized to O(1) complexity
-
-#### Protocol Mapping Structure
-Multiple mapping structures exist in the codebase:
-
-1. **ProtocolMapping** (in config_manager.rs and types/channel.rs)
-   - Does not directly contain slave_id and function_code fields
-   - These values are stored in the address string field or protocol_params HashMap
-   - Address format: `slave_id:function_code:register_address` (colon-separated)
-
-2. **ProtocolMappingRecord** (in loaders/csv_loader.rs)
-   - Directly contains slave_id, function_code, register_address fields
-   - Raw data structure loaded from CSV files
-
-3. **UnifiedPointMapping** (in types/protocol.rs)
-   - Uses ProtocolAddress enum for different protocol addresses
-   - Modbus variant includes slave_id, function_code, register, bit fields
-
-#### Address Parsing Logic
+Example parsing:
 ```rust
-// Extract address from protocol_params
-let address = cp.protocol_params.get("address").unwrap_or(&default_address);
-// Parse according to "slave_id:function_code:register_address" format
-let address_parts: Vec<&str> = address.split(':').collect();
-let slave_id = address_parts[0].parse::<u8>()?;
-let function_code = address_parts[1].parse::<u8>()?;
-let register_address = address_parts[2].parse::<u16>()?;
+let parts: Vec<&str> = address.split(':').collect();
+let slave_id = parts[0].parse::<u8>()?;
+let function_code = parts[1].parse::<u8>()?;
+let register = parts[2].parse::<u16>()?;
 ```
 
-#### Redis Optimization
-- Implement local cache layer with TTL management
-- Use batch operations with Pipeline mode
-- Replace KEYS command with SCAN to avoid blocking
-- Support batch update API: `batch_update_values`
+## Development Workflow
 
-### Testing Tools
+1. Create feature branch from `develop`
+2. Make changes and test locally
+3. Run `./scripts/local-ci.sh` before committing
+4. Update `docs/fixlog/fixlog_{date}.md` with changes
+5. Create PR to `develop` branch
 
-#### Modbus Testing
-- `tests/modbus_server_simulator.py` - Full Modbus TCP server simulator
-  - Supports all four remote types (YC/YX/YK/YT)
-  - Matches comsrv configuration for slave IDs and addresses
-  - Real-time data updates with sine wave simulation
-- `tests/test_modbus_client.py` - Test client for verification
-- `services/comsrv/scripts/test_modbus.sh` - Modbus-specific tests
-- `services/comsrv/scripts/run-integration-test.sh` - Full integration tests
+## Testing Infrastructure
 
-#### Performance Testing
-- `examples/optimized_points_demo.rs` - 10,000 point stress test
-- `services/comsrv/scripts/test_protocol.sh` - Protocol performance tests
+### Unit Tests
+- Mock transports for protocol testing
+- Test utilities in `voltage-common::test_utils`
+- Use `#[tokio::test]` for async tests
 
-#### Test Execution Scripts
+### Integration Tests
 ```bash
-# Run all service tests
-cd services/{service_name}
-./scripts/run_all_tests.sh
-
-# Run integration tests with test servers
+# Start test infrastructure
 ./scripts/start-test-servers.sh
+
+# Run integration tests
 cargo test --features integration
+
+# Clean up
 ./scripts/stop-test-servers.sh
-
-# Generate test report
-./scripts/generate_test_report.sh
 ```
-### Plugin System Architecture (NEW)
 
-#### Creating Protocol Plugins
-The plugin system allows extending comsrv with new protocols:
+### Protocol Simulators
+- `tests/modbus_server_simulator.py` - Modbus TCP server
+- Supports all point types (YC/YX/YK/YT)
+- Generates realistic test data
 
-1. **Plugin Structure**:
-   ```
-   src/core/protocols/{protocol_name}/
-   ├── mod.rs         # Module definition
-   ├── plugin.rs      # Plugin implementation
-   ├── config.rs      # Configuration types
-   ├── client.rs      # Protocol client logic
-   └── common.rs      # Shared utilities
-   ```
+## Common Issues and Solutions
 
-2. **Plugin Registration**:
-   - Implement `ProtocolPlugin` trait
-   - Register in `plugin_manager.rs`
-   - Provide configuration template
-   - Define CLI commands
+### Platform-Specific Dependencies
+- `rppal` (Raspberry Pi GPIO) is Linux-only
+- `socketcan` requires Linux for CAN support
+- Use feature flags to conditionally compile
 
-3. **Transport Layer Integration**:
-   - Use unified `Transport` trait
-   - Support mock transport for testing
-   - Handle connection lifecycle
+### Redis Connection
+- Services require Redis on localhost:6379
+- Use Docker for local development
+- Check connectivity: `redis-cli ping`
 
-### API Documentation
+### Build Warnings
+- config-framework temporarily excluded from workspace
+- Some dead_code warnings are expected
+- Use `#[allow(dead_code)]` sparingly
 
-#### API Gateway Endpoints
-- Health: `GET /api/v1/health`
-- System Info: `GET /api/v1/system/info`
-- Channels: `GET /api/v1/comsrv/channels`
-- Points: `GET /api/v1/comsrv/points/{device_id}`
-- Commands: `POST /api/v1/comsrv/command`
-- History: `GET /api/v1/hissrv/query`
-- Alarms: `GET /api/v1/alarmsrv/alarms`
+## Configuration Files
 
-#### Authentication
-- JWT tokens required for all endpoints except health
-- Token expiration: 24 hours
-- Refresh token support
+### Service Configuration
+```yaml
+# services/{service}/config/default.yml
+service:
+  name: "comsrv"
+  redis:
+    url: "redis://localhost:6379"
+  logging:
+    level: "info"
+    file: "logs/comsrv.log"
+```
 
-### Troubleshooting Common Issues
+### Channel Configuration
+```yaml
+# Point to CSV files
+csv_base_path: "./config"
+channels:
+  - id: 1
+    protocol_type: "modbus_tcp"
+    points_config:
+      base_path: "ModbusTCP_Test_01"
+```
 
-#### Redis Connection
+### CSV Point Tables
+Located in `config/{Protocol}_Test_{ID}/`:
+- `telemetry.csv` - Measurements (YC)
+- `signal.csv` - Status signals (YX)  
+- `control.csv` - Commands (YK)
+- `adjustment.csv` - Setpoints (YT)
+
+## Local CI Tools
+
+The project includes several CI tools:
+- **Earthly** - Container-based builds (needs fixes)
+- **Lefthook** - Git hooks for pre-commit checks
+- **Act** - Run GitHub Actions locally
+- **local-ci.sh** - Bash script for all checks
+
+Install with:
 ```bash
-# Check Redis connectivity
-redis-cli -p 6379 ping
-
-# Monitor Redis keys
-redis-cli monitor | grep comsrv
-
-# Check point data
-redis-cli keys "point:*" | head -20
+brew install earthly/earthly/earthly lefthook act
 ```
-
-#### Service Debugging
-```bash
-# Enable debug logging for specific module
-RUST_LOG=comsrv::core::protocols::modbus=debug cargo run
-
-# Check channel-specific logs
-tail -f logs/channel_{id}/channel_{id}.log
-
-# Monitor Prometheus metrics
-curl http://localhost:9090/metrics | grep comsrv
-```
-
-#### Protocol Issues
-- Modbus timeout: Increase `timeout` parameter in channel config
-- CAN buffer overflow: Adjust `buffer_size` in transport config
-- IEC60870 sequence errors: Check `k`, `w` parameters

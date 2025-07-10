@@ -7,7 +7,7 @@ use std::fs;
 use colored::*;
 use prettytable::{Table, row, cell};
 
-use crate::core::plugins::{PluginRegistry, ConfigGenerator};
+use crate::plugins::{PluginRegistry, ConfigGenerator};
 use crate::cli::{ConfigFormat, template_generator, test_framework};
 use crate::utils::{Result, Error};
 
