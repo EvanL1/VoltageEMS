@@ -232,7 +232,6 @@ impl ComBase for DefaultProtocol {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::config::loaders::point_mapper::CombinedPoint;
     use crate::core::config::types::ChannelLoggingConfig;
     use crate::core::config::ChannelConfig;
 

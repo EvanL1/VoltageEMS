@@ -1,7 +1,4 @@
 use crate::error::{ModelSrvError, Result};
-use crate::storage::redis_store::RedisStore;
-use crate::storage::DataStore;
-
 use crate::redis_handler::RedisConnection;
 // Redis commands are now accessed through voltage_common
 use serde::{Deserialize, Serialize};
@@ -122,7 +119,7 @@ pub struct HealthCheckResult {
 /// Monitoring service for rule execution and system health
 pub struct MonitoringService {
     /// Data store for persisting metrics and history
-    store: Arc<RedisStore>,
+    store: Arc<RedisConnection>,
     /// In-memory metrics for each rule
     metrics: Arc<RwLock<HashMap<String, RuleMetrics>>>,
     /// History of rule executions (limited to most recent)
@@ -157,7 +154,7 @@ impl MonitoringService {
         let redis_conn = RedisConnection::new();
 
         Self {
-            store: Arc::new(RedisStore::new(redis_conn)),
+            store: Arc::new(redis_conn),
             metrics: Arc::new(RwLock::new(HashMap::new())),
             history: Arc::new(Mutex::new(Vec::with_capacity(100))),
             history_limit: 100,
@@ -169,7 +166,7 @@ impl MonitoringService {
 
     /// Create a new monitoring service with a shared data store
     pub fn new_with_store(
-        store: Arc<RedisStore>,
+        store: Arc<RedisConnection>,
         history_limit: usize,
         initial_status: HealthStatus,
     ) -> Self {
@@ -235,7 +232,9 @@ impl MonitoringService {
             // Persist metrics to Redis
             if let Ok(metrics_json) = serde_json::to_string(metrics) {
                 if let Err(e) = self
-                    .store
+                    .redis
+                    .lock()
+                    .unwrap()
                     .set_string(&format!("metrics:rule:{}", rule_id), &metrics_json)
                 {
                     error!("Failed to persist metrics for rule {}: {}", rule_id, e);
@@ -270,7 +269,7 @@ impl MonitoringService {
             // Persist history entry to Redis
             if let Ok(entry_json) = serde_json::to_string(&entry) {
                 let key = format!("history:rule:{}:{}", rule_id, timestamp);
-                if let Err(e) = self.store.set_string(&key, &entry_json) {
+                if let Err(e) = self.redis.lock().unwrap().set_string(&key, &entry_json) {
                     error!(
                         "Failed to persist history entry for rule {}: {}",
                         rule_id, e
@@ -325,10 +324,10 @@ impl MonitoringService {
         // Check Redis connectivity
         // Try to perform a test operation to check connectivity
         let test_key = "health:check:test";
-        let redis_connected = match self.store.set_string(test_key, "ok") {
+        let redis_connected = match self.redis.lock().unwrap().set_string(test_key, "ok") {
             Ok(_) => {
                 // Clean up test key
-                let _ = self.store.delete(test_key);
+                let _ = self.redis.lock().unwrap().delete(test_key);
                 true
             }
             Err(_) => false,
@@ -336,7 +335,7 @@ impl MonitoringService {
         health.redis_connected = redis_connected;
 
         // Count loaded rules
-        if let Ok(keys) = self.store.get_keys("rule:*") {
+        if let Ok(keys) = self.redis.lock().unwrap().get_keys("rule:*") {
             health.rules_count = keys.len();
         }
 
@@ -430,11 +429,11 @@ impl MonitoringService {
     pub fn start_background_tasks(&self) -> Result<()> {
         // Clone required data for the background task
         let health_lock = self.health.clone();
-        let store = self.store.clone();
-
+        let _store = self.store.clone();
         // Spawn health check task
         tokio::spawn(async move {
             let mut interval_timer = interval(Duration::from_secs(60));
+            let mut redis_for_task = RedisConnection::new();
 
             loop {
                 interval_timer.tick().await;
@@ -458,10 +457,11 @@ impl MonitoringService {
                 // Check Redis connectivity
                 // Try to perform a test operation to check connectivity
                 let test_key = "health:check:test";
-                let redis_connected = match store.set_string(test_key, "ok") {
+                let redis_conn = &mut redis_for_task;
+                let redis_connected = match redis_conn.set_string(test_key, "ok") {
                     Ok(_) => {
                         // Clean up test key
-                        let _ = store.delete(test_key);
+                        let _ = redis_conn.delete(test_key);
                         true
                     }
                     Err(_) => false,
@@ -519,7 +519,7 @@ impl MonitoringService {
     /// Load recent history from persistent storage
     pub async fn load_history(&self) -> Result<()> {
         // Get history keys from Redis
-        if let Ok(keys) = self.store.get_keys("history:rule:*") {
+        if let Ok(keys) = self.redis.lock().unwrap().get_keys("history:rule:*") {
             let mut history = self.history.lock().map_err(|_| ModelSrvError::LockError)?;
 
             // Sort keys by timestamp (newest first)
@@ -529,7 +529,7 @@ impl MonitoringService {
             // Take only the most recent entries up to history_limit
             for key in sorted_keys.iter().take(self.history_limit) {
                 // Load history entry from Redis
-                if let Ok(json) = self.store.get_string(key) {
+                if let Ok(json) = self.redis.lock().unwrap().get_string(key) {
                     if let Ok(entry) = serde_json::from_str::<RuleExecutionEntry>(&json) {
                         history.push(entry);
                     }

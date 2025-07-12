@@ -23,11 +23,15 @@ COPY Cargo.lock /workspace/
 COPY libs /workspace/libs/
 COPY services /workspace/services/
 
+# Create dummy directories for workspace members that aren't needed for comsrv
+RUN mkdir -p /workspace/apps/config-ui/src-tauri && \
+    echo '[package]\nname = "config-ui"\nversion = "0.1.0"\nedition = "2021"\n\n[dependencies]' > /workspace/apps/config-ui/src-tauri/Cargo.toml
+
 WORKDIR /workspace
 
-# Build only the comsrv service
+# Build only the comsrv service with modbus feature
 RUN unset http_proxy https_proxy HTTP_PROXY HTTPS_PROXY && \
-    cargo build --release -p comsrv
+    cargo build --release -p comsrv --features "modbus"
 
 # Copy the binary to app directory
 WORKDIR /app
@@ -47,6 +51,8 @@ RUN unset http_proxy https_proxy HTTP_PROXY HTTPS_PROXY && \
     apt-get update && apt-get install -y \
     ca-certificates \
     tzdata \
+    netcat-openbsd \
+    curl \
     && rm -rf /var/lib/apt/lists/*
 
 # Create a non-root user
@@ -64,10 +70,11 @@ COPY --from=builder /app/comsrv /app/bin/comsrv
 
 # Copy configuration files and scripts
 COPY config /app/config/
-COPY scripts /app/scripts/
+COPY services/comsrv/scripts /app/scripts/
 
 # Make binary and scripts executable
-RUN chmod +x /app/bin/comsrv /app/scripts/*.sh
+RUN chmod +x /app/bin/comsrv && \
+    find /app/scripts -name "*.sh" -exec chmod +x {} \; || true
 
 # Switch to non-root user
 USER comsrv

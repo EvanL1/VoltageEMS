@@ -8,7 +8,8 @@ use super::frame::CanFrame;
 use crate::core::config::ChannelConfig;
 use crate::core::framework::base::DefaultProtocol;
 use crate::core::framework::traits::ComBase;
-use crate::core::framework::{ChannelStatus, PointData};
+use crate::core::framework::{ChannelStatus, PointData, TelemetryType};
+use crate::plugins::plugin_storage::{DefaultPluginStorage, PluginStorage};
 use crate::utils::error::{ComSrvError, Result};
 use crate::utils::hex::format_hex;
 use async_trait::async_trait;
@@ -109,6 +110,8 @@ pub struct CanClientBase {
     statistics: Arc<RwLock<CanStatistics>>,
     /// Message filters (CAN IDs to monitor)
     message_filters: Arc<RwLock<Vec<u32>>>,
+    /// Plugin storage for data persistence
+    storage: Arc<tokio::sync::Mutex<Option<Arc<dyn PluginStorage>>>>,
 }
 
 impl CanClientBase {
@@ -187,6 +190,7 @@ impl CanClientBase {
             message_mappings: Arc::new(RwLock::new(Vec::new())),
             statistics: Arc::new(RwLock::new(CanStatistics::default())),
             message_filters: Arc::new(RwLock::new(Vec::new())),
+            storage: Arc::new(tokio::sync::Mutex::new(None)),
         }
     }
 
@@ -203,6 +207,49 @@ impl CanClientBase {
     /// Get the timeout value
     pub fn timeout_ms(&self) -> u64 {
         self.timeout_ms
+    }
+
+    /// Initialize plugin storage
+    pub async fn init_storage(&self) -> Result<()> {
+        match DefaultPluginStorage::from_env().await {
+            Ok(s) => {
+                let mut storage = self.storage.lock().await;
+                *storage = Some(Arc::new(s) as Arc<dyn PluginStorage>);
+                tracing::info!("CAN storage initialized successfully");
+                Ok(())
+            }
+            Err(e) => {
+                tracing::warn!(
+                    "Failed to create storage: {}, data will not be persisted",
+                    e
+                );
+                Ok(()) // Don't fail, just run without storage
+            }
+        }
+    }
+
+    /// Store point data to plugin storage
+    async fn store_point_data(&self, point_data: &PointData) -> Result<()> {
+        if let Some(storage) = &*self.storage.lock().await {
+            // Parse point_id to u32
+            if let Ok(point_id) = point_data.id.parse::<u32>() {
+                // Determine telemetry type (CAN typically uses telemetry and signal types)
+                let telemetry_type = match point_data.unit.as_str() {
+                    "" | "bool" | "status" => TelemetryType::Signal,
+                    _ => TelemetryType::Telemetry,
+                };
+
+                if let Ok(value) = point_data.value.parse::<f64>() {
+                    if let Err(e) = storage
+                        .write_point(self.base.channel_id, &telemetry_type, point_id, value)
+                        .await
+                    {
+                        tracing::warn!("Failed to store CAN point data: {}", e);
+                    }
+                }
+            }
+        }
+        Ok(())
     }
 
     /// Load CAN message mappings
@@ -462,6 +509,9 @@ impl ComBase for CanClientBase {
     }
 
     async fn start(&mut self) -> Result<()> {
+        // Initialize storage
+        self.init_storage().await?;
+
         // Initialize CAN interface here
         *self.connected.write().await = true;
         info!("Starting CAN client on interface {:?}", self.interface_type);
@@ -622,6 +672,26 @@ impl CanClient for CanClientBase {
         // This would typically receive a frame with the specified CAN ID
         // For now, return a mock value
         debug!("Reading CAN data for mapping: {}", mapping.name);
+
+        // In a real implementation, this would extract data from CAN frames
+        // For demonstration, create a point data and store it
+        if let Some(point_id) = mapping.name.split('_').last() {
+            if let Ok(pid) = point_id.parse::<u32>() {
+                let point_data = PointData {
+                    id: pid.to_string(),
+                    name: mapping.name.clone(),
+                    value: "0.0".to_string(), // In real implementation, extract from CAN frame
+                    timestamp: Utc::now(),
+                    unit: mapping.data_type.to_string(),
+                    description: format!("CAN signal from ID 0x{:X}", mapping.can_id),
+                    telemetry_type: None,
+                    channel_id: Some(self.base.channel_id),
+                };
+
+                // Store the point data
+                let _ = self.store_point_data(&point_data).await;
+            }
+        }
 
         Ok(serde_json::Value::Null)
     }

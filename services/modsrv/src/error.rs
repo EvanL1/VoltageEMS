@@ -136,6 +136,14 @@ pub enum ModelSrvError {
     /// Action execution errors
     #[error("Action execution error: {0}")]
     ActionExecutionError(String),
+
+    /// Command not found errors
+    #[error("Command not found: {0}")]
+    CommandNotFound(String),
+
+    /// Timeout error
+    #[error("Timeout error: {0}")]
+    TimeoutError(String),
 }
 
 /// Result type alias for Model Service

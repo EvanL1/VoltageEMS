@@ -6,6 +6,7 @@
 pub mod config_template;
 pub mod plugin_manager;
 pub mod plugin_registry;
+pub mod plugin_storage;
 pub mod protocol_plugin;
 pub mod protocols;
 
@@ -16,6 +17,10 @@ pub use config_template::{
 };
 pub use plugin_manager::PluginManager;
 pub use plugin_registry::{PluginRegistry, PluginStatistics};
+pub use plugin_storage::{
+    telemetry_type_to_redis, DefaultPluginStorage, PluginPointConfig, PluginPointUpdate,
+    PluginStorage,
+};
 pub use protocol_plugin::{
     create_plugin_instance, CliArgument, CliCommand, ConfigTemplate, ProtocolMetadata,
     ProtocolPlugin, ValidationRule,

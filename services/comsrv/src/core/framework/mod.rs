@@ -12,8 +12,9 @@ pub mod types; // Data types (was data_types)
 
 // Data handling modules
 pub mod optimized_sync; // Optimized sync mechanisms
-pub mod realtime_data; // Real-time data structures
-pub mod redis; // Redis integration
+
+// Command handling
+pub mod command_subscriber; // Redis command subscription
 
 // Re-export commonly used types
 pub use base::{DefaultProtocol, PacketParseResult};
@@ -26,8 +27,11 @@ pub use types::*;
 
 // Data handling exports
 pub use optimized_sync::{OptimizedBatchSync, OptimizedSyncConfig, SyncStats};
-pub use realtime_data::{ChannelConfig, PointConfig, RealtimeBatch, RealtimeValue};
-pub use redis::{RedisBatchSync, RedisBatchSyncConfig, RedisSyncStats};
+
+// Command handling exports
+pub use command_subscriber::{
+    CommandStatus, CommandSubscriber, CommandSubscriberConfig, ControlCommand,
+};
 
 /// Initialize protocol framework
 pub fn init_framework() {

@@ -1,9 +1,12 @@
 mod api;
+mod cache;
 mod config;
+mod engine;
 mod error;
 mod model;
 mod monitoring;
 mod redis_handler;
+mod storage;
 mod template;
 
 use crate::api::ApiServer;
@@ -195,7 +198,7 @@ async fn run_service(config: &Config) -> Result<()> {
 
     // Start API server
     let redis_conn_arc = Arc::new(RedisConnection::new());
-    let api_server = ApiServer::new(redis_conn_arc, config.api.port);
+    let api_server = ApiServer::new_legacy(redis_conn_arc, config.api.port);
 
     tokio::spawn(async move {
         if let Err(e) = api_server.start().await {
@@ -400,7 +403,7 @@ fn display_model_info(config: &Config, redis_conn: &RedisConnection) -> Result<(
 }
 
 /// Debug Redis data
-fn debug_redis_data(config: &Config, pattern: &str) -> Result<()> {
+fn debug_redis_data(_config: &Config, pattern: &str) -> Result<()> {
     // Create Redis connection
     let mut redis_conn = RedisConnection::new();
 
@@ -442,7 +445,7 @@ async fn start_api_server(config: &Config) -> Result<()> {
     let redis_conn = Arc::new(RedisConnection::new());
 
     // Create API server
-    let api_server = ApiServer::new(redis_conn, config.api.port);
+    let api_server = ApiServer::new_legacy(redis_conn, config.api.port);
 
     // Start API server
     api_server

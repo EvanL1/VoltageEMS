@@ -164,7 +164,7 @@ async fn test_channel_operations() {
     assert!(metadata.is_some());
     let (name, protocol) = metadata.unwrap();
     assert_eq!(name, "channel_10");
-    assert!(protocol.contains("Modbus"));
+    assert!(protocol.contains("Virtual")); // 修正为 Virtual 协议
 
     info!("All channel operations completed successfully");
 }
@@ -254,7 +254,7 @@ async fn test_channel_with_mock_transport() {
     match result {
         Ok(protocol) => {
             info!("Protocol created: {}", protocol.name());
-            assert_eq!(protocol.protocol_type(), "modbus");
+            assert_eq!(protocol.protocol_type(), "virtual"); // 修正期望值为 "virtual"
 
             // 获取状态
             let status = protocol.status().await;

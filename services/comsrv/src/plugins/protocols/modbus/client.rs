@@ -7,6 +7,7 @@
 //! - 内置监控和诊断功能
 
 use async_trait::async_trait;
+use serde_json;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
@@ -16,10 +17,11 @@ use tracing::{debug, error, info, info_span, warn, Instrument};
 use crate::core::config::types::protocol::TelemetryType as ConfigTelemetryType;
 // UniversalTransportBridge has been removed, using Transport trait directly
 use crate::core::framework::{
-    traits::ComBase,
+    traits::{ComBase, FourTelemetryOperations},
     types::{ChannelStatus, PointData as CommonPointData, TelemetryType},
 };
 use crate::core::transport::traits::Transport;
+use crate::plugins::plugin_storage::{DefaultPluginStorage, PluginStorage};
 use crate::plugins::protocols::modbus::{
     common::{ModbusConfig, ModbusFunctionCode},
     modbus_polling::{ModbusPoint, ModbusPollingConfig, ModbusPollingEngine},
@@ -95,24 +97,9 @@ pub struct ModbusClient {
 }
 
 impl ModbusClient {
-    /// Create Redis connection
-    async fn create_redis_connection(&self) -> Result<redis::aio::MultiplexedConnection> {
-        // Use COMSRV_SERVICE_REDIS_URL or REDIS_URL environment variable
-        let redis_url = std::env::var("COMSRV_SERVICE_REDIS_URL")
-            .or_else(|_| std::env::var("REDIS_URL"))
-            .unwrap_or_else(|_| "redis://127.0.0.1:6379".to_string());
-
-        debug!("Connecting to Redis: {}", redis_url);
-
-        let client = redis::Client::open(redis_url)
-            .map_err(|e| ComSrvError::ConnectionError(format!("Redis client error: {e}")))?;
-
-        let conn = client
-            .get_multiplexed_async_connection()
-            .await
-            .map_err(|e| ComSrvError::ConnectionError(format!("Redis connection error: {e}")))?;
-
-        Ok(conn)
+    /// Create plugin storage
+    async fn create_plugin_storage(&self) -> Result<Arc<dyn PluginStorage>> {
+        Ok(Arc::new(DefaultPluginStorage::from_env().await?))
     }
 
     /// 创建新的Modbus客户端
@@ -155,8 +142,74 @@ impl ModbusClient {
             total_mappings, self.config.channel_name
         );
 
+        // 初始化点位到Redis（创建实时数据键）
+        if let Ok(storage) = self.create_plugin_storage().await {
+            let mappings = self.mappings.read().await;
+
+            // 初始化遥测点
+            for point_id in mappings.telemetry_mappings.keys() {
+                if let Err(e) = storage
+                    .initialize_point(
+                        self.config.channel_id,
+                        &crate::core::framework::types::TelemetryType::Telemetry,
+                        *point_id,
+                    )
+                    .await
+                {
+                    error!("Failed to initialize telemetry point {}: {}", point_id, e);
+                }
+            }
+
+            // 初始化遥信点
+            for point_id in mappings.signal_mappings.keys() {
+                if let Err(e) = storage
+                    .initialize_point(
+                        self.config.channel_id,
+                        &crate::core::framework::types::TelemetryType::Signal,
+                        *point_id,
+                    )
+                    .await
+                {
+                    error!("Failed to initialize signal point {}: {}", point_id, e);
+                }
+            }
+
+            // 初始化遥控点
+            for point_id in mappings.control_mappings.keys() {
+                if let Err(e) = storage
+                    .initialize_point(
+                        self.config.channel_id,
+                        &crate::core::framework::types::TelemetryType::Control,
+                        *point_id,
+                    )
+                    .await
+                {
+                    error!("Failed to initialize control point {}: {}", point_id, e);
+                }
+            }
+
+            // 初始化遥调点
+            for point_id in mappings.adjustment_mappings.keys() {
+                if let Err(e) = storage
+                    .initialize_point(
+                        self.config.channel_id,
+                        &crate::core::framework::types::TelemetryType::Adjustment,
+                        *point_id,
+                    )
+                    .await
+                {
+                    error!("Failed to initialize adjustment point {}: {}", point_id, e);
+                }
+            }
+
+            info!(
+                "[{}] Initialized {} points in Redis",
+                self.config.channel_name, total_mappings
+            );
+        }
+
         // 初始化 Modbus 专属轮询引擎
-        // NOTE: Moved to start_polling to ensure Redis is properly configured
+        // NOTE: Moved to start_polling to ensure storage is properly configured
         // self.initialize_modbus_polling().await?;
 
         Ok(())
@@ -176,8 +229,7 @@ impl ModbusClient {
 
         let mut engine = ModbusPollingEngine::new(polling_config);
 
-        // TODO: 设置 Redis 管理器
-        // engine.set_redis_manager(redis_manager);
+        // Storage is set in start_polling method
 
         // 从映射表创建 Modbus 点位
         let modbus_points = self.create_modbus_points().await?;
@@ -197,34 +249,22 @@ impl ModbusClient {
         // Initialize polling engine if not already done
         if self.polling_engine.is_none() {
             info!(
-                "[{}] Creating new polling engine with Redis",
+                "[{}] Creating new polling engine with storage",
                 self.config.channel_name
             );
             let polling_config = self.config.polling.clone();
             let mut engine = ModbusPollingEngine::new(polling_config);
 
-            // Create Redis manager if Redis is configured
-            if let Ok(redis_conn) = self.create_redis_connection().await {
-                let redis_config = crate::core::framework::redis::RedisBatchSyncConfig {
-                    batch_size: 100,
-                    sync_interval: Duration::from_millis(1000),
-                    key_prefix: format!("comsrv:{}:points", self.config.channel_name),
-                    point_ttl: None,
-                    use_pipeline: true,
-                    channel_id: Some(self.config.channel_id),
-                };
-                let redis_manager = Arc::new(crate::core::framework::redis::RedisBatchSync::new(
-                    redis_conn,
-                    redis_config,
-                ));
-                engine.set_redis_manager(redis_manager);
+            // Create plugin storage
+            if let Ok(storage) = self.create_plugin_storage().await {
+                engine.set_storage(storage);
                 info!(
-                    "[{}] Redis storage enabled for polling with channel_id={}",
+                    "[{}] Plugin storage enabled for polling with channel_id={}",
                     self.config.channel_name, self.config.channel_id
                 );
             } else {
                 warn!(
-                    "[{}] Redis not available, data will not be persisted",
+                    "[{}] Storage not available, data will not be persisted",
                     self.config.channel_name
                 );
             }
@@ -800,6 +840,7 @@ impl ComBase for ModbusClient {
         async move {
             // First establish connection
             self.connect().await?;
+
             // Then start polling if configured
             if self.config.polling.default_interval_ms > 0 {
                 self.start_polling().await?;

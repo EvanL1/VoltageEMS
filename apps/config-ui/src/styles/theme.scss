@@ -1,0 +1,467 @@
+// VoltageEMS 深色主题样式
+// 赛博朋克风格的工业控制界面
+
+// 主题色彩变量
+:root {
+  // 背景色
+  --bg-primary: #0a0a0a;
+  --bg-secondary: #1a1a1a;
+  --bg-tertiary: #252525;
+  --bg-overlay: rgba(10, 10, 10, 0.85);
+  
+  // 主色调 - 深蓝紫渐变
+  --primary-color: #626aef;
+  --primary-light: #8b91ff;
+  --primary-dark: #4047d4;
+  --primary-gradient: linear-gradient(135deg, #626aef 0%, #409eff 100%);
+  
+  // 强调色 - 霓虹色
+  --accent-cyan: #00d4ff;
+  --accent-pink: #ff006e;
+  --accent-purple: #a855f7;
+  
+  // 状态色 - 霓虹风格
+  --success-color: #00ff88;
+  --warning-color: #ff9500;
+  --danger-color: #ff3838;
+  --info-color: #00b4d8;
+  
+  // 文字色
+  --text-primary: #e4e4e4;
+  --text-secondary: #a0a0a0;
+  --text-muted: #606060;
+  
+  // 边框色
+  --border-color: rgba(255, 255, 255, 0.1);
+  --border-light: rgba(255, 255, 255, 0.05);
+  --border-highlight: rgba(98, 106, 239, 0.5);
+  
+  // 阴影 - 新拟态风格
+  --shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.4);
+  --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.5);
+  --shadow-lg: 0 8px 32px rgba(0, 0, 0, 0.6);
+  --shadow-glow: 0 0 20px rgba(98, 106, 239, 0.3);
+  --shadow-inner: inset 0 2px 4px rgba(0, 0, 0, 0.3);
+  
+  // 玻璃态效果
+  --glass-bg: rgba(255, 255, 255, 0.05);
+  --glass-border: rgba(255, 255, 255, 0.1);
+  --glass-blur: blur(10px);
+}
+
+// 全局样式重置
+* {
+  box-sizing: border-box;
+}
+
+body {
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  position: relative;
+  overflow-x: hidden;
+  
+  // 背景渐变 - 静态，不再动画
+  &::before {
+    content: '';
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: radial-gradient(circle at 20% 50%, rgba(98, 106, 239, 0.05) 0%, transparent 50%),
+                radial-gradient(circle at 80% 80%, rgba(0, 212, 255, 0.02) 0%, transparent 50%),
+                radial-gradient(circle at 40% 20%, rgba(255, 0, 110, 0.02) 0%, transparent 50%);
+    z-index: -1;
+  }
+}
+
+// 滚动条美化
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--bg-secondary);
+  border-radius: 5px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--primary-color);
+  border-radius: 5px;
+  transition: all 0.3s ease;
+  
+  &:hover {
+    background: var(--primary-light);
+    box-shadow: 0 0 10px var(--primary-color);
+  }
+}
+
+// Element Plus 主题覆盖
+.el-button {
+  --el-button-bg-color: var(--glass-bg);
+  --el-button-border-color: var(--glass-border);
+  --el-button-text-color: var(--text-primary);
+  --el-button-hover-bg-color: rgba(98, 106, 239, 0.2);
+  --el-button-hover-border-color: var(--primary-color);
+  backdrop-filter: var(--glass-blur);
+  transition: all 0.3s ease;
+  
+  &:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 16px rgba(98, 106, 239, 0.3);
+  }
+  
+  &--primary {
+    background: var(--primary-gradient);
+    border-color: transparent;
+    
+    &:hover {
+      box-shadow: 0 4px 20px rgba(98, 106, 239, 0.5);
+    }
+  }
+}
+
+.el-input {
+  --el-input-bg-color: var(--glass-bg);
+  --el-input-border-color: var(--glass-border);
+  --el-input-text-color: var(--text-primary);
+  --el-input-focus-border-color: var(--primary-color);
+  
+  .el-input__wrapper {
+    backdrop-filter: var(--glass-blur);
+    transition: all 0.3s ease;
+    
+    &:hover {
+      border-color: rgba(98, 106, 239, 0.3);
+    }
+    
+    &.is-focus {
+      border-color: var(--primary-color);
+      box-shadow: 0 0 0 2px rgba(98, 106, 239, 0.2);
+    }
+  }
+}
+
+.el-select {
+  --el-select-input-bg-color: var(--glass-bg);
+  --el-select-border-color-hover: var(--primary-color);
+}
+
+.el-table {
+  --el-table-bg-color: transparent;
+  --el-table-tr-bg-color: transparent;
+  --el-table-header-bg-color: var(--glass-bg);
+  --el-table-row-hover-bg-color: rgba(98, 106, 239, 0.1);
+  --el-table-border-color: var(--border-light);
+  --el-table-text-color: var(--text-primary);
+  --el-table-header-text-color: var(--text-primary);
+  
+  backdrop-filter: var(--glass-blur);
+}
+
+// 工具类
+.glass-effect {
+  background: var(--glass-bg);
+  backdrop-filter: var(--glass-blur);
+  border: 1px solid var(--glass-border);
+  border-radius: 12px;
+}
+
+.neon-glow {
+  text-shadow: 0 0 10px currentColor,
+               0 0 20px currentColor,
+               0 0 30px currentColor;
+}
+
+.gradient-text {
+  background: var(--primary-gradient);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+// 动画类
+@keyframes pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.8; transform: scale(1.05); }
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes slideIn {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(0); }
+}
+
+.animate-pulse {
+  animation: pulse 2s ease-in-out infinite;
+}
+
+.animate-fade-in {
+  animation: fadeIn 0.5s ease-out;
+}
+
+.animate-slide-in {
+  animation: slideIn 0.3s ease-out;
+}
+
+// 网格背景装饰
+.grid-background {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-image: 
+    linear-gradient(rgba(98, 106, 239, 0.1) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(98, 106, 239, 0.1) 1px, transparent 1px);
+  background-size: 50px 50px;
+  opacity: 0.3;
+  pointer-events: none;
+}
+
+// 低调的粒子效果
+@keyframes floatParticle {
+  0% {
+    transform: translateY(100vh) translateX(0);
+    opacity: 0;
+  }
+  10% {
+    opacity: 0.3;
+  }
+  90% {
+    opacity: 0.3;
+  }
+  100% {
+    transform: translateY(-100vh) translateX(50px);
+    opacity: 0;
+  }
+}
+
+.particle-container {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  pointer-events: none;
+  z-index: -1;
+  
+  .particle {
+    position: absolute;
+    width: 2px;
+    height: 2px;
+    background: var(--primary-color);
+    border-radius: 50%;
+    opacity: 0.5;
+    animation: floatParticle 30s linear infinite;
+    
+    &:nth-child(2n) {
+      animation-duration: 35s;
+      animation-delay: 5s;
+    }
+    
+    &:nth-child(3n) {
+      animation-duration: 40s;
+      animation-delay: 10s;
+    }
+  }
+}
+
+// 霓虹边框效果
+@mixin neon-border($color: var(--primary-color)) {
+  position: relative;
+  
+  &::before {
+    content: '';
+    position: absolute;
+    top: -2px;
+    left: -2px;
+    right: -2px;
+    bottom: -2px;
+    background: linear-gradient(45deg, $color, transparent, $color);
+    border-radius: inherit;
+    opacity: 0;
+    transition: opacity 0.3s ease;
+    animation: rotateBorder 3s linear infinite;
+    z-index: -1;
+  }
+  
+  &:hover::before {
+    opacity: 1;
+  }
+}
+
+@keyframes rotateBorder {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+// 扫描线效果 - 更加低调
+@keyframes scanLine {
+  0% { transform: translateY(-100%); opacity: 0; }
+  10% { opacity: 0.3; }
+  90% { opacity: 0.3; }
+  100% { transform: translateY(100vh); opacity: 0; }
+}
+
+.scan-line {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100px;
+  background: linear-gradient(180deg, 
+    transparent 0%, 
+    rgba(0, 212, 255, 0.03) 50%, 
+    transparent 100%);
+  pointer-events: none;
+  animation: scanLine 20s linear infinite;
+  z-index: 1;
+}
+
+// 全息效果
+.holographic {
+  position: relative;
+  background: linear-gradient(45deg, 
+    rgba(255, 0, 110, 0.1),
+    rgba(0, 212, 255, 0.1),
+    rgba(98, 106, 239, 0.1),
+    rgba(255, 0, 110, 0.1));
+  background-size: 400% 400%;
+  animation: holographicShift 10s ease infinite;
+  
+  &::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: inherit;
+    filter: blur(10px);
+    opacity: 0.5;
+    z-index: -1;
+  }
+}
+
+@keyframes holographicShift {
+  0% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+  100% { background-position: 0% 50%; }
+}
+
+// Element Plus 卡片深色主题
+.el-card {
+  background: var(--glass-bg);
+  backdrop-filter: var(--glass-blur);
+  border: 1px solid var(--glass-border);
+  color: var(--text-primary);
+  
+  &__header {
+    background: rgba(255, 255, 255, 0.02);
+    border-bottom: 1px solid var(--glass-border);
+    color: var(--text-primary);
+  }
+  
+  &__body {
+    background: transparent;
+  }
+}
+
+// 对话框深色主题
+.el-dialog {
+  background: var(--bg-secondary) !important;
+  border: 1px solid var(--glass-border) !important;
+  
+  &__header {
+    background: var(--glass-bg) !important;
+    backdrop-filter: var(--glass-blur);
+    border-bottom: 1px solid var(--glass-border) !important;
+  }
+  
+  &__title {
+    color: var(--text-primary) !important;
+    font-weight: 600;
+  }
+  
+  &__body {
+    background: var(--bg-secondary) !important;
+    color: var(--text-primary) !important;
+  }
+}
+
+// 弹出层深色主题
+.el-overlay {
+  background-color: rgba(0, 0, 0, 0.8) !important;
+}
+
+// 消息框深色主题
+.el-message-box {
+  background: var(--bg-secondary) !important;
+  border: 1px solid var(--glass-border) !important;
+  
+  &__header {
+    background: var(--glass-bg) !important;
+    border-bottom: 1px solid var(--glass-border) !important;
+  }
+  
+  &__title {
+    color: var(--text-primary) !important;
+  }
+  
+  &__content {
+    color: var(--text-primary) !important;
+  }
+  
+  &__btns {
+    .el-button {
+      background: var(--glass-bg) !important;
+      border-color: var(--glass-border) !important;
+      color: var(--text-primary) !important;
+      
+      &--primary {
+        background: var(--primary-gradient) !important;
+        border: none !important;
+        color: #fff !important;
+      }
+    }
+  }
+}
+
+// 标签页深色主题
+.el-tag {
+  background: rgba(98, 106, 239, 0.2) !important;
+  border: 1px solid var(--primary-color) !important;
+  color: var(--primary-color) !important;
+  
+  &--success {
+    background: rgba(0, 255, 136, 0.2) !important;
+    border-color: var(--success-color) !important;
+    color: var(--success-color) !important;
+  }
+  
+  &--warning {
+    background: rgba(255, 149, 0, 0.2) !important;
+    border-color: var(--warning-color) !important;
+    color: var(--warning-color) !important;
+  }
+  
+  &--danger {
+    background: rgba(255, 56, 56, 0.2) !important;
+    border-color: var(--danger-color) !important;
+    color: var(--danger-color) !important;
+  }
+  
+  &--info {
+    background: rgba(0, 180, 216, 0.2) !important;
+    border-color: var(--info-color) !important;
+    color: var(--info-color) !important;
+  }
+}

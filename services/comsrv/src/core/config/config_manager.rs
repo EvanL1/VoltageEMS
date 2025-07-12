@@ -48,26 +48,40 @@ impl ConfigManager {
         let mut from_config_center = false;
 
         if let Some(ref cc_client) = config_center {
-            match tokio::runtime::Handle::try_current() {
-                Ok(handle) => {
-                    // We're in an async context, use it
-                    match handle.block_on(cc_client.fetch_config()) {
-                        Ok(remote_config) => {
-                            info!("Successfully loaded configuration from config center");
-                            figment = figment.merge(Json::string(&remote_config.to_string()));
-                            from_config_center = true;
-                        }
-                        Err(e) => {
-                            warn!(
-                                "Failed to load from config center: {}, falling back to local file",
-                                e
-                            );
+            // Skip config center in test environments or when running synchronously
+            if std::env::var("COMSRV_SKIP_CONFIG_CENTER").is_ok() {
+                debug!("Skipping config center due to environment variable");
+            } else {
+                match tokio::runtime::Handle::try_current() {
+                    Ok(_) => {
+                        // We're in an async context, but we can't use block_on here
+                        // This would require making load_config async, which is a larger refactor
+                        debug!(
+                            "In async context, skipping config center to avoid runtime conflict"
+                        );
+                    }
+                    Err(_) => {
+                        // Not in async context, create a new runtime
+                        match tokio::runtime::Runtime::new() {
+                            Ok(rt) => match rt.block_on(cc_client.fetch_config()) {
+                                Ok(remote_config) => {
+                                    info!("Successfully loaded configuration from config center");
+                                    figment =
+                                        figment.merge(Json::string(&remote_config.to_string()));
+                                    from_config_center = true;
+                                }
+                                Err(e) => {
+                                    warn!(
+                                            "Failed to load from config center: {}, falling back to local file",
+                                            e
+                                        );
+                                }
+                            },
+                            Err(e) => {
+                                warn!("Failed to create runtime for config center: {}", e);
+                            }
                         }
                     }
-                }
-                Err(_) => {
-                    // Not in async context, skip config center for now
-                    debug!("Not in async context, skipping config center");
                 }
             }
         }

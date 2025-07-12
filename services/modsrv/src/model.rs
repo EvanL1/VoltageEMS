@@ -240,7 +240,7 @@ impl ModelEngine {
             if let Ok(action_count) = action_count_str.parse::<usize>() {
                 for i in 0..action_count {
                     let action_key = format!("{}model:action:{}:{}", self.key_prefix, model.id, i);
-                    match store.get_string(&action_key) {
+                    match redis_conn.get_string(&action_key) {
                         Ok(action_json) => {
                             match serde_json::from_str::<ControlAction>(&action_json) {
                                 Ok(action) => {

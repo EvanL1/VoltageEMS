@@ -1,0 +1,49 @@
+# Git files
+.git
+.gitignore
+
+# Build artifacts (但保留workspace的Cargo.lock)
+target/
+**/target/
+
+# IDE files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Documentation
+docs/
+README.md
+CHANGELOG.md
+
+# Python files
+*.py
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Temporary files
+*.tmp
+*.temp
+*.log
+logs/
+
+# Environment files
+.env
+.env.*
+
+# Test artifacts
+**/.test-pids/
+**/integration-test-report.txt
+**/test-*.yaml
+**/test_report*.md
+
+# 保留必要的配置文件
+!services/comsrv/config/
+!services/comsrv/scripts/

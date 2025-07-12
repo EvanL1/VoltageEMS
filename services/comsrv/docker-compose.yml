@@ -1,9 +1,7 @@
 services:
   # 通信服务
   comsrv:
-    build:
-      context: ../..
-      dockerfile: services/comsrv/Dockerfile
+    image: voltage-comsrv:latest
     container_name: voltage-comsrv
     restart: unless-stopped
     ports:
@@ -14,6 +12,8 @@ services:
       - CONFIG_PATH=/app/config
       - LOG_PATH=/app/logs
       - COMSRV_CONFIG=/app/config/comsrv-docker.yaml
+      - REDIS_URL=redis://redis:6379
+      - COMSRV_SERVICE_REDIS_URL=redis://redis:6379
     volumes:
       - ./config:/app/config
       - ./logs:/app/logs
@@ -41,9 +41,7 @@ services:
 
   # Modbus模拟器
   modbus-simulator:
-    build:
-      context: ./tests
-      dockerfile: Dockerfile.modbus
+    image: voltage-modbus-simulator:latest
     container_name: voltage-modbus-simulator
     restart: unless-stopped
     ports:

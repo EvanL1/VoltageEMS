@@ -175,5 +175,53 @@ pub mod api;
 /// for operational visibility and troubleshooting.
 pub mod monitoring;
 
+/// Storage layer for model data
+///
+/// Unified storage interface supporting monitor values and control commands,
+/// with optimized Redis-based implementation following comsrv patterns.
+pub mod storage;
+
+/// ComSrv interface for point data access
+///
+/// High-performance interface for reading comsrv point data and sending
+/// control commands through Redis pub/sub channels.
+pub mod comsrv_interface;
+
+/// Optimized data reading utilities
+///
+/// Provides efficient batch reading, caching strategies, and data aggregation
+/// for high-throughput point data access from comsrv.
+pub mod data_reader;
+
+/// Control command sending utilities
+///
+/// Reliable control command sending with retry mechanisms, status tracking,
+/// and priority-based command queuing for comsrv integration.
+pub mod control_sender;
+
+/// Rule engine for conditional logic
+///
+/// Provides rule-based conditional execution, supporting complex conditions
+/// and actions for automated control operations.
+pub mod rule_engine;
+
+/// Cache management for model data
+///
+/// High-performance in-memory caching with TTL support, providing fast access
+/// to frequently used point data and model outputs.
+pub mod cache;
+
+/// Optimized async model execution engine
+///
+/// Provides concurrent model execution with configurable parallelism,
+/// supporting async operations and efficient resource utilization.
+pub mod engine;
+
+/// Device model system for physical device abstraction
+///
+/// Provides comprehensive device modeling with properties, telemetry,
+/// commands, and real-time data flow processing.
+pub mod device_model;
+
 // Re-export commonly used types for convenience
 pub use error::{ModelSrvError, Result};

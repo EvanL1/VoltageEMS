@@ -12,7 +12,8 @@ use tracing::info;
 
 use crate::core::config::ChannelConfig;
 use crate::core::framework::traits::ComBase;
-use crate::core::framework::{ChannelStatus, PointData};
+use crate::core::framework::{ChannelStatus, PointData, TelemetryType};
+use crate::plugins::plugin_storage::{DefaultPluginStorage, PluginPointUpdate, PluginStorage};
 use crate::plugins::protocols::iec60870::asdu::{CommonAddrSize, TypeId, ASDU};
 use crate::plugins::protocols::iec60870::common::{IecError, IecResult};
 use crate::utils::error::{ComSrvError, Result};
@@ -227,11 +228,14 @@ pub struct Iec104Client {
     common_addr_size: CommonAddrSize,
     /// Saved real-time point data
     point_data: Arc<RwLock<Vec<PointData>>>,
+    /// Plugin storage for data persistence  
+    storage: Arc<Mutex<Option<Arc<dyn PluginStorage>>>>,
 }
 
 impl Iec104Client {
     /// Create a new IEC-104 client
     pub fn new(config: ChannelConfig) -> Self {
+        // Note: Storage will be initialized in an async context later
         let channel_id = config.id;
         let status = ChannelStatus::new(&channel_id.to_string());
 
@@ -290,10 +294,30 @@ impl Iec104Client {
             _recv_seq: Arc::new(Mutex::new(0)),
             common_addr_size: CommonAddrSize::TwoOctets,
             point_data: Arc::new(RwLock::new(Vec::new())),
+            storage: Arc::new(Mutex::new(None)),
         }
     }
 
     /// Get the next send sequence number
+    /// Initialize plugin storage
+    async fn init_storage(&self) -> Result<()> {
+        match DefaultPluginStorage::from_env().await {
+            Ok(s) => {
+                let mut storage = self.storage.lock().await;
+                *storage = Some(Arc::new(s) as Arc<dyn PluginStorage>);
+                tracing::info!("IEC-104 storage initialized successfully");
+                Ok(())
+            }
+            Err(e) => {
+                tracing::warn!(
+                    "Failed to create storage: {}, data will not be persisted",
+                    e
+                );
+                Ok(()) // Don't fail, just run without storage
+            }
+        }
+    }
+
     #[allow(dead_code)]
 
     async fn next_send_seq(&self) -> u16 {
@@ -513,9 +537,42 @@ impl Iec104Client {
                 channel_id: Some(self.channel_id),
             };
 
-            // Store point data
+            // Store point data in memory
             let mut data = self.point_data.write().await;
-            data.push(point_data);
+            data.push(point_data.clone());
+
+            // Store to plugin storage if available
+            if let Some(storage) = &*self.storage.lock().await {
+                // Parse point_id to extract numeric ID
+                if let Some(point_id_str) = point_data.id.split(':').last() {
+                    if let Ok(point_id) = point_id_str.parse::<u32>() {
+                        // Determine telemetry type based on TypeId
+                        let telemetry_type = match asdu.type_id {
+                            TypeId::M_SP_NA_1
+                            | TypeId::M_SP_TB_1
+                            | TypeId::M_DP_NA_1
+                            | TypeId::M_DP_TB_1 => TelemetryType::Signal,
+                            TypeId::M_ME_NA_1 | TypeId::M_ME_NB_1 | TypeId::M_ME_NC_1 => {
+                                TelemetryType::Telemetry
+                            }
+                            TypeId::C_SC_NA_1 | TypeId::C_DC_NA_1 => TelemetryType::Control,
+                            TypeId::C_SE_NA_1 | TypeId::C_SE_NB_1 | TypeId::C_SE_NC_1 => {
+                                TelemetryType::Adjustment
+                            }
+                            _ => TelemetryType::Telemetry, // Default
+                        };
+
+                        if let Ok(value) = point_data.value.parse::<f64>() {
+                            if let Err(e) = storage
+                                .write_point(self.channel_id, &telemetry_type, point_id, value)
+                                .await
+                            {
+                                tracing::warn!("Failed to store point data: {}", e);
+                            }
+                        }
+                    }
+                }
+            }
         }
 
         Ok(())
@@ -557,6 +614,9 @@ impl ComBase for Iec104Client {
         if *running {
             return Ok(());
         }
+
+        // Initialize storage
+        self.init_storage().await?;
 
         // Set running flag
         *running = true;

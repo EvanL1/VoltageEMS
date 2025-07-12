@@ -9,6 +9,7 @@
 
 use crate::core::config::types::protocol::TelemetryType;
 use crate::core::framework::types::TelemetryType as CommonTelemetryType;
+use crate::plugins::plugin_storage::{PluginPointUpdate, PluginStorage};
 use byteorder::{BigEndian, ByteOrder, LittleEndian};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -66,7 +67,6 @@ pub struct SlavePollingStats {
 }
 
 /// Modbus polling engine
-#[derive(Debug)]
 pub struct ModbusPollingEngine {
     /// Polling configuration
     config: ModbusPollingConfig,
@@ -74,14 +74,31 @@ pub struct ModbusPollingEngine {
     batch_config: ModbusBatchConfig,
     /// Points organized by slave ID
     points_by_slave: HashMap<u8, Vec<ModbusPoint>>,
-    /// Redis manager for storing results
-    redis_manager: Option<Arc<crate::core::framework::redis::RedisBatchSync>>,
+    /// Plugin storage for storing results
+    storage: Option<Arc<dyn PluginStorage>>,
     /// Running state
     is_running: Arc<RwLock<bool>>,
     /// Polling tasks handles
     task_handles: Arc<RwLock<Vec<tokio::task::JoinHandle<()>>>>,
     /// Polling statistics
     stats: Arc<RwLock<ModbusPollingStats>>,
+}
+
+impl std::fmt::Debug for ModbusPollingEngine {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ModbusPollingEngine")
+            .field("config", &self.config)
+            .field("batch_config", &self.batch_config)
+            .field("points_by_slave", &self.points_by_slave)
+            .field("storage", &self.storage.is_some())
+            .field("is_running", &self.is_running)
+            .field(
+                "task_count",
+                &self.task_handles.try_read().map(|h| h.len()).unwrap_or(0),
+            )
+            .field("stats", &self.stats)
+            .finish()
+    }
 }
 
 impl ModbusPollingEngine {
@@ -91,7 +108,7 @@ impl ModbusPollingEngine {
             config,
             batch_config: ModbusBatchConfig::default(),
             points_by_slave: HashMap::new(),
-            redis_manager: None,
+            storage: None,
             is_running: Arc::new(RwLock::new(false)),
             task_handles: Arc::new(RwLock::new(Vec::new())),
             stats: Arc::new(RwLock::new(ModbusPollingStats::default())),
@@ -107,19 +124,16 @@ impl ModbusPollingEngine {
             config,
             batch_config,
             points_by_slave: HashMap::new(),
-            redis_manager: None,
+            storage: None,
             is_running: Arc::new(RwLock::new(false)),
             task_handles: Arc::new(RwLock::new(Vec::new())),
             stats: Arc::new(RwLock::new(ModbusPollingStats::default())),
         }
     }
 
-    /// Set Redis manager for storing polled data
-    pub fn set_redis_manager(
-        &mut self,
-        redis_manager: Arc<crate::core::framework::redis::RedisBatchSync>,
-    ) {
-        self.redis_manager = Some(redis_manager);
+    /// Set plugin storage for storing polled data
+    pub fn set_storage(&mut self, storage: Arc<dyn PluginStorage>) {
+        self.storage = Some(storage);
     }
 
     /// Add points for polling
@@ -170,7 +184,7 @@ impl ModbusPollingEngine {
 
             let points = points.clone();
             let is_running = self.is_running.clone();
-            let redis_manager = self.redis_manager.clone();
+            let storage = self.storage.clone();
             let read_cb = read_callback.clone();
             let enable_batch = self.config.enable_batch_reading;
             let stats = self.stats.clone();
@@ -191,9 +205,7 @@ impl ModbusPollingEngine {
                         // Batch reading optimization
                         let batches = optimize_batch_reading(&points, &batch_config, slave_id);
                         for batch in batches {
-                            match poll_batch(slave_id, &batch, &read_cb, &redis_manager, &stats)
-                                .await
-                            {
+                            match poll_batch(slave_id, &batch, &read_cb, &storage, &stats).await {
                                 Ok(count) => points_read += count,
                                 Err(e) => {
                                     let err_msg = e.to_string();
@@ -211,14 +223,8 @@ impl ModbusPollingEngine {
                     } else {
                         // Individual point reading
                         for point in &points {
-                            match poll_single_point(
-                                slave_id,
-                                point,
-                                &read_cb,
-                                &redis_manager,
-                                &stats,
-                            )
-                            .await
+                            match poll_single_point(slave_id, point, &read_cb, &storage, &stats)
+                                .await
                             {
                                 Ok(_) => points_read += 1,
                                 Err(e) => {
@@ -350,7 +356,7 @@ fn optimize_batch_reading(
             let last_point = &current_batch[current_batch.len() - 1];
             let _current_span =
                 last_point.register_address - first_addr + last_point.register_count;
-            let new_span = point.register_address - first_addr + point.register_count;
+            let new_span = point.register_address.saturating_sub(first_addr) + point.register_count;
             let span_too_large = new_span > max_batch;
 
             fc_changed || gap_too_large || batch_full || span_too_large
@@ -497,7 +503,7 @@ async fn poll_batch<F>(
     slave_id: u8,
     batch: &[ModbusPoint],
     read_callback: &F,
-    redis_manager: &Option<Arc<crate::core::framework::redis::RedisBatchSync>>,
+    storage: &Option<Arc<dyn PluginStorage>>,
     _stats: &Arc<RwLock<ModbusPollingStats>>,
 ) -> Result<usize, Box<dyn std::error::Error + Send + Sync>>
 where
@@ -571,14 +577,46 @@ where
                 }
             }
 
-            // Store in Redis if available
-            if let Some(redis) = redis_manager {
-                info!("Storing {} points to Redis", point_data_list.len());
-                if let Err(e) = redis.batch_update_values(point_data_list).await {
-                    warn!("Failed to store batch data in Redis: {e}");
+            // Store using plugin storage if available
+            if let Some(storage) = storage {
+                info!("Storing {} points to storage", point_data_list.len());
+
+                // Convert to plugin storage format
+                let updates: Vec<PluginPointUpdate> = point_data_list
+                    .iter()
+                    .filter_map(|data| {
+                        // Parse point_id to u32
+                        if let Ok(point_id) = data.id.parse::<u32>() {
+                            // Map telemetry type
+                            let telemetry_type = match data.telemetry_type.as_ref()? {
+                                CommonTelemetryType::Telemetry => CommonTelemetryType::Telemetry,
+                                CommonTelemetryType::Signal => CommonTelemetryType::Signal,
+                                CommonTelemetryType::Control => CommonTelemetryType::Control,
+                                CommonTelemetryType::Adjustment => CommonTelemetryType::Adjustment,
+                            };
+
+                            // Parse value to f64
+                            if let Ok(value) = data.value.parse::<f64>() {
+                                Some(PluginPointUpdate {
+                                    channel_id: data.channel_id.unwrap_or(1),
+                                    telemetry_type,
+                                    point_id,
+                                    value,
+                                })
+                            } else {
+                                None
+                            }
+                        } else {
+                            None
+                        }
+                    })
+                    .collect();
+
+                if let Err(e) = storage.write_points(updates).await {
+                    warn!("Failed to store batch data in storage: {e}");
                 }
             } else {
-                warn!("No Redis manager available for storing batch data");
+                warn!("No storage available for storing batch data");
             }
 
             Ok(points_read)
@@ -595,7 +633,7 @@ async fn poll_single_point<F>(
     slave_id: u8,
     point: &ModbusPoint,
     read_callback: &F,
-    redis_manager: &Option<Arc<crate::core::framework::redis::RedisBatchSync>>,
+    storage: &Option<Arc<dyn PluginStorage>>,
     _stats: &Arc<RwLock<ModbusPollingStats>>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>>
 where
@@ -649,17 +687,34 @@ where
                     channel_id: None, // Will be set by Redis sync from config
                 };
 
-                // Store in Redis if available
-                if let Some(redis) = redis_manager {
-                    info!("Storing point {} to Redis", point.point_id);
-                    if let Err(e) = redis.update_value(point_data).await {
-                        warn!("Failed to store point data in Redis: {e}");
+                // Store using plugin storage if available
+                if let Some(storage) = storage {
+                    info!("Storing point {} to storage", point.point_id);
+
+                    // Convert to plugin storage format
+                    if let Ok(point_id) = point.point_id.parse::<u32>() {
+                        // Map telemetry type
+                        let telemetry_type = match point.telemetry_type {
+                            TelemetryType::Telemetry => CommonTelemetryType::Telemetry,
+                            TelemetryType::Signal => CommonTelemetryType::Signal,
+                            TelemetryType::Control => CommonTelemetryType::Control,
+                            TelemetryType::Adjustment => CommonTelemetryType::Adjustment,
+                        };
+
+                        if let Err(e) = storage
+                            .write_point(
+                                1, // Default channel_id, should be configured
+                                &telemetry_type,
+                                point_id,
+                                scaled_value,
+                            )
+                            .await
+                        {
+                            warn!("Failed to store point data in storage: {e}");
+                        }
                     }
                 } else {
-                    warn!(
-                        "No Redis manager available for storing point {}",
-                        point.point_id
-                    );
+                    warn!("No storage available for storing point {}", point.point_id);
                 }
 
                 debug!("Point {} value: {scaled_value}", point.point_id);

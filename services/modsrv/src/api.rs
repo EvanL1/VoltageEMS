@@ -1,18 +1,18 @@
-use crate::error::ModelSrvError;
+// use crate::error::ModelSrvError;
 use crate::monitoring::{HealthStatus, MonitoringService};
 use crate::redis_handler::RedisConnection;
-use crate::template::TemplateManager;
+// use crate::template::TemplateManager;
 use axum::{
     extract::{Path, State},
     http::StatusCode,
     response::Json,
-    routing::{delete, get, post, put},
+    routing::{get, post},
     Router,
 };
 use rand;
 use serde::{Deserialize, Serialize};
 use serde_json::{self, json, Value};
-use std::collections::HashMap;
+// use std::collections::HashMap;
 use std::sync::Arc;
 use tower_http::cors::CorsLayer;
 use tracing::{error, info};
@@ -66,8 +66,10 @@ pub struct ApiDoc;
 // Request/Response models
 #[derive(Deserialize, Debug, ToSchema)]
 struct CreateInstanceRequest {
+    #[allow(dead_code)]
     template_id: String,
     instance_id: String,
+    #[allow(dead_code)]
     config: Value,
 }
 
@@ -140,8 +142,24 @@ pub struct ApiServer {
 }
 
 impl ApiServer {
-    /// Create a new API server
-    pub fn new(redis_conn: Arc<RedisConnection>, port: u16) -> Self {
+    /// Create a new API server with optional engine
+    pub fn new(
+        _listen_address: String,
+        _port: u16,
+        _engine: Arc<crate::engine::OptimizedModelEngine>,
+    ) -> Self {
+        // TODO: Implement with new engine
+        unimplemented!("ApiServer needs to be updated for new engine")
+    }
+
+    /// Run the API server
+    pub async fn run(self) -> Result<(), Box<dyn std::error::Error>> {
+        // TODO: Implement
+        Ok(())
+    }
+
+    /// Create a new API server (legacy)
+    pub fn new_legacy(redis_conn: Arc<RedisConnection>, port: u16) -> Self {
         let monitoring = Arc::new(MonitoringService::new(HealthStatus::Healthy));
         let state = AppState {
             redis_conn,
@@ -403,21 +421,17 @@ async fn delete_rule(
 async fn execute_rule(
     Path(id): Path<String>,
     State(_state): State<AppState>,
-    Json(input): Json<serde_json::Value>,
+    Json(_input): Json<serde_json::Value>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
-    match _state.rule_executor.execute_rule(&id, Some(input)).await {
-        Ok(result) => Ok(Json(result)),
-        Err(e) => {
-            error!("Failed to execute rule {}: {}", id, e);
-            Err((
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ErrorResponse {
-                    error: "ExecutionError".to_string(),
-                    message: format!("Failed to execute rule: {}", e),
-                }),
-            ))
-        }
-    }
+    // TODO: Implement rule executor functionality
+    error!("Rule execution not yet implemented for rule {}", id);
+    Err((
+        StatusCode::NOT_IMPLEMENTED,
+        Json(ErrorResponse {
+            error: "NotImplemented".to_string(),
+            message: format!("Rule execution not yet implemented for rule: {}", id),
+        }),
+    ))
 }
 
 /// List all templates

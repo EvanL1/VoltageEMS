@@ -1,0 +1,35 @@
+=== VoltageEMS 存储系统测试报告 ===
+测试时间: Fri Jul 11 10:29:30 CST 2025
+测试环境: Darwin MacBookPro 25.0.0 Darwin Kernel Version 25.0.0: Mon Jun 30 22:08:03 PDT 2025; root:xnu-12377.0.132.0.2~69/RELEASE_ARM64_T6030 arm64
+
+[0;34m检查Redis状态...[0m
+[0;32m✓ Redis正在运行[0m
+
+[0;34m运行测试: 扁平化存储基础测试[0m
+命令: cargo test --test test_flat_storage -- --nocapture
+[0;32m✓ 扁平化存储基础测试 通过[0m
+
+[0;34m运行测试: 插件存储集成测试[0m
+命令: cargo test --test plugin_storage_integration_test -- --nocapture
+[0;32m✓ 插件存储集成测试 通过[0m
+
+[0;34m运行测试: 并发存储测试[0m
+命令: cargo test --test concurrent_storage_test -- --nocapture
+[0;32m✓ 并发存储测试 通过[0m
+  并发性能:
+    [2m2025-07-11T02:29:33.414456Z[0m [32m INFO[0m [2mconcurrent_storage_test[0m[2m:[0m 耗时: 411.337333ms
+    [2m2025-07-11T02:29:33.414485Z[0m [32m INFO[0m [2mconcurrent_storage_test[0m[2m:[0m 更新速率: 243109.47 updates/sec
+    [2m2025-07-11T02:29:34.656863Z[0m [32m INFO[0m [2mconcurrent_storage_test[0m[2m:[0m 并发读写测试完成，耗时: 1.653923916s
+
+[0;34m运行测试: 性能测试[0m
+命令: cargo test --test performance_test -- --nocapture
+[0;32m✓ 性能测试 通过[0m
+  性能指标:
+    [2m2025-07-11T02:29:34.881727Z[0m [32m INFO[0m [2mperformance_test[0m[2m:[0m 总点数: 10000, 批次大小: 1000
+    批次大小 | 总耗时(ms) | 点/秒 | 平均延迟(μs/点)
+    [2m2025-07-11T02:29:38.589357Z[0m [32m INFO[0m [2mperformance_test[0m[2m:[0m 顺序读取: 2719.959806000684 点/秒
+    [2m2025-07-11T02:29:38.831292Z[0m [32m INFO[0m [2mperformance_test[0m[2m:[0m 随机读取: 4134.000176224159 点/秒
+    [2m2025-07-11T02:29:44.885108Z[0m [32m INFO[0m [2mperformance_test[0m[2m:[0m 更新速率: 7280.00 updates/sec
+
+[0;34m运行测试: 错误恢复测试[0m
+命令: cargo test --test recovery_test -- --nocapture

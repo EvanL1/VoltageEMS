@@ -1,8 +1,9 @@
 use crate::error::{ModelSrvError, Result};
-use chrono;
 use serde_json::Value;
 use std::collections::HashMap;
-use voltage_common::redis::{RedisConfig, RedisSyncClient, RedisType as CommonRedisType};
+use std::sync::Arc;
+use tokio::sync::RwLock;
+use voltage_common::redis::{RedisConfig, RedisSyncClient};
 
 /// Redis connection handler using voltage-common
 pub struct RedisConnection {
@@ -86,6 +87,13 @@ impl RedisConnection {
         }
     }
 
+    /// Set a string value in Redis
+    pub fn set_string(&mut self, key: &str, value: &str) -> Result<()> {
+        self.client.set(key, value).map_err(|e| {
+            ModelSrvError::RedisError(format!("Failed to set string for key {}: {}", key, e))
+        })
+    }
+
     /// Get a hash value from Redis
     pub fn get_hash(&mut self, key: &str) -> Result<HashMap<String, String>> {
         self.client.hgetall(key).map_err(|e| {
@@ -101,255 +109,237 @@ impl RedisConnection {
         Ok(())
     }
 
-    /// Set an entire hash
-    pub fn set_hash(&mut self, key: &str, map: HashMap<String, String>) -> Result<()> {
-        self.client
-            .hset_multiple(key, map.into_iter())
-            .map_err(|e| {
-                ModelSrvError::RedisError(format!("Failed to set hash for key {}: {}", key, e))
-            })?;
+    /// Set multiple fields in a hash
+    pub fn set_hash_fields(&mut self, key: &str, fields: &HashMap<String, String>) -> Result<()> {
+        for (field, value) in fields {
+            self.set_hash_field(key, field, value)?;
+        }
         Ok(())
-    }
-
-    /// Append a value to a list
-    pub fn rpush(&mut self, key: &str, value: &str) -> Result<()> {
-        self.client.rpush(key, value).map_err(|e| {
-            ModelSrvError::RedisError(format!("Failed to push to list {}: {}", key, e))
-        })?;
-        Ok(())
-    }
-
-    /// Get all values from a list
-    pub fn get_list(&mut self, key: &str) -> Result<Vec<String>> {
-        self.client.lrange(key, 0, -1).map_err(|e| {
-            ModelSrvError::RedisError(format!("Failed to get list for key {}: {}", key, e))
-        })
-    }
-
-    /// Set a string value in Redis
-    pub fn set_string(&mut self, key: &str, value: &str) -> Result<()> {
-        self.client.set(key, value).map_err(|e| {
-            ModelSrvError::RedisError(format!("Failed to set string for key {}: {}", key, e))
-        })?;
-        Ok(())
-    }
-
-    /// Check if a key exists
-    pub fn exists(&mut self, key: &str) -> Result<bool> {
-        self.client.exists(key).map_err(|e| {
-            ModelSrvError::RedisError(format!("Failed to check if key {} exists: {}", key, e))
-        })
     }
 
     /// Delete a key
     pub fn delete(&mut self, key: &str) -> Result<()> {
-        self.client.del(&[key]).map_err(|e| {
-            ModelSrvError::RedisError(format!("Failed to delete key {}: {}", key, e))
-        })?;
-        Ok(())
+        self.client
+            .del(key)
+            .map_err(|e| ModelSrvError::RedisError(format!("Failed to delete key {}: {}", key, e)))
     }
 
     /// Publish a message to a channel
     pub fn publish(&mut self, channel: &str, message: &str) -> Result<()> {
-        self.client.publish(channel, message).map_err(|e| {
-            ModelSrvError::RedisError(format!("Failed to publish to channel {}: {}", channel, e))
+        self.client
+            .publish(channel, message)
+            .map_err(|e| {
+                ModelSrvError::RedisError(format!(
+                    "Failed to publish to channel {}: {}",
+                    channel, e
+                ))
+            })
+            .map(|_| ())
+    }
+
+    /// Get a value from Redis and parse as JSON
+    pub fn get_json_value(&mut self, key: &str) -> Result<Option<Value>> {
+        let str_value = self.get_string(key)?;
+        match serde_json::from_str(&str_value) {
+            Ok(json_value) => Ok(Some(json_value)),
+            Err(e) => Err(ModelSrvError::FormatError(format!(
+                "Failed to parse JSON for key {}: {}",
+                key, e
+            ))),
+        }
+    }
+
+    /// Set a JSON value in Redis
+    pub fn set_json_value(&mut self, key: &str, value: &Value) -> Result<()> {
+        let json_str = serde_json::to_string(value).map_err(|e| {
+            ModelSrvError::SerializationError(format!(
+                "Failed to serialize JSON for key {}: {}",
+                key, e
+            ))
         })?;
-        Ok(())
+        self.client
+            .set(key, &json_str)
+            .map_err(|e| ModelSrvError::RedisError(format!("Failed to set key {}: {}", key, e)))
     }
 
-    /// Execute a custom command
-    pub fn execute_command(&mut self, cmd: &str, args: Vec<&str>) -> Result<String> {
-        // Use ping as a placeholder for custom commands
-        // In future, we can extend voltage-common to support custom commands
-        if cmd == "PING" {
-            return self.client.ping().map_err(|e| {
-                ModelSrvError::RedisError(format!("Failed to execute command {}: {}", cmd, e))
-            });
-        }
-        Err(ModelSrvError::RedisError(
-            "Custom commands not yet supported in voltage-common".to_string(),
-        ))
-    }
-
-    /// Update a single point value using Hash structure for optimized query
-    pub fn update_point_value(
-        &mut self,
-        module_id: &str,
-        point_id: &str,
-        value: &serde_json::Value,
-    ) -> Result<()> {
-        let hash_key = format!("modsrv:realtime:module:{}", module_id);
-        let field = point_id;
-
-        let value_data = serde_json::json!({
-            "value": value,
-            "timestamp": chrono::Utc::now().to_rfc3339(),
-            "quality": "good"
-        });
-
-        self.set_hash_field(&hash_key, field, &value_data.to_string())?;
-
-        // Also publish to channel for subscribers
-        let channel = format!("modsrv:updates:module:{}", module_id);
-        let update_msg = serde_json::json!({
-            "module_id": module_id,
-            "point_id": point_id,
-            "value": value,
-            "timestamp": chrono::Utc::now().to_rfc3339()
-        });
-        self.publish(&channel, &update_msg.to_string())?;
-
-        Ok(())
-    }
-
-    /// Batch update multiple point values using Hash structure
-    pub fn batch_update_points(
-        &mut self,
-        module_id: &str,
-        points: Vec<(String, serde_json::Value)>,
-    ) -> Result<()> {
-        if points.is_empty() {
-            return Ok(());
-        }
-
-        let hash_key = format!("modsrv:realtime:module:{}", module_id);
-        let timestamp = chrono::Utc::now().to_rfc3339();
-
-        // Prepare fields for hash update
-        let mut fields = HashMap::new();
-        for (point_id, value) in &points {
-            let value_data = serde_json::json!({
-                "value": value,
-                "timestamp": &timestamp,
-                "quality": "good"
-            });
-            fields.insert(point_id.clone(), value_data.to_string());
-        }
-
-        // Update all fields in one operation
-        self.set_hash(&hash_key, fields)?;
-
-        // Publish batch update notification
-        let channel = format!("modsrv:updates:module:{}", module_id);
-        let update_msg = serde_json::json!({
-            "module_id": module_id,
-            "points": points.into_iter().map(|(id, val)| {
-                serde_json::json!({
-                    "point_id": id,
-                    "value": val
-                })
-            }).collect::<Vec<_>>(),
-            "timestamp": timestamp
-        });
-        self.publish(&channel, &update_msg.to_string())?;
-
-        Ok(())
-    }
-
-    /// Get all realtime values for a module
-    pub fn get_module_realtime_values(
-        &mut self,
-        module_id: &str,
-    ) -> Result<HashMap<String, serde_json::Value>> {
-        let hash_key = format!("modsrv:realtime:module:{}", module_id);
-        let raw_values = self.get_hash(&hash_key)?;
-
-        let mut result = HashMap::new();
-        for (point_id, value_str) in raw_values {
-            if let Ok(value) = serde_json::from_str::<serde_json::Value>(&value_str) {
-                result.insert(point_id, value);
+    /// Get all keys matching a pattern and their values as JSON
+    pub fn get_all_json(&mut self, pattern: &str) -> Result<HashMap<String, Value>> {
+        let keys = self.get_keys(pattern)?;
+        let mut results = HashMap::new();
+        for key in keys {
+            if let Ok(Some(value)) = self.get_json_value(&key) {
+                results.insert(key, value);
             }
         }
-
-        Ok(result)
+        Ok(results)
     }
 
-    /// Get a single point value for a module
-    pub fn get_point_value(
-        &mut self,
-        module_id: &str,
-        point_id: &str,
-    ) -> Result<serde_json::Value> {
-        let hash_key = format!("modsrv:realtime:module:{}", module_id);
-
-        // Use hget from voltage-common (we need to extend the trait if not available)
-        let all_values = self.get_hash(&hash_key)?;
-
-        if let Some(value_str) = all_values.get(point_id) {
-            serde_json::from_str(value_str)
-                .map_err(|e| ModelSrvError::RedisError(format!("Failed to parse value: {}", e)))
-        } else {
-            Err(ModelSrvError::NotFound(format!(
-                "Point {} not found in module {}",
-                point_id, module_id
-            )))
-        }
+    /// Check if a key exists
+    pub fn exists(&mut self, key: &str) -> Result<bool> {
+        self.client
+            .exists(key)
+            .map_err(|e| ModelSrvError::RedisError(format!("Failed to check key existence: {}", e)))
     }
 
-    // Note: Direct connection access is not available with voltage-common client
-    // Use the provided methods instead
+    /// Set expiration on a key (TTL in seconds)
+    pub fn expire(&mut self, key: &str, seconds: u64) -> Result<()> {
+        self.client
+            .expire(key, seconds as i64)
+            .map_err(|e| ModelSrvError::RedisError(format!("Failed to set expiration: {}", e)))
+            .map(|_| ())
+    }
 
-    /// Connect to Redis with URL
-    pub fn connect(&mut self, url: &str) -> Result<()> {
-        self.client = RedisSyncClient::new(url)
-            .map_err(|e| ModelSrvError::RedisError(format!("Redis connection failed: {}", e)))?;
+    /// Save a model configuration
+    pub fn save_model_config(&mut self, key: &str, config: &Value) -> Result<()> {
+        let config_str = serde_json::to_string_pretty(config).map_err(|e| {
+            ModelSrvError::SerializationError(format!("Failed to serialize config: {}", e))
+        })?;
+
+        self.client
+            .set(key, &config_str)
+            .map_err(|e| ModelSrvError::RedisError(format!("Failed to save config: {}", e)))?;
+
         Ok(())
     }
 
-    /// Get the type of a key
-    pub fn get_type(&mut self, key: &str) -> Result<RedisType> {
-        let key_type = self.client.key_type(key).map_err(|e| {
-            ModelSrvError::RedisError(format!("Failed to get type for key {}: {}", key, e))
-        })?;
-
-        Ok(RedisType::from(key_type))
+    /// Load a model configuration
+    pub fn load_model_config(&mut self, key: &str) -> Result<Value> {
+        let config_str = self.get_string(key)?;
+        serde_json::from_str(&config_str)
+            .map_err(|e| ModelSrvError::FormatError(format!("Failed to parse config: {}", e)))
     }
 
-    // Note: Raw connection access is not available with voltage-common client
-    // Use the provided methods instead
+    /// Get a connection that can be cloned
+    pub fn get_clonable_connection(&self) -> Result<RedisConnection> {
+        self.duplicate()
+    }
 }
 
+/// Redis handler for async operations
+pub struct RedisHandler {
+    connection: Arc<RwLock<RedisConnection>>,
+}
+
+impl RedisHandler {
+    pub fn new() -> Self {
+        Self {
+            connection: Arc::new(RwLock::new(RedisConnection::new())),
+        }
+    }
+
+    pub fn from_connection(connection: RedisConnection) -> Self {
+        Self {
+            connection: Arc::new(RwLock::new(connection)),
+        }
+    }
+
+    /// Get a value from Redis
+    pub async fn get<T: std::str::FromStr>(&self, key: &str) -> Result<Option<T>> {
+        let mut conn = self.connection.write().await;
+        match conn.get_string(key) {
+            Ok(value) => match value.parse::<T>() {
+                Ok(parsed) => Ok(Some(parsed)),
+                Err(_) => Err(ModelSrvError::FormatError(format!(
+                    "Failed to parse value for key {}",
+                    key
+                ))),
+            },
+            Err(ModelSrvError::NotFound(_)) => Ok(None),
+            Err(e) => Err(e),
+        }
+    }
+
+    /// Set a value in Redis
+    pub async fn set(&self, key: &str, value: String) -> Result<()> {
+        let mut conn = self.connection.write().await;
+        conn.client
+            .set(key, &value)
+            .map_err(|e| ModelSrvError::RedisError(format!("Failed to set key {}: {}", key, e)))
+    }
+
+    /// Publish a message to a channel
+    pub async fn publish(&self, channel: &str, message: String) -> Result<()> {
+        let mut conn = self.connection.write().await;
+        conn.publish(channel, &message)
+    }
+
+    /// Get async pubsub (placeholder - needs proper async implementation)
+    pub async fn get_async_pubsub(&self) -> Result<AsyncPubSub> {
+        Ok(AsyncPubSub::new())
+    }
+}
+
+/// Placeholder for async PubSub
+pub struct AsyncPubSub {
+    _phantom: std::marker::PhantomData<()>,
+}
+
+impl AsyncPubSub {
+    pub fn new() -> Self {
+        Self {
+            _phantom: std::marker::PhantomData,
+        }
+    }
+
+    pub async fn subscribe(&mut self, _channel: &str) -> Result<()> {
+        // TODO: Implement async subscribe
+        Ok(())
+    }
+
+    pub async fn unsubscribe(&mut self, _channel: &str) -> Result<()> {
+        // TODO: Implement async unsubscribe
+        Ok(())
+    }
+}
+
+/// PubSub message stream placeholder
+pub struct PubSubStream {
+    _phantom: std::marker::PhantomData<()>,
+}
+
+impl futures::Stream for PubSubStream {
+    type Item = PubSubMessage;
+
+    fn poll_next(
+        self: std::pin::Pin<&mut Self>,
+        _cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Option<Self::Item>> {
+        std::task::Poll::Pending
+    }
+}
+
+impl AsyncPubSub {
+    pub fn on_message(&mut self) -> PubSubStream {
+        PubSubStream {
+            _phantom: std::marker::PhantomData,
+        }
+    }
+}
+
+/// PubSub message
+pub struct PubSubMessage {
+    pub channel: String,
+    pub payload: String,
+}
+
+impl PubSubMessage {
+    pub fn get_payload<T: std::str::FromStr>(&self) -> Result<T> {
+        self.payload
+            .parse::<T>()
+            .map_err(|_| ModelSrvError::FormatError("Failed to parse payload".to_string()))
+    }
+}
+
+// Default implementation for RedisConnection
+impl Default for RedisConnection {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+// Clone implementation for RedisConnection
 impl Clone for RedisConnection {
     fn clone(&self) -> Self {
-        match self.duplicate() {
-            Ok(conn) => conn,
-            Err(_) => Self::new(), // fallback to new connection if duplicate fails
-        }
-    }
-}
-
-// Note: Deref and DerefMut traits are not implemented as voltage-common
-// does not expose the underlying connection. Use the provided methods instead.
-
-/// Redis key types
-#[derive(Debug, Clone, PartialEq)]
-pub enum RedisType {
-    /// String value
-    String,
-    /// List value
-    List,
-    /// Set value
-    Set,
-    /// Sorted set value
-    ZSet,
-    /// Hash value
-    Hash,
-    /// Key does not exist
-    None,
-    /// Unknown type
-    Unknown,
-}
-
-impl From<CommonRedisType> for RedisType {
-    fn from(common_type: CommonRedisType) -> Self {
-        match common_type {
-            CommonRedisType::String => RedisType::String,
-            CommonRedisType::List => RedisType::List,
-            CommonRedisType::Set => RedisType::Set,
-            CommonRedisType::ZSet => RedisType::ZSet,
-            CommonRedisType::Hash => RedisType::Hash,
-            CommonRedisType::None => RedisType::None,
-            CommonRedisType::Stream => RedisType::Unknown,
-        }
+        Self::new()
     }
 }

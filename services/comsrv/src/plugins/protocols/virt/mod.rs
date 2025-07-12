@@ -12,11 +12,11 @@ use tokio::sync::RwLock;
 use tracing::{debug, info};
 
 use crate::core::framework::traits::ComBase;
-use crate::core::framework::{ChannelStatus, PointData};
+use crate::core::framework::{ChannelStatus, PointData, TelemetryType};
+use crate::plugins::plugin_storage::{DefaultPluginStorage, PluginStorage};
 use crate::utils::error::{ComSrvError, Result};
 
 /// Virtual protocol client for testing
-#[derive(Debug)]
 pub struct VirtualProtocol {
     name: String,
     channel_id: u16,
@@ -24,6 +24,8 @@ pub struct VirtualProtocol {
     // Simulated data storage
     telemetry_data: Arc<RwLock<Vec<f64>>>,
     signal_data: Arc<RwLock<Vec<bool>>>,
+    // Plugin storage for data persistence
+    storage: Arc<tokio::sync::Mutex<Option<Arc<dyn PluginStorage>>>>,
 }
 
 impl VirtualProtocol {
@@ -34,6 +36,7 @@ impl VirtualProtocol {
             running: Arc::new(RwLock::new(false)),
             telemetry_data: Arc::new(RwLock::new(vec![0.0; 100])),
             signal_data: Arc::new(RwLock::new(vec![false; 100])),
+            storage: Arc::new(tokio::sync::Mutex::new(None)),
         })
     }
 
@@ -52,6 +55,19 @@ impl VirtualProtocol {
             // Toggle some signals
             *signal = i % 3 == 0;
         }
+    }
+}
+
+impl std::fmt::Debug for VirtualProtocol {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("VirtualProtocol")
+            .field("name", &self.name)
+            .field("channel_id", &self.channel_id)
+            .field("running", &self.running)
+            .field("telemetry_data", &"<telemetry_data>")
+            .field("signal_data", &"<signal_data>")
+            .field("storage", &"<storage>")
+            .finish()
     }
 }
 
@@ -79,12 +95,30 @@ impl ComBase for VirtualProtocol {
 
     async fn start(&mut self) -> Result<()> {
         info!("Starting virtual protocol client: {}", self.name);
+
+        // Initialize storage
+        match DefaultPluginStorage::from_env().await {
+            Ok(s) => {
+                let mut storage = self.storage.lock().await;
+                *storage = Some(Arc::new(s) as Arc<dyn PluginStorage>);
+                info!("Virtual protocol storage initialized");
+            }
+            Err(e) => {
+                tracing::warn!(
+                    "Failed to create storage: {}, data will not be persisted",
+                    e
+                );
+            }
+        }
+
         *self.running.write().await = true;
 
         // Start simulation task
         let running = self.running.clone();
         let telemetry_data = self.telemetry_data.clone();
         let signal_data = self.signal_data.clone();
+        let storage = self.storage.clone();
+        let channel_id = self.channel_id;
 
         tokio::spawn(async move {
             while *running.read().await {
@@ -99,6 +133,33 @@ impl ComBase for VirtualProtocol {
                 let mut signals = signal_data.write().await;
                 for (i, signal) in signals.iter_mut().enumerate() {
                     *signal = (chrono::Utc::now().timestamp() + i as i64) % 3 == 0;
+                }
+
+                // Store data to plugin storage
+                if let Some(storage) = &*storage.lock().await {
+                    // Store some sample telemetry points
+                    for i in 0..10 {
+                        let _ = storage
+                            .write_point(
+                                channel_id,
+                                &TelemetryType::Telemetry,
+                                i as u32 + 1,
+                                data[i],
+                            )
+                            .await;
+                    }
+
+                    // Store some sample signal points
+                    for i in 0..10 {
+                        let _ = storage
+                            .write_point(
+                                channel_id,
+                                &TelemetryType::Signal,
+                                i as u32 + 1001,
+                                if signals[i] { 1.0 } else { 0.0 },
+                            )
+                            .await;
+                    }
                 }
             }
         });

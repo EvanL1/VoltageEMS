@@ -365,7 +365,7 @@ impl TemplateManager {
         }
 
         // Store hash table
-        redis_conn.set_hash(&instance_key, &instance_hash)?;
+        redis_conn.set_hash(&instance_key, instance_hash)?;
 
         // Store actions separately
         if let Some(actions) = model_with_actions.get("actions") {
@@ -428,6 +428,7 @@ impl TemplateManager {
     }
 
     /// Instantiate template
+    #[allow(dead_code)]
     fn instantiate_template(
         &self,
         template: &ModelWithActions,
@@ -474,6 +475,7 @@ impl TemplateManager {
     }
 
     /// Save instance to store
+    #[allow(dead_code)]
     fn save_instance_to_store(
         &self,
         redis_conn: &mut RedisConnection,

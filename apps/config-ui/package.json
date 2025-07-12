@@ -1,0 +1,45 @@
+{
+  "name": "voltage-config-ui",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vue-tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "tauri": "tauri",
+    "tauri:dev": "tauri dev",
+    "tauri:build": "tauri build",
+    "test": "bun test",
+    "lint": "bunx eslint .",
+    "type-check": "bunx tsc --noEmit"
+  },
+  "dependencies": {
+    "@element-plus/icons-vue": "^2.3.1",
+    "@monaco-editor/loader": "^1.5.0",
+    "@tauri-apps/api": "^2",
+    "@tauri-apps/plugin-opener": "^2",
+    "@vueuse/core": "^13.5.0",
+    "dayjs": "^1.11.13",
+    "diff": "^8.0.2",
+    "echarts": "^5.6.0",
+    "element-plus": "^2.10.3",
+    "js-yaml": "^4.1.0",
+    "monaco-editor": "^0.52.2",
+    "pinia": "^3.0.3",
+    "vue": "^3.5.13",
+    "vue-echarts": "^7.0.3",
+    "vue-router": "^4.5.1"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2",
+    "@types/node": "^24.0.13",
+    "@vitejs/plugin-vue": "^5.2.1",
+    "sass": "^1.89.2",
+    "typescript": "~5.6.2",
+    "unplugin-auto-import": "^19.3.0",
+    "unplugin-vue-components": "^28.8.0",
+    "vite": "^6.0.3",
+    "vue-tsc": "^2.1.10"
+  }
+}

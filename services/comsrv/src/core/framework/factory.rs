@@ -10,7 +10,8 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 
 use crate::core::config::{ChannelConfig, ChannelLoggingConfig, ConfigManager, ProtocolType};
-use crate::core::framework::traits::ComBase;
+use crate::core::framework::command_subscriber::{CommandSubscriber, CommandSubscriberConfig};
+use crate::core::framework::traits::{ComBase, FourTelemetryOperations};
 
 // use crate::plugins::protocols::iec60870::iec104::Iec104Client;
 use crate::utils::error::{ComSrvError, Result};
@@ -324,6 +325,7 @@ impl ComBase for MockComBase {
 struct ChannelEntry {
     channel: Arc<RwLock<Box<dyn ComBase>>>,
     metadata: ChannelMetadata,
+    command_subscriber: Option<Arc<RwLock<CommandSubscriber>>>,
 }
 
 impl std::fmt::Debug for ChannelEntry {
@@ -342,8 +344,6 @@ pub struct ProtocolFactory {
     channels: DashMap<u16, ChannelEntry, ahash::RandomState>,
     /// Registry of protocol factories by protocol type
     protocol_factories: DashMap<ProtocolType, Arc<dyn ProtocolClientFactory>, ahash::RandomState>,
-    /// Optional Redis storage for channel metadata and state
-    redis_store: Option<crate::core::redis::redis_storage::RedisStore>,
 }
 
 impl std::fmt::Debug for ProtocolFactory {
@@ -351,7 +351,6 @@ impl std::fmt::Debug for ProtocolFactory {
         f.debug_struct("ProtocolFactory")
             .field("channels", &self.channels.len())
             .field("protocol_factories", &self.protocol_factories.len())
-            .field("redis_store", &self.redis_store.is_some())
             .finish()
     }
 }
@@ -371,158 +370,12 @@ impl ProtocolFactory {
         let factory = Self {
             channels: DashMap::with_hasher(ahash::RandomState::new()),
             protocol_factories: DashMap::with_hasher(ahash::RandomState::new()),
-            redis_store: None,
         };
 
         // Initialize plugin system if not already done
         let _ = crate::plugins::plugin_registry::discovery::load_all_plugins();
 
         factory
-    }
-
-    /// Create a new protocol factory with Redis storage support
-    pub fn new_with_redis(redis_store: crate::core::redis::redis_storage::RedisStore) -> Self {
-        Self {
-            channels: DashMap::with_hasher(ahash::RandomState::new()),
-            protocol_factories: DashMap::with_hasher(ahash::RandomState::new()),
-            redis_store: Some(redis_store),
-        }
-    }
-
-    /// Enable Redis storage for this factory
-    pub fn enable_redis_storage(
-        &mut self,
-        redis_store: crate::core::redis::redis_storage::RedisStore,
-    ) -> Result<()> {
-        // Migrate existing channel metadata to Redis
-        if let Some(ref _redis) = self.redis_store {
-            tracing::warn!("Redis storage is already enabled, replacing existing store");
-        }
-
-        // Store existing channels to Redis
-        let channel_entries: Vec<_> = self
-            .channels
-            .iter()
-            .map(|entry| {
-                let (id, channel_entry) = (*entry.key(), entry.value().clone());
-                (id, channel_entry)
-            })
-            .collect();
-
-        for (channel_id, channel_entry) in channel_entries {
-            let metadata = crate::core::redis::redis_storage::RedisChannelMetadata {
-                name: channel_entry.metadata.name.clone(),
-                protocol_type: format!("{:?}", channel_entry.metadata.protocol_type),
-                created_at: chrono::DateTime::<chrono::Local>::from(
-                    std::time::UNIX_EPOCH + channel_entry.metadata.created_at.elapsed(),
-                )
-                .format("%Y-%m-%dT%H:%M:%S%.3f")
-                .to_string(),
-                last_accessed: chrono::Local::now()
-                    .format("%Y-%m-%dT%H:%M:%S%.3f")
-                    .to_string(),
-                running: false, // Will be updated when channels are started
-                parameters: std::collections::HashMap::new(),
-            };
-
-            // Store to Redis asynchronously (fire and forget for now)
-            let redis_clone = redis_store.clone();
-            tokio::spawn(async move {
-                if let Err(e) = redis_clone
-                    .set_channel_metadata(channel_id, &metadata)
-                    .await
-                {
-                    tracing::error!(
-                        "Failed to migrate channel {} metadata to Redis: {}",
-                        channel_id,
-                        e
-                    );
-                }
-            });
-        }
-
-        self.redis_store = Some(redis_store);
-        tracing::info!(
-            "Redis storage enabled for ProtocolFactory with {} existing channels",
-            self.channels.len()
-        );
-        Ok(())
-    }
-
-    /// Disable Redis storage and use only in-memory storage
-    pub fn disable_redis_storage(&mut self) {
-        if self.redis_store.is_some() {
-            self.redis_store = None;
-            tracing::info!(
-                "Redis storage disabled for ProtocolFactory, using in-memory storage only"
-            );
-        }
-    }
-
-    /// Check if Redis storage is enabled
-    pub fn is_redis_enabled(&self) -> bool {
-        self.redis_store.is_some()
-    }
-
-    /// Get Redis store reference if available
-    pub fn redis_store(&self) -> Option<&crate::core::redis::redis_storage::RedisStore> {
-        self.redis_store.as_ref()
-    }
-
-    /// Synchronize channel metadata to Redis
-    pub async fn sync_channel_metadata(&mut self) -> Result<()> {
-        if let Some(ref redis_store) = self.redis_store {
-            let mut sync_count = 0;
-            let mut error_count = 0;
-
-            for entry in self.channels.iter() {
-                let (channel_id, channel_entry) = (*entry.key(), entry.value());
-
-                let metadata = crate::core::redis::redis_storage::RedisChannelMetadata {
-                    name: channel_entry.metadata.name.clone(),
-                    protocol_type: format!("{:?}", channel_entry.metadata.protocol_type),
-                    created_at: chrono::DateTime::<chrono::Local>::from(
-                        std::time::UNIX_EPOCH + channel_entry.metadata.created_at.elapsed(),
-                    )
-                    .format("%Y-%m-%dT%H:%M:%S%.3f")
-                    .to_string(),
-                    last_accessed: chrono::Local::now()
-                        .format("%Y-%m-%dT%H:%M:%S%.3f")
-                        .to_string(),
-                    running: channel_entry.channel.read().await.is_running().await,
-                    parameters: std::collections::HashMap::new(),
-                };
-
-                match redis_store
-                    .set_channel_metadata(channel_id, &metadata)
-                    .await
-                {
-                    Ok(_) => sync_count += 1,
-                    Err(e) => {
-                        tracing::error!(
-                            "Failed to sync channel {} metadata to Redis: {}",
-                            channel_id,
-                            e
-                        );
-                        error_count += 1;
-                    }
-                }
-            }
-
-            tracing::info!(
-                "Channel metadata sync completed: {} successful, {} errors",
-                sync_count,
-                error_count
-            );
-
-            if error_count > 0 {
-                return Err(ComSrvError::RedisError(format!(
-                    "Failed to sync {} channel metadata entries to Redis",
-                    error_count
-                )));
-            }
-        }
-        Ok(())
     }
 
     /// Register a protocol factory
@@ -1035,6 +888,7 @@ impl ProtocolFactory {
         let entry = ChannelEntry {
             channel: channel_wrapper,
             metadata: metadata.clone(),
+            command_subscriber: None,
         };
 
         // Use entry API for atomic operation
@@ -1042,77 +896,10 @@ impl ProtocolFactory {
             dashmap::mapref::entry::Entry::Vacant(vacant) => {
                 vacant.insert(entry);
 
-                // Store to Redis if enabled
-                if let Some(ref redis_store) = self.redis_store {
-                    let redis_metadata = crate::core::redis::redis_storage::RedisChannelMetadata {
-                        name: metadata.name.clone(),
-                        protocol_type: format!("{:?}", metadata.protocol_type),
-                        created_at: chrono::Local::now()
-                            .format("%Y-%m-%dT%H:%M:%S%.3f")
-                            .to_string(),
-                        last_accessed: chrono::Local::now()
-                            .format("%Y-%m-%dT%H:%M:%S%.3f")
-                            .to_string(),
-                        running: false,
-                        parameters: config
-                            .parameters
-                            .iter()
-                            .map(|(k, v)| {
-                                let json_value =
-                                    serde_json::to_value(v).unwrap_or(serde_json::Value::Null);
-                                (k.clone(), json_value)
-                            })
-                            .collect(),
-                    };
-
-                    if let Err(e) = redis_store
-                        .set_channel_metadata(channel_id, &redis_metadata)
-                        .await
-                    {
-                        tracing::warn!(
-                            "Failed to store channel {} metadata to Redis: {}",
-                            channel_id,
-                            e
-                        );
-                    } else {
-                        tracing::debug!("Stored channel {} metadata to Redis", channel_id);
-                    }
-
-                    // Store point definitions if available
-                    if !config.combined_points.is_empty() {
-                        tracing::info!(
-                            "Storing {} point definitions for channel {} to Redis",
-                            config.combined_points.len(),
-                            channel_id
-                        );
-                        if let Err(e) = redis_store
-                            .set_channel_points(channel_id, &config.combined_points)
-                            .await
-                        {
-                            tracing::warn!(
-                                "Failed to store channel {} point definitions to Redis: {}",
-                                channel_id,
-                                e
-                            );
-                        } else {
-                            tracing::info!(
-                                "Successfully stored {} point definitions for channel {} in Redis",
-                                config.combined_points.len(),
-                                channel_id
-                            );
-                        }
-                    }
-                }
-
                 tracing::info!(
-                    "Created channel {} with protocol {:?}{} [Channel-{}]",
+                    "Created channel {} with protocol {:?} [Channel-{}]",
                     channel_id,
                     config.protocol,
-                    if self.redis_store.is_some() {
-                        " (with Redis storage)"
-                    } else {
-                        ""
-                    },
                     channel_id
                 );
                 Ok(())
@@ -1304,12 +1091,18 @@ impl ProtocolFactory {
             return Err(ComSrvError::InvalidOperation(error_msg));
         }
 
+        // Start command subscriptions for all channels
+        self.start_command_subscriptions().await?;
+
         Ok(())
     }
 
     /// Stop all channels with improved performance and non-blocking cleanup
     pub async fn stop_all_channels(&self) -> Result<()> {
         use futures::future::join_all;
+
+        // First stop command subscriptions
+        self.stop_command_subscriptions().await?;
 
         let stop_futures = self.channels.iter().map(|entry| {
             let (id, channel_entry) = (entry.key(), entry.value());
@@ -1558,6 +1351,7 @@ impl ProtocolFactory {
         let new_entry = ChannelEntry {
             channel: new_channel_wrapper.clone(),
             metadata: new_metadata,
+            command_subscriber: None,
         };
 
         self.channels.insert(id, new_entry);
@@ -1589,6 +1383,92 @@ impl ProtocolFactory {
         } else {
             None
         }
+    }
+
+    /// Start command subscriptions for all channels
+    async fn start_command_subscriptions(&self) -> Result<()> {
+        // Get Redis URL from environment
+        let redis_url = std::env::var("REDIS_URL")
+            .or_else(|_| std::env::var("COMSRV_SERVICE_REDIS_URL"))
+            .unwrap_or_else(|_| "redis://localhost:6379".to_string());
+
+        for mut entry in self.channels.iter_mut() {
+            let channel_id = *entry.key();
+            let channel_entry = entry.value_mut();
+
+            // Skip if already has a subscriber
+            if channel_entry.command_subscriber.is_some() {
+                continue;
+            }
+
+            // Check if channel implements FourTelemetryOperations
+            let channel = channel_entry.channel.clone();
+
+            // Create a wrapper that implements FourTelemetryOperations
+            let handler = ChannelCommandHandler {
+                channel: channel.clone(),
+                channel_id,
+            };
+
+            // Create command subscriber config
+            let config = CommandSubscriberConfig {
+                channel_id,
+                redis_url: redis_url.clone(),
+            };
+
+            // Create and start command subscriber
+            match CommandSubscriber::new(config, Arc::new(handler)).await {
+                Ok(mut subscriber) => {
+                    if let Err(e) = subscriber.start().await {
+                        tracing::error!(
+                            "Failed to start command subscriber for channel {}: {}",
+                            channel_id,
+                            e
+                        );
+                        continue;
+                    }
+                    channel_entry.command_subscriber = Some(Arc::new(RwLock::new(subscriber)));
+                    tracing::info!("Command subscriber started for channel {}", channel_id);
+                }
+                Err(e) => {
+                    tracing::error!(
+                        "Failed to create command subscriber for channel {}: {}",
+                        channel_id,
+                        e
+                    );
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Stop command subscriptions for all channels
+    async fn stop_command_subscriptions(&self) -> Result<()> {
+        use futures::future::join_all;
+
+        let stop_futures = self.channels.iter().map(|entry| {
+            let channel_id = *entry.key();
+            let subscriber = entry.value().command_subscriber.clone();
+
+            async move {
+                if let Some(subscriber) = subscriber {
+                    let mut sub = subscriber.write().await;
+                    if let Err(e) = sub.stop().await {
+                        tracing::error!(
+                            "Failed to stop command subscriber for channel {}: {}",
+                            channel_id,
+                            e
+                        );
+                    } else {
+                        tracing::info!("Command subscriber stopped for channel {}", channel_id);
+                    }
+                }
+            }
+        });
+
+        join_all(stop_futures).await;
+        Ok(())
     }
 }
 
@@ -1638,13 +1518,167 @@ impl Default for ProtocolFactory {
     }
 }
 
+/// Channel command handler that wraps a ComBase channel to implement FourTelemetryOperations
+struct ChannelCommandHandler {
+    channel: Arc<RwLock<Box<dyn ComBase>>>,
+    channel_id: u16,
+}
+
+#[async_trait]
+impl FourTelemetryOperations for ChannelCommandHandler {
+    async fn remote_measurement(
+        &self,
+        _point_names: &[String],
+    ) -> Result<Vec<(String, crate::core::framework::types::PointValueType)>> {
+        // Remote measurement is read-only, not supported through command interface
+        Err(ComSrvError::InvalidOperation(
+            "Remote measurement is read-only".to_string(),
+        ))
+    }
+
+    async fn remote_signaling(
+        &self,
+        _point_names: &[String],
+    ) -> Result<Vec<(String, crate::core::framework::types::PointValueType)>> {
+        // Remote signaling is read-only, not supported through command interface
+        Err(ComSrvError::InvalidOperation(
+            "Remote signaling is read-only".to_string(),
+        ))
+    }
+
+    async fn remote_control(
+        &self,
+        request: crate::core::framework::types::RemoteOperationRequest,
+    ) -> Result<crate::core::framework::types::RemoteOperationResponse> {
+        // Get the channel
+        let mut channel = self.channel.write().await;
+
+        // Convert control value to string
+        let value_str = match request.operation_type {
+            crate::core::framework::types::RemoteOperationType::Control { value } => {
+                if value {
+                    "1"
+                } else {
+                    "0"
+                }
+            }
+            _ => {
+                return Err(ComSrvError::InvalidParameter(
+                    "Invalid operation type for control".to_string(),
+                ));
+            }
+        };
+
+        // Execute the control command
+        match channel.write_point(&request.point_name, value_str).await {
+            Ok(_) => {
+                tracing::info!(
+                    "Control command executed on channel {}: point={}, value={}",
+                    self.channel_id,
+                    request.point_name,
+                    value_str
+                );
+                Ok(crate::core::framework::types::RemoteOperationResponse {
+                    operation_id: request.operation_id,
+                    success: true,
+                    error_message: None,
+                    timestamp: chrono::Utc::now(),
+                })
+            }
+            Err(e) => {
+                tracing::error!(
+                    "Control command failed on channel {}: {}",
+                    self.channel_id,
+                    e
+                );
+                Ok(crate::core::framework::types::RemoteOperationResponse {
+                    operation_id: request.operation_id,
+                    success: false,
+                    error_message: Some(format!("Control command failed: {}", e)),
+                    timestamp: chrono::Utc::now(),
+                })
+            }
+        }
+    }
+
+    async fn remote_regulation(
+        &self,
+        request: crate::core::framework::types::RemoteOperationRequest,
+    ) -> Result<crate::core::framework::types::RemoteOperationResponse> {
+        // Get the channel
+        let mut channel = self.channel.write().await;
+
+        // Convert regulation value to string
+        let value_str = match request.operation_type {
+            crate::core::framework::types::RemoteOperationType::Regulation { value } => {
+                value.to_string()
+            }
+            _ => {
+                return Err(ComSrvError::InvalidParameter(
+                    "Invalid operation type for regulation".to_string(),
+                ));
+            }
+        };
+
+        // Execute the regulation command
+        match channel.write_point(&request.point_name, &value_str).await {
+            Ok(_) => {
+                tracing::info!(
+                    "Regulation command executed on channel {}: point={}, value={}",
+                    self.channel_id,
+                    request.point_name,
+                    value_str
+                );
+                Ok(crate::core::framework::types::RemoteOperationResponse {
+                    operation_id: request.operation_id,
+                    success: true,
+                    error_message: None,
+                    timestamp: chrono::Utc::now(),
+                })
+            }
+            Err(e) => {
+                tracing::error!(
+                    "Regulation command failed on channel {}: {}",
+                    self.channel_id,
+                    e
+                );
+                Ok(crate::core::framework::types::RemoteOperationResponse {
+                    operation_id: request.operation_id,
+                    success: false,
+                    error_message: Some(format!("Regulation command failed: {}", e)),
+                    timestamp: chrono::Utc::now(),
+                })
+            }
+        }
+    }
+
+    async fn get_control_points(&self) -> Vec<String> {
+        // For now, return empty list since ComBase doesn't provide point enumeration
+        vec![]
+    }
+
+    async fn get_regulation_points(&self) -> Vec<String> {
+        // For now, return empty list since ComBase doesn't provide point enumeration
+        vec![]
+    }
+
+    async fn get_measurement_points(&self) -> Vec<String> {
+        // For now, return empty list since ComBase doesn't provide point enumeration
+        vec![]
+    }
+
+    async fn get_signaling_points(&self) -> Vec<String> {
+        // For now, return empty list since ComBase doesn't provide point enumeration
+        vec![]
+    }
+}
+
 /// Placeholder for backward compatibility - to be implemented
 // TODO: Implement proper protocol parser registry
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::config::loaders::point_mapper::CombinedPoint;
     use crate::core::config::{ChannelLoggingConfig, ProtocolType};
     use std::sync::Once;
 
@@ -2113,6 +2147,7 @@ mod tests {
                 created_at: std::time::Instant::now(),
                 last_accessed: Arc::new(RwLock::new(std::time::Instant::now())),
             },
+            command_subscriber: None,
         };
 
         let entry2 = ChannelEntry {
@@ -2123,6 +2158,7 @@ mod tests {
                 created_at: std::time::Instant::now(),
                 last_accessed: Arc::new(RwLock::new(std::time::Instant::now())),
             },
+            command_subscriber: None,
         };
 
         let entry3 = ChannelEntry {
@@ -2133,6 +2169,7 @@ mod tests {
                 created_at: std::time::Instant::now(),
                 last_accessed: Arc::new(RwLock::new(std::time::Instant::now())),
             },
+            command_subscriber: None,
         };
 
         factory.channels.insert(1001, entry1);

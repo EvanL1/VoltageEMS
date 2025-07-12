@@ -11,6 +11,8 @@ voltage-common = { workspace = true, features = ["async", "sync"] }
 
 # Core dependencies (use voltage-common where possible)
 tokio = { workspace = true }
+redis = { workspace = true }
+futures-util = "0.3"
 serde = { workspace = true }
 serde_json = { workspace = true }
 serde_yaml = { workspace = true }
@@ -34,5 +36,13 @@ tower-http = { version = "0.5", features = ["cors"] }
 petgraph = "0.6.4"
 rand = "0.8.5"
 
+[dev-dependencies]
+criterion = { version = "0.5", features = ["async_tokio"] }
+futures = { workspace = true }
+
 [features]
-default = [] 
+default = []
+
+[[bench]]
+name = "storage_benchmark"
+harness = false 

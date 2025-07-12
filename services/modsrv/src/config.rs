@@ -8,8 +8,7 @@
 
 use crate::error::ModelSrvError;
 use crate::error::Result;
-use crate::storage::SyncMode;
-use anyhow::Context;
+// use anyhow::Context;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 use std::time::Duration;
@@ -158,12 +157,48 @@ pub struct StorageConfig {
     pub sync_interval_secs: u64,
 }
 
+/// Performance configuration
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct PerformanceConfig {
+    /// Maximum number of concurrent model executions
+    #[serde(default = "default_max_concurrent_models")]
+    pub max_concurrent_models: usize,
+
+    /// Cache TTL in seconds
+    #[serde(default = "default_cache_ttl_secs")]
+    pub cache_ttl_secs: u64,
+
+    /// Enable performance metrics collection
+    #[serde(default = "default_enable_metrics")]
+    pub enable_metrics: bool,
+
+    /// Model execution timeout in seconds
+    #[serde(default = "default_model_timeout_secs")]
+    pub model_timeout_secs: u64,
+
+    /// Batch size for Redis operations
+    #[serde(default = "default_redis_batch_size")]
+    pub redis_batch_size: usize,
+}
+
 impl Default for StorageConfig {
     fn default() -> Self {
         Self {
             use_redis: default_use_redis(),
             storage_mode: default_storage_mode(),
             sync_interval_secs: default_sync_interval_secs(),
+        }
+    }
+}
+
+impl Default for PerformanceConfig {
+    fn default() -> Self {
+        Self {
+            max_concurrent_models: default_max_concurrent_models(),
+            cache_ttl_secs: default_cache_ttl_secs(),
+            enable_metrics: default_enable_metrics(),
+            model_timeout_secs: default_model_timeout_secs(),
+            redis_batch_size: default_redis_batch_size(),
         }
     }
 }
@@ -191,6 +226,9 @@ pub struct Config {
     /// Storage configuration
     #[serde(default)]
     pub storage: StorageConfig,
+    /// Performance configuration
+    #[serde(default)]
+    pub performance: PerformanceConfig,
 
     // Legacy fields for compatibility
     #[serde(skip)]
@@ -259,6 +297,21 @@ fn default_storage_mode() -> String {
 }
 fn default_sync_interval_secs() -> u64 {
     60
+}
+fn default_max_concurrent_models() -> usize {
+    10
+}
+fn default_cache_ttl_secs() -> u64 {
+    300 // 5 minutes
+}
+fn default_enable_metrics() -> bool {
+    false
+}
+fn default_model_timeout_secs() -> u64 {
+    30
+}
+fn default_redis_batch_size() -> usize {
+    100
 }
 
 impl Config {
@@ -346,6 +399,7 @@ impl Config {
             storage_mode: default_storage_mode(),
             sync_interval_secs: default_sync_interval_secs(),
         };
+        let performance = PerformanceConfig::default();
 
         Config {
             service,
@@ -356,6 +410,7 @@ impl Config {
             api,
             monitoring,
             storage,
+            performance,
             templates_dir: default_templates_dir(),
             log_level: default_log_level(),
             use_redis: default_use_redis(),
@@ -364,15 +419,8 @@ impl Config {
         }
     }
 
-    pub fn get_sync_mode(&self) -> SyncMode {
-        match self.storage.storage_mode.as_str() {
-            "write_through" => SyncMode::WriteThrough,
-            "write_back" => {
-                SyncMode::WriteBack(Duration::from_secs(self.storage.sync_interval_secs))
-            }
-            "on_demand" => SyncMode::OnDemand,
-            _ => SyncMode::WriteThrough,
-        }
+    pub fn get_sync_mode(&self) -> String {
+        self.storage.storage_mode.clone()
     }
 }
 
