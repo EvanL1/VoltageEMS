@@ -15,7 +15,8 @@ pub mod types;
 pub use calculation::*;
 pub use dataflow::{DataFlowConfig, DataFlowProcessor};
 pub use instance::*;
-pub use integration::{DataUpdate, DeviceModelSystem};
+pub use integration::DeviceModelSystem;
+pub use dataflow::DataUpdate;
 pub use registry::*;
 pub use types::*;
 
@@ -46,23 +47,29 @@ pub struct DeviceModel {
     pub metadata: HashMap<String, String>,
 }
 
-/// 设备类型枚举
+/// Device type enumeration
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub enum DeviceType {
-    /// 传感器
+    /// Sensor device
     Sensor,
-    /// 执行器
+    /// Actuator device
     Actuator,
-    /// 网关
+    /// Gateway device
     Gateway,
-    /// 边缘设备
+    /// Edge computing device
     Edge,
-    /// 能源设备
-    Energy,
-    /// 工业设备
+    /// Industrial equipment
     Industrial,
-    /// 自定义类型
+    /// Energy storage system
+    EnergyStorage,
+    /// Diesel generator
+    DieselGenerator,
+    /// Power meter
+    PowerMeter,
+    /// Photovoltaic system
+    Photovoltaic,
+    /// Custom device type
     Custom(String),
 }
 
@@ -332,10 +339,11 @@ impl DeviceModel {
             return Err("Model name cannot be empty".to_string());
         }
 
+
         // 检查属性定义
-        let mut identifiers = std::collections::HashSet::new();
+        let mut identifiers = std::collections::HashSet::<String>::new();
         for prop in &self.properties {
-            if !identifiers.insert(&prop.identifier) {
+            if !identifiers.insert(prop.identifier.clone()) {
                 return Err(format!(
                     "Duplicate property identifier: {}",
                     prop.identifier
@@ -345,7 +353,7 @@ impl DeviceModel {
 
         // 检查遥测定义
         for telemetry in &self.telemetry {
-            if !identifiers.insert(&telemetry.identifier) {
+            if !identifiers.insert(telemetry.identifier.clone()) {
                 return Err(format!(
                     "Duplicate telemetry identifier: {}",
                     telemetry.identifier
@@ -355,7 +363,7 @@ impl DeviceModel {
 
         // 检查命令定义
         for command in &self.commands {
-            if !identifiers.insert(&command.identifier) {
+            if !identifiers.insert(command.identifier.clone()) {
                 return Err(format!(
                     "Duplicate command identifier: {}",
                     command.identifier
@@ -366,7 +374,7 @@ impl DeviceModel {
         // 检查计算定义的输入输出
         for calc in &self.calculations {
             for input in &calc.inputs {
-                if !identifiers.contains(input.as_str()) {
+                if !identifiers.contains(input) {
                     return Err(format!("Calculation input '{}' not found in model", input));
                 }
             }
@@ -388,6 +396,17 @@ impl DeviceModel {
         }
 
         points
+    }
+
+    /// Check if device is an energy device
+    pub fn is_energy_device(&self) -> bool {
+        matches!(
+            self.device_type,
+            DeviceType::EnergyStorage
+                | DeviceType::DieselGenerator
+                | DeviceType::PowerMeter
+                | DeviceType::Photovoltaic
+        )
     }
 }
 

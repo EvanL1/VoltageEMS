@@ -1,3 +1,5 @@
 pub mod subscriber;
+pub mod store;
 
-pub use subscriber::Subscriber;
+pub use subscriber::{RedisSubscriber, BatchDataFetcher, DataUpdate};
+pub use store::RedisStore;

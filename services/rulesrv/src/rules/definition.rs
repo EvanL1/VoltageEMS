@@ -86,3 +86,26 @@ pub struct DagRule {
 fn default_true() -> bool {
     true
 }
+
+/// Simple rule structure (backward compatibility)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Rule {
+    pub id: String,
+    pub name: String,
+    pub description: Option<String>,
+    pub group_id: Option<String>,
+    pub condition: String,
+    pub actions: Vec<Value>,
+    pub enabled: bool,
+    pub priority: i32,
+}
+
+/// Rule group structure
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RuleGroup {
+    pub id: String,
+    pub name: String,
+    pub description: Option<String>,
+    pub rules: Vec<String>, // Rule IDs
+    pub enabled: bool,
+}

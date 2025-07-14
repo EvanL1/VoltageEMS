@@ -352,7 +352,7 @@ impl ComSrvInterface {
         });
 
         self.redis.publish(
-            &format!("modsrv:updates:{}", module_id),
+            &format!("modsrv:outputs:{}", module_id),
             &notification.to_string(),
         )?;
 

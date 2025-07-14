@@ -1,75 +1,118 @@
-# Rulesrv Configuration
 service:
-  name: "rulesrv"
-  host: "0.0.0.0"
-  port: 8084
+  name: rulesrv
+  version: 1.0.0
+  description: "Rules Engine Service for VoltageEMS"
 
-# Redis Configuration
+# Redis configuration
 redis:
   url: "redis://localhost:6379"
-  prefix: "ems:rules:"
-  # Subscribe to modsrv outputs for rule triggers
-  subscribe_patterns:
-    - "modsrv:model:*"
-    - "modsrv:calculation:*"
-    - "device:telemetry:*"
-    - "device:status:*"
+  key_prefix: "rulesrv"
+  pool_size: 20
+  connection_timeout: 5s
 
-# Rule Engine Configuration
-rule_engine:
-  # Maximum concurrent rule executions
-  max_concurrent_executions: 10
-  # Default timeout for rule execution (seconds)
-  default_timeout: 30
-  # Enable rule execution metrics
-  enable_metrics: true
-  # Rule storage pattern
-  rule_pattern: "rule:*"
-  # Execution history retention (days)
-  history_retention_days: 7
-
-# API Configuration
+# API server configuration
 api:
   host: "0.0.0.0"
-  port: 8084
-  # Enable OpenAPI documentation
-  enable_docs: true
-  # API key for authentication (optional)
-  # api_key: "your-api-key-here"
+  port: 8080
+  cors:
+    enabled: true
+    allowed_origins:
+      - "*"
+  timeout:
+    read: 30s
+    write: 30s
+    idle: 60s
 
-# Logging Configuration
-logging:
-  level: "info"
-  file: "logs/rulesrv.log"
-  max_size: "100MB"
-  max_files: 10
-  format: "json"
+# Rule engine configuration
+engine:
+  # Maximum number of rules to load
+  max_rules: 1000
+  # Rule execution timeout
+  execution_timeout: 30s
+  # Maximum parallel rule executions
+  max_parallel_executions: 100
+  # Enable rule caching
+  cache_enabled: true
+  cache_ttl: 300s
 
-# Monitoring Configuration
+# Subscription configuration
+subscription:
+  # Channels to subscribe to
+  channels:
+    - "modsrv:outputs:*"
+    - "alarm:event:*"
+  # Buffer size for incoming messages
+  buffer_size: 10000
+  # Batch processing interval
+  batch_interval: 100ms
+
+# Action handlers configuration
+actions:
+  # Control action handler
+  control:
+    enabled: true
+    # Command timeout
+    command_timeout: 30s
+    # Retry configuration
+    retry:
+      max_attempts: 3
+      initial_delay: 1s
+      max_delay: 30s
+  
+  # Alarm action handler
+  alarm:
+    enabled: true
+    # Alarm levels
+    levels:
+      - critical
+      - warning
+      - info
+  
+  # Notification action handler
+  notification:
+    enabled: true
+    # Notification channels
+    channels:
+      - email
+      - webhook
+      - sms
+
+# Storage configuration
+storage:
+  # Rule storage settings
+  rules:
+    # Maximum rule size
+    max_size: 1MB
+    # Rule compression
+    compression: true
+  
+  # Execution history settings
+  history:
+    # History retention period
+    retention: 7d
+    # Maximum history entries per rule
+    max_entries: 1000
+
+# Monitoring configuration
 monitoring:
-  # Health check interval (seconds)
-  health_check_interval: 60
-  # Metrics export interval (seconds)
-  metrics_export_interval: 30
-  # Enable Prometheus metrics endpoint
-  prometheus_enabled: true
-  prometheus_port: 9094
+  # Metrics port
+  metrics_port: 9090
+  # Health check interval
+  health_check_interval: 30s
+  # Metrics collection interval
+  metrics_interval: 10s
 
-# Action Handlers Configuration
-action_handlers:
-  # Enable built-in action handlers
-  enable_device_control: true
-  enable_model_control: true
-  enable_notification: true
-  # Custom action handler paths
-  custom_handlers: []
-
-# Post-Processors Configuration
-post_processors:
-  # Enable logging post-processor
-  enable_logging: true
-  # Enable notification post-processor
-  enable_notification: true
-  notification_threshold_ms: 5000
-  # Enable metrics post-processor
-  enable_metrics: true
+# Logging configuration
+logging:
+  # Log level (trace, debug, info, warn, error)
+  level: info
+  # Log format (json, text)
+  format: json
+  # Log output (stdout, file)
+  output: stdout
+  # File configuration (if output is file)
+  file:
+    path: "logs/rulesrv.log"
+    max_size: 100MB
+    max_backups: 10
+    max_age: 30d

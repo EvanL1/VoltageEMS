@@ -120,8 +120,9 @@ impl RedisConnection {
     /// Delete a key
     pub fn delete(&mut self, key: &str) -> Result<()> {
         self.client
-            .del(key)
-            .map_err(|e| ModelSrvError::RedisError(format!("Failed to delete key {}: {}", key, e)))
+            .del(&[key])
+            .map_err(|e| ModelSrvError::RedisError(format!("Failed to delete key {}: {}", key, e)))?;
+        Ok(())
     }
 
     /// Publish a message to a channel
@@ -135,6 +136,29 @@ impl RedisConnection {
                 ))
             })
             .map(|_| ())
+    }
+
+    /// Set a hash in Redis
+    pub fn set_hash(&mut self, key: &str, fields: HashMap<String, String>) -> Result<()> {
+        for (field, value) in fields {
+            self.set_hash_field(key, &field, &value)?;
+        }
+        Ok(())
+    }
+
+    /// Push to a list
+    pub fn rpush(&mut self, key: &str, value: &str) -> Result<()> {
+        self.client
+            .rpush(key, value)
+            .map_err(|e| ModelSrvError::RedisError(format!("Failed to rpush to key {}: {}", key, e)))?;
+        Ok(())
+    }
+
+    /// Get a list
+    pub fn get_list(&mut self, key: &str) -> Result<Vec<String>> {
+        self.client
+            .lrange(key, 0, -1)
+            .map_err(|e| ModelSrvError::RedisError(format!("Failed to get list {}: {}", key, e)))
     }
 
     /// Get a value from Redis and parse as JSON

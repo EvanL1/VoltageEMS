@@ -144,6 +144,22 @@ pub enum ModelSrvError {
     /// Timeout error
     #[error("Timeout error: {0}")]
     TimeoutError(String),
+
+    /// Invalid value error
+    #[error("Invalid value: {0}")]
+    InvalidValue(String),
+
+    /// Instance not found error
+    #[error("Instance not found: {0}")]
+    InstanceNotFound(String),
+
+    /// Not supported error
+    #[error("Not supported: {0}")]
+    NotSupported(String),
+
+    /// Invalid model error
+    #[error("Invalid model: {0}")]
+    InvalidModel(String),
 }
 
 /// Result type alias for Model Service
@@ -265,5 +281,21 @@ impl ModelSrvError {
 
     pub fn unknown(msg: impl Into<String>) -> Self {
         ModelSrvError::UnknownError(msg.into())
+    }
+
+    pub fn invalid_value(msg: impl Into<String>) -> Self {
+        ModelSrvError::InvalidValue(msg.into())
+    }
+
+    pub fn instance_not_found(msg: impl Into<String>) -> Self {
+        ModelSrvError::InstanceNotFound(msg.into())
+    }
+
+    pub fn not_supported(msg: impl Into<String>) -> Self {
+        ModelSrvError::NotSupported(msg.into())
+    }
+
+    pub fn invalid_model(msg: impl Into<String>) -> Self {
+        ModelSrvError::InvalidModel(msg.into())
     }
 }

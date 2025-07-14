@@ -20,7 +20,7 @@ for device in $MODBUS_TCP_DEVICES; do
     if [ -n "$device" ]; then
         HOST=$(echo $device | cut -d: -f1)
         PORT=$(echo $device | cut -d: -f2)
-        
+
         echo -n "  - $device: "
         if timeout 2 bash -c "echo >/dev/tcp/$HOST/$PORT" 2>/dev/null; then
             echo "可达"
@@ -71,7 +71,7 @@ echo "检查Modbus模拟器..."
 SIMULATOR_PATH="tests/simulators/modbus_tcp_simulator.py"
 if [ -f "$SIMULATOR_PATH" ]; then
     echo "  ✓ Modbus TCP模拟器存在: $SIMULATOR_PATH"
-    
+
     # 检查模拟器是否在运行
     if pgrep -f "modbus_tcp_simulator.py" > /dev/null; then
         echo "    状态: 运行中"

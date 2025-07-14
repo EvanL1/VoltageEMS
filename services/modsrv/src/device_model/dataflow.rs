@@ -1,4 +1,4 @@
-use crate::error::Result;
+use crate::error::{ModelSrvError, Result};
 use crate::redis_handler::RedisHandler;
 use futures::StreamExt;
 use serde_json::Value;
@@ -123,34 +123,41 @@ impl DataFlowProcessor {
 
     /// Process a data update
     pub async fn process_update(&self, update: DataUpdate) -> Result<()> {
+        // Extract numeric value from JSON
+        let numeric_value = match &update.value {
+            Value::Number(n) => n.as_f64().unwrap_or(0.0),
+            Value::String(s) => s.parse::<f64>().unwrap_or(0.0),
+            _ => 0.0,
+        };
+
         // Update instance telemetry
         self.instance_manager
             .update_telemetry(
                 &update.instance_id,
                 &update.telemetry_name,
-                update.value.clone(),
+                numeric_value,
+                None,
             )
             .await?;
 
         // Get instance to check for calculations
-        if let Some(instance) = self
+        let instance = self
             .instance_manager
             .get_instance(&update.instance_id)
-            .await?
-        {
-            // Find calculations that depend on this telemetry
-            let model = instance.model;
-            for calc in &model.calculations {
-                if calc.inputs.contains(&update.telemetry_name) {
-                    // Execute calculation
-                    let model = self.instance_manager.get_model(&instance.model_id).await?;
-                    self.execute_calculation(
-                        &instance.instance_id,
-                        &model,
-                        calc.identifier.clone(),
-                    )
-                    .await?;
-                }
+            .await
+            .ok_or_else(|| ModelSrvError::instance_not_found(&update.instance_id))?;
+            
+        // Get the model to find calculations that depend on this telemetry
+        let model = self.instance_manager.get_model(&instance.model_id).await?;
+        for calc in &model.calculations {
+            if calc.inputs.contains(&update.telemetry_name) {
+                // Execute calculation
+                self.execute_calculation(
+                    &instance.instance_id,
+                    &model,
+                    calc.identifier.clone(),
+                )
+                .await?;
             }
         }
 
@@ -176,37 +183,34 @@ impl DataFlowProcessor {
                 ))
             })?;
 
-        // Prepare input data
-        let mut inputs = HashMap::new();
-        for input_name in &calc.inputs {
-            if let Some(telemetry_data) = self
-                .instance_manager
-                .get_telemetry(instance_id, input_name)
-                .await?
-            {
-                inputs.insert(input_name.clone(), telemetry_data.value);
-            }
-        }
+        // Get device data to prepare telemetry values
+        let device_data = self
+            .instance_manager
+            .get_device_data(instance_id)
+            .await
+            .ok_or_else(|| ModelSrvError::instance_not_found(instance_id))?;
+        
+        // Execute the calculation
+        let instance = self
+            .instance_manager
+            .get_instance(instance_id)
+            .await
+            .ok_or_else(|| ModelSrvError::instance_not_found(instance_id))?;
+            
+        let results = self
+            .calculation_engine
+            .execute_model_calculations(model, &instance, &device_data.telemetry)
+            .await?;
 
-        // Execute calculation based on expression type
-        let result = match &calc.expression {
-            CalculationExpression::BuiltIn { function, args: _ } => {
-                self.calculation_engine
-                    .execute(function, inputs, HashMap::new())
-                    .await?
+        // Store results
+        if let Some(calc_result) = results.get(&calculation_id) {
+            for (output_name, output_value) in &calc_result.outputs {
+                if let Some(num_val) = output_value.as_f64() {
+                    self.instance_manager
+                        .update_telemetry(instance_id, output_name, num_val, None)
+                        .await?;
+                }
             }
-            _ => {
-                return Err(crate::error::ModelSrvError::NotSupported(
-                    "Only built-in functions are currently supported".to_string(),
-                ));
-            }
-        };
-
-        // Store result - for now, write to telemetry
-        for output in &calc.outputs {
-            self.instance_manager
-                .update_telemetry(instance_id, output, result.clone())
-                .await?;
         }
 
         Ok(())
@@ -278,8 +282,8 @@ impl DataFlowProcessor {
                             let update = DataUpdate {
                                 instance_id: instance_id.clone(),
                                 telemetry_name: telemetry_name.clone(),
-                                value: point_data.value,
-                                timestamp: point_data.timestamp,
+                                value: serde_json::to_value(&point_data.value).unwrap_or(serde_json::Value::Null),
+                                timestamp: point_data.timestamp.timestamp_millis(),
                             };
 
                             if let Err(e) = self.update_channel.send(update).await {

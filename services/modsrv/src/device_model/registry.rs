@@ -109,14 +109,14 @@ impl ModelRegistry {
 
         let device_type = format!("{:?}", model.device_type);
 
-        // 从类型索引中移除
+        // 更新类型索引
         if let Some(models) = self.type_index.write().await.get_mut(&device_type) {
             models.retain(|id| id != model_id);
         }
 
-        // 从版本索引中移除
-        let base_id = model_id.split('@').next().unwrap_or(model_id);
-        if let Some(versions) = self.version_index.write().await.get_mut(base_id) {
+        // 更新版本索引
+        let base_id = model_id.split('@').next().unwrap_or(model_id).to_string();
+        if let Some(versions) = self.version_index.write().await.get_mut(&base_id) {
             versions.retain(|v| v != &model.version);
         }
 
@@ -126,11 +126,11 @@ impl ModelRegistry {
     }
 
     /// 按设备类型查询模型
-    pub async fn find_by_type(&self, device_type: &DeviceType) -> Vec<DeviceModel> {
-        let type_key = format!("{:?}", device_type);
-        let models = self.models.read().await;
-
-        if let Some(model_ids) = self.type_index.read().await.get(&type_key) {
+    pub async fn list_models_by_type(&self, device_type: &DeviceType) -> Vec<DeviceModel> {
+        let type_str = format!("{:?}", device_type);
+        
+        if let Some(model_ids) = self.type_index.read().await.get(&type_str) {
+            let models = self.models.read().await;
             model_ids
                 .iter()
                 .filter_map(|id| models.get(id).cloned())
@@ -141,12 +141,12 @@ impl ModelRegistry {
     }
 
     /// 列出所有模型
-    pub async fn list_models(&self) -> Vec<DeviceModel> {
+    pub async fn list_all_models(&self) -> Vec<DeviceModel> {
         self.models.read().await.values().cloned().collect()
     }
 
-    /// 获取模型的所有版本
-    pub async fn get_model_versions(&self, base_model_id: &str) -> Vec<String> {
+    /// 获取模型版本列表
+    pub async fn list_model_versions(&self, base_model_id: &str) -> Vec<String> {
         self.version_index
             .read()
             .await
@@ -155,119 +155,59 @@ impl ModelRegistry {
             .unwrap_or_default()
     }
 
-    /// 从JSON加载模型
-    pub async fn load_from_json(&self, json_str: &str) -> Result<()> {
-        let model: DeviceModel =
-            serde_json::from_str(json_str).map_err(|e| ModelSrvError::JsonError(e.to_string()))?;
+    /// 从文件加载模型
+    pub async fn load_model_from_file(&self, path: &std::path::Path) -> Result<DeviceModel> {
+        let content = std::fs::read_to_string(path)
+            .map_err(|e| ModelSrvError::IoError(format!("Failed to read model file: {}", e)))?;
 
-        self.register_model(model).await
+        let model: DeviceModel = serde_yaml::from_str(&content)
+            .map_err(|e| ModelSrvError::YamlError(format!("Failed to parse model YAML: {}", e)))?;
+
+        model
+            .validate()
+            .map_err(|e| ModelSrvError::InvalidModel(e))?;
+
+        Ok(model)
     }
 
-    /// 导出模型为JSON
-    pub async fn export_to_json(&self, model_id: &str) -> Result<String> {
-        let model = self
-            .get_model(model_id)
-            .await
-            .ok_or_else(|| ModelSrvError::ModelNotFound(model_id.to_string()))?;
-
-        serde_json::to_string_pretty(&model).map_err(|e| ModelSrvError::JsonError(e.to_string()))
-    }
-
-    /// 批量注册模型
-    pub async fn register_models_batch(&self, models: Vec<DeviceModel>) -> Result<()> {
-        for model in models {
-            if let Err(e) = self.register_model(model).await {
-                tracing::error!("Failed to register model: {}", e);
-            }
+    /// 从目录加载所有模型
+    pub async fn load_models_from_directory(&self, dir_path: &std::path::Path) -> Result<()> {
+        if !dir_path.is_dir() {
+            return Err(ModelSrvError::IoError(format!(
+                "Path is not a directory: {}",
+                dir_path.display()
+            )));
         }
-        Ok(())
-    }
-}
 
-/// 模型存储接口（用于持久化）
-#[async_trait::async_trait]
-pub trait ModelStore: Send + Sync {
-    /// 保存模型
-    async fn save_model(&self, model: &DeviceModel) -> Result<()>;
+        let entries = std::fs::read_dir(dir_path)
+            .map_err(|e| ModelSrvError::IoError(format!("Failed to read directory: {}", e)))?;
 
-    /// 加载模型
-    async fn load_model(&self, model_id: &str) -> Result<Option<DeviceModel>>;
+        for entry in entries {
+            let entry = entry
+                .map_err(|e| ModelSrvError::IoError(format!("Failed to read entry: {}", e)))?;
+            let path = entry.path();
 
-    /// 列出所有模型ID
-    async fn list_model_ids(&self) -> Result<Vec<String>>;
-
-    /// 删除模型
-    async fn delete_model(&self, model_id: &str) -> Result<()>;
-}
-
-/// Redis模型存储实现
-pub struct RedisModelStore {
-    storage: Arc<RwLock<crate::storage::ModelStorage>>,
-    key_prefix: String,
-}
-
-impl RedisModelStore {
-    pub async fn new(redis_url: &str, key_prefix: &str) -> Result<Self> {
-        let storage = crate::storage::ModelStorage::new(redis_url).await?;
-        Ok(Self {
-            storage: Arc::new(RwLock::new(storage)),
-            key_prefix: key_prefix.to_string(),
-        })
-    }
-
-    fn make_key(&self, model_id: &str) -> String {
-        format!("{}model:definition:{}", self.key_prefix, model_id)
-    }
-}
-
-#[async_trait::async_trait]
-impl ModelStore for RedisModelStore {
-    async fn save_model(&self, model: &DeviceModel) -> Result<()> {
-        let key = self.make_key(&model.id);
-        let json =
-            serde_json::to_string(model).map_err(|e| ModelSrvError::JsonError(e.to_string()))?;
-
-        let mut storage = self.storage.write().await;
-        storage
-            .set_model_output_json(&key, &serde_json::json!(json))
-            .await
-    }
-
-    async fn load_model(&self, model_id: &str) -> Result<Option<DeviceModel>> {
-        let key = self.make_key(model_id);
-        let mut storage = self.storage.write().await;
-
-        match storage.get_model_output(&key).await? {
-            Some(output) => {
-                if let Some(json_str) = output.outputs.get("value").and_then(|v| v.as_str()) {
-                    let model = serde_json::from_str(json_str)
-                        .map_err(|e| ModelSrvError::JsonError(e.to_string()))?;
-                    Ok(Some(model))
-                } else {
-                    Ok(None)
+            if path.is_file() && path.extension().and_then(|s| s.to_str()) == Some("yaml") {
+                match self.load_model_from_file(&path).await {
+                    Ok(model) => {
+                        if let Err(e) = self.register_model(model).await {
+                            tracing::warn!("Failed to register model from {:?}: {}", path, e);
+                        }
+                    }
+                    Err(e) => {
+                        tracing::warn!("Failed to load model from {:?}: {}", path, e);
+                    }
                 }
             }
-            None => Ok(None),
         }
-    }
 
-    async fn list_model_ids(&self) -> Result<Vec<String>> {
-        let pattern = format!("{}model:definition:*", self.key_prefix);
-        let mut storage = self.storage.write().await;
-        let configs = storage.get_model_configs(&pattern).await?;
-
-        let prefix_len = format!("{}model:definition:", self.key_prefix).len();
-        let ids: Vec<String> = configs
-            .keys()
-            .map(|k| k[prefix_len..].to_string())
-            .collect();
-
-        Ok(ids)
-    }
-
-    async fn delete_model(&self, model_id: &str) -> Result<()> {
-        // TODO: 实现Redis删除
         Ok(())
+    }
+}
+
+impl Default for ModelRegistry {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -284,7 +224,7 @@ mod tests {
             name: "Power Meter".to_string(),
             version: "1.0.0".to_string(),
             description: "Smart power meter".to_string(),
-            device_type: DeviceType::Energy,
+            device_type: DeviceType::PowerMeter,
             properties: vec![],
             telemetry: vec![],
             commands: vec![],
@@ -297,12 +237,13 @@ mod tests {
         registry.register_model(model.clone()).await.unwrap();
 
         // 获取模型
-        let retrieved = registry.get_model("power_meter_v1").await.unwrap();
-        assert_eq!(retrieved.name, "Power Meter");
+        let retrieved = registry.get_model("power_meter_v1").await;
+        assert!(retrieved.is_some());
+        assert_eq!(retrieved.unwrap().name, "Power Meter");
 
         // 按类型查询
-        let energy_models = registry.find_by_type(&DeviceType::Energy).await;
-        assert_eq!(energy_models.len(), 1);
+        let models = registry.list_models_by_type(&DeviceType::PowerMeter).await;
+        assert_eq!(models.len(), 1);
 
         // 删除模型
         registry.unregister_model("power_meter_v1").await.unwrap();

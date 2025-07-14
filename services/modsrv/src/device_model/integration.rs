@@ -10,7 +10,7 @@ use super::{
     CalculationDefinition, CalculationEngine, CalculationExpression, CollectionType, CommandType,
     Constraints, DataFlowConfig, DataFlowProcessor, DataType, DeviceInstance, DeviceModel,
     DeviceType, InstanceManager, ModelRegistry, PropertyDefinition, TelemetryDefinition,
-    TelemetryMapping, TelemetryValue,
+    TelemetryMapping, TelemetryValue, dataflow::DataUpdate,
 };
 use crate::cache::ModelCacheManager;
 use crate::engine::OptimizedModelEngine;
@@ -25,15 +25,6 @@ pub struct DeviceModelSystem {
     cache_manager: Arc<ModelCacheManager>,
     redis_client: Arc<RedisHandler>,
     update_receiver: Arc<RwLock<Option<mpsc::Receiver<DataUpdate>>>>,
-}
-
-/// Data update for internal processing
-#[derive(Debug, Clone)]
-pub struct DataUpdate {
-    pub instance_id: String,
-    pub telemetry_name: String,
-    pub value: Value,
-    pub timestamp: i64,
 }
 
 impl DeviceModelSystem {
@@ -123,7 +114,7 @@ impl DeviceModelSystem {
         let id = instance.instance_id.clone();
 
         // Set up data subscriptions for the instance
-        if let Some(instance) = self.instance_manager.get_instance(&id).await? {
+        if let Some(instance) = self.instance_manager.get_instance(&id).await {
             let model = self.instance_manager.get_model(&instance.model_id).await?;
             let mut point_mappings = HashMap::new();
 
@@ -149,7 +140,7 @@ impl DeviceModelSystem {
 
     /// Get device instance
     pub async fn get_instance(&self, instance_id: &str) -> Result<Option<DeviceInstance>> {
-        self.instance_manager.get_instance(instance_id).await
+        Ok(self.instance_manager.get_instance(instance_id).await)
     }
 
     /// Update device property
@@ -159,8 +150,10 @@ impl DeviceModelSystem {
         property_name: &str,
         value: Value,
     ) -> Result<()> {
+        let mut properties = HashMap::new();
+        properties.insert(property_name.to_string(), value);
         self.instance_manager
-            .update_property(instance_id, property_name, value)
+            .update_instance_properties(instance_id, properties)
             .await
     }
 
@@ -170,9 +163,11 @@ impl DeviceModelSystem {
         instance_id: &str,
         telemetry_name: &str,
     ) -> Result<Option<TelemetryValue>> {
-        self.instance_manager
-            .get_telemetry(instance_id, telemetry_name)
-            .await
+        if let Some(device_data) = self.instance_manager.get_device_data(instance_id).await {
+            Ok(device_data.telemetry.get(telemetry_name).cloned())
+        } else {
+            Ok(None)
+        }
     }
 
     /// Execute command on device
@@ -186,7 +181,7 @@ impl DeviceModelSystem {
         let instance = self
             .instance_manager
             .get_instance(instance_id)
-            .await?
+            .await
             .ok_or_else(|| {
                 crate::error::ModelSrvError::NotFound(format!("Instance {} not found", instance_id))
             })?;
@@ -276,7 +271,7 @@ impl DeviceModelSystem {
             name: "Power Meter V1".to_string(),
             description: "Three-phase power meter".to_string(),
             version: "1.0.0".to_string(),
-            device_type: DeviceType::Energy,
+            device_type: DeviceType::PowerMeter,
             properties: vec![PropertyDefinition {
                 identifier: "rated_voltage".to_string(),
                 name: "Rated Voltage".to_string(),
@@ -390,14 +385,3 @@ impl Clone for DeviceModelSystem {
     }
 }
 
-// Convert internal DataUpdate to dataflow DataUpdate
-impl From<DataUpdate> for super::dataflow::DataUpdate {
-    fn from(update: DataUpdate) -> Self {
-        super::dataflow::DataUpdate {
-            instance_id: update.instance_id,
-            telemetry_name: update.telemetry_name,
-            value: update.value,
-            timestamp: update.timestamp,
-        }
-    }
-}

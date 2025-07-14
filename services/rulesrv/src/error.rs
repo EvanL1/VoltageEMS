@@ -71,4 +71,13 @@ pub enum RulesrvError {
 
     #[error("Voltage common error: {0}")]
     VoltageCommonError(#[from] voltage_common::error::Error),
+
+    #[error("Internal error: {0}")]
+    InternalError(#[from] anyhow::Error),
+}
+
+impl From<redis::RedisError> for RulesrvError {
+    fn from(err: redis::RedisError) -> Self {
+        RulesrvError::RedisError(err.to_string())
+    }
 }

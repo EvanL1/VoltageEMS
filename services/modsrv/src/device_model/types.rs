@@ -21,6 +21,7 @@ pub enum DeviceStatus {
     Unknown,
 }
 
+
 /// 数据质量
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
@@ -165,7 +166,8 @@ impl super::DataType {
             (super::DataType::Timestamp, serde_json::Value::Number(n)) => n.as_i64().is_some(),
             (super::DataType::Binary, serde_json::Value::String(s)) => {
                 // 检查是否是有效的base64编码
-                base64::decode(s).is_ok()
+                use base64::Engine;
+                base64::engine::general_purpose::STANDARD.decode(s).is_ok()
             }
             _ => false,
         }

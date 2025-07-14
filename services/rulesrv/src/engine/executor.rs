@@ -1,5 +1,5 @@
 use crate::error::{Result, RulesrvError};
-use crate::redis::{RedisConnection, RedisStore};
+use crate::redis::RedisStore;
 use crate::rules::{DagRule, NodeDefinition, NodeState, NodeType};
 use async_trait::async_trait;
 use chrono::Utc;
@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, RwLock};
 use tracing::{debug, error, info, trace, warn};
 use uuid::Uuid;
 
@@ -40,9 +40,9 @@ pub struct ExecutionContext {
     /// Data store for persistence and device interaction
     store: Arc<RedisStore>,
     /// Action handlers for executing actions
-    action_handlers: Vec<Box<dyn ActionHandler + Send + Sync>>,
+    action_handlers: Vec<Arc<dyn ActionHandler + Send + Sync>>,
     /// Post-processors for rule execution results
-    post_processors: Vec<Box<dyn RulePostProcessor + Send + Sync>>,
+    post_processors: Vec<Arc<dyn RulePostProcessor + Send + Sync>>,
 }
 
 impl ExecutionContext {
@@ -58,27 +58,27 @@ impl ExecutionContext {
     }
 
     /// Register an action handler
-    pub fn register_action_handler(&mut self, handler: Box<dyn ActionHandler + Send + Sync>) {
+    pub fn register_action_handler(&mut self, handler: Arc<dyn ActionHandler + Send + Sync>) {
         self.action_handlers.push(handler);
     }
 
     /// Register a post-processor
-    pub fn register_post_processor(&mut self, processor: Box<dyn RulePostProcessor + Send + Sync>) {
+    pub fn register_post_processor(&mut self, processor: Arc<dyn RulePostProcessor + Send + Sync>) {
         self.post_processors.push(processor);
     }
 
     /// Find an action handler for a specific action type
     fn find_action_handler(
-        &mut self,
+        &self,
         action_type: &str,
-    ) -> Option<&mut Box<dyn ActionHandler + Send + Sync>> {
+    ) -> Option<&Arc<dyn ActionHandler + Send + Sync>> {
         self.action_handlers
-            .iter_mut()
+            .iter()
             .find(|handler| handler.can_handle(action_type))
     }
 
     /// Execute an action
-    pub async fn execute_action(&mut self, action_type: &str, config: &Value) -> Result<Value> {
+    pub async fn execute_action(&self, action_type: &str, config: &Value) -> Result<Value> {
         // Try to find a handler for this action type
         let handler = self.find_action_handler(action_type);
 
@@ -111,49 +111,6 @@ impl ExecutionContext {
         }
     }
 
-    /// Load device status from storage
-    pub async fn load_device_status(&mut self) -> Result<()> {
-        let keys = self.store.as_ref().get_keys("ems:device:status:*")?;
-
-        for key in keys {
-            if let Ok(status_json) = self.store.as_ref().get_string(&key) {
-                if let Ok(status) = serde_json::from_str::<Value>(&status_json) {
-                    let device_id = key.replace("ems:device:status:", "");
-                    self.device_status.insert(device_id, status);
-                }
-            }
-        }
-
-        Ok(())
-    }
-
-    /// Get device status by ID
-    pub fn get_device_status(&self, device_id: &str) -> Option<&Value> {
-        self.device_status.get(device_id)
-    }
-
-    /// Get device parameter
-    pub fn get_device_parameter(&self, device_id: &str, parameter: &str) -> Result<Value> {
-        let key = format!("device:status:{}:{}", device_id, parameter);
-
-        // Try from cached device status first
-        let cache_key = format!("{}:{}", device_id, parameter);
-        if let Some(value) = self.device_status.get(&cache_key) {
-            return Ok(value.clone());
-        }
-
-        // Then try from store
-        match self.store.as_ref().get_string(&key) {
-            Ok(value_str) => {
-                // Try to parse as JSON, or use raw string
-                match serde_json::from_str(&value_str) {
-                    Ok(value) => Ok(value),
-                    Err(_) => Ok(json!(value_str)),
-                }
-            }
-            Err(_) => Ok(json!(null)),
-        }
-    }
 
     /// Set a variable
     pub fn set_variable(&mut self, name: &str, value: Value) {
@@ -163,6 +120,33 @@ impl ExecutionContext {
     /// Get a variable
     pub fn get_variable(&self, name: &str) -> Option<&Value> {
         self.variables.get(name)
+    }
+
+    /// Resolve a variable or literal with external variables
+    pub fn resolve_variable_with_vars(&self, name: &str, variables: &HashMap<String, Value>) -> Result<Value> {
+        // Check if it's a variable reference
+        if name.starts_with("$") {
+            let var_name = &name[1..];
+            // First check external variables, then internal
+            match variables.get(var_name).or_else(|| self.variables.get(var_name)) {
+                Some(value) => Ok(value.clone()),
+                None => Err(RulesrvError::RuleError(format!(
+                    "Variable not found: {}",
+                    var_name
+                ))),
+            }
+        } else {
+            // Assume it's a literal
+            if name == "true" {
+                Ok(json!(true))
+            } else if name == "false" {
+                Ok(json!(false))
+            } else if let Ok(num) = name.parse::<f64>() {
+                Ok(json!(num))
+            } else {
+                Ok(json!(name))
+            }
+        }
     }
 
     /// Evaluate a simple expression
@@ -260,17 +244,6 @@ impl ExecutionContext {
                     var_name
                 ))),
             }
-        } else if name.starts_with("device:") {
-            // Device parameter reference: device:device_id:parameter
-            let parts: Vec<&str> = name.split(':').collect();
-            if parts.len() != 3 {
-                return Err(RulesrvError::RuleError(format!(
-                    "Invalid device reference: {}",
-                    name
-                )));
-            }
-
-            self.get_device_parameter(parts[1], parts[2])
         } else {
             // Assume it's a literal
             if name == "true" {
@@ -312,7 +285,8 @@ impl ExecutionContext {
         let cmd_key = format!("ems:control:cmd:{}", cmd_id);
         self.store
             .as_ref()
-            .set_string(&cmd_key, &command.to_string())?;
+            .set_string(&cmd_key, &command.to_string())
+            .await?;
 
         // TODO: Implement queue operations when RedisStore supports them
         // Currently RedisStore doesn't expose RPUSH operations
@@ -326,11 +300,11 @@ impl ExecutionContext {
 
     /// Process the rule execution result with registered post-processors
     pub async fn process_result(
-        &mut self,
+        &self,
         rule_id: &str,
         result: &RuleExecutionResult,
     ) -> Result<()> {
-        for processor in &mut self.post_processors {
+        for processor in &self.post_processors {
             if let Err(e) = processor.process(rule_id, result).await {
                 warn!("Post-processor {} failed: {}", processor.name(), e);
                 // Continue with other processors even if one fails
@@ -368,6 +342,93 @@ pub struct RuntimeRule {
     pub definition: DagRule,
     /// Node mapping
     pub node_map: HashMap<String, NodeIndex>,
+}
+
+/// Evaluate an expression with external variables
+fn evaluate_expression_with_vars(
+    expression: &str, 
+    context: &ExecutionContext, 
+    variables: &HashMap<String, Value>
+) -> Result<bool> {
+    // Very simple expression evaluator (should be replaced with a proper one)
+    if expression.contains("==") {
+        let parts: Vec<&str> = expression.split("==").map(|s| s.trim()).collect();
+        if parts.len() != 2 {
+            return Err(RulesrvError::RuleError(format!(
+                "Invalid expression: {}",
+                expression
+            )));
+        }
+
+        let left = context.resolve_variable_with_vars(parts[0], variables)?;
+        let right = context.resolve_variable_with_vars(parts[1], variables)?;
+
+        Ok(left == right)
+    } else if expression.contains("!=") {
+        let parts: Vec<&str> = expression.split("!=").map(|s| s.trim()).collect();
+        if parts.len() != 2 {
+            return Err(RulesrvError::RuleError(format!(
+                "Invalid expression: {}",
+                expression
+            )));
+        }
+
+        let left = context.resolve_variable_with_vars(parts[0], variables)?;
+        let right = context.resolve_variable_with_vars(parts[1], variables)?;
+
+        Ok(left != right)
+    } else if expression.contains(">") {
+        let parts: Vec<&str> = expression.split(">").map(|s| s.trim()).collect();
+        if parts.len() != 2 {
+            return Err(RulesrvError::RuleError(format!(
+                "Invalid expression: {}",
+                expression
+            )));
+        }
+
+        let left = context.resolve_variable_with_vars(parts[0], variables)?;
+        let right = context.resolve_variable_with_vars(parts[1], variables)?;
+
+        match (left.as_f64(), right.as_f64()) {
+            (Some(l), Some(r)) => Ok(l > r),
+            _ => Err(RulesrvError::RuleError(format!(
+                "Cannot compare: {} and {}",
+                left, right
+            ))),
+        }
+    } else if expression.contains("<") {
+        let parts: Vec<&str> = expression.split("<").map(|s| s.trim()).collect();
+        if parts.len() != 2 {
+            return Err(RulesrvError::RuleError(format!(
+                "Invalid expression: {}",
+                expression
+            )));
+        }
+
+        let left = context.resolve_variable_with_vars(parts[0], variables)?;
+        let right = context.resolve_variable_with_vars(parts[1], variables)?;
+
+        match (left.as_f64(), right.as_f64()) {
+            (Some(l), Some(r)) => Ok(l < r),
+            _ => Err(RulesrvError::RuleError(format!(
+                "Cannot compare: {} and {}",
+                left, right
+            ))),
+        }
+    } else {
+        // Assume it's a boolean variable or literal
+        let value = context.resolve_variable_with_vars(expression, variables)?;
+
+        if let Some(b) = value.as_bool() {
+            Ok(b)
+        } else if let Some(n) = value.as_f64() {
+            Ok(n != 0.0)
+        } else if let Some(s) = value.as_str() {
+            Ok(!s.is_empty())
+        } else {
+            Ok(false)
+        }
+    }
 }
 
 /// Build a runtime rule from a DAG rule definition
@@ -422,7 +483,8 @@ pub fn build_rule_graph(rule_def: DagRule) -> Result<RuntimeRule> {
 /// Execute a rule graph
 pub async fn execute_rule_graph(
     rule: &mut RuntimeRule,
-    context: &mut ExecutionContext,
+    context: &ExecutionContext,
+    variables: &mut HashMap<String, Value>,
 ) -> Result<Value> {
     // Reset node states
     for node_idx in rule.graph.node_indices() {
@@ -457,15 +519,15 @@ pub async fn execute_rule_graph(
             node.state = NodeState::Running;
 
             // Execute node
-            match execute_node(node, context).await {
+            match execute_node(node, context, variables).await {
                 Ok(result) => {
                     node.result = Some(result);
                     node.state = NodeState::Completed;
                     completed.insert(node_idx);
 
-                    // Store result in context using node ID as variable name
+                    // Store result in variables using node ID as variable name
                     if let Some(result) = &node.result {
-                        context.set_variable(&node.definition.id, result.clone());
+                        variables.insert(node.definition.id.clone(), result.clone());
                     }
                 }
                 Err(e) => {
@@ -500,7 +562,7 @@ pub async fn execute_rule_graph(
 
                 // Check edge condition if present
                 if let Some(condition) = edge.weight() {
-                    match context.evaluate_expression(condition) {
+                    match evaluate_expression_with_vars(condition, context, variables) {
                         Ok(result) => {
                             if !result {
                                 can_execute = false;
@@ -538,29 +600,47 @@ pub async fn execute_rule_graph(
 }
 
 /// Execute a single node
-async fn execute_node(node: &RuleNode, context: &mut ExecutionContext) -> Result<Value> {
+async fn execute_node(node: &RuleNode, context: &ExecutionContext, variables: &HashMap<String, Value>) -> Result<Value> {
     match node.definition.node_type {
         NodeType::Input => {
             // Process input node
-            let device_id = node
+            // For now, input nodes should reference modsrv outputs or point data
+            // Example: modsrv:model1:output or channel_id:type:point_id
+            let source = node
                 .definition
                 .config
-                .get("device_id")
+                .get("source")
                 .and_then(Value::as_str)
                 .ok_or_else(|| {
-                    RulesrvError::RuleError("Input node missing device_id".to_string())
+                    RulesrvError::RuleError("Input node missing source".to_string())
                 })?;
 
-            let parameter = node
-                .definition
-                .config
-                .get("parameter")
-                .and_then(Value::as_str)
-                .ok_or_else(|| {
-                    RulesrvError::RuleError("Input node missing parameter".to_string())
-                })?;
-
-            context.get_device_parameter(device_id, parameter)
+            // Get value from Redis based on source format
+            match context.store.get_string(source).await {
+                Ok(Some(value_str)) => {
+                    // Try to parse as JSON, or use raw string
+                    match serde_json::from_str(&value_str) {
+                        Ok(value) => Ok(value),
+                        Err(_) => {
+                            // Check if it's a point value format (value:timestamp)
+                            if let Some(val_str) = value_str.split(':').next() {
+                                if let Ok(val) = val_str.parse::<f64>() {
+                                    Ok(json!(val))
+                                } else {
+                                    Ok(json!(value_str))
+                                }
+                            } else {
+                                Ok(json!(value_str))
+                            }
+                        }
+                    }
+                }
+                Ok(None) => {
+                    warn!("Input source {} not found", source);
+                    Ok(json!(null))
+                }
+                Err(_) => Ok(json!(null)),
+            }
         }
         NodeType::Condition => {
             // Process condition node
@@ -573,7 +653,7 @@ async fn execute_node(node: &RuleNode, context: &mut ExecutionContext) -> Result
                     RulesrvError::RuleError("Condition node missing expression".to_string())
                 })?;
 
-            let result = context.evaluate_expression(expression)?;
+            let result = evaluate_expression_with_vars(expression, context, variables)?;
             Ok(json!(result))
         }
         NodeType::Transform => {
@@ -608,7 +688,7 @@ async fn execute_node(node: &RuleNode, context: &mut ExecutionContext) -> Result
 
                     let factor = input.get("factor").and_then(Value::as_f64).unwrap_or(1.0);
 
-                    let value = context.resolve_variable(value_expr)?;
+                    let value = context.resolve_variable_with_vars(value_expr, variables)?;
 
                     if let Some(num) = value.as_f64() {
                         Ok(json!(num * factor))
@@ -640,7 +720,7 @@ async fn execute_node(node: &RuleNode, context: &mut ExecutionContext) -> Result
                                 )
                             })?;
 
-                    let value = context.resolve_variable(value_expr)?;
+                    let value = context.resolve_variable_with_vars(value_expr, variables)?;
 
                     if let Some(num) = value.as_f64() {
                         Ok(json!(num >= threshold))
@@ -758,7 +838,7 @@ async fn execute_node(node: &RuleNode, context: &mut ExecutionContext) -> Result
 
             for input in inputs {
                 if let Some(var_name) = input.as_str() {
-                    if let Some(value) = context.get_variable(var_name) {
+                    if let Some(value) = variables.get(var_name) {
                         values.push(value.clone());
                     }
                 }
@@ -819,9 +899,9 @@ pub struct RuleExecutionResult {
 
 /// Post-processor for rule execution results
 #[async_trait::async_trait]
-pub trait RulePostProcessor {
+pub trait RulePostProcessor: Send + Sync {
     /// Process a rule execution result
-    async fn process(&mut self, rule_id: &str, result: &RuleExecutionResult) -> Result<()>;
+    async fn process(&self, rule_id: &str, result: &RuleExecutionResult) -> Result<()>;
 
     /// Get a descriptive name for this post-processor
     fn name(&self) -> &str;
@@ -839,7 +919,7 @@ impl LoggingPostProcessor {
 
 #[async_trait::async_trait]
 impl RulePostProcessor for LoggingPostProcessor {
-    async fn process(&mut self, rule_id: &str, result: &RuleExecutionResult) -> Result<()> {
+    async fn process(&self, rule_id: &str, result: &RuleExecutionResult) -> Result<()> {
         match result.status.as_str() {
             "completed" => {
                 info!(
@@ -876,8 +956,8 @@ pub struct NotificationPostProcessor {
     threshold_ms: u128,
     /// Redis key prefix
     key_prefix: String,
-    /// Redis connection
-    redis: Mutex<Option<RedisConnection>>,
+    // /// Redis connection
+    // redis: Mutex<Option<RedisConnection>>,
 }
 
 impl NotificationPostProcessor {
@@ -886,25 +966,25 @@ impl NotificationPostProcessor {
         Self {
             threshold_ms,
             key_prefix: key_prefix.to_string(),
-            redis: Mutex::new(None),
+            // redis: Mutex::new(None),
         }
     }
 
-    /// Initialize Redis connection
-    pub fn init(&mut self, redis_url: &str) -> Result<()> {
-        let mut conn = RedisConnection::new();
-        conn.connect(redis_url)?;
+    // /// Initialize Redis connection
+    // pub fn init(&mut self, redis_url: &str) -> Result<()> {
+    //     let mut conn = RedisConnection::new();
+    //     conn.connect(redis_url)?;
 
-        let mut redis_guard = self.redis.lock().map_err(|_| RulesrvError::LockError)?;
-        *redis_guard = Some(conn);
+    //     let mut redis_guard = self.redis.lock().map_err(|_| RulesrvError::LockError)?;
+    //     *redis_guard = Some(conn);
 
-        Ok(())
-    }
+    //     Ok(())
+    // }
 }
 
 #[async_trait::async_trait]
 impl RulePostProcessor for NotificationPostProcessor {
-    async fn process(&mut self, rule_id: &str, result: &RuleExecutionResult) -> Result<()> {
+    async fn process(&self, rule_id: &str, result: &RuleExecutionResult) -> Result<()> {
         // Only send notifications for slow rule executions or failures
         if result.duration_ms > self.threshold_ms || result.status == "failed" {
             let notification = json!({
@@ -922,12 +1002,12 @@ impl RulePostProcessor for NotificationPostProcessor {
                 }
             });
 
-            // Try to send notification via Redis pub/sub
-            let redis_guard = self.redis.lock().map_err(|_| RulesrvError::LockError)?;
-            if let Some(mut conn) = redis_guard.clone() {
-                let channel = format!("{}notifications", self.key_prefix);
-                conn.publish(&channel, &notification.to_string())?;
-            }
+            // // Try to send notification via Redis pub/sub
+            // let redis_guard = self.redis.lock().map_err(|_| RulesrvError::LockError)?;
+            // if let Some(mut conn) = redis_guard.clone() {
+            //     let channel = format!("{}notifications", self.key_prefix);
+            //     conn.publish(&channel, &notification.to_string())?;
+            // }
         }
 
         Ok(())
@@ -942,9 +1022,9 @@ impl RulePostProcessor for NotificationPostProcessor {
 pub struct RuleExecutor {
     store: Arc<RedisStore>,
     /// Action handler registry
-    action_handlers: Arc<Mutex<Vec<Box<dyn ActionHandler + Send + Sync>>>>,
+    action_handlers: Arc<RwLock<Vec<Arc<dyn ActionHandler + Send + Sync>>>>,
     /// Post-processor registry
-    post_processors: Arc<Mutex<Vec<Box<dyn RulePostProcessor + Send + Sync>>>>,
+    post_processors: Arc<RwLock<Vec<Arc<dyn RulePostProcessor + Send + Sync>>>>,
 }
 
 impl RuleExecutor {
@@ -952,45 +1032,38 @@ impl RuleExecutor {
     pub fn new(store: Arc<RedisStore>) -> Self {
         // Initialize with default post-processors
         let mut post_processors = Vec::new();
-        post_processors.push(Box::new(LoggingPostProcessor::new()) as Box<dyn RulePostProcessor + Send + Sync>);
+        post_processors.push(Arc::new(LoggingPostProcessor::new()) as Arc<dyn RulePostProcessor + Send + Sync>);
 
         Self {
             store,
-            action_handlers: Arc::new(Mutex::new(Vec::new())),
-            post_processors: Arc::new(Mutex::new(post_processors)),
+            action_handlers: Arc::new(RwLock::new(Vec::new())),
+            post_processors: Arc::new(RwLock::new(post_processors)),
         }
     }
 
     /// Register an action handler
-    pub fn register_action_handler<T: ActionHandler + Send + Sync + 'static>(
+    pub async fn register_action_handler<T: ActionHandler + Send + Sync + 'static>(
         &self,
         handler: T,
     ) -> Result<()> {
-        let mut handlers = self
-            .action_handlers
-            .lock()
-            .map_err(|_| RulesrvError::LockError)?;
-        handlers.push(Box::new(handler));
+        let handler_name = handler.name().to_string();
+        let mut handlers = self.action_handlers.write().await;
+        handlers.push(Arc::new(handler));
 
-        debug!(
-            "Registered action handler: {}",
-            handlers.last().unwrap().name()
-        );
+        debug!("Registered action handler: {}", handler_name);
         Ok(())
     }
 
     /// Register a post-processor
-    pub fn register_post_processor<T: RulePostProcessor + Send + Sync + 'static>(
+    pub async fn register_post_processor<T: RulePostProcessor + Send + Sync + 'static>(
         &self,
         processor: T,
     ) -> Result<()> {
-        let mut processors = self.post_processors.lock().await;
-        processors.push(Box::new(processor));
+        let processor_name = processor.name().to_string();
+        let mut processors = self.post_processors.write().await;
+        processors.push(Arc::new(processor));
 
-        debug!(
-            "Registered post-processor: {}",
-            processors.last().unwrap().name()
-        );
+        debug!("Registered post-processor: {}", processor_name);
         Ok(())
     }
 
@@ -1001,48 +1074,24 @@ impl RuleExecutor {
 
         // Register action handlers
         {
-            let handlers = self
-                .action_handlers
-                .lock()
-                .map_err(|_| RulesrvError::LockError)?;
+            let handlers = self.action_handlers.read().await;
             for handler in handlers.iter() {
-                let handler_type_name =
-                    std::any::type_name::<Box<dyn ActionHandler + Send + Sync>>();
-                let handler_name = handler.name();
-                trace!(
-                    "Registering handler {} of type {}",
-                    handler_name,
-                    handler_type_name
-                );
-
-                // Unfortunately, we can't directly clone the Box<dyn Trait> here
-                // So we need to pass a trait object reference to the context
-                // This is not ideal, but it's the best we can do without a Clone trait bound
-
-                // Since we can't clone a trait object directly, we'll have to add handlers during execution
-                // This approach would need to be refined in a real implementation
-                // For now, we'll create a mock or placeholder handler
-                // TODO: Find a better way to register handlers from the registry to the context
+                context.register_action_handler(Arc::clone(handler));
             }
         }
 
         // Register post-processors
         {
-            let processors = self
-                .post_processors
-                .lock()
-                .map_err(|_| RulesrvError::LockError)?;
-            for _processor in processors.iter() {
-                // Similar issue as with action handlers
-                // We'll create placeholder processors for now
-                // TODO: Find a better way to register processors from the registry to the context
+            let processors = self.post_processors.read().await;
+            for processor in processors.iter() {
+                context.register_post_processor(Arc::clone(processor));
             }
         }
 
         // Try loading rule directly from store first
         let rule_key = format!("rule:{}", rule_id);
-        let rule_def = match self.store.get_string(&rule_key) {
-            Ok(rule_json) => match serde_json::from_str::<DagRule>(&rule_json) {
+        let rule_def = match self.store.get_string(&rule_key).await {
+            Ok(Some(rule_json)) => match serde_json::from_str::<DagRule>(&rule_json) {
                 Ok(rule) => rule,
                 Err(e) => {
                     return Err(RulesrvError::RuleParsingError(format!(
@@ -1050,6 +1099,12 @@ impl RuleExecutor {
                         rule_id, e
                     )));
                 }
+            },
+            Ok(None) => {
+                return Err(RulesrvError::RuleNotFound(format!(
+                    "Rule {} not found in store",
+                    rule_id
+                )));
             },
             Err(e) => {
                 return Err(RulesrvError::RuleNotFound(format!(
@@ -1074,19 +1129,19 @@ impl RuleExecutor {
         let start_time = std::time::Instant::now();
 
         // Load device status
-        context.load_device_status().await?;
 
-        // Set input data as variables
+        // Create variables map and set input data
+        let mut variables = HashMap::new();
         if let Some(input) = &input_data {
             if let Value::Object(map) = input {
                 for (key, value) in map {
-                    context.set_variable(key, value.clone());
+                    variables.insert(key.clone(), value.clone());
                 }
             }
         }
 
         // Execute rule
-        let result = execute_rule_graph(&mut runtime_rule, &mut context).await;
+        let result = execute_rule_graph(&mut runtime_rule, &context, &mut variables).await;
 
         // Calculate execution time
         let execution_time = start_time.elapsed();
@@ -1133,7 +1188,7 @@ impl RuleExecutor {
 
         // Store execution result in Redis
         let record_key = format!("ems:rule:execution:{}", execution_id);
-        if let Err(e) = self.store.set_string(&record_key, &record.to_string()) {
+        if let Err(e) = self.store.set_string(&record_key, &record.to_string()).await {
             error!("Failed to store execution record: {}", e);
         }
 

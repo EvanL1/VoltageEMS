@@ -32,7 +32,7 @@ AVAILABLE_PINS=""
 for pin in $COMMON_PINS; do
     # 尝试导出GPIO
     echo $pin > /sys/class/gpio/export 2>/dev/null || true
-    
+
     if [ -d /sys/class/gpio/gpio$pin ]; then
         AVAILABLE_PINS="$AVAILABLE_PINS $pin"
         # 清理
@@ -59,7 +59,7 @@ fi
 if [ -f /proc/device-tree/model ]; then
     MODEL=$(cat /proc/device-tree/model)
     echo "设备型号: $MODEL"
-    
+
     if [[ $MODEL == *"Raspberry Pi"* ]]; then
         echo "检测到树莓派设备"
         # 树莓派特定检查

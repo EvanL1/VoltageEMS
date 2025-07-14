@@ -10,7 +10,7 @@ mod storage;
 mod template;
 
 use crate::api::ApiServer;
-use crate::redis_handler::{RedisConnection, RedisType};
+use crate::redis_handler::RedisConnection;
 use config::Config;
 use error::{ModelSrvError, Result};
 use model::ModelEngine;
@@ -415,23 +415,19 @@ fn debug_redis_data(_config: &Config, pattern: &str) -> Result<()> {
     for key in &keys {
         println!("\nKey: {}", key);
 
-        // Get key type
-        let key_type = redis_conn.get_type(key)?;
-        println!("Type: {:?}", key_type);
-
-        match key_type {
-            RedisType::String => {
-                let value = redis_conn.get_string(key)?;
-                println!("Value: {}", value);
-            }
-            RedisType::Hash => {
-                let hash = redis_conn.get_hash(key)?;
-                for (k, v) in hash {
-                    println!("{}: {}", k, v);
+        // For now, just try to get as string
+        match redis_conn.get_string(key) {
+            Ok(value) => println!("Value: {}", value),
+            Err(_) => {
+                // Try as hash
+                if let Ok(hash) = redis_conn.get_hash(key) {
+                    println!("Hash values:");
+                    for (k, v) in hash {
+                        println!("  {}: {}", k, v);
+                    }
+                } else {
+                    println!("  (unable to read value)");
                 }
-            }
-            _ => {
-                println!("Unsupported type");
             }
         }
     }
