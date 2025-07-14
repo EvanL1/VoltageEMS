@@ -87,7 +87,7 @@ VoltageEMS is a Rust-based microservices architecture for industrial IoT energy 
 
 ### 重要架构变更 (2025年7月)
 
-系统已从原有的分层哈希存储迁移到**扁平化键值存储架构**，性能提升10倍：
+系统已从原有的分层哈希存储迁移到**扁平化键值存储架构**：
 
 **旧架构**: `point:1001` → HashMap → 所有点数据
 **新架构**: `1001:m:10001` → 单个点值 (直接访问，O(1))
@@ -274,7 +274,7 @@ channels:
 ### CSV Point Tables
 Located in `config/{Protocol}_Test_{ID}/`:
 - `telemetry.csv` - Measurements (YC)
-- `signal.csv` - Status signals (YX)  
+- `signal.csv` - Status signals (YX)
 - `control.csv` - Commands (YK)
 - `adjustment.csv` - Setpoints (YT)
 
@@ -316,12 +316,3 @@ let voltage = device_system.get_telemetry(&instance_id, "voltage_a").await?;
 // 执行命令
 device_system.execute_command(&instance_id, "switch_on", params).await?;
 ```
-
-## 性能基准
-
-基于最新的Redis扁平化存储架构：
-- 单点更新: < 0.5ms
-- 批量更新(1000点): < 5ms (Pipeline)
-- 单点查询: < 0.5ms
-- 批量查询(100点): < 2ms (MGET)
-- 内存效率: ~100字节/点位
