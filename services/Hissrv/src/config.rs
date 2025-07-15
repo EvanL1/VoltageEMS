@@ -53,6 +53,8 @@ pub struct RedisConnectionConfig {
 pub struct RedisSubscriptionConfig {
     pub channels: Vec<String>,
     pub key_patterns: Vec<String>,
+    #[serde(default)]
+    pub channel_ids: Vec<u16>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

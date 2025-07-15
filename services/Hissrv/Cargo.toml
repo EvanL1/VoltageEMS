@@ -24,12 +24,44 @@ anyhow = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
-axum = "0.6"
+tracing-appender = "0.2"
+axum = { workspace = true }
 tower = { workspace = true }
+tower-http = { workspace = true }
 uuid = { workspace = true }
 dashmap = "5.4"
 async-trait = { workspace = true }
-utoipa = { version = "4.0", features = ["axum_extras"] }
-utoipa-swagger-ui = { version = "4.0", features = ["axum"] }
+utoipa = { version = "5.4", features = ["axum_extras"] }
+utoipa-swagger-ui = { version = "9.0", features = ["axum"] }
 base64 = "0.21"
-reqwest = { workspace = true } 
+reqwest = { workspace = true }
+prometheus = "0.13"
+http = { workspace = true }
+http-body = { workspace = true }
+http-body-util = { workspace = true }
+futures = "0.3"
+tokio-stream = "0.1"
+figment = { version = "0.10", features = ["toml", "yaml", "env"] }
+
+[dev-dependencies]
+# 测试依赖
+rand = "0.8"
+tempfile = "3.8"
+wiremock = "0.5"
+criterion = { version = "0.5", features = ["html_reports", "async_tokio"] }
+proptest = "1.4"
+test-log = "0.2"
+env_logger = "0.11"
+
+[features]
+default = []
+integration-tests = []
+performance-tests = []
+
+[[bench]]
+name = "batch_writer_bench"
+harness = false
+
+[[bench]]
+name = "query_optimizer_bench"
+harness = false

@@ -1,3 +1,4 @@
+use crate::batch_writer::{BatchWriter, BatchWriterConfig, BatchWriteBuffer};
 use crate::config::InfluxDBConfig;
 use crate::error::{HisSrvError, Result};
 use crate::storage::{DataPoint, DataValue, QueryFilter, QueryResult, Storage, StorageStats};
@@ -5,6 +6,10 @@ use async_trait::async_trait;
 use base64::{engine::general_purpose, Engine as _};
 use chrono::{DateTime, Utc};
 use influxdb::{Client, ReadQuery, Timestamp, WriteQuery};
+use std::sync::Arc;
+use std::time::Instant;
+use tokio::sync::Mutex;
+use tracing::{debug, info, warn};
 
 pub struct InfluxDBStorage {
     client: Option<Client>,
@@ -187,26 +192,86 @@ impl Storage for InfluxDBStorage {
             ));
         }
 
+        if data_points.is_empty() {
+            return Ok(());
+        }
+
+        let start_time = Instant::now();
         let client = self.client.as_ref().unwrap();
-        let mut write_queries: Vec<WriteQuery> = Vec::new();
-
+        
+        // Build Line Protocol string for true batch write
+        let mut line_protocol = String::new();
+        
         for data_point in data_points {
-            write_queries.push(self.data_point_to_write_query(data_point));
-        }
-
-        // Write in batches
-        let batch_size = self.config.batch_size as usize;
-        for chunk in write_queries.chunks(batch_size) {
-            for query in chunk {
-                if let Err(e) = client.query(query).await {
-                    tracing::error!("Failed to write batch to InfluxDB: {}", e);
-                    return Err(HisSrvError::InfluxDBError(e));
-                }
+            // Format: measurement,tag1=value1,tag2=value2 field1=value1,field2=value2 timestamp
+            line_protocol.push_str("hissrv_data");
+            
+            // Add tags
+            line_protocol.push_str(&format!(",key={}", escape_tag_value(&data_point.key)));
+            
+            for (tag_key, tag_value) in &data_point.tags {
+                line_protocol.push_str(&format!(",{}={}", 
+                    escape_tag_key(tag_key), 
+                    escape_tag_value(tag_value)
+                ));
             }
+            
+            // Add metadata as tags
+            for (meta_key, meta_value) in &data_point.metadata {
+                line_protocol.push_str(&format!(",meta_{}={}", 
+                    escape_tag_key(meta_key), 
+                    escape_tag_value(meta_value)
+                ));
+            }
+            
+            // Add fields
+            line_protocol.push(' ');
+            let field_str = match &data_point.value {
+                DataValue::String(s) => format!("text_value=\"{}\"", escape_field_value(s)),
+                DataValue::Integer(i) => format!("int_value={}i", i),
+                DataValue::Float(f) => format!("float_value={}", f),
+                DataValue::Boolean(b) => format!("bool_value={}", b),
+                DataValue::Json(j) => format!("json_value=\"{}\"", escape_field_value(&j.to_string())),
+                DataValue::Binary(b) => {
+                    let encoded = general_purpose::STANDARD.encode(b);
+                    format!("binary_value=\"{}\",binary_size={}i", encoded, b.len())
+                }
+            };
+            line_protocol.push_str(&field_str);
+            
+            // Add timestamp
+            if let Some(nanos) = data_point.timestamp.timestamp_nanos_opt() {
+                line_protocol.push_str(&format!(" {}", nanos));
+            }
+            
+            line_protocol.push('\n');
         }
-
-        self.last_write_time = Some(Utc::now());
-        Ok(())
+        
+        // Write using raw Line Protocol for better performance
+        let write_result = client
+            .query(&line_protocol)
+            .await
+            .map_err(|e| {
+                warn!("Failed to write batch of {} points: {}", data_points.len(), e);
+                HisSrvError::InfluxDBError(e)
+            });
+        
+        match write_result {
+            Ok(_) => {
+                let elapsed = start_time.elapsed();
+                self.last_write_time = Some(Utc::now());
+                
+                debug!(
+                    "Successfully wrote {} points in {:?} ({:.2} points/sec)",
+                    data_points.len(),
+                    elapsed,
+                    data_points.len() as f64 / elapsed.as_secs_f64()
+                );
+                
+                Ok(())
+            }
+            Err(e) => Err(e),
+        }
     }
 
     async fn query_data_points(&self, filter: &QueryFilter) -> Result<QueryResult> {
@@ -324,6 +389,47 @@ impl Storage for InfluxDBStorage {
     fn get_config(&self) -> serde_json::Value {
         serde_json::to_value(&self.config).unwrap_or_default()
     }
+}
+
+/// InfluxDBBatchWriter implements BatchWriter for InfluxDB
+pub struct InfluxDBBatchWriter {
+    storage: Arc<Mutex<InfluxDBStorage>>,
+}
+
+impl InfluxDBBatchWriter {
+    pub fn new(storage: Arc<Mutex<InfluxDBStorage>>) -> Self {
+        Self { storage }
+    }
+}
+
+#[async_trait]
+impl BatchWriter for InfluxDBBatchWriter {
+    async fn write_batch(&mut self, points: &[DataPoint]) -> Result<()> {
+        let mut storage = self.storage.lock().await;
+        storage.store_data_points(points).await
+    }
+    
+    fn name(&self) -> &str {
+        "influxdb"
+    }
+}
+
+// Helper functions for InfluxDB Line Protocol escaping
+fn escape_tag_key(s: &str) -> String {
+    s.replace(',', r"\,")
+        .replace(' ', r"\ ")
+        .replace('=', r"\=")
+}
+
+fn escape_tag_value(s: &str) -> String {
+    s.replace(',', r"\,")
+        .replace(' ', r"\ ")
+        .replace('=', r"\=")
+}
+
+fn escape_field_value(s: &str) -> String {
+    s.replace('"', r#"\""#)
+        .replace('\\', r"\\")
 }
 
 // Add base64 dependency to Cargo.toml if not already present

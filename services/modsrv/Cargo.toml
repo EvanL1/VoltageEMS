@@ -29,10 +29,10 @@ futures = { workspace = true }
 uuid = { workspace = true }
 regex = "1.10.2"
 axum = { workspace = true }
-utoipa = { version = "4.0", features = ["axum_extras"] }
-utoipa-swagger-ui = { version = "4.0", features = ["axum"] }
+utoipa = { version = "5.4", features = ["axum_extras"] }
+utoipa-swagger-ui = { version = "9.0", features = ["axum"] }
 tower = { workspace = true }
-tower-http = { version = "0.5", features = ["cors"] }
+tower-http = { workspace = true }
 petgraph = "0.6.4"
 rand = "0.8.5"
 base64 = "0.22"
