@@ -1,10 +1,24 @@
 use anyhow::Result;
 use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::domain::{Alarm, AlarmLevel, AlarmStatus};
 use crate::redis::{AlarmIndexManager, AlarmRedisClient};
+
+/// Filter criteria for alarm queries
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct AlarmFilter {
+    pub category: Option<String>,
+    pub level: Option<AlarmLevel>,
+    pub status: Option<AlarmStatus>,
+    pub keyword: Option<String>,
+    pub start_time: Option<DateTime<Utc>>,
+    pub end_time: Option<DateTime<Utc>>,
+    pub limit: Option<usize>,
+    pub offset: Option<usize>,
+}
 
 /// Handles alarm queries from Redis
 pub struct AlarmQueryService {
@@ -20,6 +34,17 @@ impl AlarmQueryService {
             client,
             index_manager,
         }
+    }
+
+    /// Query alarms with advanced filtering
+    pub async fn query(&self, filter: &AlarmFilter) -> Result<Vec<Alarm>> {
+        self.get_alarms(
+            filter.category.clone(),
+            filter.level,
+            filter.status,
+            filter.limit,
+        )
+        .await
     }
 
     /// Get alarms with basic filtering

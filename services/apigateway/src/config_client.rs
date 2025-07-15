@@ -276,6 +276,10 @@ impl ConfigClient {
                     url: data.services.alarmsrv.url,
                     timeout_seconds: data.services.alarmsrv.timeout_seconds,
                 },
+                rulesrv: crate::config::ServiceConfig {
+                    url: data.services.rulesrv.url,
+                    timeout_seconds: data.services.rulesrv.timeout_seconds,
+                },
             },
             cors: crate::config::CorsConfig {
                 allowed_origins: data.cors.allowed_origins,
@@ -357,6 +361,7 @@ pub struct ServicesConfig {
     pub hissrv: ServiceConfig,
     pub netsrv: ServiceConfig,
     pub alarmsrv: ServiceConfig,
+    pub rulesrv: ServiceConfig,
 }
 
 #[derive(Debug, Deserialize)]

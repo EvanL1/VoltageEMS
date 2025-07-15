@@ -11,10 +11,13 @@ voltage-common = { workspace = true, features = ["async"] }
 actix-web = "4"
 actix-cors = "0.6"
 actix-web-httpauth = "0.8"
+actix-web-actors = "4.2"
+actix = "0.13"
 
 # Async runtime
 tokio = { workspace = true }
 futures = { workspace = true }
+tokio-stream = "0.1"
 
 # Serialization
 serde = { workspace = true }
