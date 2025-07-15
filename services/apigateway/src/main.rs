@@ -11,6 +11,8 @@ mod error;
 mod handlers;
 mod redis_client;
 mod response;
+mod realtime;
+mod websocket;
 
 use auth::middleware::JwtAuthMiddleware;
 use config::Config;
@@ -90,6 +92,10 @@ async fn main() -> std::io::Result<()> {
                     )
                     .service(handlers::health::health_check)
                     .service(handlers::health::detailed_health)
+                    // Real-time data endpoints (temporarily public for testing)
+                    .route("/realtime/channels", web::get().to(realtime::get_channels))
+                    .route("/realtime/channels/{channel_id}/points", web::get().to(realtime::get_points))
+                    .route("/realtime/statistics", web::get().to(realtime::get_statistics))
                     // Protected endpoints (auth required)
                     .service(
                         web::scope("")
@@ -108,6 +114,8 @@ async fn main() -> std::io::Result<()> {
                             ),
                     ),
             )
+            // WebSocket endpoint
+            .route("/ws/realtime", web::get().to(websocket::ws_handler))
             .route("/health", web::get().to(handlers::health::simple_health))
     })
     .workers(workers)

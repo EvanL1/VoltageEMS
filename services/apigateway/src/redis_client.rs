@@ -42,6 +42,7 @@ impl RedisClientExt for RedisClient {
         self.del(key)
             .await
             .map_err(|e| ApiGatewayError::RedisError(e.to_string()))
+            .map(|_| ())
     }
 
     async fn exists_api(&self, key: &str) -> ApiResult<bool> {
@@ -72,18 +73,21 @@ impl RedisClientExt for RedisClient {
         self.hset(key, field, value)
             .await
             .map_err(|e| ApiGatewayError::RedisError(e.to_string()))
+            .map(|_| ())
     }
 
     async fn hgetall_api(&self, key: &str) -> ApiResult<Vec<(String, String)>> {
         self.hgetall(key)
             .await
             .map_err(|e| ApiGatewayError::RedisError(e.to_string()))
+            .map(|hm| hm.into_iter().collect())
     }
 
     async fn ping_api(&self) -> ApiResult<bool> {
         self.ping()
             .await
             .map_err(|e| ApiGatewayError::RedisError(e.to_string()))
+            .map(|result| result == "PONG")
     }
 
     async fn info_api(&self) -> ApiResult<String> {
