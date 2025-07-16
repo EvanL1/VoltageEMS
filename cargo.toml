@@ -12,7 +12,6 @@ members = [
     "services/rulesrv",
 ]
 
-# 统一依赖版本管理
 [workspace.dependencies]
 # Async runtime
 tokio = { version = "1.35", features = ["full"] }

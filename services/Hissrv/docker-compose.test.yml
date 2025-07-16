@@ -1,0 +1,94 @@
+# 完整的测试环境，所有服务都在内部网络中运行
+# 不暴露任何端口到宿主机
+
+services:
+  # Redis 服务
+  redis:
+    image: redis:7-alpine
+    container_name: hissrv-redis
+    networks:
+      - hissrv-test-network
+    command: redis-server --appendonly yes --notify-keyspace-events KEA
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # InfluxDB 3.2 Core 服务
+  influxdb:
+    image: influxdb:3.2-core
+    container_name: hissrv-influxdb
+    networks:
+      - hissrv-test-network
+    command: >
+      serve
+      --object-store file
+      --data-dir /var/lib/influxdb3
+      --node-id test-node
+      --without-auth
+    volumes:
+      - influxdb-data:/var/lib/influxdb3
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8181/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # HisSrv 服务
+  hissrv:
+    build:
+      context: ../../..  # 从工作区根目录构建
+      dockerfile: services/hissrv/Dockerfile
+    container_name: hissrv
+    networks:
+      - hissrv-test-network
+    environment:
+      - RUST_LOG=debug
+      - HISSRV_CONFIG=/app/config/docker.yaml
+      - NO_PROXY=localhost,127.0.0.1,redis,influxdb
+      - no_proxy=localhost,127.0.0.1,redis,influxdb
+    volumes:
+      - ./config:/app/config:ro
+      - ./logs:/app/logs
+    depends_on:
+      redis:
+        condition: service_healthy
+      influxdb:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8081/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # 测试运行器 - 在所有服务就绪后运行测试
+  test-runner:
+    image: python:3.11-alpine
+    container_name: hissrv-test-runner
+    networks:
+      - hissrv-test-network
+    volumes:
+      - ./tests:/tests:ro
+      - ./test-results:/results
+    environment:
+      - REDIS_HOST=redis
+      - INFLUX_HOST=influxdb
+      - HISSRV_HOST=hissrv
+    depends_on:
+      hissrv:
+        condition: service_healthy
+    command: >
+      sh -c "
+        pip install redis requests &&
+        python /tests/docker-integration-test.py &&
+        echo '测试完成！结果已保存到 /results'
+      "
+
+networks:
+  hissrv-test-network:
+    driver: bridge
+    internal: true  # 内部网络，不连接外部
+
+volumes:
+  influxdb-data:

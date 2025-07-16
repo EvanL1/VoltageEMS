@@ -316,3 +316,7 @@ let voltage = device_system.get_telemetry(&instance_id, "voltage_a").await?;
 // 执行命令
 device_system.execute_command(&instance_id, "switch_on", params).await?;
 ```
+
+## Build Environment Memory
+
+- Rust的builder是1.88-bullseye

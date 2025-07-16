@@ -1,300 +1,327 @@
-# HisSrv - Historical Data Service
+# HisSrv - 历史数据服务
 
-HisSrv 是一个独立的、可配置的历史数据服务，专为 VoltageEMS 系统设计。它通过 Redis 订阅/发布机制与其他服务通信，并支持多种存储后端。
+HisSrv 是 VoltageEMS 系统中的历史数据服务，负责将 Redis 中的实时数据转发到 InfluxDB 3.2 进行长期存储。
 
-## 🚀 特性
+## 功能特性
 
-- **独立服务**: 完全独立运行，通过 Redis 与其他服务通信
-- **多存储后端**: 支持 InfluxDB、Redis、PostgreSQL、MongoDB
-- **可配置路由**: 基于模式匹配的数据路由和过滤
-- **REST API**: 完整的 OpenAPI 3.0 规范 API
-- **实时监控**: 内置指标收集和健康检查
-- **结构化日志**: 支持 JSON 和文本格式的结构化日志
-- **异步架构**: 基于 Tokio 的高性能异步处理
+- ✅ **Redis Pub/Sub 集成** - 实时监听 Redis 键空间通知
+- ✅ **批量写入优化** - 自动批量收集数据点，提高写入效率
+- ✅ **灵活的数据模式** - 支持测量(m)、信号(s)、控制(c)、调节(a)等多种数据类型
+- ✅ **REST API** - 提供健康检查、统计信息和查询接口
+- ✅ **自动重连** - 支持 Redis 和 InfluxDB 连接中断后的自动恢复
+- ✅ **配置管理** - 使用 Figment 支持 YAML 配置和环境变量覆盖
 
-## 📋 系统要求
+## 架构设计
 
-- Rust 1.70+
-- Redis 服务器
-- InfluxDB (可选)
-- PostgreSQL (可选)
-- MongoDB (可选)
-
-## 🛠️ 安装和启动
-
-### 配置中心模式（推荐）
-
-使用配置中心进行集中化配置管理：
-
-```bash
-# 设置配置中心环境变量
-export CONFIG_CENTER_URL=http://config-center:8080
-export ENVIRONMENT=production  # 可选: development, staging, production
-
-# 构建并运行
-cargo build --release
-./target/release/hissrv-rust
+```
+Redis (键空间通知) → HisSrv → InfluxDB 3.2
+     ↓                  ↓           ↓
+  实时数据          数据处理     历史存储
 ```
 
-### 本地配置模式
+### 核心组件
 
-```bash
-# 构建项目
-cargo build --release
+1. **RedisSubscriber** - 监听 Redis 键空间通知
+2. **DataProcessor** - 处理和批量收集数据点
+3. **InfluxDBClient** - 写入 InfluxDB 3.2
+4. **API Server** - 提供 REST API 接口
 
-# 创建配置文件 (参考 hissrv.yaml)
-cp hissrv.yaml.example hissrv.yaml
+## 配置
 
-# 启动服务
-./target/release/hissrv-rust --config hissrv.yaml
+### 配置文件示例 (config/default.yaml)
+
+```yaml
+service:
+  name: "hissrv"
+  version: "0.2.0"
+  host: "0.0.0.0"
+  port: 8081
+
+redis:
+  connection:
+    host: "localhost"
+    port: 6379
+    database: 0
+    timeout_seconds: 5
+  subscription:
+    patterns:
+      - "*:m:*"  # 测量数据
+      - "*:s:*"  # 信号数据
+
+influxdb:
+  enabled: true
+  url: "http://localhost:8181"
+  database: "voltage_ems"
+  batch_size: 1000
+  flush_interval_seconds: 10
+
+logging:
+  level: "info"
+  format: "text"
+  file: "./logs/hissrv.log"
 ```
 
-### 快速启动
+### 环境变量
+
+支持通过环境变量覆盖配置：
 
 ```bash
-# 使用启动脚本 (推荐)
-./start.sh
+HISSRV_SERVICE__PORT=8082
+HISSRV_REDIS__CONNECTION__HOST=redis.example.com
+HISSRV_INFLUXDB__URL=http://influxdb:8086
 ```
 
-## ⚙️ 配置
+## Redis 配置要求
 
-HisSrv 支持两种配置方式：
+HisSrv 使用 Redis 键空间通知功能。需要确保 Redis 配置了：
 
-### 配置中心 API
+```
+notify-keyspace-events KEA
+```
 
-当设置了 `CONFIG_CENTER_URL` 环境变量时，HisSrv 会自动从配置中心获取配置：
+或者在 redis.conf 中设置，或者运行时配置：
 
-- **获取配置**: `GET /api/v1/config/hissrv/{environment}`
-- **检查更新**: 每60秒自动检查配置更新
-- **降级模式**: 配置中心不可用时自动回退到本地配置
+```bash
+redis-cli CONFIG SET notify-keyspace-events KEA
+```
 
-配置中心响应格式示例：
+HisSrv 启动时会尝试自动配置此选项。
+
+## 数据格式
+
+### Redis 键格式
+
+```
+{channelID}:{type}:{pointID}
+```
+
+例如：
+- `1001:m:10001` - 通道 1001 的测量点 10001
+- `2001:s:20001` - 通道 2001 的信号点 20001
+
+### Redis 值格式 (JSON)
+
 ```json
 {
-  "service": {
-    "name": "hissrv",
+  "point_id": 10001,
+  "value": 23.45,
+  "timestamp": "2025-07-16T00:00:00Z",
+  "metadata": null
+}
+```
+
+### InfluxDB 数据点格式
+
+```
+telemetry,channel_id=1001,point_id=10001,point_type=m value=23.45 1752627600000000000
+```
+
+## API 端点
+
+### 健康检查
+```
+GET /health
+```
+
+响应示例：
+```json
+{
+  "success": true,
+  "data": {
+    "status": "healthy",
+    "service": "hissrv",
     "version": "0.2.0",
-    "description": "Historical Data Service"
-  },
-  "redis": {
-    "host": "redis-cluster",
-    "port": 6379,
-    "channels": ["data:*", "events:*"]
-  },
-  "storage": {
-    "default": "influxdb",
-    "influxdb": {
-      "enabled": true,
-      "url": "http://influxdb:8086",
-      "database": "hissrv_data"
+    "components": {
+      "influxdb": {
+        "status": "healthy"
+      },
+      "processor": {
+        "status": "healthy"
+      }
     }
   }
 }
 ```
 
-### 本地配置文件
-
-当未设置配置中心时，HisSrv 使用 YAML 格式的配置文件。主要配置项：
-
-### 服务配置
-```yaml
-service:
-  name: "hissrv"
-  version: "0.2.0"
-  port: 8080
-  host: "0.0.0.0"
+### 统计信息
+```
+GET /stats
 ```
 
-### Redis 配置
-```yaml
-redis:
-  connection:
-    host: "127.0.0.1"
-    port: 6379
-    password: ""
-    database: 0
-  subscription:
-    channels:
-      - "data:*"
-      - "events:*"
+响应示例：
+```json
+{
+  "success": true,
+  "data": {
+    "processing": {
+      "messages_received": 100,
+      "messages_processed": 98,
+      "messages_failed": 2,
+      "points_written": 98
+    },
+    "influxdb": {
+      "connected": true,
+      "database": "voltage_ems",
+      "url": "http://localhost:8181"
+    },
+    "uptime_seconds": 3600
+  }
+}
 ```
 
-### 存储后端配置
-```yaml
-storage:
-  default: "influxdb"
-  backends:
-    influxdb:
-      enabled: true
-      url: "http://localhost:8086"
-      database: "hissrv_data"
-      retention_days: 30
+### 简单查询
+```
+GET /query/simple?measurement=telemetry&limit=10
 ```
 
-### 数据过滤规则
-```yaml
-data:
-  filters:
-    default_policy: "store"
-    rules:
-      - pattern: "temp:*"
-        action: "store"
-        storage: "influxdb"
-      - pattern: "log:*"
-        action: "ignore"
+### SQL 查询
+```
+POST /query
+Content-Type: application/json
+
+{
+  "query": "SELECT * FROM telemetry WHERE time > now() - 1h LIMIT 100"
+}
 ```
 
-## 🔌 API 接口
-
-服务启动后，API 文档可通过以下地址访问：
-
-- **Swagger UI**: http://localhost:8080/api/v1/swagger-ui
-- **健康检查**: http://localhost:8080/api/v1/health
-- **指标监控**: http://localhost:8080/api/v1/admin/statistics
-
-### 主要 API 端点
-
-#### 历史数据查询
-| 方法 | 路径 | 描述 |
-|------|------|------|
-| GET | `/api/v1/history/query` | 查询历史数据点 |
-| GET | `/api/v1/history/sources` | 获取数据源列表 |
-| GET | `/api/v1/history/sources/{id}` | 获取数据源详情 |
-| GET | `/api/v1/history/statistics` | 获取时间序列统计 |
-
-#### 数据导出
-| 方法 | 路径 | 描述 |
-|------|------|------|
-| POST | `/api/v1/history/export` | 创建导出任务 |
-| GET | `/api/v1/history/export/{job_id}` | 获取导出状态 |
-
-#### 管理监控
-| 方法 | 路径 | 描述 |
-|------|------|------|
-| GET | `/api/v1/health` | 健康检查 |
-| GET | `/api/v1/admin/storage-stats` | 存储统计 |
-| GET | `/api/v1/admin/config` | 配置信息 |
-
-## 🔄 数据流
-
+### 强制刷新
 ```
-其他服务 → Redis Pub/Sub → HisSrv → 存储后端
-                                ↓
-                           REST API ← 客户端查询
+POST /flush
 ```
 
-1. **数据接收**: 通过 Redis 订阅其他服务发布的数据
-2. **数据处理**: 应用过滤规则和转换逻辑
-3. **数据存储**: 根据配置路由到相应的存储后端
-4. **数据查询**: 通过 REST API 提供数据查询服务
+## 运行
 
-## 📊 监控和日志
-
-### 监控指标
-
-- 处理消息总数和速率
-- API 请求统计
-- 存储后端状态
-- 系统资源使用情况
-
-### 日志配置
-
-```yaml
-logging:
-  level: "info"          # 日志级别
-  format: "json"         # 格式: json/text
-  file: "logs/hissrv.log"
-```
-
-## 🧪 开发和测试
-
-### 构建
+### 本地开发
 
 ```bash
-# 开发构建
-cargo build
+# 编译
+cargo build -p hissrv
 
-# 发布构建
-cargo build --release
+# 运行（开发模式）
+RUST_LOG=debug cargo run -p hissrv
 
-# 运行测试
-cargo test
+# 运行（指定配置文件）
+HISSRV_CONFIG=config/custom.yaml cargo run -p hissrv
 ```
 
-### 配置检查
+### Docker 运行
 
 ```bash
-# 检查配置文件语法
-./target/release/hissrv-rust --config hissrv.yaml --help
+# 构建镜像
+docker build -f services/hissrv/Dockerfile -t hissrv:latest .
+
+# 运行容器
+docker run -d \
+  --name hissrv \
+  -p 8081:8081 \
+  -e HISSRV_REDIS__CONNECTION__HOST=redis \
+  -e HISSRV_INFLUXDB__URL=http://influxdb:8086 \
+  -v ./config:/app/config:ro \
+  hissrv:latest
 ```
 
-## 🐛 故障排除
+### Docker Compose
 
-### 常见问题
+```yaml
+services:
+  hissrv:
+    image: hissrv:latest
+    environment:
+      - RUST_LOG=info
+      - HISSRV_CONFIG=/app/config/production.yaml
+    volumes:
+      - ./config:/app/config:ro
+      - ./logs:/app/logs
+    depends_on:
+      - redis
+      - influxdb
+    ports:
+      - "8081:8081"
+```
 
-1. **Redis 连接失败**
-   - 检查 Redis 服务是否运行
-   - 验证连接配置 (host, port, password)
+## 测试
 
-2. **InfluxDB 连接失败**
-   - 确认 InfluxDB 服务状态
-   - 检查数据库是否存在
-
-3. **API 无法访问**
-   - 检查端口是否被占用
-   - 验证防火墙设置
-
-### 日志查看
+### 单元测试
 
 ```bash
-# 实时日志
+cargo test -p hissrv
+```
+
+### 集成测试
+
+运行提供的测试脚本：
+
+```bash
+cd services/hissrv
+./test-pubsub.sh
+```
+
+### 手动测试
+
+1. 写入测试数据到 Redis：
+```bash
+redis-cli SET "1001:m:10001" '{"point_id":10001,"value":23.45,"timestamp":"2025-07-16T00:00:00Z"}'
+```
+
+2. 检查处理统计：
+```bash
+curl http://localhost:8081/stats
+```
+
+3. 查询数据：
+```bash
+curl "http://localhost:8081/query/simple?measurement=telemetry&limit=10"
+```
+
+## 故障排除
+
+### Redis 连接问题
+
+1. 检查 Redis 是否运行：
+```bash
+redis-cli ping
+```
+
+2. 检查键空间通知配置：
+```bash
+redis-cli CONFIG GET notify-keyspace-events
+```
+
+### InfluxDB 写入失败
+
+1. 检查 InfluxDB 是否运行：
+```bash
+curl http://localhost:8181/health
+```
+
+2. 检查日志中的错误信息：
+```bash
 tail -f logs/hissrv.log
-
-# 错误日志过滤
-grep "ERROR" logs/hissrv.log
 ```
 
-## 🚧 架构设计
+### 没有接收到数据
 
-### 模块结构
+1. 确认 Redis 键格式正确
+2. 检查订阅模式是否匹配
+3. 查看 debug 日志了解详细信息
 
-```
-src/
-├── main.rs           # 主程序入口
-├── config.rs         # 配置管理
-├── error.rs          # 错误定义
-├── storage/          # 存储后端
-│   ├── mod.rs
-│   ├── influxdb_storage.rs
-│   └── redis_storage.rs
-├── pubsub/           # 消息处理
-│   └── mod.rs
-├── api/              # REST API
-│   ├── mod.rs
-│   ├── handlers.rs
-│   └── models.rs
-├── monitoring/       # 监控指标
-│   └── mod.rs
-└── logging/          # 日志系统
-    └── mod.rs
-```
+## 性能优化
 
-### 设计原则
+1. **批量大小** - 调整 `batch_size` 以优化写入性能
+2. **刷新间隔** - 根据数据量调整 `flush_interval_seconds`
+3. **连接池** - Redis 使用连接池以提高性能
+4. **日志级别** - 生产环境使用 `info` 或 `warn` 级别
 
-- **模块化**: 每个组件都是独立的模块
-- **可配置**: 所有行为都可以通过配置文件控制
-- **异步优先**: 使用 Tokio 实现高并发处理
-- **类型安全**: 利用 Rust 的类型系统确保安全性
+## 已知限制
 
-## 📝 版本历史
+1. InfluxDB 3.2 需要配置正确的 bucket/database
+2. 不支持 Redis Cluster（可以通过配置多个实例解决）
+3. 查询功能目前比较基础
 
-- **v0.2.0**: 重构为独立服务，添加 REST API 和监控
-- **v0.1.0**: 初始版本，基本的 Redis 到 InfluxDB 数据传输
-
-## 🤝 贡献
+## 贡献
 
 欢迎提交 Issue 和 Pull Request！
 
-## 📄 许可证
+## 许可证
 
-[待定]
+MIT License

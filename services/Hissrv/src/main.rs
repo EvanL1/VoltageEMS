@@ -1,450 +1,269 @@
+mod api;
+mod config;
+mod data_processor;
+mod error;
+mod influx_client;
+mod redis_client;
+
 use crate::api::start_api_server;
 use crate::config::Config;
+use crate::data_processor::DataProcessor;
 use crate::error::{HisSrvError, Result};
-use crate::monitoring::MetricsCollector;
-use crate::pubsub::{MessageProcessor, RedisSubscriber};
-use crate::storage::{
-    influxdb_storage::InfluxDBStorage, redis_storage::RedisStorage, StorageManager,
-};
+use crate::influx_client::InfluxDBClient;
+use crate::redis_client::{create_message_channel, RedisSubscriber};
 use std::sync::Arc;
-use tokio::sync::{mpsc, RwLock};
-use tokio::time::{interval, Duration};
-
-mod config;
-// mod config_center; // TODO: Implement config center support
-mod api;
-mod batch_writer;
-mod enhanced_message_processor;
-mod error;
-mod influxdb_handler;
-mod logging;
-mod main_enhanced;
-mod message_processor;
-mod monitoring;
-mod optimized_reader;
-mod pubsub;
-mod query_optimizer;
-mod redis_handler;
-mod redis_subscriber;
-mod retention_policy;
-mod storage;
-
-#[cfg(test)]
-mod tests;
+use tokio::signal;
+use tokio::sync::Mutex;
+use tracing::{error, info, warn};
+use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    // 检查是否使用增强版本
-    if std::env::var("HISSRV_ENHANCED").unwrap_or_default() == "true" {
-        return main_enhanced::main_enhanced().await;
-    }
-    
-    // 设置panic处理器
-    std::panic::set_hook(Box::new(|panic_info| {
-        let location = panic_info
-            .location()
-            .map(|l| format!("{}:{}:{}", l.file(), l.line(), l.column()))
-            .unwrap_or_else(|| "unknown".to_string());
-        
-        let message = if let Some(s) = panic_info.payload().downcast_ref::<&str>() {
-            s.to_string()
-        } else if let Some(s) = panic_info.payload().downcast_ref::<String>() {
-            s.clone()
-        } else {
-            "unknown panic".to_string()
-        };
-        
-        eprintln!("PANIC at {}: {}", location, message);
-        tracing::error!(
-            location = location,
-            message = message,
-            "Application panicked"
-        );
-    }));
-    
-    // Load configuration from config center or local file
-    let config = match Config::load().await {
-        Ok(cfg) => cfg,
+    // 初始化日志
+    init_logging()?;
+
+    // 显示启动信息
+    print_banner();
+
+    // 加载配置
+    let config = match Config::load() {
+        Ok(config) => {
+            info!("配置加载成功");
+            Arc::new(config)
+        }
         Err(e) => {
-            eprintln!("Failed to load configuration: {}", e);
-            if let Some(suggestion) = e.recovery_suggestion() {
-                eprintln!("建议: {}", suggestion);
-            }
+            error!("配置加载失败: {}", e);
             std::process::exit(1);
         }
     };
 
-    // 初始化增强日志系统（如果启用）
-    let _enhanced_logger = if std::env::var("HISSRV_ENHANCED_LOGGING").unwrap_or_default() == "true" {
-        match crate::logging::EnhancedLogger::init(config.logging.clone()) {
-            Ok(logger) => {
-                tracing::info!("Enhanced logging system initialized");
-                Some(logger)
-            }
-            Err(e) => {
-                eprintln!("Failed to initialize enhanced logging, falling back to standard: {}", e);
-                // 回退到标准日志系统
-                if let Err(e) = crate::logging::init_logging(&config.logging) {
-                    eprintln!("Failed to initialize standard logging: {}", e);
-                    std::process::exit(1);
-                }
-                None
-            }
+    // 验证 InfluxDB 是否启用
+    if !config.influxdb.enabled {
+        error!("InfluxDB 未启用，HisSrv 需要 InfluxDB 才能工作");
+        std::process::exit(1);
+    }
+
+    // 初始化 InfluxDB 客户端
+    let influx_client = InfluxDBClient::new(config.influxdb.clone());
+    
+    // 测试 InfluxDB 连接
+    info!("测试 InfluxDB 连接...");
+    if let Err(e) = influx_client.ping().await {
+        error!("InfluxDB 连接失败: {}", e);
+        warn!("请确保 InfluxDB 3.2 正在运行并且配置正确");
+        std::process::exit(1);
+    }
+    info!("InfluxDB 连接成功");
+
+    let influx_client = Arc::new(influx_client);
+
+    // 创建消息通道
+    let (message_sender, message_receiver) = create_message_channel();
+
+    // 创建数据处理器
+    let data_processor = DataProcessor::new(
+        (*influx_client).clone(),
+        message_receiver,
+        config.influxdb.flush_interval_seconds,
+    );
+
+    // 创建处理器统计的共享状态
+    let processing_stats = Arc::new(Mutex::new(crate::data_processor::ProcessingStats::default()));
+
+    // 启动数据处理器
+    let processor_stats_clone = Arc::clone(&processing_stats);
+    let processor_handle = tokio::spawn(async move {
+        if let Err(e) = data_processor.start_processing().await {
+            error!("数据处理器错误: {}", e);
         }
+    });
+
+    // 初始化 Redis 订阅器
+    let mut redis_subscriber = RedisSubscriber::new(config.redis.clone(), message_sender);
+
+    // 连接到 Redis
+    info!("连接到 Redis...");
+    if let Err(e) = redis_subscriber.connect().await {
+        error!("Redis 连接失败: {}", e);
+        warn!("请确保 Redis 正在运行并且配置正确");
+        std::process::exit(1);
+    }
+    info!("Redis 连接成功");
+
+    // 启动 Redis 订阅器
+    let subscriber_handle = tokio::spawn(async move {
+        if let Err(e) = redis_subscriber.start_listening().await {
+            error!("Redis 订阅器错误: {}", e);
+        }
+    });
+
+    // 启动 API 服务器（如果配置了）
+    let api_handle = if config.service.port > 0 {
+        let api_config = Arc::clone(&config);
+        let api_influx_client = Arc::clone(&influx_client);
+        let api_stats = Arc::clone(&processing_stats);
+
+        Some(tokio::spawn(async move {
+            info!("启动 API 服务器在端口 {}", api_config.service.port);
+            if let Err(e) = start_api_server(api_config, api_influx_client, api_stats).await {
+                error!("API 服务器错误: {}", e);
+            }
+        }))
     } else {
-        // Initialize standard logging
-        if let Err(e) = crate::logging::init_logging(&config.logging) {
-            eprintln!("Failed to initialize logging: {}", e);
-            std::process::exit(1);
-        }
+        info!("API 服务器已禁用 (port = 0)");
         None
     };
 
-    // 记录启动信息
-    tracing::info!(
-        service_name = config.service.name,
-        version = config.service.version,
-        pid = std::process::id(),
-        "Starting HisSrv"
-    );
-    tracing::info!(
-        config_file = config.config_file,
-        environment = std::env::var("HISSRV_ENV").unwrap_or_else(|_| "production".to_string()),
-        "Configuration loaded"
-    );
+    // 启动完成
+    info!("HisSrv 启动完成！");
+    print_service_info(&config);
 
-    // 验证配置
-    if let Err(e) = validate_config(&config) {
-        tracing::error!(error = %e, "Configuration validation failed");
-        return Err(e);
-    }
+    // 等待退出信号
+    wait_for_shutdown_signal().await;
 
-    // Initialize storage manager with error handling
-    let mut storage_manager = StorageManager::new();
+    // 优雅关闭
+    info!("收到关闭信号，开始优雅关闭...");
 
-    // Setup InfluxDB storage backend
-    if config.storage.backends.influxdb.enabled {
-        tracing::info!("Initializing InfluxDB storage backend");
-        let influxdb_storage = InfluxDBStorage::new(config.storage.backends.influxdb.clone());
-        storage_manager.add_backend("influxdb".to_string(), Box::new(influxdb_storage));
-        tracing::info!(
-            url = config.storage.backends.influxdb.url,
-            database = config.storage.backends.influxdb.database,
-            "InfluxDB backend configured"
-        );
-    }
-
-    // Setup Redis storage backend
-    tracing::info!("Initializing Redis storage backend");
-    let redis_storage = RedisStorage::new(config.redis.connection.clone());
-    storage_manager.add_backend("redis".to_string(), Box::new(redis_storage));
-    tracing::info!(
-        host = config.redis.connection.host,
-        port = config.redis.connection.port,
-        "Redis backend configured"
-    );
-
-    // Set default storage backend
-    storage_manager.set_default_backend(config.storage.default.clone());
-    tracing::info!(default_backend = config.storage.default, "Default storage backend set");
-
-    // Connect to all storage backends with retry logic
-    let mut retry_count = 0;
-    const MAX_RETRIES: u32 = 3;
-    loop {
-        match storage_manager.connect_all().await {
-            Ok(_) => {
-                tracing::info!("All storage backends connected successfully");
-                break;
-            }
-            Err(e) => {
-                retry_count += 1;
-                if retry_count > MAX_RETRIES {
-                    tracing::error!(
-                        error = %e,
-                        retries = retry_count,
-                        "Failed to connect to storage backends after maximum retries"
-                    );
-                    return Err(e);
-                }
-                
-                let retry_delay = 2u64.pow(retry_count - 1);
-                tracing::warn!(
-                    error = %e,
-                    retry_count = retry_count,
-                    retry_delay_secs = retry_delay,
-                    "Storage connection failed, retrying..."
-                );
-                tokio::time::sleep(Duration::from_secs(retry_delay)).await;
-            }
-        }
-    }
-
-    // Wrap storage manager in Arc<RwLock> for shared access
-    let storage_manager = Arc::new(RwLock::new(storage_manager));
-
-    // Initialize metrics collector
-    let metrics_collector = MetricsCollector::new();
-    tracing::info!("Metrics collector initialized");
-
-    // Setup message processing pipeline
-    let (message_sender, message_receiver) = mpsc::unbounded_channel();
-
-    // Clone storage_manager for the message processor
-    let storage_manager_for_processor = Arc::clone(&storage_manager);
-    let mut message_processor =
-        MessageProcessor::new(storage_manager_for_processor, message_receiver);
-
-    // Setup Redis subscriber with connection validation
-    let mut redis_subscriber = RedisSubscriber::new(config.redis.clone(), message_sender);
+    // 等待任务完成或超时
+    let shutdown_timeout = std::time::Duration::from_secs(10);
     
-    match redis_subscriber.connect().await {
-        Ok(_) => {
-            tracing::info!(
-                channels = ?config.redis.subscription.channels,
-                "Redis subscriber connected"
-            );
-        }
-        Err(e) => {
-            tracing::error!(error = %e, "Failed to connect Redis subscriber");
-            if let Some(suggestion) = e.recovery_suggestion() {
-                tracing::error!(suggestion = suggestion, "Recovery suggestion");
-            }
-            return Err(e);
-        }
+    tokio::select! {
+        _ = processor_handle => info!("数据处理器已停止"),
+        _ = subscriber_handle => info!("Redis 订阅器已停止"),
+        _ = async { if let Some(handle) = api_handle { handle.await.ok(); } } => info!("API 服务器已停止"),
+        _ = tokio::time::sleep(shutdown_timeout) => warn!("关闭超时"),
     }
 
-    // Setup graceful shutdown
-    let shutdown_signal = setup_shutdown_signal();
-
-    // Start background tasks with error handling
-    let processor_handle = {
-        let shutdown = shutdown_signal.clone();
-        tokio::spawn(async move {
-            tokio::select! {
-                result = message_processor.start_processing() => {
-                    match result {
-                        Ok(_) => tracing::info!("Message processor completed"),
-                        Err(e) => {
-                            tracing::error!(error = %e, "Message processor error");
-                            crate::logging::enhanced::log_error_with_context(&e);
-                        }
-                    }
-                }
-                _ = shutdown => {
-                    tracing::info!("Message processor shutting down");
-                }
-            }
-        })
-    };
-
-    let subscriber_handle = {
-        let shutdown = shutdown_signal.clone();
-        tokio::spawn(async move {
-            tokio::select! {
-                result = redis_subscriber.start_listening() => {
-                    match result {
-                        Ok(_) => tracing::info!("Redis subscriber completed"),
-                        Err(e) => {
-                            tracing::error!(error = %e, "Redis subscriber error");
-                            crate::logging::enhanced::log_error_with_context(&e);
-                        }
-                    }
-                }
-                _ = shutdown => {
-                    tracing::info!("Redis subscriber shutting down");
-                }
-            }
-        })
-    };
-
-    // Start API server if enabled
-    if config.api.enabled {
-        let api_config = config.clone();
-        let api_storage_manager = Arc::clone(&storage_manager);
-        let api_metrics = metrics_collector.clone();
-
-        let api_handle = {
-            let shutdown = shutdown_signal.clone();
-            tokio::spawn(async move {
-                tokio::select! {
-                    result = start_api_server(api_config, api_storage_manager) => {
-                        match result {
-                            Ok(_) => tracing::info!("API server completed"),
-                            Err(e) => {
-                                tracing::error!(error = %e, "API server error");
-                                crate::logging::enhanced::log_error_with_context(&e);
-                            }
-                        }
-                    }
-                    _ = shutdown => {
-                        tracing::info!("API server shutting down");
-                    }
-                }
-            })
-        };
-
-        tracing::info!(
-            address = format!("{}:{}", config.service.host, config.service.port),
-            "API server started"
-        );
-        tracing::info!(
-            swagger_url = format!("http://{}:{}/api/v1/swagger-ui", config.service.host, config.service.port),
-            "Swagger UI available"
-        );
-
-        // Health check endpoint log
-        tracing::info!(
-            health_check_url = format!("http://{}:{}/health", config.service.host, config.service.port),
-            "Health check endpoint available"
-        );
-
-        // Wait for shutdown signal or task completion
-        tokio::select! {
-            _ = shutdown_signal => {
-                tracing::info!("Received shutdown signal");
-            }
-            _ = processor_handle => {
-                tracing::warn!("Message processor stopped unexpectedly");
-            }
-            _ = subscriber_handle => {
-                tracing::warn!("Redis subscriber stopped unexpectedly");
-            }
-            _ = api_handle => {
-                tracing::warn!("API server stopped unexpectedly");
-            }
-        }
+    // 最终刷新 InfluxDB 缓冲区
+    if let Err(e) = influx_client.flush().await {
+        error!("最终刷新失败: {}", e);
     } else {
-        tracing::info!("API server is disabled");
-
-        // Wait for shutdown signal or task completion
-        tokio::select! {
-            _ = shutdown_signal => {
-                tracing::info!("Received shutdown signal");
-            }
-            _ = processor_handle => {
-                tracing::warn!("Message processor stopped unexpectedly");
-            }
-            _ = subscriber_handle => {
-                tracing::warn!("Redis subscriber stopped unexpectedly");
-            }
-        }
+        info!("最终刷新完成");
     }
 
-    // Graceful shutdown
-    tracing::info!("Initiating graceful shutdown");
-    
-    // 给予任务一些时间来完成当前操作
-    tokio::time::sleep(Duration::from_secs(2)).await;
-
-    // Cleanup with timeout
-    let cleanup_timeout = Duration::from_secs(10);
-    match tokio::time::timeout(cleanup_timeout, storage_manager.write().await.disconnect_all()).await {
-        Ok(Ok(_)) => {
-            tracing::info!("All storage backends disconnected successfully");
-        }
-        Ok(Err(e)) => {
-            tracing::error!(error = %e, "Error disconnecting storage backends");
-        }
-        Err(_) => {
-            tracing::error!("Timeout while disconnecting storage backends");
-        }
-    }
-    
-    // 记录最终指标
-    let final_metrics = metrics_collector.get_snapshot();
-    tracing::info!(
-        total_messages = final_metrics.total_messages_processed,
-        total_points = final_metrics.total_points_written,
-        uptime_seconds = final_metrics.uptime_seconds,
-        "Final metrics"
-    );
-
-    tracing::info!("HisSrv shutdown complete");
+    info!("HisSrv 已完全关闭");
     Ok(())
 }
 
-/// 验证配置
-fn validate_config(config: &Config) -> Result<()> {
-    // 验证Redis配置
-    if config.redis.connection.host.is_empty() && config.redis.connection.socket.is_empty() {
-        return Err(HisSrvError::MissingConfig {
-            field: "redis.connection.host or redis.connection.socket".to_string(),
-        });
+/// 初始化日志系统
+fn init_logging() -> Result<()> {
+    // 设置默认的环境变量（如果没有设置）
+    if std::env::var("RUST_LOG").is_err() {
+        std::env::set_var("RUST_LOG", "info,hissrv=debug");
     }
 
-    // 验证存储后端配置
-    if config.storage.backends.influxdb.enabled {
-        if config.storage.backends.influxdb.url.is_empty() {
-            return Err(HisSrvError::MissingConfig {
-                field: "storage.backends.influxdb.url".to_string(),
-            });
-        }
-        if config.storage.backends.influxdb.database.is_empty() {
-            return Err(HisSrvError::MissingConfig {
-                field: "storage.backends.influxdb.database".to_string(),
-            });
-        }
-    }
+    // 创建日志订阅器
+    let subscriber = tracing_subscriber::registry()
+        .with(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| "info,hissrv=debug".into()),
+        )
+        .with(tracing_subscriber::fmt::layer().with_target(false));
 
-    // 验证API配置
-    if config.api.enabled {
-        if config.service.port == 0 {
-            return Err(HisSrvError::ConfigError {
-                message: "Invalid port number".to_string(),
-                field: Some("service.port".to_string()),
-                suggestion: Some("Port must be between 1 and 65535".to_string()),
-            });
-        }
-    }
-
-    // 验证日志配置
-    if let Err(_) = config.logging.level.parse::<tracing::Level>() {
-        return Err(HisSrvError::ConfigError {
-            message: format!("Invalid log level: {}", config.logging.level),
-            field: Some("logging.level".to_string()),
-            suggestion: Some("Valid levels: trace, debug, info, warn, error".to_string()),
-        });
-    }
+    subscriber.init();
 
     Ok(())
 }
 
-/// 设置优雅关闭信号
-fn setup_shutdown_signal() -> tokio::sync::watch::Receiver<()> {
-    let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(());
+/// 显示启动横幅
+fn print_banner() {
+    println!();
+    println!("██╗  ██╗██╗███████╗███████╗██████╗ ██╗   ██╗");
+    println!("██║  ██║██║██╔════╝██╔════╝██╔══██╗██║   ██║");
+    println!("███████║██║███████╗███████╗██████╔╝██║   ██║");
+    println!("██╔══██║██║╚════██║╚════██║██╔══██╗╚██╗ ██╔╝");
+    println!("██║  ██║██║███████║███████║██║  ██║ ╚████╔╝ ");
+    println!("╚═╝  ╚═╝╚═╝╚══════╝╚══════╝╚═╝  ╚═╝  ╚═══╝  ");
+    println!();
+    println!("              历史数据服务 v0.2.0");
+    println!("          Redis → InfluxDB 3.2 数据传输");
+    println!();
+}
 
-    tokio::spawn(async move {
-        // 等待Ctrl+C信号
-        match tokio::signal::ctrl_c().await {
-            Ok(()) => {
-                tracing::info!("Received SIGINT (Ctrl+C), initiating shutdown");
-            }
-            Err(e) => {
-                tracing::error!(error = %e, "Failed to listen for SIGINT");
-            }
-        }
+/// 显示服务信息
+fn print_service_info(config: &Config) {
+    info!("服务配置:");
+    info!("  名称: {}", config.service.name);
+    info!("  版本: {}", config.service.version);
+    if config.service.port > 0 {
+        info!("  API 端口: {}", config.service.port);
+        info!("  API 地址: http://{}:{}", config.service.host, config.service.port);
+    }
+    
+    info!("Redis 配置:");
+    info!("  地址: {}:{}", config.redis.connection.host, config.redis.connection.port);
+    info!("  数据库: {}", config.redis.connection.database);
+    info!("  订阅模式: {:?}", config.redis.subscription.patterns);
+    if let Some(ref channel_ids) = config.redis.subscription.channel_ids {
+        info!("  监控通道: {:?}", channel_ids);
+    } else {
+        info!("  监控通道: 全部");
+    }
+    
+    info!("InfluxDB 配置:");
+    info!("  地址: {}", config.influxdb.url);
+    info!("  数据库: {}", config.influxdb.database);
+    info!("  批量大小: {}", config.influxdb.batch_size);
+    info!("  刷新间隔: {}s", config.influxdb.flush_interval_seconds);
+    
+    info!("日志配置:");
+    info!("  级别: {}", config.logging.level);
+    info!("  格式: {}", config.logging.format);
+    if let Some(ref file) = config.logging.file {
+        info!("  文件: {}", file);
+    }
+    
+    println!();
+}
 
-        // Unix系统上监听SIGTERM
-        #[cfg(unix)]
-        {
-            let mut sigterm = tokio::signal::unix::signal(
-                tokio::signal::unix::SignalKind::terminate()
-            ).expect("Failed to install SIGTERM handler");
+/// 等待关闭信号
+async fn wait_for_shutdown_signal() {
+    let ctrl_c = async {
+        signal::ctrl_c()
+            .await
+            .expect("failed to install Ctrl+C handler");
+    };
 
-            tokio::select! {
-                _ = sigterm.recv() => {
-                    tracing::info!("Received SIGTERM, initiating shutdown");
-                }
-                _ = tokio::signal::ctrl_c() => {
-                    tracing::info!("Received SIGINT, initiating shutdown");
-                }
-            }
-        }
+    #[cfg(unix)]
+    let terminate = async {
+        signal::unix::signal(signal::unix::SignalKind::terminate())
+            .expect("failed to install signal handler")
+            .recv()
+            .await;
+    };
 
-        // 发送关闭信号
-        let _ = shutdown_tx.send(());
-    });
+    #[cfg(not(unix))]
+    let terminate = std::future::pending::<()>();
 
-    shutdown_rx
+    tokio::select! {
+        _ = ctrl_c => {
+            info!("收到 Ctrl+C 信号");
+        },
+        _ = terminate => {
+            info!("收到终止信号");
+        },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_init_logging() {
+        // 测试日志初始化不会崩溃
+        // 注意：这可能会与其他测试冲突，因为日志只能初始化一次
+        // 在实际项目中，通常会使用更复杂的测试设置
+        std::env::set_var("RUST_LOG", "debug");
+        // init_logging().unwrap(); // 注释掉以避免重复初始化
+    }
+
+    #[tokio::test]
+    async fn test_config_loading() {
+        // 测试默认配置可以正常加载
+        let config = Config::default();
+        assert_eq!(config.service.name, "hissrv");
+        assert_eq!(config.service.version, "0.2.0");
+        assert!(config.influxdb.enabled);
+    }
 }

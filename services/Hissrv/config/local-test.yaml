@@ -1,0 +1,36 @@
+service:
+  name: "hissrv"
+  host: "0.0.0.0"
+  port: 8081
+  worker_threads: 4
+
+redis:
+  host: "test-redis"
+  port: 6379
+  db: 0
+  pool_size: 10
+  connection_timeout: 5
+  retry_interval: 30
+  max_retries: 3
+
+influxdb:
+  enabled: true
+  url: "http://test-influxdb:8181"
+  database: "voltage_ems"
+  measurement: "telemetry"
+  batch_size: 1000
+  batch_timeout: 5
+  write_timeout: 30
+  retry_backoff: 2
+  max_retries: 3
+
+logging:
+  level: "debug"
+  format: "pretty"
+  file: "./logs/hissrv.log"
+
+processing:
+  channel_batch_size: 100
+  flush_interval: 10
+  error_threshold: 0.1
+  stats_interval: 60
