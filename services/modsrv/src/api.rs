@@ -1,4 +1,5 @@
 // use crate::error::ModelSrvError;
+use crate::config::Config;
 use crate::monitoring::{HealthStatus, MonitoringService};
 use crate::redis_handler::RedisConnection;
 // use crate::template::TemplateManager;
@@ -139,6 +140,7 @@ pub struct AppState {
 pub struct ApiServer {
     state: AppState,
     port: u16,
+    config: Config,
 }
 
 impl ApiServer {
@@ -159,33 +161,39 @@ impl ApiServer {
     }
 
     /// Create a new API server (legacy)
-    pub fn new_legacy(redis_conn: Arc<RedisConnection>, port: u16) -> Self {
+    pub fn new_legacy(redis_conn: Arc<RedisConnection>, port: u16, config: Config) -> Self {
         let monitoring = Arc::new(MonitoringService::new(HealthStatus::Healthy));
         let state = AppState {
             redis_conn,
             monitoring,
         };
-        Self { state, port }
+        Self { state, port, config }
     }
 
     /// Start the API server
     pub async fn start(&self) -> Result<(), std::io::Error> {
+        let api_config = &self.config.api;
+        
         let app = Router::new()
-            // Health endpoints
+            // Health endpoints (always without prefix)
             .route("/health", get(health_check))
             // Template endpoints
-            .route("/api/templates", get(list_templates))
-            .route("/api/templates/:id", get(get_template))
+            .route(&api_config.build_path("templates"), get(list_templates))
+            .route(&api_config.build_path("templates/:id"), get(get_template))
             // Instance endpoints
-            .route("/api/instances", post(create_instance))
+            .route(&api_config.build_path("instances"), post(create_instance))
             // Control operation endpoints
             .route(
-                "/api/control/operations",
+                &api_config.build_path("control/operations"),
                 get(list_operations).post(control_operation),
             )
-            .route("/api/control/execute/:operation", post(execute_operation))
+            .route(&api_config.build_path("control/execute/:operation"), post(execute_operation))
             // OpenAPI spec endpoint
-            .route("/api-docs/openapi.json", get(serve_openapi_spec))
+            .route(&api_config.build_path("api-docs/openapi.json"), get(serve_openapi_spec))
+            // Rule endpoints (legacy API compatibility)
+            .route(&api_config.build_path("rules"), get(list_rules).post(create_rule))
+            .route(&api_config.build_path("rules/:id"), get(get_rule).put(update_rule).delete(delete_rule))
+            .route(&api_config.build_path("rules/:id/execute"), post(execute_rule))
             // CORS
             .layer(CorsLayer::permissive())
             // State

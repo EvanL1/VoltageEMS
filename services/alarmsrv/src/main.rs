@@ -96,7 +96,7 @@ async fn main() -> Result<()> {
     let app = routes::create_router(state);
 
     // Start HTTP server
-    let addr = format!("{}:{}", config.api.host, config.api.port);
+    let addr = format!("{}:{}", config.service_api.host, config.service_api.port);
     let listener = tokio::net::TcpListener::bind(&addr).await?;
 
     info!("Alarm service started successfully, listening on: {}", addr);

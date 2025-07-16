@@ -19,7 +19,7 @@ from datetime import datetime
 from tabulate import tabulate
 
 # 默认配置
-API_BASE_URL = "http://localhost:8086/api/v1"
+API_BASE_URL = "http://localhost:8083"  # Default is no prefix, use rules directly
 REDIS_HOST = "localhost"
 REDIS_PORT = 6379
 

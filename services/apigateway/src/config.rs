@@ -1,8 +1,10 @@
 use serde::{Deserialize, Serialize};
+use voltage_common::config::ApiConfig;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
     pub server: ServerConfig,
+    pub api: ApiConfig,
     pub redis: RedisConfig,
     pub services: ServicesConfig,
     pub cors: CorsConfig,
@@ -98,6 +100,7 @@ impl Default for Config {
                 port: 8080,
                 workers: 4,
             },
+            api: ApiConfig::default(),
             redis: RedisConfig {
                 url: "redis://127.0.0.1:6379".to_string(),
                 pool_size: 10,

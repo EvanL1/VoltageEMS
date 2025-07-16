@@ -43,6 +43,79 @@ impl Default for ServiceConfig {
     }
 }
 
+/// API configuration for services
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ApiConfig {
+    /// API path prefix, default is empty
+    #[serde(default = "default_api_prefix")]
+    pub prefix: String,
+    
+    /// Whether to enable API versioning
+    #[serde(default = "default_enable_versioning")]
+    pub enable_versioning: bool,
+    
+    /// API version (only used when enable_versioning is true)
+    #[serde(default = "default_api_version")]
+    pub version: String,
+}
+
+impl Default for ApiConfig {
+    fn default() -> Self {
+        Self {
+            prefix: default_api_prefix(),
+            enable_versioning: default_enable_versioning(),
+            version: default_api_version(),
+        }
+    }
+}
+
+impl ApiConfig {
+    /// Build complete API path
+    pub fn build_path(&self, path: &str) -> String {
+        let path = path.trim_start_matches('/');
+        
+        if self.prefix.is_empty() {
+            format!("/{}", path)
+        } else {
+            let prefix = self.prefix.trim_end_matches('/');
+            format!("{}/{}", prefix, path)
+        }
+    }
+    
+    /// Get the full prefix for a service
+    pub fn get_service_prefix(&self, service_name: &str) -> String {
+        if self.prefix.is_empty() {
+            format!("/{}", service_name)
+        } else {
+            format!("{}/{}", self.prefix.trim_end_matches('/'), service_name)
+        }
+    }
+    
+    /// Create ApiConfig from environment variables or defaults
+    pub fn from_env_or_default() -> Self {
+        Self {
+            prefix: std::env::var("API_PREFIX").unwrap_or_else(|_| default_api_prefix()),
+            enable_versioning: std::env::var("API_VERSIONING")
+                .unwrap_or_else(|_| "false".to_string())
+                .parse()
+                .unwrap_or(false),
+            version: std::env::var("API_VERSION").unwrap_or_else(|_| default_api_version()),
+        }
+    }
+}
+
+fn default_api_prefix() -> String {
+    "".to_string()  // Default is empty
+}
+
+fn default_enable_versioning() -> bool {
+    false  // Default is no versioning
+}
+
+fn default_api_version() -> String {
+    "v1".to_string()
+}
+
 /// Load configuration from multiple sources
 ///
 /// Priority (highest to lowest):

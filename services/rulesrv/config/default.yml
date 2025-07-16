@@ -1,118 +1,26 @@
 service:
   name: rulesrv
-  version: 1.0.0
-  description: "Rules Engine Service for VoltageEMS"
+  port: 8086
+  api_port: 8083
+
+# API configuration (for route paths)
+api:
+  prefix: ""  # Default is empty, can be set to "/api/v1" if needed
+  enable_versioning: false
+  version: "v1"
 
 # Redis configuration
 redis:
   url: "redis://localhost:6379"
   key_prefix: "rulesrv"
-  pool_size: 20
-  connection_timeout: 5s
-
-# API server configuration
-api:
-  host: "0.0.0.0"
-  port: 8080
-  cors:
-    enabled: true
-    allowed_origins:
-      - "*"
-  timeout:
-    read: 30s
-    write: 30s
-    idle: 60s
+  subscribe_patterns:
+    - "modsrv:outputs:*"
 
 # Rule engine configuration
 engine:
-  # Maximum number of rules to load
-  max_rules: 1000
-  # Rule execution timeout
-  execution_timeout: 30s
-  # Maximum parallel rule executions
-  max_parallel_executions: 100
-  # Enable rule caching
-  cache_enabled: true
-  cache_ttl: 300s
+  max_workers: 10
+  evaluation_timeout_ms: 5000
+  rule_key_pattern: "rulesrv:rule:config:*"
 
-# Subscription configuration
-subscription:
-  # Channels to subscribe to
-  channels:
-    - "modsrv:outputs:*"
-    - "alarm:event:*"
-  # Buffer size for incoming messages
-  buffer_size: 10000
-  # Batch processing interval
-  batch_interval: 100ms
-
-# Action handlers configuration
-actions:
-  # Control action handler
-  control:
-    enabled: true
-    # Command timeout
-    command_timeout: 30s
-    # Retry configuration
-    retry:
-      max_attempts: 3
-      initial_delay: 1s
-      max_delay: 30s
-  
-  # Alarm action handler
-  alarm:
-    enabled: true
-    # Alarm levels
-    levels:
-      - critical
-      - warning
-      - info
-  
-  # Notification action handler
-  notification:
-    enabled: true
-    # Notification channels
-    channels:
-      - email
-      - webhook
-      - sms
-
-# Storage configuration
-storage:
-  # Rule storage settings
-  rules:
-    # Maximum rule size
-    max_size: 1MB
-    # Rule compression
-    compression: true
-  
-  # Execution history settings
-  history:
-    # History retention period
-    retention: 7d
-    # Maximum history entries per rule
-    max_entries: 1000
-
-# Monitoring configuration
-monitoring:
-  # Metrics port
-  metrics_port: 9090
-  # Health check interval
-  health_check_interval: 30s
-  # Metrics collection interval
-  metrics_interval: 10s
-
-# Logging configuration
-logging:
-  # Log level (trace, debug, info, warn, error)
-  level: info
-  # Log format (json, text)
-  format: json
-  # Log output (stdout, file)
-  output: stdout
-  # File configuration (if output is file)
-  file:
-    path: "logs/rulesrv.log"
-    max_size: 100MB
-    max_backups: 10
-    max_age: 30d
+# Log level
+log_level: info

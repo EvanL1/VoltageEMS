@@ -198,8 +198,9 @@ async fn run_service(config: &Config) -> Result<()> {
 
     // Start API server
     let redis_conn_arc = Arc::new(RedisConnection::new());
-    let api_server = ApiServer::new_legacy(redis_conn_arc, config.api.port);
+    let api_server = ApiServer::new_legacy(redis_conn_arc, config.service_api.port, config.clone());
 
+    let api_port = config.service_api.port;
     tokio::spawn(async move {
         if let Err(e) = api_server.start().await {
             error!("API server error: {}", e);
@@ -208,7 +209,7 @@ async fn run_service(config: &Config) -> Result<()> {
 
     info!(
         "Model engine started, API server available at http://0.0.0.0:{}",
-        config.api.port
+        api_port
     );
 
     loop {
@@ -441,7 +442,7 @@ async fn start_api_server(config: &Config) -> Result<()> {
     let redis_conn = Arc::new(RedisConnection::new());
 
     // Create API server
-    let api_server = ApiServer::new_legacy(redis_conn, config.api.port);
+    let api_server = ApiServer::new_legacy(redis_conn, config.service_api.port, config.clone());
 
     // Start API server
     api_server

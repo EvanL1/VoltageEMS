@@ -56,7 +56,7 @@ where
         Box::pin(async move {
             // Skip auth for health check endpoints
             let path = req.path();
-            if path == "/health" || path.starts_with("/api/v1/health") {
+            if path == "/health" || path.ends_with("/health") {
                 return service.call(req).await;
             }
 

@@ -1,5 +1,6 @@
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
+use voltage_common::config::ApiConfig as CommonApiConfig;
 
 use crate::services::rules::AlarmRule;
 
@@ -8,8 +9,11 @@ use crate::services::rules::AlarmRule;
 pub struct AlarmConfig {
     /// Redis configuration
     pub redis: RedisConfig,
-    /// API configuration
-    pub api: ApiConfig,
+    /// Common API prefix configuration
+    #[serde(default)]
+    pub api: CommonApiConfig,
+    /// Service-specific API configuration
+    pub service_api: ServiceApiConfig,
     /// Storage configuration
     pub storage: StorageConfig,
     /// Monitoring configuration
@@ -104,9 +108,9 @@ fn default_redis_port() -> u16 {
     6379
 }
 
-/// API configuration
+/// Service-specific API configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ApiConfig {
+pub struct ServiceApiConfig {
     /// Listen address
     pub host: String,
     /// Listen port
@@ -175,7 +179,8 @@ impl Default for AlarmConfig {
                 password: None,
                 database: 0,
             },
-            api: ApiConfig {
+            api: CommonApiConfig::default(),
+            service_api: ServiceApiConfig {
                 host: "0.0.0.0".to_string(),
                 port: 8080,
             },
