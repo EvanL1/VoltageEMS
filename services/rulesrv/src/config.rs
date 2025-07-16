@@ -1,7 +1,6 @@
 use crate::error::{Result, RulesrvError};
 use serde::{Deserialize, Serialize};
-use std::path::Path;
-use voltage_common::config::ApiConfig as CommonApiConfig;
+use std::path::{Path, PathBuf};
 
 /// Main configuration structure
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -16,15 +15,11 @@ pub struct Config {
     pub engine: EngineConfig,
 
     /// API configuration
-    pub api: CommonApiConfig,
+    pub api: ApiConfig,
 
     /// Log level
     #[serde(default = "default_log_level")]
     pub log_level: String,
-    
-    /// Redis URL (convenience accessor)
-    #[serde(skip)]
-    pub redis_url: String,
 }
 
 /// Service configuration
@@ -37,10 +32,6 @@ pub struct ServiceConfig {
     /// Service port
     #[serde(default = "default_service_port")]
     pub port: u16,
-    
-    /// API server port
-    #[serde(default = "default_api_port")]
-    pub api_port: u16,
 }
 
 /// Redis configuration
@@ -75,6 +66,17 @@ pub struct EngineConfig {
     pub rule_key_pattern: String,
 }
 
+/// API configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ApiConfig {
+    /// API port
+    #[serde(default = "default_api_port")]
+    pub port: u16,
+
+    /// Enable Swagger UI
+    #[serde(default = "default_enable_swagger")]
+    pub enable_swagger: bool,
+}
 
 impl Config {
     /// Load configuration from file
@@ -82,18 +84,14 @@ impl Config {
         let content = std::fs::read_to_string(path)
             .map_err(|e| RulesrvError::ConfigError(format!("Failed to read config file: {}", e)))?;
 
-        let mut config: Config = serde_yaml::from_str(&content)
+        let config: Config = serde_yaml::from_str(&content)
             .map_err(|e| RulesrvError::ConfigError(format!("Failed to parse config: {}", e)))?;
-        
-        // Set the redis_url from redis.url
-        config.redis_url = config.redis.url.clone();
 
         Ok(config)
     }
 
     /// Load configuration from environment variables
     pub fn from_env() -> Result<Self> {
-        let redis_url = std::env::var("REDIS_URL").unwrap_or_else(|_| default_redis_url());
         Ok(Config {
             service: ServiceConfig {
                 name: std::env::var("SERVICE_NAME").unwrap_or_else(|_| default_service_name()),
@@ -101,13 +99,9 @@ impl Config {
                     .ok()
                     .and_then(|s| s.parse().ok())
                     .unwrap_or_else(default_service_port),
-                api_port: std::env::var("API_PORT")
-                    .ok()
-                    .and_then(|s| s.parse().ok())
-                    .unwrap_or_else(default_api_port),
             },
             redis: RedisConfig {
-                url: redis_url.clone(),
+                url: std::env::var("REDIS_URL").unwrap_or_else(|_| default_redis_url()),
                 key_prefix: std::env::var("REDIS_KEY_PREFIX")
                     .unwrap_or_else(|_| default_key_prefix()),
                 subscribe_patterns: std::env::var("REDIS_SUBSCRIBE_PATTERNS")
@@ -127,24 +121,29 @@ impl Config {
                 rule_key_pattern: std::env::var("RULE_KEY_PATTERN")
                     .unwrap_or_else(|_| default_rule_key_pattern()),
             },
-            api: CommonApiConfig::from_env_or_default(),
+            api: ApiConfig {
+                port: std::env::var("API_PORT")
+                    .ok()
+                    .and_then(|s| s.parse().ok())
+                    .unwrap_or_else(default_api_port),
+                enable_swagger: std::env::var("ENABLE_SWAGGER")
+                    .ok()
+                    .and_then(|s| s.parse().ok())
+                    .unwrap_or_else(default_enable_swagger),
+            },
             log_level: std::env::var("LOG_LEVEL").unwrap_or_else(|_| default_log_level()),
-            redis_url,
         })
     }
 }
 
 impl Default for Config {
     fn default() -> Self {
-        let redis_config = RedisConfig::default();
-        let redis_url = redis_config.url.clone();
         Config {
             service: ServiceConfig::default(),
-            redis: redis_config,
+            redis: RedisConfig::default(),
             engine: EngineConfig::default(),
-            api: CommonApiConfig::default(),
+            api: ApiConfig::default(),
             log_level: default_log_level(),
-            redis_url,
         }
     }
 }
@@ -154,7 +153,6 @@ impl Default for ServiceConfig {
         ServiceConfig {
             name: default_service_name(),
             port: default_service_port(),
-            api_port: default_api_port(),
         }
     }
 }
@@ -179,6 +177,14 @@ impl Default for EngineConfig {
     }
 }
 
+impl Default for ApiConfig {
+    fn default() -> Self {
+        ApiConfig {
+            port: default_api_port(),
+            enable_swagger: default_enable_swagger(),
+        }
+    }
+}
 
 // Default value functions
 fn default_service_name() -> String {
@@ -214,7 +220,11 @@ fn default_rule_key_pattern() -> String {
 }
 
 fn default_api_port() -> u16 {
-    8083
+    8086
+}
+
+fn default_enable_swagger() -> bool {
+    true
 }
 
 fn default_log_level() -> String {

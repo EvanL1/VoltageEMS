@@ -3,18 +3,29 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::info;
 
-use alarmsrv::{
-    api::routes,
-    config::AlarmConfig,
-    domain::AlarmClassifier,
-    redis::{AlarmQueryService, AlarmRedisClient, AlarmStatisticsManager, AlarmStore},
-    services::{
-        rules::AlarmRulesEngine,
-        scanner::{MonitorConfig, RedisDataScanner},
-        start_alarm_processor, start_redis_listener,
-    },
-    AppState,
-};
+mod api;
+mod config;
+mod domain;
+mod redis;
+mod services;
+
+use api::routes;
+use config::AlarmConfig;
+use domain::{Alarm, AlarmClassifier};
+use redis::{AlarmQueryService, AlarmRedisClient, AlarmStatisticsManager, AlarmStore};
+use services::{start_alarm_processor, start_redis_listener};
+
+/// Application state
+#[derive(Clone)]
+pub struct AppState {
+    pub alarms: Arc<RwLock<Vec<Alarm>>>,
+    pub config: Arc<AlarmConfig>,
+    pub redis_client: Arc<AlarmRedisClient>,
+    pub alarm_store: Arc<AlarmStore>,
+    pub query_service: Arc<AlarmQueryService>,
+    pub stats_manager: Arc<AlarmStatisticsManager>,
+    pub classifier: Arc<AlarmClassifier>,
+}
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -52,7 +63,7 @@ async fn main() -> Result<()> {
     let state = AppState {
         alarms: Arc::new(RwLock::new(Vec::new())),
         config: config.clone(),
-        redis_client: redis_client.clone(),
+        redis_client,
         alarm_store,
         query_service,
         stats_manager,
@@ -63,40 +74,11 @@ async fn main() -> Result<()> {
     start_redis_listener(state.clone()).await?;
     start_alarm_processor(state.clone()).await?;
 
-    // Start data scanner if monitoring is enabled
-    if config.monitoring.enabled {
-        info!("Starting data scanner with {} rules", config.alarm_rules.len());
-        
-        // Create rules engine
-        let mut rules_engine = AlarmRulesEngine::new();
-        rules_engine.load_rules(config.alarm_rules.clone());
-        let rules_engine = Arc::new(RwLock::new(rules_engine));
-
-        // Create scanner configuration
-        let monitor_config = MonitorConfig {
-            channels: config.monitoring.channels.clone(),
-            point_types: config.monitoring.point_types.clone(),
-            scan_interval: config.monitoring.scan_interval,
-        };
-
-        // Start scanner
-        let scanner = RedisDataScanner::new(
-            redis_client.clone(),
-            monitor_config,
-            rules_engine,
-        ).await?;
-        
-        scanner.start(state.clone()).await?;
-        info!("Data scanner started successfully");
-    } else {
-        info!("Data scanning is disabled");
-    }
-
     // Create API routes
     let app = routes::create_router(state);
 
     // Start HTTP server
-    let addr = format!("{}:{}", config.service_api.host, config.service_api.port);
+    let addr = format!("{}:{}", config.api.host, config.api.port);
     let listener = tokio::net::TcpListener::bind(&addr).await?;
 
     info!("Alarm service started successfully, listening on: {}", addr);

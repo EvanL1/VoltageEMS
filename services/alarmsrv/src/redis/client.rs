@@ -9,7 +9,6 @@ use crate::config::{AlarmConfig, RedisConnectionType};
 /// Redis client wrapper for alarm service
 pub struct AlarmRedisClient {
     client: Arc<Mutex<Option<RedisClient>>>,
-    #[allow(dead_code)]
     config: Arc<AlarmConfig>,
 }
 
@@ -65,37 +64,5 @@ impl AlarmRedisClient {
     /// Get a mutable reference to the Redis client
     pub async fn get_client(&self) -> Result<tokio::sync::MutexGuard<'_, Option<RedisClient>>> {
         Ok(self.client.lock().await)
-    }
-
-    /// Scan keys matching a pattern
-    pub async fn scan_keys(&self, pattern: &str) -> Result<Vec<String>> {
-        let mut client_guard = self.client.lock().await;
-        if let Some(conn) = client_guard.as_mut() {
-            // Use keys command for simplicity - in production should use SCAN
-            let keys: Vec<String> = conn.keys(pattern).await?;
-            Ok(keys)
-        } else {
-            Err(anyhow::anyhow!("Redis connection not available"))
-        }
-    }
-
-    /// Get multiple values at once
-    pub async fn mget(&self, keys: &[String]) -> Result<Vec<Option<String>>> {
-        if keys.is_empty() {
-            return Ok(Vec::new());
-        }
-
-        let mut client_guard = self.client.lock().await;
-        if let Some(conn) = client_guard.as_mut() {
-            let mut values = Vec::new();
-            // Get values one by one - in production should use MGET
-            for key in keys {
-                let value: Option<String> = conn.get(key).await?;
-                values.push(value);
-            }
-            Ok(values)
-        } else {
-            Err(anyhow::anyhow!("Redis connection not available"))
-        }
     }
 }

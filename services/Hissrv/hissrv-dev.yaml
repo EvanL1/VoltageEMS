@@ -67,19 +67,4 @@ api:
 
 logging:
   level: "debug"
-  format: "text"  # 开发环境使用text格式，更易读
-  file: "logs/hissrv-dev.log"
-  max_size: "50MB"
-  max_files: 5
-  # 增强日志功能（开发环境）
-  enhanced:
-    enabled: true  # 开发环境默认启用增强日志
-    sampling:  # 开发环境不采样，记录所有日志
-      default_rate: 1.0
-      rules: []
-    sensitive_filters:  # 敏感数据过滤
-      - "password"
-      - "token"
-      - "api_key"
-      - "secret"
-      - "authorization"
+  format: "json"

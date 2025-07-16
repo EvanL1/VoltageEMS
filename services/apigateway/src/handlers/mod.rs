@@ -1,11 +1,14 @@
 pub mod alarmsrv;
 pub mod auth;
+pub mod channels;
 pub mod comsrv;
+pub mod data;
 pub mod health;
 pub mod hissrv;
 pub mod modsrv;
 pub mod netsrv;
 pub mod rulesrv;
+pub mod system;
 
 use actix_web::{web, HttpRequest, HttpResponse};
 use log::{debug, error};
@@ -77,8 +80,11 @@ pub async fn proxy_request(
                 ApiError::ServiceError(format!("Failed to read response from {}", service_name))
             })?;
 
-            // Build response
-            let mut res = HttpResponse::build(status);
+            // Build response  
+            // Convert reqwest StatusCode to actix StatusCode
+            let actix_status = actix_web::http::StatusCode::from_u16(status.as_u16())
+                .unwrap_or(actix_web::http::StatusCode::INTERNAL_SERVER_ERROR);
+            let mut res = HttpResponse::build(actix_status);
 
             // Copy response headers
             for (name, value) in headers {

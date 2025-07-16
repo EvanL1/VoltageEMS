@@ -98,12 +98,11 @@ impl RedisSubscriber {
 
     /// 订阅默认通道
     async fn subscribe_default_channels(&self, pubsub: &mut PubSub) -> Result<()> {
-        // 使用模式订阅来支持通配符
         // 订阅 modsrv 模型输出
-        pubsub.psubscribe("modsrv:outputs:*").await?;
+        pubsub.subscribe("modsrv:outputs:*").await?;
         
         // 订阅告警事件
-        pubsub.psubscribe("alarm:event:*").await?;
+        pubsub.subscribe("alarm:event:*").await?;
         
         info!("Subscribed to default channels");
         
@@ -174,34 +173,11 @@ impl RedisSubscriber {
         }
         
         // 触发规则评估
-        // 获取所有规则并检查是否需要执行
-        match rule_executor.list_rules().await {
-            Ok(rules) => {
-                for rule in rules {
-                    if rule.enabled {
-                        // 将context转换为JSON对象
-                        let context_value = serde_json::Value::Object(
-                            context.clone().into_iter().collect()
-                        );
-                        
-                        // 执行简单规则
-                        match rule_executor.execute_simple_rule(&rule, &context_value).await {
-                            Ok(triggered) => {
-                                if triggered {
-                                    info!("Rule '{}' triggered on channel {}", rule.name, channel);
-                                }
-                            }
-                            Err(e) => {
-                                error!("Error executing rule '{}': {}", rule.id, e);
-                            }
-                        }
-                    }
-                }
-            }
-            Err(e) => {
-                error!("Error listing rules: {}", e);
-            }
-        }
+        // TODO: 需要实现基于数据源触发的规则执行逻辑
+        // 当前 RuleExecutor 只支持按规则ID执行
+        // rule_executor.execute_rule(&rule_id, Some(serde_json::Value::Object(
+        //     context.into_iter().collect()
+        // ))).await?;
         
         Ok(())
     }

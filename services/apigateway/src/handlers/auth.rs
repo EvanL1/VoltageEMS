@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 use crate::auth::{jwt::JwtManager, UserInfo};
 use crate::error::{ApiError, ApiResult};
 use crate::redis_client::{RedisClient, RedisClientExt};
+use std::sync::Arc;
 use crate::response::success_response;
 
 #[derive(Deserialize)]
@@ -35,7 +36,7 @@ pub struct RefreshResponse {
 
 pub async fn login(
     req: web::Json<LoginRequest>,
-    redis: web::Data<RedisClient>,
+    redis: web::Data<Arc<RedisClient>>,
 ) -> ApiResult<HttpResponse> {
     // TODO: In production, verify credentials against a user database
     // For now, we'll use hardcoded users for demonstration
@@ -106,7 +107,7 @@ pub async fn login(
 
 pub async fn refresh_token(
     req: web::Json<RefreshRequest>,
-    redis: web::Data<RedisClient>,
+    redis: web::Data<Arc<RedisClient>>,
 ) -> ApiResult<HttpResponse> {
     // Verify refresh token
     let claims = JwtManager::verify_token(&req.refresh_token)?;
@@ -139,7 +140,7 @@ pub async fn refresh_token(
 
 pub async fn logout(
     claims: web::ReqData<crate::auth::Claims>,
-    redis: web::Data<RedisClient>,
+    redis: web::Data<Arc<RedisClient>>,
 ) -> ApiResult<HttpResponse> {
     // Remove refresh token from Redis
     let key = format!("refresh_token:{}", claims.sub);

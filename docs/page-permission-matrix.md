@@ -85,13 +85,13 @@
 {
   // 数据查看
   viewData: ['operator', 'engineer', 'admin'],
-
+  
   // 远程控制
   remoteControl: ['engineer', 'admin'],
-
+  
   // 参数设置
   parameterSetting: ['engineer', 'admin'],
-
+  
   // 导出数据
   exportData: ['engineer', 'admin']
 }
@@ -102,13 +102,13 @@
 {
   // 查看告警
   viewAlarms: ['operator', 'engineer', 'admin'],
-
+  
   // 确认告警
   acknowledgeAlarm: ['engineer', 'admin'],
-
+  
   // 清除告警
   clearAlarm: ['engineer', 'admin'],
-
+  
   // 配置规则
   configureRules: ['admin']
 }
@@ -119,13 +119,13 @@
 {
   // 查看状态
   viewStatus: ['engineer', 'admin'],
-
+  
   // 查看日志
   viewLogs: ['engineer', 'admin'],
-
+  
   // 重启服务
   restartService: ['admin'],
-
+  
   // 修改配置
   modifyConfig: ['admin']
 }
@@ -173,7 +173,7 @@
 router.beforeEach((to, from, next) => {
   const userRole = store.state.user.role;
   const requiredRoles = to.meta.roles || [];
-
+  
   if (requiredRoles.length === 0) {
     next(); // 公开页面
   } else if (requiredRoles.includes(userRole)) {
@@ -191,7 +191,7 @@ app.directive('permission', {
   mounted(el, binding) {
     const userRole = store.state.user.role;
     const permissions = binding.value;
-
+    
     if (!permissions.includes(userRole)) {
       el.style.display = 'none';
     }

@@ -1,27 +1,15 @@
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
-use voltage_common::config::ApiConfig as CommonApiConfig;
-
-use crate::services::rules::AlarmRule;
 
 /// Alarm service configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AlarmConfig {
     /// Redis configuration
     pub redis: RedisConfig,
-    /// Common API prefix configuration
-    #[serde(default)]
-    pub api: CommonApiConfig,
-    /// Service-specific API configuration
-    pub service_api: ServiceApiConfig,
+    /// API configuration
+    pub api: ApiConfig,
     /// Storage configuration
     pub storage: StorageConfig,
-    /// Monitoring configuration
-    #[serde(default)]
-    pub monitoring: MonitoringConfig,
-    /// Alarm rules
-    #[serde(default)]
-    pub alarm_rules: Vec<AlarmRule>,
 }
 
 /// Redis connection type
@@ -108,9 +96,9 @@ fn default_redis_port() -> u16 {
     6379
 }
 
-/// Service-specific API configuration
+/// API configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ServiceApiConfig {
+pub struct ApiConfig {
     /// Listen address
     pub host: String,
     /// Listen port
@@ -128,46 +116,6 @@ pub struct StorageConfig {
     pub cleanup_interval_hours: u32,
 }
 
-/// Monitoring configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct MonitoringConfig {
-    /// Enable data scanning
-    #[serde(default = "default_true")]
-    pub enabled: bool,
-    /// Channels to monitor
-    #[serde(default)]
-    pub channels: Vec<u16>,
-    /// Point types to monitor (m/s/c/a)
-    #[serde(default = "default_point_types")]
-    pub point_types: Vec<String>,
-    /// Scan interval in seconds
-    #[serde(default = "default_scan_interval")]
-    pub scan_interval: u64,
-}
-
-impl Default for MonitoringConfig {
-    fn default() -> Self {
-        Self {
-            enabled: true,
-            channels: vec![],
-            point_types: default_point_types(),
-            scan_interval: default_scan_interval(),
-        }
-    }
-}
-
-fn default_true() -> bool {
-    true
-}
-
-fn default_point_types() -> Vec<String> {
-    vec!["m".to_string(), "s".to_string()]
-}
-
-fn default_scan_interval() -> u64 {
-    10
-}
-
 impl Default for AlarmConfig {
     fn default() -> Self {
         Self {
@@ -179,8 +127,7 @@ impl Default for AlarmConfig {
                 password: None,
                 database: 0,
             },
-            api: CommonApiConfig::default(),
-            service_api: ServiceApiConfig {
+            api: ApiConfig {
                 host: "0.0.0.0".to_string(),
                 port: 8080,
             },
@@ -189,8 +136,6 @@ impl Default for AlarmConfig {
                 auto_cleanup: true,
                 cleanup_interval_hours: 24,
             },
-            monitoring: MonitoringConfig::default(),
-            alarm_rules: Vec::new(),
         }
     }
 }
@@ -198,79 +143,53 @@ impl Default for AlarmConfig {
 impl AlarmConfig {
     /// Load configuration
     pub async fn load() -> Result<Self> {
-        // Try to load from configuration file first
-        let config_path = "alarmsrv.yaml";
-        if std::path::Path::new(config_path).exists() {
-            let config_str = std::fs::read_to_string(config_path)?;
-            let mut config: AlarmConfig = serde_yaml::from_str(&config_str)?;
-            
-            // Override with environment variables if set
-            if let Ok(host) = std::env::var("REDIS_HOST") {
-                config.redis.host = host;
-            }
-            if let Ok(port) = std::env::var("REDIS_PORT") {
-                if let Ok(p) = port.parse() {
-                    config.redis.port = p;
-                }
-            }
-            if let Ok(api_port) = std::env::var("API_PORT") {
-                if let Ok(p) = api_port.parse() {
-                    config.api.port = p;
-                }
-            }
-            
-            Ok(config)
-        } else {
-            // Fallback to environment variables only
-            let config = Self {
-                redis: RedisConfig {
-                    connection_type: match std::env::var("REDIS_CONNECTION_TYPE")
-                        .unwrap_or_else(|_| "tcp".to_string())
-                        .to_lowercase()
-                        .as_str()
-                    {
-                        "unix" => RedisConnectionType::Unix,
-                        _ => RedisConnectionType::Tcp,
-                    },
-                    host: std::env::var("REDIS_HOST").unwrap_or_else(|_| "localhost".to_string()),
-                    port: std::env::var("REDIS_PORT")
-                        .unwrap_or_else(|_| "6379".to_string())
-                        .parse()
-                        .unwrap_or(6379),
-                    socket_path: std::env::var("REDIS_SOCKET_PATH").ok(),
-                    password: std::env::var("REDIS_PASSWORD").ok(),
-                    database: std::env::var("REDIS_DB")
-                        .unwrap_or_else(|_| "0".to_string())
-                        .parse()
-                        .unwrap_or(0),
+        // Try to load configuration from environment variables
+        let config = Self {
+            redis: RedisConfig {
+                connection_type: match std::env::var("REDIS_CONNECTION_TYPE")
+                    .unwrap_or_else(|_| "tcp".to_string())
+                    .to_lowercase()
+                    .as_str()
+                {
+                    "unix" => RedisConnectionType::Unix,
+                    _ => RedisConnectionType::Tcp,
                 },
-                api: ApiConfig {
-                    host: std::env::var("API_HOST").unwrap_or_else(|_| "0.0.0.0".to_string()),
-                    port: std::env::var("API_PORT")
-                        .unwrap_or_else(|_| "8087".to_string())
-                        .parse()
-                        .unwrap_or(8087),
-                },
-                storage: StorageConfig {
-                    retention_days: std::env::var("STORAGE_RETENTION_DAYS")
-                        .unwrap_or_else(|_| "30".to_string())
-                        .parse()
-                        .unwrap_or(30),
-                    auto_cleanup: std::env::var("STORAGE_AUTO_CLEANUP")
-                        .unwrap_or_else(|_| "true".to_string())
-                        .parse()
-                        .unwrap_or(true),
-                    cleanup_interval_hours: std::env::var("STORAGE_CLEANUP_INTERVAL_HOURS")
-                        .unwrap_or_else(|_| "24".to_string())
-                        .parse()
-                        .unwrap_or(24),
-                },
-                monitoring: MonitoringConfig::default(),
-                alarm_rules: Vec::new(),
-            };
+                host: std::env::var("REDIS_HOST").unwrap_or_else(|_| "localhost".to_string()),
+                port: std::env::var("REDIS_PORT")
+                    .unwrap_or_else(|_| "6379".to_string())
+                    .parse()
+                    .unwrap_or(6379),
+                socket_path: std::env::var("REDIS_SOCKET_PATH").ok(),
+                password: std::env::var("REDIS_PASSWORD").ok(),
+                database: std::env::var("REDIS_DB")
+                    .unwrap_or_else(|_| "0".to_string())
+                    .parse()
+                    .unwrap_or(0),
+            },
+            api: ApiConfig {
+                host: std::env::var("API_HOST").unwrap_or_else(|_| "0.0.0.0".to_string()),
+                port: std::env::var("API_PORT")
+                    .unwrap_or_else(|_| "8080".to_string())
+                    .parse()
+                    .unwrap_or(8080),
+            },
+            storage: StorageConfig {
+                retention_days: std::env::var("STORAGE_RETENTION_DAYS")
+                    .unwrap_or_else(|_| "30".to_string())
+                    .parse()
+                    .unwrap_or(30),
+                auto_cleanup: std::env::var("STORAGE_AUTO_CLEANUP")
+                    .unwrap_or_else(|_| "true".to_string())
+                    .parse()
+                    .unwrap_or(true),
+                cleanup_interval_hours: std::env::var("STORAGE_CLEANUP_INTERVAL_HOURS")
+                    .unwrap_or_else(|_| "24".to_string())
+                    .parse()
+                    .unwrap_or(24),
+            },
+        };
 
-            Ok(config)
-        }
+        Ok(config)
     }
 
     /// Generate default configuration file

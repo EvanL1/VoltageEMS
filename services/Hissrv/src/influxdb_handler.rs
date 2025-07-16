@@ -2,7 +2,6 @@ use crate::config::Config;
 use crate::error::{HisSrvError, Result};
 use chrono::Utc;
 use influxdb::{Client, InfluxDbWriteable, Timestamp, WriteQuery};
-use std::collections::HashMap;
 
 pub struct InfluxDBConnection {
     client: Option<Client>,
@@ -20,19 +19,18 @@ impl InfluxDBConnection {
     }
 
     pub async fn connect(&mut self, config: &Config) -> Result<()> {
-        if !config.storage.backends.influxdb.enabled {
+        if !config.enable_influxdb {
             println!("InfluxDB writing is disabled by configuration.");
             return Ok(());
         }
 
-        let influx_config = &config.storage.backends.influxdb;
-        let client = if !influx_config.username.is_empty() && !influx_config.password.is_empty() {
-            Client::new(influx_config.url.clone(), influx_config.database.clone()).with_auth(
-                influx_config.username.clone(),
-                influx_config.password.clone(),
+        let client = if !config.influxdb_user.is_empty() && !config.influxdb_password.is_empty() {
+            Client::new(config.influxdb_url.clone(), config.influxdb_db.clone()).with_auth(
+                config.influxdb_user.clone(),
+                config.influxdb_password.clone(),
             )
         } else {
-            Client::new(influx_config.url.clone(), influx_config.database.clone())
+            Client::new(config.influxdb_url.clone(), config.influxdb_db.clone())
         };
 
         // Test connection with ping
@@ -40,14 +38,14 @@ impl InfluxDBConnection {
             Ok(_) => {
                 println!(
                     "Successfully connected to InfluxDB at {}",
-                    influx_config.url
+                    config.influxdb_url
                 );
                 self.client = Some(client);
                 self.connected = true;
-                self.db_name = influx_config.database.clone();
+                self.db_name = config.influxdb_db.clone();
 
                 // Set data retention policy
-                self.create_retention_policy(influx_config.retention_days).await?;
+                self.create_retention_policy(config.retention_days).await?;
                 Ok(())
             }
             Err(e) => {
@@ -102,48 +100,6 @@ impl InfluxDBConnection {
                 }
             }
         }
-    }
-
-    pub async fn write_hash_data(
-        &self,
-        key: &str,
-        hash_data: HashMap<String, String>,
-        _config: &Config,
-    ) -> Result<usize> {
-        if !self.connected || self.client.is_none() {
-            return Err(HisSrvError::ConnectionError(
-                "Not connected to InfluxDB".to_string(),
-            ));
-        }
-
-        let client = self.client.as_ref().unwrap();
-        let mut points_written = 0;
-        
-        for (field, value) in hash_data {
-            let (is_numeric, numeric_value) = try_parse_numeric(&value);
-            
-            // Create WriteQuery using the builder pattern for InfluxDB 0.5.x
-            let timestamp = Utc::now();
-            let mut write_query = WriteQuery::new(timestamp.into(), "rtdb_data")
-                .add_tag("key", key)
-                .add_tag("field", &field);
-
-            if is_numeric {
-                write_query = write_query.add_field("value", numeric_value);
-            } else {
-                write_query = write_query.add_field("text_value", value.as_str());
-            }
-
-            match client.query(&write_query).await {
-                Ok(_) => points_written += 1,
-                Err(e) => {
-                    // Log error but continue processing other fields
-                    tracing::error!("Failed to write field {} for key {}: {}", field, key, e);
-                }
-            }
-        }
-        
-        Ok(points_written)
     }
 
     pub async fn write_point(

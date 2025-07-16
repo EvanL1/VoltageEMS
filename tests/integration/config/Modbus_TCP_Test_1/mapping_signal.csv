@@ -1,3 +1,0 @@
-point_id,signal_name,slave_id,function_code,register_address,bit_position
-101,breaker_status,1,2,10001,0
-102,alarm_status,1,2,10002,0

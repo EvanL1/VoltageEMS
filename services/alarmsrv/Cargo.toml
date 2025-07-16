@@ -5,14 +5,6 @@ edition = "2021"
 authors = ["Voltage EMS Team"]
 description = "Basic alarm service for Voltage EMS"
 
-[lib]
-name = "alarmsrv"
-path = "src/lib.rs"
-
-[[bin]]
-name = "alarmsrv"
-path = "src/main.rs"
-
 [dependencies]
 # Async runtime
 tokio = { workspace = true }
@@ -49,7 +41,4 @@ anyhow = { workspace = true }
 config = { workspace = true }
 
 # Utilities
-futures = { workspace = true }
-
-[dev-dependencies]
-tower = { workspace = true, features = ["util"] } 
+futures = { workspace = true } 

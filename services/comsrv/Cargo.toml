@@ -60,7 +60,7 @@ byteorder = "1.4"
 
 # Web framework
 axum = { workspace = true }
-utoipa = { version = "5.4", features = ["axum_extras"] }
+utoipa = { version = "4.0", features = ["axum_extras"] }
 
 # Data structures
 dashmap = { version = "5.5", features = ["serde"] }

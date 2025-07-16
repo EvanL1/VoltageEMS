@@ -41,33 +41,32 @@ impl RedisConnection {
         // Disconnect if already connected
         self.disconnect();
 
-        let redis_conn_config = &config.redis.connection;
-        let redis_config = if !redis_conn_config.socket.is_empty() {
+        let redis_config = if !config.redis_socket.is_empty() {
             RedisConfig {
                 host: String::new(),
                 port: 0,
-                password: if redis_conn_config.password.is_empty() {
+                password: if config.redis_password.is_empty() {
                     None
                 } else {
-                    Some(redis_conn_config.password.clone())
+                    Some(config.redis_password.clone())
                 },
-                socket: Some(redis_conn_config.socket.clone()),
-                database: redis_conn_config.database,
-                connection_timeout: redis_conn_config.timeout as u64,
+                socket: Some(config.redis_socket.clone()),
+                database: 0,
+                connection_timeout: 10,
                 max_retries: 3,
             }
         } else {
             RedisConfig {
-                host: redis_conn_config.host.clone(),
-                port: redis_conn_config.port,
-                password: if redis_conn_config.password.is_empty() {
+                host: config.redis_host.clone(),
+                port: config.redis_port,
+                password: if config.redis_password.is_empty() {
                     None
                 } else {
-                    Some(redis_conn_config.password.clone())
+                    Some(config.redis_password.clone())
                 },
                 socket: None,
-                database: redis_conn_config.database,
-                connection_timeout: redis_conn_config.timeout as u64,
+                database: 0,
+                connection_timeout: 10,
                 max_retries: 3,
             }
         };
@@ -89,15 +88,15 @@ impl RedisConnection {
             ));
         }
 
-        if !redis_conn_config.socket.is_empty() {
+        if !config.redis_socket.is_empty() {
             println!(
                 "Successfully connected to Redis via Unix socket: {}",
-                redis_conn_config.socket
+                config.redis_socket
             );
         } else {
             println!(
                 "Successfully connected to Redis at {}:{}",
-                redis_conn_config.host, redis_conn_config.port
+                config.redis_host, config.redis_port
             );
         }
 
@@ -285,9 +284,13 @@ pub async fn process_redis_data(
     influxdb: &mut InfluxDBConnection,
     config: &Config,
 ) -> Result<()> {
-    if !config.storage.backends.influxdb.enabled || !influxdb.is_connected() {
-        // Note: verbose and interval_seconds fields don't exist in new config
-        // We'll need to handle this differently or remove the message
+    if !config.enable_influxdb || !influxdb.is_connected() {
+        if config.verbose {
+            println!(
+                "InfluxDB writing is disabled. Waiting {} seconds...",
+                config.interval_seconds
+            );
+        }
         return Ok(());
     }
 
@@ -305,21 +308,23 @@ pub async fn process_redis_data(
     let mut skipped_points = 0;
 
     // Check if we should process comsrv channels
-    // Using key_patterns from redis subscription config
-    let key_patterns = &config.redis.subscription.key_patterns;
-    if key_patterns.iter().any(|p| p.contains("comsrv:realtime:channel:")) {
+    if config
+        .redis_key_pattern
+        .contains("comsrv:realtime:channel:")
+    {
         // Extract channel IDs from pattern or use predefined list
         let channel_ids: Vec<u16> = vec![1, 2, 3]; // TODO: Make configurable
 
         for channel_id in channel_ids {
             match redis.get_channel_realtime_data(channel_id).await {
                 Ok(channel_data) => {
-                    // Removed verbose logging as config doesn't have verbose field
-                    println!(
-                        "Processing channel {} with {} points",
-                        channel_id,
-                        channel_data.len()
-                    );
+                    if config.verbose {
+                        println!(
+                            "Processing channel {} with {} points",
+                            channel_id,
+                            channel_data.len()
+                        );
+                    }
 
                     // Convert to format expected by InfluxDB
                     let mut hash_data = HashMap::new();
@@ -331,7 +336,9 @@ pub async fn process_redis_data(
                     match influxdb.write_hash_data(&key, hash_data, config).await {
                         Ok(points) => {
                             stored_points += points;
-                            // Removed verbose logging
+                            if config.verbose > 1 {
+                                println!("Stored {} points from channel {}", points, channel_id);
+                            }
                         }
                         Err(e) => {
                             println!("Failed to write data for channel {}: {}", channel_id, e);
@@ -348,19 +355,20 @@ pub async fn process_redis_data(
     }
 
     // Check if we should process modsrv modules
-    if key_patterns.iter().any(|p| p.contains("modsrv:realtime:module:")) {
+    if config.redis_key_pattern.contains("modsrv:realtime:module:") {
         // Extract module IDs from pattern or use predefined list
         let module_ids: Vec<&str> = vec!["calc_module_1", "calc_module_2"]; // TODO: Make configurable
 
         for module_id in module_ids {
             match redis.get_module_realtime_data(module_id).await {
                 Ok(module_data) => {
-                    // Removed verbose logging as config doesn't have verbose field
-                    println!(
-                        "Processing module {} with {} points",
-                        module_id,
-                        module_data.len()
-                    );
+                    if config.verbose {
+                        println!(
+                            "Processing module {} with {} points",
+                            module_id,
+                            module_data.len()
+                        );
+                    }
 
                     // Convert to format expected by InfluxDB
                     let mut hash_data = HashMap::new();
@@ -372,7 +380,9 @@ pub async fn process_redis_data(
                     match influxdb.write_hash_data(&key, hash_data, config).await {
                         Ok(points) => {
                             stored_points += points;
-                            // Removed verbose logging
+                            if config.verbose > 1 {
+                                println!("Stored {} points from module {}", points, module_id);
+                            }
                         }
                         Err(e) => {
                             println!("Failed to write data for module {}: {}", module_id, e);
@@ -389,56 +399,61 @@ pub async fn process_redis_data(
     }
 
     // Fall back to old pattern-based processing for backward compatibility
-    if !key_patterns.iter().any(|p| p.contains("comsrv:realtime:"))
-        && !key_patterns.iter().any(|p| p.contains("modsrv:realtime:"))
+    if !config.redis_key_pattern.contains("comsrv:realtime:")
+        && !config.redis_key_pattern.contains("modsrv:realtime:")
     {
-        // Process each key pattern separately
-        for pattern in key_patterns {
-            let keys = redis.get_keys(pattern).await?;
+        let keys = redis.get_keys(&config.redis_key_pattern).await?;
 
+        if config.verbose {
             println!(
                 "Found {} keys matching pattern: {}",
                 keys.len(),
-                pattern
+                config.redis_key_pattern
             );
+        }
 
-            for key in &keys {
-                // Removed verbose logging
-                tracing::debug!("Processing key: {}", key);
+        for key in &keys {
+            if config.verbose > 1 {
+                println!("Processing key: {}", key);
+            }
 
-                let key_type = redis.get_type(key).await?;
+            let key_type = redis.get_type(key).await?;
 
-                match key_type {
-                    RedisType::Hash => match redis.get_hash(key).await {
-                        Ok(hash_data) => match influxdb.write_hash_data(key, hash_data, config).await {
-                            Ok(points) => {
-                                stored_points += points;
-                                // Removed verbose logging
+            match key_type {
+                RedisType::Hash => match redis.get_hash(key).await {
+                    Ok(hash_data) => match influxdb.write_hash_data(key, hash_data, config).await {
+                        Ok(points) => {
+                            stored_points += points;
+                            if config.verbose > 1 {
+                                println!("Stored {} points from key: {}", points, key);
                             }
-                            Err(e) => {
-                                println!("Failed to write data for key {}: {}", key, e);
-                                skipped_points += 1;
-                            }
-                        },
+                        }
                         Err(e) => {
-                            println!("Failed to get hash data for key {}: {}", key, e);
+                            println!("Failed to write data for key {}: {}", key, e);
                             skipped_points += 1;
                         }
                     },
-                    _ => {
-                        // Removed verbose logging
-                        tracing::debug!("Skipping non-hash key: {} (type: {:?})", key, key_type);
+                    Err(e) => {
+                        println!("Failed to get hash data for key {}: {}", key, e);
                         skipped_points += 1;
                     }
+                },
+                _ => {
+                    if config.verbose > 1 {
+                        println!("Skipping non-hash key: {} (type: {:?})", key, key_type);
+                    }
+                    skipped_points += 1;
                 }
             }
         }
     }
 
-    println!(
-        "Processed {} points, skipped {} keys",
-        stored_points, skipped_points
-    );
+    if config.verbose {
+        println!(
+            "Processed {} points, skipped {} keys",
+            stored_points, skipped_points
+        );
+    }
 
     Ok(())
 }

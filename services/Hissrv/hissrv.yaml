@@ -23,13 +23,10 @@ redis:
   # 订阅配置
   subscription:
     channels:
-      - "channel:*:telemetry"  # 订阅遥测数据
-      - "channel:*:signal"     # 订阅信号数据
-      - "channel:*:event"      # 订阅事件数据
+      - "data:*"  # 订阅数据通道
+      - "events:*"  # 订阅事件通道
     key_patterns:
       - "*"  # 要处理的 key 模式
-    # 监控的通道ID列表（如果为空则监控所有通道）
-    channel_ids: [1, 2, 3, 4, 5]  # 根据实际需要配置
 
 # 存储后端配置
 storage:
@@ -113,21 +110,6 @@ logging:
   file: "logs/hissrv.log"
   max_size: "100MB"
   max_files: 10
-  # 增强日志功能（可选）
-  enhanced:
-    enabled: false  # 通过环境变量 HISSRV_ENHANCED_LOGGING=true 启用
-    sampling:  # 日志采样配置
-      default_rate: 1.0  # 默认采样率 (0.0-1.0)
-      rules:
-        - module: "hissrv::redis_subscriber"
-          rate: 0.1  # Redis订阅者日志采样10%
-        - module: "hissrv::message_processor"
-          rate: 0.5  # 消息处理器日志采样50%
-    sensitive_filters:  # 敏感数据过滤
-      - "password"
-      - "token"
-      - "api_key"
-      - "secret"
 
 # 性能配置
 performance:

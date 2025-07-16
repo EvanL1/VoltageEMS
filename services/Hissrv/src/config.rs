@@ -7,7 +7,6 @@ use std::fs;
 use std::path::Path;
 use std::time::SystemTime;
 use tracing::info;
-use voltage_common::config::ApiConfig as CommonApiConfig;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Config {
@@ -15,9 +14,7 @@ pub struct Config {
     pub redis: RedisConfig,
     pub storage: StorageConfig,
     pub data: DataConfig,
-    #[serde(default)]
-    pub api: CommonApiConfig,
-    pub service_api: ServiceApiConfig,
+    pub api: ApiConfig,
     pub monitoring: MonitoringConfig,
     pub logging: LoggingConfig,
     pub performance: PerformanceConfig,
@@ -56,8 +53,6 @@ pub struct RedisConnectionConfig {
 pub struct RedisSubscriptionConfig {
     pub channels: Vec<String>,
     pub key_patterns: Vec<String>,
-    #[serde(default)]
-    pub channel_ids: Vec<u16>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -131,8 +126,9 @@ pub struct DataTransformation {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct ServiceApiConfig {
+pub struct ApiConfig {
     pub enabled: bool,
+    pub prefix: String,
     pub swagger_ui: bool,
     pub cors: CorsConfig,
 }
@@ -229,9 +225,9 @@ impl Default for Config {
                 },
                 transformations: Vec::new(),
             },
-            api: CommonApiConfig::default(),
-            service_api: ServiceApiConfig {
+            api: ApiConfig {
                 enabled: true,
+                prefix: "/api/v1".to_string(),
                 swagger_ui: true,
                 cors: CorsConfig {
                     enabled: true,

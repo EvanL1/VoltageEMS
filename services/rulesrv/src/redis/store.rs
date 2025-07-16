@@ -345,13 +345,6 @@ impl RedisStore {
         
         Ok(())
     }
-    
-    /// Publish a message to a Redis channel
-    pub async fn publish(&self, channel: &str, message: &str) -> Result<()> {
-        let mut conn = self.redis_client.get_multiplexed_async_connection().await?;
-        redis::AsyncCommands::publish(&mut conn, channel, message).await?;
-        Ok(())
-    }
 }
 
 /// 执行历史记录
