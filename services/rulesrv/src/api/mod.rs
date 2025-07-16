@@ -37,23 +37,23 @@ impl ApiServer {
             // Rule management
             .route("/api/v1/rules", get(handlers::list_rules))
             .route("/api/v1/rules", post(handlers::create_rule))
-            .route("/api/v1/rules/:rule_id", get(handlers::get_rule))
-            .route("/api/v1/rules/:rule_id", put(handlers::update_rule))
-            .route("/api/v1/rules/:rule_id", delete(handlers::delete_rule))
+            .route("/api/v1/rules/{rule_id}", get(handlers::get_rule))
+            .route("/api/v1/rules/{rule_id}", put(handlers::update_rule))
+            .route("/api/v1/rules/{rule_id}", delete(handlers::delete_rule))
             
             // Rule execution
-            .route("/api/v1/rules/:rule_id/execute", post(handlers::execute_rule))
+            .route("/api/v1/rules/{rule_id}/execute", post(handlers::execute_rule))
             .route("/api/v1/rules/test", post(handlers::test_rule))
             
             // Rule history
-            .route("/api/v1/rules/:rule_id/history", get(handlers::get_rule_history))
+            .route("/api/v1/rules/{rule_id}/history", get(handlers::get_rule_history))
             
             // Rule groups
             .route("/api/v1/groups", get(handlers::list_rule_groups))
             .route("/api/v1/groups", post(handlers::create_rule_group))
-            .route("/api/v1/groups/:group_id", get(handlers::get_rule_group))
-            .route("/api/v1/groups/:group_id", delete(handlers::delete_rule_group))
-            .route("/api/v1/groups/:group_id/rules", get(handlers::get_group_rules))
+            .route("/api/v1/groups/{group_id}", get(handlers::get_rule_group))
+            .route("/api/v1/groups/{group_id}", delete(handlers::delete_rule_group))
+            .route("/api/v1/groups/{group_id}/rules", get(handlers::get_group_rules))
             
             // Add CORS support
             .layer(CorsLayer::permissive())
