@@ -28,10 +28,6 @@ cargo build --release --workspace
 # Run local CI checks
 ./scripts/local-ci.sh
 
-# Run all services locally
-./scripts/run-all.sh start
-./scripts/run-all.sh stop
-./scripts/run-all.sh status
 ```
 
 ### Service-Specific Commands
@@ -85,6 +81,30 @@ uv pip install -r requirements.txt
 
 VoltageEMS is a Rust-based microservices architecture for industrial IoT energy management. The system uses Redis as a central message bus and data store, with each service handling specific responsibilities.
 
+```
+┌─────────────────────────────────────────────────────────────┐
+│                      Web Application                        │
+│            Web UI | Mobile App │ HMI/SCADA                  │
+└─────────────────────┬───────────────────────────────────────┘
+                          │
+                   ┌──────┴──────┐
+                   │ API Gateway │
+                   └──────┬──────┘
+                          │
+┌─────────────────────────┴───────────────────────────────────┐
+│                    Redis Message                            │
+│              Pub/Sub | Key-Value | Streams                  │
+└──┬──────────┬────────┬─────────┬──────────┬──────────┬──────┘
+   │          │        │         │          │          │
+┌──┴───┐  ┌───┴──┐  ┌──┴───┐  ┌──┴───┐  ┌───┴────┐  ┌──┴──┐
+│comsrv│  │modsrv│  │hissrv│  │netsrv│  │alarmsrv│  │ ... │
+└──┬───┘  └──────┘  └──────┘  └──────┘  └────────┘  └─────┘
+   │
+┌──┴──────────────────────────────┐
+│            Devices              │
+│   Modbus | IEC60870 | CAN | ... │
+└─────────────────────────────────┘
+```
 ### 重要架构变更 (2025年7月)
 
 系统已从原有的分层哈希存储迁移到**扁平化键值存储架构**：
@@ -98,7 +118,7 @@ All services communicate exclusively through Redis pub/sub and key-value storage
 - No direct service-to-service HTTP calls
 - Real-time data flows through Redis channels
 - State persistence in Redis with optional InfluxDB for historical data
-- 使用Redis直接映射替代HTTP调用（性能提升10倍）
+- 使用Redis直接映射替代HTTP调用
 
 ### Core Services
 
@@ -108,14 +128,18 @@ All services communicate exclusively through Redis pub/sub and key-value storage
 - Unified transport layer supporting TCP, Serial, CAN, GPIO
 - 发布遥测数据到Redis: `{channelID}:{type}:{pointID}` 格式
 - 订阅控制命令: `cmd:{channel_id}:control` 和 `cmd:{channel_id}:adjustment` 通道
-- 框架层处理命令订阅，协议层保持独立
+- combase框架层处理命令订阅，协议层保持独立
 
-**modsrv** - Computation Engine
+**modsrv** - device model Engine
 - Executes DAG-based calculation workflows
 - 订阅遥测更新从Redis（使用新的扁平化存储）
 - Publishes calculated values back to Redis
 - 新增物模型映射系统（device_model模块）
 - 支持实时数据流处理和自动计算触发
+
+**rulesrv** - control rule Engine
+- 通过Json文件定义DAG(有向无环图)从而定义触发规则
+- 原则上只对modsrv的redis键进行读取、控制
 
 **hissrv** - Historical Data Service
 - Bridges Redis real-time data to InfluxDB
@@ -150,7 +174,7 @@ All services communicate exclusively through Redis pub/sub and key-value storage
 - Metrics collection
 
 ### Key Design Patterns
-
+**comsrv**
 1. **扁平化存储架构**
    - 键格式: `{channelID}:{type}:{pointID}` (实时数据)
    - 配置格式: `cfg:{channelID}:{type}:{pointID}` (配置数据)
@@ -194,10 +218,9 @@ let register = parts[2].parse::<u16>()?;
 
 1. Create feature branch from `develop`
 2. Make changes and test locally
-3. Run `./scripts/local-ci.sh` before committing
-4. 更新 `docs/fixlog/fixlog_{date}.md` 记录修改（使用date命令获取日期）
-5. Create PR to `develop` branch
-6. Git commit时不包含Claude相关信息
+3. 更新 `docs/fixlog/fixlog_{date}.md` 记录修改（使用date命令获取日期）
+4. Create PR to `develop` branch
+5. Git commit时不包含Claude相关信息
 
 ## Testing Infrastructure
 
@@ -217,11 +240,6 @@ cargo test --features integration
 # Clean up
 ./scripts/stop-test-servers.sh
 ```
-
-### Protocol Simulators
-- `tests/modbus_server_simulator.py` - Modbus TCP server
-- Supports all point types (YC/YX/YK/YT)
-- Generates realistic test data
 
 ## Common Issues and Solutions
 
@@ -278,19 +296,6 @@ Located in `config/{Protocol}_Test_{ID}/`:
 - `control.csv` - Commands (YK)
 - `adjustment.csv` - Setpoints (YT)
 
-## Local CI Tools
-
-The project includes several CI tools:
-- **Earthly** - Container-based builds (needs fixes)
-- **Lefthook** - Git hooks for pre-commit checks
-- **Act** - Run GitHub Actions locally
-- **local-ci.sh** - Bash script for all checks
-
-Install with:
-```bash
-brew install earthly/earthly/earthly lefthook act
-```
-
 ## 物模型系统 (modsrv device_model)
 
 ### 核心组件
@@ -317,6 +322,10 @@ let voltage = device_system.get_telemetry(&instance_id, "voltage_a").await?;
 device_system.execute_command(&instance_id, "switch_on", params).await?;
 ```
 
-## Build Environment Memory
+## Memory
 
-- Rust的builder是1.88-bullseye
+### comsrv Design
+- comsrv键值对的值中只有Value 和时间戳两个属性。
+
+### Development Infrastructure
+- builder使用Rust:1.88-bullseye
