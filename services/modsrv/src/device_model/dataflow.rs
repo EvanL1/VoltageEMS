@@ -216,40 +216,74 @@ impl DataFlowProcessor {
         Ok(())
     }
 
-    /// Run Redis subscriber for real-time updates
+    /// Run Redis subscriber for real-time updates using keyspace notifications
     async fn run_redis_subscriber(&self) -> Result<()> {
         let mut pubsub = self.redis_client.get_async_pubsub().await?;
 
-        // Subscribe to point update channel
-        pubsub.subscribe("point:update").await?;
+        // Subscribe to keyspace notifications for point data changes
+        // Format: __keyspace@0__:channelID:type:pointID
+        pubsub.psubscribe("__keyspace@0__:*:m:*").await?; // 遥测 YC
+        pubsub.psubscribe("__keyspace@0__:*:s:*").await?; // 遥信 YX
+
+        tracing::info!("Redis subscriber started, listening for comsrv data updates");
 
         while *self.is_running.read().await {
             let msg = pubsub.on_message().next().await;
             match msg {
                 Some(msg) => {
-                    if let Ok(payload) = msg.get_payload::<String>() {
-                        // Parse update message
-                        if let Ok(update_data) =
-                            serde_json::from_str::<PointUpdateMessage>(&payload)
-                        {
-                            // Find subscriptions for this point
-                            let subscriptions = self.subscriptions.read().await;
-                            for (instance_id, sub) in subscriptions.iter() {
-                                if let Some(telemetry_name) = sub
-                                    .point_mappings
-                                    .iter()
-                                    .find(|(_, point_id)| **point_id == update_data.point_id)
-                                    .map(|(name, _)| name.clone())
-                                {
-                                    let update = DataUpdate {
-                                        instance_id: instance_id.clone(),
-                                        telemetry_name,
-                                        value: update_data.value.clone(),
-                                        timestamp: update_data.timestamp,
-                                    };
+                    if let Ok(channel) = msg.get_channel::<String>() {
+                        // Extract point key from keyspace notification
+                        // Format: __keyspace@0__:1001:m:10001
+                        if let Some(point_key) = channel.strip_prefix("__keyspace@0__:") {
+                            // Parse the point key: channelID:type:pointID
+                            let parts: Vec<&str> = point_key.split(':').collect();
+                            if parts.len() == 3 {
+                                let channel_id = parts[0];
+                                let point_type = parts[1];
+                                let point_id = parts[2];
+                                
+                                // Get the actual data from Redis
+                                if let Ok(Some(data)) = self.redis_client.get::<String>(&point_key).await {
+                                    // Parse comsrv format: value:timestamp
+                                    let data_parts: Vec<&str> = data.split(':').collect();
+                                    if data_parts.len() == 2 {
+                                        if let (Ok(value), Ok(timestamp)) = (
+                                            data_parts[0].parse::<f64>(),
+                                            data_parts[1].parse::<i64>()
+                                        ) {
+                                            // Find subscriptions for this point
+                                            let subscriptions = self.subscriptions.read().await;
+                                            for (instance_id, sub) in subscriptions.iter() {
+                                                // Check if this point is mapped in any subscription
+                                                if let Some(telemetry_name) = sub
+                                                    .point_mappings
+                                                    .iter()
+                                                    .find(|(_, redis_key)| *redis_key == point_key)
+                                                    .map(|(name, _)| name.clone())
+                                                {
+                                                    let update = DataUpdate {
+                                                        instance_id: instance_id.clone(),
+                                                        telemetry_name: telemetry_name.clone(),
+                                                        value: serde_json::Value::Number(
+                                                            serde_json::Number::from_f64(value)
+                                                                .unwrap_or_else(|| serde_json::Number::from(0))
+                                                        ),
+                                                        timestamp,
+                                                    };
 
-                                    if let Err(e) = self.update_channel.send(update).await {
-                                        tracing::error!("Failed to send update: {}", e);
+                                                    if let Err(e) = self.update_channel.send(update).await {
+                                                        tracing::error!("Failed to send update: {}", e);
+                                                    } else {
+                                                        tracing::debug!(
+                                                            "Sent data update for {}:{} -> {} = {}",
+                                                            instance_id, telemetry_name, point_key, value
+                                                        );
+                                                    }
+                                                }
+                                            }
+                                        } else {
+                                            tracing::warn!("Failed to parse comsrv data format: {}", data);
+                                        }
                                     }
                                 }
                             }
@@ -276,18 +310,49 @@ impl DataFlowProcessor {
             for (instance_id, sub) in subscriptions {
                 // Check if it's time to poll
                 for (telemetry_name, redis_key) in &sub.point_mappings {
-                    // Get data from Redis
+                    // Get data from Redis using comsrv format
                     if let Ok(Some(data)) = self.redis_client.get::<String>(&redis_key).await {
-                        if let Ok(point_data) = serde_json::from_str::<PointData>(&data) {
-                            let update = DataUpdate {
-                                instance_id: instance_id.clone(),
-                                telemetry_name: telemetry_name.clone(),
-                                value: serde_json::to_value(&point_data.value).unwrap_or(serde_json::Value::Null),
-                                timestamp: point_data.timestamp.timestamp_millis(),
-                            };
+                        // Parse comsrv format: value:timestamp
+                        let data_parts: Vec<&str> = data.split(':').collect();
+                        if data_parts.len() == 2 {
+                            if let (Ok(value), Ok(timestamp)) = (
+                                data_parts[0].parse::<f64>(),
+                                data_parts[1].parse::<i64>()
+                            ) {
+                                let update = DataUpdate {
+                                    instance_id: instance_id.clone(),
+                                    telemetry_name: telemetry_name.clone(),
+                                    value: serde_json::Value::Number(
+                                        serde_json::Number::from_f64(value)
+                                            .unwrap_or_else(|| serde_json::Number::from(0))
+                                    ),
+                                    timestamp,
+                                };
 
-                            if let Err(e) = self.update_channel.send(update).await {
-                                tracing::error!("Failed to send polled update: {}", e);
+                                if let Err(e) = self.update_channel.send(update).await {
+                                    tracing::error!("Failed to send polled update: {}", e);
+                                } else {
+                                    tracing::debug!(
+                                        "Polled data update for {}:{} -> {} = {}",
+                                        instance_id, telemetry_name, redis_key, value
+                                    );
+                                }
+                            } else {
+                                tracing::warn!("Failed to parse polled comsrv data format: {}", data);
+                            }
+                        } else {
+                            // Fallback: try to parse as legacy PointData format
+                            if let Ok(point_data) = serde_json::from_str::<PointData>(&data) {
+                                let update = DataUpdate {
+                                    instance_id: instance_id.clone(),
+                                    telemetry_name: telemetry_name.clone(),
+                                    value: serde_json::to_value(&point_data.value).unwrap_or(serde_json::Value::Null),
+                                    timestamp: point_data.timestamp.timestamp_millis(),
+                                };
+
+                                if let Err(e) = self.update_channel.send(update).await {
+                                    tracing::error!("Failed to send legacy polled update: {}", e);
+                                }
                             }
                         }
                     }
@@ -312,8 +377,9 @@ impl Clone for DataFlowProcessor {
     }
 }
 
-/// Point update message from Redis pub/sub
+/// Point update message from Redis pub/sub (Legacy - now using keyspace notifications)
 #[derive(Debug, Clone, serde::Deserialize)]
+#[allow(dead_code)]
 struct PointUpdateMessage {
     point_id: String,
     value: Value,
