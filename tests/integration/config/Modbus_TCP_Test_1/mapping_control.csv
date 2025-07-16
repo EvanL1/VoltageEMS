@@ -1,3 +1,0 @@
-point_id,signal_name,slave_id,function_code,register_address,coil_number
-201,breaker_control,1,5,1,1
-202,reset_alarm,1,5,2,2

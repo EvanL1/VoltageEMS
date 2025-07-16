@@ -1,6 +1,7 @@
 use actix_web::{get, web, HttpResponse};
 use serde_json::json;
 use std::sync::Arc;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::config::Config;
 use crate::error::ApiResult;
@@ -16,8 +17,15 @@ pub async fn health_check() -> ApiResult<HttpResponse> {
 }
 
 pub async fn simple_health() -> ApiResult<HttpResponse> {
+    let uptime = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    
     Ok(success_response(json!({
-        "status": "ok"
+        "status": "healthy",
+        "uptime": uptime,
+        "version": env!("CARGO_PKG_VERSION")
     })))
 }
 
@@ -37,13 +45,9 @@ pub async fn detailed_health(
     // Check Redis connection
     let redis_status = {
         match redis_client.ping().await {
-            Ok(true) => json!({
+            Ok(_) => json!({
                 "status": "healthy",
                 "message": "Redis connection successful"
-            }),
-            Ok(false) => json!({
-                "status": "unhealthy",
-                "message": "Redis ping failed"
             }),
             Err(e) => json!({
                 "status": "unhealthy",

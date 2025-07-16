@@ -65,11 +65,9 @@ async fn main() -> std::io::Result<()> {
     let http_client = Arc::new(reqwest::Client::new());
 
     let workers = config.server.workers;
-    let api_prefix = config.api.prefix.clone();
 
     // Start HTTP server
     HttpServer::new(move || {
-        let api_prefix = api_prefix.clone();
         let cors = Cors::default()
             .allowed_origin_fn(|origin, _req_head| {
                 origin.as_bytes().starts_with(b"http://localhost")
@@ -85,7 +83,7 @@ async fn main() -> std::io::Result<()> {
             .wrap(cors)
             .wrap(middleware::Logger::default())
             .service(
-                web::scope(&api_prefix)
+                web::scope("/api/v1")
                     // Public endpoints (no auth required)
                     .route("/auth/login", web::post().to(handlers::auth::login))
                     .route(

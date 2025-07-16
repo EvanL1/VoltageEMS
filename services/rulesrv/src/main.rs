@@ -106,8 +106,8 @@ async fn run_service(config: &Config) -> Result<()> {
     subscriber.start().await?;
 
     // Start API server in a separate task
-    let api_server = ApiServer::new(executor.clone(), store.clone(), config.service.api_port, config.api.clone());
-    let api_port = config.service.api_port;
+    let api_server = ApiServer::new(executor.clone(), store.clone(), config.api.port);
+    let api_port = config.api.port;
     
     let api_handle = tokio::spawn(async move {
         api_server.start().await
@@ -131,9 +131,9 @@ async fn run_service(config: &Config) -> Result<()> {
 async fn start_api_server(config: &Config) -> Result<()> {
     let store = Arc::new(RedisStore::new(&config.redis_url, None)?);
     let executor = Arc::new(RuleExecutor::new(store.clone()));
-    let api_server = ApiServer::new(executor, store, config.service.api_port, config.api.clone());
+    let api_server = ApiServer::new(executor, store, config.api.port);
 
-    info!("Starting API server on port {}", config.service.api_port);
+    info!("Starting API server on port {}", config.api.port);
     api_server.start().await?;
 
     Ok(())

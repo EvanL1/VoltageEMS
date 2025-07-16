@@ -1,10 +1,8 @@
 use serde::{Deserialize, Serialize};
-use voltage_common::config::ApiConfig;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
     pub server: ServerConfig,
-    pub api: ApiConfig,
     pub redis: RedisConfig,
     pub services: ServicesConfig,
     pub cors: CorsConfig,
@@ -100,7 +98,6 @@ impl Default for Config {
                 port: 8080,
                 workers: 4,
             },
-            api: ApiConfig::default(),
             redis: RedisConfig {
                 url: "redis://127.0.0.1:6379".to_string(),
                 pool_size: 10,
@@ -133,19 +130,23 @@ impl Default for Config {
                 },
             },
             cors: CorsConfig {
-                allowed_origins: vec![
-                    "http://localhost:8082".to_string(),
-                    "http://localhost:3000".to_string(),
-                    "http://localhost:5173".to_string(),
-                ],
+                allowed_origins: vec!["*".to_string()],
                 allowed_methods: vec![
                     "GET".to_string(),
                     "POST".to_string(),
                     "PUT".to_string(),
                     "DELETE".to_string(),
                     "OPTIONS".to_string(),
+                    "HEAD".to_string(),
+                    "PATCH".to_string(),
                 ],
-                allowed_headers: vec!["Content-Type".to_string(), "Authorization".to_string()],
+                allowed_headers: vec![
+                    "Content-Type".to_string(),
+                    "Authorization".to_string(),
+                    "Origin".to_string(),
+                    "Accept".to_string(),
+                    "X-Requested-With".to_string(),
+                ],
                 max_age: 3600,
             },
             logging: LoggingConfig {
