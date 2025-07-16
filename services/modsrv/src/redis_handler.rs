@@ -275,10 +275,27 @@ impl RedisHandler {
 
     /// Set a value in Redis
     pub async fn set(&self, key: &str, value: String) -> Result<()> {
-        let mut conn = self.connection.write().await;
+        let conn = self.connection.write().await;
         conn.client
             .set(key, &value)
             .map_err(|e| ModelSrvError::RedisError(format!("Failed to set key {}: {}", key, e)))
+    }
+
+    /// Delete a key from Redis
+    pub async fn del(&self, key: &str) -> Result<()> {
+        let conn = self.connection.write().await;
+        conn.client
+            .del(&[key])
+            .map_err(|e| ModelSrvError::RedisError(format!("Failed to delete key {}: {}", key, e)))
+            .map(|_| ())
+    }
+
+    /// Scan keys by pattern
+    pub async fn scan_keys(&self, pattern: &str) -> Result<Vec<String>> {
+        let conn = self.connection.write().await;
+        conn.client
+            .keys(pattern)
+            .map_err(|e| ModelSrvError::RedisError(format!("Failed to scan keys {}: {}", pattern, e)))
     }
 
     /// Publish a message to a channel
@@ -307,6 +324,11 @@ impl AsyncPubSub {
 
     pub async fn subscribe(&mut self, _channel: &str) -> Result<()> {
         // TODO: Implement async subscribe
+        Ok(())
+    }
+
+    pub async fn psubscribe(&mut self, _pattern: &str) -> Result<()> {
+        // TODO: Implement async pattern subscribe
         Ok(())
     }
 
@@ -351,6 +373,12 @@ impl PubSubMessage {
         self.payload
             .parse::<T>()
             .map_err(|_| ModelSrvError::FormatError("Failed to parse payload".to_string()))
+    }
+
+    pub fn get_channel<T: std::str::FromStr>(&self) -> Result<T> {
+        self.channel
+            .parse::<T>()
+            .map_err(|_| ModelSrvError::FormatError("Failed to parse channel".to_string()))
     }
 }
 
