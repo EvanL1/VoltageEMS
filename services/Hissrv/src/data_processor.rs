@@ -1,6 +1,7 @@
 use crate::error::{HisSrvError, Result};
 use crate::influx_client::{DataPoint, DataValue, InfluxDBClient};
 use crate::redis_client::RedisMessage;
+use crate::config::points::{PointStorageConfig, FilterState};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{mpsc, Mutex};
@@ -8,11 +9,12 @@ use tokio::time::{interval, Instant};
 use tracing::{debug, error, info, warn};
 
 /// 数据处理统计
-#[derive(Debug, Clone, Default, serde::Serialize)]
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct ProcessingStats {
     pub messages_received: u64,
     pub messages_processed: u64,
     pub messages_failed: u64,
+    pub messages_filtered: u64,
     pub points_written: u64,
     #[serde(skip)]
     pub last_processed_time: Option<Instant>,
@@ -24,6 +26,8 @@ pub struct DataProcessor {
     message_receiver: Arc<Mutex<mpsc::UnboundedReceiver<RedisMessage>>>,
     stats: Arc<Mutex<ProcessingStats>>,
     flush_interval: Duration,
+    points_config: Arc<PointStorageConfig>,
+    filter_state: Arc<Mutex<FilterState>>,
 }
 
 impl DataProcessor {
@@ -32,12 +36,15 @@ impl DataProcessor {
         influx_client: InfluxDBClient,
         message_receiver: mpsc::UnboundedReceiver<RedisMessage>,
         flush_interval_seconds: u64,
+        points_config: PointStorageConfig,
     ) -> Self {
         Self {
             influx_client: Arc::new(influx_client),
             message_receiver: Arc::new(Mutex::new(message_receiver)),
             stats: Arc::new(Mutex::new(ProcessingStats::default())),
             flush_interval: Duration::from_secs(flush_interval_seconds),
+            points_config: Arc::new(points_config),
+            filter_state: Arc::new(Mutex::new(FilterState::new())),
         }
     }
 
@@ -70,10 +77,11 @@ impl DataProcessor {
                 interval_timer.tick().await;
                 let stats = stats_clone.lock().await;
                 info!(
-                    "处理统计: 收到 {} 条消息, 处理 {} 条, 失败 {} 条, 写入 {} 个点",
+                    "处理统计: 收到 {} 条消息, 处理 {} 条, 失败 {} 条, 过滤 {} 条, 写入 {} 个点",
                     stats.messages_received,
                     stats.messages_processed, 
                     stats.messages_failed,
+                    stats.messages_filtered,
                     stats.points_written
                 );
             }
@@ -131,6 +139,25 @@ impl DataProcessor {
             return Ok(());
         };
 
+        // 检查是否有通道信息
+        let Some(ref channel_info) = message.channel_info else {
+            debug!("消息 {} 没有通道信息，跳过", message.key);
+            return Ok(());
+        };
+
+        // 应用点位过滤规则
+        if !self.should_save_point(channel_info.channel_id, channel_info.point_id, &channel_info.point_type, point_data).await? {
+            debug!("点位 {}:{}:{} 被过滤，跳过保存", channel_info.channel_id, channel_info.point_id, channel_info.point_type);
+            
+            // 更新过滤统计
+            {
+                let mut stats = self.stats.lock().await;
+                stats.messages_filtered += 1;
+            }
+            
+            return Ok(());
+        }
+
         // 转换为 InfluxDB 数据点
         let data_point = self.convert_to_influx_point(&message, point_data)?;
 
@@ -145,6 +172,105 @@ impl DataProcessor {
 
         debug!("成功处理消息: {}", message.key);
         Ok(())
+    }
+
+    /// 检查点位是否应该保存
+    async fn should_save_point(
+        &self,
+        channel_id: u32,
+        point_id: u32,
+        point_type: &str,
+        point_data: &voltage_common::types::PointData,
+    ) -> Result<bool> {
+        // 1. 检查基本的点位规则
+        if !self.points_config.should_save_point(channel_id, point_id, point_type) {
+            return Ok(false);
+        }
+
+        // 2. 应用过滤器规则
+        for filter in &self.points_config.filters {
+            if !self.apply_filter(filter, channel_id, point_id, point_type, point_data).await? {
+                return Ok(false);
+            }
+        }
+
+        Ok(true)
+    }
+
+    /// 应用单个过滤器规则
+    async fn apply_filter(
+        &self,
+        filter: &crate::config::points::FilterRule,
+        channel_id: u32,
+        point_id: u32,
+        point_type: &str,
+        point_data: &voltage_common::types::PointData,
+    ) -> Result<bool> {
+        use crate::config::points::FilterRule;
+        use voltage_common::types::PointValue;
+
+        match filter {
+            FilterRule::ValueRange { point_types, min_value, max_value } => {
+                // 检查点位类型是否匹配
+                if !point_types.contains(&point_type.to_string()) {
+                    return Ok(true); // 不匹配的类型直接通过
+                }
+
+                // 检查值范围
+                let value = match &point_data.value {
+                    PointValue::Float(f) => *f,
+                    PointValue::Int(i) => *i as f64,
+                    _ => return Ok(true), // 非数值类型直接通过
+                };
+
+                if let Some(min) = min_value {
+                    if value < *min {
+                        return Ok(false);
+                    }
+                }
+
+                if let Some(max) = max_value {
+                    if value > *max {
+                        return Ok(false);
+                    }
+                }
+
+                Ok(true)
+            }
+            FilterRule::TimeInterval { point_types, min_interval_seconds } => {
+                // 检查点位类型是否匹配
+                if let Some(ref types) = point_types {
+                    if !types.contains(&point_type.to_string()) {
+                        return Ok(true); // 不匹配的类型直接通过
+                    }
+                }
+
+                // 检查时间间隔
+                let key = format!("{}:{}:{}", channel_id, point_type, point_id);
+                let mut filter_state = self.filter_state.lock().await;
+                Ok(filter_state.check_time_interval(&key, *min_interval_seconds))
+            }
+            FilterRule::Quality { point_types, min_quality } => {
+                // 检查点位类型是否匹配
+                if let Some(ref types) = point_types {
+                    if !types.contains(&point_type.to_string()) {
+                        return Ok(true); // 不匹配的类型直接通过
+                    }
+                }
+
+                // 检查质量
+                if let Some(min_qual) = min_quality {
+                    if let Some(ref quality) = point_data.quality {
+                        // 假设质量有一个 value 字段
+                        // 这里需要根据实际的 Quality 结构来调整
+                        // 暂时跳过质量检查
+                        debug!("质量过滤器暂未实现，跳过");
+                    }
+                }
+
+                Ok(true)
+            }
+        }
     }
 
     /// 将 Redis 消息转换为 InfluxDB 数据点

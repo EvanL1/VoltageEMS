@@ -1,11 +1,12 @@
 use crate::data_processor::ProcessingStats;
 use crate::error::{HisSrvError, Result};
 use crate::influx_client::InfluxDBClient;
+use crate::config::points::{PointStorageConfig, PointConfigStats};
 use axum::{
     extract::{Query, State},
     http::StatusCode,
     response::Json,
-    routing::{get, post},
+    routing::{get, post, put},
     Router,
 };
 use serde::{Deserialize, Serialize};
@@ -22,10 +23,11 @@ pub struct ApiState {
     pub influx_client: Arc<InfluxDBClient>,
     pub processing_stats: Arc<Mutex<ProcessingStats>>,
     pub config: Arc<crate::config::Config>,
+    pub points_config: Arc<Mutex<PointStorageConfig>>,
 }
 
 /// 健康检查响应
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct HealthResponse {
     pub status: String,
     pub service: String,
@@ -35,7 +37,7 @@ pub struct HealthResponse {
 }
 
 /// 组件健康状态
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct ComponentHealth {
     pub status: String,
     pub message: Option<String>,
@@ -43,7 +45,7 @@ pub struct ComponentHealth {
 }
 
 /// 统计信息响应
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct StatsResponse {
     pub processing: ProcessingStats,
     pub influxdb: InfluxDBStats,
@@ -51,7 +53,7 @@ pub struct StatsResponse {
 }
 
 /// InfluxDB 统计信息
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct InfluxDBStats {
     pub connected: bool,
     pub database: String,
@@ -74,7 +76,7 @@ pub struct QueryParams {
 }
 
 /// 通用API响应
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct ApiResponse<T> {
     pub success: bool,
     pub data: Option<T>,
@@ -110,6 +112,11 @@ pub fn create_router(state: ApiState) -> Router {
         .route("/query", post(query_data))
         .route("/query/simple", get(simple_query))
         .route("/flush", post(flush_data))
+        // 点位配置管理 API
+        .route("/config/points", get(get_points_config))
+        .route("/config/points", put(update_points_config))
+        .route("/config/points/stats", get(get_points_config_stats))
+        .route("/config/points/reload", post(reload_points_config))
         .layer(
             ServiceBuilder::new()
                 .layer(TraceLayer::new_for_http())
@@ -266,16 +273,83 @@ pub async fn flush_data(State(state): State<ApiState>) -> std::result::Result<Js
     }
 }
 
+/// 获取点位配置
+pub async fn get_points_config(
+    State(state): State<ApiState>,
+) -> std::result::Result<Json<ApiResponse<PointStorageConfig>>, (StatusCode, Json<ApiResponse<()>>)> {
+    let config = state.points_config.lock().await;
+    let response = ApiResponse::success(config.clone());
+    Ok(Json(response))
+}
+
+/// 更新点位配置
+pub async fn update_points_config(
+    State(state): State<ApiState>,
+    Json(new_config): Json<PointStorageConfig>,
+) -> std::result::Result<Json<ApiResponse<()>>, (StatusCode, Json<ApiResponse<()>>)> {
+    // 验证配置
+    if let Err(e) = new_config.validate() {
+        let response = ApiResponse::error(format!("配置验证失败: {}", e));
+        return Err((StatusCode::BAD_REQUEST, Json(response)));
+    }
+
+    // 更新配置
+    {
+        let mut config = state.points_config.lock().await;
+        *config = new_config;
+    }
+
+    info!("点位配置已通过 API 更新");
+    let response = ApiResponse::success(());
+    Ok(Json(response))
+}
+
+/// 获取点位配置统计
+pub async fn get_points_config_stats(
+    State(state): State<ApiState>,
+) -> std::result::Result<Json<ApiResponse<PointConfigStats>>, (StatusCode, Json<ApiResponse<()>>)> {
+    let config = state.points_config.lock().await;
+    let stats = config.get_stats();
+    let response = ApiResponse::success(stats);
+    Ok(Json(response))
+}
+
+/// 重新加载点位配置
+pub async fn reload_points_config(
+    State(state): State<ApiState>,
+) -> std::result::Result<Json<ApiResponse<String>>, (StatusCode, Json<ApiResponse<()>>)> {
+    let config_path = std::env::var("HISSRV_POINTS_CONFIG")
+        .unwrap_or_else(|_| "config/points.yaml".to_string());
+    
+    match PointStorageConfig::from_file(&config_path) {
+        Ok(new_config) => {
+            {
+                let mut config = state.points_config.lock().await;
+                *config = new_config;
+            }
+            info!("点位配置已从文件 {} 重新加载", config_path);
+            let response = ApiResponse::success(format!("配置已从 {} 重新加载", config_path));
+            Ok(Json(response))
+        }
+        Err(e) => {
+            let response = ApiResponse::error(format!("重新加载配置失败: {}", e));
+            Err((StatusCode::INTERNAL_SERVER_ERROR, Json(response)))
+        }
+    }
+}
+
 /// 启动 API 服务器
 pub async fn start_api_server(
     config: Arc<crate::config::Config>,
     influx_client: Arc<InfluxDBClient>,
     processing_stats: Arc<Mutex<ProcessingStats>>,
+    points_config: Arc<Mutex<PointStorageConfig>>,
 ) -> Result<()> {
     let api_state = ApiState {
         influx_client,
         processing_stats,
         config: Arc::clone(&config),
+        points_config,
     };
 
     let app = create_router(api_state);
@@ -285,11 +359,15 @@ pub async fn start_api_server(
     
     // 打印可用的端点
     info!("可用端点:");
-    info!("  GET  /health      - 健康检查");
-    info!("  GET  /stats       - 统计信息");
-    info!("  POST /query       - SQL查询");
-    info!("  GET  /query/simple - 简单查询");
-    info!("  POST /flush       - 强制刷新");
+    info!("  GET  /health              - 健康检查");
+    info!("  GET  /stats               - 统计信息");
+    info!("  POST /query               - SQL查询");
+    info!("  GET  /query/simple        - 简单查询");
+    info!("  POST /flush               - 强制刷新");
+    info!("  GET  /config/points       - 获取点位配置");
+    info!("  PUT  /config/points       - 更新点位配置");
+    info!("  GET  /config/points/stats - 获取点位配置统计");
+    info!("  POST /config/points/reload - 重新加载点位配置");
 
     axum::serve(listener, app).await.map_err(|e| {
         HisSrvError::Internal(anyhow::anyhow!("API 服务器错误: {}", e))
@@ -309,11 +387,13 @@ mod tests {
         let influx_config = InfluxDBConfig::default();
         let influx_client = Arc::new(crate::influx_client::InfluxDBClient::new(influx_config));
         let processing_stats = Arc::new(Mutex::new(ProcessingStats::default()));
+        let points_config = Arc::new(Mutex::new(PointStorageConfig::default()));
 
         ApiState {
             influx_client,
             processing_stats,
             config,
+            points_config,
         }
     }
 

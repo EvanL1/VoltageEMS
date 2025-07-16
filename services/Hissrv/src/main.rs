@@ -65,6 +65,7 @@ async fn main() -> Result<()> {
         (*influx_client).clone(),
         message_receiver,
         config.influxdb.flush_interval_seconds,
+        config.points.clone(),
     );
 
     // 创建处理器统计的共享状态
@@ -97,15 +98,19 @@ async fn main() -> Result<()> {
         }
     });
 
+    // 创建点位配置的共享状态
+    let points_config = Arc::new(Mutex::new(config.points.clone()));
+
     // 启动 API 服务器（如果配置了）
     let api_handle = if config.service.port > 0 {
         let api_config = Arc::clone(&config);
         let api_influx_client = Arc::clone(&influx_client);
         let api_stats = Arc::clone(&processing_stats);
+        let api_points_config = Arc::clone(&points_config);
 
         Some(tokio::spawn(async move {
             info!("启动 API 服务器在端口 {}", api_config.service.port);
-            if let Err(e) = start_api_server(api_config, api_influx_client, api_stats).await {
+            if let Err(e) = start_api_server(api_config, api_influx_client, api_stats, api_points_config).await {
                 error!("API 服务器错误: {}", e);
             }
         }))
@@ -211,6 +216,17 @@ fn print_service_info(config: &Config) {
     info!("  格式: {}", config.logging.format);
     if let Some(ref file) = config.logging.file {
         info!("  文件: {}", file);
+    }
+    
+    info!("点位配置:");
+    info!("  启用: {}", config.points.enabled);
+    info!("  默认策略: {:?}", config.points.default_policy);
+    info!("  通道规则: {} 个", config.points.rules.channels.len());
+    info!("  点位规则: {} 个", config.points.rules.points.len());
+    info!("  过滤器: {} 个", config.points.filters.len());
+    let configured_channels = config.points.get_configured_channels();
+    if !configured_channels.is_empty() {
+        info!("  已配置通道: {:?}", configured_channels);
     }
     
     println!();

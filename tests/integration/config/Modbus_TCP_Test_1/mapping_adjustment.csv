@@ -1,3 +1,0 @@
-point_id,signal_name,slave_id,function_code,register_address,data_format,register_count
-301,power_setpoint,1,6,40001,float32,2
-302,voltage_setpoint,1,6,40003,float32,2

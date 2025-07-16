@@ -1,3 +1,0 @@
-point_id,signal_name,chinese_name,data_type,reverse
-101,breaker_status,断路器状态,bool,false
-102,alarm_status,告警状态,bool,false

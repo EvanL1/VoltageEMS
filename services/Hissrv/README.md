@@ -7,7 +7,9 @@ HisSrv 是 VoltageEMS 系统中的历史数据服务，负责将 Redis 中的实
 - ✅ **Redis Pub/Sub 集成** - 实时监听 Redis 键空间通知
 - ✅ **批量写入优化** - 自动批量收集数据点，提高写入效率
 - ✅ **灵活的数据模式** - 支持测量(m)、信号(s)、控制(c)、调节(a)等多种数据类型
+- ✅ **智能点位过滤** - 支持通道级、点位级和过滤器级的精细控制
 - ✅ **REST API** - 提供健康检查、统计信息和查询接口
+- ✅ **配置管理 API** - 支持动态配置管理和热重载
 - ✅ **自动重连** - 支持 Redis 和 InfluxDB 连接中断后的自动恢复
 - ✅ **配置管理** - 使用 Figment 支持 YAML 配置和环境变量覆盖
 
@@ -22,9 +24,10 @@ Redis (键空间通知) → HisSrv → InfluxDB 3.2
 ### 核心组件
 
 1. **RedisSubscriber** - 监听 Redis 键空间通知
-2. **DataProcessor** - 处理和批量收集数据点
+2. **DataProcessor** - 处理和批量收集数据点，支持智能过滤
 3. **InfluxDBClient** - 写入 InfluxDB 3.2
 4. **API Server** - 提供 REST API 接口
+5. **点位配置系统** - 精细控制数据保存规则
 
 ## 配置
 
@@ -69,7 +72,75 @@ logging:
 HISSRV_SERVICE__PORT=8082
 HISSRV_REDIS__CONNECTION__HOST=redis.example.com
 HISSRV_INFLUXDB__URL=http://influxdb:8086
+HISSRV_POINTS_CONFIG=config/points.yaml
 ```
+
+## 点位配置系统
+
+HisSrv 提供了强大的点位配置系统，允许精细控制哪些数据点被保存到 InfluxDB。
+
+### 配置文件位置
+
+- 主配置：`config/hissrv.yaml`
+- 点位配置：`config/points.yaml`
+
+### 配置规则优先级
+
+1. **点位级别规则** - 针对特定点位的配置
+2. **通道级别规则** - 针对整个通道的配置
+3. **默认策略** - 全局默认行为
+
+### 基本配置示例
+
+```yaml
+# config/points.yaml
+enabled: true
+default_policy: "allow_all"
+
+rules:
+  channels:
+    - channel_id: 1001
+      enabled: true
+      point_types: ["m", "s"]  # 只保存测量和信号数据
+      name: "主变电站"
+      
+  points:
+    - channel_id: 1001
+      point_id: 10001
+      point_type: "m"
+      enabled: false  # 禁用特定点位
+      name: "故障点位"
+
+filters:
+  - type: "value_range"
+    point_types: ["m"]
+    min_value: -10000
+    max_value: 10000
+    
+  - type: "time_interval"
+    point_types: ["m", "s"]
+    min_interval_seconds: 5
+```
+
+### 配置管理 API
+
+```bash
+# 获取当前配置
+curl http://localhost:8080/config/points
+
+# 更新配置
+curl -X PUT http://localhost:8080/config/points \
+  -H "Content-Type: application/json" \
+  -d @new_config.json
+
+# 获取配置统计
+curl http://localhost:8080/config/points/stats
+
+# 重新加载配置
+curl -X POST http://localhost:8080/config/points/reload
+```
+
+详细配置说明请参考：[POINTS_CONFIG.md](./POINTS_CONFIG.md)
 
 ## Redis 配置要求
 
