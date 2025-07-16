@@ -16,6 +16,7 @@ logs/
 **/logs/
 **/*.log
 fixlog*
+**/fixlog/
 
 # Environment
 .env
