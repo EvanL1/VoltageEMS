@@ -1,35 +1,46 @@
 [package]
-name = "hissrv-rust"
-version = "0.1.0"
+name = "hissrv"
+version = "0.2.0"
 edition = "2021"
 authors = ["Evan Liu <Evan.Liu@voltageenergy.com>"]
-description = "Redis to InfluxDB data transfer service"
+description = "Simple Redis to InfluxDB 3.2 data transfer service"
 
 [dependencies]
 # Internal dependencies
 voltage-common = { workspace = true, features = ["async"] }
 
-# External dependencies
-redis = { version = "0.29", features = ["tokio-comp"], default-features = false } # Only for PubSub types
-influxdb = { version = "0.5.2", features = ["derive"] }
-tokio = { workspace = true }
+# Core dependencies
+tokio = { workspace = true, features = ["full"] }
 futures-util = "0.3"
-clap = { version = "4.1.8", features = ["derive"] }
-regex = "1.7.1"
-serde = { workspace = true }
-serde_json = { workspace = true }
-serde_yaml = { workspace = true }
-chrono = { workspace = true }
 anyhow = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }
-tracing-subscriber = { workspace = true }
-axum = "0.6"
+tracing-subscriber = { workspace = true, features = ["env-filter"] }
+
+# Serialization
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+serde_yaml = { workspace = true }
+chrono = { workspace = true, features = ["serde"] }
+
+# HTTP client for InfluxDB 3.2
+reqwest = { workspace = true, features = ["json"] }
+
+# Web framework (simple API)
+axum = { workspace = true }
 tower = { workspace = true }
-uuid = { workspace = true }
-dashmap = "5.4"
-async-trait = { workspace = true }
-utoipa = { version = "4.0", features = ["axum_extras"] }
-utoipa-swagger-ui = { version = "4.0", features = ["axum"] }
-base64 = "0.21"
-reqwest = { workspace = true } 
+tower-http = { workspace = true, features = ["cors", "trace"] }
+
+# Configuration
+figment = { version = "0.10", features = ["yaml", "env"] }
+
+# Redis
+redis = { workspace = true, features = ["tokio-comp", "connection-manager"] }
+
+# Utilities
+urlencoding = "2.1"
+
+[dev-dependencies]
+tempfile = "3.8"
+tokio-test = "0.4"
+axum-test = "17.1"

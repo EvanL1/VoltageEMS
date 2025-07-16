@@ -11,6 +11,8 @@ voltage-common = { workspace = true, features = ["async"] }
 actix-web = "4"
 actix-cors = "0.6"
 actix-web-httpauth = "0.8"
+actix-web-actors = "4.2"
+actix = "0.13"
 
 # WebSocket support
 actix-ws = "0.2"

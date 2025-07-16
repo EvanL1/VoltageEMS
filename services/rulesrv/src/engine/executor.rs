@@ -1228,4 +1228,103 @@ impl RuleExecutor {
             }
         }
     }
+    
+    /// List all available rules
+    pub async fn list_rules(&self) -> Result<Vec<crate::rules::Rule>> {
+        self.store.list_rules().await
+            .map_err(|e| RulesrvError::RedisError(e.to_string()))
+    }
+
+    /// Execute a simple rule (not DAG)
+    pub async fn execute_simple_rule(&self, rule: &crate::rules::Rule, context: &Value) -> Result<bool> {
+        // Evaluate condition
+        let condition_result = self.evaluate_condition(&rule.condition, context)?;
+        
+        if condition_result {
+            info!("Rule '{}' condition met, executing actions", rule.name);
+            
+            // Execute actions
+            for action in &rule.actions {
+                if let Some(action_type) = action.get("type").and_then(|v| v.as_str()) {
+                    match action_type {
+                        "publish" => {
+                            if let (Some(channel), Some(message)) = (
+                                action.get("channel").and_then(|v| v.as_str()),
+                                action.get("message").and_then(|v| v.as_str())
+                            ) {
+                                // Publish to Redis channel
+                                match self.store.publish(channel, message).await {
+                                    Ok(_) => {
+                                        info!("Published to channel '{}': {}", channel, message);
+                                    }
+                                    Err(e) => {
+                                        error!("Failed to publish to channel '{}': {}", channel, e);
+                                    }
+                                }
+                            }
+                        }
+                        _ => {
+                            debug!("Unknown action type: {}", action_type);
+                        }
+                    }
+                }
+            }
+        }
+        
+        Ok(condition_result)
+    }
+    
+    /// Evaluate a simple condition expression
+    fn evaluate_condition(&self, condition: &str, context: &Value) -> Result<bool> {
+        // Simple condition evaluation for "variable > value" format
+        // This is a basic implementation - can be extended for more complex conditions
+        
+        // Try to parse "variable operator value" format
+        let parts: Vec<&str> = condition.split_whitespace().collect();
+        if parts.len() == 3 {
+            let var_name = parts[0];
+            let operator = parts[1];
+            let value_str = parts[2];
+            
+            // Get variable value from context
+            let var_value = if let Some(val) = context.get(var_name) {
+                val
+            } else if var_name == "temperature" {
+                // Special handling for temperature - check in value field
+                if let Some(val) = context.get("value").and_then(|v| v.get("temperature")) {
+                    val
+                } else {
+                    return Ok(false); // Variable not found in context
+                }
+            } else {
+                return Ok(false); // Variable not found
+            };
+            
+            // Parse comparison value
+            let comp_value: f64 = value_str.parse()
+                .map_err(|_| RulesrvError::ConditionError(format!("Invalid number: {}", value_str)))?;
+            
+            // Get numeric value
+            let num_value = if let Some(n) = var_value.as_f64() {
+                n
+            } else if let Some(n) = var_value.as_i64() {
+                n as f64
+            } else {
+                return Ok(false); // Not a numeric value
+            };
+            
+            // Evaluate operator
+            match operator {
+                ">" => Ok(num_value > comp_value),
+                "<" => Ok(num_value < comp_value),
+                ">=" => Ok(num_value >= comp_value),
+                "<=" => Ok(num_value <= comp_value),
+                "==" => Ok((num_value - comp_value).abs() < f64::EPSILON),
+                "!=" => Ok((num_value - comp_value).abs() >= f64::EPSILON),
+                _ => Err(RulesrvError::InvalidOperator(operator.to_string()))
+            }
+        } else {
+            Err(RulesrvError::ConditionError(format!("Invalid condition format: {}", condition)))
+        }
+    }
 }

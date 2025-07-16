@@ -8,6 +8,7 @@ use crate::redis::AlarmRedisClient;
 
 /// Manages Redis indexes for alarms
 pub struct AlarmIndexManager {
+    #[allow(dead_code)]
     client: Arc<AlarmRedisClient>,
 }
 

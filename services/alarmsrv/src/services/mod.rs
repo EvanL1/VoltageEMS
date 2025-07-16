@@ -6,6 +6,8 @@
 pub mod escalation;
 pub mod listener;
 pub mod processor;
+pub mod rules;
+pub mod scanner;
 
 pub use listener::start_redis_listener;
 pub use processor::start_alarm_processor;
