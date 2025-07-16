@@ -315,12 +315,19 @@ impl RedisClient {
     // Pub/Sub operations
 
     /// Subscribe to channels
-    pub async fn subscribe(&self, _channels: &[&str]) -> Result<redis::aio::PubSub> {
-        let pubsub = self
+    pub async fn subscribe(&self, channels: &[&str]) -> Result<redis::aio::PubSub> {
+        let mut pubsub = self
             .client
             .get_async_pubsub()
             .await
             .map_err(|e| Error::Redis(format!("Failed to create pubsub: {}", e)))?;
+        
+        // Subscribe to channels if provided
+        if !channels.is_empty() {
+            pubsub.subscribe(channels).await
+                .map_err(|e| Error::Redis(format!("Failed to subscribe to channels: {}", e)))?;
+        }
+        
         Ok(pubsub)
     }
 

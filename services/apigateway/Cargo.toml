@@ -12,9 +12,16 @@ actix-web = "4"
 actix-cors = "0.6"
 actix-web-httpauth = "0.8"
 
+# WebSocket support
+actix-ws = "0.2"
+actix-web-actors = "4"
+actix = "0.13"
+
 # Async runtime
 tokio = { workspace = true }
 futures = { workspace = true }
+tokio-stream = "0.1"
+futures-util = "0.3"
 
 # Serialization
 serde = { workspace = true }
@@ -38,6 +45,9 @@ config = { workspace = true }
 # Logging (will be migrated to voltage-common logging)
 env_logger = "0.10"
 log = "0.4"
+
+# Random number generation
+rand = "0.8"
 
 [dev-dependencies]
 actix-rt = "2"

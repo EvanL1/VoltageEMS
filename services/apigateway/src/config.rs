@@ -130,19 +130,23 @@ impl Default for Config {
                 },
             },
             cors: CorsConfig {
-                allowed_origins: vec![
-                    "http://localhost:8082".to_string(),
-                    "http://localhost:3000".to_string(),
-                    "http://localhost:5173".to_string(),
-                ],
+                allowed_origins: vec!["*".to_string()],
                 allowed_methods: vec![
                     "GET".to_string(),
                     "POST".to_string(),
                     "PUT".to_string(),
                     "DELETE".to_string(),
                     "OPTIONS".to_string(),
+                    "HEAD".to_string(),
+                    "PATCH".to_string(),
                 ],
-                allowed_headers: vec!["Content-Type".to_string(), "Authorization".to_string()],
+                allowed_headers: vec![
+                    "Content-Type".to_string(),
+                    "Authorization".to_string(),
+                    "Origin".to_string(),
+                    "Accept".to_string(),
+                    "X-Requested-With".to_string(),
+                ],
                 max_age: 3600,
             },
             logging: LoggingConfig {

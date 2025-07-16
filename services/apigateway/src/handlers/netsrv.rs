@@ -17,7 +17,7 @@ pub async fn proxy_handler(
     req: HttpRequest,
     path: web::Path<String>,
     body: web::Bytes,
-    config: web::Data<Config>,
+    config: web::Data<Arc<Config>>,
     client: web::Data<Arc<reqwest::Client>>,
 ) -> ApiResult<HttpResponse> {
     let method = req.method().as_str();
@@ -29,8 +29,8 @@ pub async fn proxy_handler(
         method,
         &req,
         Some(body),
-        &config,
-        &client,
+        config.get_ref().as_ref(),
+        client.get_ref(),
     )
     .await
 }

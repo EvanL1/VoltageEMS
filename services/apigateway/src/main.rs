@@ -1,5 +1,5 @@
 use actix_cors::Cors;
-use actix_web::{middleware, web, App, HttpServer};
+use actix_web::{middleware, web, App, HttpServer, HttpResponse};
 use env_logger::Env;
 use log::info;
 use std::sync::Arc;
@@ -11,11 +11,17 @@ mod error;
 mod handlers;
 mod redis_client;
 mod response;
+mod websocket;
 
 use auth::middleware::JwtAuthMiddleware;
 use config::Config;
 use config_client::ConfigClient;
 use redis_client::RedisClient;
+
+// CORS OPTIONS 处理器
+async fn handle_options() -> actix_web::Result<HttpResponse> {
+    Ok(HttpResponse::Ok().finish())
+}
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
@@ -66,49 +72,100 @@ async fn main() -> std::io::Result<()> {
 
     // Start HTTP server
     HttpServer::new(move || {
-        let cors = Cors::default()
-            .allowed_origin_fn(|origin, _req_head| {
-                origin.as_bytes().starts_with(b"http://localhost")
-            })
-            .allowed_methods(vec!["GET", "POST", "PUT", "DELETE", "OPTIONS"])
-            .allowed_headers(vec!["Content-Type", "Authorization"])
-            .max_age(3600);
+        // Create WebSocket Hub
+        let ws_hub = websocket::server::create_hub(redis_client.clone());
+        
+        // Start Redis subscriber for real-time data
+        let _redis_subscriber = websocket::handlers::realtime::RedisSubscriber::start(
+            ws_hub.clone(),
+            redis_client.clone(),
+        );
+        let cors = if config.cors.allowed_origins.contains(&"*".to_string()) {
+            // Allow all origins - 明确设置所有需要的头部
+            Cors::default()
+                .allow_any_origin()
+                .allow_any_method()
+                .allow_any_header()
+                .expose_any_header()
+                .max_age(config.cors.max_age as usize)
+        } else {
+            // Configure specific origins
+            let mut cors = Cors::default();
+            for origin in &config.cors.allowed_origins {
+                cors = cors.allowed_origin(origin);
+            }
+            
+            // Convert string methods to HttpMethod
+            let methods: Vec<actix_web::http::Method> = config.cors.allowed_methods
+                .iter()
+                .filter_map(|m| match m.as_str() {
+                    "GET" => Some(actix_web::http::Method::GET),
+                    "POST" => Some(actix_web::http::Method::POST),
+                    "PUT" => Some(actix_web::http::Method::PUT),
+                    "DELETE" => Some(actix_web::http::Method::DELETE),
+                    "OPTIONS" => Some(actix_web::http::Method::OPTIONS),
+                    "HEAD" => Some(actix_web::http::Method::HEAD),
+                    "PATCH" => Some(actix_web::http::Method::PATCH),
+                    _ => None,
+                })
+                .collect();
+                
+            cors.allowed_methods(methods)
+                .allowed_headers(&config.cors.allowed_headers)
+                .expose_any_header()
+                .supports_credentials()
+                .max_age(config.cors.max_age as usize)
+        };
 
         App::new()
             .app_data(web::Data::new(config.clone()))
             .app_data(web::Data::new(redis_client.clone()))
             .app_data(web::Data::new(http_client.clone()))
+            .app_data(web::Data::new(ws_hub.clone()))
             .wrap(cors)
             .wrap(middleware::Logger::default())
-            .service(
-                web::scope("/api/v1")
-                    // Public endpoints (no auth required)
-                    .route("/auth/login", web::post().to(handlers::auth::login))
-                    .route(
-                        "/auth/refresh",
-                        web::post().to(handlers::auth::refresh_token),
-                    )
-                    .service(handlers::health::health_check)
-                    .service(handlers::health::detailed_health)
-                    // Protected endpoints (auth required)
-                    .service(
-                        web::scope("")
-                            .wrap(JwtAuthMiddleware)
-                            .route("/auth/logout", web::post().to(handlers::auth::logout))
-                            .route("/auth/me", web::get().to(handlers::auth::current_user))
-                            .service(web::scope("/comsrv").service(handlers::comsrv::proxy_handler))
-                            .service(web::scope("/modsrv").service(handlers::modsrv::proxy_handler))
-                            .service(web::scope("/hissrv").service(handlers::hissrv::proxy_handler))
-                            .service(web::scope("/netsrv").service(handlers::netsrv::proxy_handler))
-                            .service(
-                                web::scope("/alarmsrv").service(handlers::alarmsrv::proxy_handler),
-                            )
-                            .service(
-                                web::scope("/rulesrv").service(handlers::rulesrv::proxy_handler),
-                            ),
-                    ),
-            )
+            // WebSocket endpoint (no auth required, must be registered first)
+            .route("/ws", web::get().to(websocket::ws_handler))
+            // Health check endpoint (no auth required)
             .route("/health", web::get().to(handlers::health::simple_health))
+            // Public endpoints (no auth required)
+            .route("/auth/login", web::post().to(handlers::auth::login))
+            .route("/auth/refresh", web::post().to(handlers::auth::refresh_token))
+            .service(handlers::health::health_check)
+            .service(handlers::health::detailed_health)
+            // OPTIONS preflight requests for CORS (bypass auth)
+            .route("/api/{path:.*}", web::method(actix_web::http::Method::OPTIONS).to(handle_options))
+            // Protected endpoints (auth required)
+            .service(
+                web::scope("/api")
+                    .wrap(JwtAuthMiddleware)
+                    .route("/auth/logout", web::post().to(handlers::auth::logout))
+                    .route("/auth/me", web::get().to(handlers::auth::current_user))
+                    // Channel management
+                    .route("/channels", web::get().to(handlers::channels::list_channels))
+                    .route("/channels/{id}", web::get().to(handlers::channels::get_channel))
+                    .route("/channels/{id}/telemetry", web::get().to(handlers::data::get_telemetry))
+                    .route("/channels/{id}/signals", web::get().to(handlers::data::get_signals))
+                    .route("/channels/{id}/control", web::post().to(handlers::data::send_control))
+                    .route("/channels/{id}/adjustment", web::post().to(handlers::data::send_adjustment))
+                    .route("/channels/{id}/points/{point_id}/history", web::get().to(handlers::data::get_point_history))
+                    // Alarms
+                    .route("/alarms", web::get().to(handlers::data::get_alarms))
+                    .route("/alarms/active", web::get().to(handlers::data::get_active_alarms))
+                    .route("/alarms/{id}/acknowledge", web::post().to(handlers::data::acknowledge_alarm))
+                    // Historical data
+                    .route("/historical", web::get().to(handlers::data::get_historical))
+                    // System info
+                    .route("/system/info", web::get().to(handlers::system::get_info))
+                    .route("/device-models", web::get().to(handlers::system::get_device_models))
+                    // Service proxies
+                    .service(web::scope("/comsrv").service(handlers::comsrv::proxy_handler))
+                    .service(web::scope("/modsrv").service(handlers::modsrv::proxy_handler))
+                    .service(web::scope("/hissrv").service(handlers::hissrv::proxy_handler))
+                    .service(web::scope("/netsrv").service(handlers::netsrv::proxy_handler))
+                    .service(web::scope("/alarmsrv").service(handlers::alarmsrv::proxy_handler))
+                    .service(web::scope("/rulesrv").service(handlers::rulesrv::proxy_handler))
+            )
     })
     .workers(workers)
     .bind(&bind_addr)?

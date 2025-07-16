@@ -29,14 +29,7 @@ pub struct ConfigResponse {
 }
 
 /// Configuration data structure
-#[derive(Debug, Deserialize)]
-pub struct ConfigData {
-    pub server: ServerConfig,
-    pub redis: RedisConfig,
-    pub services: ServicesConfig,
-    pub cors: CorsConfig,
-    pub logging: LoggingConfig,
-}
+type ConfigData = Config;
 
 /// Configuration update notification
 #[derive(Debug, Deserialize)]
@@ -64,7 +57,7 @@ impl ConfigClient {
     /// Fetch configuration from config service
     pub async fn fetch_config(&self) -> Result<Config, ApiGatewayError> {
         let url = format!(
-            "{}/api/v1/config/{}",
+            "{}/config/{}",
             self.config_service_url, self.service_name
         );
 
@@ -96,8 +89,8 @@ impl ConfigClient {
         // Update version
         *self.current_version.write().await = config_response.version;
 
-        // Convert to internal Config structure
-        let config = self.convert_config(config_response.data)?;
+        // Use the config data directly
+        let config = config_response.data;
 
         // Update cache
         *self.cached_config.write().await = Some(config.clone());
@@ -108,7 +101,7 @@ impl ConfigClient {
     /// Check for configuration updates
     pub async fn check_for_updates(&self) -> Result<bool, ApiGatewayError> {
         let url = format!(
-            "{}/api/v1/config/{}/version",
+            "{}/config/{}/version",
             self.config_service_url, self.service_name
         );
 
@@ -176,7 +169,7 @@ impl ConfigClient {
         value: serde_json::Value,
     ) -> Result<(), ApiGatewayError> {
         let url = format!(
-            "{}/api/v1/config/{}/update",
+            "{}/config/{}/update",
             self.config_service_url, self.service_name
         );
 
@@ -213,7 +206,7 @@ impl ConfigClient {
         &self,
         callback_url: &str,
     ) -> Result<(), ApiGatewayError> {
-        let url = format!("{}/api/v1/config/subscribe", self.config_service_url);
+        let url = format!("{}/config/subscribe", self.config_service_url);
 
         let subscription = NotificationSubscription {
             service: self.service_name.clone(),
@@ -239,58 +232,6 @@ impl ConfigClient {
         Ok(())
     }
 
-    /// Convert external config to internal format
-    fn convert_config(&self, data: ConfigData) -> Result<Config, ApiGatewayError> {
-        // Convert from ConfigData to internal Config structure
-        // This handles any format differences between config service and API Gateway
-
-        let config = Config {
-            server: crate::config::ServerConfig {
-                host: data.server.host,
-                port: data.server.port,
-                workers: data.server.workers,
-            },
-            redis: crate::config::RedisConfig {
-                url: data.redis.url,
-                pool_size: data.redis.pool_size,
-                timeout_seconds: data.redis.timeout_seconds,
-            },
-            services: crate::config::ServicesConfig {
-                comsrv: crate::config::ServiceConfig {
-                    url: data.services.comsrv.url,
-                    timeout_seconds: data.services.comsrv.timeout_seconds,
-                },
-                modsrv: crate::config::ServiceConfig {
-                    url: data.services.modsrv.url,
-                    timeout_seconds: data.services.modsrv.timeout_seconds,
-                },
-                hissrv: crate::config::ServiceConfig {
-                    url: data.services.hissrv.url,
-                    timeout_seconds: data.services.hissrv.timeout_seconds,
-                },
-                netsrv: crate::config::ServiceConfig {
-                    url: data.services.netsrv.url,
-                    timeout_seconds: data.services.netsrv.timeout_seconds,
-                },
-                alarmsrv: crate::config::ServiceConfig {
-                    url: data.services.alarmsrv.url,
-                    timeout_seconds: data.services.alarmsrv.timeout_seconds,
-                },
-            },
-            cors: crate::config::CorsConfig {
-                allowed_origins: data.cors.allowed_origins,
-                allowed_methods: data.cors.allowed_methods,
-                allowed_headers: data.cors.allowed_headers,
-                max_age: data.cors.max_age,
-            },
-            logging: crate::config::LoggingConfig {
-                level: data.logging.level,
-                format: data.logging.format,
-            },
-        };
-
-        Ok(config)
-    }
 
     /// Verify configuration checksum
     fn verify_checksum(&self, _response: &ConfigResponse) -> bool {
@@ -335,46 +276,4 @@ struct NotificationSubscription {
     events: Vec<String>,
 }
 
-// Re-export config data structures
-#[derive(Debug, Deserialize)]
-pub struct ServerConfig {
-    pub host: String,
-    pub port: u16,
-    pub workers: usize,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct RedisConfig {
-    pub url: String,
-    pub pool_size: u32,
-    pub timeout_seconds: u64,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct ServicesConfig {
-    pub comsrv: ServiceConfig,
-    pub modsrv: ServiceConfig,
-    pub hissrv: ServiceConfig,
-    pub netsrv: ServiceConfig,
-    pub alarmsrv: ServiceConfig,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct ServiceConfig {
-    pub url: String,
-    pub timeout_seconds: u64,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct CorsConfig {
-    pub allowed_origins: Vec<String>,
-    pub allowed_methods: Vec<String>,
-    pub allowed_headers: Vec<String>,
-    pub max_age: u64,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct LoggingConfig {
-    pub level: String,
-    pub format: String,
-}
+// Config structures are imported from crate::config
