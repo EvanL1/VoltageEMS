@@ -33,6 +33,7 @@ pub enum ApiGatewayError {
     InternalError(String),
     DatabaseError(String),
     RedisError(String),
+    InfluxDb(String),
 
     // Config errors
     ConfigFetchError(String),
@@ -65,6 +66,7 @@ impl fmt::Display for ApiGatewayError {
             ApiGatewayError::InternalError(msg) => write!(f, "Internal error: {}", msg),
             ApiGatewayError::DatabaseError(msg) => write!(f, "Database error: {}", msg),
             ApiGatewayError::RedisError(msg) => write!(f, "Redis error: {}", msg),
+            ApiGatewayError::InfluxDb(msg) => write!(f, "InfluxDB error: {}", msg),
 
             ApiGatewayError::ConfigFetchError(msg) => write!(f, "Config fetch error: {}", msg),
             ApiGatewayError::ConfigParseError(msg) => write!(f, "Config parse error: {}", msg),
@@ -106,6 +108,7 @@ impl IntoResponse for ApiGatewayError {
                 (StatusCode::INTERNAL_SERVER_ERROR, "DATABASE_ERROR")
             }
             ApiGatewayError::RedisError(_) => (StatusCode::INTERNAL_SERVER_ERROR, "REDIS_ERROR"),
+            ApiGatewayError::InfluxDb(_) => (StatusCode::INTERNAL_SERVER_ERROR, "INFLUXDB_ERROR"),
 
             ApiGatewayError::ConfigFetchError(_) => {
                 (StatusCode::INTERNAL_SERVER_ERROR, "CONFIG_FETCH_ERROR")

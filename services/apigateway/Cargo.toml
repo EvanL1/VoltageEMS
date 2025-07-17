@@ -40,11 +40,18 @@ tracing = { workspace = true }
 # HTTP client
 reqwest = { workspace = true }
 
+# InfluxDB client
+influxdb = "0.7"
+
 # Authentication
 jsonwebtoken = "9"
 
 # Configuration
 config = { workspace = true }
+
+# Async traits and error handling
+async-trait = "0.1"
+thiserror = "1.0"
 
 # Logging (will be migrated to voltage-common logging)
 env_logger = "0.10"

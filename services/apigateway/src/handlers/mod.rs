@@ -1,6 +1,7 @@
 pub mod alarmsrv;
 pub mod auth;
 pub mod channels;
+pub mod config;
 pub mod comsrv;
 pub mod data;
 pub mod health;
