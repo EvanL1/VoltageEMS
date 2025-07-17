@@ -44,6 +44,3 @@ futures = { workspace = true }
 [features]
 default = []
 
-[[bench]]
-name = "storage_benchmark"
-harness = false 
