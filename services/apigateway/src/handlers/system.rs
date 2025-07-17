@@ -1,11 +1,10 @@
-use actix_web::{web, HttpResponse};
+use axum::{extract::State, response::IntoResponse};
 use serde::{Deserialize, Serialize};
-use std::sync::Arc;
 use std::collections::HashMap;
 
 use crate::error::ApiResult;
-use crate::redis_client::RedisClient;
 use crate::response::success_response;
+use crate::AppState;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SystemInfo {
@@ -13,7 +12,7 @@ pub struct SystemInfo {
     pub name: String,
     pub description: String,
     pub uptime: u64,
-    pub services: std::collections::HashMap<String, ServiceStatus>,
+    pub services: HashMap<String, ServiceStatus>,
     pub metrics: SystemMetrics,
 }
 
@@ -84,13 +83,19 @@ pub struct ParamDefinition {
 
 /// 获取系统信息
 pub async fn get_info(
-    redis: web::Data<Arc<RedisClient>>,
-) -> ApiResult<HttpResponse> {
+    State(state): State<AppState>,
+) -> ApiResult<impl IntoResponse> {
     // 检查Redis连接
-    let redis_connected = redis.ping().await.is_ok();
+    let redis_connected = state.redis_client.ping().await.is_ok();
     
     // 获取系统启动时间（模拟）
     let uptime = 3600 * 24 * 7; // 7天
+    
+    // 获取WebSocket连接数
+    let ws_connections = {
+        let hub = state.ws_hub.read().await;
+        hub.session_count()
+    };
     
     let system_info = SystemInfo {
         version: "2.0.0".to_string(),
@@ -132,11 +137,11 @@ pub async fn get_info(
             services
         },
         metrics: SystemMetrics {
-            total_channels: 3,
-            online_channels: 2,
+            total_channels: 5,
+            online_channels: 4,
             total_points: 230,
             active_alarms: 1,
-            websocket_connections: 0, // 实际应该从Hub获取
+            websocket_connections: ws_connections as u32,
             redis_connected,
         },
     };
@@ -145,7 +150,7 @@ pub async fn get_info(
 }
 
 /// 获取设备模型列表
-pub async fn get_device_models() -> ApiResult<HttpResponse> {
+pub async fn get_device_models() -> ApiResult<impl IntoResponse> {
     let device_models = vec![
         DeviceModel {
             id: "power_meter_v1".to_string(),

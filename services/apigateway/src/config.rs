@@ -95,11 +95,11 @@ impl Default for Config {
         Self {
             server: ServerConfig {
                 host: "0.0.0.0".to_string(),
-                port: 8080,
+                port: 8089,
                 workers: 4,
             },
             redis: RedisConfig {
-                url: "redis://127.0.0.1:6379".to_string(),
+                url: "redis://redis:6379".to_string(),
                 pool_size: 10,
                 timeout_seconds: 5,
             },

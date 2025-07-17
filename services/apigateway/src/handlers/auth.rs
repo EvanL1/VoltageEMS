@@ -1,11 +1,11 @@
-use actix_web::{web, HttpResponse};
+use axum::{extract::{Extension, Json, State}, response::IntoResponse};
 use serde::{Deserialize, Serialize};
 
-use crate::auth::{jwt::JwtManager, UserInfo};
+use crate::auth::{jwt::JwtManager, Claims, UserInfo};
 use crate::error::{ApiError, ApiResult};
-use crate::redis_client::{RedisClient, RedisClientExt};
-use std::sync::Arc;
+use crate::redis_client::RedisClientExt;
 use crate::response::success_response;
+use crate::AppState;
 
 #[derive(Deserialize)]
 pub struct LoginRequest {
@@ -35,9 +35,9 @@ pub struct RefreshResponse {
 }
 
 pub async fn login(
-    req: web::Json<LoginRequest>,
-    redis: web::Data<Arc<RedisClient>>,
-) -> ApiResult<HttpResponse> {
+    State(state): State<AppState>,
+    Json(req): Json<LoginRequest>,
+) -> ApiResult<impl IntoResponse> {
     // TODO: In production, verify credentials against a user database
     // For now, we'll use hardcoded users for demonstration
     let user_info = match req.username.as_str() {
@@ -90,7 +90,7 @@ pub async fn login(
 
     // Store refresh token in Redis (optional, for token revocation)
     let key = format!("refresh_token:{}", user_info.id);
-    redis
+    state.redis_client
         .set_ex_api(&key, &refresh_token, 30 * 24 * 3600)
         .await?;
 
@@ -106,15 +106,15 @@ pub async fn login(
 }
 
 pub async fn refresh_token(
-    req: web::Json<RefreshRequest>,
-    redis: web::Data<Arc<RedisClient>>,
-) -> ApiResult<HttpResponse> {
+    State(state): State<AppState>,
+    Json(req): Json<RefreshRequest>,
+) -> ApiResult<impl IntoResponse> {
     // Verify refresh token
     let claims = JwtManager::verify_token(&req.refresh_token)?;
 
     // Check if refresh token exists in Redis (optional)
     let key = format!("refresh_token:{}", claims.sub);
-    let stored_token: Option<String> = redis.get_api(&key).await?;
+    let stored_token: Option<String> = state.redis_client.get_api(&key).await?;
 
     if stored_token.is_none() || stored_token.unwrap() != req.refresh_token {
         return Err(ApiError::InvalidToken("Invalid refresh token".to_string()));
@@ -139,19 +139,21 @@ pub async fn refresh_token(
 }
 
 pub async fn logout(
-    claims: web::ReqData<crate::auth::Claims>,
-    redis: web::Data<Arc<RedisClient>>,
-) -> ApiResult<HttpResponse> {
+    State(state): State<AppState>,
+    Extension(claims): Extension<Claims>,
+) -> ApiResult<impl IntoResponse> {
     // Remove refresh token from Redis
     let key = format!("refresh_token:{}", claims.sub);
-    redis.del_api(&key).await?;
+    state.redis_client.del_api(&key).await?;
 
     Ok(success_response(serde_json::json!({
         "message": "Logged out successfully"
     })))
 }
 
-pub async fn current_user(claims: web::ReqData<crate::auth::Claims>) -> ApiResult<HttpResponse> {
+pub async fn current_user(
+    Extension(claims): Extension<Claims>,
+) -> ApiResult<impl IntoResponse> {
     let user_info = UserInfo {
         id: claims.sub.clone(),
         username: claims.username.clone(),

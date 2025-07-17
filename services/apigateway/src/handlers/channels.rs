@@ -1,10 +1,12 @@
-use actix_web::{web, HttpResponse};
+use axum::{
+    extract::{Path, Query, State},
+    response::IntoResponse,
+};
 use serde::{Deserialize, Serialize};
-use std::sync::Arc;
 
-use crate::error::ApiResult;
-use crate::redis_client::RedisClient;
+use crate::error::{ApiError, ApiResult};
 use crate::response::success_response;
+use crate::AppState;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Channel {
@@ -24,9 +26,9 @@ pub struct ChannelQuery {
 
 /// 获取通道列表
 pub async fn list_channels(
-    query: web::Query<ChannelQuery>,
-    _redis: web::Data<Arc<RedisClient>>,
-) -> ApiResult<HttpResponse> {
+    Query(query): Query<ChannelQuery>,
+    State(_state): State<AppState>,
+) -> ApiResult<impl IntoResponse> {
     // 模拟数据 - 在实际应用中，这些数据应该从Redis或配置中读取
     let mut channels = vec![
         Channel {
@@ -53,6 +55,22 @@ pub async fn list_channels(
             description: Some("Modbus RTU备用通道".to_string()),
             config: None,
         },
+        Channel {
+            id: 1004,
+            name: "CAN总线通道".to_string(),
+            protocol: "can".to_string(),
+            status: "online".to_string(),
+            description: Some("CAN总线数据采集通道".to_string()),
+            config: None,
+        },
+        Channel {
+            id: 1005,
+            name: "测试通道".to_string(),
+            protocol: "modbus_tcp".to_string(),
+            status: "online".to_string(),
+            description: Some("测试用Modbus TCP通道".to_string()),
+            config: None,
+        },
     ];
 
     // 根据查询参数过滤
@@ -68,11 +86,9 @@ pub async fn list_channels(
 
 /// 获取单个通道详情
 pub async fn get_channel(
-    path: web::Path<u32>,
-    _redis: web::Data<Arc<RedisClient>>,
-) -> ApiResult<HttpResponse> {
-    let channel_id = path.into_inner();
-    
+    Path(channel_id): Path<u32>,
+    State(_state): State<AppState>,
+) -> ApiResult<impl IntoResponse> {
     // 模拟数据
     let channel = match channel_id {
         1001 => Some(Channel {
@@ -127,12 +143,40 @@ pub async fn get_channel(
                 "timeout": 1000
             })),
         }),
+        1004 => Some(Channel {
+            id: 1004,
+            name: "CAN总线通道".to_string(),
+            protocol: "can".to_string(),
+            status: "online".to_string(),
+            description: Some("CAN总线数据采集通道".to_string()),
+            config: Some(serde_json::json!({
+                "interface": "can0",
+                "bitrate": 250000,
+                "filters": [
+                    {"id": "0x100", "mask": "0x7FF"},
+                    {"id": "0x200", "mask": "0x7FF"}
+                ]
+            })),
+        }),
+        1005 => Some(Channel {
+            id: 1005,
+            name: "测试通道".to_string(),
+            protocol: "modbus_tcp".to_string(),
+            status: "online".to_string(),
+            description: Some("测试用Modbus TCP通道".to_string()),
+            config: Some(serde_json::json!({
+                "host": "127.0.0.1",
+                "port": 5020,
+                "timeout": 3000,
+                "retry": 2
+            })),
+        }),
         _ => None,
     };
 
     match channel {
         Some(ch) => Ok(success_response(ch)),
-        None => Err(crate::error::ApiError::NotFound(format!(
+        None => Err(ApiError::NotFound(format!(
             "Channel {} not found",
             channel_id
         ))),

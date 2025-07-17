@@ -8,16 +8,18 @@ edition = "2021"
 voltage-common = { workspace = true, features = ["async"] }
 
 # Web framework
-actix-web = "4"
-actix-cors = "0.6"
-actix-web-httpauth = "0.8"
-actix-web-actors = "4.2"
-actix = "0.13"
+axum = { workspace = true, features = ["ws"] }
+tower = { workspace = true }
+tower-http = { version = "0.5", features = ["cors", "trace", "auth"] }
+tower-layer = "0.3"
+tower-service = "0.3"
+http = "1"
+http-body-util = "0.1"
+bytes = "1.9"
 
 # WebSocket support
-actix-ws = "0.2"
-actix-web-actors = "4"
-actix = "0.13"
+tokio-tungstenite = "0.21"
+tungstenite = "0.21"
 
 # Async runtime
 tokio = { workspace = true }
@@ -52,4 +54,5 @@ log = "0.4"
 rand = "0.8"
 
 [dev-dependencies]
-actix-rt = "2"
+anyhow = "1"
+sysinfo = "0.30"
