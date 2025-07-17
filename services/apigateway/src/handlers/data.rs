@@ -1,11 +1,15 @@
-use actix_web::{web, HttpResponse};
+use axum::{
+    extract::{Extension, Path, Query, State},
+    response::IntoResponse,
+    Json,
+};
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
-use std::sync::Arc;
 
+use crate::auth::Claims;
 use crate::error::{ApiError, ApiResult};
-use crate::redis_client::RedisClient;
 use crate::response::success_response;
+use crate::AppState;
 
 // 有效通道ID列表
 const VALID_CHANNEL_IDS: &[u32] = &[1001, 1002, 1003, 1004, 1005];
@@ -96,58 +100,41 @@ pub struct HistoricalQuery {
 
 /// 获取遥测数据
 pub async fn get_telemetry(
-    path: web::Path<u32>,
-    query: web::Query<TelemetryQuery>,
-    redis: web::Data<Arc<RedisClient>>,
-) -> ApiResult<HttpResponse> {
-    let channel_id = path.into_inner();
-    
-    // 验证通道ID有效性
+    Path(channel_id): Path<u32>,
+    Query(query): Query<TelemetryQuery>,
+    State(state): State<AppState>,
+) -> ApiResult<impl IntoResponse> {
+    // 验证通道ID
     validate_channel_id(channel_id)?;
     
-    // 解析点位ID
-    let point_ids: Vec<u32> = if let Some(ids) = &query.point_ids {
-        ids.split(',')
-            .filter_map(|id| id.trim().parse().ok())
-            .collect()
-    } else {
-        // 默认返回前10个点位
-        (1..=10).map(|i| 10000 + i).collect()
-    };
-
+    let limit = query.limit.unwrap_or(100);
     let mut telemetry_data = Vec::new();
-    let timestamp = Utc::now().timestamp_millis();
 
-    // 尝试从Redis获取数据
-    for point_id in point_ids.iter().take(query.limit.unwrap_or(100)) {
-        // 构造Redis键
-        let key = format!("{}:m:{}", channel_id, point_id);
-        
-        // 尝试从Redis获取
-        match redis.get(&key).await {
-            Ok(Some(data)) => {
-                // 解析Redis中的数据
-                if let Ok(value) = serde_json::from_str::<serde_json::Value>(&data) {
-                    telemetry_data.push(TelemetryData {
-                        point_id: *point_id,
-                        value: value["value"].as_f64().unwrap_or(0.0),
-                        quality: value["quality"].as_u64().unwrap_or(192) as u8,
-                        timestamp: value["timestamp"].as_i64().unwrap_or(timestamp),
-                        name: Some(format!("测量点{}", point_id)),
-                        unit: Some("kW".to_string()),
-                    });
+    if let Some(point_ids_str) = query.point_ids {
+        // Get specific points
+        let point_ids: Vec<u32> = point_ids_str
+            .split(',')
+            .filter_map(|s| s.trim().parse().ok())
+            .collect();
+
+        for point_id in point_ids.into_iter().take(limit) {
+            let key = format!("{}:m:{}", channel_id, point_id);
+            if let Ok(Some(data)) = state.redis_client.get(&key).await {
+                if let Ok(value) = serde_json::from_str::<TelemetryData>(&data) {
+                    telemetry_data.push(value);
                 }
             }
-            _ => {
-                // 如果Redis中没有数据，生成模拟数据
-                telemetry_data.push(TelemetryData {
-                    point_id: *point_id,
-                    value: 100.0 + (point_id % 50) as f64 + rand::random::<f64>() * 10.0,
-                    quality: 192,
-                    timestamp,
-                    name: Some(format!("测量点{}", point_id)),
-                    unit: Some("kW".to_string()),
-                });
+        }
+    } else {
+        // Get all telemetry points for the channel
+        let pattern = format!("{}:m:*", channel_id);
+        if let Ok(keys) = state.redis_client.keys(&pattern).await {
+            for key in keys.into_iter().take(limit) {
+                if let Ok(Some(data)) = state.redis_client.get(&key).await {
+                    if let Ok(value) = serde_json::from_str::<TelemetryData>(&data) {
+                        telemetry_data.push(value);
+                    }
+                }
             }
         }
     }
@@ -157,39 +144,43 @@ pub async fn get_telemetry(
 
 /// 获取信号数据
 pub async fn get_signals(
-    path: web::Path<u32>,
-    redis: web::Data<Arc<RedisClient>>,
-) -> ApiResult<HttpResponse> {
-    let channel_id = path.into_inner();
-    
-    // 验证通道ID有效性
+    Path(channel_id): Path<u32>,
+    Query(query): Query<TelemetryQuery>,
+    State(state): State<AppState>,
+) -> ApiResult<impl IntoResponse> {
+    // 验证通道ID
     validate_channel_id(channel_id)?;
+    
+    let limit = query.limit.unwrap_or(100);
     let mut signal_data = Vec::new();
-    let timestamp = Utc::now().timestamp_millis();
 
-    // 生成一些信号数据
-    for i in 1..=10 {
-        let point_id = 20000 + i;
-        let key = format!("{}:s:{}", channel_id, point_id);
-        
-        let value = match redis.get(&key).await {
-            Ok(Some(data)) => {
-                serde_json::from_str::<serde_json::Value>(&data)
-                    .ok()
-                    .and_then(|v| v["value"].as_bool())
-                    .unwrap_or(i % 2 == 0)
+    if let Some(point_ids_str) = query.point_ids {
+        // Get specific points
+        let point_ids: Vec<u32> = point_ids_str
+            .split(',')
+            .filter_map(|s| s.trim().parse().ok())
+            .collect();
+
+        for point_id in point_ids.into_iter().take(limit) {
+            let key = format!("{}:s:{}", channel_id, point_id);
+            if let Ok(Some(data)) = state.redis_client.get(&key).await {
+                if let Ok(value) = serde_json::from_str::<SignalData>(&data) {
+                    signal_data.push(value);
+                }
             }
-            _ => i % 2 == 0,
-        };
-
-        signal_data.push(SignalData {
-            point_id,
-            value,
-            quality: 192,
-            timestamp,
-            name: Some(format!("信号{}", i)),
-            description: Some(if value { "开启" } else { "关闭" }.to_string()),
-        });
+        }
+    } else {
+        // Get all signal points for the channel
+        let pattern = format!("{}:s:*", channel_id);
+        if let Ok(keys) = state.redis_client.keys(&pattern).await {
+            for key in keys.into_iter().take(limit) {
+                if let Ok(Some(data)) = state.redis_client.get(&key).await {
+                    if let Ok(value) = serde_json::from_str::<SignalData>(&data) {
+                        signal_data.push(value);
+                    }
+                }
+            }
+        }
     }
 
     Ok(success_response(signal_data))
@@ -197,254 +188,229 @@ pub async fn get_signals(
 
 /// 发送控制命令
 pub async fn send_control(
-    path: web::Path<u32>,
-    command: web::Json<ControlCommand>,
-    redis: web::Data<Arc<RedisClient>>,
-) -> ApiResult<HttpResponse> {
-    let channel_id = path.into_inner();
-    
-    // 验证通道ID有效性
+    Path(channel_id): Path<u32>,
+    State(state): State<AppState>,
+    Extension(claims): Extension<Claims>,
+    Json(command): Json<ControlCommand>,
+) -> ApiResult<impl IntoResponse> {
+    // 验证通道ID
     validate_channel_id(channel_id)?;
     
-    // 构造命令消息
-    let command_msg = serde_json::json!({
-        "type": "control",
+    // Check permission
+    if !claims.has_permission("channel:write") {
+        return Err(ApiError::Forbidden);
+    }
+
+    // Generate command ID
+    let command_id = uuid::Uuid::new_v4().to_string();
+
+    // Create command with metadata
+    let redis_command = serde_json::json!({
+        "id": command_id,
         "channel_id": channel_id,
         "point_id": command.point_id,
         "value": command.value,
         "params": command.params,
-        "timestamp": Utc::now().timestamp_millis(),
+        "user": claims.username,
+        "timestamp": Utc::now().timestamp(),
     });
 
-    // 发布到Redis
-    let channel = format!("cmd:{}:control", channel_id);
-    redis.publish(&channel, &command_msg.to_string()).await?;
+    // Publish to Redis channel
+    let channel_name = format!("cmd:{}:control", channel_id);
+    let json_str = serde_json::to_string(&redis_command)?;
+    state.redis_client
+        .publish(&channel_name, &json_str)
+        .await?;
 
-    let response = CommandResponse {
+    Ok(success_response(CommandResponse {
         success: true,
-        message: "Control command sent successfully".to_string(),
-        command_id: Some(format!("cmd_{}", Utc::now().timestamp_millis())),
-    };
-
-    Ok(HttpResponse::Accepted().json(&response))
+        message: format!("Control command sent to channel {}", channel_id),
+        command_id: Some(command_id),
+    }))
 }
 
 /// 发送调节命令
 pub async fn send_adjustment(
-    path: web::Path<u32>,
-    command: web::Json<ControlCommand>,
-    redis: web::Data<Arc<RedisClient>>,
-) -> ApiResult<HttpResponse> {
-    let channel_id = path.into_inner();
-    
-    // 验证通道ID有效性
+    Path(channel_id): Path<u32>,
+    State(state): State<AppState>,
+    Extension(claims): Extension<Claims>,
+    Json(command): Json<ControlCommand>,
+) -> ApiResult<impl IntoResponse> {
+    // 验证通道ID
     validate_channel_id(channel_id)?;
     
-    // 构造命令消息
-    let command_msg = serde_json::json!({
-        "type": "adjustment",
+    // Check permission
+    if !claims.has_permission("channel:write") {
+        return Err(ApiError::Forbidden);
+    }
+
+    // Generate command ID
+    let command_id = uuid::Uuid::new_v4().to_string();
+
+    // Create command with metadata
+    let redis_command = serde_json::json!({
+        "id": command_id,
         "channel_id": channel_id,
         "point_id": command.point_id,
         "value": command.value,
         "params": command.params,
-        "timestamp": Utc::now().timestamp_millis(),
+        "user": claims.username,
+        "timestamp": Utc::now().timestamp(),
     });
 
-    // 发布到Redis
-    let channel = format!("cmd:{}:adjustment", channel_id);
-    redis.publish(&channel, &command_msg.to_string()).await?;
+    // Publish to Redis channel
+    let channel_name = format!("cmd:{}:adjustment", channel_id);
+    let json_str = serde_json::to_string(&redis_command)?;
+    state.redis_client
+        .publish(&channel_name, &json_str)
+        .await?;
 
-    let response = CommandResponse {
+    Ok(success_response(CommandResponse {
         success: true,
-        message: "Adjustment command sent successfully".to_string(),
-        command_id: Some(format!("adj_{}", Utc::now().timestamp_millis())),
-    };
-
-    Ok(HttpResponse::Accepted().json(&response))
+        message: format!("Adjustment command sent to channel {}", channel_id),
+        command_id: Some(command_id),
+    }))
 }
 
 /// 获取告警列表
 pub async fn get_alarms(
-    query: web::Query<AlarmQuery>,
-    _redis: web::Data<Arc<RedisClient>>,
-) -> ApiResult<HttpResponse> {
-    let mut alarms = vec![
-        Alarm {
-            id: "alarm_001".to_string(),
-            channel_id: 1001,
-            point_id: 10001,
-            level: "warning".to_string(),
-            message: "功率超限".to_string(),
-            timestamp: Utc::now().timestamp_millis() - 3600000,
-            acknowledged: true,
-            status: "acknowledged".to_string(),
-            acknowledged_by: Some("admin".to_string()),
-            acknowledged_at: Some(Utc::now().timestamp_millis() - 1800000),
-        },
-        Alarm {
-            id: "alarm_002".to_string(),
-            channel_id: 1001,
-            point_id: 10002,
-            level: "critical".to_string(),
-            message: "设备离线".to_string(),
-            timestamp: Utc::now().timestamp_millis() - 7200000,
-            acknowledged: false,
-            status: "active".to_string(),
-            acknowledged_by: None,
-            acknowledged_at: None,
-        },
-        Alarm {
-            id: "alarm_003".to_string(),
-            channel_id: 1002,
-            point_id: 10003,
-            level: "info".to_string(),
-            message: "维护提醒".to_string(),
-            timestamp: Utc::now().timestamp_millis() - 86400000,
-            acknowledged: true,
-            status: "acknowledged".to_string(),
-            acknowledged_by: Some("operator".to_string()),
-            acknowledged_at: Some(Utc::now().timestamp_millis() - 43200000),
-        },
-    ];
-
-    // 根据查询参数过滤
-    if query.active_only.unwrap_or(false) {
-        alarms.retain(|a| a.status == "active");
-    }
-    if let Some(status) = &query.status {
-        alarms.retain(|a| a.status == *status);
-    }
-    if let Some(level) = &query.level {
-        alarms.retain(|a| a.level == *level);
-    }
-
-    // 限制返回数量
+    Query(query): Query<AlarmQuery>,
+    State(state): State<AppState>,
+) -> ApiResult<impl IntoResponse> {
+    let mut alarms = Vec::new();
     let limit = query.limit.unwrap_or(100);
-    alarms.truncate(limit);
+
+    // Get alarms from Redis
+    let pattern = "alarm:*";
+    if let Ok(keys) = state.redis_client.keys(pattern).await {
+        for key in keys.into_iter().take(limit) {
+            if let Ok(Some(data)) = state.redis_client.get(&key).await {
+                if let Ok(alarm) = serde_json::from_str::<Alarm>(&data) {
+                    // Apply filters
+                    if query.active_only.unwrap_or(false) && alarm.acknowledged {
+                        continue;
+                    }
+                    
+                    if let Some(ref status_filter) = query.status {
+                        if alarm.status != *status_filter {
+                            continue;
+                        }
+                    }
+                    
+                    if let Some(ref level_filter) = query.level {
+                        if alarm.level != *level_filter {
+                            continue;
+                        }
+                    }
+
+                    alarms.push(alarm);
+                }
+            }
+        }
+    }
+
+    // Sort by timestamp (newest first)
+    alarms.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
 
     Ok(success_response(alarms))
 }
 
 /// 获取活动告警
 pub async fn get_active_alarms(
-    _redis: web::Data<Arc<RedisClient>>,
-) -> ApiResult<HttpResponse> {
-    let query = AlarmQuery {
-        active_only: Some(true),
-        status: None,
-        level: None,
-        limit: Some(50),
-    };
-    get_alarms(web::Query(query), _redis).await
+    State(state): State<AppState>,
+) -> ApiResult<impl IntoResponse> {
+    get_alarms(
+        Query(AlarmQuery {
+            active_only: Some(true),
+            status: Some("active".to_string()),
+            level: None,
+            limit: Some(100),
+        }),
+        State(state),
+    )
+    .await
 }
 
 /// 确认告警
 pub async fn acknowledge_alarm(
-    path: web::Path<String>,
-) -> ApiResult<HttpResponse> {
-    let alarm_id = path.into_inner();
+    Path(alarm_id): Path<String>,
+    State(state): State<AppState>,
+    Extension(claims): Extension<Claims>,
+) -> ApiResult<impl IntoResponse> {
+    // Check permission
+    if !claims.has_permission("alarm:write") {
+        return Err(ApiError::Forbidden);
+    }
+
+    let key = format!("alarm:{}", alarm_id);
     
-    // 在实际应用中，这里应该更新Redis中的告警状态
-    let response = serde_json::json!({
+    // Get the alarm
+    let alarm_data: String = state.redis_client
+        .get(&key)
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("Alarm {} not found", alarm_id)))?;
+
+    let mut alarm: Alarm = serde_json::from_str(&alarm_data)?;
+
+    // Update alarm
+    alarm.acknowledged = true;
+    alarm.acknowledged_by = Some(claims.username.clone());
+    alarm.acknowledged_at = Some(Utc::now().timestamp());
+    alarm.status = "acknowledged".to_string();
+
+    // Save back to Redis
+    state.redis_client
+        .set(&key, &serde_json::to_string(&alarm)?)
+        .await?;
+
+    Ok(success_response(serde_json::json!({
         "success": true,
         "message": format!("Alarm {} acknowledged", alarm_id),
-        "acknowledged_at": Utc::now().timestamp_millis(),
-    });
-
-    Ok(success_response(response))
+        "alarm": alarm,
+    })))
 }
 
 /// 获取历史数据
 pub async fn get_historical(
-    query: web::Query<HistoricalQuery>,
-) -> ApiResult<HttpResponse> {
-    // 解析点位ID
-    let point_ids: Vec<u32> = query
-        .point_ids
-        .split(',')
-        .filter_map(|id| id.trim().parse().ok())
-        .collect();
-
-    if point_ids.is_empty() {
-        return Err(ApiError::BadRequest("No valid point IDs provided".to_string()));
-    }
-
-    // 模拟历史数据
-    let mut data = Vec::new();
-    let interval_ms = match query.interval.as_deref() {
-        Some("1m") => 60000,
-        Some("5m") => 300000,
-        Some("1h") => 3600000,
-        _ => 300000, // 默认5分钟
-    };
-
-    for point_id in point_ids {
-        let mut point_data = Vec::new();
-        let mut timestamp = query.start_time;
-        
-        while timestamp <= query.end_time {
-            point_data.push(serde_json::json!({
-                "timestamp": timestamp,
-                "value": 100.0 + (point_id % 50) as f64 + rand::random::<f64>() * 20.0 - 10.0,
-                "quality": 192,
-            }));
-            timestamp += interval_ms;
-        }
-
-        data.push(serde_json::json!({
-            "point_id": point_id,
-            "data": point_data,
-        }));
-    }
-
-    Ok(success_response(serde_json::json!({
+    Query(query): Query<HistoricalQuery>,
+    State(_state): State<AppState>,
+) -> ApiResult<impl IntoResponse> {
+    // 验证通道ID
+    validate_channel_id(query.channel_id)?;
+    
+    // In a real implementation, this would query InfluxDB
+    // For now, return mock data
+    let mock_data = serde_json::json!({
         "channel_id": query.channel_id,
+        "point_ids": query.point_ids,
         "start_time": query.start_time,
         "end_time": query.end_time,
-        "interval": query.interval.as_deref().unwrap_or("5m"),
-        "points": data,
-    })))
+        "interval": query.interval,
+        "data": []
+    });
+
+    Ok(success_response(mock_data))
 }
 
-#[derive(Debug, Deserialize)]
-pub struct PointHistoryQuery {
-    pub start_time: i64,
-    pub end_time: i64,
-    pub interval: Option<String>, // e.g., "1m", "5m", "1h"
-}
-
-/// 获取单个点位的历史数据
+/// 获取点位历史数据
 pub async fn get_point_history(
-    path: web::Path<(u32, u32)>,
-    query: web::Query<PointHistoryQuery>,
-) -> ApiResult<HttpResponse> {
-    let (_channel_id, point_id) = path.into_inner();
+    Path((channel_id, point_id)): Path<(u32, u32)>,
+    Query(query): Query<HistoricalQuery>,
+    State(_state): State<AppState>,
+) -> ApiResult<impl IntoResponse> {
+    // 验证通道ID
+    validate_channel_id(channel_id)?;
     
-    // 验证时间范围
-    if query.start_time >= query.end_time {
-        return Err(ApiError::BadRequest("Invalid time range".to_string()));
-    }
+    // In a real implementation, this would query InfluxDB
+    // For now, return mock data
+    let mock_data = serde_json::json!({
+        "channel_id": channel_id,
+        "point_id": point_id,
+        "start_time": query.start_time,
+        "end_time": query.end_time,
+        "interval": query.interval,
+        "data": []
+    });
 
-    // 模拟历史数据
-    let interval_ms = match query.interval.as_deref() {
-        Some("1m") => 60000,
-        Some("5m") => 300000,
-        Some("1h") => 3600000,
-        _ => 300000, // 默认5分钟
-    };
-
-    let mut data = Vec::new();
-    let mut timestamp = query.start_time;
-    
-    while timestamp <= query.end_time {
-        data.push(serde_json::json!({
-            "timestamp": timestamp,
-            "value": 100.0 + (point_id % 50) as f64 + rand::random::<f64>() * 20.0 - 10.0,
-            "quality": 192,
-        }));
-        timestamp += interval_ms;
-    }
-
-    // 返回数组格式的数据
-    Ok(success_response(data))
+    Ok(success_response(mock_data))
 }

@@ -1,4 +1,8 @@
-use actix_web::HttpResponse;
+use axum::{
+    http::StatusCode,
+    response::{IntoResponse, Response},
+    Json,
+};
 use chrono::Utc;
 use serde::Serialize;
 use serde_json::json;
@@ -48,30 +52,29 @@ where
     }
 }
 
-pub trait IntoApiResponse {
-    fn into_response(self) -> HttpResponse;
-}
-
-impl<T> IntoApiResponse for ApiResponse<T>
+impl<T> IntoResponse for ApiResponse<T>
 where
     T: Serialize,
 {
-    fn into_response(self) -> HttpResponse {
-        HttpResponse::Ok().json(self)
+    fn into_response(self) -> Response {
+        Json(self).into_response()
     }
 }
 
-pub fn success_response<T: Serialize>(data: T) -> HttpResponse {
-    ApiResponse::success(data).into_response()
+pub fn success_response<T: Serialize>(data: T) -> impl IntoResponse {
+    Json(ApiResponse::success(data))
 }
 
 pub fn error_response(
-    status: actix_web::http::StatusCode,
+    status: StatusCode,
     code: &str,
     message: &str,
     details: Option<String>,
-) -> HttpResponse {
-    HttpResponse::build(status).json(ApiResponse::<()>::error(code, message, details))
+) -> impl IntoResponse {
+    (
+        status,
+        Json(ApiResponse::<()>::error(code, message, details)),
+    )
 }
 
 pub fn paginated_response<T: Serialize>(
@@ -79,7 +82,7 @@ pub fn paginated_response<T: Serialize>(
     total: usize,
     offset: usize,
     limit: usize,
-) -> HttpResponse {
+) -> impl IntoResponse {
     success_response(json!({
         "items": data,
         "pagination": {
