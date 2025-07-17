@@ -10,7 +10,7 @@ use crate::api::ApiServer;
 use crate::config::Config;
 use crate::engine::RuleExecutor;
 use crate::error::{Result, RulesrvError};
-use crate::redis::Subscriber;
+use crate::redis::{RedisSubscriber, RedisStore};
 
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
@@ -95,36 +95,43 @@ async fn main() -> Result<()> {
 async fn run_service(config: &Config) -> Result<()> {
     info!("Starting Rules Service in service mode");
 
+    // Create Redis store
+    let store = Arc::new(RedisStore::new(&config.redis_url, None)?);
+    
     // Create rule executor
-    let executor = Arc::new(RuleExecutor::new(config.clone())?);
+    let executor = Arc::new(RuleExecutor::new(store.clone()));
 
     // Start Redis subscriber
-    let subscriber = Subscriber::new(config.clone());
-    let executor_clone = executor.clone();
+    let mut subscriber = RedisSubscriber::new(&config.redis_url, executor.clone())?;
+    subscriber.start().await?;
 
-    tokio::spawn(async move {
-        if let Err(e) = subscriber.start(executor_clone).await {
-            error!("Redis subscriber error: {}", e);
-        }
+    // Start API server in a separate task
+    let api_server = ApiServer::new(executor.clone(), store.clone(), config.api.port);
+    let api_port = config.api.port;
+    
+    let api_handle = tokio::spawn(async move {
+        api_server.start().await
     });
-
-    // Start API server
-    let api_server = ApiServer::new(executor.clone(), config.api.port);
 
     info!(
         "Rules service started, API server available at http://0.0.0.0:{}",
-        config.api.port
+        api_port
     );
 
-    api_server.start().await?;
+    // Keep the subscriber alive and wait for the API server
+    api_handle.await.map_err(|e| RulesrvError::InternalError(e.into()))??;
+    
+    // Clean shutdown
+    subscriber.stop().await?;
 
     Ok(())
 }
 
 /// Start API server only
 async fn start_api_server(config: &Config) -> Result<()> {
-    let executor = Arc::new(RuleExecutor::new(config.clone())?);
-    let api_server = ApiServer::new(executor, config.api.port);
+    let store = Arc::new(RedisStore::new(&config.redis_url, None)?);
+    let executor = Arc::new(RuleExecutor::new(store.clone()));
+    let api_server = ApiServer::new(executor, store, config.api.port);
 
     info!("Starting API server on port {}", config.api.port);
     api_server.start().await?;
@@ -134,8 +141,9 @@ async fn start_api_server(config: &Config) -> Result<()> {
 
 /// List all rules
 async fn list_rules(config: &Config) -> Result<()> {
-    let executor = RuleExecutor::new(config.clone())?;
-    let rules = executor.list_rules()?;
+    let store = Arc::new(RedisStore::new(&config.redis_url, None)?);
+    let executor = RuleExecutor::new(store);
+    let rules = executor.list_rules().await?;
 
     println!("Available rules:");
     for rule in rules {
@@ -152,7 +160,8 @@ async fn list_rules(config: &Config) -> Result<()> {
 
 /// Test a specific rule
 async fn test_rule(config: &Config, rule_id: &str) -> Result<()> {
-    let executor = RuleExecutor::new(config.clone())?;
+    let store = Arc::new(RedisStore::new(&config.redis_url, None)?);
+    let executor = RuleExecutor::new(store);
 
     println!("Testing rule: {}", rule_id);
 

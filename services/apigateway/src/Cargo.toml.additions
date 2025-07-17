@@ -1,0 +1,8 @@
+# Add these dependencies to apigateway/Cargo.toml
+
+[dependencies]
+# ... existing dependencies ...
+actix-web-actors = "4.2"
+actix = "0.13"
+futures = "0.3"
+tokio-stream = "0.1"

@@ -19,6 +19,7 @@ mod error;
 mod handlers;
 mod redis_client;
 mod response;
+mod realtime;
 mod websocket;
 
 use auth::middleware::jwt_auth_layer;

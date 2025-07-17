@@ -354,6 +354,42 @@ impl ControlSender {
         timeout_commands
     }
 
+    /// 等待命令完成（异步版本）
+    pub async fn wait_for_completion(&mut self, command_id: &str, timeout: std::time::Duration) -> Result<SendResult> {
+        let start = Instant::now();
+        let mut retry_count = 0;
+        
+        loop {
+            // 检查是否已经完成
+            if let Some(status) = self.interface.get_command_status(command_id)? {
+                match status.status.as_str() {
+                    "success" | "failed" => {
+                        return Ok(SendResult {
+                            command_id: command_id.to_string(),
+                            success: status.status == "success",
+                            status: status.status,
+                            message: status.message,
+                            retry_count,
+                            duration: start.elapsed(),
+                        });
+                    }
+                    _ => {
+                        // 命令仍在处理中，继续等待
+                    }
+                }
+            }
+            
+            // 检查超时
+            if start.elapsed() > timeout {
+                return Err(ModelSrvError::TimeoutError(format!("Command {} timeout after {:?}", command_id, timeout)));
+            }
+            
+            // 等待一段时间后重试
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            retry_count += 1;
+        }
+    }
+
     // ===== 内部方法 =====
 
     /// 等待命令完成并支持重试

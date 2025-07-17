@@ -5,6 +5,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+pub mod auto_config;
 pub mod calculation;
 pub mod dataflow;
 pub mod instance;
@@ -12,6 +13,7 @@ pub mod integration;
 pub mod registry;
 pub mod types;
 
+pub use auto_config::*;
 pub use calculation::*;
 pub use dataflow::{DataFlowConfig, DataFlowProcessor};
 pub use instance::*;

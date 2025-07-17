@@ -83,8 +83,9 @@ pub struct PointData {
     pub value: PointValue,
     /// Timestamp when the value was read/generated
     pub timestamp: Timestamp,
-    /// Quality flag
-    pub quality: Quality,
+    /// Quality flag (optional, defaults to Good if not specified)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub quality: Option<Quality>,
     /// Optional metadata
     #[serde(skip_serializing_if = "Option::is_none")]
     pub metadata: Option<HashMap<String, String>>,
