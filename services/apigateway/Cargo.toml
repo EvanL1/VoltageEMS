@@ -16,8 +16,6 @@ actix = "0.13"
 
 # WebSocket support
 actix-ws = "0.2"
-actix-web-actors = "4"
-actix = "0.13"
 
 # Async runtime
 tokio = { workspace = true }
