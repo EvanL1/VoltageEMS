@@ -255,6 +255,13 @@ impl ConfigClient {
                 pool_size: data.redis.pool_size,
                 timeout_seconds: data.redis.timeout_seconds,
             },
+            influxdb: crate::config::InfluxDbConfig {
+                url: "http://localhost:8086".to_string(),
+                database: "voltage_ems".to_string(),
+                username: None,
+                password: None,
+                timeout_seconds: 30,
+            },
             services: crate::config::ServicesConfig {
                 comsrv: crate::config::ServiceConfig {
                     url: data.services.comsrv.url,

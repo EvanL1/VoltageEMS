@@ -15,16 +15,19 @@ use tower_http::cors::{Any, CorsLayer};
 mod auth;
 mod config;
 mod config_client;
+mod data_access;
 mod error;
 mod handlers;
+mod influxdb_client;
 mod redis_client;
 mod response;
-mod realtime;
 mod websocket;
 
 use auth::middleware::jwt_auth_layer;
 use config::Config;
 use config_client::ConfigClient;
+use data_access::{hybrid::HybridDataAccess, sync::ConfigSyncService, DataAccessLayer};
+use influxdb_client::InfluxDbClient;
 use redis_client::RedisClient;
 
 // CORS OPTIONS 处理器
@@ -82,6 +85,12 @@ async fn main() -> std::io::Result<()> {
             .expect("Failed to connect to Redis"),
     );
 
+    // Initialize InfluxDB client
+    let influxdb_client = Arc::new(InfluxDbClient::new(
+        &config.influxdb.url,
+        &config.influxdb.database,
+    ));
+
     // Create HTTP client for backend services
     let http_client = Arc::new(reqwest::Client::new());
 
@@ -94,6 +103,51 @@ async fn main() -> std::io::Result<()> {
         ws_hub.clone(),
         redis_client.clone(),
     );
+
+    // Initialize data access layer
+    let mut service_urls = std::collections::HashMap::new();
+    if let Some(comsrv_url) = config.get_service_url("comsrv") {
+        service_urls.insert("comsrv".to_string(), comsrv_url.to_string());
+    }
+    if let Some(modsrv_url) = config.get_service_url("modsrv") {
+        service_urls.insert("modsrv".to_string(), modsrv_url.to_string());
+    }
+    if let Some(hissrv_url) = config.get_service_url("hissrv") {
+        service_urls.insert("hissrv".to_string(), hissrv_url.to_string());
+    }
+    if let Some(netsrv_url) = config.get_service_url("netsrv") {
+        service_urls.insert("netsrv".to_string(), netsrv_url.to_string());
+    }
+    if let Some(alarmsrv_url) = config.get_service_url("alarmsrv") {
+        service_urls.insert("alarmsrv".to_string(), alarmsrv_url.to_string());
+    }
+
+    let data_access_layer = Arc::new(HybridDataAccess::new(
+        redis_client.clone(),
+        http_client.clone(),
+        service_urls.clone(),
+        influxdb_client.clone(),
+    )) as Arc<dyn DataAccessLayer>;
+
+    // Initialize configuration sync service
+    let config_sync_service = Arc::new(ConfigSyncService::new(
+        redis_client.clone(),
+        http_client.clone(),
+    ));
+
+    // Register services for configuration sync
+    for (service_name, service_url) in service_urls.iter() {
+        let service_config = data_access::sync::ServiceConfig::new(
+            service_name.clone(),
+            service_url.to_string(),
+        );
+        config_sync_service.register_service(service_config).await;
+    }
+
+    // Start configuration sync tasks
+    config_sync_service.start_sync_tasks().await;
+
+    info!("Data access layer and configuration sync service initialized");
 
     // Setup CORS
     let cors = if config.cors.allowed_origins.contains(&"*".to_string()) {
@@ -149,6 +203,14 @@ async fn main() -> std::io::Result<()> {
                 .route("/channels/:id/control", post(handlers::data::send_control))
                 .route("/channels/:id/adjustment", post(handlers::data::send_adjustment))
                 .route("/channels/:id/points/:point_id/history", get(handlers::data::get_point_history))
+                // Configuration management
+                .route("/configs", get(handlers::config::list_configs))
+                .route("/configs/:key", get(handlers::config::get_config))
+                .route("/configs/:key", axum::routing::put(handlers::config::update_config))
+                .route("/configs/:key", axum::routing::delete(handlers::config::delete_config))
+                .route("/configs/sync/:service", post(handlers::config::trigger_sync))
+                .route("/configs/sync/status", get(handlers::config::get_sync_status))
+                .route("/configs/cache/clear", post(handlers::config::clear_cache))
                 // Alarms
                 .route("/alarms", get(handlers::data::get_alarms))
                 .route("/alarms/active", get(handlers::data::get_active_alarms))
@@ -178,7 +240,10 @@ async fn main() -> std::io::Result<()> {
             config: config.clone(),
             redis_client: redis_client.clone(),
             http_client: http_client.clone(),
+            influxdb_client: influxdb_client.clone(),
             ws_hub: ws_hub.clone(),
+            data_access_layer: data_access_layer.clone(),
+            config_sync_service: config_sync_service.clone(),
         });
 
     // Create TCP listener
@@ -200,7 +265,10 @@ pub struct AppState {
     pub config: Arc<Config>,
     pub redis_client: Arc<RedisClient>,
     pub http_client: Arc<reqwest::Client>,
+    pub influxdb_client: Arc<InfluxDbClient>,
     pub ws_hub: Arc<tokio::sync::RwLock<websocket::hub::Hub>>,
+    pub data_access_layer: Arc<dyn DataAccessLayer>,
+    pub config_sync_service: Arc<ConfigSyncService>,
 }
 
 // Logging middleware

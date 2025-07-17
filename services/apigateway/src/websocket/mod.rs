@@ -62,7 +62,7 @@ async fn handle_socket(
             match msg {
                 hub::HubMessage::Text(text) => {
                     if ws_sender
-                        .send(axum::extract::ws::Message::Text(text))
+                        .send(axum::extract::ws::Message::Text(text.into()))
                         .await
                         .is_err()
                     {
@@ -71,7 +71,7 @@ async fn handle_socket(
                 }
                 hub::HubMessage::Binary(data) => {
                     if ws_sender
-                        .send(axum::extract::ws::Message::Binary(data))
+                        .send(axum::extract::ws::Message::Binary(data.into()))
                         .await
                         .is_err()
                     {

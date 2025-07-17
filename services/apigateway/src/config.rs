@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 pub struct Config {
     pub server: ServerConfig,
     pub redis: RedisConfig,
+    pub influxdb: InfluxDbConfig,
     pub services: ServicesConfig,
     pub cors: CorsConfig,
     pub logging: LoggingConfig,
@@ -20,6 +21,15 @@ pub struct ServerConfig {
 pub struct RedisConfig {
     pub url: String,
     pub pool_size: u32,
+    pub timeout_seconds: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InfluxDbConfig {
+    pub url: String,
+    pub database: String,
+    pub username: Option<String>,
+    pub password: Option<String>,
     pub timeout_seconds: u64,
 }
 
@@ -102,6 +112,13 @@ impl Default for Config {
                 url: "redis://redis:6379".to_string(),
                 pool_size: 10,
                 timeout_seconds: 5,
+            },
+            influxdb: InfluxDbConfig {
+                url: "http://influxdb:8086".to_string(),
+                database: "voltage_ems".to_string(),
+                username: None,
+                password: None,
+                timeout_seconds: 30,
             },
             services: ServicesConfig {
                 comsrv: ServiceConfig {

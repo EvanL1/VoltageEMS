@@ -39,7 +39,7 @@ impl RedisClientExt for RedisClient {
     }
 
     async fn del_api(&self, key: &str) -> ApiResult<()> {
-        self.del(key)
+        self.del(&[key])
             .await
             .map_err(|e| ApiGatewayError::RedisError(e.to_string()))
             .map(|_| ())
