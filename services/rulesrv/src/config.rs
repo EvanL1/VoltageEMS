@@ -21,7 +21,7 @@ pub struct Config {
     /// Log level
     #[serde(default = "default_log_level")]
     pub log_level: String,
-    
+
     /// Redis URL (convenience accessor)
     #[serde(skip)]
     pub redis_url: String,
@@ -37,7 +37,7 @@ pub struct ServiceConfig {
     /// Service port
     #[serde(default = "default_service_port")]
     pub port: u16,
-    
+
     /// API server port
     #[serde(default = "default_api_port")]
     pub api_port: u16,
@@ -75,7 +75,6 @@ pub struct EngineConfig {
     pub rule_key_pattern: String,
 }
 
-
 impl Config {
     /// Load configuration from file
     pub fn from_file<P: AsRef<Path>>(path: P) -> Result<Self> {
@@ -84,7 +83,7 @@ impl Config {
 
         let mut config: Config = serde_yaml::from_str(&content)
             .map_err(|e| RulesrvError::ConfigError(format!("Failed to parse config: {}", e)))?;
-        
+
         // Set the redis_url from redis.url
         config.redis_url = config.redis.url.clone();
 
@@ -178,7 +177,6 @@ impl Default for EngineConfig {
         }
     }
 }
-
 
 // Default value functions
 fn default_service_name() -> String {

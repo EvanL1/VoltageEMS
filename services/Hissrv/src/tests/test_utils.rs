@@ -1,6 +1,8 @@
 //! 测试辅助工具
 
-use crate::config::{Config, RedisConfig, RedisConnection, StorageConfig, ServiceConfig, LoggingConfig, ApiConfig};
+use crate::config::{
+    ApiConfig, Config, LoggingConfig, RedisConfig, RedisConnection, ServiceConfig, StorageConfig,
+};
 use crate::storage::{DataPoint, DataValue};
 use chrono::{DateTime, Utc};
 use std::collections::HashMap;
@@ -26,10 +28,7 @@ pub fn create_test_config() -> Config {
                 timeout_seconds: 5,
                 max_retries: 3,
             },
-            subscription: vec![
-                "test:*".to_string(),
-                "1001:*:*".to_string(),
-            ],
+            subscription: vec!["test:*".to_string(), "1001:*:*".to_string()],
             batch_size: 100,
             flush_interval_ms: 100,
         },
@@ -134,11 +133,7 @@ pub fn create_test_data_point_with_tags(
 }
 
 /// 创建测试用的 PointData
-pub fn create_test_point_data(
-    channel_id: u32,
-    point_id: u32,
-    value: f64,
-) -> PointData {
+pub fn create_test_point_data(channel_id: u32, point_id: u32, value: f64) -> PointData {
     PointData {
         channel_id,
         point_id,
@@ -155,7 +150,7 @@ pub fn create_test_batch(size: usize, base_value: f64) -> Vec<DataPoint> {
             let mut tags = HashMap::new();
             tags.insert("sensor".to_string(), format!("sensor_{}", i % 10));
             tags.insert("location".to_string(), format!("location_{}", i % 5));
-            
+
             DataPoint {
                 key: format!("test_metric_{}", i),
                 value: DataValue::Float(base_value + i as f64),
@@ -175,14 +170,12 @@ pub fn create_time_series_data(
     interval_seconds: i64,
 ) -> Vec<DataPoint> {
     (0..count)
-        .map(|i| {
-            DataPoint {
-                key: key.to_string(),
-                value: DataValue::Float((i as f64).sin() * 100.0),
-                timestamp: start_time + chrono::Duration::seconds(i as i64 * interval_seconds),
-                tags: HashMap::new(),
-                metadata: HashMap::new(),
-            }
+        .map(|i| DataPoint {
+            key: key.to_string(),
+            value: DataValue::Float((i as f64).sin() * 100.0),
+            timestamp: start_time + chrono::Duration::seconds(i as i64 * interval_seconds),
+            tags: HashMap::new(),
+            metadata: HashMap::new(),
         })
         .collect()
 }
@@ -196,17 +189,17 @@ pub fn generate_test_channel(channel_id: u32, msg_type: &str, point_id: u32) -> 
 pub fn generate_random_data(count: usize) -> Vec<DataPoint> {
     use rand::Rng;
     let mut rng = rand::thread_rng();
-    
+
     (0..count)
         .map(|_| {
             let value = rng.gen_range(0.0..100.0);
             let sensor_id = rng.gen_range(1..=10);
             let location_id = rng.gen_range(1..=5);
-            
+
             let mut tags = HashMap::new();
             tags.insert("sensor".to_string(), format!("sensor_{}", sensor_id));
             tags.insert("location".to_string(), format!("location_{}", location_id));
-            
+
             DataPoint {
                 key: format!("metric_{}", Uuid::new_v4()),
                 value: DataValue::Float(value),
@@ -231,14 +224,14 @@ where
     let start = tokio::time::Instant::now();
     let timeout = tokio::time::Duration::from_millis(timeout_ms);
     let interval = tokio::time::Duration::from_millis(check_interval_ms);
-    
+
     while start.elapsed() < timeout {
         if condition().await {
             return true;
         }
         tokio::time::sleep(interval).await;
     }
-    
+
     false
 }
 
@@ -255,13 +248,13 @@ impl TestTimestampGenerator {
             increment: chrono::Duration::seconds(increment_seconds),
         }
     }
-    
+
     pub fn next(&mut self) -> DateTime<Utc> {
         let timestamp = self.current;
         self.current = self.current + self.increment;
         timestamp
     }
-    
+
     pub fn skip(&mut self, count: usize) {
         for _ in 0..count {
             self.next();
@@ -272,27 +265,27 @@ impl TestTimestampGenerator {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_create_test_config() {
         let config = create_test_config();
         assert_eq!(config.service.name, "hissrv-test");
         assert_eq!(config.redis.connection.database, 15);
     }
-    
+
     #[test]
     fn test_create_test_data_point() {
         let point = create_test_data_point("test_key", 42.0);
         assert_eq!(point.key, "test_key");
         assert!(matches!(point.value, DataValue::Float(v) if v == 42.0));
     }
-    
+
     #[test]
     fn test_generate_test_channel() {
         assert_eq!(generate_test_channel(1001, "m", 10001), "1001:m:10001");
         assert_eq!(generate_test_channel(2002, "s", 20002), "2002:s:20002");
     }
-    
+
     #[tokio::test]
     async fn test_wait_for_condition() {
         let mut counter = 0;
@@ -300,7 +293,7 @@ mod tests {
             counter += 1;
             counter >= 3
         };
-        
+
         let result = wait_for_condition(condition, 1000, 100).await;
         assert!(result);
     }

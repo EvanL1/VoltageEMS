@@ -25,9 +25,13 @@ path = "src/bin/test_logging.rs"
 name = "test_debug_logging"
 path = "src/bin/test_debug_logging.rs"
 
-# [[example]]
-# name = "optimized_points_demo"
-# path = "examples/optimized_points_demo.rs"
+[[example]]
+name = "pubsub_subscriber"
+path = "examples/pubsub_subscriber.rs"
+
+[[example]]
+name = "pubsub_test"
+path = "examples/pubsub_test.rs"
 
 [dependencies]
 # Local dependencies

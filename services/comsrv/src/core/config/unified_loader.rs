@@ -20,7 +20,6 @@ pub struct UnifiedCsvLoader;
 pub struct FourTelemetryPoint {
     pub point_id: u32,
     pub signal_name: String,
-    pub chinese_name: String,
     pub telemetry_type: String,
     pub scale: Option<f64>,
     pub offset: Option<f64>,
@@ -180,17 +179,16 @@ impl UnifiedCsvLoader {
                 ComSrvError::ConfigError(format!("CSV error at row {}: {e}", idx + 2))
             })?;
 
-            let point = if header_count >= 9 {
-                // New format: point_id,signal_name,chinese_name,data_type,scale,offset,unit,description,group
+            let point = if header_count >= 7 {
+                // New format: point_id,signal_name,data_type,scale,offset,unit,description
                 FourTelemetryPoint {
                     point_id: record.get(0).unwrap_or("0").parse().unwrap_or(0),
                     signal_name: record.get(1).unwrap_or("").to_string(),
-                    chinese_name: record.get(2).unwrap_or("").to_string(),
                     telemetry_type: telemetry_type.to_string(),
-                    data_type: record.get(3).unwrap_or("float32").to_string(),
-                    scale: record.get(4).and_then(|s| s.parse().ok()),
-                    offset: record.get(5).and_then(|s| s.parse().ok()),
-                    unit: record.get(6).and_then(|s| {
+                    data_type: record.get(2).unwrap_or("float32").to_string(),
+                    scale: record.get(3).and_then(|s| s.parse().ok()),
+                    offset: record.get(4).and_then(|s| s.parse().ok()),
+                    unit: record.get(5).and_then(|s| {
                         if s.is_empty() {
                             None
                         } else {
@@ -200,13 +198,12 @@ impl UnifiedCsvLoader {
                     reverse: None,
                 }
             } else if header_count >= 6 {
-                // Old format: point_id,signal_name,chinese_name,scale,offset,unit
+                // Compact format: point_id,signal_name,data_type,scale,offset,unit
                 FourTelemetryPoint {
                     point_id: record.get(0).unwrap_or("0").parse().unwrap_or(0),
                     signal_name: record.get(1).unwrap_or("").to_string(),
-                    chinese_name: record.get(2).unwrap_or("").to_string(),
                     telemetry_type: telemetry_type.to_string(),
-                    data_type: "FLOAT".to_string(),
+                    data_type: record.get(2).unwrap_or("float32").to_string(),
                     scale: record.get(3).and_then(|s| s.parse().ok()),
                     offset: record.get(4).and_then(|s| s.parse().ok()),
                     unit: record.get(5).and_then(|s| {
@@ -259,18 +256,17 @@ impl UnifiedCsvLoader {
                 ComSrvError::ConfigError(format!("CSV error at row {}: {e}", idx + 2))
             })?;
 
-            // Signal format: point_id,signal_name,chinese_name,data_type,reverse
+            // Signal format: point_id,signal_name,data_type,reverse
             let point = FourTelemetryPoint {
                 point_id: record.get(0).unwrap_or("0").parse().unwrap_or(0),
                 signal_name: record.get(1).unwrap_or("").to_string(),
-                chinese_name: record.get(2).unwrap_or("").to_string(),
                 telemetry_type: telemetry_type.to_string(),
-                data_type: record.get(3).unwrap_or("bool").to_string(),
+                data_type: record.get(2).unwrap_or("bool").to_string(),
                 scale: None,
                 offset: None,
                 unit: None,
                 reverse: record
-                    .get(4)
+                    .get(3)
                     .and_then(|s| s.parse::<u8>().ok())
                     .map(|v| v != 0),
             };
@@ -382,7 +378,6 @@ impl UnifiedCsvLoader {
         CombinedPoint {
             point_id: telemetry.point_id,
             signal_name: telemetry.signal_name,
-            chinese_name: telemetry.chinese_name,
             telemetry_type: telemetry.telemetry_type.clone(),
             data_type: telemetry.data_type,
             protocol_params,

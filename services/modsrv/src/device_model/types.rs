@@ -21,7 +21,6 @@ pub enum DeviceStatus {
     Unknown,
 }
 
-
 /// 数据质量
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]

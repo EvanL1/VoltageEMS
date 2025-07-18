@@ -77,7 +77,7 @@ pub async fn advanced_query(
 
     // 创建查询优化器
     let optimizer = QueryOptimizer::new(state.storage_manager.clone());
-    
+
     // 生成查询计划
     let query_plan = optimizer
         .create_plan(&query, params.mode.unwrap_or(QueryMode::Balanced))
@@ -151,7 +151,9 @@ pub async fn batch_query(
     Query(params): Query<BatchQueryParams>,
     Json(batch_query): Json<BatchHistoryQuery>,
 ) -> Result<Json<BatchQueryResponse>, (StatusCode, Json<ErrorResponse>)> {
-    let batch_id = params.batch_id.unwrap_or_else(|| Uuid::new_v4().to_string());
+    let batch_id = params
+        .batch_id
+        .unwrap_or_else(|| Uuid::new_v4().to_string());
     let async_mode = params.async_mode.unwrap_or(false);
 
     // 验证批量查询
@@ -200,7 +202,7 @@ pub async fn batch_query(
 
     for (index, query) in batch_query.queries.iter().enumerate() {
         let query_id = format!("{}_query_{}", batch_id, index);
-        
+
         match execute_single_query(&optimizer, query, &query_id).await {
             Ok(result) => results.push(BatchQueryResult {
                 query_id,
@@ -247,28 +249,31 @@ pub async fn batch_query(
 pub async fn stream_query(
     State(state): State<AppState>,
     Json(query): Json<StreamHistoryQuery>,
-) -> Result<Sse<impl Stream<Item = Result<axum::response::sse::Event, Infallible>>>, (StatusCode, Json<ErrorResponse>)> {
+) -> Result<
+    Sse<impl Stream<Item = Result<axum::response::sse::Event, Infallible>>>,
+    (StatusCode, Json<ErrorResponse>),
+> {
     // 验证流式查询参数
     validate_stream_query(&query)?;
 
     let storage_manager = state.storage_manager.clone();
-    
+
     // 创建流
     let stream = stream::unfold(
         (query, storage_manager, 0u64),
         |(query, storage_manager, offset)| async move {
             // 模拟流式数据获取
             tokio::time::sleep(Duration::from_millis(query.chunk_delay_ms.unwrap_or(100))).await;
-            
+
             // TODO: 实现实际的流式查询逻辑
             let data = StreamChunk {
                 chunk_id: Uuid::new_v4().to_string(),
                 sequence: offset,
-                data_points: vec![], // 实际数据
+                data_points: vec![],   // 实际数据
                 has_more: offset < 10, // 示例：10个chunk后结束
                 timestamp: Utc::now(),
             };
-            
+
             if data.has_more {
                 Some((
                     Ok(axum::response::sse::Event::default()
@@ -303,7 +308,7 @@ pub async fn trend_analysis(
     Json(request): Json<TrendAnalysisRequest>,
 ) -> Result<Json<TrendAnalysisResponse>, (StatusCode, Json<ErrorResponse>)> {
     let start_time = std::time::Instant::now();
-    
+
     // 验证分析请求
     validate_trend_request(&request)?;
 
@@ -325,19 +330,17 @@ pub async fn trend_analysis(
             std_dev: 2.1,
             min: 20.0,
             max: 31.0,
-            percentiles: HashMap::from([
-                (25, 23.5),
-                (50, 25.0),
-                (75, 27.2),
-                (95, 30.1),
-            ]),
+            percentiles: HashMap::from([(25, 23.5), (50, 25.0), (75, 27.2), (95, 30.1)]),
         },
         anomalies: vec![],
         forecast: if params.forecast_minutes.is_some() {
             Some(ForecastResult {
                 forecast_points: vec![],
                 confidence_intervals: vec![],
-                algorithm_used: params.algorithm.unwrap_or(TrendAlgorithm::LinearRegression).to_string(),
+                algorithm_used: params
+                    .algorithm
+                    .unwrap_or(TrendAlgorithm::LinearRegression)
+                    .to_string(),
             })
         } else {
             None
@@ -366,7 +369,7 @@ pub async fn aggregate_analysis(
     Json(request): Json<AggregateAnalysisRequest>,
 ) -> Result<Json<AggregateAnalysisResponse>, (StatusCode, Json<ErrorResponse>)> {
     let start_time = std::time::Instant::now();
-    
+
     // 验证聚合请求
     if request.aggregations.is_empty() {
         return Err((
@@ -380,14 +383,18 @@ pub async fn aggregate_analysis(
     }
 
     // TODO: 实现实际的聚合分析逻辑
-    let mock_results = request.aggregations.iter().map(|agg| {
-        AggregateResult {
-            aggregation: agg.clone(),
-            value: 42.0, // 模拟值
-            sample_count: 1000,
-            metadata: HashMap::new(),
-        }
-    }).collect();
+    let mock_results = request
+        .aggregations
+        .iter()
+        .map(|agg| {
+            AggregateResult {
+                aggregation: agg.clone(),
+                value: 42.0, // 模拟值
+                sample_count: 1000,
+                metadata: HashMap::new(),
+            }
+        })
+        .collect();
 
     let response = AggregateAnalysisResponse {
         request_id: Uuid::new_v4().to_string(),
@@ -446,7 +453,9 @@ pub async fn data_quality_report(
 
 // 辅助函数
 
-fn validate_advanced_query(query: &AdvancedHistoryQuery) -> Result<(), (StatusCode, Json<ErrorResponse>)> {
+fn validate_advanced_query(
+    query: &AdvancedHistoryQuery,
+) -> Result<(), (StatusCode, Json<ErrorResponse>)> {
     // 验证时间范围
     if query.time_range.start_time >= query.time_range.end_time {
         return Err((
@@ -474,7 +483,9 @@ fn validate_advanced_query(query: &AdvancedHistoryQuery) -> Result<(), (StatusCo
     Ok(())
 }
 
-fn validate_stream_query(query: &StreamHistoryQuery) -> Result<(), (StatusCode, Json<ErrorResponse>)> {
+fn validate_stream_query(
+    query: &StreamHistoryQuery,
+) -> Result<(), (StatusCode, Json<ErrorResponse>)> {
     if query.chunk_size.unwrap_or(1000) > 10000 {
         return Err((
             StatusCode::BAD_REQUEST,
@@ -489,7 +500,9 @@ fn validate_stream_query(query: &StreamHistoryQuery) -> Result<(), (StatusCode, 
     Ok(())
 }
 
-fn validate_trend_request(request: &TrendAnalysisRequest) -> Result<(), (StatusCode, Json<ErrorResponse>)> {
+fn validate_trend_request(
+    request: &TrendAnalysisRequest,
+) -> Result<(), (StatusCode, Json<ErrorResponse>)> {
     let duration = request.time_range.end_time - request.time_range.start_time;
     if duration.num_hours() < 1 {
         return Err((

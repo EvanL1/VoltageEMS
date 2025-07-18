@@ -5,13 +5,12 @@
 use futures::StreamExt;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use tokio::sync::RwLock;
+use tokio::sync::{mpsc, RwLock};
 use tokio::task::JoinHandle;
 use tracing::{debug, error, info, warn};
 use voltage_common::redis::async_client::RedisClient;
 
-use crate::core::framework::traits::FourTelemetryOperations;
-use crate::core::framework::types::RemoteOperationRequest;
+use crate::core::framework::types::ChannelCommand;
 use crate::utils::error::Result;
 
 /// 控制命令类型
@@ -63,7 +62,7 @@ pub struct CommandSubscriberConfig {
 pub struct CommandSubscriber {
     config: CommandSubscriberConfig,
     redis_client: Arc<RedisClient>,
-    handler: Arc<dyn FourTelemetryOperations>,
+    command_tx: mpsc::Sender<ChannelCommand>,
     is_running: Arc<RwLock<bool>>,
     task_handle: Option<JoinHandle<()>>,
 }
@@ -72,14 +71,14 @@ impl CommandSubscriber {
     /// 创建新的命令订阅器
     pub async fn new(
         config: CommandSubscriberConfig,
-        handler: Arc<dyn FourTelemetryOperations>,
+        command_tx: mpsc::Sender<ChannelCommand>,
     ) -> Result<Self> {
         let redis_client = RedisClient::new(&config.redis_url).await?;
 
         Ok(Self {
             config,
             redis_client: Arc::new(redis_client),
-            handler,
+            command_tx,
             is_running: Arc::new(RwLock::new(false)),
             task_handle: None,
         })
@@ -110,7 +109,7 @@ impl CommandSubscriber {
 
         // 克隆必要的对象用于任务
         let redis_client = self.redis_client.clone();
-        let handler = self.handler.clone();
+        let command_tx = self.command_tx.clone();
         let is_running = self.is_running.clone();
         let channel_id = self.config.channel_id;
 
@@ -118,7 +117,7 @@ impl CommandSubscriber {
         let task_handle = tokio::spawn(async move {
             if let Err(e) = Self::subscription_loop(
                 redis_client,
-                handler,
+                command_tx,
                 is_running,
                 channel_id,
                 vec![control_channel, adjustment_channel],
@@ -162,7 +161,7 @@ impl CommandSubscriber {
     /// 订阅循环
     async fn subscription_loop(
         redis_client: Arc<RedisClient>,
-        handler: Arc<dyn FourTelemetryOperations>,
+        command_tx: mpsc::Sender<ChannelCommand>,
         is_running: Arc<RwLock<bool>>,
         channel_id: u16,
         channels: Vec<String>,
@@ -202,9 +201,7 @@ impl CommandSubscriber {
             {
                 Ok(Some(msg)) => {
                     // 处理消息
-                    if let Err(e) =
-                        Self::process_message(&redis_client, &handler, channel_id, msg).await
-                    {
+                    if let Err(e) = Self::process_message(&command_tx, channel_id, msg).await {
                         error!("Failed to process command message: {}", e);
                     }
                 }
@@ -224,8 +221,7 @@ impl CommandSubscriber {
 
     /// 处理单个消息
     async fn process_message(
-        redis_client: &Arc<RedisClient>,
-        handler: &Arc<dyn FourTelemetryOperations>,
+        command_tx: &mpsc::Sender<ChannelCommand>,
         channel_id: u16,
         msg: redis::Msg,
     ) -> Result<()> {
@@ -256,95 +252,31 @@ impl CommandSubscriber {
             return Ok(());
         }
 
-        // 更新命令状态为执行中
-        let mut status = CommandStatus {
-            command_id: command.command_id.clone(),
-            status: "executing".to_string(),
-            result: None,
-            error: None,
-            timestamp: chrono::Utc::now().timestamp_millis(),
-        };
-
-        // 发布执行状态
-        let status_key = format!("cmd_status:{}:{}", channel_id, command.command_id);
-        redis_client
-            .set(&status_key, &serde_json::to_string(&status)?)
-            .await?;
-
-        // 创建远程操作请求
-        let operation_type = match command.command_type {
-            CommandType::Control => crate::core::framework::types::RemoteOperationType::Control {
-                value: command.value != 0.0, // 将非零值转换为true
+        // 转换为ChannelCommand并发送
+        let channel_command = match command.command_type {
+            CommandType::Control => ChannelCommand::Control {
+                command_id: command.command_id,
+                point_id: command.point_id,
+                value: command.value,
+                timestamp: command.timestamp,
             },
-            CommandType::Adjustment => {
-                crate::core::framework::types::RemoteOperationType::Regulation {
-                    value: command.value,
-                }
-            }
+            CommandType::Adjustment => ChannelCommand::Adjustment {
+                command_id: command.command_id,
+                point_id: command.point_id,
+                value: command.value,
+                timestamp: command.timestamp,
+            },
         };
 
-        let request = RemoteOperationRequest {
-            operation_id: command.command_id.clone(),
-            point_name: command.point_id.to_string(),
-            operation_type,
-        };
-
-        // 执行命令
-        let result = match command.command_type {
-            CommandType::Control => handler.remote_control(request).await,
-            CommandType::Adjustment => handler.remote_regulation(request).await,
-        };
-
-        // 更新命令状态
-        match result {
-            Ok(response) => {
-                status.status = if response.success {
-                    "success"
-                } else {
-                    "failed"
-                }
-                .to_string();
-                status.result = Some(serde_json::json!({
-                    "operation_id": response.operation_id,
-                    "success": response.success,
-                    "timestamp": response.timestamp,
-                }));
-                if let Some(ref error_msg) = response.error_message {
-                    status.error = Some(error_msg.clone());
-                }
-                info!(
-                    "Command {} executed on channel {} with result: {}",
-                    command.command_id,
-                    channel_id,
-                    if response.success {
-                        "success"
-                    } else {
-                        "failed"
-                    }
-                );
-            }
-            Err(e) => {
-                status.status = "failed".to_string();
-                status.error = Some(format!("{}", e));
-                error!(
-                    "Command {} failed on channel {}: {}",
-                    command.command_id, channel_id, e
-                );
-            }
+        // 发送命令到协议处理器
+        if let Err(e) = command_tx.send(channel_command).await {
+            error!("Failed to send command to protocol handler: {}", e);
+            return Err(crate::error::ComSrvError::InternalError(
+                "Command channel closed".to_string(),
+            ));
         }
 
-        status.timestamp = chrono::Utc::now().timestamp_millis();
-
-        // 发布最终状态
-        redis_client
-            .set(&status_key, &serde_json::to_string(&status)?)
-            .await?;
-
-        // 设置状态键的过期时间（24小时）
-        if let Err(e) = redis_client.expire(&status_key, 86400).await {
-            warn!("Failed to set expiry for command status: {}", e);
-        }
-
+        debug!("Command forwarded to protocol handler");
         Ok(())
     }
 }
@@ -352,66 +284,6 @@ impl CommandSubscriber {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::framework::types::PointValueType;
-
-    struct MockHandler;
-
-    #[async_trait]
-    impl FourTelemetryOperations for MockHandler {
-        async fn remote_measurement(
-            &self,
-            _point_names: &[String],
-        ) -> Result<Vec<(String, PointValueType)>> {
-            Ok(vec![])
-        }
-
-        async fn remote_signaling(
-            &self,
-            _point_names: &[String],
-        ) -> Result<Vec<(String, PointValueType)>> {
-            Ok(vec![])
-        }
-
-        async fn remote_control(
-            &self,
-            request: RemoteOperationRequest,
-        ) -> Result<RemoteOperationResponse> {
-            Ok(RemoteOperationResponse {
-                operation_id: request.operation_id.clone(),
-                success: true,
-                error_message: None,
-                timestamp: chrono::Utc::now(),
-            })
-        }
-
-        async fn remote_regulation(
-            &self,
-            request: RemoteOperationRequest,
-        ) -> Result<RemoteOperationResponse> {
-            Ok(RemoteOperationResponse {
-                operation_id: request.operation_id.clone(),
-                success: true,
-                error_message: None,
-                timestamp: chrono::Utc::now(),
-            })
-        }
-
-        async fn get_control_points(&self) -> Vec<String> {
-            vec![]
-        }
-
-        async fn get_regulation_points(&self) -> Vec<String> {
-            vec![]
-        }
-
-        async fn get_measurement_points(&self) -> Vec<String> {
-            vec![]
-        }
-
-        async fn get_signaling_points(&self) -> Vec<String> {
-            vec![]
-        }
-    }
 
     #[tokio::test]
     async fn test_command_parsing() {

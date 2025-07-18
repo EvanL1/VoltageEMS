@@ -16,6 +16,9 @@ pub mod optimized_sync; // Optimized sync mechanisms
 // Command handling
 pub mod command_subscriber; // Redis command subscription
 
+// Storage integration
+pub mod combase_storage; // ComBase统一存储接口
+
 // Re-export commonly used types
 pub use base::{DefaultProtocol, PacketParseResult};
 pub use factory::{ConfigValue, ProtocolFactory};
@@ -32,6 +35,9 @@ pub use optimized_sync::{OptimizedBatchSync, OptimizedSyncConfig, SyncStats};
 pub use command_subscriber::{
     CommandStatus, CommandSubscriber, CommandSubscriberConfig, ControlCommand,
 };
+
+// Storage integration exports
+pub use combase_storage::{ComBaseStorage, DefaultComBaseStorage};
 
 /// Initialize protocol framework
 pub fn init_framework() {

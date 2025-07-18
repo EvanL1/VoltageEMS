@@ -29,10 +29,7 @@ pub enum HisSrvError {
     },
 
     #[error("InfluxDB query error: {message}")]
-    InfluxDBQueryError {
-        message: String,
-        query: String,
-    },
+    InfluxDBQueryError { message: String, query: String },
 
     // IO相关错误
     #[error("IO error: {0}")]
@@ -73,17 +70,11 @@ pub enum HisSrvError {
     },
 
     #[error("Connection timeout: endpoint={endpoint}, timeout={timeout_secs}s")]
-    ConnectionTimeout {
-        endpoint: String,
-        timeout_secs: u64,
-    },
+    ConnectionTimeout { endpoint: String, timeout_secs: u64 },
 
     // 序列化错误
     #[error("Serialization error: {message}")]
-    SerializationError {
-        message: String,
-        data_type: String,
-    },
+    SerializationError { message: String, data_type: String },
 
     #[error("Deserialization error: {message}")]
     DeserializationError {
@@ -101,10 +92,7 @@ pub enum HisSrvError {
     },
 
     #[error("Storage backend not available: {backend}")]
-    StorageBackendUnavailable {
-        backend: String,
-        reason: String,
-    },
+    StorageBackendUnavailable { backend: String, reason: String },
 
     // 查找错误
     #[error("Not found: {resource_type} - {identifier}")]
@@ -243,9 +231,7 @@ impl HisSrvError {
     pub fn recovery_suggestion(&self) -> Option<String> {
         match self {
             Self::ConfigError { suggestion, .. } => suggestion.clone(),
-            Self::MissingConfig { field } => {
-                Some(format!("请在配置文件中设置 {} 字段", field))
-            }
+            Self::MissingConfig { field } => Some(format!("请在配置文件中设置 {} 字段", field)),
             Self::ConnectionTimeout { endpoint, .. } => {
                 Some(format!("检查 {} 的网络连接和防火墙设置", endpoint))
             }
@@ -253,9 +239,10 @@ impl HisSrvError {
                 Some(format!("确保 {} 服务正在运行: {}", backend, reason))
             }
             Self::AuthError { .. } => Some("检查认证凭据是否正确".to_string()),
-            Self::PermissionError { resource, action } => {
-                Some(format!("确保当前用户有权限对 {} 执行 {} 操作", resource, action))
-            }
+            Self::PermissionError { resource, action } => Some(format!(
+                "确保当前用户有权限对 {} 执行 {} 操作",
+                resource, action
+            )),
             _ => None,
         }
     }
@@ -275,7 +262,9 @@ impl HisSrvError {
     fn error_type(&self) -> &'static str {
         match self {
             Self::RedisError { .. } | Self::RedisConnectionError { .. } => "redis",
-            Self::InfluxDBError(_) | Self::InfluxDBWriteError { .. } | Self::InfluxDBQueryError { .. } => "influxdb",
+            Self::InfluxDBError(_)
+            | Self::InfluxDBWriteError { .. }
+            | Self::InfluxDBQueryError { .. } => "influxdb",
             Self::IOError(_) => "io",
             Self::ParseError { .. } | Self::InvalidFormat { .. } => "parse",
             Self::ConfigError { .. } | Self::MissingConfig { .. } => "config",

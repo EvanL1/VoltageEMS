@@ -29,8 +29,10 @@ RUN mkdir -p /workspace/apps/config-ui/src-tauri && \
 
 WORKDIR /workspace
 
-# Build only the comsrv service with modbus feature
+# Force clean and build only the comsrv service with modbus feature
 RUN unset http_proxy https_proxy HTTP_PROXY HTTPS_PROXY && \
+    rm -rf target/ && \
+    cargo clean && \
     cargo build --release -p comsrv --features "modbus"
 
 # Copy the binary to app directory

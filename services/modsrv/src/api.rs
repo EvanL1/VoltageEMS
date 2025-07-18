@@ -167,13 +167,17 @@ impl ApiServer {
             redis_conn,
             monitoring,
         };
-        Self { state, port, config }
+        Self {
+            state,
+            port,
+            config,
+        }
     }
 
     /// Start the API server
     pub async fn start(&self) -> Result<(), std::io::Error> {
         let api_config = &self.config.api;
-        
+
         let app = Router::new()
             // Health endpoints (always without prefix)
             .route("/health", get(health_check))
@@ -187,13 +191,28 @@ impl ApiServer {
                 &api_config.build_path("control/operations"),
                 get(list_operations).post(control_operation),
             )
-            .route(&api_config.build_path("control/execute/:operation"), post(execute_operation))
+            .route(
+                &api_config.build_path("control/execute/:operation"),
+                post(execute_operation),
+            )
             // OpenAPI spec endpoint
-            .route(&api_config.build_path("api-docs/openapi.json"), get(serve_openapi_spec))
+            .route(
+                &api_config.build_path("api-docs/openapi.json"),
+                get(serve_openapi_spec),
+            )
             // Rule endpoints (legacy API compatibility)
-            .route(&api_config.build_path("rules"), get(list_rules).post(create_rule))
-            .route(&api_config.build_path("rules/:id"), get(get_rule).put(update_rule).delete(delete_rule))
-            .route(&api_config.build_path("rules/:id/execute"), post(execute_rule))
+            .route(
+                &api_config.build_path("rules"),
+                get(list_rules).post(create_rule),
+            )
+            .route(
+                &api_config.build_path("rules/:id"),
+                get(get_rule).put(update_rule).delete(delete_rule),
+            )
+            .route(
+                &api_config.build_path("rules/:id/execute"),
+                post(execute_rule),
+            )
             // CORS
             .layer(CorsLayer::permissive())
             // State

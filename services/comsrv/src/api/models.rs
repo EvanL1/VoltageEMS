@@ -9,6 +9,7 @@ pub struct ServiceStatus {
     pub name: String,
     pub version: String,
     pub uptime: u64,
+    #[schema(value_type = String, example = "2023-01-01T00:00:00Z")]
     pub start_time: DateTime<Utc>,
     pub channels: u32,
     pub active_channels: u32,
@@ -21,6 +22,7 @@ pub struct ChannelStatusResponse {
     pub name: String,
     pub protocol: String,
     pub connected: bool,
+    #[schema(value_type = String, example = "2023-01-01T00:00:00Z")]
     pub last_update: DateTime<Utc>,
     pub error_count: u32,
     pub last_error: Option<String>,
@@ -34,6 +36,7 @@ pub struct ChannelStatus {
     pub protocol: String,
     pub connected: bool,
     pub running: bool,
+    #[schema(value_type = String, example = "2023-01-01T00:00:00Z")]
     pub last_update: DateTime<Utc>,
     pub error_count: u32,
     pub last_error: Option<String>,
@@ -82,6 +85,7 @@ pub struct PointValue {
     pub id: String,
     pub name: String,
     pub value: serde_json::Value,
+    #[schema(value_type = String, example = "2023-01-01T00:00:00Z")]
     pub timestamp: DateTime<Utc>,
     pub unit: String,
     pub description: String,
@@ -203,6 +207,7 @@ pub struct TelemetryPoint {
     /// Current real-time value (changes)
     pub current_value: Option<serde_json::Value>,
     /// Last update timestamp
+    #[schema(value_type = Option<String>, example = json!("2023-01-01T00:00:00Z"))]
     pub last_update: Option<DateTime<Utc>>,
     /// Point status (connected, error, etc.)
     pub status: String,
@@ -470,6 +475,7 @@ pub struct TelemetryTableView {
     /// Control points (遥控 - digital commands)
     pub control: Vec<TelemetryPoint>,
     /// Last refresh timestamp
+    #[schema(value_type = String, example = "2023-01-01T00:00:00Z")]
     pub timestamp: DateTime<Utc>,
 }
 

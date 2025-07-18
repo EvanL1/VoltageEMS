@@ -163,30 +163,24 @@ impl RedisClient {
     /// Pop value from list head
     pub async fn lpop(&self, key: &str, count: Option<usize>) -> Result<Vec<String>> {
         let mut conn = self.get_connection().await?;
-        match count {
-            Some(n) => {
-                let count_opt = std::num::NonZeroUsize::new(n);
-                self.execute(conn.lpop(key, count_opt)).await
-            }
-            None => {
-                let value: Option<String> = self.execute(conn.lpop(key, None)).await?;
-                Ok(value.map(|v| vec![v]).unwrap_or_default())
-            }
+        if let Some(n) = count {
+            let count_opt = std::num::NonZeroUsize::new(n);
+            self.execute(conn.lpop(key, count_opt)).await
+        } else {
+            let value: Option<String> = self.execute(conn.lpop(key, None)).await?;
+            Ok(value.map(|v| vec![v]).unwrap_or_default())
         }
     }
 
     /// Pop value from list tail
     pub async fn rpop(&self, key: &str, count: Option<usize>) -> Result<Vec<String>> {
         let mut conn = self.get_connection().await?;
-        match count {
-            Some(n) => {
-                let count_opt = std::num::NonZeroUsize::new(n);
-                self.execute(conn.rpop(key, count_opt)).await
-            }
-            None => {
-                let value: Option<String> = self.execute(conn.rpop(key, None)).await?;
-                Ok(value.map(|v| vec![v]).unwrap_or_default())
-            }
+        if let Some(n) = count {
+            let count_opt = std::num::NonZeroUsize::new(n);
+            self.execute(conn.rpop(key, count_opt)).await
+        } else {
+            let value: Option<String> = self.execute(conn.rpop(key, None)).await?;
+            Ok(value.map(|v| vec![v]).unwrap_or_default())
         }
     }
 
@@ -399,6 +393,7 @@ impl RedisClientBuilder {
         }
     }
 
+    #[must_use]
     pub fn timeout(mut self, timeout: Duration) -> Self {
         self.timeout = Some(timeout);
         self

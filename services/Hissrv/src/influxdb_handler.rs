@@ -47,7 +47,8 @@ impl InfluxDBConnection {
                 self.db_name = influx_config.database.clone();
 
                 // Set data retention policy
-                self.create_retention_policy(influx_config.retention_days).await?;
+                self.create_retention_policy(influx_config.retention_days)
+                    .await?;
                 Ok(())
             }
             Err(e) => {
@@ -118,10 +119,10 @@ impl InfluxDBConnection {
 
         let client = self.client.as_ref().unwrap();
         let mut points_written = 0;
-        
+
         for (field, value) in hash_data {
             let (is_numeric, numeric_value) = try_parse_numeric(&value);
-            
+
             // Create WriteQuery using the builder pattern for InfluxDB 0.5.x
             let timestamp = Utc::now();
             let mut write_query = WriteQuery::new(timestamp.into(), "rtdb_data")
@@ -142,7 +143,7 @@ impl InfluxDBConnection {
                 }
             }
         }
-        
+
         Ok(points_written)
     }
 

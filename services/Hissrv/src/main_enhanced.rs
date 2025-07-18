@@ -21,7 +21,7 @@ pub async fn main_enhanced() -> Result<()> {
 
     // 初始化配置
     let config = Config::load().await?;
-    
+
     // 初始化日志系统
     // Note: enhanced_logging field doesn't exist in config, always use standard logging
     crate::logging::init_logging(&config.logging)?;
@@ -33,7 +33,7 @@ pub async fn main_enhanced() -> Result<()> {
     let influx_config = &config.storage.backends.influxdb;
     if influx_config.enabled {
         let influx_storage = InfluxDBStorage::new(influx_config).await?;
-        
+
         // 创建批量写入器
         let batch_writer = InfluxDBBatchWriter::new(Arc::new(influx_storage));
         let batch_buffer = BatchWriteBuffer::new(
@@ -41,7 +41,7 @@ pub async fn main_enhanced() -> Result<()> {
             influx_config.batch_size,
             Duration::from_secs(influx_config.flush_interval),
         );
-        
+
         storage_manager
             .write()
             .await
@@ -57,7 +57,7 @@ pub async fn main_enhanced() -> Result<()> {
 
     // 初始化保留策略管理器
     let retention_manager = Arc::new(RetentionPolicyManager::default());
-    
+
     // 启动保留策略定时任务
     let retention_clone = retention_manager.clone();
     let storage_clone = storage_manager.clone();

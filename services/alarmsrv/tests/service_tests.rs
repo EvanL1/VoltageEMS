@@ -1,11 +1,11 @@
 //! Service integration tests
 
-use std::sync::Arc;
 use alarmsrv::{
-    domain::{AlarmLevel},
+    domain::AlarmLevel,
     redis::{AlarmRedisClient, AlarmStore},
     services::rules::{AlarmRule, AlarmRuleType},
 };
+use std::sync::Arc;
 
 mod common;
 use common::{cleanup_test_data, test_config::test_config};
@@ -40,7 +40,7 @@ async fn test_alarm_rules_threshold() {
 
     // Test threshold evaluation
     let test_cases = vec![
-        (50.0, None),                    // Normal value
+        (50.0, None),                      // Normal value
         (85.0, Some(AlarmLevel::Warning)), // High value
         (95.0, Some(AlarmLevel::Major)),   // High High value
         (15.0, Some(AlarmLevel::Warning)), // Low value
@@ -49,7 +49,12 @@ async fn test_alarm_rules_threshold() {
 
     for (value, expected_level) in test_cases {
         match &rule.rule_type {
-            AlarmRuleType::Threshold { high, low, high_high, low_low } => {
+            AlarmRuleType::Threshold {
+                high,
+                low,
+                high_high,
+                low_low,
+            } => {
                 let level = if let Some(hh) = high_high {
                     if value >= *hh {
                         Some(AlarmLevel::Major)
@@ -113,7 +118,7 @@ async fn test_alarm_rules_threshold() {
                 } else {
                     None
                 };
-                
+
                 assert_eq!(level, expected_level, "Failed for value {}", value);
             }
             _ => panic!("Wrong rule type"),
@@ -140,15 +145,19 @@ async fn test_alarm_rules_timeout() {
         alarm_title: "Communication Timeout".to_string(),
         alarm_description: "Device communication timeout".to_string(),
         rule_type: AlarmRuleType::Timeout {
-            warning_timeout: 300,  // 5 minutes
-            major_timeout: 600,    // 10 minutes
+            warning_timeout: 300,   // 5 minutes
+            major_timeout: 600,     // 10 minutes
             critical_timeout: 1200, // 20 minutes
         },
     };
 
     // Test timeout evaluation
     match &rule.rule_type {
-        AlarmRuleType::Timeout { warning_timeout, major_timeout, critical_timeout } => {
+        AlarmRuleType::Timeout {
+            warning_timeout,
+            major_timeout,
+            critical_timeout,
+        } => {
             assert_eq!(*warning_timeout, 300);
             assert_eq!(*major_timeout, 600);
             assert_eq!(*critical_timeout, 1200);
@@ -156,4 +165,3 @@ async fn test_alarm_rules_timeout() {
         _ => panic!("Wrong rule type"),
     }
 }
-

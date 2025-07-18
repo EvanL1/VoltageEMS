@@ -111,7 +111,6 @@ impl ExecutionContext {
         }
     }
 
-
     /// Set a variable
     pub fn set_variable(&mut self, name: &str, value: Value) {
         self.variables.insert(name.to_string(), value);
@@ -123,12 +122,19 @@ impl ExecutionContext {
     }
 
     /// Resolve a variable or literal with external variables
-    pub fn resolve_variable_with_vars(&self, name: &str, variables: &HashMap<String, Value>) -> Result<Value> {
+    pub fn resolve_variable_with_vars(
+        &self,
+        name: &str,
+        variables: &HashMap<String, Value>,
+    ) -> Result<Value> {
         // Check if it's a variable reference
         if name.starts_with("$") {
             let var_name = &name[1..];
             // First check external variables, then internal
-            match variables.get(var_name).or_else(|| self.variables.get(var_name)) {
+            match variables
+                .get(var_name)
+                .or_else(|| self.variables.get(var_name))
+            {
                 Some(value) => Ok(value.clone()),
                 None => Err(RulesrvError::RuleError(format!(
                     "Variable not found: {}",
@@ -299,11 +305,7 @@ impl ExecutionContext {
     }
 
     /// Process the rule execution result with registered post-processors
-    pub async fn process_result(
-        &self,
-        rule_id: &str,
-        result: &RuleExecutionResult,
-    ) -> Result<()> {
+    pub async fn process_result(&self, rule_id: &str, result: &RuleExecutionResult) -> Result<()> {
         for processor in &self.post_processors {
             if let Err(e) = processor.process(rule_id, result).await {
                 warn!("Post-processor {} failed: {}", processor.name(), e);
@@ -346,9 +348,9 @@ pub struct RuntimeRule {
 
 /// Evaluate an expression with external variables
 fn evaluate_expression_with_vars(
-    expression: &str, 
-    context: &ExecutionContext, 
-    variables: &HashMap<String, Value>
+    expression: &str,
+    context: &ExecutionContext,
+    variables: &HashMap<String, Value>,
 ) -> Result<bool> {
     // Very simple expression evaluator (should be replaced with a proper one)
     if expression.contains("==") {
@@ -600,7 +602,11 @@ pub async fn execute_rule_graph(
 }
 
 /// Execute a single node
-async fn execute_node(node: &RuleNode, context: &ExecutionContext, variables: &HashMap<String, Value>) -> Result<Value> {
+async fn execute_node(
+    node: &RuleNode,
+    context: &ExecutionContext,
+    variables: &HashMap<String, Value>,
+) -> Result<Value> {
     match node.definition.node_type {
         NodeType::Input => {
             // Process input node
@@ -611,9 +617,7 @@ async fn execute_node(node: &RuleNode, context: &ExecutionContext, variables: &H
                 .config
                 .get("source")
                 .and_then(Value::as_str)
-                .ok_or_else(|| {
-                    RulesrvError::RuleError("Input node missing source".to_string())
-                })?;
+                .ok_or_else(|| RulesrvError::RuleError("Input node missing source".to_string()))?;
 
             // Get value from Redis based on source format
             match context.store.get_string(source).await {
@@ -1105,7 +1109,7 @@ impl RuleExecutor {
                     "Rule {} not found in store",
                     rule_id
                 )));
-            },
+            }
             Err(e) => {
                 return Err(RulesrvError::RuleNotFound(format!(
                     "Rule {} not found: {}",
@@ -1188,7 +1192,11 @@ impl RuleExecutor {
 
         // Store execution result in Redis
         let record_key = format!("ems:rule:execution:{}", execution_id);
-        if let Err(e) = self.store.set_string(&record_key, &record.to_string()).await {
+        if let Err(e) = self
+            .store
+            .set_string(&record_key, &record.to_string())
+            .await
+        {
             error!("Failed to store execution record: {}", e);
         }
 
@@ -1228,21 +1236,27 @@ impl RuleExecutor {
             }
         }
     }
-    
+
     /// List all available rules
     pub async fn list_rules(&self) -> Result<Vec<crate::rules::Rule>> {
-        self.store.list_rules().await
+        self.store
+            .list_rules()
+            .await
             .map_err(|e| RulesrvError::RedisError(e.to_string()))
     }
 
     /// Execute a simple rule (not DAG)
-    pub async fn execute_simple_rule(&self, rule: &crate::rules::Rule, context: &Value) -> Result<bool> {
+    pub async fn execute_simple_rule(
+        &self,
+        rule: &crate::rules::Rule,
+        context: &Value,
+    ) -> Result<bool> {
         // Evaluate condition
         let condition_result = self.evaluate_condition(&rule.condition, context)?;
-        
+
         if condition_result {
             info!("Rule '{}' condition met, executing actions", rule.name);
-            
+
             // Execute actions
             for action in &rule.actions {
                 if let Some(action_type) = action.get("type").and_then(|v| v.as_str()) {
@@ -1250,7 +1264,7 @@ impl RuleExecutor {
                         "publish" => {
                             if let (Some(channel), Some(message)) = (
                                 action.get("channel").and_then(|v| v.as_str()),
-                                action.get("message").and_then(|v| v.as_str())
+                                action.get("message").and_then(|v| v.as_str()),
                             ) {
                                 // Publish to Redis channel
                                 match self.store.publish(channel, message).await {
@@ -1270,22 +1284,22 @@ impl RuleExecutor {
                 }
             }
         }
-        
+
         Ok(condition_result)
     }
-    
+
     /// Evaluate a simple condition expression
     fn evaluate_condition(&self, condition: &str, context: &Value) -> Result<bool> {
         // Simple condition evaluation for "variable > value" format
         // This is a basic implementation - can be extended for more complex conditions
-        
+
         // Try to parse "variable operator value" format
         let parts: Vec<&str> = condition.split_whitespace().collect();
         if parts.len() == 3 {
             let var_name = parts[0];
             let operator = parts[1];
             let value_str = parts[2];
-            
+
             // Get variable value from context
             let var_value = if let Some(val) = context.get(var_name) {
                 val
@@ -1299,11 +1313,12 @@ impl RuleExecutor {
             } else {
                 return Ok(false); // Variable not found
             };
-            
+
             // Parse comparison value
-            let comp_value: f64 = value_str.parse()
-                .map_err(|_| RulesrvError::ConditionError(format!("Invalid number: {}", value_str)))?;
-            
+            let comp_value: f64 = value_str.parse().map_err(|_| {
+                RulesrvError::ConditionError(format!("Invalid number: {}", value_str))
+            })?;
+
             // Get numeric value
             let num_value = if let Some(n) = var_value.as_f64() {
                 n
@@ -1312,7 +1327,7 @@ impl RuleExecutor {
             } else {
                 return Ok(false); // Not a numeric value
             };
-            
+
             // Evaluate operator
             match operator {
                 ">" => Ok(num_value > comp_value),
@@ -1321,10 +1336,13 @@ impl RuleExecutor {
                 "<=" => Ok(num_value <= comp_value),
                 "==" => Ok((num_value - comp_value).abs() < f64::EPSILON),
                 "!=" => Ok((num_value - comp_value).abs() >= f64::EPSILON),
-                _ => Err(RulesrvError::InvalidOperator(operator.to_string()))
+                _ => Err(RulesrvError::InvalidOperator(operator.to_string())),
             }
         } else {
-            Err(RulesrvError::ConditionError(format!("Invalid condition format: {}", condition)))
+            Err(RulesrvError::ConditionError(format!(
+                "Invalid condition format: {}",
+                condition
+            )))
         }
     }
 }

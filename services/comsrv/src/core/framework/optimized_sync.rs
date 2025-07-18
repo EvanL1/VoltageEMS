@@ -47,7 +47,7 @@ pub struct OptimizedBatchSync {
 }
 
 impl OptimizedBatchSync {
-    /// Create new optimized sync with storage
+    /// Create new optimized sync with storage (pub/sub始终启用)
     pub async fn new(config: OptimizedSyncConfig) -> Result<Self> {
         let storage = Arc::new(DefaultPluginStorage::from_env().await?);
         Ok(Self {

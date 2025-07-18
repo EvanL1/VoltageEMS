@@ -65,8 +65,11 @@ async fn main() -> Result<()> {
 
     // Start data scanner if monitoring is enabled
     if config.monitoring.enabled {
-        info!("Starting data scanner with {} rules", config.alarm_rules.len());
-        
+        info!(
+            "Starting data scanner with {} rules",
+            config.alarm_rules.len()
+        );
+
         // Create rules engine
         let mut rules_engine = AlarmRulesEngine::new();
         rules_engine.load_rules(config.alarm_rules.clone());
@@ -80,12 +83,9 @@ async fn main() -> Result<()> {
         };
 
         // Start scanner
-        let scanner = RedisDataScanner::new(
-            redis_client.clone(),
-            monitor_config,
-            rules_engine,
-        ).await?;
-        
+        let scanner =
+            RedisDataScanner::new(redis_client.clone(), monitor_config, rules_engine).await?;
+
         scanner.start(state.clone()).await?;
         info!("Data scanner started successfully");
     } else {

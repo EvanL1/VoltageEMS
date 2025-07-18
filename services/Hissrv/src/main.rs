@@ -38,14 +38,14 @@ async fn main() -> Result<()> {
     if std::env::var("HISSRV_ENHANCED").unwrap_or_default() == "true" {
         return main_enhanced::main_enhanced().await;
     }
-    
+
     // 设置panic处理器
     std::panic::set_hook(Box::new(|panic_info| {
         let location = panic_info
             .location()
             .map(|l| format!("{}:{}:{}", l.file(), l.line(), l.column()))
             .unwrap_or_else(|| "unknown".to_string());
-        
+
         let message = if let Some(s) = panic_info.payload().downcast_ref::<&str>() {
             s.to_string()
         } else if let Some(s) = panic_info.payload().downcast_ref::<String>() {
@@ -53,7 +53,7 @@ async fn main() -> Result<()> {
         } else {
             "unknown panic".to_string()
         };
-        
+
         eprintln!("PANIC at {}: {}", location, message);
         tracing::error!(
             location = location,
@@ -61,7 +61,7 @@ async fn main() -> Result<()> {
             "Application panicked"
         );
     }));
-    
+
     // Load configuration from config center or local file
     let config = match Config::load().await {
         Ok(cfg) => cfg,
@@ -75,14 +75,18 @@ async fn main() -> Result<()> {
     };
 
     // 初始化增强日志系统（如果启用）
-    let _enhanced_logger = if std::env::var("HISSRV_ENHANCED_LOGGING").unwrap_or_default() == "true" {
+    let _enhanced_logger = if std::env::var("HISSRV_ENHANCED_LOGGING").unwrap_or_default() == "true"
+    {
         match crate::logging::EnhancedLogger::init(config.logging.clone()) {
             Ok(logger) => {
                 tracing::info!("Enhanced logging system initialized");
                 Some(logger)
             }
             Err(e) => {
-                eprintln!("Failed to initialize enhanced logging, falling back to standard: {}", e);
+                eprintln!(
+                    "Failed to initialize enhanced logging, falling back to standard: {}",
+                    e
+                );
                 // 回退到标准日志系统
                 if let Err(e) = crate::logging::init_logging(&config.logging) {
                     eprintln!("Failed to initialize standard logging: {}", e);
@@ -146,7 +150,10 @@ async fn main() -> Result<()> {
 
     // Set default storage backend
     storage_manager.set_default_backend(config.storage.default.clone());
-    tracing::info!(default_backend = config.storage.default, "Default storage backend set");
+    tracing::info!(
+        default_backend = config.storage.default,
+        "Default storage backend set"
+    );
 
     // Connect to all storage backends with retry logic
     let mut retry_count = 0;
@@ -167,7 +174,7 @@ async fn main() -> Result<()> {
                     );
                     return Err(e);
                 }
-                
+
                 let retry_delay = 2u64.pow(retry_count - 1);
                 tracing::warn!(
                     error = %e,
@@ -197,7 +204,7 @@ async fn main() -> Result<()> {
 
     // Setup Redis subscriber with connection validation
     let mut redis_subscriber = RedisSubscriber::new(config.redis.clone(), message_sender);
-    
+
     match redis_subscriber.connect().await {
         Ok(_) => {
             tracing::info!(
@@ -289,13 +296,19 @@ async fn main() -> Result<()> {
             "API server started"
         );
         tracing::info!(
-            swagger_url = format!("http://{}:{}/api/v1/swagger-ui", config.service.host, config.service.port),
+            swagger_url = format!(
+                "http://{}:{}/api/v1/swagger-ui",
+                config.service.host, config.service.port
+            ),
             "Swagger UI available"
         );
 
         // Health check endpoint log
         tracing::info!(
-            health_check_url = format!("http://{}:{}/health", config.service.host, config.service.port),
+            health_check_url = format!(
+                "http://{}:{}/health",
+                config.service.host, config.service.port
+            ),
             "Health check endpoint available"
         );
 
@@ -333,13 +346,18 @@ async fn main() -> Result<()> {
 
     // Graceful shutdown
     tracing::info!("Initiating graceful shutdown");
-    
+
     // 给予任务一些时间来完成当前操作
     tokio::time::sleep(Duration::from_secs(2)).await;
 
     // Cleanup with timeout
     let cleanup_timeout = Duration::from_secs(10);
-    match tokio::time::timeout(cleanup_timeout, storage_manager.write().await.disconnect_all()).await {
+    match tokio::time::timeout(
+        cleanup_timeout,
+        storage_manager.write().await.disconnect_all(),
+    )
+    .await
+    {
         Ok(Ok(_)) => {
             tracing::info!("All storage backends disconnected successfully");
         }
@@ -350,7 +368,7 @@ async fn main() -> Result<()> {
             tracing::error!("Timeout while disconnecting storage backends");
         }
     }
-    
+
     // 记录最终指标
     let final_metrics = metrics_collector.get_snapshot();
     tracing::info!(
@@ -428,9 +446,9 @@ fn setup_shutdown_signal() -> tokio::sync::watch::Receiver<()> {
         // Unix系统上监听SIGTERM
         #[cfg(unix)]
         {
-            let mut sigterm = tokio::signal::unix::signal(
-                tokio::signal::unix::SignalKind::terminate()
-            ).expect("Failed to install SIGTERM handler");
+            let mut sigterm =
+                tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+                    .expect("Failed to install SIGTERM handler");
 
             tokio::select! {
                 _ = sigterm.recv() => {

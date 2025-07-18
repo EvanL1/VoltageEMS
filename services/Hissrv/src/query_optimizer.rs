@@ -6,8 +6,8 @@ use tokio::sync::RwLock;
 use utoipa::ToSchema;
 
 use crate::api::models_enhanced::{
-    AdvancedHistoryQuery, AggregationConfig, EnhancedDataPoint, EnhancedQueryResult,
-    QueryMetadata, QueryMode, DataQuality, QualityCode, QualityInfo,
+    AdvancedHistoryQuery, AggregationConfig, DataQuality, EnhancedDataPoint, EnhancedQueryResult,
+    QualityCode, QualityInfo, QueryMetadata, QueryMode,
 };
 use crate::api::models_history::{PaginationInfo, TimeRange};
 use crate::error::{HisSrvError, Result};
@@ -55,13 +55,13 @@ pub struct QueryStep {
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum StepType {
-    Scan,           // 数据扫描
-    Filter,         // 过滤
-    Aggregate,      // 聚合
-    Sort,           // 排序
-    Join,           // 连接
-    Cache,          // 缓存查询
-    Transform,      // 数据转换
+    Scan,      // 数据扫描
+    Filter,    // 过滤
+    Aggregate, // 聚合
+    Sort,      // 排序
+    Join,      // 连接
+    Cache,     // 缓存查询
+    Transform, // 数据转换
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema, Hash, Eq, PartialEq)]
@@ -143,10 +143,10 @@ impl QueryOptimizer {
 
         // 分析时间范围
         let time_analysis = self.analyze_time_range(&query.time_range);
-        
+
         // 选择数据源
         let source = self.select_source(&time_analysis, &mode);
-        
+
         // 生成扫描步骤
         let scan_step = QueryStep {
             step_id: format!("{}_scan", plan_id),
@@ -178,8 +178,12 @@ impl QueryOptimizer {
                     step_id: format!("{}_aggregate", plan_id),
                     step_type: StepType::Aggregate,
                     source: source.clone(),
-                    dependencies: steps.last().map(|s| vec![s.step_id.clone()]).unwrap_or_default(),
-                    estimated_rows: self.estimate_aggregation_rows(aggregations, query.group_by.as_ref()),
+                    dependencies: steps
+                        .last()
+                        .map(|s| vec![s.step_id.clone()])
+                        .unwrap_or_default(),
+                    estimated_rows: self
+                        .estimate_aggregation_rows(aggregations, query.group_by.as_ref()),
                     parallelizable: false,
                 };
                 steps.push(agg_step);
@@ -193,7 +197,10 @@ impl QueryOptimizer {
                     step_id: format!("{}_sort", plan_id),
                     step_type: StepType::Sort,
                     source: source.clone(),
-                    dependencies: steps.last().map(|s| vec![s.step_id.clone()]).unwrap_or_default(),
+                    dependencies: steps
+                        .last()
+                        .map(|s| vec![s.step_id.clone()])
+                        .unwrap_or_default(),
                     estimated_rows: steps.last().map(|s| s.estimated_rows).unwrap_or(0),
                     parallelizable: false,
                 };
@@ -229,18 +236,19 @@ impl QueryOptimizer {
         }
 
         let start_time = std::time::Instant::now();
-        
+
         // 执行查询步骤
         let result = self.execute_steps(&plan.steps, max_parallelism).await?;
-        
+
         let execution_time = start_time.elapsed().as_millis() as u64;
-        
+
         // 更新统计信息
-        self.update_stats(false, execution_time, &plan.steps[0].source).await;
-        
+        self.update_stats(false, execution_time, &plan.steps[0].source)
+            .await;
+
         // 缓存结果
         self.cache_result(&plan.plan_id, &result).await;
-        
+
         Ok(result)
     }
 
@@ -249,7 +257,7 @@ impl QueryOptimizer {
         let duration = time_range.end_time - time_range.start_time;
         let now = Utc::now();
         let age = now - time_range.end_time;
-        
+
         TimeRangeAnalysis {
             duration_hours: duration.num_hours() as u64,
             is_recent: age < Duration::hours(1),
@@ -282,9 +290,13 @@ impl QueryOptimizer {
     }
 
     /// 估算扫描行数
-    async fn estimate_scan_rows(&self, time_range: &TimeRange, source: &QuerySource) -> Result<u64> {
+    async fn estimate_scan_rows(
+        &self,
+        time_range: &TimeRange,
+        source: &QuerySource,
+    ) -> Result<u64> {
         let duration_seconds = (time_range.end_time - time_range.start_time).num_seconds() as u64;
-        
+
         // 基于数据源和时间范围估算
         let estimated_rows = match source {
             QuerySource::Redis => {
@@ -304,7 +316,7 @@ impl QueryOptimizer {
                 (duration_seconds * 10 + duration_seconds / 60) / 2
             }
         };
-        
+
         Ok(estimated_rows.min(1_000_000)) // 最多100万行
     }
 
@@ -329,14 +341,16 @@ impl QueryOptimizer {
         let mut io_cost = 0.0;
         let mut network_cost = 0.0;
         let mut memory_bytes = 0u64;
-        
+
         for step in steps {
             match step.step_type {
                 StepType::Scan => {
                     io_cost += step.estimated_rows as f64 * 0.001;
                     match source {
                         QuerySource::Redis => network_cost += step.estimated_rows as f64 * 0.0001,
-                        QuerySource::InfluxDB => network_cost += step.estimated_rows as f64 * 0.0002,
+                        QuerySource::InfluxDB => {
+                            network_cost += step.estimated_rows as f64 * 0.0002
+                        }
                         _ => {}
                     }
                 }
@@ -348,15 +362,16 @@ impl QueryOptimizer {
                     memory_bytes += step.estimated_rows * 100; // 假设每行100字节
                 }
                 StepType::Sort => {
-                    cpu_cost += step.estimated_rows as f64 * (step.estimated_rows as f64).log2() * 0.0001;
+                    cpu_cost +=
+                        step.estimated_rows as f64 * (step.estimated_rows as f64).log2() * 0.0001;
                     memory_bytes += step.estimated_rows * 8; // 排序索引
                 }
                 _ => {}
             }
         }
-        
+
         let estimated_time_ms = (cpu_cost + io_cost + network_cost) as u64;
-        
+
         QueryCost {
             cpu_cost,
             io_cost,
@@ -373,29 +388,29 @@ impl QueryOptimizer {
         analysis: &TimeRangeAnalysis,
     ) -> Vec<String> {
         let mut hints = Vec::new();
-        
+
         // 时间范围建议
         if analysis.duration_hours > 24 * 30 {
             hints.push("考虑缩小查询时间范围以提高性能".to_string());
         }
-        
+
         // 聚合建议
         if let Some(aggregations) = &query.aggregations {
             if aggregations.len() > 5 {
                 hints.push("过多的聚合函数可能影响性能，建议减少聚合数量".to_string());
             }
         }
-        
+
         // 分页建议
         if query.pagination.is_none() {
             hints.push("建议添加分页参数以限制返回数据量".to_string());
         }
-        
+
         // 索引建议
         if !query.filters.is_empty() {
             hints.push("确保过滤字段已建立索引".to_string());
         }
-        
+
         hints
     }
 
@@ -445,42 +460,48 @@ impl QueryOptimizer {
     /// 缓存结果
     async fn cache_result(&self, key: &str, result: &EnhancedQueryResult) {
         let mut cache = self.cache.write().await;
-        
+
         // 简单的LRU实现
         if cache.entries.len() >= cache.max_size {
             // 移除最少使用的条目
-            if let Some(lru_key) = cache.entries.iter()
+            if let Some(lru_key) = cache
+                .entries
+                .iter()
                 .min_by_key(|(_, entry)| entry.hit_count)
-                .map(|(k, _)| k.clone()) {
+                .map(|(k, _)| k.clone())
+            {
                 cache.entries.remove(&lru_key);
             }
         }
-        
-        cache.entries.insert(key.to_string(), CacheEntry {
-            key: key.to_string(),
-            result: result.clone(),
-            created_at: Utc::now(),
-            hit_count: 0,
-            size_bytes: 1000, // TODO: 计算实际大小
-        });
+
+        cache.entries.insert(
+            key.to_string(),
+            CacheEntry {
+                key: key.to_string(),
+                result: result.clone(),
+                created_at: Utc::now(),
+                hit_count: 0,
+                size_bytes: 1000, // TODO: 计算实际大小
+            },
+        );
     }
 
     /// 更新统计信息
     async fn update_stats(&self, cache_hit: bool, execution_time: u64, source: &QuerySource) {
         let mut stats = self.stats.write().await;
         stats.total_queries += 1;
-        
+
         if cache_hit {
             stats.cache_hits += 1;
         } else {
             stats.cache_misses += 1;
         }
-        
+
         // 更新平均执行时间
         let n = stats.total_queries as f64;
-        stats.avg_execution_time_ms = 
+        stats.avg_execution_time_ms =
             (stats.avg_execution_time_ms * (n - 1.0) + execution_time as f64) / n;
-        
+
         // 更新数据源使用统计
         *stats.source_usage.entry(source.clone()).or_insert(0) += 1;
     }

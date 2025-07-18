@@ -1,12 +1,12 @@
-use actix::{Actor, StreamHandler, ActorContext, AsyncContext, Handler, Message, fut};
+use actix::{fut, Actor, ActorContext, AsyncContext, Handler, Message, StreamHandler};
+use actix_web::{web, Error, HttpRequest, HttpResponse};
 use actix_web_actors::ws;
-use actix_web::{web, HttpRequest, HttpResponse, Error};
+use futures::future::{ready, Ready};
 use log::{debug, error, info};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
-use futures::future::{ready, Ready};
 
 use crate::redis_client::RedisClient;
 
@@ -20,9 +20,13 @@ const CLIENT_TIMEOUT: Duration = Duration::from_secs(10);
 #[serde(tag = "type")]
 pub enum WsMessage {
     /// Subscribe to channels
-    Subscribe { channels: Vec<String> },
+    Subscribe {
+        channels: Vec<String>,
+    },
     /// Unsubscribe from channels
-    Unsubscribe { channels: Vec<String> },
+    Unsubscribe {
+        channels: Vec<String>,
+    },
     /// Data update from Redis
     DataUpdate {
         channel: String,
@@ -32,7 +36,9 @@ pub enum WsMessage {
     Ping,
     Pong,
     /// Error message
-    Error { message: String },
+    Error {
+        message: String,
+    },
 }
 
 /// WebSocket connection actor
@@ -123,7 +129,7 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for WsConnection {
             }
             Ok(ws::Message::Text(text)) => {
                 debug!("Received text message: {}", text);
-                
+
                 // Parse message
                 match serde_json::from_str::<WsMessage>(&text) {
                     Ok(msg) => match msg {

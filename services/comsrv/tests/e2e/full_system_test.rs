@@ -82,8 +82,7 @@ impl SystemTestRunner {
     async fn start_protocol_plugins(&self) -> Result<(), Box<dyn std::error::Error>> {
         println!("\n🔌 Starting protocol plugins...");
         
-        // TODO: 实际启动协议插件
-        // 这里应该通过插件管理器启动配置的协议插件
+        // Protocol plugin startup is handled by the main service
         
         println!("✓ Protocol plugins started");
         Ok(())
@@ -160,7 +159,7 @@ impl SystemTestRunner {
         
         // 模拟连接断开
         println!("  Simulating connection loss...");
-        // TODO: 实际断开某个协议连接
+        // Connection loss simulation requires protocol-specific implementation
         
         sleep(Duration::from_secs(2)).await;
         

@@ -1,28 +1,56 @@
 //! 极简的Redis存储实现
 
+use super::publisher::{PublisherConfig, PublisherHandle, RedisPublisher};
 use super::types::*;
 use crate::utils::error::{ComSrvError, Result};
 use redis::aio::ConnectionManager;
 use redis::{AsyncCommands, Pipeline};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use tracing::{debug, error, info};
 
 /// Redis存储管理器
 pub struct RedisStorage {
     conn: ConnectionManager,
+    publisher: Option<RedisPublisher>,
+    publisher_handle: Option<PublisherHandle>,
 }
 
 impl RedisStorage {
-    /// 创建新的存储实例
+    /// 创建新的存储实例（pub/sub始终启用）
     pub async fn new(redis_url: &str) -> Result<Self> {
+        Self::with_default_pubsub(redis_url).await
+    }
+
+    /// 创建带默认pub/sub配置的存储实例
+    async fn with_default_pubsub(redis_url: &str) -> Result<Self> {
         let client = redis::Client::open(redis_url)
             .map_err(|e| ComSrvError::Storage(format!("Failed to create Redis client: {}", e)))?;
 
-        let conn = ConnectionManager::new(client)
+        let conn = ConnectionManager::new(client.clone())
             .await
             .map_err(|e| ComSrvError::Storage(format!("Failed to connect to Redis: {}", e)))?;
 
-        Ok(Self { conn })
+        // Pub/sub始终启用
+        let pub_conn = ConnectionManager::new(client).await.map_err(|e| {
+            ComSrvError::Storage(format!("Failed to create publisher connection: {}", e))
+        })?;
+
+        let config = PublisherConfig {
+            enabled: true,
+            batch_size: 100,
+            batch_timeout: Duration::from_millis(50),
+            message_version: "1.0".to_string(),
+        };
+
+        let (publisher, publisher_handle) = RedisPublisher::new(pub_conn, config).await?;
+        info!("Redis publisher initialized with batch_size=100, timeout=50ms");
+        let (publisher, publisher_handle) = (Some(publisher), Some(publisher_handle));
+
+        Ok(Self {
+            conn,
+            publisher,
+            publisher_handle,
+        })
     }
 
     /// 设置单个点位值
@@ -38,9 +66,22 @@ impl RedisStorage {
         let data = point_value.to_redis();
 
         self.conn
-            .set(&key, &data)
+            .set::<_, _, ()>(&key, &data)
             .await
             .map_err(|e| ComSrvError::Storage(format!("Failed to set point: {}", e)))?;
+
+        // Publish if enabled
+        if let Some(ref publisher) = self.publisher {
+            publisher
+                .publish_point(
+                    channel_id,
+                    point_type,
+                    point_id,
+                    value,
+                    point_value.timestamp,
+                )
+                .await?;
+        }
 
         debug!(
             "Set point {}:{}:{} = {}",
@@ -94,9 +135,18 @@ impl RedisStorage {
             pipe.set(&key, &data);
         }
 
-        pipe.query_async(&mut self.conn)
+        pipe.query_async::<()>(&mut self.conn)
             .await
             .map_err(|e| ComSrvError::Storage(format!("Failed to set points: {}", e)))?;
+
+        // Publish if enabled
+        if let Some(ref publisher) = self.publisher {
+            let publish_data: Vec<(u16, &str, u32, f64, i64)> = updates
+                .iter()
+                .map(|u| (u.channel_id, u.point_type, u.point_id, u.value, timestamp))
+                .collect();
+            publisher.publish_points(&publish_data).await?;
+        }
 
         let elapsed = start.elapsed();
         info!("Batch updated {} points in {:?}", updates.len(), elapsed);
@@ -144,7 +194,7 @@ impl RedisStorage {
             .map_err(|e| ComSrvError::Storage(format!("Failed to serialize config: {}", e)))?;
 
         self.conn
-            .set(&key, &json)
+            .set::<_, _, ()>(&key, &json)
             .await
             .map_err(|e| ComSrvError::Storage(format!("Failed to set config: {}", e)))?;
 
@@ -188,7 +238,7 @@ impl RedisStorage {
         let key = make_key(channel_id, point_type, point_id);
 
         self.conn
-            .del(&key)
+            .del::<_, ()>(&key)
             .await
             .map_err(|e| ComSrvError::Storage(format!("Failed to delete point: {}", e)))?;
 
@@ -198,10 +248,18 @@ impl RedisStorage {
     /// 检查连接状态
     pub async fn ping(&mut self) -> Result<()> {
         redis::cmd("PING")
-            .query_async(&mut self.conn)
+            .query_async::<()>(&mut self.conn)
             .await
             .map_err(|e| ComSrvError::Storage(format!("Redis ping failed: {}", e)))?;
         Ok(())
+    }
+
+    /// 关闭存储（等待发布器完成）
+    pub async fn close(self) {
+        if let Some(handle) = self.publisher_handle {
+            info!("Waiting for publisher to finish...");
+            handle.wait().await;
+        }
     }
 }
 

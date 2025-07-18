@@ -447,6 +447,7 @@ pub mod service {
 }
 
 // Re-export commonly used types and traits
+pub use api::openapi_routes::{get_service_start_time, set_service_start_time};
 pub use core::config::ConfigManager;
 pub use core::framework::{ChannelStatus, ComBase, DefaultProtocol, PointData, ProtocolFactory};
 pub use utils::error::{ComSrvError, Result};

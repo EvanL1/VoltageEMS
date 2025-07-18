@@ -1,14 +1,14 @@
 //! Common test utilities and helpers
 
-use anyhow::Result;
-use std::sync::Arc;
-use tokio::sync::RwLock;
 use alarmsrv::{
     api::routes,
     domain::{Alarm, AlarmClassifier, AlarmLevel},
     redis::{AlarmQueryService, AlarmRedisClient, AlarmStatisticsManager, AlarmStore},
     AppState,
 };
+use anyhow::Result;
+use std::sync::Arc;
+use tokio::sync::RwLock;
 
 pub mod test_config;
 
@@ -40,18 +40,14 @@ pub async fn create_test_router() -> Result<axum::Router> {
 
 /// Create a sample alarm for testing
 pub fn create_test_alarm(title: &str, level: AlarmLevel) -> Alarm {
-    Alarm::new(
-        title.to_string(),
-        format!("Test alarm: {}", title),
-        level,
-    )
+    Alarm::new(title.to_string(), format!("Test alarm: {}", title), level)
 }
 
 /// Clean up test data from Redis
 pub async fn cleanup_test_data(key_pattern: &str) -> Result<()> {
     let config = Arc::new(test_config::test_config());
     let redis_client = Arc::new(AlarmRedisClient::new(config).await?);
-    
+
     let mut client_guard = redis_client.get_client().await?;
     if let Some(conn) = client_guard.as_mut() {
         let keys: Vec<String> = conn.keys(key_pattern).await?;
@@ -61,7 +57,7 @@ pub async fn cleanup_test_data(key_pattern: &str) -> Result<()> {
             }
         }
     }
-    
+
     Ok(())
 }
 
@@ -72,14 +68,14 @@ where
 {
     let start = std::time::Instant::now();
     let timeout = std::time::Duration::from_secs(timeout_secs);
-    
+
     while start.elapsed() < timeout {
         if condition() {
             return true;
         }
         tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
     }
-    
+
     false
 }
 

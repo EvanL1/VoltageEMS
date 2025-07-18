@@ -141,7 +141,8 @@ async fn test_complete_modbus_communication() {
     let modbus_config_dir = config_dir.join("Modbus_TCP_Test_01");
 
     // 复制配置文件
-    copy_config_files("config/Modbus_TCP_Test_01", &modbus_config_dir).expect("复制配置文件失败");
+    copy_config_files("test-configs/modbus/ModbusTCP_Test_01", &modbus_config_dir)
+        .expect("复制配置文件失败");
 
     // 创建配置
     let config_content = format!(

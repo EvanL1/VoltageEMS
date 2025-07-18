@@ -94,7 +94,6 @@ pub struct ProtocolMappingFiles {
 pub struct FourTelemetryPoint {
     pub point_id: u32,
     pub signal_name: String,
-    pub chinese_name: String,
     pub telemetry_type: String,
     pub scale: Option<f64>,
     pub offset: Option<f64>,
@@ -116,7 +115,6 @@ pub struct ProtocolMapping {
 pub struct CombinedPoint {
     pub point_id: u32,
     pub signal_name: String,
-    pub chinese_name: String,
     pub telemetry_type: String,
     pub data_type: String,
     pub protocol_params: HashMap<String, String>,

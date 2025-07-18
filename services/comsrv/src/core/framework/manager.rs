@@ -100,7 +100,7 @@ impl OptimizedPointManager {
 
         // Build indices
         for config in configs {
-            let point_id = config.address; // Use address as point ID for simplicity
+            let point_id = config.id.parse::<u32>().unwrap_or(config.address); // Use id as point ID, fallback to address
 
             // Add to name mapping
             name_to_id.insert(config.name.to_string(), point_id);
@@ -358,7 +358,6 @@ pub fn generate_test_points(count: usize) -> Vec<PollingPoint> {
             unit: "V".to_string(),
             description: format!("Test point number {i}"),
             access_mode: "rw".to_string(),
-            group: Arc::from("test"),
             protocol_params: HashMap::new(),
         };
 

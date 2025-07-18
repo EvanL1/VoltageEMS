@@ -21,6 +21,8 @@ pub struct ChannelStatus {
     pub last_error: String,
     /// Last status update time
     pub last_update_time: DateTime<Utc>,
+    /// Total error count since startup
+    pub error_count: u64,
 }
 
 impl ChannelStatus {
@@ -32,6 +34,7 @@ impl ChannelStatus {
             last_response_time: 0.0,
             last_error: String::new(),
             last_update_time: Utc::now(),
+            error_count: 0,
         }
     }
 
@@ -56,9 +59,10 @@ impl ChannelStatus {
         self.last_update_time = Utc::now();
     }
 
-    /// Update error status
+    /// Update error status and increment error count
     pub fn set_error(&mut self, error: String) {
         self.last_error = error;
+        self.error_count += 1;
         self.last_update_time = Utc::now();
     }
 
@@ -81,6 +85,11 @@ impl ChannelStatus {
     /// Get last update timestamp
     pub fn last_update(&self) -> DateTime<Utc> {
         self.last_update_time
+    }
+
+    /// Get total error count
+    pub fn get_error_count(&self) -> u64 {
+        self.error_count
     }
 }
 
@@ -167,8 +176,6 @@ pub struct PollingPoint {
     pub description: String,
     /// Access mode
     pub access_mode: String,
-    /// Point group - kept as Arc for grouping operations
-    pub group: Arc<str>,
     /// Protocol-specific parameters
     pub protocol_params: HashMap<String, serde_json::Value>,
 }
@@ -187,7 +194,6 @@ impl PollingPoint {
             unit: String::new(),
             description: String::new(),
             access_mode: "r".to_string(),
-            group: Arc::from("default"),
             protocol_params: HashMap::new(),
         }
     }
@@ -342,4 +348,23 @@ pub struct RemoteOperationResponse {
     pub error_message: Option<String>,
     /// Response timestamp
     pub timestamp: DateTime<Utc>,
+}
+
+/// 通道命令类型 - 用于命令订阅器和协议之间的通信
+#[derive(Debug, Clone)]
+pub enum ChannelCommand {
+    /// 遥控命令
+    Control {
+        command_id: String,
+        point_id: u32,
+        value: f64,
+        timestamp: i64,
+    },
+    /// 遥调命令
+    Adjustment {
+        command_id: String,
+        point_id: u32,
+        value: f64,
+        timestamp: i64,
+    },
 }

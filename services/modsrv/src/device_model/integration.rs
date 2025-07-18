@@ -7,10 +7,10 @@ use tokio::sync::mpsc;
 use tokio::sync::RwLock;
 
 use super::{
-    CalculationDefinition, CalculationEngine, CalculationExpression, CollectionType, CommandType,
-    Constraints, DataFlowConfig, DataFlowProcessor, DataType, DeviceInstance, DeviceModel,
-    DeviceType, InstanceManager, ModelRegistry, PropertyDefinition, TelemetryDefinition,
-    TelemetryMapping, TelemetryValue, dataflow::DataUpdate,
+    dataflow::DataUpdate, CalculationDefinition, CalculationEngine, CalculationExpression,
+    CollectionType, CommandType, Constraints, DataFlowConfig, DataFlowProcessor, DataType,
+    DeviceInstance, DeviceModel, DeviceType, InstanceManager, ModelRegistry, PropertyDefinition,
+    TelemetryDefinition, TelemetryMapping, TelemetryValue,
 };
 use crate::cache::ModelCacheManager;
 use crate::engine::OptimizedModelEngine;
@@ -384,4 +384,3 @@ impl Clone for DeviceModelSystem {
         }
     }
 }
-

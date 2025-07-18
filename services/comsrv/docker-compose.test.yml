@@ -1,93 +1,57 @@
 version: '3.8'
 
 services:
-  # Redis服务
   redis:
     image: redis:7-alpine
-    container_name: voltage-redis-test
-    restart: unless-stopped
-    ports:
-      - "6380:6379"
+    container_name: comsrv-redis-test
     volumes:
-      - redis-test-data:/data
+      - ./test-configs/redis:/usr/local/etc/redis
+    command: redis-server /usr/local/etc/redis/redis.conf
     networks:
-      - voltage-test-network
-    command: redis-server --appendonly yes
-
-  # Modbus模拟器
-  modbus-simulator:
-    image: python:3.11-slim
-    container_name: voltage-modbus-simulator-test
-    restart: unless-stopped
-    ports:
-      - "5502:5502"
-      - "5503:5503"
-    volumes:
-      - ./tests:/app
-    working_dir: /app
-    environment:
-      - PYTHONUNBUFFERED=1
-    command: python simple_tcp_server.py 0.0.0.0 5502
-    networks:
-      - voltage-test-network
-
-  # 通信服务
-  comsrv:
-    image: voltageems/comsrv:latest
-    container_name: voltage-comsrv-test
-    restart: unless-stopped
-    ports:
-      - "8888:3000"  # API端口
-      - "9091:9090"  # Metrics端口
-    environment:
-      - RUST_LOG=debug
-      - CONFIG_FILE=/app/config/comsrv-docker.yaml
-      - COMSRV_SERVICE_REDIS_URL=redis://redis:6379
-      - LOG_DIR=/app/logs
-      - DATA_DIR=/app/data
-    volumes:
-      - ./config:/app/config
-      - ./logs-test:/app/logs
-      - ./data-test:/app/data
-    networks:
-      - voltage-test-network
-    depends_on:
-      - redis
-      - modbus-simulator
-    command: /app/bin/comsrv --config /app/config/comsrv-docker.yaml
+      - comsrv-network
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:3000/api/v1/channels"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 40s
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
 
-  # Prometheus监控（可选）
-  prometheus:
-    image: prom/prometheus:v2.45.0
-    container_name: voltage-prometheus-test
-    restart: unless-stopped
+  modbus-simulator:
+    image: oitc/modbus-server:latest
+    container_name: comsrv-modbus-tcp-simulator
     ports:
-      - "9092:9090"
-    volumes:
-      - ./config/prometheus.yml:/etc/prometheus/prometheus.yml
-      - prometheus-test-data:/prometheus
+      - "5020:5020"
     networks:
-      - voltage-test-network
-    command:
-      - '--config.file=/etc/prometheus/prometheus.yml'
-      - '--storage.tsdb.path=/prometheus'
-      - '--web.console.libraries=/etc/prometheus/console_libraries'
-      - '--web.console.templates=/etc/prometheus/consoles'
-      - '--web.enable-lifecycle'
+      - comsrv-network
+
+  comsrv:
+    build:
+      context: ../../
+      dockerfile: services/comsrv/Dockerfile
+    image: comsrv:test
+    container_name: comsrv-test
+    volumes:
+      - ./test-configs:/app/config
+      - ./logs:/app/logs
+    environment:
+      - RUST_LOG=debug,comsrv=debug
+      - COMSRV_SERVICE_REDIS_URL=redis://comsrv:comsrv_secure_password_2025@comsrv-redis-test:6379
+      - COMSRV_SERVICE_REDIS_ENABLED=true
+    ports:
+      - "3000:3000"  # API端口
+    depends_on:
+      redis:
+        condition: service_healthy
+      modbus-simulator:
+        condition: service_started
+    networks:
+      - comsrv-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/api/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
 networks:
-  voltage-test-network:
+  comsrv-network:
     driver: bridge
-    ipam:
-      config:
-        - subnet: 172.20.0.0/16
-
-volumes:
-  redis-test-data:
-  prometheus-test-data:
+    name: comsrv-test-network

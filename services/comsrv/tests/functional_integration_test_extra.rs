@@ -66,7 +66,6 @@ async fn test_config_type_mapping() {
     let point = CombinedPoint {
         point_id: 1001,
         signal_name: "test_point".to_string(),
-        chinese_name: "测试点".to_string(),
         telemetry_type: "Measurement".to_string(),
         data_type: "FLOAT".to_string(),
         protocol_params: HashMap::new(),

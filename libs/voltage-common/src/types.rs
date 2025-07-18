@@ -1,4 +1,4 @@
-//! Common types used across VoltageEMS services
+//! Common types used across `VoltageEMS` services
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -50,6 +50,7 @@ impl PointValue {
     pub fn as_f64(&self) -> Option<f64> {
         match self {
             PointValue::Float(v) => Some(*v),
+            #[allow(clippy::cast_precision_loss)]
             PointValue::Int(v) => Some(*v as f64),
             _ => None,
         }
@@ -58,6 +59,7 @@ impl PointValue {
     pub fn as_i64(&self) -> Option<i64> {
         match self {
             PointValue::Int(v) => Some(*v),
+            #[allow(clippy::cast_possible_truncation)]
             PointValue::Float(v) => Some(*v as i64),
             _ => None,
         }
@@ -180,6 +182,7 @@ impl<T> Envelope<T> {
         }
     }
 
+    #[must_use]
     pub fn with_target(mut self, target: ServiceName) -> Self {
         self.target = Some(target);
         self
@@ -220,8 +223,13 @@ pub struct PaginatedResponse<T> {
 }
 
 impl<T> PaginatedResponse<T> {
-    pub fn new(data: Vec<T>, pagination: Pagination, total: u64) -> Self {
-        let total_pages = ((total as f64) / (pagination.per_page as f64)).ceil() as u32;
+    pub fn new(data: Vec<T>, pagination: &Pagination, total: u64) -> Self {
+        #[allow(
+            clippy::cast_precision_loss,
+            clippy::cast_possible_truncation,
+            clippy::cast_sign_loss
+        )]
+        let total_pages = ((total as f64) / f64::from(pagination.per_page)).ceil() as u32;
         Self {
             data,
             page: pagination.page,

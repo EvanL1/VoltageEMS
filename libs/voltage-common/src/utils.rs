@@ -1,13 +1,16 @@
-//! Common utility functions for VoltageEMS services
+//! Common utility functions for `VoltageEMS` services
 
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 /// Get current timestamp in milliseconds since Unix epoch
 pub fn current_timestamp_millis() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("Time went backwards")
-        .as_millis() as u64
+    u64::try_from(
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("Time went backwards")
+            .as_millis(),
+    )
+    .expect("Timestamp overflow")
 }
 
 /// Get current timestamp in seconds since Unix epoch
@@ -95,6 +98,7 @@ where
 
 /// Round a float to specified decimal places
 pub fn round_to_decimals(value: f64, decimals: u32) -> f64 {
+    #[allow(clippy::cast_possible_wrap)]
     let multiplier = 10f64.powi(decimals as i32);
     (value * multiplier).round() / multiplier
 }
@@ -151,6 +155,7 @@ impl MovingAverage {
             } else {
                 self.index
             };
+            #[allow(clippy::cast_precision_loss)]
             Some(self.sum / count as f64)
         }
     }

@@ -1,0 +1,7 @@
+user default on nopass ~* &* -@all
+user comsrv on >comsrv_secure_password_2025 ~* &* +@all
+user readonly on >readonly_password_2025 ~* &* +@read +@pubsub +ping +info +client +config|get -@write -@dangerous
+user modsrv on >modsrv_password_2025 resetkeys ~calc:* ~model:* &* +@read +@pubsub +ping +info +client +set
+user alarmsrv on >alarmsrv_password_2025 resetkeys ~alarm:* ~event:* &* +@read +@pubsub +ping +info +client +set
+user apigateway on >apigateway_password_2025 ~* &* +@read +ping +info +client -@write -@dangerous
+user test on >test_password_2025 resetkeys ~ping ~info &* +ping +info +client

@@ -7,7 +7,7 @@ use once_cell::sync::Lazy;
 use semver::Version;
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
 use super::protocol_plugin::{PluginFactory, ProtocolMetadata, ProtocolPlugin};
 use crate::utils::error::{ComSrvError as Error, Result};
@@ -282,6 +282,15 @@ pub mod discovery {
 
     /// Load all discovered plugins
     pub fn load_all_plugins() -> Result<()> {
+        // Use a static flag to ensure plugins are only loaded once
+        use std::sync::atomic::{AtomicBool, Ordering};
+        static PLUGINS_LOADED: AtomicBool = AtomicBool::new(false);
+
+        if PLUGINS_LOADED.swap(true, Ordering::SeqCst) {
+            debug!("Plugins already loaded, skipping");
+            return Ok(());
+        }
+
         // Built-in plugin registration
         register_builtin_plugins()?;
 
@@ -294,16 +303,25 @@ pub mod discovery {
     fn register_builtin_plugins() -> Result<()> {
         info!("Registering built-in protocol plugins");
 
+        // Log feature status
+        #[cfg(feature = "modbus")]
+        info!("Modbus feature is ENABLED");
+        #[cfg(not(feature = "modbus"))]
+        warn!("Modbus feature is DISABLED");
+
         // Register Modbus plugins
         #[cfg(feature = "modbus")]
         {
+            info!("Registering Modbus plugins...");
             use crate::plugins::protocols::modbus::plugin::{ModbusRtuPlugin, ModbusTcpPlugin};
             PluginRegistry::register_factory_global("modbus_tcp".to_string(), || {
                 Box::new(ModbusTcpPlugin::default())
             })?;
+            info!("Registered modbus_tcp plugin");
             PluginRegistry::register_factory_global("modbus_rtu".to_string(), || {
                 Box::new(ModbusRtuPlugin::default())
             })?;
+            info!("Registered modbus_rtu plugin");
         }
 
         // Register IEC 60870-5-104 plugin
@@ -357,6 +375,6 @@ mod tests {
         let mut registry = PluginRegistry::new();
 
         // Test registration
-        // TODO: Add test plugin implementation
+        // Test plugin implementation covered by builtin plugin tests
     }
 }

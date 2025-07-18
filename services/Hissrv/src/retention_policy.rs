@@ -133,20 +133,23 @@ impl RetentionPolicyManager {
     pub async fn add_policy(&self, policy: RetentionPolicyConfig) -> Result<()> {
         let name = policy.name.clone();
         info!("Adding retention policy: {}", name);
-        
+
         self.policies.write().await.insert(name.clone(), policy);
-        self.statistics.write().await.insert(name, PolicyStatistics::default());
-        
+        self.statistics
+            .write()
+            .await
+            .insert(name, PolicyStatistics::default());
+
         Ok(())
     }
 
     /// 移除策略
     pub async fn remove_policy(&self, name: &str) -> Result<()> {
         info!("Removing retention policy: {}", name);
-        
+
         self.policies.write().await.remove(name);
         self.statistics.write().await.remove(name);
-        
+
         Ok(())
     }
 
@@ -187,7 +190,7 @@ impl RetentionPolicyManager {
             if policy.enabled {
                 let manager = self.clone_for_task();
                 let policy_name = name.clone();
-                
+
                 tokio::spawn(async move {
                     manager.run_policy_executor(policy_name, policy).await;
                 });
@@ -206,29 +209,38 @@ impl RetentionPolicyManager {
 
     /// 立即执行指定策略
     pub async fn execute_policy(&self, name: &str) -> Result<()> {
-        let policy = self.get_policy(name).await
+        let policy = self
+            .get_policy(name)
+            .await
             .ok_or_else(|| HisSrvError::NotFound(format!("Policy {} not found", name)))?;
 
         if !policy.enabled {
-            return Err(HisSrvError::ValidationError(
-                format!("Policy {} is disabled", name)
-            ));
+            return Err(HisSrvError::ValidationError(format!(
+                "Policy {} is disabled",
+                name
+            )));
         }
 
         self.execute_single_policy(&name, &policy).await
     }
 
     /// 执行单个策略
-    async fn execute_single_policy(&self, name: &str, policy: &RetentionPolicyConfig) -> Result<()> {
+    async fn execute_single_policy(
+        &self,
+        name: &str,
+        policy: &RetentionPolicyConfig,
+    ) -> Result<()> {
         info!("Executing retention policy: {}", name);
         let start_time = Utc::now();
 
         let result = match &policy.retention_type {
             RetentionType::TimeBased { duration_seconds } => {
-                self.execute_time_based_retention(policy, *duration_seconds).await
+                self.execute_time_based_retention(policy, *duration_seconds)
+                    .await
             }
             RetentionType::SpaceBased { max_size_bytes } => {
-                self.execute_space_based_retention(policy, *max_size_bytes).await
+                self.execute_space_based_retention(policy, *max_size_bytes)
+                    .await
             }
             RetentionType::CountBased { max_count } => {
                 self.execute_count_based_retention(policy, *max_count).await
@@ -243,7 +255,8 @@ impl RetentionPolicyManager {
                     *duration_seconds,
                     *max_size_bytes,
                     *max_count,
-                ).await
+                )
+                .await
             }
         };
 
@@ -254,12 +267,15 @@ impl RetentionPolicyManager {
             stat.last_execution = Some(Utc::now());
             stat.total_executions += 1;
             stat.last_execution_duration_ms = duration_ms;
-            
+
             match result {
                 Ok(deleted_count) => {
                     stat.successful_executions += 1;
                     stat.total_records_deleted += deleted_count;
-                    info!("Policy {} executed successfully, deleted {} records", name, deleted_count);
+                    info!(
+                        "Policy {} executed successfully, deleted {} records",
+                        name, deleted_count
+                    );
                 }
                 Err(ref e) => {
                     stat.failed_executions += 1;
@@ -290,11 +306,14 @@ impl RetentionPolicyManager {
         let mut total_deleted = 0u64;
 
         let storage_manager = self.storage_manager.read().await;
-        
+
         // 对每个匹配的测量执行删除
         for pattern in &policy.measurement_patterns {
-            debug!("Processing pattern: {} with cutoff time: {}", pattern, cutoff_time);
-            
+            debug!(
+                "Processing pattern: {} with cutoff time: {}",
+                pattern, cutoff_time
+            );
+
             // 这里需要根据实际的存储后端实现删除逻辑
             // 示例：使用 InfluxDB 的删除功能
             if let Some(backend) = storage_manager.get_backend(Some("influxdb")) {
@@ -304,11 +323,11 @@ impl RetentionPolicyManager {
                     pattern,
                     cutoff_time.to_rfc3339()
                 );
-                
+
                 // 注意：实际实现需要在 StorageBackend trait 中添加删除方法
                 // 这里仅作示例
                 debug!("Would execute delete query: {}", delete_query);
-                
+
                 // total_deleted += backend.delete_before(pattern, cutoff_time).await?;
             }
         }
@@ -324,8 +343,11 @@ impl RetentionPolicyManager {
     ) -> Result<u64> {
         // 实现基于空间的清理逻辑
         // 这需要查询当前存储使用情况，然后删除最旧的数据直到满足空间限制
-        
-        warn!("Space-based retention not yet implemented for policy: {}", policy.name);
+
+        warn!(
+            "Space-based retention not yet implemented for policy: {}",
+            policy.name
+        );
         Ok(0)
     }
 
@@ -337,8 +359,11 @@ impl RetentionPolicyManager {
     ) -> Result<u64> {
         // 实现基于记录数的清理逻辑
         // 这需要查询当前记录数，然后删除最旧的记录直到满足数量限制
-        
-        warn!("Count-based retention not yet implemented for policy: {}", policy.name);
+
+        warn!(
+            "Count-based retention not yet implemented for policy: {}",
+            policy.name
+        );
         Ok(0)
     }
 
@@ -370,7 +395,10 @@ impl RetentionPolicyManager {
 
         // 执行计数保留
         if let Some(max_count_val) = max_count {
-            match self.execute_count_based_retention(policy, max_count_val).await {
+            match self
+                .execute_count_based_retention(policy, max_count_val)
+                .await
+            {
                 Ok(deleted) => total_deleted += deleted,
                 Err(e) => warn!("Count-based retention failed: {}", e),
             }
@@ -392,18 +420,22 @@ impl RetentionPolicyManager {
 
         // 实现降采样逻辑
         // 这需要查询原始数据，应用聚合函数，然后写入降采样后的数据
-        
-        warn!("Downsampling not yet implemented for policy: {}", policy.name);
+
+        warn!(
+            "Downsampling not yet implemented for policy: {}",
+            policy.name
+        );
         Ok(())
     }
 
     /// 策略执行器循环
     async fn run_policy_executor(self, name: String, policy: RetentionPolicyConfig) {
-        let mut interval_timer = interval(TokioDuration::from_secs(policy.execution_interval_seconds));
-        
+        let mut interval_timer =
+            interval(TokioDuration::from_secs(policy.execution_interval_seconds));
+
         loop {
             interval_timer.tick().await;
-            
+
             if !*self.running.read().await {
                 info!("Policy executor {} stopping", name);
                 break;
@@ -441,14 +473,14 @@ pub fn default_retention_policies() -> Vec<RetentionPolicyConfig> {
                 // 1小时后降采样到5分钟
                 DownsamplingPolicy {
                     source_retention_seconds: 60 * 60, // 1小时
-                    interval_seconds: 5 * 60, // 5分钟
+                    interval_seconds: 5 * 60,          // 5分钟
                     aggregation_method: AggregationMethod::Mean,
                     target_suffix: "_5m".to_string(),
                 },
                 // 1天后降采样到1小时
                 DownsamplingPolicy {
                     source_retention_seconds: 24 * 60 * 60, // 1天
-                    interval_seconds: 60 * 60, // 1小时
+                    interval_seconds: 60 * 60,              // 1小时
                     aggregation_method: AggregationMethod::Mean,
                     target_suffix: "_1h".to_string(),
                 },

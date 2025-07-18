@@ -5,10 +5,10 @@ use axum::{
     routing::{get, post},
     Router,
 };
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use csv::ReaderBuilder;
 use serde_json;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use tokio::sync::RwLock;
 use utoipa::OpenApi;
 
@@ -18,6 +18,19 @@ use crate::api::models::{
     TelemetryTableView, WritePointRequest,
 };
 use crate::core::framework::factory::ProtocolFactory;
+
+/// Global service start time storage
+static SERVICE_START_TIME: OnceLock<DateTime<Utc>> = OnceLock::new();
+
+/// Set the service start time (should be called once at startup)
+pub fn set_service_start_time(start_time: DateTime<Utc>) {
+    let _ = SERVICE_START_TIME.set(start_time);
+}
+
+/// Get the service start time
+pub fn get_service_start_time() -> DateTime<Utc> {
+    *SERVICE_START_TIME.get().unwrap_or(&Utc::now())
+}
 
 /// OpenAPI documentation
 #[derive(OpenApi)]
@@ -95,10 +108,10 @@ pub async fn get_service_status(
     let total_channels = factory.channel_count();
     let active_channels = factory.running_channel_count().await;
 
-    // TODO: Store actual service start time when service starts
-    // For now, using a reasonable estimate based on uptime
-    let uptime_seconds = 3600u64; // Placeholder - should be calculated from actual start time
-    let start_time = Utc::now() - chrono::Duration::seconds(uptime_seconds as i64);
+    // Get actual service start time and calculate uptime
+    let start_time = get_service_start_time();
+    let uptime_duration = Utc::now() - start_time;
+    let uptime_seconds = uptime_duration.num_seconds().max(0) as u64;
 
     let status = ServiceStatus {
         name: "Communication Service".to_string(),
@@ -168,7 +181,7 @@ pub async fn get_all_channels(
                 protocol,
                 connected: status.connected,
                 last_update: status.last_update_time,
-                error_count: 0, // TODO: Add error count to channel status
+                error_count: status.get_error_count() as u32,
                 last_error: if status.has_error() {
                     Some(status.last_error)
                 } else {
@@ -222,7 +235,7 @@ pub async fn get_channel_status(
             connected: channel_status.connected,
             running: is_running,
             last_update: channel_status.last_update_time,
-            error_count: 0, // TODO: Extract error count from diagnostics
+            error_count: channel_status.get_error_count() as u32,
             last_error: if channel_status.has_error() {
                 Some(channel_status.last_error)
             } else {
@@ -547,6 +560,7 @@ pub async fn get_channel_telemetry_tables(
 async fn read_channel_csv_config(
     channel_id: u16,
     channel_name: &str,
+    factory: &Arc<RwLock<ProtocolFactory>>,
 ) -> Result<TelemetryTableView, Box<dyn std::error::Error + Send + Sync>> {
     let config_base_path = format!("config/{channel_name}");
 
@@ -556,8 +570,25 @@ async fn read_channel_csv_config(
     let adjustment_points = read_telemetry_csv(&config_base_path, "adjustment").await?;
     let control_points = read_telemetry_csv(&config_base_path, "control").await?;
 
-    // TODO: Determine protocol type based on channel configuration
-    let protocol_type = "modbus"; // Default for now
+    // Determine protocol type based on channel configuration
+    let protocol_type = {
+        let factory_read = factory.read().await;
+        if let Some((_, protocol_name)) = factory_read.get_channel_metadata(channel_id).await {
+            // Convert protocol name to mapping file format
+            match protocol_name.to_lowercase().as_str() {
+                "modbustcp" | "modbus_tcp" => "modbus",
+                "modbusrtu" | "modbus_rtu" => "modbus",
+                "iec104" | "iec60870" => "iec60870",
+                "can" => "can",
+                "virtual" => "modbus", // Virtual uses modbus-style mapping for demo
+                "dio" => "modbus",     // DIO uses modbus-style mapping
+                "iec61850" => "iec61850",
+                _ => "modbus", // Default fallback
+            }
+        } else {
+            "modbus" // Default if channel not found
+        }
+    };
 
     // Read protocol mapping files (synchronous call, no .await)
     let telemetry_mapping = read_mapping_csv(
@@ -744,19 +775,19 @@ pub fn create_api_routes(factory: Arc<RwLock<ProtocolFactory>>) -> Router {
         .route("/api/status", get(get_service_status))
         .route("/api/health", get(health_check))
         .route("/api/channels", get(get_all_channels))
-        .route("/api/channels/:id/status", get(get_channel_status))
-        .route("/api/channels/:id/control", post(control_channel))
+        .route("/api/channels/{id}/status", get(get_channel_status))
+        .route("/api/channels/{id}/control", post(control_channel))
         .route(
-            "/api/channels/:channel_id/points/:point_table/:point_name",
+            "/api/channels/{channel_id}/points/{point_table}/{point_name}",
             get(read_point),
         )
         .route(
-            "/api/channels/:channel_id/points/:point_table/:point_name",
+            "/api/channels/{channel_id}/points/{point_table}/{point_name}",
             post(write_point),
         )
-        .route("/api/channels/:channel_id/points", get(get_channel_points))
+        .route("/api/channels/{channel_id}/points", get(get_channel_points))
         .route(
-            "/api/channels/:channel_id/telemetry_tables",
+            "/api/channels/{channel_id}/telemetry_tables",
             get(get_channel_telemetry_tables),
         )
         .route("/api-docs/openapi.json", get(serve_openapi_spec))

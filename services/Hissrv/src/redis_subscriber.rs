@@ -14,8 +14,8 @@ use tokio::sync::RwLock;
 use tokio::time::{interval, sleep};
 use tracing::{debug, error, info, warn};
 use uuid::Uuid;
-use voltage_common::types::PointData;
 use voltage_common::redis::{RedisClient, RedisConfig as CommonRedisConfig};
+use voltage_common::types::PointData;
 
 /// 消息类型，用于区分不同的数据类型
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -43,10 +43,10 @@ impl MessageType {
         let parts: Vec<&str> = channel.split(':').collect();
         if parts.len() >= 2 {
             match parts[1] {
-                "m" => Some(MessageType::Telemetry),    // 测量(YC)
-                "s" => Some(MessageType::Signal),       // 信号(YX)
-                "c" => Some(MessageType::Control),      // 控制(YK)
-                "a" => Some(MessageType::Adjustment),   // 调节(YT)
+                "m" => Some(MessageType::Telemetry),     // 测量(YC)
+                "s" => Some(MessageType::Signal),        // 信号(YX)
+                "c" => Some(MessageType::Control),       // 控制(YK)
+                "a" => Some(MessageType::Adjustment),    // 调节(YT)
                 "calc" => Some(MessageType::Calculated), // 计算点
                 _ => None,
             }
@@ -77,7 +77,7 @@ impl ChannelInfo {
             let channel_id = parts[0].parse::<u32>().ok()?;
             let message_type = MessageType::from_channel(channel)?;
             let point_id = parts[2].parse::<u32>().ok()?;
-            
+
             Some(ChannelInfo {
                 channel_id,
                 message_type,
@@ -187,18 +187,18 @@ impl EnhancedRedisSubscriber {
     /// 连接到 Redis
     pub async fn connect(&mut self) -> Result<()> {
         *self.state.write().await = SubscriberState::Connecting;
-        
+
         let conn_config = &self.config.connection;
         let redis_config = self.build_redis_config(conn_config);
-        
+
         let url = redis_config.to_url();
-        let client = RedisClient::new(&url).await.map_err(|e| {
-            HisSrvError::ConnectionError {
+        let client = RedisClient::new(&url)
+            .await
+            .map_err(|e| HisSrvError::ConnectionError {
                 message: format!("Failed to create Redis client: {}", e),
                 endpoint: url.clone(),
                 retry_count: 0,
-            }
-        })?;
+            })?;
 
         // 测试连接
         let ping_result = client
@@ -229,16 +229,16 @@ impl EnhancedRedisSubscriber {
     /// 断开连接
     pub async fn disconnect(&mut self) -> Result<()> {
         *self.state.write().await = SubscriberState::Stopping;
-        
+
         // 清理资源
         self.pubsub = None;
         self.client = None;
         self.subscribed_channels.write().await.clear();
         self.subscribed_patterns.write().await.clear();
-        
+
         *self.state.write().await = SubscriberState::Stopped;
         info!("Redis subscriber disconnected");
-        
+
         Ok(())
     }
 
@@ -246,7 +246,7 @@ impl EnhancedRedisSubscriber {
     async fn reconnect(&mut self) -> Result<()> {
         let mut attempts = self.reconnect_attempts.write().await;
         *attempts += 1;
-        
+
         if *attempts > self.subscriber_config.max_reconnect_attempts {
             error!("Max reconnection attempts reached");
             return Err(HisSrvError::ConnectionError {
@@ -255,23 +255,24 @@ impl EnhancedRedisSubscriber {
                 retry_count: *attempts,
             });
         }
-        
-        warn!("Attempting to reconnect... (attempt {}/{})", 
-              *attempts, self.subscriber_config.max_reconnect_attempts);
-        
-        // 指数退避
-        let delay = Duration::from_millis(
-            self.subscriber_config.reconnect_delay_ms * (*attempts as u64)
+
+        warn!(
+            "Attempting to reconnect... (attempt {}/{})",
+            *attempts, self.subscriber_config.max_reconnect_attempts
         );
+
+        // 指数退避
+        let delay =
+            Duration::from_millis(self.subscriber_config.reconnect_delay_ms * (*attempts as u64));
         sleep(delay).await;
-        
+
         // 尝试重新连接
         drop(attempts); // 释放锁
         self.connect().await?;
-        
+
         // 重新订阅之前的通道
         self.resubscribe().await?;
-        
+
         Ok(())
     }
 
@@ -304,10 +305,9 @@ impl EnhancedRedisSubscriber {
         // 重新订阅模式
         let patterns = self.subscribed_patterns.read().await.clone();
         for pattern in patterns {
-            pubsub
-                .psubscribe(&pattern)
-                .await
-                .map_err(|e| HisSrvError::RedisError(format!("Failed to pattern subscribe: {}", e)))?;
+            pubsub.psubscribe(&pattern).await.map_err(|e| {
+                HisSrvError::RedisError(format!("Failed to pattern subscribe: {}", e))
+            })?;
             info!("Resubscribed to pattern: {}", pattern);
         }
 
@@ -318,7 +318,7 @@ impl EnhancedRedisSubscriber {
     /// 订阅通道
     pub async fn subscribe_channels(&mut self, channels: Vec<String>) -> Result<()> {
         *self.state.write().await = SubscriberState::Subscribing;
-        
+
         if self.client.is_none() {
             return Err(HisSrvError::ConnectionError {
                 message: "Not connected to Redis".to_string(),
@@ -400,8 +400,10 @@ impl EnhancedRedisSubscriber {
     async fn listen_with_reconnect(&mut self, mut pubsub: PubSub) -> Result<()> {
         let mut pubsub_stream = pubsub.into_on_message();
         let mut batch = Vec::new();
-        let mut batch_timer = interval(Duration::from_millis(self.subscriber_config.batch_timeout_ms));
-        
+        let mut batch_timer = interval(Duration::from_millis(
+            self.subscriber_config.batch_timeout_ms,
+        ));
+
         loop {
             tokio::select! {
                 // 接收消息
@@ -411,7 +413,7 @@ impl EnhancedRedisSubscriber {
                             if let Err(e) = self.process_message(msg, &mut batch).await {
                                 warn!("Failed to process message: {}", e);
                             }
-                            
+
                             // 检查批量大小
                             if batch.len() >= self.subscriber_config.batch_size {
                                 self.flush_batch(&mut batch).await;
@@ -447,7 +449,7 @@ impl EnhancedRedisSubscriber {
         match msg.get_payload::<String>() {
             Ok(payload) => {
                 debug!("Received message on channel {}: {}", channel_name, payload);
-                
+
                 let subscription_msg = self.parse_message(&channel_name, &payload)?;
                 batch.push(subscription_msg);
             }
@@ -455,14 +457,14 @@ impl EnhancedRedisSubscriber {
                 error!("Error parsing message payload from Redis: {}", e);
             }
         }
-        
+
         Ok(())
     }
 
     /// 解析消息
     fn parse_message(&self, channel: &str, payload: &str) -> Result<SubscriptionMessage> {
         let channel_info = ChannelInfo::from_channel(channel);
-        
+
         // 尝试解析为 PointData
         let point_data = if let Ok(pd) = serde_json::from_str::<PointData>(payload) {
             Some(pd)
@@ -472,12 +474,15 @@ impl EnhancedRedisSubscriber {
 
         let mut metadata = HashMap::new();
         metadata.insert("source".to_string(), "redis_subscriber".to_string());
-        
+
         // 添加通道信息到元数据
         if let Some(ref info) = channel_info {
             metadata.insert("channel_id".to_string(), info.channel_id.to_string());
             metadata.insert("point_id".to_string(), info.point_id.to_string());
-            metadata.insert("message_type".to_string(), format!("{:?}", info.message_type));
+            metadata.insert(
+                "message_type".to_string(),
+                format!("{:?}", info.message_type),
+            );
         }
 
         Ok(SubscriptionMessage {
@@ -502,7 +507,7 @@ impl EnhancedRedisSubscriber {
         }
 
         debug!("Flushing batch of {} messages", batch.len());
-        
+
         for msg in batch.drain(..) {
             if let Err(e) = self.message_sender.send(msg) {
                 error!("Failed to send message to processor: {}", e);
@@ -511,7 +516,10 @@ impl EnhancedRedisSubscriber {
     }
 
     /// 构建 Redis 配置
-    fn build_redis_config(&self, conn_config: &crate::config::RedisConnection) -> CommonRedisConfig {
+    fn build_redis_config(
+        &self,
+        conn_config: &crate::config::RedisConnection,
+    ) -> CommonRedisConfig {
         if !conn_config.socket.is_empty() {
             CommonRedisConfig {
                 host: String::new(),
@@ -547,10 +555,10 @@ impl EnhancedRedisSubscriber {
     pub async fn shutdown(&mut self) -> Result<()> {
         info!("Shutting down Redis subscriber");
         *self.state.write().await = SubscriberState::Stopping;
-        
+
         // 等待一小段时间让正在处理的消息完成
         sleep(Duration::from_millis(100)).await;
-        
+
         self.disconnect().await?;
         Ok(())
     }

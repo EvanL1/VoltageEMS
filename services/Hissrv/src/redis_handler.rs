@@ -307,7 +307,10 @@ pub async fn process_redis_data(
     // Check if we should process comsrv channels
     // Using key_patterns from redis subscription config
     let key_patterns = &config.redis.subscription.key_patterns;
-    if key_patterns.iter().any(|p| p.contains("comsrv:realtime:channel:")) {
+    if key_patterns
+        .iter()
+        .any(|p| p.contains("comsrv:realtime:channel:"))
+    {
         // Extract channel IDs from pattern or use predefined list
         let channel_ids: Vec<u16> = vec![1, 2, 3]; // TODO: Make configurable
 
@@ -348,7 +351,10 @@ pub async fn process_redis_data(
     }
 
     // Check if we should process modsrv modules
-    if key_patterns.iter().any(|p| p.contains("modsrv:realtime:module:")) {
+    if key_patterns
+        .iter()
+        .any(|p| p.contains("modsrv:realtime:module:"))
+    {
         // Extract module IDs from pattern or use predefined list
         let module_ids: Vec<&str> = vec!["calc_module_1", "calc_module_2"]; // TODO: Make configurable
 
@@ -396,11 +402,7 @@ pub async fn process_redis_data(
         for pattern in key_patterns {
             let keys = redis.get_keys(pattern).await?;
 
-            println!(
-                "Found {} keys matching pattern: {}",
-                keys.len(),
-                pattern
-            );
+            println!("Found {} keys matching pattern: {}", keys.len(), pattern);
 
             for key in &keys {
                 // Removed verbose logging
@@ -410,16 +412,18 @@ pub async fn process_redis_data(
 
                 match key_type {
                     RedisType::Hash => match redis.get_hash(key).await {
-                        Ok(hash_data) => match influxdb.write_hash_data(key, hash_data, config).await {
-                            Ok(points) => {
-                                stored_points += points;
-                                // Removed verbose logging
+                        Ok(hash_data) => {
+                            match influxdb.write_hash_data(key, hash_data, config).await {
+                                Ok(points) => {
+                                    stored_points += points;
+                                    // Removed verbose logging
+                                }
+                                Err(e) => {
+                                    println!("Failed to write data for key {}: {}", key, e);
+                                    skipped_points += 1;
+                                }
                             }
-                            Err(e) => {
-                                println!("Failed to write data for key {}: {}", key, e);
-                                skipped_points += 1;
-                            }
-                        },
+                        }
                         Err(e) => {
                             println!("Failed to get hash data for key {}: {}", key, e);
                             skipped_points += 1;

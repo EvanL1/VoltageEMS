@@ -16,6 +16,7 @@ pub async fn start_communication_service(
     config_manager: Arc<ConfigManager>,
     factory: Arc<RwLock<ProtocolFactory>>,
 ) -> Result<()> {
+    info!("DEBUG: start_communication_service called");
     // Redis configuration info
     if config_manager.is_redis_enabled() {
         info!("Redis is enabled in configuration");
@@ -68,11 +69,23 @@ pub async fn start_communication_service(
         successful_channels, failed_channels
     );
 
-    // Start all channels with improved performance
+    // Start all channels with improved performance and timeout
+    info!("About to acquire factory read lock...");
     let factory_guard = factory.read().await;
-    if let Err(e) = factory_guard.start_all_channels().await {
-        error!("Failed to start some channels: {e}");
-        // Log but don't fail - some channels might have started successfully
+    info!("Factory read lock acquired, about to start all channels...");
+
+    let start_channels_task = factory_guard.start_all_channels();
+    match tokio::time::timeout(std::time::Duration::from_secs(30), start_channels_task).await {
+        Ok(Ok(())) => {
+            info!("All channels started successfully");
+        }
+        Ok(Err(e)) => {
+            error!("Failed to start some channels: {e}");
+            // Log but don't fail - some channels might have started successfully
+        }
+        Err(_) => {
+            error!("Timeout waiting for channels to start - continuing anyway");
+        }
     }
 
     let stats = factory_guard.get_channel_stats().await;

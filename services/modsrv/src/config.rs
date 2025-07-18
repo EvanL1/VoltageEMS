@@ -558,7 +558,7 @@ impl ConfigLoader {
         if let Ok(version) = std::env::var("API_VERSION") {
             config.api.version = version;
         }
-        
+
         // Service-specific API host and port
         if let Ok(host) = std::env::var(format!("{}API_HOST", self.env_prefix)) {
             config.service_api.host = host;

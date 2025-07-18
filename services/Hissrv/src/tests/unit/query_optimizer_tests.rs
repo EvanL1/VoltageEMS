@@ -39,9 +39,12 @@ async fn test_query_plan_creation_basic() {
     // 验证计划基本结构
     assert!(!plan.plan_id.is_empty());
     assert!(!plan.steps.is_empty());
-    
+
     // 应该至少有一个扫描步骤
-    let scan_step = plan.steps.iter().find(|s| matches!(s.step_type, StepType::Scan));
+    let scan_step = plan
+        .steps
+        .iter()
+        .find(|s| matches!(s.step_type, StepType::Scan));
     assert!(scan_step.is_some());
 }
 
@@ -55,13 +58,11 @@ async fn test_query_plan_with_filters() {
             start_time: Utc::now() - Duration::hours(1),
             end_time: Utc::now(),
         },
-        filters: vec![
-            crate::api::models_enhanced::Filter {
-                field: "value".to_string(),
-                operator: crate::api::models_enhanced::FilterOperator::GreaterThan,
-                value: serde_json::json!(100),
-            },
-        ],
+        filters: vec![crate::api::models_enhanced::Filter {
+            field: "value".to_string(),
+            operator: crate::api::models_enhanced::FilterOperator::GreaterThan,
+            value: serde_json::json!(100),
+        }],
         aggregations: None,
         group_by: None,
         order_by: None,
@@ -75,9 +76,15 @@ async fn test_query_plan_with_filters() {
         .unwrap();
 
     // 应该有扫描和过滤步骤
-    let has_scan = plan.steps.iter().any(|s| matches!(s.step_type, StepType::Scan));
-    let has_filter = plan.steps.iter().any(|s| matches!(s.step_type, StepType::Filter));
-    
+    let has_scan = plan
+        .steps
+        .iter()
+        .any(|s| matches!(s.step_type, StepType::Scan));
+    let has_filter = plan
+        .steps
+        .iter()
+        .any(|s| matches!(s.step_type, StepType::Filter));
+
     assert!(has_scan);
     assert!(has_filter);
 }
@@ -93,14 +100,12 @@ async fn test_query_plan_with_aggregation() {
             end_time: Utc::now(),
         },
         filters: vec![],
-        aggregations: Some(vec![
-            AggregationConfig {
-                function: AggregationType::Average,
-                field: "value".to_string(),
-                window: Some("1h".to_string()),
-                alias: Some("avg_value".to_string()),
-            },
-        ]),
+        aggregations: Some(vec![AggregationConfig {
+            function: AggregationType::Average,
+            field: "value".to_string(),
+            window: Some("1h".to_string()),
+            alias: Some("avg_value".to_string()),
+        }]),
         group_by: None,
         order_by: None,
         pagination: None,
@@ -113,7 +118,10 @@ async fn test_query_plan_with_aggregation() {
         .unwrap();
 
     // 应该有聚合步骤
-    let has_aggregate = plan.steps.iter().any(|s| matches!(s.step_type, StepType::Aggregate));
+    let has_aggregate = plan
+        .steps
+        .iter()
+        .any(|s| matches!(s.step_type, StepType::Aggregate));
     assert!(has_aggregate);
 }
 
@@ -144,7 +152,10 @@ async fn test_query_plan_with_sorting() {
         .unwrap();
 
     // 应该有排序步骤
-    let has_sort = plan.steps.iter().any(|s| matches!(s.step_type, StepType::Sort));
+    let has_sort = plan
+        .steps
+        .iter()
+        .any(|s| matches!(s.step_type, StepType::Sort));
     assert!(has_sort);
 }
 
@@ -171,8 +182,12 @@ async fn test_source_selection_based_on_time_range() {
         .create_plan(&realtime_query, QueryMode::Fast)
         .await
         .unwrap();
-    
-    if let Some(scan_step) = plan.steps.iter().find(|s| matches!(s.step_type, StepType::Scan)) {
+
+    if let Some(scan_step) = plan
+        .steps
+        .iter()
+        .find(|s| matches!(s.step_type, StepType::Scan))
+    {
         assert!(matches!(scan_step.source, QuerySource::Redis));
     }
 
@@ -195,8 +210,12 @@ async fn test_source_selection_based_on_time_range() {
         .create_plan(&historical_query, QueryMode::Accurate)
         .await
         .unwrap();
-    
-    if let Some(scan_step) = plan.steps.iter().find(|s| matches!(s.step_type, StepType::Scan)) {
+
+    if let Some(scan_step) = plan
+        .steps
+        .iter()
+        .find(|s| matches!(s.step_type, StepType::Scan))
+    {
         assert!(matches!(scan_step.source, QuerySource::InfluxDB));
     }
 }
@@ -220,9 +239,19 @@ async fn test_query_mode_impact_on_source() {
     };
 
     // Fast 模式应该优先使用缓存或 Redis
-    let fast_plan = optimizer.create_plan(&query, QueryMode::Fast).await.unwrap();
-    if let Some(scan_step) = fast_plan.steps.iter().find(|s| matches!(s.step_type, StepType::Scan)) {
-        assert!(matches!(scan_step.source, QuerySource::Redis | QuerySource::Cache));
+    let fast_plan = optimizer
+        .create_plan(&query, QueryMode::Fast)
+        .await
+        .unwrap();
+    if let Some(scan_step) = fast_plan
+        .steps
+        .iter()
+        .find(|s| matches!(s.step_type, StepType::Scan))
+    {
+        assert!(matches!(
+            scan_step.source,
+            QuerySource::Redis | QuerySource::Cache
+        ));
     }
 
     // Accurate 模式应该使用 InfluxDB
@@ -230,7 +259,11 @@ async fn test_query_mode_impact_on_source() {
         .create_plan(&query, QueryMode::Accurate)
         .await
         .unwrap();
-    if let Some(scan_step) = accurate_plan.steps.iter().find(|s| matches!(s.step_type, StepType::Scan)) {
+    if let Some(scan_step) = accurate_plan
+        .steps
+        .iter()
+        .find(|s| matches!(s.step_type, StepType::Scan))
+    {
         assert!(matches!(scan_step.source, QuerySource::InfluxDB));
     }
 }
@@ -296,21 +329,17 @@ async fn test_cost_estimation() {
             start_time: Utc::now() - Duration::days(7),
             end_time: Utc::now(),
         },
-        filters: vec![
-            crate::api::models_enhanced::Filter {
-                field: "value".to_string(),
-                operator: crate::api::models_enhanced::FilterOperator::GreaterThan,
-                value: serde_json::json!(100),
-            },
-        ],
-        aggregations: Some(vec![
-            AggregationConfig {
-                function: AggregationType::Average,
-                field: "value".to_string(),
-                window: Some("1h".to_string()),
-                alias: Some("avg_value".to_string()),
-            },
-        ]),
+        filters: vec![crate::api::models_enhanced::Filter {
+            field: "value".to_string(),
+            operator: crate::api::models_enhanced::FilterOperator::GreaterThan,
+            value: serde_json::json!(100),
+        }],
+        aggregations: Some(vec![AggregationConfig {
+            function: AggregationType::Average,
+            field: "value".to_string(),
+            window: Some("1h".to_string()),
+            alias: Some("avg_value".to_string()),
+        }]),
         group_by: Some(vec!["tag1".to_string()]),
         order_by: Some(vec![OrderBy {
             field: "timestamp".to_string(),
@@ -332,7 +361,8 @@ async fn test_cost_estimation() {
     // 复杂查询的成本应该更高
     assert!(complex_plan.estimated_cost.cpu_cost > simple_plan.estimated_cost.cpu_cost);
     assert!(
-        complex_plan.estimated_cost.estimated_time_ms > simple_plan.estimated_cost.estimated_time_ms
+        complex_plan.estimated_cost.estimated_time_ms
+            > simple_plan.estimated_cost.estimated_time_ms
     );
 }
 
@@ -346,21 +376,17 @@ async fn test_step_dependencies() {
             start_time: Utc::now() - Duration::hours(1),
             end_time: Utc::now(),
         },
-        filters: vec![
-            crate::api::models_enhanced::Filter {
-                field: "value".to_string(),
-                operator: crate::api::models_enhanced::FilterOperator::GreaterThan,
-                value: serde_json::json!(100),
-            },
-        ],
-        aggregations: Some(vec![
-            AggregationConfig {
-                function: AggregationType::Sum,
-                field: "value".to_string(),
-                window: Some("5m".to_string()),
-                alias: Some("sum_value".to_string()),
-            },
-        ]),
+        filters: vec![crate::api::models_enhanced::Filter {
+            field: "value".to_string(),
+            operator: crate::api::models_enhanced::FilterOperator::GreaterThan,
+            value: serde_json::json!(100),
+        }],
+        aggregations: Some(vec![AggregationConfig {
+            function: AggregationType::Sum,
+            field: "value".to_string(),
+            window: Some("5m".to_string()),
+            alias: Some("sum_value".to_string()),
+        }]),
         group_by: None,
         order_by: Some(vec![OrderBy {
             field: "sum_value".to_string(),

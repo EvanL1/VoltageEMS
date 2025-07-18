@@ -146,18 +146,14 @@ impl DataFlowProcessor {
             .get_instance(&update.instance_id)
             .await
             .ok_or_else(|| ModelSrvError::instance_not_found(&update.instance_id))?;
-            
+
         // Get the model to find calculations that depend on this telemetry
         let model = self.instance_manager.get_model(&instance.model_id).await?;
         for calc in &model.calculations {
             if calc.inputs.contains(&update.telemetry_name) {
                 // Execute calculation
-                self.execute_calculation(
-                    &instance.instance_id,
-                    &model,
-                    calc.identifier.clone(),
-                )
-                .await?;
+                self.execute_calculation(&instance.instance_id, &model, calc.identifier.clone())
+                    .await?;
             }
         }
 
@@ -189,14 +185,14 @@ impl DataFlowProcessor {
             .get_device_data(instance_id)
             .await
             .ok_or_else(|| ModelSrvError::instance_not_found(instance_id))?;
-        
+
         // Execute the calculation
         let instance = self
             .instance_manager
             .get_instance(instance_id)
             .await
             .ok_or_else(|| ModelSrvError::instance_not_found(instance_id))?;
-            
+
         let results = self
             .calculation_engine
             .execute_model_calculations(model, &instance, &device_data.telemetry)
@@ -282,7 +278,8 @@ impl DataFlowProcessor {
                             let update = DataUpdate {
                                 instance_id: instance_id.clone(),
                                 telemetry_name: telemetry_name.clone(),
-                                value: serde_json::to_value(&point_data.value).unwrap_or(serde_json::Value::Null),
+                                value: serde_json::to_value(&point_data.value)
+                                    .unwrap_or(serde_json::Value::Null),
                                 timestamp: point_data.timestamp.timestamp_millis(),
                             };
 

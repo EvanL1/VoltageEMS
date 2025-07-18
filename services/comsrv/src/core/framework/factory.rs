@@ -11,7 +11,7 @@ use tokio::sync::RwLock;
 
 use crate::core::config::{ChannelConfig, ChannelLoggingConfig, ConfigManager, ProtocolType};
 use crate::core::framework::command_subscriber::{CommandSubscriber, CommandSubscriberConfig};
-use crate::core::framework::traits::{ComBase, FourTelemetryOperations};
+use crate::core::framework::traits::ComBase;
 
 // use crate::plugins::protocols::iec60870::iec104::Iec104Client;
 use crate::utils::error::{ComSrvError, Result};
@@ -1401,14 +1401,21 @@ impl ProtocolFactory {
                 continue;
             }
 
-            // Check if channel implements FourTelemetryOperations
-            let channel = channel_entry.channel.clone();
+            // Create command channel for communication between subscriber and protocol
+            let (command_tx, command_rx) = tokio::sync::mpsc::channel(100);
 
-            // Create a wrapper that implements FourTelemetryOperations
-            let handler = ChannelCommandHandler {
-                channel: channel.clone(),
-                channel_id,
-            };
+            // Set command receiver in the protocol
+            {
+                let mut channel = channel_entry.channel.write().await;
+                if let Err(e) = channel.set_command_receiver(command_rx).await {
+                    tracing::warn!(
+                        "Failed to set command receiver for channel {}: {}",
+                        channel_id,
+                        e
+                    );
+                    // Continue anyway - not all protocols support command handling
+                }
+            }
 
             // Create command subscriber config
             let config = CommandSubscriberConfig {
@@ -1416,8 +1423,8 @@ impl ProtocolFactory {
                 redis_url: redis_url.clone(),
             };
 
-            // Create and start command subscriber
-            match CommandSubscriber::new(config, Arc::new(handler)).await {
+            // Create and start command subscriber with command sender
+            match CommandSubscriber::new(config, command_tx).await {
                 Ok(mut subscriber) => {
                     if let Err(e) = subscriber.start().await {
                         tracing::error!(
@@ -1518,163 +1525,7 @@ impl Default for ProtocolFactory {
     }
 }
 
-/// Channel command handler that wraps a ComBase channel to implement FourTelemetryOperations
-struct ChannelCommandHandler {
-    channel: Arc<RwLock<Box<dyn ComBase>>>,
-    channel_id: u16,
-}
-
-#[async_trait]
-impl FourTelemetryOperations for ChannelCommandHandler {
-    async fn remote_measurement(
-        &self,
-        _point_names: &[String],
-    ) -> Result<Vec<(String, crate::core::framework::types::PointValueType)>> {
-        // Remote measurement is read-only, not supported through command interface
-        Err(ComSrvError::InvalidOperation(
-            "Remote measurement is read-only".to_string(),
-        ))
-    }
-
-    async fn remote_signaling(
-        &self,
-        _point_names: &[String],
-    ) -> Result<Vec<(String, crate::core::framework::types::PointValueType)>> {
-        // Remote signaling is read-only, not supported through command interface
-        Err(ComSrvError::InvalidOperation(
-            "Remote signaling is read-only".to_string(),
-        ))
-    }
-
-    async fn remote_control(
-        &self,
-        request: crate::core::framework::types::RemoteOperationRequest,
-    ) -> Result<crate::core::framework::types::RemoteOperationResponse> {
-        // Get the channel
-        let mut channel = self.channel.write().await;
-
-        // Convert control value to string
-        let value_str = match request.operation_type {
-            crate::core::framework::types::RemoteOperationType::Control { value } => {
-                if value {
-                    "1"
-                } else {
-                    "0"
-                }
-            }
-            _ => {
-                return Err(ComSrvError::InvalidParameter(
-                    "Invalid operation type for control".to_string(),
-                ));
-            }
-        };
-
-        // Execute the control command
-        match channel.write_point(&request.point_name, value_str).await {
-            Ok(_) => {
-                tracing::info!(
-                    "Control command executed on channel {}: point={}, value={}",
-                    self.channel_id,
-                    request.point_name,
-                    value_str
-                );
-                Ok(crate::core::framework::types::RemoteOperationResponse {
-                    operation_id: request.operation_id,
-                    success: true,
-                    error_message: None,
-                    timestamp: chrono::Utc::now(),
-                })
-            }
-            Err(e) => {
-                tracing::error!(
-                    "Control command failed on channel {}: {}",
-                    self.channel_id,
-                    e
-                );
-                Ok(crate::core::framework::types::RemoteOperationResponse {
-                    operation_id: request.operation_id,
-                    success: false,
-                    error_message: Some(format!("Control command failed: {}", e)),
-                    timestamp: chrono::Utc::now(),
-                })
-            }
-        }
-    }
-
-    async fn remote_regulation(
-        &self,
-        request: crate::core::framework::types::RemoteOperationRequest,
-    ) -> Result<crate::core::framework::types::RemoteOperationResponse> {
-        // Get the channel
-        let mut channel = self.channel.write().await;
-
-        // Convert regulation value to string
-        let value_str = match request.operation_type {
-            crate::core::framework::types::RemoteOperationType::Regulation { value } => {
-                value.to_string()
-            }
-            _ => {
-                return Err(ComSrvError::InvalidParameter(
-                    "Invalid operation type for regulation".to_string(),
-                ));
-            }
-        };
-
-        // Execute the regulation command
-        match channel.write_point(&request.point_name, &value_str).await {
-            Ok(_) => {
-                tracing::info!(
-                    "Regulation command executed on channel {}: point={}, value={}",
-                    self.channel_id,
-                    request.point_name,
-                    value_str
-                );
-                Ok(crate::core::framework::types::RemoteOperationResponse {
-                    operation_id: request.operation_id,
-                    success: true,
-                    error_message: None,
-                    timestamp: chrono::Utc::now(),
-                })
-            }
-            Err(e) => {
-                tracing::error!(
-                    "Regulation command failed on channel {}: {}",
-                    self.channel_id,
-                    e
-                );
-                Ok(crate::core::framework::types::RemoteOperationResponse {
-                    operation_id: request.operation_id,
-                    success: false,
-                    error_message: Some(format!("Regulation command failed: {}", e)),
-                    timestamp: chrono::Utc::now(),
-                })
-            }
-        }
-    }
-
-    async fn get_control_points(&self) -> Vec<String> {
-        // For now, return empty list since ComBase doesn't provide point enumeration
-        vec![]
-    }
-
-    async fn get_regulation_points(&self) -> Vec<String> {
-        // For now, return empty list since ComBase doesn't provide point enumeration
-        vec![]
-    }
-
-    async fn get_measurement_points(&self) -> Vec<String> {
-        // For now, return empty list since ComBase doesn't provide point enumeration
-        vec![]
-    }
-
-    async fn get_signaling_points(&self) -> Vec<String> {
-        // For now, return empty list since ComBase doesn't provide point enumeration
-        vec![]
-    }
-}
-
-/// Placeholder for backward compatibility - to be implemented
-// TODO: Implement proper protocol parser registry
+// ChannelCommandHandler removed - now using channel-based command communication
 
 #[cfg(test)]
 mod tests {
@@ -1687,9 +1538,16 @@ mod tests {
 
     fn ensure_plugins_loaded() {
         INIT.call_once(|| {
-            // 加载所有内置插件
-            crate::plugins::plugin_registry::discovery::load_all_plugins()
-                .expect("Failed to load plugins");
+            // 直接注册测试所需的插件
+            use crate::plugins::plugin_registry::PluginRegistry;
+            use crate::plugins::protocols::modbus::plugin::{ModbusRtuPlugin, ModbusTcpPlugin};
+
+            let _ = PluginRegistry::register_factory_global("modbus_tcp".to_string(), || {
+                Box::new(ModbusTcpPlugin::default())
+            });
+            let _ = PluginRegistry::register_factory_global("modbus_rtu".to_string(), || {
+                Box::new(ModbusRtuPlugin::default())
+            });
         });
     }
 
@@ -1827,6 +1685,9 @@ mod tests {
         let config = create_test_channel_config(1, ProtocolType::ModbusTcp);
 
         let result = factory.create_protocol(config).await;
+        if let Err(e) = &result {
+            eprintln!("Modbus TCP test failed with error: {:?}", e);
+        }
         assert!(result.is_ok());
     }
 
@@ -1837,6 +1698,9 @@ mod tests {
         let config = create_modbus_rtu_test_config(4);
 
         let result = factory.create_protocol(config).await;
+        if let Err(e) = &result {
+            eprintln!("Modbus RTU test failed with error: {:?}", e);
+        }
         assert!(result.is_ok(), "Modbus RTU protocol should be supported");
     }
 

@@ -1,4 +1,4 @@
-use crate::batch_writer::{BatchWriter, BatchWriterConfig, BatchWriteBuffer};
+use crate::batch_writer::{BatchWriteBuffer, BatchWriter, BatchWriterConfig};
 use crate::config::InfluxDBConfig;
 use crate::error::{HisSrvError, Result};
 use crate::storage::{DataPoint, DataValue, QueryFilter, QueryResult, Storage, StorageStats};
@@ -198,32 +198,34 @@ impl Storage for InfluxDBStorage {
 
         let start_time = Instant::now();
         let client = self.client.as_ref().unwrap();
-        
+
         // Build Line Protocol string for true batch write
         let mut line_protocol = String::new();
-        
+
         for data_point in data_points {
             // Format: measurement,tag1=value1,tag2=value2 field1=value1,field2=value2 timestamp
             line_protocol.push_str("hissrv_data");
-            
+
             // Add tags
             line_protocol.push_str(&format!(",key={}", escape_tag_value(&data_point.key)));
-            
+
             for (tag_key, tag_value) in &data_point.tags {
-                line_protocol.push_str(&format!(",{}={}", 
-                    escape_tag_key(tag_key), 
+                line_protocol.push_str(&format!(
+                    ",{}={}",
+                    escape_tag_key(tag_key),
                     escape_tag_value(tag_value)
                 ));
             }
-            
+
             // Add metadata as tags
             for (meta_key, meta_value) in &data_point.metadata {
-                line_protocol.push_str(&format!(",meta_{}={}", 
-                    escape_tag_key(meta_key), 
+                line_protocol.push_str(&format!(
+                    ",meta_{}={}",
+                    escape_tag_key(meta_key),
                     escape_tag_value(meta_value)
                 ));
             }
-            
+
             // Add fields
             line_protocol.push(' ');
             let field_str = match &data_point.value {
@@ -231,43 +233,46 @@ impl Storage for InfluxDBStorage {
                 DataValue::Integer(i) => format!("int_value={}i", i),
                 DataValue::Float(f) => format!("float_value={}", f),
                 DataValue::Boolean(b) => format!("bool_value={}", b),
-                DataValue::Json(j) => format!("json_value=\"{}\"", escape_field_value(&j.to_string())),
+                DataValue::Json(j) => {
+                    format!("json_value=\"{}\"", escape_field_value(&j.to_string()))
+                }
                 DataValue::Binary(b) => {
                     let encoded = general_purpose::STANDARD.encode(b);
                     format!("binary_value=\"{}\",binary_size={}i", encoded, b.len())
                 }
             };
             line_protocol.push_str(&field_str);
-            
+
             // Add timestamp
             if let Some(nanos) = data_point.timestamp.timestamp_nanos_opt() {
                 line_protocol.push_str(&format!(" {}", nanos));
             }
-            
+
             line_protocol.push('\n');
         }
-        
+
         // Write using raw Line Protocol for better performance
-        let write_result = client
-            .query(&line_protocol)
-            .await
-            .map_err(|e| {
-                warn!("Failed to write batch of {} points: {}", data_points.len(), e);
-                HisSrvError::InfluxDBError(e)
-            });
-        
+        let write_result = client.query(&line_protocol).await.map_err(|e| {
+            warn!(
+                "Failed to write batch of {} points: {}",
+                data_points.len(),
+                e
+            );
+            HisSrvError::InfluxDBError(e)
+        });
+
         match write_result {
             Ok(_) => {
                 let elapsed = start_time.elapsed();
                 self.last_write_time = Some(Utc::now());
-                
+
                 debug!(
                     "Successfully wrote {} points in {:?} ({:.2} points/sec)",
                     data_points.len(),
                     elapsed,
                     data_points.len() as f64 / elapsed.as_secs_f64()
                 );
-                
+
                 Ok(())
             }
             Err(e) => Err(e),
@@ -408,7 +413,7 @@ impl BatchWriter for InfluxDBBatchWriter {
         let mut storage = self.storage.lock().await;
         storage.store_data_points(points).await
     }
-    
+
     fn name(&self) -> &str {
         "influxdb"
     }
@@ -428,8 +433,7 @@ fn escape_tag_value(s: &str) -> String {
 }
 
 fn escape_field_value(s: &str) -> String {
-    s.replace('"', r#"\""#)
-        .replace('\\', r"\\")
+    s.replace('"', r#"\""#).replace('\\', r"\\")
 }
 
 // Add base64 dependency to Cargo.toml if not already present

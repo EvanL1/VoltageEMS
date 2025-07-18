@@ -7,7 +7,7 @@ use thiserror::Error;
 use voltage_common::Error as CommonError;
 
 /// Communication Service Error Type
-#[derive(Error, Debug)]
+#[derive(Error, Debug, Clone)]
 pub enum ComSrvError {
     /// Configuration-related errors
     #[error("Configuration error: {0}")]
@@ -93,6 +93,10 @@ pub enum ComSrvError {
     /// Protocol not supported
     #[error("Protocol not supported: {0}")]
     ProtocolNotSupported(String),
+
+    /// Not implemented error
+    #[error("Not implemented: {0}")]
+    NotImplemented(String),
 
     /// Parsing errors
     #[error("Parsing error: {0}")]

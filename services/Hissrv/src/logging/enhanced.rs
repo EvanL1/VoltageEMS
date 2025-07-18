@@ -343,7 +343,11 @@ impl<S> Layer<S> for SamplingLayer
 where
     S: Subscriber,
 {
-    fn enabled(&self, metadata: &Metadata<'_>, _ctx: tracing_subscriber::layer::Context<'_, S>) -> bool {
+    fn enabled(
+        &self,
+        metadata: &Metadata<'_>,
+        _ctx: tracing_subscriber::layer::Context<'_, S>,
+    ) -> bool {
         // 始终记录ERROR和WARN级别
         if *metadata.level() <= Level::WARN {
             return true;
@@ -376,7 +380,7 @@ where
 // 结构化日志助手函数
 pub fn log_error_with_context(error: &HisSrvError) {
     let context = error.context();
-    
+
     match context.severity {
         ErrorSeverity::Critical => {
             error!(
@@ -429,7 +433,7 @@ impl PerformanceTracker {
     pub fn new(operation: impl Into<String>) -> Self {
         let operation = operation.into();
         info!(operation = %operation, "Starting operation");
-        
+
         Self {
             operation,
             start_time: Instant::now(),

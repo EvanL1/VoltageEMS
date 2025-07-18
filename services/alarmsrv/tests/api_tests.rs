@@ -33,11 +33,7 @@ async fn json_request(
             .unwrap()
     };
 
-    let response = app
-        .clone()
-        .oneshot(request)
-        .await
-        .unwrap();
+    let response = app.clone().oneshot(request).await.unwrap();
 
     let status = response.status();
     let body_bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
@@ -56,10 +52,15 @@ async fn json_request(
 #[tokio::test]
 async fn test_health_check() {
     let app = create_test_router().await.unwrap();
-    
+
     let response = app
         .clone()
-        .oneshot(Request::builder().uri("/health").body(Body::empty()).unwrap())
+        .oneshot(
+            Request::builder()
+                .uri("/health")
+                .body(Body::empty())
+                .unwrap(),
+        )
         .await
         .unwrap();
 
@@ -69,7 +70,7 @@ async fn test_health_check() {
 #[tokio::test]
 async fn test_status_endpoint() {
     let app = create_test_router().await.unwrap();
-    
+
     let (status, body) = json_request(&app, "GET", "/status", None).await;
 
     assert_eq!(status, StatusCode::OK);
@@ -81,7 +82,7 @@ async fn test_status_endpoint() {
 #[tokio::test]
 async fn test_create_alarm() {
     let app = create_test_router().await.unwrap();
-    
+
     // Clean up before test
     cleanup_test_data("ems:alarms:*").await.unwrap();
 
@@ -108,7 +109,7 @@ async fn test_create_alarm() {
 #[tokio::test]
 async fn test_list_alarms() {
     let app = create_test_router().await.unwrap();
-    
+
     // Clean up before test
     cleanup_test_data("ems:alarms:*").await.unwrap();
 
@@ -144,7 +145,7 @@ async fn test_list_alarms() {
 #[tokio::test]
 async fn test_acknowledge_alarm() {
     let app = create_test_router().await.unwrap();
-    
+
     // Clean up before test
     cleanup_test_data("ems:alarms:*").await.unwrap();
 
@@ -159,12 +160,8 @@ async fn test_acknowledge_alarm() {
     let alarm_id = created["id"].as_str().unwrap();
 
     // Acknowledge the alarm
-    let (status, body) = json_request(
-        &app,
-        "POST",
-        &format!("/alarms/{}/ack", alarm_id),
-        None,
-    ).await;
+    let (status, body) =
+        json_request(&app, "POST", &format!("/alarms/{}/ack", alarm_id), None).await;
 
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["status"], "Acknowledged");
@@ -178,7 +175,7 @@ async fn test_acknowledge_alarm() {
 #[tokio::test]
 async fn test_resolve_alarm() {
     let app = create_test_router().await.unwrap();
-    
+
     // Clean up before test
     cleanup_test_data("ems:alarms:*").await.unwrap();
 
@@ -193,12 +190,8 @@ async fn test_resolve_alarm() {
     let alarm_id = created["id"].as_str().unwrap();
 
     // Resolve the alarm
-    let (status, body) = json_request(
-        &app,
-        "POST",
-        &format!("/alarms/{}/resolve", alarm_id),
-        None,
-    ).await;
+    let (status, body) =
+        json_request(&app, "POST", &format!("/alarms/{}/resolve", alarm_id), None).await;
 
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["status"], "Resolved");
@@ -212,7 +205,7 @@ async fn test_resolve_alarm() {
 #[tokio::test]
 async fn test_get_statistics() {
     let app = create_test_router().await.unwrap();
-    
+
     // Clean up before test
     cleanup_test_data("ems:alarms:*").await.unwrap();
 
@@ -246,7 +239,7 @@ async fn test_get_statistics() {
 #[tokio::test]
 async fn test_classify_alarms() {
     let app = create_test_router().await.unwrap();
-    
+
     // Clean up before test
     cleanup_test_data("ems:alarms:*").await.unwrap();
 
@@ -272,19 +265,19 @@ async fn test_classify_alarms() {
 #[tokio::test]
 async fn test_get_alarm_categories() {
     let app = create_test_router().await.unwrap();
-    
+
     let (status, body) = json_request(&app, "GET", "/alarms/categories", None).await;
 
     assert_eq!(status, StatusCode::OK);
     let categories = body.as_array().unwrap();
     assert!(!categories.is_empty());
-    
+
     // Check that we have expected categories
     let category_names: Vec<&str> = categories
         .iter()
         .map(|c| c["name"].as_str().unwrap())
         .collect();
-    
+
     assert!(category_names.contains(&"environmental"));
     assert!(category_names.contains(&"power"));
     assert!(category_names.contains(&"communication"));
@@ -295,7 +288,7 @@ async fn test_get_alarm_categories() {
 #[tokio::test]
 async fn test_alarm_filtering() {
     let app = create_test_router().await.unwrap();
-    
+
     // Clean up before test
     cleanup_test_data("ems:alarms:*").await.unwrap();
 

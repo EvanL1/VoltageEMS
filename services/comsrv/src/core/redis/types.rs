@@ -48,7 +48,6 @@ pub struct PointConfig {
     pub unit: String,
     pub scale: f64,
     pub offset: f64,
-    pub address: String,
 }
 
 impl Default for PointConfig {
@@ -58,7 +57,6 @@ impl Default for PointConfig {
             unit: String::new(),
             scale: 1.0,
             offset: 0.0,
-            address: String::new(),
         }
     }
 }

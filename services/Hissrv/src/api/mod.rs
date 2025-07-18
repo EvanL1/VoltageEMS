@@ -161,13 +161,28 @@ pub fn create_router(state: AppState) -> Router {
         )
         .route("/history/statistics", get(handlers_history::get_statistics))
         // 增强查询 endpoints
-        .route("/history/query/advanced", post(handlers_enhanced::advanced_query))
+        .route(
+            "/history/query/advanced",
+            post(handlers_enhanced::advanced_query),
+        )
         .route("/history/query/batch", post(handlers_enhanced::batch_query))
-        .route("/history/query/stream", post(handlers_enhanced::stream_query))
+        .route(
+            "/history/query/stream",
+            post(handlers_enhanced::stream_query),
+        )
         // 数据分析 endpoints
-        .route("/history/analysis/trend", post(handlers_enhanced::trend_analysis))
-        .route("/history/analysis/aggregate", post(handlers_enhanced::aggregate_analysis))
-        .route("/history/quality/report", get(handlers_enhanced::data_quality_report))
+        .route(
+            "/history/analysis/trend",
+            post(handlers_enhanced::trend_analysis),
+        )
+        .route(
+            "/history/analysis/aggregate",
+            post(handlers_enhanced::aggregate_analysis),
+        )
+        .route(
+            "/history/quality/report",
+            get(handlers_enhanced::data_quality_report),
+        )
         // 数据导出 endpoints
         .route("/history/export", post(handlers_history::create_export_job))
         .route(
@@ -190,7 +205,7 @@ pub fn create_router(state: AppState) -> Router {
                 .layer(axum::middleware::from_fn_with_state(
                     state.clone(),
                     self::middleware::validate_request,
-                ))
+                )),
         )
         .with_state(state)
 }
@@ -220,13 +235,14 @@ pub async fn start_api_server(
     let addr = format!("{}:{}", config.service.host, config.service.port);
     tracing::info!("Starting API server on {}", addr);
 
-    let listener = tokio::net::TcpListener::bind(&addr)
-        .await
-        .map_err(|e| HisSrvError::ConfigError {
-            message: format!("Failed to bind to {}: {}", addr, e),
-            field: Some("service.host/port".to_string()),
-            suggestion: Some("Check if the port is already in use".to_string()),
-        })?;
+    let listener =
+        tokio::net::TcpListener::bind(&addr)
+            .await
+            .map_err(|e| HisSrvError::ConfigError {
+                message: format!("Failed to bind to {}: {}", addr, e),
+                field: Some("service.host/port".to_string()),
+                suggestion: Some("Check if the port is already in use".to_string()),
+            })?;
 
     axum::serve(listener, app)
         .await

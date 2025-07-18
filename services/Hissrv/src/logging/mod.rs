@@ -138,13 +138,9 @@ pub mod enhanced;
 
 // 重新导出增强日志系统的关键组件
 pub use enhanced::{
-    log_api_request as enhanced_log_api_request,
-    log_batch_operation,
-    log_error_with_context as enhanced_log_error_with_context,
-    log_query_performance,
-    log_storage_operation as enhanced_log_storage_operation,
-    EnhancedLogger,
-    LogMetricsSnapshot,
+    log_api_request as enhanced_log_api_request, log_batch_operation,
+    log_error_with_context as enhanced_log_error_with_context, log_query_performance,
+    log_storage_operation as enhanced_log_storage_operation, EnhancedLogger, LogMetricsSnapshot,
     PerformanceTracker as EnhancedPerformanceTracker,
 };
 

@@ -1,4 +1,4 @@
-use crate::batch_writer::{BatchWriteBuffer, BatchWriter, BatchWriterConfig, BatchWriteStats};
+use crate::batch_writer::{BatchWriteBuffer, BatchWriteStats, BatchWriter, BatchWriterConfig};
 use crate::error::{HisSrvError, Result};
 use crate::storage::{DataPoint, DataValue};
 use async_trait::async_trait;
@@ -56,11 +56,11 @@ impl BatchWriter for MockBatchWriter {
         }
 
         let mut count = self.write_count.lock().await;
-        
+
         if self.should_fail {
             return Err(HisSrvError::WriteError("Permanent failure".to_string()));
         }
-        
+
         if *count < self.fail_count {
             *count += 1;
             Err(HisSrvError::WriteError("Mock transient error".to_string()))

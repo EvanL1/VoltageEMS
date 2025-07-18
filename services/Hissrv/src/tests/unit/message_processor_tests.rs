@@ -203,10 +203,10 @@ async fn test_event_message_processing() {
 #[tokio::test]
 async fn test_quality_code_handling() {
     let quality_codes = vec![
-        (192, "Good"),          // 0xC0
-        (0, "Bad"),             // 0x00
-        (64, "Uncertain"),      // 0x40
-        (216, "Good_Local"),    // 0xD8
+        (192, "Good"),       // 0xC0
+        (0, "Bad"),          // 0x00
+        (64, "Uncertain"),   // 0x40
+        (216, "Good_Local"), // 0xD8
     ];
 
     for (code, expected_quality) in quality_codes {
@@ -346,7 +346,10 @@ fn convert_message_to_datapoint(msg: &SubscriptionMessage) -> DataPoint {
 
     let mut tags = HashMap::new();
     if let Some(channel_info) = &msg.channel_info {
-        tags.insert("channel_id".to_string(), channel_info.channel_id.to_string());
+        tags.insert(
+            "channel_id".to_string(),
+            channel_info.channel_id.to_string(),
+        );
         tags.insert("point_id".to_string(), channel_info.point_id.to_string());
         tags.insert(
             "message_type".to_string(),
@@ -393,9 +396,6 @@ async fn test_timestamp_handling() {
         };
 
         assert_eq!(message.timestamp, *ts);
-        assert_eq!(
-            message.point_data.unwrap().timestamp,
-            ts.timestamp() as u64
-        );
+        assert_eq!(message.point_data.unwrap().timestamp, ts.timestamp() as u64);
     }
 }

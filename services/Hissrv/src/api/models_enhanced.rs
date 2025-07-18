@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use utoipa::ToSchema;
 
-use crate::api::models_history::{HistoryValue, TimeRange, PaginationInfo};
+use crate::api::models_history::{HistoryValue, PaginationInfo, TimeRange};
 
 // 查询模式
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
@@ -53,20 +53,20 @@ pub struct QueryFilter {
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum FilterOperator {
-    Eq,         // 等于
-    Ne,         // 不等于
-    Gt,         // 大于
-    Gte,        // 大于等于
-    Lt,         // 小于
-    Lte,        // 小于等于
-    In,         // 在列表中
-    NotIn,      // 不在列表中
-    Like,       // 模糊匹配
-    NotLike,    // 不匹配
-    Regex,      // 正则表达式
-    Between,    // 区间
-    IsNull,     // 为空
-    IsNotNull,  // 不为空
+    Eq,        // 等于
+    Ne,        // 不等于
+    Gt,        // 大于
+    Gte,       // 大于等于
+    Lt,        // 小于
+    Lte,       // 小于等于
+    In,        // 在列表中
+    NotIn,     // 不在列表中
+    Like,      // 模糊匹配
+    NotLike,   // 不匹配
+    Regex,     // 正则表达式
+    Between,   // 区间
+    IsNull,    // 为空
+    IsNotNull, // 不为空
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]

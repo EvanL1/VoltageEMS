@@ -39,7 +39,6 @@ fn test_point_config() {
         unit: "°C".to_string(),
         scale: 0.1,
         offset: 0.0,
-        address: "1:3:100".to_string(),
     };
 
     // 测试序列化

@@ -17,8 +17,9 @@ use crate::plugins::protocol_plugin::{
 };
 use crate::utils::error::{ComSrvError as Error, Result};
 
-use super::client::{ModbusChannelConfig, ModbusClient};
-use super::common::ModbusConfig;
+use super::client_impl::ModbusClientImpl;
+use super::combase_adapter::ModbusComBaseAdapter;
+use super::frame::ModbusMode;
 use super::modbus_polling::ModbusPollingConfig;
 
 /// Modbus TCP Protocol Plugin
@@ -28,17 +29,35 @@ pub struct ModbusTcpPlugin {
 }
 
 impl ModbusTcpPlugin {
+    /// Extract Modbus polling configuration from channel parameters
+    fn extract_modbus_polling_config(
+        &self,
+        parameters: &HashMap<String, serde_yaml::Value>,
+    ) -> ModbusPollingConfig {
+        // Check if polling configuration exists in parameters
+        if let Some(polling_value) = parameters.get("polling") {
+            if let Ok(polling_config) =
+                serde_yaml::from_value::<ModbusPollingConfig>(polling_value.clone())
+            {
+                return polling_config;
+            }
+        }
+
+        // Return default configuration if not found or parsing fails
+        ModbusPollingConfig::default()
+    }
+
     /// Create Modbus mapping table from combined points
     fn create_modbus_mapping_table(
         &self,
         config: &ChannelConfig,
-    ) -> super::client::ProtocolMappingTable {
+    ) -> super::types::ProtocolMappingTable {
         use super::protocol_engine::{
             ModbusAdjustmentMapping, ModbusControlMapping, ModbusSignalMapping,
             ModbusTelemetryMapping,
         };
 
-        let mut mapping_table = super::client::ProtocolMappingTable::default();
+        let mut mapping_table = super::types::ProtocolMappingTable::default();
 
         // Convert combined_points to protocol mappings
         for point in &config.combined_points {
@@ -343,93 +362,41 @@ impl ProtocolPlugin for ModbusTcpPlugin {
             host,
             port
         );
-        let _transport = factory
+        let transport = factory
             .create_tcp_transport(transport_config)
             .await
             .map_err(|e| {
-                tracing::error!("ModbusTcpPlugin: Failed to create TCP _transport: {e}");
+                tracing::error!("ModbusTcpPlugin: Failed to create TCP transport: {e}");
                 e
             })?;
         tracing::info!("ModbusTcpPlugin: TCP transport created successfully");
 
-        // Create Modbus configuration
-        let modbus_config = ModbusConfig {
-            protocol_type: "ModbusTcp".to_string(),
-            host: Some(host),
-            port: Some(port),
-            device_path: None,
-            baud_rate: None,
-            data_bits: None,
-            stop_bits: None,
-            parity: None,
-            timeout_ms: Some(timeout_ms),
-            points: vec![], // Points will be configured later
-        };
+        // Create unified Modbus client implementation
+        let timeout = std::time::Duration::from_millis(timeout_ms);
+        let modbus_client = ModbusClientImpl::new(transport, ModbusMode::Tcp, timeout);
 
-        // Create channel configuration
-        let modbus_channel_config = ModbusChannelConfig {
-            channel_id: channel_config.id,
-            channel_name: channel_config.name.clone(),
-            connection: modbus_config,
-            request_timeout: std::time::Duration::from_millis(timeout_ms),
-            max_retries: 3,
-            retry_delay: std::time::Duration::from_millis(1000),
-            polling: ModbusPollingConfig {
-                default_interval_ms: params
-                    .get("polling_interval")
-                    .and_then(|v| v.as_u64())
-                    .unwrap_or(1000), // Default 1 second
-                enable_batch_reading: params
-                    .get("enable_batch_reading")
-                    .and_then(|v| v.as_bool())
-                    .unwrap_or(true),
-                max_batch_size: params
-                    .get("batch_size")
-                    .and_then(|v| v.as_u64())
-                    .map(|s| s as u16)
-                    .unwrap_or(125),
-                read_timeout_ms: timeout_ms,
-                slave_configs: HashMap::new(),
-            },
-        };
+        // Extract polling configuration
+        let polling_config = self.extract_modbus_polling_config(&channel_config.parameters);
 
-        // Create Modbus client
-        tracing::info!(
-            "ModbusTcpPlugin: Creating Modbus client for channel {}",
-            modbus_channel_config.channel_name
+        // Create ComBase adapter
+        let mut adapter = ModbusComBaseAdapter::new(
+            modbus_client,
+            channel_config.id,
+            channel_config.name.clone(),
+            "ModbusTcp".to_string(),
         );
-        let mut client = ModbusClient::new(modbus_channel_config, _transport)
-            .await
-            .map_err(|e| {
-                tracing::error!("ModbusTcpPlugin: Failed to create Modbus client: {e}");
-                e
-            })?;
-        tracing::info!("ModbusTcpPlugin: Modbus client created successfully");
 
-        // Load protocol mappings if combined_points are available
-        if !channel_config.combined_points.is_empty() {
-            tracing::info!(
-                "ModbusTcpPlugin: Loading {} protocol mappings for channel {}",
-                channel_config.combined_points.len(),
-                channel_config.name
-            );
+        // Set channel configuration and polling config
+        adapter.set_channel_config(channel_config.clone());
+        adapter.set_polling_config(polling_config);
 
-            // Create mapping table from combined points
-            let mapping_table = self.create_modbus_mapping_table(&channel_config);
+        tracing::info!(
+            "ModbusTcpPlugin: Created unified Modbus client for channel {} with {} points",
+            channel_config.name,
+            channel_config.combined_points.len()
+        );
 
-            if let Err(e) = client.load_protocol_mappings(mapping_table).await {
-                tracing::warn!("ModbusTcpPlugin: Failed to load protocol mappings: {e}");
-            } else {
-                tracing::info!("ModbusTcpPlugin: Successfully loaded protocol mappings");
-            }
-        } else {
-            tracing::info!(
-                "ModbusTcpPlugin: No combined_points to load for channel {}",
-                channel_config.name
-            );
-        }
-
-        Ok(Box::new(client))
+        Ok(Box::new(adapter))
     }
 
     fn cli_commands(&self) -> Vec<CliCommand> {
@@ -560,6 +527,26 @@ impl Default for ModbusRtuPlugin {
                 dependencies: HashMap::new(),
             },
         }
+    }
+}
+
+impl ModbusRtuPlugin {
+    /// Extract Modbus polling configuration from channel parameters
+    fn extract_modbus_polling_config(
+        &self,
+        parameters: &HashMap<String, serde_yaml::Value>,
+    ) -> ModbusPollingConfig {
+        // Check if polling configuration exists in parameters
+        if let Some(polling_value) = parameters.get("polling") {
+            if let Ok(polling_config) =
+                serde_yaml::from_value::<ModbusPollingConfig>(polling_value.clone())
+            {
+                return polling_config;
+            }
+        }
+
+        // Return default configuration if not found or parsing fails
+        ModbusPollingConfig::default()
     }
 }
 
@@ -703,8 +690,14 @@ impl ProtocolPlugin for ModbusRtuPlugin {
     }
 
     async fn create_instance(&self, channel_config: ChannelConfig) -> Result<Box<dyn ComBase>> {
+        tracing::info!(
+            "ModbusRtuPlugin: Starting to create instance for channel {}",
+            channel_config.name
+        );
+
         // Extract Modbus RTU configuration from channel config
         let params = &channel_config.parameters;
+        tracing::debug!("ModbusRtuPlugin: Parameters: {params:?}");
 
         let device_path = params
             .get("device_path")
@@ -759,72 +752,45 @@ impl ProtocolPlugin for ModbusRtuPlugin {
             write_timeout: std::time::Duration::from_millis(timeout_ms),
         };
 
-        let _transport = factory.create_serial_transport(transport_config).await?;
+        tracing::info!(
+            "ModbusRtuPlugin: Creating serial transport to {}",
+            device_path
+        );
+        let transport = factory
+            .create_serial_transport(transport_config)
+            .await
+            .map_err(|e| {
+                tracing::error!("ModbusRtuPlugin: Failed to create serial transport: {e}");
+                e
+            })?;
+        tracing::info!("ModbusRtuPlugin: Serial transport created successfully");
 
-        // Create Modbus configuration
-        let modbus_config = ModbusConfig {
-            protocol_type: "ModbusRtu".to_string(),
-            host: None,
-            port: None,
-            device_path: Some(device_path),
-            baud_rate: Some(baud_rate),
-            data_bits: Some(data_bits),
-            stop_bits: Some(stop_bits),
-            parity: Some(parity),
-            timeout_ms: Some(timeout_ms),
-            points: vec![], // Points will be configured later
-        };
+        // Create unified Modbus client implementation
+        let timeout = std::time::Duration::from_millis(timeout_ms);
+        let modbus_client = ModbusClientImpl::new(transport, ModbusMode::Rtu, timeout);
 
-        // Create channel configuration
-        let rtu_channel_config = ModbusChannelConfig {
-            channel_id: channel_config.id,
-            channel_name: channel_config.name.clone(),
-            connection: modbus_config,
-            request_timeout: std::time::Duration::from_millis(timeout_ms),
-            max_retries: 3,
-            retry_delay: std::time::Duration::from_millis(1000),
-            polling: ModbusPollingConfig {
-                default_interval_ms: params
-                    .get("polling_interval")
-                    .and_then(|v| v.as_u64())
-                    .unwrap_or(1000), // Default 1 second
-                enable_batch_reading: params
-                    .get("enable_batch_reading")
-                    .and_then(|v| v.as_bool())
-                    .unwrap_or(true),
-                max_batch_size: params
-                    .get("batch_size")
-                    .and_then(|v| v.as_u64())
-                    .map(|s| s as u16)
-                    .unwrap_or(125),
-                read_timeout_ms: timeout_ms,
-                slave_configs: HashMap::new(),
-            },
-        };
+        // Extract polling configuration
+        let polling_config = self.extract_modbus_polling_config(&channel_config.parameters);
 
-        // Create Modbus client
-        let mut client = ModbusClient::new(rtu_channel_config, _transport).await?;
+        // Create ComBase adapter
+        let mut adapter = ModbusComBaseAdapter::new(
+            modbus_client,
+            channel_config.id,
+            channel_config.name.clone(),
+            "ModbusRtu".to_string(),
+        );
 
-        // Load protocol mappings if combined_points are available
-        if !channel_config.combined_points.is_empty() {
-            tracing::info!(
-                "ModbusRtuPlugin: Loading {} protocol mappings for channel {}",
-                channel_config.combined_points.len(),
-                channel_config.name
-            );
+        // Set channel configuration and polling config
+        adapter.set_channel_config(channel_config.clone());
+        adapter.set_polling_config(polling_config);
 
-            // Create mapping table from combined points
-            let mapping_table =
-                ModbusTcpPlugin::create_modbus_mapping_table(&Default::default(), &channel_config);
+        tracing::info!(
+            "ModbusRtuPlugin: Created unified Modbus client for channel {} with {} points",
+            channel_config.name,
+            channel_config.combined_points.len()
+        );
 
-            if let Err(e) = client.load_protocol_mappings(mapping_table).await {
-                tracing::warn!("ModbusRtuPlugin: Failed to load protocol mappings: {e}");
-            } else {
-                tracing::info!("ModbusRtuPlugin: Successfully loaded protocol mappings");
-            }
-        }
-
-        Ok(Box::new(client))
+        Ok(Box::new(adapter))
     }
 
     fn cli_commands(&self) -> Vec<CliCommand> {

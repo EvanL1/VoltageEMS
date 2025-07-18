@@ -1,13 +1,13 @@
 use crate::storage::StorageManager;
 use axum::{extract::State, http::StatusCode, response::Json, routing::get, Router};
-use prometheus::{Encoder, TextEncoder, Counter, Gauge, Histogram, HistogramOpts, Registry};
+use prometheus::{Counter, Encoder, Gauge, Histogram, HistogramOpts, Registry, TextEncoder};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
-use utoipa::ToSchema;
 use tracing::{debug, error, info};
+use utoipa::ToSchema;
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct Metrics {
@@ -73,45 +73,78 @@ impl Default for MetricsCollector {
 impl MetricsCollector {
     pub fn new() -> Self {
         let registry = Registry::new();
-        
+
         // 创建 Prometheus 指标
-        let messages_total = Counter::new("hissrv_messages_total", "Total number of messages processed")
-            .expect("Failed to create messages_total counter");
-        let messages_rate = Gauge::new("hissrv_messages_rate", "Messages processing rate per second")
-            .expect("Failed to create messages_rate gauge");
-        let api_requests_total = Counter::new("hissrv_api_requests_total", "Total number of API requests")
-            .expect("Failed to create api_requests_total counter");
-        let api_requests_rate = Gauge::new("hissrv_api_requests_rate", "API requests rate per second")
-            .expect("Failed to create api_requests_rate gauge");
-        
+        let messages_total = Counter::new(
+            "hissrv_messages_total",
+            "Total number of messages processed",
+        )
+        .expect("Failed to create messages_total counter");
+        let messages_rate = Gauge::new(
+            "hissrv_messages_rate",
+            "Messages processing rate per second",
+        )
+        .expect("Failed to create messages_rate gauge");
+        let api_requests_total =
+            Counter::new("hissrv_api_requests_total", "Total number of API requests")
+                .expect("Failed to create api_requests_total counter");
+        let api_requests_rate =
+            Gauge::new("hissrv_api_requests_rate", "API requests rate per second")
+                .expect("Failed to create api_requests_rate gauge");
+
         let processing_duration = Histogram::with_opts(
-            HistogramOpts::new("hissrv_processing_duration_seconds", "Message processing duration")
-                .buckets(vec![0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1.0, 5.0])
-        ).expect("Failed to create processing_duration histogram");
-        
-        let storage_operations_total = Counter::new("hissrv_storage_operations_total", "Total storage operations")
-            .expect("Failed to create storage_operations_total counter");
-        let storage_errors_total = Counter::new("hissrv_storage_errors_total", "Total storage errors")
-            .expect("Failed to create storage_errors_total counter");
-        let active_connections = Gauge::new("hissrv_active_connections", "Number of active connections")
-            .expect("Failed to create active_connections gauge");
+            HistogramOpts::new(
+                "hissrv_processing_duration_seconds",
+                "Message processing duration",
+            )
+            .buckets(vec![0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1.0, 5.0]),
+        )
+        .expect("Failed to create processing_duration histogram");
+
+        let storage_operations_total = Counter::new(
+            "hissrv_storage_operations_total",
+            "Total storage operations",
+        )
+        .expect("Failed to create storage_operations_total counter");
+        let storage_errors_total =
+            Counter::new("hissrv_storage_errors_total", "Total storage errors")
+                .expect("Failed to create storage_errors_total counter");
+        let active_connections =
+            Gauge::new("hissrv_active_connections", "Number of active connections")
+                .expect("Failed to create active_connections gauge");
         let memory_usage_bytes = Gauge::new("hissrv_memory_usage_bytes", "Memory usage in bytes")
             .expect("Failed to create memory_usage_bytes gauge");
         let cpu_usage_percent = Gauge::new("hissrv_cpu_usage_percent", "CPU usage percentage")
             .expect("Failed to create cpu_usage_percent gauge");
-        
+
         // 注册所有指标
         registry.register(Box::new(messages_total.clone())).unwrap();
         registry.register(Box::new(messages_rate.clone())).unwrap();
-        registry.register(Box::new(api_requests_total.clone())).unwrap();
-        registry.register(Box::new(api_requests_rate.clone())).unwrap();
-        registry.register(Box::new(processing_duration.clone())).unwrap();
-        registry.register(Box::new(storage_operations_total.clone())).unwrap();
-        registry.register(Box::new(storage_errors_total.clone())).unwrap();
-        registry.register(Box::new(active_connections.clone())).unwrap();
-        registry.register(Box::new(memory_usage_bytes.clone())).unwrap();
-        registry.register(Box::new(cpu_usage_percent.clone())).unwrap();
-        
+        registry
+            .register(Box::new(api_requests_total.clone()))
+            .unwrap();
+        registry
+            .register(Box::new(api_requests_rate.clone()))
+            .unwrap();
+        registry
+            .register(Box::new(processing_duration.clone()))
+            .unwrap();
+        registry
+            .register(Box::new(storage_operations_total.clone()))
+            .unwrap();
+        registry
+            .register(Box::new(storage_errors_total.clone()))
+            .unwrap();
+        registry
+            .register(Box::new(active_connections.clone()))
+            .unwrap();
+        registry
+            .register(Box::new(memory_usage_bytes.clone()))
+            .unwrap();
+        registry
+            .register(Box::new(cpu_usage_percent.clone()))
+            .unwrap();
+
         Self {
             start_time: Instant::now(),
             total_messages: Arc::new(std::sync::atomic::AtomicU64::new(0)),
@@ -144,24 +177,24 @@ impl MetricsCollector {
         // Keep only timestamps from the last minute
         timestamps.retain(|&ts| now.duration_since(ts) < Duration::from_secs(60));
         timestamps.push(now);
-        
+
         // 更新速率
         let rate = timestamps.len() as f64 / 60.0;
         self.messages_rate.set(rate);
     }
-    
+
     pub async fn record_message_processing_time(&self, duration: Duration) {
         self.processing_duration.observe(duration.as_secs_f64());
     }
-    
+
     pub async fn record_storage_operation(&self) {
         self.storage_operations_total.inc();
     }
-    
+
     pub async fn record_storage_error(&self) {
         self.storage_errors_total.inc();
     }
-    
+
     pub async fn update_active_connections(&self, count: f64) {
         self.active_connections.set(count);
     }
@@ -178,7 +211,7 @@ impl MetricsCollector {
         // Keep only timestamps from the last minute
         timestamps.retain(|&ts| now.duration_since(ts) < Duration::from_secs(60));
         timestamps.push(now);
-        
+
         // 更新速率
         let rate = timestamps.len() as f64 / 60.0;
         self.api_requests_rate.set(rate);
@@ -220,10 +253,11 @@ impl MetricsCollector {
         #[cfg(target_os = "linux")]
         {
             use std::fs;
-            
+
             // 获取内存使用情况
             let memory_usage = if let Ok(status) = fs::read_to_string("/proc/self/status") {
-                status.lines()
+                status
+                    .lines()
                     .find(|line| line.starts_with("VmRSS:"))
                     .and_then(|line| {
                         line.split_whitespace()
@@ -235,7 +269,7 @@ impl MetricsCollector {
             } else {
                 0
             };
-            
+
             // 获取 CPU 使用率（简化版本）
             let cpu_usage = if let Ok(stat) = fs::read_to_string("/proc/self/stat") {
                 // 这是一个简化的实现，实际应用中需要更复杂的计算
@@ -243,21 +277,21 @@ impl MetricsCollector {
             } else {
                 0.0
             };
-            
+
             // 更新 Prometheus 指标
             self.memory_usage_bytes.set(memory_usage as f64);
             self.cpu_usage_percent.set(cpu_usage);
-            
+
             (memory_usage, cpu_usage)
         }
-        
+
         #[cfg(not(target_os = "linux"))]
         {
             // 非 Linux 系统返回默认值
             (0, 0.0)
         }
     }
-    
+
     /// 获取 Prometheus 格式的指标
     pub fn get_prometheus_metrics(&self) -> Result<String, Box<dyn std::error::Error>> {
         let encoder = TextEncoder::new();
@@ -350,10 +384,10 @@ pub async fn health_check(
 ) -> Result<Json<HealthStatus>, StatusCode> {
     let storage_manager = state.storage_manager.read().await;
     let all_stats = storage_manager.get_all_statistics().await;
-    
+
     let mut healthy = true;
     let mut checks = HashMap::new();
-    
+
     // 检查存储后端连接状态
     for (backend_name, stats) in all_stats {
         let backend_healthy = stats.connection_status == "connected";
@@ -363,12 +397,16 @@ pub async fn health_check(
         checks.insert(
             format!("storage_{}", backend_name),
             HealthCheck {
-                status: if backend_healthy { "healthy".to_string() } else { "unhealthy".to_string() },
+                status: if backend_healthy {
+                    "healthy".to_string()
+                } else {
+                    "unhealthy".to_string()
+                },
                 message: stats.connection_status.clone(),
-            }
+            },
         );
     }
-    
+
     // 检查消息处理
     let message_rate = state.metrics_collector.messages_rate.get();
     checks.insert(
@@ -376,15 +414,19 @@ pub async fn health_check(
         HealthCheck {
             status: "healthy".to_string(),
             message: format!("Processing {} msg/s", message_rate),
-        }
+        },
     );
-    
+
     let status = HealthStatus {
-        status: if healthy { "healthy".to_string() } else { "unhealthy".to_string() },
+        status: if healthy {
+            "healthy".to_string()
+        } else {
+            "unhealthy".to_string()
+        },
         timestamp: chrono::Utc::now(),
         checks,
     };
-    
+
     if healthy {
         Ok(Json(status))
     } else {

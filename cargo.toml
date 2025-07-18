@@ -6,7 +6,7 @@ members = [
     "services/apigateway",
     "services/comsrv",
     # "services/config-framework",  # Temporarily disabled due to clippy warnings
-    "services/hissrv",
+    "services/Hissrv",
     "services/modsrv",
     "services/netsrv",
     "services/rulesrv",

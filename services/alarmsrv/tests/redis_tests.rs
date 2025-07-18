@@ -1,10 +1,10 @@
 //! Redis integration tests
 
-use std::sync::Arc;
 use alarmsrv::{
     domain::{AlarmLevel, AlarmStatus},
     redis::{AlarmQueryService, AlarmRedisClient, AlarmStatisticsManager, AlarmStore},
 };
+use std::sync::Arc;
 
 mod common;
 use common::{cleanup_test_data, create_test_alarm, test_config::test_config};
@@ -32,13 +32,17 @@ async fn test_alarm_store_basic_operations() {
     assert_eq!(retrieved.level, AlarmLevel::Warning);
 
     // Acknowledge the alarm
-    let ack_result = store.acknowledge_alarm(&alarm.id.to_string(), "test_user".to_string()).await;
+    let ack_result = store
+        .acknowledge_alarm(&alarm.id.to_string(), "test_user".to_string())
+        .await;
     assert!(ack_result.is_ok());
     let acked_alarm = ack_result.unwrap();
     assert_eq!(acked_alarm.status, AlarmStatus::Acknowledged);
 
     // Resolve the alarm
-    let resolve_result = store.resolve_alarm(&alarm.id.to_string(), "test_user".to_string()).await;
+    let resolve_result = store
+        .resolve_alarm(&alarm.id.to_string(), "test_user".to_string())
+        .await;
     assert!(resolve_result.is_ok());
     let resolved_alarm = resolve_result.unwrap();
     assert_eq!(resolved_alarm.status, AlarmStatus::Resolved);
@@ -65,16 +69,25 @@ async fn test_alarm_query_service() {
     }
 
     // Query all alarms
-    let alarms = query_service.get_alarms(None, None, None, None).await.unwrap();
+    let alarms = query_service
+        .get_alarms(None, None, None, None)
+        .await
+        .unwrap();
     assert_eq!(alarms.len(), 3);
 
     // Query by level
-    let critical_alarms = query_service.get_alarms(None, Some(AlarmLevel::Critical), None, None).await.unwrap();
+    let critical_alarms = query_service
+        .get_alarms(None, Some(AlarmLevel::Critical), None, None)
+        .await
+        .unwrap();
     assert_eq!(critical_alarms.len(), 1);
     assert_eq!(critical_alarms[0].level, AlarmLevel::Critical);
 
     // Query with limit
-    let limited_alarms = query_service.get_alarms(None, None, None, Some(2)).await.unwrap();
+    let limited_alarms = query_service
+        .get_alarms(None, None, None, Some(2))
+        .await
+        .unwrap();
     assert_eq!(limited_alarms.len(), 2);
 
     // Clean up after test
@@ -132,10 +145,13 @@ async fn test_alarm_cleanup() {
     for i in 0..3 {
         let alarm = create_test_alarm(&format!("Cleanup Test {}", i), AlarmLevel::Info);
         store.store_alarm(&alarm).await.unwrap();
-        
+
         if i == 0 {
             // Resolve the first alarm
-            store.resolve_alarm(&alarm.id.to_string(), "test".to_string()).await.unwrap();
+            store
+                .resolve_alarm(&alarm.id.to_string(), "test".to_string())
+                .await
+                .unwrap();
         }
     }
 
@@ -145,7 +161,10 @@ async fn test_alarm_cleanup() {
 
     // Verify only unresolved alarms remain
     let query_service = AlarmQueryService::new(redis_client.clone());
-    let remaining = query_service.get_alarms(None, None, None, None).await.unwrap();
+    let remaining = query_service
+        .get_alarms(None, None, None, None)
+        .await
+        .unwrap();
     assert_eq!(remaining.len(), 2);
 
     // Clean up after test

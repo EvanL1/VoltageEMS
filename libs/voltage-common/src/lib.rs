@@ -1,7 +1,7 @@
-//! VoltageEMS Common Library
+//! `VoltageEMS` Common Library
 //!
 //! This library provides shared utilities and common functionality used across
-//! all VoltageEMS microservices.
+//! all `VoltageEMS` microservices.
 
 #![allow(clippy::approx_constant)]
 

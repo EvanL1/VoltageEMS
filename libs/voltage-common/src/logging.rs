@@ -1,4 +1,4 @@
-//! Common logging configuration for VoltageEMS services
+//! Common logging configuration for `VoltageEMS` services
 
 use crate::Result;
 use std::path::Path;
@@ -58,7 +58,7 @@ pub fn init_logging(config: &LogConfig) -> Result<Option<WorkerGuard>> {
     if config.console {
         let env_filter = EnvFilter::try_new(&config.level)
             .or_else(|_| EnvFilter::try_new("info"))
-            .map_err(|e| crate::Error::config(format!("Invalid log level: {}", e)))?;
+            .map_err(|e| crate::Error::config(format!("Invalid log level: {e}")))?;
         let console_layer = match config.format {
             LogFormat::Json => {
                 let layer = fmt::layer()
@@ -106,7 +106,7 @@ pub fn init_logging(config: &LogConfig) -> Result<Option<WorkerGuard>> {
     if let Some(file_path) = &config.file {
         let env_filter = EnvFilter::try_new(&config.level)
             .or_else(|_| EnvFilter::try_new("info"))
-            .map_err(|e| crate::Error::config(format!("Invalid log level: {}", e)))?;
+            .map_err(|e| crate::Error::config(format!("Invalid log level: {e}")))?;
 
         let path = Path::new(file_path);
         if let Some(parent) = path.parent() {
@@ -207,31 +207,37 @@ impl LogConfigBuilder {
         }
     }
 
+    #[must_use]
     pub fn level(mut self, level: impl Into<String>) -> Self {
         self.config.level = level.into();
         self
     }
 
+    #[must_use]
     pub fn console(mut self, enable: bool) -> Self {
         self.config.console = enable;
         self
     }
 
+    #[must_use]
     pub fn file(mut self, path: impl Into<String>) -> Self {
         self.config.file = Some(path.into());
         self
     }
 
+    #[must_use]
     pub fn format(mut self, format: LogFormat) -> Self {
         self.config.format = format;
         self
     }
 
+    #[must_use]
     pub fn ansi(mut self, enable: bool) -> Self {
         self.config.ansi = enable;
         self
     }
 
+    #[must_use]
     pub fn span_events(mut self, enable: bool) -> Self {
         self.config.span_events = enable;
         self

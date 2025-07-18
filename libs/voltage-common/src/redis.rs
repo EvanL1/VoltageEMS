@@ -1,4 +1,4 @@
-//! Redis client utilities for VoltageEMS services
+//! Redis client utilities for `VoltageEMS` services
 //!
 //! This module provides both synchronous and asynchronous Redis client implementations
 //! with support for connection pooling, Unix sockets, and comprehensive error handling.

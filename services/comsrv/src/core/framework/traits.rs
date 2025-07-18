@@ -8,9 +8,10 @@ use std::collections::HashMap;
 
 use crate::core::framework::manager::OptimizedPointManager as UniversalPointManager;
 use crate::core::framework::types::{
-    ChannelStatus, ConnectionState, PointData, PointValueType, RemoteOperationRequest,
-    RemoteOperationResponse, TelemetryType,
+    ChannelCommand, ChannelStatus, ConnectionState, PointData, PointValueType,
+    RemoteOperationRequest, RemoteOperationResponse, TelemetryType,
 };
+use crate::plugins::plugin_storage::PluginPointUpdate;
 use crate::utils::error::Result;
 
 /// Main communication service trait
@@ -104,6 +105,132 @@ pub trait ComBase: Send + Sync + std::fmt::Debug {
         } else {
             Vec::new()
         }
+    }
+
+    // ========== 四遥功能集成 ==========
+
+    /// Remote Measurement (遥测) - Read analog measurement values
+    async fn remote_measurement(
+        &self,
+        point_names: &[String],
+    ) -> Result<Vec<(String, PointValueType)>> {
+        // 默认实现：委托给协议具体实现
+        let _ = point_names;
+        Ok(Vec::new())
+    }
+
+    /// Remote Signaling (遥信) - Read digital status values
+    async fn remote_signaling(
+        &self,
+        point_names: &[String],
+    ) -> Result<Vec<(String, PointValueType)>> {
+        // 默认实现：委托给协议具体实现
+        let _ = point_names;
+        Ok(Vec::new())
+    }
+
+    /// Remote Control (遥控) - Execute digital control operations
+    async fn remote_control(
+        &mut self,
+        request: RemoteOperationRequest,
+    ) -> Result<RemoteOperationResponse> {
+        // 默认实现：委托给协议具体实现
+        let _ = request;
+        Err(crate::utils::error::ComSrvError::NotImplemented(
+            "Remote control not implemented".to_string(),
+        ))
+    }
+
+    /// Remote Regulation (遥调) - Execute analog regulation operations
+    async fn remote_regulation(
+        &mut self,
+        request: RemoteOperationRequest,
+    ) -> Result<RemoteOperationResponse> {
+        // 默认实现：委托给协议具体实现
+        let _ = request;
+        Err(crate::utils::error::ComSrvError::NotImplemented(
+            "Remote regulation not implemented".to_string(),
+        ))
+    }
+
+    // ========== 存储接口集成 ==========
+
+    /// Store point data through unified storage interface
+    /// 通过combase层统一存储接口写入点位数据，自动触发pub/sub发布
+    async fn store_point_data(
+        &self,
+        channel_id: u16,
+        telemetry_type: &TelemetryType,
+        point_id: u32,
+        value: f64,
+    ) -> Result<()> {
+        // 默认实现：需要具体协议提供存储实例
+        let _ = (channel_id, telemetry_type, point_id, value);
+        Err(crate::utils::error::ComSrvError::NotImplemented(
+            "Storage interface not implemented".to_string(),
+        ))
+    }
+
+    /// Store batch point data through unified storage interface
+    /// 批量存储点位数据，自动触发批量pub/sub发布
+    async fn store_batch_data(&self, updates: Vec<PluginPointUpdate>) -> Result<()> {
+        // 默认实现：委托给单点存储
+        for update in updates {
+            self.store_point_data(
+                update.channel_id,
+                &update.telemetry_type,
+                update.point_id,
+                update.value,
+            )
+            .await?;
+        }
+        Ok(())
+    }
+
+    // ========== Pub/Sub 控制接口 ==========
+
+    /// Start command subscription for remote control and regulation
+    /// 启动命令订阅，用于接收遥控和遥调命令
+    async fn start_command_subscription(&mut self) -> Result<()> {
+        // 默认实现：需要具体协议提供实现
+        Err(crate::utils::error::ComSrvError::NotImplemented(
+            "Command subscription not implemented".to_string(),
+        ))
+    }
+
+    /// Stop command subscription
+    /// 停止命令订阅
+    async fn stop_command_subscription(&mut self) -> Result<()> {
+        // 默认实现：空操作
+        Ok(())
+    }
+
+    /// Check if command subscription is active
+    /// 检查命令订阅是否激活
+    async fn is_command_subscription_active(&self) -> bool {
+        // 默认实现：返回false
+        false
+    }
+
+    /// Set command receiver for handling incoming commands
+    /// 设置命令接收器用于处理传入的命令
+    async fn set_command_receiver(
+        &mut self,
+        _rx: tokio::sync::mpsc::Receiver<ChannelCommand>,
+    ) -> Result<()> {
+        // 默认实现：不支持命令接收
+        Err(crate::utils::error::ComSrvError::NotImplemented(
+            "Command receiver not supported".to_string(),
+        ))
+    }
+
+    /// Handle channel command (implementation-specific)
+    /// 处理通道命令（具体实现相关）
+    async fn handle_channel_command(&mut self, _command: ChannelCommand) -> Result<()> {
+        // 默认实现：不处理命令
+        Err(crate::utils::error::ComSrvError::NotImplemented(
+            "Command handling not implemented".to_string(),
+        ))
     }
 }
 

@@ -1,8 +1,8 @@
 use actix_web::{web, HttpResponse};
+use chrono::{DateTime, Utc};
 use log::{debug, error};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use chrono::{DateTime, Utc};
 
 use crate::error::{ApiGatewayError, ApiResult};
 use crate::redis_client::{RedisClient, RedisClientExt};
@@ -38,14 +38,14 @@ pub struct RealtimeQuery {
 }
 
 /// Get all channel statuses
-pub async fn get_channels(
-    redis_client: web::Data<Arc<RedisClient>>,
-) -> ApiResult<HttpResponse> {
+pub async fn get_channels(redis_client: web::Data<Arc<RedisClient>>) -> ApiResult<HttpResponse> {
     debug!("Getting all channel statuses");
 
     // Get channel list from Redis
     let pattern = "channel:*:status";
-    let keys = redis_client.keys_api(pattern).await
+    let keys = redis_client
+        .keys_api(pattern)
+        .await
         .map_err(|e| ApiGatewayError::ServiceError(format!("Failed to scan Redis keys: {}", e)))?;
 
     let mut channels = Vec::new();
@@ -54,32 +54,40 @@ pub async fn get_channels(
         if let Some(channel_id_str) = key.split(':').nth(1) {
             if let Ok(channel_id) = channel_id_str.parse::<u32>() {
                 // Get channel status from Redis
-                let status_data = redis_client.get_api(&key).await
-                    .map_err(|e| ApiGatewayError::ServiceError(format!("Failed to get channel status: {}", e)))?;
+                let status_data = redis_client.get_api(&key).await.map_err(|e| {
+                    ApiGatewayError::ServiceError(format!("Failed to get channel status: {}", e))
+                })?;
 
                 if let Some(status_json) = status_data {
                     match serde_json::from_str::<serde_json::Value>(&status_json) {
                         Ok(status_value) => {
                             let channel_status = ChannelStatus {
                                 channel_id,
-                                name: status_value.get("name")
+                                name: status_value
+                                    .get("name")
                                     .and_then(|v| v.as_str())
                                     .unwrap_or("Unknown")
                                     .to_string(),
-                                status: status_value.get("status")
+                                status: status_value
+                                    .get("status")
                                     .and_then(|v| v.as_str())
                                     .unwrap_or("offline")
                                     .to_string(),
-                                last_update: status_value.get("last_update")
+                                last_update: status_value
+                                    .get("last_update")
                                     .and_then(|v| v.as_str())
                                     .and_then(|s| DateTime::parse_from_rfc3339(s).ok())
                                     .map(|dt| dt.with_timezone(&Utc)),
-                                point_count: status_value.get("point_count")
+                                point_count: status_value
+                                    .get("point_count")
                                     .and_then(|v| v.as_u64())
-                                    .unwrap_or(0) as u32,
-                                error_count: status_value.get("error_count")
+                                    .unwrap_or(0)
+                                    as u32,
+                                error_count: status_value
+                                    .get("error_count")
                                     .and_then(|v| v.as_u64())
-                                    .unwrap_or(0) as u32,
+                                    .unwrap_or(0)
+                                    as u32,
                             };
                             channels.push(channel_status);
                         }
@@ -108,7 +116,7 @@ pub async fn get_points(
     debug!("Getting points for channel {}", channel_id);
 
     let mut points = Vec::new();
-    
+
     // Determine point types to query
     let point_types = if let Some(types) = &query.point_types {
         types.split(',').collect::<Vec<_>>()
@@ -119,8 +127,9 @@ pub async fn get_points(
     // Query each point type
     for point_type in point_types {
         let pattern = format!("{}:{}:*", channel_id, point_type);
-        let keys = redis_client.keys_api(&pattern).await
-            .map_err(|e| ApiGatewayError::ServiceError(format!("Failed to scan Redis keys: {}", e)))?;
+        let keys = redis_client.keys_api(&pattern).await.map_err(|e| {
+            ApiGatewayError::ServiceError(format!("Failed to scan Redis keys: {}", e))
+        })?;
 
         let limit = query.limit.unwrap_or(1000);
         for (idx, key) in keys.iter().enumerate() {
@@ -132,8 +141,9 @@ pub async fn get_points(
             if let Some(point_id_str) = key.split(':').nth(2) {
                 if let Ok(point_id) = point_id_str.parse::<u32>() {
                     // Get point data from Redis
-                    let point_data = redis_client.get_api(key).await
-                        .map_err(|e| ApiGatewayError::ServiceError(format!("Failed to get point data: {}", e)))?;
+                    let point_data = redis_client.get_api(key).await.map_err(|e| {
+                        ApiGatewayError::ServiceError(format!("Failed to get point data: {}", e))
+                    })?;
 
                     if let Some(data_str) = point_data {
                         // Parse value:quality:timestamp format
@@ -141,7 +151,8 @@ pub async fn get_points(
                         if parts.len() >= 3 {
                             let value = serde_json::Value::String(parts[0].to_string());
                             let quality = parts[1].parse::<u8>().unwrap_or(0);
-                            let timestamp = parts[2].parse::<i64>()
+                            let timestamp = parts[2]
+                                .parse::<i64>()
                                 .ok()
                                 .and_then(|ts| DateTime::from_timestamp(ts, 0))
                                 .unwrap_or_else(Utc::now);
@@ -176,14 +187,14 @@ pub async fn get_points(
 }
 
 /// Get aggregated statistics
-pub async fn get_statistics(
-    redis_client: web::Data<Arc<RedisClient>>,
-) -> ApiResult<HttpResponse> {
+pub async fn get_statistics(redis_client: web::Data<Arc<RedisClient>>) -> ApiResult<HttpResponse> {
     debug!("Getting real-time statistics");
 
     // Get all channel statuses
     let pattern = "channel:*:status";
-    let keys = redis_client.keys_api(pattern).await
+    let keys = redis_client
+        .keys_api(pattern)
+        .await
         .map_err(|e| ApiGatewayError::ServiceError(format!("Failed to scan Redis keys: {}", e)))?;
 
     let total_channels = keys.len();
@@ -192,7 +203,9 @@ pub async fn get_statistics(
     let mut total_errors = 0;
 
     for key in keys {
-        let status_data = redis_client.get(&key).await
+        let status_data = redis_client
+            .get(&key)
+            .await
             .map_err(|e| ApiError::ServiceError(format!("Failed to get channel status: {}", e)))?;
 
         if let Some(status_json) = status_data {
@@ -200,10 +213,12 @@ pub async fn get_statistics(
                 if status_value.get("status").and_then(|v| v.as_str()) == Some("online") {
                     online_channels += 1;
                 }
-                total_points += status_value.get("point_count")
+                total_points += status_value
+                    .get("point_count")
                     .and_then(|v| v.as_u64())
                     .unwrap_or(0);
-                total_errors += status_value.get("error_count")
+                total_errors += status_value
+                    .get("error_count")
                     .and_then(|v| v.as_u64())
                     .unwrap_or(0);
             }

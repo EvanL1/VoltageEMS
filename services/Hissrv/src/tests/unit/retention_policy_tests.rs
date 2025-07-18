@@ -1,6 +1,6 @@
 use crate::retention_policy::{
-    AggregationMethod, DownsamplingPolicy, PolicyStatistics, RetentionPolicyConfig,
-    RetentionPolicyManager, RetentionType, default_retention_policies,
+    default_retention_policies, AggregationMethod, DownsamplingPolicy, PolicyStatistics,
+    RetentionPolicyConfig, RetentionPolicyManager, RetentionType,
 };
 use crate::storage::StorageManager;
 use chrono::{Duration, Utc};
@@ -82,9 +82,7 @@ async fn test_retention_type_variations() {
         name: "count_based".to_string(),
         enabled: true,
         measurement_patterns: vec!["count.*".to_string()],
-        retention_type: RetentionType::CountBased {
-            max_count: 1000000,
-        },
+        retention_type: RetentionType::CountBased { max_count: 1000000 },
         downsampling: None,
         execution_interval_seconds: 3600,
     };
@@ -152,16 +150,25 @@ async fn test_downsampling_configuration() {
     let retrieved = manager.get_policy("downsampling_test").await.unwrap();
     let downsampling = retrieved.downsampling.unwrap();
     assert_eq!(downsampling.len(), 3);
-    
+
     // 验证降采样配置
     assert_eq!(downsampling[0].target_suffix, "_5m");
-    assert!(matches!(downsampling[0].aggregation_method, AggregationMethod::Mean));
-    
+    assert!(matches!(
+        downsampling[0].aggregation_method,
+        AggregationMethod::Mean
+    ));
+
     assert_eq!(downsampling[1].target_suffix, "_1h");
-    assert!(matches!(downsampling[1].aggregation_method, AggregationMethod::Max));
-    
+    assert!(matches!(
+        downsampling[1].aggregation_method,
+        AggregationMethod::Max
+    ));
+
     assert_eq!(downsampling[2].target_suffix, "_1d");
-    assert!(matches!(downsampling[2].aggregation_method, AggregationMethod::Min));
+    assert!(matches!(
+        downsampling[2].aggregation_method,
+        AggregationMethod::Min
+    ));
 }
 
 #[tokio::test]
@@ -278,7 +285,8 @@ async fn test_measurement_pattern_matching() {
         };
 
         assert_eq!(
-            matches, should_match,
+            matches,
+            should_match,
             "Pattern {} should {} match measurement {}",
             pattern,
             if should_match { "" } else { "not" },
@@ -290,10 +298,10 @@ async fn test_measurement_pattern_matching() {
 #[tokio::test]
 async fn test_default_retention_policies() {
     let defaults = default_retention_policies();
-    
+
     // 验证默认策略
     assert_eq!(defaults.len(), 3);
-    
+
     // 验证原始数据策略
     let raw_data_policy = defaults.iter().find(|p| p.name == "raw_data_7d").unwrap();
     assert!(raw_data_policy.enabled);
@@ -304,7 +312,7 @@ async fn test_default_retention_policies() {
         panic!("Expected TimeBased retention type");
     }
     assert!(raw_data_policy.downsampling.is_some());
-    
+
     // 验证事件数据策略
     let events_policy = defaults.iter().find(|p| p.name == "events_30d").unwrap();
     assert!(events_policy.enabled);
@@ -315,9 +323,12 @@ async fn test_default_retention_policies() {
         panic!("Expected TimeBased retention type");
     }
     assert!(events_policy.downsampling.is_none());
-    
+
     // 验证系统状态策略
-    let system_policy = defaults.iter().find(|p| p.name == "system_status_1d").unwrap();
+    let system_policy = defaults
+        .iter()
+        .find(|p| p.name == "system_status_1d")
+        .unwrap();
     assert!(system_policy.enabled);
     assert_eq!(system_policy.measurement_patterns, vec!["system*"]);
     if let RetentionType::TimeBased { duration_seconds } = system_policy.retention_type {
@@ -353,10 +364,10 @@ async fn test_aggregation_methods() {
 #[tokio::test]
 async fn test_concurrent_policy_operations() {
     let manager = create_test_manager().await;
-    
+
     // 并发添加多个策略
     let mut handles = vec![];
-    
+
     for i in 0..5 {
         let manager_clone = create_test_manager().await;
         let handle = tokio::spawn(async move {
@@ -374,7 +385,7 @@ async fn test_concurrent_policy_operations() {
         });
         handles.push(handle);
     }
-    
+
     // 等待所有任务完成
     for handle in handles {
         handle.await.unwrap().unwrap();

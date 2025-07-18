@@ -39,11 +39,10 @@ impl EnhancedMessageProcessor {
     /// 开始处理消息
     pub async fn start_processing(&mut self) -> Result<()> {
         info!("Starting enhanced message processor");
-        
+
         let mut batch = Vec::new();
-        let mut batch_timer = tokio::time::interval(
-            tokio::time::Duration::from_millis(self.batch_timeout_ms)
-        );
+        let mut batch_timer =
+            tokio::time::interval(tokio::time::Duration::from_millis(self.batch_timeout_ms));
 
         loop {
             tokio::select! {
@@ -52,7 +51,7 @@ impl EnhancedMessageProcessor {
                     match msg {
                         Some(message) => {
                             batch.push(message);
-                            
+
                             // 检查批量大小
                             if batch.len() >= self.batch_size {
                                 self.process_batch(&mut batch).await?;
@@ -127,10 +126,7 @@ impl EnhancedMessageProcessor {
                         }
                     }
                     Err(e) => {
-                        error!(
-                            "Failed to store batch to backend {}: {}",
-                            backend_name, e
-                        );
+                        error!("Failed to store batch to backend {}: {}", backend_name, e);
                         for _ in 0..data_points.len() {
                             self.metrics_collector.record_storage_error().await;
                         }
@@ -207,16 +203,19 @@ impl EnhancedMessageProcessor {
         metadata: &HashMap<String, String>,
     ) -> Result<DataPoint> {
         let key = if let Some(info) = channel_info {
-            format!("{}:{}:{}", info.channel_id, 
-                    match info.message_type {
-                        MessageType::Telemetry => "m",
-                        MessageType::Signal => "s",
-                        MessageType::Control => "c",
-                        MessageType::Adjustment => "a",
-                        MessageType::Calculated => "calc",
-                        _ => "unknown",
-                    },
-                    info.point_id)
+            format!(
+                "{}:{}:{}",
+                info.channel_id,
+                match info.message_type {
+                    MessageType::Telemetry => "m",
+                    MessageType::Signal => "s",
+                    MessageType::Control => "c",
+                    MessageType::Adjustment => "a",
+                    MessageType::Calculated => "calc",
+                    _ => "unknown",
+                },
+                info.point_id
+            )
         } else {
             format!("unknown:{}", point_data.id)
         };
@@ -285,9 +284,15 @@ impl EnhancedMessageProcessor {
         );
 
         let mut tags = HashMap::new();
-        tags.insert("channel_id".to_string(), channel_info.channel_id.to_string());
+        tags.insert(
+            "channel_id".to_string(),
+            channel_info.channel_id.to_string(),
+        );
         tags.insert("point_id".to_string(), channel_info.point_id.to_string());
-        tags.insert("type".to_string(), format!("{:?}", channel_info.message_type));
+        tags.insert(
+            "type".to_string(),
+            format!("{:?}", channel_info.message_type),
+        );
 
         Ok(DataPoint {
             key,
@@ -300,10 +305,7 @@ impl EnhancedMessageProcessor {
 
     /// 创建事件数据点
     fn create_event_data_point(&self, message: &SubscriptionMessage) -> Result<DataPoint> {
-        let event_type = message
-            .channel
-            .strip_prefix("event:")
-            .unwrap_or("unknown");
+        let event_type = message.channel.strip_prefix("event:").unwrap_or("unknown");
 
         let mut tags = HashMap::new();
         tags.insert("type".to_string(), "event".to_string());

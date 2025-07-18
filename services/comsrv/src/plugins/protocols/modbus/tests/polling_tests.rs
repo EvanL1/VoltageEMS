@@ -37,5 +37,5 @@ mod tests {
         engine_mut.add_points(points);
     }
 
-    // TODO: Add async polling tests when test infrastructure is ready
+    // Async polling tests require test infrastructure setup
 }

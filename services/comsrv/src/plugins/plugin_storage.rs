@@ -90,7 +90,6 @@ impl From<PluginPointConfig> for PointConfig {
             unit: config.unit,
             scale: config.scale,
             offset: config.offset,
-            address: config.address,
         }
     }
 }
@@ -101,7 +100,7 @@ pub struct DefaultPluginStorage {
 }
 
 impl DefaultPluginStorage {
-    /// 创建新的存储实例
+    /// 创建新的存储实例（pub/sub始终启用）
     pub async fn new(redis_url: &str) -> Result<Self> {
         let storage = RedisStorage::new(redis_url).await?;
         Ok(Self {
@@ -109,7 +108,7 @@ impl DefaultPluginStorage {
         })
     }
 
-    /// 从环境变量创建
+    /// 从环境变量创建存储实例
     pub async fn from_env() -> Result<Self> {
         let redis_url = std::env::var("COMSRV_SERVICE_REDIS_URL")
             .or_else(|_| std::env::var("REDIS_URL"))

@@ -25,13 +25,16 @@
 //! - Proper error handling and exception responses
 //! - Integrated statistics and diagnostics
 
-pub mod client;
+pub mod client_impl;
+pub mod client_trait;
+pub mod combase_adapter;
 pub mod common;
 pub mod frame;
 pub mod modbus_polling;
 pub mod pdu;
 pub mod protocol_engine;
 pub mod server;
+pub mod types;
 
 pub mod tests;
 
@@ -39,15 +42,19 @@ pub mod tests;
 pub mod plugin;
 
 // Re-export main types for easier usage
-pub use client::{
-    ClientStatistics, ConnectionState, ModbusChannelConfig, ModbusClient, ProtocolMappingTable,
+pub use client_impl::ModbusClientImpl;
+pub use client_trait::{
+    BatchOperationResult, ExtendedModbusClient, ModbusClient as ModbusClientTrait,
+    ModbusDataOperations, StringEncoding,
 };
+pub use combase_adapter::ModbusComBaseAdapter;
 pub use common::ModbusFunctionCode;
 pub use common::{ModbusConfig, ModbusPoint};
 pub use frame::{ModbusFrameProcessor, ModbusMode};
 pub use pdu::{ModbusExceptionCode, ModbusPduProcessor};
 pub use protocol_engine::{ModbusProtocolEngine, ProtocolEngineConfig};
 pub use server::{ModbusDevice, ModbusServer};
+pub use types::{ClientStatistics, ConnectionState, ModbusChannelConfig, ProtocolMappingTable};
 
 use crate::core::framework::{PacketParseResult, ProtocolPacketParser};
 use chrono::Utc;

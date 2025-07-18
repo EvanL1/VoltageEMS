@@ -119,9 +119,9 @@ impl RedisConnection {
 
     /// Delete a key
     pub fn delete(&mut self, key: &str) -> Result<()> {
-        self.client
-            .del(&[key])
-            .map_err(|e| ModelSrvError::RedisError(format!("Failed to delete key {}: {}", key, e)))?;
+        self.client.del(&[key]).map_err(|e| {
+            ModelSrvError::RedisError(format!("Failed to delete key {}: {}", key, e))
+        })?;
         Ok(())
     }
 
@@ -148,9 +148,9 @@ impl RedisConnection {
 
     /// Push to a list
     pub fn rpush(&mut self, key: &str, value: &str) -> Result<()> {
-        self.client
-            .rpush(key, value)
-            .map_err(|e| ModelSrvError::RedisError(format!("Failed to rpush to key {}: {}", key, e)))?;
+        self.client.rpush(key, value).map_err(|e| {
+            ModelSrvError::RedisError(format!("Failed to rpush to key {}: {}", key, e))
+        })?;
         Ok(())
     }
 

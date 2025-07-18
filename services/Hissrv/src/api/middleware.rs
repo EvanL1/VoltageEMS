@@ -38,10 +38,7 @@ pub async fn validate_request(
 }
 
 /// 请求追踪中间件
-pub async fn trace_request(
-    request: Request<axum::body::Body>,
-    next: Next,
-) -> Response {
+pub async fn trace_request(request: Request<axum::body::Body>, next: Next) -> Response {
     let request_id = Uuid::new_v4().to_string();
     let method = request.method().clone();
     let uri = request.uri().clone();
@@ -93,9 +90,7 @@ pub fn create_body_limit_layer() -> RequestBodyLimitLayer {
 }
 
 /// 错误处理中间件
-pub async fn handle_error(
-    err: tower::BoxError,
-) -> (StatusCode, Json<ErrorResponse>) {
+pub async fn handle_error(err: tower::BoxError) -> (StatusCode, Json<ErrorResponse>) {
     if err.is::<timeout::error::Elapsed>() {
         (
             StatusCode::REQUEST_TIMEOUT,

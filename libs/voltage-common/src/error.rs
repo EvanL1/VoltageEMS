@@ -1,8 +1,8 @@
-//! Common error types for VoltageEMS services
+//! Common error types for `VoltageEMS` services
 
 use thiserror::Error;
 
-/// Common error type used across VoltageEMS services
+/// Common error type used across `VoltageEMS` services
 #[derive(Error, Debug)]
 pub enum Error {
     /// Configuration related errors

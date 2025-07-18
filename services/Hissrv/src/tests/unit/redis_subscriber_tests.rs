@@ -130,23 +130,27 @@ async fn test_subscription_message_creation() {
             r#"{"point_id":20001,"value":1,"quality":192,"timestamp":"2025-01-14T10:00:00Z"}"#,
             true,
         ),
-        ("event:alarm", r#"{"type":"high_temp","severity":"warning"}"#, false),
+        (
+            "event:alarm",
+            r#"{"type":"high_temp","severity":"warning"}"#,
+            false,
+        ),
         ("invalid:channel", "plain text message", false),
     ];
 
     for (channel, payload, should_have_point_data) in test_cases {
         let msg = subscriber.parse_message(channel, payload).unwrap();
-        
+
         assert_eq!(msg.channel, channel);
         assert_eq!(msg.point_data.is_some(), should_have_point_data);
-        
+
         if !should_have_point_data {
             assert!(msg.raw_data.is_some());
         }
-        
+
         // 验证元数据
         assert_eq!(msg.metadata.get("source").unwrap(), "redis_subscriber");
-        
+
         if let Some(channel_info) = &msg.channel_info {
             assert!(msg.metadata.contains_key("channel_id"));
             assert!(msg.metadata.contains_key("point_id"));
@@ -168,7 +172,7 @@ async fn test_subscriber_config_defaults() {
 #[tokio::test]
 async fn test_subscriber_batch_processing() {
     let (tx, mut rx) = mpsc::unbounded_channel::<SubscriptionMessage>();
-    
+
     // 发送多个消息
     for i in 0..5 {
         let msg = SubscriptionMessage {
@@ -225,7 +229,8 @@ async fn test_channel_pattern_matching() {
         };
 
         assert_eq!(
-            matches, should_match,
+            matches,
+            should_match,
             "Pattern {} should {} match channel {}",
             pattern,
             if should_match { "" } else { "not" },
@@ -259,7 +264,7 @@ async fn test_subscription_message_metadata() {
     assert_eq!(msg.metadata.get("channel_id").unwrap(), "1001");
     assert_eq!(msg.metadata.get("point_id").unwrap(), "10001");
     assert_eq!(msg.metadata.get("message_type").unwrap(), "Telemetry");
-    
+
     // 验证通道信息
     let channel_info = msg.channel_info.unwrap();
     assert_eq!(channel_info.channel_id, 1001);
@@ -298,7 +303,7 @@ async fn test_redis_config_socket_vs_tcp() {
 #[tokio::test]
 async fn test_reconnect_backoff() {
     let delays = vec![1000, 2000, 4000, 8000]; // 指数退避
-    
+
     for (attempt, expected_delay) in delays.iter().enumerate() {
         let delay = 1000 * (2_u64.pow(attempt as u32));
         assert_eq!(delay, *expected_delay);

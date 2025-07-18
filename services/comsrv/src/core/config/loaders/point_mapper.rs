@@ -14,14 +14,12 @@ pub struct CombinedPoint {
     // Four telemetry data
     pub point_id: u32,
     pub signal_name: String,
-    pub chinese_name: Option<String>,
     pub data_type: String,
     pub scale: f64,
     pub offset: f64,
     pub reverse: Option<bool>,
     pub unit: Option<String>,
     pub description: Option<String>,
-    pub group: Option<String>,
 
     // Protocol mapping data
     pub slave_id: u8,
@@ -62,14 +60,12 @@ impl PointMapper {
                     // Four telemetry data
                     point_id: telemetry.point_id,
                     signal_name: telemetry.signal_name.to_string(),
-                    chinese_name: telemetry.chinese_name.map(|s| s.to_string()),
                     data_type: telemetry.data_type.to_string(),
                     scale: telemetry.scale.unwrap_or(1.0),
                     offset: telemetry.offset.unwrap_or(0.0),
                     reverse: telemetry.reverse,
                     unit: telemetry.unit.map(|s| s.to_string()),
                     description: telemetry.description.map(|s| s.to_string()),
-                    group: telemetry.group.map(|s| s.to_string()),
 
                     // Protocol mapping data
                     slave_id: mapping.slave_id,
@@ -224,14 +220,12 @@ mod tests {
         FourTelemetryRecord {
             point_id: 1,
             signal_name: "Test Signal".to_string(),
-            chinese_name: Some("测试信号".to_string()),
             data_type: "float32".to_string(),
             scale: Some(1.0),
             offset: Some(0.0),
             reverse: None,
             unit: Some("V".to_string()),
             description: Some("Test description".to_string()),
-            group: Some("Test Group".to_string()),
         }
     }
 
@@ -271,14 +265,12 @@ mod tests {
         let mut combined = CombinedPoint {
             point_id: 1,
             signal_name: "Test Signal".to_string(),
-            chinese_name: Some("测试信号".to_string()),
             data_type: "float32".to_string(),
             scale: 1.0,
             offset: 0.0,
             reverse: None,
             unit: Some("V".to_string()),
             description: Some("Test description".to_string()),
-            group: Some("Test Group".to_string()),
             slave_id: 1,
             function_code: 3,
             register_address: 100,
@@ -308,14 +300,12 @@ mod tests {
         let mut point1 = CombinedPoint {
             point_id: 1,
             signal_name: "Signal 1".to_string(),
-            chinese_name: None,
             data_type: "float32".to_string(),
             scale: 1.0,
             offset: 0.0,
             reverse: None,
             unit: None,
             description: None,
-            group: None,
             slave_id: 1,
             function_code: 3,
             register_address: 100,

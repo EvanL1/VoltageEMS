@@ -180,6 +180,7 @@ impl ComBase for VirtualProtocol {
             last_response_time: 0.0,
             last_error: String::new(),
             last_update_time: chrono::Utc::now(),
+            error_count: 0,
         }
     }
 

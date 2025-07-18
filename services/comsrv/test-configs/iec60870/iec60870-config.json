@@ -1,0 +1,201 @@
+{
+  "server": {
+    "host": "0.0.0.0",
+    "port": 2404,
+    "timeout": 5000,
+    "max_clients": 10,
+    "protocol": "iec104"
+  },
+  "station": {
+    "common_address": 1,
+    "name": "IEC60870测试站",
+    "description": "IEC60870-5-104测试站点",
+    "originator_address": 0,
+    "asdu_address": 1
+  },
+  "data_model": {
+    "single_points": {
+      "range": [1, 1000],
+      "initial_values": {
+        "1": true,
+        "2": false,
+        "3": false,
+        "4": false,
+        "5": false,
+        "6": false,
+        "7": false,
+        "8": false,
+        "9": false,
+        "10": false,
+        "11": false,
+        "12": false,
+        "13": false,
+        "14": false,
+        "15": false,
+        "16": true,
+        "17": false,
+        "18": false,
+        "19": true,
+        "20": true
+      }
+    },
+    "double_points": {
+      "range": [1, 1000],
+      "initial_values": {
+        "1": 1,
+        "2": 2,
+        "3": 0,
+        "4": 0,
+        "5": 1,
+        "6": 1,
+        "7": 2,
+        "8": 0,
+        "9": 0,
+        "10": 1
+      }
+    },
+    "measured_values": {
+      "range": [1, 1000],
+      "initial_values": {
+        "1": 22000,
+        "2": 22000,
+        "3": 22000,
+        "4": 1000,
+        "5": 1000,
+        "6": 1000,
+        "7": 5000,
+        "8": 2000,
+        "9": 5385,
+        "10": 950,
+        "11": 5000,
+        "12": 250,
+        "13": 450,
+        "14": 1013,
+        "15": 1200,
+        "16": 10000,
+        "17": 5000,
+        "18": 120,
+        "19": 120,
+        "20": 120
+      }
+    },
+    "scaled_values": {
+      "range": [1, 1000],
+      "initial_values": {
+        "1": 2200,
+        "2": 2200,
+        "3": 2200,
+        "4": 100,
+        "5": 100,
+        "6": 100,
+        "7": 500,
+        "8": 200,
+        "9": 538,
+        "10": 95,
+        "11": 500,
+        "12": 25,
+        "13": 45,
+        "14": 101,
+        "15": 120,
+        "16": 1000,
+        "17": 500,
+        "18": 12,
+        "19": 12,
+        "20": 12
+      }
+    },
+    "integrated_totals": {
+      "range": [1, 1000],
+      "initial_values": {
+        "1": 1000000,
+        "2": 500000,
+        "3": 0,
+        "4": 0,
+        "5": 0
+      }
+    }
+  },
+  "data_simulation": {
+    "enabled": true,
+    "update_interval": 2000,
+    "patterns": {
+      "voltage_simulation": {
+        "measured_values": [1, 2, 3],
+        "type": "sine_wave",
+        "base_value": 22000,
+        "amplitude": 500,
+        "frequency": 0.1,
+        "phase_shift": [0, 120, 240]
+      },
+      "current_simulation": {
+        "measured_values": [4, 5, 6],
+        "type": "sine_wave",
+        "base_value": 1000,
+        "amplitude": 100,
+        "frequency": 0.1,
+        "phase_shift": [0, 120, 240]
+      },
+      "power_simulation": {
+        "measured_values": [7, 8, 9],
+        "type": "random_walk",
+        "base_value": 5000,
+        "max_change": 200,
+        "min_value": 1000,
+        "max_value": 8000
+      },
+      "frequency_simulation": {
+        "measured_values": [11],
+        "type": "sine_wave",
+        "base_value": 5000,
+        "amplitude": 5,
+        "frequency": 0.05
+      },
+      "temperature_simulation": {
+        "measured_values": [12],
+        "type": "random_walk",
+        "base_value": 250,
+        "max_change": 10,
+        "min_value": 200,
+        "max_value": 800
+      },
+      "alarm_simulation": {
+        "single_points": [7, 8, 9, 10, 11, 12],
+        "type": "random_toggle",
+        "probability": 0.05
+      },
+      "breaker_simulation": {
+        "double_points": [1, 2, 3, 4, 5, 6],
+        "type": "state_machine",
+        "states": [0, 1, 2],
+        "transition_probability": 0.02
+      },
+      "energy_simulation": {
+        "integrated_totals": [1, 2],
+        "type": "incremental",
+        "increment_rate": 10,
+        "base_time": 3600
+      }
+    }
+  },
+  "communication": {
+    "t0": 30,
+    "t1": 15,
+    "t2": 10,
+    "t3": 20,
+    "k": 12,
+    "w": 8
+  },
+  "logging": {
+    "level": "info",
+    "file": "/var/log/iec60870-simulator.log",
+    "console": true,
+    "trace_asdu": true
+  },
+  "events": {
+    "spontaneous_transmission": true,
+    "cyclic_transmission": true,
+    "cyclic_period": 60000,
+    "general_interrogation": true,
+    "clock_synchronization": true
+  }
+}

@@ -26,5 +26,5 @@ mod tests {
         assert_eq!(&frame[7..], &pdu); // PDU
     }
 
-    // TODO: Add more frame tests when frame processor is fully implemented
+    // Additional frame tests will be added as frame processor evolves
 }

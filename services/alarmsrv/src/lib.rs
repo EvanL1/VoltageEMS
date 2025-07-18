@@ -1,5 +1,5 @@
 //! Alarm Service Library
-//! 
+//!
 //! This module exports the public API for the alarm service.
 
 pub mod api;
@@ -9,10 +9,9 @@ pub mod redis;
 pub mod services;
 
 pub use config::AlarmConfig;
-pub use domain::{Alarm, AlarmClassifier, AlarmLevel, AlarmStatus, AlarmStatistics};
+pub use domain::{Alarm, AlarmClassifier, AlarmLevel, AlarmStatistics, AlarmStatus};
 pub use redis::{
-    AlarmFilter, AlarmQueryService, AlarmRedisClient, AlarmStatisticsManager,
-    AlarmStore,
+    AlarmFilter, AlarmQueryService, AlarmRedisClient, AlarmStatisticsManager, AlarmStore,
 };
 
 /// Application state

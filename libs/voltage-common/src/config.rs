@@ -1,4 +1,4 @@
-//! Common configuration utilities for VoltageEMS services
+//! Common configuration utilities for `VoltageEMS` services
 
 use crate::{Error, Result};
 use figment::{
@@ -49,12 +49,12 @@ pub struct ApiConfig {
     /// API path prefix, default is empty
     #[serde(default = "default_api_prefix")]
     pub prefix: String,
-    
+
     /// Whether to enable API versioning
     #[serde(default = "default_enable_versioning")]
     pub enable_versioning: bool,
-    
-    /// API version (only used when enable_versioning is true)
+
+    /// API version (only used when `enable_versioning` is true)
     #[serde(default = "default_api_version")]
     pub version: String,
 }
@@ -73,25 +73,25 @@ impl ApiConfig {
     /// Build complete API path
     pub fn build_path(&self, path: &str) -> String {
         let path = path.trim_start_matches('/');
-        
+
         if self.prefix.is_empty() {
-            format!("/{}", path)
+            format!("/{path}")
         } else {
             let prefix = self.prefix.trim_end_matches('/');
-            format!("{}/{}", prefix, path)
+            format!("{prefix}/{path}")
         }
     }
-    
+
     /// Get the full prefix for a service
     pub fn get_service_prefix(&self, service_name: &str) -> String {
         if self.prefix.is_empty() {
-            format!("/{}", service_name)
+            format!("/{service_name}")
         } else {
             format!("{}/{}", self.prefix.trim_end_matches('/'), service_name)
         }
     }
-    
-    /// Create ApiConfig from environment variables or defaults
+
+    /// Create `ApiConfig` from environment variables or defaults
     pub fn from_env_or_default() -> Self {
         Self {
             prefix: std::env::var("API_PREFIX").unwrap_or_else(|_| default_api_prefix()),
@@ -105,11 +105,11 @@ impl ApiConfig {
 }
 
 fn default_api_prefix() -> String {
-    "".to_string()  // Default is empty
+    String::new() // Default is empty
 }
 
 fn default_enable_versioning() -> bool {
-    false  // Default is no versioning
+    false // Default is no versioning
 }
 
 fn default_api_version() -> String {
@@ -136,22 +136,22 @@ where
         .merge(Yaml::file("config/default.yaml"))
         .merge(Json::file("config/default.json"))
         // Environment-specific config
-        .merge(Toml::file(format!("config/{}.toml", env)))
-        .merge(Yaml::file(format!("config/{}.yaml", env)))
-        .merge(Json::file(format!("config/{}.json", env)))
+        .merge(Toml::file(format!("config/{env}.toml")))
+        .merge(Yaml::file(format!("config/{env}.yaml")))
+        .merge(Json::file(format!("config/{env}.json")))
         // Local overrides (not committed to git)
         .merge(Toml::file("config/local.toml"))
         .merge(Yaml::file("config/local.yaml"))
         .merge(Json::file("config/local.json"))
         // Service-specific config
-        .merge(Toml::file(format!("config/{}.toml", service_name)))
-        .merge(Yaml::file(format!("config/{}.yaml", service_name)))
+        .merge(Toml::file(format!("config/{service_name}.toml")))
+        .merge(Yaml::file(format!("config/{service_name}.yaml")))
         // Environment variables with prefix
         .merge(Env::prefixed(&format!("{}_", service_name.to_uppercase())));
 
     figment
         .extract()
-        .map_err(|e| Error::Config(format!("Failed to load configuration: {}", e)))
+        .map_err(|e| Error::Config(format!("Failed to load configuration: {e}")))
 }
 
 /// Load configuration from a specific file
@@ -172,15 +172,14 @@ where
         "json" => Figment::new().merge(Json::file(path)),
         _ => {
             return Err(Error::Config(format!(
-                "Unsupported config file format: {}",
-                extension
+                "Unsupported config file format: {extension}"
             )))
         }
     };
 
     figment
         .extract()
-        .map_err(|e| Error::Config(format!("Failed to load configuration from file: {}", e)))
+        .map_err(|e| Error::Config(format!("Failed to load configuration from file: {e}")))
 }
 
 /// Save configuration to a file
@@ -212,8 +211,7 @@ where
         }
         _ => {
             return Err(Error::Config(format!(
-                "Unsupported config file format: {}",
-                extension
+                "Unsupported config file format: {extension}"
             )))
         }
     };

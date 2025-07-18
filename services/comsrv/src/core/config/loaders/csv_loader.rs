@@ -235,14 +235,12 @@ impl CsvLoader {
 pub struct FourTelemetryRecord {
     pub point_id: u32,
     pub signal_name: String,
-    pub chinese_name: Option<String>,
     pub data_type: String,
     pub scale: Option<f64>,
     pub offset: Option<f64>,
     pub reverse: Option<bool>, // For signal/control types
     pub unit: Option<String>,
     pub description: Option<String>,
-    pub group: Option<String>,
 }
 
 /// Modbus protocol mapping CSV record structure
