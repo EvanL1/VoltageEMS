@@ -10,7 +10,6 @@ pub const HEALTH_OK: &str = "OK";
 /// Alarm query parameters
 #[derive(Deserialize)]
 pub struct AlarmQuery {
-    pub category: Option<String>,
     pub level: Option<AlarmLevel>,
     pub status: Option<AlarmStatus>,
     pub limit: Option<usize>,
@@ -46,11 +45,4 @@ pub struct StatusResponse {
     pub active_alarms: usize,
     pub redis_connected: bool,
     pub classifier_rules: usize,
-}
-
-/// Classification result
-#[derive(Serialize)]
-pub struct ClassificationResult {
-    pub classified_count: usize,
-    pub failed_count: usize,
 }

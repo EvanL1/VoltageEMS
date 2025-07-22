@@ -35,19 +35,9 @@ impl Alarm {
 
     /// Get alarm urgency score based on multiple factors
     pub fn urgency_score(&self) -> u32 {
-        use crate::domain::AlarmLevel;
         use chrono::{Duration, Utc};
 
-        let mut score = self.classification.priority;
-
-        // Add level-based bonus
-        match self.level {
-            AlarmLevel::Critical => score += 50,
-            AlarmLevel::Major => score += 30,
-            AlarmLevel::Minor => score += 20,
-            AlarmLevel::Warning => score += 10,
-            AlarmLevel::Info => score += 0,
-        }
+        let mut score = self.metadata.priority;
 
         // Add time-based urgency
         let age = Utc::now() - self.created_at;

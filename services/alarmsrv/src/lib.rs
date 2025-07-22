@@ -9,7 +9,7 @@ pub mod redis;
 pub mod services;
 
 pub use config::AlarmConfig;
-pub use domain::{Alarm, AlarmClassifier, AlarmLevel, AlarmStatistics, AlarmStatus};
+pub use domain::{Alarm, AlarmLevel, AlarmStatistics, AlarmStatus};
 pub use redis::{
     AlarmFilter, AlarmQueryService, AlarmRedisClient, AlarmStatisticsManager, AlarmStore,
 };
@@ -23,5 +23,4 @@ pub struct AppState {
     pub alarm_store: std::sync::Arc<AlarmStore>,
     pub query_service: std::sync::Arc<AlarmQueryService>,
     pub stats_manager: std::sync::Arc<AlarmStatisticsManager>,
-    pub classifier: std::sync::Arc<AlarmClassifier>,
 }

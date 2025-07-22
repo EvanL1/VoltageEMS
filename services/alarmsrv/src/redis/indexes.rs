@@ -1,7 +1,8 @@
 use anyhow::Result;
+use redis::AsyncCommands;
 use std::collections::HashMap;
 use std::sync::Arc;
-use voltage_common::redis::RedisClient;
+use voltage_libs::redis::RedisClient;
 
 use crate::domain::{Alarm, AlarmLevel, AlarmStatus};
 use crate::redis::AlarmRedisClient;
@@ -19,22 +20,31 @@ impl AlarmIndexManager {
     }
 
     /// Add alarm to all relevant indexes
-    pub async fn add_to_indexes(&self, conn: &RedisClient, alarm: &Alarm) -> Result<()> {
+    pub async fn add_to_indexes(&self, conn: &mut RedisClient, alarm: &Alarm) -> Result<()> {
         // Add to category index
-        let category_key = format!("ems:alarms:category:{}", alarm.classification.category);
-        conn.sadd(&category_key, &alarm.id.to_string()).await?;
+        // For now, just store all alarms in a general category
+        let category_key = "ems:alarms:category:general".to_string();
+        conn.get_connection_mut()
+            .sadd(&category_key, &alarm.id.to_string())
+            .await?;
 
         // Add to level index
         let level_key = format!("ems:alarms:level:{:?}", alarm.level);
-        conn.sadd(&level_key, &alarm.id.to_string()).await?;
+        conn.get_connection_mut()
+            .sadd(&level_key, &alarm.id.to_string())
+            .await?;
 
         // Add to status index
         let status_key = format!("ems:alarms:status:{:?}", alarm.status);
-        conn.sadd(&status_key, &alarm.id.to_string()).await?;
+        conn.get_connection_mut()
+            .sadd(&status_key, &alarm.id.to_string())
+            .await?;
 
         // Add to time-based index
         let date_key = format!("ems:alarms:date:{}", alarm.created_at.format("%Y-%m-%d"));
-        conn.sadd(&date_key, &alarm.id.to_string()).await?;
+        conn.get_connection_mut()
+            .sadd(&date_key, &alarm.id.to_string())
+            .await?;
 
         // Add to realtime hash for quick access
         let realtime_key = "ems:alarms:realtime";
@@ -43,15 +53,18 @@ impl AlarmIndexManager {
             "id": alarm.id,
             "created_at": alarm.created_at.to_rfc3339(),
             "level": alarm.level,
-            "category": alarm.classification.category,
+            "category": "general",
         });
-        conn.hset(&realtime_key, &realtime_field, &realtime_data.to_string())
+        conn.get_connection_mut()
+            .hset(&realtime_key, &realtime_field, &realtime_data.to_string())
             .await?;
 
         // Add to hourly bucket for time-based queries
         let bucket = alarm.created_at.format("%Y%m%d%H").to_string();
         let bucket_index_key = format!("ems:alarms:buckets:{}", bucket);
-        conn.sadd(&bucket_index_key, &alarm.id.to_string()).await?;
+        conn.get_connection_mut()
+            .sadd(&bucket_index_key, &alarm.id.to_string())
+            .await?;
 
         Ok(())
     }
@@ -69,13 +82,13 @@ impl AlarmIndexManager {
         if let Some(conn) = client_guard.as_mut() {
             if let Some(cat) = category {
                 let category_key = format!("ems:alarms:category:{}", cat);
-                alarm_ids = conn.smembers(&category_key).await?;
+                alarm_ids = conn.get_connection_mut().smembers(&category_key).await?;
             } else if let Some(lvl) = level {
                 let level_key = format!("ems:alarms:level:{:?}", lvl);
-                alarm_ids = conn.smembers(&level_key).await?;
+                alarm_ids = conn.get_connection_mut().smembers(&level_key).await?;
             } else if let Some(stat) = status {
                 let status_key = format!("ems:alarms:status:{:?}", stat);
-                alarm_ids = conn.smembers(&status_key).await?;
+                alarm_ids = conn.get_connection_mut().smembers(&status_key).await?;
             } else {
                 // Get all alarm IDs
                 let pattern = "ems:alarms:*";
@@ -107,14 +120,21 @@ impl AlarmIndexManager {
 
         if let Some(conn) = client_guard.as_mut() {
             let unclassified_key = "ems:alarms:category:unclassified";
-            alarm_ids = conn.smembers(&unclassified_key).await?;
+            alarm_ids = conn
+                .get_connection_mut()
+                .smembers(&unclassified_key)
+                .await?;
         }
 
         Ok(alarm_ids)
     }
 
     /// Clean up alarm indexes
-    pub async fn cleanup_alarm_indexes(&self, conn: &RedisClient, alarm_id: &str) -> Result<()> {
+    pub async fn cleanup_alarm_indexes(
+        &self,
+        conn: &mut RedisClient,
+        alarm_id: &str,
+    ) -> Result<()> {
         // Remove from all possible indexes
         let patterns = vec![
             "ems:alarms:category:*",
@@ -126,17 +146,20 @@ impl AlarmIndexManager {
         for pattern in patterns {
             let keys: Vec<String> = conn.keys(pattern).await?;
             for key in keys {
-                conn.srem(&key, alarm_id).await?;
+                conn.get_connection_mut().srem(&key, alarm_id).await?;
             }
         }
 
         // Remove from realtime hash
         let realtime_key = "ems:alarms:realtime";
-        let all_fields: HashMap<String, String> = conn.hgetall(&realtime_key).await?;
+        let all_fields: HashMap<String, String> =
+            conn.get_connection_mut().hgetall(&realtime_key).await?;
 
         for (field, _) in all_fields {
             if field.ends_with(&format!(":{}", alarm_id)) {
-                conn.hdel(&realtime_key, &[field.as_str()]).await?;
+                conn.get_connection_mut()
+                    .hdel(&realtime_key, &[field.as_str()])
+                    .await?;
             }
         }
 

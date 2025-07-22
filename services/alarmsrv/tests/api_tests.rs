@@ -71,7 +71,7 @@ async fn test_health_check() {
 async fn test_status_endpoint() {
     let app = create_test_router().await.unwrap();
 
-    let (status, body) = json_request(&app, "GET", "/status", None).await;
+    let (status, body) = json_request(&app, "GET", "/api/v1/status", None).await;
 
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["service"], "alarmsrv");
@@ -92,7 +92,7 @@ async fn test_create_alarm() {
         "level": "Warning"
     });
 
-    let (status, body) = json_request(&app, "POST", "/alarms", Some(create_request)).await;
+    let (status, body) = json_request(&app, "POST", "/api/v1/alarms", Some(create_request)).await;
 
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["title"], "Test Alarm");
@@ -120,18 +120,18 @@ async fn test_list_alarms() {
             "description": "Test description",
             "level": "Warning"
         });
-        json_request(&app, "POST", "/alarms", Some(create_request)).await;
+        json_request(&app, "POST", "/api/v1/alarms", Some(create_request)).await;
     }
 
     // List all alarms
-    let (status, body) = json_request(&app, "GET", "/alarms", None).await;
+    let (status, body) = json_request(&app, "GET", "/api/v1/alarms", None).await;
 
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["total"], 3);
     assert_eq!(body["alarms"].as_array().unwrap().len(), 3);
 
     // Test with limit
-    let (status, body) = json_request(&app, "GET", "/alarms?limit=2", None).await;
+    let (status, body) = json_request(&app, "GET", "/api/v1/alarms?limit=2", None).await;
 
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["total"], 3);
@@ -156,12 +156,17 @@ async fn test_acknowledge_alarm() {
         "level": "Major"
     });
 
-    let (_, created) = json_request(&app, "POST", "/alarms", Some(create_request)).await;
+    let (_, created) = json_request(&app, "POST", "/api/v1/alarms", Some(create_request)).await;
     let alarm_id = created["id"].as_str().unwrap();
 
     // Acknowledge the alarm
-    let (status, body) =
-        json_request(&app, "POST", &format!("/alarms/{}/ack", alarm_id), None).await;
+    let (status, body) = json_request(
+        &app,
+        "POST",
+        &format!("/api/v1/alarms/{}/ack", alarm_id),
+        None,
+    )
+    .await;
 
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["status"], "Acknowledged");
@@ -186,12 +191,17 @@ async fn test_resolve_alarm() {
         "level": "Minor"
     });
 
-    let (_, created) = json_request(&app, "POST", "/alarms", Some(create_request)).await;
+    let (_, created) = json_request(&app, "POST", "/api/v1/alarms", Some(create_request)).await;
     let alarm_id = created["id"].as_str().unwrap();
 
     // Resolve the alarm
-    let (status, body) =
-        json_request(&app, "POST", &format!("/alarms/{}/resolve", alarm_id), None).await;
+    let (status, body) = json_request(
+        &app,
+        "POST",
+        &format!("/api/v1/alarms/{}/resolve", alarm_id),
+        None,
+    )
+    .await;
 
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["status"], "Resolved");
@@ -217,11 +227,11 @@ async fn test_get_statistics() {
             "description": "Test alarm",
             "level": level
         });
-        json_request(&app, "POST", "/alarms", Some(create_request)).await;
+        json_request(&app, "POST", "/api/v1/alarms", Some(create_request)).await;
     }
 
     // Get statistics
-    let (status, body) = json_request(&app, "GET", "/stats", None).await;
+    let (status, body) = json_request(&app, "GET", "/api/v1/stats", None).await;
 
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["total"], 5);
@@ -249,10 +259,10 @@ async fn test_classify_alarms() {
         "description": "Temperature is too high",
         "level": "Warning"
     });
-    json_request(&app, "POST", "/alarms", Some(create_request)).await;
+    json_request(&app, "POST", "/api/v1/alarms", Some(create_request)).await;
 
     // Trigger classification
-    let (status, body) = json_request(&app, "POST", "/alarms/classify", None).await;
+    let (status, body) = json_request(&app, "POST", "/api/v1/alarms/classify", None).await;
 
     assert_eq!(status, StatusCode::OK);
     assert!(body["classified_count"].is_number());
@@ -266,7 +276,7 @@ async fn test_classify_alarms() {
 async fn test_get_alarm_categories() {
     let app = create_test_router().await.unwrap();
 
-    let (status, body) = json_request(&app, "GET", "/alarms/categories", None).await;
+    let (status, body) = json_request(&app, "GET", "/api/v1/alarms/categories", None).await;
 
     assert_eq!(status, StatusCode::OK);
     let categories = body.as_array().unwrap();
@@ -307,17 +317,17 @@ async fn test_alarm_filtering() {
             "description": "Test alarm",
             "level": level
         });
-        json_request(&app, "POST", "/alarms", Some(create_request)).await;
+        json_request(&app, "POST", "/api/v1/alarms", Some(create_request)).await;
     }
 
     // Filter by level
-    let (status, body) = json_request(&app, "GET", "/alarms?level=Critical", None).await;
+    let (status, body) = json_request(&app, "GET", "/api/v1/alarms?level=Critical", None).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["total"], 1);
     assert_eq!(body["alarms"][0]["title"], "Critical Alert");
 
     // Filter by keyword
-    let (status, body) = json_request(&app, "GET", "/alarms?keyword=Issue", None).await;
+    let (status, body) = json_request(&app, "GET", "/api/v1/alarms?keyword=Issue", None).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["total"], 1);
     assert_eq!(body["alarms"][0]["title"], "Major Issue");

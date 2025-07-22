@@ -6,7 +6,6 @@ use tracing::info;
 use alarmsrv::{
     api::routes,
     config::AlarmConfig,
-    domain::AlarmClassifier,
     redis::{AlarmQueryService, AlarmRedisClient, AlarmStatisticsManager, AlarmStore},
     services::{
         rules::AlarmRulesEngine,
@@ -44,10 +43,6 @@ async fn main() -> Result<()> {
     let query_service = Arc::new(AlarmQueryService::new(redis_client.clone()));
     let stats_manager = Arc::new(AlarmStatisticsManager::new(redis_client.clone()));
 
-    // Initialize alarm classifier
-    let classifier = Arc::new(AlarmClassifier::new(config.clone()));
-    info!("Alarm classifier initialized");
-
     // Create application state
     let state = AppState {
         alarms: Arc::new(RwLock::new(Vec::new())),
@@ -56,7 +51,6 @@ async fn main() -> Result<()> {
         alarm_store,
         query_service,
         stats_manager,
-        classifier,
     };
 
     // Start background services

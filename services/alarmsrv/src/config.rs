@@ -113,6 +113,13 @@ pub struct ApiConfig {
     pub port: u16,
 }
 
+impl ApiConfig {
+    /// Build a path with API prefix
+    pub fn build_path(&self, path: &str) -> String {
+        format!("/api/v1/{}", path.trim_start_matches('/'))
+    }
+}
+
 /// Storage configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StorageConfig {
@@ -210,7 +217,7 @@ impl AlarmConfig {
             }
             if let Ok(api_port) = std::env::var("API_PORT") {
                 if let Ok(p) = api_port.parse() {
-                    config.service_api.port = p;
+                    config.api.port = p;
                 }
             }
 
@@ -239,8 +246,7 @@ impl AlarmConfig {
                         .parse()
                         .unwrap_or(0),
                 },
-                api: CommonApiConfig::default(),
-                service_api: ServiceApiConfig {
+                api: ApiConfig {
                     host: std::env::var("API_HOST").unwrap_or_else(|_| "0.0.0.0".to_string()),
                     port: std::env::var("API_PORT")
                         .unwrap_or_else(|_| "8087".to_string())

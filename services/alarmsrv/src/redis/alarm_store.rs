@@ -1,5 +1,6 @@
 use anyhow::Result;
 use chrono::{DateTime, Duration, Utc};
+use redis::AsyncCommands;
 use serde_json;
 use std::sync::Arc;
 use tracing::debug;
@@ -41,23 +42,19 @@ impl AlarmStore {
                 ("description".to_string(), alarm.description.clone()),
                 ("level".to_string(), serde_json::to_string(&alarm.level)?),
                 ("status".to_string(), serde_json::to_string(&alarm.status)?),
-                (
-                    "category".to_string(),
-                    alarm.classification.category.clone(),
-                ),
-                (
-                    "priority".to_string(),
-                    alarm.classification.priority.to_string(),
-                ),
+                ("category".to_string(), "general".to_string()),
+                ("priority".to_string(), alarm.metadata.priority.to_string()),
                 (
                     "tags".to_string(),
-                    serde_json::to_string(&alarm.classification.tags)?,
+                    serde_json::to_string(&alarm.metadata.tags)?,
                 ),
                 ("created_at".to_string(), alarm.created_at.to_rfc3339()),
                 ("updated_at".to_string(), alarm.updated_at.to_rfc3339()),
                 ("data".to_string(), alarm_json),
             ];
-            conn.hset_multiple(&alarm_key, fields).await?;
+            conn.get_connection_mut()
+                .hset_multiple(&alarm_key, &fields)
+                .await?;
 
             // Update indexes
             self.index_manager.add_to_indexes(conn, alarm).await?;
@@ -78,7 +75,11 @@ impl AlarmStore {
         let mut client_guard = self.client.get_client().await?;
         if let Some(conn) = client_guard.as_mut() {
             let alarm_key = format!("ems:alarms:{}", alarm_id);
-            if let Ok(Some(alarm_data)) = conn.hget(&alarm_key, "data").await {
+            if let Ok(alarm_data) = conn
+                .get_connection_mut()
+                .hget::<_, _, String>(&alarm_key, "data")
+                .await
+            {
                 if let Ok(alarm) = serde_json::from_str::<Alarm>(&alarm_data) {
                     return Ok(Some(alarm));
                 }
@@ -94,10 +95,11 @@ impl AlarmStore {
             let alarm_key = format!("ems:alarms:{}", alarm_id);
 
             // Get current alarm data
-            let alarm_data: String = match conn.hget(&alarm_key, "data").await? {
-                Some(data) => data,
-                None => return Err(anyhow::anyhow!("Alarm data not found")),
-            };
+            let alarm_data: String = conn
+                .get_connection_mut()
+                .hget::<_, _, String>(&alarm_key, "data")
+                .await
+                .map_err(|_| anyhow::anyhow!("Alarm data not found"))?;
             let mut alarm: Alarm = serde_json::from_str(&alarm_data)?;
 
             // Update alarm
@@ -118,11 +120,16 @@ impl AlarmStore {
                 ),
                 ("data".to_string(), updated_data),
             ];
-            conn.hset_multiple(&alarm_key, fields).await?;
+            conn.get_connection_mut()
+                .hset_multiple(&alarm_key, &fields)
+                .await?;
 
             // Update status indexes
-            conn.srem("ems:alarms:status:New", alarm_id).await?;
-            conn.sadd("ems:alarms:status:Acknowledged", alarm_id)
+            conn.get_connection_mut()
+                .srem("ems:alarms:status:New", alarm_id)
+                .await?;
+            conn.get_connection_mut()
+                .sadd("ems:alarms:status:Acknowledged", alarm_id)
                 .await?;
 
             // Update statistics
@@ -143,10 +150,11 @@ impl AlarmStore {
             let alarm_key = format!("ems:alarms:{}", alarm_id);
 
             // Get current alarm data
-            let alarm_data: String = match conn.hget(&alarm_key, "data").await? {
-                Some(data) => data,
-                None => return Err(anyhow::anyhow!("Alarm data not found")),
-            };
+            let alarm_data: String = conn
+                .get_connection_mut()
+                .hget::<_, _, String>(&alarm_key, "data")
+                .await
+                .map_err(|_| anyhow::anyhow!("Alarm data not found"))?;
             let mut alarm: Alarm = serde_json::from_str(&alarm_data)?;
 
             // Update alarm
@@ -167,13 +175,20 @@ impl AlarmStore {
                 ),
                 ("data".to_string(), updated_data),
             ];
-            conn.hset_multiple(&alarm_key, fields).await?;
+            conn.get_connection_mut()
+                .hset_multiple(&alarm_key, &fields)
+                .await?;
 
             // Update status indexes
-            conn.srem("ems:alarms:status:New", alarm_id).await?;
-            conn.srem("ems:alarms:status:Acknowledged", alarm_id)
+            conn.get_connection_mut()
+                .srem("ems:alarms:status:New", alarm_id)
                 .await?;
-            conn.sadd("ems:alarms:status:Resolved", alarm_id).await?;
+            conn.get_connection_mut()
+                .srem("ems:alarms:status:Acknowledged", alarm_id)
+                .await?;
+            conn.get_connection_mut()
+                .sadd("ems:alarms:status:Resolved", alarm_id)
+                .await?;
 
             // Update statistics
             self.stats_manager
@@ -195,35 +210,31 @@ impl AlarmStore {
 
             // Update classification data
             let fields: Vec<(String, String)> = vec![
-                (
-                    "category".to_string(),
-                    alarm.classification.category.clone(),
-                ),
-                (
-                    "priority".to_string(),
-                    alarm.classification.priority.to_string(),
-                ),
+                ("category".to_string(), "general".to_string()),
+                ("priority".to_string(), alarm.metadata.priority.to_string()),
                 (
                     "tags".to_string(),
-                    serde_json::to_string(&alarm.classification.tags)?,
+                    serde_json::to_string(&alarm.metadata.tags)?,
                 ),
                 ("updated_at".to_string(), alarm.updated_at.to_rfc3339()),
                 ("data".to_string(), alarm_json),
             ];
-            conn.hset_multiple(&alarm_key, fields).await?;
-
-            // Remove from unclassified
-            conn.srem("ems:alarms:category:unclassified", &alarm.id.to_string())
+            conn.get_connection_mut()
+                .hset_multiple(&alarm_key, &fields)
                 .await?;
 
-            // Add to new category
-            let category_key = format!("ems:alarms:category:{}", alarm.classification.category);
-            conn.sadd(&category_key, &alarm.id.to_string()).await?;
+            // Remove from unclassified
+            conn.get_connection_mut()
+                .srem("ems:alarms:category:unclassified", &alarm.id.to_string())
+                .await?;
 
-            debug!(
-                "Updated alarm {} classification to {}",
-                alarm.id, alarm.classification.category
-            );
+            // Add to general category
+            let category_key = "ems:alarms:category:general".to_string();
+            conn.get_connection_mut()
+                .sadd(&category_key, &alarm.id.to_string())
+                .await?;
+
+            debug!("Updated alarm {} to general category", alarm.id);
         }
 
         Ok(())
@@ -241,12 +252,16 @@ impl AlarmStore {
                 ("updated_at".to_string(), alarm.updated_at.to_rfc3339()),
                 ("data".to_string(), alarm_json),
             ];
-            conn.hset_multiple(&alarm_key, fields).await?;
+            conn.get_connection_mut()
+                .hset_multiple(&alarm_key, &fields)
+                .await?;
 
             // Update level indexes
             // Note: This is simplified - in reality we'd need to remove from old level index
             let level_key = format!("ems:alarms:level:{:?}", alarm.level);
-            conn.sadd(&level_key, &alarm.id.to_string()).await?;
+            conn.get_connection_mut()
+                .sadd(&level_key, &alarm.id.to_string())
+                .await?;
 
             // Update statistics
             self.stats_manager
@@ -266,13 +281,17 @@ impl AlarmStore {
 
         if let Some(conn) = client_guard.as_mut() {
             let status_key = format!("ems:alarms:status:{:?}", rule.from_status);
-            let alarm_ids: Vec<String> = conn.smembers(&status_key).await?;
+            let alarm_ids: Vec<String> = conn.get_connection_mut().smembers(&status_key).await?;
 
             let cutoff_time = Utc::now() - Duration::minutes(rule.duration_minutes as i64);
 
             for alarm_id in alarm_ids {
                 let alarm_key = format!("ems:alarms:{}", alarm_id);
-                if let Ok(Some(alarm_data)) = conn.hget(&alarm_key, "data").await {
+                if let Ok(alarm_data) = conn
+                    .get_connection_mut()
+                    .hget::<_, _, String>(&alarm_key, "data")
+                    .await
+                {
                     if let Ok(alarm) = serde_json::from_str::<Alarm>(&alarm_data) {
                         if alarm.created_at < cutoff_time && alarm.level == rule.from_level {
                             alarms.push(alarm);
@@ -297,7 +316,9 @@ impl AlarmStore {
 
             // Also store for batch processing
             let cloud_queue_key = "ems:cloud:alarms:queue";
-            conn.lpush(&cloud_queue_key, &cloud_data).await?;
+            conn.get_connection_mut()
+                .lpush(&cloud_queue_key, &cloud_data)
+                .await?;
 
             debug!("Published alarm {} for cloud push", alarm.id);
         }
@@ -313,18 +334,24 @@ impl AlarmStore {
         if let Some(conn) = client_guard.as_mut() {
             let cutoff_date = Utc::now() - Duration::days(retention_days as i64);
             let resolved_key = "ems:alarms:status:Resolved";
-            let alarm_ids: Vec<String> = conn.smembers(&resolved_key).await?;
+            let alarm_ids: Vec<String> = conn.get_connection_mut().smembers(&resolved_key).await?;
 
             for alarm_id in alarm_ids {
                 let alarm_key = format!("ems:alarms:{}", alarm_id);
-                if let Ok(Some(resolved_at_str)) = conn.hget(&alarm_key, "resolved_at").await {
+                if let Ok(resolved_at_str) = conn
+                    .get_connection_mut()
+                    .hget::<_, _, String>(&alarm_key, "resolved_at")
+                    .await
+                {
                     if let Ok(resolved_at) = DateTime::parse_from_rfc3339(&resolved_at_str) {
                         if resolved_at.with_timezone(&Utc) < cutoff_date {
                             // Remove alarm and all its indexes
                             self.index_manager
                                 .cleanup_alarm_indexes(conn, &alarm_id)
                                 .await?;
-                            conn.del(&[&alarm_key.as_str()]).await?;
+                            conn.get_connection_mut()
+                                .del(&[&alarm_key.as_str()])
+                                .await?;
                             cleaned_count += 1;
                         }
                     }

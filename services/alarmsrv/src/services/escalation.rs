@@ -7,7 +7,7 @@ use crate::AppState;
 
 /// Process alarm escalation
 pub async fn process_alarm_escalation(state: &AppState) -> Result<()> {
-    let escalation_rules = state.classifier.get_escalation_rules();
+    let escalation_rules: Vec<crate::domain::EscalationRule> = Vec::new(); // No escalation rules for now
 
     for rule in escalation_rules {
         match state.alarm_store.get_alarms_for_escalation(&rule).await {

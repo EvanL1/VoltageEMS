@@ -3,7 +3,7 @@
 use anyhow::Result;
 use futures::StreamExt;
 use tracing::{error, info};
-use voltage_common::redis::RedisClient;
+use voltage_libs::redis::RedisClient;
 
 use crate::domain::{Alarm, AlarmLevel};
 use crate::AppState;
@@ -11,7 +11,7 @@ use crate::AppState;
 /// Start Redis listener for auto alarm generation
 pub async fn start_redis_listener(state: AppState) -> Result<()> {
     let redis_url = state.config.redis.get_connection_url();
-    let client = RedisClient::new(&redis_url).await?;
+    let mut client = RedisClient::new(&redis_url).await?;
 
     tokio::spawn(async move {
         loop {
@@ -66,11 +66,7 @@ async fn process_data_message(state: &AppState, payload: &str) -> Result<()> {
             }
 
             // Process each alarm
-            for mut alarm in alarms_to_create {
-                // Classify the alarm
-                let classification = state.classifier.classify(&alarm).await;
-                alarm.set_classification(classification);
-
+            for alarm in alarms_to_create {
                 // Store in Redis
                 if let Err(e) = state.alarm_store.store_alarm(&alarm).await {
                     error!("Failed to store auto-generated alarm: {}", e);
@@ -87,8 +83,8 @@ async fn process_data_message(state: &AppState, payload: &str) -> Result<()> {
                 }
 
                 info!(
-                    "Auto-triggered alarm: {} (Category: {})",
-                    alarm.title, alarm.classification.category
+                    "Auto-triggered alarm: {} (Level: {:?})",
+                    alarm.title, alarm.level
                 );
             }
         }

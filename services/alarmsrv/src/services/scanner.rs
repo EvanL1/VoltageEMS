@@ -91,9 +91,14 @@ impl RedisDataScanner {
 
                             // Process generated alarms
                             for mut alarm in alarms {
-                                // Classify the alarm
-                                let classification = state.classifier.classify(&alarm).await;
-                                alarm.set_classification(classification);
+                                // Set source information
+                                let source = format!(
+                                    "{}:{}:{}",
+                                    point_data.channel_id,
+                                    point_data.point_type,
+                                    point_data.point_id
+                                );
+                                alarm.metadata.source = Some(source);
 
                                 // Store in Redis
                                 if let Err(e) = state.alarm_store.store_alarm(&alarm).await {
@@ -113,8 +118,8 @@ impl RedisDataScanner {
                                 }
 
                                 info!(
-                                    "Generated alarm: {} (Level: {:?}, Category: {})",
-                                    alarm.title, alarm.level, alarm.classification.category
+                                    "Generated alarm: {} (Level: {:?})",
+                                    alarm.title, alarm.level
                                 );
                             }
                         }
@@ -134,11 +139,7 @@ impl RedisDataScanner {
         let rules_engine = self.rules_engine.read().await;
         let timeout_alarms = rules_engine.check_timeouts(current_time);
 
-        for mut alarm in timeout_alarms {
-            // Classify the alarm
-            let classification = state.classifier.classify(&alarm).await;
-            alarm.set_classification(classification);
-
+        for alarm in timeout_alarms {
             // Store in Redis
             if let Err(e) = state.alarm_store.store_alarm(&alarm).await {
                 error!("Failed to store timeout alarm: {}", e);
@@ -218,10 +219,40 @@ impl RedisDataScanner {
             .parse::<u32>()
             .map_err(|e| anyhow!("Invalid point ID: {}", e))?;
 
-        // Parse value format: value:timestamp
+        // Try to parse as JSON format first
+        if let Ok(json_value) = serde_json::from_str::<serde_json::Value>(value) {
+            let point_value = json_value
+                .get("value")
+                .and_then(|v| v.as_f64())
+                .ok_or_else(|| anyhow!("Missing or invalid 'value' field in JSON"))?;
+
+            let timestamp =
+                if let Some(ts_str) = json_value.get("timestamp").and_then(|v| v.as_str()) {
+                    // Parse ISO format timestamp
+                    chrono::DateTime::parse_from_rfc3339(ts_str)
+                        .map(|dt| dt.with_timezone(&Utc))
+                        .map_err(|e| anyhow!("Invalid timestamp format: {}", e))?
+                } else {
+                    // Use current time if no timestamp provided
+                    Utc::now()
+                };
+
+            return Ok(PointData {
+                channel_id,
+                point_type,
+                point_id,
+                value: point_value,
+                timestamp,
+            });
+        }
+
+        // Fallback: Parse legacy format: value:timestamp
         let value_parts: Vec<&str> = value.split(':').collect();
         if value_parts.len() != 2 {
-            return Err(anyhow!("Invalid value format: {}", value));
+            return Err(anyhow!(
+                "Invalid value format (neither JSON nor value:timestamp): {}",
+                value
+            ));
         }
 
         let point_value = value_parts[0]

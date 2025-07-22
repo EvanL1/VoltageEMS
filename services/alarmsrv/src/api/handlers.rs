@@ -28,7 +28,7 @@ pub async fn get_status(State(state): State<AppState>) -> Json<StatusResponse> {
         total_alarms: alarms.len(),
         active_alarms: active_count,
         redis_connected: redis_status,
-        classifier_rules: state.classifier.get_rule_count(),
+        classifier_rules: 0, // Classification removed
     })
 }
 
@@ -56,7 +56,7 @@ pub async fn list_alarms(
     match state
         .query_service
         .get_alarms_paginated(
-            query.category,
+            None, // No category filtering
             query.level,
             query.status,
             query.start_time,
@@ -85,11 +85,7 @@ pub async fn create_alarm(
     State(state): State<AppState>,
     Json(request): Json<CreateAlarmRequest>,
 ) -> Result<Json<Alarm>, StatusCode> {
-    let mut alarm = Alarm::new(request.title, request.description, request.level);
-
-    // Classify the alarm
-    let classification = state.classifier.classify(&alarm).await;
-    alarm.set_classification(classification);
+    let alarm = Alarm::new(request.title, request.description, request.level);
 
     // Store in Redis
     if let Err(e) = state.alarm_store.store_alarm(&alarm).await {
@@ -107,8 +103,8 @@ pub async fn create_alarm(
     }
 
     info!(
-        "Created new alarm: {} (Category: {})",
-        alarm.title, alarm.classification.category
+        "Created new alarm: {} (Level: {:?})",
+        alarm.title, alarm.level
     );
     Ok(Json(alarm))
 }
@@ -177,52 +173,4 @@ pub async fn resolve_alarm(
             Err(StatusCode::NOT_FOUND)
         }
     }
-}
-
-/// Classify existing alarms
-pub async fn classify_alarms(
-    State(state): State<AppState>,
-) -> Result<Json<ClassificationResult>, StatusCode> {
-    let mut classified_count = 0;
-    let mut failed_count = 0;
-
-    // Get unclassified alarms from Redis
-    match state.query_service.get_unclassified_alarms().await {
-        Ok(alarms) => {
-            for mut alarm in alarms {
-                let classification = state.classifier.classify(&alarm).await;
-                alarm.set_classification(classification);
-
-                match state.alarm_store.update_alarm_classification(&alarm).await {
-                    Ok(_) => {
-                        classified_count += 1;
-                        // Publish updated classification for cloud
-                        if let Err(e) = state.alarm_store.publish_alarm_for_cloud(&alarm).await {
-                            warn!("Failed to publish classified alarm for cloud: {}", e);
-                        }
-                    }
-                    Err(e) => {
-                        error!("Failed to update alarm classification: {}", e);
-                        failed_count += 1;
-                    }
-                }
-            }
-        }
-        Err(e) => {
-            error!("Failed to get unclassified alarms: {}", e);
-            return Err(StatusCode::INTERNAL_SERVER_ERROR);
-        }
-    }
-
-    Ok(Json(ClassificationResult {
-        classified_count,
-        failed_count,
-    }))
-}
-
-/// Get alarm categories
-pub async fn get_alarm_categories(
-    State(state): State<AppState>,
-) -> Json<Vec<crate::domain::AlarmCategory>> {
-    Json(state.classifier.get_categories())
 }

@@ -4,8 +4,6 @@
 //! for the alarm service.
 
 pub mod alarm;
-pub mod classification;
 pub mod types;
 
-pub use classification::*;
 pub use types::*;

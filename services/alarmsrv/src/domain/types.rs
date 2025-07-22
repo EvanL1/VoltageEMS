@@ -29,29 +29,23 @@ pub enum AlarmStatus {
     Resolved,
 }
 
-/// Alarm classification
+/// Simplified alarm metadata
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AlarmClassification {
-    /// Classification category
-    pub category: String,
-    /// Priority score (0-100)
+pub struct AlarmMetadata {
+    /// Priority score based on level (0-100)
     pub priority: u32,
-    /// Associated tags
+    /// Source information (channel, point, etc.)
+    pub source: Option<String>,
+    /// Additional tags for filtering
     pub tags: Vec<String>,
-    /// Classification confidence (0.0-1.0)
-    pub confidence: f64,
-    /// Classification reason
-    pub reason: String,
 }
 
-impl Default for AlarmClassification {
+impl Default for AlarmMetadata {
     fn default() -> Self {
         Self {
-            category: "unclassified".to_string(),
             priority: 50,
+            source: None,
             tags: Vec::new(),
-            confidence: 0.0,
-            reason: "No classification applied".to_string(),
         }
     }
 }
@@ -69,8 +63,8 @@ pub struct Alarm {
     pub level: AlarmLevel,
     /// Alarm status
     pub status: AlarmStatus,
-    /// Alarm classification
-    pub classification: AlarmClassification,
+    /// Alarm metadata
+    pub metadata: AlarmMetadata,
     /// Creation time
     pub created_at: DateTime<Utc>,
     /// Update time
@@ -89,13 +83,19 @@ impl Alarm {
     /// Create new alarm
     pub fn new(title: String, description: String, level: AlarmLevel) -> Self {
         let now = Utc::now();
+        let priority = Self::level_to_priority(level);
+
         Self {
             id: Uuid::new_v4(),
             title,
             description,
             level,
             status: AlarmStatus::New,
-            classification: AlarmClassification::default(),
+            metadata: AlarmMetadata {
+                priority,
+                source: None,
+                tags: Vec::new(),
+            },
             created_at: now,
             updated_at: now,
             acknowledged_at: None,
@@ -105,9 +105,32 @@ impl Alarm {
         }
     }
 
-    /// Set alarm classification
-    pub fn set_classification(&mut self, classification: AlarmClassification) {
-        self.classification = classification;
+    /// Create new alarm with source information
+    pub fn new_with_source(
+        title: String,
+        description: String,
+        level: AlarmLevel,
+        source: String,
+    ) -> Self {
+        let mut alarm = Self::new(title, description, level);
+        alarm.metadata.source = Some(source);
+        alarm
+    }
+
+    /// Convert alarm level to priority score
+    fn level_to_priority(level: AlarmLevel) -> u32 {
+        match level {
+            AlarmLevel::Critical => 90,
+            AlarmLevel::Major => 70,
+            AlarmLevel::Minor => 50,
+            AlarmLevel::Warning => 30,
+            AlarmLevel::Info => 10,
+        }
+    }
+
+    /// Set alarm metadata
+    pub fn set_metadata(&mut self, metadata: AlarmMetadata) {
+        self.metadata = metadata;
         self.updated_at = Utc::now();
     }
 
@@ -219,8 +242,6 @@ pub struct CloudAlarm {
     pub level: String,
     /// Alarm status
     pub status: String,
-    /// Alarm category
-    pub category: String,
     /// Priority score
     pub priority: u32,
     /// Tags
@@ -242,11 +263,10 @@ impl CloudAlarm {
         let mut cloud_metadata = HashMap::new();
         cloud_metadata.insert("service".to_string(), "alarmsrv".to_string());
         cloud_metadata.insert("version".to_string(), "1.0".to_string());
-        cloud_metadata.insert(
-            "confidence".to_string(),
-            alarm.classification.confidence.to_string(),
-        );
-        cloud_metadata.insert("reason".to_string(), alarm.classification.reason.clone());
+
+        if let Some(ref source) = alarm.metadata.source {
+            cloud_metadata.insert("data_source".to_string(), source.clone());
+        }
 
         Self {
             id: alarm.id.to_string(),
@@ -254,12 +274,15 @@ impl CloudAlarm {
             description: alarm.description.clone(),
             level: format!("{:?}", alarm.level),
             status: format!("{:?}", alarm.status),
-            category: alarm.classification.category.clone(),
-            priority: alarm.classification.priority,
-            tags: alarm.classification.tags.clone(),
+            priority: alarm.metadata.priority,
+            tags: alarm.metadata.tags.clone(),
             created_at: alarm.created_at.to_rfc3339(),
             updated_at: alarm.updated_at.to_rfc3339(),
-            source: "ems-alarmsrv".to_string(),
+            source: alarm
+                .metadata
+                .source
+                .clone()
+                .unwrap_or_else(|| "ems-alarmsrv".to_string()),
             facility: "default".to_string(),
             cloud_metadata,
         }
@@ -275,8 +298,6 @@ pub struct AlarmStatistics {
     pub by_status: AlarmStatusStats,
     /// Statistics by level
     pub by_level: AlarmLevelStats,
-    /// Statistics by category
-    pub by_category: HashMap<String, usize>,
     /// Today's handled alarms count
     pub today_handled: usize,
     /// Active alarms count (new + acknowledged)
@@ -325,7 +346,7 @@ mod tests {
         assert_eq!(alarm.level, AlarmLevel::Warning);
         assert_eq!(alarm.status, AlarmStatus::New);
         assert!(alarm.is_active());
-        assert_eq!(alarm.classification.category, "unclassified");
+        assert_eq!(alarm.metadata.priority, 30);
     }
 
     #[test]
@@ -384,28 +405,18 @@ mod tests {
 
     #[test]
     fn test_cloud_alarm_conversion() {
-        let mut alarm = Alarm::new(
+        let alarm = Alarm::new_with_source(
             "Test Alarm".to_string(),
             "This is a test alarm".to_string(),
             AlarmLevel::Warning,
+            "test_source".to_string(),
         );
-
-        let classification = AlarmClassification {
-            category: "test".to_string(),
-            priority: 75,
-            tags: vec!["test".to_string(), "example".to_string()],
-            confidence: 0.9,
-            reason: "Test classification".to_string(),
-        };
-
-        alarm.set_classification(classification);
 
         let cloud_alarm = CloudAlarm::from_alarm(&alarm);
 
         assert_eq!(cloud_alarm.title, "Test Alarm");
-        assert_eq!(cloud_alarm.category, "test");
-        assert_eq!(cloud_alarm.priority, 75);
-        assert_eq!(cloud_alarm.tags.len(), 2);
-        assert!(cloud_alarm.cloud_metadata.contains_key("confidence"));
+        assert_eq!(cloud_alarm.source, "test_source");
+        assert_eq!(cloud_alarm.priority, 30);
+        assert!(cloud_alarm.cloud_metadata.contains_key("data_source"));
     }
 }

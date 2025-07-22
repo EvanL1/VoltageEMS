@@ -1,8 +1,9 @@
 use anyhow::Result;
 use chrono::Utc;
+use redis::AsyncCommands;
 use std::collections::HashMap;
 use std::sync::Arc;
-use voltage_common::redis::RedisClient;
+use voltage_libs::redis::RedisClient;
 
 use crate::domain::{Alarm, AlarmLevelStats, AlarmStatistics, AlarmStatus, AlarmStatusStats};
 use crate::redis::AlarmRedisClient;
@@ -21,7 +22,7 @@ impl AlarmStatisticsManager {
     /// Update statistics based on alarm action
     pub async fn update_statistics(
         &self,
-        conn: &RedisClient,
+        conn: &mut RedisClient,
         alarm: &Alarm,
         action: &str,
     ) -> Result<()> {
@@ -29,39 +30,59 @@ impl AlarmStatisticsManager {
 
         match action {
             "created" => {
-                conn.hincrby(&stats_key, "total", 1).await?;
-                conn.hincrby(&stats_key, "new", 1).await?;
-                conn.hincrby(&stats_key, &format!("{:?}", alarm.level).to_lowercase(), 1)
+                conn.get_connection_mut()
+                    .hincr(&stats_key, "total", 1)
+                    .await?;
+                conn.get_connection_mut()
+                    .hincr(&stats_key, "new", 1)
+                    .await?;
+                conn.get_connection_mut()
+                    .hincr(&stats_key, &format!("{:?}", alarm.level).to_lowercase(), 1)
                     .await?;
             }
             "acknowledged" => {
-                conn.hincrby(&stats_key, "new", -1).await?;
-                conn.hincrby(&stats_key, "acknowledged", 1).await?;
+                conn.get_connection_mut()
+                    .hincr(&stats_key, "new", -1)
+                    .await?;
+                conn.get_connection_mut()
+                    .hincr(&stats_key, "acknowledged", 1)
+                    .await?;
 
                 // Update today's handled count
                 let today = Utc::now().format("%Y-%m-%d").to_string();
                 let today_handled_key = format!("ems:alarms:handled:{}", today);
-                conn.incr(&today_handled_key).await?;
+                conn.get_connection_mut()
+                    .incr(&today_handled_key, 1)
+                    .await?;
                 // Set expiration to 7 days
                 conn.expire(&today_handled_key, 7 * 24 * 3600).await?;
             }
             "resolved" => {
                 if alarm.status == AlarmStatus::Acknowledged {
-                    conn.hincrby(&stats_key, "acknowledged", -1).await?;
+                    conn.get_connection_mut()
+                        .hincr(&stats_key, "acknowledged", -1)
+                        .await?;
                 } else if alarm.status == AlarmStatus::New {
-                    conn.hincrby(&stats_key, "new", -1).await?;
+                    conn.get_connection_mut()
+                        .hincr(&stats_key, "new", -1)
+                        .await?;
                 }
-                conn.hincrby(&stats_key, "resolved", 1).await?;
+                conn.get_connection_mut()
+                    .hincr(&stats_key, "resolved", 1)
+                    .await?;
 
                 // Update today's handled count
                 let today = Utc::now().format("%Y-%m-%d").to_string();
                 let today_handled_key = format!("ems:alarms:handled:{}", today);
-                conn.incr(&today_handled_key).await?;
+                conn.get_connection_mut()
+                    .incr(&today_handled_key, 1)
+                    .await?;
                 // Set expiration to 7 days
                 conn.expire(&today_handled_key, 7 * 24 * 3600).await?;
             }
             "escalated" => {
-                conn.hincrby(&stats_key, &format!("{:?}", alarm.level).to_lowercase(), 1)
+                conn.get_connection_mut()
+                    .hincr(&stats_key, &format!("{:?}", alarm.level).to_lowercase(), 1)
                     .await?;
             }
             _ => {}
@@ -77,6 +98,7 @@ impl AlarmStatisticsManager {
             let stats_key = "ems:alarms:stats";
 
             let total: i32 = conn
+                .get_connection_mut()
                 .hget(&stats_key, "total")
                 .await
                 .ok()
@@ -84,6 +106,7 @@ impl AlarmStatisticsManager {
                 .and_then(|s: String| s.parse().ok())
                 .unwrap_or(0);
             let new: i32 = conn
+                .get_connection_mut()
                 .hget(&stats_key, "new")
                 .await
                 .ok()
@@ -91,6 +114,7 @@ impl AlarmStatisticsManager {
                 .and_then(|s: String| s.parse().ok())
                 .unwrap_or(0);
             let acknowledged: i32 = conn
+                .get_connection_mut()
                 .hget(&stats_key, "acknowledged")
                 .await
                 .ok()
@@ -98,6 +122,7 @@ impl AlarmStatisticsManager {
                 .and_then(|s: String| s.parse().ok())
                 .unwrap_or(0);
             let resolved: i32 = conn
+                .get_connection_mut()
                 .hget(&stats_key, "resolved")
                 .await
                 .ok()
@@ -105,6 +130,7 @@ impl AlarmStatisticsManager {
                 .and_then(|s: String| s.parse().ok())
                 .unwrap_or(0);
             let critical: i32 = conn
+                .get_connection_mut()
                 .hget(&stats_key, "critical")
                 .await
                 .ok()
@@ -112,6 +138,7 @@ impl AlarmStatisticsManager {
                 .and_then(|s: String| s.parse().ok())
                 .unwrap_or(0);
             let major: i32 = conn
+                .get_connection_mut()
                 .hget(&stats_key, "major")
                 .await
                 .ok()
@@ -119,6 +146,7 @@ impl AlarmStatisticsManager {
                 .and_then(|s: String| s.parse().ok())
                 .unwrap_or(0);
             let minor: i32 = conn
+                .get_connection_mut()
                 .hget(&stats_key, "minor")
                 .await
                 .ok()
@@ -126,6 +154,7 @@ impl AlarmStatisticsManager {
                 .and_then(|s: String| s.parse().ok())
                 .unwrap_or(0);
             let warning: i32 = conn
+                .get_connection_mut()
                 .hget(&stats_key, "warning")
                 .await
                 .ok()
@@ -133,6 +162,7 @@ impl AlarmStatisticsManager {
                 .and_then(|s: String| s.parse().ok())
                 .unwrap_or(0);
             let info: i32 = conn
+                .get_connection_mut()
                 .hget(&stats_key, "info")
                 .await
                 .ok()
@@ -171,7 +201,6 @@ impl AlarmStatisticsManager {
                     warning: warning as usize,
                     info: info as usize,
                 },
-                by_category: categories,
                 today_handled: today_handled as usize,
                 active,
             });
@@ -181,14 +210,17 @@ impl AlarmStatisticsManager {
     }
 
     /// Get category statistics
-    async fn get_category_statistics(&self, conn: &RedisClient) -> Result<HashMap<String, usize>> {
+    async fn get_category_statistics(
+        &self,
+        conn: &mut RedisClient,
+    ) -> Result<HashMap<String, usize>> {
         let mut categories = HashMap::new();
         let pattern = "ems:alarms:category:*";
         let keys: Vec<String> = conn.keys(pattern).await?;
 
         for key in keys {
             let category = key.replace("ems:alarms:category:", "");
-            let count: usize = conn.scard(&key).await.unwrap_or(0);
+            let count: usize = conn.get_connection_mut().scard(&key).await.unwrap_or(0);
             categories.insert(category, count);
         }
 

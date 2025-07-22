@@ -2,7 +2,7 @@ use anyhow::Result;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tracing::info;
-use voltage_common::redis::RedisClient;
+use voltage_libs::redis::RedisClient;
 
 use crate::config::{AlarmConfig, RedisConnectionType};
 
@@ -22,7 +22,7 @@ impl AlarmRedisClient {
             redis_url.replace(&config.redis.password.clone().unwrap_or_default(), "***")
         );
 
-        let client = RedisClient::new(&redis_url).await?;
+        let mut client = RedisClient::new(&redis_url).await?;
 
         // Test connection with PING
         let ping_result = client.ping().await?;
