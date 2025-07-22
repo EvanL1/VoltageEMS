@@ -10,7 +10,6 @@ use tokio::time::{interval, Duration};
 
 use super::calculation::CalculationEngine;
 use super::{DeviceModel, InstanceManager};
-use voltage_common::prelude::PointData;
 
 /// Data flow processor for real-time device data processing
 pub struct DataFlowProcessor {

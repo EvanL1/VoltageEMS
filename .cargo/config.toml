@@ -1,0 +1,19 @@
+[build]
+# 使用所有CPU核心进行并行编译
+jobs = 11
+
+[target.aarch64-apple-darwin]
+# macOS M3 优化
+rustflags = ["-C", "target-cpu=native"]
+
+[profile.dev]
+# 开发模式优化
+opt-level = 0
+debug = true
+incremental = true
+
+[profile.release]
+# 发布模式优化
+opt-level = 3
+lto = "thin"
+codegen-units = 1

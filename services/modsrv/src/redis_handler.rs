@@ -1,14 +1,15 @@
 use crate::error::{ModelSrvError, Result};
+use redis::{Commands, Connection};
 use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use voltage_common::redis::{RedisConfig, RedisSyncClient};
+use voltage_libs::redis::RedisConfig;
 
-/// Redis connection handler using voltage-common
+/// Redis connection handler using direct redis connection
 pub struct RedisConnection {
-    /// Redis sync client from voltage-common
-    client: RedisSyncClient,
+    /// Redis sync connection
+    connection: Connection,
 }
 
 impl RedisConnection {
@@ -16,8 +17,9 @@ impl RedisConnection {
     pub fn new() -> Self {
         let redis_url =
             std::env::var("REDIS_URL").unwrap_or_else(|_| "redis://127.0.0.1:6379".to_string());
-        let client = RedisSyncClient::new(&redis_url).expect("Redis client creation failed");
-        Self { client }
+        let client = redis::Client::open(redis_url).expect("Redis client creation failed");
+        let connection = client.get_connection().expect("Redis connection failed");
+        Self { connection }
     }
 
     /// Create a new Redis connection with custom configuration
@@ -26,10 +28,9 @@ impl RedisConnection {
             host: host.to_string(),
             port,
             password,
-            socket: None,
             database: 0,
-            connection_timeout: 10,
-            max_retries: 3,
+            pool_size: 10,
+            timeout_seconds: 10,
         };
 
         let url = config.to_url();
@@ -45,10 +46,9 @@ impl RedisConnection {
             host: config["host"].as_str().unwrap_or("127.0.0.1").to_string(),
             port: config["port"].as_u64().unwrap_or(6379) as u16,
             password: config["password"].as_str().map(|s| s.to_string()),
-            socket: config["socket"].as_str().map(|s| s.to_string()),
             database: config["database"].as_u64().unwrap_or(0) as u8,
-            connection_timeout: config["connection_timeout"].as_u64().unwrap_or(10),
-            max_retries: config["max_retries"].as_u64().unwrap_or(3) as u32,
+            pool_size: config["pool_size"].as_u64().unwrap_or(10) as u32,
+            timeout_seconds: config["timeout_seconds"].as_u64().unwrap_or(10),
         };
 
         let url = redis_config.to_url();
@@ -70,14 +70,14 @@ impl RedisConnection {
 
     /// Get keys matching a pattern
     pub fn get_keys(&mut self, pattern: &str) -> Result<Vec<String>> {
-        self.client
+        self.connection
             .keys(pattern)
             .map_err(|e| ModelSrvError::RedisError(format!("Failed to get keys: {}", e)))
     }
 
     /// Get a string value from Redis
     pub fn get_string(&mut self, key: &str) -> Result<String> {
-        match self.client.get(key) {
+        match self.connection.get(key) {
             Ok(Some(value)) => Ok(value),
             Ok(None) => Err(ModelSrvError::NotFound(format!("Key not found: {}", key))),
             Err(e) => Err(ModelSrvError::RedisError(format!(
@@ -89,21 +89,21 @@ impl RedisConnection {
 
     /// Set a string value in Redis
     pub fn set_string(&mut self, key: &str, value: &str) -> Result<()> {
-        self.client.set(key, value).map_err(|e| {
+        self.connection.set(key, value).map_err(|e| {
             ModelSrvError::RedisError(format!("Failed to set string for key {}: {}", key, e))
         })
     }
 
     /// Get a hash value from Redis
     pub fn get_hash(&mut self, key: &str) -> Result<HashMap<String, String>> {
-        self.client.hgetall(key).map_err(|e| {
+        self.connection.hgetall(key).map_err(|e| {
             ModelSrvError::RedisError(format!("Failed to get hash for key {}: {}", key, e))
         })
     }
 
     /// Set a field in a hash
     pub fn set_hash_field(&mut self, key: &str, field: &str, value: &str) -> Result<()> {
-        self.client.hset(key, field, value).map_err(|e| {
+        let _: bool = self.connection.hset(key, field, value).map_err(|e| {
             ModelSrvError::RedisError(format!("Failed to set hash field for key {}: {}", key, e))
         })?;
         Ok(())
@@ -119,7 +119,7 @@ impl RedisConnection {
 
     /// Delete a key
     pub fn delete(&mut self, key: &str) -> Result<()> {
-        self.client.del(&[key]).map_err(|e| {
+        let _: u32 = self.connection.del(key).map_err(|e| {
             ModelSrvError::RedisError(format!("Failed to delete key {}: {}", key, e))
         })?;
         Ok(())
@@ -127,15 +127,10 @@ impl RedisConnection {
 
     /// Publish a message to a channel
     pub fn publish(&mut self, channel: &str, message: &str) -> Result<()> {
-        self.client
-            .publish(channel, message)
-            .map_err(|e| {
-                ModelSrvError::RedisError(format!(
-                    "Failed to publish to channel {}: {}",
-                    channel, e
-                ))
-            })
-            .map(|_| ())
+        let _: u32 = self.connection.publish(channel, message).map_err(|e| {
+            ModelSrvError::RedisError(format!("Failed to publish to channel {}: {}", channel, e))
+        })?;
+        Ok(())
     }
 
     /// Set a hash in Redis
@@ -148,7 +143,7 @@ impl RedisConnection {
 
     /// Push to a list
     pub fn rpush(&mut self, key: &str, value: &str) -> Result<()> {
-        self.client.rpush(key, value).map_err(|e| {
+        let _: u32 = self.connection.rpush(key, value).map_err(|e| {
             ModelSrvError::RedisError(format!("Failed to rpush to key {}: {}", key, e))
         })?;
         Ok(())
@@ -156,7 +151,7 @@ impl RedisConnection {
 
     /// Get a list
     pub fn get_list(&mut self, key: &str) -> Result<Vec<String>> {
-        self.client
+        self.connection
             .lrange(key, 0, -1)
             .map_err(|e| ModelSrvError::RedisError(format!("Failed to get list {}: {}", key, e)))
     }
@@ -181,9 +176,11 @@ impl RedisConnection {
                 key, e
             ))
         })?;
-        self.client
+        let _: () = self
+            .connection
             .set(key, &json_str)
-            .map_err(|e| ModelSrvError::RedisError(format!("Failed to set key {}: {}", key, e)))
+            .map_err(|e| ModelSrvError::RedisError(format!("Failed to set key {}: {}", key, e)))?;
+        Ok(())
     }
 
     /// Get all keys matching a pattern and their values as JSON
@@ -200,17 +197,18 @@ impl RedisConnection {
 
     /// Check if a key exists
     pub fn exists(&mut self, key: &str) -> Result<bool> {
-        self.client
+        self.connection
             .exists(key)
             .map_err(|e| ModelSrvError::RedisError(format!("Failed to check key existence: {}", e)))
     }
 
     /// Set expiration on a key (TTL in seconds)
     pub fn expire(&mut self, key: &str, seconds: u64) -> Result<()> {
-        self.client
+        let _: bool = self
+            .connection
             .expire(key, seconds as i64)
-            .map_err(|e| ModelSrvError::RedisError(format!("Failed to set expiration: {}", e)))
-            .map(|_| ())
+            .map_err(|e| ModelSrvError::RedisError(format!("Failed to set expiration: {}", e)))?;
+        Ok(())
     }
 
     /// Save a model configuration
@@ -219,7 +217,8 @@ impl RedisConnection {
             ModelSrvError::SerializationError(format!("Failed to serialize config: {}", e))
         })?;
 
-        self.client
+        let _: () = self
+            .connection
             .set(key, &config_str)
             .map_err(|e| ModelSrvError::RedisError(format!("Failed to save config: {}", e)))?;
 
@@ -275,27 +274,20 @@ impl RedisHandler {
 
     /// Set a value in Redis
     pub async fn set(&self, key: &str, value: String) -> Result<()> {
-        let conn = self.connection.write().await;
-        conn.client
-            .set(key, &value)
-            .map_err(|e| ModelSrvError::RedisError(format!("Failed to set key {}: {}", key, e)))
+        let mut conn = self.connection.write().await;
+        conn.set_string(key, &value)
     }
 
     /// Delete a key from Redis
     pub async fn del(&self, key: &str) -> Result<()> {
-        let conn = self.connection.write().await;
-        conn.client
-            .del(&[key])
-            .map_err(|e| ModelSrvError::RedisError(format!("Failed to delete key {}: {}", key, e)))
-            .map(|_| ())
+        let mut conn = self.connection.write().await;
+        conn.delete(key)
     }
 
     /// Scan keys by pattern
     pub async fn scan_keys(&self, pattern: &str) -> Result<Vec<String>> {
-        let conn = self.connection.write().await;
-        conn.client.keys(pattern).map_err(|e| {
-            ModelSrvError::RedisError(format!("Failed to scan keys {}: {}", pattern, e))
-        })
+        let mut conn = self.connection.write().await;
+        conn.get_keys(pattern)
     }
 
     /// Publish a message to a channel

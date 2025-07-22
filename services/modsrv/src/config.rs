@@ -87,7 +87,42 @@ pub struct ModelConfig {
     pub templates_dir: String,
 }
 
-use voltage_common::config::ApiConfig as CommonApiConfig;
+/// API configuration for common settings
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct ApiConfig {
+    /// API prefix path
+    #[serde(default = "default_api_prefix")]
+    pub prefix: String,
+
+    /// Whether to enable API versioning
+    #[serde(default)]
+    pub enable_versioning: bool,
+
+    /// API version
+    #[serde(default = "default_api_version")]
+    pub version: String,
+}
+
+impl Default for ApiConfig {
+    fn default() -> Self {
+        Self {
+            prefix: default_api_prefix(),
+            enable_versioning: false,
+            version: default_api_version(),
+        }
+    }
+}
+
+impl ApiConfig {
+    /// Build a path with the API prefix
+    pub fn build_path(&self, path: &str) -> String {
+        if path.starts_with('/') {
+            format!("{}{}", self.prefix, path)
+        } else {
+            format!("{}/{}", self.prefix, path)
+        }
+    }
+}
 
 /// HTTP API server configuration (service-specific)
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -221,7 +256,7 @@ pub struct Config {
     pub control: ControlConfig,
     /// Common API prefix configuration
     #[serde(default)]
-    pub api: CommonApiConfig,
+    pub api: ApiConfig,
     /// Service-specific API configuration
     #[serde(default)]
     pub service_api: ServiceApiConfig,
@@ -284,6 +319,12 @@ fn default_api_host() -> String {
 }
 fn default_api_port() -> u16 {
     8092
+}
+fn default_api_prefix() -> String {
+    "/api/v1".to_string()
+}
+fn default_api_version() -> String {
+    "v1".to_string()
 }
 fn default_metrics_port() -> u16 {
     9092
@@ -397,7 +438,7 @@ impl Config {
             operation_key_pattern: "voltage:control:operation:*".to_string(),
             enabled: default_control_enabled(),
         };
-        let api = CommonApiConfig::default();
+        let api = ApiConfig::default();
         let service_api = ServiceApiConfig::default();
         let monitoring = MonitoringConfig::default();
         let storage = StorageConfig {

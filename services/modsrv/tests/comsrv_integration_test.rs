@@ -13,7 +13,7 @@ use modsrv::device_model::{
     DataFlowProcessor, DataFormatConverter, DeviceInstanceConfig, InstanceManager, PointMapping,
 };
 use modsrv::redis_handler::RedisHandler;
-use voltage_common::test_utils::setup_test_redis;
+use voltage_libs::test_utils::setup_test_redis;
 
 const TEST_CHANNEL_ID: u16 = 1001;
 const TEST_REDIS_PREFIX: &str = "test:modsrv";

@@ -4,7 +4,7 @@
 //! adapting voltage-common error types to maintain backward compatibility.
 
 use thiserror::Error;
-use voltage_common::Error as CommonError;
+use voltage_libs::error::Error as CommonError;
 
 /// Model Service Error Type
 #[derive(Error, Debug, Clone)]
@@ -165,17 +165,18 @@ pub enum ModelSrvError {
 /// Result type alias for Model Service
 pub type Result<T> = std::result::Result<T, ModelSrvError>;
 
-// Conversion from voltage_common::Error to ModelSrvError
+// Conversion from voltage_libs::Error to ModelSrvError
 impl From<CommonError> for ModelSrvError {
     fn from(err: CommonError) -> Self {
         match err {
             CommonError::Config(msg) => ModelSrvError::ConfigError(msg),
             CommonError::Io(e) => ModelSrvError::IoError(e.to_string()),
             CommonError::Serialization(msg) => ModelSrvError::SerializationError(msg),
-            CommonError::Storage(msg) => ModelSrvError::RedisError(msg),
-            CommonError::InvalidInput(msg) => ModelSrvError::InvalidParameter(msg),
-            CommonError::Auth(msg) => ModelSrvError::PermissionDenied(msg),
-            CommonError::Other { message, .. } => ModelSrvError::InternalError(message),
+            #[cfg(feature = "redis")]
+            CommonError::Redis(msg) => ModelSrvError::RedisError(msg),
+            CommonError::Parse(msg) => ModelSrvError::FormatError(msg),
+            CommonError::Timeout(msg) => ModelSrvError::TimeoutError(msg),
+            CommonError::Generic(msg) => ModelSrvError::InternalError(msg),
             _ => ModelSrvError::InternalError(err.to_string()),
         }
     }
