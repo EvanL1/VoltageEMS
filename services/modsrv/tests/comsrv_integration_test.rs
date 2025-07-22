@@ -9,9 +9,8 @@ use tokio::time::{sleep, timeout};
 
 use modsrv::comsrv_interface::{ComSrvInterface, ControlCommand, PointValue};
 use modsrv::device_model::{
-    AutoConfigManager, CommandTransformer, DataFlowProcessor, DataFormatConverter,
-    DeviceInstanceConfig, InstanceManager, CalculationEngine, CommandRequest,
-    ChannelConfig, PointMapping
+    AutoConfigManager, CalculationEngine, ChannelConfig, CommandRequest, CommandTransformer,
+    DataFlowProcessor, DataFormatConverter, DeviceInstanceConfig, InstanceManager, PointMapping,
 };
 use modsrv::redis_handler::RedisHandler;
 use voltage_common::test_utils::setup_test_redis;
@@ -41,8 +40,10 @@ async fn test_comsrv_to_modsrv_data_flow() {
             timestamp: chrono::Utc::now().timestamp_millis(),
             quality: "good".to_string(),
         };
-        
-        let result = redis_client.set(&redis_key, &point_value.to_redis(), None).await;
+
+        let result = redis_client
+            .set(&redis_key, &point_value.to_redis(), None)
+            .await;
         assert!(result.is_ok(), "Failed to set Redis data: {:?}", result);
     }
 
@@ -57,19 +58,25 @@ async fn test_comsrv_to_modsrv_data_flow() {
 
     // 创建测试实例配置
     let instance_config = create_test_instance_config();
-    
+
     // 设置数据流订阅
     let point_mappings = instance_config.point_mappings.clone();
-    let result = data_flow_processor.subscribe_instance(
-        instance_config.instance_id.clone(),
-        point_mappings,
-        Duration::from_millis(100),
-    ).await;
+    let result = data_flow_processor
+        .subscribe_instance(
+            instance_config.instance_id.clone(),
+            point_mappings,
+            Duration::from_millis(100),
+        )
+        .await;
     assert!(result.is_ok(), "Failed to subscribe instance: {:?}", result);
 
     // 启动数据流处理器
     let result = data_flow_processor.start().await;
-    assert!(result.is_ok(), "Failed to start data flow processor: {:?}", result);
+    assert!(
+        result.is_ok(),
+        "Failed to start data flow processor: {:?}",
+        result
+    );
 
     // 等待数据处理
     sleep(Duration::from_secs(2)).await;
@@ -77,11 +84,20 @@ async fn test_comsrv_to_modsrv_data_flow() {
     // 验证数据转换结果
     for (point_id, point_type, expected_value) in &[(10001, "m", 25.6), (10002, "m", 1.2)] {
         let redis_key = format!("{}:{}:{}", TEST_CHANNEL_ID, point_type, point_id);
-        let redis_data = redis_client.get::<String>(&redis_key).await.unwrap().unwrap();
-        
-        let telemetry_result = DataFormatConverter::convert_comsrv_to_telemetry(&redis_data, point_type);
-        assert!(telemetry_result.is_ok(), "Failed to convert data: {:?}", telemetry_result);
-        
+        let redis_data = redis_client
+            .get::<String>(&redis_key)
+            .await
+            .unwrap()
+            .unwrap();
+
+        let telemetry_result =
+            DataFormatConverter::convert_comsrv_to_telemetry(&redis_data, point_type);
+        assert!(
+            telemetry_result.is_ok(),
+            "Failed to convert data: {:?}",
+            telemetry_result
+        );
+
         let telemetry = telemetry_result.unwrap();
         assert_eq!(telemetry.raw_value, Some(*expected_value));
     }
@@ -110,15 +126,23 @@ async fn test_control_command_flow() {
             command.point_id,
             command.value,
         );
-        assert!(result.is_ok(), "Failed to send control command: {:?}", result);
+        assert!(
+            result.is_ok(),
+            "Failed to send control command: {:?}",
+            result
+        );
         command_ids.push(command_id);
     }
 
     // 验证命令状态
     for command_id in command_ids {
         let status_result = comsrv_interface.get_command_status(&command_id);
-        assert!(status_result.is_ok(), "Failed to get command status: {:?}", status_result);
-        
+        assert!(
+            status_result.is_ok(),
+            "Failed to get command status: {:?}",
+            status_result
+        );
+
         let status = status_result.unwrap();
         assert!(status.is_some(), "Command status should exist");
         assert_eq!(status.unwrap().status, "pending");
@@ -141,7 +165,9 @@ async fn test_device_model_command_transformation() {
             request_id: "req_002".to_string(),
             instance_id: "motor_001".to_string(),
             command: "change_speed".to_string(),
-            params: [("target_speed".to_string(), serde_json::json!(2000.0))].into_iter().collect(),
+            params: [("target_speed".to_string(), serde_json::json!(2000.0))]
+                .into_iter()
+                .collect(),
             timestamp: chrono::Utc::now().timestamp_millis(),
         },
     ];
@@ -233,7 +259,7 @@ async fn test_auto_config_manager() {
 
     // 从配置文件加载实例
     let result = auto_config.load_from_config_file(config_path).await;
-    
+
     // 清理临时文件
     let _ = tokio::fs::remove_file(config_path).await;
 
@@ -259,13 +285,15 @@ async fn test_realtime_data_trigger() {
     // 创建测试实例
     let instance_config = create_test_instance_config();
     let point_mappings = instance_config.point_mappings.clone();
-    
+
     // 订阅实例数据
-    let result = data_flow_processor.subscribe_instance(
-        instance_config.instance_id.clone(),
-        point_mappings,
-        Duration::from_millis(100),
-    ).await;
+    let result = data_flow_processor
+        .subscribe_instance(
+            instance_config.instance_id.clone(),
+            point_mappings,
+            Duration::from_millis(100),
+        )
+        .await;
     assert!(result.is_ok());
 
     // 启动数据流处理器
@@ -281,7 +309,7 @@ async fn test_realtime_data_trigger() {
     // 等待数据更新消息
     let update_result = timeout(Duration::from_secs(5), rx.recv()).await;
     assert!(update_result.is_ok(), "Should receive data update");
-    
+
     let update = update_result.unwrap().unwrap();
     assert_eq!(update.instance_id, instance_config.instance_id);
     assert_eq!(update.value, serde_json::json!(30.5));
@@ -331,9 +359,7 @@ async fn test_performance_benchmark() {
     let mut comsrv_interface = ComSrvInterface::new(redis_client.clone());
 
     // 准备测试数据
-    let test_points: Vec<(u16, &str, u32)> = (10001..10100)
-        .map(|i| (1001u16, "m", i))
-        .collect();
+    let test_points: Vec<(u16, &str, u32)> = (10001..10100).map(|i| (1001u16, "m", i)).collect();
 
     // 写入测试数据
     for (channel_id, point_type, point_id) in &test_points {
@@ -352,9 +378,17 @@ async fn test_performance_benchmark() {
     assert_eq!(results.len(), test_points.len());
 
     // 性能要求：100个点位读取应该在500ms内完成
-    assert!(duration.as_millis() < 500, "Batch read took too long: {:?}", duration);
-    
-    println!("Batch read {} points took {:?}", test_points.len(), duration);
+    assert!(
+        duration.as_millis() < 500,
+        "Batch read took too long: {:?}",
+        duration
+    );
+
+    println!(
+        "Batch read {} points took {:?}",
+        test_points.len(),
+        duration
+    );
 }
 
 /// 创建测试实例配置
@@ -371,12 +405,16 @@ fn create_test_instance_config() -> DeviceInstanceConfig {
             ("motor_temperature".to_string(), "1001:m:10004".to_string()),
             ("motor_status".to_string(), "1001:s:20001".to_string()),
             ("emergency_stop".to_string(), "1001:s:20002".to_string()),
-        ].into_iter().collect(),
+        ]
+        .into_iter()
+        .collect(),
         properties: [
             ("motor_type".to_string(), serde_json::json!("NEMA23")),
             ("max_speed".to_string(), serde_json::json!(3000.0)),
             ("max_torque".to_string(), serde_json::json!(2.5)),
-        ].into_iter().collect(),
+        ]
+        .into_iter()
+        .collect(),
         channel_config: ChannelConfig {
             channel_id: TEST_CHANNEL_ID,
             protocol: "modbus_tcp".to_string(),
