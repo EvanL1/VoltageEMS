@@ -4,7 +4,7 @@
 
 #[cfg(test)]
 mod tests {
-    use crate::core::framework::traits::ComBase;
+    use crate::core::combase::ComBase;
     use crate::plugins::protocols::modbus::modbus_polling::ModbusPollingConfig;
     use crate::plugins::protocols::modbus::tests::mock_transport::{
         MockTransport, MockTransportConfig,

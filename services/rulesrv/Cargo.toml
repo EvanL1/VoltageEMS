@@ -11,7 +11,7 @@ path = "src/main.rs"
 
 [dependencies]
 # Local dependencies
-voltage-common = { workspace = true, features = ["async", "sync"] }
+voltage-libs = { path = "../../libs", features = ["redis"] }
 
 # Core dependencies
 redis = { workspace = true }

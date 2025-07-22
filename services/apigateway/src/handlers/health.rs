@@ -37,13 +37,9 @@ pub async fn detailed_health(
     // Check Redis connection
     let redis_status = {
         match redis_client.ping().await {
-            Ok(true) => json!({
+            Ok(_pong) => json!({
                 "status": "healthy",
                 "message": "Redis connection successful"
-            }),
-            Ok(false) => json!({
-                "status": "unhealthy",
-                "message": "Redis ping failed"
             }),
             Err(e) => json!({
                 "status": "unhealthy",

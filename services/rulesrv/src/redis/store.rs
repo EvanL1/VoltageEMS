@@ -2,7 +2,6 @@ use anyhow::Result;
 use redis::{AsyncCommands, Pipeline};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::time::Duration;
 use tracing::{debug, error, info};
 
 use crate::rules::{Rule, RuleGroup};

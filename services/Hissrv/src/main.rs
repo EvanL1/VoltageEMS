@@ -3,9 +3,7 @@ use crate::config::Config;
 use crate::error::{HisSrvError, Result};
 use crate::monitoring::MetricsCollector;
 use crate::pubsub::{MessageProcessor, RedisSubscriber};
-use crate::storage::{
-    influxdb_storage::InfluxDBStorage, redis_storage::RedisStorage, StorageManager,
-};
+use crate::storage::StorageManager;
 use std::sync::Arc;
 use tokio::sync::{mpsc, RwLock};
 use tokio::time::{interval, Duration};
@@ -24,7 +22,6 @@ mod monitoring;
 mod optimized_reader;
 mod pubsub;
 mod query_optimizer;
-mod redis_handler;
 mod redis_subscriber;
 mod retention_policy;
 mod storage;
@@ -129,8 +126,15 @@ async fn main() -> Result<()> {
     // Setup InfluxDB storage backend
     if config.storage.backends.influxdb.enabled {
         tracing::info!("Initializing InfluxDB storage backend");
-        let influxdb_storage = InfluxDBStorage::new(config.storage.backends.influxdb.clone());
-        storage_manager.add_backend("influxdb".to_string(), Box::new(influxdb_storage));
+        storage_manager
+            .add_influxdb_backend(
+                "influxdb",
+                &config.storage.backends.influxdb.url,
+                &config.storage.backends.influxdb.database,
+                config.storage.backends.influxdb.username.as_deref(),
+                config.storage.backends.influxdb.password.as_deref(),
+            )
+            .await?;
         tracing::info!(
             url = config.storage.backends.influxdb.url,
             database = config.storage.backends.influxdb.database,
@@ -140,19 +144,23 @@ async fn main() -> Result<()> {
 
     // Setup Redis storage backend
     tracing::info!("Initializing Redis storage backend");
-    let redis_storage = RedisStorage::new(config.redis.connection.clone());
-    storage_manager.add_backend("redis".to_string(), Box::new(redis_storage));
+    let redis_url = format!(
+        "redis://{}:{}",
+        config.redis.connection.host, config.redis.connection.port
+    );
+    storage_manager
+        .add_redis_backend("redis", &redis_url)
+        .await?;
     tracing::info!(
         host = config.redis.connection.host,
         port = config.redis.connection.port,
         "Redis backend configured"
     );
 
-    // Set default storage backend
-    storage_manager.set_default_backend(config.storage.default.clone());
+    // Default backend is set automatically in voltage-storage
     tracing::info!(
         default_backend = config.storage.default,
-        "Default storage backend set"
+        "Default storage backend configured"
     );
 
     // Connect to all storage backends with retry logic

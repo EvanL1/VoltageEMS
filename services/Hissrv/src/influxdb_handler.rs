@@ -1,11 +1,14 @@
 use crate::config::Config;
 use crate::error::{HisSrvError, Result};
 use chrono::Utc;
-use influxdb::{Client, InfluxDbWriteable, Timestamp, WriteQuery};
 use std::collections::HashMap;
+use std::sync::Arc;
+use voltage_influxdb::{
+    v1::InfluxDBv1Storage, DataPoint, FieldValue, TimeSeriesStorage, WriteConfig,
+};
 
 pub struct InfluxDBConnection {
-    client: Option<Client>,
+    storage: Option<Arc<InfluxDBv1Storage>>,
     connected: bool,
     db_name: String,
 }
@@ -13,7 +16,7 @@ pub struct InfluxDBConnection {
 impl InfluxDBConnection {
     pub fn new() -> Self {
         InfluxDBConnection {
-            client: None,
+            storage: None,
             connected: false,
             db_name: String::new(),
         }
@@ -26,37 +29,46 @@ impl InfluxDBConnection {
         }
 
         let influx_config = &config.storage.backends.influxdb;
-        let client = if !influx_config.username.is_empty() && !influx_config.password.is_empty() {
-            Client::new(influx_config.url.clone(), influx_config.database.clone()).with_auth(
-                influx_config.username.clone(),
-                influx_config.password.clone(),
+        let storage = if !influx_config.username.is_empty() && !influx_config.password.is_empty() {
+            InfluxDBv1Storage::with_auth(
+                &influx_config.url,
+                &influx_config.database,
+                &influx_config.username,
+                &influx_config.password,
             )
         } else {
-            Client::new(influx_config.url.clone(), influx_config.database.clone())
+            InfluxDBv1Storage::new(&influx_config.url, &influx_config.database)
         };
 
-        // Test connection with ping
-        match client.ping().await {
-            Ok(_) => {
+        let storage = Arc::new(storage.with_config(WriteConfig {
+            batch_size: 5000,
+            batch_timeout: std::time::Duration::from_millis(100),
+            ..Default::default()
+        }));
+
+        // Test connection with health check
+        match storage.health_check().await {
+            Ok(true) => {
                 println!(
                     "Successfully connected to InfluxDB at {}",
                     influx_config.url
                 );
-                self.client = Some(client);
+                self.storage = Some(storage.clone());
                 self.connected = true;
                 self.db_name = influx_config.database.clone();
 
                 // Set data retention policy
-                self.create_retention_policy(influx_config.retention_days)
-                    .await?;
+                let duration = format!("{}d", influx_config.retention_days);
+                storage.set_retention_policy(&duration).await?;
                 Ok(())
             }
-            Err(e) => {
-                println!("Failed to connect to InfluxDB: {}", e);
-                Err(HisSrvError::ConnectionError(format!(
-                    "Failed to connect to InfluxDB: {}",
-                    e
-                )))
+            Ok(false) | Err(_) => {
+                println!("Failed to connect to InfluxDB");
+                Err(HisSrvError::ConnectionError {
+                    message: "Failed to connect to InfluxDB".to_string(),
+                    endpoint: influx_config.url.clone(),
+                    retry_count: 0,
+                })
             }
         }
     }
@@ -65,45 +77,7 @@ impl InfluxDBConnection {
         self.connected
     }
 
-    pub async fn create_retention_policy(&self, retention_days: u32) -> Result<()> {
-        if !self.connected || self.client.is_none() {
-            return Err(HisSrvError::ConnectionError(
-                "Not connected to InfluxDB".to_string(),
-            ));
-        }
-
-        let client = self.client.as_ref().unwrap();
-        let query = format!(
-            "CREATE RETENTION POLICY \"{}_retention\" ON \"{}\" DURATION {}d REPLICATION 1 DEFAULT",
-            self.db_name, self.db_name, retention_days
-        );
-
-        let read_query = influxdb::ReadQuery::new(query);
-        match client.query(&read_query).await {
-            Ok(_) => {
-                println!("Created retention policy: {} days", retention_days);
-                Ok(())
-            }
-            Err(e) => {
-                // If policy already exists, try to update it
-                let query = format!(
-                    "ALTER RETENTION POLICY \"{}_retention\" ON \"{}\" DURATION {}d REPLICATION 1 DEFAULT",
-                    self.db_name, self.db_name, retention_days
-                );
-                let read_query = influxdb::ReadQuery::new(query);
-                match client.query(&read_query).await {
-                    Ok(_) => {
-                        println!("Updated retention policy: {} days", retention_days);
-                        Ok(())
-                    }
-                    Err(e2) => {
-                        println!("Error setting retention policy: {}", e2);
-                        Err(HisSrvError::InfluxDBError(e2))
-                    }
-                }
-            }
-        }
-    }
+    // Retention policy is now handled in connect() method
 
     pub async fn write_hash_data(
         &self,
@@ -111,40 +85,46 @@ impl InfluxDBConnection {
         hash_data: HashMap<String, String>,
         _config: &Config,
     ) -> Result<usize> {
-        if !self.connected || self.client.is_none() {
-            return Err(HisSrvError::ConnectionError(
-                "Not connected to InfluxDB".to_string(),
-            ));
+        if !self.connected || self.storage.is_none() {
+            return Err(HisSrvError::ConnectionError {
+                message: "Not connected to InfluxDB".to_string(),
+                endpoint: "unknown".to_string(),
+                retry_count: 0,
+            });
         }
 
-        let client = self.client.as_ref().unwrap();
-        let mut points_written = 0;
+        let storage = self.storage.as_ref().unwrap();
+        let mut points = Vec::new();
 
         for (field, value) in hash_data {
             let (is_numeric, numeric_value) = try_parse_numeric(&value);
 
-            // Create WriteQuery using the builder pattern for InfluxDB 0.5.x
-            let timestamp = Utc::now();
-            let mut write_query = WriteQuery::new(timestamp.into(), "rtdb_data")
+            let mut point = DataPoint::new("rtdb_data");
+            point
                 .add_tag("key", key)
-                .add_tag("field", &field);
+                .add_tag("field", &field)
+                .set_timestamp(Utc::now());
 
             if is_numeric {
-                write_query = write_query.add_field("value", numeric_value);
+                point.add_field("value", numeric_value);
             } else {
-                write_query = write_query.add_field("text_value", value.as_str());
+                point.add_field("text_value", value.as_str());
             }
 
-            match client.query(&write_query).await {
-                Ok(_) => points_written += 1,
-                Err(e) => {
-                    // Log error but continue processing other fields
-                    tracing::error!("Failed to write field {} for key {}: {}", field, key, e);
-                }
-            }
+            points.push(point);
         }
 
-        Ok(points_written)
+        let points_count = points.len();
+        match storage.write_points(points).await {
+            Ok(_) => Ok(points_count),
+            Err(e) => {
+                tracing::error!("Failed to write batch for key {}: {}", key, e);
+                Err(HisSrvError::WriteError(format!(
+                    "Failed to write data: {}",
+                    e
+                )))
+            }
+        }
     }
 
     pub async fn write_point(
@@ -157,37 +137,42 @@ impl InfluxDBConnection {
         text_value: Option<&str>,
         score: Option<f64>,
     ) -> Result<()> {
-        if !self.connected || self.client.is_none() {
-            return Err(HisSrvError::ConnectionError(
-                "Not connected to InfluxDB".to_string(),
-            ));
+        if !self.connected || self.storage.is_none() {
+            return Err(HisSrvError::ConnectionError {
+                message: "Not connected to InfluxDB".to_string(),
+                endpoint: "unknown".to_string(),
+                retry_count: 0,
+            });
         }
 
-        let client = self.client.as_ref().unwrap();
+        let storage = self.storage.as_ref().unwrap();
 
-        // Create WriteQuery using the builder pattern for InfluxDB 0.5.x
-        let timestamp = Utc::now();
-        let mut write_query = WriteQuery::new(timestamp.into(), "rtdb_data")
+        let mut point = DataPoint::new("rtdb_data");
+        point
             .add_tag("key", key)
-            .add_tag("type", data_type);
+            .add_tag("type", data_type)
+            .set_timestamp(Utc::now());
 
         if let Some(field) = field_name {
-            write_query = write_query.add_tag("field", field);
+            point.add_tag("field", field);
         }
 
         if is_numeric {
-            write_query = write_query.add_field("value", numeric_value);
+            point.add_field("value", numeric_value);
         } else if let Some(text) = text_value {
-            write_query = write_query.add_field("text_value", text);
+            point.add_field("text_value", text);
         }
 
         if let Some(s) = score {
-            write_query = write_query.add_field("score", s);
+            point.add_field("score", s);
         }
 
-        match client.query(&write_query).await {
+        match storage.write_point(point).await {
             Ok(_) => Ok(()),
-            Err(e) => Err(HisSrvError::InfluxDBError(e)),
+            Err(e) => Err(HisSrvError::WriteError(format!(
+                "Failed to write point: {}",
+                e
+            ))),
         }
     }
 }

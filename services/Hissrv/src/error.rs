@@ -17,19 +17,7 @@ pub enum HisSrvError {
         retry_after: Option<u64>, // 秒
     },
 
-    // InfluxDB相关错误
-    #[error("InfluxDB error: {0}")]
-    InfluxDBError(#[from] influxdb::Error),
-
-    #[error("InfluxDB write error: {message}, batch_size: {batch_size}")]
-    InfluxDBWriteError {
-        message: String,
-        batch_size: usize,
-        failed_points: Option<Vec<String>>,
-    },
-
-    #[error("InfluxDB query error: {message}")]
-    InfluxDBQueryError { message: String, query: String },
+    // InfluxDB相关错误 - 使用通用的WriteError和StorageError
 
     // IO相关错误
     #[error("IO error: {0}")]
@@ -262,9 +250,6 @@ impl HisSrvError {
     fn error_type(&self) -> &'static str {
         match self {
             Self::RedisError { .. } | Self::RedisConnectionError { .. } => "redis",
-            Self::InfluxDBError(_)
-            | Self::InfluxDBWriteError { .. }
-            | Self::InfluxDBQueryError { .. } => "influxdb",
             Self::IOError(_) => "io",
             Self::ParseError { .. } | Self::InvalidFormat { .. } => "parse",
             Self::ConfigError { .. } | Self::MissingConfig { .. } => "config",

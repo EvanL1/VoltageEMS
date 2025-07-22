@@ -5,7 +5,7 @@ edition = "2021"
 
 [dependencies]
 # Local dependencies
-voltage-common = { workspace = true, features = ["async"] }
+voltage-libs = { path = "../../libs", features = ["redis"] }
 
 # Web framework
 actix-web = "4"

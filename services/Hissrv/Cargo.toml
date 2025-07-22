@@ -7,11 +7,10 @@ description = "Redis to InfluxDB data transfer service"
 
 [dependencies]
 # Internal dependencies
-voltage-common = { workspace = true, features = ["async"] }
+voltage-libs = { path = "../../libs", features = ["redis", "influxdb"] }
 
 # External dependencies
 redis = { version = "0.29", features = ["tokio-comp"], default-features = false } # Only for PubSub types
-influxdb = { version = "0.5.2", features = ["derive"] }
 tokio = { workspace = true }
 futures-util = "0.3"
 clap = { version = "4.1.8", features = ["derive"] }

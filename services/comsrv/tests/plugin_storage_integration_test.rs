@@ -5,8 +5,6 @@
 use comsrv::core::config::types::channel::ChannelConfig;
 use comsrv::core::framework::traits::ComBase;
 use comsrv::core::framework::TelemetryType;
-use comsrv::core::redis::storage::RedisStorage;
-use comsrv::core::redis::types::{TYPE_MEASUREMENT, TYPE_SIGNAL};
 use comsrv::plugins::plugin_storage::{DefaultPluginStorage, PluginStorage};
 use comsrv::plugins::protocols::virt;
 use std::sync::Arc;

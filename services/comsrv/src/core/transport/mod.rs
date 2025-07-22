@@ -56,6 +56,7 @@ pub mod can;
 
 pub mod factory;
 pub mod gpio;
+#[cfg(any(test, feature = "test-utils"))]
 pub mod mock;
 pub mod serial;
 pub mod tcp;
@@ -67,6 +68,7 @@ pub use can::CanTransport;
 
 pub use factory::{TransportFactory, TransportType};
 pub use gpio::GpioTransport;
+#[cfg(any(test, feature = "test-utils"))]
 pub use mock::MockTransport;
 pub use serial::SerialTransport;
 pub use tcp::TcpTransport;

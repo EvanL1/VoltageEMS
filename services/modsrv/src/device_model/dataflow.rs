@@ -9,7 +9,7 @@ use tokio::sync::RwLock;
 use tokio::time::{interval, Duration};
 
 use super::calculation::CalculationEngine;
-use super::{CalculationExpression, DeviceModel, InstanceManager};
+use super::{DeviceModel, InstanceManager};
 use voltage_common::prelude::PointData;
 
 /// Data flow processor for real-time device data processing
@@ -272,15 +272,18 @@ impl DataFlowProcessor {
             for (instance_id, sub) in subscriptions {
                 // Check if it's time to poll
                 for (telemetry_name, redis_key) in &sub.point_mappings {
-                    // Get data from Redis
+                    // Get data from Redis - 现在主键直接存储数值字符串
                     if let Ok(Some(data)) = self.redis_client.get::<String>(&redis_key).await {
-                        if let Ok(point_data) = serde_json::from_str::<PointData>(&data) {
+                        // 尝试解析为浮点数
+                        if let Ok(value) = data.parse::<f64>() {
                             let update = DataUpdate {
                                 instance_id: instance_id.clone(),
                                 telemetry_name: telemetry_name.clone(),
-                                value: serde_json::to_value(&point_data.value)
-                                    .unwrap_or(serde_json::Value::Null),
-                                timestamp: point_data.timestamp.timestamp_millis(),
+                                value: serde_json::Value::Number(
+                                    serde_json::Number::from_f64(value)
+                                        .unwrap_or(serde_json::Number::from(0)),
+                                ),
+                                timestamp: chrono::Utc::now().timestamp_millis(), // 如需精确时间戳，可从:ts键读取
                             };
 
                             if let Err(e) = self.update_channel.send(update).await {

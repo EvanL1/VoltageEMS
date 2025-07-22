@@ -3,8 +3,6 @@
 //! 测试新的扁平化Redis存储结构的性能
 
 use comsrv::core::framework::TelemetryType;
-use comsrv::core::redis::storage::RedisStorage;
-use comsrv::core::redis::types::{PointUpdate, TYPE_MEASUREMENT};
 use comsrv::plugins::plugin_storage::{DefaultPluginStorage, PluginPointUpdate, PluginStorage};
 use std::sync::Arc;
 use std::time::{Duration, Instant};

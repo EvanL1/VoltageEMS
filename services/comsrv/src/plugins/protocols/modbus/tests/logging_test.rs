@@ -14,7 +14,7 @@ use crate::plugins::protocols::modbus::{
     tests::mock_transport::{MockTransport, MockTransportConfig},
     protocol_engine::{ModbusTelemetryMapping, ModbusSignalMapping},
 };
-use crate::core::framework::base::telemetry::TelemetryType;
+use crate::core::combase::base::telemetry::TelemetryType;
 
 /// 创建测试用的 Modbus 配置
 fn create_test_modbus_config() -> ModbusConfig {

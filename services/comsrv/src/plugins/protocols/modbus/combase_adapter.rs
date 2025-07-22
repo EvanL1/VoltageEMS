@@ -10,12 +10,14 @@ use tokio::sync::{Mutex, RwLock};
 use tokio::time::{interval, Duration};
 use tracing::{debug, error, info, warn};
 
-use crate::core::config::types::channel::ChannelConfig;
-use crate::core::config::types::protocol::TelemetryType as ConfigTelemetryType;
-use crate::core::framework::traits::ComBase;
-use crate::core::framework::types::{ChannelCommand, ChannelStatus, PointData, TelemetryType};
+use crate::core::combase::{
+    ChannelCommand, ChannelStatus, ComBase, PointData, PointDataMap, RedisValue, TelemetryType,
+};
+use crate::core::config::types::{
+    ChannelConfig, TelemetryType as ConfigTelemetryType, UnifiedPointMapping,
+};
 use crate::core::transport::Transport;
-use crate::plugins::plugin_storage::{DefaultPluginStorage, PluginStorage};
+use crate::plugins::core::{DefaultPluginStorage, PluginStorage};
 use crate::utils::error::{ComSrvError, Result};
 
 use super::client_impl::ModbusClientImpl;
@@ -226,7 +228,6 @@ impl<T: Transport + 'static> ModbusComBaseAdapter<T> {
                                 slave_id,
                                 function_code,
                                 register_address,
-                                scale_factor: point.scaling.as_ref().map(|s| s.scale),
                                 data_format: point.data_type.clone(),
                                 register_count: 1, // Default, could be configured
                                 byte_order: None,
@@ -304,23 +305,27 @@ impl<T: Transport + 'static> ModbusComBaseAdapter<T> {
                                 {
                                     Ok(values) => {
                                         if let Some(value) = values.first() {
-                                            let scaled_value =
-                                                if let Some(scale) = point.scale_factor {
-                                                    *value as f64 * scale
-                                                } else {
-                                                    *value as f64
-                                                };
+                                            let raw_value = *value as f64;
 
-                                            // Store to Redis via plugin storage
+                                            // Store raw value to Redis via plugin storage
+                                            // 协议层提供原始值和缩放参数，存储层负责计算和存储
                                             if let Some(storage) = &*storage.lock().await {
                                                 let framework_type =
                                                     convert_telemetry_type(&point.telemetry_type);
+                                                let point_id = point.point_id.parse().unwrap_or(0);
+
+                                                // 查找点位配置中的缩放参数
+                                                // 默认不进行缩放
+                                                let (scale, offset) = (1.0, 0.0);
+
                                                 let _ = storage
-                                                    .write_point(
+                                                    .write_point_with_scaling(
                                                         channel_id,
                                                         &framework_type,
-                                                        point.point_id.parse().unwrap_or(0),
-                                                        scaled_value,
+                                                        point_id,
+                                                        raw_value,
+                                                        scale,
+                                                        offset,
                                                     )
                                                     .await;
                                             }
@@ -347,12 +352,20 @@ impl<T: Transport + 'static> ModbusComBaseAdapter<T> {
                                             if let Some(storage) = &*storage.lock().await {
                                                 let framework_type =
                                                     convert_telemetry_type(&point.telemetry_type);
+                                                let point_id = point.point_id.parse().unwrap_or(0);
+
+                                                // 布尔值通常不需要缩放，但保持接口一致
+                                                // 默认不进行缩放
+                                                let (scale, offset) = (1.0, 0.0);
+
                                                 let _ = storage
-                                                    .write_point(
+                                                    .write_point_with_scaling(
                                                         channel_id,
                                                         &framework_type,
-                                                        point.point_id.parse().unwrap_or(0),
+                                                        point_id,
                                                         float_value,
+                                                        scale,
+                                                        offset,
                                                     )
                                                     .await;
                                             }
@@ -402,27 +415,24 @@ impl<T: Transport + 'static> ComBase for ModbusComBaseAdapter<T> {
         &self.channel_name
     }
 
-    fn channel_id(&self) -> String {
-        self.channel_id.to_string()
-    }
-
     fn protocol_type(&self) -> &str {
         &self.protocol_type
     }
 
-    fn get_parameters(&self) -> HashMap<String, String> {
-        let mut params = HashMap::new();
-        params.insert("protocol".to_string(), self.protocol_type.clone());
-        params.insert("channel_id".to_string(), self.channel_id.to_string());
-        params.insert("channel_name".to_string(), self.channel_name.clone());
-        params
+    fn is_connected(&self) -> bool {
+        // 使用 block_on 来同步访问 async 状态
+        tokio::task::block_in_place(|| {
+            tokio::runtime::Handle::current()
+                .block_on(async { self.client.read().await.is_connected().await })
+        })
     }
 
-    async fn is_running(&self) -> bool {
-        *self.running.read().await
+    async fn initialize(&mut self, _channel_config: &ChannelConfig) -> Result<()> {
+        // Initialize already done in constructor
+        Ok(())
     }
 
-    async fn start(&mut self) -> Result<()> {
+    async fn connect(&mut self) -> Result<()> {
         info!(
             "[ModbusAdapter] Starting Modbus client for channel {}",
             self.channel_name
@@ -454,31 +464,55 @@ impl<T: Transport + 'static> ComBase for ModbusComBaseAdapter<T> {
                 channel_name_clone
             );
 
-            // Add timeout to Redis connection
-            let redis_timeout = std::time::Duration::from_secs(5);
-            let redis_task = DefaultPluginStorage::from_env();
+            // Add retry mechanism for Redis connection
+            let mut retry_count = 0;
+            const MAX_RETRIES: u32 = 3;
+            let mut base_delay = std::time::Duration::from_secs(1);
 
-            match tokio::time::timeout(redis_timeout, redis_task).await {
-                Ok(Ok(s)) => {
-                    let mut storage = storage_clone.lock().await;
-                    *storage = Some(Arc::new(s) as Arc<dyn PluginStorage>);
-                    info!(
-                        "[ModbusAdapter] Plugin storage initialized for channel {}",
-                        channel_name_clone
-                    );
+            loop {
+                let redis_timeout = std::time::Duration::from_secs(5);
+                let redis_task = DefaultPluginStorage::from_env();
+
+                match tokio::time::timeout(redis_timeout, redis_task).await {
+                    Ok(Ok(s)) => {
+                        let mut storage = storage_clone.lock().await;
+                        *storage = Some(Arc::new(s) as Arc<dyn PluginStorage>);
+                        info!(
+                            "[ModbusAdapter] Plugin storage initialized for channel {} after {} retries",
+                            channel_name_clone, retry_count
+                        );
+                        break;
+                    }
+                    Ok(Err(e)) => {
+                        error!(
+                            "[ModbusAdapter] Failed to create storage for channel {} (attempt {}/{}): {}",
+                            channel_name_clone, retry_count + 1, MAX_RETRIES, e
+                        );
+                    }
+                    Err(_) => {
+                        error!(
+                            "[ModbusAdapter] Redis connection timed out for channel {} (attempt {}/{})",
+                            channel_name_clone, retry_count + 1, MAX_RETRIES
+                        );
+                    }
                 }
-                Ok(Err(e)) => {
+
+                retry_count += 1;
+                if retry_count >= MAX_RETRIES {
                     warn!(
-                        "[ModbusAdapter] Failed to create storage for channel {}: {}, data will not be persisted",
-                        channel_name_clone, e
+                        "[ModbusAdapter] Failed to connect to Redis after {} attempts for channel {}, data will not be persisted",
+                        MAX_RETRIES, channel_name_clone
                     );
+                    break;
                 }
-                Err(_) => {
-                    warn!(
-                        "[ModbusAdapter] Redis connection timed out for channel {}, data will not be persisted",
-                        channel_name_clone
-                    );
-                }
+
+                // Exponential backoff
+                info!(
+                    "[ModbusAdapter] Retrying Redis connection for channel {} in {:?}...",
+                    channel_name_clone, base_delay
+                );
+                tokio::time::sleep(base_delay).await;
+                base_delay *= 2; // Double the delay for next retry
             }
         });
 
@@ -584,7 +618,7 @@ impl<T: Transport + 'static> ComBase for ModbusComBaseAdapter<T> {
         Ok(())
     }
 
-    async fn stop(&mut self) -> Result<()> {
+    async fn disconnect(&mut self) -> Result<()> {
         info!(
             "[ModbusAdapter] Stopping Modbus client for channel {}",
             self.channel_name
@@ -609,7 +643,7 @@ impl<T: Transport + 'static> ComBase for ModbusComBaseAdapter<T> {
         Ok(())
     }
 
-    async fn status(&self) -> ChannelStatus {
+    async fn get_status(&self) -> ChannelStatus {
         let client = self.client.read().await;
         let diagnostics = client.get_diagnostics().await;
         let connected = client.is_connected().await;
@@ -634,129 +668,98 @@ impl<T: Transport + 'static> ComBase for ModbusComBaseAdapter<T> {
         }
     }
 
-    async fn update_status(&mut self, status: ChannelStatus) -> Result<()> {
-        debug!(
-            "[ModbusAdapter] Status update for channel {}: {:?}",
-            self.channel_name, status
-        );
-        Ok(())
-    }
+    async fn read_four_telemetry(&self, telemetry_type: &str) -> Result<PointDataMap> {
+        // 实现四遥数据读取
+        let mut data_map = PointDataMap::new();
 
-    async fn get_all_points(&self) -> Vec<PointData> {
-        // In a real implementation, this would read all configured points
-        // For now, return empty vector as this is a demo
-        debug!(
-            "[ModbusAdapter] get_all_points called for channel {}",
-            self.channel_name
-        );
-        Vec::new()
-    }
-
-    async fn read_point(&self, point_id: &str) -> Result<PointData> {
-        debug!(
-            "[ModbusAdapter] Reading point {} from channel {}",
-            point_id, self.channel_name
-        );
-
-        // Parse point ID to determine if it's a register or coil
-        let point_num: u16 = point_id.parse().map_err(|_| {
-            ComSrvError::InvalidParameter(format!("Invalid point ID: {}", point_id))
-        })?;
-
-        let mut client = self.client.write().await;
-
-        // For demo purposes, assume points < 1000 are coils, >= 1000 are registers
-        if point_num < 1000 {
-            // Read coil
-            let coils = client.read_coils(1, point_num, 1).await?;
-            let value = coils.get(0).unwrap_or(&false);
-
-            Ok(self.create_point_data(
-                point_id.to_string(),
-                format!("Coil_{}", point_id),
-                if *value { "1" } else { "0" }.to_string(),
-                TelemetryType::Signal,
-                "".to_string(),
-                format!("Modbus coil at address {}", point_num),
-            ))
-        } else {
-            // Read holding register
-            let registers = client.read_holding_registers(1, point_num, 1).await?;
-            let value = registers.get(0).unwrap_or(&0);
-
-            Ok(self.create_point_data(
-                point_id.to_string(),
-                format!("Register_{}", point_id),
-                value.to_string(),
-                TelemetryType::Telemetry,
-                "".to_string(),
-                format!("Modbus holding register at address {}", point_num),
-            ))
+        // 根据 telemetry_type 读取相应数据
+        match telemetry_type {
+            "m" | "telemetry" => {
+                // 读取遥测数据
+                // TODO: 实现实际的 Modbus 读取逻辑
+            }
+            "s" | "signal" => {
+                // 读取遥信数据
+            }
+            "c" | "control" => {
+                // 读取遥控状态
+            }
+            "a" | "adjustment" => {
+                // 读取遥调数据
+            }
+            _ => {
+                return Err(ComSrvError::InvalidParameter(format!(
+                    "Unknown telemetry type: {}",
+                    telemetry_type
+                )));
+            }
         }
+
+        Ok(data_map)
     }
 
-    async fn write_point(&mut self, point_id: &str, value: &str) -> Result<()> {
-        info!(
-            "[ModbusAdapter] Writing point {} = {} on channel {}",
-            point_id, value, self.channel_name
-        );
-
-        // Parse point ID
-        let point_num: u16 = point_id.parse().map_err(|_| {
-            ComSrvError::InvalidParameter(format!("Invalid point ID: {}", point_id))
-        })?;
-
+    async fn control(&mut self, commands: Vec<(u32, RedisValue)>) -> Result<Vec<(u32, bool)>> {
+        let mut results = Vec::new();
         let mut client = self.client.write().await;
 
-        // For demo purposes, assume points < 1000 are coils, >= 1000 are registers
-        if point_num < 1000 {
-            // Write coil
-            let coil_value = value
-                .parse::<bool>()
-                .unwrap_or_else(|_| value.parse::<u16>().unwrap_or(0) != 0);
+        for (point_id, value) in commands {
+            // Convert RedisValue to bool for coil control
+            let coil_value = match value {
+                RedisValue::Bool(b) => b,
+                RedisValue::Integer(i) => i != 0,
+                RedisValue::Float(f) => f != 0.0,
+                RedisValue::String(s) => s == "true" || s == "1",
+                RedisValue::Null => false,
+            };
 
-            client.write_single_coil(1, point_num, coil_value).await
-        } else {
-            // Write holding register
-            let register_value: u16 = value.parse().map_err(|_| {
-                ComSrvError::InvalidParameter(format!("Invalid register value: {}", value))
-            })?;
+            // Use default slave ID of 1 (should be configurable)
+            let slave_id = 1u8;
 
-            client
-                .write_single_register(1, point_num, register_value)
+            match client
+                .write_single_coil(slave_id, point_id as u16, coil_value)
                 .await
+            {
+                Ok(_) => results.push((point_id, true)),
+                Err(_) => results.push((point_id, false)),
+            }
         }
+
+        Ok(results)
     }
 
-    async fn get_diagnostics(&self) -> HashMap<String, String> {
-        let client = self.client.read().await;
-        let mut diagnostics = client.get_diagnostics().await;
-
-        // Add adapter-specific information
-        diagnostics.insert(
-            "adapter_type".to_string(),
-            "ModbusComBaseAdapter".to_string(),
-        );
-        diagnostics.insert("channel_id".to_string(), self.channel_id.to_string());
-        diagnostics.insert("channel_name".to_string(), self.channel_name.clone());
-        diagnostics.insert("running".to_string(), self.is_running().await.to_string());
-
-        diagnostics
-    }
-
-    async fn set_command_receiver(
+    async fn adjustment(
         &mut self,
-        rx: tokio::sync::mpsc::Receiver<ChannelCommand>,
-    ) -> Result<()> {
-        info!(
-            "[ModbusAdapter] Setting command receiver for channel {}",
-            self.channel_name
-        );
-        self.command_rx = Some(rx);
-        Ok(())
+        adjustments: Vec<(u32, RedisValue)>,
+    ) -> Result<Vec<(u32, bool)>> {
+        let mut results = Vec::new();
+        let mut client = self.client.write().await;
+
+        for (point_id, value) in adjustments {
+            // Convert RedisValue to u16 for register write
+            let register_value = match value {
+                RedisValue::Integer(i) => i as u16,
+                RedisValue::Float(f) => f as u16,
+                RedisValue::String(s) => s.parse::<u16>().unwrap_or(0),
+                _ => 0,
+            };
+
+            // Use default slave ID of 1 (should be configurable)
+            let slave_id = 1u8;
+
+            match client
+                .write_single_register(slave_id, point_id as u16, register_value)
+                .await
+            {
+                Ok(_) => results.push((point_id, true)),
+                Err(_) => results.push((point_id, false)),
+            }
+        }
+
+        Ok(results)
     }
 
-    async fn handle_channel_command(&mut self, command: ChannelCommand) -> Result<()> {
-        self.handle_command(command).await
+    async fn update_points(&mut self, _mappings: Vec<UnifiedPointMapping>) -> Result<()> {
+        // TODO: 实现点位更新逻辑
+        Ok(())
     }
 }

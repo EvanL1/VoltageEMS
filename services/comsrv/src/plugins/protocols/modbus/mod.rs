@@ -56,7 +56,7 @@ pub use protocol_engine::{ModbusProtocolEngine, ProtocolEngineConfig};
 pub use server::{ModbusDevice, ModbusServer};
 pub use types::{ClientStatistics, ConnectionState, ModbusChannelConfig, ProtocolMappingTable};
 
-use crate::core::framework::{PacketParseResult, ProtocolPacketParser};
+use crate::core::combase::{PacketParseResult, ProtocolPacketParser};
 use chrono::Utc;
 use std::collections::HashMap;
 

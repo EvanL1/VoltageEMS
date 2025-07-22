@@ -78,7 +78,10 @@ pub async fn proxy_request(
             })?;
 
             // Build response
-            let mut res = HttpResponse::build(status);
+            let mut res = HttpResponse::build(
+                actix_web::http::StatusCode::from_u16(status.as_u16())
+                    .unwrap_or(actix_web::http::StatusCode::INTERNAL_SERVER_ERROR),
+            );
 
             // Copy response headers
             for (name, value) in headers {

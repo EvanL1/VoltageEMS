@@ -8,10 +8,10 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::sync::Arc;
-use tracing::{debug, error, info};
+use tracing::{debug, info};
 
 use crate::engine::RuleExecutor;
-use crate::redis::{store::ExecutionHistory, RedisStore};
+use crate::redis::RedisStore;
 use crate::rules::{Rule, RuleGroup};
 
 /// API state shared across handlers
@@ -150,7 +150,7 @@ pub async fn update_rule(
     Json(request): Json<UpdateRuleRequest>,
 ) -> impl IntoResponse {
     let result = async {
-        let mut rule = request.rule;
+        let rule = request.rule;
 
         // Ensure rule ID matches path
         if rule.id != rule_id {

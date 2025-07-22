@@ -3,8 +3,6 @@
 //! 测试多通道并发写入Redis的性能和数据一致性
 
 use comsrv::core::framework::TelemetryType;
-use comsrv::core::redis::storage::RedisStorage;
-use comsrv::core::redis::types::{PointUpdate, TYPE_MEASUREMENT, TYPE_SIGNAL};
 use comsrv::plugins::plugin_storage::{DefaultPluginStorage, PluginPointUpdate, PluginStorage};
 use std::sync::Arc;
 use std::time::{Duration, Instant};

@@ -7,7 +7,7 @@ use crate::error::{ModelSrvError, Result};
 use async_trait::async_trait;
 use std::collections::HashMap;
 use std::sync::Arc;
-use tracing::{debug, error, info};
+use tracing::{debug, info};
 
 /// 计算上下文
 #[derive(Debug, Clone)]

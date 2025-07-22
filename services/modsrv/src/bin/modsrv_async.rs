@@ -52,7 +52,7 @@ async fn main() -> Result<()> {
         let loader = ConfigLoader::new()
             .with_file(config_path.to_string_lossy())
             .with_env_prefix("MODSRV_");
-        loader.load()?
+        loader.load().await?
     } else {
         Config::default()
     };
@@ -89,7 +89,11 @@ async fn run_async_engine(config: Config, interval_secs: u64) -> Result<()> {
     // Start API server if enabled
     let api_handle = if true {
         // API always enabled for now
-        let api_server = ApiServer::new(config.api.host.clone(), config.api.port, engine.clone());
+        let api_server = ApiServer::new(
+            config.service_api.host.clone(),
+            config.service_api.port,
+            engine.clone(),
+        );
         Some(tokio::spawn(async move {
             if let Err(e) = api_server.run().await {
                 error!("API server error: {}", e);
@@ -125,8 +129,6 @@ async fn run_async_engine(config: Config, interval_secs: u64) -> Result<()> {
 
     // Main execution loop
     let mut interval = time::interval(Duration::from_secs(interval_secs));
-    let mut shutdown_rx = shutdown_signal();
-
     info!(
         "Starting main execution loop with {}s interval",
         interval_secs
@@ -156,7 +158,7 @@ async fn run_async_engine(config: Config, interval_secs: u64) -> Result<()> {
                     }
                 }
             }
-            _ = &mut shutdown_rx => {
+            _ = shutdown_signal() => {
                 info!("Shutdown signal received");
                 break;
             }

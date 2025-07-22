@@ -17,7 +17,7 @@ use tokio::sync::{RwLock, Semaphore};
 use tracing::{debug, info, warn};
 
 // UniversalTransportBridge has been removed, using Transport trait directly
-use crate::core::framework::types::PointData;
+use crate::core::combase::PointData;
 use crate::plugins::protocols::modbus::{
     common::{ModbusConfig, ModbusFunctionCode},
     frame::{ModbusFrameProcessor, ModbusMode},

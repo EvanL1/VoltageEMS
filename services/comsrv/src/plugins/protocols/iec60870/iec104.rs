@@ -10,9 +10,9 @@ use tokio::sync::{Mutex, RwLock};
 use tokio::time::sleep;
 use tracing::info;
 
+use crate::core::combase::ComBase;
+use crate::core::combase::{ChannelStatus, PointData, TelemetryType};
 use crate::core::config::ChannelConfig;
-use crate::core::framework::traits::ComBase;
-use crate::core::framework::{ChannelStatus, PointData, TelemetryType};
 use crate::plugins::plugin_storage::{DefaultPluginStorage, PluginPointUpdate, PluginStorage};
 use crate::plugins::protocols::iec60870::asdu::{CommonAddrSize, TypeId, ASDU};
 use crate::plugins::protocols::iec60870::common::{IecError, IecResult};
@@ -533,7 +533,7 @@ impl Iec104Client {
                     "IEC 60870 data point {}:{}",
                     asdu.common_addr, "some_point_id"
                 ),
-                telemetry_type: Some(crate::core::framework::TelemetryType::Telemetry),
+                telemetry_type: Some(crate::core::combase::TelemetryType::Telemetry),
                 channel_id: Some(self.channel_id),
             };
 

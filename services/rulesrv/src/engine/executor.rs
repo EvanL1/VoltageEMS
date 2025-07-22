@@ -11,8 +11,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
-use tokio::sync::{Mutex, RwLock};
-use tracing::{debug, error, info, trace, warn};
+use tokio::sync::RwLock;
+use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 
 /// Action handler trait for control operations

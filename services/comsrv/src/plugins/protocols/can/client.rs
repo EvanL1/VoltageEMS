@@ -5,11 +5,11 @@
 
 use super::common::*;
 use super::frame::CanFrame;
+use crate::core::combase::base::DefaultProtocol;
+use crate::core::combase::ComBase;
+use crate::core::combase::{ChannelStatus, PointData, TelemetryType};
 use crate::core::config::ChannelConfig;
-use crate::core::framework::base::DefaultProtocol;
-use crate::core::framework::traits::ComBase;
-use crate::core::framework::{ChannelStatus, PointData, TelemetryType};
-use crate::plugins::plugin_storage::{DefaultPluginStorage, PluginStorage};
+use crate::plugins::core::{DefaultPluginStorage, PluginStorage};
 use crate::utils::error::{ComSrvError, Result};
 use crate::utils::hex::format_hex;
 use async_trait::async_trait;
@@ -550,7 +550,7 @@ impl ComBase for CanClientBase {
                 timestamp: Utc::now(),
                 unit: mapping.unit.clone().unwrap_or_default(),
                 description: mapping.description.clone().unwrap_or_default(),
-                telemetry_type: Some(crate::core::framework::TelemetryType::Telemetry),
+                telemetry_type: Some(crate::core::combase::TelemetryType::Telemetry),
                 channel_id: None,
             };
             points.push(point_data);
@@ -579,7 +579,7 @@ impl ComBase for CanClientBase {
                 timestamp: Utc::now(),
                 unit: mapping.unit.clone().unwrap_or_default(),
                 description: mapping.description.clone().unwrap_or_default(),
-                telemetry_type: Some(crate::core::framework::TelemetryType::Telemetry),
+                telemetry_type: Some(crate::core::combase::TelemetryType::Telemetry),
                 channel_id: None,
             })
         } else {

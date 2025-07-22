@@ -7,8 +7,8 @@ use async_trait::async_trait;
 use serde_json::{json, Value};
 use std::collections::HashMap;
 
+use crate::core::combase::ComBase;
 use crate::core::config::types::channel::ChannelConfig;
-use crate::core::framework::traits::ComBase;
 use crate::core::transport::factory::TransportFactory;
 use crate::plugins::protocol_plugin::{
     CliArgument, CliCommand, ConfigTemplate, ProtocolMetadata, ProtocolPlugin, ValidationRule,

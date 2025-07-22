@@ -47,7 +47,7 @@ impl ConfigLoader {
         for validator in &self.validators {
             debug!("Running validator: {}", validator.name());
             tokio::runtime::Runtime::new()
-                .unwrap()
+                .unwrap_or_else(|_| panic!("Failed to create Tokio runtime"))
                 .block_on(validator.validate(&config as &(dyn std::any::Any + Send + Sync)))?;
         }
 

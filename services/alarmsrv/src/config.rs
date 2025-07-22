@@ -215,7 +215,7 @@ impl AlarmConfig {
             }
             if let Ok(api_port) = std::env::var("API_PORT") {
                 if let Ok(p) = api_port.parse() {
-                    config.api.port = p;
+                    config.service_api.port = p;
                 }
             }
 
@@ -244,7 +244,8 @@ impl AlarmConfig {
                         .parse()
                         .unwrap_or(0),
                 },
-                api: ApiConfig {
+                api: CommonApiConfig::default(),
+                service_api: ServiceApiConfig {
                     host: std::env::var("API_HOST").unwrap_or_else(|_| "0.0.0.0".to_string()),
                     port: std::env::var("API_PORT")
                         .unwrap_or_else(|_| "8087".to_string())

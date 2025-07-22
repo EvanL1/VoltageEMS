@@ -13,10 +13,10 @@ use tracing::{error, info, warn, Level};
 use tracing_appender::rolling::{RollingFileAppender, Rotation};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, Layer};
 
-use comsrv::api::openapi_routes::create_api_routes;
+use comsrv::api::routes::create_api_routes;
+use comsrv::core::combase::factory::ProtocolFactory;
 use comsrv::core::config::ConfigManager;
-use comsrv::core::framework::factory::ProtocolFactory;
-use comsrv::service_impl::{shutdown_handler, start_cleanup_task, start_communication_service};
+use comsrv::service::{shutdown_handler, start_cleanup_task, start_communication_service};
 use comsrv::{ComSrvError, Result};
 
 /// Print startup banner with COMSRV ASCII art
@@ -119,15 +119,15 @@ async fn main() -> Result<()> {
         eprintln!("Config center URL detected: {url}");
     }
 
-    let config_manager = Arc::new(ConfigManager::load_async(&args.config).await.map_err(|e| {
+    let config_manager = Arc::new(ConfigManager::from_file(&args.config).map_err(|e| {
         eprintln!("Failed to load configuration: {e}");
         e
     })?);
 
     // Initialize logging/tracing with configuration and channels
     initialize_logging(
-        &config_manager.config().service.logging,
-        &config_manager.config().channels,
+        &config_manager.service_config().logging,
+        config_manager.channels(),
     )?;
 
     info!(
@@ -137,18 +137,19 @@ async fn main() -> Result<()> {
 
     // Display configuration summary
     info!("Configuration loaded successfully:");
-    info!("  - Service name: {}", config_manager.config().service.name);
+    info!("  - Service name: {}", config_manager.service_config().name);
     info!(
         "  - Channels configured: {}",
-        config_manager.config().channels.len()
+        config_manager.channels().len()
     );
     info!(
-        "  - API enabled: {}",
-        config_manager.config().service.api.enabled
+        "  - API server: {}:{}",
+        config_manager.service_config().api.host,
+        config_manager.service_config().api.port
     );
     info!(
         "  - Redis enabled: {}",
-        config_manager.config().service.redis.enabled
+        config_manager.service_config().redis.enabled
     );
 
     // Initialize plugin system
@@ -210,9 +211,11 @@ async fn main() -> Result<()> {
     let cleanup_factory = factory.clone();
     let cleanup_handle = start_cleanup_task(cleanup_factory);
 
-    // Start API server if enabled (independent of communication service)
-    let api_handle = if config_manager.config().service.api.enabled {
-        let bind_address = &config_manager.config().service.api.bind_address;
+    // Start API server (always enabled)
+    let api_handle = {
+        let host = &config_manager.service_config().api.host;
+        let port = config_manager.service_config().api.port;
+        let bind_address = format!("{}:{}", host, port);
         info!("Preparing to start API server on {bind_address}");
 
         let addr: SocketAddr = bind_address.parse().map_err(|e| {
@@ -240,19 +243,20 @@ async fn main() -> Result<()> {
                 info!("API server stopped gracefully");
             }
         }))
-    } else {
-        info!("API server disabled in configuration");
-        None
     };
 
     // Final startup confirmation
-    if api_handle.is_some() {
-        info!("All services started successfully - API server is ready");
-        info!("API server accessible at: http://localhost:3000");
-        info!("Health check: http://localhost:3000/health");
-    } else {
-        info!("Communication service started (API server disabled)");
-    }
+    info!("All services started successfully - API server is ready");
+    info!(
+        "API server accessible at: http://{}:{}",
+        config_manager.service_config().api.host,
+        config_manager.service_config().api.port
+    );
+    info!(
+        "Health check: http://{}:{}/health",
+        config_manager.service_config().api.host,
+        config_manager.service_config().api.port
+    );
 
     info!("Press Ctrl+C to shutdown");
 
@@ -266,8 +270,8 @@ async fn main() -> Result<()> {
 
     // Cancel background tasks
     cleanup_handle.abort();
-    if let Some(ref api_handle) = &api_handle {
-        api_handle.abort();
+    if let Some(handle) = api_handle.as_ref() {
+        handle.abort();
     }
 
     // Wait for tasks to cleanup
@@ -344,7 +348,6 @@ fn initialize_logging(
             .rotation(Rotation::DAILY)
             .filename_prefix(log_filename)
             .filename_suffix("log")
-            .max_log_files(logging_config.max_files as usize)
             .build(log_dir)
             .map_err(|e| {
                 eprintln!("Failed to create file appender: {e}");
@@ -372,9 +375,8 @@ fn initialize_logging(
 
         eprintln!("Logging configured:");
         eprintln!("  - Console: enabled");
-        eprintln!("  - File: {log_file_path}");
+        eprintln!("  - File: {}", log_file_path.display());
         eprintln!("  - Level: {}", logging_config.level);
-        eprintln!("  - Max files: {}", logging_config.max_files);
     } else if logging_config.console {
         // Console only
         let console_layer =
@@ -407,7 +409,6 @@ fn initialize_logging(
             .rotation(Rotation::DAILY)
             .filename_prefix(log_filename)
             .filename_suffix("log")
-            .max_log_files(logging_config.max_files as usize)
             .build(log_dir)
             .map_err(|e| {
                 eprintln!("Failed to create file appender: {e}");
@@ -426,9 +427,8 @@ fn initialize_logging(
 
         eprintln!("Logging configured:");
         eprintln!("  - Console: disabled");
-        eprintln!("  - File: {log_file_path}");
+        eprintln!("  - File: {}", log_file_path.display());
         eprintln!("  - Level: {}", logging_config.level);
-        eprintln!("  - Max files: {}", logging_config.max_files);
     } else {
         eprintln!("Warning: No logging outputs configured!");
         return Ok(());

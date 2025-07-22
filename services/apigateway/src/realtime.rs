@@ -203,10 +203,9 @@ pub async fn get_statistics(redis_client: web::Data<Arc<RedisClient>>) -> ApiRes
     let mut total_errors = 0;
 
     for key in keys {
-        let status_data = redis_client
-            .get(&key)
-            .await
-            .map_err(|e| ApiError::ServiceError(format!("Failed to get channel status: {}", e)))?;
+        let status_data = redis_client.get(&key).await.map_err(|e| {
+            ApiGatewayError::ServiceError(format!("Failed to get channel status: {}", e))
+        })?;
 
         if let Some(status_json) = status_data {
             if let Ok(status_value) = serde_json::from_str::<serde_json::Value>(&status_json) {

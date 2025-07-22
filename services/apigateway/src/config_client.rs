@@ -255,6 +255,7 @@ impl ConfigClient {
                 pool_size: data.redis.pool_size,
                 timeout_seconds: data.redis.timeout_seconds,
             },
+            api: ApiConfig::default(),
             services: crate::config::ServicesConfig {
                 comsrv: crate::config::ServiceConfig {
                     url: data.services.comsrv.url,

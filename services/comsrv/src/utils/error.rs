@@ -4,7 +4,7 @@
 //! adapting voltage-common error types to maintain backward compatibility.
 
 use thiserror::Error;
-use voltage_common::Error as CommonError;
+use voltage_libs::error::Error as CommonError;
 
 /// Communication Service Error Type
 #[derive(Error, Debug, Clone)]
@@ -24,6 +24,14 @@ pub enum ComSrvError {
     /// Connection establishment and maintenance errors
     #[error("Connection error: {0}")]
     ConnectionError(String),
+
+    /// Not connected error
+    #[error("Not connected")]
+    NotConnected,
+
+    /// Not supported error
+    #[error("Not supported: {0}")]
+    NotSupported(String),
 
     /// Data serialization and deserialization errors
     #[error("Serialization error: {0}")]
@@ -150,25 +158,19 @@ pub enum ComSrvError {
 /// Result type alias for Communication Service
 pub type Result<T> = std::result::Result<T, ComSrvError>;
 
-// Conversion from voltage_common::Error to ComSrvError
+// Conversion from voltage_libs::Error to ComSrvError
 impl From<CommonError> for ComSrvError {
     fn from(err: CommonError) -> Self {
         match err {
             CommonError::Config(msg) => ComSrvError::ConfigError(msg),
             CommonError::Io(e) => ComSrvError::IoError(e.to_string()),
             CommonError::Serialization(msg) => ComSrvError::SerializationError(msg),
-            CommonError::Storage(msg) => ComSrvError::RedisError(msg),
-            CommonError::Network(msg) => ComSrvError::ConnectionError(msg),
-            CommonError::Protocol(msg) => ComSrvError::ProtocolError(msg),
+            CommonError::Parse(msg) => ComSrvError::InvalidData(msg),
             CommonError::Timeout(msg) => ComSrvError::TimeoutError(msg),
-            CommonError::InvalidInput(msg) => ComSrvError::InvalidData(msg),
-            CommonError::ServiceUnavailable(msg) => ComSrvError::ResourceError(msg),
-            CommonError::Auth(msg) => ComSrvError::ResourceError(msg),
-            CommonError::RateLimitExceeded => {
-                ComSrvError::ResourceError("Rate limit exceeded".to_string())
-            }
-            CommonError::Other { message, .. } => ComSrvError::InternalError(message),
+            CommonError::Generic(msg) => ComSrvError::InternalError(msg),
             CommonError::Redis(msg) => ComSrvError::RedisError(msg),
+            CommonError::InfluxDB(msg) => ComSrvError::Storage(msg),
+            CommonError::Http(msg) => ComSrvError::ConnectionError(msg),
         }
     }
 }

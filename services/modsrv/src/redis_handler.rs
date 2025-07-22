@@ -275,7 +275,7 @@ impl RedisHandler {
 
     /// Set a value in Redis
     pub async fn set(&self, key: &str, value: String) -> Result<()> {
-        let mut conn = self.connection.write().await;
+        let conn = self.connection.write().await;
         conn.client
             .set(key, &value)
             .map_err(|e| ModelSrvError::RedisError(format!("Failed to set key {}: {}", key, e)))

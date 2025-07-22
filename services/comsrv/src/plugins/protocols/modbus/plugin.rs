@@ -7,14 +7,12 @@ use async_trait::async_trait;
 use serde_json::{json, Value};
 use std::collections::HashMap;
 
-use crate::core::config::types::channel::ChannelConfig;
-use crate::core::framework::traits::ComBase;
+use crate::core::combase::ComBase;
+use crate::core::config::types::ChannelConfig;
 use crate::core::transport::factory::TransportFactory;
 use crate::core::transport::serial::SerialTransportConfig;
 use crate::core::transport::tcp::TcpTransportConfig;
-use crate::plugins::protocol_plugin::{
-    CliArgument, CliCommand, ConfigTemplate, ProtocolMetadata, ProtocolPlugin, ValidationRule,
-};
+use crate::plugins::traits::{ConfigTemplate, ProtocolMetadata, ProtocolPlugin, ValidationRule};
 use crate::utils::error::{ComSrvError as Error, Result};
 
 use super::client_impl::ModbusClientImpl;
