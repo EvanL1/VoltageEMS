@@ -10,7 +10,7 @@ use chrono::Utc;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{mpsc, RwLock};
-use voltage_common::data::PointData;
+use crate::types::GenericPointData as PointData;
 
 /// 创建测试用的 Redis 配置
 fn create_test_redis_config() -> RedisConfig {

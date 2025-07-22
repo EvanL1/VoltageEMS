@@ -5,6 +5,7 @@ use figment::{providers::Env, providers::Yaml, providers::Format, Figment};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 use self::points::PointStorageConfig;
+use crate::types::{KeyParseConfig, MessageFormat};
 
 /// 服务配置
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -59,6 +60,10 @@ pub struct RedisSubscriptionConfig {
     pub patterns: Vec<String>,
     #[serde(default = "default_channel_ids")]
     pub channel_ids: Option<Vec<u32>>,
+    #[serde(default)]
+    pub key_parse_config: KeyParseConfig,
+    #[serde(default)]
+    pub message_format: MessageFormat,
 }
 
 fn default_channel_ids() -> Option<Vec<u32>> {
@@ -70,6 +75,8 @@ impl Default for RedisSubscriptionConfig {
         Self {
             patterns: vec!["*:m:*".to_string(), "*:s:*".to_string()], // 默认监控测量和信号数据
             channel_ids: None,
+            key_parse_config: KeyParseConfig::default(),
+            message_format: MessageFormat::default(),
         }
     }
 }

@@ -180,7 +180,7 @@ impl DataProcessor {
         channel_id: u32,
         point_id: u32,
         point_type: &str,
-        point_data: &voltage_common::types::PointData,
+        point_data: &crate::types::GenericPointData,
     ) -> Result<bool> {
         // 1. 检查基本的点位规则
         if !self.points_config.should_save_point(channel_id, point_id, point_type) {
@@ -204,10 +204,10 @@ impl DataProcessor {
         channel_id: u32,
         point_id: u32,
         point_type: &str,
-        point_data: &voltage_common::types::PointData,
+        point_data: &crate::types::GenericPointData,
     ) -> Result<bool> {
         use crate::config::points::FilterRule;
-        use voltage_common::types::PointValue;
+        use crate::types::PointValue;
 
         match filter {
             FilterRule::ValueRange { point_types, min_value, max_value } => {
@@ -277,7 +277,7 @@ impl DataProcessor {
     fn convert_to_influx_point(
         &self,
         message: &RedisMessage,
-        point_data: &voltage_common::types::PointData,
+        point_data: &crate::types::GenericPointData,
     ) -> Result<DataPoint> {
         // 转换值类型
         let value = DataValue::from(point_data.clone());
@@ -350,8 +350,8 @@ pub struct DataTransformer;
 
 impl DataTransformer {
     /// 验证数据点的有效性
-    pub fn validate_point_data(point_data: &voltage_common::types::PointData) -> Result<()> {
-        use voltage_common::types::PointValue;
+    pub fn validate_point_data(point_data: &crate::types::GenericPointData) -> Result<()> {
+        use crate::types::PointValue;
 
         // 检查值的有效性
         match &point_data.value {
@@ -440,7 +440,7 @@ mod tests {
     use super::*;
     use crate::config::InfluxDBConfig;
     use tokio_test;
-    use voltage_common::types::{PointData, PointValue};
+    use crate::types::{GenericPointData as PointData, PointValue};
 
     fn create_test_influx_config() -> InfluxDBConfig {
         InfluxDBConfig {

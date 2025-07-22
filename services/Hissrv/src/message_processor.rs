@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tracing::{debug, error, info, warn};
-use voltage_common::redis::RedisClient;
+use voltage_libs::redis::RedisClient;
 
 /// Message processor with batch writing support
 pub struct MessageProcessor {

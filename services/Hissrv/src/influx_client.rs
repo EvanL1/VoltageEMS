@@ -29,16 +29,18 @@ impl DataValue {
     }
 }
 
-/// 从 voltage-common 的 PointData 转换
-impl From<voltage_common::types::PointData> for DataValue {
-    fn from(point_data: voltage_common::types::PointData) -> Self {
-        match point_data.value {
-            voltage_common::types::PointValue::Float(f) => DataValue::Float(f),
-            voltage_common::types::PointValue::Int(i) => DataValue::Integer(i),
-            voltage_common::types::PointValue::String(s) => DataValue::String(s),
-            voltage_common::types::PointValue::Bool(b) => DataValue::Boolean(b),
-            voltage_common::types::PointValue::Binary(_) => DataValue::String("binary_data".to_string()),
-            voltage_common::types::PointValue::Null => DataValue::String("null".to_string()),
+/// 从 GenericPointData 转换
+impl From<crate::types::GenericPointData> for DataValue {
+    fn from(point_data: crate::types::GenericPointData) -> Self {
+        use crate::types::PointValue;
+        let pv: PointValue = point_data.value.into();
+        match pv {
+            PointValue::Float(f) => DataValue::Float(f),
+            PointValue::Integer(i) => DataValue::Integer(i),
+            PointValue::String(s) => DataValue::String(s),
+            PointValue::Boolean(b) => DataValue::Boolean(b),
+            PointValue::Binary(_) => DataValue::String("binary_data".to_string()),
+            PointValue::Null => DataValue::String("null".to_string()),
         }
     }
 }

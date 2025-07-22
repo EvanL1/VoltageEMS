@@ -1,4 +1,4 @@
-use crate::config::RedisConfig;
+use crate::config::{RedisConfig, RedisSubscriptionConfig};
 use crate::error::{HisSrvError, Result};
 use crate::storage::{DataPoint, DataValue};
 use chrono::Utc;
@@ -14,8 +14,8 @@ use tokio::sync::RwLock;
 use tokio::time::{interval, sleep};
 use tracing::{debug, error, info, warn};
 use uuid::Uuid;
-use voltage_common::redis::{RedisClient, RedisConfig as CommonRedisConfig};
-use voltage_common::types::PointData;
+use voltage_libs::redis::{RedisClient, RedisConfig as CommonRedisConfig};
+use crate::types::{GenericPointData, Quality};
 
 /// 消息类型，用于区分不同的数据类型
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -69,23 +69,26 @@ pub struct ChannelInfo {
 }
 
 impl ChannelInfo {
-    /// 从通道名称解析通道信息
+    /// 从通道名称解析通道信息（默认格式）
     pub fn from_channel(channel: &str) -> Option<Self> {
-        // 新的扁平化格式: {channelID}:{type}:{pointID}
-        let parts: Vec<&str> = channel.split(':').collect();
-        if parts.len() == 3 {
-            let channel_id = parts[0].parse::<u32>().ok()?;
-            let message_type = MessageType::from_channel(channel)?;
-            let point_id = parts[2].parse::<u32>().ok()?;
+        let default_config = KeyParseConfig::default();
+        Self::from_channel_with_config(channel, &default_config)
+    }
 
-            Some(ChannelInfo {
-                channel_id,
-                message_type,
-                point_id,
-            })
-        } else {
-            None
-        }
+    /// 使用配置化的键解析器解析通道信息
+    pub fn from_channel_with_config(channel: &str, config: &KeyParseConfig) -> Option<Self> {
+        let parsed = config.parse_key(channel)?;
+        
+        let channel_id = parsed.get("channel")?.parse::<u32>().ok()?;
+        let type_str = parsed.get("type")?;
+        let message_type = MessageType::from_type_str(type_str)?;
+        let point_id = parsed.get("point")?.parse::<u32>().ok()?;
+
+        Some(Self {
+            channel_id,
+            point_id,
+            message_type,
+        })
     }
 }
 
@@ -96,7 +99,7 @@ pub struct SubscriptionMessage {
     pub channel: String,
     pub channel_info: Option<ChannelInfo>,
     pub timestamp: chrono::DateTime<chrono::Utc>,
-    pub point_data: Option<PointData>,
+    pub point_data: Option<GenericPointData>,
     pub raw_data: Option<String>,
     pub metadata: HashMap<String, String>,
 }
@@ -153,6 +156,7 @@ pub struct EnhancedRedisSubscriber {
     pubsub: Option<PubSub>,
     config: RedisConfig,
     subscriber_config: SubscriberConfig,
+    subscription_config: RedisSubscriptionConfig,
     message_sender: mpsc::UnboundedSender<SubscriptionMessage>,
     state: Arc<RwLock<SubscriberState>>,
     reconnect_attempts: Arc<RwLock<u32>>,
@@ -169,6 +173,7 @@ impl EnhancedRedisSubscriber {
         Self {
             client: None,
             pubsub: None,
+            subscription_config: config.subscription.clone(),
             config,
             subscriber_config,
             message_sender,
@@ -463,13 +468,17 @@ impl EnhancedRedisSubscriber {
 
     /// 解析消息
     fn parse_message(&self, channel: &str, payload: &str) -> Result<SubscriptionMessage> {
-        let channel_info = ChannelInfo::from_channel(channel);
+        let channel_info = ChannelInfo::from_channel_with_config(
+            channel, 
+            &self.subscription_config.key_parse_config
+        );
 
-        // 尝试解析为 PointData
-        let point_data = if let Ok(pd) = serde_json::from_str::<PointData>(payload) {
-            Some(pd)
-        } else {
-            None
+        // 根据配置的消息格式解析数据
+        let point_data = match &self.subscription_config.message_format {
+            MessageFormat::ComSrv => self.parse_comsrv_format(payload, &channel_info),
+            MessageFormat::ModSrv => self.parse_modsrv_format(payload, &channel_info),
+            MessageFormat::Generic => self.parse_generic_format(payload),
+            MessageFormat::Custom(parser_name) => self.parse_custom_format(payload, parser_name),
         };
 
         let mut metadata = HashMap::new();
@@ -549,6 +558,68 @@ impl EnhancedRedisSubscriber {
                 max_retries: conn_config.max_retries,
             }
         }
+    }
+
+    // 消息格式解析方法
+
+    /// 解析 comsrv 格式的消息
+    fn parse_comsrv_format(&self, payload: &str, channel_info: &Option<ChannelInfo>) -> Option<GenericPointData> {
+        // comsrv 格式通常是直接的值或 JSON 对象
+        if let Some(info) = channel_info {
+            // 尝试解析为 JSON 值
+            if let Ok(value) = serde_json::from_str::<serde_json::Value>(payload) {
+                let mut point_data = GenericPointData::new(
+                    info.channel_id,
+                    info.point_id,
+                    value.clone(),
+                );
+                
+                // 如果是对象，提取特殊字段
+                if let Some(obj) = value.as_object() {
+                    if let Some(quality) = obj.get("quality").and_then(|v| v.as_u64()) {
+                        point_data = point_data.with_quality(quality as u8);
+                    }
+                    if let Some(ts_str) = obj.get("timestamp").and_then(|v| v.as_str()) {
+                        if let Ok(ts) = chrono::DateTime::parse_from_rfc3339(ts_str) {
+                            point_data = point_data.with_timestamp(ts.with_timezone(&Utc));
+                        }
+                    }
+                }
+                
+                return Some(point_data);
+            }
+            
+            // 如果不是 JSON，尝试作为简单值
+            if let Ok(float_val) = payload.parse::<f64>() {
+                return Some(GenericPointData::new(
+                    info.channel_id,
+                    info.point_id,
+                    serde_json::Value::from(float_val),
+                ));
+            }
+        }
+        
+        None
+    }
+
+    /// 解析 modsrv 格式的消息
+    fn parse_modsrv_format(&self, payload: &str, channel_info: &Option<ChannelInfo>) -> Option<GenericPointData> {
+        // modsrv 可能有不同的格式，这里提供基本实现
+        // 可以根据实际的 modsrv 数据格式进行调整
+        self.parse_generic_format(payload)
+    }
+
+    /// 解析通用 JSON 格式
+    fn parse_generic_format(&self, payload: &str) -> Option<GenericPointData> {
+        serde_json::from_str::<GenericPointData>(payload).ok()
+    }
+
+    /// 解析自定义格式
+    fn parse_custom_format(&self, payload: &str, parser_name: &str) -> Option<GenericPointData> {
+        // 这里可以根据 parser_name 调用不同的解析逻辑
+        // 目前返回通用解析结果
+        warn!("Custom parser '{}' not implemented, using generic parser", parser_name);
+        self.parse_generic_format(payload)
     }
 
     /// 优雅关闭

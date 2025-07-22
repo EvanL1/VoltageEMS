@@ -8,7 +8,7 @@ use std::time::Instant;
 use tokio::sync::mpsc;
 use tokio::sync::RwLock;
 use tracing::{debug, error, info, warn};
-use voltage_common::types::{PointData, PointValue};
+use crate::types::{GenericPointData, PointValue};
 
 /// 增强的消息处理器
 pub struct EnhancedMessageProcessor {
@@ -199,7 +199,7 @@ impl EnhancedMessageProcessor {
     fn point_data_to_data_point(
         &self,
         channel_info: &Option<ChannelInfo>,
-        point_data: &PointData,
+        point_data: &GenericPointData,
         metadata: &HashMap<String, String>,
     ) -> Result<DataPoint> {
         let key = if let Some(info) = channel_info {
@@ -377,7 +377,7 @@ impl EnhancedMessageProcessor {
 mod tests {
     use super::*;
     use crate::redis_subscriber::ChannelInfo;
-    use voltage_common::types::{PointData, PointValue};
+    use crate::types::{GenericPointData, PointValue};
 
     #[test]
     fn test_determine_storage_backend() {

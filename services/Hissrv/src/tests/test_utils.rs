@@ -7,7 +7,7 @@ use crate::storage::{DataPoint, DataValue};
 use chrono::{DateTime, Utc};
 use std::collections::HashMap;
 use uuid::Uuid;
-use voltage_common::data::{PointData, Quality};
+use crate::types::{GenericPointData as PointData, Quality};
 
 /// 创建测试配置
 pub fn create_test_config() -> Config {

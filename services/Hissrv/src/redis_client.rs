@@ -5,8 +5,8 @@ use serde::{Deserialize, Serialize};
 use futures_util::StreamExt;
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, warn};
-use voltage_common::redis::RedisClient;
-use voltage_common::types::{PointData, PointValue};
+use voltage_libs::redis::RedisClient;
+use crate::types::{GenericPointData, PointValue};
 
 /// 解析后的通道信息
 #[derive(Debug, Clone, Serialize, Deserialize)]

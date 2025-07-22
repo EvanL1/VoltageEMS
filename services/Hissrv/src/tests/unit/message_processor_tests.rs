@@ -6,7 +6,7 @@ use chrono::Utc;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::{mpsc, RwLock};
-use voltage_common::data::PointData;
+use crate::types::GenericPointData as PointData;
 
 async fn create_test_processor() -> (MessageProcessor, mpsc::UnboundedSender<SubscriptionMessage>) {
     let storage_manager = Arc::new(RwLock::new(StorageManager::new()));

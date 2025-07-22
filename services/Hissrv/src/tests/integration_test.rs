@@ -16,7 +16,7 @@ use async_trait::async_trait;
 use chrono::{Duration, Utc};
 use std::sync::Arc;
 use tokio::sync::{mpsc, Mutex, RwLock};
-use voltage_common::data::PointData;
+use crate::types::GenericPointData as PointData;
 
 /// 集成测试用的批量写入器
 struct IntegrationBatchWriter {

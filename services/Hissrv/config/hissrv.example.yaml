@@ -1,0 +1,93 @@
+# hissrv 配置文件示例
+# 历史数据服务配置
+
+# 服务基本配置
+service:
+  name: "hissrv"
+  version: "0.2.0"
+  port: 8080
+  host: "0.0.0.0"
+
+# Redis 配置
+redis:
+  # 连接配置
+  connection:
+    host: "127.0.0.1"
+    port: 6379
+    password: ""
+    database: 0
+    timeout_seconds: 5
+  
+  # 订阅配置
+  subscription:
+    # 订阅模式列表
+    patterns:
+      - "*:m:*"     # 订阅所有测量数据 (comsrv)
+      - "*:s:*"     # 订阅所有信号数据 (comsrv)
+      - "modsrv:*"  # 订阅 modsrv 计算数据
+    
+    # 通道过滤（可选，不设置则监控所有通道）
+    # channel_ids: [1001, 1002, 1003]
+    
+    # 键解析配置
+    key_parse_config:
+      # 键的分隔符
+      separator: ":"
+      # 键的格式模板
+      key_pattern: "{channel}:{type}:{point}"
+      # 字段映射（字段名 -> 索引位置）
+      field_mapping:
+        channel: 0
+        type: 1
+        point: 2
+    
+    # 消息格式（ComSrv, ModSrv, Generic, Custom）
+    message_format: "Generic"
+
+# InfluxDB 配置
+influxdb:
+  enabled: true
+  url: "http://localhost:8086"
+  database: "voltage_ems"
+  # token: "your-influxdb-token"  # InfluxDB 2.x 使用
+  # username: "admin"             # InfluxDB 1.x 使用
+  # password: "password"          # InfluxDB 1.x 使用
+  batch_size: 1000
+  flush_interval: 10
+  retention_days: 365
+
+# 日志配置
+logging:
+  level: "info"  # trace, debug, info, warn, error
+  format: "text" # text, json
+  file: "logs/hissrv.log"
+
+# 点位存储配置
+points:
+  # 默认存储策略
+  default_storage_policy:
+    retention_days: 30
+    sampling_interval_seconds: 60
+    aggregation_method: "average"  # average, sum, min, max, last
+  
+  # 特定点位的存储策略
+  # point_policies:
+  #   - point_id: 10001
+  #     retention_days: 365
+  #     sampling_interval_seconds: 10
+  #   - point_id: 10002
+  #     retention_days: 7
+  #     sampling_interval_seconds: 300
+
+# 其他数据源配置示例（modsrv 格式）
+# 如果 modsrv 使用不同的键格式，可以这样配置：
+# modsrv_config:
+#   key_parse_config:
+#     separator: "/"
+#     key_pattern: "{service}/{channel}/{type}/{point}"
+#     field_mapping:
+#       service: 0
+#       channel: 1
+#       type: 2
+#       point: 3
+#   message_format: "ModSrv"
