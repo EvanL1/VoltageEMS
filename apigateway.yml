@@ -1,0 +1,52 @@
+server:
+  host: "0.0.0.0"
+  port: 8089
+  workers: 4
+
+redis:
+  url: "redis://localhost:6379"
+  pool_size: 10
+  timeout_seconds: 5
+
+services:
+  comsrv:
+    url: "http://localhost:8001"
+    timeout_seconds: 30
+  modsrv:
+    url: "http://localhost:8002"
+    timeout_seconds: 30
+  hissrv:
+    url: "http://localhost:8003"
+    timeout_seconds: 30
+  netsrv:
+    url: "http://localhost:8004"
+    timeout_seconds: 30
+  alarmsrv:
+    url: "http://localhost:8005"
+    timeout_seconds: 30
+  rulesrv:
+    url: "http://localhost:8006"
+    timeout_seconds: 30
+
+cors:
+  allowed_origins:
+    - "*"
+  allowed_methods:
+    - "GET"
+    - "POST"
+    - "PUT"
+    - "DELETE"
+    - "OPTIONS"
+  allowed_headers:
+    - "Content-Type"
+    - "Authorization"
+    - "X-Requested-With"
+  max_age: 3600
+
+logging:
+  level: "debug"
+  format: "json"
+
+jwt:
+  secret: "test-secret-key"
+  expires_in_seconds: 3600

@@ -1,11 +1,10 @@
 use serde::{Deserialize, Serialize};
-use voltage_common::config::ApiConfig;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
     pub server: ServerConfig,
-    pub api: ApiConfig,
     pub redis: RedisConfig,
+    pub influxdb: InfluxDbConfig,
     pub services: ServicesConfig,
     pub cors: CorsConfig,
     pub logging: LoggingConfig,
@@ -22,6 +21,15 @@ pub struct ServerConfig {
 pub struct RedisConfig {
     pub url: String,
     pub pool_size: u32,
+    pub timeout_seconds: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InfluxDbConfig {
+    pub url: String,
+    pub database: String,
+    pub username: Option<String>,
+    pub password: Option<String>,
     pub timeout_seconds: u64,
 }
 
@@ -97,14 +105,20 @@ impl Default for Config {
         Self {
             server: ServerConfig {
                 host: "0.0.0.0".to_string(),
-                port: 8080,
+                port: 8089,
                 workers: 4,
             },
-            api: ApiConfig::default(),
             redis: RedisConfig {
-                url: "redis://127.0.0.1:6379".to_string(),
+                url: "redis://redis:6379".to_string(),
                 pool_size: 10,
                 timeout_seconds: 5,
+            },
+            influxdb: InfluxDbConfig {
+                url: "http://influxdb:8086".to_string(),
+                database: "voltage_ems".to_string(),
+                username: None,
+                password: None,
+                timeout_seconds: 30,
             },
             services: ServicesConfig {
                 comsrv: ServiceConfig {
@@ -133,19 +147,23 @@ impl Default for Config {
                 },
             },
             cors: CorsConfig {
-                allowed_origins: vec![
-                    "http://localhost:8082".to_string(),
-                    "http://localhost:3000".to_string(),
-                    "http://localhost:5173".to_string(),
-                ],
+                allowed_origins: vec!["*".to_string()],
                 allowed_methods: vec![
                     "GET".to_string(),
                     "POST".to_string(),
                     "PUT".to_string(),
                     "DELETE".to_string(),
                     "OPTIONS".to_string(),
+                    "HEAD".to_string(),
+                    "PATCH".to_string(),
                 ],
-                allowed_headers: vec!["Content-Type".to_string(), "Authorization".to_string()],
+                allowed_headers: vec![
+                    "Content-Type".to_string(),
+                    "Authorization".to_string(),
+                    "Origin".to_string(),
+                    "Accept".to_string(),
+                    "X-Requested-With".to_string(),
+                ],
                 max_age: 3600,
             },
             logging: LoggingConfig {

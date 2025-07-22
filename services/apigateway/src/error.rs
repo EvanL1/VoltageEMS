@@ -1,4 +1,8 @@
-use actix_web::{error::ResponseError, http::StatusCode, HttpResponse};
+use axum::{
+    http::StatusCode,
+    response::{IntoResponse, Response},
+    Json,
+};
 use std::fmt;
 
 use crate::response::ApiResponse;
@@ -29,6 +33,7 @@ pub enum ApiGatewayError {
     InternalError(String),
     DatabaseError(String),
     RedisError(String),
+    InfluxDb(String),
 
     // Config errors
     ConfigFetchError(String),
@@ -61,6 +66,7 @@ impl fmt::Display for ApiGatewayError {
             ApiGatewayError::InternalError(msg) => write!(f, "Internal error: {}", msg),
             ApiGatewayError::DatabaseError(msg) => write!(f, "Database error: {}", msg),
             ApiGatewayError::RedisError(msg) => write!(f, "Redis error: {}", msg),
+            ApiGatewayError::InfluxDb(msg) => write!(f, "InfluxDB error: {}", msg),
 
             ApiGatewayError::ConfigFetchError(msg) => write!(f, "Config fetch error: {}", msg),
             ApiGatewayError::ConfigParseError(msg) => write!(f, "Config parse error: {}", msg),
@@ -75,9 +81,9 @@ impl fmt::Display for ApiGatewayError {
     }
 }
 
-impl ResponseError for ApiGatewayError {
-    fn error_response(&self) -> HttpResponse {
-        let (status, code) = match self {
+impl IntoResponse for ApiGatewayError {
+    fn into_response(self) -> Response {
+        let (status, code) = match &self {
             ApiGatewayError::ServiceUnavailable(_) => {
                 (StatusCode::SERVICE_UNAVAILABLE, "SERVICE_UNAVAILABLE")
             }
@@ -102,6 +108,7 @@ impl ResponseError for ApiGatewayError {
                 (StatusCode::INTERNAL_SERVER_ERROR, "DATABASE_ERROR")
             }
             ApiGatewayError::RedisError(_) => (StatusCode::INTERNAL_SERVER_ERROR, "REDIS_ERROR"),
+            ApiGatewayError::InfluxDb(_) => (StatusCode::INTERNAL_SERVER_ERROR, "INFLUXDB_ERROR"),
 
             ApiGatewayError::ConfigFetchError(_) => {
                 (StatusCode::INTERNAL_SERVER_ERROR, "CONFIG_FETCH_ERROR")
@@ -123,26 +130,7 @@ impl ResponseError for ApiGatewayError {
 
         let response = ApiResponse::<()>::error(code, &self.to_string(), None);
 
-        HttpResponse::build(status).json(response)
-    }
-
-    fn status_code(&self) -> StatusCode {
-        match self {
-            ApiGatewayError::ServiceUnavailable(_) => StatusCode::SERVICE_UNAVAILABLE,
-            ApiGatewayError::ServiceTimeout(_) => StatusCode::GATEWAY_TIMEOUT,
-            ApiGatewayError::ServiceError(_) => StatusCode::BAD_GATEWAY,
-
-            ApiGatewayError::Unauthorized => StatusCode::UNAUTHORIZED,
-            ApiGatewayError::Forbidden => StatusCode::FORBIDDEN,
-            ApiGatewayError::InvalidToken(_) => StatusCode::UNAUTHORIZED,
-            ApiGatewayError::TokenExpired => StatusCode::UNAUTHORIZED,
-
-            ApiGatewayError::BadRequest(_) => StatusCode::BAD_REQUEST,
-            ApiGatewayError::NotFound(_) => StatusCode::NOT_FOUND,
-            ApiGatewayError::MethodNotAllowed => StatusCode::METHOD_NOT_ALLOWED,
-
-            _ => StatusCode::INTERNAL_SERVER_ERROR,
-        }
+        (status, Json(response)).into_response()
     }
 }
 
@@ -181,3 +169,17 @@ impl From<voltage_common::Error> for ApiGatewayError {
         }
     }
 }
+
+// Helper function to convert ApiResult to Response
+pub fn api_result_to_response<T>(result: ApiResult<T>) -> axum::response::Response
+where
+    T: IntoResponse,
+{
+    match result {
+        Ok(value) => value.into_response(),
+        Err(error) => error.into_response(),
+    }
+}
+
+// Removed orphan trait implementation for ApiResult<T>
+// Use api_result_to_response helper function instead

@@ -1,67 +1,63 @@
-use actix_web::{
-    dev::{forward_ready, Service, ServiceRequest, ServiceResponse, Transform},
-    error::ErrorUnauthorized,
+use axum::{
+    extract::Request,
     http::header,
-    Error, HttpMessage,
+    middleware::Next,
+    response::{IntoResponse, Response},
 };
-use actix_web_httpauth::extractors::bearer::BearerAuth;
-use futures::future::{ok, Ready};
-use futures::Future;
+use futures::future::BoxFuture;
 use log::debug;
-use std::pin::Pin;
-use std::rc::Rc;
+use std::task::{Context, Poll};
+use tower::{Layer, Service};
 
-use super::{check_permission, jwt::JwtManager, Permission};
+use super::{check_permission, jwt::JwtManager, Claims, Permission};
+use crate::error::ApiError;
 
-pub struct JwtAuthMiddleware;
+// JWT Authentication Layer
+pub fn jwt_auth_layer() -> JwtAuthLayer {
+    JwtAuthLayer
+}
 
-impl<S, B> Transform<S, ServiceRequest> for JwtAuthMiddleware
-where
-    S: Service<ServiceRequest, Response = ServiceResponse<B>, Error = Error> + 'static,
-    S::Future: 'static,
-    B: 'static,
-{
-    type Response = ServiceResponse<B>;
-    type Error = Error;
-    type InitError = ();
-    type Transform = JwtAuthMiddlewareService<S>;
-    type Future = Ready<Result<Self::Transform, Self::InitError>>;
+#[derive(Clone)]
+pub struct JwtAuthLayer;
 
-    fn new_transform(&self, service: S) -> Self::Future {
-        ok(JwtAuthMiddlewareService {
-            service: Rc::new(service),
-        })
+impl<S> Layer<S> for JwtAuthLayer {
+    type Service = JwtAuthMiddleware<S>;
+
+    fn layer(&self, inner: S) -> Self::Service {
+        JwtAuthMiddleware { inner }
     }
 }
 
-pub struct JwtAuthMiddlewareService<S> {
-    service: Rc<S>,
+#[derive(Clone)]
+pub struct JwtAuthMiddleware<S> {
+    inner: S,
 }
 
-impl<S, B> Service<ServiceRequest> for JwtAuthMiddlewareService<S>
+impl<S> Service<Request> for JwtAuthMiddleware<S>
 where
-    S: Service<ServiceRequest, Response = ServiceResponse<B>, Error = Error> + 'static,
-    S::Future: 'static,
-    B: 'static,
+    S: Service<Request, Response = Response> + Send + 'static + Clone,
+    S::Future: Send + 'static,
 {
-    type Response = ServiceResponse<B>;
-    type Error = Error;
-    type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>>>>;
+    type Response = S::Response;
+    type Error = S::Error;
+    type Future = BoxFuture<'static, Result<Self::Response, Self::Error>>;
 
-    forward_ready!(service);
+    fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        self.inner.poll_ready(cx)
+    }
 
-    fn call(&self, req: ServiceRequest) -> Self::Future {
-        let service = self.service.clone();
+    fn call(&mut self, mut request: Request) -> Self::Future {
+        let mut inner = self.inner.clone();
 
         Box::pin(async move {
             // Skip auth for health check endpoints
-            let path = req.path();
-            if path == "/health" || path.ends_with("/health") {
-                return service.call(req).await;
+            let path = request.uri().path();
+            if path == "/health" || path.starts_with("/health") {
+                return inner.call(request).await;
             }
 
             // Extract token from Authorization header
-            let auth_header = req.headers().get(header::AUTHORIZATION);
+            let auth_header = request.headers().get(header::AUTHORIZATION);
 
             if let Some(auth_value) = auth_header {
                 if let Ok(auth_str) = auth_value.to_str() {
@@ -71,8 +67,8 @@ where
                         match JwtManager::verify_token(token) {
                             Ok(claims) => {
                                 debug!("Token verified for user: {}", claims.username);
-                                req.extensions_mut().insert(claims);
-                                return service.call(req).await;
+                                request.extensions_mut().insert(claims);
+                                return inner.call(request).await;
                             }
                             Err(e) => {
                                 debug!("Token verification failed: {}", e);
@@ -82,88 +78,72 @@ where
                 }
             }
 
-            Err(ErrorUnauthorized("Invalid or missing authentication token"))
-        })
-    }
-}
-
-pub struct RequirePermission {
-    permission: Permission,
-}
-
-impl RequirePermission {
-    pub fn new(permission: Permission) -> Self {
-        Self { permission }
-    }
-}
-
-impl<S, B> Transform<S, ServiceRequest> for RequirePermission
-where
-    S: Service<ServiceRequest, Response = ServiceResponse<B>, Error = Error> + 'static,
-    S::Future: 'static,
-    B: 'static,
-{
-    type Response = ServiceResponse<B>;
-    type Error = Error;
-    type InitError = ();
-    type Transform = RequirePermissionService<S>;
-    type Future = Ready<Result<Self::Transform, Self::InitError>>;
-
-    fn new_transform(&self, service: S) -> Self::Future {
-        ok(RequirePermissionService {
-            service: Rc::new(service),
-            permission: self.permission.clone(),
-        })
-    }
-}
-
-pub struct RequirePermissionService<S> {
-    service: Rc<S>,
-    permission: Permission,
-}
-
-impl<S, B> Service<ServiceRequest> for RequirePermissionService<S>
-where
-    S: Service<ServiceRequest, Response = ServiceResponse<B>, Error = Error> + 'static,
-    S::Future: 'static,
-    B: 'static,
-{
-    type Response = ServiceResponse<B>;
-    type Error = Error;
-    type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>>>>;
-
-    forward_ready!(service);
-
-    fn call(&self, req: ServiceRequest) -> Self::Future {
-        let service = self.service.clone();
-        let required_permission = self.permission.clone();
-
-        Box::pin(async move {
-            // Get claims from request extensions
-            let has_permission = req
-                .extensions()
-                .get::<super::Claims>()
-                .map(|claims| check_permission(&claims.roles, required_permission))
-                .unwrap_or(false);
-
-            if has_permission {
-                service.call(req).await
-            } else {
-                Err(ErrorUnauthorized("Insufficient permissions"))
+            // Try to extract token from query parameters
+            if let Some(query) = request.uri().query() {
+                for param in query.split('&') {
+                    if let Some(token) = param.strip_prefix("token=") {
+                        match JwtManager::verify_token(token) {
+                            Ok(claims) => {
+                                debug!("Token verified for user (from query): {}", claims.username);
+                                request.extensions_mut().insert(claims);
+                                return inner.call(request).await;
+                            }
+                            Err(e) => {
+                                debug!("Token verification failed (from query): {}", e);
+                            }
+                        }
+                    }
+                }
             }
+
+            // Try to extract token from Cookie header
+            if let Some(cookie_header) = request.headers().get(header::COOKIE) {
+                if let Ok(cookie_str) = cookie_header.to_str() {
+                    for cookie in cookie_str.split(';') {
+                        let cookie = cookie.trim();
+                        if let Some(token) = cookie.strip_prefix("token=") {
+                            match JwtManager::verify_token(token) {
+                                Ok(claims) => {
+                                    debug!("Token verified for user (from cookie): {}", claims.username);
+                                    request.extensions_mut().insert(claims);
+                                    return inner.call(request).await;
+                                }
+                                Err(e) => {
+                                    debug!("Token verification failed (from cookie): {}", e);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Return unauthorized error
+            Ok(ApiError::Unauthorized.into_response())
         })
     }
 }
 
-pub async fn bearer_auth_validator(
-    req: ServiceRequest,
-    credentials: BearerAuth,
-) -> Result<ServiceRequest, (Error, ServiceRequest)> {
-    match JwtManager::verify_token(credentials.token()) {
-        Ok(claims) => {
-            req.extensions_mut().insert(claims);
-            Ok(req)
-        }
-        Err(_) => Err((ErrorUnauthorized("Invalid token"), req)),
+// Permission middleware function
+pub async fn require_permission(
+    permission: Permission,
+    request: Request,
+    next: Next,
+) -> Result<Response, ApiError> {
+    // Get claims from request extensions
+    let has_permission = request
+        .extensions()
+        .get::<Claims>()
+        .map(|claims| check_permission(&claims.roles, permission))
+        .unwrap_or(false);
+
+    if has_permission {
+        Ok(next.run(request).await)
+    } else {
+        Err(ApiError::Forbidden)
     }
+}
+
+// Helper function to extract claims from request
+pub fn extract_claims(request: &Request) -> Option<&Claims> {
+    request.extensions().get::<Claims>()
 }

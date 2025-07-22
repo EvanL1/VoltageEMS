@@ -8,16 +8,24 @@ edition = "2021"
 voltage-libs = { path = "../../libs", features = ["redis"] }
 
 # Web framework
-actix-web = "4"
-actix-cors = "0.6"
-actix-web-httpauth = "0.8"
-actix-web-actors = "4.2"
-actix = "0.13"
+axum = { workspace = true, features = ["ws"] }
+tower = { workspace = true }
+tower-http = { version = "0.5", features = ["cors", "trace", "auth"] }
+tower-layer = "0.3"
+tower-service = "0.3"
+http = "1"
+http-body-util = "0.1"
+bytes = "1.9"
+
+# WebSocket support
+tokio-tungstenite = "0.21"
+tungstenite = "0.21"
 
 # Async runtime
 tokio = { workspace = true }
 futures = { workspace = true }
 tokio-stream = "0.1"
+futures-util = "0.3"
 
 # Serialization
 serde = { workspace = true }
@@ -32,15 +40,26 @@ tracing = { workspace = true }
 # HTTP client
 reqwest = { workspace = true }
 
+# InfluxDB client
+influxdb = "0.7"
+
 # Authentication
 jsonwebtoken = "9"
 
 # Configuration
 config = { workspace = true }
 
+# Async traits and error handling
+async-trait = "0.1"
+thiserror = "1.0"
+
 # Logging (will be migrated to voltage-common logging)
 env_logger = "0.10"
 log = "0.4"
 
+# Random number generation
+rand = "0.8"
+
 [dev-dependencies]
-actix-rt = "2"
+anyhow = "1"
+sysinfo = "0.30"

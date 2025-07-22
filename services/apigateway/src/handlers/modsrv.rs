@@ -1,36 +1,15 @@
-use actix_web::{web, HttpRequest, HttpResponse};
-use std::sync::Arc;
+use axum::{extract::State, routing::any, Router};
 
-use crate::config::Config;
-use crate::error::ApiResult;
-use crate::handlers::proxy_request;
+use crate::AppState;
+use crate::handlers::handle_proxy;
 
-#[actix_web::route(
-    "{path:.*}",
-    method = "GET",
-    method = "POST",
-    method = "PUT",
-    method = "DELETE",
-    method = "PATCH"
-)]
-pub async fn proxy_handler(
-    req: HttpRequest,
-    path: web::Path<String>,
-    body: web::Bytes,
-    config: web::Data<Config>,
-    client: web::Data<Arc<reqwest::Client>>,
-) -> ApiResult<HttpResponse> {
-    let method = req.method().as_str();
-    let path_str = format!("/{}", path.as_str());
+/// Create routes for modsrv proxy
+pub fn proxy_routes() -> Router<AppState> {
+    Router::new()
+        .fallback(any(proxy_handler))
+}
 
-    proxy_request(
-        "modsrv",
-        &path_str,
-        method,
-        &req,
-        Some(body),
-        &config,
-        &client,
-    )
-    .await
+#[axum::debug_handler]
+async fn proxy_handler(state: State<AppState>, req: axum::extract::Request) -> axum::response::Response {
+    handle_proxy("modsrv", req, state).await
 }

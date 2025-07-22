@@ -225,3 +225,6 @@ pub mod device_model;
 
 // Re-export commonly used types for convenience
 pub use error::{ModelSrvError, Result};
+
+#[cfg(test)]
+mod test_basic;

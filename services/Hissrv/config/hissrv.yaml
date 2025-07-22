@@ -1,0 +1,45 @@
+# HisSrv 主配置文件
+
+# 服务配置
+service:
+  name: "hissrv"
+  version: "0.2.0"
+  port: 8080
+  host: "0.0.0.0"
+
+# Redis 配置
+redis:
+  connection:
+    host: "127.0.0.1"
+    port: 6379
+    database: 0
+    timeout_seconds: 5
+    # password: "your_redis_password"  # 如果 Redis 需要密码
+  
+  subscription:
+    # 订阅模式 - 监听所有测量和信号数据
+    patterns:
+      - "*:m:*"  # 测量数据
+      - "*:s:*"  # 信号数据
+    
+    # 可选：只监听特定通道（如果不指定则监听所有通道）
+    # channel_ids: [1001, 1002, 2001]
+
+# InfluxDB 配置
+influxdb:
+  enabled: true
+  url: "http://localhost:8086"
+  database: "hissrv_data"
+  # token: "your_influxdb_token"      # InfluxDB 认证令牌
+  # organization: "your_org"          # InfluxDB 组织名
+  batch_size: 1000
+  flush_interval_seconds: 10
+
+# 日志配置
+logging:
+  level: "info"
+  format: "text"
+  # file: "logs/hissrv.log"  # 可选：日志文件路径
+
+# 注意：点位配置在单独的 points.yaml 文件中
+# 路径可以通过环境变量 HISSRV_POINTS_CONFIG 指定
