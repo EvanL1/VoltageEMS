@@ -271,7 +271,12 @@ pub struct MonitorKey {
 
 /// 生成监视值Redis键
 pub fn make_monitor_key(model_id: &str, monitor_type: &MonitorType, point_id: u32) -> String {
-    format!("mod:{}:{}:{}", model_id, monitor_type.to_redis(), point_id)
+    format!(
+        "modsrv:{}:{}:{}",
+        model_id,
+        monitor_type.to_redis(),
+        point_id
+    )
 }
 
 /// 生成控制命令Redis键
@@ -286,7 +291,7 @@ pub fn make_control_list_key(model_id: &str) -> String {
 
 /// 生成模型输出Redis键
 pub fn make_model_output_key(model_id: &str) -> String {
-    format!("mod:out:{}", model_id)
+    format!("modsrv:{}:output", model_id)
 }
 
 #[cfg(test)]
@@ -326,7 +331,7 @@ mod tests {
     fn test_make_keys() {
         assert_eq!(
             make_monitor_key("model_123", &MonitorType::Measurement, 10001),
-            "mod:model_123:mv:m:10001"
+            "modsrv:model_123:mv:m:10001"
         );
         assert_eq!(make_control_key("cmd_123"), "cmd:cmd_123");
     }

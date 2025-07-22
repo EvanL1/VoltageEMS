@@ -68,7 +68,7 @@ fn default_channel_ids() -> Option<Vec<u32>> {
 impl Default for RedisSubscriptionConfig {
     fn default() -> Self {
         Self {
-            patterns: vec!["*:m:*".to_string(), "*:s:*".to_string()], // 默认监控测量和信号数据
+            patterns: vec!["comsrv:*".to_string()], // 订阅所有comsrv数据
             channel_ids: None,
         }
     }

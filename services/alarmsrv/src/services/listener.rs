@@ -15,7 +15,7 @@ pub async fn start_redis_listener(state: AppState) -> Result<()> {
 
     tokio::spawn(async move {
         loop {
-            match client.subscribe(&["ems:data:*"]).await {
+            match client.subscribe(&["comsrv:*"]).await {
                 Ok(pubsub) => {
                     info!("Redis connection successful, starting to listen for data...");
 

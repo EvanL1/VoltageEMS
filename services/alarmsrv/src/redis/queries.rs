@@ -74,7 +74,7 @@ impl AlarmQueryService {
 
             // Fetch alarm data
             for alarm_id in limited_ids {
-                let alarm_key = format!("ems:alarms:{}", alarm_id);
+                let alarm_key = format!("alarmsrv:{}", alarm_id);
                 if let Ok(alarm_data) = conn
                     .get_connection_mut()
                     .hget::<_, _, String>(&alarm_key, "data")
@@ -113,7 +113,7 @@ impl AlarmQueryService {
         if let Some(conn) = client_guard.as_mut() {
             // Fetch all alarm data for filtering
             for alarm_id in alarm_ids {
-                let alarm_key = format!("ems:alarms:{}", alarm_id);
+                let alarm_key = format!("alarmsrv:{}", alarm_id);
                 if let Ok(alarm_data) = conn
                     .get_connection_mut()
                     .hget::<_, _, String>(&alarm_key, "data")
@@ -181,7 +181,7 @@ impl AlarmQueryService {
 
         if let Some(conn) = client_guard.as_mut() {
             for alarm_id in alarm_ids {
-                let alarm_key = format!("ems:alarms:{}", alarm_id);
+                let alarm_key = format!("alarmsrv:{}", alarm_id);
                 if let Ok(alarm_data) = conn
                     .get_connection_mut()
                     .hget::<_, _, String>(&alarm_key, "data")
@@ -207,7 +207,7 @@ impl AlarmQueryService {
         let mut alarms = Vec::new();
 
         if let Some(conn) = client_guard.as_mut() {
-            let realtime_key = "ems:alarms:realtime";
+            let realtime_key = "alarmsrv:realtime";
             let all_fields: HashMap<String, String> =
                 conn.get_connection_mut().hgetall(&realtime_key).await?;
 
@@ -240,7 +240,7 @@ impl AlarmQueryService {
             // Fetch full alarm data for the selected items
             for (_, data) in alarm_data {
                 if let Some(id) = data["id"].as_str() {
-                    let alarm_key = format!("ems:alarms:{}", id);
+                    let alarm_key = format!("alarmsrv:{}", id);
                     if let Ok(alarm_json) = conn
                         .get_connection_mut()
                         .hget::<_, _, String>(&alarm_key, "data")
@@ -279,14 +279,14 @@ impl AlarmQueryService {
 
             // Query each bucket
             for bucket in buckets {
-                let bucket_index_key = format!("ems:alarms:buckets:{}", bucket);
+                let bucket_index_key = format!("alarmsrv:buckets:{}", bucket);
                 if let Ok(alarm_ids) = conn
                     .get_connection_mut()
                     .smembers::<_, Vec<String>>(&bucket_index_key)
                     .await
                 {
                     for alarm_id in alarm_ids {
-                        let alarm_key = format!("ems:alarms:shard:{}:{}", bucket, alarm_id);
+                        let alarm_key = format!("alarmsrv:shard:{}:{}", bucket, alarm_id);
                         if let Ok(alarm_json) = conn
                             .get_connection_mut()
                             .hget::<_, _, String>(&alarm_key, "data")

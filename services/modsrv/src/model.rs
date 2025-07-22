@@ -202,7 +202,7 @@ impl ModelEngine {
 
         let output_key = model_hash
             .get("output_key")
-            .unwrap_or(&format!("ems:model:output:{}", id))
+            .unwrap_or(&format!("modsrv:{}:output", id))
             .to_string();
 
         let enabled = model_hash

@@ -101,7 +101,7 @@ impl PointStorage for Storage {
         point_id: u32,
         value: f64,
     ) -> Result<()> {
-        let key = format!("{}:{}:{}", channel_id, point_type, point_id);
+        let key = format!("comsrv:{}:{}:{}", channel_id, point_type, point_id);
         let data = PointData::new(value);
 
         let mut client = self.get_client().await?;
@@ -121,7 +121,7 @@ impl PointStorage for Storage {
         value: f64,
         raw_value: Option<f64>,
     ) -> Result<()> {
-        let key = format!("{}:{}:{}", channel_id, point_type, point_id);
+        let key = format!("comsrv:{}:{}:{}", channel_id, point_type, point_id);
         let data = PointData::new(value);
 
         let mut client = self.get_client().await?;
@@ -192,7 +192,7 @@ impl PointStorage for Storage {
         point_type: &str,
         point_id: u32,
     ) -> Result<Option<PointData>> {
-        let key = format!("{}:{}:{}", channel_id, point_type, point_id);
+        let key = format!("comsrv:{}:{}:{}", channel_id, point_type, point_id);
 
         let mut client = self.get_client().await?;
         let data: Option<String> = client
@@ -240,7 +240,7 @@ impl PointStorage for Storage {
         channel_id: u16,
         point_type: &str,
     ) -> Result<Vec<(u32, PointData)>> {
-        let pattern = format!("{}:{}:*", channel_id, point_type);
+        let pattern = format!("comsrv:{}:{}:*", channel_id, point_type);
 
         let mut client = self.get_client().await?;
 
@@ -264,8 +264,8 @@ impl PointStorage for Storage {
         let mut results = Vec::new();
         for (key, value) in keys.iter().zip(values.iter()) {
             if let Some(value_str) = value {
-                // 从键中提取点位ID
-                if let Some(point_id_str) = key.split(':').nth(2) {
+                // 从键中提取点位ID (格式: comsrv:channelID:type:pointID)
+                if let Some(point_id_str) = key.split(':').nth(3) {
                     if let Ok(point_id) = point_id_str.parse::<u32>() {
                         if let Ok(data) = PointData::from_redis(value_str) {
                             results.push((point_id, data));

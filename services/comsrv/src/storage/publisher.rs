@@ -108,7 +108,10 @@ impl Publisher {
 
         for update in buffer.iter() {
             // 发布到通道
-            let channel = format!("data:{}:{}", update.channel_id, update.point_type);
+            let channel = format!(
+                "comsrv:{}:{}:{}",
+                update.channel_id, update.point_type, update.point_id
+            );
             let message = serde_json::json!({
                 "point_id": update.point_id,
                 "value": update.data.value,

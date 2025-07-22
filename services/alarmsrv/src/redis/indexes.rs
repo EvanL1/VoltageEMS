@@ -23,31 +23,31 @@ impl AlarmIndexManager {
     pub async fn add_to_indexes(&self, conn: &mut RedisClient, alarm: &Alarm) -> Result<()> {
         // Add to category index
         // For now, just store all alarms in a general category
-        let category_key = "ems:alarms:category:general".to_string();
+        let category_key = "alarmsrv:category:general".to_string();
         conn.get_connection_mut()
             .sadd(&category_key, &alarm.id.to_string())
             .await?;
 
         // Add to level index
-        let level_key = format!("ems:alarms:level:{:?}", alarm.level);
+        let level_key = format!("alarmsrv:level:{:?}", alarm.level);
         conn.get_connection_mut()
             .sadd(&level_key, &alarm.id.to_string())
             .await?;
 
         // Add to status index
-        let status_key = format!("ems:alarms:status:{:?}", alarm.status);
+        let status_key = format!("alarmsrv:status:{:?}", alarm.status);
         conn.get_connection_mut()
             .sadd(&status_key, &alarm.id.to_string())
             .await?;
 
         // Add to time-based index
-        let date_key = format!("ems:alarms:date:{}", alarm.created_at.format("%Y-%m-%d"));
+        let date_key = format!("alarmsrv:date:{}", alarm.created_at.format("%Y-%m-%d"));
         conn.get_connection_mut()
             .sadd(&date_key, &alarm.id.to_string())
             .await?;
 
         // Add to realtime hash for quick access
-        let realtime_key = "ems:alarms:realtime";
+        let realtime_key = "alarmsrv:realtime";
         let realtime_field = format!("{}:{}", "default", alarm.id); // channel:id
         let realtime_data = serde_json::json!({
             "id": alarm.id,
@@ -61,7 +61,7 @@ impl AlarmIndexManager {
 
         // Add to hourly bucket for time-based queries
         let bucket = alarm.created_at.format("%Y%m%d%H").to_string();
-        let bucket_index_key = format!("ems:alarms:buckets:{}", bucket);
+        let bucket_index_key = format!("alarmsrv:buckets:{}", bucket);
         conn.get_connection_mut()
             .sadd(&bucket_index_key, &alarm.id.to_string())
             .await?;
@@ -81,17 +81,17 @@ impl AlarmIndexManager {
 
         if let Some(conn) = client_guard.as_mut() {
             if let Some(cat) = category {
-                let category_key = format!("ems:alarms:category:{}", cat);
+                let category_key = format!("alarmsrv:category:{}", cat);
                 alarm_ids = conn.get_connection_mut().smembers(&category_key).await?;
             } else if let Some(lvl) = level {
-                let level_key = format!("ems:alarms:level:{:?}", lvl);
+                let level_key = format!("alarmsrv:level:{:?}", lvl);
                 alarm_ids = conn.get_connection_mut().smembers(&level_key).await?;
             } else if let Some(stat) = status {
-                let status_key = format!("ems:alarms:status:{:?}", stat);
+                let status_key = format!("alarmsrv:status:{:?}", stat);
                 alarm_ids = conn.get_connection_mut().smembers(&status_key).await?;
             } else {
                 // Get all alarm IDs
-                let pattern = "ems:alarms:*";
+                let pattern = "alarmsrv:*";
                 let keys: Vec<String> = conn.keys(pattern).await?;
                 alarm_ids = keys
                     .into_iter()
@@ -105,7 +105,7 @@ impl AlarmIndexManager {
                             && !k.contains(":realtime")
                             && !k.contains(":handled:")
                     })
-                    .map(|k| k.replace("ems:alarms:", ""))
+                    .map(|k| k.replace("alarmsrv:", ""))
                     .collect();
             }
         }
@@ -119,7 +119,7 @@ impl AlarmIndexManager {
         let mut alarm_ids = Vec::new();
 
         if let Some(conn) = client_guard.as_mut() {
-            let unclassified_key = "ems:alarms:category:unclassified";
+            let unclassified_key = "alarmsrv:category:unclassified";
             alarm_ids = conn
                 .get_connection_mut()
                 .smembers(&unclassified_key)
@@ -137,10 +137,10 @@ impl AlarmIndexManager {
     ) -> Result<()> {
         // Remove from all possible indexes
         let patterns = vec![
-            "ems:alarms:category:*",
-            "ems:alarms:level:*",
-            "ems:alarms:status:*",
-            "ems:alarms:date:*",
+            "alarmsrv:category:*",
+            "alarmsrv:level:*",
+            "alarmsrv:status:*",
+            "alarmsrv:date:*",
         ];
 
         for pattern in patterns {
@@ -151,7 +151,7 @@ impl AlarmIndexManager {
         }
 
         // Remove from realtime hash
-        let realtime_key = "ems:alarms:realtime";
+        let realtime_key = "alarmsrv:realtime";
         let all_fields: HashMap<String, String> =
             conn.get_connection_mut().hgetall(&realtime_key).await?;
 

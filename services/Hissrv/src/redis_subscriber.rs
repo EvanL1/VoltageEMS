@@ -39,10 +39,11 @@ pub enum MessageType {
 impl MessageType {
     /// 从通道名称解析消息类型
     pub fn from_channel(channel: &str) -> Option<Self> {
-        // 新的扁平化格式: {channelID}:{type}:{pointID}
         let parts: Vec<&str> = channel.split(':').collect();
-        if parts.len() >= 2 {
-            match parts[1] {
+        
+        // 新的统一格式: comsrv:{channelID}:{type}:{pointID}
+        if parts.len() >= 4 && parts[0] == "comsrv" {
+            match parts[2] {
                 "m" => Some(MessageType::Telemetry),     // 测量(YC)
                 "s" => Some(MessageType::Signal),        // 信号(YX)
                 "c" => Some(MessageType::Control),       // 控制(YK)
@@ -71,12 +72,13 @@ pub struct ChannelInfo {
 impl ChannelInfo {
     /// 从通道名称解析通道信息
     pub fn from_channel(channel: &str) -> Option<Self> {
-        // 新的扁平化格式: {channelID}:{type}:{pointID}
         let parts: Vec<&str> = channel.split(':').collect();
-        if parts.len() == 3 {
-            let channel_id = parts[0].parse::<u32>().ok()?;
+        
+        // 新的统一格式: comsrv:{channelID}:{type}:{pointID}
+        if parts.len() == 4 && parts[0] == "comsrv" {
+            let channel_id = parts[1].parse::<u32>().ok()?;
             let message_type = MessageType::from_channel(channel)?;
-            let point_id = parts[2].parse::<u32>().ok()?;
+            let point_id = parts[3].parse::<u32>().ok()?;
 
             Some(ChannelInfo {
                 channel_id,
@@ -571,19 +573,19 @@ mod tests {
     #[test]
     fn test_message_type_from_channel() {
         assert!(matches!(
-            MessageType::from_channel("1001:m:10001"),
+            MessageType::from_channel("comsrv:1001:m:10001"),
             Some(MessageType::Telemetry)
         ));
         assert!(matches!(
-            MessageType::from_channel("1001:s:20001"),
+            MessageType::from_channel("comsrv:1001:s:20001"),
             Some(MessageType::Signal)
         ));
         assert!(matches!(
-            MessageType::from_channel("1001:c:30001"),
+            MessageType::from_channel("comsrv:1001:c:30001"),
             Some(MessageType::Control)
         ));
         assert!(matches!(
-            MessageType::from_channel("1001:a:40001"),
+            MessageType::from_channel("comsrv:1001:a:40001"),
             Some(MessageType::Adjustment)
         ));
         assert!(matches!(
@@ -598,12 +600,13 @@ mod tests {
 
     #[test]
     fn test_channel_info_parsing() {
-        let info = ChannelInfo::from_channel("1001:m:10001").unwrap();
+        let info = ChannelInfo::from_channel("comsrv:1001:m:10001").unwrap();
         assert_eq!(info.channel_id, 1001);
         assert!(matches!(info.message_type, MessageType::Telemetry));
         assert_eq!(info.point_id, 10001);
 
         assert!(ChannelInfo::from_channel("invalid").is_none());
-        assert!(ChannelInfo::from_channel("1001:x:10001").is_none());
+        assert!(ChannelInfo::from_channel("comsrv:1001:x:10001").is_none());
+        assert!(ChannelInfo::from_channel("1001:m:10001").is_none()); // 旧格式应该失败
     }
 }

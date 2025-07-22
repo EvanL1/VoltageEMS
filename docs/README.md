@@ -3,7 +3,7 @@
 ## 系统架构文档
 
 - [系统架构概述](architecture/system-architecture.md) - VoltageEMS 整体架构设计
-- [Redis 存储架构](architecture/redis-storage-architecture.md) - 扁平化键值存储设计
+- [Redis 数据结构规范](architecture/redis-data-structures.md) - Redis键格式和数据结构规范
 - [数据流架构](architecture/data-flow-architecture.md) - 实时数据流处理架构
 
 ## 服务文档

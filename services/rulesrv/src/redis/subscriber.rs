@@ -100,17 +100,17 @@ impl RedisSubscriber {
     async fn subscribe_default_channels(&self, pubsub: &mut PubSub) -> Result<()> {
         // 使用模式订阅来支持通配符
         // 订阅 modsrv 模型输出
-        pubsub.psubscribe("modsrv:outputs:*").await?;
+        pubsub.psubscribe("modsrv:*").await?;
 
         // 订阅告警事件
-        pubsub.psubscribe("alarm:event:*").await?;
+        pubsub.psubscribe("alarmsrv:*").await?;
 
         info!("Subscribed to default channels");
 
         // 更新订阅记录
         let mut subs = self.subscriptions.write().await;
-        subs.insert("modsrv".to_string(), vec!["modsrv:outputs:*".to_string()]);
-        subs.insert("alarm".to_string(), vec!["alarm:event:*".to_string()]);
+        subs.insert("modsrv".to_string(), vec!["modsrv:*".to_string()]);
+        subs.insert("alarm".to_string(), vec!["alarmsrv:*".to_string()]);
 
         Ok(())
     }
