@@ -13,15 +13,15 @@ mod tests {
         // 测试基本的数据结构创建
         let mut data = HashMap::new();
         data.insert("test_key".to_string(), "test_value".to_string());
-        
+
         assert_eq!(data.get("test_key"), Some(&"test_value".to_string()));
-        
+
         // 测试基本的JSON序列化
         let json_data = serde_json::json!({
             "status": "success",
             "message": "Test passed"
         });
-        
+
         assert_eq!(json_data["status"], "success");
         assert_eq!(json_data["message"], "Test passed");
     }
@@ -31,11 +31,11 @@ mod tests {
         // 测试Redis键格式验证
         let valid_keys = vec![
             "1001:m:10001",
-            "1002:s:20001", 
+            "1002:s:20001",
             "1003:c:30001",
             "1004:a:40001",
         ];
-        
+
         for key in valid_keys {
             let parts: Vec<&str> = key.split(':').collect();
             assert_eq!(parts.len(), 3);
@@ -50,12 +50,12 @@ mod tests {
         // 测试comsrv数据格式解析
         let test_data = "25.6:1234567890";
         let parts: Vec<&str> = test_data.split(':').collect();
-        
+
         assert_eq!(parts.len(), 2);
-        
+
         let value = parts[0].parse::<f64>().unwrap();
         let timestamp = parts[1].parse::<i64>().unwrap();
-        
+
         assert_eq!(value, 25.6);
         assert_eq!(timestamp, 1234567890);
     }
@@ -67,13 +67,13 @@ mod tests {
         let point_type = "c";
         let point_id = 30001u32;
         let value = 1.0f64;
-        
+
         // 验证基本数据类型
         assert!(channel_id > 0);
         assert!(point_type == "c" || point_type == "a");
         assert!(point_id > 0);
         assert!(value.is_finite());
-        
+
         // 测试Redis键生成
         let redis_key = format!("{}:{}:{}", channel_id, point_type, point_id);
         assert_eq!(redis_key, "1001:c:30001");

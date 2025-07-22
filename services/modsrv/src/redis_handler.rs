@@ -293,9 +293,9 @@ impl RedisHandler {
     /// Scan keys by pattern
     pub async fn scan_keys(&self, pattern: &str) -> Result<Vec<String>> {
         let conn = self.connection.write().await;
-        conn.client
-            .keys(pattern)
-            .map_err(|e| ModelSrvError::RedisError(format!("Failed to scan keys {}: {}", pattern, e)))
+        conn.client.keys(pattern).map_err(|e| {
+            ModelSrvError::RedisError(format!("Failed to scan keys {}: {}", pattern, e))
+        })
     }
 
     /// Publish a message to a channel

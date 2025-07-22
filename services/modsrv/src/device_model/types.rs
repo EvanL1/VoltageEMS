@@ -2,9 +2,9 @@
 //!
 //! 提供设备模型相关的类型和工具函数
 
+use crate::comsrv_interface::ControlCommand;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use crate::comsrv_interface::ControlCommand;
 
 /// 设备实例状态
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -154,16 +154,21 @@ impl crate::device_model::DataType {
                 .as_i64()
                 .map(|v| v >= i32::MIN as i64 && v <= i32::MAX as i64)
                 .unwrap_or(false),
-            (crate::device_model::DataType::Int64, serde_json::Value::Number(n)) => n.as_i64().is_some(),
-            (crate::device_model::DataType::Float32 | crate::device_model::DataType::Float64, serde_json::Value::Number(_)) => {
-                true
+            (crate::device_model::DataType::Int64, serde_json::Value::Number(n)) => {
+                n.as_i64().is_some()
             }
+            (
+                crate::device_model::DataType::Float32 | crate::device_model::DataType::Float64,
+                serde_json::Value::Number(_),
+            ) => true,
             (crate::device_model::DataType::String, serde_json::Value::String(_)) => true,
             (crate::device_model::DataType::Array(inner), serde_json::Value::Array(arr)) => {
                 arr.iter().all(|v| inner.validate_value(v))
             }
             (crate::device_model::DataType::Object, serde_json::Value::Object(_)) => true,
-            (crate::device_model::DataType::Timestamp, serde_json::Value::Number(n)) => n.as_i64().is_some(),
+            (crate::device_model::DataType::Timestamp, serde_json::Value::Number(n)) => {
+                n.as_i64().is_some()
+            }
             (crate::device_model::DataType::Binary, serde_json::Value::String(s)) => {
                 // 检查是否是有效的base64编码
                 use base64::Engine;
@@ -177,13 +182,17 @@ impl crate::device_model::DataType {
     pub fn default_value(&self) -> serde_json::Value {
         match self {
             crate::device_model::DataType::Bool => serde_json::Value::Bool(false),
-            crate::device_model::DataType::Int32 | crate::device_model::DataType::Int64 => serde_json::Value::Number(0.into()),
+            crate::device_model::DataType::Int32 | crate::device_model::DataType::Int64 => {
+                serde_json::Value::Number(0.into())
+            }
             crate::device_model::DataType::Float32 | crate::device_model::DataType::Float64 => {
                 serde_json::Value::Number(serde_json::Number::from_f64(0.0).unwrap())
             }
             crate::device_model::DataType::String => serde_json::Value::String(String::new()),
             crate::device_model::DataType::Array(_) => serde_json::Value::Array(vec![]),
-            crate::device_model::DataType::Object => serde_json::Value::Object(serde_json::Map::new()),
+            crate::device_model::DataType::Object => {
+                serde_json::Value::Object(serde_json::Map::new())
+            }
             crate::device_model::DataType::Timestamp => serde_json::Value::Number(0.into()),
             crate::device_model::DataType::Binary => serde_json::Value::String(String::new()),
         }
@@ -291,26 +300,36 @@ impl CommandTransformer {
             }
             "change_speed" => {
                 // 变速需要从参数中提取目标速度
-                request.params.get("target_speed")
+                request
+                    .params
+                    .get("target_speed")
                     .and_then(|v| v.as_f64())
                     .ok_or_else(|| "Missing or invalid target_speed parameter".to_string())
             }
             "set_position" => {
                 // 位置设定需要从参数中提取目标位置
-                request.params.get("target_position")
+                request
+                    .params
+                    .get("target_position")
                     .and_then(|v| v.as_f64())
                     .ok_or_else(|| "Missing or invalid target_position parameter".to_string())
             }
             _ => {
                 // 通用参数提取：尝试从参数中提取"value"字段
-                request.params.get("value")
+                request
+                    .params
+                    .get("value")
                     .and_then(|v| v.as_f64())
                     .or_else(|| {
                         // 如果没有value字段，尝试从默认值获取
-                        mapping.default_values.get("value")
-                            .and_then(|v| v.as_f64())
+                        mapping.default_values.get("value").and_then(|v| v.as_f64())
                     })
-                    .ok_or_else(|| format!("Unable to extract control value for command '{}'", request.command))
+                    .ok_or_else(|| {
+                        format!(
+                            "Unable to extract control value for command '{}'",
+                            request.command
+                        )
+                    })
             }
         }
     }
@@ -320,44 +339,64 @@ impl CommandTransformer {
         let mut mappings = HashMap::new();
 
         // 电机启动命令
-        mappings.insert("start_motor".to_string(), CommandMapping {
-            command_name: "start_motor".to_string(),
-            channel_id: 1001,
-            point_type: "c".to_string(),
-            point_id: 30001,
-            parameter_mapping: HashMap::new(),
-            default_values: [("value".to_string(), serde_json::json!(1.0))].into_iter().collect(),
-        });
+        mappings.insert(
+            "start_motor".to_string(),
+            CommandMapping {
+                command_name: "start_motor".to_string(),
+                channel_id: 1001,
+                point_type: "c".to_string(),
+                point_id: 30001,
+                parameter_mapping: HashMap::new(),
+                default_values: [("value".to_string(), serde_json::json!(1.0))]
+                    .into_iter()
+                    .collect(),
+            },
+        );
 
         // 电机停止命令
-        mappings.insert("stop_motor".to_string(), CommandMapping {
-            command_name: "stop_motor".to_string(),
-            channel_id: 1001,
-            point_type: "c".to_string(),
-            point_id: 30001,
-            parameter_mapping: HashMap::new(),
-            default_values: [("value".to_string(), serde_json::json!(0.0))].into_iter().collect(),
-        });
+        mappings.insert(
+            "stop_motor".to_string(),
+            CommandMapping {
+                command_name: "stop_motor".to_string(),
+                channel_id: 1001,
+                point_type: "c".to_string(),
+                point_id: 30001,
+                parameter_mapping: HashMap::new(),
+                default_values: [("value".to_string(), serde_json::json!(0.0))]
+                    .into_iter()
+                    .collect(),
+            },
+        );
 
         // 速度调节命令
-        mappings.insert("change_speed".to_string(), CommandMapping {
-            command_name: "change_speed".to_string(),
-            channel_id: 1001,
-            point_type: "a".to_string(),
-            point_id: 30002,
-            parameter_mapping: [("target_speed".to_string(), "value".to_string())].into_iter().collect(),
-            default_values: HashMap::new(),
-        });
+        mappings.insert(
+            "change_speed".to_string(),
+            CommandMapping {
+                command_name: "change_speed".to_string(),
+                channel_id: 1001,
+                point_type: "a".to_string(),
+                point_id: 30002,
+                parameter_mapping: [("target_speed".to_string(), "value".to_string())]
+                    .into_iter()
+                    .collect(),
+                default_values: HashMap::new(),
+            },
+        );
 
         // 位置设定命令
-        mappings.insert("set_position".to_string(), CommandMapping {
-            command_name: "set_position".to_string(),
-            channel_id: 1001,
-            point_type: "a".to_string(),
-            point_id: 30003,
-            parameter_mapping: [("target_position".to_string(), "value".to_string())].into_iter().collect(),
-            default_values: HashMap::new(),
-        });
+        mappings.insert(
+            "set_position".to_string(),
+            CommandMapping {
+                command_name: "set_position".to_string(),
+                channel_id: 1001,
+                point_type: "a".to_string(),
+                point_id: 30003,
+                parameter_mapping: [("target_position".to_string(), "value".to_string())]
+                    .into_iter()
+                    .collect(),
+                default_values: HashMap::new(),
+            },
+        );
 
         mappings
     }
@@ -372,13 +411,17 @@ impl CommandTransformer {
 
         for request in requests {
             match mappings.get(&request.command) {
-                Some(mapping) => {
-                    match Self::transform_to_control_command(&request, mapping) {
-                        Ok(control_command) => control_commands.push(control_command),
-                        Err(e) => errors.push(format!("Failed to transform command '{}': {}", request.command, e)),
-                    }
-                }
-                None => errors.push(format!("No mapping found for command '{}'", request.command)),
+                Some(mapping) => match Self::transform_to_control_command(&request, mapping) {
+                    Ok(control_command) => control_commands.push(control_command),
+                    Err(e) => errors.push(format!(
+                        "Failed to transform command '{}': {}",
+                        request.command, e
+                    )),
+                },
+                None => errors.push(format!(
+                    "No mapping found for command '{}'",
+                    request.command
+                )),
             }
         }
 
@@ -405,9 +448,11 @@ impl DataFormatConverter {
             return Err(format!("Invalid comsrv data format: {}", comsrv_data));
         }
 
-        let value = parts[0].parse::<f64>()
+        let value = parts[0]
+            .parse::<f64>()
             .map_err(|e| format!("Invalid value: {}", e))?;
-        let timestamp = parts[1].parse::<i64>()
+        let timestamp = parts[1]
+            .parse::<i64>()
             .map_err(|e| format!("Invalid timestamp: {}", e))?;
 
         // 根据点位类型确定数据质量
@@ -420,7 +465,7 @@ impl DataFormatConverter {
         Ok(TelemetryValue {
             value: serde_json::Value::Number(
                 serde_json::Number::from_f64(value)
-                    .ok_or_else(|| "Invalid float value".to_string())?
+                    .ok_or_else(|| "Invalid float value".to_string())?,
             ),
             timestamp,
             quality,
@@ -434,7 +479,13 @@ impl DataFormatConverter {
             // 如果没有原始值，尝试从JSON值提取
             match &telemetry.value {
                 serde_json::Value::Number(n) => n.as_f64().unwrap_or(0.0),
-                serde_json::Value::Bool(b) => if *b { 1.0 } else { 0.0 },
+                serde_json::Value::Bool(b) => {
+                    if *b {
+                        1.0
+                    } else {
+                        0.0
+                    }
+                }
                 _ => 0.0,
             }
         });
@@ -446,7 +497,8 @@ impl DataFormatConverter {
     pub fn batch_convert_comsrv_to_telemetry(
         comsrv_data: HashMap<String, (String, String)>, // key -> (data, point_type)
     ) -> HashMap<String, Result<TelemetryValue, String>> {
-        comsrv_data.into_iter()
+        comsrv_data
+            .into_iter()
             .map(|(key, (data, point_type))| {
                 let result = Self::convert_comsrv_to_telemetry(&data, &point_type);
                 (key, result)
@@ -465,7 +517,8 @@ mod tests {
         assert!(int_type.validate_value(&serde_json::json!(42)));
         assert!(!int_type.validate_value(&serde_json::json!("string")));
 
-        let array_type = crate::device_model::DataType::Array(Box::new(crate::device_model::DataType::String));
+        let array_type =
+            crate::device_model::DataType::Array(Box::new(crate::device_model::DataType::String));
         assert!(array_type.validate_value(&serde_json::json!(["a", "b"])));
         assert!(!array_type.validate_value(&serde_json::json!([1, 2])));
     }
@@ -500,7 +553,8 @@ mod tests {
             default_values: HashMap::new(),
         };
 
-        let control_command = CommandTransformer::transform_to_control_command(&request, &mapping).unwrap();
+        let control_command =
+            CommandTransformer::transform_to_control_command(&request, &mapping).unwrap();
         assert_eq!(control_command.channel_id, 1001);
         assert_eq!(control_command.point_type, "c");
         assert_eq!(control_command.point_id, 30001);
@@ -512,7 +566,7 @@ mod tests {
         // 测试comsrv到遥测数据转换
         let comsrv_data = "25.6:1234567890";
         let telemetry = DataFormatConverter::convert_comsrv_to_telemetry(comsrv_data, "m").unwrap();
-        
+
         assert_eq!(telemetry.raw_value, Some(25.6));
         assert_eq!(telemetry.timestamp, 1234567890);
         assert_eq!(telemetry.quality, DataQuality::Good);
@@ -525,7 +579,7 @@ mod tests {
     #[test]
     fn test_standard_mappings() {
         let mappings = CommandTransformer::create_standard_mappings();
-        
+
         // 测试电机启动命令映射
         let start_mapping = mappings.get("start_motor").unwrap();
         assert_eq!(start_mapping.channel_id, 1001);
