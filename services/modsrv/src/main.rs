@@ -116,17 +116,17 @@ async fn main() -> Result<()> {
         }
     };
 
-    // Initialize logging using voltage-common
-    let log_config = voltage_common::logging::LogConfig {
+    // Initialize logging using voltage-libs
+    let log_config = voltage_libs::logging::LogConfig {
         level: config.log_level.clone(),
         console: true,
         file: None,
-        format: voltage_common::logging::LogFormat::Pretty,
+        format: voltage_libs::logging::LogFormat::Pretty,
         ansi: true,
         span_events: false,
     };
 
-    let _log_guard = voltage_common::logging::init_logging(&log_config)
+    let _log_guard = voltage_libs::logging::init_logging(&log_config)
         .map_err(|e| ModelSrvError::ConfigError(format!("Failed to initialize logging: {}", e)))?;
 
     info!("Starting Model Service");
