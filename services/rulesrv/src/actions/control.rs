@@ -1,14 +1,13 @@
 use crate::error::{Result, RulesrvError};
 use async_trait::async_trait;
+use redis::AsyncCommands;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::sync::RwLock;
-use tracing::{debug, error, info, warn};
+use tracing::info;
 use uuid::Uuid;
-use redis::AsyncCommands;
 
 use crate::actions::ActionHandler;
 
@@ -90,7 +89,7 @@ impl ControlActionHandler {
     /// 创建新的控制动作处理器
     pub fn new(redis_url: &str) -> Result<Self> {
         let redis_client = redis::Client::open(redis_url)?;
-        
+
         Ok(Self {
             redis_client,
             operation_status_cache: Arc::new(RwLock::new(HashMap::new())),
@@ -106,7 +105,7 @@ impl ControlActionHandler {
         value: &Value,
     ) -> Result<String> {
         let mut conn = self.redis_client.get_multiplexed_async_connection().await?;
-        
+
         let command_id = format!("cmd:{}", Uuid::new_v4());
         let command = ControlCommand {
             id: command_id.clone(),
@@ -116,30 +115,30 @@ impl ControlActionHandler {
             value: value.clone(),
             timestamp: chrono::Utc::now().timestamp_millis(),
         };
-        
+
         // 发布到 comsrv 的控制命令通道
         let channel = format!("cmd:{}:{}", channel_id, point_type);
         let command_json = serde_json::to_string(&command)?;
         conn.publish(&channel, &command_json).await?;
-        
-        info!("Published control command {} to channel {}", command_id, channel);
-        
+
+        info!(
+            "Published control command {} to channel {}",
+            command_id, channel
+        );
+
         // 记录命令状态
-        self.update_operation_status(&command_id, OperationStatus::Executing, None).await?;
-        
+        self.update_operation_status(&command_id, OperationStatus::Executing, None)
+            .await?;
+
         Ok(command_id)
     }
 
     /// 发送模型控制命令
-    async fn send_model_control(
-        &self,
-        model_id: &str,
-        action: &str,
-    ) -> Result<String> {
+    async fn send_model_control(&self, model_id: &str, action: &str) -> Result<String> {
         let mut conn = self.redis_client.get_multiplexed_async_connection().await?;
-        
+
         let command_id = format!("model_cmd:{}", Uuid::new_v4());
-        
+
         // 发布到 modsrv 的控制通道
         let channel = "modsrv:control";
         let command = serde_json::json!({
@@ -148,14 +147,18 @@ impl ControlActionHandler {
             "action": action,
             "timestamp": chrono::Utc::now().timestamp_millis(),
         });
-        
+
         conn.publish(channel, command.to_string()).await?;
-        
-        info!("Published model control command {} for model {}", command_id, model_id);
-        
+
+        info!(
+            "Published model control command {} for model {}",
+            command_id, model_id
+        );
+
         // 记录命令状态
-        self.update_operation_status(&command_id, OperationStatus::Executing, None).await?;
-        
+        self.update_operation_status(&command_id, OperationStatus::Executing, None)
+            .await?;
+
         Ok(command_id)
     }
 
@@ -172,41 +175,44 @@ impl ControlActionHandler {
             timestamp: chrono::Utc::now().timestamp_millis(),
             message,
         };
-        
+
         // 更新缓存
         let mut cache = self.operation_status_cache.write().await;
         cache.insert(operation_id.to_string(), status_record.clone());
-        
+
         // 更新 Redis
         let mut conn = self.redis_client.get_multiplexed_async_connection().await?;
         let status_key = format!("rulesrv:operation:status:{}", operation_id);
         let status_json = serde_json::to_string(&status_record)?;
         conn.set_ex(&status_key, &status_json, 86400).await?; // 24小时过期
-        
+
         Ok(())
     }
 
     /// 获取操作状态
-    pub async fn get_operation_status(&self, operation_id: &str) -> Result<Option<OperationStatusRecord>> {
+    pub async fn get_operation_status(
+        &self,
+        operation_id: &str,
+    ) -> Result<Option<OperationStatusRecord>> {
         // 先检查缓存
         let cache = self.operation_status_cache.read().await;
         if let Some(status) = cache.get(operation_id) {
             return Ok(Some(status.clone()));
         }
         drop(cache);
-        
+
         // 从 Redis 获取
         let mut conn = self.redis_client.get_multiplexed_async_connection().await?;
         let status_key = format!("rulesrv:operation:status:{}", operation_id);
         let status_json: Option<String> = conn.get(&status_key).await?;
-        
+
         if let Some(json) = status_json {
             let status: OperationStatusRecord = serde_json::from_str(&json)?;
-            
+
             // 更新缓存
             let mut cache = self.operation_status_cache.write().await;
             cache.insert(operation_id.to_string(), status.clone());
-            
+
             Ok(Some(status))
         } else {
             Ok(None)
@@ -228,88 +234,137 @@ impl ActionHandler for ControlActionHandler {
         "control".to_string()
     }
 
-    async fn execute_action(
-        &self,
-        action_type: &str,
-        config: &Value,
-    ) -> Result<String> {
+    async fn execute_action(&self, action_type: &str, config: &Value) -> Result<String> {
         match action_type {
             "control" => {
                 // 通用控制动作
                 if let Some(control_id) = config.get("control_id").and_then(|v| v.as_str()) {
                     // 基于预定义的控制操作执行
-                    let target_type = config.get("target_type")
+                    let target_type = config
+                        .get("target_type")
                         .and_then(|v| v.as_str())
                         .unwrap_or("device");
-                    
+
                     match target_type {
                         "device" => {
-                            let channel_id = config.get("channel_id")
+                            let channel_id = config
+                                .get("channel_id")
                                 .and_then(|v| v.as_u64())
-                                .ok_or_else(|| RulesrvError::ActionExecutionError("Missing channel_id".to_string()))? as u16;
-                            
-                            let point_type = config.get("point_type")
+                                .ok_or_else(|| {
+                                    RulesrvError::ActionExecutionError(
+                                        "Missing channel_id".to_string(),
+                                    )
+                                })? as u16;
+
+                            let point_type = config
+                                .get("point_type")
                                 .and_then(|v| v.as_str())
-                                .ok_or_else(|| RulesrvError::ActionExecutionError("Missing point_type".to_string()))?;
-                            
-                            let point_id = config.get("point_id")
+                                .ok_or_else(|| {
+                                    RulesrvError::ActionExecutionError(
+                                        "Missing point_type".to_string(),
+                                    )
+                                })?;
+
+                            let point_id = config
+                                .get("point_id")
                                 .and_then(|v| v.as_u64())
-                                .ok_or_else(|| RulesrvError::ActionExecutionError("Missing point_id".to_string()))? as u32;
-                            
-                            let value = config.get("value")
-                                .ok_or_else(|| RulesrvError::ActionExecutionError("Missing value".to_string()))?;
-                            
-                            self.send_device_control(channel_id, point_type, point_id, value).await
+                                .ok_or_else(|| {
+                                    RulesrvError::ActionExecutionError(
+                                        "Missing point_id".to_string(),
+                                    )
+                                })? as u32;
+
+                            let value = config.get("value").ok_or_else(|| {
+                                RulesrvError::ActionExecutionError("Missing value".to_string())
+                            })?;
+
+                            self.send_device_control(channel_id, point_type, point_id, value)
+                                .await
                         }
                         "model" => {
-                            let model_id = config.get("model_id")
+                            let model_id = config
+                                .get("model_id")
                                 .and_then(|v| v.as_str())
-                                .ok_or_else(|| RulesrvError::ActionExecutionError("Missing model_id".to_string()))?;
-                            
-                            let action = config.get("action")
-                                .and_then(|v| v.as_str())
-                                .ok_or_else(|| RulesrvError::ActionExecutionError("Missing action".to_string()))?;
-                            
+                                .ok_or_else(|| {
+                                    RulesrvError::ActionExecutionError(
+                                        "Missing model_id".to_string(),
+                                    )
+                                })?;
+
+                            let action =
+                                config
+                                    .get("action")
+                                    .and_then(|v| v.as_str())
+                                    .ok_or_else(|| {
+                                        RulesrvError::ActionExecutionError(
+                                            "Missing action".to_string(),
+                                        )
+                                    })?;
+
                             self.send_model_control(model_id, action).await
                         }
-                        _ => Err(RulesrvError::ActionExecutionError(format!("Unsupported target type: {}", target_type)))
+                        _ => Err(RulesrvError::ActionExecutionError(format!(
+                            "Unsupported target type: {}",
+                            target_type
+                        ))),
                     }
                 } else {
-                    Err(RulesrvError::ActionExecutionError("Missing control_id in config".to_string()))
+                    Err(RulesrvError::ActionExecutionError(
+                        "Missing control_id in config".to_string(),
+                    ))
                 }
             }
             "device_control" => {
                 // 直接设备控制
-                let channel_id = config.get("channel_id")
+                let channel_id = config
+                    .get("channel_id")
                     .and_then(|v| v.as_u64())
-                    .ok_or_else(|| RulesrvError::ActionExecutionError("Missing channel_id".to_string()))? as u16;
-                
-                let point_type = config.get("point_type")
+                    .ok_or_else(|| {
+                        RulesrvError::ActionExecutionError("Missing channel_id".to_string())
+                    })? as u16;
+
+                let point_type = config
+                    .get("point_type")
                     .and_then(|v| v.as_str())
                     .unwrap_or("c"); // 默认为控制点
-                
-                let point_id = config.get("point_id")
+
+                let point_id = config
+                    .get("point_id")
                     .and_then(|v| v.as_u64())
-                    .ok_or_else(|| RulesrvError::ActionExecutionError("Missing point_id".to_string()))? as u32;
-                
-                let value = config.get("value")
-                    .ok_or_else(|| RulesrvError::ActionExecutionError("Missing value".to_string()))?;
-                
-                self.send_device_control(channel_id, point_type, point_id, value).await
+                    .ok_or_else(|| {
+                        RulesrvError::ActionExecutionError("Missing point_id".to_string())
+                    })? as u32;
+
+                let value = config.get("value").ok_or_else(|| {
+                    RulesrvError::ActionExecutionError("Missing value".to_string())
+                })?;
+
+                self.send_device_control(channel_id, point_type, point_id, value)
+                    .await
             }
             "model_control" => {
                 // 模型控制
-                let model_id = config.get("model_id")
+                let model_id =
+                    config
+                        .get("model_id")
+                        .and_then(|v| v.as_str())
+                        .ok_or_else(|| {
+                            RulesrvError::ActionExecutionError("Missing model_id".to_string())
+                        })?;
+
+                let action = config
+                    .get("action")
                     .and_then(|v| v.as_str())
-                    .ok_or_else(|| RulesrvError::ActionExecutionError("Missing model_id".to_string()))?;
-                
-                let action = config.get("action")
-                    .and_then(|v| v.as_str())
-                    .ok_or_else(|| RulesrvError::ActionExecutionError("Missing action".to_string()))?;
-                
+                    .ok_or_else(|| {
+                        RulesrvError::ActionExecutionError("Missing action".to_string())
+                    })?;
+
                 self.send_model_control(model_id, action).await
             }
-            _ => Err(RulesrvError::ActionExecutionError(format!("Unsupported action type: {}", action_type)))
+            _ => Err(RulesrvError::ActionExecutionError(format!(
+                "Unsupported action type: {}",
+                action_type
+            ))),
         }
     }
 }
@@ -332,10 +387,10 @@ mod tests {
             timestamp: 1234567890,
             message: Some("Success".to_string()),
         };
-        
+
         let json = serde_json::to_string(&status).unwrap();
         let deserialized: OperationStatusRecord = serde_json::from_str(&json).unwrap();
-        
+
         assert_eq!(status.operation_id, deserialized.operation_id);
         assert_eq!(status.status, deserialized.status);
         assert_eq!(status.timestamp, deserialized.timestamp);

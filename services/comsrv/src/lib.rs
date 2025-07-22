@@ -201,7 +201,8 @@ pub mod core;
 /// Plugin system for protocol implementations
 pub mod plugins;
 /// Service implementation
-pub mod service_impl;
+/// Storage module for flat key-value storage
+pub mod storage;
 /// Utility functions
 pub mod utils;
 
@@ -210,12 +211,12 @@ pub use utils::error;
 
 pub mod service {
 
+    use crate::core::combase::factory::ProtocolFactory;
     use crate::core::config::ConfigManager;
-    use crate::core::framework::factory::ProtocolFactory;
-    use crate::service_impl as impls;
     use crate::utils::Result;
     use std::sync::Arc;
     use tokio::sync::RwLock;
+    use tracing::{error, info, warn};
 
     /// Start the communication service with optimized performance and monitoring
     ///
@@ -292,7 +293,64 @@ pub mod service {
         config_manager: Arc<ConfigManager>,
         factory: Arc<RwLock<ProtocolFactory>>,
     ) -> Result<()> {
-        impls::start_communication_service(config_manager, factory).await
+        info!("DEBUG: start_communication_service called");
+
+        // Get channel configurations
+        let configs = config_manager.channels().to_vec();
+
+        if configs.is_empty() {
+            warn!("No channels configured");
+            return Ok(());
+        }
+
+        info!("Creating {} channels...", configs.len());
+
+        // Create channels with improved error handling and metrics
+        let mut successful_channels = 0;
+        let mut failed_channels = 0;
+
+        for channel_config in configs {
+            info!(
+                "Creating channel: {} - {}",
+                channel_config.id, channel_config.name
+            );
+
+            let factory_guard = factory.write().await;
+            match factory_guard
+                .create_channel(&channel_config, Some(&*config_manager))
+                .await
+            {
+                Ok(_) => {
+                    info!("Channel created successfully: {}", channel_config.id);
+                    successful_channels += 1;
+                }
+                Err(e) => {
+                    error!("Failed to create channel {}: {e}", channel_config.id);
+                    failed_channels += 1;
+
+                    // Continue with other channels instead of failing completely
+                    continue;
+                }
+            }
+            drop(factory_guard); // Release the lock for each iteration
+        }
+
+        info!(
+            "Channel creation completed: {} successful, {} failed",
+            successful_channels, failed_channels
+        );
+
+        // Log channel creation results
+        let factory_guard = factory.read().await;
+        info!(
+            "Communication service started with {} channels successfully created",
+            successful_channels
+        );
+        drop(factory_guard);
+
+        // Redis metadata sync removed - using direct storage now
+
+        Ok(())
     }
 
     /// Handle graceful shutdown of the communication service
@@ -361,7 +419,24 @@ pub mod service {
     ///
     /// This function provides a convenient public interface for graceful service shutdown.
     pub async fn shutdown_handler(factory: Arc<RwLock<ProtocolFactory>>) {
-        impls::shutdown_handler(factory).await;
+        info!("Starting graceful shutdown...");
+
+        // Get all channel IDs
+        let channel_ids = {
+            let factory_guard = factory.read().await;
+            factory_guard.get_channel_ids()
+        };
+
+        // Remove all channels
+        for channel_id in channel_ids {
+            let factory_guard = factory.write().await;
+            if let Err(e) = factory_guard.remove_channel(channel_id).await {
+                error!("Error stopping channel {}: {}", channel_id, e);
+            }
+            drop(factory_guard);
+        }
+
+        info!("All channels stopped");
     }
 
     /// Start the periodic cleanup task for resource management
@@ -442,13 +517,32 @@ pub mod service {
     pub fn start_cleanup_task(
         factory: Arc<RwLock<ProtocolFactory>>,
     ) -> tokio::task::JoinHandle<()> {
-        impls::start_cleanup_task(factory)
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(300)); // 5 minutes
+
+            loop {
+                interval.tick().await;
+
+                // Clean up idle channels (1 hour idle time)
+                let factory_guard = factory.read().await;
+
+                // Log statistics
+                let all_stats = factory_guard.get_all_channel_stats().await;
+                info!(
+                    "Channel stats: total={}, active={}",
+                    all_stats.len(),
+                    all_stats.iter().filter(|s| s.is_connected).count()
+                );
+                drop(factory_guard);
+            }
+        })
     }
 }
 
 // Re-export commonly used types and traits
+pub use api::routes::{get_service_start_time, set_service_start_time};
+pub use core::combase::{ChannelStatus, ComBase, DefaultProtocol, PointData, ProtocolFactory};
 pub use core::config::ConfigManager;
-pub use core::framework::{ChannelStatus, ComBase, DefaultProtocol, PointData, ProtocolFactory};
 pub use utils::error::{ComSrvError, Result};
 
 // #[cfg(test)]

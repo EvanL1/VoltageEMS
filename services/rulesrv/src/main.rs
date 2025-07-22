@@ -10,7 +10,7 @@ use crate::api::ApiServer;
 use crate::config::Config;
 use crate::engine::RuleExecutor;
 use crate::error::{Result, RulesrvError};
-use crate::redis::{RedisSubscriber, RedisStore};
+use crate::redis::{RedisStore, RedisSubscriber};
 
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
@@ -97,7 +97,7 @@ async fn run_service(config: &Config) -> Result<()> {
 
     // Create Redis store
     let store = Arc::new(RedisStore::new(&config.redis_url, None)?);
-    
+
     // Create rule executor
     let executor = Arc::new(RuleExecutor::new(store.clone()));
 
@@ -106,12 +106,15 @@ async fn run_service(config: &Config) -> Result<()> {
     subscriber.start().await?;
 
     // Start API server in a separate task
-    let api_server = ApiServer::new(executor.clone(), store.clone(), config.api.port);
-    let api_port = config.api.port;
-    
-    let api_handle = tokio::spawn(async move {
-        api_server.start().await
-    });
+    let api_server = ApiServer::new(
+        executor.clone(),
+        store.clone(),
+        config.service.api_port,
+        config.api.clone(),
+    );
+    let api_port = config.service.api_port;
+
+    let api_handle = tokio::spawn(async move { api_server.start().await });
 
     info!(
         "Rules service started, API server available at http://0.0.0.0:{}",
@@ -119,8 +122,10 @@ async fn run_service(config: &Config) -> Result<()> {
     );
 
     // Keep the subscriber alive and wait for the API server
-    api_handle.await.map_err(|e| RulesrvError::InternalError(e.into()))??;
-    
+    api_handle
+        .await
+        .map_err(|e| RulesrvError::InternalError(e.into()))??;
+
     // Clean shutdown
     subscriber.stop().await?;
 
@@ -131,9 +136,9 @@ async fn run_service(config: &Config) -> Result<()> {
 async fn start_api_server(config: &Config) -> Result<()> {
     let store = Arc::new(RedisStore::new(&config.redis_url, None)?);
     let executor = Arc::new(RuleExecutor::new(store.clone()));
-    let api_server = ApiServer::new(executor, store, config.api.port);
+    let api_server = ApiServer::new(executor, store, config.service.api_port, config.api.clone());
 
-    info!("Starting API server on port {}", config.api.port);
+    info!("Starting API server on port {}", config.service.api_port);
     api_server.start().await?;
 
     Ok(())

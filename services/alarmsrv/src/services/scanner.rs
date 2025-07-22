@@ -50,9 +50,8 @@ impl RedisDataScanner {
     /// Start scanning loop
     pub async fn start(self, state: AppState) -> Result<()> {
         tokio::spawn(async move {
-            let mut interval = tokio::time::interval(
-                tokio::time::Duration::from_secs(self.config.scan_interval)
-            );
+            let mut interval =
+                tokio::time::interval(tokio::time::Duration::from_secs(self.config.scan_interval));
 
             info!(
                 "Starting Redis data scanner with {} channels and {} point types",
@@ -62,7 +61,7 @@ impl RedisDataScanner {
 
             loop {
                 interval.tick().await;
-                
+
                 if let Err(e) = self.scan_and_evaluate(&state).await {
                     error!("Failed to scan and evaluate data: {}", e);
                 }
@@ -83,13 +82,13 @@ impl RedisDataScanner {
                 match self.scan_channel_points(*channel_id, point_type).await {
                     Ok(points) => {
                         total_points += points.len();
-                        
+
                         // Evaluate rules for each point
                         let mut rules_engine = self.rules_engine.write().await;
                         for point_data in points {
                             let alarms = rules_engine.evaluate(&point_data);
                             alarm_count += alarms.len();
-                            
+
                             // Process generated alarms
                             for mut alarm in alarms {
                                 // Classify the alarm
@@ -107,7 +106,9 @@ impl RedisDataScanner {
                                 alarms.push(alarm.clone());
 
                                 // Publish for cloud push
-                                if let Err(e) = state.alarm_store.publish_alarm_for_cloud(&alarm).await {
+                                if let Err(e) =
+                                    state.alarm_store.publish_alarm_for_cloud(&alarm).await
+                                {
                                     warn!("Failed to publish alarm for cloud: {}", e);
                                 }
 
@@ -132,7 +133,7 @@ impl RedisDataScanner {
         let current_time = Utc::now();
         let rules_engine = self.rules_engine.read().await;
         let timeout_alarms = rules_engine.check_timeouts(current_time);
-        
+
         for mut alarm in timeout_alarms {
             // Classify the alarm
             let classification = state.classifier.classify(&alarm).await;
@@ -175,17 +176,17 @@ impl RedisDataScanner {
         point_type: &str,
     ) -> Result<Vec<PointData>> {
         let pattern = format!("{}:{}:*", channel_id, point_type);
-        
+
         // Use SCAN to get keys matching the pattern
         let keys = self.redis_client.scan_keys(&pattern).await?;
-        
+
         if keys.is_empty() {
             return Ok(Vec::new());
         }
 
         // Batch get values
         let values = self.redis_client.mget(&keys).await?;
-        
+
         let mut points = Vec::new();
         for (key, value) in keys.iter().zip(values.iter()) {
             if let Some(value_str) = value {
@@ -209,10 +210,12 @@ impl RedisDataScanner {
             return Err(anyhow!("Invalid key format: {}", key));
         }
 
-        let channel_id = parts[0].parse::<u16>()
+        let channel_id = parts[0]
+            .parse::<u16>()
             .map_err(|e| anyhow!("Invalid channel ID: {}", e))?;
         let point_type = parts[1].to_string();
-        let point_id = parts[2].parse::<u32>()
+        let point_id = parts[2]
+            .parse::<u32>()
             .map_err(|e| anyhow!("Invalid point ID: {}", e))?;
 
         // Parse value format: value:timestamp
@@ -221,9 +224,11 @@ impl RedisDataScanner {
             return Err(anyhow!("Invalid value format: {}", value));
         }
 
-        let point_value = value_parts[0].parse::<f64>()
+        let point_value = value_parts[0]
+            .parse::<f64>()
             .map_err(|e| anyhow!("Invalid point value: {}", e))?;
-        let timestamp_ms = value_parts[1].parse::<i64>()
+        let timestamp_ms = value_parts[1]
+            .parse::<i64>()
             .map_err(|e| anyhow!("Invalid timestamp: {}", e))?;
 
         let timestamp = DateTime::from_timestamp_millis(timestamp_ms)
@@ -239,7 +244,6 @@ impl RedisDataScanner {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -254,10 +258,12 @@ mod tests {
                 return Err(anyhow!("Invalid key format: {}", key));
             }
 
-            let channel_id = parts[0].parse::<u16>()
+            let channel_id = parts[0]
+                .parse::<u16>()
                 .map_err(|e| anyhow!("Invalid channel ID: {}", e))?;
             let point_type = parts[1].to_string();
-            let point_id = parts[2].parse::<u32>()
+            let point_id = parts[2]
+                .parse::<u32>()
                 .map_err(|e| anyhow!("Invalid point ID: {}", e))?;
 
             // Parse value format: value:timestamp
@@ -266,9 +272,11 @@ mod tests {
                 return Err(anyhow!("Invalid value format: {}", value));
             }
 
-            let point_value = value_parts[0].parse::<f64>()
+            let point_value = value_parts[0]
+                .parse::<f64>()
                 .map_err(|e| anyhow!("Invalid point value: {}", e))?;
-            let timestamp_ms = value_parts[1].parse::<i64>()
+            let timestamp_ms = value_parts[1]
+                .parse::<i64>()
                 .map_err(|e| anyhow!("Invalid timestamp: {}", e))?;
 
             let timestamp = DateTime::from_timestamp_millis(timestamp_ms)
@@ -288,7 +296,7 @@ mod tests {
         let value = "75.5:1704956400000";
         let result = parse_fn(key, value);
         assert!(result.is_ok());
-        
+
         let point = result.unwrap();
         assert_eq!(point.channel_id, 1001);
         assert_eq!(point.point_type, "m");

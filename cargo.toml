@@ -1,12 +1,12 @@
 [workspace]
 resolver = "2"
 members = [
-    "libs/voltage-common",
+    "libs",
     "services/alarmsrv",
     "services/apigateway",
     "services/comsrv",
     # "services/config-framework",  # Temporarily disabled due to clippy warnings
-    "services/hissrv",
+    "services/Hissrv",
     "services/modsrv",
     "services/netsrv",
     "services/rulesrv",
@@ -94,5 +94,4 @@ jsonwebtoken = "9"
 once_cell = "1"
 
 # Internal dependencies
-voltage-common = { path = "libs/voltage-common" }
 voltage-config = { path = "services/config-framework" }

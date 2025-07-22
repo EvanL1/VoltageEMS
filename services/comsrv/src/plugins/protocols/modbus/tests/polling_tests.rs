@@ -28,7 +28,6 @@ mod tests {
             slave_id: 1,
             function_code: 3,
             register_address: 0,
-            scale_factor: None,
             data_format: "uint16".to_string(),
             register_count: 1,
             byte_order: None,
@@ -37,5 +36,5 @@ mod tests {
         engine_mut.add_points(points);
     }
 
-    // TODO: Add async polling tests when test infrastructure is ready
+    // Async polling tests require test infrastructure setup
 }

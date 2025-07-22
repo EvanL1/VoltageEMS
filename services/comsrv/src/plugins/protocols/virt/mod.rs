@@ -5,15 +5,25 @@
 
 pub mod plugin;
 
+// 重新导出插件
+pub use plugin::VirtualPlugin as VirtPlugin;
+
+// 导出创建函数
+pub fn create_plugin() -> Box<dyn crate::plugins::traits::ProtocolPlugin> {
+    Box::new(VirtPlugin::new())
+}
+
 use async_trait::async_trait;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use tracing::{debug, info};
+use tracing::{debug, error, info, warn};
 
-use crate::core::framework::traits::ComBase;
-use crate::core::framework::{ChannelStatus, PointData, TelemetryType};
-use crate::plugins::plugin_storage::{DefaultPluginStorage, PluginStorage};
+use crate::core::combase::{
+    ChannelStatus, ComBase, PointData, PointDataMap, RedisValue, TelemetryType,
+};
+use crate::core::config::types::{ChannelConfig, UnifiedPointMapping};
+use crate::plugins::core::{DefaultPluginStorage, PluginStorage};
 use crate::utils::error::{ComSrvError, Result};
 
 /// Virtual protocol client for testing
@@ -29,7 +39,7 @@ pub struct VirtualProtocol {
 }
 
 impl VirtualProtocol {
-    pub fn new(channel_config: crate::core::config::types::channel::ChannelConfig) -> Result<Self> {
+    pub fn new(channel_config: crate::core::config::types::ChannelConfig) -> Result<Self> {
         Ok(Self {
             name: channel_config.name.clone(),
             channel_id: channel_config.id,
@@ -42,18 +52,11 @@ impl VirtualProtocol {
 
     /// Simulate data changes
     #[allow(dead_code)]
-
     async fn simulate_data(&self) {
         let mut data = self.telemetry_data.write().await;
         for (i, value) in data.iter_mut().enumerate() {
             // Generate sine wave data
             *value = (i as f64 * 0.1).sin() * 100.0;
-        }
-
-        let mut signals = self.signal_data.write().await;
-        for (i, signal) in signals.iter_mut().enumerate() {
-            // Toggle some signals
-            *signal = i % 3 == 0;
         }
     }
 }
@@ -64,9 +67,6 @@ impl std::fmt::Debug for VirtualProtocol {
             .field("name", &self.name)
             .field("channel_id", &self.channel_id)
             .field("running", &self.running)
-            .field("telemetry_data", &"<telemetry_data>")
-            .field("signal_data", &"<signal_data>")
-            .field("storage", &"<storage>")
             .finish()
     }
 }
@@ -77,86 +77,83 @@ impl ComBase for VirtualProtocol {
         &self.name
     }
 
-    fn channel_id(&self) -> String {
-        self.channel_id.to_string()
-    }
-
     fn protocol_type(&self) -> &str {
         "virtual"
     }
 
-    fn get_parameters(&self) -> HashMap<String, String> {
-        HashMap::new()
+    fn is_connected(&self) -> bool {
+        true // 虚拟协议始终连接
     }
 
-    async fn is_running(&self) -> bool {
-        *self.running.read().await
-    }
-
-    async fn start(&mut self) -> Result<()> {
-        info!("Starting virtual protocol client: {}", self.name);
-
-        // Initialize storage
-        match DefaultPluginStorage::from_env().await {
-            Ok(s) => {
-                let mut storage = self.storage.lock().await;
-                *storage = Some(Arc::new(s) as Arc<dyn PluginStorage>);
-                info!("Virtual protocol storage initialized");
-            }
-            Err(e) => {
-                tracing::warn!(
-                    "Failed to create storage: {}, data will not be persisted",
-                    e
-                );
-            }
+    async fn get_status(&self) -> ChannelStatus {
+        ChannelStatus {
+            is_connected: true,
+            last_error: None,
+            last_update: chrono::Utc::now().timestamp() as u64,
+            success_count: 100,
+            error_count: 0,
+            reconnect_count: 0,
+            points_count: 200, // 100 telemetry + 100 signal
+            last_read_duration_ms: Some(1),
+            average_read_duration_ms: Some(1.0),
         }
+    }
 
+    async fn initialize(&mut self, _channel_config: &ChannelConfig) -> Result<()> {
+        // 初始化存储
+        let storage = DefaultPluginStorage::from_env().await?;
+        *self.storage.lock().await = Some(Arc::new(storage) as Arc<dyn PluginStorage>);
+        Ok(())
+    }
+
+    async fn connect(&mut self) -> Result<()> {
+        info!("Starting virtual protocol client: {}", self.name);
         *self.running.write().await = true;
 
         // Start simulation task
-        let running = self.running.clone();
         let telemetry_data = self.telemetry_data.clone();
         let signal_data = self.signal_data.clone();
-        let storage = self.storage.clone();
+        let running = self.running.clone();
         let channel_id = self.channel_id;
+        let storage = self.storage.clone();
 
         tokio::spawn(async move {
+            let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(1));
+
             while *running.read().await {
-                // Simulate data changes every second
-                tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                interval.tick().await;
 
-                let mut data = telemetry_data.write().await;
-                for (i, value) in data.iter_mut().enumerate() {
-                    *value = (chrono::Utc::now().timestamp() as f64 + i as f64 * 0.1).sin() * 100.0;
-                }
-
-                let mut signals = signal_data.write().await;
-                for (i, signal) in signals.iter_mut().enumerate() {
-                    *signal = (chrono::Utc::now().timestamp() + i as i64) % 3 == 0;
-                }
-
-                // Store data to plugin storage
-                if let Some(storage) = &*storage.lock().await {
-                    // Store some sample telemetry points
-                    for i in 0..10 {
-                        let _ = storage
-                            .write_point(
-                                channel_id,
-                                &TelemetryType::Telemetry,
-                                i as u32 + 1,
-                                data[i],
-                            )
-                            .await;
+                // Update telemetry data
+                {
+                    let mut data = telemetry_data.write().await;
+                    for (i, value) in data.iter_mut().enumerate() {
+                        // Generate sine wave data
+                        let t = chrono::Utc::now().timestamp() as f64;
+                        *value = ((t + i as f64) * 0.1).sin() * 100.0;
                     }
+                }
 
-                    // Store some sample signal points
-                    for i in 0..10 {
+                // Update signal data
+                {
+                    let mut signals = signal_data.write().await;
+                    for (i, signal) in signals.iter_mut().enumerate() {
+                        // Toggle some signals randomly
+                        if i % 10 == 0 {
+                            *signal = !*signal;
+                        }
+                    }
+                }
+
+                // Write to storage if available
+                if let Some(storage) = &*storage.lock().await {
+                    let data = telemetry_data.read().await;
+                    for (i, &value) in data.iter().enumerate().take(10) {
                         let _ = storage
                             .write_point(
                                 channel_id,
-                                &TelemetryType::Signal,
-                                i as u32 + 1001,
-                                if signals[i] { 1.0 } else { 0.0 },
+                                &crate::core::config::TelemetryType::Telemetry,
+                                i as u32 + 1,
+                                value,
                             )
                             .await;
                     }
@@ -167,130 +164,135 @@ impl ComBase for VirtualProtocol {
         Ok(())
     }
 
-    async fn stop(&mut self) -> Result<()> {
+    async fn disconnect(&mut self) -> Result<()> {
         info!("Stopping virtual protocol client: {}", self.name);
         *self.running.write().await = false;
         Ok(())
     }
 
-    async fn status(&self) -> ChannelStatus {
-        ChannelStatus {
-            id: self.channel_id.to_string(),
-            connected: *self.running.read().await,
-            last_response_time: 0.0,
-            last_error: String::new(),
-            last_update_time: chrono::Utc::now(),
+    async fn read_four_telemetry(&self, telemetry_type: &str) -> Result<PointDataMap> {
+        let mut data_map = PointDataMap::new();
+
+        match telemetry_type {
+            "m" | "telemetry" => {
+                let data = self.telemetry_data.read().await;
+                for (i, &value) in data.iter().enumerate() {
+                    data_map.insert(
+                        i as u32 + 1,
+                        PointData {
+                            value: RedisValue::Float(value),
+                            quality: 192,
+                            timestamp: chrono::Utc::now().timestamp() as u64,
+                        },
+                    );
+                }
+            }
+            "s" | "signal" => {
+                let signals = self.signal_data.read().await;
+                for (i, &signal) in signals.iter().enumerate() {
+                    data_map.insert(
+                        i as u32 + 1,
+                        PointData {
+                            value: RedisValue::Bool(signal),
+                            quality: 192,
+                            timestamp: chrono::Utc::now().timestamp() as u64,
+                        },
+                    );
+                }
+            }
+            _ => {}
         }
+
+        Ok(data_map)
     }
 
-    async fn update_status(&mut self, status: ChannelStatus) -> Result<()> {
-        debug!("Virtual protocol status update: {status:?}");
+    async fn control(&mut self, commands: Vec<(u32, RedisValue)>) -> Result<Vec<(u32, bool)>> {
+        let mut results = Vec::new();
+        let mut signals = self.signal_data.write().await;
+
+        for (point_id, value) in commands {
+            if point_id > 0 && point_id <= signals.len() as u32 {
+                let idx = (point_id - 1) as usize;
+                signals[idx] = match value {
+                    RedisValue::Bool(b) => b,
+                    RedisValue::Integer(i) => i != 0,
+                    RedisValue::Float(f) => f != 0.0,
+                    _ => false,
+                };
+                results.push((point_id, true));
+            } else {
+                results.push((point_id, false));
+            }
+        }
+
+        Ok(results)
+    }
+
+    async fn adjustment(
+        &mut self,
+        adjustments: Vec<(u32, RedisValue)>,
+    ) -> Result<Vec<(u32, bool)>> {
+        let mut results = Vec::new();
+        let mut data = self.telemetry_data.write().await;
+
+        for (point_id, value) in adjustments {
+            if point_id > 0 && point_id <= data.len() as u32 {
+                let idx = (point_id - 1) as usize;
+                data[idx] = match value {
+                    RedisValue::Float(f) => f,
+                    RedisValue::Integer(i) => i as f64,
+                    RedisValue::String(s) => s.parse().unwrap_or(0.0),
+                    _ => 0.0,
+                };
+                results.push((point_id, true));
+            } else {
+                results.push((point_id, false));
+            }
+        }
+
+        Ok(results)
+    }
+
+    async fn update_points(&mut self, _mappings: Vec<UnifiedPointMapping>) -> Result<()> {
+        // 虚拟协议不需要更新点位映射
         Ok(())
     }
+}
 
-    async fn get_all_points(&self) -> Vec<PointData> {
-        // Return simulated point data
-        let data = self.telemetry_data.read().await;
-        let signals = self.signal_data.read().await;
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-        let mut points = Vec::new();
+    #[tokio::test]
+    async fn test_virtual_protocol() {
+        let config = ChannelConfig {
+            id: 1,
+            name: "Test Channel".to_string(),
+            description: None,
+            protocol: "virtual".to_string(),
+            parameters: HashMap::new(),
+            logging: Default::default(),
+            points_config: None,
+            combined_points: vec![],
+        };
 
-        // Add telemetry points
-        for (i, &value) in data.iter().enumerate() {
-            points.push(PointData {
-                id: format!("YC{}", i + 1),
-                name: format!("Telemetry {}", i + 1),
-                value: value.to_string(),
-                timestamp: chrono::Utc::now(),
-                unit: "V".to_string(),
-                description: format!("Simulated telemetry point {}", i + 1),
-                telemetry_type: Some(crate::core::framework::TelemetryType::Telemetry),
-                channel_id: Some(self.channel_id),
-            });
-        }
+        let mut protocol = VirtualProtocol::new(config).unwrap();
 
-        // Add signal points
-        for (i, &signal) in signals.iter().enumerate() {
-            points.push(PointData {
-                id: format!("YX{}", i + 1),
-                name: format!("Signal {}", i + 1),
-                value: if signal { "1" } else { "0" }.to_string(),
-                timestamp: chrono::Utc::now(),
-                unit: "".to_string(),
-                description: format!("Simulated signal point {}", i + 1),
-                telemetry_type: Some(crate::core::framework::TelemetryType::Signal),
-                channel_id: Some(self.channel_id),
-            });
-        }
+        // Test connection
+        assert!(protocol.connect().await.is_ok());
+        assert!(protocol.is_connected());
 
-        points
-    }
+        // Test reading telemetry
+        let telemetry = protocol.read_four_telemetry("m").await.unwrap();
+        assert_eq!(telemetry.len(), 100);
 
-    async fn read_point(&self, point_id: &str) -> Result<PointData> {
-        if point_id.starts_with("YC") {
-            let id: usize = point_id[2..].parse().unwrap_or(0);
-            let data = self.telemetry_data.read().await;
-            if id > 0 && id <= data.len() {
-                Ok(PointData {
-                    id: point_id.to_string(),
-                    name: format!("Telemetry {id}"),
-                    value: data[id - 1].to_string(),
-                    timestamp: chrono::Utc::now(),
-                    unit: "V".to_string(),
-                    description: format!("Simulated telemetry point {id}"),
-                    telemetry_type: Some(crate::core::framework::TelemetryType::Telemetry),
-                    channel_id: Some(self.channel_id),
-                })
-            } else {
-                Err(ComSrvError::InvalidParameter(
-                    "Invalid point ID".to_string(),
-                ))
-            }
-        } else if point_id.starts_with("YX") {
-            let id: usize = point_id[2..].parse().unwrap_or(0);
-            let signals = self.signal_data.read().await;
-            if id > 0 && id <= signals.len() {
-                Ok(PointData {
-                    id: point_id.to_string(),
-                    name: format!("Signal {id}"),
-                    value: if signals[id - 1] { "1" } else { "0" }.to_string(),
-                    timestamp: chrono::Utc::now(),
-                    unit: "".to_string(),
-                    description: format!("Simulated signal point {id}"),
-                    telemetry_type: Some(crate::core::framework::TelemetryType::Signal),
-                    channel_id: Some(self.channel_id),
-                })
-            } else {
-                Err(ComSrvError::InvalidParameter(
-                    "Invalid point ID".to_string(),
-                ))
-            }
-        } else {
-            Err(ComSrvError::InvalidParameter(
-                "Unknown point type".to_string(),
-            ))
-        }
-    }
+        // Test control
+        let commands = vec![(1, RedisValue::Bool(true))];
+        let results = protocol.control(commands).await.unwrap();
+        assert_eq!(results.len(), 1);
+        assert!(results[0].1);
 
-    async fn write_point(&mut self, point_id: &str, value: &str) -> Result<()> {
-        info!("Virtual protocol write: {}={value}", point_id);
-
-        if point_id.starts_with("YK") || point_id.starts_with("YT") {
-            // Simulated control/adjustment write
-            Ok(())
-        } else {
-            Err(ComSrvError::InvalidParameter(format!(
-                "Point {} is not writable",
-                point_id
-            )))
-        }
-    }
-
-    async fn get_diagnostics(&self) -> HashMap<String, String> {
-        let mut diag = HashMap::new();
-        diag.insert("protocol".to_string(), "virtual".to_string());
-        diag.insert("status".to_string(), "simulated".to_string());
-        diag.insert("running".to_string(), self.is_running().await.to_string());
-        diag
+        // Test disconnection
+        assert!(protocol.disconnect().await.is_ok());
     }
 }

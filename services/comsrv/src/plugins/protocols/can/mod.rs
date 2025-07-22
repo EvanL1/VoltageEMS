@@ -18,8 +18,8 @@ pub mod plugin;
 
 pub use config::CanConfig;
 
-use crate::core::framework::base::PacketParseResult;
-use crate::core::framework::traits::ProtocolPacketParser;
+use crate::core::combase::base::PacketParseResult;
+use crate::core::combase::ProtocolPacketParser;
 
 /// CAN protocol packet parser
 ///

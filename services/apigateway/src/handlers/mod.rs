@@ -1,55 +1,47 @@
 pub mod alarmsrv;
 pub mod auth;
-pub mod channels;
-pub mod config;
 pub mod comsrv;
-pub mod data;
 pub mod health;
 pub mod hissrv;
 pub mod modsrv;
 pub mod netsrv;
 pub mod rulesrv;
-pub mod system;
 
-use axum::{
-    body::Body,
-    extract::{Request, State},
-    http::{HeaderMap, StatusCode},
-    response::{IntoResponse, Response},
-};
-use bytes::Bytes;
+use actix_web::{web, HttpRequest, HttpResponse};
 use log::{debug, error};
+use reqwest::Client;
+use std::sync::Arc;
 use std::time::Duration;
 
+use crate::config::Config;
 use crate::error::{ApiError, ApiResult};
-use crate::AppState;
 
 /// Common proxy function for forwarding requests to backend services
 pub async fn proxy_request(
     service_name: &str,
     path: &str,
     method: &str,
-    headers: &HeaderMap,
-    body: Option<Bytes>,
-    state: &AppState,
-) -> ApiResult<Response> {
-    let service_url = state
-        .config
+    req: &HttpRequest,
+    body: Option<web::Bytes>,
+    config: &Config,
+    client: &Arc<Client>,
+) -> ApiResult<HttpResponse> {
+    let service_url = config
         .get_service_url(service_name)
         .ok_or_else(|| ApiError::NotFound(format!("Service not found: {}", service_name)))?;
 
-    let timeout_seconds = state.config.get_service_timeout(service_name).unwrap_or(30);
+    let timeout_seconds = config.get_service_timeout(service_name).unwrap_or(30);
 
     let full_url = format!("{}{}", service_url, path);
 
     debug!("Proxying {} request to {}", method, full_url);
 
     let mut request = match method.to_uppercase().as_str() {
-        "GET" => state.http_client.get(&full_url),
-        "POST" => state.http_client.post(&full_url),
-        "PUT" => state.http_client.put(&full_url),
-        "DELETE" => state.http_client.delete(&full_url),
-        "PATCH" => state.http_client.patch(&full_url),
+        "GET" => client.get(&full_url),
+        "POST" => client.post(&full_url),
+        "PUT" => client.put(&full_url),
+        "DELETE" => client.delete(&full_url),
+        "PATCH" => client.patch(&full_url),
         _ => {
             return Err(ApiError::BadRequest(format!(
                 "Unsupported method: {}",
@@ -59,7 +51,7 @@ pub async fn proxy_request(
     };
 
     // Copy headers from original request
-    for (name, value) in headers {
+    for (name, value) in req.headers() {
         if name != "host" && name != "connection" {
             if let Ok(value_str) = value.to_str() {
                 request = request.header(name.as_str(), value_str);
@@ -69,7 +61,7 @@ pub async fn proxy_request(
 
     // Add body if present
     if let Some(body_bytes) = body {
-        request = request.body(body_bytes);
+        request = request.body(body_bytes.to_vec());
     }
 
     // Set timeout
@@ -86,19 +78,21 @@ pub async fn proxy_request(
             })?;
 
             // Build response
-            let mut res = Response::builder()
-                .status(StatusCode::from_u16(status.as_u16()).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR));
+            let mut res = HttpResponse::build(
+                actix_web::http::StatusCode::from_u16(status.as_u16())
+                    .unwrap_or(actix_web::http::StatusCode::INTERNAL_SERVER_ERROR),
+            );
 
             // Copy response headers
             for (name, value) in headers {
                 if let Some(name) = name {
                     if name != "connection" && name != "transfer-encoding" {
-                        res = res.header(name.as_str(), value.as_bytes());
+                        res.insert_header((name.as_str(), value.as_bytes()));
                     }
                 }
             }
 
-            Ok(res.body(Body::from(body)).unwrap())
+            Ok(res.body(body))
         }
         Err(e) => {
             error!("Failed to proxy request to {}: {}", service_name, e);
@@ -119,26 +113,5 @@ pub async fn proxy_request(
                 )))
             }
         }
-    }
-}
-
-/// Create a generic proxy handler for a service
-pub async fn handle_proxy(
-    service_name: &'static str,
-    req: Request,
-    State(state): State<AppState>,
-) -> Response {
-    let path = req.uri().path().to_string();
-    let method = req.method().as_str().to_string();
-    let headers = req.headers().clone();
-    
-    let body = match axum::body::to_bytes(req.into_body(), usize::MAX).await {
-        Ok(bytes) => Some(bytes),
-        Err(_) => None,
-    };
-
-    match proxy_request(service_name, &path, &method, &headers, body, &state).await {
-        Ok(response) => response,
-        Err(error) => error.into_response(),
     }
 }

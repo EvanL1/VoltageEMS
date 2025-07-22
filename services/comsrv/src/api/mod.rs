@@ -7,7 +7,7 @@
 //!
 //! The API is structured around the following components:
 //!
-//! - **Routes** (`openapi_routes`): API endpoint definitions with axum handlers
+//! - **Routes** (`routes`): API endpoint definitions with axum handlers
 //! - **Models** (`models`): Request/response models with OpenAPI schemas  
 //! - **Documentation** (`swagger`): OpenAPI specification and Swagger UI integration
 //!
@@ -35,7 +35,7 @@
 //! # Usage
 //!
 //! ```rust,no_run
-//! use comsrv::api::openapi_routes::create_api_routes;
+//! use comsrv::api::routes::create_api_routes;
 //! use axum::Server;
 //! use std::net::SocketAddr;
 //!
@@ -107,10 +107,57 @@
 
 // Active API modules
 pub mod models;
-pub mod openapi_routes;
-pub mod swagger;
+pub mod routes;
 
 // Future helper functions can be added here as needed.
+
+// ============================================================================
+// Swagger/OpenAPI Support
+// ============================================================================
+
+use axum::{
+    response::{Html, Json},
+    routing::get,
+    Router,
+};
+use utoipa::OpenApi;
+
+/// OpenAPI specification for Communication Service
+#[derive(OpenApi)]
+#[openapi(
+    info(
+        title = "Communication Service API",
+        version = "0.1.0",
+        description = "Industrial communication service providing protocol abstraction and data access"
+    ),
+    tags(
+        (name = "health", description = "Health check endpoints"),
+        (name = "status", description = "Service status endpoints"),
+        (name = "channels", description = "Channel management endpoints"),
+        (name = "points", description = "Point data endpoints"),
+        (name = "point-tables", description = "Point table management endpoints")
+    )
+)]
+#[derive(Debug)]
+pub struct ApiDoc;
+
+/// Generate OpenAPI JSON specification
+pub async fn openapi_json() -> Json<utoipa::openapi::OpenApi> {
+    Json(ApiDoc::openapi())
+}
+
+/// Swagger UI HTML page
+pub async fn swagger_ui() -> Html<&'static str> {
+    Html(include_str!("swagger_ui.html"))
+}
+
+/// Create Swagger routes
+pub fn swagger_routes() -> Router {
+    Router::new()
+        // SwaggerUi integration removed due to compatibility issues
+        .route("/api-docs/openapi.json", get(openapi_json))
+        .route("/swagger", get(swagger_ui))
+}
 
 #[cfg(test)]
 mod tests {
@@ -263,5 +310,12 @@ mod tests {
         assert!(json_str.contains("serialization_test"));
         assert!(json_str.contains("success"));
         assert!(json_str.contains("true"));
+    }
+
+    #[test]
+    fn test_openapi_generation() {
+        let openapi = ApiDoc::openapi();
+        assert_eq!(openapi.info.title, "Communication Service API");
+        assert_eq!(openapi.info.version, "0.1.0");
     }
 }

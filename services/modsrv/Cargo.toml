@@ -7,7 +7,7 @@ description = "Real-time model execution service"
 
 [dependencies]
 # Local dependencies
-voltage-common = { workspace = true, features = ["async", "sync"] }
+voltage-libs = { path = "../../libs", features = ["redis"] }
 
 # Core dependencies (use voltage-common where possible)
 tokio = { workspace = true }

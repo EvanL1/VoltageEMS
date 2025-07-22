@@ -15,10 +15,10 @@ pub mod types;
 
 pub use auto_config::*;
 pub use calculation::*;
+pub use dataflow::DataUpdate;
 pub use dataflow::{DataFlowConfig, DataFlowProcessor};
 pub use instance::*;
 pub use integration::DeviceModelSystem;
-pub use dataflow::DataUpdate;
 pub use registry::*;
 pub use types::*;
 
@@ -340,7 +340,6 @@ impl DeviceModel {
         if self.name.is_empty() {
             return Err("Model name cannot be empty".to_string());
         }
-
 
         // 检查属性定义
         let mut identifiers = std::collections::HashSet::<String>::new();

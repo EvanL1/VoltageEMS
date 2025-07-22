@@ -7,13 +7,16 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ### Workspace-Level Commands
 
 ```bash
+# Check compilation without building (preferred over cargo build)
+cargo check --workspace
+
 # Format all code
 cargo fmt --all
 
 # Run clippy linting on all services
 cargo clippy --all-targets --all-features -- -D warnings
 
-# Build entire workspace
+# Build entire workspace (only when necessary)
 cargo build --workspace
 
 # Run all tests
@@ -24,10 +27,6 @@ cargo test -p {service_name}
 
 # Build in release mode
 cargo build --release --workspace
-
-# Run local CI checks
-./scripts/local-ci.sh
-
 ```
 
 ### Service-Specific Commands
@@ -52,6 +51,20 @@ cargo test test_name -- --exact --nocapture
 cargo watch -x run
 ```
 
+### Docker Development Environment
+
+```bash
+# Start complete test environment for a service
+cd services/{service_name}
+docker-compose -f docker-compose.test.yml up -d
+
+# Monitor service logs
+docker-compose -f docker-compose.test.yml logs -f {service_name}
+
+# Stop test environment
+docker-compose -f docker-compose.test.yml down
+```
+
 ### Redis Operations
 
 ```bash
@@ -61,10 +74,16 @@ docker run -d --name redis-dev -p 6379:6379 redis:7-alpine
 # Monitor Redis activity
 redis-cli monitor | grep {service_name}
 
-# Check specific keys (新架构使用扁平化存储)
+# Check specific keys
 redis-cli keys "1001:m:*" | head -20  # 查看通道1001的测量点
 redis-cli get "1001:m:10001"          # 获取单个点值
 redis-cli keys "cfg:*" | head -20      # 查看配置数据
+
+# Monitor comsrv data publishing
+./services/comsrv/scripts/monitor-redis.sh
+
+# Verify data flow
+./services/comsrv/scripts/verify-data-flow.sh
 ```
 
 ### Python Scripts (使用uv环境)
@@ -77,6 +96,16 @@ uv run python scripts/script_name.py
 uv pip install -r requirements.txt
 ```
 
+### Performance Testing
+
+```bash
+# Run benchmarks (modsrv example)
+cargo bench -p modsrv
+
+# Quick benchmark mode
+cargo bench -p modsrv -- --quick
+```
+
 ## Architecture Overview
 
 VoltageEMS is a Rust-based microservices architecture for industrial IoT energy management. The system uses Redis as a central message bus and data store, with each service handling specific responsibilities.
@@ -85,7 +114,7 @@ VoltageEMS is a Rust-based microservices architecture for industrial IoT energy 
 ┌─────────────────────────────────────────────────────────────┐
 │                      Web Application                        │
 │            Web UI | Mobile App │ HMI/SCADA                  │
-└─────────────────────┬───────────────────────────────────────┘
+└─────────────────────────┬───────────────────────────────────┘
                           │
                    ┌──────┴──────┐
                    │ API Gateway │
@@ -129,15 +158,17 @@ All services communicate exclusively through Redis pub/sub and key-value storage
 - 发布遥测数据到Redis: `{channelID}:{type}:{pointID}` 格式
 - 订阅控制命令: `cmd:{channel_id}:control` 和 `cmd:{channel_id}:adjustment` 通道
 - combase框架层处理命令订阅，协议层保持独立
+- **Platform-specific features**: `socketcan` (Linux), `rppal` (Linux/RPi), `i2cdev`/`spidev` (industrial I/O)
 
-**modsrv** - device model Engine
+**modsrv** - Device Model Engine
 - Executes DAG-based calculation workflows
-- 订阅遥测更新从Redis（使用新的扁平化存储）
+- 订阅遥测更新从Redis
 - Publishes calculated values back to Redis
 - 新增物模型映射系统（device_model模块）
 - 支持实时数据流处理和自动计算触发
+- Includes performance benchmarks (`cargo bench -p modsrv`)
 
-**rulesrv** - control rule Engine
+**rulesrv** - Control Rule Engine
 - 通过Json文件定义DAG(有向无环图)从而定义触发规则
 - 原则上只对modsrv的redis键进行读取、控制
 
@@ -162,7 +193,7 @@ All services communicate exclusively through Redis pub/sub and key-value storage
 - Single entry point for frontend
 - JWT authentication
 - Routes requests to appropriate services via Redis
-- Note: Uses actix-web while other services use axum
+- **Note**: Uses actix-web while other services use axum
 
 ### Shared Libraries
 
@@ -172,9 +203,9 @@ All services communicate exclusively through Redis pub/sub and key-value storage
 - Logging configuration
 - Common data types (包含PointData结构)
 - Metrics collection
+- Feature flags: `async` (default), `sync`, `metrics`, `http`, `test-utils`
 
 ### Key Design Patterns
-**comsrv**
 1. **扁平化存储架构**
    - 键格式: `{channelID}:{type}:{pointID}` (实时数据)
    - 配置格式: `cfg:{channelID}:{type}:{pointID}` (配置数据)
@@ -216,7 +247,7 @@ let register = parts[2].parse::<u16>()?;
 
 ## Development Workflow
 
-1. Create feature branch from `develop`
+1. Create worktree branch from `develop`
 2. Make changes and test locally
 3. 更新 `docs/fixlog/fixlog_{date}.md` 记录修改（使用date命令获取日期）
 4. Create PR to `develop` branch
@@ -247,12 +278,14 @@ cargo test --features integration
 - `rppal` (Raspberry Pi GPIO) is Linux-only
 - `socketcan` requires Linux for CAN support
 - Use feature flags to conditionally compile
+- macOS M3 users: Cannot compile Linux-specific features locally
 
 ### Redis Connection
 - Services require Redis on localhost:6379
 - Use Docker for local development
 - Check connectivity: `redis-cli ping`
 - modsrv使用RedisHandler包装器处理异步操作
+- Redis ACL configured for service authentication (see `services/comsrv/test-configs/redis/users.acl`)
 
 ### Build Warnings
 - config-framework temporarily excluded from workspace
@@ -263,6 +296,12 @@ cargo test --features integration
 - CalculationError → ValidationError
 - ParseError → FormatError
 - 使用crate::error::ModelSrvError而非voltage_common::error::VoltageError
+
+### Docker Build Notes
+- Base image: `rust:1.88-bullseye` for building
+- Runtime: `debian:bullseye-slim`
+- Uses Aliyun mirrors for faster apt updates in China
+- Multi-stage builds to reduce image size
 
 ## Configuration Files
 
@@ -322,10 +361,32 @@ let voltage = device_system.get_telemetry(&instance_id, "voltage_a").await?;
 device_system.execute_command(&instance_id, "switch_on", params).await?;
 ```
 
-## Memory
+## Service-Specific Notes
 
-### comsrv Design
-- comsrv键值对的值中只有Value 和时间戳两个属性。
+### comsrv Startup Architecture
+- Uses async startup pattern to prevent blocking
+- Communication service runs in separate tokio task
+- API server starts immediately without waiting
+- 30-second timeout for service initialization
+- Redis connection handled asynchronously with 5-second timeout
 
-### Development Infrastructure
-- builder使用Rust:1.88-bullseye
+### Tauri Desktop Application
+- Located in `apps/tauri-desktop/`
+- Vue 3 + TypeScript frontend
+- Connects only to API Gateway via REST/WebSocket
+- Build with: `npm run tauri:build`
+- Development: `npm run tauri:dev`
+
+## Critical Reminders
+
+### Redis Data Architecture
+- **Only comsrv writes telemetry data to Redis**
+- Other services read data and may write computed/derived values
+- Point data format: `{channelID}:{type}:{pointID}` → `{value, timestamp}`
+- Configuration data: `cfg:{channelID}:{type}:{pointID}`
+
+### Development Workflow
+- Create fixlog entries: `docs/fixlog/fixlog_{date}.md`
+- Use `date` command to get current date
+- Git commits should not contain Claude-related information
+- Always use uv for Python scripts, never system Python

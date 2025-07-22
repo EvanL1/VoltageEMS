@@ -27,5 +27,5 @@ mod tests {
         ); // Custom code
     }
 
-    // TODO: Add more PDU tests when PDU processor is implemented
+    // Additional PDU tests will be added with PDU processor implementation
 }

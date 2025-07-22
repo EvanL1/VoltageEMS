@@ -9,6 +9,7 @@ pub struct ServiceStatus {
     pub name: String,
     pub version: String,
     pub uptime: u64,
+    #[schema(value_type = String, example = "2023-01-01T00:00:00Z")]
     pub start_time: DateTime<Utc>,
     pub channels: u32,
     pub active_channels: u32,
@@ -21,6 +22,7 @@ pub struct ChannelStatusResponse {
     pub name: String,
     pub protocol: String,
     pub connected: bool,
+    #[schema(value_type = String, example = "2023-01-01T00:00:00Z")]
     pub last_update: DateTime<Utc>,
     pub error_count: u32,
     pub last_error: Option<String>,
@@ -34,29 +36,27 @@ pub struct ChannelStatus {
     pub protocol: String,
     pub connected: bool,
     pub running: bool,
+    #[schema(value_type = String, example = "2023-01-01T00:00:00Z")]
     pub last_update: DateTime<Utc>,
     pub error_count: u32,
     pub last_error: Option<String>,
     pub statistics: HashMap<String, serde_json::Value>,
 }
 
-impl From<crate::core::framework::ChannelStatus> for ChannelStatus {
+impl From<crate::core::combase::ChannelStatus> for ChannelStatus {
     /// Convert from ComBase ChannelStatus to API ChannelStatus
-    fn from(status: crate::core::framework::ChannelStatus) -> Self {
+    fn from(status: crate::core::combase::ChannelStatus) -> Self {
         Self {
-            id: status.id.parse().unwrap_or(0), // Convert string ID to u16
-            name: "Unknown".to_string(), // ComBase doesn't provide name, will be filled by handler
-            protocol: "Unknown".to_string(), // ComBase doesn't provide protocol, will be filled by handler
-            connected: status.connected,
-            running: false, // Will be filled by handler
-            last_update: status.last_update_time,
-            error_count: if status.has_error() { 1 } else { 0 }, // Estimate from error state
-            last_error: if status.has_error() {
-                Some(status.last_error)
-            } else {
-                None
-            },
-            statistics: HashMap::new(), // ComBase doesn't provide statistics, will be filled by handler
+            id: 0,                           // Will be filled by handler
+            name: "Unknown".to_string(),     // Will be filled by handler
+            protocol: "Unknown".to_string(), // Will be filled by handler
+            connected: status.is_connected,
+            running: status.is_connected, // Use is_connected as running status
+            last_update: DateTime::<Utc>::from_timestamp(status.last_update as i64, 0)
+                .unwrap_or_else(Utc::now),
+            error_count: status.error_count as u32,
+            last_error: status.last_error,
+            statistics: HashMap::new(), // Will be filled by handler
         }
     }
 }
@@ -82,21 +82,36 @@ pub struct PointValue {
     pub id: String,
     pub name: String,
     pub value: serde_json::Value,
+    #[schema(value_type = String, example = "2023-01-01T00:00:00Z")]
     pub timestamp: DateTime<Utc>,
     pub unit: String,
     pub description: String,
 }
 
-impl From<crate::core::framework::types::PointData> for PointValue {
+impl From<crate::core::combase::PointData> for PointValue {
     /// Convert from protocols common PointData to API PointValue
-    fn from(point: crate::core::framework::types::PointData) -> Self {
+    fn from(point: crate::core::combase::PointData) -> Self {
+        let value = match point.value {
+            crate::core::combase::RedisValue::String(s) => serde_json::Value::String(s),
+            crate::core::combase::RedisValue::Integer(i) => serde_json::Value::Number(i.into()),
+            crate::core::combase::RedisValue::Float(f) => {
+                if let Some(n) = serde_json::Number::from_f64(f) {
+                    serde_json::Value::Number(n)
+                } else {
+                    serde_json::Value::String(f.to_string())
+                }
+            }
+            crate::core::combase::RedisValue::Bool(b) => serde_json::Value::Bool(b),
+            crate::core::combase::RedisValue::Null => serde_json::Value::Null,
+        };
+
         Self {
-            id: point.id,
-            name: point.name,
-            value: serde_json::Value::String(point.value),
-            timestamp: point.timestamp,
-            unit: point.unit,
-            description: point.description,
+            id: "0".to_string(),       // Default ID since PointData doesn't have it
+            name: "point".to_string(), // Default name
+            value,
+            timestamp: Utc::now(), // Use current time since timestamp is u64
+            unit: "".to_string(),
+            description: "".to_string(),
         }
     }
 }
@@ -203,6 +218,7 @@ pub struct TelemetryPoint {
     /// Current real-time value (changes)
     pub current_value: Option<serde_json::Value>,
     /// Last update timestamp
+    #[schema(value_type = Option<String>, example = json!("2023-01-01T00:00:00Z"))]
     pub last_update: Option<DateTime<Utc>>,
     /// Point status (connected, error, etc.)
     pub status: String,
@@ -470,6 +486,7 @@ pub struct TelemetryTableView {
     /// Control points (遥控 - digital commands)
     pub control: Vec<TelemetryPoint>,
     /// Last refresh timestamp
+    #[schema(value_type = String, example = "2023-01-01T00:00:00Z")]
     pub timestamp: DateTime<Utc>,
 }
 
@@ -742,7 +759,7 @@ mod tests {
 
     #[test]
     fn test_combase_channel_status_conversion() {
-        let combase_status = crate::core::framework::ChannelStatus::new("test_001");
+        let combase_status = crate::core::combase::ChannelStatus::new("test_001");
         let api_status = ChannelStatus::from(combase_status);
 
         assert_eq!(api_status.id, 0); // Updated: test_001 cannot parse as u16, so returns 0
@@ -756,7 +773,7 @@ mod tests {
 
     #[test]
     fn test_combase_point_data_conversion() {
-        let combase_point = crate::core::framework::types::PointData {
+        let combase_point = crate::core::combase::PointData {
             id: "1".to_string(),
             name: "Temperature".to_string(),
             value: "25.5".to_string(),

@@ -7,9 +7,9 @@
 //! - Function code optimization
 //! - Exception handling for slave devices
 
+use crate::core::combase::TelemetryType as CommonTelemetryType;
 use crate::core::config::types::protocol::TelemetryType;
-use crate::core::framework::types::TelemetryType as CommonTelemetryType;
-use crate::plugins::plugin_storage::{PluginPointUpdate, PluginStorage};
+use crate::plugins::core::{PluginPointUpdate, PluginStorage};
 use byteorder::{BigEndian, ByteOrder, LittleEndian};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -31,8 +31,6 @@ pub struct ModbusPoint {
     pub function_code: u8,
     /// Register address
     pub register_address: u16,
-    /// Optional data transformation
-    pub scale_factor: Option<f64>,
     /// Data format (e.g., "float32_be", "uint16", "bool")
     pub data_format: String,
     /// Number of registers to read (e.g., 2 for float32)
@@ -553,12 +551,13 @@ where
                         point.byte_order.as_deref(),
                     );
 
-                    let scaled_value = point.scale_factor.map(|s| value * s).unwrap_or(value);
+                    // 协议层不处理缩放，直接使用原始值
+                    let raw_value = value;
 
-                    let point_data = crate::core::framework::types::PointData {
+                    let point_data = crate::core::combase::types::PointData {
                         id: point.point_id.clone(),
                         name: format!("Point_{}", point.point_id),
-                        value: scaled_value.to_string(),
+                        value: raw_value.to_string(),
                         timestamp: chrono::Utc::now(),
                         unit: String::new(),
                         description: format!("Modbus point from slave {slave_id}"),
@@ -669,12 +668,13 @@ where
                     point.byte_order.as_deref(),
                 );
 
-                let scaled_value = point.scale_factor.map(|s| value * s).unwrap_or(value);
+                // 协议层不处理缩放，直接使用原始值
+                let raw_value = value;
 
-                let point_data = crate::core::framework::types::PointData {
+                let point_data = crate::core::combase::types::PointData {
                     id: point.point_id.clone(),
                     name: format!("Point_{}", point.point_id),
-                    value: scaled_value.to_string(),
+                    value: raw_value.to_string(),
                     timestamp: chrono::Utc::now(),
                     unit: String::new(),
                     description: format!("Modbus point from slave {slave_id}"),
@@ -800,7 +800,6 @@ mod tests {
                 slave_id: 1,
                 function_code: 3,
                 register_address: 100,
-                scale_factor: None,
                 data_format: "uint16".to_string(),
                 register_count: 1,
                 byte_order: None,
@@ -811,7 +810,6 @@ mod tests {
                 slave_id: 1,
                 function_code: 3,
                 register_address: 101,
-                scale_factor: None,
                 data_format: "uint16".to_string(),
                 register_count: 1,
                 byte_order: None,
@@ -822,7 +820,6 @@ mod tests {
                 slave_id: 1,
                 function_code: 1,
                 register_address: 0,
-                scale_factor: None,
                 data_format: "bool".to_string(),
                 register_count: 1,
                 byte_order: None,
@@ -843,7 +840,6 @@ mod tests {
                 slave_id: 1,
                 function_code: 3,
                 register_address: 100,
-                scale_factor: None,
                 data_format: "uint16".to_string(),
                 register_count: 1,
                 byte_order: None,
@@ -854,7 +850,6 @@ mod tests {
                 slave_id: 1,
                 function_code: 3,
                 register_address: 101,
-                scale_factor: None,
                 data_format: "uint16".to_string(),
                 register_count: 1,
                 byte_order: None,
@@ -865,7 +860,6 @@ mod tests {
                 slave_id: 1,
                 function_code: 3,
                 register_address: 120,
-                scale_factor: None,
                 data_format: "uint16".to_string(),
                 register_count: 1,
                 byte_order: None,
@@ -892,7 +886,6 @@ mod tests {
                 slave_id: 1,
                 function_code: 3,
                 register_address: 100 + i,
-                scale_factor: None,
                 data_format: "uint16".to_string(),
                 register_count: 1,
                 byte_order: None,

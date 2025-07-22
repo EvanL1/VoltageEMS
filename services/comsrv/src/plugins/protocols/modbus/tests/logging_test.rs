@@ -9,13 +9,12 @@ use tracing::{info, debug};
 use tracing_test::traced_test;
 
 use crate::plugins::protocols::modbus::{
-    client::{ModbusClient, ModbusChannelConfig},
+    types::{ModbusChannelConfig, ProtocolMappingTable},
     common::ModbusConfig,
     tests::mock_transport::{MockTransport, MockTransportConfig},
     protocol_engine::{ModbusTelemetryMapping, ModbusSignalMapping},
-    client::ProtocolMappingTable,
 };
-use crate::core::framework::base::telemetry::TelemetryType;
+use crate::core::combase::base::telemetry::TelemetryType;
 
 /// 创建测试用的 Modbus 配置
 fn create_test_modbus_config() -> ModbusConfig {

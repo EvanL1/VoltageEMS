@@ -27,7 +27,7 @@ serde_json = { workspace = true }
 serde_yaml = { workspace = true }
 
 # Internal dependencies
-voltage-common = { workspace = true, features = ["async"] }
+voltage-libs = { path = "../../libs", features = ["redis"] }
 
 # Redis - only for PubSub types
 redis = { workspace = true }

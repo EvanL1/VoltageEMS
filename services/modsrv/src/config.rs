@@ -87,9 +87,11 @@ pub struct ModelConfig {
     pub templates_dir: String,
 }
 
-/// HTTP API server configuration
+use voltage_common::config::ApiConfig as CommonApiConfig;
+
+/// HTTP API server configuration (service-specific)
 #[derive(Debug, Deserialize, Serialize, Clone)]
-pub struct ApiConfig {
+pub struct ServiceApiConfig {
     /// API server host address
     #[serde(default = "default_api_host")]
     pub host: String,
@@ -99,7 +101,7 @@ pub struct ApiConfig {
     pub port: u16,
 }
 
-impl Default for ApiConfig {
+impl Default for ServiceApiConfig {
     fn default() -> Self {
         Self {
             host: default_api_host(),
@@ -217,9 +219,12 @@ pub struct Config {
     pub model: ModelConfig,
     /// Control operations configuration
     pub control: ControlConfig,
-    /// HTTP API server configuration
+    /// Common API prefix configuration
     #[serde(default)]
-    pub api: ApiConfig,
+    pub api: CommonApiConfig,
+    /// Service-specific API configuration
+    #[serde(default)]
+    pub service_api: ServiceApiConfig,
     /// System monitoring configuration
     #[serde(default)]
     pub monitoring: MonitoringConfig,
@@ -392,7 +397,8 @@ impl Config {
             operation_key_pattern: "voltage:control:operation:*".to_string(),
             enabled: default_control_enabled(),
         };
-        let api = ApiConfig::default();
+        let api = CommonApiConfig::default();
+        let service_api = ServiceApiConfig::default();
         let monitoring = MonitoringConfig::default();
         let storage = StorageConfig {
             use_redis: default_use_redis(),
@@ -408,6 +414,7 @@ impl Config {
             model,
             control,
             api,
+            service_api,
             monitoring,
             storage,
             performance,
@@ -541,12 +548,23 @@ impl ConfigLoader {
             config.redis.url = url;
         }
 
-        // API host and port
+        // API prefix configuration
+        if let Ok(prefix) = std::env::var("API_PREFIX") {
+            config.api.prefix = prefix;
+        }
+        if let Ok(versioning) = std::env::var("API_VERSIONING") {
+            config.api.enable_versioning = versioning.parse().unwrap_or(false);
+        }
+        if let Ok(version) = std::env::var("API_VERSION") {
+            config.api.version = version;
+        }
+
+        // Service-specific API host and port
         if let Ok(host) = std::env::var(format!("{}API_HOST", self.env_prefix)) {
-            config.api.host = host;
+            config.service_api.host = host;
         }
         if let Ok(port) = std::env::var(format!("{}API_PORT", self.env_prefix)) {
-            config.api.port = port
+            config.service_api.port = port
                 .parse()
                 .map_err(|_| ModelSrvError::ConfigError("Invalid API port".to_string()))?;
         }
@@ -585,7 +603,7 @@ impl ConfigLoader {
         }
 
         // Validate API port
-        if config.api.port == 0 {
+        if config.service_api.port == 0 {
             return Err(ModelSrvError::ConfigError(
                 "API port cannot be 0".to_string(),
             ));

@@ -25,8 +25,7 @@ impl ConfigMigrator {
         T: Serialize,
     {
         // Read source configuration
-        let source_content =
-            fs::read_to_string(&self.source_path).map_err(|e| ConfigError::Io(e))?;
+        let source_content = fs::read_to_string(&self.source_path).map_err(ConfigError::Io)?;
 
         // Parse based on file extension
         let source_value: S = match self.source_path.extension().and_then(|e| e.to_str()) {
@@ -56,10 +55,10 @@ impl ConfigMigrator {
 
         // Create target directory if it doesn't exist
         if let Some(parent) = self.target_path.parent() {
-            fs::create_dir_all(parent).map_err(|e| ConfigError::Io(e))?;
+            fs::create_dir_all(parent).map_err(ConfigError::Io)?;
         }
 
-        fs::write(&self.target_path, target_content).map_err(|e| ConfigError::Io(e))?;
+        fs::write(&self.target_path, target_content).map_err(ConfigError::Io)?;
 
         Ok(())
     }
@@ -74,7 +73,7 @@ impl ConfigMigrator {
                 .unwrap_or("conf")
         ));
 
-        fs::copy(&self.source_path, &backup_path).map_err(|e| ConfigError::Io(e))?;
+        fs::copy(&self.source_path, &backup_path).map_err(ConfigError::Io)?;
 
         Ok(backup_path)
     }
@@ -194,7 +193,7 @@ pub mod transformers {
         if let Some(obj) = old_config.as_object() {
             let url = obj
                 .get("redis_url")
-                .map(|v| v.clone())
+                .cloned()
                 .or_else(|| {
                     obj.get("redis_host").map(|host| {
                         let port = obj
@@ -243,12 +242,18 @@ pub struct ConfigValidator {
     errors: Vec<String>,
 }
 
-impl ConfigValidator {
-    pub fn new() -> Self {
+impl Default for ConfigValidator {
+    fn default() -> Self {
         Self {
             warnings: Vec::new(),
             errors: Vec::new(),
         }
+    }
+}
+
+impl ConfigValidator {
+    pub fn new() -> Self {
+        Self::default()
     }
 
     /// Validate migrated configuration

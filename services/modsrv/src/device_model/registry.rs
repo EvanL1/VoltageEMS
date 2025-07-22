@@ -128,7 +128,7 @@ impl ModelRegistry {
     /// 按设备类型查询模型
     pub async fn list_models_by_type(&self, device_type: &DeviceType) -> Vec<DeviceModel> {
         let type_str = format!("{:?}", device_type);
-        
+
         if let Some(model_ids) = self.type_index.read().await.get(&type_str) {
             let models = self.models.read().await;
             model_ids

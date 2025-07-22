@@ -14,9 +14,6 @@ pub struct Point {
     /// Human-readable name
     pub name: String,
 
-    /// Protocol-specific address (could be register, coil, etc.)
-    pub address: String,
-
     /// Data type (bool, uint16, float32, etc.)
     pub data_type: String,
 
@@ -41,11 +38,10 @@ fn default_scale() -> f64 {
 
 impl Point {
     /// Create a new point with basic information
-    pub fn new(id: String, name: String, address: String, data_type: String) -> Self {
+    pub fn new(id: String, name: String, data_type: String) -> Self {
         Self {
             id,
             name,
-            address,
             data_type,
             scale: 1.0,
             offset: 0.0,

@@ -3,20 +3,40 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 
 use axum::serve;
+use chrono;
 use clap::Parser;
 use dotenv::dotenv;
 use tokio::signal;
 use tokio::sync::RwLock;
 
-use tracing::{error, info, Level};
+use tracing::{error, info, warn, Level};
 use tracing_appender::rolling::{RollingFileAppender, Rotation};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, Layer};
 
-use comsrv::api::openapi_routes::create_api_routes;
+use comsrv::api::routes::create_api_routes;
+use comsrv::core::combase::factory::ProtocolFactory;
 use comsrv::core::config::ConfigManager;
-use comsrv::core::framework::factory::ProtocolFactory;
-use comsrv::service_impl::{shutdown_handler, start_cleanup_task, start_communication_service};
+use comsrv::service::{shutdown_handler, start_cleanup_task, start_communication_service};
 use comsrv::{ComSrvError, Result};
+
+/// Print startup banner with COMSRV ASCII art
+fn print_startup_banner() {
+    println!();
+    println!("  ██████╗ ██████╗ ███╗   ███╗███████╗██████╗ ██╗   ██╗");
+    println!(" ██╔════╝██╔═══██╗████╗ ████║██╔════╝██╔══██╗██║   ██║");
+    println!(" ██║     ██║   ██║██╔████╔██║███████╗██████╔╝██║   ██║");
+    println!(" ██║     ██║   ██║██║╚██╔╝██║╚════██║██╔══██╗╚██╗ ██╔╝");
+    println!(" ╚██████╗╚██████╔╝██║ ╚═╝ ██║███████║██║  ██║ ╚████╔╝ ");
+    println!("  ╚═════╝ ╚═════╝ ╚═╝     ╚═╝╚══════╝╚═╝  ╚═╝  ╚═══╝  ");
+    println!();
+    println!(
+        "           Communication Service v{}",
+        env!("CARGO_PKG_VERSION")
+    );
+    println!("           Industrial Protocol Gateway & Data Handler");
+    println!("           ────────────────────────────────────────────");
+    println!();
+}
 
 /// Custom formatter that shows target only for DEBUG and ERROR levels
 struct ConditionalTargetFormatter;
@@ -87,21 +107,27 @@ async fn main() -> Result<()> {
     // Load environment variables
     dotenv().ok();
 
+    // Print startup banner
+    print_startup_banner();
+
+    // Record service start time for API
+    comsrv::set_service_start_time(chrono::Utc::now());
+
     // Load configuration (with basic console output)
     eprintln!("Loading configuration from: {}", args.config);
     if let Ok(url) = std::env::var("CONFIG_CENTER_URL") {
         eprintln!("Config center URL detected: {url}");
     }
 
-    let config_manager = Arc::new(ConfigManager::load_async(&args.config).await.map_err(|e| {
+    let config_manager = Arc::new(ConfigManager::from_file(&args.config).map_err(|e| {
         eprintln!("Failed to load configuration: {e}");
         e
     })?);
 
     // Initialize logging/tracing with configuration and channels
     initialize_logging(
-        &config_manager.config().service.logging,
-        &config_manager.config().channels,
+        &config_manager.service_config().logging,
+        config_manager.channels(),
     )?;
 
     info!(
@@ -111,18 +137,19 @@ async fn main() -> Result<()> {
 
     // Display configuration summary
     info!("Configuration loaded successfully:");
-    info!("  - Service name: {}", config_manager.config().service.name);
+    info!("  - Service name: {}", config_manager.service_config().name);
     info!(
         "  - Channels configured: {}",
-        config_manager.config().channels.len()
+        config_manager.channels().len()
     );
     info!(
-        "  - API enabled: {}",
-        config_manager.config().service.api.enabled
+        "  - API server: {}:{}",
+        config_manager.service_config().api.host,
+        config_manager.service_config().api.port
     );
     info!(
         "  - Redis enabled: {}",
-        config_manager.config().service.redis.enabled
+        config_manager.service_config().redis.enabled
     );
 
     // Initialize plugin system
@@ -132,24 +159,65 @@ async fn main() -> Result<()> {
         e
     })?;
 
-    // Create protocol factory
+    // Create protocol factory (this will initialize the plugin system)
     let factory = Arc::new(RwLock::new(ProtocolFactory::new()));
 
-    // Start communication service (initializes channels, Redis, etc.)
-    info!("Starting communication channels...");
-    start_communication_service(config_manager.clone(), factory.clone()).await?;
+    // Start communication service in background
+    info!("Starting communication channels in background...");
+    let start_service_factory = factory.clone();
+    let start_service_config = config_manager.clone();
 
-    // Start cleanup task
-    let cleanup_factory = factory.clone();
-    let cleanup_handle = tokio::spawn(async move {
-        if let Err(e) = start_cleanup_task(cleanup_factory).await {
-            error!("Cleanup task error: {e}");
+    // Use a channel to track communication service status
+    let (comm_tx, mut comm_rx) = tokio::sync::mpsc::channel(1);
+
+    tokio::spawn(async move {
+        info!("Communication service task started");
+
+        // Use timeout to prevent indefinite blocking
+        let start_timeout = std::time::Duration::from_secs(30);
+        let start_task = start_communication_service(start_service_config, start_service_factory);
+
+        match tokio::time::timeout(start_timeout, start_task).await {
+            Ok(Ok(())) => {
+                info!("Communication service started successfully");
+                let _ = comm_tx.send(true).await;
+            }
+            Ok(Err(e)) => {
+                error!("Communication service failed: {e}");
+                let _ = comm_tx.send(false).await;
+            }
+            Err(_) => {
+                error!("Communication service startup timed out after 30 seconds");
+                let _ = comm_tx.send(false).await;
+            }
         }
     });
 
-    // Start API server if enabled
-    let api_handle = if config_manager.config().service.api.enabled {
-        let bind_address = &config_manager.config().service.api.bind_address;
+    // Wait a bit for channels to initialize, but don't block indefinitely
+    info!("Waiting for communication service initialization...");
+    tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+
+    // Check if communication service has reported back
+    let comm_status = tokio::time::timeout(std::time::Duration::from_secs(1), comm_rx.recv()).await;
+    match comm_status {
+        Ok(Some(true)) => info!("Communication service confirmed started"),
+        Ok(Some(false)) => warn!("Communication service reported failure, but continuing..."),
+        Ok(None) | Err(_) => {
+            info!("Communication service still initializing, continuing with API server...")
+        }
+    }
+
+    // Start cleanup task
+    let cleanup_factory = factory.clone();
+    let cleanup_handle = start_cleanup_task(cleanup_factory);
+
+    // Start API server (always enabled)
+    let api_handle = {
+        let host = &config_manager.service_config().api.host;
+        let port = config_manager.service_config().api.port;
+        let bind_address = format!("{}:{}", host, port);
+        info!("Preparing to start API server on {bind_address}");
+
         let addr: SocketAddr = bind_address.parse().map_err(|e| {
             error!("Invalid API bind address '{}': {e}", bind_address);
             ComSrvError::ConfigError(format!("Invalid API bind address: {e}"))
@@ -158,19 +226,38 @@ async fn main() -> Result<()> {
         info!("Starting API server on {addr}");
 
         let app = create_api_routes(factory.clone());
-        let listener = tokio::net::TcpListener::bind(addr).await?;
+
+        // Try to bind to the address
+        let listener = tokio::net::TcpListener::bind(addr).await.map_err(|e| {
+            error!("Failed to bind API server to {addr}: {e}");
+            e
+        })?;
+
+        info!("API server successfully bound to {addr}");
 
         Some(tokio::spawn(async move {
+            info!("API server task started, ready to accept connections");
             if let Err(e) = serve(listener, app).await {
                 error!("API server error: {e}");
+            } else {
+                info!("API server stopped gracefully");
             }
         }))
-    } else {
-        info!("API server disabled in configuration");
-        None
     };
 
-    info!("Communication service started successfully");
+    // Final startup confirmation
+    info!("All services started successfully - API server is ready");
+    info!(
+        "API server accessible at: http://{}:{}",
+        config_manager.service_config().api.host,
+        config_manager.service_config().api.port
+    );
+    info!(
+        "Health check: http://{}:{}/health",
+        config_manager.service_config().api.host,
+        config_manager.service_config().api.port
+    );
+
     info!("Press Ctrl+C to shutdown");
 
     // Wait for shutdown signal
@@ -178,17 +265,23 @@ async fn main() -> Result<()> {
 
     info!("Shutting down communication service...");
 
-    // Shutdown channels
+    // Shutdown channels first
     shutdown_handler(factory.clone()).await;
 
     // Cancel background tasks
     cleanup_handle.abort();
-    if let Some(api_handle) = api_handle {
-        api_handle.abort();
+    if let Some(handle) = api_handle.as_ref() {
+        handle.abort();
     }
 
-    // Give tasks time to cleanup
-    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+    // Wait for tasks to cleanup
+    let _ = cleanup_handle.await;
+    if let Some(api_handle) = api_handle {
+        let _ = api_handle.await;
+    }
+
+    // Additional cleanup time for any remaining async operations
+    tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
 
     info!("Communication service shutdown complete");
     Ok(())
@@ -255,7 +348,6 @@ fn initialize_logging(
             .rotation(Rotation::DAILY)
             .filename_prefix(log_filename)
             .filename_suffix("log")
-            .max_log_files(logging_config.max_files as usize)
             .build(log_dir)
             .map_err(|e| {
                 eprintln!("Failed to create file appender: {e}");
@@ -283,9 +375,8 @@ fn initialize_logging(
 
         eprintln!("Logging configured:");
         eprintln!("  - Console: enabled");
-        eprintln!("  - File: {log_file_path}");
+        eprintln!("  - File: {}", log_file_path.display());
         eprintln!("  - Level: {}", logging_config.level);
-        eprintln!("  - Max files: {}", logging_config.max_files);
     } else if logging_config.console {
         // Console only
         let console_layer =
@@ -318,7 +409,6 @@ fn initialize_logging(
             .rotation(Rotation::DAILY)
             .filename_prefix(log_filename)
             .filename_suffix("log")
-            .max_log_files(logging_config.max_files as usize)
             .build(log_dir)
             .map_err(|e| {
                 eprintln!("Failed to create file appender: {e}");
@@ -337,9 +427,8 @@ fn initialize_logging(
 
         eprintln!("Logging configured:");
         eprintln!("  - Console: disabled");
-        eprintln!("  - File: {log_file_path}");
+        eprintln!("  - File: {}", log_file_path.display());
         eprintln!("  - Level: {}", logging_config.level);
-        eprintln!("  - Max files: {}", logging_config.max_files);
     } else {
         eprintln!("Warning: No logging outputs configured!");
         return Ok(());

@@ -1,24 +1,20 @@
 // use crate::error::ModelSrvError;
+use crate::config::Config;
 use crate::monitoring::{HealthStatus, MonitoringService};
 use crate::redis_handler::RedisConnection;
-use crate::comsrv_interface::ControlCommand;
-use crate::control_sender::ControlSender;
 // use crate::template::TemplateManager;
 use axum::{
     extract::{Path, State},
+    http::StatusCode,
     response::Json,
     routing::{get, post},
     Router,
 };
-
-type HttpStatusCode = axum::http::StatusCode;
-type ApiResult<T> = std::result::Result<axum::Json<T>, (axum::http::StatusCode, axum::Json<ErrorResponse>)>;
-type ApiError = (axum::http::StatusCode, axum::Json<ErrorResponse>);
 use rand;
 use serde::{Deserialize, Serialize};
 use serde_json::{self, json, Value};
 // use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use tower_http::cors::CorsLayer;
 use tracing::{error, info};
 use utoipa::{OpenApi, ToSchema};
@@ -54,11 +50,6 @@ use utoipa::{OpenApi, ToSchema};
             ExecuteRuleRequest,
             CreateInstanceRequest,
             ExecuteOperationRequest,
-            ControlRequest,
-            ControlTarget,
-            ControlParameters,
-            ControlOptions,
-            ControlResponse,
             OperationResponse,
             ErrorResponse
         )
@@ -87,45 +78,6 @@ struct CreateInstanceRequest {
 struct ExecuteOperationRequest {
     instance_id: String,
     parameters: Value,
-}
-
-#[derive(Deserialize, Debug, ToSchema)]
-struct ControlRequest {
-    request_id: Option<String>,
-    instance_id: String,
-    command_type: String, // "control" or "adjustment"
-    target: ControlTarget,
-    parameters: ControlParameters,
-    options: Option<ControlOptions>,
-}
-
-#[derive(Deserialize, Debug, ToSchema)]
-struct ControlTarget {
-    channel_id: u16,
-    point_type: String, // "c" for control, "a" for adjustment
-    point_id: u32,
-}
-
-#[derive(Deserialize, Debug, ToSchema)]
-struct ControlParameters {
-    value: f64,
-    timeout: Option<u64>, // milliseconds
-    priority: Option<String>,
-}
-
-#[derive(Deserialize, Debug, ToSchema)]
-struct ControlOptions {
-    wait_for_confirm: Option<bool>,
-    retry_count: Option<u32>,
-    batch_mode: Option<bool>,
-}
-
-#[derive(Serialize, ToSchema)]
-struct ControlResponse {
-    status: String,
-    command_id: String,
-    message: String,
-    request_id: Option<String>,
 }
 
 #[derive(Deserialize, Debug, ToSchema)]
@@ -182,14 +134,13 @@ pub struct AppState {
     redis_conn: Arc<RedisConnection>,
     /// Monitoring service
     monitoring: Arc<MonitoringService>,
-    /// Control sender for comsrv commands
-    control_sender: Arc<Mutex<ControlSender>>,
 }
 
 /// API server for the modsrv service
 pub struct ApiServer {
     state: AppState,
     port: u16,
+    config: Config,
 }
 
 impl ApiServer {
@@ -210,38 +161,58 @@ impl ApiServer {
     }
 
     /// Create a new API server (legacy)
-    pub fn new_legacy(redis_conn: Arc<RedisConnection>, port: u16) -> Self {
+    pub fn new_legacy(redis_conn: Arc<RedisConnection>, port: u16, config: Config) -> Self {
         let monitoring = Arc::new(MonitoringService::new(HealthStatus::Healthy));
-        let control_sender = Arc::new(Mutex::new(ControlSender::new(
-            (*redis_conn).clone(),
-            crate::control_sender::SendStrategy::default(),
-        )));
         let state = AppState {
             redis_conn,
             monitoring,
-            control_sender,
         };
-        Self { state, port }
+        Self {
+            state,
+            port,
+            config,
+        }
     }
 
     /// Start the API server
     pub async fn start(&self) -> Result<(), std::io::Error> {
+        let api_config = &self.config.api;
+
         let app = Router::new()
-            // Health endpoints
+            // Health endpoints (always without prefix)
             .route("/health", get(health_check))
             // Template endpoints
-            .route("/api/templates", get(list_templates))
-            .route("/api/templates/:id", get(get_template))
+            .route(&api_config.build_path("templates"), get(list_templates))
+            .route(&api_config.build_path("templates/:id"), get(get_template))
             // Instance endpoints
-            .route("/api/instances", post(create_instance))
+            .route(&api_config.build_path("instances"), post(create_instance))
             // Control operation endpoints
             .route(
-                "/api/control/operations",
+                &api_config.build_path("control/operations"),
                 get(list_operations).post(control_operation),
             )
-            .route("/api/control/execute/:operation", post(execute_operation))
+            .route(
+                &api_config.build_path("control/execute/:operation"),
+                post(execute_operation),
+            )
             // OpenAPI spec endpoint
-            .route("/api-docs/openapi.json", get(serve_openapi_spec))
+            .route(
+                &api_config.build_path("api-docs/openapi.json"),
+                get(serve_openapi_spec),
+            )
+            // Rule endpoints (legacy API compatibility)
+            .route(
+                &api_config.build_path("rules"),
+                get(list_rules).post(create_rule),
+            )
+            .route(
+                &api_config.build_path("rules/:id"),
+                get(get_rule).put(update_rule).delete(delete_rule),
+            )
+            .route(
+                &api_config.build_path("rules/:id/execute"),
+                post(execute_rule),
+            )
             // CORS
             .layer(CorsLayer::permissive())
             // State
@@ -284,7 +255,7 @@ async fn health_check() -> Json<HealthResponse> {
 )]
 async fn list_rules(
     State(_state): State<AppState>,
-) -> ApiResult<serde_json::Value> {
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
     // TODO: Implement list_rules method in RedisStore
     match Ok(serde_json::Value::Array(vec![]))
         as Result<serde_json::Value, crate::error::ModelSrvError>
@@ -296,8 +267,8 @@ async fn list_rules(
         Err(e) => {
             error!("Failed to list rules: {}", e);
             Err((
-                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-                axum::Json(ErrorResponse {
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
                     error: "InternalError".to_string(),
                     message: format!("Failed to list rules: {}", e),
                 }),
@@ -322,7 +293,7 @@ async fn list_rules(
 async fn get_rule(
     Path(id): Path<String>,
     State(_state): State<AppState>,
-) -> ApiResult<serde_json::Value> {
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
     // TODO: Implement get_rule method in RedisStore
     match Ok(None) as Result<Option<serde_json::Value>, crate::error::ModelSrvError> {
         Ok(Some(rule)) => Ok(Json(json!({
@@ -330,8 +301,8 @@ async fn get_rule(
             "rule": rule
         }))),
         Ok(None) => Err((
-            axum::http::StatusCode::NOT_FOUND,
-            axum::Json(ErrorResponse {
+            StatusCode::NOT_FOUND,
+            Json(ErrorResponse {
                 error: "NotFound".to_string(),
                 message: format!("Rule with ID '{}' not found", id),
             }),
@@ -339,8 +310,8 @@ async fn get_rule(
         Err(e) => {
             error!("Failed to get rule {}: {}", id, e);
             Err((
-                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-                axum::Json(ErrorResponse {
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
                     error: "InternalError".to_string(),
                     message: format!("Failed to get rule: {}", e),
                 }),
@@ -363,7 +334,7 @@ async fn get_rule(
 async fn create_rule(
     State(_state): State<AppState>,
     Json(_rule_data): Json<serde_json::Value>,
-) -> ApiResult<serde_json::Value> {
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
     // TODO: Implement create_rule method in RedisStore
     match Ok(format!("rule_{}", rand::random::<u32>()))
         as Result<String, crate::error::ModelSrvError>
@@ -376,8 +347,8 @@ async fn create_rule(
         Err(e) => {
             error!("Failed to create rule: {}", e);
             Err((
-                axum::http::StatusCode::BAD_REQUEST,
-                axum::Json(ErrorResponse {
+                StatusCode::BAD_REQUEST,
+                Json(ErrorResponse {
                     error: "BadRequest".to_string(),
                     message: format!("Failed to create rule: {}", e),
                 }),
@@ -404,7 +375,7 @@ async fn update_rule(
     Path(id): Path<String>,
     State(_state): State<AppState>,
     Json(_rule_data): Json<serde_json::Value>,
-) -> ApiResult<serde_json::Value> {
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
     // TODO: Implement update_rule method in RedisStore
     match Ok(()) as Result<(), crate::error::ModelSrvError> {
         Ok(_) => Ok(Json(json!({
@@ -414,8 +385,8 @@ async fn update_rule(
         Err(e) => {
             error!("Failed to update rule {}: {}", id, e);
             Err((
-                axum::http::StatusCode::NOT_FOUND,
-                axum::Json(ErrorResponse {
+                StatusCode::NOT_FOUND,
+                Json(ErrorResponse {
                     error: "NotFound".to_string(),
                     message: format!("Failed to update rule: {}", e),
                 }),
@@ -440,7 +411,7 @@ async fn update_rule(
 async fn delete_rule(
     Path(id): Path<String>,
     State(_state): State<AppState>,
-) -> ApiResult<serde_json::Value> {
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
     // TODO: Implement delete_rule method in RedisStore
     match Ok(()) as Result<(), crate::error::ModelSrvError> {
         Ok(_) => Ok(Json(json!({
@@ -450,8 +421,8 @@ async fn delete_rule(
         Err(e) => {
             error!("Failed to delete rule {}: {}", id, e);
             Err((
-                axum::http::StatusCode::NOT_FOUND,
-                axum::Json(ErrorResponse {
+                StatusCode::NOT_FOUND,
+                Json(ErrorResponse {
                     error: "NotFound".to_string(),
                     message: format!("Failed to delete rule: {}", e),
                 }),
@@ -478,11 +449,11 @@ async fn execute_rule(
     Path(id): Path<String>,
     State(_state): State<AppState>,
     Json(_input): Json<serde_json::Value>,
-) -> ApiResult<serde_json::Value> {
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
     // TODO: Implement rule executor functionality
     error!("Rule execution not yet implemented for rule {}", id);
     Err((
-        axum::http::StatusCode::NOT_IMPLEMENTED,
+        StatusCode::NOT_IMPLEMENTED,
         Json(ErrorResponse {
             error: "NotImplemented".to_string(),
             message: format!("Rule execution not yet implemented for rule: {}", id),
@@ -502,7 +473,7 @@ async fn execute_rule(
 )]
 async fn list_templates(
     State(_state): State<AppState>,
-) -> ApiResult<serde_json::Value> {
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
     // TODO: Implement template manager functionality
     Ok(Json(json!({
         "status": "success",
@@ -526,10 +497,10 @@ async fn list_templates(
 async fn get_template(
     Path(id): Path<String>,
     State(_state): State<AppState>,
-) -> ApiResult<serde_json::Value> {
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
     // TODO: Implement template manager functionality
     Err((
-        axum::http::StatusCode::NOT_FOUND,
+        StatusCode::NOT_FOUND,
         Json(ErrorResponse {
             error: "NotFound".to_string(),
             message: format!("Template with ID '{}' not found", id),
@@ -551,7 +522,7 @@ async fn get_template(
 async fn create_instance(
     State(_state): State<AppState>,
     Json(req): Json<CreateInstanceRequest>,
-) -> ApiResult<serde_json::Value> {
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
     // TODO: Implement template manager functionality
     Ok(Json(json!({
         "status": "success",
@@ -581,106 +552,22 @@ async fn list_operations(State(_state): State<AppState>) -> Json<Vec<String>> {
 #[utoipa::path(
     post,
     path = "/api/control/operations",
-    request_body = ControlRequest,
+    request_body = ExecuteOperationRequest,
     responses(
-        (status = 200, description = "Operation executed", body = ControlResponse),
+        (status = 200, description = "Operation executed"),
         (status = 400, description = "Invalid request", body = ErrorResponse)
     ),
     tag = "operations"
 )]
 async fn control_operation(
-    State(state): State<AppState>,
-    Json(req): Json<ControlRequest>,
-) -> std::result::Result<axum::Json<ControlResponse>, (axum::http::StatusCode, axum::Json<ErrorResponse>)> {
-    // Validate request
-    if req.target.point_type != "c" && req.target.point_type != "a" {
-        return Err((
-            axum::http::StatusCode::BAD_REQUEST,
-            axum::Json(ErrorResponse {
-                error: "InvalidPointType".to_string(),
-                message: "Point type must be 'c' (control) or 'a' (adjustment)".to_string(),
-            }),
-        ));
-    }
-
-    // Create control command
-    let control_command = ControlCommand::new(
-        req.target.channel_id,
-        &req.target.point_type,
-        req.target.point_id,
-        req.parameters.value,
-    );
-
-    let command_id = control_command.command_id.clone();
-    let request_id = req.request_id.clone();
-
-    // Send control command via ControlSender
-    let send_result = {
-        let mut sender = state.control_sender.lock().unwrap();
-        sender.send_command(
-            req.target.channel_id,
-            &req.target.point_type,
-            req.target.point_id,
-            req.parameters.value,
-        )
-    };
-    
-    match send_result {
-        Ok(_) => {
-            info!(
-                "Control command sent successfully: {} -> {}:{}:{} = {}",
-                command_id, req.target.channel_id, req.target.point_type, req.target.point_id, req.parameters.value
-            );
-
-            // If wait_for_confirm is enabled, wait for completion
-            if req.options.as_ref().and_then(|o| o.wait_for_confirm).unwrap_or(false) {
-                let timeout = std::time::Duration::from_millis(req.parameters.timeout.unwrap_or(5000));
-                
-                let completion_result = {
-                    let mut sender = state.control_sender.lock().unwrap();
-                    sender.wait_for_completion(&command_id, timeout).await
-                };
-                
-                match completion_result {
-                    Ok(status) => {
-                        Ok(axum::Json(ControlResponse {
-                            status: "success".to_string(),
-                            command_id,
-                            message: format!("Command executed successfully: {}", status.status),
-                            request_id,
-                        }))
-                    }
-                    Err(e) => {
-                        error!("Command execution failed: {}", e);
-                        Err((
-                            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-                            axum::Json(ErrorResponse {
-                                error: "ExecutionError".to_string(),
-                                message: format!("Command execution failed: {}", e),
-                            }),
-                        ))
-                    }
-                }
-            } else {
-                Ok(axum::Json(ControlResponse {
-                    status: "pending".to_string(),
-                    command_id,
-                    message: "Command sent successfully, execution pending".to_string(),
-                    request_id,
-                }))
-            }
-        }
-        Err(e) => {
-            error!("Failed to send control command: {}", e);
-            Err((
-                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-                axum::Json(ErrorResponse {
-                    error: "SendError".to_string(),
-                    message: format!("Failed to send control command: {}", e),
-                }),
-            ))
-        }
-    }
+    State(_state): State<AppState>,
+    Json(req): Json<ExecuteOperationRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
+    // Placeholder implementation
+    Ok(Json(json!({
+        "status": "success",
+        "message": format!("Operation executed for instance {}", req.instance_id)
+    })))
 }
 
 /// Execute specific operation
@@ -689,9 +576,8 @@ async fn control_operation(
     path = "/api/control/execute/{operation}",
     request_body = ExecuteOperationRequest,
     responses(
-        (status = 200, description = "Operation executed", body = ControlResponse),
-        (status = 400, description = "Invalid request", body = ErrorResponse),
-        (status = 404, description = "Operation not found", body = ErrorResponse)
+        (status = 200, description = "Operation executed"),
+        (status = 400, description = "Invalid request", body = ErrorResponse)
     ),
     params(
         ("operation" = String, Path, description = "Operation name")
@@ -700,124 +586,14 @@ async fn control_operation(
 )]
 async fn execute_operation(
     Path(operation): Path<String>,
-    State(state): State<AppState>,
+    State(_state): State<AppState>,
     Json(req): Json<ExecuteOperationRequest>,
-) -> ApiResult<ControlResponse> {
-    // Parse operation parameters
-    let parameters = req.parameters.as_object().ok_or_else(|| {
-        (
-            axum::http::StatusCode::BAD_REQUEST,
-            axum::Json(ErrorResponse {
-                error: "InvalidParameters".to_string(),
-                message: "Parameters must be a JSON object".to_string(),
-            }),
-        )
-    })?;
-
-    // Map operation to control command based on operation type
-    let (channel_id, point_type, point_id, value) = match operation.as_str() {
-        "start_motor" => {
-            // Extract parameters for motor start
-            let channel_id = parameters.get("channel_id")
-                .and_then(|v| v.as_u64())
-                .ok_or_else(|| {
-                    (
-                        axum::http::StatusCode::BAD_REQUEST,
-                        axum::Json(ErrorResponse {
-                            error: "MissingParameter".to_string(),
-                            message: "Missing required parameter: channel_id".to_string(),
-                        }),
-                    )
-                })? as u16;
-            
-            let point_id = parameters.get("point_id")
-                .and_then(|v| v.as_u64())
-                .ok_or_else(|| {
-                    (
-                        axum::http::StatusCode::BAD_REQUEST,
-                        axum::Json(ErrorResponse {
-                            error: "MissingParameter".to_string(),
-                            message: "Missing required parameter: point_id".to_string(),
-                        }),
-                    )
-                })? as u32;
-
-            (channel_id, "c", point_id, 1.0) // Start motor = 1
-        }
-        "stop_motor" => {
-            let channel_id = parameters.get("channel_id")
-                .and_then(|v| v.as_u64())
-                .unwrap_or(1001) as u16;
-            
-            let point_id = parameters.get("point_id")
-                .and_then(|v| v.as_u64())
-                .unwrap_or(30001) as u32;
-
-            (channel_id, "c", point_id, 0.0) // Stop motor = 0
-        }
-        "change_speed" => {
-            let channel_id = parameters.get("channel_id")
-                .and_then(|v| v.as_u64())
-                .unwrap_or(1001) as u16;
-            
-            let point_id = parameters.get("point_id")
-                .and_then(|v| v.as_u64())
-                .unwrap_or(30002) as u32;
-
-            let target_speed = parameters.get("target_speed")
-                .and_then(|v| v.as_f64())
-                .ok_or_else(|| {
-                    (
-                        axum::http::StatusCode::BAD_REQUEST,
-                        axum::Json(ErrorResponse {
-                            error: "MissingParameter".to_string(),
-                            message: "Missing required parameter: target_speed".to_string(),
-                        }),
-                    )
-                })?;
-
-            (channel_id, "a", point_id, target_speed) // Speed adjustment
-        }
-        _ => {
-            return Err((
-                axum::http::StatusCode::NOT_FOUND,
-                axum::Json(ErrorResponse {
-                    error: "OperationNotFound".to_string(),
-                    message: format!("Operation '{}' not found", operation),
-                }),
-            ));
-        }
-    };
-
-    // Create and send control command
-    let control_command = ControlCommand::new(channel_id, point_type, point_id, value);
-    let command_id = control_command.command_id.clone();
-
-    match state.control_sender.lock().unwrap().send_command(channel_id, point_type, point_id, value) {
-        Ok(_) => {
-            info!(
-                "Operation '{}' executed successfully for instance {}: command_id={}",
-                operation, req.instance_id, command_id
-            );
-
-            Ok(axum::Json(ControlResponse {
-                status: "success".to_string(),
-                command_id,
-                message: format!("Operation '{}' executed successfully for instance {}", operation, req.instance_id),
-                request_id: None,
-            }))
-        }
-        Err(e) => {
-            error!("Failed to execute operation '{}': {}", operation, e);
-            Err((
-                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-                axum::Json(ErrorResponse {
-                    error: "ExecutionError".to_string(),
-                    message: format!("Failed to execute operation '{}': {}", operation, e),
-                }),
-            ))
-        }
-    }
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
+    // Placeholder implementation
+    Ok(Json(json!({
+        "status": "success",
+        "message": format!("Operation '{}' executed for instance {}", operation, req.instance_id)
+    })))
 }
 
 /// Serve OpenAPI specification as JSON

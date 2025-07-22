@@ -1,34 +1,32 @@
-use axum::{extract::State, response::IntoResponse};
+use actix_web::{get, web, HttpResponse};
 use serde_json::json;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::sync::Arc;
 
+use crate::config::Config;
 use crate::error::ApiResult;
+use crate::redis_client::RedisClient;
 use crate::response::success_response;
-use crate::AppState;
 
-pub async fn health_check() -> ApiResult<impl IntoResponse> {
+#[get("/health")]
+pub async fn health_check() -> ApiResult<HttpResponse> {
     Ok(success_response(json!({
         "status": "healthy",
         "service": "apigateway"
     })))
 }
 
-pub async fn simple_health() -> ApiResult<impl IntoResponse> {
-    let uptime = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs();
-    
+pub async fn simple_health() -> ApiResult<HttpResponse> {
     Ok(success_response(json!({
-        "status": "healthy",
-        "uptime": uptime,
-        "version": env!("CARGO_PKG_VERSION")
+        "status": "ok"
     })))
 }
 
+#[get("/health/detailed")]
 pub async fn detailed_health(
-    State(state): State<AppState>,
-) -> ApiResult<impl IntoResponse> {
+    config: web::Data<Config>,
+    redis_client: web::Data<Arc<RedisClient>>,
+    http_client: web::Data<Arc<reqwest::Client>>,
+) -> ApiResult<HttpResponse> {
     let mut health_status = json!({
         "status": "healthy",
         "service": "apigateway",
@@ -38,8 +36,8 @@ pub async fn detailed_health(
 
     // Check Redis connection
     let redis_status = {
-        match state.redis_client.ping().await {
-            Ok(_) => json!({
+        match redis_client.ping().await {
+            Ok(_pong) => json!({
                 "status": "healthy",
                 "message": "Redis connection successful"
             }),
@@ -55,9 +53,9 @@ pub async fn detailed_health(
     let services = vec!["comsrv", "modsrv", "hissrv", "netsrv", "alarmsrv"];
 
     for service in services {
-        if let Some(service_url) = state.config.get_service_url(service) {
+        if let Some(service_url) = config.get_service_url(service) {
             let health_url = format!("{}/health", service_url);
-            let status = match state.http_client
+            let status = match http_client
                 .get(&health_url)
                 .timeout(std::time::Duration::from_secs(5))
                 .send()

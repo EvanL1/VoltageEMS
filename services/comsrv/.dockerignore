@@ -4,7 +4,7 @@
 
 # Build artifacts
 target/
-Cargo.lock
+# Cargo.lock  # Need this for reproducible builds
 
 # IDE files
 .idea/

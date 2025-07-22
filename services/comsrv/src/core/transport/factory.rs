@@ -14,6 +14,7 @@ use tracing::{debug, info};
 #[cfg(all(target_os = "linux", feature = "can"))]
 use super::can::{CanTransport, CanTransportBuilder, CanTransportConfig};
 use super::gpio::{GpioTransport, GpioTransportBuilder, GpioTransportConfig};
+#[cfg(any(test, feature = "test-utils"))]
 use super::mock::{MockTransport, MockTransportBuilder, MockTransportConfig};
 use super::serial::{SerialTransport, SerialTransportBuilder, SerialTransportConfig};
 use super::tcp::{TcpTransport, TcpTransportBuilder, TcpTransportConfig};
@@ -79,6 +80,7 @@ pub enum AnyTransportConfig {
     #[cfg(all(target_os = "linux", feature = "can"))]
     Can(CanTransportConfig),
     /// Mock transport configuration
+    #[cfg(any(test, feature = "test-utils"))]
     Mock(MockTransportConfig),
 }
 
@@ -91,6 +93,7 @@ impl AnyTransportConfig {
             AnyTransportConfig::Gpio(_) => TransportType::Gpio,
             #[cfg(all(target_os = "linux", feature = "can"))]
             AnyTransportConfig::Can(_) => TransportType::Can,
+            #[cfg(any(test, feature = "test-utils"))]
             AnyTransportConfig::Mock(_) => TransportType::Mock,
         }
     }
@@ -103,6 +106,7 @@ impl AnyTransportConfig {
             AnyTransportConfig::Gpio(config) => config.validate(),
             #[cfg(all(target_os = "linux", feature = "can"))]
             AnyTransportConfig::Can(config) => config.validate(),
+            #[cfg(any(test, feature = "test-utils"))]
             AnyTransportConfig::Mock(config) => config.validate(),
         }
     }
@@ -146,15 +150,17 @@ impl SerialBuilderImpl {
     }
 }
 
+#[cfg(any(test, feature = "test-utils"))]
 #[derive(Debug)]
 struct MockBuilderImpl {
-    builder: MockTransportBuilder,
+    builder: mock::MockTransportBuilder,
 }
 
+#[cfg(any(test, feature = "test-utils"))]
 impl MockBuilderImpl {
     fn new() -> Self {
         Self {
-            builder: MockTransportBuilder::new(),
+            builder: mock::MockTransportBuilder::new(),
         }
     }
 }
@@ -215,6 +221,7 @@ impl TransportFactory {
         // Register default transport builders
         factory.register_tcp_builder();
         factory.register_serial_builder();
+        #[cfg(any(test, feature = "test-utils"))]
         factory.register_mock_builder();
         factory.register_gpio_builder();
         #[cfg(all(target_os = "linux", feature = "can"))]
@@ -239,6 +246,7 @@ impl TransportFactory {
     }
 
     /// Register mock transport builder
+    #[cfg(any(test, feature = "test-utils"))]
     fn register_mock_builder(&mut self) {
         let builder = MockBuilderImpl::new();
         self.builders.insert(TransportType::Mock, Box::new(builder));
@@ -310,6 +318,7 @@ impl TransportFactory {
     }
 
     /// Create a mock transport with given configuration
+    #[cfg(any(test, feature = "test-utils"))]
     pub async fn create_mock_transport(
         &self,
         config: MockTransportConfig,
@@ -349,7 +358,12 @@ impl TransportFactory {
             TransportType::Gpio => AnyTransportConfig::Gpio(GpioTransportConfig::default()),
             #[cfg(all(target_os = "linux", feature = "can"))]
             TransportType::Can => AnyTransportConfig::Can(CanTransportConfig::default()),
-            TransportType::Mock => AnyTransportConfig::Mock(MockTransportConfig::default()),
+            #[cfg(any(test, feature = "test-utils"))]
+            TransportType::Mock => AnyTransportConfig::Mock(mock::MockTransportConfig::default()),
+            #[cfg(not(any(test, feature = "test-utils")))]
+            TransportType::Mock => {
+                panic!("Mock transport is only available in test builds");
+            }
         }
     }
 }
@@ -389,6 +403,7 @@ impl TransportBuilderRegistry for SerialBuilderImpl {
     }
 }
 
+#[cfg(any(test, feature = "test-utils"))]
 impl TransportBuilderRegistry for MockBuilderImpl {
     fn build_transport(
         &self,
@@ -396,7 +411,7 @@ impl TransportBuilderRegistry for MockBuilderImpl {
     ) -> Result<Box<dyn Transport>, TransportError> {
         match config {
             AnyTransportConfig::Mock(mock_config) => {
-                let _transport = MockTransport::new(mock_config)?;
+                let _transport = mock::MockTransport::new(mock_config)?;
                 Ok(Box::new(_transport))
             }
             _ => Err(TransportError::ConfigError(

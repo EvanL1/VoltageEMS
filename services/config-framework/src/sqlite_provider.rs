@@ -142,6 +142,10 @@ impl SqliteProvider {
 
     /// Convert serde_json::Value to figment::Value
     fn json_to_figment_value(&self, json: serde_json::Value) -> Value {
+        Self::convert_json_to_figment_value(json)
+    }
+
+    fn convert_json_to_figment_value(json: serde_json::Value) -> Value {
         match json {
             serde_json::Value::Null => Value::from(""),
             serde_json::Value::Bool(b) => Value::from(b),
@@ -158,14 +162,14 @@ impl SqliteProvider {
             serde_json::Value::Array(arr) => {
                 let values: Vec<Value> = arr
                     .into_iter()
-                    .map(|v| self.json_to_figment_value(v))
+                    .map(Self::convert_json_to_figment_value)
                     .collect();
                 Value::from(values)
             }
             serde_json::Value::Object(obj) => {
                 let mut map = Map::new();
                 for (k, v) in obj {
-                    map.insert(k, self.json_to_figment_value(v));
+                    map.insert(k, Self::convert_json_to_figment_value(v));
                 }
                 Value::from(map)
             }

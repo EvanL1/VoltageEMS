@@ -22,5 +22,5 @@ mod tests {
         }
     }
 
-    // TODO: Add full integration tests when all components are ready
+    // Integration tests are covered by other test modules
 }

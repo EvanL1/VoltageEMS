@@ -7,9 +7,9 @@ use async_trait::async_trait;
 use serde_json::{json, Value};
 use std::collections::HashMap;
 
-use crate::core::config::types::channel::ChannelConfig;
-use crate::core::framework::traits::ComBase;
-use crate::plugins::protocol_plugin::{
+use crate::core::combase::ComBase;
+use crate::core::config::types::ChannelConfig;
+use crate::plugins::traits::{
     CliCommand, ConfigTemplate, ProtocolMetadata, ProtocolPlugin, ValidationRule,
 };
 use crate::utils::Result;
@@ -20,6 +20,12 @@ use super::VirtualProtocol;
 #[derive(Debug)]
 pub struct VirtualPlugin {
     metadata: ProtocolMetadata,
+}
+
+impl VirtualPlugin {
+    pub fn new() -> Self {
+        Self::default()
+    }
 }
 
 impl Default for VirtualPlugin {
@@ -100,27 +106,7 @@ impl ProtocolPlugin for VirtualPlugin {
         vec![CliCommand {
             name: "test".to_string(),
             description: "Test virtual protocol".to_string(),
-            args: vec![],
+            subcommands: vec![],
         }]
-    }
-
-    fn documentation(&self) -> &str {
-        r#"
-# Virtual Protocol
-
-The virtual protocol plugin provides a simulated protocol for testing purposes.
-
-## Configuration Example
-
-```yaml
-channels:
-  - id: 99
-    name: "Virtual Device"
-    protocol: "virtual"
-    protocol_params:
-      update_interval: 1000
-      simulation_mode: "sine"
-```
-"#
     }
 }

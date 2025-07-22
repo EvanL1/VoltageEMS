@@ -1,42 +1,36 @@
-//! Protocol Plugin System
+//! 协议插件系统
 //!
-//! This module provides a flexible plugin architecture for protocol implementations,
-//! enabling dynamic loading, configuration management, and standardized interfaces.
+//! 提供灵活的插件架构，支持协议实现的动态加载、配置管理和标准化接口
 
-pub mod config_template;
-pub mod plugin_manager;
-pub mod plugin_registry;
-pub mod plugin_storage;
-pub mod protocol_plugin;
+pub mod core;
 pub mod protocols;
+pub mod traits;
 
-// Re-export main types
-pub use config_template::{
-    ConfigGenerator, ConfigParameter, ConfigSchema, ConfigSection, ConfigValidator, ParameterType,
-    ValidationResult,
-};
-pub use plugin_manager::PluginManager;
-pub use plugin_registry::{PluginRegistry, PluginStatistics};
-pub use plugin_storage::{
-    telemetry_type_to_redis, DefaultPluginStorage, PluginPointConfig, PluginPointUpdate,
-    PluginStorage,
-};
-pub use protocol_plugin::{
-    create_plugin_instance, CliArgument, CliCommand, ConfigTemplate, ProtocolMetadata,
-    ProtocolPlugin, ValidationRule,
+// 从core重新导出核心类型
+pub use core::{
+    discovery, telemetry_type_to_redis, DefaultPluginStorage, PluginManager, PluginPointConfig,
+    PluginPointUpdate, PluginRegistry, PluginStatistics, PluginStorage,
 };
 
-// Re-export macros
+// 从traits重新导出接口定义
+pub use traits::{
+    create_plugin_instance, CliArgument, CliCommand, CliSubcommand, ConfigGenerator,
+    ConfigParameter, ConfigSchema, ConfigSection, ConfigTemplate, ConfigValidator,
+    DependencyCondition, EnumValue, ParameterDependency, ParameterType, ParameterValidation,
+    PluginFactory, ProtocolMetadata, ProtocolPlugin, ValidationResult, ValidationRule,
+};
+
+// 重新导出宏
 pub use crate::{protocol_plugin, register_plugin};
 
-/// Initialize the plugin system
+/// 初始化插件系统
 pub fn init_plugin_system() -> crate::utils::Result<()> {
     tracing::info!("Initializing protocol plugin system");
 
-    // Load built-in plugins
-    plugin_registry::discovery::load_all_plugins()?;
+    // 加载内置插件
+    discovery::load_all_plugins()?;
 
-    // Log loaded plugins
+    // 记录已加载的插件
     let registry = PluginRegistry::global();
     let registry = registry.read().unwrap();
     let stats = registry.get_statistics();

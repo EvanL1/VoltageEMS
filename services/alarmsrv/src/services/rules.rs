@@ -97,17 +97,19 @@ impl AlarmRulesEngine {
     /// Evaluate rules against point data
     pub fn evaluate(&mut self, data: &PointData) -> Vec<Alarm> {
         let mut alarms = Vec::new();
-        
+
         // Update last data timestamp
         let key = format!("{}:{}:{}", data.channel_id, data.point_type, data.point_id);
         self.last_data.insert(key.clone(), data.timestamp);
 
         // Find matching rules
-        let matching_rules: Vec<_> = self.rules.iter()
+        let matching_rules: Vec<_> = self
+            .rules
+            .iter()
             .filter(|rule| {
-                rule.channel_id == data.channel_id &&
-                rule.point_type == data.point_type &&
-                (rule.point_id.is_none() || rule.point_id == Some(data.point_id))
+                rule.channel_id == data.channel_id
+                    && rule.point_type == data.point_type
+                    && (rule.point_id.is_none() || rule.point_id == Some(data.point_id))
             })
             .collect();
 
@@ -128,7 +130,9 @@ impl AlarmRulesEngine {
         let mut alarms = Vec::new();
 
         // Group rules by monitored points
-        let timeout_rules: Vec<_> = self.rules.iter()
+        let timeout_rules: Vec<_> = self
+            .rules
+            .iter()
             .filter(|r| matches!(r.rule_type, AlarmRuleType::Timeout { .. }))
             .collect();
 
@@ -142,7 +146,9 @@ impl AlarmRulesEngine {
             } else {
                 // Check all points of this type
                 let prefix = format!("{}:{}:", rule.channel_id, rule.point_type);
-                let timeout_points: Vec<_> = self.last_data.iter()
+                let timeout_points: Vec<_> = self
+                    .last_data
+                    .iter()
                     .filter(|(k, _)| k.starts_with(&prefix))
                     .collect();
 
@@ -160,7 +166,12 @@ impl AlarmRulesEngine {
     /// Evaluate a single rule against data
     fn evaluate_rule(&self, rule: &AlarmRule, data: &PointData) -> Option<Alarm> {
         match &rule.rule_type {
-            AlarmRuleType::Threshold { high, low, high_high, low_low } => {
+            AlarmRuleType::Threshold {
+                high,
+                low,
+                high_high,
+                low_low,
+            } => {
                 let mut level = None;
                 let mut threshold_type = "";
                 let mut threshold_value = 0.0;
@@ -202,14 +213,16 @@ impl AlarmRulesEngine {
                 }
 
                 if let Some(alarm_level) = level {
-                    let title = rule.alarm_title
+                    let title = rule
+                        .alarm_title
                         .replace("{value}", &format!("{:.2}", data.value))
                         .replace("{point_id}", &data.point_id.to_string())
                         .replace("{channel_id}", &data.channel_id.to_string())
                         .replace("{threshold_type}", threshold_type)
                         .replace("{threshold_value}", &format!("{:.2}", threshold_value));
 
-                    let description = rule.alarm_description
+                    let description = rule
+                        .alarm_description
                         .replace("{value}", &format!("{:.2}", data.value))
                         .replace("{point_id}", &data.point_id.to_string())
                         .replace("{channel_id}", &data.channel_id.to_string())
@@ -229,17 +242,33 @@ impl AlarmRulesEngine {
     }
 
     /// Check timeout for a specific point
-    fn check_point_timeout(&self, rule: &AlarmRule, key: &str, current_time: DateTime<Utc>) -> Option<Alarm> {
+    fn check_point_timeout(
+        &self,
+        rule: &AlarmRule,
+        key: &str,
+        current_time: DateTime<Utc>,
+    ) -> Option<Alarm> {
         let last_update = self.last_data.get(key)?;
         let elapsed = (current_time - *last_update).num_seconds() as u64;
 
-        if let AlarmRuleType::Timeout { warning_timeout, major_timeout, critical_timeout } = &rule.rule_type {
+        if let AlarmRuleType::Timeout {
+            warning_timeout,
+            major_timeout,
+            critical_timeout,
+        } = &rule.rule_type
+        {
             let (level, timeout_desc) = if elapsed > *critical_timeout {
-                (AlarmLevel::Critical, format!("{}s (Critical)", critical_timeout))
+                (
+                    AlarmLevel::Critical,
+                    format!("{}s (Critical)", critical_timeout),
+                )
             } else if elapsed > *major_timeout {
                 (AlarmLevel::Major, format!("{}s (Major)", major_timeout))
             } else if elapsed > *warning_timeout {
-                (AlarmLevel::Warning, format!("{}s (Warning)", warning_timeout))
+                (
+                    AlarmLevel::Warning,
+                    format!("{}s (Warning)", warning_timeout),
+                )
             } else {
                 return None;
             };
@@ -251,13 +280,15 @@ impl AlarmRulesEngine {
                 return None;
             }
 
-            let title = rule.alarm_title
+            let title = rule
+                .alarm_title
                 .replace("{point_id}", parts[2])
                 .replace("{channel_id}", parts[0])
                 .replace("{timeout}", &timeout_desc)
                 .replace("{elapsed}", &elapsed.to_string());
 
-            let description = rule.alarm_description
+            let description = rule
+                .alarm_description
                 .replace("{point_id}", parts[2])
                 .replace("{channel_id}", parts[0])
                 .replace("{timeout}", &timeout_desc)
@@ -279,7 +310,7 @@ mod tests {
     #[test]
     fn test_threshold_rule_evaluation() {
         let mut engine = AlarmRulesEngine::new();
-        
+
         let rule = AlarmRule {
             id: "test_threshold".to_string(),
             name: "Temperature Threshold".to_string(),
@@ -295,9 +326,11 @@ mod tests {
             },
             enabled: true,
             alarm_title: "Temperature {threshold_type} Limit Exceeded".to_string(),
-            alarm_description: "Temperature {value}°C exceeds {threshold_type} limit of {threshold_value}°C".to_string(),
+            alarm_description:
+                "Temperature {value}°C exceeds {threshold_type} limit of {threshold_value}°C"
+                    .to_string(),
         };
-        
+
         engine.load_rules(vec![rule]);
 
         // Test high-high threshold
@@ -308,7 +341,7 @@ mod tests {
             value: 96.5,
             timestamp: Utc::now(),
         };
-        
+
         let alarms = engine.evaluate(&data);
         assert_eq!(alarms.len(), 1);
         assert_eq!(alarms[0].level, AlarmLevel::Critical);
@@ -318,7 +351,7 @@ mod tests {
     #[test]
     fn test_timeout_rule() {
         let mut engine = AlarmRulesEngine::new();
-        
+
         let rule = AlarmRule {
             id: "test_timeout".to_string(),
             name: "Communication Timeout".to_string(),
@@ -335,7 +368,7 @@ mod tests {
             alarm_title: "Point {point_id} Communication Timeout ({timeout})".to_string(),
             alarm_description: "No data received for {elapsed} seconds".to_string(),
         };
-        
+
         engine.load_rules(vec![rule]);
 
         // Add initial data

@@ -8,7 +8,7 @@ pub mod plugin;
 
 pub use config::Iec104Config;
 
-use crate::core::framework::{PacketParseResult, ProtocolPacketParser};
+use crate::core::combase::{PacketParseResult, ProtocolPacketParser};
 
 /// IEC60870 protocol packet parser
 ///

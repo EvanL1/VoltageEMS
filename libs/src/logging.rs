@@ -1,0 +1,20 @@
+//! 日志功能模块
+
+use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
+
+/// 初始化日志系统
+pub fn init(level: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(level));
+
+    tracing_subscriber::registry()
+        .with(env_filter)
+        .with(tracing_subscriber::fmt::layer())
+        .init();
+
+    Ok(())
+}
+
+/// 设置日志级别
+pub fn set_level(level: &str) {
+    tracing::info!("Log level set to: {}", level);
+}

@@ -25,13 +25,10 @@ path = "src/bin/test_logging.rs"
 name = "test_debug_logging"
 path = "src/bin/test_debug_logging.rs"
 
-# [[example]]
-# name = "optimized_points_demo"
-# path = "examples/optimized_points_demo.rs"
 
 [dependencies]
 # Local dependencies
-voltage-common = { workspace = true, features = ["async"] }
+voltage-libs = { path = "../../libs", features = ["redis"] }
 
 # Core async runtime
 tokio = { workspace = true }
@@ -74,6 +71,9 @@ hex = "0.4"
 once_cell = "1.19"
 dotenv = "0.15"
 clap = { version = "4.0", features = ["derive"] }
+md5 = "0.7"
+num_cpus = "1.16"
+rand = "0.8"
 
 # Configuration (will migrate to voltage-common)
 figment = { workspace = true }
@@ -110,3 +110,4 @@ can = ["socketcan"]
 iec60870 = []
 gpio = ["rppal"]  # GPIO support for embedded systems (Raspberry Pi)
 industrial-io = ["i2cdev", "spidev"]  # Industrial I/O support
+test-utils = []  # Enable mock implementations for testing

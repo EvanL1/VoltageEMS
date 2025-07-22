@@ -198,7 +198,7 @@ impl AlarmConfig {
         if std::path::Path::new(config_path).exists() {
             let config_str = std::fs::read_to_string(config_path)?;
             let mut config: AlarmConfig = serde_yaml::from_str(&config_str)?;
-            
+
             // Override with environment variables if set
             if let Ok(host) = std::env::var("REDIS_HOST") {
                 config.redis.host = host;
@@ -210,10 +210,10 @@ impl AlarmConfig {
             }
             if let Ok(api_port) = std::env::var("API_PORT") {
                 if let Ok(p) = api_port.parse() {
-                    config.api.port = p;
+                    config.service_api.port = p;
                 }
             }
-            
+
             Ok(config)
         } else {
             // Fallback to environment variables only
@@ -239,7 +239,8 @@ impl AlarmConfig {
                         .parse()
                         .unwrap_or(0),
                 },
-                api: ApiConfig {
+                api: CommonApiConfig::default(),
+                service_api: ServiceApiConfig {
                     host: std::env::var("API_HOST").unwrap_or_else(|_| "0.0.0.0".to_string()),
                     port: std::env::var("API_PORT")
                         .unwrap_or_else(|_| "8087".to_string())

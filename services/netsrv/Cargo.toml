@@ -21,7 +21,7 @@ async-trait = { workspace = true }
 futures = { workspace = true }
 
 # Internal dependencies
-voltage-common = { workspace = true, features = ["async"] }
+voltage-libs = { path = "../../libs", features = ["redis"] }
 
 # MQTT dependencies
 rumqttc = "0.20.0"
