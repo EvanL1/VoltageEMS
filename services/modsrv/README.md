@@ -1,452 +1,225 @@
-# ModSrv - Model Service
+# modsrv - 设备模型计算服务
 
-Real-time model execution service for VoltageEMS.
+## 概述
 
-## Overview
+modsrv 是 VoltageEMS 的核心计算引擎，负责执行基于 DAG（有向无环图）的实时计算模型和设备物模型管理。它从 Redis 读取 comsrv 采集的实时数据，执行各种计算任务，并将结果存储回 Redis 供其他服务使用。
 
-ModSrv is a service that executes real-time models for monitoring and control of energy systems. It provides a flexible framework for creating and managing different types of models, with support for:
+## 主要特性
 
-- Template-based model creation
-- Real-time data processing
-- Control operations
-- Redis-based data storage and retrieval
+- **DAG 计算引擎**: 支持复杂的数据流计算和依赖管理
+- **物模型系统**: 完整的设备建模、实例管理和计算框架
+- **实时数据处理**: 订阅 Redis 数据变化，自动触发计算
+- **高性能存储**: 使用 Redis Hash 结构，计算结果不含时间戳
+- **内置函数库**: sum、avg、min、max、scale 等常用计算函数
+- **性能基准测试**: 包含完整的 benchmark 套件
 
-## Model Execution Flow
+## 快速开始
 
-The following diagram illustrates the complete model execution workflow:
+### 运行服务
 
-```mermaid
-flowchart TD
-    subgraph "Initialization"
-        Start([START])
-        LoadConfig[LOAD CONFIG]
-        LoadTemplates[LOAD TEMPLATES]
-        InitRedis[INIT REDIS]
-    end
-    
-    subgraph "Main Loop"
-        StartLoop[START LOOP]
-        CheckData{NEW DATA?}
-        Wait[WAIT]
-    end
-    
-    subgraph "Data Processing"
-        ProcessData[PROCESS DATA]
-        ExecuteModels[EXECUTE MODELS]
-    end
-    
-    subgraph "Results Handling"
-        UpdateMetrics[UPDATE METRICS]
-        StoreResults[STORE RESULTS]
-        CheckControl{CONTROL OPS?}
-    end
-    
-    subgraph "Control Actions"
-        ExecuteControl[EXECUTE CONTROL]
-        LogOperation[LOG RESULTS]
-    end
-    
-    subgraph "Templates"
-        Template1[TEMPLATE 1]
-        Template2[TEMPLATE 2]
-        TemplateN[TEMPLATE N]
-    end
-    
-    subgraph "Storage"
-        RedisStore[("REDIS")]
-        LocalStore[("LOCAL")]
-    end
-    
-    subgraph "Monitoring"
-        Metrics[METRICS]
-        History[HISTORY]
-        Health[HEALTH]
-    end
-    
-    %% Vertical execution flow
-    Start --> LoadConfig
-    LoadConfig --> LoadTemplates
-    LoadTemplates --> InitRedis
-    InitRedis --> StartLoop
-    
-    StartLoop --> CheckData
-    CheckData -->|No| Wait
-    Wait --> CheckData
-    
-    CheckData -->|Yes| ProcessData
-    ProcessData --> ExecuteModels
-    
-    ExecuteModels --> UpdateMetrics
-    UpdateMetrics --> StoreResults
-    StoreResults --> CheckControl
-    
-    CheckControl -->|No| CheckData
-    CheckControl -->|Yes| ExecuteControl
-    ExecuteControl --> LogOperation
-    LogOperation --> CheckData
-    
-    %% Side connections
-    LoadTemplates --> Template1
-    LoadTemplates --> Template2
-    LoadTemplates --> TemplateN
-    
-    ProcessData <--> RedisStore
-    StoreResults --> RedisStore
-    ExecuteControl --> RedisStore
-    ProcessData <--> LocalStore
-    
-    UpdateMetrics --> Metrics
-    UpdateMetrics --> History
-    UpdateMetrics --> Health
+```bash
+cd services/modsrv
+cargo run
 ```
 
-## Requirements
+### 运行性能测试
 
-- Rust 1.70 or higher
-- Redis (local or remote)
-- Docker and Docker Compose (for containerized deployment)
+```bash
+# 完整基准测试
+cargo bench
 
-## Directory Structure
-
-```
-modsrv/
-  ├── src/               # Source code
-  ├── templates/         # Model templates
-  ├── config/            # Configuration files
-  ├── instances/         # Instance data (local storage)
-  ├── Dockerfile         # Docker build file
-  ├── docker-compose.yml # Docker Compose configuration
-  └── Cargo.toml         # Rust project configuration
+# 快速模式
+cargo bench -- --quick
 ```
 
-## Configuration
+### 配置文件
 
-Configuration can be provided in YAML or TOML format. The service looks for configuration files in the following order:
-
-1. Path specified by `--config` command-line argument
-2. `/etc/voltageems/config/modsrv/modsrv.yaml` (Docker environment)
-3. Current directory (`modsrv.yaml` or `modsrv.toml`)
-
-Example configuration (YAML):
+主配置文件位于 `config/default.yml`：
 
 ```yaml
-redis:
-  host: "localhost"  # or "redis" for Docker
-  port: 6379
-  password: ""
-  socket: ""
-  key_prefix: "ems:"
-  db: 0
+service:
+  name: "modsrv"
+  redis:
+    url: "redis://localhost:6379"
+  logging:
+    level: "info"
+    file: "logs/modsrv.log"
 
-logging:
-  level: "debug"
-  file: ""
-  console: true
-
-model:
-  update_interval_ms: 1000
-  config_key_pattern: "ems:model:config:*"
-  data_key_pattern: "ems:data:*"
-  output_key_pattern: "ems:model:output:*"
-  templates_dir: "templates"  # or "/opt/voltageems/modsrv/templates" for Docker
-
-control:
-  operation_key_pattern: "ems:control:operation:*"
-  enabled: true
-
-use_redis: true
-storage_mode: "hybrid"
-sync_interval_secs: 60
+models:
+  config_path: "./config/models"
+  update_interval: 1000  # 毫秒
 ```
 
-## Local Development
+## Redis 数据结构
 
-### Running Locally
+### Hash 存储格式
 
-To run the service locally:
+```
+键: modsrv:{modelname}:{type}
+字段: {field_name}
+值: "{value:.6f}"
 
-```sh
-# With default configuration
-cargo run -- service
+示例:
+modsrv:power_meter:measurement → {
+    "total_power": "1200.500000",
+    "power_factor": "0.950000",
+    "efficiency": "0.890000"
+}
 
-# With custom configuration
-cargo run -- --config config/local-config.yaml service
-
-# List available templates
-cargo run -- list
-
-# Show model information
-cargo run -- info
+modsrv:power_meter:control → {
+    "enable": "1.000000",
+    "setpoint": "1000.000000"
+}
 ```
 
-### Creating Model Instances
+### 数据格式特点
 
-To create a model instance from a template:
+- **无时间戳**: modsrv 存储的计算结果仅包含值，不包含时间戳
+- **标准精度**: 所有浮点数值使用 6 位小数精度
+- **按模型组织**: 使用模型名称作为命名空间
 
-```sh
-# Create a single instance
-cargo run -- create <template_id> <instance_id> --name "Instance Name"
+## 物模型系统
 
-# Create multiple instances
-cargo run -- create-multiple <template_id> <count> --prefix "instance" --start-index 1
+### 核心组件
+
+1. **DeviceModel**: 设备模型定义
+   - 属性（Properties）
+   - 遥测（Telemetry）
+   - 命令（Commands）
+   - 事件（Events）
+   - 计算（Calculations）
+
+2. **InstanceManager**: 实例管理
+   - 创建、更新、删除实例
+   - 实例状态管理
+   - 数据持久化
+
+3. **CalculationEngine**: 计算引擎
+   - 内置函数支持
+   - 自定义计算逻辑
+   - 依赖图解析
+
+4. **DataFlowProcessor**: 数据流处理
+   - Redis 订阅管理
+   - 自动计算触发
+   - 结果发布
+
+### 使用示例
+
+```rust
+// 创建设备实例
+let instance_id = device_system.create_instance(
+    "power_meter_v1",
+    "meter_001".to_string(),
+    "主电表".to_string(),
+    initial_properties,
+).await?;
+
+// 获取遥测数据
+let voltage = device_system.get_telemetry(&instance_id, "voltage_a").await?;
+
+// 执行命令
+device_system.execute_command(&instance_id, "reset_counter", params).await?;
 ```
 
-## Docker Deployment
+## DAG 计算模型
 
-### Building and Running with Docker Compose
+### 模型定义
 
-```sh
-# Build and start the services
-docker-compose up -d
-
-# View logs
-docker-compose logs -f modsrv
-
-# Stop services
-docker-compose down
-```
-
-### Using Docker directly
-
-```sh
-# Build the image
-docker build -t voltageems/modsrv .
-
-# Run the container
-docker run -d --name modsrv \
-  -v ./config:/etc/voltageems/config/modsrv \
-  -v ./templates:/opt/voltageems/modsrv/templates \
-  --network host \
-  voltageems/modsrv
-```
-
-## Templates
-
-Templates are stored in the `templates` directory and define the structure and behavior of model instances. Each template includes:
-
-- Basic metadata (ID, name, description)
-- Input/output mappings
-- Control actions
-
-Example template:
+使用 YAML 定义计算模型：
 
 ```yaml
-id: "example_model"
-name: "Example Model"
-description: "A simple example model"
-file_path: "templates/example.yaml"
-version: "1.0.0"
+id: "power_calculation"
+name: "功率计算模型"
+inputs:
+  - name: "voltage"
+    source: "comsrv:1001:m:10001"
+  - name: "current"
+    source: "comsrv:1001:m:10002"
 
-input_mappings:
-  - source_field: "input1"
-    target_field: "model_input1"
-    data_type: "string"
-  - source_field: "input2"
-    target_field: "model_input2"
-    data_type: "float"
+calculations:
+  - id: "apparent_power"
+    function: "multiply"
+    inputs: ["voltage", "current"]
+  
+  - id: "real_power"
+    function: "scale"
+    inputs: ["apparent_power"]
+    params:
+      factor: 0.95
 
-output_mappings:
-  - source_field: "output1"
-    target_field: "model_output1"
-    data_type: "string"
-  - source_field: "output2"
-    target_field: "model_output2"
-    data_type: "float"
-
-control_actions:
-  - id: "action1"
-    name: "Example Action 1"
-    description: "This is an example action"
-    parameters:
-      - name: "param1"
-        description: "Example parameter"
-        data_type: "string"
-        default_value: "default"
+outputs:
+  - name: "total_power"
+    target: "modsrv:power_meter:measurement"
+    field: "total_power"
+    source: "real_power"
 ```
 
-## Control Operations
+### 内置函数
 
-ModSrv supports control operations that can be triggered through Redis. To execute a control operation:
+- `sum(inputs)` - 求和
+- `avg(inputs)` - 平均值
+- `min(inputs)` - 最小值
+- `max(inputs)` - 最大值
+- `scale(input, factor)` - 缩放
+- `multiply(a, b)` - 乘法
+- `divide(a, b)` - 除法
 
-1. Create a control operation in Redis:
-   ```
-   HSET ems:control:operation:<operation_id> id <operation_id> model_id <model_id> action_id <action_id> param1 <value1> param2 <value2>
-   ```
-2. The service will automatically detect and execute the operation on the next update cycle.
+## 开发指南
 
-## Monitoring and Observability
+### 添加新的计算函数
 
-ModSrv provides comprehensive monitoring and observability features to track rule execution metrics, maintain execution history, and monitor system health.
-
-### Overview
-
-The monitoring system offers the following capabilities:
-
-1. **Rule Execution Metrics**: Collect and analyze metrics for rule executions including execution counts, success rates, and timing information.
-2. **Execution History**: Track historical rule executions with detailed information about inputs, outputs, and errors.
-3. **Health Monitoring**: Monitor the overall system health with detailed checks and automatic recovery.
-4. **Structured Logging**: Enhanced logging capabilities for better observability.
-
-### API Endpoints
-
-#### Rule Metrics
-
-##### Get metrics for all rules
-```
-GET /api/metrics
+```rust
+// 在 calculation_engine.rs 中注册新函数
+pub fn register_custom_functions(engine: &mut CalculationEngine) {
+    engine.register_function("custom_calc", |inputs, params| {
+        // 实现计算逻辑
+        let result = inputs[0] * params.get("factor").unwrap_or(&1.0);
+        Ok(StandardFloat::new(result))
+    });
+}
 ```
 
-Returns a map of rule IDs to metric objects containing:
-- Total executions count
-- Success and failure counts
-- Success rate
-- Execution timing statistics (min, max, avg)
-- Last execution timestamp
+### 订阅数据更新
 
-##### Get metrics for a specific rule
-```
-GET /api/rules/{ruleId}/metrics
-```
-
-Returns detailed metrics for a specific rule.
-
-#### Rule Execution History
-```
-GET /api/rules/{ruleId}/history?limit=10
+```rust
+// 订阅 comsrv 数据变化
+let subscription = DataSubscription {
+    patterns: vec![
+        "comsrv:1001:m:*".to_string(),
+        "comsrv:1002:s:*".to_string(),
+    ],
+    handler: Box::new(move |update| {
+        // 处理数据更新
+        trigger_calculation(update).await
+    }),
+};
 ```
 
-Returns the execution history for a specific rule, with an optional limit parameter to control the number of entries returned.
+## 性能优化
 
-Each history entry includes:
-- Execution timestamp
-- Duration
-- Success status
-- Input context
-- Output result
-- Error message (if failed)
+- **批量计算**: 收集多个输入变化后批量执行
+- **缓存机制**: 缓存中间计算结果
+- **并行处理**: 无依赖的计算并行执行
+- **内存池**: 复用计算缓冲区
 
-#### Health Monitoring
+## 监控指标
 
-##### Basic health check
-```
-GET /api/health
-```
+通过 `/metrics` 端点暴露 Prometheus 指标：
 
-Returns a simple status code indicating if the service is running.
+- `modsrv_calculations_total` - 计算执行总数
+- `modsrv_calculation_duration_seconds` - 计算耗时
+- `modsrv_model_instances_active` - 活跃模型实例数
+- `modsrv_redis_operations_total` - Redis 操作计数
 
-##### Detailed health check
-```
-GET /api/health/detailed
-```
+## 环境变量
 
-Returns detailed health information:
-- Overall health status (Healthy, Degraded, Unhealthy)
-- System uptime
-- Memory usage
-- Number of rules loaded
-- Redis connection status
-- Individual component health checks
+- `RUST_LOG` - 日志级别
+- `REDIS_URL` - Redis 连接地址
+- `MODSRV_PORT` - API 服务端口（默认 8082）
 
-### Using Monitoring Features
+## 相关文档
 
-#### Tracking Rule Performance
-
-The monitoring system automatically tracks metrics for all rule executions. These metrics can be used to:
-
-1. Identify slow-running rules
-2. Monitor success rates for specific rules
-3. Track execution patterns over time
-
-Example usage:
-```javascript
-// Get metrics for all rules
-fetch('/api/metrics')
-  .then(response => response.json())
-  .then(metrics => {
-    // Find rules with high failure rates
-    const problematicRules = Object.entries(metrics)
-      .filter(([_, m]) => m.success_rate < 0.9)
-      .map(([id, _]) => id);
-    
-    console.log('Rules with high failure rates:', problematicRules);
-  });
-```
-
-#### Debugging Rule Execution
-
-When a rule fails, you can use the history API to investigate:
-```javascript
-// Get recent execution history for a rule
-fetch('/api/rules/my-rule-id/history?limit=5')
-  .then(response => response.json())
-  .then(history => {
-    // Check the most recent execution
-    const lastExecution = history[0];
-    console.log('Last execution status:', lastExecution.success ? 'Success' : 'Failed');
-    if (!lastExecution.success) {
-      console.log('Error:', lastExecution.error);
-      console.log('Input context:', lastExecution.context);
-    }
-  });
-```
-
-#### Monitoring System Health
-
-You can integrate the health check endpoint into your monitoring system:
-```javascript
-// Check system health
-fetch('/api/health/detailed')
-  .then(response => response.json())
-  .then(health => {
-    if (health.status !== 'Healthy') {
-      console.warn('System health is degraded:', health.status);
-      
-      // Check specific components
-      const unhealthyChecks = Object.entries(health.checks)
-        .filter(([_, check]) => check.status !== 'Healthy')
-        .map(([id, check]) => ({ id, details: check.details }));
-      
-      console.warn('Unhealthy components:', unhealthyChecks);
-    }
-  });
-```
-
-### Automatic Recovery
-
-The monitoring system includes automatic recovery mechanisms for certain failure scenarios:
-
-1. **Redis Connection Issues**: The system will attempt to reconnect to Redis if the connection is lost.
-2. **Rule Execution Failures**: Individual rule failures are isolated and won't affect the execution of other rules.
-
-### Retention Policies
-
-By default, the system maintains:
-- The most recent 1000 execution history entries across all rules
-- All metrics, which are persisted to Redis for durability
-
-These limits can be configured in the application settings.
-
-### Integration with External Systems
-
-The metrics and health endpoints are designed to be compatible with common monitoring systems such as Prometheus, Grafana, and ELK stack. 
-
-For Prometheus integration, consider using the Prometheus Redis exporter to expose Redis metrics, including the rule execution metrics stored in Redis.
-
-### Log Levels
-
-The application uses structured logging with the following levels:
-- **ERROR**: Critical issues that require immediate attention
-- **WARN**: Potentially problematic situations that might require attention
-- **INFO**: Important events and status updates
-- **DEBUG**: Detailed information for debugging purposes
-
-The log level can be configured in the `docker-compose.yml` file:
-```yaml
-environment:
-  - RUST_LOG=debug  # Set to info, debug, or trace as needed
-```
-
-## License
-
-Copyright © 2024 VoltageEMS. All rights reserved.
-
+- [架构设计](docs/architecture.md)
+- [设备模型系统](docs/device-model.md)
+- [Redis 接口](docs/redis-interface.md)

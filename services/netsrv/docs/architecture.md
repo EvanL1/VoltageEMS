@@ -2,403 +2,588 @@
 
 ## 概述
 
-netsrv（Network Service）是 VoltageEMS 的云端网关服务，负责将本地数据同步到云平台，支持多种云服务商和协议，实现数据的远程监控和管理。
+netsrv 采用插件化架构设计，将数据源、格式化器和协议适配器解耦，实现灵活的数据转发能力。服务从 Redis 读取系统数据，经过过滤、格式化和批量处理后，通过多种协议推送到外部系统。
 
-## 架构特点
-
-1. **多云支持**：AWS IoT、阿里云、Azure 等
-2. **协议转换**：MQTT、HTTP/HTTPS、WebSocket
-3. **智能缓存**：断线数据缓存和续传
-4. **数据过滤**：灵活的数据筛选和聚合
-5. **安全传输**：TLS 加密和认证
-
-## 系统架构图
+## 核心架构
 
 ```
-┌────────────────────────────────────────────────────────────┐
-│                         netsrv                              │
-├────────────────────────────────────────────────────────────┤
-│                    Data Source Layer                        │
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐    │
-│  │Redis Monitor │  │Data Filter   │  │Aggregator    │    │
-│  └──────┬───────┘  └──────┬───────┘  └──────┬───────┘    │
-│         └──────────────────┴──────────────────┘            │
-│                            │                                │
-│                   Protocol Adapter Layer                    │
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐    │
-│  │MQTT Adapter  │  │HTTP Adapter  │  │Custom Adapter│    │
-│  └──────────────┘  └──────────────┘  └──────────────┘    │
-│                            │                                │
-│                    Cloud Provider Layer                     │
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐    │
-│  │AWS IoT Core  │  │Aliyun IoT    │  │Azure IoT Hub │    │
-│  └──────────────┘  └──────────────┘  └──────────────┘    │
-└────────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────┐
+│                      netsrv                             │
+├─────────────────────────────────────────────────────────┤
+│                   API Server                            │
+│            (Config/Status/Control)                      │
+├─────────────────────────────────────────────────────────┤
+│                 Data Pipeline                           │
+│     ┌──────────┬──────────┬──────────┬──────────┐     │
+│     │ Source   │ Filter   │Formatter │ Batcher  │     │
+│     │ Manager  │ Engine   │ Registry │ Manager  │     │
+│     └──────────┴──────────┴──────────┴──────────┘     │
+├─────────────────────────────────────────────────────────┤
+│                Protocol Adapters                        │
+│     ┌──────────┬──────────┬──────────┬──────────┐     │
+│     │  MQTT    │  HTTP    │ AWS IoT  │ Aliyun   │     │
+│     │ Adapter  │ Adapter  │ Adapter  │   IoT    │     │
+│     └──────────┴──────────┴──────────┴──────────┘     │
+├─────────────────────────────────────────────────────────┤
+│               Connection Manager                        │
+│     ┌──────────┬──────────┬──────────┬──────────┐     │
+│     │Connection│ Failover │ Health   │ Metrics  │     │
+│     │  Pool    │ Manager  │ Monitor  │Collector │     │
+│     └──────────┴──────────┴──────────┴──────────┘     │
+├─────────────────────────────────────────────────────────┤
+│                  Redis Client                           │
+│          ┌──────────────┬──────────────┐               │
+│          │ Key Monitor  │   Pub/Sub    │               │
+│          └──────────────┴──────────────┘               │
+└─────────────────────────────────────────────────────────┘
 ```
 
-## 核心组件
+## 组件说明
 
-### 1. Data Monitor（数据监控）
+### 1. Data Pipeline
+
+数据管道是 netsrv 的核心，负责数据的全流程处理：
 
 ```rust
-pub struct DataMonitor {
-    redis_client: Arc<RedisClient>,
-    filters: Vec<DataFilter>,
-    output_channel: mpsc::Sender<FilteredData>,
+pub struct DataPipeline {
+    source_manager: Arc<SourceManager>,
+    filter_engine: Arc<FilterEngine>,
+    formatter_registry: Arc<FormatterRegistry>,
+    batcher_manager: Arc<BatcherManager>,
 }
 
-impl DataMonitor {
-    /// 监控数据更新
-    pub async fn monitor_updates(&self) -> Result<()> {
-        let mut pubsub = self.redis_client.get_async_pubsub().await?;
-        pubsub.psubscribe("point:update:*").await?;
+impl DataPipeline {
+    pub async fn process(&self, config: &PipelineConfig) -> Result<()> {
+        // 1. 从数据源读取
+        let data_stream = self.source_manager.create_stream(config).await?;
         
-        while let Some(msg) = pubsub.on_message().next().await {
-            if let Ok(update) = self.parse_update(&msg) {
-                // 应用过滤器
-                if self.should_forward(&update) {
-                    let filtered = self.apply_filters(update);
-                    self.output_channel.send(filtered).await?;
+        // 2. 过滤数据
+        let filtered_stream = self.filter_engine.apply(data_stream, &config.filters);
+        
+        // 3. 格式化数据
+        let formatter = self.formatter_registry.get(&config.format)?;
+        let formatted_stream = filtered_stream.map(|data| formatter.format(data));
+        
+        // 4. 批量处理
+        let batched_stream = self.batcher_manager.batch(formatted_stream, &config.batch);
+        
+        // 5. 发送到目标
+        self.send_to_targets(batched_stream, &config.targets).await
+    }
+}
+```
+
+### 2. Source Manager
+
+管理多个数据源的订阅和读取：
+
+```rust
+pub struct SourceManager {
+    redis_client: Arc<RedisClient>,
+    sources: HashMap<String, Box<dyn DataSource>>,
+}
+
+#[async_trait]
+pub trait DataSource: Send + Sync {
+    async fn create_stream(&self, redis: &RedisClient) -> Result<DataStream>;
+}
+
+pub struct ComsrvSource {
+    patterns: Vec<String>,
+}
+
+#[async_trait]
+impl DataSource for ComsrvSource {
+    async fn create_stream(&self, redis: &RedisClient) -> Result<DataStream> {
+        let mut streams = Vec::new();
+        
+        for pattern in &self.patterns {
+            // 监控 Hash 键的变化
+            let stream = self.monitor_hash_changes(redis, pattern).await?;
+            streams.push(stream);
+        }
+        
+        Ok(DataStream::merge(streams))
+    }
+    
+    async fn monitor_hash_changes(
+        &self,
+        redis: &RedisClient,
+        pattern: &str,
+    ) -> Result<impl Stream<Item = DataPoint>> {
+        // 使用 Redis keyspace notifications
+        let mut pubsub = redis.get_async_pubsub().await?;
+        pubsub.psubscribe(format!("__keyspace@0__:{}", pattern)).await?;
+        
+        Ok(stream! {
+            while let Some(msg) = pubsub.on_message().next().await {
+                let key = msg.get_channel_name()?;
+                if let Some(data) = self.read_hash_data(redis, &key).await? {
+                    yield data;
                 }
             }
-        }
-        
-        Ok(())
+        })
     }
 }
 ```
 
-### 2. Protocol Adapters（协议适配器）
+### 3. Filter Engine
 
-#### MQTT 适配器
+灵活的数据过滤引擎：
+
 ```rust
+pub struct FilterEngine {
+    filters: Vec<Box<dyn DataFilter>>,
+}
+
+#[async_trait]
+pub trait DataFilter: Send + Sync {
+    fn matches(&self, data: &DataPoint) -> bool;
+}
+
+pub struct ChannelFilter {
+    include: HashSet<u32>,
+    exclude: HashSet<u32>,
+}
+
+impl DataFilter for ChannelFilter {
+    fn matches(&self, data: &DataPoint) -> bool {
+        if !self.include.is_empty() && !self.include.contains(&data.channel_id) {
+            return false;
+        }
+        if self.exclude.contains(&data.channel_id) {
+            return false;
+        }
+        true
+    }
+}
+
+pub struct ValueRangeFilter {
+    field: String,
+    min: Option<f64>,
+    max: Option<f64>,
+}
+
+impl DataFilter for ValueRangeFilter {
+    fn matches(&self, data: &DataPoint) -> bool {
+        match data.get_field(&self.field) {
+            Some(value) => {
+                if let Some(min) = self.min {
+                    if value < min { return false; }
+                }
+                if let Some(max) = self.max {
+                    if value > max { return false; }
+                }
+                true
+            }
+            None => false,
+        }
+    }
+}
+```
+
+### 4. Formatter Registry
+
+格式化器注册表和实现：
+
+```rust
+pub struct FormatterRegistry {
+    formatters: HashMap<String, Box<dyn DataFormatter>>,
+}
+
+#[async_trait]
+pub trait DataFormatter: Send + Sync {
+    fn format(&self, data: &DataPoint) -> Result<Vec<u8>>;
+    fn content_type(&self) -> &str;
+}
+
+pub struct JsonFormatter {
+    config: JsonFormatConfig,
+}
+
+impl DataFormatter for JsonFormatter {
+    fn format(&self, data: &DataPoint) -> Result<Vec<u8>> {
+        let json_value = match &self.config.structure {
+            JsonStructure::Standard => json!({
+                "timestamp": data.timestamp.to_rfc3339(),
+                "channel": data.channel_id,
+                "type": data.data_type,
+                "point": data.point_id,
+                "value": format!("{:.6}", data.value),
+            }),
+            JsonStructure::Flat => {
+                let key = format!("channel_{}_{}_{}", 
+                    data.channel_id, data.data_type, data.point_id);
+                json!({
+                    "timestamp": data.timestamp.to_rfc3339(),
+                    key: format!("{:.6}", data.value),
+                })
+            }
+        };
+        
+        Ok(serde_json::to_vec(&json_value)?)
+    }
+    
+    fn content_type(&self) -> &str {
+        "application/json"
+    }
+}
+```
+
+### 5. Protocol Adapters
+
+协议适配器的统一接口和实现：
+
+```rust
+#[async_trait]
+pub trait ProtocolAdapter: Send + Sync {
+    async fn connect(&mut self) -> Result<()>;
+    async fn send(&self, data: &[u8]) -> Result<()>;
+    async fn send_batch(&self, batch: &[Vec<u8>]) -> Result<()>;
+    async fn disconnect(&mut self) -> Result<()>;
+    fn is_connected(&self) -> bool;
+}
+
 pub struct MqttAdapter {
-    client: AsyncClient,
+    client: Option<AsyncClient>,
     config: MqttConfig,
-    topic_mapper: TopicMapper,
 }
 
-impl MqttAdapter {
-    /// 发布数据到 MQTT
-    pub async fn publish_data(&self, data: &CloudData) -> Result<()> {
-        let topic = self.topic_mapper.map_topic(data)?;
-        let payload = self.serialize_payload(data)?;
-        
-        let msg = MessageBuilder::new()
-            .topic(&topic)
-            .payload(payload)
-            .qos(self.config.qos)
-            .retained(self.config.retained)
-            .finalize();
-        
-        self.client.publish(msg).await?;
-        Ok(())
-    }
-}
-```
-
-#### HTTP 适配器
-```rust
-pub struct HttpAdapter {
-    client: reqwest::Client,
-    config: HttpConfig,
-    auth: AuthProvider,
-}
-
-impl HttpAdapter {
-    /// 批量发送数据
-    pub async fn send_batch(&self, batch: Vec<CloudData>) -> Result<()> {
-        let request = self.client
-            .post(&self.config.endpoint)
-            .header("Authorization", self.auth.get_token().await?)
-            .json(&batch)
-            .timeout(self.config.timeout);
-        
-        let response = request.send().await?;
-        
-        if !response.status().is_success() {
-            return Err(Error::HttpError(response.status()));
-        }
-        
-        Ok(())
-    }
-}
-```
-
-### 3. Cloud Providers（云服务提供商）
-
-#### AWS IoT Core
-```rust
-pub struct AwsIotProvider {
-    mqtt_client: MqttAdapter,
-    shadow_client: DeviceShadowClient,
-    config: AwsConfig,
-}
-
-impl CloudProvider for AwsIotProvider {
+#[async_trait]
+impl ProtocolAdapter for MqttAdapter {
     async fn connect(&mut self) -> Result<()> {
-        // 配置 TLS 证书
-        let tls_config = self.build_tls_config()?;
+        let create_opts = CreateOptionsBuilder::new()
+            .server_uri(&self.config.broker)
+            .client_id(&self.config.client_id)
+            .finalize();
+            
+        let client = AsyncClient::new(create_opts)?;
         
-        // 连接到 AWS IoT
-        self.mqtt_client.connect_with_tls(tls_config).await?;
+        let conn_opts = ConnectOptionsBuilder::new()
+            .user_name(&self.config.username)
+            .password(&self.config.password)
+            .keep_alive_interval(Duration::from_secs(30))
+            .clean_session(true)
+            .finalize();
+            
+        client.connect(conn_opts).await?;
+        self.client = Some(client);
         
         Ok(())
     }
     
-    async fn send_telemetry(&self, data: TelemetryData) -> Result<()> {
-        let topic = format!("$aws/things/{}/shadow/update", self.config.thing_name);
-        
-        let payload = json!({
-            "state": {
-                "reported": data.to_json()
-            }
-        });
-        
-        self.mqtt_client.publish(&topic, payload).await
-    }
-}
-```
-
-### 4. Data Management（数据管理）
-
-#### 缓存管理
-```rust
-pub struct CacheManager {
-    cache: Arc<RwLock<VecDeque<CachedData>>>,
-    max_size: usize,
-    persistence: DiskPersistence,
-}
-
-impl CacheManager {
-    /// 缓存数据
-    pub async fn cache_data(&self, data: CloudData) -> Result<()> {
-        let mut cache = self.cache.write().await;
-        
-        // 检查容量
-        if cache.len() >= self.max_size {
-            // 持久化到磁盘
-            let overflow = cache.drain(..self.max_size/2).collect::<Vec<_>>();
-            self.persistence.save_batch(overflow).await?;
+    async fn send(&self, data: &[u8]) -> Result<()> {
+        if let Some(client) = &self.client {
+            let msg = MessageBuilder::new()
+                .topic(&self.config.topic)
+                .payload(data)
+                .qos(self.config.qos)
+                .retained(self.config.retain)
+                .finalize();
+                
+            client.publish(msg).await?;
         }
-        
-        cache.push_back(CachedData {
-            data,
-            timestamp: Utc::now(),
-            retry_count: 0,
-        });
         
         Ok(())
     }
 }
 ```
 
-#### 断线重连
+### 6. Connection Manager
+
+连接管理和故障恢复：
+
 ```rust
 pub struct ConnectionManager {
-    providers: HashMap<String, Box<dyn CloudProvider>>,
-    reconnect_strategy: ReconnectStrategy,
+    adapters: HashMap<String, AdapterWrapper>,
+    health_monitor: Arc<HealthMonitor>,
+    failover_manager: Arc<FailoverManager>,
+}
+
+pub struct AdapterWrapper {
+    adapter: Arc<Mutex<Box<dyn ProtocolAdapter>>>,
+    config: ConnectionConfig,
+    status: Arc<AtomicU8>, // 0=断开, 1=连接中, 2=已连接
+    last_error: Arc<Mutex<Option<String>>>,
 }
 
 impl ConnectionManager {
-    /// 管理连接状态
-    pub async fn maintain_connections(&self) -> Result<()> {
-        for (name, provider) in &self.providers {
-            if !provider.is_connected().await {
-                info!("Provider {} disconnected, attempting reconnect", name);
-                
-                match self.reconnect_with_backoff(provider).await {
-                    Ok(_) => info!("Reconnected to {}", name),
-                    Err(e) => error!("Failed to reconnect to {}: {}", name, e),
-                }
-            }
+    pub async fn ensure_connected(&self, name: &str) -> Result<()> {
+        let wrapper = self.adapters.get(name)
+            .ok_or_else(|| Error::AdapterNotFound(name.to_string()))?;
+            
+        let status = wrapper.status.load(Ordering::Relaxed);
+        
+        if status != 2 {
+            self.reconnect(wrapper).await?;
         }
         
         Ok(())
     }
-}
-```
-
-## 数据流处理
-
-### 1. 数据过滤
-
-```rust
-pub struct DataFilter {
-    /// 通道过滤
-    channel_ids: Option<HashSet<u16>>,
     
-    /// 点位类型过滤
-    point_types: Option<HashSet<String>>,
-    
-    /// 值范围过滤
-    value_range: Option<(f64, f64)>,
-    
-    /// 采样率
-    sampling_rate: Option<f64>,
-}
-
-impl DataFilter {
-    pub fn apply(&self, data: &PointData) -> Option<FilteredData> {
-        // 通道过滤
-        if let Some(channels) = &self.channel_ids {
-            if !channels.contains(&data.channel_id) {
-                return None;
+    async fn reconnect(&self, wrapper: &AdapterWrapper) -> Result<()> {
+        let mut attempt = 0;
+        let config = &wrapper.config.reconnect;
+        
+        loop {
+            attempt += 1;
+            
+            match wrapper.adapter.lock().await.connect().await {
+                Ok(_) => {
+                    wrapper.status.store(2, Ordering::Relaxed);
+                    info!("Connected successfully after {} attempts", attempt);
+                    return Ok(());
+                }
+                Err(e) => {
+                    let delay = self.calculate_backoff(attempt, config);
+                    
+                    if config.max_attempts > 0 && attempt >= config.max_attempts {
+                        return Err(Error::MaxRetriesExceeded);
+                    }
+                    
+                    warn!("Connection failed (attempt {}): {}", attempt, e);
+                    tokio::time::sleep(delay).await;
+                }
             }
         }
-        
-        // 采样
-        if let Some(rate) = self.sampling_rate {
-            if rand::random::<f64>() > rate {
-                return None;
-            }
-        }
-        
-        Some(FilteredData::from(data))
     }
 }
 ```
 
-### 2. 数据聚合
+## 数据流程
+
+### 1. 数据采集流程
+
+```
+Redis Hash 变化 → Keyspace Notification → Source Manager → Data Point
+                                                ↓
+                                          Filter Engine
+                                                ↓
+                                          Formatter Registry
+                                                ↓
+                                          Batcher Manager
+                                                ↓
+                                          Protocol Adapter → 外部系统
+```
+
+### 2. 批量处理流程
 
 ```rust
-pub struct DataAggregator {
-    window: Duration,
-    aggregations: Vec<AggregationType>,
-    buffer: Arc<RwLock<HashMap<String, Vec<f64>>>>,
+pub struct BatcherManager {
+    batchers: HashMap<String, Batcher>,
 }
 
-impl DataAggregator {
-    pub async fn aggregate(&self, key: String, value: f64) -> Option<AggregatedData> {
-        let mut buffer = self.buffer.write().await;
-        let values = buffer.entry(key.clone()).or_insert_with(Vec::new);
-        values.push(value);
+pub struct Batcher {
+    config: BatchConfig,
+    buffer: Arc<Mutex<Vec<FormattedData>>>,
+    last_flush: Arc<Mutex<Instant>>,
+}
+
+impl Batcher {
+    pub async fn add(&self, data: FormattedData) -> Option<Vec<FormattedData>> {
+        let mut buffer = self.buffer.lock().await;
+        buffer.push(data);
         
-        // 检查是否到达窗口边界
-        if self.should_emit(&values) {
-            let aggregated = self.calculate_aggregations(&values);
-            buffer.remove(&key);
-            Some(aggregated)
+        // 检查是否需要flush
+        if self.should_flush(&buffer).await {
+            let batch = std::mem::take(&mut *buffer);
+            *self.last_flush.lock().await = Instant::now();
+            Some(batch)
         } else {
             None
         }
     }
-}
-```
-
-## 安全设计
-
-### 1. 认证机制
-
-```rust
-pub enum AuthMethod {
-    /// X.509 证书
-    Certificate {
-        cert_path: String,
-        key_path: String,
-        ca_path: String,
-    },
     
-    /// Token 认证
-    Token {
-        token: String,
-        refresh_url: String,
-    },
-    
-    /// API Key
-    ApiKey {
-        key_id: String,
-        secret: String,
-    },
-}
-```
-
-### 2. 数据加密
-
-```rust
-pub struct DataEncryption {
-    cipher: Aes256Gcm,
-    key_rotation_interval: Duration,
-}
-
-impl DataEncryption {
-    pub fn encrypt_payload(&self, data: &[u8]) -> Result<Vec<u8>> {
-        let nonce = Aes256Gcm::generate_nonce(&mut OsRng);
-        let ciphertext = self.cipher.encrypt(&nonce, data)?;
+    async fn should_flush(&self, buffer: &[FormattedData]) -> bool {
+        // 大小限制
+        if buffer.len() >= self.config.max_batch_size {
+            return true;
+        }
         
-        // 组合 nonce 和密文
-        let mut result = nonce.to_vec();
-        result.extend_from_slice(&ciphertext);
+        // 时间限制
+        let elapsed = self.last_flush.lock().await.elapsed();
+        if elapsed >= Duration::from_millis(self.config.max_wait_time_ms) {
+            return true;
+        }
         
-        Ok(result)
+        false
     }
 }
 ```
 
 ## 性能优化
 
-### 1. 批量发送
-- 聚合小消息减少请求次数
-- 动态调整批次大小
-- 优先级队列管理
+### 1. 零拷贝设计
 
-### 2. 压缩策略
-- Gzip 压缩大消息
-- Protocol Buffers 序列化
-- 增量更新
+```rust
+pub struct ZeroCopyFormatter {
+    buffer_pool: Arc<BufferPool>,
+}
 
-### 3. 连接池
-- 复用 HTTP 连接
-- MQTT 持久会话
-- 连接健康检查
+impl ZeroCopyFormatter {
+    pub fn format_into(&self, data: &DataPoint, buf: &mut BytesMut) -> Result<()> {
+        // 直接写入缓冲区，避免中间分配
+        write!(buf, "{},{},{},{:.6}\n",
+            data.timestamp.timestamp(),
+            data.channel_id,
+            data.point_id,
+            data.value
+        )?;
+        
+        Ok(())
+    }
+}
+```
 
-## 配置示例
+### 2. 并行处理
 
-```yaml
-# netsrv 配置
-redis:
-  url: "redis://localhost:6379"
-  
-filters:
-  - channel_ids: [1001, 1002, 1003]
-    point_types: ["m", "s"]
-    sampling_rate: 0.1
+```rust
+pub struct ParallelProcessor {
+    workers: Vec<Worker>,
+    dispatcher: Arc<Dispatcher>,
+}
+
+impl ParallelProcessor {
+    pub async fn process_parallel(
+        &self,
+        data_stream: impl Stream<Item = DataPoint>,
+    ) -> Result<()> {
+        let (tx, rx) = mpsc::channel(1000);
+        
+        // 分发数据到工作线程
+        tokio::spawn(async move {
+            data_stream
+                .for_each_concurrent(None, |data| async {
+                    tx.send(data).await.ok();
+                })
+                .await;
+        });
+        
+        // 并行处理
+        let handles: Vec<_> = self.workers.iter()
+            .map(|worker| {
+                let rx = rx.clone();
+                tokio::spawn(worker.run(rx))
+            })
+            .collect();
+            
+        futures::future::join_all(handles).await;
+        
+        Ok(())
+    }
+}
+```
+
+### 3. 内存池
+
+```rust
+pub struct BufferPool {
+    pool: Arc<Mutex<Vec<BytesMut>>>,
+    buffer_size: usize,
+}
+
+impl BufferPool {
+    pub async fn acquire(&self) -> BytesMut {
+        let mut pool = self.pool.lock().await;
+        
+        pool.pop().unwrap_or_else(|| {
+            BytesMut::with_capacity(self.buffer_size)
+        })
+    }
     
-providers:
-  aws_iot:
-    enabled: true
-    endpoint: "xxx.iot.region.amazonaws.com"
-    thing_name: "voltage_ems_gateway"
-    cert_path: "/certs/device.pem"
-    key_path: "/certs/private.key"
-    
-  aliyun_iot:
-    enabled: false
-    product_key: "xxx"
-    device_name: "gateway001"
-    device_secret: "${ALIYUN_DEVICE_SECRET}"
-    
-cache:
-  max_memory_mb: 100
-  disk_path: "/var/cache/netsrv"
-  
-retry:
-  max_attempts: 3
-  initial_delay: 1s
-  max_delay: 30s
+    pub async fn release(&self, mut buffer: BytesMut) {
+        buffer.clear();
+        
+        let mut pool = self.pool.lock().await;
+        if pool.len() < 100 {  // 限制池大小
+            pool.push(buffer);
+        }
+    }
+}
 ```
 
 ## 监控指标
 
-- 发送成功率
-- 消息延迟
-- 缓存命中率
-- 连接状态
-- 流量统计
+```rust
+pub struct Metrics {
+    // 数据流指标
+    data_points_received: IntCounter,
+    data_points_filtered: IntCounter,
+    data_points_sent: IntCounter,
+    
+    // 批量指标
+    batches_created: IntCounter,
+    batch_size: Histogram,
+    batch_wait_time: Histogram,
+    
+    // 连接指标
+    connection_attempts: IntCounterVec,
+    connection_failures: IntCounterVec,
+    connection_duration: GaugeVec,
+    
+    // 性能指标
+    processing_duration: Histogram,
+    formatting_duration: Histogram,
+    send_duration: HistogramVec,
+}
+```
 
-## 故障处理
+## 错误处理
 
-1. **网络中断**：本地缓存 + 自动重连
-2. **认证失败**：Token 刷新 + 告警
-3. **限流**：退避算法 + 队列管理
-4. **数据丢失**：持久化队列 + 确认机制
+```rust
+#[derive(Debug, thiserror::Error)]
+pub enum NetSrvError {
+    #[error("Adapter not found: {0}")]
+    AdapterNotFound(String),
+    
+    #[error("Connection failed: {0}")]
+    ConnectionFailed(String),
+    
+    #[error("Format error: {0}")]
+    FormatError(String),
+    
+    #[error("Send failed: {0}")]
+    SendFailed(String),
+    
+    #[error("Max retries exceeded")]
+    MaxRetriesExceeded,
+    
+    #[error("Redis error: {0}")]
+    Redis(#[from] redis::RedisError),
+}
+```
+
+## 扩展性设计
+
+### 添加新协议
+
+```rust
+// 1. 实现 ProtocolAdapter trait
+pub struct CustomProtocolAdapter {
+    // ... 自定义字段
+}
+
+#[async_trait]
+impl ProtocolAdapter for CustomProtocolAdapter {
+    // ... 实现方法
+}
+
+// 2. 注册适配器
+adapter_registry.register("custom", Box::new(CustomProtocolAdapter::new));
+```
+
+### 添加新格式
+
+```rust
+// 1. 实现 DataFormatter trait
+pub struct CustomFormatter {
+    // ... 自定义配置
+}
+
+impl DataFormatter for CustomFormatter {
+    // ... 实现方法
+}
+
+// 2. 注册格式化器
+formatter_registry.register("custom", Box::new(CustomFormatter::new));
+```
