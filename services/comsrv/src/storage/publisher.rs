@@ -118,7 +118,7 @@ impl Publisher {
         // 批量发布每个通道的更新
         for (channel, updates) in grouped {
             for update in updates {
-                let message = format!("{}:{:.6}", update.point_id, update.data.value);
+                let message = format!("{}:{}", update.point_id, update.data.value);
                 pipe.publish(&channel, &message);
             }
         }

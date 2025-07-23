@@ -368,7 +368,6 @@ impl ComBase for DefaultProtocol {
             let value = RedisValue::Float(rand::random::<f64>() * 100.0);
             let point_data = PointData {
                 value: value.clone(),
-                quality: 192, // Good quality
                 timestamp: std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
                     .unwrap()
@@ -399,7 +398,6 @@ impl ComBase for DefaultProtocol {
                     timestamp: point_data.timestamp as i64,
                     telemetry_type: crate::core::config::TelemetryType::from_str(telemetry_type)
                         .unwrap(),
-                    quality: point_data.quality,
                     raw_value: None,
                 });
             }
@@ -546,7 +544,6 @@ mod tests {
     #[test]
     fn test_point_data_default() {
         let point = PointData::default();
-        assert_eq!(point.quality, 0);
         assert_eq!(point.timestamp, 0);
         match point.value {
             RedisValue::Float(v) => assert_eq!(v, 0.0),

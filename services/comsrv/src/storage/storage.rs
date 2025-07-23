@@ -107,7 +107,7 @@ impl PointStorage for Storage {
 
         let mut client = self.get_client().await?;
         client
-            .hset(&hash_key, &field, data.to_redis())
+            .hset(&hash_key, &field, data.to_comsrv_redis())
             .await
             .map_err(|e| ComSrvError::Storage(format!("Failed to write point: {}", e)))?;
 
@@ -133,7 +133,7 @@ impl PointStorage for Storage {
         pipe.atomic();
 
         // 写入主Hash值
-        pipe.hset(&hash_key, &field, data.to_redis());
+        pipe.hset(&hash_key, &field, data.to_comsrv_redis());
 
         // 写入元数据（仍使用单独的键）
         if let Some(raw) = raw_value {
@@ -185,7 +185,7 @@ impl PointStorage for Storage {
         for (hash_key, updates) in grouped {
             for update in updates {
                 let field = update.point_id.to_string();
-                pipe.hset(&hash_key, &field, update.data.to_redis());
+                pipe.hset(&hash_key, &field, update.data.to_comsrv_redis());
 
                 if let Some(raw) = update.raw_value {
                     pipe.hset(format!("{}:raw", hash_key), &field, format!("{:.6}", raw));
@@ -228,7 +228,7 @@ impl PointStorage for Storage {
 
         match data {
             Some(value) => {
-                let point = PointData::from_redis(&value).map_err(|e| {
+                let point = PointData::from_comsrv_redis(&value).map_err(|e| {
                     ComSrvError::Storage(format!("Failed to parse point data: {}", e))
                 })?;
                 Ok(Some(point))
@@ -260,7 +260,7 @@ impl PointStorage for Storage {
 
                 match data {
                     Some(value) => {
-                        let point = PointData::from_redis(&value).map_err(|e| {
+                        let point = PointData::from_comsrv_redis(&value).map_err(|e| {
                             ComSrvError::Storage(format!("Failed to parse point data: {}", e))
                         })?;
                         results.push(Some(point));
@@ -293,7 +293,7 @@ impl PointStorage for Storage {
         let mut results = Vec::new();
         for (field, value) in data {
             if let Ok(point_id) = field.parse::<u32>() {
-                if let Ok(point_data) = PointData::from_redis(&value) {
+                if let Ok(point_data) = PointData::from_comsrv_redis(&value) {
                     results.push((point_id, point_data));
                 }
             }
