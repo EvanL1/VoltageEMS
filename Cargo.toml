@@ -64,6 +64,9 @@ uuid = { version = "1.6", features = ["v4", "serde"] }
 # HTTP clients
 reqwest = { version = "0.12", features = ["json", "rustls-tls"] }
 
+# InfluxDB 2.x client
+influxdb2 = "0.5"
+
 # Configuration
 config = "0.14"
 figment = { version = "0.10", features = ["yaml", "toml", "json", "env"] }

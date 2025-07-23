@@ -81,18 +81,36 @@ impl Default for RedisConfig {
     }
 }
 
-/// InfluxDB 配置
+/// InfluxDB 2.x 配置
 #[cfg(feature = "influxdb")]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct InfluxConfig {
     pub url: String,
-    pub database: String,
+    pub org: String,
+    pub bucket: String,
+    pub token: String,
+    #[serde(default = "default_timeout")]
+    pub timeout_seconds: u64,
+
+    // 向下兼容字段
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub database: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub username: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub password: Option<String>,
-    #[serde(default = "default_timeout")]
-    pub timeout_seconds: u64,
+}
+
+#[cfg(feature = "influxdb")]
+impl InfluxConfig {
+    /// 向下兼容：如果没有设置bucket，使用database字段
+    pub fn get_bucket(&self) -> &str {
+        if let Some(ref database) = self.database {
+            database
+        } else {
+            &self.bucket
+        }
+    }
 }
 
 fn default_pool_size() -> u32 {
