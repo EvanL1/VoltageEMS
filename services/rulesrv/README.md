@@ -1,40 +1,171 @@
-# Rules Service (rulesrv)
-
-规则引擎服务，负责实时监控系统数据、执行业务规则、触发自动化动作。
+# rulesrv - 控制规则引擎
 
 ## 概述
 
-rulesrv 是 VoltageEMS 的核心决策服务，提供：
-- 灵活的规则定义和管理
-- 实时数据订阅和处理
-- 条件判断和表达式评估
-- 自动化动作执行
-- DAG（有向无环图）规则执行引擎
+rulesrv 是 VoltageEMS 的智能规则引擎服务，负责执行基于 DAG（有向无环图）的控制规则。服务专注于读取 modsrv 的计算结果，执行逻辑判断，并触发相应的控制动作。所有数据读写基于新的 Redis Hash 结构。
 
-## 主要功能
+## 主要特性
 
-### 1. 规则管理
-- 规则的创建、更新、删除、查询
-- 规则分组管理
-- 规则优先级控制
-- 规则启用/禁用
+- **DAG 规则引擎**: 支持复杂的有向无环图规则定义
+- **专注控制逻辑**: 只读取 modsrv 数据，执行控制决策
+- **实时触发**: 监听数据变化，自动执行相关规则
+- **多种条件类型**: 阈值、范围、表达式、状态等
+- **灵活的动作**: 控制命令、告警生成、通知发送
+- **标准化精度**: 所有数值保持 6 位小数精度
 
-### 2. 触发类型
-- **数据变化触发**：监控特定数据源的变化
-- **定时触发**：按照 cron 表达式定时执行
-- **手动触发**：通过 API 手动执行
+## 快速开始
 
-### 3. 条件类型
-- **阈值条件**：数值比较（>, <, >=, <=, ==, !=）
-- **范围条件**：数值范围判断
-- **表达式条件**：支持复杂表达式
-- **状态条件**：设备或系统状态判断
+### 运行服务
 
-### 4. 动作类型
-- **控制动作**：发送控制命令到设备
-- **告警动作**：生成告警事件
-- **通知动作**：发送通知消息
-- **计算动作**：执行计算并存储结果
+```bash
+cd services/rulesrv
+cargo run
+```
+
+### 配置文件
+
+主配置文件位于 `config/default.yml`：
+
+```yaml
+service:
+  name: "rulesrv"
+  host: "0.0.0.0"
+  port: 8085
+  
+redis:
+  url: "redis://localhost:6379"
+  
+rule_engine:
+  max_rules: 1000
+  execution_timeout: 30  # 秒
+  max_parallel: 100
+  
+monitoring:
+  sources:
+    - "modsrv:*:measurement"  # 监控所有模型的测量值
+    - "modsrv:*:control"      # 监控所有模型的控制值
+    
+logging:
+  level: "info"
+  file: "logs/rulesrv.log"
+```
+
+## 数据读取原则
+
+rulesrv **只从 modsrv 读取数据**，不直接访问 comsrv 数据：
+
+```rust
+// 正确：读取 modsrv 计算结果
+let value = redis_client.hget("modsrv:power_meter:measurement", "total_power").await?;
+
+// 错误：不应直接读取 comsrv 原始数据
+// let value = redis_client.hget("comsrv:1001:m", "10001").await?;
+```
+
+## DAG 规则定义
+
+### 规则结构
+
+```json
+{
+  "id": "power_optimization",
+  "name": "功率优化控制",
+  "description": "基于功率计算结果的优化控制",
+  "enabled": true,
+  "nodes": [
+    {
+      "id": "read_power",
+      "type": "input",
+      "config": {
+        "source": "modsrv:power_meter:measurement",
+        "field": "total_power"
+      }
+    },
+    {
+      "id": "read_limit",
+      "type": "input",
+      "config": {
+        "source": "modsrv:power_meter:control",
+        "field": "power_limit"
+      }
+    },
+    {
+      "id": "check_overload",
+      "type": "condition",
+      "config": {
+        "expression": "$read_power > $read_limit * 0.9"
+      }
+    },
+    {
+      "id": "reduce_load",
+      "type": "action",
+      "config": {
+        "type": "control",
+        "channel": "cmd:1001:adjustment",
+        "command": {
+          "point_id": 40001,
+          "value": "$read_limit * 0.8"
+        }
+      }
+    }
+  ],
+  "edges": [
+    {"from": "read_power", "to": "check_overload"},
+    {"from": "read_limit", "to": "check_overload"},
+    {"from": "check_overload", "to": "reduce_load", "condition": true}
+  ]
+}
+```
+
+### 节点类型
+
+#### 1. Input 节点
+```json
+{
+  "type": "input",
+  "config": {
+    "source": "modsrv:power_meter:measurement",
+    "field": "total_power",
+    "default": 0.0
+  }
+}
+```
+
+#### 2. Transform 节点
+```json
+{
+  "type": "transform",
+  "config": {
+    "expression": "($input1 + $input2) / 2",
+    "output_precision": 6
+  }
+}
+```
+
+#### 3. Condition 节点
+```json
+{
+  "type": "condition",
+  "config": {
+    "type": "threshold",
+    "operator": ">",
+    "value": 1000.0,
+    "duration": 60  // 持续时间（秒）
+  }
+}
+```
+
+#### 4. Action 节点
+```json
+{
+  "type": "action",
+  "config": {
+    "type": "control",
+    "delay": 0,
+    "retry": 3
+  }
+}
+```
 
 ## API 接口
 
@@ -42,404 +173,327 @@ rulesrv 是 VoltageEMS 的核心决策服务，提供：
 
 ```bash
 # 列出所有规则
-GET /api/v1/rules?group_id={group_id}&enabled={true/false}
+GET /rules?enabled=true&tag=power
 
-# 获取单个规则
-GET /api/v1/rules/{rule_id}
+# 获取规则详情
+GET /rules/{rule_id}
 
 # 创建规则
-POST /api/v1/rules
-{
-  "rule": {
-    "id": "temp_threshold_rule",
-    "name": "温度阈值告警",
-    "group_id": "energy_rules",
-    "enabled": true,
-    "trigger": {
-      "type": "data_change",
-      "sources": ["1001:m:10001"]
-    },
-    "conditions": [{
-      "type": "threshold",
-      "source": "1001:m:10001",
-      "operator": ">",
-      "value": 80,
-      "duration": 60000
-    }],
-    "actions": [{
-      "type": "alarm",
-      "level": "warning",
-      "message": "温度超过阈值"
-    }]
-  }
-}
+POST /rules
+Content-Type: application/json
 
 # 更新规则
-PUT /api/v1/rules/{rule_id}
+PUT /rules/{rule_id}
 
 # 删除规则
-DELETE /api/v1/rules/{rule_id}
+DELETE /rules/{rule_id}
 
-# 执行规则
-POST /api/v1/rules/{rule_id}/execute
+# 启用/禁用规则
+POST /rules/{rule_id}/enable
+POST /rules/{rule_id}/disable
+```
+
+### 规则执行
+
+```bash
+# 手动执行规则
+POST /rules/{rule_id}/execute
 {
-  "input": {
-    "temperature": 85.5
+  "context": {
+    "key": "value"
   }
 }
 
-# 测试规则（不保存）
-POST /api/v1/rules/test
+# 测试规则（不保存结果）
+POST /rules/test
 {
   "rule": { ... },
   "input": { ... }
 }
 
 # 获取执行历史
-GET /api/v1/rules/{rule_id}/history?limit=100
+GET /rules/{rule_id}/history?limit=100
 ```
 
-### 规则组管理
+### 监控和统计
 
 ```bash
-# 列出所有规则组
-GET /api/v1/groups
+# 获取规则统计
+GET /stats
 
-# 获取单个规则组
-GET /api/v1/groups/{group_id}
-
-# 创建规则组
-POST /api/v1/groups
-{
-  "group": {
-    "id": "energy_rules",
-    "name": "能源管理规则",
-    "description": "能源相关的自动化规则",
-    "enabled": true
-  }
-}
-
-# 删除规则组
-DELETE /api/v1/groups/{group_id}
-
-# 获取组内规则
-GET /api/v1/groups/{group_id}/rules
+# 获取执行指标
+GET /metrics
 ```
 
-### 健康检查
+## 条件类型
 
-```bash
-GET /health
-```
-
-## 配置说明
-
-配置文件位于 `config/default.yml`：
+### 阈值条件
 
 ```yaml
-# Redis 配置
-redis:
-  url: "redis://localhost:6379"
-  key_prefix: "rulesrv"
+conditions:
+  - type: "threshold"
+    source: "modsrv:power_meter:measurement"
+    field: "total_power"
+    operator: ">"  # >, <, >=, <=, ==, !=
+    value: 1000.0
+    duration: 60   # 持续时间（秒）
+```
 
-# API 服务配置
-api:
-  port: 8080
+### 范围条件
 
-# 规则引擎配置
-engine:
-  max_rules: 1000
-  execution_timeout: 30s
-  max_parallel_executions: 100
+```yaml
+conditions:
+  - type: "range"
+    source: "modsrv:power_meter:measurement"
+    field: "power_factor"
+    min: 0.85
+    max: 0.95
+    inside: true  # true=在范围内触发，false=在范围外触发
+```
 
-# 订阅配置
-subscription:
-  channels:
-    - "modsrv:outputs:*"
-    - "alarm:event:*"
+### 表达式条件
+
+```yaml
+conditions:
+  - type: "expression"
+    expression: |
+      power > 1000 AND 
+      power_factor < 0.9 AND 
+      time.hour >= 8 AND 
+      time.hour <= 18
+```
+
+### 状态变化条件
+
+```yaml
+conditions:
+  - type: "state_change"
+    source: "modsrv:device:status"
+    field: "online"
+    from: 1
+    to: 0
+    debounce: 30  # 防抖时间（秒）
+```
+
+## 动作类型
+
+### 控制动作
+
+```yaml
+actions:
+  - type: "control"
+    channel: "cmd:1001:control"
+    command:
+      point_id: 30001
+      value: 1.0
+    confirm_timeout: 5000  # 毫秒
+```
+
+### 调节动作
+
+```yaml
+actions:
+  - type: "adjustment"
+    channel: "cmd:1001:adjustment"
+    command:
+      point_id: 40001
+      value: "$calculated_value * 0.95"
+```
+
+### 告警动作
+
+```yaml
+actions:
+  - type: "alarm"
+    severity: "major"
+    title: "功率超限"
+    description: "当前功率 {$power} 超过限值 {$limit}"
+    category: "power"
+```
+
+### 通知动作
+
+```yaml
+actions:
+  - type: "notification"
+    channel: "notification:email"
+    template: "power_alert"
+    recipients: ["operator@example.com"]
+    data:
+      power: "$current_power"
+      limit: "$power_limit"
 ```
 
 ## 规则示例
 
-### 1. 温度阈值告警
+### 示例 1：功率因数优化
 
 ```json
 {
-  "id": "high_temp_alarm",
-  "name": "高温告警",
+  "id": "power_factor_optimization",
+  "name": "功率因数优化",
   "trigger": {
     "type": "data_change",
-    "sources": ["1001:m:10001"]
+    "sources": ["modsrv:power_meter:measurement"]
   },
   "conditions": [{
     "type": "threshold",
-    "source": "1001:m:10001",
-    "operator": ">",
-    "value": 85.0,
-    "duration": 60000
+    "source": "modsrv:power_meter:measurement",
+    "field": "power_factor",
+    "operator": "<",
+    "value": 0.90
   }],
   "actions": [{
-    "type": "alarm",
-    "level": "critical",
-    "message": "温度超过85度"
-  }, {
     "type": "control",
-    "channel_id": 1001,
-    "point_type": "c",
-    "point_id": 30001,
-    "value": false
+    "channel": "cmd:1001:control",
+    "command": {
+      "point_id": 30010,
+      "value": 1.0,
+      "description": "启动功率因数补偿"
+    }
   }]
 }
 ```
 
-### 2. 功率优化规则
+### 示例 2：温度联动控制
 
 ```json
 {
-  "id": "power_optimization",
-  "name": "功率优化",
-  "trigger": {
-    "type": "schedule",
-    "cron": "*/5 * * * *"
-  },
-  "conditions": [{
-    "type": "expression",
-    "expression": "avg(1001:m:20001..20010) > 1000 AND time.hour >= 9 AND time.hour <= 18"
-  }],
-  "actions": [{
-    "type": "control",
-    "channel_id": 1001,
-    "point_type": "a",
-    "point_id": 40001,
-    "value": "current_power * 0.95"
-  }]
-}
-```
-
-### 3. DAG 规则示例
-
-```json
-{
-  "id": "complex_dag_rule",
-  "name": "复杂DAG规则",
+  "id": "temperature_control",
+  "name": "温度联动控制",
   "nodes": [
     {
-      "id": "temp_input",
+      "id": "temp_avg",
       "type": "input",
       "config": {
-        "source": "modsrv:calc:env_monitor"
+        "source": "modsrv:env_monitor:measurement",
+        "field": "avg_temperature"
       }
     },
     {
-      "id": "humidity_input",
-      "type": "input",
-      "config": {
-        "source": "1001:s:20001"
-      }
-    },
-    {
-      "id": "comfort_calc",
-      "type": "transform",
-      "config": {
-        "expression": "temp * 0.7 + humidity * 0.3"
-      }
-    },
-    {
-      "id": "check_comfort",
+      "id": "temp_high",
       "type": "condition",
       "config": {
-        "expression": "$comfort_calc > 75"
+        "expression": "$temp_avg > 28.0"
       }
     },
     {
-      "id": "adjust_ac",
+      "id": "temp_low",
+      "type": "condition",
+      "config": {
+        "expression": "$temp_avg < 20.0"
+      }
+    },
+    {
+      "id": "start_cooling",
       "type": "action",
       "config": {
-        "action_type": "control",
-        "channel_id": 1001,
-        "point_type": "a",
-        "point_id": 50001,
-        "value": "$comfort_calc"
+        "type": "control",
+        "channel": "cmd:2001:control",
+        "command": {"point_id": 30001, "value": 1.0}
+      }
+    },
+    {
+      "id": "start_heating",
+      "type": "action",
+      "config": {
+        "type": "control",
+        "channel": "cmd:2001:control",
+        "command": {"point_id": 30002, "value": 1.0}
       }
     }
   ],
   "edges": [
-    { "from": "temp_input", "to": "comfort_calc" },
-    { "from": "humidity_input", "to": "comfort_calc" },
-    { "from": "comfort_calc", "to": "check_comfort" },
-    { "from": "check_comfort", "to": "adjust_ac", "condition": "$check_comfort == true" }
+    {"from": "temp_avg", "to": "temp_high"},
+    {"from": "temp_avg", "to": "temp_low"},
+    {"from": "temp_high", "to": "start_cooling", "condition": true},
+    {"from": "temp_low", "to": "start_heating", "condition": true}
   ]
 }
 ```
 
-## 开发指南
+## 表达式语法
 
-### 添加新的条件类型
+### 支持的操作符
 
-1. 在 `models/rule.rs` 中添加新的条件枚举：
+- 算术: `+`, `-`, `*`, `/`, `%`, `^`
+- 比较: `>`, `<`, `>=`, `<=`, `==`, `!=`
+- 逻辑: `AND`, `OR`, `NOT`
+- 函数: `abs()`, `min()`, `max()`, `avg()`, `sum()`
 
-```rust
-pub enum ConditionType {
-    // ... 现有条件
-    MyNewCondition {
-        param1: String,
-        param2: f64,
-    },
-}
-```
+### 内置变量
 
-2. 在 `engine/evaluator.rs` 中实现条件评估逻辑：
+- `$node_id` - 引用其他节点的输出
+- `time.hour` - 当前小时（0-23）
+- `time.minute` - 当前分钟（0-59）
+- `time.weekday` - 星期几（1-7）
 
-```rust
-match condition {
-    ConditionType::MyNewCondition { param1, param2 } => {
-        // 实现条件评估逻辑
-    }
-}
-```
+### 示例表达式
 
-### 添加新的动作处理器
+```javascript
+// 简单比较
+temperature > 30.0
 
-1. 实现 `ActionHandler` trait：
+// 复合条件
+power > 1000 AND power_factor < 0.9
 
-```rust
-pub struct MyActionHandler {
-    // 处理器状态
-}
+// 使用函数
+abs(voltage - 220) > 10
 
-#[async_trait]
-impl ActionHandler for MyActionHandler {
-    fn can_handle(&self, action_type: &str) -> bool {
-        action_type == "my_action"
-    }
-    
-    fn name(&self) -> &str {
-        "MyActionHandler"
-    }
-    
-    async fn execute_action(
-        &self,
-        action_type: &str,
-        config: &Value,
-    ) -> Result<String> {
-        // 实现动作执行逻辑
-    }
-}
-```
-
-2. 注册处理器：
-
-```rust
-let handler = MyActionHandler::new();
-rule_executor.register_action_handler(handler).await?;
+// 时间条件
+time.hour >= 8 AND time.hour <= 18 AND time.weekday <= 5
 ```
 
 ## 性能优化
 
-### 1. 批量数据获取
+### 1. 规则缓存
 
-使用 `BatchDataFetcher` 批量获取多个点位数据：
+规则引擎自动缓存已编译的规则，避免重复解析。
+
+### 2. 批量数据读取
 
 ```rust
-let fetcher = BatchDataFetcher::new(&redis_url)?;
-let points = vec!["1001:m:10001", "1001:m:10002", "1001:m:10003"];
-let values = fetcher.fetch_points(&points).await?;
+// 批量读取多个字段
+let fields = vec!["total_power", "power_factor", "voltage"];
+let values = redis_client.hmget("modsrv:power_meter:measurement", &fields).await?;
 ```
-
-### 2. 规则缓存
-
-规则引擎自动缓存已加载的规则，减少 Redis 访问。
 
 ### 3. 并行执行
 
-规则引擎支持并行执行多个独立的规则，通过 `max_parallel_executions` 配置控制并发度。
+独立的规则可以并行执行，通过 `max_parallel` 配置控制并发度。
 
-## 监控和调试
+## 监控指标
 
-### 1. 日志
+通过 `/metrics` 端点暴露 Prometheus 指标：
 
-服务使用结构化日志，支持按级别过滤：
+- `rulesrv_rules_total` - 规则总数
+- `rulesrv_rule_executions_total` - 规则执行次数
+- `rulesrv_rule_execution_duration_seconds` - 执行耗时
+- `rulesrv_rule_failures_total` - 执行失败次数
 
-```bash
-RUST_LOG=rulesrv=debug cargo run
-```
+## 故障排查
 
-### 2. 指标
+### 规则未触发
 
-通过 Prometheus 端点暴露指标：
+1. 检查规则是否启用
+2. 验证数据源是否有更新
+3. 查看条件是否满足
+4. 检查日志中的错误信息
 
-- `rulesrv_rules_total`：规则总数
-- `rulesrv_rule_executions_total`：规则执行次数
-- `rulesrv_rule_execution_duration`：规则执行耗时
-- `rulesrv_rule_failures_total`：规则执行失败次数
+### 动作执行失败
 
-### 3. 健康检查
+1. 验证目标通道是否存在
+2. 检查命令格式是否正确
+3. 确认权限是否足够
+4. 查看重试日志
 
-```bash
-curl http://localhost:8080/health
-```
+## 环境变量
 
-## 故障处理
+- `RUST_LOG` - 日志级别
+- `RULESRV_CONFIG` - 配置文件路径
+- `REDIS_URL` - Redis 连接地址
 
-### 1. 规则执行失败
+## 相关文档
 
-- 检查规则定义是否正确
-- 查看执行历史了解失败原因
-- 使用测试端点验证规则逻辑
-
-### 2. Redis 连接问题
-
-- 检查 Redis 服务状态
-- 验证连接配置
-- 查看网络连接
-
-### 3. 性能问题
-
-- 减少规则复杂度
-- 优化表达式
-- 增加并行执行数
-- 使用批量数据获取
-
-## 部署
-
-### Docker
-
-```bash
-docker build -t rulesrv .
-docker run -d \
-  --name rulesrv \
-  -p 8080:8080 \
-  -e REDIS_URL=redis://redis:6379 \
-  rulesrv
-```
-
-### Kubernetes
-
-```yaml
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: rulesrv
-spec:
-  replicas: 2
-  selector:
-    matchLabels:
-      app: rulesrv
-  template:
-    metadata:
-      labels:
-        app: rulesrv
-    spec:
-      containers:
-      - name: rulesrv
-        image: rulesrv:latest
-        ports:
-        - containerPort: 8080
-        env:
-        - name: REDIS_URL
-          value: redis://redis-service:6379
-```
-
-## 许可证
-
-MIT License
+- [架构设计](docs/architecture.md)
+- [规则配置指南](docs/rule-configuration.md)

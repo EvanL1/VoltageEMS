@@ -1,398 +1,294 @@
 # hissrv - 历史数据服务
 
-hissrv 是 VoltageEMS 系统中的历史数据服务，负责将 Redis 中的实时数据转发到 InfluxDB 3.2 进行长期存储。
+## 概述
 
-## 功能特性
+hissrv 是 VoltageEMS 的历史数据存储服务，负责将 Redis 中的实时数据批量转储到 InfluxDB 进行长期存储。服务采用高效的批处理机制，支持新的 Redis Hash 数据结构，并提供灵活的数据过滤和存储策略。
 
-- ✅ **Redis Pub/Sub 集成** - 实时监听 Redis 键空间通知
-- ✅ **批量写入优化** - 自动批量收集数据点，提高写入效率
-- ✅ **灵活的数据模式** - 支持测量(m)、信号(s)、控制(c)、调节(a)等多种数据类型
-- ✅ **智能点位过滤** - 支持通道级、点位级和过滤器级的精细控制
-- ✅ **REST API** - 提供健康检查、统计信息和查询接口
-- ✅ **配置管理 API** - 支持动态配置管理和热重载
-- ✅ **自动重连** - 支持 Redis 和 InfluxDB 连接中断后的自动恢复
-- ✅ **配置管理** - 使用 Figment 支持 YAML 配置和环境变量覆盖
+## 主要特性
 
-## 架构设计
+- **Hash 结构订阅**: 监听 Redis Hash 数据变化，支持通道级订阅
+- **批量写入优化**: 自动批量收集数据点，提高 InfluxDB 写入效率
+- **智能数据过滤**: 支持值范围、时间间隔等多种过滤规则
+- **标准化精度**: 所有浮点数值保持 6 位小数精度
+- **配置热重载**: 支持动态更新点位配置而无需重启服务
+- **自动重连机制**: Redis 和 InfluxDB 连接中断后自动恢复
 
+## 快速开始
+
+### 运行服务
+
+```bash
+cd services/hissrv
+cargo run
 ```
-Redis (键空间通知) → hissrv → InfluxDB 3.2
-     ↓                  ↓           ↓
-  实时数据          数据处理     历史存储
-```
 
-### 核心组件
+### 配置文件
 
-1. **RedisSubscriber** - 监听 Redis 键空间通知
-2. **DataProcessor** - 处理和批量收集数据点，支持智能过滤
-3. **InfluxDBClient** - 写入 InfluxDB 3.2
-4. **API Server** - 提供 REST API 接口
-5. **点位配置系统** - 精细控制数据保存规则
-
-## 配置
-
-### 配置文件示例 (config/default.yaml)
+主配置文件位于 `config/default.yml`：
 
 ```yaml
 service:
   name: "hissrv"
-  version: "0.2.0"
   host: "0.0.0.0"
-  port: 8081
-
+  port: 8083
+  
 redis:
-  connection:
-    host: "localhost"
-    port: 6379
-    database: 0
-    timeout_seconds: 5
+  url: "redis://localhost:6379"
   subscription:
     patterns:
-      - "*:m:*"  # 测量数据
-      - "*:s:*"  # 信号数据
-
+      - "comsrv:*:m"  # 订阅所有测量数据
+      - "comsrv:*:s"  # 订阅所有信号数据
+      - "modsrv:*:measurement"  # 订阅计算结果
+      
 influxdb:
-  enabled: true
-  url: "http://localhost:8181"
-  database: "voltage_ems"
+  url: "http://localhost:8086"
+  database: "voltageems"
   batch_size: 1000
-  flush_interval_seconds: 10
-
+  flush_interval: 10  # 秒
+  
 logging:
   level: "info"
-  format: "text"
-  file: "./logs/hissrv.log"
+  file: "logs/hissrv.log"
 ```
 
-### 环境变量
-
-支持通过环境变量覆盖配置：
-
-```bash
-HISSRV_SERVICE__PORT=8082
-HISSRV_REDIS__CONNECTION__HOST=redis.example.com
-HISSRV_INFLUXDB__URL=http://influxdb:8086
-HISSRV_POINTS_CONFIG=config/points.yaml
-```
-
-## 点位配置系统
-
-hissrv 提供了强大的点位配置系统，允许精细控制哪些数据点被保存到 InfluxDB。
-
-### 配置文件位置
-
-- 主配置：`config/hissrv.yaml`
-- 点位配置：`config/points.yaml`
-
-### 配置规则优先级
-
-1. **点位级别规则** - 针对特定点位的配置
-2. **通道级别规则** - 针对整个通道的配置
-3. **默认策略** - 全局默认行为
-
-### 基本配置示例
-
-```yaml
-# config/points.yaml
-enabled: true
-default_policy: "allow_all"
-
-rules:
-  channels:
-    - channel_id: 1001
-      enabled: true
-      point_types: ["m", "s"]  # 只保存测量和信号数据
-      name: "主变电站"
-      
-  points:
-    - channel_id: 1001
-      point_id: 10001
-      point_type: "m"
-      enabled: false  # 禁用特定点位
-      name: "故障点位"
-
-filters:
-  - type: "value_range"
-    point_types: ["m"]
-    min_value: -10000
-    max_value: 10000
-    
-  - type: "time_interval"
-    point_types: ["m", "s"]
-    min_interval_seconds: 5
-```
-
-### 配置管理 API
-
-```bash
-# 获取当前配置
-curl http://localhost:8080/config/points
-
-# 更新配置
-curl -X PUT http://localhost:8080/config/points \
-  -H "Content-Type: application/json" \
-  -d @new_config.json
-
-# 获取配置统计
-curl http://localhost:8080/config/points/stats
-
-# 重新加载配置
-curl -X POST http://localhost:8080/config/points/reload
-```
-
-详细配置说明请参考：[POINTS_CONFIG.md](./POINTS_CONFIG.md)
-
-## Redis 配置要求
-
-hissrv 使用 Redis 键空间通知功能。需要确保 Redis 配置了：
+## 数据流架构
 
 ```
-notify-keyspace-events KEA
+Redis Hash 结构         hissrv              InfluxDB
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+comsrv:1001:m  ───┐                    ┌─── telemetry
+  10001: "25.1" ──┼──► 订阅处理 ───────┼──► channel_id=1001
+  10002: "26.2" ──┘    批量收集         └─── point_id=10001
+                       时间戳添加             value=25.100000
 ```
 
-或者在 redis.conf 中设置，或者运行时配置：
+## Redis 订阅机制
 
-```bash
-redis-cli CONFIG SET notify-keyspace-events KEA
+### Hash 键监听
+
+hissrv 订阅 Redis Hash 结构的变化：
+
+```rust
+// 订阅模式
+PSUBSCRIBE __keyspace@0__:comsrv:*:m
+PSUBSCRIBE __keyspace@0__:comsrv:*:s
+PSUBSCRIBE __keyspace@0__:modsrv:*:measurement
 ```
 
-hissrv 启动时会尝试自动配置此选项。
+### 数据读取流程
 
-## 数据格式
+1. 接收键空间通知
+2. 解析 Hash 键获取通道和类型信息
+3. 批量读取 Hash 中的所有字段
+4. 添加时间戳并转换为 InfluxDB 格式
+5. 批量写入 InfluxDB
 
-### Redis 键格式
+## 数据格式转换
+
+### Redis Hash 格式
 
 ```
-{channelID}:{type}:{pointID}
-```
-
-例如：
-- `1001:m:10001` - 通道 1001 的测量点 10001
-- `2001:s:20001` - 通道 2001 的信号点 20001
-
-### Redis 值格式 (JSON)
-
-```json
-{
-  "point_id": 10001,
-  "value": 23.45,
-  "timestamp": "2025-07-16T00:00:00Z",
-  "metadata": null
-}
+键: comsrv:1001:m
+字段值对:
+  10001 → "25.123456"
+  10002 → "26.789012"
 ```
 
 ### InfluxDB 数据点格式
 
 ```
-telemetry,channel_id=1001,point_id=10001,point_type=m value=23.45 1752627600000000000
+测量名: telemetry
+标签:
+  - channel_id: "1001"
+  - point_id: "10001"
+  - point_type: "m"
+字段:
+  - value: 25.123456
+时间戳: 1642592400000000000
 ```
 
-## API 端点
+## 批处理优化
+
+### 批量收集器
+
+```rust
+pub struct BatchCollector {
+    buffer: Vec<DataPoint>,
+    max_size: usize,
+    flush_interval: Duration,
+}
+
+// 自动批量处理
+- 达到批量大小限制时刷新
+- 超过时间间隔时刷新
+- 手动触发刷新
+```
+
+### 性能参数
+
+- `batch_size`: 批量大小（默认 1000）
+- `flush_interval`: 刷新间隔（默认 10 秒）
+- `buffer_size`: 内部缓冲区大小
+
+## 点位过滤配置
+
+### 配置文件 (`config/points.yml`)
+
+```yaml
+enabled: true
+default_policy: "allow_all"  # 或 "deny_all"
+
+rules:
+  # 通道级规则
+  channels:
+    - channel_id: 1001
+      enabled: true
+      point_types: ["m", "s"]
+      description: "主站数据"
+      
+    - channel_id: 2001
+      enabled: false
+      description: "测试通道，不保存"
+      
+  # 点位级规则
+  points:
+    - channel_id: 1001
+      point_id: 10099
+      enabled: false
+      description: "故障点位"
+
+# 数据过滤器
+filters:
+  - type: "value_range"
+    point_types: ["m"]
+    min_value: -10000.0
+    max_value: 10000.0
+    
+  - type: "time_interval"
+    min_interval_seconds: 5
+    description: "防止过于频繁的更新"
+```
+
+## API 接口
 
 ### 健康检查
-```
+
+```bash
 GET /health
 ```
 
-响应示例：
+响应：
 ```json
 {
-  "success": true,
-  "data": {
-    "status": "healthy",
-    "service": "hissrv",
-    "version": "0.2.0",
-    "components": {
-      "influxdb": {
-        "status": "healthy"
-      },
-      "processor": {
-        "status": "healthy"
-      }
-    }
+  "status": "healthy",
+  "components": {
+    "redis": "connected",
+    "influxdb": "connected",
+    "processor": "running"
   }
 }
 ```
 
 ### 统计信息
-```
+
+```bash
 GET /stats
 ```
 
-响应示例：
+响应：
 ```json
 {
-  "success": true,
-  "data": {
-    "processing": {
-      "messages_received": 100,
-      "messages_processed": 98,
-      "messages_failed": 2,
-      "points_written": 98
-    },
-    "influxdb": {
-      "connected": true,
-      "database": "voltage_ems",
-      "url": "http://localhost:8181"
-    },
-    "uptime_seconds": 3600
-  }
+  "messages_received": 10000,
+  "points_written": 9950,
+  "current_batch_size": 150,
+  "write_errors": 0,
+  "uptime_seconds": 3600
 }
 ```
 
-### 简单查询
-```
-GET /query/simple?measurement=telemetry&limit=10
-```
+### 配置管理
 
-### SQL 查询
-```
-POST /query
+```bash
+# 获取当前配置
+GET /config/points
+
+# 更新配置
+PUT /config/points
 Content-Type: application/json
 
-{
-  "query": "SELECT * FROM telemetry WHERE time > now() - 1h LIMIT 100"
-}
+# 重载配置
+POST /config/reload
 ```
 
-### 强制刷新
-```
+### 手动刷新
+
+```bash
 POST /flush
 ```
 
-## 运行
+## 监控和调试
 
-### 本地开发
-
-```bash
-# 编译
-cargo build -p hissrv
-
-# 运行（开发模式）
-RUST_LOG=debug cargo run -p hissrv
-
-# 运行（指定配置文件）
-HISSRV_CONFIG=config/custom.yaml cargo run -p hissrv
-```
-
-### Docker 运行
-
-```bash
-# 构建镜像
-docker build -f services/hissrv/Dockerfile -t hissrv:latest .
-
-# 运行容器
-docker run -d \
-  --name hissrv \
-  -p 8081:8081 \
-  -e HISSRV_REDIS__CONNECTION__HOST=redis \
-  -e HISSRV_INFLUXDB__URL=http://influxdb:8086 \
-  -v ./config:/app/config:ro \
-  hissrv:latest
-```
-
-### Docker Compose
+### 日志配置
 
 ```yaml
-services:
-  hissrv:
-    image: hissrv:latest
-    environment:
-      - RUST_LOG=info
-      - HISSRV_CONFIG=/app/config/production.yaml
-    volumes:
-      - ./config:/app/config:ro
-      - ./logs:/app/logs
-    depends_on:
-      - redis
-      - influxdb
-    ports:
-      - "8081:8081"
+logging:
+  level: "debug"  # debug, info, warn, error
+  format: "json"  # json 或 text
+  file: "logs/hissrv.log"
+  rotate: true
+  max_size: "100MB"
 ```
 
-## 测试
+### 监控指标
 
-### 单元测试
+通过 `/metrics` 端点暴露 Prometheus 指标：
 
-```bash
-cargo test -p hissrv
-```
+- `hissrv_messages_received_total` - 接收消息总数
+- `hissrv_points_written_total` - 写入点位总数
+- `hissrv_batch_size` - 当前批次大小
+- `hissrv_write_duration_seconds` - 写入耗时
 
-### 集成测试
-
-运行提供的测试脚本：
-
-```bash
-cd services/hissrv
-./test-pubsub.sh
-```
-
-### 手动测试
-
-1. 写入测试数据到 Redis：
-```bash
-redis-cli SET "1001:m:10001" '{"point_id":10001,"value":23.45,"timestamp":"2025-07-16T00:00:00Z"}'
-```
-
-2. 检查处理统计：
-```bash
-curl http://localhost:8081/stats
-```
-
-3. 查询数据：
-```bash
-curl "http://localhost:8081/query/simple?measurement=telemetry&limit=10"
-```
-
-## 故障排除
+## 故障排查
 
 ### Redis 连接问题
 
-1. 检查 Redis 是否运行：
-```bash
-redis-cli ping
-```
-
-2. 检查键空间通知配置：
+1. 检查键空间通知配置：
 ```bash
 redis-cli CONFIG GET notify-keyspace-events
+# 应该包含 'K' 和 'h'
+```
+
+2. 手动设置（如需要）：
+```bash
+redis-cli CONFIG SET notify-keyspace-events Kh
 ```
 
 ### InfluxDB 写入失败
 
-1. 检查 InfluxDB 是否运行：
+1. 检查连接：
 ```bash
-curl http://localhost:8181/health
+curl http://localhost:8086/health
 ```
 
-2. 检查日志中的错误信息：
+2. 查看错误日志：
 ```bash
-tail -f logs/hissrv.log
+tail -f logs/hissrv.log | grep ERROR
 ```
 
-### 没有接收到数据
+### 数据未保存
 
-1. 确认 Redis 键格式正确
-2. 检查订阅模式是否匹配
-3. 查看 debug 日志了解详细信息
+1. 检查点位配置是否允许该数据
+2. 验证数据格式是否正确
+3. 查看过滤器是否阻止了数据
 
-## 性能优化
+## 环境变量
 
-1. **批量大小** - 调整 `batch_size` 以优化写入性能
-2. **刷新间隔** - 根据数据量调整 `flush_interval_seconds`
-3. **连接池** - Redis 使用连接池以提高性能
-4. **日志级别** - 生产环境使用 `info` 或 `warn` 级别
+- `RUST_LOG` - 日志级别
+- `HISSRV_CONFIG` - 配置文件路径
+- `HISSRV_REDIS_URL` - Redis 连接地址
+- `HISSRV_INFLUXDB_URL` - InfluxDB 连接地址
 
-## 已知限制
+## 相关文档
 
-1. InfluxDB 3.2 需要配置正确的 bucket/database
-2. 不支持 Redis Cluster（可以通过配置多个实例解决）
-3. 查询功能目前比较基础
-
-## 贡献
-
-欢迎提交 Issue 和 Pull Request！
-
-## 许可证
-
-MIT License
+- [架构设计](docs/architecture.md)
+- [InfluxDB 桥接](docs/influxdb-bridge.md)

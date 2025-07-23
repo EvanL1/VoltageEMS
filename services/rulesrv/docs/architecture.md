@@ -2,476 +2,544 @@
 
 ## 概述
 
-rulesrv 是 VoltageEMS 的规则引擎服务，负责实时监控系统数据、执行业务规则、触发自动化动作。服务采用高性能的规则评估引擎，支持复杂的条件判断和灵活的动作执行。
+rulesrv 采用基于 DAG（有向无环图）的规则引擎架构，专注于从 modsrv 读取计算结果并执行控制逻辑。服务设计强调规则的可组合性、执行效率和实时响应能力。
 
-## 架构原则
-
-1. **实时响应**：毫秒级规则评估，快速响应数据变化
-2. **灵活配置**：支持热更新规则，无需重启服务
-3. **可扩展性**：插件化的条件和动作设计
-4. **高可靠性**：规则执行隔离，单个规则失败不影响其他规则
-
-## 系统架构
+## 核心架构
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                      rulesrv 规则引擎                         │
-├─────────────────────────────────────────────────────────────┤
-│                                                             │
-│  ┌─────────────┐    ┌─────────────┐    ┌─────────────┐    │
-│  │  数据订阅器  │    │  规则管理器  │    │  动作执行器  │    │
-│  │             │    │             │    │             │    │
-│  │ - 点位订阅   │    │ - 规则加载   │    │ - 控制命令   │    │
-│  │ - 事件订阅   │    │ - 热更新     │    │ - 告警生成   │    │
-│  │ - 批量获取   │    │ - 规则缓存   │    │ - 通知发送   │    │
-│  └──────┬──────┘    └──────┬──────┘    └──────┬──────┘    │
-│         │                  │                  │            │
-│         └──────────────────┴──────────────────┘            │
-│                           │                                │
-│                    ┌──────┴──────┐                         │
-│                    │  规则引擎    │                         │
-│                    │             │                         │
-│                    │ - 表达式评估 │                         │
-│                    │ - 状态机管理 │                         │
-│                    │ - 调度系统   │                         │
-│                    └──────┬──────┘                         │
-│                           │                                │
-└───────────────────────────┼─────────────────────────────────┘
-                            │
-                     ┌──────┴──────┐
-                     │    Redis    │
-                     └─────────────┘
+┌─────────────────────────────────────────────────────────┐
+│                      rulesrv                            │
+├─────────────────────────────────────────────────────────┤
+│                   API Server                            │
+│              (Rules/Execution/Stats)                    │
+├─────────────────────────────────────────────────────────┤
+│                 Rule Manager                            │
+│     ┌──────────────┬──────────────┬──────────────┐    │
+│     │ Rule Store   │ Rule Parser  │ Rule Cache   │    │
+│     │ (Redis)      │ (DAG)        │ (Memory)     │    │
+│     └──────────────┴──────────────┴──────────────┘    │
+├─────────────────────────────────────────────────────────┤
+│                  DAG Engine                             │
+│     ┌──────────┬──────────┬──────────┬──────────┐    │
+│     │Scheduler │Executor  │Evaluator │Context   │    │
+│     └──────────┴──────────┴──────────┴──────────┘    │
+├─────────────────────────────────────────────────────────┤
+│                 Data Interface                          │
+│     ┌──────────────┬──────────────┬──────────────┐    │
+│     │ Data Reader  │ Subscription │ Cache        │    │
+│     │ (modsrv only)│ Manager      │ Layer        │    │
+│     └──────────────┴──────────────┴──────────────┘    │
+├─────────────────────────────────────────────────────────┤
+│                Action Handlers                          │
+│     ┌──────────┬──────────┬──────────┬──────────┐    │
+│     │Control   │Alarm     │Notify    │Custom    │    │
+│     └──────────┴──────────┴──────────┴──────────┘    │
+└─────────────────────────────────────────────────────────┘
 ```
 
-## 核心组件
+## 组件说明
 
-### 1. 数据订阅器 (Data Subscriber)
+### 1. Rule Manager
 
-负责从 Redis 获取实时数据和事件。
-
-```rust
-pub struct DataSubscriber {
-    redis: RedisClient,
-    subscriptions: HashMap<String, Subscription>,
-    cache: DataCache,
-}
-
-pub struct Subscription {
-    pub pattern: String,          // 订阅模式，如 "1001:m:*"
-    pub callback: SubscriptionCallback,
-    pub batch_config: Option<BatchConfig>,
-}
-```
-
-**功能特点**：
-- 支持通配符订阅
-- 批量数据获取优化
-- 本地缓存减少查询
-
-### 2. 规则管理器 (Rule Manager)
-
-管理所有规则的生命周期。
+负责规则的生命周期管理：
 
 ```rust
 pub struct RuleManager {
-    rules: HashMap<String, Rule>,
-    rule_groups: HashMap<String, RuleGroup>,
-    config_watcher: ConfigWatcher,
+    store: Arc<RuleStore>,
+    parser: Arc<RuleParser>,
+    cache: Arc<RuleCache>,
 }
 
 pub struct Rule {
     pub id: String,
     pub name: String,
+    pub description: String,
     pub enabled: bool,
-    pub priority: u8,
-    pub conditions: Vec<Condition>,
-    pub actions: Vec<Action>,
+    pub graph: DAG,
     pub metadata: RuleMetadata,
 }
-```
 
-**规则结构**：
-- 多条件组合（AND/OR）
-- 优先级控制
-- 分组管理
-- 元数据扩展
-
-### 3. 规则引擎 (Rule Engine)
-
-核心的规则评估和执行引擎。
-
-```rust
-pub struct RuleEngine {
-    evaluator: ExpressionEvaluator,
-    state_manager: StateManager,
-    scheduler: RuleScheduler,
-    executor: ActionExecutor,
-}
-
-impl RuleEngine {
-    pub async fn evaluate(&self, rule: &Rule, context: &Context) -> Result<bool> {
-        // 评估所有条件
-        for condition in &rule.conditions {
-            if !self.evaluator.evaluate(condition, context).await? {
-                return Ok(false);
-            }
-        }
-        Ok(true)
+impl RuleManager {
+    pub async fn create_rule(&self, rule_def: RuleDefinition) -> Result<Rule> {
+        // 解析规则定义
+        let dag = self.parser.parse(&rule_def)?;
+        
+        // 验证 DAG 合法性
+        self.validate_dag(&dag)?;
+        
+        // 创建规则对象
+        let rule = Rule {
+            id: Uuid::new_v4().to_string(),
+            name: rule_def.name,
+            description: rule_def.description,
+            enabled: true,
+            graph: dag,
+            metadata: RuleMetadata::new(),
+        };
+        
+        // 存储到 Redis
+        self.store.save(&rule).await?;
+        
+        // 更新缓存
+        self.cache.insert(&rule.id, rule.clone()).await;
+        
+        Ok(rule)
     }
 }
 ```
 
-### 4. 动作执行器 (Action Executor)
+### 2. DAG Engine
 
-执行规则触发的动作。
+DAG 执行引擎是规则系统的核心：
 
 ```rust
-pub struct ActionExecutor {
-    handlers: HashMap<ActionType, Box<dyn ActionHandler>>,
-    redis: RedisClient,
-    rate_limiter: RateLimiter,
+pub struct DAGEngine {
+    scheduler: Arc<Scheduler>,
+    executor: Arc<Executor>,
+    evaluator: Arc<Evaluator>,
+}
+
+pub struct DAG {
+    nodes: HashMap<String, Node>,
+    edges: Vec<Edge>,
+    topology: Vec<String>, // 拓扑排序结果
+}
+
+pub enum Node {
+    Input(InputNode),
+    Transform(TransformNode),
+    Condition(ConditionNode),
+    Action(ActionNode),
+}
+
+impl DAGEngine {
+    pub async fn execute(&self, rule: &Rule, context: ExecutionContext) -> Result<ExecutionResult> {
+        let mut node_outputs = HashMap::new();
+        
+        // 按拓扑顺序执行节点
+        for node_id in &rule.graph.topology {
+            let node = &rule.graph.nodes[node_id];
+            
+            // 收集输入
+            let inputs = self.collect_inputs(&rule.graph, node_id, &node_outputs)?;
+            
+            // 执行节点
+            let output = match node {
+                Node::Input(n) => self.execute_input(n, &context).await?,
+                Node::Transform(n) => self.execute_transform(n, inputs).await?,
+                Node::Condition(n) => self.execute_condition(n, inputs).await?,
+                Node::Action(n) => self.execute_action(n, inputs).await?,
+            };
+            
+            node_outputs.insert(node_id.clone(), output);
+        }
+        
+        Ok(ExecutionResult {
+            rule_id: rule.id.clone(),
+            outputs: node_outputs,
+            timestamp: Utc::now(),
+        })
+    }
+}
+```
+
+### 3. Data Interface
+
+数据接口专门从 modsrv 读取数据：
+
+```rust
+pub struct DataReader {
+    redis_client: Arc<RedisClient>,
+    cache: Arc<DataCache>,
+}
+
+impl DataReader {
+    /// 只从 modsrv 读取数据
+    pub async fn read_value(
+        &self,
+        model_name: &str,
+        data_type: &str,
+        field: &str,
+    ) -> Result<StandardFloat> {
+        let hash_key = format!("modsrv:{}:{}", model_name, data_type);
+        
+        // 检查缓存
+        if let Some(value) = self.cache.get(&hash_key, field).await {
+            return Ok(value);
+        }
+        
+        // 从 Redis 读取
+        let value_str: Option<String> = self.redis_client
+            .hget(&hash_key, field)
+            .await?;
+        
+        match value_str {
+            Some(s) => {
+                let value = s.parse::<f64>()?;
+                let std_value = StandardFloat::new(value);
+                
+                // 更新缓存
+                self.cache.put(&hash_key, field, std_value).await;
+                
+                Ok(std_value)
+            }
+            None => Err(Error::DataNotFound(format!("{}:{}", hash_key, field))),
+        }
+    }
+    
+    /// 批量读取
+    pub async fn batch_read(
+        &self,
+        requests: Vec<DataRequest>,
+    ) -> Result<HashMap<String, StandardFloat>> {
+        // 按 Hash 键分组
+        let mut grouped: HashMap<String, Vec<String>> = HashMap::new();
+        
+        for req in requests {
+            let hash_key = format!("modsrv:{}:{}", req.model, req.data_type);
+            grouped.entry(hash_key)
+                .or_insert_with(Vec::new)
+                .push(req.field);
+        }
+        
+        // 批量读取每个 Hash
+        let mut results = HashMap::new();
+        
+        for (hash_key, fields) in grouped {
+            let values: Vec<Option<String>> = self.redis_client
+                .hmget(&hash_key, &fields)
+                .await?;
+            
+            for (field, value) in fields.iter().zip(values.iter()) {
+                if let Some(v) = value {
+                    if let Ok(parsed) = v.parse::<f64>() {
+                        let key = format!("{}:{}", hash_key, field);
+                        results.insert(key, StandardFloat::new(parsed));
+                    }
+                }
+            }
+        }
+        
+        Ok(results)
+    }
+}
+```
+
+### 4. Node Executors
+
+不同类型节点的执行器：
+
+#### Input Node
+```rust
+pub struct InputNode {
+    pub source: String,  // modsrv:model:type
+    pub field: String,
+    pub default: Option<f64>,
+}
+
+async fn execute_input(
+    &self,
+    node: &InputNode,
+    context: &ExecutionContext,
+) -> Result<NodeOutput> {
+    // 解析数据源
+    let parts: Vec<&str> = node.source.split(':').collect();
+    if parts.len() != 3 || parts[0] != "modsrv" {
+        return Err(Error::InvalidSource("Must read from modsrv"));
+    }
+    
+    let model = parts[1];
+    let data_type = parts[2];
+    
+    // 读取数据
+    match self.data_reader.read_value(model, data_type, &node.field).await {
+        Ok(value) => Ok(NodeOutput::Value(value)),
+        Err(_) => {
+            // 使用默认值
+            match node.default {
+                Some(d) => Ok(NodeOutput::Value(StandardFloat::new(d))),
+                None => Err(Error::DataNotFound(node.source.clone())),
+            }
+        }
+    }
+}
+```
+
+#### Condition Node
+```rust
+pub struct ConditionNode {
+    pub condition_type: ConditionType,
+    pub params: serde_json::Value,
+}
+
+pub enum ConditionType {
+    Threshold {
+        operator: ComparisonOperator,
+        value: f64,
+        duration: Option<Duration>,
+    },
+    Range {
+        min: f64,
+        max: f64,
+        inside: bool,
+    },
+    Expression {
+        expr: String,
+    },
+}
+
+async fn execute_condition(
+    &self,
+    node: &ConditionNode,
+    inputs: HashMap<String, NodeOutput>,
+) -> Result<NodeOutput> {
+    let result = match &node.condition_type {
+        ConditionType::Threshold { operator, value, duration } => {
+            let input_value = self.get_numeric_input(&inputs, "input")?;
+            let meets_condition = self.evaluate_comparison(input_value, *operator, *value);
+            
+            // 检查持续时间
+            if let Some(d) = duration {
+                self.check_duration(node, meets_condition, *d).await?
+            } else {
+                meets_condition
+            }
+        }
+        ConditionType::Expression { expr } => {
+            self.evaluate_expression(expr, &inputs)?
+        }
+        _ => false,
+    };
+    
+    Ok(NodeOutput::Boolean(result))
+}
+```
+
+#### Action Node
+```rust
+pub struct ActionNode {
+    pub action_type: ActionType,
+    pub config: serde_json::Value,
+}
+
+pub enum ActionType {
+    Control,
+    Alarm,
+    Notification,
+    Custom(String),
+}
+
+async fn execute_action(
+    &self,
+    node: &ActionNode,
+    inputs: HashMap<String, NodeOutput>,
+) -> Result<NodeOutput> {
+    let handler = self.get_action_handler(&node.action_type)?;
+    
+    // 准备动作参数
+    let params = self.prepare_action_params(&node.config, &inputs)?;
+    
+    // 执行动作
+    let result = handler.execute(params).await?;
+    
+    Ok(NodeOutput::String(result))
+}
+```
+
+### 5. Action Handlers
+
+动作处理器实现具体的控制逻辑：
+
+```rust
+#[async_trait]
+pub trait ActionHandler: Send + Sync {
+    async fn execute(&self, params: ActionParams) -> Result<String>;
+}
+
+pub struct ControlActionHandler {
+    redis_client: Arc<RedisClient>,
 }
 
 #[async_trait]
-pub trait ActionHandler {
-    async fn execute(&self, action: &Action, context: &Context) -> Result<()>;
+impl ActionHandler for ControlActionHandler {
+    async fn execute(&self, params: ActionParams) -> Result<String> {
+        let channel = params.get_string("channel")?;
+        let command = params.get_object("command")?;
+        
+        // 构建控制命令
+        let control_command = ControlCommand {
+            point_id: command["point_id"].as_u64().unwrap() as u32,
+            value: command["value"].as_f64().unwrap(),
+            timestamp: Utc::now().timestamp_millis(),
+            source: "rulesrv".to_string(),
+        };
+        
+        // 发布到控制通道
+        self.redis_client
+            .publish(&channel, serde_json::to_string(&control_command)?)
+            .await?;
+        
+        Ok(format!("Control command sent to {}", channel))
+    }
 }
 ```
 
-## 规则定义
+## 数据流
 
-### 规则配置示例
+### 规则触发流程
 
-```yaml
-rules:
-  - id: high_temperature_alarm
-    name: 高温告警
-    enabled: true
-    priority: 10
-    trigger:
-      type: data_change
-      sources:
-        - pattern: "1001:m:10001"  # 温度传感器
-    conditions:
-      - type: threshold
-        expression: "value > 80"
-        duration: 60s  # 持续60秒
-    actions:
-      - type: alarm
-        level: critical
-        message: "温度超过80度，当前值: ${value}"
-      - type: control
-        target:
-          channel_id: 1001
-          point_type: "c"
-          point_id: 30001
-        value: 0  # 关闭加热器
+1. **数据变化监听**
+   ```
+   modsrv:power_meter:measurement → HSET total_power "1200.500000"
+   ```
 
-  - id: power_optimization
-    name: 功率优化
-    enabled: true
-    schedule:
-      cron: "*/5 * * * *"  # 每5分钟执行
-    conditions:
-      - type: expression
-        expression: |
-          avg("1001:m:20001..20010") > 1000 AND 
-          time.hour >= 9 AND time.hour <= 18
-    actions:
-      - type: calculate
-        formula: "optimal_power = current_power * 0.95"
-      - type: batch_control
-        targets:
-          - channel: 1001
-            controls:
-              - { type: "a", id: 40001, value: "${optimal_power}" }
-```
+2. **触发规则评估**
+   - 查找监听该数据源的规则
+   - 将规则加入执行队列
 
-## 条件类型
+3. **DAG 执行**
+   - 按拓扑顺序执行节点
+   - 传递节点间的数据
+   - 评估条件分支
 
-### 1. 阈值条件 (Threshold)
-
-```rust
-pub struct ThresholdCondition {
-    pub operator: ComparisonOperator,  // >, <, >=, <=, ==, !=
-    pub value: f64,
-    pub duration: Option<Duration>,     // 持续时间
-    pub hysteresis: Option<f64>,        // 滞后值
-}
-```
-
-### 2. 范围条件 (Range)
-
-```rust
-pub struct RangeCondition {
-    pub min: f64,
-    pub max: f64,
-    pub inclusive: bool,
-}
-```
-
-### 3. 表达式条件 (Expression)
-
-```rust
-pub struct ExpressionCondition {
-    pub expression: String,  // 支持复杂表达式
-    pub variables: HashMap<String, String>,
-}
-```
-
-### 4. 状态条件 (State)
-
-```rust
-pub struct StateCondition {
-    pub state_name: String,
-    pub expected_state: String,
-    pub timeout: Option<Duration>,
-}
-```
-
-## 动作类型
-
-### 1. 控制动作
-
-发送控制命令到设备。
-
-```rust
-pub struct ControlAction {
-    pub channel_id: u16,
-    pub point_type: String,
-    pub point_id: u32,
-    pub value: f64,
-    pub confirm_timeout: Duration,
-}
-```
-
-### 2. 告警动作
-
-生成告警事件。
-
-```rust
-pub struct AlarmAction {
-    pub level: AlarmLevel,
-    pub category: String,
-    pub message: String,
-    pub auto_resolve: bool,
-}
-```
-
-### 3. 通知动作
-
-发送通知消息。
-
-```rust
-pub struct NotificationAction {
-    pub channels: Vec<NotificationChannel>,
-    pub template: String,
-    pub recipients: Vec<String>,
-}
-```
-
-### 4. 计算动作
-
-执行计算并存储结果。
-
-```rust
-pub struct CalculationAction {
-    pub formula: String,
-    pub output_key: String,
-    pub cache_duration: Duration,
-}
-```
-
-## 表达式引擎
-
-支持丰富的表达式语法：
-
-```rust
-// 基本运算
-value + 10
-value * 0.9
-(value1 + value2) / 2
-
-// 函数调用
-avg("1001:m:10001..10010")
-max(value1, value2, value3)
-min_in_window("1001:m:10001", "5m")
-
-// 条件判断
-value > 100 ? "high" : "normal"
-if(state == "running", power * 0.8, 0)
-
-// 时间函数
-time.hour >= 8 AND time.hour <= 20
-time.dayOfWeek != "Sunday"
-```
-
-## 状态管理
-
-### 规则状态机
-
-```rust
-pub enum RuleState {
-    Idle,           // 空闲
-    Evaluating,     // 评估中
-    Triggered,      // 已触发
-    Executing,      // 执行中
-    Completed,      // 已完成
-    Failed,         // 失败
-}
-
-pub struct RuleStateMachine {
-    current_state: RuleState,
-    transitions: HashMap<(RuleState, Event), RuleState>,
-    history: Vec<StateTransition>,
-}
-```
-
-### 持久化状态
-
-```rust
-// Redis 键格式
-rule:state:{rule_id} -> RuleState
-rule:history:{rule_id} -> List<StateTransition>
-rule:context:{rule_id} -> Context
-```
+4. **动作执行**
+   - 根据条件结果执行相应动作
+   - 记录执行结果
 
 ## 性能优化
 
-### 1. 批量评估
+### 1. 规则编译缓存
 
 ```rust
-pub struct BatchEvaluator {
-    pub batch_size: usize,
-    pub parallel_workers: usize,
+pub struct CompiledRule {
+    pub id: String,
+    pub dag: Arc<DAG>,
+    pub expression_cache: HashMap<String, CompiledExpression>,
 }
 
-impl BatchEvaluator {
-    pub async fn evaluate_rules(&self, rules: Vec<Rule>) -> Vec<RuleResult> {
-        let chunks = rules.chunks(self.batch_size);
-        let mut handles = vec![];
-        
-        for chunk in chunks {
-            let handle = tokio::spawn(async move {
-                // 并行评估规则
-            });
-            handles.push(handle);
-        }
-        
-        futures::future::join_all(handles).await
-    }
+pub struct RuleCache {
+    compiled: Arc<RwLock<HashMap<String, CompiledRule>>>,
 }
 ```
 
-### 2. 缓存策略
-
-- 表达式编译缓存
-- 数据预取缓存
-- 规则结果缓存
-
-### 3. 优先级队列
+### 2. 数据预取
 
 ```rust
-pub struct PriorityExecutor {
-    high_priority: Queue<Rule>,
-    normal_priority: Queue<Rule>,
-    low_priority: Queue<Rule>,
-}
-```
-
-## 错误处理
-
-### 规则隔离
-
-每个规则在独立的上下文中执行，失败不影响其他规则。
-
-```rust
-pub async fn execute_with_isolation(&self, rule: &Rule) -> Result<()> {
-    let result = tokio::time::timeout(
-        rule.timeout,
-        self.execute_rule(rule)
-    ).await;
+pub async fn prefetch_rule_data(&self, rule: &Rule) -> Result<()> {
+    // 分析规则依赖的数据
+    let data_deps = self.analyze_data_dependencies(rule)?;
     
-    match result {
-        Ok(Ok(())) => Ok(()),
-        Ok(Err(e)) => {
-            self.handle_rule_error(rule, e).await;
-            Err(e)
-        }
-        Err(_) => {
-            self.handle_rule_timeout(rule).await;
-            Err(Error::Timeout)
-        }
-    }
+    // 批量预取
+    let requests: Vec<DataRequest> = data_deps.into_iter()
+        .map(|dep| DataRequest {
+            model: dep.model,
+            data_type: dep.data_type,
+            field: dep.field,
+        })
+        .collect();
+    
+    self.data_reader.batch_read(requests).await?;
+    Ok(())
 }
 ```
 
-### 重试机制
+### 3. 并行执行
 
 ```rust
-pub struct RetryConfig {
-    pub max_attempts: u32,
-    pub initial_delay: Duration,
-    pub max_delay: Duration,
-    pub exponential_base: f64,
+pub struct ParallelExecutor {
+    thread_pool: Arc<ThreadPool>,
+    max_parallel: usize,
+}
+
+impl ParallelExecutor {
+    pub async fn execute_rules(&self, rules: Vec<Rule>) -> Vec<Result<ExecutionResult>> {
+        // 分析规则依赖关系
+        let groups = self.group_independent_rules(&rules);
+        
+        let mut all_results = Vec::new();
+        
+        // 并行执行每组独立规则
+        for group in groups {
+            let results = futures::future::join_all(
+                group.into_iter().map(|rule| {
+                    self.execute_single(rule)
+                })
+            ).await;
+            
+            all_results.extend(results);
+        }
+        
+        all_results
+    }
 }
 ```
 
 ## 监控指标
 
 ```rust
-pub struct RuleMetrics {
-    pub evaluation_count: Counter,
-    pub trigger_count: Counter,
-    pub execution_duration: Histogram,
-    pub failure_count: Counter,
-    pub active_rules: Gauge,
+pub struct Metrics {
+    rules_total: IntGauge,
+    rules_active: IntGauge,
+    executions_total: IntCounter,
+    execution_duration: Histogram,
+    execution_errors: IntCounter,
+    node_execution_duration: HistogramVec,
 }
 ```
 
-## 配置示例
+## 错误处理
 
-```yaml
-service:
-  name: rulesrv
-  redis:
-    url: redis://localhost:6379
-    pool_size: 20
-
-engine:
-  max_parallel_rules: 100
-  evaluation_timeout: 5s
-  batch_size: 50
-
-data_subscription:
-  buffer_size: 10000
-  batch_interval: 100ms
-
-action_execution:
-  rate_limit:
-    max_per_minute: 1000
-  retry:
-    max_attempts: 3
-    initial_delay: 1s
-
-monitoring:
-  metrics_port: 9093
-  health_check_interval: 30s
+```rust
+#[derive(Debug, thiserror::Error)]
+pub enum RuleError {
+    #[error("Invalid DAG: {0}")]
+    InvalidDAG(String),
+    
+    #[error("Data not found: {0}")]
+    DataNotFound(String),
+    
+    #[error("Expression error: {0}")]
+    ExpressionError(String),
+    
+    #[error("Action failed: {0}")]
+    ActionFailed(String),
+    
+    #[error("Timeout after {0:?}")]
+    Timeout(Duration),
+}
 ```
 
-## 部署注意事项
+## 扩展性设计
 
-1. **高可用部署**
-   - 支持多实例部署
-   - 使用 Redis 分布式锁避免重复执行
-   - 规则分片负载均衡
+### 添加自定义节点类型
 
-2. **性能调优**
-   - 根据规则数量调整并行度
-   - 优化 Redis 连接池大小
-   - 合理设置缓存策略
+```rust
+pub trait NodeExecutor: Send + Sync {
+    async fn execute(
+        &self,
+        node: &Node,
+        inputs: HashMap<String, NodeOutput>,
+        context: &ExecutionContext,
+    ) -> Result<NodeOutput>;
+}
 
-3. **安全考虑**
-   - 规则执行沙箱
-   - 表达式注入防护
-   - 动作权限控制
+// 注册自定义节点
+engine.register_node_executor("custom_type", Box::new(CustomExecutor::new()));
+```
+
+### 添加自定义动作
+
+```rust
+pub struct CustomActionHandler;
+
+#[async_trait]
+impl ActionHandler for CustomActionHandler {
+    async fn execute(&self, params: ActionParams) -> Result<String> {
+        // 实现自定义动作逻辑
+        Ok("Custom action executed".to_string())
+    }
+}
+
+// 注册动作处理器
+action_registry.register("custom_action", Box::new(CustomActionHandler));
+```

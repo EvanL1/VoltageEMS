@@ -1,333 +1,570 @@
-# VoltageEMS API Gateway
+# apigateway - API 网关服务
 
-高性能的统一API网关，为VoltageEMS工业物联网能源管理系统提供智能数据访问和服务路由。
+## 概述
 
-## 🚀 核心特性
+apigateway 是 VoltageEMS 的统一 API 网关，为前端应用提供一致的 RESTful API 和 WebSocket 接口。服务采用智能路由策略，根据数据类型自动选择最优的访问路径，支持实时数据、配置管理、历史查询等多种场景。所有数值保持 6 位小数精度。
 
-### 混合数据访问架构
-- **智能路由** - 根据数据类型自动选择最优访问策略
-- **分层缓存** - 本地LRU缓存 + Redis缓存的二级架构  
-- **HTTP回源** - 配置数据的智能降级和一致性保证
-- **批量优化** - 并发批量操作提升性能
+## 主要特性
 
-### 数据访问策略
-- 🔥 **实时数据** (`RedisOnly`) - 毫秒级响应，直接Redis访问
-- ⚡ **配置数据** (`RedisWithHttpFallback`) - 缓存优先，HTTP回源保证一致性
-- 📊 **历史数据** (`InfluxDBQuery`) - 时间序列数据，InfluxDB直接查询
-- 📈 **复杂查询** (`HttpOnly`) - 统计报表、分析计算
+- **统一入口**: 所有外部请求的单一入口点
+- **智能路由**: 根据数据类型自动选择 Redis、InfluxDB 或 HTTP 路径
+- **JWT 认证**: 安全的用户身份验证和授权
+- **WebSocket 支持**: 实时数据推送和双向通信
+- **混合数据访问**: 多层缓存架构，优化性能
+- **标准化精度**: 所有浮点数保持 6 位小数精度
 
-### 现代Web架构
-- **axum框架** - 高性能异步Web服务器
-- **JWT认证** - 安全的用户身份验证和授权
-- **WebSocket实时推送** - 实时数据流和告警通知
-- **CORS支持** - 完整的跨域资源共享配置
+## 快速开始
 
-## 📋 支持的数据类型
+### 运行服务
 
-### 实时数据 (Redis直接访问)
-```
-{channelID}:m:{pointID}    # 测量值 (遥测YC)
-{channelID}:s:{pointID}    # 状态值 (遥信YX)  
-{channelID}:c:{pointID}    # 控制状态 (遥控YK)
-{channelID}:a:{pointID}    # 调节值 (遥调YT)
-```
-
-### 配置数据 (Redis缓存+HTTP回源)
-```
-cfg:channel:{channelID}    # 通道配置
-cfg:module:{moduleName}    # 模块配置  
-cfg:service:{serviceName} # 服务配置
-model:def:{modelName}      # 设备模型定义
-alarm:config:{ruleID}      # 告警规则配置
-```
-
-### 历史数据查询 (InfluxDB直接访问)
-```
-his:index:{channelID}:{date}  # 历史数据索引
-his:query:{queryID}           # 查询结果缓存
-his:stats:{channelID}:{date}  # 历史统计缓存
-```
-
-### 复杂查询 (HTTP服务访问)
-```
-stats:{type}:{id}         # 统计数据分析
-report:{type}:{id}        # 报表生成
-analytics:{type}:{id}     # 数据分析
-```
-
-## 🛠️ 快速开始
-
-### 环境要求
-- Rust 1.70+
-- Redis 7.0+
-- InfluxDB 2.x+ (历史数据存储)
-- 后端服务 (comsrv, modsrv, hissrv, netsrv, alarmsrv, rulesrv)
-
-### 本地开发
 ```bash
-# 启动Redis
-docker run -d --name redis-dev -p 6379:6379 redis:7-alpine
-
-# 启动InfluxDB (历史数据存储)
-docker run -d --name influxdb-dev -p 8086:8086 influxdb:2.7-alpine
-
-# 开发模式运行
-RUST_LOG=debug cargo run
-
-# 指定配置文件
-cargo run -- --config config/apigateway-test.yaml
+cd services/apigateway
+cargo run
 ```
 
-### 生产部署
-```bash
-# 编译发布版本
-cargo build --release
+### 配置文件
 
-# 运行
-./target/release/apigateway
-```
+主配置文件位于 `apigateway.yaml`：
 
-## 📖 API文档
-
-### 认证端点
-```
-POST /auth/login           # 用户登录
-POST /auth/refresh         # 刷新Token
-POST /auth/logout          # 用户登出
-GET  /auth/me              # 获取当前用户信息
-```
-
-### 数据访问端点
-```
-GET  /api/channels                    # 获取通道列表
-GET  /api/channels/{id}               # 获取通道详情
-GET  /api/channels/{id}/telemetry     # 获取遥测数据
-GET  /api/channels/{id}/signals       # 获取信号数据
-POST /api/channels/{id}/control       # 发送控制命令
-POST /api/channels/{id}/adjustment    # 发送调节命令
-```
-
-### 配置管理端点
-```
-GET    /api/configs                   # 获取配置列表
-GET    /api/configs/{key}             # 获取单个配置
-PUT    /api/configs/{key}             # 更新配置
-DELETE /api/configs/{key}             # 删除配置
-POST   /api/configs/sync/{service}    # 触发服务同步
-GET    /api/configs/sync/status       # 获取同步状态
-POST   /api/configs/cache/clear       # 清理缓存
-```
-
-### 告警管理端点
-```
-GET  /api/alarms                      # 获取告警列表
-GET  /api/alarms/active               # 获取活动告警
-POST /api/alarms/{id}/acknowledge     # 确认告警
-```
-
-### 历史数据端点 (InfluxDB查询)
-```
-GET  /api/historical                  # 历史数据查询
-GET  /api/channels/{id}/points/{point_id}/history  # 点位历史数据
-GET  /api/historical/range            # 时间范围查询
-GET  /api/historical/aggregate        # 聚合查询
-```
-
-### 系统信息端点
-```
-GET  /api/system/info                 # 系统信息
-GET  /api/device-models               # 设备模型列表
-```
-
-### 健康检查端点
-```
-GET  /health                          # 简单健康检查
-GET  /health/check                    # 基础健康检查
-GET  /health/detailed                 # 详细健康检查
-```
-
-### WebSocket实时数据
-```
-WS   /ws                              # WebSocket连接端点
-```
-
-### 服务代理端点
-```
-/api/comsrv/*     # 通信服务代理
-/api/modsrv/*     # 模型服务代理  
-/api/hissrv/*     # 历史服务代理
-/api/netsrv/*     # 网络服务代理
-/api/alarmsrv/*   # 告警服务代理
-/api/rulesrv/*    # 规则服务代理
-```
-
-## ⚙️ 配置说明
-
-### 主配置文件 (apigateway.yaml)
 ```yaml
 server:
-  host: "0.0.0.0"          # 绑定地址
-  port: 8080               # 监听端口
-  workers: 4               # 工作线程数
-
+  host: "0.0.0.0"
+  port: 8080
+  workers: 4
+  
 redis:
-  url: "redis://localhost:6379"  # Redis连接URL
-  pool_size: 10                  # 连接池大小
-  timeout_seconds: 5             # 操作超时
-
-services:                        # 后端服务配置
+  url: "redis://localhost:6379"
+  pool_size: 10
+  timeout_seconds: 5
+  
+influxdb:
+  url: "http://localhost:8086"
+  org: "voltage-ems"
+  bucket: "ems_data"
+  token: "${INFLUXDB_TOKEN}"
+  
+services:
   comsrv:
-    url: "http://localhost:8001"
+    url: "http://localhost:8081"
     timeout_seconds: 30
   modsrv:
-    url: "http://localhost:8002"
+    url: "http://localhost:8082"
     timeout_seconds: 30
-  # ... 其他服务
-
-cors:                           # CORS配置
+  hissrv:
+    url: "http://localhost:8083"
+    timeout_seconds: 30
+  alarmsrv:
+    url: "http://localhost:8084"
+    timeout_seconds: 30
+  rulesrv:
+    url: "http://localhost:8085"
+    timeout_seconds: 30
+  netsrv:
+    url: "http://localhost:8086"
+    timeout_seconds: 30
+    
+auth:
+  jwt_secret: "${JWT_SECRET}"
+  token_expiry: 3600  # 1小时
+  refresh_expiry: 86400  # 24小时
+  
+cors:
   allowed_origins:
     - "http://localhost:3000"
-  allowed_methods:
-    - "GET"
-    - "POST"
-    - "PUT"
-    - "DELETE"
-    - "OPTIONS"
+    - "http://localhost:5173"
+  allowed_methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"]
   max_age: 3600
-
-logging:                        # 日志配置
+  
+logging:
   level: "info"
-  format: "json"
+  file: "logs/apigateway.log"
 ```
 
-### Docker环境配置 (config/apigateway-test.yaml)
-专为Docker容器环境优化的配置，使用容器服务名进行通信。
+## 数据访问策略
 
-## 🧪 测试
+### 1. 实时数据 (Redis 直接访问)
 
-### 单元测试
+```rust
+// 直接从 Redis Hash 读取
+// 键格式: {service}:{channelID}:{type}
+// 示例: comsrv:1001:m, modsrv:power_meter:measurement
+
+策略: RedisOnly
+延迟: < 5ms
+用途: 实时遥测、信号、计算结果
+```
+
+### 2. 配置数据 (Redis 缓存 + HTTP 回源)
+
+```rust
+// 优先从 Redis 读取，未命中则 HTTP 回源
+// 键格式: cfg:{type}:{id}
+// 示例: cfg:channel:1001, cfg:model:power_meter
+
+策略: RedisWithHttpFallback
+延迟: 缓存命中 < 5ms，回源 < 100ms
+用途: 通道配置、设备模型、服务配置
+```
+
+### 3. 历史数据 (InfluxDB 查询)
+
+```rust
+// 直接查询 InfluxDB
+// 使用 Flux 查询语言
+
+策略: InfluxDBQuery
+延迟: 10-500ms (根据数据量)
+用途: 历史趋势、统计分析、报表
+```
+
+### 4. 复杂查询 (HTTP 服务)
+
+```rust
+// 转发到后端服务处理
+// 路径: /api/{service}/*
+
+策略: HttpOnly
+延迟: 50-500ms
+用途: 业务逻辑、复杂计算、管理操作
+```
+
+## API 接口
+
+### 认证管理
+
 ```bash
-cargo test
+# 用户登录
+POST /auth/login
+Content-Type: application/json
+{
+  "username": "admin",
+  "password": "password"
+}
+
+# 响应
+{
+  "access_token": "eyJ...",
+  "refresh_token": "eyJ...",
+  "expires_in": 3600
+}
+
+# 刷新令牌
+POST /auth/refresh
+Authorization: Bearer {refresh_token}
+
+# 用户登出
+POST /auth/logout
+Authorization: Bearer {access_token}
+
+# 获取当前用户
+GET /auth/me
+Authorization: Bearer {access_token}
 ```
 
-### 集成测试
+### 通道数据
+
 ```bash
-# 确保Redis运行
-docker run -d --name redis-test -p 6379:6379 redis:7-alpine
+# 获取通道列表
+GET /api/channels
+Authorization: Bearer {token}
 
-# 运行集成测试
-cargo test --test integration_test
+# 获取通道详情
+GET /api/channels/{channel_id}
+
+# 获取实时遥测
+GET /api/channels/{channel_id}/telemetry
+响应:
+{
+  "channel_id": 1001,
+  "data": {
+    "10001": "220.123456",
+    "10002": "221.234567",
+    "10003": "219.345678"
+  },
+  "timestamp": "2025-07-23T10:00:00Z"
+}
+
+# 获取实时信号
+GET /api/channels/{channel_id}/signals
+
+# 发送控制命令
+POST /api/channels/{channel_id}/control
+{
+  "point_id": 30001,
+  "value": 1.0,
+  "source": "web_ui"
+}
+
+# 发送调节命令
+POST /api/channels/{channel_id}/adjustment
+{
+  "point_id": 40001,
+  "value": 220.500000,
+  "source": "web_ui"
+}
 ```
 
-### API测试
+### 设备模型
+
 ```bash
-# 健康检查
-curl http://localhost:8080/health
+# 获取模型列表
+GET /api/device-models
 
-# 获取通道列表 (需要认证)
-curl -H "Authorization: Bearer YOUR_TOKEN" \
-     http://localhost:8080/api/channels
+# 获取模型实例
+GET /api/device-models/{model_name}/instances
 
-# WebSocket连接测试
-wscat -c ws://localhost:8080/ws
+# 获取实例数据
+GET /api/device-models/{model_name}/instances/{instance_id}
+
+# 获取模型计算结果
+GET /api/device-models/{model_name}/measurements
 ```
 
-## 🏗️ 架构设计
+### 历史数据
 
-### 数据访问层架构
-```
-Frontend Request
-       ↓
-   API Gateway (axum)
-       ↓
- DataAccessLayer (trait)
-       ↓
- HybridDataAccess
-    ↙    ↓    ↓    ↘
- Redis  Cache  InfluxDB  HTTP
-   ↓      ↓       ↓       ↓
-实时数据  配置缓存  历史数据  报表查询
-```
-
-### 存储架构
-- **L1缓存**: 本地LRU缓存 (1000项，内存)
-- **L2缓存**: Redis缓存 (分布式，TTL控制)
-- **时序存储**: InfluxDB (历史数据，高性能时间序列)
-- **业务存储**: HTTP服务 (配置数据，业务逻辑)
-
-### 智能路由逻辑
-1. 解析请求键前缀
-2. 确定数据类型 (实时/配置/历史/复杂)
-3. 选择访问策略 (Redis/InfluxDB/HTTP/混合)
-4. 执行缓存策略
-5. 返回响应
-
-## 📊 性能特性
-
-- **高并发**: 支持数千并发连接
-- **低延迟**: 实时数据毫秒级响应
-- **高可用**: 自动故障降级和重试
-- **可扩展**: 水平扩展和负载均衡友好
-
-## 🔧 开发工具
-
-### 代码检查
 ```bash
-cargo clippy --all-targets --all-features -- -D warnings
+# 查询历史数据
+GET /api/historical?channel={channel_id}&point={point_id}&start={start_time}&end={end_time}
+
+# 聚合查询
+GET /api/historical/aggregate?channel={channel_id}&point={point_id}&window=1h&function=mean
+
+# 批量查询
+POST /api/historical/batch
+{
+  "queries": [
+    {
+      "channel": 1001,
+      "point": 10001,
+      "start": "2025-07-23T00:00:00Z",
+      "end": "2025-07-23T23:59:59Z",
+      "aggregation": {
+        "window": "5m",
+        "function": "mean"
+      }
+    }
+  ]
+}
 ```
 
-### 代码格式化
+### 告警管理
+
 ```bash
-cargo fmt --all
+# 获取活跃告警
+GET /api/alarms?status=active&level=critical
+
+# 获取告警详情
+GET /api/alarms/{alarm_id}
+
+# 确认告警
+POST /api/alarms/{alarm_id}/acknowledge
+{
+  "notes": "正在处理"
+}
+
+# 解决告警
+POST /api/alarms/{alarm_id}/resolve
+{
+  "resolution": "已更换故障设备"
+}
+
+# 获取告警统计
+GET /api/alarms/stats
 ```
 
-### 性能分析
+### 规则管理
+
 ```bash
-RUST_LOG=debug cargo run --release
+# 获取规则列表
+GET /api/rules?enabled=true
+
+# 获取规则详情
+GET /api/rules/{rule_id}
+
+# 创建规则
+POST /api/rules
+{
+  "name": "温度监控",
+  "type": "threshold",
+  "config": {...}
+}
+
+# 启用/禁用规则
+POST /api/rules/{rule_id}/enable
+POST /api/rules/{rule_id}/disable
+
+# 手动执行规则
+POST /api/rules/{rule_id}/execute
 ```
 
-## 📁 项目结构
+### 配置管理
 
-```
-src/
-├── main.rs                 # 主程序入口
-├── config.rs              # 配置管理
-├── error.rs               # 错误定义
-├── auth/                  # 认证模块
-│   ├── jwt.rs            # JWT处理
-│   ├── middleware.rs     # 认证中间件
-│   └── mod.rs
-├── data_access/           # 数据访问层
-│   ├── mod.rs            # 接口定义
-│   ├── hybrid.rs         # 混合访问实现
-│   ├── cache.rs          # 缓存管理
-│   └── sync.rs           # 配置同步
-├── handlers/              # API处理器
-│   ├── auth.rs           # 认证接口
-│   ├── channels.rs       # 通道管理
-│   ├── config.rs         # 配置管理
-│   ├── data.rs           # 数据接口
-│   ├── health.rs         # 健康检查
-│   └── ...               # 服务代理
-└── websocket/             # WebSocket模块
-    ├── mod.rs
-    ├── hub.rs            # 连接管理
-    └── handlers/         # 消息处理
+```bash
+# 获取配置
+GET /api/configs/{key}
+
+# 更新配置
+PUT /api/configs/{key}
+{
+  "value": {...}
+}
+
+# 同步配置
+POST /api/configs/sync/{service}
+
+# 清理缓存
+POST /api/configs/cache/clear
 ```
 
-## 📚 相关文档
+### 系统信息
 
-- [Redis键值设计规范](docs/redis-key-design.md)
-- [修复日志](docs/fixlog/)
-- [VoltageEMS架构文档](../../CLAUDE.md)
+```bash
+# 获取系统信息
+GET /api/system/info
 
-## 🤝 贡献指南
+# 获取服务状态
+GET /api/system/services
 
-1. 遵循Rust代码规范
-2. 编写测试覆盖新功能
-3. 更新相关文档
-4. 运行完整测试套件
+# 获取性能指标
+GET /api/system/metrics
+```
 
-## 📄 许可证
+### 健康检查
 
-版权所有 © 2025 VoltageEMS团队
+```bash
+# 简单健康检查
+GET /health
+
+# 详细健康检查
+GET /health/detailed
+响应:
+{
+  "status": "healthy",
+  "services": {
+    "redis": "healthy",
+    "influxdb": "healthy",
+    "comsrv": "healthy",
+    "modsrv": "healthy"
+  },
+  "latency": {
+    "redis": "2ms",
+    "influxdb": "15ms"
+  }
+}
+```
+
+## WebSocket 接口
+
+### 连接建立
+
+```javascript
+// 建立连接
+const ws = new WebSocket('ws://localhost:8080/ws');
+
+// 认证
+ws.send(JSON.stringify({
+  type: 'auth',
+  token: 'Bearer {access_token}'
+}));
+```
+
+### 订阅数据
+
+```javascript
+// 订阅通道数据
+ws.send(JSON.stringify({
+  type: 'subscribe',
+  channels: [1001, 1002],
+  data_types: ['m', 's']
+}));
+
+// 订阅告警
+ws.send(JSON.stringify({
+  type: 'subscribe_alarms',
+  levels: ['critical', 'major']
+}));
+
+// 订阅模型数据
+ws.send(JSON.stringify({
+  type: 'subscribe_models',
+  models: ['power_meter', 'env_monitor']
+}));
+```
+
+### 接收消息
+
+```javascript
+ws.onmessage = (event) => {
+  const message = JSON.parse(event.data);
+  
+  switch(message.type) {
+    case 'data':
+      // 实时数据更新
+      console.log('Channel:', message.channel);
+      console.log('Data:', message.data);
+      break;
+      
+    case 'alarm':
+      // 告警通知
+      console.log('New alarm:', message.alarm);
+      break;
+      
+    case 'model_update':
+      // 模型数据更新
+      console.log('Model:', message.model);
+      console.log('Data:', message.data);
+      break;
+  }
+};
+```
+
+### 发送控制命令
+
+```javascript
+// 通过 WebSocket 发送控制命令
+ws.send(JSON.stringify({
+  type: 'control',
+  channel: 1001,
+  point: 30001,
+  value: 1.0
+}));
+```
+
+## 服务代理
+
+API Gateway 为后端服务提供统一代理：
+
+```
+/api/comsrv/*    → http://comsrv:8081/*
+/api/modsrv/*    → http://modsrv:8082/*
+/api/hissrv/*    → http://hissrv:8083/*
+/api/alarmsrv/*  → http://alarmsrv:8084/*
+/api/rulesrv/*   → http://rulesrv:8085/*
+/api/netsrv/*    → http://netsrv:8086/*
+```
+
+## 缓存策略
+
+### 多层缓存架构
+
+```
+请求 → L1 本地缓存 → L2 Redis 缓存 → 数据源
+         ↓               ↓              ↓
+      内存 LRU        分布式缓存      后端服务
+      (1000项)         (TTL控制)
+```
+
+### 缓存配置
+
+```yaml
+cache:
+  # L1 本地缓存
+  local:
+    max_entries: 1000
+    ttl_seconds: 60
+    
+  # L2 Redis 缓存
+  redis:
+    default_ttl: 300
+    config_ttl: 3600
+    
+  # 缓存键前缀
+  prefixes:
+    config: "cache:config:"
+    model: "cache:model:"
+    stats: "cache:stats:"
+```
+
+## 性能优化
+
+### 批量操作
+
+```rust
+// 批量读取多个通道数据
+GET /api/channels/batch?ids=1001,1002,1003
+
+// 批量查询历史数据
+POST /api/historical/batch
+```
+
+### 连接池
+
+```yaml
+# HTTP 客户端连接池
+http_client:
+  pool_idle_timeout: 90
+  pool_max_idle_per_host: 10
+  timeout: 30
+  
+# Redis 连接池
+redis:
+  pool_size: 10
+  min_idle: 5
+```
+
+### 并发控制
+
+```rust
+// 使用信号量限制并发
+let semaphore = Arc::new(Semaphore::new(100));
+
+// 限流配置
+rate_limit:
+  requests_per_second: 1000
+  burst: 2000
+```
+
+## 监控指标
+
+通过 `/api/system/metrics` 端点暴露 Prometheus 指标：
+
+- `apigateway_requests_total` - 请求总数
+- `apigateway_request_duration_seconds` - 请求耗时
+- `apigateway_active_connections` - 活跃连接数
+- `apigateway_cache_hits_total` - 缓存命中数
+- `apigateway_cache_misses_total` - 缓存未命中数
+
+## 故障排查
+
+### 认证问题
+
+```bash
+# 检查 JWT 密钥配置
+echo $JWT_SECRET
+
+# 验证 token
+curl -H "Authorization: Bearer {token}" http://localhost:8080/auth/me
+```
+
+### 连接问题
+
+```bash
+# 检查 Redis 连接
+redis-cli ping
+
+# 检查后端服务
+curl http://localhost:8081/health
+```
+
+### 性能问题
+
+```bash
+# 查看慢查询日志
+tail -f logs/apigateway.log | grep "slow_request"
+
+# 监控内存使用
+ps aux | grep apigateway
+```
+
+## 环境变量
+
+- `RUST_LOG` - 日志级别
+- `JWT_SECRET` - JWT 签名密钥
+- `INFLUXDB_TOKEN` - InfluxDB 访问令牌
+- `REDIS_URL` - Redis 连接地址
+
+## 相关文档
+
+- [架构设计](docs/architecture.md)
+- [API 规范](docs/api-specification.md)
+- [WebSocket 协议](docs/websocket-protocol.md)
