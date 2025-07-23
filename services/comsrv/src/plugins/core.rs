@@ -278,7 +278,6 @@ pub struct PluginPointUpdate {
     pub point_id: u32,
     pub value: f64,
     pub timestamp: i64,
-    pub quality: u8,
     pub raw_value: Option<f64>,
 }
 
@@ -436,7 +435,6 @@ impl PluginStorage for DefaultPluginStorage {
                     data: PointData {
                         value: update.value,
                         timestamp: update.timestamp,
-                        quality: update.quality,
                     },
                     raw_value: update.raw_value,
                 }

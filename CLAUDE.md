@@ -114,7 +114,7 @@ VoltageEMS is a Rust-based microservices architecture for industrial IoT energy 
 ┌─────────────────────────────────────────────────────────────┐
 │                      Web Application                        │
 │            Web UI | Mobile App │ HMI/SCADA                  │
-└─────────────────────────┬───────────────────────────────────┘
+└─────────────────────┬───────────────────────────────────────┘
                           │
                    ┌──────┴──────┐
                    │ API Gateway │
@@ -221,7 +221,7 @@ All services communicate exclusively through Redis pub/sub and key-value storage
 3. **Point Management**
    - Points identified by u32 IDs for performance
    - 直接键值访问，无需二次哈希
-   - Point data includes value, quality, timestamp
+   - Point data includes value, timestamp
 
 4. **Configuration Hierarchy**
    - Figment-based configuration merging
@@ -390,3 +390,7 @@ device_system.execute_command(&instance_id, "switch_on", params).await?;
 - Use `date` command to get current date
 - Git commits should not contain Claude-related information
 - Always use uv for Python scripts, never system Python
+
+## Data Quality Considerations
+
+- 不允许有数据质量相关的代码，事实上无法检测数据质量，除非相关的协议有数据质量的东西，例如IEC-60870

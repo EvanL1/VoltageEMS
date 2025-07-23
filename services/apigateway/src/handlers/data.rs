@@ -27,7 +27,6 @@ fn validate_channel_id(channel_id: u32) -> Result<(), ApiError> {
 pub struct TelemetryData {
     pub point_id: u32,
     pub value: f64,
-    pub quality: u8,
     pub timestamp: i64,
     pub name: Option<String>,
     pub unit: Option<String>,
@@ -37,7 +36,6 @@ pub struct TelemetryData {
 pub struct SignalData {
     pub point_id: u32,
     pub value: bool,
-    pub quality: u8,
     pub timestamp: i64,
     pub name: Option<String>,
     pub description: Option<String>,

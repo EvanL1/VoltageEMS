@@ -84,8 +84,8 @@ PSUBSCRIBE comsrv:*
 
 #### 3.1.1 键格式规范
 
-**存储键**: `comsrv:{channelID}:{type}:{pointID}`
-**发布通道**: `comsrv:{channelID}:{type}:{pointID}`
+**Hash键**: `comsrv:{channelID}:{type}`
+**发布通道**: `comsrv:{channelID}:{type}`
 
 **类型映射**:
 - `m`: 测量值 (YC - Yao Ce)
@@ -95,40 +95,46 @@ PSUBSCRIBE comsrv:*
 
 #### 3.1.2 数据格式
 
-**存储值** (String):
+**Hash存储结构**:
 ```
-格式: "{value:.6}"
-示例: "25.123456"
-说明: 6位小数精度，确保工业测量精度
+键: comsrv:{channelID}:{type}
+字段: {pointID}
+值: "{value:.6}"
+示例: comsrv:1001:m → {10001: "25.123456", 10002: "26.789012"}
 ```
 
-**发布消息** (JSON):
-```json
-{
-    "point_id": 10001,
-    "value": 25.123456,
-    "timestamp": 1642592400000,
-    "quality": 192,
-    "raw_value": 25.1
+**发布消息** (String):
+```
+格式: "{pointID}:{value:.6}"
+示例: "10001:25.123456"
+说明: 发布点位ID和数值，便于客户端更新缓存
+```
+
+#### 3.1.3 数据结构示例
+
+```
+# Hash结构
+comsrv:1001:m → {
+    10001: "25.123456",
+    10002: "26.789012",
+    10003: "24.567890"
 }
-```
 
-#### 3.1.3 质量标识
+comsrv:1001:s → {
+    20001: "1",
+    20002: "0",
+    20003: "1"
+}
 
-| 质量码 | 含义 | 说明 |
-|--------|------|------|
-| 192 | GOOD | 数据质量良好 |
-| 64 | UNCERTAIN | 数据质量不确定 |
-| 0 | BAD | 数据质量差或无效 |
+comsrv:1001:c → {
+    30001: "0",
+    30002: "1"
+}
 
-#### 3.1.4 键示例
-
-```
-comsrv:1001:m:10001 → "25.123456"    # 通道1001测量点10001
-comsrv:1001:m:10002 → "26.789012"    # 通道1001测量点10002
-comsrv:1001:s:20001 → "1"            # 通道1001信号点20001(开关状态)
-comsrv:1002:c:30001 → "0"            # 通道1002控制点30001
-comsrv:1002:a:40001 → "50.500000"    # 通道1002调节点40001
+comsrv:1001:a → {
+    40001: "50.500000",
+    40002: "75.250000"
+}
 ```
 
 #### 3.1.5 操作接口
@@ -136,25 +142,28 @@ comsrv:1002:a:40001 → "50.500000"    # 通道1002调节点40001
 **读取操作**:
 ```bash
 # 单点查询
-GET comsrv:1001:m:10001
+HGET comsrv:1001:m 10001
 
 # 批量查询同类型点位
-MGET comsrv:1001:m:10001 comsrv:1001:m:10002
+HMGET comsrv:1001:m 10001 10002 10003
 
-# 模式查询(需要使用SCAN)
-SCAN 0 MATCH comsrv:1001:m:*
+# 获取通道所有点位
+HGETALL comsrv:1001:m
+
+# 获取字段数量
+HLEN comsrv:1001:m
 ```
 
 **写入操作**:
 ```bash
 # 单点写入
-SET comsrv:1001:m:10001 "25.123456"
+HSET comsrv:1001:m 10001 "25.123456"
 
 # 批量写入
-MSET comsrv:1001:m:10001 "25.123456" comsrv:1001:m:10002 "26.789012"
+HMSET comsrv:1001:m 10001 "25.123456" 10002 "26.789012"
 
-# 发布通知
-PUBLISH comsrv:1001:m:10001 '{"point_id":10001,"value":25.123456,"timestamp":1642592400000,"quality":192}'
+# 发布通知（通道级）
+PUBLISH comsrv:1001:m "10001:25.123456"
 ```
 
 ### 3.2 alarmsrv (告警服务)
@@ -163,13 +172,13 @@ PUBLISH comsrv:1001:m:10001 '{"point_id":10001,"value":25.123456,"timestamp":164
 
 #### 3.2.1 键格式规范
 
-**主数据键**: `alarmsrv:{alarmID}`
-**分类索引**: `alarmsrv:category:{category}`
-**级别索引**: `alarmsrv:level:{level}`
-**状态索引**: `alarmsrv:status:{status}`
-**时间索引**: `alarmsrv:date:{YYYY-MM-DD}`
-**小时分片**: `alarmsrv:buckets:{YYYYMMDDHH}`
-**实时索引**: `alarmsrv:realtime`
+**主数据键**: `alarm:{alarmID}`
+**分类索引**: `alarm:category:{category}`
+**级别索引**: `alarm:level:{level}`
+**状态索引**: `alarm:status:{status}`
+**时间索引**: `alarm:date:{YYYY-MM-DD}`
+**小时分片**: `alarm:buckets:{YYYYMMDDHH}`
+**实时索引**: `alarm:realtime`
 
 #### 3.2.2 数据格式
 
@@ -218,13 +227,13 @@ Escalated → Suppressed → Closed
 
 **分类索引** (Set):
 ```
-alarmsrv:category:temperature → {alarm_id_1, alarm_id_2, ...}
-alarmsrv:category:pressure → {alarm_id_3, alarm_id_4, ...}
+alarm:category:temperature → {alarm_id_1, alarm_id_2, ...}
+alarm:category:pressure → {alarm_id_3, alarm_id_4, ...}
 ```
 
 **时间分片** (Hash):
 ```
-alarmsrv:buckets:2024010110 → {
+alarm:buckets:2024010110 → {
     "alarm_id_1": "compressed_alarm_data",
     "alarm_id_2": "compressed_alarm_data"
 }
@@ -232,7 +241,7 @@ alarmsrv:buckets:2024010110 → {
 
 **实时索引** (Hash):
 ```
-alarmsrv:realtime → {
+alarm:realtime → {
     "temperature:alarm_123": "{\"id\":\"alarm_123\",\"level\":\"Critical\",\"created_at\":\"...\"}",
     "pressure:alarm_456": "{\"id\":\"alarm_456\",\"level\":\"High\",\"created_at\":\"...\"}"
 }
@@ -251,57 +260,55 @@ alarmsrv:realtime → {
 
 #### 3.3.1 键格式规范
 
-**监视值**: `modsrv:{modelID}:{monitorType}:{pointID}`
+**Hash键**: `modsrv:{modelname}:{type}`
 **控制命令**: `cmd:{commandID}`
-**命令列表**: `cmd:list:{modelID}`
-**模型输出**: `modsrv:{modelID}:output`
+**命令列表**: `cmd:list:{modelname}`
 
-**监视类型映射**:
-- `mv:m`: 监视测量值 (Monitor Value: Measurement)
-- `mv:s`: 监视信号值 (Monitor Value: Signal)
-- `mo`: 模型输出 (Model Output)
-- `mi`: 中间计算值 (Model Intermediate)
-
-**控制类型映射**:
-- `cc:c`: 控制命令 (Control Command: Control)
-- `cc:a`: 调节命令 (Control Command: Adjust)
+**类型映射**:
+- `measurement`: 测量值（计算结果、监视值）
+- `control`: 控制值（控制命令、设定值）
 
 #### 3.3.2 数据格式
 
-**监视值** (String):
+**Hash存储结构**:
 ```
-格式: "{value}:{timestamp}:{quality}:{source}"
-示例: "25.123456:1642592400000:192:model_power_calc"
-说明: value(6位小数):timestamp(毫秒):quality:source
+键: modsrv:{modelname}:{type}
+字段: 有意义的属性名
+值: "{value}:{timestamp}:{source}"
+```
+
+**测量值示例**:
+```
+modsrv:power_calc:measurement → {
+    "total_power": "1200.5:1642592400000:calculation",
+    "efficiency": "0.856:1642592400000:calculation",
+    "load_factor": "0.78:1642592400000:calculation",
+    "reactive_power": "350.2:1642592400000:calculation"
+}
+```
+
+**控制值示例**:
+```
+modsrv:power_calc:control → {
+    "enable": "1:1642592400000:operator",
+    "max_power": "1500.0:1642592400000:operator",
+    "mode": "auto:1642592400000:system",
+    "target_pf": "0.95:1642592400000:optimizer"
+}
 ```
 
 **控制命令** (Hash):
 ```json
 {
     "id": "cmd_550e8400-e29b-41d4-a716-446655440000",
-    "channel_id": "1001",
-    "point_id": "20001",
-    "command_type": "cc:c",
-    "value": "1.0",
+    "model_name": "power_calc",
+    "field_name": "max_power",
+    "value": "1600.0",
     "status": "pending",
     "created_at": "1642592400000",
     "updated_at": "1642592400000",
     "message": null,
-    "source_model": "model_power_control"
-}
-```
-
-**模型输出** (JSON):
-```json
-{
-    "model_id": "model_power_calc",
-    "outputs": {
-        "total_power": 1200.5,
-        "efficiency": 0.856,
-        "load_factor": 0.78
-    },
-    "timestamp": 1642592400000,
-    "execution_time_ms": 45
+    "source": "api_request"
 }
 ```
 
@@ -316,26 +323,38 @@ alarmsrv:realtime → {
 | cancelled | 已取消 |
 | timeout | 执行超时 |
 
-#### 3.3.4 键示例
+#### 3.3.4 操作示例
 
+**读取操作**:
+```bash
+# 获取单个值
+HGET modsrv:power_calc:measurement total_power
+
+# 获取多个值
+HMGET modsrv:power_calc:measurement total_power efficiency
+
+# 获取所有测量值
+HGETALL modsrv:power_calc:measurement
 ```
-# 监视值
-modsrv:power_calc:mv:m:10001 → "25.123456:1642592400000:192:model_power_calc"
-modsrv:power_calc:mv:s:20001 → "1:1642592400000:192:model_power_calc"
-modsrv:power_calc:mo:result → "1200.500000:1642592400000:192:model_power_calc"
 
-# 控制命令
-cmd:cmd_550e8400-e29b-41d4-a716-446655440000 → {Hash结构}
+**写入操作**:
+```bash
+# 单个更新
+HSET modsrv:power_calc:measurement total_power "1250.5:1642592401000:calculation"
 
-# 模型输出
-modsrv:power_calc:output → {JSON字符串}
+# 批量更新
+HMSET modsrv:power_calc:measurement \
+    total_power "1250.5:1642592401000:calculation" \
+    efficiency "0.862:1642592401000:calculation"
+
+# 发布通知
+PUBLISH modsrv:power_calc:measurement "total_power:1250.5"
 ```
 
 #### 3.3.5 TTL策略
 
-- **监视值**: 无过期时间（实时数据）
+- **测量/控制值**: 无过期时间（实时数据）
 - **控制命令**: 24小时过期
-- **模型输出**: 7天过期
 - **命令列表**: 保留最近1000条
 
 ### 3.4 rulesrv (规则服务)
@@ -451,10 +470,10 @@ Redis实时数据 → hissrv订阅 → 批量处理 → InfluxDB存储
 **默认订阅模式**: `comsrv:*`
 
 **订阅处理逻辑**:
-- 解析通道格式: `comsrv:{channelID}:{type}:{pointID}`
+- 解析通道格式: `comsrv:{channelID}:{type}` (Hash键)
 - 数据类型映射: m(测量) → measurement, s(信号) → signal
 - 批量聚合: 配置化批量大小和超时
-- 质量过滤: 仅存储GOOD质量数据
+- 单次获取整个通道数据（HGETALL）
 
 #### 3.5.3 批量处理配置
 
@@ -462,7 +481,6 @@ Redis实时数据 → hissrv订阅 → 批量处理 → InfluxDB存储
 batch_config:
   size: 1000              # 批量大小
   timeout_ms: 5000        # 批量超时
-  quality_filter: [192]   # 质量过滤
   type_filter: ["m", "s"] # 类型过滤
 ```
 
@@ -480,28 +498,28 @@ hissrv主要作为数据中继，不在Redis中存储大量历史数据，仅使
 
 #### 4.1.1 查询模式分类
 
-**点查询** (O(1)):
+**Hash字段查询** (O(1)):
 ```bash
-GET comsrv:1001:m:10001
+HGET comsrv:1001:m 10001
 ```
 
-**批量查询** (O(N)):
+**Hash批量查询** (O(N)):
 ```bash
-MGET comsrv:1001:m:10001 comsrv:1001:m:10002 comsrv:1001:m:10003
+HMGET comsrv:1001:m 10001 10002 10003
 ```
 
-**模式查询** (O(N)):
+**Hash全量查询** (O(N)):
 ```bash
-# 使用SCAN避免阻塞
-SCAN 0 MATCH comsrv:1001:m:* COUNT 100
+# 获取整个通道数据
+HGETALL comsrv:1001:m
 ```
 
 **索引查询** (O(log N)):
 ```bash
 # Set索引查询
-SMEMBERS alarmsrv:category:temperature
+SMEMBERS alarm:category:temperature
 # Hash索引查询
-HGETALL alarmsrv:realtime
+HGETALL alarm:realtime
 ```
 
 #### 4.1.2 Pipeline批处理
@@ -509,17 +527,18 @@ HGETALL alarmsrv:realtime
 **批量读取示例**:
 ```python
 pipe = redis.pipeline()
-pipe.get("comsrv:1001:m:10001")
-pipe.get("comsrv:1001:m:10002")
-pipe.get("comsrv:1001:m:10003")
+pipe.hget("comsrv:1001:m", "10001")
+pipe.hget("comsrv:1001:m", "10002")
+pipe.hget("comsrv:1001:m", "10003")
 results = pipe.execute()
 ```
 
 **批量写入示例**:
 ```python
 pipe = redis.pipeline()
-pipe.set("comsrv:1001:m:10001", "25.123456")
-pipe.publish("comsrv:1001:m:10001", message)
+pipe.hset("comsrv:1001:m", "10001", "25.123456")
+pipe.hset("comsrv:1001:m", "10002", "26.789012")
+pipe.publish("comsrv:1001:m", "10001:25.123456")
 pipe.execute()
 ```
 
@@ -534,16 +553,21 @@ pipe.execute()
 
 #### 4.2.2 容量估算
 
-**单点位存储成本**:
-- 键名: ~30字节
-- 数值: ~15字节
-- 总计: ~45字节/点位
+**Hash结构存储成本**:
+- Hash键名: ~20字节 (comsrv:1001:m)
+- 字段名: ~5字节 (10001)
+- 数值: ~15字节 ("25.123456")
+- 单点位: ~20字节
 
-**百万点位容量**:
-- 实时数据: ~45MB
-- 索引数据: ~10MB
-- 元数据: ~5MB
-- 总计: ~60MB
+**百万点位容量对比**:
+- 旧结构 (String): ~45MB
+- 新结构 (Hash): ~30MB
+- 节省: 33%
+
+**实际键数量**:
+- 旧: 1,000,000个键 (100万点位)
+- 新: ~1,000个键 (假设1000通道)
+- 减少: 99.9%
 
 ### 4.3 扩展策略
 
@@ -551,14 +575,14 @@ pipe.execute()
 
 **分片策略**:
 - 按通道ID分片: `{channelID}` hash slot
-- 跨服务分布: 每个服务独立分片
+- 按服务分片: `{service}` hash slot
 - 索引复制: 关键索引多节点复制
 
 **分片示例**:
 ```
-Shard 1: comsrv:1001-1999:*
-Shard 2: comsrv:2000-2999:*
-Shard 3: comsrv:3000-3999:*
+Shard 1: {comsrv}:*     # 通信服务数据
+Shard 2: {modsrv}:*     # 模型服务数据
+Shard 3: {alarm}:*      # 告警服务数据
 ```
 
 #### 4.3.2 垂直扩展
@@ -609,7 +633,7 @@ INFO replication
 # connected_slaves: 连接的从节点数
 PUBSUB CHANNELS comsrv:*
 # 活跃通道列表
-PUBSUB NUMSUB comsrv:1001:m:10001
+PUBSUB NUMSUB comsrv:1001:m
 # 通道订阅者数量
 ```
 
@@ -617,7 +641,6 @@ PUBSUB NUMSUB comsrv:1001:m:10001
 
 **数据更新频率**:
 - 各通道数据更新QPS
-- 异常数据质量比例
 - 数据延迟统计
 
 **告警统计**:
@@ -772,19 +795,26 @@ GET key_name
 
 **键空间分析**:
 ```bash
-# 统计键模式
+# 统计Hash键数量
 redis-cli --scan --pattern "comsrv:*" | wc -l
-redis-cli --scan --pattern "alarmsrv:*" | wc -l
+redis-cli --scan --pattern "alarm:*" | wc -l
 redis-cli --scan --pattern "modsrv:*" | wc -l
+
+# 统计Hash字段数量
+redis-cli HLEN comsrv:1001:m
+redis-cli HLEN modsrv:power_calc:measurement
 ```
 
 **数据完整性检查**:
 ```bash
 # 检查点位数据连续性
-redis-cli MGET comsrv:1001:m:10001 comsrv:1001:m:10002 comsrv:1001:m:10003
+redis-cli HMGET comsrv:1001:m 10001 10002 10003
 
 # 检查告警索引一致性
-redis-cli SMEMBERS alarmsrv:category:temperature
+redis-cli SMEMBERS alarm:category:temperature
+
+# 检查模型数据
+redis-cli HGETALL modsrv:power_calc:measurement
 ```
 
 **性能测试**:
@@ -804,21 +834,28 @@ redis-cli --eval performance_test.lua comsrv:test , 1000
 
 **正则表达式**:
 ```regex
-^(comsrv|alarmsrv|modsrv|rulesrv):[a-zA-Z0-9_]+:[a-zA-Z0-9_:]+:[a-zA-Z0-9_]+$
+# Hash键格式
+^(comsrv|modsrv):[a-zA-Z0-9_]+:(m|s|c|a|measurement|control)$
+
+# String键格式(告警)
+^alarm:[a-zA-Z0-9_-]+$
 ```
 
 **验证函数示例**:
 ```python
 import re
 
-def validate_key_format(key: str) -> bool:
-    """验证Redis键格式"""
-    pattern = r'^(comsrv|alarmsrv|modsrv|rulesrv):[a-zA-Z0-9_]+:[a-zA-Z0-9_:]+:[a-zA-Z0-9_]+$'
-    return re.match(pattern, key) is not None
+def validate_hash_key(key: str) -> bool:
+    """验证Hash键格式"""
+    patterns = [
+        r'^comsrv:\d+:(m|s|c|a)$',  # comsrv:1001:m
+        r'^modsrv:[a-zA-Z0-9_]+:(measurement|control)$',  # modsrv:power_calc:measurement
+    ]
+    return any(re.match(pattern, key) for pattern in patterns)
 
-def validate_comsrv_key(key: str) -> bool:
-    """验证comsrv键格式"""
-    pattern = r'^comsrv:\d+:(m|s|c|a):\d+$'
+def validate_alarm_key(key: str) -> bool:
+    """验证告警键格式"""
+    pattern = r'^alarm:[a-zA-Z0-9_-]+$'
     return re.match(pattern, key) is not None
 ```
 
@@ -845,14 +882,6 @@ def validate_timestamp(timestamp: int) -> bool:
     return 1000000000000 <= timestamp <= 9999999999999
 ```
 
-**质量码验证**:
-```python
-def validate_quality_code(quality: int) -> bool:
-    """验证质量码"""
-    valid_qualities = [0, 64, 192]
-    return quality in valid_qualities
-```
-
 ### 6.2 自动化测试
 
 #### 6.2.1 单元测试
@@ -860,31 +889,31 @@ def validate_quality_code(quality: int) -> bool:
 **键格式测试**:
 ```python
 class TestKeyFormat:
-    def test_comsrv_key_valid(self):
-        assert validate_comsrv_key("comsrv:1001:m:10001")
-        assert validate_comsrv_key("comsrv:2000:s:20001")
+    def test_hash_key_valid(self):
+        assert validate_hash_key("comsrv:1001:m")
+        assert validate_hash_key("modsrv:power_calc:measurement")
 
-    def test_comsrv_key_invalid(self):
-        assert not validate_comsrv_key("comsrv:1001:x:10001")
-        assert not validate_comsrv_key("invalid:1001:m:10001")
+    def test_alarm_key_valid(self):
+        assert validate_alarm_key("alarm:550e8400-e29b-41d4")
+        assert not validate_alarm_key("alarmsrv:123")
 ```
 
 **数据操作测试**:
 ```python
 class TestDataOperations:
-    def test_point_data_crud(self):
+    def test_hash_data_crud(self):
         # Create
-        redis_client.set("comsrv:1001:m:10001", "25.123456")
+        redis_client.hset("comsrv:1001:m", "10001", "25.123456")
 
         # Read
-        value = redis_client.get("comsrv:1001:m:10001")
+        value = redis_client.hget("comsrv:1001:m", "10001")
         assert value == "25.123456"
 
         # Update
-        redis_client.set("comsrv:1001:m:10001", "26.789012")
+        redis_client.hset("comsrv:1001:m", "10001", "26.789012")
 
-        # Delete
-        redis_client.delete("comsrv:1001:m:10001")
+        # Delete field
+        redis_client.hdel("comsrv:1001:m", "10001")
 ```
 
 #### 6.2.2 集成测试
@@ -892,40 +921,39 @@ class TestDataOperations:
 **Pub/Sub测试**:
 ```python
 class TestPubSub:
-    def test_point_publish_subscribe(self):
+    def test_channel_publish_subscribe(self):
         # 订阅通道
         pubsub = redis_client.pubsub()
-        pubsub.subscribe("comsrv:1001:m:10001")
+        pubsub.subscribe("comsrv:1001:m")
 
         # 发布消息
-        message = {
-            "point_id": 10001,
-            "value": 25.123456,
-            "timestamp": 1642592400000,
-            "quality": 192
-        }
-        redis_client.publish("comsrv:1001:m:10001", json.dumps(message))
+        redis_client.publish("comsrv:1001:m", "10001:25.123456")
 
         # 验证接收
         received = pubsub.get_message()
         assert received is not None
+        assert "10001:25.123456" in str(received['data'])
 ```
 
 **批量操作测试**:
 ```python
 class TestBatchOperations:
-    def test_batch_write_read(self):
+    def test_hash_batch_operations(self):
         # 批量写入
         pipe = redis_client.pipeline()
         for i in range(1000):
-            pipe.set(f"comsrv:1001:m:{10000+i}", f"{25.0+i:.6f}")
+            pipe.hset("comsrv:1001:m", str(10000+i), f"{25.0+i:.6f}")
         pipe.execute()
 
         # 批量读取验证
-        keys = [f"comsrv:1001:m:{10000+i}" for i in range(1000)]
-        values = redis_client.mget(keys)
+        fields = [str(10000+i) for i in range(1000)]
+        values = redis_client.hmget("comsrv:1001:m", fields)
         assert len(values) == 1000
         assert all(v is not None for v in values)
+
+        # 获取所有字段
+        all_data = redis_client.hgetall("comsrv:1001:m")
+        assert len(all_data) == 1000
 ```
 
 #### 6.2.3 性能测试
@@ -935,13 +963,14 @@ class TestBatchOperations:
 import concurrent.futures
 import time
 
-def write_points_batch(start_id: int, count: int):
+def write_points_batch(channel_id: int, start_id: int, count: int):
     """批量写入点位数据"""
     pipe = redis_client.pipeline()
+    hash_key = f"comsrv:{channel_id}:m"
     for i in range(count):
-        key = f"comsrv:1001:m:{start_id + i}"
+        field = str(start_id + i)
         value = f"{25.0 + i:.6f}"
-        pipe.set(key, value)
+        pipe.hset(hash_key, field, value)
     pipe.execute()
 
 def test_concurrent_writes():
@@ -969,21 +998,20 @@ def test_concurrent_writes():
 ```python
 def test_query_performance():
     """查询性能测试"""
-    # 单点查询
+    # Hash单字段查询
     start_time = time.time()
-    for _ in range(1000):
-        redis_client.get("comsrv:1001:m:10001")
+    for i in range(1000):
+        redis_client.hget("comsrv:1001:m", str(10000+i))
     single_query_time = time.time() - start_time
 
-    # 批量查询
-    keys = [f"comsrv:1001:m:{10000+i}" for i in range(1000)]
+    # Hash全量查询
     start_time = time.time()
-    redis_client.mget(keys)
+    all_data = redis_client.hgetall("comsrv:1001:m")
     batch_query_time = time.time() - start_time
 
-    print(f"1000次单点查询耗时: {single_query_time:.3f}秒")
-    print(f"1000点批量查询耗时: {batch_query_time:.3f}秒")
-    print(f"批量查询提升: {single_query_time/batch_query_time:.1f}倍")
+    print(f"1000次Hash字段查询耗时: {single_query_time:.3f}秒")
+    print(f"Hash全量查询耗时: {batch_query_time:.3f}秒")
+    print(f"全量查询提升: {single_query_time/batch_query_time:.1f}倍")
 ```
 
 ## 7. 最佳实践
@@ -993,7 +1021,8 @@ def test_query_performance():
 #### 7.1.1 键命名规范
 
 **强制要求**:
-- 严格遵循命名格式: `{service}:{entity}:{type}:{id}`
+- Hash键格式: `{service}:{entity}:{type}`
+- String键格式: `{service}:{id}`
 - 使用小写字母和下划线
 - 避免使用特殊字符和空格
 - 键名总长度不超过256字符
@@ -1006,10 +1035,10 @@ def test_query_performance():
 
 **示例对比**:
 ```
-✅ 正确: comsrv:1001:m:10001
-❌ 错误: CoMsRv:1001:Measurement:10001
-❌ 错误: 1001:measurement:10001
-❌ 错误: comsrv-1001-m-10001
+✅ 正确: comsrv:1001:m (Hash键)
+✅ 正确: alarm:550e8400-e29b (String键)
+❌ 错误: comsrv:1001:m:10001 (不再使用点位级键)
+❌ 错误: comsrv-1001-m (使用了连字符)
 ```
 
 #### 7.1.2 数据类型选择
@@ -1038,12 +1067,12 @@ def test_query_performance():
 
 **原子操作示例**:
 ```python
-def atomic_update_with_publish(key: str, value: str, channel: str, message: dict):
-    """原子更新并发布"""
+def atomic_hash_update_with_publish(hash_key: str, field: str, value: str, channel: str):
+    """原子更新Hash字段并发布"""
     pipe = redis_client.pipeline(transaction=True)
     pipe.multi()
-    pipe.set(key, value)
-    pipe.publish(channel, json.dumps(message))
+    pipe.hset(hash_key, field, value)
+    pipe.publish(channel, f"{field}:{value}")
     return pipe.execute()
 ```
 
@@ -1075,11 +1104,13 @@ def conditional_update(key: str, expected_value: str, new_value: str) -> bool:
 
 **Pipeline批处理**:
 ```python
-def batch_update_points(updates: List[Tuple[str, str]]):
-    """批量更新点位"""
+def batch_update_channel(channel_key: str, updates: Dict[str, str]):
+    """批量更新通道数据"""
     pipe = redis_client.pipeline(transaction=False)
-    for key, value in updates:
-        pipe.set(key, value)
+    for field, value in updates.items():
+        pipe.hset(channel_key, field, value)
+    # 发布通道级通知
+    pipe.publish(channel_key, f"updated:{len(updates)}")
     return pipe.execute()
 ```
 
@@ -1097,22 +1128,18 @@ def batch_publish_updates(updates: List[Tuple[str, dict]]):
 
 **值压缩策略**:
 ```python
-def compress_point_value(value: float, quality: int, timestamp: int) -> str:
+def compress_point_value(value: float, timestamp: int) -> str:
     """压缩点位值"""
     # 限制精度减少存储空间
     compressed_value = f"{value:.6f}"
-    if quality == 192:  # GOOD质量，省略质量码
-        return f"{compressed_value}:{timestamp}"
-    else:
-        return f"{compressed_value}:{timestamp}:{quality}"
+    return f"{compressed_value}:{timestamp}"
 
-def decompress_point_value(compressed: str) -> Tuple[float, int, int]:
+def decompress_point_value(compressed: str) -> Tuple[float, int]:
     """解压点位值"""
     parts = compressed.split(':')
     value = float(parts[0])
     timestamp = int(parts[1])
-    quality = int(parts[2]) if len(parts) > 2 else 192
-    return value, quality, timestamp
+    return value, timestamp
 ```
 
 #### 7.2.3 查询优化
@@ -1229,7 +1256,8 @@ ACL SETUSER readonly on +@read -@dangerous >readonly_password
 
 # 创建服务专用用户
 ACL SETUSER comsrv_user on +@all ~comsrv:* >comsrv_password
-ACL SETUSER alarmsrv_user on +@all ~alarmsrv:* >alarmsrv_password
+ACL SETUSER modsrv_user on +@all ~modsrv:* >modsrv_password
+ACL SETUSER alarm_user on +@all ~alarm:* >alarm_password
 ```
 
 #### 7.4.2 数据加密
@@ -1257,13 +1285,13 @@ def verify_sensitive_value(value: str, encrypted: str, key: str) -> bool:
 
 ### 8.1 核心特性
 
-VoltageEMS Redis数据结构规范提供了：
+VoltageEMS Redis数据结构规范v3.0提供了：
 
-1. **统一的键格式**: `{service}:{entity}:{type}:{id}`
-2. **点位级精确访问**: O(1)查询性能
-3. **命名空间隔离**: 避免服务间数据冲突
-4. **Pub/Sub一致性**: 存储与通信格式统一
-5. **扩展性设计**: 支持百万级点位实时处理
+1. **Hash结构优化**: 大幅减少键数量，提升批量操作效率
+2. **通道级数据组织**: `{service}:{entity}:{type}` Hash键格式
+3. **内存优化**: 相比旧结构节省30%+内存
+4. **简化的Pub/Sub**: 通道级发布，减少消息数量
+5. **更好的扩展性**: 从百万键减少到千级键
 
 ### 8.2 适用场景
 
@@ -1284,6 +1312,7 @@ VoltageEMS Redis数据结构规范提供了：
 
 ---
 
-**文档版本**: v2.0
-**最后更新**: 2025-07-22
+**文档版本**: v3.0
+**最后更新**: 2025-07-23
+**主要变更**: 从String键迁移到Hash结构，删除数据质量字段
 **维护团队**: VoltageEMS开发团队

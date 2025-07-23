@@ -56,8 +56,6 @@ pub struct MonitorValue {
     pub value: f64,
     /// 时间戳（毫秒）
     pub timestamp: i64,
-    /// 数据质量（0-100，100表示最好）
-    pub quality: u8,
     /// 数据源标识
     pub source: String,
 }
@@ -68,25 +66,19 @@ impl MonitorValue {
         Self {
             value,
             timestamp: chrono::Utc::now().timestamp_millis(),
-            quality: 100,
             source,
         }
     }
 
-    /// 从Redis字符串解析（格式：value:timestamp:quality:source）
+    /// 从Redis字符串解析（格式：value:timestamp:source）
     pub fn from_redis(data: &str) -> Option<Self> {
         let parts: Vec<&str> = data.split(':').collect();
-        if parts.len() >= 4 {
-            if let (Ok(value), Ok(timestamp), Ok(quality)) = (
-                parts[0].parse::<f64>(),
-                parts[1].parse::<i64>(),
-                parts[2].parse::<u8>(),
-            ) {
+        if parts.len() >= 3 {
+            if let (Ok(value), Ok(timestamp)) = (parts[0].parse::<f64>(), parts[1].parse::<i64>()) {
                 return Some(Self {
                     value,
                     timestamp,
-                    quality,
-                    source: parts[3..].join(":"), // 处理source中可能包含的冒号
+                    source: parts[2..].join(":"), // 处理source中可能包含的冒号
                 });
             }
         }
@@ -95,10 +87,7 @@ impl MonitorValue {
 
     /// 转换为Redis字符串
     pub fn to_redis(&self) -> String {
-        format!(
-            "{}:{}:{}:{}",
-            self.value, self.timestamp, self.quality, self.source
-        )
+        format!("{}:{}:{}", self.value, self.timestamp, self.source)
     }
 }
 

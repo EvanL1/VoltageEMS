@@ -57,8 +57,6 @@ pub struct PointData {
     pub channel_id: u16,
     /// 当前值
     pub value: f64,
-    /// 质量标志
-    pub quality: String,
     /// 时间戳（毫秒）
     pub timestamp: i64,
 }
@@ -308,7 +306,6 @@ mod tests {
             point_id: 1001,
             channel_id: 1,
             value: 42.5,
-            quality: "Good".to_string(),
             timestamp: 1234567890,
         };
 

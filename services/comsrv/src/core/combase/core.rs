@@ -67,7 +67,6 @@ pub struct ChannelStatus {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PointData {
     pub value: RedisValue,
-    pub quality: u8,
     pub timestamp: u64,
 }
 
@@ -88,7 +87,6 @@ impl Default for PointData {
     fn default() -> Self {
         Self {
             value: RedisValue::Float(0.0),
-            quality: 0,
             timestamp: 0,
         }
     }

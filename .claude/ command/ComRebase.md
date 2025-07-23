@@ -1,0 +1,2 @@
+- 把develop分支提交推送远程仓库，然后把所有worktree rebase过来
+- 若无法合并，可以申请强制rebase

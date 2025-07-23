@@ -21,7 +21,6 @@ pub const TYPE_ADJUSTMENT: &str = "a"; // 遥调 YT
 pub struct PointValue {
     pub value: f64,
     pub timestamp: i64,
-    pub quality: String,
 }
 
 impl PointValue {
@@ -30,11 +29,7 @@ impl PointValue {
         let parts: Vec<&str> = data.split(':').collect();
         if parts.len() == 2 {
             if let (Ok(value), Ok(timestamp)) = (parts[0].parse::<f64>(), parts[1].parse::<i64>()) {
-                return Some(Self {
-                    value,
-                    timestamp,
-                    quality: "good".to_string(),
-                });
+                return Some(Self { value, timestamp });
             }
         }
         None
@@ -411,7 +406,6 @@ mod tests {
         let pv = PointValue::from_redis(redis_str).unwrap();
         assert_eq!(pv.value, 25.6);
         assert_eq!(pv.timestamp, 1234567890);
-        assert_eq!(pv.quality, "good");
     }
 
     #[test]
@@ -430,7 +424,6 @@ mod tests {
         let pv = PointValue {
             value: 42.0,
             timestamp: 123456,
-            quality: "good".to_string(),
         };
 
         cache.set("test_key".to_string(), pv.clone());

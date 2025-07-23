@@ -181,7 +181,6 @@ impl ComBase for VirtualProtocol {
                         i as u32 + 1,
                         PointData {
                             value: RedisValue::Float(value),
-                            quality: 192,
                             timestamp: chrono::Utc::now().timestamp() as u64,
                         },
                     );
@@ -194,7 +193,6 @@ impl ComBase for VirtualProtocol {
                         i as u32 + 1,
                         PointData {
                             value: RedisValue::Bool(signal),
-                            quality: 192,
                             timestamp: chrono::Utc::now().timestamp() as u64,
                         },
                     );

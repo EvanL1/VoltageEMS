@@ -9,8 +9,6 @@ pub struct PointData {
     pub value: f64,
     /// 时间戳（毫秒）
     pub timestamp: i64,
-    /// 数据质量
-    pub quality: u8,
 }
 
 impl PointData {
@@ -19,7 +17,6 @@ impl PointData {
         Self {
             value,
             timestamp: chrono::Utc::now().timestamp_millis(),
-            quality: 192, // Good quality
         }
     }
 
@@ -70,8 +67,16 @@ impl PointUpdate {
         self
     }
 
-    /// 生成 Redis 键
+    /// 生成 Redis Hash键
+    pub fn hash_key(&self) -> String {
+        format!("comsrv:{}:{}", self.channel_id, self.point_type)
+    }
+
+    /// 生成 Redis 键（旧格式，保留用于兼容）
     pub fn key(&self) -> String {
-        format!("{}:{}:{}", self.channel_id, self.point_type, self.point_id)
+        format!(
+            "comsrv:{}:{}:{}",
+            self.channel_id, self.point_type, self.point_id
+        )
     }
 }

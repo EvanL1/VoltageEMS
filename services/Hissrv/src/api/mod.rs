@@ -133,7 +133,7 @@ pub use models_history::*;
         (name = "health", description = "健康检查接口")
     ),
     info(
-        title = "HisSrv Historical Data API",
+        title = "hissrv Historical Data API",
         version = "0.2.0",
         description = "历史数据服务专用 REST API - 专注于历史数据查询、分析和导出",
         contact(

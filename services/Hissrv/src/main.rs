@@ -106,7 +106,7 @@ async fn main() -> Result<()> {
         service_name = config.service.name,
         version = config.service.version,
         pid = std::process::id(),
-        "Starting HisSrv"
+        "Starting hissrv"
     );
     tracing::info!(
         config_file = config.config_file,
@@ -386,7 +386,7 @@ async fn main() -> Result<()> {
         "Final metrics"
     );
 
-    tracing::info!("HisSrv shutdown complete");
+    tracing::info!("hissrv shutdown complete");
     Ok(())
 }
 

@@ -31,7 +31,7 @@ impl RedisClient {
         key: &str,
         value: T,
     ) -> Result<()> {
-        self.conn.set(key, value).await?;
+        let _: () = self.conn.set(key, value).await?;
         Ok(())
     }
 
@@ -42,7 +42,7 @@ impl RedisClient {
         value: T,
         seconds: u64,
     ) -> Result<()> {
-        self.conn.set_ex(key, value, seconds).await?;
+        let _: () = self.conn.set_ex(key, value, seconds).await?;
         Ok(())
     }
 
@@ -85,7 +85,7 @@ impl RedisClient {
         &mut self,
         items: &[(String, T)],
     ) -> Result<()> {
-        self.conn.mset(items).await?;
+        let _: () = self.conn.mset(items).await?;
         Ok(())
     }
 
@@ -97,6 +97,49 @@ impl RedisClient {
     /// 获取连接管理器的可变引用
     pub fn get_connection_mut(&mut self) -> &mut ConnectionManager {
         &mut self.conn
+    }
+
+    /// Hash 操作 - 设置字段
+    pub async fn hset(&mut self, key: &str, field: &str, value: String) -> Result<()> {
+        redis::cmd("HSET")
+            .arg(key)
+            .arg(field)
+            .arg(value)
+            .query_async(&mut self.conn)
+            .await
+            .map_err(|e| e.into())
+    }
+
+    /// Hash 操作 - 获取字段
+    pub async fn hget(&mut self, key: &str, field: &str) -> Result<Option<String>> {
+        redis::cmd("HGET")
+            .arg(key)
+            .arg(field)
+            .query_async(&mut self.conn)
+            .await
+            .map_err(|e| e.into())
+    }
+
+    /// Hash 操作 - 获取多个字段
+    pub async fn hmget(&mut self, key: &str, fields: &[&str]) -> Result<Vec<Option<String>>> {
+        redis::cmd("HMGET")
+            .arg(key)
+            .arg(fields)
+            .query_async(&mut self.conn)
+            .await
+            .map_err(|e| e.into())
+    }
+
+    /// Hash 操作 - 获取所有字段
+    pub async fn hgetall(
+        &mut self,
+        key: &str,
+    ) -> Result<std::collections::HashMap<String, String>> {
+        redis::cmd("HGETALL")
+            .arg(key)
+            .query_async(&mut self.conn)
+            .await
+            .map_err(|e| e.into())
     }
 
     /// 创建订阅连接

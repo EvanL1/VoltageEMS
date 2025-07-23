@@ -17,7 +17,7 @@ use tokio::time::{interval, Duration};
 use tracing::{error, info, warn};
 
 pub async fn main_enhanced() -> Result<()> {
-    info!("Starting HisSrv service (Enhanced Version)");
+    info!("Starting hissrv service (Enhanced Version)");
 
     // 初始化配置
     let config = Config::load().await?;
@@ -115,6 +115,6 @@ pub async fn main_enhanced() -> Result<()> {
         }
     }
 
-    info!("HisSrv service shutting down");
+    info!("hissrv service shutting down");
     Ok(())
 }

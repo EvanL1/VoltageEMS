@@ -1,6 +1,6 @@
-# HisSrv - 历史数据服务
+# hissrv - 历史数据服务
 
-HisSrv 是 VoltageEMS 系统中的历史数据服务，负责将 Redis 中的实时数据转发到 InfluxDB 3.2 进行长期存储。
+hissrv 是 VoltageEMS 系统中的历史数据服务，负责将 Redis 中的实时数据转发到 InfluxDB 3.2 进行长期存储。
 
 ## 功能特性
 
@@ -16,7 +16,7 @@ HisSrv 是 VoltageEMS 系统中的历史数据服务，负责将 Redis 中的实
 ## 架构设计
 
 ```
-Redis (键空间通知) → HisSrv → InfluxDB 3.2
+Redis (键空间通知) → hissrv → InfluxDB 3.2
      ↓                  ↓           ↓
   实时数据          数据处理     历史存储
 ```
@@ -77,7 +77,7 @@ HISSRV_POINTS_CONFIG=config/points.yaml
 
 ## 点位配置系统
 
-HisSrv 提供了强大的点位配置系统，允许精细控制哪些数据点被保存到 InfluxDB。
+hissrv 提供了强大的点位配置系统，允许精细控制哪些数据点被保存到 InfluxDB。
 
 ### 配置文件位置
 
@@ -144,7 +144,7 @@ curl -X POST http://localhost:8080/config/points/reload
 
 ## Redis 配置要求
 
-HisSrv 使用 Redis 键空间通知功能。需要确保 Redis 配置了：
+hissrv 使用 Redis 键空间通知功能。需要确保 Redis 配置了：
 
 ```
 notify-keyspace-events KEA
@@ -156,7 +156,7 @@ notify-keyspace-events KEA
 redis-cli CONFIG SET notify-keyspace-events KEA
 ```
 
-HisSrv 启动时会尝试自动配置此选项。
+hissrv 启动时会尝试自动配置此选项。
 
 ## 数据格式
 

@@ -106,22 +106,21 @@ impl Publisher {
 
         let mut pipe = redis::pipe();
 
-        for update in buffer.iter() {
-            // 发布到通道
-            let channel = format!(
-                "comsrv:{}:{}:{}",
-                update.channel_id, update.point_type, update.point_id
-            );
-            let message = serde_json::json!({
-                "point_id": update.point_id,
-                "value": update.data.value,
-                "timestamp": update.data.timestamp,
-                "quality": update.data.quality,
-                "raw_value": update.raw_value,
-            })
-            .to_string();
+        // 按通道分组发布
+        use std::collections::HashMap;
+        let mut grouped: HashMap<String, Vec<&PointUpdate>> = HashMap::new();
 
-            pipe.publish(&channel, &message);
+        for update in buffer.iter() {
+            let channel = format!("comsrv:{}:{}", update.channel_id, update.point_type);
+            grouped.entry(channel).or_insert_with(Vec::new).push(update);
+        }
+
+        // 批量发布每个通道的更新
+        for (channel, updates) in grouped {
+            for update in updates {
+                let message = format!("{}:{:.6}", update.point_id, update.data.value);
+                pipe.publish(&channel, &message);
+            }
         }
 
         let conn = client.get_connection_mut();

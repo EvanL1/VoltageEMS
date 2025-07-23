@@ -24,7 +24,6 @@ pub struct PointData {
     pub point_id: u32,
     pub point_type: String, // YC, YX, YK, YT
     pub value: serde_json::Value,
-    pub quality: u8,
     pub timestamp: DateTime<Utc>,
     pub description: Option<String>,
 }
@@ -146,12 +145,11 @@ pub async fn get_points(
                     })?;
 
                     if let Some(data_str) = point_data {
-                        // Parse value:quality:timestamp format
+                        // Parse value:timestamp format
                         let parts: Vec<&str> = data_str.split(':').collect();
-                        if parts.len() >= 3 {
+                        if parts.len() >= 2 {
                             let value = serde_json::Value::String(parts[0].to_string());
-                            let quality = parts[1].parse::<u8>().unwrap_or(0);
-                            let timestamp = parts[2]
+                            let timestamp = parts[1]
                                 .parse::<i64>()
                                 .ok()
                                 .and_then(|ts| DateTime::from_timestamp(ts, 0))
@@ -167,7 +165,6 @@ pub async fn get_points(
                                     _ => point_type.to_string(),
                                 },
                                 value,
-                                quality,
                                 timestamp,
                                 description: None,
                             };

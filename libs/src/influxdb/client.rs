@@ -24,7 +24,7 @@ impl InfluxClient {
 
     /// 写入线协议数据
     pub async fn write_line_protocol(&self, data: &str) -> Result<()> {
-        let mut url = format!("{}/write?db={}", self.config.url, self.config.database);
+        let url = format!("{}/write?db={}", self.config.url, self.config.database);
 
         let mut request = self.client.post(&url);
 
@@ -54,7 +54,7 @@ impl InfluxClient {
 
     /// 执行查询
     pub async fn query(&self, query: &str) -> Result<String> {
-        let mut url = format!("{}/query?db={}", self.config.url, self.config.database);
+        let url = format!("{}/query?db={}", self.config.url, self.config.database);
 
         let mut request = self.client.get(&url).query(&[("q", query)]);
 

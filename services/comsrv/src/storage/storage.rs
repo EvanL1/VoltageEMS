@@ -101,12 +101,13 @@ impl PointStorage for Storage {
         point_id: u32,
         value: f64,
     ) -> Result<()> {
-        let key = format!("comsrv:{}:{}:{}", channel_id, point_type, point_id);
+        let hash_key = format!("comsrv:{}:{}", channel_id, point_type);
+        let field = point_id.to_string();
         let data = PointData::new(value);
 
         let mut client = self.get_client().await?;
         client
-            .set(&key, data.to_redis())
+            .hset(&hash_key, &field, data.to_redis())
             .await
             .map_err(|e| ComSrvError::Storage(format!("Failed to write point: {}", e)))?;
 
@@ -121,7 +122,8 @@ impl PointStorage for Storage {
         value: f64,
         raw_value: Option<f64>,
     ) -> Result<()> {
-        let key = format!("comsrv:{}:{}:{}", channel_id, point_type, point_id);
+        let hash_key = format!("comsrv:{}:{}", channel_id, point_type);
+        let field = point_id.to_string();
         let data = PointData::new(value);
 
         let mut client = self.get_client().await?;
@@ -130,13 +132,17 @@ impl PointStorage for Storage {
         let mut pipe = redis::pipe();
         pipe.atomic();
 
-        // 写入主值
-        pipe.set(&key, data.to_redis());
+        // 写入主Hash值
+        pipe.hset(&hash_key, &field, data.to_redis());
 
-        // 写入元数据
+        // 写入元数据（仍使用单独的键）
         if let Some(raw) = raw_value {
-            pipe.set(format!("{}:raw", key), format!("{:.6}", raw));
-            pipe.set(format!("{}:ts", key), data.timestamp);
+            pipe.hset(format!("{}:raw", hash_key), &field, format!("{:.6}", raw));
+            pipe.hset(
+                format!("{}:ts", hash_key),
+                &field,
+                data.timestamp.to_string(),
+            );
         }
 
         let conn = client.get_connection_mut();
@@ -163,13 +169,32 @@ impl PointStorage for Storage {
         let mut pipe = redis::pipe();
         pipe.atomic();
 
-        for update in &updates {
-            let key = update.key();
-            pipe.set(&key, update.data.to_redis());
+        // 按通道和类型分组
+        use std::collections::HashMap;
+        let mut grouped: HashMap<String, Vec<&PointUpdate>> = HashMap::new();
 
-            if let Some(raw) = update.raw_value {
-                pipe.set(format!("{}:raw", key), format!("{:.6}", raw));
-                pipe.set(format!("{}:ts", key), update.data.timestamp);
+        for update in &updates {
+            let hash_key = format!("comsrv:{}:{}", update.channel_id, update.point_type);
+            grouped
+                .entry(hash_key)
+                .or_insert_with(Vec::new)
+                .push(update);
+        }
+
+        // 批量写入每个Hash
+        for (hash_key, updates) in grouped {
+            for update in updates {
+                let field = update.point_id.to_string();
+                pipe.hset(&hash_key, &field, update.data.to_redis());
+
+                if let Some(raw) = update.raw_value {
+                    pipe.hset(format!("{}:raw", hash_key), &field, format!("{:.6}", raw));
+                    pipe.hset(
+                        format!("{}:ts", hash_key),
+                        &field,
+                        update.data.timestamp.to_string(),
+                    );
+                }
             }
         }
 
@@ -192,11 +217,12 @@ impl PointStorage for Storage {
         point_type: &str,
         point_id: u32,
     ) -> Result<Option<PointData>> {
-        let key = format!("comsrv:{}:{}:{}", channel_id, point_type, point_id);
+        let hash_key = format!("comsrv:{}:{}", channel_id, point_type);
+        let field = point_id.to_string();
 
         let mut client = self.get_client().await?;
         let data: Option<String> = client
-            .get(&key)
+            .hget(&hash_key, &field)
             .await
             .map_err(|e| ComSrvError::Storage(format!("Failed to read point: {}", e)))?;
 
@@ -217,22 +243,36 @@ impl PointStorage for Storage {
         }
 
         let mut client = self.get_client().await?;
-        let values: Vec<Option<String>> = client
-            .mget(&keys.iter().map(|s| s.as_str()).collect::<Vec<_>>())
-            .await
-            .map_err(|e| ComSrvError::Storage(format!("Failed to read points: {}", e)))?;
+        let mut results = Vec::new();
 
-        let points: Result<Vec<Option<PointData>>> = values
-            .into_iter()
-            .map(|opt_value| match opt_value {
-                Some(value) => PointData::from_redis(&value).map(Some).map_err(|e| {
-                    ComSrvError::Storage(format!("Failed to parse point data: {}", e))
-                }),
-                None => Ok(None),
-            })
-            .collect();
+        // 解析键并按Hash分组
+        for key in keys {
+            // 期望格式: "comsrv:{channel_id}:{type}:{point_id}"
+            let parts: Vec<&str> = key.split(':').collect();
+            if parts.len() == 4 {
+                let hash_key = format!("{}:{}:{}", parts[0], parts[1], parts[2]);
+                let field = parts[3];
 
-        points
+                let data: Option<String> = client
+                    .hget(&hash_key, field)
+                    .await
+                    .map_err(|e| ComSrvError::Storage(format!("Failed to read point: {}", e)))?;
+
+                match data {
+                    Some(value) => {
+                        let point = PointData::from_redis(&value).map_err(|e| {
+                            ComSrvError::Storage(format!("Failed to parse point data: {}", e))
+                        })?;
+                        results.push(Some(point));
+                    }
+                    None => results.push(None),
+                }
+            } else {
+                results.push(None);
+            }
+        }
+
+        Ok(results)
     }
 
     async fn get_channel_points(
@@ -240,37 +280,21 @@ impl PointStorage for Storage {
         channel_id: u16,
         point_type: &str,
     ) -> Result<Vec<(u32, PointData)>> {
-        let pattern = format!("comsrv:{}:{}:*", channel_id, point_type);
+        let hash_key = format!("comsrv:{}:{}", channel_id, point_type);
 
         let mut client = self.get_client().await?;
 
-        // 获取所有匹配的键
-        let keys: Vec<String> = client
-            .keys(&pattern)
+        // 使用HGETALL获取所有字段
+        let data: std::collections::HashMap<String, String> = client
+            .hgetall(&hash_key)
             .await
-            .map_err(|e| ComSrvError::Storage(format!("Failed to scan keys: {}", e)))?;
+            .map_err(|e| ComSrvError::Storage(format!("Failed to get channel points: {}", e)))?;
 
-        if keys.is_empty() {
-            return Ok(vec![]);
-        }
-
-        // 批量读取值
-        let values: Vec<Option<String>> = client
-            .mget(&keys.iter().map(|s| s.as_str()).collect::<Vec<_>>())
-            .await
-            .map_err(|e| ComSrvError::Storage(format!("Failed to read values: {}", e)))?;
-
-        // 解析结果
         let mut results = Vec::new();
-        for (key, value) in keys.iter().zip(values.iter()) {
-            if let Some(value_str) = value {
-                // 从键中提取点位ID (格式: comsrv:channelID:type:pointID)
-                if let Some(point_id_str) = key.split(':').nth(3) {
-                    if let Ok(point_id) = point_id_str.parse::<u32>() {
-                        if let Ok(data) = PointData::from_redis(value_str) {
-                            results.push((point_id, data));
-                        }
-                    }
+        for (field, value) in data {
+            if let Ok(point_id) = field.parse::<u32>() {
+                if let Ok(point_data) = PointData::from_redis(&value) {
+                    results.push((point_id, point_data));
                 }
             }
         }
