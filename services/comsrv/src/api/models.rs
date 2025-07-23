@@ -1,10 +1,9 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use utoipa::ToSchema;
 
 /// service status response
-#[derive(Debug, Clone, Serialize, ToSchema)]
+#[derive(Debug, Clone, Serialize)]
 pub struct ServiceStatus {
     pub name: String,
     pub version: String,
@@ -16,7 +15,7 @@ pub struct ServiceStatus {
 }
 
 /// channel status response for list endpoint
-#[derive(Debug, Clone, Serialize, ToSchema)]
+#[derive(Debug, Clone, Serialize)]
 pub struct ChannelStatusResponse {
     pub id: u16,
     pub name: String,
@@ -29,7 +28,7 @@ pub struct ChannelStatusResponse {
 }
 
 /// channel status response - Enhanced version combining API and ComBase requirements
-#[derive(Debug, Clone, Serialize, ToSchema)]
+#[derive(Debug, Clone, Serialize)]
 pub struct ChannelStatus {
     pub id: u16,
     pub name: String,
@@ -62,7 +61,7 @@ impl From<crate::core::combase::ChannelStatus> for ChannelStatus {
 }
 
 /// service health status
-#[derive(Debug, Clone, Serialize, ToSchema)]
+#[derive(Debug, Clone, Serialize)]
 pub struct HealthStatus {
     pub status: String,
     pub uptime: u64,
@@ -71,13 +70,13 @@ pub struct HealthStatus {
 }
 
 /// channel operation request
-#[derive(Debug, Clone, Deserialize, ToSchema)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct ChannelOperation {
     pub operation: String, // "start", "stop", "restart"
 }
 
 /// point value read response
-#[derive(Debug, Clone, Serialize, ToSchema)]
+#[derive(Debug, Clone, Serialize)]
 pub struct PointValue {
     pub id: String,
     pub name: String,
@@ -125,7 +124,7 @@ pub struct PointTableData {
 }
 
 /// point value write request
-#[derive(Debug, Clone, Deserialize, ToSchema)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct WritePointRequest {
     pub value: serde_json::Value,
 }
@@ -173,7 +172,7 @@ pub struct ChannelConfigUpdateRequest {
 }
 
 /// API response wrapper
-#[derive(Debug, Clone, Serialize, ToSchema)]
+#[derive(Debug, Clone, Serialize)]
 pub struct ApiResponse<T> {
     pub success: bool,
     pub data: Option<T>,
@@ -199,7 +198,7 @@ impl<T> ApiResponse<T> {
 }
 
 /// Enhanced point with configuration information
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TelemetryPoint {
     /// Point ID from CSV configuration
     pub point_id: u32,
@@ -253,7 +252,7 @@ fn default_function_code() -> u8 {
 }
 
 /// Modbus protocol mapping implementation
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModbusMapping {
     /// Point ID that links to telemetry table
     pub point_id: u32,
@@ -326,7 +325,7 @@ impl ProtocolMapping for ModbusMapping {
 }
 
 /// CAN protocol mapping implementation
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CanMapping {
     /// Point ID that links to telemetry table
     pub point_id: u32,
@@ -403,7 +402,7 @@ impl ProtocolMapping for CanMapping {
 }
 
 /// IEC 60870-5-104 protocol mapping implementation  
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IecMapping {
     /// Point ID that links to telemetry table
     pub point_id: u32,
@@ -471,7 +470,7 @@ impl ProtocolMapping for IecMapping {
 }
 
 /// Four-telemetry table view for frontend display
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TelemetryTableView {
     /// Channel ID
     pub channel_id: u16,

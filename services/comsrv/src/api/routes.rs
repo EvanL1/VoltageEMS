@@ -10,7 +10,6 @@ use csv::ReaderBuilder;
 use serde_json;
 use std::sync::{Arc, OnceLock};
 use tokio::sync::RwLock;
-use utoipa::OpenApi;
 
 use crate::api::models::{
     ApiResponse, CanMapping, ChannelOperation, ChannelStatus, ChannelStatusResponse, HealthStatus,
@@ -32,53 +31,7 @@ pub fn get_service_start_time() -> DateTime<Utc> {
     *SERVICE_START_TIME.get().unwrap_or(&Utc::now())
 }
 
-/// OpenAPI documentation
-#[derive(OpenApi)]
-#[openapi(
-    paths(
-        get_service_status,
-        health_check,
-        get_all_channels,
-        get_channel_status,
-        control_channel,
-        read_point,
-        write_point,
-        get_channel_points,
-        get_channel_telemetry_tables
-    ),
-    components(
-        schemas(
-            ServiceStatus,
-            ChannelStatusResponse,
-            ChannelStatus,
-            HealthStatus,
-            ChannelOperation,
-            PointValue,
-            WritePointRequest,
-            TelemetryTableView,
-            TelemetryPoint,
-            ModbusMapping,
-            CanMapping,
-            IecMapping,
-            ApiResponse<ServiceStatus>,
-            ApiResponse<Vec<ChannelStatusResponse>>,
-            ApiResponse<ChannelStatus>,
-            ApiResponse<HealthStatus>,
-            ApiResponse<String>,
-            ApiResponse<PointValue>,
-            ApiResponse<Vec<PointValue>>,
-        )
-    ),
-    tags(
-        (name = "Status", description = "Service status endpoints"),
-        (name = "Health", description = "Health check endpoints"),
-        (name = "Channels", description = "Channel management endpoints"),
-        (name = "Points", description = "Point read/write endpoints"),
-        (name = "Telemetry", description = "Telemetry table endpoints")
-    )
-)]
-#[derive(Debug)]
-pub struct ApiDoc;
+// OpenAPI removed
 
 /// Application state containing the protocol factory
 #[derive(Clone, Debug)]
@@ -93,14 +46,13 @@ impl AppState {
 }
 
 /// Get service status endpoint
-#[utoipa::path(
+// OpenAPI path annotation removed
     get,
     path = "/api/status",
     responses(
         (status = 200, description = "Service status retrieved successfully", body = ApiResponse<ServiceStatus>)
     ),
     tag = "Status"
-)]
 pub async fn get_service_status(
     State(state): State<AppState>,
 ) -> Result<Json<ApiResponse<ServiceStatus>>, StatusCode> {
@@ -126,14 +78,13 @@ pub async fn get_service_status(
 }
 
 /// Health check endpoint
-#[utoipa::path(
+// OpenAPI path annotation removed
     get,
     path = "/api/health",
     responses(
         (status = 200, description = "Health status retrieved successfully", body = ApiResponse<HealthStatus>)
     ),
     tag = "Health"
-)]
 pub async fn health_check() -> Result<Json<ApiResponse<HealthStatus>>, StatusCode> {
     let health = HealthStatus {
         status: "healthy".to_string(),
@@ -146,14 +97,13 @@ pub async fn health_check() -> Result<Json<ApiResponse<HealthStatus>>, StatusCod
 }
 
 /// List all channels
-#[utoipa::path(
+// OpenAPI path annotation removed
     get,
     path = "/api/channels",
     responses(
         (status = 200, description = "All channels retrieved successfully", body = ApiResponse<Vec<ChannelStatusResponse>>)
     ),
     tag = "Channels"
-)]
 pub async fn get_all_channels(
     State(state): State<AppState>,
 ) -> Result<Json<ApiResponse<Vec<ChannelStatusResponse>>>, StatusCode> {
@@ -193,7 +143,7 @@ pub async fn get_all_channels(
 }
 
 /// Get channel status
-#[utoipa::path(
+// OpenAPI path annotation removed
     get,
     path = "/api/channels/{id}/status",
     params(
@@ -204,7 +154,6 @@ pub async fn get_all_channels(
         (status = 404, description = "Channel not found")
     ),
     tag = "Channels"
-)]
 pub async fn get_channel_status(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -250,7 +199,7 @@ pub async fn get_channel_status(
 }
 
 /// Control channel operation
-#[utoipa::path(
+// OpenAPI path annotation removed
     post,
     path = "/api/channels/{id}/control",
     params(
@@ -263,7 +212,6 @@ pub async fn get_channel_status(
         (status = 404, description = "Channel not found")
     ),
     tag = "Channels"
-)]
 pub async fn control_channel(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -323,7 +271,7 @@ pub async fn control_channel(
 }
 
 /// Read point value
-#[utoipa::path(
+// OpenAPI path annotation removed
     get,
     path = "/api/channels/{channel_id}/points/{point_table}/{point_name}",
     params(
@@ -336,7 +284,6 @@ pub async fn control_channel(
         (status = 404, description = "Point not found")
     ),
     tag = "Points"
-)]
 pub async fn read_point(
     State(state): State<AppState>,
     Path((channel_id, point_table, _point_name)): Path<(String, String, String)>,
@@ -382,7 +329,7 @@ pub async fn read_point(
 }
 
 /// Write point value
-#[utoipa::path(
+// OpenAPI path annotation removed
     post,
     path = "/api/channels/{channel_id}/points/{point_table}/{point_name}",
     params(
@@ -396,7 +343,6 @@ pub async fn read_point(
         (status = 404, description = "Point not found")
     ),
     tag = "Points"
-)]
 pub async fn write_point(
     State(state): State<AppState>,
     Path((channel_id, point_table, point_name)): Path<(String, String, String)>,
@@ -458,7 +404,7 @@ pub async fn write_point(
 }
 
 /// Get all points for a channel
-#[utoipa::path(
+// OpenAPI path annotation removed
     get,
     path = "/api/channels/{channel_id}/points",
     params(
@@ -469,7 +415,6 @@ pub async fn write_point(
         (status = 404, description = "Channel not found")
     ),
     tag = "Points"
-)]
 pub async fn get_channel_points(
     State(state): State<AppState>,
     Path(channel_id): Path<String>,
@@ -510,7 +455,7 @@ pub async fn get_channel_points(
 }
 
 /// Get telemetry tables view for a channel
-#[utoipa::path(
+// OpenAPI path annotation removed
     get,
     path = "/api/channels/{channel_id}/telemetry_tables",
     params(
@@ -522,7 +467,6 @@ pub async fn get_channel_points(
         (status = 500, description = "Internal server error")
     ),
     tag = "Telemetry"
-)]
 pub async fn get_channel_telemetry_tables(
     State(app_state): State<AppState>,
     Path(channel_id): Path<u16>,
@@ -843,8 +787,7 @@ pub fn get_openapi_spec() -> String {
         .unwrap_or_else(|_| "{}".to_string())
 }
 
-#[cfg(test)]
-mod tests {
+#[cfg(testmod tests {
     use super::*;
 
     #[tokio::test]

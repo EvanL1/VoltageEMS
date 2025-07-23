@@ -17,44 +17,14 @@ use serde_json::{self, json, Value};
 use std::sync::Arc;
 use tower_http::cors::CorsLayer;
 use tracing::{error, info};
-use utoipa::{OpenApi, ToSchema};
-// SwaggerUi removed due to compatibility issues
 
 /// API module for the model service
 /// Provides HTTP REST API for the model service
 /// Uses axum for routing and request handling
 
-#[derive(OpenApi)]
-#[openapi(
-    paths(
-        health_check,
-        list_rules,
-        get_rule,
-        create_rule,
-        update_rule,
-        delete_rule,
-        execute_rule,
-        list_templates,
-        get_template,
-        create_instance,
-        list_operations,
-        control_operation,
-        execute_operation
-    ),
-    components(
-        schemas(
-            HealthResponse,
-            RuleResponse,
-            CreateRuleRequest,
-            UpdateRuleRequest,
-            ExecuteRuleRequest,
-            CreateInstanceRequest,
-            ExecuteOperationRequest,
-            OperationResponse,
-            ErrorResponse
-        )
-    ),
-    tags(
+// OpenAPI removed
+
+// Request/Response structures
         (name = "health", description = "Health check endpoints"),
         (name = "rules", description = "Rule management endpoints"),
         (name = "templates", description = "Template management endpoints"),
@@ -65,7 +35,7 @@ use utoipa::{OpenApi, ToSchema};
 pub struct ApiDoc;
 
 // Request/Response models
-#[derive(Deserialize, Debug, ToSchema)]
+#[derive(Deserialize, Debug)]
 struct CreateInstanceRequest {
     #[allow(dead_code)]
     template_id: String,
@@ -74,13 +44,13 @@ struct CreateInstanceRequest {
     config: Value,
 }
 
-#[derive(Deserialize, Debug, ToSchema)]
+#[derive(Deserialize, Debug)]
 struct ExecuteOperationRequest {
     instance_id: String,
     parameters: Value,
 }
 
-#[derive(Deserialize, Debug, ToSchema)]
+#[derive(Deserialize, Debug)]
 struct CreateRuleRequest {
     name: String,
     conditions: Value,
@@ -88,7 +58,7 @@ struct CreateRuleRequest {
     enabled: bool,
 }
 
-#[derive(Deserialize, Debug, ToSchema)]
+#[derive(Deserialize, Debug)]
 struct UpdateRuleRequest {
     name: Option<String>,
     conditions: Option<Value>,
@@ -96,18 +66,18 @@ struct UpdateRuleRequest {
     enabled: Option<bool>,
 }
 
-#[derive(Deserialize, Debug, ToSchema)]
+#[derive(Deserialize, Debug)]
 struct ExecuteRuleRequest {
     input: Option<Value>,
 }
 
-#[derive(Serialize, ToSchema)]
+#[derive(Serialize)]
 struct HealthResponse {
     status: String,
     version: String,
 }
 
-#[derive(Serialize, ToSchema)]
+#[derive(Serialize)]
 struct RuleResponse {
     id: String,
     name: String,
@@ -116,12 +86,12 @@ struct RuleResponse {
     actions: Value,
 }
 
-#[derive(Serialize, ToSchema)]
+#[derive(Serialize)]
 struct OperationResponse {
     operations: Vec<String>,
 }
 
-#[derive(Serialize, ToSchema)]
+#[derive(Serialize)]
 struct ErrorResponse {
     error: String,
     message: String,
