@@ -3,7 +3,6 @@
 //! 包含协议插件trait定义、配置模板系统和相关的类型定义
 
 use async_trait::async_trait;
-use regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::any::Any;
@@ -11,7 +10,7 @@ use std::collections::HashMap;
 
 use crate::core::combase::ComBase;
 use crate::core::config::types::ChannelConfig;
-use crate::utils::error::{ComSrvError, Result};
+use crate::utils::error::Result;
 
 // ============================================================================
 // 协议插件接口
@@ -58,6 +57,11 @@ pub trait ProtocolPlugin: Send + Sync + Any {
     /// 获取协议特定的CLI命令
     fn cli_commands(&self) -> Vec<CliCommand> {
         vec![]
+    }
+
+    /// 获取协议文档
+    fn documentation(&self) -> &str {
+        "No documentation available"
     }
 
     /// 生成示例配置

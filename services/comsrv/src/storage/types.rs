@@ -1,6 +1,5 @@
 //! 存储数据类型定义
 
-use serde::{Deserialize, Serialize};
 use voltage_libs::types::PointData as LibPointData;
 
 /// 点位数据（使用库中的标准化版本）

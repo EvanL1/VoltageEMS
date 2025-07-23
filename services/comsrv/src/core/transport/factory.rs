@@ -153,14 +153,14 @@ impl SerialBuilderImpl {
 #[cfg(any(test, feature = "test-utils"))]
 #[derive(Debug)]
 struct MockBuilderImpl {
-    builder: mock::MockTransportBuilder,
+    builder: super::mock::MockTransportBuilder,
 }
 
 #[cfg(any(test, feature = "test-utils"))]
 impl MockBuilderImpl {
     fn new() -> Self {
         Self {
-            builder: mock::MockTransportBuilder::new(),
+            builder: super::mock::MockTransportBuilder::new(),
         }
     }
 }
@@ -359,7 +359,9 @@ impl TransportFactory {
             #[cfg(all(target_os = "linux", feature = "can"))]
             TransportType::Can => AnyTransportConfig::Can(CanTransportConfig::default()),
             #[cfg(any(test, feature = "test-utils"))]
-            TransportType::Mock => AnyTransportConfig::Mock(mock::MockTransportConfig::default()),
+            TransportType::Mock => {
+                AnyTransportConfig::Mock(super::mock::MockTransportConfig::default())
+            }
             #[cfg(not(any(test, feature = "test-utils")))]
             TransportType::Mock => {
                 panic!("Mock transport is only available in test builds");
@@ -411,7 +413,7 @@ impl TransportBuilderRegistry for MockBuilderImpl {
     ) -> Result<Box<dyn Transport>, TransportError> {
         match config {
             AnyTransportConfig::Mock(mock_config) => {
-                let _transport = mock::MockTransport::new(mock_config)?;
+                let _transport = super::mock::MockTransport::new(mock_config)?;
                 Ok(Box::new(_transport))
             }
             _ => Err(TransportError::ConfigError(

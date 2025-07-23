@@ -11,7 +11,6 @@ use std::collections::HashMap;
 use std::str::FromStr;
 use std::sync::Arc;
 use tokio::sync::{Mutex, RwLock};
-use tracing::{error, warn};
 // ============================================================================
 // Redis值类型定义
 // ============================================================================
@@ -204,6 +203,9 @@ pub trait ConfigValidator {
 /// 协议数据包解析器trait
 #[async_trait]
 pub trait ProtocolPacketParser: Send + Sync {
+    fn protocol_name(&self) -> &str {
+        "Unknown"
+    }
     async fn parse_packet(&self, data: &[u8]) -> Result<PacketParseResult>;
     async fn build_packet(&self, data: &PointDataMap) -> Result<Vec<u8>>;
 }
@@ -259,7 +261,7 @@ impl DefaultProtocol {
         F: FnOnce(&mut ChannelStatus),
     {
         let mut status = self.status.write().await;
-        updater(&mut *status);
+        updater(&mut status);
         status.last_update = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
@@ -456,7 +458,7 @@ impl ComBase for DefaultProtocol {
         for mapping in mappings {
             point_mappings
                 .entry(mapping.telemetry_type.clone())
-                .or_insert_with(Vec::new)
+                .or_default()
                 .push(mapping);
         }
 

@@ -441,14 +441,14 @@ impl Transport for GpioTransport {
 
     async fn stats(&self) -> TransportStats {
         let state = self.state.read().await;
-        let mut stats = state.stats.clone();
+        let mut current_stats = state.stats.clone();
 
         // Update uptime
         if let Ok(elapsed) = self.start_time.elapsed() {
-            stats.uptime = elapsed;
+            current_stats.uptime = elapsed;
         }
 
-        stats
+        current_stats
     }
 
     async fn reset_stats(&mut self) {

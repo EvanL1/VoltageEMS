@@ -314,7 +314,7 @@ mod tests {
 
     #[test]
     fn test_openapi_generation() {
-        let openapi = ApiDoc::openapi();
+        let openapi = crate::api::routes::ApiDoc::openapi();
         assert_eq!(openapi.info.title, "Communication Service API");
         assert_eq!(openapi.info.version, "0.1.0");
     }

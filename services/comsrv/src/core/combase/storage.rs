@@ -11,7 +11,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::Mutex;
 use tokio::time::interval;
-use tracing::{debug, error, info, trace, warn};
+use tracing::{debug, error, info, trace};
 
 // 类型别名
 type AsyncRedisClient = voltage_libs::redis::RedisClient;
@@ -72,10 +72,10 @@ impl DefaultComBaseStorage {
     /// 内部批量更新方法
     async fn internal_batch_update(
         &self,
-        channel_id: u16,
+        _channel_id: u16,
         updates: Vec<PluginPointUpdate>,
     ) -> Result<()> {
-        let mut storage = self.storage.lock().await;
+        let storage = self.storage.lock().await;
 
         // 执行批量更新
         storage.write_points(updates.clone()).await?;
@@ -141,7 +141,6 @@ impl ComBaseStorage for DefaultComBaseStorage {
                 .unwrap()
                 .as_secs() as i64,
             telemetry_type: telemetry_type.parse().unwrap(), // 需要从字符串转换为枚举
-            quality: 192,                                    // Good quality
             raw_value: None,
         };
 
@@ -424,23 +423,26 @@ pub fn create_batch_sync(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::plugins::core::MockPluginStorage;
+    use crate::plugins::core::DefaultPluginStorage;
 
     #[tokio::test]
     async fn test_combase_storage() {
-        let mock_storage = Box::new(MockPluginStorage::new());
-        let mut storage = DefaultComBaseStorage::new(mock_storage);
+        // 使用默认存储进行测试
+        if let Ok(default_storage) = DefaultPluginStorage::from_env().await {
+            let plugin_storage = Box::new(default_storage) as Box<dyn PluginStorage>;
+            let mut storage = DefaultComBaseStorage::new(plugin_storage);
 
-        // 测试单点更新
-        let result = storage
-            .update_and_publish(1, 100, RedisValue::Float(42.0), "m")
-            .await;
-        assert!(result.is_ok());
+            // 测试单点更新
+            let result = storage
+                .update_and_publish(1, 100, RedisValue::Float(42.0), "m")
+                .await;
+            assert!(result.is_ok());
 
-        // 获取统计信息
-        let stats = storage.get_stats().await;
-        assert_eq!(stats.total_updates, 1);
-        assert_eq!(stats.single_updates, 1);
+            // 获取统计信息
+            let stats = storage.get_stats().await;
+            assert_eq!(stats.total_updates, 1);
+            assert_eq!(stats.single_updates, 1);
+        }
     }
 
     #[tokio::test]

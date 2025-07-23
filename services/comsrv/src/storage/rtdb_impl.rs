@@ -1,4 +1,4 @@
-//! Redis 存储实现
+//! 实时数据库(RTDB) 实现
 
 use async_trait::async_trait;
 use std::sync::Arc;
@@ -28,15 +28,16 @@ impl Default for RetryConfig {
     }
 }
 
-/// Redis 存储实现
-pub struct Storage {
+/// 实时数据库存储实现
+pub struct RtdbStorage {
     redis_url: String,
+    #[allow(dead_code)]
     retry_config: RetryConfig,
     publisher: Option<Arc<Publisher>>,
 }
 
-impl Storage {
-    /// 创建新的存储实例
+impl RtdbStorage {
+    /// 创建新的实时数据库实例
     pub async fn new(redis_url: &str) -> Result<Self> {
         // 测试连接
         let mut client = RedisClient::new(redis_url)
@@ -93,7 +94,7 @@ impl Storage {
 }
 
 #[async_trait]
-impl PointStorage for Storage {
+impl PointStorage for RtdbStorage {
     async fn write_point(
         &self,
         channel_id: u16,
@@ -107,7 +108,7 @@ impl PointStorage for Storage {
 
         let mut client = self.get_client().await?;
         client
-            .hset(&hash_key, &field, data.to_comsrv_redis())
+            .hset(&hash_key, &field, data.to_redis_value())
             .await
             .map_err(|e| ComSrvError::Storage(format!("Failed to write point: {}", e)))?;
 
@@ -133,7 +134,7 @@ impl PointStorage for Storage {
         pipe.atomic();
 
         // 写入主Hash值
-        pipe.hset(&hash_key, &field, data.to_comsrv_redis());
+        pipe.hset(&hash_key, &field, data.to_redis_value());
 
         // 写入元数据（仍使用单独的键）
         if let Some(raw) = raw_value {
@@ -146,7 +147,8 @@ impl PointStorage for Storage {
         }
 
         let conn = client.get_connection_mut();
-        pipe.query_async(conn)
+        let _: () = pipe
+            .query_async(conn)
             .await
             .map_err(|e| ComSrvError::Storage(format!("Failed to write with metadata: {}", e)))?;
 
@@ -175,17 +177,14 @@ impl PointStorage for Storage {
 
         for update in &updates {
             let hash_key = format!("comsrv:{}:{}", update.channel_id, update.point_type);
-            grouped
-                .entry(hash_key)
-                .or_insert_with(Vec::new)
-                .push(update);
+            grouped.entry(hash_key).or_default().push(update);
         }
 
         // 批量写入每个Hash
         for (hash_key, updates) in grouped {
             for update in updates {
                 let field = update.point_id.to_string();
-                pipe.hset(&hash_key, &field, update.data.to_comsrv_redis());
+                pipe.hset(&hash_key, &field, update.data.to_redis_value());
 
                 if let Some(raw) = update.raw_value {
                     pipe.hset(format!("{}:raw", hash_key), &field, format!("{:.6}", raw));
@@ -199,7 +198,8 @@ impl PointStorage for Storage {
         }
 
         let conn = client.get_connection_mut();
-        pipe.query_async(conn)
+        let _: () = pipe
+            .query_async(conn)
             .await
             .map_err(|e| ComSrvError::Storage(format!("Failed to write batch: {}", e)))?;
 
@@ -228,7 +228,7 @@ impl PointStorage for Storage {
 
         match data {
             Some(value) => {
-                let point = PointData::from_comsrv_redis(&value).map_err(|e| {
+                let point = PointData::from_redis_value(&value).map_err(|e| {
                     ComSrvError::Storage(format!("Failed to parse point data: {}", e))
                 })?;
                 Ok(Some(point))
@@ -260,7 +260,7 @@ impl PointStorage for Storage {
 
                 match data {
                     Some(value) => {
-                        let point = PointData::from_comsrv_redis(&value).map_err(|e| {
+                        let point = PointData::from_redis_value(&value).map_err(|e| {
                             ComSrvError::Storage(format!("Failed to parse point data: {}", e))
                         })?;
                         results.push(Some(point));
@@ -293,7 +293,7 @@ impl PointStorage for Storage {
         let mut results = Vec::new();
         for (field, value) in data {
             if let Ok(point_id) = field.parse::<u32>() {
-                if let Ok(point_data) = PointData::from_comsrv_redis(&value) {
+                if let Ok(point_data) = PointData::from_redis_value(&value) {
                     results.push((point_id, point_data));
                 }
             }
