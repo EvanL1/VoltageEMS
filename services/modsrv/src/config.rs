@@ -406,9 +406,10 @@ impl Config {
 
         Ok(config)
     }
+}
 
-    /// Create default configuration
-    pub fn default() -> Self {
+impl Default for Config {
+    fn default() -> Self {
         let service = default_service_info();
         let redis = RedisConfig {
             url: "redis://localhost:6379".to_string(),
@@ -466,7 +467,9 @@ impl Config {
             sync_interval_secs: default_sync_interval_secs(),
         }
     }
+}
 
+impl Config {
     pub fn get_sync_mode(&self) -> String {
         self.storage.storage_mode.clone()
     }
@@ -479,13 +482,19 @@ pub struct ConfigLoader {
     env_prefix: String,
 }
 
-impl ConfigLoader {
-    pub fn new() -> Self {
+impl Default for ConfigLoader {
+    fn default() -> Self {
         Self {
             config_file: None,
             config_center_url: None,
             env_prefix: "MODSRV_".to_string(),
         }
+    }
+}
+
+impl ConfigLoader {
+    pub fn new() -> Self {
+        Self::default()
     }
 
     pub fn with_file(mut self, path: impl Into<String>) -> Self {

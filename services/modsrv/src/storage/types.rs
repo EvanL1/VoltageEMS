@@ -4,6 +4,7 @@
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use voltage_libs::types::StandardFloat;
 
 /// 模型监视数据类型
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -49,45 +50,38 @@ impl ControlType {
     }
 }
 
-/// 监视值数据
+/// 监视值数据（modsrv格式：仅存储计算值，6位小数精度，不含时间戳）
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MonitorValue {
-    /// 数值
-    pub value: f64,
-    /// 时间戳（毫秒）
-    pub timestamp: i64,
-    /// 数据源标识
-    pub source: String,
+    /// 数值（标准化6位小数）
+    pub value: StandardFloat,
 }
 
 impl MonitorValue {
     /// 创建新的监视值
-    pub fn new(value: f64, source: String) -> Self {
+    pub fn new(value: f64) -> Self {
         Self {
-            value,
-            timestamp: chrono::Utc::now().timestamp_millis(),
-            source,
+            value: StandardFloat::new(value),
         }
     }
 
-    /// 从Redis字符串解析（格式：value:timestamp:source）
+    /// 从Redis字符串解析（格式：仅数值，6位小数精度）
     pub fn from_redis(data: &str) -> Option<Self> {
-        let parts: Vec<&str> = data.split(':').collect();
-        if parts.len() >= 3 {
-            if let (Ok(value), Ok(timestamp)) = (parts[0].parse::<f64>(), parts[1].parse::<i64>()) {
-                return Some(Self {
-                    value,
-                    timestamp,
-                    source: parts[2..].join(":"), // 处理source中可能包含的冒号
-                });
-            }
+        if let Ok(std_float) = StandardFloat::from_redis(data) {
+            Some(Self { value: std_float })
+        } else {
+            None
         }
-        None
     }
 
-    /// 转换为Redis字符串
+    /// 转换为Redis字符串（标准化6位小数格式）
     pub fn to_redis(&self) -> String {
-        format!("{}:{}:{}", self.value, self.timestamp, self.source)
+        self.value.to_redis()
+    }
+
+    /// 获取原始数值
+    pub fn raw_value(&self) -> f64 {
+        self.value.value()
     }
 }
 
@@ -149,7 +143,7 @@ pub struct ControlCommand {
     /// 命令类型
     pub command_type: ControlType,
     /// 命令值（对于YK为0/1，对于YT为具体数值）
-    pub value: f64,
+    pub value: StandardFloat,
     /// 命令状态
     pub status: CommandStatus,
     /// 创建时间戳
@@ -177,7 +171,7 @@ impl ControlCommand {
             channel_id,
             point_id,
             command_type,
-            value,
+            value: StandardFloat::new(value),
             status: CommandStatus::Pending,
             created_at: now,
             updated_at: now,
@@ -196,7 +190,7 @@ impl ControlCommand {
             "command_type".to_string(),
             self.command_type.to_redis().to_string(),
         );
-        hash.insert("value".to_string(), self.value.to_string());
+        hash.insert("value".to_string(), self.value.to_redis());
         hash.insert("status".to_string(), self.status.to_str().to_string());
         hash.insert("created_at".to_string(), self.created_at.to_string());
         hash.insert("updated_at".to_string(), self.updated_at.to_string());
@@ -218,7 +212,7 @@ impl ControlCommand {
                 "cc:a" => ControlType::RemoteAdjust,
                 _ => return None,
             },
-            value: hash.get("value")?.parse().ok()?,
+            value: StandardFloat::from_redis(hash.get("value")?).ok()?,
             status: hash.get("status")?.parse().ok()?,
             created_at: hash.get("created_at")?.parse().ok()?,
             updated_at: hash.get("updated_at")?.parse().ok()?,
@@ -234,7 +228,7 @@ pub struct ModelOutput {
     /// 模型ID
     pub model_id: String,
     /// 输出数据（键值对）
-    pub outputs: HashMap<String, f64>,
+    pub outputs: HashMap<String, StandardFloat>,
     /// 时间戳
     pub timestamp: i64,
     /// 执行耗时（毫秒）
@@ -246,7 +240,7 @@ pub struct ModelOutput {
 pub struct MonitorUpdate {
     pub model_id: String,
     pub monitor_type: MonitorType,
-    pub point_id: u32,
+    pub field_name: String, // 有意义的字段名替代point_id
     pub value: MonitorValue,
 }
 
@@ -255,17 +249,18 @@ pub struct MonitorUpdate {
 pub struct MonitorKey {
     pub model_id: String,
     pub monitor_type: MonitorType,
-    pub point_id: u32,
+    pub field_name: String, // 有意义的字段名替代point_id
 }
 
-/// 生成监视值Redis键
-pub fn make_monitor_key(model_id: &str, monitor_type: &MonitorType, point_id: u32) -> String {
-    format!(
-        "modsrv:{}:{}:{}",
-        model_id,
-        monitor_type.to_redis(),
-        point_id
-    )
+/// 生成监视值Redis Hash键 (符合规范：modsrv:{modelname}:{type})
+pub fn make_monitor_key(model_id: &str, monitor_type: &MonitorType) -> String {
+    let type_str = match monitor_type {
+        MonitorType::Measurement | MonitorType::ModelOutput | MonitorType::Intermediate => {
+            "measurement"
+        }
+        MonitorType::Signal => "signal",
+    };
+    format!("modsrv:{}:{}", model_id, type_str)
 }
 
 /// 生成控制命令Redis键
@@ -289,14 +284,14 @@ mod tests {
 
     #[test]
     fn test_monitor_value() {
-        let mv = MonitorValue::new(25.6, "model_123".to_string());
-        assert_eq!(mv.value, 25.6);
-        assert_eq!(mv.quality, 100);
+        let mv = MonitorValue::new(25.6);
+        assert_eq!(mv.raw_value(), 25.6);
 
         let redis_str = mv.to_redis();
+        assert_eq!(redis_str, "25.600000");
+
         let parsed = MonitorValue::from_redis(&redis_str).unwrap();
-        assert_eq!(parsed.value, 25.6);
-        assert_eq!(parsed.source, "model_123");
+        assert_eq!(parsed.raw_value(), 25.6);
     }
 
     #[test]
@@ -319,8 +314,12 @@ mod tests {
     #[test]
     fn test_make_keys() {
         assert_eq!(
-            make_monitor_key("model_123", &MonitorType::Measurement, 10001),
-            "modsrv:model_123:mv:m:10001"
+            make_monitor_key("model_123", &MonitorType::Measurement),
+            "modsrv:model_123:measurement"
+        );
+        assert_eq!(
+            make_monitor_key("model_123", &MonitorType::Signal),
+            "modsrv:model_123:signal"
         );
         assert_eq!(make_control_key("cmd_123"), "cmd:cmd_123");
     }

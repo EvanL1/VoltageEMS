@@ -80,8 +80,8 @@ pub struct CommandStatus {
 pub struct ComSrvInterface {
     redis: RedisConnection,
     command_channel: String,
-    status_channel: String,
-    cache_ttl: Duration,
+    _status_channel: String,
+    _cache_ttl: Duration,
 }
 
 impl ComSrvInterface {
@@ -90,8 +90,8 @@ impl ComSrvInterface {
         Self {
             redis,
             command_channel: "comsrv:commands".to_string(),
-            status_channel: "comsrv:status".to_string(),
-            cache_ttl: Duration::from_secs(1),
+            _status_channel: "comsrv:status".to_string(),
+            _cache_ttl: Duration::from_secs(1),
         }
     }
 
@@ -105,8 +105,8 @@ impl ComSrvInterface {
         Self {
             redis,
             command_channel,
-            status_channel,
-            cache_ttl,
+            _status_channel: status_channel,
+            _cache_ttl: cache_ttl,
         }
     }
 

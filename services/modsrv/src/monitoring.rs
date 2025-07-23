@@ -68,20 +68,15 @@ pub struct RuleExecutionEntry {
 }
 
 /// Health status of the rule engine
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum HealthStatus {
     /// System is healthy
+    #[default]
     Healthy,
     /// System is degraded but operational
     Degraded,
     /// System is unhealthy
     Unhealthy,
-}
-
-impl Default for HealthStatus {
-    fn default() -> Self {
-        HealthStatus::Healthy
-    }
 }
 
 /// Health check information

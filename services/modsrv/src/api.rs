@@ -77,28 +77,28 @@ struct CreateInstanceRequest {
 #[derive(Deserialize, Debug, ToSchema)]
 struct ExecuteOperationRequest {
     instance_id: String,
-    parameters: Value,
+    _parameters: Value,
 }
 
 #[derive(Deserialize, Debug, ToSchema)]
 struct CreateRuleRequest {
-    name: String,
-    conditions: Value,
-    actions: Value,
-    enabled: bool,
+    _name: String,
+    _conditions: Value,
+    _actions: Value,
+    _enabled: bool,
 }
 
 #[derive(Deserialize, Debug, ToSchema)]
 struct UpdateRuleRequest {
-    name: Option<String>,
-    conditions: Option<Value>,
-    actions: Option<Value>,
-    enabled: Option<bool>,
+    _name: Option<String>,
+    _conditions: Option<Value>,
+    _actions: Option<Value>,
+    _enabled: Option<bool>,
 }
 
 #[derive(Deserialize, Debug, ToSchema)]
 struct ExecuteRuleRequest {
-    input: Option<Value>,
+    _input: Option<Value>,
 }
 
 #[derive(Serialize, ToSchema)]
@@ -131,9 +131,9 @@ struct ErrorResponse {
 #[derive(Clone)]
 pub struct AppState {
     /// Redis connection
-    redis_conn: Arc<RedisConnection>,
+    _redis_conn: Arc<RedisConnection>,
     /// Monitoring service
-    monitoring: Arc<MonitoringService>,
+    _monitoring: Arc<MonitoringService>,
 }
 
 /// API server for the modsrv service
@@ -164,8 +164,8 @@ impl ApiServer {
     pub fn new_legacy(redis_conn: Arc<RedisConnection>, port: u16, config: Config) -> Self {
         let monitoring = Arc::new(MonitoringService::new(HealthStatus::Healthy));
         let state = AppState {
-            redis_conn,
-            monitoring,
+            _redis_conn: redis_conn,
+            _monitoring: monitoring,
         };
         Self {
             state,

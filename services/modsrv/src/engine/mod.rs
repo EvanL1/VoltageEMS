@@ -227,13 +227,12 @@ impl OptimizedModelEngine {
                             "s" => MonitorType::Signal,
                             _ => return None,
                         };
-                        if let Ok(point_id) = parts[2].parse() {
-                            return Some(MonitorKey {
-                                model_id,
-                                monitor_type,
-                                point_id,
-                            });
-                        }
+                        let field_name = parts[2].to_string();
+                        return Some(MonitorKey {
+                            model_id,
+                            monitor_type,
+                            field_name,
+                        });
                     }
                     None
                 })
@@ -246,7 +245,8 @@ impl OptimizedModelEngine {
             for (i, value) in values.iter().enumerate() {
                 if let Some(mv) = value {
                     let mapping = &keys_to_fetch[i];
-                    let json_value = Value::Number(serde_json::Number::from_f64(mv.value).unwrap());
+                    let json_value =
+                        Value::Number(serde_json::Number::from_f64(mv.raw_value()).unwrap());
 
                     // 更新缓存
                     let cache_key = format!("{}:{}", mapping.source_key, mapping.source_field);

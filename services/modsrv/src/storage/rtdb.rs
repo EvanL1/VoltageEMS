@@ -38,16 +38,16 @@ impl ModelStorage {
         Self::new(&redis_url).await
     }
 
-    /// 读取单个监视值
+    /// 读取单个监视值（从Hash结构）
     pub async fn get_monitor_value(
         &mut self,
         model_id: &str,
         monitor_type: MonitorType,
-        point_id: u32,
+        field_name: &str,
     ) -> Result<Option<MonitorValue>> {
-        let key = make_monitor_key(model_id, &monitor_type, point_id);
+        let key = make_monitor_key(model_id, &monitor_type);
 
-        let data: Option<String> = self.conn.get(&key).await.map_err(|e| {
+        let data: Option<String> = self.conn.hget(&key, field_name).await.map_err(|e| {
             ModelSrvError::RedisError(format!("Failed to get monitor value: {}", e))
         })?;
 
@@ -64,7 +64,7 @@ impl ModelStorage {
         }
     }
 
-    /// 批量读取监视值
+    /// 批量读取监视值（从多个Hash）
     pub async fn get_monitor_values(
         &mut self,
         keys: &[MonitorKey],
@@ -73,50 +73,61 @@ impl ModelStorage {
             return Ok(vec![]);
         }
 
-        let redis_keys: Vec<String> = keys
-            .iter()
-            .map(|k| make_monitor_key(&k.model_id, &k.monitor_type, k.point_id))
-            .collect();
+        let mut results = Vec::new();
 
-        let values: Vec<Option<String>> = self.conn.get(&redis_keys).await.map_err(|e| {
-            ModelSrvError::RedisError(format!("Failed to get monitor values: {}", e))
-        })?;
+        // 按Hash键分组请求
+        for key in keys {
+            let hash_key = make_monitor_key(&key.model_id, &key.monitor_type);
 
-        let results = values
-            .into_iter()
-            .map(|opt_str| opt_str.and_then(|s| MonitorValue::from_redis(&s)))
-            .collect();
+            let data: Option<String> =
+                self.conn
+                    .hget(&hash_key, &key.field_name)
+                    .await
+                    .map_err(|e| {
+                        ModelSrvError::RedisError(format!("Failed to get monitor value: {}", e))
+                    })?;
+
+            let result = data.and_then(|s| MonitorValue::from_redis(&s));
+            results.push(result);
+        }
 
         Ok(results)
     }
 
-    /// 写入单个监视值（用于模型输出）
+    /// 写入单个监视值（用于模型输出，存储到Hash）
     pub async fn set_monitor_value(
         &mut self,
         model_id: &str,
         monitor_type: MonitorType,
-        point_id: u32,
+        field_name: &str,
         value: MonitorValue,
     ) -> Result<()> {
-        let key = make_monitor_key(model_id, &monitor_type, point_id);
+        let key = make_monitor_key(model_id, &monitor_type);
         let data = value.to_redis();
 
-        self.conn.set::<_, _, ()>(&key, &data).await.map_err(|e| {
-            ModelSrvError::RedisError(format!("Failed to set monitor value: {}", e))
-        })?;
+        self.conn
+            .hset::<_, _, _, ()>(&key, field_name, &data)
+            .await
+            .map_err(|e| {
+                ModelSrvError::RedisError(format!("Failed to set monitor value: {}", e))
+            })?;
 
         debug!(
-            "Set monitor value {}:{}:{} = {}",
+            "Set monitor value {}:{}.{} = {}",
             model_id,
-            monitor_type.to_redis(),
-            point_id,
-            value.value
+            match monitor_type {
+                MonitorType::Measurement | MonitorType::ModelOutput | MonitorType::Intermediate =>
+                    "measurement",
+                MonitorType::Signal => "signal",
+            },
+            field_name,
+            value.raw_value()
         );
 
         Ok(())
     }
 
-    /// 批量写入监视值
+    /// 批量写入监视值（Hash存储）
     pub async fn set_monitor_values(&mut self, updates: &[MonitorUpdate]) -> Result<()> {
         if updates.is_empty() {
             return Ok(());
@@ -126,9 +137,9 @@ impl ModelStorage {
         let mut pipe = Pipeline::new();
 
         for update in updates {
-            let key = make_monitor_key(&update.model_id, &update.monitor_type, update.point_id);
+            let key = make_monitor_key(&update.model_id, &update.monitor_type);
             let data = update.value.to_redis();
-            pipe.set(&key, &data);
+            pipe.hset(&key, &update.field_name, &data);
         }
 
         pipe.query_async::<()>(&mut self.conn).await.map_err(|e| {
@@ -355,74 +366,58 @@ impl ModelStorage {
         }
     }
 
-    /// 从comsrv读取点位值（只读）
+    /// 从comsrv读取点位值（只读，使用Hash格式）
     pub async fn read_comsrv_point(
         &mut self,
         channel_id: u16,
         point_type: &str,
         point_id: u32,
-    ) -> Result<Option<(f64, i64)>> {
-        // 使用comsrv的键格式
-        let key = format!("{}:{}:{}", channel_id, point_type, point_id);
+    ) -> Result<Option<f64>> {
+        // 使用comsrv的Hash键格式：comsrv:{channelID}:{type}
+        let key = format!("comsrv:{}:{}", channel_id, point_type);
+        let field = point_id.to_string();
 
-        let data: Option<String> = self.conn.get(&key).await.map_err(|e| {
+        let data: Option<String> = self.conn.hget(&key, &field).await.map_err(|e| {
             ModelSrvError::RedisError(format!("Failed to read comsrv point: {}", e))
         })?;
 
         match data {
             Some(redis_str) => {
-                // 解析comsrv的格式：value:timestamp
-                let parts: Vec<&str> = redis_str.split(':').collect();
-                if parts.len() == 2 {
-                    if let (Ok(value), Ok(timestamp)) =
-                        (parts[0].parse::<f64>(), parts[1].parse::<i64>())
-                    {
-                        return Ok(Some((value, timestamp)));
-                    }
+                // 解析comsrv的格式：仅数值（6位小数精度）
+                if let Ok(value) = redis_str.parse::<f64>() {
+                    Ok(Some(value))
+                } else {
+                    error!("Failed to parse comsrv value: {}", redis_str);
+                    Ok(None)
                 }
-                error!("Failed to parse comsrv value: {}", redis_str);
-                Ok(None)
             }
             None => Ok(None),
         }
     }
 
-    /// 批量读取comsrv点位值
+    /// 批量读取comsrv点位值（使用Hash格式）
     pub async fn read_comsrv_points(
         &mut self,
         points: &[(u16, &str, u32)],
-    ) -> Result<Vec<Option<(f64, i64)>>> {
+    ) -> Result<Vec<Option<f64>>> {
         if points.is_empty() {
             return Ok(vec![]);
         }
 
-        let redis_keys: Vec<String> = points
-            .iter()
-            .map(|(channel_id, point_type, point_id)| {
-                format!("{}:{}:{}", channel_id, point_type, point_id)
-            })
-            .collect();
+        let mut results = Vec::new();
 
-        let values: Vec<Option<String>> = self.conn.get(&redis_keys).await.map_err(|e| {
-            ModelSrvError::RedisError(format!("Failed to read comsrv points: {}", e))
-        })?;
+        // 按Hash键分组请求
+        for (channel_id, point_type, point_id) in points {
+            let key = format!("comsrv:{}:{}", channel_id, point_type);
+            let field = point_id.to_string();
 
-        let results = values
-            .into_iter()
-            .map(|opt_str| {
-                opt_str.and_then(|s| {
-                    let parts: Vec<&str> = s.split(':').collect();
-                    if parts.len() == 2 {
-                        if let (Ok(value), Ok(timestamp)) =
-                            (parts[0].parse::<f64>(), parts[1].parse::<i64>())
-                        {
-                            return Some((value, timestamp));
-                        }
-                    }
-                    None
-                })
-            })
-            .collect();
+            let data: Option<String> = self.conn.hget(&key, &field).await.map_err(|e| {
+                ModelSrvError::RedisError(format!("Failed to read comsrv point: {}", e))
+            })?;
+
+            let result = data.and_then(|s| s.parse::<f64>().ok());
+            results.push(result);
+        }
 
         Ok(results)
     }

@@ -2,7 +2,7 @@
 //!
 //! 提供对监视值的高级操作接口
 
-use super::storage::ModelStorage;
+use super::rtdb::ModelStorage;
 use super::types::*;
 use crate::error::Result;
 use std::collections::HashMap;
@@ -47,7 +47,7 @@ impl MonitorManager {
         // 构建结果映射
         let mut results = HashMap::new();
         for (idx, (_, _, _, field_name)) in input_mappings.iter().enumerate() {
-            if let Some(Some((value, _timestamp))) = values.get(idx) {
+            if let Some(Some(value)) = values.get(idx) {
                 results.insert(field_name.clone(), *value);
             }
         }
@@ -67,14 +67,12 @@ impl MonitorManager {
         // 构建批量更新
         let mut updates = Vec::new();
         for (field_name, value) in outputs.iter() {
-            // 使用字段名的哈希值作为point_id
-            let point_id = self.field_name_to_point_id(field_name);
-            let monitor_value = MonitorValue::new(*value, model_id.to_string());
+            let monitor_value = MonitorValue::new(*value);
 
             updates.push(MonitorUpdate {
                 model_id: model_id.to_string(),
                 monitor_type: MonitorType::ModelOutput,
-                point_id,
+                field_name: field_name.clone(),
                 value: monitor_value,
             });
         }
@@ -82,10 +80,15 @@ impl MonitorManager {
         // 批量写入
         self.storage.set_monitor_values(&updates).await?;
 
-        // 同时保存完整的模型输出记录
+        // 同时保存完整的模型输出记录，转换数值格式
+        let std_outputs: HashMap<String, voltage_libs::types::StandardFloat> = outputs
+            .into_iter()
+            .map(|(k, v)| (k, voltage_libs::types::StandardFloat::new(v)))
+            .collect();
+
         let model_output = ModelOutput {
             model_id: model_id.to_string(),
-            outputs,
+            outputs: std_outputs,
             timestamp,
             execution_time_ms: 0, // 调用方可以设置实际执行时间
         };
@@ -109,7 +112,7 @@ impl MonitorManager {
             .map(|name| MonitorKey {
                 model_id: model_id.to_string(),
                 monitor_type: MonitorType::Intermediate,
-                point_id: self.field_name_to_point_id(name),
+                field_name: name.clone(),
             })
             .collect();
 
@@ -131,27 +134,21 @@ impl MonitorManager {
         field_name: &str,
         value: f64,
     ) -> Result<()> {
-        let point_id = self.field_name_to_point_id(field_name);
-        let monitor_value = MonitorValue::new(value, model_id.to_string());
+        let monitor_value = MonitorValue::new(value);
 
         self.storage
-            .set_monitor_value(model_id, MonitorType::Intermediate, point_id, monitor_value)
+            .set_monitor_value(
+                model_id,
+                MonitorType::Intermediate,
+                field_name,
+                monitor_value,
+            )
             .await
     }
 
     /// 获取模型的最后输出
     pub async fn get_last_model_output(&mut self, model_id: &str) -> Result<Option<ModelOutput>> {
         self.storage.get_model_output(model_id).await
-    }
-
-    /// 将字段名转换为point_id（使用简单的哈希）
-    fn field_name_to_point_id(&self, field_name: &str) -> u32 {
-        use std::collections::hash_map::DefaultHasher;
-        use std::hash::{Hash, Hasher};
-
-        let mut hasher = DefaultHasher::new();
-        field_name.hash(&mut hasher);
-        (hasher.finish() as u32) & 0x7FFFFFFF // 确保为正数
     }
 }
 

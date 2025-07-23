@@ -32,7 +32,7 @@ impl DeviceModelSystem {
         redis_client: Arc<RedisHandler>,
         cache_manager: Arc<ModelCacheManager>,
         model_engine: Arc<OptimizedModelEngine>,
-        config: DataFlowConfig,
+        _config: DataFlowConfig,
     ) -> Result<Self> {
         let registry = Arc::new(ModelRegistry::new());
         let calculation_engine = Arc::new(CalculationEngine::new());
@@ -252,7 +252,7 @@ impl DeviceModelSystem {
         };
 
         while let Some(update) = receiver.recv().await {
-            if let Err(e) = self.dataflow_processor.process_update(update.into()).await {
+            if let Err(e) = self.dataflow_processor.process_update(update).await {
                 tracing::error!("Failed to process update: {}", e);
             }
         }

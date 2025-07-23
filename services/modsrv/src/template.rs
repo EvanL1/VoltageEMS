@@ -176,7 +176,7 @@ impl TemplateManager {
             if path.is_file()
                 && path
                     .extension()
-                    .map_or(false, |ext| ext == "json" || ext == "yaml" || ext == "yml")
+                    .is_some_and(|ext| ext == "json" || ext == "yaml" || ext == "yml")
             {
                 let template = self.load_template_info(&path)?;
                 if template.id == template_id {
@@ -212,7 +212,7 @@ impl TemplateManager {
             if path.is_file()
                 && path
                     .extension()
-                    .map_or(false, |ext| ext == "json" || ext == "yaml" || ext == "yml")
+                    .is_some_and(|ext| ext == "json" || ext == "yaml" || ext == "yml")
             {
                 println!("Loading template info from: {}", path.display());
                 let template = self.load_template_info(&path)?;

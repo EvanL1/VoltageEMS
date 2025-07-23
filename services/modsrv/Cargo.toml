@@ -42,4 +42,5 @@ criterion = { version = "0.5", features = ["async_tokio"] }
 futures = { workspace = true }
 
 [features]
-default = []
+default = ["redis"]
+redis = []

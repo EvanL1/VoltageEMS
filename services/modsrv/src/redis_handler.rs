@@ -34,10 +34,14 @@ impl RedisConnection {
         };
 
         let url = config.to_url();
-        let client = RedisSyncClient::new(&url)
+        let client = redis::Client::open(url).map_err(|e| {
+            ModelSrvError::RedisError(format!("Redis client creation failed: {}", e))
+        })?;
+        let connection = client
+            .get_connection()
             .map_err(|e| ModelSrvError::RedisError(format!("Redis connection failed: {}", e)))?;
 
-        Ok(Self { client })
+        Ok(Self { connection })
     }
 
     /// Create a connection from configuration
@@ -52,20 +56,28 @@ impl RedisConnection {
         };
 
         let url = redis_config.to_url();
-        let client = RedisSyncClient::new(&url)
+        let client = redis::Client::open(url).map_err(|e| {
+            ModelSrvError::RedisError(format!("Redis client creation failed: {}", e))
+        })?;
+        let connection = client
+            .get_connection()
             .map_err(|e| ModelSrvError::RedisError(format!("Redis connection failed: {}", e)))?;
 
-        Ok(Self { client })
+        Ok(Self { connection })
     }
 
     /// Clone the connection to create a duplicate
     pub fn duplicate(&self) -> Result<Self> {
         let redis_url =
             std::env::var("REDIS_URL").unwrap_or_else(|_| "redis://127.0.0.1:6379".to_string());
-        let client = RedisSyncClient::new(&redis_url)
+        let client = redis::Client::open(redis_url).map_err(|e| {
+            ModelSrvError::RedisError(format!("Redis client creation failed: {}", e))
+        })?;
+        let connection = client
+            .get_connection()
             .map_err(|e| ModelSrvError::RedisError(format!("Redis connection failed: {}", e)))?;
 
-        Ok(Self { client })
+        Ok(Self { connection })
     }
 
     /// Get keys matching a pattern
@@ -243,11 +255,17 @@ pub struct RedisHandler {
     connection: Arc<RwLock<RedisConnection>>,
 }
 
-impl RedisHandler {
-    pub fn new() -> Self {
+impl Default for RedisHandler {
+    fn default() -> Self {
         Self {
             connection: Arc::new(RwLock::new(RedisConnection::new())),
         }
+    }
+}
+
+impl RedisHandler {
+    pub fn new() -> Self {
+        Self::default()
     }
 
     pub fn from_connection(connection: RedisConnection) -> Self {
@@ -307,11 +325,17 @@ pub struct AsyncPubSub {
     _phantom: std::marker::PhantomData<()>,
 }
 
-impl AsyncPubSub {
-    pub fn new() -> Self {
+impl Default for AsyncPubSub {
+    fn default() -> Self {
         Self {
             _phantom: std::marker::PhantomData,
         }
+    }
+}
+
+impl AsyncPubSub {
+    pub fn new() -> Self {
+        Self::default()
     }
 
     pub async fn subscribe(&mut self, _channel: &str) -> Result<()> {

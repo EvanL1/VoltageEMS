@@ -61,8 +61,8 @@ pub struct DataReader {
     interface: ComSrvInterface,
     cache: Arc<RwLock<PointCache>>,
     strategy: ReadStrategy,
-    batch_buffer: Vec<PointDescriptor>,
-    batch_size: usize,
+    _batch_buffer: Vec<PointDescriptor>,
+    _batch_size: usize,
     stats: ReadStats,
 }
 
@@ -93,8 +93,8 @@ impl DataReader {
             interface: ComSrvInterface::new(redis),
             cache: Arc::new(RwLock::new(PointCache::new(cache_ttl))),
             strategy,
-            batch_buffer: Vec::new(),
-            batch_size,
+            _batch_buffer: Vec::new(),
+            _batch_size: batch_size,
             stats: ReadStats::default(),
         }
     }

@@ -11,7 +11,7 @@ use std::sync::Arc;
 use tokio::fs;
 use tracing::{debug, error, info, warn};
 
-use super::{CalculationEngine, DataFlowProcessor, DeviceModel, InstanceManager};
+use super::{DataFlowProcessor, DeviceModel, InstanceManager};
 
 /// 自动配置管理器
 pub struct AutoConfigManager {
@@ -154,7 +154,7 @@ impl AutoConfigManager {
         );
 
         // 加载设备模型
-        let model = self.load_device_model(&config.model_id).await?;
+        let _model = self.load_device_model(&config.model_id).await?;
 
         // 创建设备实例
         let instance_id = self

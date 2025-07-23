@@ -24,9 +24,9 @@ pub struct DataFlowProcessor {
 /// Data subscription for a device instance
 #[derive(Clone)]
 struct DataSubscription {
-    instance_id: String,
+    _instance_id: String,
     point_mappings: HashMap<String, String>, // telemetry_name -> redis_key
-    update_interval: Duration,
+    _update_interval: Duration,
 }
 
 /// Data update message
@@ -102,9 +102,9 @@ impl DataFlowProcessor {
         update_interval: Duration,
     ) -> Result<()> {
         let subscription = DataSubscription {
-            instance_id: instance_id.clone(),
+            _instance_id: instance_id.clone(),
             point_mappings,
-            update_interval,
+            _update_interval: update_interval,
         };
 
         let mut subscriptions = self.subscriptions.write().await;
@@ -167,7 +167,7 @@ impl DataFlowProcessor {
         calculation_id: String,
     ) -> Result<()> {
         // Get calculation definition
-        let calc = model
+        let _calc = model
             .calculations
             .iter()
             .find(|c| c.identifier == calculation_id)
@@ -272,7 +272,7 @@ impl DataFlowProcessor {
                 // Check if it's time to poll
                 for (telemetry_name, redis_key) in &sub.point_mappings {
                     // Get data from Redis - 现在主键直接存储数值字符串
-                    if let Ok(Some(data)) = self.redis_client.get::<String>(&redis_key).await {
+                    if let Ok(Some(data)) = self.redis_client.get::<String>(redis_key).await {
                         // 尝试解析为浮点数
                         if let Ok(value) = data.parse::<f64>() {
                             let update = DataUpdate {
@@ -317,7 +317,7 @@ struct PointUpdateMessage {
     point_id: String,
     value: Value,
     timestamp: i64,
-    quality: Option<u8>,
+    _quality: Option<u8>,
 }
 
 /// Data flow configuration

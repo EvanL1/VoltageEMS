@@ -31,9 +31,7 @@ impl ModelRegistry {
     /// 注册设备模型
     pub async fn register_model(&self, model: DeviceModel) -> Result<()> {
         // 验证模型
-        model
-            .validate()
-            .map_err(|e| ModelSrvError::InvalidModel(e))?;
+        model.validate().map_err(ModelSrvError::InvalidModel)?;
 
         let model_id = model.id.clone();
         let device_type = format!("{:?}", model.device_type);
@@ -79,9 +77,7 @@ impl ModelRegistry {
     /// 更新设备模型
     pub async fn update_model(&self, model: DeviceModel) -> Result<()> {
         // 验证模型
-        model
-            .validate()
-            .map_err(|e| ModelSrvError::InvalidModel(e))?;
+        model.validate().map_err(ModelSrvError::InvalidModel)?;
 
         let model_id = model.id.clone();
 
@@ -163,9 +159,7 @@ impl ModelRegistry {
         let model: DeviceModel = serde_yaml::from_str(&content)
             .map_err(|e| ModelSrvError::YamlError(format!("Failed to parse model YAML: {}", e)))?;
 
-        model
-            .validate()
-            .map_err(|e| ModelSrvError::InvalidModel(e))?;
+        model.validate().map_err(ModelSrvError::InvalidModel)?;
 
         Ok(model)
     }

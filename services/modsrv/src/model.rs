@@ -99,6 +99,7 @@ pub enum CommandStatus {
     Unknown,
 }
 
+#[derive(Default)]
 pub struct ModelEngine {
     models: HashMap<String, ModelDefinition>,
     actions: HashMap<String, Vec<ControlAction>>,
@@ -107,11 +108,7 @@ pub struct ModelEngine {
 
 impl ModelEngine {
     pub fn new() -> Self {
-        Self {
-            models: HashMap::new(),
-            actions: HashMap::new(),
-            key_prefix: String::new(),
-        }
+        Self::default()
     }
 
     pub fn load_models(&mut self, redis_conn: &mut RedisConnection, pattern: &str) -> Result<()> {
@@ -395,7 +392,7 @@ impl ModelEngine {
         // Try to parse as model with control actions
         let model_with_actions = serde_json::from_str::<ModelWithActions>(&model_json);
 
-        if let Err(_) = model_with_actions {
+        if model_with_actions.is_err() {
             // Skip if not a model with actions
             return Ok(());
         }
