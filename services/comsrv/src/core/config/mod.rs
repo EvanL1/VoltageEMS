@@ -18,6 +18,8 @@
 //!   └── Point Tables (CSV)
 //! ```
 
+#![allow(ambiguous_glob_reexports)]
+
 pub mod core;
 pub mod loaders;
 pub mod parameters;

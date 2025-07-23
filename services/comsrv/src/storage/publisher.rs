@@ -40,6 +40,7 @@ pub trait PublishUpdates: Send + Sync {
 
 /// Redis发布器
 pub struct Publisher {
+    #[allow(dead_code)]
     redis_url: String,
     tx: mpsc::Sender<PointUpdate>,
 }
@@ -112,7 +113,7 @@ impl Publisher {
 
         for update in buffer.iter() {
             let channel = format!("comsrv:{}:{}", update.channel_id, update.point_type);
-            grouped.entry(channel).or_insert_with(Vec::new).push(update);
+            grouped.entry(channel).or_default().push(update);
         }
 
         // 批量发布每个通道的更新
@@ -124,7 +125,8 @@ impl Publisher {
         }
 
         let conn = client.get_connection_mut();
-        pipe.query_async(conn)
+        let _: () = pipe
+            .query_async(conn)
             .await
             .map_err(|e| ComSrvError::Storage(format!("Failed to publish batch: {}", e)))?;
 

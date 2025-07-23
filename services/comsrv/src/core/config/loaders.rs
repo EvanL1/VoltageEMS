@@ -4,7 +4,7 @@
 
 use super::types::{CombinedPoint, ScalingInfo, UnifiedPointMapping};
 use crate::utils::error::{ComSrvError, Result};
-use csv::{Reader, ReaderBuilder};
+use csv::ReaderBuilder;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};

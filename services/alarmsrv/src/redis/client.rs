@@ -98,4 +98,15 @@ impl AlarmRedisClient {
             Err(anyhow::anyhow!("Redis connection not available"))
         }
     }
+
+    /// Get all fields and values from a hash
+    pub async fn hgetall(&self, key: &str) -> Result<std::collections::HashMap<String, String>> {
+        let mut client_guard = self.client.lock().await;
+        if let Some(conn) = client_guard.as_mut() {
+            let hash_data = conn.hgetall(key).await?;
+            Ok(hash_data)
+        } else {
+            Err(anyhow::anyhow!("Redis connection not available"))
+        }
+    }
 }

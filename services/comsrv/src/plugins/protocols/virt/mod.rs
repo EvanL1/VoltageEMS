@@ -14,17 +14,14 @@ pub fn create_plugin() -> Box<dyn crate::plugins::traits::ProtocolPlugin> {
 }
 
 use async_trait::async_trait;
-use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use tracing::{debug, error, info, warn};
+use tracing::info;
 
-use crate::core::combase::{
-    ChannelStatus, ComBase, PointData, PointDataMap, RedisValue, TelemetryType,
-};
+use crate::core::combase::{ChannelStatus, ComBase, PointData, PointDataMap, RedisValue};
 use crate::core::config::types::{ChannelConfig, UnifiedPointMapping};
 use crate::plugins::core::{DefaultPluginStorage, PluginStorage};
-use crate::utils::error::{ComSrvError, Result};
+use crate::utils::error::Result;
 
 /// Virtual protocol client for testing
 pub struct VirtualProtocol {
@@ -260,6 +257,7 @@ impl ComBase for VirtualProtocol {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashMap;
 
     #[tokio::test]
     async fn test_virtual_protocol() {
@@ -270,8 +268,9 @@ mod tests {
             protocol: "virtual".to_string(),
             parameters: HashMap::new(),
             logging: Default::default(),
-            points_config: None,
+            table_config: None,
             combined_points: vec![],
+            points: vec![],
         };
 
         let mut protocol = VirtualProtocol::new(config).unwrap();

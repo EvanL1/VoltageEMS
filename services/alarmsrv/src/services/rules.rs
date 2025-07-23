@@ -78,6 +78,12 @@ pub struct AlarmRulesEngine {
     last_data: HashMap<String, DateTime<Utc>>,
 }
 
+impl Default for AlarmRulesEngine {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl AlarmRulesEngine {
     /// Create new rules engine
     pub fn new() -> Self {

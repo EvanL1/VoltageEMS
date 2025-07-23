@@ -171,7 +171,7 @@ impl AlarmStatisticsManager {
                 .unwrap_or(0);
 
             // Get category statistics
-            let categories = self.get_category_statistics(conn).await?;
+            let _categories = self.get_category_statistics(conn).await?;
 
             // Get today's handled alarms count
             let today = Utc::now().format("%Y-%m-%d").to_string();
