@@ -35,17 +35,22 @@ class ModbusSimulator:
     def create_datastore(self):
         """创建Modbus数据存储"""
         # 创建保持寄存器 (Holding Registers) - 功能码3,6,16
-        holding_registers = ModbusSequentialDataBlock(40001, [0] * self.register_count)
+        # 使用地址0开始，支持地址1-100的访问
+        holding_registers = ModbusSequentialDataBlock(
+            0, [0] * (self.register_count + 50000)
+        )
 
         # 创建输入寄存器 (Input Registers) - 功能码4
-        input_registers = ModbusSequentialDataBlock(30001, [0] * self.register_count)
+        input_registers = ModbusSequentialDataBlock(
+            0, [0] * (self.register_count + 50000)
+        )
 
         # 创建线圈 (Coils) - 功能码1,5,15
-        coils = ModbusSequentialDataBlock(1, [False] * self.register_count)
+        coils = ModbusSequentialDataBlock(0, [False] * (self.register_count + 10000))
 
         # 创建离散输入 (Discrete Inputs) - 功能码2
         discrete_inputs = ModbusSequentialDataBlock(
-            10001, [False] * self.register_count
+            0, [False] * (self.register_count + 10000)
         )
 
         # 创建从站上下文
@@ -96,6 +101,27 @@ class ModbusSimulator:
             for i in range(10):
                 counter_value = (counter_base + i * 100) % 65536
                 slave_context.setValues(3, 40021 + i, [counter_value])
+
+            # 按位测试专用寄存器设置
+            # 寄存器1 (地址1): 0xA5 (10100101) - 用于测试位0-7
+            slave_context.setValues(3, 1, [0xA5])
+
+            # 寄存器2 (地址2): 0x5A (01011010) - 用于测试不同位模式
+            slave_context.setValues(3, 2, [0x5A])
+
+            # 寄存器3 (地址3): 0xF00F (1111000000001111) - 用于测试高位和低位
+            slave_context.setValues(3, 3, [0xF00F])
+
+            # 寄存器4 (地址4): 0x8001 (1000000000000001) - 用于测试最高位和最低位
+            slave_context.setValues(3, 4, [0x8001])
+
+            # 寄存器5 (地址5): 动态模式 - 每秒变化的位模式
+            time_based_pattern = int(time.time()) % 16
+            dynamic_value = 0
+            for bit in range(16):
+                if (bit + time_based_pattern) % 3 == 0:
+                    dynamic_value |= 1 << bit
+            slave_context.setValues(3, 5, [dynamic_value])
 
         except Exception as e:
             logger.error(f"更新寄存器数据失败: {e}")

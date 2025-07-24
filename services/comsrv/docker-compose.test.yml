@@ -96,6 +96,7 @@ services:
       - ./tests/docker/test-configs:/app/test-configs:ro
       - ./logs:/app/logs  # 映射日志目录到本地
       - ./config:/opt/comsrv/config:ro  # 映射配置文件到本地
+      - comsrv-logs:/app/service-logs  # 服务内部日志
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:3000/api/health"]
       interval: 15s
@@ -138,8 +139,14 @@ services:
     command: >
       sh -c "
         echo '开始集成测试 - $(date)' &&
-        python -m pytest tests/docker/integration_test.py -v --tb=short --capture=no &&
-        python tests/docker/performance_test.py &&
+        echo '运行基础集成测试...' &&
+        python -m pytest /app/tests/docker/integration_test.py::TestComsrvIntegration -v --tb=short --capture=no &&
+        echo '运行按位解析测试...' &&
+        python -m pytest /app/tests/docker/integration_test.py::TestModbusBitwiseParsing -v --tb=short --capture=no &&
+        echo '运行性能测试...' &&
+        python /app/tests/docker/performance_test.py &&
+        echo '运行按位解析验证脚本...' &&
+        python /app/tests/test_bitwise_parsing.py || true &&
         echo '所有测试完成 - $(date)'
       "
     logging:

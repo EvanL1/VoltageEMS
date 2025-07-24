@@ -10,6 +10,8 @@ import statistics
 import redis
 import requests
 import logging
+import asyncio
+import aiohttp
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # 配置日志
@@ -25,7 +27,7 @@ logger = logging.getLogger(__name__)
 
 # 测试配置
 REDIS_URL = os.getenv("REDIS_URL", "redis://:testpass123@redis:6379")
-COMSRV_URL = os.getenv("COMSRV_URL", "http://comsrv:8080")
+COMSRV_URL = os.getenv("COMSRV_URL", "http://comsrv:3000")
 MODBUS_HOST = os.getenv("MODBUS_HOST", "modbus-simulator")
 MODBUS_PORT = int(os.getenv("MODBUS_PORT", 502))
 
@@ -34,7 +36,7 @@ class PerformanceTest:
     """性能测试类"""
 
     def __init__(self):
-        self.api_base_url = os.getenv("COMSRV_API_URL", "http://localhost:3000")
+        self.api_base_url = os.getenv("COMSRV_URL", "http://comsrv:3000")
         self.redis_url = os.getenv("REDIS_URL", "redis://localhost:6379")
         self.results = {"response_times": [], "error_count": 0, "success_count": 0}
 
@@ -60,10 +62,8 @@ class PerformanceTest:
         print(f"每用户请求数: {requests_per_user}")
 
         endpoints = [
-            "/api/v1/status",
-            "/api/v1/channels",
-            "/api/v1/channels/1001/status",
-            "/api/v1/channels/1001/points",
+            "/api/health",
+            "/api/channels",
         ]
 
         async with aiohttp.ClientSession() as session:
@@ -84,7 +84,6 @@ class PerformanceTest:
         """吞吐量测试"""
         print(f"\n=== 吞吐量测试 ({duration_seconds}秒) ===")
 
-
         session = requests.Session()
 
         start_time = time.time()
@@ -92,9 +91,7 @@ class PerformanceTest:
 
         while time.time() - start_time < duration_seconds:
             try:
-                response = session.get(
-                    f"{self.api_base_url}/api/v1/channels/1001/points"
-                )
+                response = session.get(f"{self.api_base_url}/api/health")
                 if response.status_code == 200:
                     request_count += 1
             except Exception as e:
@@ -113,13 +110,12 @@ class PerformanceTest:
         """延迟测试"""
         print(f"\n=== 延迟测试 ({iterations}次迭代) ===")
 
-
         latencies = []
 
         for _ in range(iterations):
             start = time.time()
             try:
-                response = requests.get(f"{self.api_base_url}/api/v1/status")
+                response = requests.get(f"{self.api_base_url}/api/health")
                 if response.status_code == 200:
                     latency = (time.time() - start) * 1000  # 转换为毫秒
                     latencies.append(latency)
@@ -188,12 +184,9 @@ class PerformanceTest:
         print(f"最大并发数: {max_concurrent}")
         print(f"递增时间: {ramp_up_time}秒")
 
-
         def make_request():
             try:
-                response = requests.get(
-                    f"{self.api_base_url}/api/v1/channels/1001/points", timeout=5
-                )
+                response = requests.get(f"{self.api_base_url}/api/health", timeout=5)
                 return response.status_code == 200
             except:
                 return False

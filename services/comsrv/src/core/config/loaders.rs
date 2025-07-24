@@ -269,6 +269,7 @@ impl PointMapper {
                             scale: telemetry.scale.unwrap_or(1.0),
                             offset: telemetry.offset.unwrap_or(0.0),
                             unit: telemetry.unit,
+                            reverse: telemetry.reverse,
                         })
                     } else {
                         None

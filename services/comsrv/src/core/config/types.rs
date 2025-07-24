@@ -5,6 +5,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::str::FromStr;
 
 // ============================================================================
 // 应用配置
@@ -154,9 +155,15 @@ pub struct ChannelConfig {
     #[serde(skip)]
     pub points: Vec<UnifiedPointMapping>,
 
-    /// 合并的点位
-    #[serde(skip_serializing_if = "Vec::is_empty", default)]
-    pub combined_points: Vec<CombinedPoint>,
+    /// 四遥点位映射 - 分别存储四种遥测类型
+    #[serde(skip)]
+    pub measurement_points: HashMap<u32, CombinedPoint>,
+    #[serde(skip)]
+    pub signal_points: HashMap<u32, CombinedPoint>,
+    #[serde(skip)]
+    pub control_points: HashMap<u32, CombinedPoint>,
+    #[serde(skip)]
+    pub adjustment_points: HashMap<u32, CombinedPoint>,
 }
 
 /// 通道日志配置
@@ -190,7 +197,7 @@ pub struct TableConfig {
     pub protocol_mapping_route: String,
 
     /// 协议映射文件
-    pub protocol_mapping_file: String,
+    pub protocol_mapping_file: ProtocolMappingFiles,
 }
 
 /// 四遥文件配置
@@ -207,6 +214,22 @@ pub struct FourTelemetryFiles {
 
     /// 遥控文件
     pub control_file: String,
+}
+
+/// 协议映射文件配置
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProtocolMappingFiles {
+    /// 遥测映射文件
+    pub telemetry_mapping: String,
+
+    /// 遥信映射文件
+    pub signal_mapping: String,
+
+    /// 遥调映射文件
+    pub adjustment_mapping: String,
+
+    /// 遥控映射文件
+    pub control_mapping: String,
 }
 
 /// 合并的点位
@@ -226,6 +249,7 @@ pub struct ScalingInfo {
     pub scale: f64,
     pub offset: f64,
     pub unit: Option<String>,
+    pub reverse: Option<bool>,
 }
 
 // ============================================================================
@@ -316,12 +340,14 @@ impl std::str::FromStr for ProtocolType {
     type Err = crate::utils::error::ComSrvError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.to_lowercase().as_str() {
-            "modbus_tcp" | "modbustcp" => Ok(ProtocolType::ModbusTcp),
-            "modbus_rtu" | "modbusrtu" => Ok(ProtocolType::ModbusRtu),
+        // 使用normalize_protocol_name函数来实现大小写不敏感的匹配
+        let normalized = crate::utils::normalize_protocol_name(s);
+        match normalized.as_str() {
+            "modbus_tcp" => Ok(ProtocolType::ModbusTcp),
+            "modbus_rtu" => Ok(ProtocolType::ModbusRtu),
             "can" => Ok(ProtocolType::Can),
-            "iec60870" | "iec104" => Ok(ProtocolType::Iec60870),
-            "virtual" | "virt" => Ok(ProtocolType::Virtual),
+            "iec60870" => Ok(ProtocolType::Iec60870),
+            "virtual" => Ok(ProtocolType::Virtual),
             _ => Err(crate::utils::error::ComSrvError::ConfigError(format!(
                 "Unknown protocol type: {}",
                 s
@@ -452,6 +478,57 @@ impl ChannelConfig {
     pub fn get_bool_parameter(&self, key: &str) -> Option<bool> {
         self.parameters.get(key).and_then(|v| v.as_bool())
     }
+
+    /// 根据遥测类型获取点位
+    pub fn get_point(
+        &self,
+        telemetry_type: TelemetryType,
+        point_id: u32,
+    ) -> Option<&CombinedPoint> {
+        match telemetry_type {
+            TelemetryType::Telemetry => self.measurement_points.get(&point_id),
+            TelemetryType::Signal => self.signal_points.get(&point_id),
+            TelemetryType::Control => self.control_points.get(&point_id),
+            TelemetryType::Adjustment => self.adjustment_points.get(&point_id),
+        }
+    }
+
+    /// 添加点位到对应的HashMap
+    pub fn add_point(&mut self, point: CombinedPoint) -> Result<(), String> {
+        let telemetry_type = TelemetryType::from_str(&point.telemetry_type)
+            .map_err(|e| format!("Invalid telemetry type: {}", e))?;
+
+        let target_hashmap = match telemetry_type {
+            TelemetryType::Telemetry => &mut self.measurement_points,
+            TelemetryType::Signal => &mut self.signal_points,
+            TelemetryType::Control => &mut self.control_points,
+            TelemetryType::Adjustment => &mut self.adjustment_points,
+        };
+
+        target_hashmap.insert(point.point_id, point);
+        Ok(())
+    }
+
+    /// 获取所有点位数量
+    pub fn get_total_points_count(&self) -> usize {
+        self.measurement_points.len()
+            + self.signal_points.len()
+            + self.control_points.len()
+            + self.adjustment_points.len()
+    }
+
+    /// 获取指定类型的所有点位
+    pub fn get_points_by_type(
+        &self,
+        telemetry_type: TelemetryType,
+    ) -> &HashMap<u32, CombinedPoint> {
+        match telemetry_type {
+            TelemetryType::Telemetry => &self.measurement_points,
+            TelemetryType::Signal => &self.signal_points,
+            TelemetryType::Control => &self.control_points,
+            TelemetryType::Adjustment => &self.adjustment_points,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -484,7 +561,10 @@ mod tests {
             logging: ChannelLoggingConfig::default(),
             table_config: None,
             points: vec![],
-            combined_points: vec![],
+            measurement_points: HashMap::new(),
+            signal_points: HashMap::new(),
+            control_points: HashMap::new(),
+            adjustment_points: HashMap::new(),
         };
 
         // 添加参数

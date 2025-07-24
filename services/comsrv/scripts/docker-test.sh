@@ -147,7 +147,8 @@ docker-compose -f docker-compose.test.yml up -d comsrv
 # 等待comsrv就绪
 echo -e "${YELLOW}等待comsrv就绪...${NC}"
 for i in {1..60}; do
-    if curl -f http://localhost:3000/api/v1/status >/dev/null 2>&1; then
+    # 使用docker-compose exec检查容器内部健康状态
+    if docker-compose -f docker-compose.test.yml exec -T comsrv curl -f http://localhost:3000/api/health >/dev/null 2>&1; then
         echo -e "${GREEN}comsrv已就绪${NC}"
         break
     fi
@@ -176,7 +177,7 @@ case $TEST_TYPE in
         docker-compose -f docker-compose.test.yml run --rm \
             -e TEST_TIMEOUT=$TIMEOUT \
             test-runner \
-            python -m pytest -v /tests/docker/integration_test.py \
+            python -m pytest -v /app/tests/docker/integration_test.py \
             --junit-xml=/test-results/integration-junit.xml
         ;;
     performance)
@@ -184,7 +185,7 @@ case $TEST_TYPE in
         docker-compose -f docker-compose.test.yml run --rm \
             -e TEST_TIMEOUT=$TIMEOUT \
             test-runner \
-            python /tests/docker/performance_test.py
+            python /app/tests/docker/performance_test.py
         ;;
     all)
         echo -e "${YELLOW}运行所有测试...${NC}"
@@ -192,14 +193,14 @@ case $TEST_TYPE in
         docker-compose -f docker-compose.test.yml run --rm \
             -e TEST_TIMEOUT=$TIMEOUT \
             test-runner \
-            python -m pytest -v /tests/docker/integration_test.py \
+            python -m pytest -v /app/tests/docker/integration_test.py \
             --junit-xml=/test-results/integration-junit.xml
         
         # 性能测试
         docker-compose -f docker-compose.test.yml run --rm \
             -e TEST_TIMEOUT=$TIMEOUT \
             test-runner \
-            python /tests/docker/performance_test.py
+            python /app/tests/docker/performance_test.py
         ;;
     *)
         echo -e "${RED}未知的测试类型: $TEST_TYPE${NC}"
@@ -227,8 +228,9 @@ fi
 # 保持运行提示
 if [ "$KEEP_RUNNING" = true ]; then
     echo -e "\n${GREEN}服务保持运行中...${NC}"
-    echo "API端点: http://localhost:3000/api/v1/status"
-    echo "Redis CLI: docker-compose -f docker-compose.test.yml exec redis redis-cli"
+    echo "查看comsrv日志: docker-compose -f docker-compose.test.yml logs -f comsrv"
+    echo "Redis CLI: docker-compose -f docker-compose.test.yml exec redis redis-cli -a testpass123"
+    echo "容器内部API: docker-compose -f docker-compose.test.yml exec comsrv curl http://localhost:3000/api/health"
     echo ""
     echo -e "${YELLOW}按Ctrl+C停止服务${NC}"
     
