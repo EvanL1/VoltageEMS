@@ -149,4 +149,15 @@ impl RedisClient {
         pubsub.subscribe(channels).await?;
         Ok(pubsub)
     }
+
+    /// CONFIG SET 操作
+    pub async fn config_set(&mut self, parameter: &str, value: &str) -> Result<String> {
+        redis::cmd("CONFIG")
+            .arg("SET")
+            .arg(parameter)
+            .arg(value)
+            .query_async(&mut self.conn)
+            .await
+            .map_err(|e| e.into())
+    }
 }

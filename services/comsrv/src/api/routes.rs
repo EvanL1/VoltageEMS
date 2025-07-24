@@ -339,7 +339,7 @@ pub async fn control_channel(
 )]
 pub async fn read_point(
     State(state): State<AppState>,
-    Path((channel_id, point_table, point_name)): Path<(String, String, String)>,
+    Path((channel_id, point_table, _point_name)): Path<(String, String, String)>,
 ) -> Result<Json<ApiResponse<PointValue>>, StatusCode> {
     let channel_id_u16 = channel_id
         .parse::<u16>()
@@ -420,7 +420,7 @@ pub async fn write_point(
         let point_id = format!("{}_{point_name}", point_table);
 
         // Convert JSON value to string for writing
-        let value_str = match &value.value {
+        let _value_str = match &value.value {
             serde_json::Value::String(s) => s.clone(),
             serde_json::Value::Number(n) => n.to_string(),
             serde_json::Value::Bool(b) => b.to_string(),
@@ -593,6 +593,7 @@ pub async fn get_channel_telemetry_tables(
 }
 
 /// Read CSV channel configuration and return complete table view
+#[allow(dead_code)]
 async fn read_channel_csv_config(
     channel_id: u16,
     channel_name: &str,

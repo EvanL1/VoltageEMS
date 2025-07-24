@@ -170,32 +170,31 @@ impl RedisDataScanner {
         Ok(())
     }
 
-    /// Scan points for a specific channel and type
+    /// Scan points for a specific channel and type using Hash structure
     async fn scan_channel_points(
         &self,
         channel_id: u16,
         point_type: &str,
     ) -> Result<Vec<PointData>> {
-        let pattern = format!("{}:{}:*", channel_id, point_type);
+        // Use new Hash key format: comsrv:{channelID}:{type}
+        let hash_key = format!("comsrv:{}:{}", channel_id, point_type);
 
-        // Use SCAN to get keys matching the pattern
-        let keys = self.redis_client.scan_keys(&pattern).await?;
+        // Get all fields and values from the hash
+        let hash_data = self.redis_client.hgetall(&hash_key).await?;
 
-        if keys.is_empty() {
+        if hash_data.is_empty() {
             return Ok(Vec::new());
         }
 
-        // Batch get values
-        let values = self.redis_client.mget(&keys).await?;
-
         let mut points = Vec::new();
-        for (key, value) in keys.iter().zip(values.iter()) {
-            if let Some(value_str) = value {
-                match self.parse_point_data(key, value_str) {
-                    Ok(point_data) => points.push(point_data),
-                    Err(e) => {
-                        debug!("Failed to parse point data for {}: {}", key, e);
-                    }
+        for (field, value) in hash_data.iter() {
+            match self.parse_point_data(channel_id, point_type, field, value) {
+                Ok(point_data) => points.push(point_data),
+                Err(e) => {
+                    debug!(
+                        "Failed to parse point data for {}:{}: {}",
+                        hash_key, field, e
+                    );
                 }
             }
         }
@@ -203,21 +202,18 @@ impl RedisDataScanner {
         Ok(points)
     }
 
-    /// Parse point data from Redis key and value
-    fn parse_point_data(&self, key: &str, value: &str) -> Result<PointData> {
-        // Parse key format: channel_id:type:point_id
-        let parts: Vec<&str> = key.split(':').collect();
-        if parts.len() != 3 {
-            return Err(anyhow!("Invalid key format: {}", key));
-        }
-
-        let channel_id = parts[0]
-            .parse::<u16>()
-            .map_err(|e| anyhow!("Invalid channel ID: {}", e))?;
-        let point_type = parts[1].to_string();
-        let point_id = parts[2]
+    /// Parse point data from Hash field and value
+    fn parse_point_data(
+        &self,
+        channel_id: u16,
+        point_type: &str,
+        field: &str,
+        value: &str,
+    ) -> Result<PointData> {
+        // In Hash structure, field is the point_id
+        let point_id = field
             .parse::<u32>()
-            .map_err(|e| anyhow!("Invalid point ID: {}", e))?;
+            .map_err(|e| anyhow!("Invalid point ID in field '{}': {}", field, e))?;
 
         // Try to parse as JSON format first
         if let Ok(json_value) = serde_json::from_str::<serde_json::Value>(value) {
@@ -239,7 +235,7 @@ impl RedisDataScanner {
 
             return Ok(PointData {
                 channel_id,
-                point_type,
+                point_type: point_type.to_string(),
                 point_id,
                 value: point_value,
                 timestamp,
@@ -267,7 +263,7 @@ impl RedisDataScanner {
 
         Ok(PointData {
             channel_id,
-            point_type,
+            point_type: point_type.to_string(),
             point_id,
             value: point_value,
             timestamp,
@@ -282,50 +278,44 @@ mod tests {
     #[test]
     fn test_parse_point_data() {
         // Create a minimal scanner just to test the parse_point_data method
-        let parse_fn = |key: &str, value: &str| -> Result<PointData> {
-            // Parse key format: channel_id:type:point_id
-            let parts: Vec<&str> = key.split(':').collect();
-            if parts.len() != 3 {
-                return Err(anyhow!("Invalid key format: {}", key));
-            }
+        let parse_fn =
+            |channel_id: u16, point_type: &str, field: &str, value: &str| -> Result<PointData> {
+                // In Hash structure, field is the point_id
+                let point_id = field
+                    .parse::<u32>()
+                    .map_err(|e| anyhow!("Invalid point ID in field '{}': {}", field, e))?;
 
-            let channel_id = parts[0]
-                .parse::<u16>()
-                .map_err(|e| anyhow!("Invalid channel ID: {}", e))?;
-            let point_type = parts[1].to_string();
-            let point_id = parts[2]
-                .parse::<u32>()
-                .map_err(|e| anyhow!("Invalid point ID: {}", e))?;
+                // Parse value format: value:timestamp
+                let value_parts: Vec<&str> = value.split(':').collect();
+                if value_parts.len() != 2 {
+                    return Err(anyhow!("Invalid value format: {}", value));
+                }
 
-            // Parse value format: value:timestamp
-            let value_parts: Vec<&str> = value.split(':').collect();
-            if value_parts.len() != 2 {
-                return Err(anyhow!("Invalid value format: {}", value));
-            }
+                let point_value = value_parts[0]
+                    .parse::<f64>()
+                    .map_err(|e| anyhow!("Invalid point value: {}", e))?;
+                let timestamp_ms = value_parts[1]
+                    .parse::<i64>()
+                    .map_err(|e| anyhow!("Invalid timestamp: {}", e))?;
 
-            let point_value = value_parts[0]
-                .parse::<f64>()
-                .map_err(|e| anyhow!("Invalid point value: {}", e))?;
-            let timestamp_ms = value_parts[1]
-                .parse::<i64>()
-                .map_err(|e| anyhow!("Invalid timestamp: {}", e))?;
+                let timestamp = DateTime::from_timestamp_millis(timestamp_ms)
+                    .ok_or_else(|| anyhow!("Invalid timestamp value: {}", timestamp_ms))?;
 
-            let timestamp = DateTime::from_timestamp_millis(timestamp_ms)
-                .ok_or_else(|| anyhow!("Invalid timestamp value: {}", timestamp_ms))?;
+                Ok(PointData {
+                    channel_id,
+                    point_type: point_type.to_string(),
+                    point_id,
+                    value: point_value,
+                    timestamp,
+                })
+            };
 
-            Ok(PointData {
-                channel_id,
-                point_type,
-                point_id,
-                value: point_value,
-                timestamp,
-            })
-        };
-
-        // Test valid data
-        let key = "1001:m:10001";
+        // Test valid data with new Hash format
+        let channel_id = 1001;
+        let point_type = "m";
+        let field = "10001"; // point_id as field
         let value = "75.5:1704956400000";
-        let result = parse_fn(key, value);
+        let result = parse_fn(channel_id, point_type, field, value);
         assert!(result.is_ok());
 
         let point = result.unwrap();
@@ -334,12 +324,12 @@ mod tests {
         assert_eq!(point.point_id, 10001);
         assert_eq!(point.value, 75.5);
 
-        // Test invalid key format
-        let result = parse_fn("invalid_key", value);
+        // Test invalid field format
+        let result = parse_fn(channel_id, point_type, "invalid_field", value);
         assert!(result.is_err());
 
         // Test invalid value format
-        let result = parse_fn(key, "invalid_value");
+        let result = parse_fn(channel_id, point_type, field, "invalid_value");
         assert!(result.is_err());
     }
 }

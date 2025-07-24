@@ -2,502 +2,590 @@
 
 ## 概述
 
-alarmsrv（Alarm Service）是 VoltageEMS 的告警管理服务，负责实时监控系统数据，检测异常情况，生成告警事件，并通过多种渠道发送通知。
+alarmsrv 采用事件驱动架构，通过监控 Redis 数据流实现实时告警检测。服务使用简化的键值存储结构 `alarm:{id}`，配合多维度索引实现高效的告警管理和查询。
 
-## 架构特点
-
-1. **实时检测**：毫秒级告警触发
-2. **规则引擎**：灵活的告警规则配置
-3. **智能抑制**：防止告警风暴
-4. **多渠道通知**：邮件、短信、Webhook
-5. **告警生命周期**：完整的告警状态管理
-
-## 系统架构图
+## 核心架构
 
 ```
-┌────────────────────────────────────────────────────────────┐
-│                        alarmsrv                             │
-├────────────────────────────────────────────────────────────┤
-│                   Detection Layer                           │
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐    │
-│  │Data Monitor  │  │Rule Engine   │  │Threshold Check│    │
-│  └──────┬───────┘  └──────┬───────┘  └──────┬───────┘    │
-│         └──────────────────┴──────────────────┘            │
-│                            │                                │
-│                   Processing Layer                          │
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐    │
-│  │Alarm Manager │  │Suppression   │  │Aggregation   │    │
-│  └──────────────┘  └──────────────┘  └──────────────┘    │
-│                            │                                │
-│                  Notification Layer                         │
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐    │
-│  │Email Sender  │  │SMS Gateway   │  │Webhook Client│    │
-│  └──────────────┘  └──────────────┘  └──────────────┘    │
-└────────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────┐
+│                      alarmsrv                           │
+├─────────────────────────────────────────────────────────┤
+│                   API Server                            │
+│              (Alarms/Stats/Config)                      │
+├─────────────────────────────────────────────────────────┤
+│                 Monitor Engine                          │
+│     ┌──────────────┬──────────────┬──────────────┐    │
+│     │ Data         │ Threshold    │ Pattern      │    │
+│     │ Subscriber   │ Evaluator    │ Matcher      │    │
+│     └──────────────┴──────────────┴──────────────┘    │
+├─────────────────────────────────────────────────────────┤
+│                Alarm Processor                          │
+│     ┌──────────┬──────────┬──────────┬──────────┐    │
+│     │Detector  │Classifier │Creator   │Escalator │    │
+│     └──────────┴──────────┴──────────┴──────────┘    │
+├─────────────────────────────────────────────────────────┤
+│                 Storage Layer                           │
+│     ┌──────────────┬──────────────┬──────────────┐    │
+│     │ Alarm Store  │ Index        │ Statistics   │    │
+│     │ (alarm:id)   │ Manager      │ Collector    │    │
+│     └──────────────┴──────────────┴──────────────┘    │
+├─────────────────────────────────────────────────────────┤
+│                  Redis Client                           │
+│          ┌──────────────┬──────────────┐              │
+│          │ Key-Value    │   Pub/Sub    │              │
+│          └──────────────┴──────────────┘              │
+└─────────────────────────────────────────────────────────┘
 ```
 
-## 核心组件
+## 组件说明
 
-### 1. Alarm Detection（告警检测）
+### 1. Monitor Engine
 
-#### 数据监控器
+负责监控数据源并检测告警条件：
+
 ```rust
-pub struct DataMonitor {
-    redis_client: Arc<RedisClient>,
-    rule_engine: Arc<RuleEngine>,
-    alarm_queue: mpsc::Sender<AlarmEvent>,
+pub struct MonitorEngine {
+    subscribers: Vec<DataSubscriber>,
+    evaluator: ThresholdEvaluator,
+    pattern_matcher: PatternMatcher,
 }
 
-impl DataMonitor {
-    /// 监控实时数据
-    pub async fn monitor_realtime_data(&self) -> Result<()> {
+pub struct DataSubscriber {
+    patterns: Vec<String>,
+    redis_client: Arc<RedisClient>,
+    handler: Arc<dyn DataHandler>,
+}
+
+impl DataSubscriber {
+    pub async fn subscribe(&self) -> Result<()> {
         let mut pubsub = self.redis_client.get_async_pubsub().await?;
-        pubsub.psubscribe("point:update:*").await?;
         
+        // 订阅数据通道
+        for pattern in &self.patterns {
+            pubsub.psubscribe(pattern).await?;
+        }
+        
+        // 处理消息
         while let Some(msg) = pubsub.on_message().next().await {
-            if let Ok(point_data) = self.parse_point_update(&msg) {
-                // 检查告警规则
-                if let Some(alarm) = self.rule_engine.check(&point_data).await? {
-                    self.alarm_queue.send(alarm).await?;
+            self.handle_message(msg).await?;
+        }
+        
+        Ok(())
+    }
+    
+    async fn handle_message(&self, msg: PubSubMessage) -> Result<()> {
+        let channel = msg.get_channel_name()?;
+        let payload = msg.get_payload()?;
+        
+        // 解析消息格式: "pointID:value"
+        if let Some((point_id, value)) = payload.split_once(':') {
+            let data_point = DataPoint {
+                channel: channel.to_string(),
+                point_id: point_id.parse()?,
+                value: value.parse::<f64>()?,
+                timestamp: Utc::now(),
+            };
+            
+            self.handler.handle_data(data_point).await?;
+        }
+        
+        Ok(())
+    }
+}
+```
+
+### 2. Threshold Evaluator
+
+评估数据是否触发告警阈值：
+
+```rust
+pub struct ThresholdEvaluator {
+    rules: HashMap<String, Vec<ThresholdRule>>,
+}
+
+pub struct ThresholdRule {
+    pub field: String,
+    pub operator: ComparisonOperator,
+    pub value: f64,
+    pub level: AlarmLevel,
+    pub debounce: Option<Duration>,
+}
+
+pub enum ComparisonOperator {
+    GreaterThan,
+    LessThan,
+    Equal,
+    NotEqual,
+    GreaterThanOrEqual,
+    LessThanOrEqual,
+}
+
+impl ThresholdEvaluator {
+    pub fn evaluate(
+        &self,
+        data_point: &DataPoint,
+    ) -> Option<AlarmTrigger> {
+        let key = format!("{}:{}", data_point.channel, data_point.point_id);
+        
+        if let Some(rules) = self.rules.get(&key) {
+            for rule in rules {
+                if self.check_rule(rule, data_point.value) {
+                    return Some(AlarmTrigger {
+                        rule: rule.clone(),
+                        data_point: data_point.clone(),
+                        triggered_at: Utc::now(),
+                    });
+                }
+            }
+        }
+        
+        None
+    }
+    
+    fn check_rule(&self, rule: &ThresholdRule, value: f64) -> bool {
+        match rule.operator {
+            ComparisonOperator::GreaterThan => value > rule.value,
+            ComparisonOperator::LessThan => value < rule.value,
+            ComparisonOperator::Equal => (value - rule.value).abs() < f64::EPSILON,
+            ComparisonOperator::NotEqual => (value - rule.value).abs() >= f64::EPSILON,
+            ComparisonOperator::GreaterThanOrEqual => value >= rule.value,
+            ComparisonOperator::LessThanOrEqual => value <= rule.value,
+        }
+    }
+}
+```
+
+### 3. Alarm Classifier
+
+智能分类告警：
+
+```rust
+pub struct AlarmClassifier {
+    category_rules: HashMap<AlarmCategory, CategoryRule>,
+}
+
+pub struct CategoryRule {
+    pub patterns: Vec<String>,
+    pub keywords: Vec<String>,
+    pub weight: f64,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum AlarmCategory {
+    Environmental,
+    Power,
+    Communication,
+    System,
+    Security,
+    Unknown,
+}
+
+impl AlarmClassifier {
+    pub fn classify(&self, alarm_data: &AlarmData) -> AlarmCategory {
+        let mut scores: HashMap<AlarmCategory, f64> = HashMap::new();
+        
+        // 检查标题和描述
+        let text = format!("{} {}", alarm_data.title, alarm_data.description);
+        
+        for (category, rule) in &self.category_rules {
+            let mut score = 0.0;
+            
+            // 模式匹配
+            for pattern in &rule.patterns {
+                if text.contains(pattern) {
+                    score += rule.weight;
+                }
+            }
+            
+            // 关键词匹配
+            for keyword in &rule.keywords {
+                if text.to_lowercase().contains(&keyword.to_lowercase()) {
+                    score += rule.weight * 0.5;
+                }
+            }
+            
+            if score > 0.0 {
+                scores.insert(category.clone(), score);
+            }
+        }
+        
+        // 返回得分最高的分类
+        scores.into_iter()
+            .max_by(|a, b| a.1.partial_cmp(&b.1).unwrap())
+            .map(|(category, _)| category)
+            .unwrap_or(AlarmCategory::Unknown)
+    }
+}
+```
+
+### 4. Storage Layer
+
+简化的存储结构：
+
+```rust
+pub struct AlarmStorage {
+    redis_client: Arc<RedisClient>,
+    index_manager: IndexManager,
+}
+
+impl AlarmStorage {
+    /// 存储告警（简化的键结构）
+    pub async fn store_alarm(&self, alarm: &Alarm) -> Result<()> {
+        let key = format!("alarm:{}", alarm.id);
+        let value = serde_json::to_string(alarm)?;
+        
+        // 存储告警数据
+        self.redis_client.set(&key, value).await?;
+        
+        // 更新索引
+        self.index_manager.index_alarm(alarm).await?;
+        
+        Ok(())
+    }
+    
+    /// 获取告警
+    pub async fn get_alarm(&self, alarm_id: &str) -> Result<Option<Alarm>> {
+        let key = format!("alarm:{}", alarm_id);
+        
+        match self.redis_client.get(&key).await? {
+            Some(data) => {
+                let alarm: Alarm = serde_json::from_str(&data)?;
+                Ok(Some(alarm))
+            }
+            None => Ok(None),
+        }
+    }
+}
+
+/// 索引管理器
+pub struct IndexManager {
+    redis_client: Arc<RedisClient>,
+}
+
+impl IndexManager {
+    pub async fn index_alarm(&self, alarm: &Alarm) -> Result<()> {
+        let alarm_id = &alarm.id;
+        
+        // 状态索引
+        let status_key = format!("alarm:index:{}", alarm.status.to_string().to_lowercase());
+        self.redis_client.sadd(&status_key, alarm_id).await?;
+        
+        // 级别索引
+        let level_key = format!("alarm:index:level:{}", alarm.level.to_string().to_lowercase());
+        self.redis_client.sadd(&level_key, alarm_id).await?;
+        
+        // 分类索引
+        let category_key = format!("alarm:index:category:{}", alarm.category.to_string().to_lowercase());
+        self.redis_client.sadd(&category_key, alarm_id).await?;
+        
+        // 日期索引
+        let date_key = format!("alarm:index:date:{}", alarm.created_at.format("%Y-%m-%d"));
+        self.redis_client.sadd(&date_key, alarm_id).await?;
+        
+        Ok(())
+    }
+    
+    pub async fn remove_from_indexes(&self, alarm: &Alarm) -> Result<()> {
+        let alarm_id = &alarm.id;
+        
+        // 从所有相关索引中移除
+        let keys = vec![
+            format!("alarm:index:{}", alarm.status.to_string().to_lowercase()),
+            format!("alarm:index:level:{}", alarm.level.to_string().to_lowercase()),
+            format!("alarm:index:category:{}", alarm.category.to_string().to_lowercase()),
+            format!("alarm:index:date:{}", alarm.created_at.format("%Y-%m-%d")),
+        ];
+        
+        for key in keys {
+            self.redis_client.srem(&key, alarm_id).await?;
+        }
+        
+        Ok(())
+    }
+}
+```
+
+## 告警生命周期
+
+### 状态流转
+
+```
+Created → Active → Acknowledged → Resolved → Archived
+           ↓         ↓
+       Escalated  Escalated
+```
+
+### 生命周期管理
+
+```rust
+pub struct AlarmLifecycle {
+    storage: Arc<AlarmStorage>,
+    notifier: Arc<NotificationService>,
+}
+
+impl AlarmLifecycle {
+    pub async fn create_alarm(&self, alarm_data: AlarmData) -> Result<Alarm> {
+        let alarm = Alarm {
+            id: Uuid::new_v4().to_string(),
+            title: alarm_data.title,
+            description: alarm_data.description,
+            category: alarm_data.category,
+            level: alarm_data.level,
+            status: AlarmStatus::Active,
+            source: alarm_data.source,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+            acknowledged_at: None,
+            resolved_at: None,
+        };
+        
+        // 存储告警
+        self.storage.store_alarm(&alarm).await?;
+        
+        // 发送通知
+        self.notifier.notify_alarm_created(&alarm).await?;
+        
+        Ok(alarm)
+    }
+    
+    pub async fn acknowledge_alarm(
+        &self,
+        alarm_id: &str,
+        acknowledged_by: &str,
+        notes: Option<&str>,
+    ) -> Result<()> {
+        let mut alarm = self.storage.get_alarm(alarm_id).await?
+            .ok_or_else(|| Error::AlarmNotFound)?;
+        
+        // 更新状态
+        alarm.status = AlarmStatus::Acknowledged;
+        alarm.acknowledged_at = Some(Utc::now());
+        alarm.updated_at = Utc::now();
+        
+        // 保存更新
+        self.storage.update_alarm(&alarm).await?;
+        
+        // 发送通知
+        self.notifier.notify_alarm_acknowledged(&alarm).await?;
+        
+        Ok(())
+    }
+}
+```
+
+## 自动升级机制
+
+### 升级引擎
+
+```rust
+pub struct EscalationEngine {
+    rules: Vec<EscalationRule>,
+    storage: Arc<AlarmStorage>,
+}
+
+pub struct EscalationRule {
+    pub from_level: AlarmLevel,
+    pub to_level: AlarmLevel,
+    pub after: Duration,
+    pub condition: EscalationCondition,
+}
+
+pub enum EscalationCondition {
+    NotAcknowledged,
+    NotResolved,
+    Always,
+}
+
+impl EscalationEngine {
+    pub async fn check_escalations(&self) -> Result<()> {
+        // 获取活跃告警
+        let active_alarms = self.storage.get_alarms_by_status(
+            AlarmStatus::Active
+        ).await?;
+        
+        for alarm in active_alarms {
+            for rule in &self.rules {
+                if self.should_escalate(&alarm, rule) {
+                    self.escalate_alarm(&alarm, &rule.to_level).await?;
                 }
             }
         }
         
         Ok(())
     }
-}
-```
-
-#### 规则引擎
-```rust
-pub struct RuleEngine {
-    rules: Arc<RwLock<HashMap<String, AlarmRule>>>,
-    expression_engine: ExpressionEngine,
-}
-
-#[derive(Debug, Clone)]
-pub struct AlarmRule {
-    /// 规则ID
-    pub id: String,
     
-    /// 规则名称
-    pub name: String,
-    
-    /// 触发条件
-    pub condition: Condition,
-    
-    /// 告警级别
-    pub severity: AlarmSeverity,
-    
-    /// 告警内容模板
-    pub message_template: String,
-    
-    /// 抑制策略
-    pub suppression: Option<SuppressionPolicy>,
-}
-
-impl RuleEngine {
-    /// 检查数据是否触发告警
-    pub async fn check(&self, data: &PointData) -> Result<Option<AlarmEvent>> {
-        let rules = self.rules.read().await;
+    fn should_escalate(&self, alarm: &Alarm, rule: &EscalationRule) -> bool {
+        // 检查级别匹配
+        if alarm.level != rule.from_level {
+            return false;
+        }
         
-        for rule in rules.values() {
-            if self.evaluate_condition(&rule.condition, data).await? {
-                return Ok(Some(self.create_alarm_event(rule, data)?));
+        // 检查时间条件
+        let elapsed = Utc::now() - alarm.created_at;
+        if elapsed < rule.after {
+            return false;
+        }
+        
+        // 检查升级条件
+        match rule.condition {
+            EscalationCondition::NotAcknowledged => {
+                alarm.acknowledged_at.is_none()
             }
-        }
-        
-        Ok(None)
-    }
-}
-```
-
-### 2. Alarm Processing（告警处理）
-
-#### 告警管理器
-```rust
-pub struct AlarmManager {
-    /// 活跃告警
-    active_alarms: Arc<RwLock<HashMap<String, ActiveAlarm>>>,
-    
-    /// 告警历史
-    alarm_history: Arc<AlarmHistory>,
-    
-    /// 通知管理器
-    notifier: Arc<NotificationManager>,
-}
-
-impl AlarmManager {
-    /// 处理新告警
-    pub async fn process_alarm(&self, event: AlarmEvent) -> Result<()> {
-        // 1. 检查是否需要抑制
-        if self.should_suppress(&event).await? {
-            return Ok(());
-        }
-        
-        // 2. 创建或更新告警
-        let alarm = self.create_or_update_alarm(event).await?;
-        
-        // 3. 发送通知
-        if alarm.is_new || alarm.severity_changed {
-            self.notifier.send_notification(&alarm).await?;
-        }
-        
-        // 4. 记录历史
-        self.alarm_history.record(&alarm).await?;
-        
-        Ok(())
-    }
-    
-    /// 告警恢复
-    pub async fn recover_alarm(&self, alarm_id: &str) -> Result<()> {
-        let mut active = self.active_alarms.write().await;
-        
-        if let Some(alarm) = active.remove(alarm_id) {
-            // 发送恢复通知
-            self.notifier.send_recovery(&alarm).await?;
-            
-            // 更新历史记录
-            self.alarm_history.mark_recovered(alarm_id).await?;
-        }
-        
-        Ok(())
-    }
-}
-```
-
-#### 告警抑制
-```rust
-pub struct SuppressionManager {
-    /// 抑制规则
-    rules: Vec<SuppressionRule>,
-    
-    /// 告警计数器
-    counters: Arc<RwLock<HashMap<String, AlarmCounter>>>,
-}
-
-#[derive(Debug, Clone)]
-pub struct SuppressionRule {
-    /// 时间窗口
-    pub window: Duration,
-    
-    /// 最大告警数
-    pub max_count: u32,
-    
-    /// 抑制时长
-    pub suppress_duration: Duration,
-}
-
-impl SuppressionManager {
-    /// 检查是否应该抑制
-    pub async fn should_suppress(&self, alarm: &AlarmEvent) -> bool {
-        let mut counters = self.counters.write().await;
-        let counter = counters.entry(alarm.rule_id.clone())
-            .or_insert_with(|| AlarmCounter::new());
-        
-        // 更新计数
-        counter.increment();
-        
-        // 检查抑制条件
-        for rule in &self.rules {
-            if counter.count_in_window(rule.window) > rule.max_count {
-                counter.suppress_until = Some(Instant::now() + rule.suppress_duration);
-                return true;
+            EscalationCondition::NotResolved => {
+                alarm.resolved_at.is_none()
             }
+            EscalationCondition::Always => true,
         }
-        
-        // 检查是否在抑制期
-        if let Some(until) = counter.suppress_until {
-            return Instant::now() < until;
+    }
+}
+```
+
+## 查询优化
+
+### 多条件查询
+
+```rust
+pub async fn query_alarms(
+    &self,
+    filters: AlarmFilters,
+) -> Result<Vec<Alarm>> {
+    let mut alarm_ids = HashSet::new();
+    let mut first_filter = true;
+    
+    // 状态过滤
+    if let Some(status) = filters.status {
+        let key = format!("alarm:index:{}", status.to_lowercase());
+        let ids = self.redis_client.smembers(&key).await?;
+        if first_filter {
+            alarm_ids = ids.into_iter().collect();
+            first_filter = false;
+        } else {
+            alarm_ids = alarm_ids.intersection(&ids.into_iter().collect()).cloned().collect();
         }
-        
-        false
     }
-}
-```
-
-### 3. Notification（通知系统）
-
-#### 通知管理器
-```rust
-pub struct NotificationManager {
-    channels: Vec<Box<dyn NotificationChannel>>,
-    router: NotificationRouter,
-    template_engine: TemplateEngine,
-}
-
-#[async_trait]
-pub trait NotificationChannel: Send + Sync {
-    /// 发送通知
-    async fn send(&self, notification: &Notification) -> Result<()>;
     
-    /// 检查可用性
-    async fn is_available(&self) -> bool;
-}
-```
-
-#### 邮件通知
-```rust
-pub struct EmailChannel {
-    smtp_client: SmtpClient,
-    config: EmailConfig,
-}
-
-#[async_trait]
-impl NotificationChannel for EmailChannel {
-    async fn send(&self, notification: &Notification) -> Result<()> {
-        let email = Message::builder()
-            .from(self.config.from.parse()?)
-            .to(notification.recipient.parse()?)
-            .subject(&notification.subject)
-            .body(notification.content.clone())?;
-        
-        self.smtp_client.send(email).await?;
-        Ok(())
-    }
-}
-```
-
-#### Webhook 通知
-```rust
-pub struct WebhookChannel {
-    http_client: reqwest::Client,
-    endpoints: Vec<WebhookEndpoint>,
-}
-
-impl WebhookChannel {
-    async fn send_webhook(&self, alarm: &AlarmEvent) -> Result<()> {
-        let payload = json!({
-            "alarm_id": alarm.id,
-            "severity": alarm.severity,
-            "message": alarm.message,
-            "timestamp": alarm.timestamp,
-            "tags": alarm.tags,
-            "data": alarm.data,
-        });
-        
-        for endpoint in &self.endpoints {
-            let response = self.http_client
-                .post(&endpoint.url)
-                .header("X-Alarm-Token", &endpoint.token)
-                .json(&payload)
-                .timeout(Duration::from_secs(5))
-                .send()
-                .await?;
-            
-            if !response.status().is_success() {
-                error!("Webhook failed: {}", response.status());
-            }
+    // 级别过滤
+    if let Some(level) = filters.level {
+        let key = format!("alarm:index:level:{}", level.to_lowercase());
+        let ids = self.redis_client.smembers(&key).await?;
+        if first_filter {
+            alarm_ids = ids.into_iter().collect();
+            first_filter = false;
+        } else {
+            alarm_ids = alarm_ids.intersection(&ids.into_iter().collect()).cloned().collect();
         }
-        
-        Ok(())
     }
-}
-```
-
-## 告警规则配置
-
-### 规则定义
-```yaml
-rules:
-  - id: "high_temperature"
-    name: "高温告警"
-    condition:
-      type: threshold
-      field: value
-      operator: ">"
-      threshold: 85
-      duration: 60s  # 持续60秒触发
-    severity: warning
-    message: "设备 {device_name} 温度过高: {value}°C"
-    tags:
-      - temperature
-      - safety
-      
-  - id: "power_failure"
-    name: "电源故障"
-    condition:
-      type: expression
-      expression: "voltage_a < 50 && voltage_b < 50 && voltage_c < 50"
-    severity: critical
-    message: "设备 {device_name} 电源故障"
-    actions:
-      - type: webhook
-        url: "https://api.example.com/critical-alerts"
-```
-
-### 条件类型
-
-#### 阈值条件
-```rust
-pub enum ThresholdCondition {
-    /// 简单阈值
-    Simple {
-        field: String,
-        operator: ComparisonOp,
-        threshold: f64,
-    },
     
-    /// 范围条件
-    Range {
-        field: String,
-        min: f64,
-        max: f64,
-        inclusive: bool,
-    },
-    
-    /// 持续时间
-    Duration {
-        condition: Box<ThresholdCondition>,
-        duration: Duration,
-    },
-}
-```
-
-#### 表达式条件
-```rust
-pub struct ExpressionCondition {
-    /// 表达式字符串
-    expression: String,
-    
-    /// 变量映射
-    variables: HashMap<String, String>,
-    
-    /// 计算引擎
-    evaluator: ExpressionEvaluator,
-}
-```
-
-## 告警状态管理
-
-### 告警生命周期
-```
-Created → Active → Acknowledged → Recovering → Recovered → Closed
-   │         │           │            │            │
-   └─────────┴───────────┴────────────┴────────────┴─→ Suppressed
-```
-
-### 状态转换
-```rust
-pub struct AlarmStateMachine {
-    transitions: HashMap<(AlarmState, AlarmEvent), AlarmState>,
-}
-
-impl AlarmStateMachine {
-    pub fn transition(
-        &self,
-        current: AlarmState,
-        event: AlarmEvent,
-    ) -> Result<AlarmState> {
-        self.transitions
-            .get(&(current, event))
-            .cloned()
-            .ok_or_else(|| Error::InvalidTransition)
+    // 批量获取告警数据
+    let mut alarms = Vec::new();
+    for id in alarm_ids.iter().take(filters.limit.unwrap_or(100)) {
+        if let Some(alarm) = self.get_alarm(id).await? {
+            alarms.push(alarm);
+        }
     }
+    
+    // 排序
+    alarms.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+    
+    Ok(alarms)
 }
 ```
 
 ## 性能优化
 
-### 1. 规则缓存
-```rust
-pub struct RuleCache {
-    /// 编译后的规则
-    compiled_rules: Arc<RwLock<HashMap<String, CompiledRule>>>,
-    
-    /// 规则索引
-    point_index: Arc<RwLock<HashMap<String, Vec<String>>>>,
-}
-```
+### 1. 批量处理
 
-### 2. 批量处理
 ```rust
 pub struct BatchProcessor {
-    batch_size: usize,
-    flush_interval: Duration,
-    buffer: Arc<Mutex<Vec<AlarmEvent>>>,
+    buffer: Arc<Mutex<Vec<AlarmTrigger>>>,
+    processor: Arc<AlarmProcessor>,
+    config: BatchConfig,
+}
+
+impl BatchProcessor {
+    pub async fn process_batch(&self) {
+        let triggers = {
+            let mut buffer = self.buffer.lock().await;
+            std::mem::take(&mut *buffer)
+        };
+        
+        if triggers.is_empty() {
+            return;
+        }
+        
+        // 去重
+        let unique_triggers = self.deduplicate(triggers);
+        
+        // 批量创建告警
+        for trigger in unique_triggers {
+            self.processor.create_alarm_from_trigger(trigger).await.ok();
+        }
+    }
 }
 ```
 
-### 3. 异步通知
+### 2. 缓存策略
+
 ```rust
-pub struct AsyncNotifier {
-    /// 通知队列
-    queue: Arc<SegQueue<Notification>>,
-    
-    /// 工作线程数
-    worker_count: usize,
+pub struct AlarmCache {
+    active_alarms: Arc<RwLock<HashMap<String, Alarm>>>,
+    ttl: Duration,
+}
+
+impl AlarmCache {
+    pub async fn get_or_load(
+        &self,
+        alarm_id: &str,
+        loader: impl Future<Output = Result<Option<Alarm>>>,
+    ) -> Result<Option<Alarm>> {
+        // 检查缓存
+        if let Some(alarm) = self.active_alarms.read().await.get(alarm_id) {
+            return Ok(Some(alarm.clone()));
+        }
+        
+        // 从存储加载
+        let alarm = loader.await?;
+        
+        // 更新缓存
+        if let Some(ref a) = alarm {
+            if a.status == AlarmStatus::Active {
+                self.active_alarms.write().await.insert(alarm_id.to_string(), a.clone());
+            }
+        }
+        
+        Ok(alarm)
+    }
 }
 ```
 
 ## 监控指标
 
-- 告警触发率
-- 规则评估耗时
-- 通知发送成功率
-- 活跃告警数量
-- 抑制告警数量
-
-## 配置示例
-
-```yaml
-# alarmsrv 配置
-redis:
-  url: "redis://localhost:6379"
-  
-engine:
-  max_rules: 1000
-  evaluation_threads: 4
-  
-suppression:
-  default_window: 5m
-  default_max_count: 10
-  
-notification:
-  channels:
-    email:
-      enabled: true
-      smtp_host: "smtp.example.com"
-      smtp_port: 587
-      from: "alerts@example.com"
-      
-    webhook:
-      enabled: true
-      endpoints:
-        - url: "https://api.example.com/alerts"
-          token: "${WEBHOOK_TOKEN}"
-          
-history:
-  retention_days: 30
-  archive_path: "/var/lib/alarmsrv/archive"
+```rust
+pub struct Metrics {
+    alarms_created: IntCounter,
+    alarms_acknowledged: IntCounter,
+    alarms_resolved: IntCounter,
+    alarms_escalated: IntCounter,
+    active_alarms: IntGauge,
+    processing_duration: Histogram,
+}
 ```
 
-## 集成示例
+## 错误处理
 
-### 钉钉通知
 ```rust
-pub struct DingTalkChannel {
-    webhook_url: String,
-    secret: String,
-}
-
-impl DingTalkChannel {
-    async fn send_dingtalk(&self, alarm: &AlarmEvent) -> Result<()> {
-        let timestamp = Utc::now().timestamp_millis();
-        let sign = self.calculate_sign(timestamp)?;
-        
-        let message = json!({
-            "msgtype": "markdown",
-            "markdown": {
-                "title": format!("[{}] {}", alarm.severity, alarm.name),
-                "text": self.format_markdown(alarm),
-            },
-            "at": {
-                "isAtAll": alarm.severity == AlarmSeverity::Critical,
-            }
-        });
-        
-        // 发送请求...
-    }
+#[derive(Debug, thiserror::Error)]
+pub enum AlarmError {
+    #[error("Alarm not found: {0}")]
+    AlarmNotFound(String),
+    
+    #[error("Invalid alarm state transition")]
+    InvalidStateTransition,
+    
+    #[error("Threshold configuration error: {0}")]
+    ThresholdConfig(String),
+    
+    #[error("Redis error: {0}")]
+    Redis(#[from] redis::RedisError),
 }
 ```

@@ -14,7 +14,7 @@ use super::traits::{PluginFactory, ProtocolMetadata, ProtocolPlugin};
 use crate::core::config::TelemetryType;
 use crate::storage::{
     PointData, PointStorage as VoltagePointStorage, PointUpdate as VoltagePointUpdate,
-    PublisherConfig, RetryConfig, Storage,
+    PublisherConfig, RetryConfig, RtdbStorage,
 };
 use crate::utils::error::{ComSrvError as Error, Result};
 
@@ -62,14 +62,20 @@ impl std::fmt::Debug for PluginEntry {
     }
 }
 
-impl PluginRegistry {
-    /// 创建新的插件注册表
-    pub fn new() -> Self {
+impl Default for PluginRegistry {
+    fn default() -> Self {
         Self {
             plugins: HashMap::new(),
             factories: HashMap::new(),
             load_order: Vec::new(),
         }
+    }
+}
+
+impl PluginRegistry {
+    /// 创建新的插件注册表
+    pub fn new() -> Self {
+        Self::default()
     }
 
     /// 获取全局注册表实例
@@ -363,13 +369,13 @@ pub trait PluginStorage: Send + Sync {
 
 /// 默认插件存储实现
 pub struct DefaultPluginStorage {
-    storage: Arc<Storage>,
+    storage: Arc<RtdbStorage>,
 }
 
 impl DefaultPluginStorage {
     /// 创建新的存储实例
     pub async fn new(redis_url: String) -> Result<Self> {
-        let storage = Storage::with_config(
+        let storage = RtdbStorage::with_config(
             &redis_url,
             RetryConfig::default(),
             Some(PublisherConfig::default()),
@@ -381,8 +387,8 @@ impl DefaultPluginStorage {
         })
     }
 
-    /// 从已有的Storage创建
-    pub fn from_storage(storage: Arc<Storage>) -> Self {
+    /// 从已有的RtdbStorage创建
+    pub fn from_storage(storage: Arc<RtdbStorage>) -> Self {
         Self { storage }
     }
 
@@ -433,7 +439,7 @@ impl PluginStorage for DefaultPluginStorage {
                     point_type: point_type.to_string(),
                     point_id: update.point_id,
                     data: PointData {
-                        value: update.value,
+                        value: update.value.into(),
                         timestamp: update.timestamp,
                     },
                     raw_value: update.raw_value,
@@ -456,7 +462,7 @@ impl PluginStorage for DefaultPluginStorage {
             .read_point(channel_id, point_type, point_id)
             .await?
         {
-            Some(data) => Ok(Some((data.value, data.timestamp))),
+            Some(data) => Ok(Some((data.value.into(), data.timestamp))),
             None => Ok(None),
         }
     }
@@ -469,8 +475,8 @@ impl PluginStorage for DefaultPluginStorage {
         config: PluginPointConfig,
     ) -> Result<()> {
         let point_type = telemetry_type_to_redis(telemetry_type);
-        let key = format!("cfg:{}:{}:{}", channel_id, point_type, point_id);
-        let value =
+        let _key = format!("cfg:{}:{}:{}", channel_id, point_type, point_id);
+        let _value =
             serde_json::to_string(&config).map_err(|e| Error::SerializationError(e.to_string()))?;
 
         // 临时实现，后续可以扩展Storage接口
@@ -520,7 +526,7 @@ pub mod discovery {
         let registry = PluginRegistry::global();
         let mut reg = registry.write().unwrap();
 
-        let plugin = Box::new(modbus::ModbusPlugin::new());
+        let plugin = Box::new(modbus::ModbusTcpPlugin::default());
         reg.register_plugin(plugin)?;
         reg.register_factory("modbus_tcp", modbus::create_plugin)?;
         reg.register_factory("modbus_rtu", modbus::create_plugin)?;
@@ -577,6 +583,7 @@ mod tests {
 
         // 测试插件注册
         struct TestPlugin;
+        #[async_trait::async_trait]
         impl ProtocolPlugin for TestPlugin {
             fn metadata(&self) -> ProtocolMetadata {
                 ProtocolMetadata {
@@ -589,6 +596,21 @@ mod tests {
                     features: vec![],
                     dependencies: HashMap::new(),
                 }
+            }
+
+            fn config_template(&self) -> Vec<crate::plugins::traits::ConfigTemplate> {
+                vec![]
+            }
+
+            fn validate_config(&self, _config: &HashMap<String, serde_json::Value>) -> Result<()> {
+                Ok(())
+            }
+
+            async fn create_instance(
+                &self,
+                _channel_config: crate::core::config::types::ChannelConfig,
+            ) -> Result<Box<dyn crate::core::combase::ComBase>> {
+                Err(crate::ComSrvError::protocol("Test plugin not implemented"))
             }
         }
 

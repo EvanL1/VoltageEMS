@@ -13,7 +13,6 @@ use figment::{
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::Path;
-use std::sync::Arc;
 use tokio::fs;
 use tracing::{debug, info, warn};
 
@@ -116,8 +115,10 @@ pub struct ConfigManager {
     /// 加载的应用配置
     config: AppConfig,
     /// Figment实例用于重新加载
+    #[allow(dead_code)]
     figment: Figment,
     /// 配置中心客户端
+    #[allow(dead_code)]
     config_center: Option<ConfigCenterClient>,
 }
 

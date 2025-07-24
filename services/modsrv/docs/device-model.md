@@ -2,621 +2,506 @@
 
 ## 概述
 
-modsrv 的设备模型系统提供了完整的物理设备抽象能力，支持属性定义、遥测映射、命令执行和实时计算。通过标准化的模型定义，实现了设备的统一管理和数据处理。
+modsrv 的设备模型系统提供了完整的物模型定义、实例管理和数据处理框架。通过标准化的模型定义，可以快速创建和管理各种工业设备的数字孪生。
 
-## 模型结构
+## 模型定义
 
-### 完整模型定义
+### 基本结构
 
-```rust
-pub struct DeviceModel {
-    /// 模型唯一标识
-    pub id: String,
-    
-    /// 模型名称
-    pub name: String,
-    
-    /// 版本号
-    pub version: String,
-    
-    /// 模型描述
-    pub description: String,
-    
-    /// 设备类型
-    pub device_type: DeviceType,
-    
-    /// 属性定义（静态配置）
-    pub properties: Vec<PropertyDefinition>,
-    
-    /// 遥测点定义（动态数据）
-    pub telemetry: Vec<TelemetryDefinition>,
-    
-    /// 命令定义（控制操作）
-    pub commands: Vec<CommandDefinition>,
-    
-    /// 事件定义（状态变化）
-    pub events: Vec<EventDefinition>,
-    
-    /// 计算定义（衍生数据）
-    pub calculations: Vec<CalculationDefinition>,
-    
-    /// 扩展元数据
-    pub metadata: HashMap<String, String>,
-}
-```
+设备模型使用 YAML 格式定义，包含以下核心要素：
 
-## 组件详解
-
-### 1. 属性定义（Properties）
-
-设备的静态配置参数，如额定值、型号等。
-
-```rust
-pub struct PropertyDefinition {
-    /// 属性标识符
-    pub identifier: String,
-    
-    /// 显示名称
-    pub name: String,
-    
-    /// 数据类型
-    pub data_type: DataType,
-    
-    /// 是否必需
-    pub required: bool,
-    
-    /// 默认值
-    pub default_value: Option<Value>,
-    
-    /// 约束条件
-    pub constraints: Option<Constraints>,
-    
-    /// 单位
-    pub unit: Option<String>,
-    
-    /// 描述
-    pub description: Option<String>,
-}
-```
-
-#### 示例：变压器属性
 ```yaml
+id: "power_meter_v1"
+name: "智能电表"
+version: "1.0.0"
+description: "三相智能电表物模型"
+
+# 属性定义（静态配置）
 properties:
-  - identifier: rated_capacity
-    name: 额定容量
-    data_type: float64
-    required: true
-    default_value: 1000
-    unit: kVA
-    constraints:
-      min: 100
-      max: 10000
-    description: 变压器额定容量
-    
-  - identifier: voltage_ratio
-    name: 变比
-    data_type: string
-    required: true
-    default_value: "10/0.4"
-    description: 高压侧/低压侧电压比
+  rated_voltage:
+    type: "float"
+    unit: "V"
+    default: 380.0
+    description: "额定电压"
+  
+  rated_current:
+    type: "float"
+    unit: "A"
+    default: 100.0
+    description: "额定电流"
+
+# 遥测定义（动态数据）
+telemetry:
+  voltage_a:
+    type: "float"
+    unit: "V"
+    source: "comsrv:1001:m:10001"
+    description: "A相电压"
+  
+  current_a:
+    type: "float"
+    unit: "A"
+    source: "comsrv:1001:m:10002"
+    description: "A相电流"
+  
+  power_factor:
+    type: "float"
+    unit: ""
+    calculated: true
+    description: "功率因数"
+
+# 命令定义（控制操作）
+commands:
+  reset_energy:
+    description: "复位电能计数"
+    parameters: []
+    target: "comsrv:1001:c:30001"
+  
+  set_limit:
+    description: "设置功率限值"
+    parameters:
+      - name: "limit"
+        type: "float"
+        unit: "kW"
+        min: 0
+        max: 1000
+    target: "comsrv:1001:a:40001"
+
+# 事件定义（异常告警）
+events:
+  overload:
+    description: "过载事件"
+    severity: "warning"
+    condition: "current_a > rated_current * 1.2"
+  
+  power_failure:
+    description: "断电事件"
+    severity: "critical"
+    condition: "voltage_a < 50"
+
+# 计算定义（衍生数据）
+calculations:
+  - id: "apparent_power"
+    description: "视在功率"
+    function: "multiply"
+    inputs: ["voltage_a", "current_a"]
+    output: "apparent_power"
+  
+  - id: "power_factor_calc"
+    description: "功率因数计算"
+    function: "custom_power_factor"
+    inputs: ["real_power", "apparent_power"]
+    output: "power_factor"
 ```
 
-### 2. 遥测定义（Telemetry）
-
-设备的实时测量数据。
-
-```rust
-pub struct TelemetryDefinition {
-    /// 遥测标识符
-    pub identifier: String,
-    
-    /// 显示名称
-    pub name: String,
-    
-    /// 数据类型
-    pub data_type: DataType,
-    
-    /// 采集方式
-    pub collection_type: CollectionType,
-    
-    /// 数据源映射
-    pub mapping: TelemetryMapping,
-    
-    /// 转换规则
-    pub transform: Option<TransformRule>,
-    
-    /// 单位
-    pub unit: Option<String>,
-}
-```
-
-#### 采集类型
-```rust
-pub enum CollectionType {
-    /// 周期采集
-    Periodic { interval_ms: u64 },
-    
-    /// 变化采集
-    OnChange { threshold: Option<f64> },
-    
-    /// 事件驱动
-    EventDriven,
-    
-    /// 混合模式
-    Hybrid {
-        interval_ms: u64,
-        change_threshold: Option<f64>,
-    },
-}
-```
-
-#### 数据映射
-```rust
-pub struct TelemetryMapping {
-    /// 通道ID
-    pub channel_id: u16,
-    
-    /// 点类型 (m/s/c/a)
-    pub point_type: String,
-    
-    /// 点ID
-    pub point_id: u32,
-    
-    /// 缩放因子
-    pub scale: Option<f64>,
-    
-    /// 偏移量
-    pub offset: Option<f64>,
-}
-```
-
-### 3. 命令定义（Commands）
-
-设备支持的控制操作。
-
-```rust
-pub struct CommandDefinition {
-    /// 命令标识符
-    pub identifier: String,
-    
-    /// 显示名称
-    pub name: String,
-    
-    /// 命令类型
-    pub command_type: CommandType,
-    
-    /// 输入参数
-    pub input_params: Vec<ParamDefinition>,
-    
-    /// 输出参数
-    pub output_params: Vec<ParamDefinition>,
-    
-    /// 命令映射
-    pub mapping: CommandMapping,
-}
-
-pub enum CommandType {
-    Control,    // 控制命令
-    Setting,    // 设置命令
-    Query,      // 查询命令
-    Action,     // 动作命令
-}
-```
-
-### 4. 事件定义（Events）
-
-设备状态变化和告警事件。
-
-```rust
-pub struct EventDefinition {
-    /// 事件标识符
-    pub identifier: String,
-    
-    /// 事件名称
-    pub name: String,
-    
-    /// 事件类型
-    pub event_type: EventType,
-    
-    /// 触发条件
-    pub trigger: TriggerCondition,
-    
-    /// 事件参数
-    pub params: Vec<ParamDefinition>,
-}
-
-pub enum TriggerCondition {
-    /// 阈值触发
-    Threshold {
-        variable: String,
-        operator: String,
-        value: f64,
-    },
-    
-    /// 表达式触发
-    Expression(String),
-    
-    /// 状态变化
-    StateChange {
-        variable: String,
-        from: Option<Value>,
-        to: Option<Value>,
-    },
-}
-```
-
-### 5. 计算定义（Calculations）
-
-基于原始数据的衍生计算。
-
-```rust
-pub struct CalculationDefinition {
-    /// 计算标识符
-    pub identifier: String,
-    
-    /// 计算名称
-    pub name: String,
-    
-    /// 输入变量
-    pub inputs: Vec<String>,
-    
-    /// 输出变量
-    pub outputs: Vec<String>,
-    
-    /// 计算表达式
-    pub expression: CalculationExpression,
-    
-    /// 执行条件
-    pub condition: Option<String>,
-}
-```
-
-## 模型实例化
-
-### 实例管理器
-
-```rust
-pub struct InstanceManager {
-    /// 模型注册表
-    model_registry: Arc<ModelRegistry>,
-    
-    /// 实例存储
-    instances: Arc<RwLock<HashMap<String, DeviceInstance>>>,
-    
-    /// 数据缓存
-    data_cache: Arc<RwLock<HashMap<String, DeviceData>>>,
-}
-```
+## 实例管理
 
 ### 创建实例
 
 ```rust
-// 创建电表实例
-let instance = instance_manager.create_instance(
-    "power_meter_v1",           // 模型ID
-    "meter_001",               // 实例ID
-    "1号楼总电表",              // 实例名称
-    Some(hashmap! {            // 初始属性
-        "location" => json!("1号楼配电室"),
-        "rated_voltage" => json!(380),
-    }),
-    None,                      // 配置参数
-).await?;
+use voltage_libs::types::StandardFloat;
+
+// 创建设备实例
+let instance = DeviceInstance {
+    id: "meter_001".to_string(),
+    model_id: "power_meter_v1".to_string(),
+    name: "1号楼总表".to_string(),
+    properties: hashmap! {
+        "rated_voltage" => Value::from(StandardFloat::new(380.0)),
+        "rated_current" => Value::from(StandardFloat::new(100.0)),
+    },
+    status: InstanceStatus::Active,
+    created_at: Utc::now(),
+};
+
+// 保存到 Redis
+instance_manager.create_instance(instance).await?;
 ```
 
 ### 实例数据结构
 
 ```rust
 pub struct DeviceInstance {
-    /// 实例唯一标识
-    pub instance_id: String,
-    
-    /// 所属模型ID
+    pub id: String,
     pub model_id: String,
-    
-    /// 实例名称
     pub name: String,
-    
-    /// 属性值
     pub properties: HashMap<String, Value>,
-    
-    /// 配置参数
-    pub config: HashMap<String, Value>,
-    
-    /// 实例状态
-    pub status: DeviceStatus,
-    
-    /// 创建时间
-    pub created_at: i64,
-    
-    /// 更新时间
-    pub updated_at: i64,
+    pub telemetry_cache: Arc<RwLock<HashMap<String, TelemetryData>>>,
+    pub status: InstanceStatus,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+pub struct TelemetryData {
+    pub value: StandardFloat,
+    pub timestamp: i64,
+    pub source: String,
+}
+
+pub enum InstanceStatus {
+    Active,
+    Inactive,
+    Maintenance,
+    Fault,
 }
 ```
 
-## 实时数据流
+## 数据流处理
 
-### 数据流处理器
+### 实时数据订阅
 
 ```rust
 pub struct DataFlowProcessor {
-    redis_client: Arc<RedisHandler>,
     instance_manager: Arc<InstanceManager>,
     calculation_engine: Arc<CalculationEngine>,
-    subscriptions: Arc<RwLock<HashMap<String, DataSubscription>>>,
-    update_channel: mpsc::Sender<DataUpdate>,
+    redis_client: Arc<RedisClient>,
+}
+
+impl DataFlowProcessor {
+    pub async fn start(&self) -> Result<()> {
+        // 获取所有活跃实例的数据源
+        let instances = self.instance_manager.get_active_instances().await?;
+        let mut patterns = HashSet::new();
+        
+        for instance in instances {
+            let model = self.get_model(&instance.model_id)?;
+            for telemetry in model.telemetry.values() {
+                if let Some(source) = &telemetry.source {
+                    patterns.insert(source.clone());
+                }
+            }
+        }
+        
+        // 订阅数据源
+        for pattern in patterns {
+            self.subscribe_pattern(pattern).await?;
+        }
+        
+        Ok(())
+    }
+    
+    async fn handle_data_update(&self, channel: &str, message: &str) -> Result<()> {
+        // 解析数据
+        let (point_id, value) = parse_message(message)?;
+        
+        // 查找受影响的实例
+        let affected_instances = self.find_affected_instances(channel).await?;
+        
+        // 更新实例数据并触发计算
+        for instance_id in affected_instances {
+            self.update_instance_telemetry(&instance_id, channel, value).await?;
+            self.trigger_calculations(&instance_id).await?;
+        }
+        
+        Ok(())
+    }
 }
 ```
 
-### 数据订阅流程
+### 计算触发
 
 ```rust
-// 1. 订阅实例数据
-dataflow_processor.subscribe_instance(
-    "meter_001".to_string(),
-    hashmap! {
-        "voltage_a" => "1001:m:10001",
-        "current_a" => "1001:m:10002",
-        "power_a" => "1001:m:10003",
-    },
-    Duration::from_secs(1),
-).await?;
+impl DataFlowProcessor {
+    async fn trigger_calculations(&self, instance_id: &str) -> Result<()> {
+        let instance = self.instance_manager.get_instance(instance_id).await?;
+        let model = self.get_model(&instance.model_id)?;
+        
+        // 执行所有计算
+        for calc_def in &model.calculations {
+            // 收集输入数据
+            let inputs = self.collect_inputs(&instance, &calc_def.inputs).await?;
+            
+            // 检查输入是否完整
+            if inputs.len() == calc_def.inputs.len() {
+                // 执行计算
+                let result = self.calculation_engine
+                    .execute_calculation(&calc_def.function, inputs, &calc_def.params)
+                    .await?;
+                
+                // 存储结果
+                self.store_calculation_result(
+                    &instance,
+                    &calc_def.output,
+                    result,
+                ).await?;
+            }
+        }
+        
+        Ok(())
+    }
+    
+    async fn store_calculation_result(
+        &self,
+        instance: &DeviceInstance,
+        field_name: &str,
+        value: StandardFloat,
+    ) -> Result<()> {
+        // 存储到 Redis Hash（无时间戳）
+        let hash_key = format!("modsrv:{}:measurement", instance.id);
+        self.redis_client
+            .hset(&hash_key, field_name, value.to_redis())
+            .await?;
+        
+        // 更新实例缓存
+        instance.telemetry_cache.write().await.insert(
+            field_name.to_string(),
+            TelemetryData {
+                value,
+                timestamp: Utc::now().timestamp_millis(),
+                source: "calculated".to_string(),
+            },
+        );
+        
+        Ok(())
+    }
+}
+```
 
-// 2. 处理数据更新
-async fn process_update(&self, update: DataUpdate) -> Result<()> {
-    // 更新实例遥测
-    self.instance_manager.update_telemetry(
-        &update.instance_id,
-        &update.telemetry_name,
-        update.value
+## 命令执行
+
+### 命令处理流程
+
+```rust
+pub async fn execute_command(
+    &self,
+    instance_id: &str,
+    command_id: &str,
+    parameters: HashMap<String, Value>,
+) -> Result<CommandResult> {
+    // 获取实例和模型
+    let instance = self.instance_manager.get_instance(instance_id).await?;
+    let model = self.get_model(&instance.model_id)?;
+    
+    // 查找命令定义
+    let command_def = model.commands.get(command_id)
+        .ok_or_else(|| Error::CommandNotFound(command_id.to_string()))?;
+    
+    // 验证参数
+    self.validate_command_parameters(&command_def, &parameters)?;
+    
+    // 构建控制消息
+    let control_message = self.build_control_message(
+        &command_def,
+        &parameters,
+    )?;
+    
+    // 发布到 Redis
+    if let Some(target) = &command_def.target {
+        let parts: Vec<&str> = target.split(':').collect();
+        if parts.len() >= 3 {
+            let channel = format!("cmd:{}:{}", parts[1], parts[2]);
+            self.redis_client
+                .publish(&channel, serde_json::to_string(&control_message)?)
+                .await?;
+        }
+    }
+    
+    Ok(CommandResult {
+        success: true,
+        message: format!("Command {} executed", command_id),
+        timestamp: Utc::now(),
+    })
+}
+```
+
+## 事件处理
+
+### 事件检测
+
+```rust
+pub struct EventDetector {
+    event_rules: HashMap<String, CompiledRule>,
+}
+
+impl EventDetector {
+    pub async fn check_events(
+        &self,
+        instance: &DeviceInstance,
+        model: &DeviceModel,
+    ) -> Vec<Event> {
+        let mut events = Vec::new();
+        
+        for (event_id, event_def) in &model.events {
+            // 评估条件
+            if let Ok(triggered) = self.evaluate_condition(
+                &event_def.condition,
+                instance,
+            ).await {
+                if triggered {
+                    events.push(Event {
+                        id: Uuid::new_v4().to_string(),
+                        instance_id: instance.id.clone(),
+                        event_type: event_id.clone(),
+                        severity: event_def.severity.clone(),
+                        description: event_def.description.clone(),
+                        timestamp: Utc::now(),
+                        data: self.collect_event_data(instance).await,
+                    });
+                }
+            }
+        }
+        
+        events
+    }
+}
+```
+
+## 数据查询
+
+### 查询接口
+
+```rust
+impl DeviceModelSystem {
+    /// 获取实例当前状态
+    pub async fn get_instance_state(
+        &self,
+        instance_id: &str,
+    ) -> Result<InstanceState> {
+        let instance = self.instance_manager.get_instance(instance_id).await?;
+        
+        // 从 Redis 读取最新数据
+        let measurements = self.read_measurements(&instance.id).await?;
+        let controls = self.read_controls(&instance.id).await?;
+        
+        Ok(InstanceState {
+            instance_id: instance.id.clone(),
+            model_id: instance.model_id.clone(),
+            properties: instance.properties.clone(),
+            telemetry: measurements,
+            controls,
+            status: instance.status.clone(),
+            last_update: instance.updated_at,
+        })
+    }
+    
+    /// 批量查询遥测数据
+    pub async fn get_telemetry_batch(
+        &self,
+        instance_id: &str,
+        telemetry_names: Vec<&str>,
+    ) -> Result<HashMap<String, StandardFloat>> {
+        let hash_key = format!("modsrv:{}:measurement", instance_id);
+        
+        // 批量获取
+        let values: Vec<Option<String>> = self.redis_client
+            .hmget(&hash_key, &telemetry_names)
+            .await?;
+        
+        // 构建结果
+        let mut result = HashMap::new();
+        for (name, value) in telemetry_names.iter().zip(values.iter()) {
+            if let Some(val) = value {
+                if let Ok(parsed) = val.parse::<f64>() {
+                    result.insert(
+                        name.to_string(),
+                        StandardFloat::new(parsed),
+                    );
+                }
+            }
+        }
+        
+        Ok(result)
+    }
+}
+```
+
+## 模型版本管理
+
+### 版本升级
+
+```rust
+pub async fn upgrade_instance_model(
+    &self,
+    instance_id: &str,
+    new_model_id: &str,
+) -> Result<()> {
+    let instance = self.instance_manager.get_instance(instance_id).await?;
+    let old_model = self.get_model(&instance.model_id)?;
+    let new_model = self.get_model(new_model_id)?;
+    
+    // 验证兼容性
+    self.validate_model_compatibility(&old_model, &new_model)?;
+    
+    // 迁移数据
+    let migrated_properties = self.migrate_properties(
+        &instance.properties,
+        &old_model,
+        &new_model,
+    )?;
+    
+    // 更新实例
+    self.instance_manager.update_instance_model(
+        instance_id,
+        new_model_id,
+        migrated_properties,
     ).await?;
-    
-    // 触发相关计算
-    self.trigger_calculations(&update).await?;
-    
-    // 检查事件触发
-    self.check_events(&update).await?;
     
     Ok(())
 }
 ```
 
-## 模型示例
-
-### 1. 智能电表模型
-
-```yaml
-id: smart_meter_v1
-name: 智能电表
-version: 1.0.0
-device_type: energy
-
-properties:
-  - identifier: meter_type
-    name: 电表类型
-    data_type: string
-    default_value: "三相四线"
-    
-  - identifier: accuracy_class
-    name: 精度等级
-    data_type: float64
-    default_value: 0.5
-
-telemetry:
-  - identifier: voltage_a
-    name: A相电压
-    data_type: float64
-    collection_type:
-      periodic:
-        interval_ms: 1000
-    mapping:
-      channel_id: 1001
-      point_type: m
-      point_id: 10001
-    unit: V
-    
-  - identifier: current_a
-    name: A相电流
-    data_type: float64
-    collection_type:
-      periodic:
-        interval_ms: 1000
-    mapping:
-      channel_id: 1001
-      point_type: m
-      point_id: 10002
-    unit: A
-
-calculations:
-  - identifier: apparent_power_a
-    name: A相视在功率
-    inputs: [voltage_a, current_a]
-    outputs: [apparent_power_a]
-    expression:
-      built_in:
-        function: multiply
-        args: []
-    
-  - identifier: daily_energy
-    name: 日电能累计
-    inputs: [total_power]
-    outputs: [daily_energy]
-    expression:
-      built_in:
-        function: integrate
-        args: ["1d"]
-
-events:
-  - identifier: over_voltage
-    name: 过压告警
-    event_type: alarm
-    trigger:
-      threshold:
-        variable: voltage_a
-        operator: ">"
-        value: 253
-        
-  - identifier: power_loss
-    name: 失电事件
-    event_type: fault
-    trigger:
-      expression: "voltage_a < 50 && voltage_b < 50 && voltage_c < 50"
-```
-
-### 2. 变压器监测模型
-
-```yaml
-id: transformer_monitor_v1
-name: 变压器监测
-version: 1.0.0
-device_type: energy
-
-properties:
-  - identifier: rated_capacity
-    name: 额定容量
-    data_type: float64
-    default_value: 1000
-    unit: kVA
-    
-  - identifier: cooling_type
-    name: 冷却方式
-    data_type: string
-    default_value: "ONAN"
-
-telemetry:
-  - identifier: oil_temp
-    name: 油温
-    data_type: float64
-    collection_type:
-      periodic:
-        interval_ms: 5000
-    mapping:
-      channel_id: 2001
-      point_type: m
-      point_id: 20001
-    unit: °C
-    
-  - identifier: winding_temp_h
-    name: 高压侧绕组温度
-    data_type: float64
-    collection_type:
-      hybrid:
-        interval_ms: 5000
-        change_threshold: 2.0
-    mapping:
-      channel_id: 2001
-      point_type: m
-      point_id: 20002
-    unit: °C
-
-calculations:
-  - identifier: load_rate
-    name: 负载率
-    inputs: [current_power, rated_capacity]
-    outputs: [load_rate]
-    expression:
-      math: "(current_power / rated_capacity) * 100"
-      
-  - identifier: temp_rise
-    name: 温升
-    inputs: [oil_temp, ambient_temp]
-    outputs: [temp_rise]
-    expression:
-      math: "oil_temp - ambient_temp"
-
-events:
-  - identifier: high_temp_alarm
-    name: 高温告警
-    event_type: alarm
-    trigger:
-      threshold:
-        variable: oil_temp
-        operator: ">"
-        value: 85
-        
-  - identifier: overload_alarm
-    name: 过载告警
-    event_type: alarm
-    trigger:
-      threshold:
-        variable: load_rate
-        operator: ">"
-        value: 110
-```
-
 ## 最佳实践
 
 ### 1. 模型设计原则
-- **单一职责**：每个模型专注一类设备
-- **可扩展性**：预留扩展字段
-- **版本管理**：支持模型升级
-- **标准化**：遵循行业标准
+
+- 保持模型简洁，避免过度复杂
+- 使用有意义的命名
+- 提供完整的单位和描述信息
+- 合理设置默认值和范围限制
 
 ### 2. 性能优化
-- **批量处理**：聚合相关计算
-- **缓存策略**：热点数据缓存
-- **异步执行**：非阻塞计算
-- **懒加载**：按需加载模型
 
-### 3. 数据质量
-- **数据验证**：类型和范围检查
-- **异常处理**：降级和默认值
-- **质量标记**：Good/Bad/Uncertain
-- **时间戳**：精确到毫秒
+- 使用计算缓存避免重复计算
+- 批量处理数据更新
+- 合理设置订阅粒度
 
-### 4. 运维考虑
-- **模型热更新**：无需重启服务
-- **实例监控**：状态和性能指标
-- **日志追踪**：完整的数据流日志
-- **故障隔离**：实例级别的错误处理
+### 3. 错误处理
 
-## 扩展开发
+- 实现优雅降级
+- 记录详细的错误日志
+- 提供有意义的错误消息
 
-### 自定义计算函数
+## 示例模型
 
-```rust
-// 1. 定义计算函数
-async fn custom_calculation(
-    inputs: HashMap<String, Value>,
-    params: HashMap<String, Value>,
-) -> Result<Value> {
-    // 自定义计算逻辑
-    let result = complex_calculation(inputs, params)?;
-    Ok(json!(result))
-}
+### 温度传感器
 
-// 2. 注册到计算引擎
-calculation_engine.register_function(
-    "custom_calc",
-    Arc::new(custom_calculation)
-);
-
-// 3. 在模型中使用
-calculations:
-  - identifier: special_metric
-    expression:
-      built_in:
-        function: custom_calc
-        args: ["param1", "param2"]
+```yaml
+id: "temperature_sensor_v1"
+name: "温度传感器"
+properties:
+  location:
+    type: "string"
+    description: "安装位置"
+    
+telemetry:
+  temperature:
+    type: "float"
+    unit: "°C"
+    source: "comsrv:2001:m:20001"
+    
+events:
+  high_temperature:
+    condition: "temperature > 40"
+    severity: "warning"
 ```
 
-### 协议适配
+### 开关控制器
 
-```rust
-// 实现数据源适配器
-#[async_trait]
-impl DataSourceAdapter for CustomProtocolAdapter {
-    async fn read_telemetry(
-        &self,
-        mapping: &TelemetryMapping,
-    ) -> Result<Value> {
-        // 协议特定的数据读取
-        let raw_data = self.protocol_read(mapping).await?;
-        
-        // 数据转换
-        let value = self.transform_data(raw_data, mapping)?;
-        
-        Ok(value)
-    }
-}
+```yaml
+id: "switch_controller_v1"
+name: "开关控制器"
+
+telemetry:
+  status:
+    type: "boolean"
+    source: "comsrv:3001:s:30001"
+    
+commands:
+  turn_on:
+    target: "comsrv:3001:c:30001"
+    parameters: []
+    
+  turn_off:
+    target: "comsrv:3001:c:30002"
+    parameters: []
 ```

@@ -28,7 +28,7 @@ pub use storage::{
     OptimizedBatchSync, OptimizedSyncConfig, StorageStats, SyncStats,
 };
 
-/// Initialize combase framework
+/// Initialize combase module
 pub fn init_combase() {
-    tracing::info!("ComBase framework initialized");
+    tracing::info!("ComBase module initialized");
 }

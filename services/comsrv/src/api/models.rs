@@ -384,7 +384,7 @@ impl ProtocolMapping for CanMapping {
         if !self.extended && self.can_id > 0x7FF {
             return Err("Standard CAN ID must be <= 0x7FF".to_string());
         }
-        if self.extended && self.can_id > 0x1FFFFFFF {
+        if self.extended && self.can_id > 0x1FFF_FFFF {
             return Err("Extended CAN ID must be <= 0x1FFFFFFF".to_string());
         }
         if self.byte_position > 7 {
@@ -457,7 +457,7 @@ impl ProtocolMapping for IecMapping {
         if self.point_id == 0 {
             return Err("Point ID must be > 0".to_string());
         }
-        if self.ioa > 0xFFFFFF {
+        if self.ioa > 0x00FF_FFFF {
             return Err("IOA must be <= 0xFFFFFF".to_string());
         }
         if self.ca == 0 {
