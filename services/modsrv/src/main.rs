@@ -297,7 +297,7 @@ async fn run_service(config: &Config) -> Result<()> {
     // Main service loop
     loop {
         interval.tick().await;
-        
+
         // Just keep the service running
         debug!("Service heartbeat");
     }
