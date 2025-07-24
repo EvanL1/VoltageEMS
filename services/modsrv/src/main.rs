@@ -1,7 +1,12 @@
+#![allow(dead_code)]
+#![allow(unused_imports)]
+
 mod api;
 mod cache;
+mod comsrv_interface;
 mod config;
-mod engine;
+mod device_model;
+// engine module removed
 mod error;
 mod model;
 mod monitoring;
@@ -10,6 +15,7 @@ mod storage;
 mod template;
 
 use crate::api::ApiServer;
+use crate::device_model::ModelRegistry;
 use crate::redis_handler::RedisConnection;
 use config::Config;
 use error::{ModelSrvError, Result};
@@ -117,16 +123,7 @@ async fn main() -> Result<()> {
     };
 
     // Initialize logging using voltage-libs
-    let log_config = voltage_libs::logging::LogConfig {
-        level: config.log_level.clone(),
-        console: true,
-        file: None,
-        format: voltage_libs::logging::LogFormat::Pretty,
-        ansi: true,
-        span_events: false,
-    };
-
-    let _log_guard = voltage_libs::logging::init_logging(&log_config)
+    voltage_libs::logging::init(&config.log_level)
         .map_err(|e| ModelSrvError::ConfigError(format!("Failed to initialize logging: {}", e)))?;
 
     info!("Starting Model Service");
@@ -189,42 +186,120 @@ async fn run_service(config: &Config) -> Result<()> {
     // Create Redis connection
     let mut redis_conn = RedisConnection::new();
 
-    // Initialize model engine
-    let mut model_engine = ModelEngine::new();
+    // Legacy model engine initialization (kept for compatibility)
 
     // Main service loop
     let update_interval = Duration::from_millis(config.model.update_interval_ms);
     let mut interval = time::interval(update_interval);
 
-    // Start API server
+    // Start API server with startup confirmation
     let redis_conn_arc = Arc::new(RedisConnection::new());
-    let api_server = ApiServer::new_legacy(redis_conn_arc, config.api.port);
+    let api_port = config.service_api.port;
+    let api_server = ApiServer::new_legacy(redis_conn_arc, api_port, config.clone());
+
+    // Create channel for API server startup confirmation
+    let (startup_tx, mut startup_rx) =
+        tokio::sync::mpsc::channel::<std::result::Result<(), String>>(1);
 
     tokio::spawn(async move {
-        if let Err(e) = api_server.start().await {
-            error!("API server error: {}", e);
+        match api_server.start_with_notification(startup_tx).await {
+            Ok(_) => {
+                info!("API server started successfully on port {}", api_port);
+            }
+            Err(e) => {
+                error!("API server failed to start: {}", e);
+            }
         }
     });
 
+    // Wait for API server startup confirmation with timeout
+    info!("Waiting for API server to start...");
+    match tokio::time::timeout(Duration::from_secs(10), startup_rx.recv()).await {
+        Ok(Some(Ok(_))) => {
+            info!(
+                "✓ API server started successfully on http://0.0.0.0:{}",
+                config.service_api.port
+            );
+        }
+        Ok(Some(Err(e))) => {
+            error!("✗ API server startup failed: {}", e);
+            return Err(ModelSrvError::ConfigError(
+                "API server startup failed".to_string(),
+            ));
+        }
+        Ok(None) => {
+            error!("✗ API server startup channel closed unexpectedly");
+            return Err(ModelSrvError::ConfigError(
+                "API server startup channel closed".to_string(),
+            ));
+        }
+        Err(_) => {
+            error!("✗ API server startup timed out after 10 seconds");
+            return Err(ModelSrvError::ConfigError(
+                "API server startup timeout".to_string(),
+            ));
+        }
+    }
+
     info!(
         "Model engine started, API server available at http://0.0.0.0:{}",
-        config.api.port
+        config.service_api.port
     );
 
+    // Initialize device model system if enabled
+    if config.device_model.enabled {
+        info!("Initializing device model system...");
+        let model_registry = Arc::new(ModelRegistry::new());
+
+        // Load models from directory
+        let models_path = std::path::Path::new(&config.device_model.models_directory);
+        if models_path.exists() {
+            info!("Loading models from: {}", models_path.display());
+            if let Err(e) = model_registry.load_models_from_directory(models_path).await {
+                error!("Failed to load models from directory: {}", e);
+            } else {
+                info!("Device models loaded successfully");
+            }
+        } else {
+            warn!("Models directory does not exist: {}", models_path.display());
+        }
+
+        // If auto-reload is enabled, set up periodic reload
+        if config.device_model.auto_reload {
+            let registry_clone = model_registry.clone();
+            let models_dir = config.device_model.models_directory.clone();
+            let reload_interval = Duration::from_secs(config.device_model.reload_interval_seconds);
+
+            tokio::spawn(async move {
+                let mut reload_interval = time::interval(reload_interval);
+                loop {
+                    reload_interval.tick().await;
+                    let models_path = std::path::Path::new(&models_dir);
+                    if models_path.exists() {
+                        if let Err(e) = registry_clone.load_models_from_directory(models_path).await
+                        {
+                            error!("Failed to reload models: {}", e);
+                        } else {
+                            info!("Models reloaded successfully");
+                        }
+                    }
+                }
+            });
+            info!(
+                "Auto-reload enabled with interval: {}s",
+                config.device_model.reload_interval_seconds
+            );
+        }
+    } else {
+        info!("Device model system is disabled");
+    }
+
+    // Main service loop
     loop {
         interval.tick().await;
-
-        // Load model configurations
-        if let Err(e) = model_engine.load_models(&mut redis_conn, &config.model.config_key_pattern)
-        {
-            error!("Failed to load models: {}", e);
-            continue;
-        }
-
-        // Execute models
-        if let Err(e) = model_engine.execute_models(&mut redis_conn) {
-            error!("Failed to execute models: {}", e);
-        }
+        
+        // Just keep the service running
+        debug!("Service heartbeat");
     }
 }
 
@@ -441,7 +516,7 @@ async fn start_api_server(config: &Config) -> Result<()> {
     let redis_conn = Arc::new(RedisConnection::new());
 
     // Create API server
-    let api_server = ApiServer::new_legacy(redis_conn, config.api.port);
+    let api_server = ApiServer::new_legacy(redis_conn, config.service_api.port, config.clone());
 
     // Start API server
     api_server

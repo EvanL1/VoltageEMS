@@ -513,9 +513,9 @@ mod tests {
     fn test_priority_queue() {
         let mut queue = PriorityCommandQueue::new();
 
-        let cmd1 = ControlCommand::new(1, 1, ControlType::RemoteControl, 1.0, "test".to_string());
-        let cmd2 = ControlCommand::new(2, 2, ControlType::RemoteControl, 2.0, "test".to_string());
-        let cmd3 = ControlCommand::new(3, 3, ControlType::RemoteControl, 3.0, "test".to_string());
+        let cmd1 = ControlCommand::new(1, "control", 1, 1.0);
+        let cmd2 = ControlCommand::new(2, "control", 2, 2.0);
+        let cmd3 = ControlCommand::new(3, "control", 3, 3.0);
 
         queue.enqueue(cmd1.clone(), CommandPriority::Low);
         queue.enqueue(cmd2.clone(), CommandPriority::High);

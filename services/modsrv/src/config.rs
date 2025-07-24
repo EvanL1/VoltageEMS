@@ -178,6 +178,23 @@ impl Default for MonitoringConfig {
     }
 }
 
+/// Device Model configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DeviceModelConfig {
+    /// Enable device model system
+    #[serde(default = "default_device_model_enabled")]
+    pub enabled: bool,
+    /// Models directory path
+    #[serde(default = "default_models_directory")]
+    pub models_directory: String,
+    /// Auto reload models when files change
+    #[serde(default = "default_auto_reload")]
+    pub auto_reload: bool,
+    /// Reload interval in seconds
+    #[serde(default = "default_reload_interval_seconds")]
+    pub reload_interval_seconds: u64,
+}
+
 /// Storage configuration
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct StorageConfig {
@@ -216,6 +233,17 @@ pub struct PerformanceConfig {
     /// Batch size for Redis operations
     #[serde(default = "default_redis_batch_size")]
     pub redis_batch_size: usize,
+}
+
+impl Default for DeviceModelConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_device_model_enabled(),
+            models_directory: default_models_directory(),
+            auto_reload: default_auto_reload(),
+            reload_interval_seconds: default_reload_interval_seconds(),
+        }
+    }
 }
 
 impl Default for StorageConfig {
@@ -263,6 +291,9 @@ pub struct Config {
     /// System monitoring configuration
     #[serde(default)]
     pub monitoring: MonitoringConfig,
+    /// Device model configuration
+    #[serde(default)]
+    pub device_model: DeviceModelConfig,
     /// Storage configuration
     #[serde(default)]
     pub storage: StorageConfig,
@@ -344,6 +375,21 @@ fn default_storage_mode() -> String {
 fn default_sync_interval_secs() -> u64 {
     60
 }
+
+// Device model default functions
+fn default_device_model_enabled() -> bool {
+    true
+}
+fn default_models_directory() -> String {
+    "/config/models".to_string()
+}
+fn default_auto_reload() -> bool {
+    true
+}
+fn default_reload_interval_seconds() -> u64 {
+    10
+}
+
 fn default_max_concurrent_models() -> usize {
     10
 }
@@ -458,6 +504,7 @@ impl Default for Config {
             api,
             service_api,
             monitoring,
+            device_model: DeviceModelConfig::default(),
             storage,
             performance,
             templates_dir: default_templates_dir(),

@@ -21,7 +21,7 @@ pub enum MonitorType {
 
 impl MonitorType {
     /// 转换为Redis存储的类型缩写
-    pub fn to_redis(&self) -> &'static str {
+    pub fn to_redis(self) -> &'static str {
         match self {
             MonitorType::Measurement => "mv:m", // monitor value: measurement
             MonitorType::Signal => "mv:s",      // monitor value: signal
@@ -42,7 +42,7 @@ pub enum ControlType {
 
 impl ControlType {
     /// 转换为Redis存储的类型缩写
-    pub fn to_redis(&self) -> &'static str {
+    pub fn to_redis(self) -> &'static str {
         match self {
             ControlType::RemoteControl => "cc:c", // control command: control
             ControlType::RemoteAdjust => "cc:a",  // control command: adjust
@@ -103,7 +103,7 @@ pub enum CommandStatus {
 }
 
 impl CommandStatus {
-    pub fn to_str(&self) -> &'static str {
+    pub fn to_str(self) -> &'static str {
         match self {
             CommandStatus::Pending => "pending",
             CommandStatus::Executing => "executing",

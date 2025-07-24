@@ -13,7 +13,7 @@ use super::{
     TelemetryDefinition, TelemetryMapping, TelemetryValue,
 };
 use crate::cache::ModelCacheManager;
-use crate::engine::OptimizedModelEngine;
+// engine module removed - using device model system directly
 
 /// Integrated device model system
 pub struct DeviceModelSystem {
@@ -21,7 +21,6 @@ pub struct DeviceModelSystem {
     instance_manager: Arc<InstanceManager>,
     calculation_engine: Arc<CalculationEngine>,
     dataflow_processor: Arc<DataFlowProcessor>,
-    model_engine: Arc<OptimizedModelEngine>,
     cache_manager: Arc<ModelCacheManager>,
     redis_client: Arc<RedisHandler>,
     update_receiver: Arc<RwLock<Option<mpsc::Receiver<DataUpdate>>>>,
@@ -31,7 +30,6 @@ impl DeviceModelSystem {
     pub async fn new(
         redis_client: Arc<RedisHandler>,
         cache_manager: Arc<ModelCacheManager>,
-        model_engine: Arc<OptimizedModelEngine>,
         _config: DataFlowConfig,
     ) -> Result<Self> {
         let registry = Arc::new(ModelRegistry::new());
@@ -49,7 +47,6 @@ impl DeviceModelSystem {
             instance_manager,
             calculation_engine,
             dataflow_processor: Arc::new(dataflow_processor),
-            model_engine,
             cache_manager,
             redis_client,
             update_receiver: Arc::new(RwLock::new(Some(update_receiver))),
@@ -377,7 +374,6 @@ impl Clone for DeviceModelSystem {
             instance_manager: self.instance_manager.clone(),
             calculation_engine: self.calculation_engine.clone(),
             dataflow_processor: self.dataflow_processor.clone(),
-            model_engine: self.model_engine.clone(),
             cache_manager: self.cache_manager.clone(),
             redis_client: self.redis_client.clone(),
             update_receiver: self.update_receiver.clone(),

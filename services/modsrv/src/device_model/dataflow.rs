@@ -342,6 +342,8 @@ impl Default for DataFlowConfig {
 
 #[cfg(test)]
 mod tests {
+    // Tests are empty but keep test structure
+    #[allow(unused_imports)]
     use super::*;
 
     #[tokio::test]

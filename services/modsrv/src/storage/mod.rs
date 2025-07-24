@@ -1,14 +1,12 @@
 //! modsrv存储模块
 //!
-//! 为模型服务提供统一的Redis存储接口，参考comsrv的扁平化键值结构设计
-//! 支持监视值读取和控制命令写入
+//! 为模型服务提供统一的Redis存储接口
+//! 专注于设备模型数据的读写和控制操作
 
 pub mod control;
-pub mod monitor;
-mod rtdb;
+pub mod rtdb;
 pub mod types;
 
 pub use control::*;
-pub use monitor::*;
 pub use rtdb::ModelStorage;
 pub use types::*;

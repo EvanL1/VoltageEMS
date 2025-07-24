@@ -1,441 +1,224 @@
-//! modsrv Redis存储实现
+//! 实时数据库模块
 //!
-//! 提供统一的存储接口，支持监视值读取和控制命令写入
+//! 提供高性能的实时数据存储和访问接口
 
-use super::types::*;
 use crate::error::{ModelSrvError, Result};
-use redis::aio::ConnectionManager;
-use redis::{AsyncCommands, Pipeline};
+use redis::{AsyncCommands, Client};
 use std::collections::HashMap;
-use std::time::Instant;
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 
-/// modsrv存储管理器
+/// 模型存储管理器
 pub struct ModelStorage {
-    conn: ConnectionManager,
+    client: Client,
 }
 
 impl ModelStorage {
-    /// 创建新的存储实例
+    /// 创建新的模型存储实例
     pub async fn new(redis_url: &str) -> Result<Self> {
-        let client = redis::Client::open(redis_url).map_err(|e| {
+        let client = Client::open(redis_url).map_err(|e| {
             ModelSrvError::RedisError(format!("Failed to create Redis client: {}", e))
         })?;
 
-        let conn = ConnectionManager::new(client)
+        // 测试连接
+        let mut conn = client
+            .get_async_connection()
             .await
             .map_err(|e| ModelSrvError::RedisError(format!("Failed to connect to Redis: {}", e)))?;
 
-        Ok(Self { conn })
+        let _: String = conn
+            .ping()
+            .await
+            .map_err(|e| ModelSrvError::RedisError(format!("Failed to ping Redis: {}", e)))?;
+
+        info!("Connected to Redis at {}", redis_url);
+
+        Ok(Self { client })
     }
 
     /// 从环境变量创建
     pub async fn from_env() -> Result<Self> {
-        let redis_url = std::env::var("MODSRV_REDIS_URL")
-            .or_else(|_| std::env::var("REDIS_URL"))
-            .unwrap_or_else(|_| "redis://127.0.0.1:6379".to_string());
-
+        let redis_url =
+            std::env::var("REDIS_URL").unwrap_or_else(|_| "redis://localhost:6379".to_string());
         Self::new(&redis_url).await
     }
 
-    /// 读取单个监视值（从Hash结构）
-    pub async fn get_monitor_value(
-        &mut self,
-        model_id: &str,
-        monitor_type: MonitorType,
-        field_name: &str,
-    ) -> Result<Option<MonitorValue>> {
-        let key = make_monitor_key(model_id, &monitor_type);
-
-        let data: Option<String> = self.conn.hget(&key, field_name).await.map_err(|e| {
-            ModelSrvError::RedisError(format!("Failed to get monitor value: {}", e))
-        })?;
-
-        match data {
-            Some(redis_str) => {
-                if let Some(mv) = MonitorValue::from_redis(&redis_str) {
-                    Ok(Some(mv))
-                } else {
-                    error!("Failed to parse monitor value: {}", redis_str);
-                    Ok(None)
-                }
-            }
-            None => Ok(None),
-        }
-    }
-
-    /// 批量读取监视值（从多个Hash）
-    pub async fn get_monitor_values(
-        &mut self,
-        keys: &[MonitorKey],
-    ) -> Result<Vec<Option<MonitorValue>>> {
-        if keys.is_empty() {
-            return Ok(vec![]);
-        }
-
-        let mut results = Vec::new();
-
-        // 按Hash键分组请求
-        for key in keys {
-            let hash_key = make_monitor_key(&key.model_id, &key.monitor_type);
-
-            let data: Option<String> =
-                self.conn
-                    .hget(&hash_key, &key.field_name)
-                    .await
-                    .map_err(|e| {
-                        ModelSrvError::RedisError(format!("Failed to get monitor value: {}", e))
-                    })?;
-
-            let result = data.and_then(|s| MonitorValue::from_redis(&s));
-            results.push(result);
-        }
-
-        Ok(results)
-    }
-
-    /// 写入单个监视值（用于模型输出，存储到Hash）
-    pub async fn set_monitor_value(
-        &mut self,
-        model_id: &str,
-        monitor_type: MonitorType,
-        field_name: &str,
-        value: MonitorValue,
-    ) -> Result<()> {
-        let key = make_monitor_key(model_id, &monitor_type);
-        let data = value.to_redis();
-
-        self.conn
-            .hset::<_, _, _, ()>(&key, field_name, &data)
-            .await
-            .map_err(|e| {
-                ModelSrvError::RedisError(format!("Failed to set monitor value: {}", e))
-            })?;
-
-        debug!(
-            "Set monitor value {}:{}.{} = {}",
-            model_id,
-            match monitor_type {
-                MonitorType::Measurement | MonitorType::ModelOutput | MonitorType::Intermediate =>
-                    "measurement",
-                MonitorType::Signal => "signal",
-            },
-            field_name,
-            value.raw_value()
-        );
-
-        Ok(())
-    }
-
-    /// 批量写入监视值（Hash存储）
-    pub async fn set_monitor_values(&mut self, updates: &[MonitorUpdate]) -> Result<()> {
-        if updates.is_empty() {
-            return Ok(());
-        }
-
-        let start = Instant::now();
-        let mut pipe = Pipeline::new();
-
-        for update in updates {
-            let key = make_monitor_key(&update.model_id, &update.monitor_type);
-            let data = update.value.to_redis();
-            pipe.hset(&key, &update.field_name, &data);
-        }
-
-        pipe.query_async::<()>(&mut self.conn).await.map_err(|e| {
-            ModelSrvError::RedisError(format!("Failed to set monitor values: {}", e))
-        })?;
-
-        let elapsed = start.elapsed();
-        info!(
-            "Batch updated {} monitor values in {:?}",
-            updates.len(),
-            elapsed
-        );
-
-        Ok(())
-    }
-
-    /// 创建控制命令
-    pub async fn create_control_command(&mut self, command: &ControlCommand) -> Result<()> {
-        let key = make_control_key(&command.id);
-        let hash = command.to_hash();
-
-        // 将命令存储为Hash
-        for (field, value) in hash {
-            self.conn
-                .hset::<_, _, _, ()>(&key, field, value)
-                .await
-                .map_err(|e| {
-                    ModelSrvError::RedisError(format!("Failed to set hash field: {}", e))
-                })?;
-        }
-
-        // 设置过期时间（24小时）
-        self.conn.expire::<_, ()>(&key, 86400).await.map_err(|e| {
-            ModelSrvError::RedisError(format!("Failed to set command expire: {}", e))
-        })?;
-
-        // 添加到模型的命令列表
-        let list_key = make_control_list_key(&command.source_model);
-        self.conn
-            .lpush::<_, _, ()>(&list_key, &command.id)
-            .await
-            .map_err(|e| {
-                ModelSrvError::RedisError(format!("Failed to add command to list: {}", e))
-            })?;
-
-        // 限制列表长度（保留最近1000条）
-        self.conn
-            .ltrim::<_, ()>(&list_key, 0, 999)
-            .await
-            .map_err(|e| {
-                ModelSrvError::RedisError(format!("Failed to trim command list: {}", e))
-            })?;
-
-        // 发布命令到通道（供comsrv订阅）
-        let channel = format!(
-            "cmd:{}:{}",
-            command.channel_id,
-            command.command_type.to_redis()
-        );
-        let cmd_json =
-            serde_json::to_string(command).map_err(|e| ModelSrvError::JsonError(e.to_string()))?;
-
-        self.conn
-            .publish::<_, _, ()>(&channel, &cmd_json)
-            .await
-            .map_err(|e| ModelSrvError::RedisError(format!("Failed to publish command: {}", e)))?;
-
-        info!(
-            "Created control command {} for channel {} point {}",
-            command.id, command.channel_id, command.point_id
-        );
-
-        Ok(())
-    }
-
-    /// 发送控制命令（简化接口）
-    pub async fn send_control_command(&mut self, command: &ControlCommand) -> Result<()> {
-        self.create_control_command(command).await
-    }
-
-    /// 获取模型配置
-    pub async fn get_model_configs(&mut self, pattern: &str) -> Result<HashMap<String, String>> {
-        let keys: Vec<String> = redis::cmd("KEYS")
-            .arg(pattern)
-            .query_async(&mut self.conn)
-            .await
-            .map_err(|e| ModelSrvError::RedisError(format!("Failed to get model keys: {}", e)))?;
-
-        let mut configs = HashMap::new();
-        for key in keys {
-            if let Ok(value) = self.conn.get::<_, String>(&key).await {
-                configs.insert(key, value);
-            }
-        }
-
-        Ok(configs)
-    }
-
-    /// 设置模型输出（JSON格式）
-    pub async fn set_model_output_json(
-        &mut self,
-        model_id: &str,
-        output: &serde_json::Value,
-    ) -> Result<()> {
-        let key = format!("model:output:{}", model_id);
-        let value =
-            serde_json::to_string(output).map_err(|e| ModelSrvError::JsonError(e.to_string()))?;
-
-        self.conn
-            .set_ex::<_, _, ()>(&key, &value, 300) // 5分钟过期
-            .await
-            .map_err(|e| ModelSrvError::RedisError(format!("Failed to set model output: {}", e)))?;
-
-        Ok(())
-    }
-
-    /// 获取控制命令
-    pub async fn get_control_command(
-        &mut self,
-        command_id: &str,
-    ) -> Result<Option<ControlCommand>> {
-        let key = make_control_key(command_id);
-
-        let hash: HashMap<String, String> = self.conn.hgetall(&key).await.map_err(|e| {
-            ModelSrvError::RedisError(format!("Failed to get control command: {}", e))
-        })?;
-
-        if hash.is_empty() {
-            Ok(None)
-        } else {
-            Ok(ControlCommand::from_hash(hash))
-        }
-    }
-
-    /// 更新控制命令状态
-    pub async fn update_command_status(
-        &mut self,
-        command_id: &str,
-        status: CommandStatus,
-        message: Option<String>,
-    ) -> Result<()> {
-        let key = make_control_key(command_id);
-        let now = chrono::Utc::now().timestamp_millis();
-
-        let mut updates: Vec<(&str, String)> = vec![
-            ("status", status.to_str().to_string()),
-            ("updated_at", now.to_string()),
-        ];
-
-        if let Some(msg) = message {
-            updates.push(("message", msg));
-        }
-
-        self.conn
-            .hset_multiple::<_, _, _, ()>(&key, &updates)
-            .await
-            .map_err(|e| {
-                ModelSrvError::RedisError(format!("Failed to update command status: {}", e))
-            })?;
-
-        Ok(())
-    }
-
-    /// 获取模型的最近控制命令
-    pub async fn get_model_commands(
-        &mut self,
-        model_id: &str,
-        limit: isize,
-    ) -> Result<Vec<ControlCommand>> {
-        let list_key = make_control_list_key(model_id);
-
-        let command_ids: Vec<String> = self
-            .conn
-            .lrange(&list_key, 0, limit - 1)
-            .await
-            .map_err(|e| ModelSrvError::RedisError(format!("Failed to get command list: {}", e)))?;
-
-        let mut commands = Vec::new();
-        for cmd_id in command_ids {
-            if let Some(cmd) = self.get_control_command(&cmd_id).await? {
-                commands.push(cmd);
-            }
-        }
-
-        Ok(commands)
-    }
-
-    /// 写入模型输出
-    pub async fn set_model_output(&mut self, output: &ModelOutput) -> Result<()> {
-        let key = make_model_output_key(&output.model_id);
-        let json =
-            serde_json::to_string(output).map_err(|e| ModelSrvError::JsonError(e.to_string()))?;
-
-        self.conn
-            .set::<_, _, ()>(&key, &json)
-            .await
-            .map_err(|e| ModelSrvError::RedisError(format!("Failed to set model output: {}", e)))?;
-
-        // 设置过期时间（7天）
-        self.conn.expire::<_, ()>(&key, 604800).await.map_err(|e| {
-            ModelSrvError::RedisError(format!("Failed to set output expire: {}", e))
-        })?;
-
-        Ok(())
-    }
-
-    /// 获取模型输出
-    pub async fn get_model_output(&mut self, model_id: &str) -> Result<Option<ModelOutput>> {
-        let key = make_model_output_key(model_id);
-
-        let data: Option<String> =
-            self.conn.get(&key).await.map_err(|e| {
-                ModelSrvError::RedisError(format!("Failed to get model output: {}", e))
-            })?;
-
-        match data {
-            Some(json_str) => {
-                let output = serde_json::from_str(&json_str).map_err(|e| {
-                    ModelSrvError::JsonError(format!("Failed to parse model output: {}", e))
-                })?;
-                Ok(Some(output))
-            }
-            None => Ok(None),
-        }
-    }
-
-    /// 从comsrv读取点位值（只读，使用Hash格式）
-    pub async fn read_comsrv_point(
-        &mut self,
-        channel_id: u16,
-        point_type: &str,
-        point_id: u32,
-    ) -> Result<Option<f64>> {
-        // 使用comsrv的Hash键格式：comsrv:{channelID}:{type}
-        let key = format!("comsrv:{}:{}", channel_id, point_type);
-        let field = point_id.to_string();
-
-        let data: Option<String> = self.conn.hget(&key, &field).await.map_err(|e| {
-            ModelSrvError::RedisError(format!("Failed to read comsrv point: {}", e))
-        })?;
-
-        match data {
-            Some(redis_str) => {
-                // 解析comsrv的格式：仅数值（6位小数精度）
-                if let Ok(value) = redis_str.parse::<f64>() {
-                    Ok(Some(value))
-                } else {
-                    error!("Failed to parse comsrv value: {}", redis_str);
-                    Ok(None)
-                }
-            }
-            None => Ok(None),
-        }
-    }
-
-    /// 批量读取comsrv点位值（使用Hash格式）
+    /// 读取comsrv点位数据
     pub async fn read_comsrv_points(
-        &mut self,
+        &self,
         points: &[(u16, &str, u32)],
     ) -> Result<Vec<Option<f64>>> {
         if points.is_empty() {
-            return Ok(vec![]);
+            return Ok(Vec::new());
         }
 
-        let mut results = Vec::new();
+        let mut conn = self.client.get_async_connection().await.map_err(|e| {
+            ModelSrvError::RedisError(format!("Failed to get Redis connection: {}", e))
+        })?;
 
-        // 按Hash键分组请求
+        let mut results = Vec::with_capacity(points.len());
+
         for (channel_id, point_type, point_id) in points {
             let key = format!("comsrv:{}:{}", channel_id, point_type);
             let field = point_id.to_string();
 
-            let data: Option<String> = self.conn.hget(&key, &field).await.map_err(|e| {
-                ModelSrvError::RedisError(format!("Failed to read comsrv point: {}", e))
-            })?;
-
-            let result = data.and_then(|s| s.parse::<f64>().ok());
-            results.push(result);
+            match conn.hget::<_, _, Option<String>>(&key, &field).await {
+                Ok(Some(value_str)) => match value_str.parse::<f64>() {
+                    Ok(value) => {
+                        debug!("Read {}:{} = {}", key, field, value);
+                        results.push(Some(value));
+                    }
+                    Err(e) => {
+                        warn!(
+                            "Failed to parse value '{}' for {}:{}: {}",
+                            value_str, key, field, e
+                        );
+                        results.push(None);
+                    }
+                },
+                Ok(None) => {
+                    debug!("No value found for {}:{}", key, field);
+                    results.push(None);
+                }
+                Err(e) => {
+                    error!("Redis error reading {}:{}: {}", key, field, e);
+                    results.push(None);
+                }
+            }
         }
 
         Ok(results)
     }
 
-    /// 检查连接状态
-    pub async fn ping(&mut self) -> Result<()> {
-        let _: String = redis::cmd("PING")
-            .query_async(&mut self.conn)
-            .await
-            .map_err(|e| ModelSrvError::RedisError(format!("Redis ping failed: {}", e)))?;
+    /// 写入模型输出数据
+    pub async fn write_model_output(
+        &self,
+        model_id: &str,
+        outputs: &HashMap<String, f64>,
+    ) -> Result<()> {
+        if outputs.is_empty() {
+            return Ok(());
+        }
+
+        let mut conn = self.client.get_async_connection().await.map_err(|e| {
+            ModelSrvError::RedisError(format!("Failed to get Redis connection: {}", e))
+        })?;
+
+        let key = format!("modsrv:output:{}", model_id);
+
+        for (field, value) in outputs {
+            let value_str = format!("{:.6}", value); // 6位小数精度
+            let _: () = conn.hset(&key, field, &value_str).await.map_err(|e| {
+                ModelSrvError::RedisError(format!("Failed to write {}.{}: {}", key, field, e))
+            })?;
+
+            debug!("Wrote {}.{} = {}", key, field, value_str);
+        }
+
+        info!("Wrote {} outputs for model {}", outputs.len(), model_id);
         Ok(())
     }
-}
 
-#[cfg(test)]
-mod tests {
-    #[tokio::test]
-    async fn test_model_storage() {
-        // 集成测试占位符
+    /// 获取模型配置
+    pub async fn get_model_configs(&self, pattern: &str) -> Result<HashMap<String, String>> {
+        let mut conn = self.client.get_async_connection().await.map_err(|e| {
+            ModelSrvError::RedisError(format!("Failed to get Redis connection: {}", e))
+        })?;
+
+        let keys: Vec<String> = conn.keys(pattern).await.map_err(|e| {
+            ModelSrvError::RedisError(format!(
+                "Failed to get keys with pattern {}: {}",
+                pattern, e
+            ))
+        })?;
+
+        let mut configs = HashMap::new();
+
+        for key in keys {
+            match conn.get::<_, Option<String>>(&key).await {
+                Ok(Some(config)) => {
+                    configs.insert(key, config);
+                }
+                Ok(None) => {
+                    warn!("Key {} exists but has no value", key);
+                }
+                Err(e) => {
+                    error!("Failed to get config for key {}: {}", key, e);
+                }
+            }
+        }
+
+        debug!("Found {} model configurations", configs.len());
+        Ok(configs)
+    }
+
+    /// 发送控制命令到comsrv
+    pub async fn send_control_command(
+        &self,
+        channel_id: u16,
+        point_type: &str,
+        point_id: u32,
+        value: f64,
+    ) -> Result<()> {
+        let mut conn = self.client.get_async_connection().await.map_err(|e| {
+            ModelSrvError::RedisError(format!("Failed to get Redis connection: {}", e))
+        })?;
+
+        let channel = format!("cmd:{}:{}", channel_id, point_type);
+        let message = format!("{}:{:.6}", point_id, value);
+
+        let _: () = conn.publish(&channel, &message).await.map_err(|e| {
+            ModelSrvError::RedisError(format!("Failed to publish control command: {}", e))
+        })?;
+
+        info!("Sent control command: {} -> {}", channel, message);
+        Ok(())
+    }
+
+    /// 批量读取模型输出
+    pub async fn read_model_outputs(
+        &self,
+        model_ids: &[&str],
+    ) -> Result<HashMap<String, HashMap<String, f64>>> {
+        if model_ids.is_empty() {
+            return Ok(HashMap::new());
+        }
+
+        let mut conn = self.client.get_async_connection().await.map_err(|e| {
+            ModelSrvError::RedisError(format!("Failed to get Redis connection: {}", e))
+        })?;
+
+        let mut results = HashMap::new();
+
+        for model_id in model_ids {
+            let key = format!("modsrv:output:{}", model_id);
+
+            match conn.hgetall::<_, HashMap<String, String>>(&key).await {
+                Ok(fields) => {
+                    let mut model_outputs = HashMap::new();
+                    for (field, value_str) in fields {
+                        match value_str.parse::<f64>() {
+                            Ok(value) => {
+                                model_outputs.insert(field, value);
+                            }
+                            Err(e) => {
+                                warn!(
+                                    "Failed to parse output value '{}' for {}.{}: {}",
+                                    value_str, model_id, field, e
+                                );
+                            }
+                        }
+                    }
+                    if !model_outputs.is_empty() {
+                        results.insert(model_id.to_string(), model_outputs);
+                    }
+                }
+                Err(e) => {
+                    error!("Failed to read outputs for model {}: {}", model_id, e);
+                }
+            }
+        }
+
+        debug!("Read outputs for {} models", results.len());
+        Ok(results)
     }
 }

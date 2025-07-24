@@ -63,6 +63,9 @@ docker-compose -f docker-compose.test.yml logs -f {service_name}
 
 # Stop test environment
 docker-compose -f docker-compose.test.yml down
+
+# Run complete integration tests (no external ports exposed)
+./scripts/run-integration-tests.sh
 ```
 
 ### Redis Operations
@@ -74,9 +77,10 @@ docker run -d --name redis-dev -p 6379:6379 redis:7-alpine
 # Monitor Redis activity
 redis-cli monitor | grep {service_name}
 
-# Check specific keys
-redis-cli keys "1001:m:*" | head -20  # 查看通道1001的测量点
-redis-cli get "1001:m:10001"          # 获取单个点值
+# Check specific Hash keys and data
+redis-cli keys "comsrv:*"              # 查看comsrv所有通道
+redis-cli hgetall "comsrv:1001:m"      # 查看通道1001的所有测量点
+redis-cli hget "comsrv:1001:m" "10001" # 获取单个点值
 redis-cli keys "cfg:*" | head -20      # 查看配置数据
 
 # Monitor comsrv data publishing
@@ -134,12 +138,18 @@ VoltageEMS is a Rust-based microservices architecture for industrial IoT energy 
 │   Modbus | IEC60870 | CAN | ... │
 └─────────────────────────────────┘
 ```
-### 重要架构变更 (2025年7月)
+### Redis数据结构架构 (规范v3.2)
 
-系统已从原有的分层哈希存储迁移到**扁平化键值存储架构**：
+**数据存储格式**：
+- **Hash存储**: `comsrv:{channelID}:{type}` → Hash{pointID: value}
+- **标准化精度**: 所有浮点数值使用6位小数格式 (例: "25.123456")
+- **类型映射**: m=测量(YC), s=信号(YX), c=控制(YK), a=调节(YT)
+- **标准化类型**: 使用 `voltage_libs::types::StandardFloat` 和 `PointData`
 
-**旧架构**: `point:1001` → HashMap → 所有点数据
-**新架构**: `1001:m:10001` → 单个点值 (直接访问，O(1))
+**Pub/Sub通知机制**：
+- **存储与通知分离**: Hash用于批量查询，Pub/Sub用于实时推送
+- **通道格式**: `comsrv:{channelID}:{type}`
+- **消息格式**: `{pointID}:{value:.6f}` (逐个点位推送)
 
 ### Service Communication Pattern
 
@@ -206,11 +216,11 @@ All services communicate exclusively through Redis pub/sub and key-value storage
 - Feature flags: `async` (default), `sync`, `metrics`, `http`, `test-utils`
 
 ### Key Design Patterns
-1. **扁平化存储架构**
-   - 键格式: `{channelID}:{type}:{pointID}` (实时数据)
-   - 配置格式: `cfg:{channelID}:{type}:{pointID}` (配置数据)
+1. **Hash存储架构**
+   - 实时数据: `comsrv:{channelID}:{type}` → Hash{pointID: value}
+   - 配置数据: `cfg:{channelID}:{type}:{pointID}` (配置数据)
    - 类型映射: m=测量(YC), s=信号(YX), c=控制(YK), a=调节(YT)
-   - 单点查询O(1)，支持百万级点位
+   - 批量查询O(1)，支持百万级点位，大幅减少键数量
 
 2. **Protocol Plugin System** (comsrv)
    - Each protocol implements `ProtocolPlugin` trait
@@ -220,8 +230,9 @@ All services communicate exclusively through Redis pub/sub and key-value storage
 
 3. **Point Management**
    - Points identified by u32 IDs for performance
-   - 直接键值访问，无需二次哈希
-   - Point data includes value, timestamp
+   - Hash字段访问，O(1)查询单个点位
+   - 标准化数值格式：6位小数精度
+   - Point data includes value with optional timestamp
 
 4. **Configuration Hierarchy**
    - Figment-based configuration merging
@@ -270,6 +281,52 @@ cargo test --features integration
 
 # Clean up
 ./scripts/stop-test-servers.sh
+```
+
+### Docker Integration Testing
+```bash
+# Complete isolated test environment (services/modsrv/)
+docker-compose -f docker-compose.test.yml up -d
+
+# Includes:
+# - Redis 8 (internal network only)
+# - ComsRv data simulator (follows Redis v3.2 spec)
+# - ModSrv service with device model engine
+# - Test runner with comprehensive test suite
+
+# Run all integration tests
+docker-compose -f docker-compose.test.yml exec test-runner /scripts/run-integration-tests.sh
+
+# Monitor data flow
+docker-compose -f docker-compose.test.yml exec test-runner /scripts/test-data-flow.sh
+
+# Check Redis data format compliance
+docker-compose -f docker-compose.test.yml exec comsrv-simulator redis-cli -h redis keys "comsrv:*"
+```
+
+### Complete Production-Ready Testing
+```bash
+# Full isolated testing environment with comprehensive logging (services/modsrv/)
+./run-docker-test.sh
+
+# Features:
+# - No external port exposure (complete internal network)
+# - Redis 8 with persistence and logging
+# - ComsRv data simulator (Redis v3.2 spec compliant)
+# - ModSrv service with device model engine
+# - Automated test executor with 10+ test scenarios
+# - Real-time log monitoring and data validation
+# - Performance benchmarking and resource monitoring
+
+# Monitor test execution progress
+docker-compose -f docker-compose.complete-test.yml logs -f test-executor
+
+# View all test reports and logs
+ls -la test-reports/
+ls -la logs/
+
+# Stop complete environment
+docker-compose -f docker-compose.complete-test.yml down
 ```
 
 ## Common Issues and Solutions
@@ -382,7 +439,9 @@ device_system.execute_command(&instance_id, "switch_on", params).await?;
 ### Redis Data Architecture
 - **Only comsrv writes telemetry data to Redis**
 - Other services read data and may write computed/derived values
-- Point data format: `{channelID}:{type}:{pointID}` → `{value, timestamp}`
+- **Hash storage format**: `comsrv:{channelID}:{type}` → Hash{pointID: value}
+- **Standard precision**: All float values use 6-decimal format (e.g., "25.123456")
+- **Pub/Sub notifications**: Channel `comsrv:{channelID}:{type}`, Message `{pointID}:{value:.6f}`
 - Configuration data: `cfg:{channelID}:{type}:{pointID}`
 
 ### Development Workflow

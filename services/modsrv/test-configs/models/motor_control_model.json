@@ -1,0 +1,256 @@
+{
+  "id": "motor_control_model",
+  "name": "电机控制模型",
+  "version": "1.0.0",
+  "description": "电机运行状态监控和控制",
+  "device_type": "industrial",
+  "properties": [
+    {
+      "identifier": "max_temperature",
+      "name": "最大允许温度",
+      "data_type": "float64",
+      "required": true,
+      "default_value": 85.0,
+      "constraints": {
+        "min": 60.0,
+        "max": 100.0,
+        "enum_values": null,
+        "pattern": null
+      },
+      "unit": "°C",
+      "description": "电机最大允许运行温度"
+    },
+    {
+      "identifier": "max_current",
+      "name": "最大允许电流",
+      "data_type": "float64",
+      "required": true,
+      "default_value": 55.0,
+      "constraints": {
+        "min": 0.0,
+        "max": 100.0,
+        "enum_values": null,
+        "pattern": null
+      },
+      "unit": "A",
+      "description": "电机最大允许电流"
+    }
+  ],
+  "telemetry": [
+    {
+      "identifier": "motor_speed",
+      "name": "电机转速",
+      "data_type": "float64",
+      "collection_type": {
+        "periodic": {
+          "interval_ms": 500
+        }
+      },
+      "mapping": {
+        "channel_id": 1003,
+        "point_type": "m",
+        "point_id": 10,
+        "scale": null,
+        "offset": null
+      },
+      "transform": null,
+      "unit": "RPM",
+      "description": "电机转速测量值"
+    },
+    {
+      "identifier": "motor_current",
+      "name": "电机电流",
+      "data_type": "float64",
+      "collection_type": {
+        "periodic": {
+          "interval_ms": 500
+        }
+      },
+      "mapping": {
+        "channel_id": 1003,
+        "point_type": "m",
+        "point_id": 11,
+        "scale": null,
+        "offset": null
+      },
+      "transform": null,
+      "unit": "A",
+      "description": "电机电流测量值"
+    },
+    {
+      "identifier": "motor_temperature",
+      "name": "电机温度",
+      "data_type": "float64",
+      "collection_type": {
+        "periodic": {
+          "interval_ms": 1000
+        }
+      },
+      "mapping": {
+        "channel_id": 1003,
+        "point_type": "m",
+        "point_id": 12,
+        "scale": null,
+        "offset": null
+      },
+      "transform": null,
+      "unit": "°C",
+      "description": "电机温度测量值"
+    },
+    {
+      "identifier": "motor_status",
+      "name": "电机运行状态",
+      "data_type": "bool",
+      "collection_type": {
+        "on_change": {
+          "threshold": null
+        }
+      },
+      "mapping": {
+        "channel_id": 1003,
+        "point_type": "s",
+        "point_id": 20,
+        "scale": null,
+        "offset": null
+      },
+      "transform": null,
+      "unit": null,
+      "description": "电机运行状态信号"
+    }
+  ],
+  "commands": [
+    {
+      "identifier": "start_stop_motor",
+      "name": "电机启停控制",
+      "command_type": "control",
+      "input_params": [
+        {
+          "name": "action",
+          "data_type": "bool",
+          "required": true,
+          "default_value": false,
+          "description": "true=启动, false=停止"
+        }
+      ],
+      "output_params": [
+        {
+          "name": "result",
+          "data_type": "bool",
+          "required": true,
+          "default_value": false,
+          "description": "执行结果"
+        }
+      ],
+      "mapping": {
+        "channel_id": 1003,
+        "command_type": "c",
+        "point_id": 30,
+        "value_mapping": {
+          "start": 1.0,
+          "stop": 0.0
+        }
+      },
+      "description": "电机启停控制命令"
+    },
+    {
+      "identifier": "set_speed",
+      "name": "设置转速",
+      "command_type": "setting",
+      "input_params": [
+        {
+          "name": "target_speed",
+          "data_type": "float64",
+          "required": true,
+          "default_value": 0.0,
+          "description": "目标转速值"
+        }
+      ],
+      "output_params": [
+        {
+          "name": "result",
+          "data_type": "bool",
+          "required": true,
+          "default_value": false,
+          "description": "设置结果"
+        }
+      ],
+      "mapping": {
+        "channel_id": 1003,
+        "command_type": "a",
+        "point_id": 31,
+        "value_mapping": null
+      },
+      "description": "设置电机目标转速"
+    }
+  ],
+  "events": [
+    {
+      "identifier": "temperature_alarm",
+      "name": "温度告警",
+      "event_type": "alarm",
+      "trigger": {
+        "threshold": {
+          "variable": "motor_temperature",
+          "operator": ">",
+          "value": 80.0
+        }
+      },
+      "params": [
+        {
+          "name": "temperature_value",
+          "data_type": "float64",
+          "required": true,
+          "default_value": 0.0,
+          "description": "告警时的温度值"
+        }
+      ],
+      "description": "电机温度过高告警"
+    },
+    {
+      "identifier": "overcurrent_alarm",
+      "name": "过流告警",
+      "event_type": "alarm",
+      "trigger": {
+        "threshold": {
+          "variable": "motor_current",
+          "operator": ">",
+          "value": 50.0
+        }
+      },
+      "params": [
+        {
+          "name": "current_value",
+          "data_type": "float64",
+          "required": true,
+          "default_value": 0.0,
+          "description": "告警时的电流值"
+        }
+      ],
+      "description": "电机过流告警"
+    }
+  ],
+  "calculations": [
+    {
+      "identifier": "power_calculation",
+      "name": "功率计算",
+      "inputs": [
+        "motor_current",
+        "motor_status"
+      ],
+      "outputs": [
+        "calculated_power"
+      ],
+      "expression": {
+        "math": "motor_current * 380 * 1.732 * 0.85"
+      },
+      "condition": "motor_status == true && motor_current > 0",
+      "description": "根据电流计算电机功率"
+    }
+  ],
+  "metadata": {
+    "created_at": "2025-07-23T22:30:00Z",
+    "created_by": "test_system",
+    "category": "motor_control",
+    "tags": "motor,control,monitoring,alarm"
+  }
+}

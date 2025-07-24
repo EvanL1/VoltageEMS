@@ -3,6 +3,9 @@
 //! A comprehensive model execution engine and control system for energy management systems.
 //! This library provides real-time data processing, model execution, and automated control
 //! operations with Redis-based data storage and multi-backend support.
+
+#![allow(dead_code)]
+#![allow(unused_imports)]
 //!
 //! ## Overview
 //!
@@ -187,11 +190,7 @@ pub mod storage;
 /// control commands through Redis pub/sub channels.
 pub mod comsrv_interface;
 
-/// Optimized data reading utilities
-///
-/// Provides efficient batch reading, caching strategies, and data aggregation
-/// for high-throughput point data access from comsrv.
-pub mod data_reader;
+// data_reader module removed - functionality integrated into device_model system
 
 /// Control command sending utilities
 ///
@@ -199,11 +198,7 @@ pub mod data_reader;
 /// and priority-based command queuing for comsrv integration.
 pub mod control_sender;
 
-/// Rule engine for conditional logic
-///
-/// Provides rule-based conditional execution, supporting complex conditions
-/// and actions for automated control operations.
-pub mod rule_engine;
+// rule_engine module removed - functionality moved to separate rulesrv service
 
 /// Cache management for model data
 ///
@@ -213,9 +208,7 @@ pub mod cache;
 
 /// Optimized async model execution engine
 ///
-/// Provides concurrent model execution with configurable parallelism,
-/// supporting async operations and efficient resource utilization.
-pub mod engine;
+// engine module removed - core functionality is in device_model system
 
 /// Device model system for physical device abstraction
 ///

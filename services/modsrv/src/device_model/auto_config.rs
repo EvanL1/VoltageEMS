@@ -11,6 +11,8 @@ use std::sync::Arc;
 use tokio::fs;
 use tracing::{debug, error, info, warn};
 
+#[allow(unused_imports)]
+use super::{CalculationEngine, ModelRegistry};
 use super::{DataFlowProcessor, DeviceModel, InstanceManager};
 
 /// 自动配置管理器
@@ -482,11 +484,11 @@ mod tests {
     fn test_validate_redis_key_format() {
         let manager = AutoConfigManager::new(
             Arc::new(RedisHandler::new()),
-            Arc::new(InstanceManager::new()),
+            Arc::new(InstanceManager::new(Arc::new(ModelRegistry::new()))),
             Arc::new(
                 DataFlowProcessor::new(
                     Arc::new(RedisHandler::new()),
-                    Arc::new(InstanceManager::new()),
+                    Arc::new(InstanceManager::new(Arc::new(ModelRegistry::new()))),
                     Arc::new(CalculationEngine::new()),
                 )
                 .0,

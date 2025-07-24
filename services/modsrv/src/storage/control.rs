@@ -1,52 +1,95 @@
-//! 控制命令管理模块
+//! 控制模块
 //!
-//! 提供控制命令的创建、跟踪和状态管理
+//! 提供设备模型的控制命令发送功能
 
 use super::rtdb::ModelStorage;
-use super::types::*;
 use crate::error::{ModelSrvError, Result};
 use serde::{Deserialize, Serialize};
-use std::time::Duration;
-// use tokio::time::timeout;
-use tracing::{debug, error, info, warn};
+use std::collections::HashMap;
+use tracing::{info, warn};
 
-/// 控制命令管理器
+/// 控制命令类型
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum ControlType {
+    /// 遥控命令 (YK)
+    RemoteControl,
+    /// 遥调命令 (YT)  
+    RemoteAdjustment,
+}
+
+/// 控制命令
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ControlCommand {
+    /// 命令ID
+    pub id: String,
+    /// 通道ID
+    pub channel_id: u16,
+    /// 点位ID
+    pub point_id: u32,
+    /// 控制类型
+    pub control_type: ControlType,
+    /// 控制值
+    pub value: f64,
+    /// 来源模型
+    pub source_model: Option<String>,
+    /// 创建时间戳
+    pub timestamp: i64,
+}
+
+impl ControlCommand {
+    /// 创建新的控制命令
+    pub fn new(
+        channel_id: u16,
+        point_id: u32,
+        control_type: ControlType,
+        value: f64,
+        source_model: Option<String>,
+    ) -> Self {
+        Self {
+            id: uuid::Uuid::new_v4().to_string(),
+            channel_id,
+            point_id,
+            control_type,
+            value,
+            source_model,
+            timestamp: chrono::Utc::now().timestamp(),
+        }
+    }
+
+    /// 获取点位类型字符串
+    pub fn get_point_type(&self) -> &str {
+        match self.control_type {
+            ControlType::RemoteControl => "c",    // 遥控
+            ControlType::RemoteAdjustment => "a", // 遥调
+        }
+    }
+}
+
+/// 控制管理器
 pub struct ControlManager {
     storage: ModelStorage,
-    timeout_duration: Duration,
 }
 
 impl ControlManager {
-    /// 创建新的控制命令管理器
+    /// 创建新的控制管理器
     pub async fn new(redis_url: &str) -> Result<Self> {
         let storage = ModelStorage::new(redis_url).await?;
-        Ok(Self {
-            storage,
-            timeout_duration: Duration::from_secs(30), // 默认30秒超时
-        })
+        Ok(Self { storage })
     }
 
     /// 从环境变量创建
     pub async fn from_env() -> Result<Self> {
         let storage = ModelStorage::from_env().await?;
-        Ok(Self {
-            storage,
-            timeout_duration: Duration::from_secs(30),
-        })
+        Ok(Self { storage })
     }
 
-    /// 设置命令超时时间
-    pub fn set_timeout(&mut self, duration: Duration) {
-        self.timeout_duration = duration;
-    }
-
-    /// 发送遥控命令（YK）
+    /// 发送遥控命令 (YK)
     pub async fn send_remote_control(
-        &mut self,
+        &self,
         channel_id: u16,
         point_id: u32,
         value: bool,
-        source_model: String,
+        source_model: Option<String>,
     ) -> Result<String> {
         let command = ControlCommand::new(
             channel_id,
@@ -56,7 +99,14 @@ impl ControlManager {
             source_model,
         );
 
-        self.storage.create_control_command(&command).await?;
+        self.storage
+            .send_control_command(
+                command.channel_id,
+                command.get_point_type(),
+                command.point_id,
+                command.value,
+            )
+            .await?;
 
         info!(
             "Sent remote control command {} to channel {} point {} value {}",
@@ -66,265 +116,131 @@ impl ControlManager {
         Ok(command.id)
     }
 
-    /// 发送遥调命令（YT）
-    pub async fn send_remote_adjust(
-        &mut self,
+    /// 发送遥调命令 (YT)
+    pub async fn send_remote_adjustment(
+        &self,
         channel_id: u16,
         point_id: u32,
         value: f64,
-        source_model: String,
+        source_model: Option<String>,
     ) -> Result<String> {
         let command = ControlCommand::new(
             channel_id,
             point_id,
-            ControlType::RemoteAdjust,
+            ControlType::RemoteAdjustment,
             value,
             source_model,
         );
 
-        self.storage.create_control_command(&command).await?;
+        self.storage
+            .send_control_command(
+                command.channel_id,
+                command.get_point_type(),
+                command.point_id,
+                command.value,
+            )
+            .await?;
 
         info!(
-            "Sent remote adjust command {} to channel {} point {} value {}",
+            "Sent remote adjustment command {} to channel {} point {} value {}",
             command.id, channel_id, point_id, value
         );
 
         Ok(command.id)
     }
 
-    /// 获取命令状态
-    pub async fn get_command_status(&mut self, command_id: &str) -> Result<CommandStatus> {
-        match self.storage.get_control_command(command_id).await? {
-            Some(command) => Ok(command.status),
-            None => Err(ModelSrvError::CommandNotFound(command_id.to_string())),
-        }
-    }
-
-    /// 等待命令完成
-    pub async fn wait_for_completion(&mut self, command_id: &str) -> Result<CommandStatus> {
-        let start_time = std::time::Instant::now();
-
-        loop {
-            match self.storage.get_control_command(command_id).await? {
-                Some(command) => {
-                    match command.status {
-                        CommandStatus::Success
-                        | CommandStatus::Failed
-                        | CommandStatus::Cancelled
-                        | CommandStatus::Timeout => {
-                            return Ok(command.status);
-                        }
-                        _ => {
-                            // 继续等待
-                        }
-                    }
-                }
-                None => {
-                    return Err(ModelSrvError::CommandNotFound(command_id.to_string()));
-                }
-            }
-
-            // 检查超时
-            if start_time.elapsed() > self.timeout_duration {
-                // 更新状态为超时
-                self.storage
-                    .update_command_status(
-                        command_id,
-                        CommandStatus::Timeout,
-                        Some("Command execution timeout".to_string()),
-                    )
-                    .await?;
-
-                return Ok(CommandStatus::Timeout);
-            }
-
-            // 等待一小段时间后重试
-            tokio::time::sleep(Duration::from_millis(100)).await;
-        }
-    }
-
-    /// 取消命令
-    pub async fn cancel_command(&mut self, command_id: &str) -> Result<()> {
-        match self.storage.get_control_command(command_id).await? {
-            Some(command) => match command.status {
-                CommandStatus::Pending | CommandStatus::Executing => {
-                    self.storage
-                        .update_command_status(
-                            command_id,
-                            CommandStatus::Cancelled,
-                            Some("Command cancelled by user".to_string()),
-                        )
-                        .await?;
-
-                    info!("Cancelled command {}", command_id);
-                    Ok(())
-                }
-                _ => Err(ModelSrvError::InvalidOperation(format!(
-                    "Cannot cancel command in {} state",
-                    command.status.to_str()
-                ))),
-            },
-            None => Err(ModelSrvError::CommandNotFound(command_id.to_string())),
-        }
-    }
-
-    /// 获取模型的历史命令
-    pub async fn get_model_command_history(
-        &mut self,
-        model_id: &str,
-        limit: usize,
-    ) -> Result<Vec<ControlCommand>> {
-        self.storage
-            .get_model_commands(model_id, limit as isize)
-            .await
-    }
-
     /// 批量发送控制命令
-    pub async fn send_batch_commands(
-        &mut self,
-        commands: Vec<(u16, u32, ControlType, f64, String)>,
-    ) -> Result<Vec<String>> {
+    pub async fn send_batch_commands(&self, commands: Vec<ControlCommand>) -> Result<Vec<String>> {
         let mut command_ids = Vec::new();
 
-        for (channel_id, point_id, command_type, value, source_model) in commands {
-            let command =
-                ControlCommand::new(channel_id, point_id, command_type, value, source_model);
-
-            self.storage.create_control_command(&command).await?;
-            command_ids.push(command.id);
+        for command in commands {
+            match self
+                .storage
+                .send_control_command(
+                    command.channel_id,
+                    command.get_point_type(),
+                    command.point_id,
+                    command.value,
+                )
+                .await
+            {
+                Ok(_) => {
+                    info!("Sent batch command {}", command.id);
+                    command_ids.push(command.id);
+                }
+                Err(e) => {
+                    warn!("Failed to send batch command {}: {}", command.id, e);
+                    return Err(e);
+                }
+            }
         }
 
-        info!("Sent {} batch commands", command_ids.len());
+        info!("Successfully sent {} batch commands", command_ids.len());
         Ok(command_ids)
     }
 
-    /// 检查命令执行条件
-    pub async fn check_command_conditions(
+    /// 基于设备模型发送控制命令
+    pub async fn send_model_control(
         &self,
-        conditions: &[(String, String, f64)], // (field, operator, value)
-        current_values: &std::collections::HashMap<String, f64>,
-    ) -> bool {
-        for (field, operator, compare_value) in conditions {
-            if let Some(current_value) = current_values.get(field) {
-                let condition_met = match operator.as_str() {
-                    ">" => current_value > compare_value,
-                    "<" => current_value < compare_value,
-                    ">=" => current_value >= compare_value,
-                    "<=" => current_value <= compare_value,
-                    "==" => (current_value - compare_value).abs() < f64::EPSILON,
-                    "!=" => (current_value - compare_value).abs() >= f64::EPSILON,
-                    _ => {
-                        warn!("Unknown operator: {}", operator);
-                        false
-                    }
-                };
+        model_id: &str,
+        command_name: &str,
+        params: HashMap<String, serde_json::Value>,
+    ) -> Result<String> {
+        // 这里可以根据设备模型定义解析命令参数
+        // 现在先提供一个简化实现
 
-                if !condition_met {
-                    debug!(
-                        "Condition not met: {} {} {} (current: {})",
-                        field, operator, compare_value, current_value
-                    );
-                    return false;
-                }
-            } else {
-                debug!("Field {} not found in current values", field);
-                return false;
-            }
-        }
+        // 从参数中提取基本信息
+        let channel_id = params
+            .get("channel_id")
+            .and_then(|v| v.as_u64())
+            .ok_or_else(|| ModelSrvError::InvalidParameter("channel_id is required".to_string()))?
+            as u16;
 
-        true
+        let point_id = params
+            .get("point_id")
+            .and_then(|v| v.as_u64())
+            .ok_or_else(|| ModelSrvError::InvalidParameter("point_id is required".to_string()))?
+            as u32;
+
+        let value = params
+            .get("value")
+            .and_then(|v| v.as_f64())
+            .ok_or_else(|| ModelSrvError::InvalidParameter("value is required".to_string()))?;
+
+        // 根据命令名称确定控制类型
+        let control_type = if command_name.contains("control") || command_name.contains("switch") {
+            ControlType::RemoteControl
+        } else if command_name.contains("adjust") || command_name.contains("set") {
+            ControlType::RemoteAdjustment
+        } else {
+            // 默认为遥调
+            ControlType::RemoteAdjustment
+        };
+
+        let command = ControlCommand::new(
+            channel_id,
+            point_id,
+            control_type,
+            value,
+            Some(model_id.to_string()),
+        );
+
+        self.storage
+            .send_control_command(
+                command.channel_id,
+                command.get_point_type(),
+                command.point_id,
+                command.value,
+            )
+            .await?;
+
+        info!(
+            "Sent model control command {} for model {} command {}",
+            command.id, model_id, command_name
+        );
+
+        Ok(command.id)
     }
-}
-
-/// 控制命令执行器（用于监听和执行命令反馈）
-pub struct CommandExecutor {
-    storage: ModelStorage,
-    subscription: redis::aio::PubSub,
-}
-
-impl CommandExecutor {
-    /// 创建命令执行器
-    pub async fn new(redis_url: &str) -> Result<Self> {
-        let storage = ModelStorage::new(redis_url).await?;
-
-        let client =
-            redis::Client::open(redis_url).map_err(|e| ModelSrvError::RedisError(e.to_string()))?;
-
-        let subscription = client
-            .get_async_pubsub()
-            .await
-            .map_err(|e| ModelSrvError::RedisError(e.to_string()))?;
-
-        Ok(Self {
-            storage,
-            subscription,
-        })
-    }
-
-    /// 订阅命令反馈通道
-    pub async fn subscribe_feedback(&mut self, patterns: &[String]) -> Result<()> {
-        // use redis::AsyncCommands;
-
-        for pattern in patterns {
-            self.subscription
-                .psubscribe(pattern)
-                .await
-                .map_err(|e| ModelSrvError::RedisError(e.to_string()))?;
-        }
-
-        info!("Subscribed to {} feedback patterns", patterns.len());
-        Ok(())
-    }
-
-    /// 处理命令反馈
-    pub async fn process_feedback(&mut self) -> Result<()> {
-        // use redis::AsyncCommands;
-        use futures_util::StreamExt;
-
-        while let Some(msg) = self.subscription.on_message().next().await {
-            let channel = msg.get_channel_name();
-            let payload: String = match msg.get_payload() {
-                Ok(p) => p,
-                Err(e) => {
-                    error!("Failed to get message payload: {}", e);
-                    continue;
-                }
-            };
-
-            // 解析反馈消息
-            if let Ok(feedback) = serde_json::from_str::<CommandFeedback>(&payload) {
-                debug!(
-                    "Received feedback for command {}: {:?}",
-                    feedback.command_id, feedback.status
-                );
-
-                // 更新命令状态
-                if let Err(e) = self
-                    .storage
-                    .update_command_status(&feedback.command_id, feedback.status, feedback.message)
-                    .await
-                {
-                    error!("Failed to update command status: {}", e);
-                }
-            } else {
-                warn!(
-                    "Failed to parse feedback message from {}: {}",
-                    channel, payload
-                );
-            }
-        }
-
-        Ok(())
-    }
-}
-
-/// 命令反馈结构
-#[derive(Debug, Serialize, Deserialize)]
-struct CommandFeedback {
-    command_id: String,
-    status: CommandStatus,
-    message: Option<String>,
-    timestamp: i64,
 }
 
 #[cfg(test)]
@@ -332,29 +248,29 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_check_conditions() {
-        // 创建一个临时的ControlManager用于测试
-        // 注意：这只测试条件检查逻辑，不涉及实际的存储操作
+    fn test_control_command_creation() {
+        let command = ControlCommand::new(
+            1001,
+            30001,
+            ControlType::RemoteControl,
+            1.0,
+            Some("test_model".to_string()),
+        );
 
-        let conditions = vec![
-            ("temperature".to_string(), ">".to_string(), 20.0),
-            ("pressure".to_string(), "<=".to_string(), 110.0),
-        ];
+        assert_eq!(command.channel_id, 1001);
+        assert_eq!(command.point_id, 30001);
+        assert_eq!(command.value, 1.0);
+        assert_eq!(command.get_point_type(), "c");
+        assert!(!command.id.is_empty());
+    }
 
-        let mut values = std::collections::HashMap::new();
-        values.insert("temperature".to_string(), 25.5);
-        values.insert("pressure".to_string(), 101.3);
+    #[test]
+    fn test_control_types() {
+        let control_cmd = ControlCommand::new(1001, 30001, ControlType::RemoteControl, 1.0, None);
+        assert_eq!(control_cmd.get_point_type(), "c");
 
-        // 直接测试条件检查逻辑
-        for (field, operator, compare_value) in &conditions {
-            if let Some(current_value) = values.get(field) {
-                let condition_met = match operator.as_str() {
-                    ">" => current_value > compare_value,
-                    "<=" => current_value <= compare_value,
-                    _ => false,
-                };
-                assert!(condition_met);
-            }
-        }
+        let adjust_cmd =
+            ControlCommand::new(1001, 30002, ControlType::RemoteAdjustment, 25.5, None);
+        assert_eq!(adjust_cmd.get_point_type(), "a");
     }
 }

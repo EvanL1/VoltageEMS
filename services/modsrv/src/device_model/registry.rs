@@ -156,8 +156,20 @@ impl ModelRegistry {
         let content = std::fs::read_to_string(path)
             .map_err(|e| ModelSrvError::IoError(format!("Failed to read model file: {}", e)))?;
 
-        let model: DeviceModel = serde_yaml::from_str(&content)
-            .map_err(|e| ModelSrvError::YamlError(format!("Failed to parse model YAML: {}", e)))?;
+        let model: DeviceModel = match path.extension().and_then(|s| s.to_str()) {
+            Some("json") => serde_json::from_str(&content).map_err(|e| {
+                ModelSrvError::JsonError(format!("Failed to parse model JSON: {}", e))
+            })?,
+            Some("yaml") | Some("yml") => serde_yaml::from_str(&content).map_err(|e| {
+                ModelSrvError::YamlError(format!("Failed to parse model YAML: {}", e))
+            })?,
+            _ => {
+                // Default to JSON if extension is unknown
+                serde_json::from_str(&content).map_err(|e| {
+                    ModelSrvError::JsonError(format!("Failed to parse model JSON (default): {}", e))
+                })?
+            }
+        };
 
         model.validate().map_err(ModelSrvError::InvalidModel)?;
 
@@ -181,15 +193,19 @@ impl ModelRegistry {
                 .map_err(|e| ModelSrvError::IoError(format!("Failed to read entry: {}", e)))?;
             let path = entry.path();
 
-            if path.is_file() && path.extension().and_then(|s| s.to_str()) == Some("yaml") {
-                match self.load_model_from_file(&path).await {
-                    Ok(model) => {
-                        if let Err(e) = self.register_model(model).await {
-                            tracing::warn!("Failed to register model from {:?}: {}", path, e);
+            if path.is_file() {
+                let extension = path.extension().and_then(|s| s.to_str());
+                // Support both JSON (preferred) and YAML files
+                if matches!(extension, Some("json") | Some("yaml") | Some("yml")) {
+                    match self.load_model_from_file(&path).await {
+                        Ok(model) => {
+                            if let Err(e) = self.register_model(model).await {
+                                tracing::warn!("Failed to register model from {:?}: {}", path, e);
+                            }
                         }
-                    }
-                    Err(e) => {
-                        tracing::warn!("Failed to load model from {:?}: {}", path, e);
+                        Err(e) => {
+                            tracing::warn!("Failed to load model from {:?}: {}", path, e);
+                        }
                     }
                 }
             }

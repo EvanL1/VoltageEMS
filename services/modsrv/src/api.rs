@@ -10,7 +10,6 @@ use axum::{
     routing::{get, post},
     Router,
 };
-use rand;
 use serde::{Deserialize, Serialize};
 use serde_json::{self, json, Value};
 // use std::collections::HashMap;
@@ -144,14 +143,10 @@ pub struct ApiServer {
 }
 
 impl ApiServer {
-    /// Create a new API server with optional engine
-    pub fn new(
-        _listen_address: String,
-        _port: u16,
-        _engine: Arc<crate::engine::OptimizedModelEngine>,
-    ) -> Self {
-        // TODO: Implement with new engine
-        unimplemented!("ApiServer needs to be updated for new engine")
+    /// Create a new API server (engine functionality removed)
+    pub fn new(_listen_address: String, _port: u16) -> Self {
+        // TODO: Implement with device model system
+        unimplemented!("ApiServer needs to be updated for device model system")
     }
 
     /// Run the API server
@@ -183,7 +178,7 @@ impl ApiServer {
             .route("/health", get(health_check))
             // Template endpoints
             .route(&api_config.build_path("templates"), get(list_templates))
-            .route(&api_config.build_path("templates/:id"), get(get_template))
+            .route(&api_config.build_path("templates/{id}"), get(get_template))
             // Instance endpoints
             .route(&api_config.build_path("instances"), post(create_instance))
             // Control operation endpoints
@@ -192,7 +187,7 @@ impl ApiServer {
                 get(list_operations).post(control_operation),
             )
             .route(
-                &api_config.build_path("control/execute/:operation"),
+                &api_config.build_path("control/execute/{operation}"),
                 post(execute_operation),
             )
             // OpenAPI spec endpoint
@@ -206,20 +201,78 @@ impl ApiServer {
                 get(list_rules).post(create_rule),
             )
             .route(
-                &api_config.build_path("rules/:id"),
+                &api_config.build_path("rules/{id}"),
                 get(get_rule).put(update_rule).delete(delete_rule),
             )
             .route(
-                &api_config.build_path("rules/:id/execute"),
+                &api_config.build_path("rules/{id}/execute"),
                 post(execute_rule),
             )
             // CORS
             .layer(CorsLayer::permissive())
             // State
-            .with_state(self.state.clone());
+            .with_state(Arc::new(self.state.clone()));
 
         let listener = tokio::net::TcpListener::bind(format!("0.0.0.0:{}", self.port)).await?;
         info!("Starting API server on port {}", self.port);
+
+        axum::serve(listener, app).await?;
+
+        Ok(())
+    }
+
+    /// Start API server with startup notification
+    pub async fn start_with_notification(
+        &self,
+        startup_tx: tokio::sync::mpsc::Sender<std::result::Result<(), String>>,
+    ) -> Result<(), std::io::Error> {
+        let api_config = &self.config.api;
+
+        let app = Router::new()
+            // Health endpoints (always without prefix)
+            .route("/health", get(health_check))
+            // Template endpoints
+            .route(&api_config.build_path("templates"), get(list_templates))
+            .route(&api_config.build_path("templates/{id}"), get(get_template))
+            // Instance endpoints
+            .route(&api_config.build_path("instances"), post(create_instance))
+            // Control operation endpoints
+            .route(
+                &api_config.build_path("control/operations"),
+                get(list_operations).post(control_operation),
+            )
+            .route(
+                &api_config.build_path("control/execute/{operation}"),
+                post(execute_operation),
+            )
+            // OpenAPI spec endpoint
+            .route(
+                &api_config.build_path("api-docs/openapi.json"),
+                get(serve_openapi_spec),
+            )
+            // Rule endpoints (legacy API compatibility)
+            .route(
+                &api_config.build_path("rules"),
+                get(list_rules).post(create_rule),
+            )
+            .route(
+                &api_config.build_path("rules/{id}"),
+                get(get_rule).put(update_rule).delete(delete_rule),
+            )
+            .route(
+                &api_config.build_path("rules/{id}/execute"),
+                post(execute_rule),
+            )
+            // CORS
+            .layer(CorsLayer::permissive())
+            // State
+            .with_state(Arc::new(self.state.clone()));
+
+        let listener = tokio::net::TcpListener::bind(format!("0.0.0.0:{}", self.port)).await?;
+        info!("Starting API server on port {}", self.port);
+
+        // Send startup confirmation
+        let _ = startup_tx.send(Ok(())).await;
 
         axum::serve(listener, app).await?;
 
@@ -254,7 +307,7 @@ async fn health_check() -> Json<HealthResponse> {
     tag = "rules"
 )]
 async fn list_rules(
-    State(_state): State<AppState>,
+    State(_state): State<Arc<AppState>>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
     // TODO: Implement list_rules method in RedisStore
     match Ok(serde_json::Value::Array(vec![]))
@@ -292,7 +345,7 @@ async fn list_rules(
 )]
 async fn get_rule(
     Path(id): Path<String>,
-    State(_state): State<AppState>,
+    State(_state): State<Arc<AppState>>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
     // TODO: Implement get_rule method in RedisStore
     match Ok(None) as Result<Option<serde_json::Value>, crate::error::ModelSrvError> {
@@ -332,7 +385,7 @@ async fn get_rule(
     tag = "rules"
 )]
 async fn create_rule(
-    State(_state): State<AppState>,
+    State(_state): State<Arc<AppState>>,
     Json(_rule_data): Json<serde_json::Value>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
     // TODO: Implement create_rule method in RedisStore
@@ -373,7 +426,7 @@ async fn create_rule(
 )]
 async fn update_rule(
     Path(id): Path<String>,
-    State(_state): State<AppState>,
+    State(_state): State<Arc<AppState>>,
     Json(_rule_data): Json<serde_json::Value>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
     // TODO: Implement update_rule method in RedisStore
@@ -410,7 +463,7 @@ async fn update_rule(
 )]
 async fn delete_rule(
     Path(id): Path<String>,
-    State(_state): State<AppState>,
+    State(_state): State<Arc<AppState>>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
     // TODO: Implement delete_rule method in RedisStore
     match Ok(()) as Result<(), crate::error::ModelSrvError> {
@@ -447,7 +500,7 @@ async fn delete_rule(
 )]
 async fn execute_rule(
     Path(id): Path<String>,
-    State(_state): State<AppState>,
+    State(_state): State<Arc<AppState>>,
     Json(_input): Json<serde_json::Value>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
     // TODO: Implement rule executor functionality
@@ -472,7 +525,7 @@ async fn execute_rule(
     tag = "templates"
 )]
 async fn list_templates(
-    State(_state): State<AppState>,
+    State(_state): State<Arc<AppState>>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
     // TODO: Implement template manager functionality
     Ok(Json(json!({
@@ -496,7 +549,7 @@ async fn list_templates(
 )]
 async fn get_template(
     Path(id): Path<String>,
-    State(_state): State<AppState>,
+    State(_state): State<Arc<AppState>>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
     // TODO: Implement template manager functionality
     Err((
@@ -520,7 +573,7 @@ async fn get_template(
     tag = "instances"
 )]
 async fn create_instance(
-    State(_state): State<AppState>,
+    State(_state): State<Arc<AppState>>,
     Json(req): Json<CreateInstanceRequest>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
     // TODO: Implement template manager functionality
@@ -540,7 +593,7 @@ async fn create_instance(
     ),
     tag = "operations"
 )]
-async fn list_operations(State(_state): State<AppState>) -> Json<Vec<String>> {
+async fn list_operations(State(_state): State<Arc<AppState>>) -> Json<Vec<String>> {
     Json(vec![
         "start_motor".to_string(),
         "stop_motor".to_string(),
@@ -560,7 +613,7 @@ async fn list_operations(State(_state): State<AppState>) -> Json<Vec<String>> {
     tag = "operations"
 )]
 async fn control_operation(
-    State(_state): State<AppState>,
+    State(_state): State<Arc<AppState>>,
     Json(req): Json<ExecuteOperationRequest>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
     // Placeholder implementation
@@ -586,7 +639,7 @@ async fn control_operation(
 )]
 async fn execute_operation(
     Path(operation): Path<String>,
-    State(_state): State<AppState>,
+    State(_state): State<Arc<AppState>>,
     Json(req): Json<ExecuteOperationRequest>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
     // Placeholder implementation
