@@ -419,6 +419,79 @@ curl http://localhost:8080/health  # apigateway
 - No secrets in code or logs
 - Environment variables for sensitive config
 
+## Service-Specific Configuration
+
+### ModSrv Configuration
+
+ModSrv使用统一配置文件，所有模型定义都在主配置中：
+
+```yaml
+# services/modsrv/config/default.yml
+service_name: "modsrv"
+version: "2.0.0"
+
+redis:
+  url: "redis://localhost:6379"
+  key_prefix: "modsrv:"
+
+models:
+  - id: "power_meter_demo"
+    name: "演示电表模型"
+    description: "用于演示的简单电表监控模型"
+    monitoring:
+      voltage_a:
+        description: "A相电压"
+        unit: "V"
+      current_a:
+        description: "A相电流"
+        unit: "A"
+      power:
+        description: "有功功率"
+        unit: "kW"
+    control:
+      main_switch:
+        description: "主开关"
+      power_limit:
+        description: "功率限制设定"
+        unit: "kW"
+```
+
+### ModSrv点位映射
+
+```json
+// services/modsrv/mappings/power_meter_demo.json
+{
+  "monitoring": {
+    "voltage_a": {
+      "channel": 1001,
+      "point": 10001,
+      "type": "m"
+    }
+  },
+  "control": {
+    "main_switch": {
+      "channel": 1001,
+      "point": 20001,
+      "type": "c"
+    }
+  }
+}
+```
+
+### ModSrv数据结构
+
+```rust
+// 标准化浮点数（6位小数精度）
+use voltage_libs::types::StandardFloat;
+
+let value = StandardFloat::new(25.123456);
+let redis_value = value.to_string();  // "25.123456"
+
+// Redis存储格式
+// Hash: modsrv:{modelname}:{type}
+// 示例: modsrv:power_meter_demo:measurement
+```
+
 ## Critical Reminders
 
 1. **Always use `cargo check` before building**
@@ -429,3 +502,5 @@ curl http://localhost:8080/health  # apigateway
 6. **All services use axum framework**
 7. **Hash storage for all real-time data**
 8. **6 decimal precision for all numeric values**
+9. **ModSrv uses unified config (no separate JSON model files)**
+10. **No "enhance" in filenames or functions - modify existing code**
