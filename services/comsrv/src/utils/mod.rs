@@ -14,6 +14,35 @@ pub mod hex;
 // Re-export error types for convenience
 pub use error::{ComSrvError, ErrorExt, Result};
 
+/// 规范化协议名称为标准格式（小写下划线）
+pub fn normalize_protocol_name(name: &str) -> String {
+    match name
+        .to_lowercase()
+        .replace("_", "")
+        .replace("-", "")
+        .as_str()
+    {
+        "modbustcp" => "modbus_tcp".to_string(),
+        "modbusrtu" => "modbus_rtu".to_string(),
+        "iec60870" | "iec104" => "iec60870".to_string(),
+        "can" | "canbus" => "can".to_string(),
+        "virtual" | "virt" => "virtual".to_string(),
+        _ => name.to_lowercase(),
+    }
+}
+
+/// 将协议名称转换为显示格式（PascalCase）
+pub fn protocol_display_name(normalized_name: &str) -> String {
+    match normalized_name {
+        "modbus_tcp" => "ModbusTcp".to_string(),
+        "modbus_rtu" => "ModbusRtu".to_string(),
+        "iec60870" => "IEC60870".to_string(),
+        "can" => "CAN".to_string(),
+        "virtual" => "Virtual".to_string(),
+        _ => normalized_name.to_string(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

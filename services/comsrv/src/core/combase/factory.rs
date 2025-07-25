@@ -4,14 +4,13 @@
 
 use async_trait::async_trait;
 use dashmap::DashMap;
-use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{error, info};
 
 use crate::core::combase::command::{CommandSubscriber, CommandSubscriberConfig};
-use crate::core::combase::core::{ComBase, PointData};
-use crate::core::config::{ChannelConfig, ChannelLoggingConfig, ConfigManager, ProtocolType};
+use crate::core::combase::core::ComBase;
+use crate::core::config::{ChannelConfig, ConfigManager, ProtocolType};
 use crate::utils::error::{ComSrvError, Result};
 use std::str::FromStr;
 
@@ -115,7 +114,50 @@ impl ProtocolFactory {
         // 初始化插件系统
         let _ = crate::plugins::core::get_plugin_registry();
 
+        // 注册内置协议工厂
+        factory.register_builtin_factories();
+
         factory
+    }
+
+    /// 注册内置协议工厂
+    fn register_builtin_factories(&self) {
+        use crate::plugins::core::get_plugin_registry;
+
+        // 获取插件注册表
+        let registry = get_plugin_registry();
+        let reg = registry.read().unwrap();
+
+        // Modbus TCP
+        if reg.get_factory("modbus_tcp").is_some() {
+            self.register_protocol_factory(Arc::new(PluginAdapterFactory::new(
+                ProtocolType::ModbusTcp,
+                "modbus_tcp".to_string(),
+            )));
+        }
+
+        // Modbus RTU
+        if reg.get_factory("modbus_rtu").is_some() {
+            self.register_protocol_factory(Arc::new(PluginAdapterFactory::new(
+                ProtocolType::ModbusRtu,
+                "modbus_rtu".to_string(),
+            )));
+        }
+
+        // Virtual
+        if reg.get_factory("virt").is_some() {
+            self.register_protocol_factory(Arc::new(PluginAdapterFactory::new(
+                ProtocolType::Virtual,
+                "virt".to_string(),
+            )));
+        }
+
+        // 虚拟协议工厂（用于测试）
+        #[cfg(any(test, feature = "test-utils"))]
+        {
+            use self::test_support::MockProtocolFactory;
+            self.register_protocol_factory(Arc::new(MockProtocolFactory));
+        }
     }
 
     /// 注册协议工厂
@@ -169,7 +211,7 @@ impl ProtocolFactory {
     pub async fn create_channel(
         &self,
         channel_config: &ChannelConfig,
-        _config_manager: Option<&ConfigManager>,
+        config_manager: Option<&ConfigManager>,
     ) -> Result<Arc<RwLock<Box<dyn ComBase>>>> {
         let channel_id = channel_config.id;
 
@@ -201,17 +243,23 @@ impl ProtocolFactory {
         factory.validate_config(&config_value)?;
 
         // 创建客户端实例
+        info!("Creating client for protocol {:?}", protocol_type);
         let mut client = factory.create_client(channel_config, config_value).await?;
+        info!("Client created successfully for channel {}", channel_id);
 
         // 初始化客户端
+        info!("Initializing client for channel {}", channel_id);
         client.initialize(channel_config).await?;
+        info!("Client initialized successfully for channel {}", channel_id);
 
-        // 加载点位映射
-        // TODO: 实现点位映射加载逻辑
-        // if let Some(config_mgr) = config_manager {
-        //     let mappings = config_mgr.load_unified_mappings(channel_id).await?;
-        //     client.update_points(mappings).await?;
-        // }
+        // 四遥分离架构下，点位配置已在initialize阶段直接从channel_config加载，不需要额外的unified mapping
+
+        // 跳过连接阶段，仅完成初始化
+        // 连接将在所有通道初始化完成后统一建立
+        info!(
+            "Channel {} initialization completed, connection will be established later",
+            channel_id
+        );
 
         let channel_arc = Arc::new(RwLock::new(client));
 
@@ -282,6 +330,43 @@ impl ProtocolFactory {
             });
             entry.channel.clone()
         })
+    }
+
+    /// 批量连接所有已初始化的通道
+    pub async fn connect_all_channels(&self) -> Result<()> {
+        info!(
+            "Starting batch connection for {} channels",
+            self.channels.len()
+        );
+
+        let channel_ids: Vec<u16> = self.channels.iter().map(|entry| *entry.key()).collect();
+        let mut successful_connections = 0;
+        let mut failed_connections = 0;
+
+        for channel_id in channel_ids {
+            if let Some(entry) = self.channels.get(&channel_id) {
+                info!("Connecting channel {}", channel_id);
+
+                let mut client = entry.channel.write().await;
+                match client.connect().await {
+                    Ok(_) => {
+                        info!("Channel {} connected successfully", channel_id);
+                        successful_connections += 1;
+                    }
+                    Err(e) => {
+                        error!("Failed to connect channel {}: {}", channel_id, e);
+                        failed_connections += 1;
+                    }
+                }
+            }
+        }
+
+        info!(
+            "Batch connection completed: {} successful, {} failed",
+            successful_connections, failed_connections
+        );
+
+        Ok(())
     }
 
     /// 移除通道
@@ -434,13 +519,81 @@ pub fn create_factory_with_custom_protocols(
 }
 
 // ============================================================================
+// 插件适配器工厂
+// ============================================================================
+
+/// 插件系统适配器工厂
+/// 将插件系统的 ProtocolPlugin 适配为 ProtocolClientFactory
+struct PluginAdapterFactory {
+    protocol_type: ProtocolType,
+    plugin_id: String,
+}
+
+impl PluginAdapterFactory {
+    fn new(protocol_type: ProtocolType, plugin_id: String) -> Self {
+        Self {
+            protocol_type,
+            plugin_id,
+        }
+    }
+}
+
+#[async_trait]
+impl ProtocolClientFactory for PluginAdapterFactory {
+    fn protocol_type(&self) -> ProtocolType {
+        self.protocol_type
+    }
+
+    async fn create_client(
+        &self,
+        channel_config: &ChannelConfig,
+        _config_value: ConfigValue,
+    ) -> Result<Box<dyn ComBase>> {
+        use crate::plugins::core::get_plugin_registry;
+
+        // 在一个小作用域内获取插件
+        let plugin = {
+            let registry = get_plugin_registry();
+            let reg = registry.read().unwrap();
+
+            let factory = reg.get_factory(&self.plugin_id).ok_or_else(|| {
+                ComSrvError::ConfigError(format!("Plugin factory not found: {}", self.plugin_id))
+            })?;
+
+            // 创建插件实例
+            factory()
+        }; // RwLockReadGuard 在这里被释放
+
+        // 使用插件创建协议实例
+        info!(
+            "Using plugin {} to create protocol instance",
+            self.plugin_id
+        );
+        let instance = plugin.create_instance(channel_config.clone()).await?;
+        info!("Plugin {} created instance successfully", self.plugin_id);
+        Ok(instance)
+    }
+
+    fn validate_config(&self, config: &ConfigValue) -> Result<()> {
+        // TODO: 调用插件的配置验证
+        Ok(())
+    }
+
+    fn get_config_template(&self) -> ConfigValue {
+        // TODO: 从插件获取配置模板
+        serde_json::json!({})
+    }
+}
+
+// ============================================================================
 // 测试支持
 // ============================================================================
 
 #[cfg(any(test, feature = "test-utils"))]
 pub mod test_support {
     use super::*;
-    use crate::core::combase::core::{ChannelStatus, DefaultProtocol, PointData, RedisValue};
+    use crate::core::combase::core::{ChannelStatus, PointData, RedisValue};
+    use std::collections::HashMap;
     use std::sync::atomic::{AtomicBool, Ordering};
 
     /// 测试用的Mock通信基础实现
@@ -532,7 +685,8 @@ pub mod test_support {
     #[async_trait]
     impl ProtocolClientFactory for MockProtocolFactory {
         fn protocol_type(&self) -> ProtocolType {
-            ProtocolType::ModbusTcp
+            // 使用 Virtual 协议类型，避免覆盖真正的 Modbus
+            ProtocolType::Virtual
         }
 
         async fn create_client(
@@ -581,7 +735,7 @@ mod tests {
 
         let protocols = factory.get_registered_protocols();
         assert_eq!(protocols.len(), 1);
-        assert_eq!(protocols[0], ProtocolType::ModbusTcp);
+        assert_eq!(protocols[0], ProtocolType::Virtual);
     }
 
     #[tokio::test]
@@ -593,7 +747,7 @@ mod tests {
         let channel_config = ChannelConfig {
             id: 1,
             name: "Test Channel".to_string(),
-            protocol: "modbus_tcp".to_string(),
+            protocol: "virtual".to_string(),
             parameters: HashMap::new(),
             enabled: true,
             enable_control: Some(false),

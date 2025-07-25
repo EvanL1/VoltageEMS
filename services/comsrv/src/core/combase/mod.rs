@@ -11,7 +11,7 @@ pub mod manager; // 点位管理器
 pub mod storage; // 存储和同步
 
 // 重新导出常用类型
-pub use crate::core::config::types::{TelemetryType, UnifiedPointMapping};
+pub use crate::core::config::types::TelemetryType;
 pub use command::{CommandStatus, CommandSubscriber, CommandSubscriberConfig, ControlCommand};
 pub use core::{
     ChannelCommand, ChannelStatus, ComBase, ConfigValidator, ConnectionManager, DefaultProtocol,

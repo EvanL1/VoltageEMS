@@ -201,11 +201,16 @@ impl ConfigManager {
                 match CsvLoader::load_channel_tables(table_config, config_dir) {
                     Ok(points) => {
                         info!(
-                            "Loaded {} combined points for channel {}",
+                            "Loaded {} four remote points for channel {}",
                             points.len(),
                             channel.id
                         );
-                        channel.combined_points = points;
+                        // 将点位分别添加到对应的HashMap
+                        for point in points {
+                            if let Err(e) = channel.add_point(point) {
+                                warn!("Failed to add point: {}", e);
+                            }
+                        }
                     }
                     Err(e) => {
                         warn!("Failed to load CSV for channel {}: {}", channel.id, e);
@@ -251,6 +256,8 @@ impl ConfigManager {
 
         Ok(())
     }
+
+    // 四遥分离架构下，不再需要统一映射方法
 }
 
 // ============================================================================
@@ -263,7 +270,7 @@ pub struct CsvLoader;
 
 /// 四遥点位
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct FourTelemetryPoint {
+pub struct FourRemotePoint {
     pub point_id: u32,
     pub signal_name: String,
     pub telemetry_type: String,
@@ -294,8 +301,11 @@ impl CsvLoader {
     ) -> Result<Vec<CombinedPoint>> {
         info!("Loading CSV tables for channel");
 
-        // 加载四遥点位
-        let mut all_telemetry = HashMap::new();
+        // 按四遥类型分别存储点位
+        let mut measurement_points = HashMap::new();
+        let mut signal_points = HashMap::new();
+        let mut control_points = HashMap::new();
+        let mut adjustment_points = HashMap::new();
 
         // 检查环境变量覆盖
         let base_dir = std::env::var("COMSRV_CSV_BASE_PATH")
@@ -305,64 +315,108 @@ impl CsvLoader {
         debug!("Using CSV base directory: {}", base_dir.display());
 
         // 加载遥测文件
-        let base_path = base_dir.join(&table_config.four_telemetry_route);
+        let base_path = base_dir.join(&table_config.four_remote_route);
 
         // 遥测
-        if let Some(measurement_points) = Self::load_telemetry_file(
-            &base_path.join(&table_config.four_telemetry_files.telemetry_file),
+        if let Some(measurement_data) = Self::load_measurement_file(
+            &base_path.join(&table_config.four_remote_files.measurement_file),
             "Measurement",
         )? {
-            for point in measurement_points {
-                all_telemetry.insert(point.point_id, point);
+            for point in measurement_data {
+                measurement_points.insert(point.point_id, point);
             }
         }
 
         // 遥信
-        if let Some(signal_points) = Self::load_signal_file(
-            &base_path.join(&table_config.four_telemetry_files.signal_file),
+        if let Some(signal_data) = Self::load_signal_file(
+            &base_path.join(&table_config.four_remote_files.signal_file),
             "Signal",
         )? {
-            for point in signal_points {
-                all_telemetry.insert(point.point_id, point);
+            for point in signal_data {
+                signal_points.insert(point.point_id, point);
             }
         }
 
         // 遥调
-        if let Some(adjustment_points) = Self::load_telemetry_file(
-            &base_path.join(&table_config.four_telemetry_files.adjustment_file),
+        if let Some(adjustment_data) = Self::load_measurement_file(
+            &base_path.join(&table_config.four_remote_files.adjustment_file),
             "Adjustment",
         )? {
-            for point in adjustment_points {
-                all_telemetry.insert(point.point_id, point);
+            for point in adjustment_data {
+                adjustment_points.insert(point.point_id, point);
             }
         }
 
         // 遥控
-        if let Some(control_points) = Self::load_signal_file(
-            &base_path.join(&table_config.four_telemetry_files.control_file),
+        if let Some(control_data) = Self::load_signal_file(
+            &base_path.join(&table_config.four_remote_files.control_file),
             "Control",
         )? {
-            for point in control_points {
-                all_telemetry.insert(point.point_id, point);
+            for point in control_data {
+                control_points.insert(point.point_id, point);
             }
         }
 
         // 加载协议映射
         let protocol_path = base_dir.join(&table_config.protocol_mapping_route);
-        let protocol_mappings =
-            Self::load_protocol_mappings(&protocol_path.join(&table_config.protocol_mapping_file))?;
 
-        // 合并点位
-        let combined = Self::combine_points(all_telemetry, protocol_mappings)?;
+        // 为每种遥测类型分别加载对应的映射文件，避免点位ID冲突
+        let mut combined = Vec::new();
+
+        // 合并遥测点位
+        if let Ok(measurement_mappings) = Self::load_protocol_mappings(
+            &protocol_path.join(&table_config.protocol_mapping_file.measurement_mapping),
+        ) {
+            debug!("Loaded {} measurement mappings", measurement_mappings.len());
+            let measurement_combined = Self::combine_points_by_type(
+                measurement_points,
+                &measurement_mappings,
+                "Measurement",
+            )?;
+            combined.extend(measurement_combined);
+        }
+
+        // 合并遥信点位
+        if let Ok(signal_mappings) = Self::load_protocol_mappings(
+            &protocol_path.join(&table_config.protocol_mapping_file.signal_mapping),
+        ) {
+            debug!("Loaded {} signal mappings", signal_mappings.len());
+            let signal_combined =
+                Self::combine_points_by_type(signal_points, &signal_mappings, "Signal")?;
+            combined.extend(signal_combined);
+        }
+
+        // 合并遥调点位
+        if let Ok(adjustment_mappings) = Self::load_protocol_mappings(
+            &protocol_path.join(&table_config.protocol_mapping_file.adjustment_mapping),
+        ) {
+            debug!("Loaded {} adjustment mappings", adjustment_mappings.len());
+            let adjustment_combined = Self::combine_points_by_type(
+                adjustment_points,
+                &adjustment_mappings,
+                "Adjustment",
+            )?;
+            combined.extend(adjustment_combined);
+        }
+
+        // 合并遥控点位
+        if let Ok(control_mappings) = Self::load_protocol_mappings(
+            &protocol_path.join(&table_config.protocol_mapping_file.control_mapping),
+        ) {
+            debug!("Loaded {} control mappings", control_mappings.len());
+            let control_combined =
+                Self::combine_points_by_type(control_points, &control_mappings, "Control")?;
+            combined.extend(control_combined);
+        }
 
         Ok(combined)
     }
 
     /// 加载遥测文件（带缩放参数）
-    fn load_telemetry_file(
+    fn load_measurement_file(
         path: &Path,
         telemetry_type: &str,
-    ) -> Result<Option<Vec<FourTelemetryPoint>>> {
+    ) -> Result<Option<Vec<FourRemotePoint>>> {
         if !path.exists() {
             debug!("File not found: {}, skipping", path.display());
             return Ok(None);
@@ -381,7 +435,7 @@ impl CsvLoader {
             let record = result
                 .map_err(|e| ComSrvError::IoError(format!("Failed to read CSV record: {}", e)))?;
 
-            let point = FourTelemetryPoint {
+            let point = FourRemotePoint {
                 point_id: record
                     .get(0)
                     .ok_or_else(|| ComSrvError::ConfigError("Missing point_id".to_string()))?
@@ -404,10 +458,7 @@ impl CsvLoader {
     }
 
     /// 加载信号文件（不带缩放参数）
-    fn load_signal_file(
-        path: &Path,
-        telemetry_type: &str,
-    ) -> Result<Option<Vec<FourTelemetryPoint>>> {
+    fn load_signal_file(path: &Path, telemetry_type: &str) -> Result<Option<Vec<FourRemotePoint>>> {
         if !path.exists() {
             debug!("File not found: {}, skipping", path.display());
             return Ok(None);
@@ -426,7 +477,7 @@ impl CsvLoader {
             let record = result
                 .map_err(|e| ComSrvError::IoError(format!("Failed to read CSV record: {}", e)))?;
 
-            let point = FourTelemetryPoint {
+            let point = FourRemotePoint {
                 point_id: record
                     .get(0)
                     .ok_or_else(|| ComSrvError::ConfigError("Missing point_id".to_string()))?
@@ -513,25 +564,27 @@ impl CsvLoader {
 
     /// 合并点位信息
     fn combine_points(
-        telemetry: HashMap<u32, FourTelemetryPoint>,
+        measurement: HashMap<u32, FourRemotePoint>,
         protocol_mappings: HashMap<u32, HashMap<String, String>>,
     ) -> Result<Vec<CombinedPoint>> {
         let mut combined = Vec::new();
 
-        for (point_id, telemetry_point) in telemetry {
+        for (point_id, measurement_point) in measurement {
             if let Some(protocol_params) = protocol_mappings.get(&point_id) {
                 let point = CombinedPoint {
                     point_id,
-                    signal_name: telemetry_point.signal_name,
-                    telemetry_type: telemetry_point.telemetry_type,
-                    data_type: telemetry_point.data_type,
+                    signal_name: measurement_point.signal_name,
+                    telemetry_type: measurement_point.telemetry_type,
+                    data_type: measurement_point.data_type,
                     protocol_params: protocol_params.clone(),
-                    scaling: if telemetry_point.scale.is_some() || telemetry_point.offset.is_some()
+                    scaling: if measurement_point.scale.is_some()
+                        || measurement_point.offset.is_some()
                     {
                         Some(super::types::ScalingInfo {
-                            scale: telemetry_point.scale.unwrap_or(1.0),
-                            offset: telemetry_point.offset.unwrap_or(0.0),
-                            unit: telemetry_point.unit,
+                            scale: measurement_point.scale.unwrap_or(1.0),
+                            offset: measurement_point.offset.unwrap_or(0.0),
+                            unit: measurement_point.unit,
+                            reverse: None, // TODO: Load from CSV if needed
                         })
                     } else {
                         None
@@ -544,6 +597,53 @@ impl CsvLoader {
         }
 
         info!("Combined {} points with protocol mappings", combined.len());
+        Ok(combined)
+    }
+
+    /// 按类型合并点位信息，保持四遥分离
+    fn combine_points_by_type(
+        measurement_points: HashMap<u32, FourRemotePoint>,
+        protocol_mappings: &HashMap<u32, HashMap<String, String>>,
+        telemetry_type: &str,
+    ) -> Result<Vec<CombinedPoint>> {
+        let mut combined = Vec::new();
+
+        for (point_id, measurement_point) in measurement_points {
+            if let Some(protocol_params) = protocol_mappings.get(&point_id) {
+                let point = CombinedPoint {
+                    point_id,
+                    signal_name: measurement_point.signal_name,
+                    telemetry_type: measurement_point.telemetry_type,
+                    data_type: measurement_point.data_type,
+                    protocol_params: protocol_params.clone(),
+                    scaling: if measurement_point.scale.is_some()
+                        || measurement_point.offset.is_some()
+                        || measurement_point.reverse.is_some()
+                    {
+                        Some(super::types::ScalingInfo {
+                            scale: measurement_point.scale.unwrap_or(1.0),
+                            offset: measurement_point.offset.unwrap_or(0.0),
+                            unit: measurement_point.unit,
+                            reverse: measurement_point.reverse,
+                        })
+                    } else {
+                        None
+                    },
+                };
+                combined.push(point);
+            } else {
+                debug!(
+                    "No protocol mapping found for {} point_id: {}",
+                    telemetry_type, point_id
+                );
+            }
+        }
+
+        debug!(
+            "Combined {} {} points with protocol mappings",
+            combined.len(),
+            telemetry_type
+        );
         Ok(combined)
     }
 }

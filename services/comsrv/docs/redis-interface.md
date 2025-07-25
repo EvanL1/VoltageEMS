@@ -27,8 +27,8 @@ comsrv:1001:m → {
 
 # 通道 1001 的信号值
 comsrv:1001:s → {
-    "20001": "1.000000",
-    "20002": "0.000000"
+    "10001": "1.000000",
+    "10002": "0.000000"
 }
 ```
 
@@ -59,15 +59,15 @@ pub async fn batch_update_points(
     updates: Vec<(u32, StandardFloat)>,
 ) -> Result<()> {
     let hash_key = format!("comsrv:{}:{}", channel_id, point_type);
-    
+
     // 使用 pipeline 批量更新
     let mut pipe = redis::pipe();
     pipe.atomic();
-    
+
     for (point_id, value) in updates {
         pipe.hset(&hash_key, point_id.to_string(), value.to_redis());
     }
-    
+
     pipe.query_async(&mut self.conn).await?;
     Ok(())
 }
@@ -83,19 +83,19 @@ pub async fn batch_read_points(
     point_ids: Vec<u32>,
 ) -> Result<HashMap<u32, StandardFloat>> {
     let hash_key = format!("comsrv:{}:{}", channel_id, point_type);
-    
+
     // 构建字段列表
     let fields: Vec<String> = point_ids.iter()
         .map(|id| id.to_string())
         .collect();
-    
+
     // 批量获取
     let values: Vec<Option<String>> = redis::cmd("HMGET")
         .arg(&hash_key)
         .arg(&fields)
         .query_async(&mut self.conn)
         .await?;
-    
+
     // 解析结果
     let mut result = HashMap::new();
     for (id, value) in point_ids.iter().zip(values.iter()) {
@@ -105,7 +105,7 @@ pub async fn batch_read_points(
             }
         }
     }
-    
+
     Ok(result)
 }
 ```
@@ -114,7 +114,7 @@ pub async fn batch_read_points(
 
 ### 发布格式
 
-**通道**: `comsrv:{channelID}:{type}`  
+**通道**: `comsrv:{channelID}:{type}`
 **消息**: `{pointID}:{value}`
 
 ```rust
@@ -127,7 +127,7 @@ pub async fn publish_point_update(
 ) -> Result<()> {
     let channel = format!("comsrv:{}:{}", channel_id, point_type);
     let message = format!("{}:{}", point_id, value.to_redis());
-    
+
     self.conn.publish(&channel, message).await?;
     Ok(())
 }
@@ -143,15 +143,15 @@ pub async fn publish_batch_updates(
     updates: Vec<(u32, StandardFloat)>,
 ) -> Result<()> {
     let channel = format!("comsrv:{}:{}", channel_id, point_type);
-    
+
     // 使用 pipeline 批量发布
     let mut pipe = redis::pipe();
-    
+
     for (point_id, value) in updates {
         let message = format!("{}:{}", point_id, value.to_redis());
         pipe.publish(&channel, &message);
     }
-    
+
     pipe.query_async(&mut self.conn).await?;
     Ok(())
 }
@@ -168,22 +168,22 @@ pub async fn subscribe_channel_updates(
 ) -> Result<()> {
     let mut pubsub = redis_client.get_async_pubsub().await?;
     let pattern = format!("comsrv:{}:{}", channel_id, point_type);
-    
+
     pubsub.subscribe(&pattern).await?;
-    
+
     while let Some(msg) = pubsub.on_message().next().await {
         let payload: String = msg.get_payload()?;
-        
+
         // 解析消息: "pointID:value"
         if let Some((point_id, value)) = payload.split_once(':') {
             let point_id: u32 = point_id.parse()?;
             let value: f64 = value.parse()?;
-            
+
             // 处理数据更新
             handle_point_update(channel_id, point_type, point_id, value).await?;
         }
     }
-    
+
     Ok(())
 }
 ```
@@ -197,18 +197,18 @@ comsrv 订阅控制命令：
 ```rust
 pub async fn subscribe_control_commands(channel_id: u16) -> Result<()> {
     let mut pubsub = redis_client.get_async_pubsub().await?;
-    
+
     // 订阅控制和调节命令
     pubsub.subscribe(format!("cmd:{}:control", channel_id)).await?;
     pubsub.subscribe(format!("cmd:{}:adjustment", channel_id)).await?;
-    
+
     while let Some(msg) = pubsub.on_message().next().await {
         let channel: String = msg.get_channel_name()?;
         let payload: String = msg.get_payload()?;
-        
+
         // 解析命令
         let command: ControlCommand = serde_json::from_str(&payload)?;
-        
+
         // 执行命令
         if channel.ends_with(":control") {
             execute_control_command(channel_id, command).await?;
@@ -216,7 +216,7 @@ pub async fn subscribe_control_commands(channel_id: u16) -> Result<()> {
             execute_adjustment_command(channel_id, command).await?;
         }
     }
-    
+
     Ok(())
 }
 ```
@@ -256,7 +256,7 @@ impl RedisPool {
             }),
             ..Default::default()
         };
-        
+
         let pool = config.create_pool(Some(Runtime::Tokio1))?;
         Ok(Self { pool })
     }
@@ -281,7 +281,7 @@ impl PointCache {
         match self.data.get(key) {
             Some(cached) => {
                 // 值变化或缓存过期才更新
-                cached.value != new_value || 
+                cached.value != new_value ||
                 cached.timestamp.elapsed() > self.max_age
             }
             None => true,
@@ -306,15 +306,15 @@ pub struct BatchCollector {
 impl BatchCollector {
     pub async fn add(&mut self, point_id: u32, value: StandardFloat) -> Result<()> {
         self.buffer.push((point_id, value));
-        
-        if self.buffer.len() >= BATCH_SIZE || 
+
+        if self.buffer.len() >= BATCH_SIZE ||
            self.last_flush.elapsed() > BATCH_TIMEOUT {
             self.flush().await?;
         }
-        
+
         Ok(())
     }
-    
+
     async fn flush(&mut self) -> Result<()> {
         if !self.buffer.is_empty() {
             // 批量写入 Redis
@@ -405,7 +405,7 @@ fn validate_point_value(
         }
         _ => {}
     }
-    
+
     Ok(StandardFloat::new(value))
 }
 ```

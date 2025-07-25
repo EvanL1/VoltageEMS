@@ -19,7 +19,7 @@ COPY services ./services
 
 # 构建comsrv
 WORKDIR /build
-RUN cargo build --release --package comsrv --features "modbus,test-utils"
+RUN cargo build --release --package comsrv --features "modbus"
 
 # 运行阶段
 FROM debian:bullseye-slim

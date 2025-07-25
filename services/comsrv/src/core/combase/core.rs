@@ -2,13 +2,12 @@
 //!
 //! 整合了基础trait定义、类型定义和默认实现
 
-use crate::core::config::{ChannelConfig, TelemetryType, UnifiedPointMapping};
+use crate::core::config::{ChannelConfig, TelemetryType};
 use crate::plugins::core::{PluginPointUpdate, PluginStorage};
 use crate::utils::error::{ComSrvError, Result};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::str::FromStr;
 use std::sync::Arc;
 use tokio::sync::{Mutex, RwLock};
 // ============================================================================
@@ -152,8 +151,7 @@ pub trait ComBase: Send + Sync {
     async fn adjustment(&mut self, adjustments: Vec<(u32, RedisValue)>)
         -> Result<Vec<(u32, bool)>>;
 
-    /// 更新点位
-    async fn update_points(&mut self, mappings: Vec<UnifiedPointMapping>) -> Result<()>;
+    // 四遥分离架构下，不再需要update_points方法，点位配置在initialize阶段直接加载
 
     /// 启动周期性任务
     async fn start_periodic_tasks(&self) -> Result<()> {
@@ -231,7 +229,7 @@ pub struct DefaultProtocol {
     status: Arc<RwLock<ChannelStatus>>,
     is_connected: Arc<RwLock<bool>>,
     channel_config: Option<ChannelConfig>,
-    point_mappings: Arc<RwLock<HashMap<String, Vec<UnifiedPointMapping>>>>,
+    // 四遥分离架构下，不再需要统一的point_mappings
     storage: Option<Arc<Mutex<Box<dyn PluginStorage>>>>,
 }
 
@@ -244,7 +242,7 @@ impl DefaultProtocol {
             status: Arc::new(RwLock::new(ChannelStatus::default())),
             is_connected: Arc::new(RwLock::new(false)),
             channel_config: None,
-            point_mappings: Arc::new(RwLock::new(HashMap::new())),
+            // 四遥分离架构下，不再需要统一的point_mappings
             storage: None,
         }
     }
@@ -268,11 +266,7 @@ impl DefaultProtocol {
             .as_secs();
     }
 
-    /// 获取点位映射
-    async fn get_mappings(&self, telemetry_type: &str) -> Vec<UnifiedPointMapping> {
-        let mappings = self.point_mappings.read().await;
-        mappings.get(telemetry_type).cloned().unwrap_or_default()
-    }
+    // 四遥分离架构下，不再需要get_mappings方法
 
     /// 处理存储更新
     async fn handle_storage_update(&self, updates: Vec<PluginPointUpdate>) -> Result<()> {
@@ -354,70 +348,14 @@ impl ComBase for DefaultProtocol {
         Ok(())
     }
 
-    async fn read_four_telemetry(&self, telemetry_type: &str) -> Result<PointDataMap> {
+    async fn read_four_telemetry(&self, _telemetry_type: &str) -> Result<PointDataMap> {
         if !<Self as ComBase>::is_connected(self) {
             return Err(ComSrvError::NotConnected);
         }
 
-        let start_time = std::time::Instant::now();
-        let mappings = self.get_mappings(telemetry_type).await;
-
-        let mut result = HashMap::new();
-        let mut updates = Vec::new();
-
-        // 模拟读取数据
-        for mapping in mappings {
-            let value = RedisValue::Float(rand::random::<f64>() * 100.0);
-            let point_data = PointData {
-                value: value.clone(),
-                timestamp: std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
-                    .as_secs(),
-            };
-
-            result.insert(mapping.point_id, point_data.clone());
-
-            if self.storage.is_some() {
-                let float_value = match &value {
-                    RedisValue::Float(f) => *f,
-                    RedisValue::Integer(i) => *i as f64,
-                    RedisValue::Bool(b) => {
-                        if *b {
-                            1.0
-                        } else {
-                            0.0
-                        }
-                    }
-                    RedisValue::String(s) => s.parse::<f64>().unwrap_or(0.0),
-                    RedisValue::Null => 0.0,
-                };
-
-                updates.push(PluginPointUpdate {
-                    channel_id: self.channel_config.as_ref().unwrap().id,
-                    point_id: mapping.point_id,
-                    value: float_value,
-                    timestamp: point_data.timestamp as i64,
-                    telemetry_type: crate::core::config::TelemetryType::from_str(telemetry_type)
-                        .unwrap(),
-                    raw_value: None,
-                });
-            }
-        }
-
-        // 批量更新存储
-        if !updates.is_empty() {
-            self.handle_storage_update(updates).await?;
-        }
-
-        let duration = start_time.elapsed().as_millis() as u64;
-        self.update_status(|status| {
-            status.success_count += 1;
-            status.last_read_duration_ms = Some(duration);
-        })
-        .await;
-
-        Ok(result)
+        // 四遥分离架构下，DefaultProtocol仅提供基础实现
+        // 实际协议应该重写此方法以提供真实数据
+        Ok(HashMap::new())
     }
 
     async fn control(&mut self, commands: Vec<(u32, RedisValue)>) -> Result<Vec<(u32, bool)>> {
@@ -451,24 +389,7 @@ impl ComBase for DefaultProtocol {
         Ok(results)
     }
 
-    async fn update_points(&mut self, mappings: Vec<UnifiedPointMapping>) -> Result<()> {
-        let mut point_mappings = self.point_mappings.write().await;
-        point_mappings.clear();
-
-        for mapping in mappings {
-            point_mappings
-                .entry(mapping.telemetry_type.clone())
-                .or_default()
-                .push(mapping);
-        }
-
-        self.update_status(|status| {
-            status.points_count = point_mappings.values().map(|v| v.len()).sum();
-        })
-        .await;
-
-        Ok(())
-    }
+    // 四遥分离架构下，update_points方法已移除
 }
 
 #[async_trait]

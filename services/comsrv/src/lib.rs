@@ -1,4 +1,4 @@
-//! Communication Service Library (`ComsrvRust`)
+//! Communication Service Library (ComsrvRust)
 //!
 //! A high-performance, async-first industrial communication service written in Rust.
 //! This library provides a unified interface for communicating with various industrial
@@ -6,14 +6,14 @@
 //!
 //! # Features
 //!
-//! - **Multi-Protocol Support**: Modbus TCP/RTU, IEC60870-5-104, and extensible protocol architecture
+//! - **Multi-Protocol Support**: Modbus TCP/RTU, IEC60870-5-104, and extensible protocol framework
 //! - **High Performance**: Async/await throughout, connection pooling, and optimized batch operations  
 //! - **Reliability**: Automatic retry logic, heartbeat monitoring, and comprehensive error handling
 //! - **Configuration**: YAML-based configuration with hot-reload support and environment overrides
 //! - **Point Tables**: CSV-based point table management with dynamic loading and four telemetry types
-//! - **REST API**: `RESTful` API built with axum and `OpenAPI` documentation via utoipa
+//! - **REST API**: RESTful API built with axum
 //! - **Storage**: Optional Redis integration for data persistence and caching
-//! - **Logging**: Structured logging with tracing instead of traditional logging libraries
+//! - **Logging**: Structured logging with tracing instead of traditional log framework
 //!
 //! # Architecture
 //!
@@ -21,7 +21,7 @@
 //!
 //! - **`core`**: Core functionality including protocol implementations, configuration management, and factories
 //! - **`utils`**: Utility functions, error handling, and shared components  
-//! - **`api`**: REST API endpoints, OpenAPI documentation, and request/response models
+//! - **`api`**: REST API endpoints and request/response models
 //! - **`service`**: Main service entry point and lifecycle management
 //!
 //! ## Service Architecture
@@ -35,7 +35,7 @@
 //!          ▼                       ▼                       ▼
 //! ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
 //! │     tracing     │    │   Redis Store   │    │   Axum Server   │
-//! │  (Structured)   │    │  (Optional)     │    │ (REST+OpenAPI)  │
+//! │  (Structured)   │    │  (Optional)     │    │    (REST)       │
 //! └─────────────────┘    └─────────────────┘    └─────────────────┘
 //! ```
 //!
@@ -151,12 +151,10 @@
 //!
 //! # API Documentation
 //!
-//! The service provides a REST API with comprehensive OpenAPI 3.0 documentation:
+//! The service provides a REST API:
 //!
 //! - **Framework**: Built with axum for high performance
-//! - **Documentation**: Auto-generated OpenAPI specs via utoipa
 //! - **Endpoints**: Channel management, point reading/writing, status monitoring
-//! - **Interactive UI**: Swagger UI available at `/swagger-ui/` (when enabled)
 //!
 //! Key API endpoints:
 //! - `GET /api/v1/status` - Service status and health
@@ -201,7 +199,7 @@ pub mod core;
 /// Plugin system for protocol implementations
 pub mod plugins;
 /// Service implementation
-/// Real-time database (RTDB) module for flat key-value storage
+/// Storage module for flat key-value storage
 pub mod storage;
 /// Utility functions
 pub mod utils;
@@ -336,19 +334,31 @@ pub mod service {
         }
 
         info!(
-            "Channel creation completed: {} successful, {} failed",
+            "Channel initialization completed: {} successful, {} failed",
             successful_channels, failed_channels
         );
 
-        // Log channel creation results
+        // 等待短暂时间确保所有通道初始化完成
+        tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+
+        // 第二阶段：批量建立所有通道的连接
+        info!("Starting connection phase for all initialized channels...");
         let factory_guard = factory.read().await;
-        info!(
-            "Communication service started with {} channels successfully created",
-            successful_channels
-        );
+        match factory_guard.connect_all_channels().await {
+            Ok(_) => {
+                info!("All channel connections completed successfully");
+            }
+            Err(e) => {
+                error!("Some channel connections failed: {}", e);
+                // 连接失败不应阻止服务启动，继续运行
+            }
+        }
         drop(factory_guard);
 
-        // Redis metadata sync removed - using direct storage now
+        info!(
+            "Communication service started with {} channels successfully initialized",
+            successful_channels
+        );
 
         Ok(())
     }
@@ -547,6 +557,3 @@ pub use utils::error::{ComSrvError, Result};
 
 // #[cfg(test)]
 // mod test_plugin_debug; // Moved to tests directory
-
-// #[cfg(test)]
-// mod test_validation;
