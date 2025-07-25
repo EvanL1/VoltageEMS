@@ -64,7 +64,7 @@ docker-compose -f docker-compose.test.yml logs -f {service_name}
 # Stop test environment
 docker-compose -f docker-compose.test.yml down
 
-# Run complete integration tests (no external ports exposed)
+# Run complete integration tests
 ./scripts/run-integration-tests.sh
 ```
 
@@ -77,17 +77,14 @@ docker run -d --name redis-dev -p 6379:6379 redis:7-alpine
 # Monitor Redis activity
 redis-cli monitor | grep {service_name}
 
-# Check specific Hash keys and data
-redis-cli keys "comsrv:*"              # 查看comsrv所有通道
-redis-cli hgetall "comsrv:1001:m"      # 查看通道1001的所有测量点
-redis-cli hget "comsrv:1001:m" "10001" # 获取单个点值
-redis-cli keys "cfg:*" | head -20      # 查看配置数据
+# Check Hash data
+redis-cli hgetall "comsrv:1001:m"      # View all measurements for channel 1001
+redis-cli hget "comsrv:1001:m" "10001" # Get single point value
+redis-cli hlen "comsrv:1001:m"         # Count points in channel
 
-# Monitor comsrv data publishing
-./services/comsrv/scripts/monitor-redis.sh
-
-# Verify data flow
-./services/comsrv/scripts/verify-data-flow.sh
+# Monitor Pub/Sub
+redis-cli psubscribe "comsrv:*"        # Monitor all comsrv channels
+redis-cli subscribe "comsrv:1001:m"    # Monitor specific channel
 ```
 
 ### Python Scripts (使用uv环境)
@@ -100,16 +97,6 @@ uv run python scripts/script_name.py
 uv pip install -r requirements.txt
 ```
 
-### Performance Testing
-
-```bash
-# Run benchmarks (modsrv example)
-cargo bench -p modsrv
-
-# Quick benchmark mode
-cargo bench -p modsrv -- --quick
-```
-
 ## Architecture Overview
 
 VoltageEMS is a Rust-based microservices architecture for industrial IoT energy management. The system uses Redis as a central message bus and data store, with each service handling specific responsibilities.
@@ -117,7 +104,7 @@ VoltageEMS is a Rust-based microservices architecture for industrial IoT energy 
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │                      Web Application                        │
-│            Web UI | Mobile App │ HMI/SCADA                  │
+│            Web UI | Mobile App | HMI/SCADA                  │
 └─────────────────────┬───────────────────────────────────────┘
                           │
                    ┌──────┴──────┐
@@ -125,7 +112,7 @@ VoltageEMS is a Rust-based microservices architecture for industrial IoT energy 
                    └──────┬──────┘
                           │
 ┌─────────────────────────┴───────────────────────────────────┐
-│                    Redis Message                            │
+│                    Redis Message Bus                         │
 │              Pub/Sub | Key-Value | Streams                  │
 └──┬──────────┬────────┬─────────┬──────────┬──────────┬──────┘
    │          │        │         │          │          │
@@ -138,195 +125,147 @@ VoltageEMS is a Rust-based microservices architecture for industrial IoT energy 
 │   Modbus | IEC60870 | CAN | ... │
 └─────────────────────────────────┘
 ```
-### Redis数据结构架构 (规范v3.2)
 
-**数据存储格式**：
-- **Hash存储**: `comsrv:{channelID}:{type}` → Hash{pointID: value}
-- **标准化精度**: 所有浮点数值使用6位小数格式 (例: "25.123456")
-- **类型映射**: m=测量(YC), s=信号(YX), c=控制(YK), a=调节(YT)
-- **标准化类型**: 使用 `voltage_libs::types::StandardFloat` 和 `PointData`
+## Redis Data Architecture (v3.2)
 
-**Pub/Sub通知机制**：
-- **存储与通知分离**: Hash用于批量查询，Pub/Sub用于实时推送
-- **通道格式**: `comsrv:{channelID}:{type}`
-- **消息格式**: `{pointID}:{value:.6f}` (逐个点位推送)
+### Hash Storage Format
+```
+comsrv:{channelID}:{type}   # type: m(measurement), s(signal), c(control), a(adjustment)
+modsrv:{modelname}:{type}   # type: measurement, control
+alarm:{alarmID}             # Alarm data
+rulesrv:rule:{ruleID}       # Rule definitions
+```
 
-### Service Communication Pattern
+### Data Standards
+- **Float Precision**: 6 decimal places (e.g., "25.123456")
+- **Hash Access**: O(1) field queries
+- **Batch Operations**: HGETALL, HMGET for efficiency
+- **No Quality Field**: Data quality removed from all structures
 
-All services communicate exclusively through Redis pub/sub and key-value storage:
-- No direct service-to-service HTTP calls
-- Real-time data flows through Redis channels
-- State persistence in Redis with optional InfluxDB for historical data
-- 使用Redis直接映射替代HTTP调用
+### Pub/Sub Channels
+```
+comsrv:{channelID}:{type}   # Message format: "{pointID}:{value:.6f}"
+modsrv:{modelname}:{type}   # Calculation results
+cmd:{channelID}:control     # Control commands
+cmd:{channelID}:adjustment  # Adjustment commands
+```
 
-### Core Services
+## Core Services
 
-**comsrv** - Industrial Protocol Gateway
+### comsrv - Industrial Protocol Gateway
 - Manages all device communication (Modbus, CAN, IEC60870)
 - Plugin architecture for protocol extensibility
-- Unified transport layer supporting TCP, Serial, CAN, GPIO
-- 发布遥测数据到Redis: `{channelID}:{type}:{pointID}` 格式
-- 订阅控制命令: `cmd:{channel_id}:control` 和 `cmd:{channel_id}:adjustment` 通道
-- combase框架层处理命令订阅，协议层保持独立
-- **Platform-specific features**: `socketcan` (Linux), `rppal` (Linux/RPi), `i2cdev`/`spidev` (industrial I/O)
+- Publishes data to Redis Hash: `comsrv:{channelID}:{type}`
+- Subscribes to control commands: `cmd:{channelID}:control`
+- Command subscription handled at framework level, not in protocol plugins
 
-**modsrv** - Device Model Engine
+### modsrv - Device Model Engine
 - Executes DAG-based calculation workflows
-- 订阅遥测更新从Redis
-- Publishes calculated values back to Redis
-- 新增物模型映射系统（device_model模块）
-- 支持实时数据流处理和自动计算触发
-- Includes performance benchmarks (`cargo bench -p modsrv`)
+- Device model system (DeviceModel)
+- Real-time data flow processing
+- Built-in functions: sum, avg, min, max, scale
+- Stores results in Hash: `modsrv:{modelname}:{type}`
 
-**rulesrv** - Control Rule Engine
-- 通过Json文件定义DAG(有向无环图)从而定义触发规则
-- 原则上只对modsrv的redis键进行读取、控制
-
-**hissrv** - Historical Data Service
+### hissrv - Historical Data Service
 - Bridges Redis real-time data to InfluxDB
 - Batch writes for performance
 - Manages data retention policies
-- Provides query API for historical data
+- No quality field processing
 
-**netsrv** - Cloud Gateway
+### netsrv - Cloud Gateway
 - Forwards data to external systems (AWS IoT, Alibaba Cloud)
 - Protocol transformation (MQTT, HTTP)
 - Configurable data formatting and filtering
-- Retry logic for reliability
 
-**alarmsrv** - Alarm Management
+### alarmsrv - Alarm Management
 - Real-time alarm detection and classification
 - Stores alarm state in Redis
 - Manages alarm lifecycle and notifications
+- Subscribes to modsrv calculation results
 
-**apigateway** - REST API Gateway
+### rulesrv - Rule Engine
+- DAG-based rule definitions (JSON)
+- Reads modsrv Redis keys
+- Executes control actions
+- Manages rule scheduling
+
+### apigateway - REST API Gateway
 - Single entry point for frontend
 - JWT authentication
 - Routes requests to appropriate services via Redis
-- **Note**: Uses actix-web while other services use axum
+- WebSocket support for real-time data
+- Uses axum framework (unified across all services)
 
-### Shared Libraries
+## Shared Libraries
 
-**voltage-common** (`libs/voltage-common`)
-- Unified error handling
-- Redis client wrapper (async/sync)
-- Logging configuration
-- Common data types (包含PointData结构)
-- Metrics collection
-- Feature flags: `async` (default), `sync`, `metrics`, `http`, `test-utils`
+### voltage-libs
+- `voltage_libs::types`: StandardFloat, PointData
+- `voltage_libs::error`: Unified error handling
+- `voltage_libs::redis`: Redis client wrapper
+- Common logging and metrics
 
-### Key Design Patterns
-1. **Hash存储架构**
-   - 实时数据: `comsrv:{channelID}:{type}` → Hash{pointID: value}
-   - 配置数据: `cfg:{channelID}:{type}:{pointID}` (配置数据)
-   - 类型映射: m=测量(YC), s=信号(YX), c=控制(YK), a=调节(YT)
-   - 批量查询O(1)，支持百万级点位，大幅减少键数量
+## Key Design Patterns
 
-2. **Protocol Plugin System** (comsrv)
-   - Each protocol implements `ProtocolPlugin` trait
-   - Transport abstraction allows mock testing
-   - Configuration via YAML + CSV point tables
-   - 命令订阅在框架层，不在协议插件层
+### 1. Hash Storage Architecture
+- Real-time data: `comsrv:{channelID}:{type}` → Hash{pointID: value}
+- Configuration: `cfg:{channelID}:{type}:{pointID}`
+- O(1) access performance, supports millions of points
+- 30%+ memory savings vs string keys
 
-3. **Point Management**
-   - Points identified by u32 IDs for performance
-   - Hash字段访问，O(1)查询单个点位
-   - 标准化数值格式：6位小数精度
-   - Point data includes value with optional timestamp
+### 2. Protocol Plugin System (comsrv)
+- Each protocol implements `ProtocolPlugin` trait
+- Transport abstraction for testing
+- YAML configuration + CSV point tables
+- Framework handles command subscription
 
-4. **Configuration Hierarchy**
-   - Figment-based configuration merging
-   - Environment variables override files
-   - CSV files for point mappings
-
-5. **Logging Architecture**
-   - Service-level and channel-level configuration
-   - Daily rotation with retention policies
-   - Separate log files per channel
-
-## Protocol Address Format
-
-Modbus addresses use colon-separated format: `slave_id:function_code:register_address`
-
-Example parsing:
+### 3. Data Type Standards
 ```rust
-let parts: Vec<&str> = address.split(':').collect();
-let slave_id = parts[0].parse::<u8>()?;
-let function_code = parts[1].parse::<u8>()?;
-let register = parts[2].parse::<u16>()?;
+use voltage_libs::types::{StandardFloat, PointData};
+
+// All float values use 6 decimal precision
+let value = StandardFloat::new(25.123456);
+let point = PointData::new(value);
+
+// Redis storage
+let redis_value = point.to_redis_value();  // "25.123456"
 ```
+
+### 4. Configuration
+- Figment-based configuration merging
+- Environment variables override files
+- CSV files for point mappings
+- Service-specific YAML configs
 
 ## Development Workflow
 
-1. Create worktree branch from `develop`
-2. Make changes and test locally
-3. 更新 `docs/fixlog/fixlog_{date}.md` 记录修改（使用date命令获取日期）
-4. Create PR to `develop` branch
-5. Git commit时不包含Claude相关信息
+1. Check compilation with `cargo check --workspace`
+2. Create worktree branch from `develop`
+3. Make changes and test locally
+4. Update `docs/fixlog/fixlog_{date}.md` with changes
+5. Create PR to `develop` branch
+6. No Claude-related information in git commits
 
-## Testing Infrastructure
+## Testing
 
 ### Unit Tests
-- Mock transports for protocol testing
-- Test utilities in `voltage-common::test_utils`
-- Use `#[tokio::test]` for async tests
+```bash
+cargo test --workspace
+cargo test -p {service_name}
+```
 
 ### Integration Tests
 ```bash
-# Start test infrastructure
-./scripts/start-test-servers.sh
-
-# Run integration tests
-cargo test --features integration
-
-# Clean up
-./scripts/stop-test-servers.sh
-```
-
-### Docker Integration Testing
-```bash
-# Complete isolated test environment (services/modsrv/)
+# Docker-based testing
+cd services/{service_name}
 docker-compose -f docker-compose.test.yml up -d
-
-# Includes:
-# - Redis 8 (internal network only)
-# - ComsRv data simulator (follows Redis v3.2 spec)
-# - ModSrv service with device model engine
-# - Test runner with comprehensive test suite
-
-# Run all integration tests
-docker-compose -f docker-compose.test.yml exec test-runner /scripts/run-integration-tests.sh
-
-# Monitor data flow
-docker-compose -f docker-compose.test.yml exec test-runner /scripts/test-data-flow.sh
-
-# Check Redis data format compliance
-docker-compose -f docker-compose.test.yml exec comsrv-simulator redis-cli -h redis keys "comsrv:*"
+docker-compose -f docker-compose.test.yml exec test-runner cargo test
 ```
 
-### Complete Production-Ready Testing
+### Performance Testing
 ```bash
-# Full isolated testing environment with comprehensive logging (services/modsrv/)
-./run-docker-test.sh
-
-# Features:
-# - No external port exposure (complete internal network)
-# - Redis 8 with persistence and logging
-# - ComsRv data simulator (Redis v3.2 spec compliant)
-# - ModSrv service with device model engine
-# - Automated test executor with 10+ test scenarios
-# - Real-time log monitoring and data validation
-# - Performance benchmarking and resource monitoring
-
-# Monitor test execution progress
-docker-compose -f docker-compose.complete-test.yml logs -f test-executor
-
-# View all test reports and logs
-ls -la test-reports/
-ls -la logs/
-
-# Stop complete environment
-docker-compose -f docker-compose.complete-test.yml down
+# Benchmarks (e.g., modsrv)
+cargo bench -p modsrv
+cargo bench -p modsrv -- --quick
 ```
 
 ## Common Issues and Solutions
@@ -334,31 +273,18 @@ docker-compose -f docker-compose.complete-test.yml down
 ### Platform-Specific Dependencies
 - `rppal` (Raspberry Pi GPIO) is Linux-only
 - `socketcan` requires Linux for CAN support
-- Use feature flags to conditionally compile
-- macOS M3 users: Cannot compile Linux-specific features locally
+- macOS M3: Cannot compile Linux-specific features locally
+- Use Docker for cross-platform testing
 
 ### Redis Connection
 - Services require Redis on localhost:6379
-- Use Docker for local development
+- Use Docker: `docker run -d -p 6379:6379 redis:7-alpine`
 - Check connectivity: `redis-cli ping`
-- modsrv使用RedisHandler包装器处理异步操作
-- Redis ACL configured for service authentication (see `services/comsrv/test-configs/redis/users.acl`)
 
-### Build Warnings
-- config-framework temporarily excluded from workspace
-- Some dead_code warnings are expected
-- Use `#[allow(dead_code)]` sparingly
-
-### Error Type Mapping (modsrv)
-- CalculationError → ValidationError
-- ParseError → FormatError
-- 使用crate::error::ModelSrvError而非voltage_common::error::VoltageError
-
-### Docker Build Notes
-- Base image: `rust:1.88-bullseye` for building
-- Runtime: `debian:bullseye-slim`
-- Uses Aliyun mirrors for faster apt updates in China
-- Multi-stage builds to reduce image size
+### Build Errors
+- netsrv workspace error: Temporary, being fixed
+- Use `cargo check` instead of `cargo build` for verification
+- Some warnings expected (deprecated functions, unused imports)
 
 ## Configuration Files
 
@@ -376,80 +302,130 @@ service:
 
 ### Channel Configuration
 ```yaml
-# Point to CSV files
-csv_base_path: "./config"
+# services/{service}/config/channels.yml
 channels:
-  - id: 1
+  - id: 1001
+    name: "ModbusTCP Channel 1001"
     protocol_type: "modbus_tcp"
-    points_config:
-      base_path: "ModbusTCP_Test_01"
+    enabled: true
+    table_config:
+      # Four telemetry point tables path
+      four_telemetry_route: "ModbusTCP_CH1001"
+      four_telemetry_files:
+        measurement_file: "measurement.csv"    # YC - Telemetry measurements
+        signal_file: "signal.csv"              # YX - Status signals
+        adjustment_file: "adjustment.csv"      # YT - Adjustment setpoints
+        control_file: "control.csv"            # YK - Control commands
+      
+      # Protocol mapping path
+      protocol_mapping_route: "ModbusTCP_CH1001/mappings"
+      protocol_mapping_file:
+        measurement_mapping: "modbus_measurement.csv"
+        signal_mapping: "modbus_signal.csv"
+        adjustment_mapping: "modbus_adjustment.csv"
+        control_mapping: "modbus_control.csv"
 ```
 
 ### CSV Point Tables
-Located in `config/{Protocol}_Test_{ID}/`:
-- `telemetry.csv` - Measurements (YC)
-- `signal.csv` - Status signals (YX)
-- `control.csv` - Commands (YK)
-- `adjustment.csv` - Setpoints (YT)
 
-## 物模型系统 (modsrv device_model)
+#### Four Telemetry Tables (in config/{Protocol}_CH{ChannelID}/)
 
-### 核心组件
-- **DeviceModel**: 设备模型定义（属性、遥测、命令、事件、计算）
-- **InstanceManager**: 实例管理（创建、更新、查询）
-- **CalculationEngine**: 计算引擎（内置函数：sum、avg、min、max、scale）
-- **DataFlowProcessor**: 实时数据流处理（Redis订阅、自动计算触发）
-- **DeviceModelSystem**: 系统集成（统一API接口）
-
-### 使用示例
-```rust
-// 创建设备实例
-let instance_id = device_system.create_instance(
-    "power_meter_v1",
-    "meter_001".to_string(),
-    "Main Power Meter".to_string(),
-    initial_properties,
-).await?;
-
-// 获取遥测数据
-let voltage = device_system.get_telemetry(&instance_id, "voltage_a").await?;
-
-// 执行命令
-device_system.execute_command(&instance_id, "switch_on", params).await?;
+**measurement.csv** (YC - Telemetry):
+```csv
+point_id,signal_name,data_type,scale,offset,unit,description
+10001,voltage_a,float,0.1,0,V,Phase A voltage
+10002,current_a,float,0.01,0,A,Phase A current
+10003,power_active,float,1.0,0,kW,Active power
+10004,power_reactive,float,1.0,0,kVar,Reactive power
 ```
 
-## Service-Specific Notes
+**signal.csv** (YX - Status):
+```csv
+point_id,signal_name,data_type,scale,offset,unit,description
+20001,breaker_status,bool,1.0,0,,Breaker open/close status
+20002,fault_alarm,bool,1.0,0,,Fault alarm signal
+20003,communication_ok,bool,1.0,0,,Communication status
+```
 
-### comsrv Startup Architecture
-- Uses async startup pattern to prevent blocking
-- Communication service runs in separate tokio task
-- API server starts immediately without waiting
-- 30-second timeout for service initialization
-- Redis connection handled asynchronously with 5-second timeout
+**adjustment.csv** (YT - Adjustment):
+```csv
+point_id,signal_name,data_type,scale,offset,unit,description
+40001,voltage_setpoint,float,0.1,0,V,Voltage setpoint
+40002,power_limit,float,1.0,0,kW,Power limit setpoint
+```
 
-### Tauri Desktop Application
-- Located in `apps/tauri-desktop/`
-- Vue 3 + TypeScript frontend
-- Connects only to API Gateway via REST/WebSocket
-- Build with: `npm run tauri:build`
-- Development: `npm run tauri:dev`
+**control.csv** (YK - Control):
+```csv
+point_id,signal_name,data_type,scale,offset,unit,description
+30001,breaker_control,bool,1.0,0,,Breaker open/close control
+30002,reset_alarm,bool,1.0,0,,Reset alarm command
+```
+
+#### Protocol Mapping Tables (in config/{Protocol}_CH{ChannelID}/mappings/)
+
+**modbus_measurement.csv**:
+```csv
+point_id,slave_id,function_code,register_address,data_type,byte_order
+10001,1,3,0,float32,ABCD
+10002,1,3,2,float32,ABCD
+10003,1,3,4,float32,ABCD
+10004,1,3,6,float32,ABCD
+```
+
+**modbus_signal.csv**:
+```csv
+point_id,slave_id,function_code,register_address,bit_position
+20001,1,2,0,0
+20002,1,2,0,1
+20003,1,2,0,2
+```
+
+## Performance Optimization
+
+### Redis Operations
+- Use Hash structures for O(1) access
+- Batch operations with pipeline
+- Minimize key count (thousands vs millions)
+- 6 decimal precision for all floats
+
+### Service Design
+- Async/await throughout
+- Connection pooling
+- Efficient serialization (bincode where applicable)
+- Minimal data copying
+
+## Monitoring
+
+### Logs
+- Structured logging with tracing
+- Service and channel level configuration
+- Daily rotation with retention
+
+### Metrics
+- Prometheus-compatible metrics
+- Service health endpoints
+- Redis operation counters
+
+### Health Checks
+```bash
+curl http://localhost:8001/health  # comsrv
+curl http://localhost:8080/health  # apigateway
+```
+
+## Security Notes
+
+- JWT tokens for API authentication
+- Redis ACL for service isolation (when configured)
+- No secrets in code or logs
+- Environment variables for sensitive config
 
 ## Critical Reminders
 
-### Redis Data Architecture
-- **Only comsrv writes telemetry data to Redis**
-- Other services read data and may write computed/derived values
-- **Hash storage format**: `comsrv:{channelID}:{type}` → Hash{pointID: value}
-- **Standard precision**: All float values use 6-decimal format (e.g., "25.123456")
-- **Pub/Sub notifications**: Channel `comsrv:{channelID}:{type}`, Message `{pointID}:{value:.6f}`
-- Configuration data: `cfg:{channelID}:{type}:{pointID}`
-
-### Development Workflow
-- Create fixlog entries: `docs/fixlog/fixlog_{date}.md`
-- Use `date` command to get current date
-- Git commits should not contain Claude-related information
-- Always use uv for Python scripts, never system Python
-
-## Data Quality Considerations
-
-- 不允许有数据质量相关的代码，事实上无法检测数据质量，除非相关的协议有数据质量的东西，例如IEC-60870
+1. **Always use `cargo check` before building**
+2. **Update fixlog for all changes**
+3. **No Claude references in commits**
+4. **Use uv for Python, never system Python**
+5. **Test with Docker for platform compatibility**
+6. **All services use axum framework**
+7. **Hash storage for all real-time data**
+8. **6 decimal precision for all numeric values**

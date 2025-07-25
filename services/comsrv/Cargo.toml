@@ -17,8 +17,6 @@ path = "src/main.rs"
 # name = "test_modbus"
 # path = "src/bin/test_modbus.rs"
 
-
-
 [dependencies]
 # Local dependencies
 voltage-libs = { path = "../../libs", features = ["redis"] }
@@ -85,13 +83,13 @@ semver = "1.0"
 regex = "1.10"
 
 # Industrial GPIO and hardware interfaces
-i2cdev = { version = "0.6", optional = true }  # I2C device support
-spidev = { version = "0.6", optional = true }  # SPI device support
+i2cdev = { version = "0.6", optional = true } # I2C device support
+spidev = { version = "0.6", optional = true } # SPI device support
 
 # Platform-specific dependencies
 [target.'cfg(target_os = "linux")'.dependencies]
-socketcan = { version = "3.0", optional = true }  # CAN bus support (Linux only)
-rppal = { version = "0.17", optional = true }  # Raspberry Pi GPIO (Linux only)
+socketcan = { version = "3.0", optional = true } # CAN bus support (Linux only)
+rppal = { version = "0.17", optional = true }    # Raspberry Pi GPIO (Linux only)
 
 [dev-dependencies]
 tracing-test = "0.2"
@@ -101,6 +99,6 @@ default = ["modbus"]
 modbus = []
 can = ["socketcan"]
 iec60870 = []
-gpio = ["rppal"]  # GPIO support for embedded systems (Raspberry Pi)
-industrial-io = ["i2cdev", "spidev"]  # Industrial I/O support
-test-utils = []  # Enable mock implementations for testing
+gpio = ["rppal"]                     # GPIO support for embedded systems (Raspberry Pi)
+industrial-io = ["i2cdev", "spidev"] # Industrial I/O support
+test-utils = []                      # Enable mock implementations for testing
