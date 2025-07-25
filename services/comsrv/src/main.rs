@@ -3,7 +3,6 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 
 use axum::serve;
-use chrono;
 use clap::Parser;
 use dotenv::dotenv;
 use tokio::signal;

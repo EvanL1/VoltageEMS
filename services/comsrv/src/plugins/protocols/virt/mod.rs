@@ -19,7 +19,7 @@ use tokio::sync::RwLock;
 use tracing::info;
 
 use crate::core::combase::{ChannelStatus, ComBase, PointData, PointDataMap, RedisValue};
-use crate::core::config::types::{ChannelConfig, UnifiedPointMapping};
+use crate::core::config::types::ChannelConfig;
 use crate::plugins::core::{DefaultPluginStorage, PluginStorage};
 use crate::utils::error::Result;
 
@@ -148,7 +148,7 @@ impl ComBase for VirtualProtocol {
                         let _ = storage
                             .write_point(
                                 channel_id,
-                                &crate::core::config::TelemetryType::Telemetry,
+                                &crate::core::config::TelemetryType::Measurement,
                                 i as u32 + 1,
                                 value,
                             )
@@ -248,10 +248,7 @@ impl ComBase for VirtualProtocol {
         Ok(results)
     }
 
-    async fn update_points(&mut self, _mappings: Vec<UnifiedPointMapping>) -> Result<()> {
-        // 虚拟协议不需要更新点位映射
-        Ok(())
-    }
+    // 四遥分离架构下，update_points方法已移除
 }
 
 #[cfg(test)]

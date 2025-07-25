@@ -6,6 +6,7 @@
 //! - 批量读取优化
 //! - Plugin 接口适配
 
+pub mod connection;
 pub mod core;
 pub mod plugin;
 pub mod test_helpers;
@@ -13,6 +14,9 @@ pub mod transport;
 pub mod types;
 
 // 重新导出主要类型
+pub use connection::{
+    ConnectionParams, ModbusConnection, ModbusConnectionManager, ModbusMode as ConnectionMode,
+};
 pub use core::{ModbusCore, ModbusProtocol};
 pub use plugin::{ModbusRtuPlugin, ModbusTcpPlugin};
 pub use transport::{ModbusFrameProcessor, ModbusMode};
@@ -22,5 +26,5 @@ pub use types::{
 
 // Plugin 工厂函数
 pub fn create_plugin() -> Box<dyn crate::plugins::traits::ProtocolPlugin> {
-    Box::new(ModbusTcpPlugin::default())
+    Box::new(ModbusTcpPlugin)
 }

@@ -210,23 +210,6 @@ impl From<redis::RedisError> for ComSrvError {
     }
 }
 
-// Conversion from TransportError
-impl From<crate::core::transport::traits::TransportError> for ComSrvError {
-    fn from(err: crate::core::transport::traits::TransportError) -> Self {
-        use crate::core::transport::traits::TransportError;
-        match err {
-            TransportError::ConnectionFailed(msg) => ComSrvError::ConnectionError(msg),
-            TransportError::ConnectionLost(msg) => ComSrvError::ConnectionError(msg),
-            TransportError::SendFailed(msg) => ComSrvError::CommunicationError(msg),
-            TransportError::ReceiveFailed(msg) => ComSrvError::CommunicationError(msg),
-            TransportError::Timeout(msg) => ComSrvError::TimeoutError(msg),
-            TransportError::ConfigError(msg) => ComSrvError::ConfigError(msg),
-            TransportError::IoError(msg) => ComSrvError::IoError(msg),
-            TransportError::ProtocolError(msg) => ComSrvError::ProtocolError(msg),
-        }
-    }
-}
-
 // Helper methods for creating errors
 impl ComSrvError {
     pub fn config(msg: impl Into<String>) -> Self {

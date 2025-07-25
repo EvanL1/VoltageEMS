@@ -2,14 +2,10 @@
 //!
 //! 支持 TCP 和 RTU 两种传输模式的帧处理
 
+use super::connection::ConnectionParams;
 use crate::core::config::types::ChannelConfig;
-use crate::core::transport::{
-    factory::{AnyTransportConfig, TransportFactory},
-    serial::SerialTransportConfig,
-    tcp::TcpTransportConfig,
-    Transport,
-};
 use crate::utils::error::{ComSrvError, Result};
+use tracing::debug;
 
 /// Modbus 传输模式
 #[derive(Debug, Clone, PartialEq)]
@@ -134,6 +130,14 @@ impl ModbusFrameProcessor {
 
         // 提取PDU
         let pdu = data[7..].to_vec();
+
+        debug!(
+            "Parsed TCP frame: trans_id={:04X}, length={}, unit_id={}, pdu_len={}",
+            _transaction_id,
+            length,
+            unit_id,
+            pdu.len()
+        );
 
         Ok((unit_id, pdu))
     }
@@ -272,75 +276,76 @@ mod tests {
     }
 }
 
-/// 创建传输层实例
-/// 从通道配置中提取传输层信息并创建相应的传输实例
-pub async fn create_transport(config: &ChannelConfig) -> Result<Box<dyn Transport>> {
-    let factory = TransportFactory::new();
-
-    // 从通道配置中解析传输类型和参数
-    let transport_config = match config.protocol.as_str() {
+/// 创建连接参数
+/// 从通道配置中提取连接参数
+pub fn create_connection_params(config: &ChannelConfig) -> Result<ConnectionParams> {
+    match config.protocol.as_str() {
         "modbus_tcp" => {
             // 从parameters中提取TCP配置
             let host = config
                 .parameters
                 .get("host")
                 .and_then(|v| v.as_str())
-                .unwrap_or("localhost")
-                .to_string();
+                .map(|s| s.to_string());
             let port = config
                 .parameters
                 .get("port")
                 .and_then(|v| v.as_u64())
-                .unwrap_or(502) as u16;
+                .map(|p| p as u16);
 
-            AnyTransportConfig::Tcp(TcpTransportConfig {
+            Ok(ConnectionParams {
                 host,
                 port,
+                device: None,
+                baud_rate: None,
+                data_bits: None,
+                stop_bits: None,
+                parity: None,
                 timeout: std::time::Duration::from_secs(5),
-                max_retries: 3,
-                keep_alive: None,
-                recv_buffer_size: None,
-                send_buffer_size: None,
-                no_delay: false,
             })
         }
         "modbus_rtu" => {
             // 从parameters中提取串口配置
-            let port = config
+            let device = config
                 .parameters
                 .get("device")
                 .and_then(|v| v.as_str())
-                .unwrap_or("/dev/ttyUSB0")
-                .to_string();
+                .map(|s| s.to_string());
             let baud_rate = config
                 .parameters
                 .get("baud_rate")
                 .and_then(|v| v.as_u64())
-                .unwrap_or(9600) as u32;
+                .map(|b| b as u32);
+            let data_bits = config
+                .parameters
+                .get("data_bits")
+                .and_then(|v| v.as_u64())
+                .map(|d| d as u8);
+            let stop_bits = config
+                .parameters
+                .get("stop_bits")
+                .and_then(|v| v.as_u64())
+                .map(|s| s as u8);
+            let parity = config
+                .parameters
+                .get("parity")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
 
-            AnyTransportConfig::Serial(SerialTransportConfig {
-                port,
+            Ok(ConnectionParams {
+                host: None,
+                port: None,
+                device,
                 baud_rate,
-                data_bits: 8,
-                parity: "None".to_string(),
-                stop_bits: 1,
-                flow_control: "None".to_string(),
+                data_bits,
+                stop_bits,
+                parity,
                 timeout: std::time::Duration::from_secs(1),
-                max_retries: 3,
-                read_timeout: std::time::Duration::from_secs(1),
-                write_timeout: std::time::Duration::from_secs(1),
             })
         }
-        _ => {
-            return Err(ComSrvError::ConfigError(format!(
-                "Unsupported protocol type: {}",
-                config.protocol
-            )));
-        }
-    };
-
-    factory
-        .create_transport(transport_config)
-        .await
-        .map_err(|e| ComSrvError::ConnectionError(e.to_string()))
+        _ => Err(ComSrvError::ConfigError(format!(
+            "Unsupported protocol type: {}",
+            config.protocol
+        ))),
+    }
 }

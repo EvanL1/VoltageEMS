@@ -96,4 +96,4 @@ jsonwebtoken = "9"
 once_cell = "1"
 
 # Internal dependencies
-voltage-config = { path = "services/config-framework" }
+# voltage-config = { path = "services/config-framework" }
