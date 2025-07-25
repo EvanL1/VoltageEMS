@@ -15,7 +15,7 @@ use crate::core::combase::{
     ChannelCommand, ChannelStatus, ComBase, CommandSubscriber, CommandSubscriberConfig, PointData,
     PointDataMap, RedisValue, TelemetryType,
 };
-use crate::core::config::types::{ChannelConfig, UnifiedPointMapping};
+use crate::core::config::types::ChannelConfig;
 use crate::plugins::core::PluginStorage;
 use crate::utils::error::{ComSrvError, Result};
 
@@ -26,16 +26,16 @@ use super::types::{ModbusPoint, ModbusPollingConfig};
 /// 将字符串遥测类型转换为TelemetryType枚举
 fn telemetry_type_from_string(type_str: &str) -> TelemetryType {
     match type_str {
-        "Measurement" => TelemetryType::Telemetry, // 遥测 → "m"
-        "Signal" => TelemetryType::Signal,         // 遥信 → "s"
-        "Control" => TelemetryType::Control,       // 遥控 → "c"
-        "Adjustment" => TelemetryType::Adjustment, // 遥调 → "a"
+        "Measurement" => TelemetryType::Measurement, // 遥测 → "m"
+        "Signal" => TelemetryType::Signal,           // 遥信 → "s"
+        "Control" => TelemetryType::Control,         // 遥控 → "c"
+        "Adjustment" => TelemetryType::Adjustment,   // 遥调 → "a"
         _ => {
             debug!(
                 "Unknown telemetry type '{}', defaulting to Telemetry",
                 type_str
             );
-            TelemetryType::Telemetry // 默认值
+            TelemetryType::Measurement // 默认值
         }
     }
 }
@@ -66,7 +66,10 @@ impl ModbusCore {
         for point in points {
             self._points.insert(point.point_id.clone(), point);
         }
-        info!("Loaded {} Modbus points", self._points.len());
+        info!(
+            "Loaded {} Modbus points for protocol processing",
+            self._points.len()
+        );
     }
 
     // TODO: 实现完整的轮询和批量读取功能
@@ -171,30 +174,38 @@ impl ComBase for ModbusProtocol {
 
     async fn initialize(&mut self, channel_config: &ChannelConfig) -> Result<()> {
         info!(
-            "Initializing Modbus protocol for channel {}",
+            "Initializing Modbus protocol for channel {} - Step 1: Starting initialization",
             channel_config.id
         );
 
         self.channel_config = Some(channel_config.clone());
 
-        // 初始化存储
+        // Step 2: 初始化存储
+        info!(
+            "Channel {} - Step 2: Initializing storage",
+            channel_config.id
+        );
         match crate::plugins::core::DefaultPluginStorage::from_env().await {
             Ok(storage) => {
                 *self.storage.lock().await = Some(Arc::new(storage) as Arc<dyn PluginStorage>);
                 info!(
-                    "Storage initialized successfully for channel {}",
+                    "Channel {} - Step 2 completed: Storage initialized successfully",
                     self.channel_id
                 );
             }
             Err(e) => {
                 error!(
-                    "Failed to initialize storage for channel {}: {}",
+                    "Channel {} - Step 2 failed: Storage initialization error: {}",
                     self.channel_id, e
                 );
             }
         }
 
-        // 从配置中提取点位，使用新的四个HashMap结构
+        // Step 3: 加载和解析点位配置
+        info!(
+            "Channel {} - Step 3: Loading point configurations",
+            channel_config.id
+        );
         let mut modbus_points = Vec::new();
 
         // 合并所有四种遥测类型的点位进行处理
@@ -204,6 +215,20 @@ impl ComBase for ModbusProtocol {
             &channel_config.control_points,
             &channel_config.adjustment_points,
         ];
+
+        let total_configured_points = channel_config.measurement_points.len()
+            + channel_config.signal_points.len()
+            + channel_config.control_points.len()
+            + channel_config.adjustment_points.len();
+
+        info!("Channel {} - Step 3: Processing {} configured points ({} measurement, {} signal, {} control, {} adjustment)", 
+            channel_config.id,
+            total_configured_points,
+            channel_config.measurement_points.len(),
+            channel_config.signal_points.len(),
+            channel_config.control_points.len(),
+            channel_config.adjustment_points.len()
+        );
 
         for point_map in all_points {
             for point in point_map.values() {
@@ -264,26 +289,47 @@ impl ComBase for ModbusProtocol {
             }
         }
 
-        // 设置点位到核心和本地存储
+        // Step 4: 设置点位到核心和本地存储
+        info!(
+            "Channel {} - Step 4: Setting up {} points in storage",
+            channel_config.id,
+            modbus_points.len()
+        );
         {
             let mut core = self.core.lock().await;
             core.set_points(modbus_points.clone());
         }
-        *self.points.write().await = modbus_points;
+        *self.points.write().await = modbus_points.clone();
 
         self.status.write().await.points_count = self.points.read().await.len();
 
+        info!(
+            "Channel {} - Step 4 completed: Successfully processed {} out of {} configured points for Modbus protocol",
+            channel_config.id,
+            modbus_points.len(),
+            total_configured_points
+        );
+
+        info!("Channel {} - Initialization completed successfully (connection will be established later)", channel_config.id);
         Ok(())
     }
 
     async fn connect(&mut self) -> Result<()> {
         info!(
-            "Connecting to Modbus device for channel {}",
+            "Channel {} - Connection Phase: Starting connection to Modbus device",
             self.channel_id
         );
 
         // 建立连接
+        info!(
+            "Channel {} - Establishing Modbus connection...",
+            self.channel_id
+        );
         self.connection_manager.connect().await?;
+        info!(
+            "Channel {} - Modbus connection established successfully",
+            self.channel_id
+        );
 
         *self.is_connected.write().await = true;
         self.status.write().await.is_connected = true;
@@ -307,7 +353,12 @@ impl ComBase for ModbusProtocol {
         }
 
         // 启动周期性任务（轮询等）
+        info!("Channel {} - Starting periodic tasks...", self.channel_id);
         self.start_periodic_tasks().await?;
+        info!(
+            "Channel {} - Connection phase completed successfully",
+            self.channel_id
+        );
 
         Ok(())
     }
@@ -414,67 +465,7 @@ impl ComBase for ModbusProtocol {
         Ok(results)
     }
 
-    async fn update_points(&mut self, mappings: Vec<UnifiedPointMapping>) -> Result<()> {
-        // 转换为 ModbusPoint
-        let mut modbus_points = Vec::new();
-
-        for mapping in mappings {
-            // 只使用新格式：分离的参数
-            if let (Some(slave_id_str), Some(function_code_str), Some(register_str)) = (
-                mapping.protocol_params.get("slave_id"),
-                mapping.protocol_params.get("function_code"),
-                mapping.protocol_params.get("register_address"),
-            ) {
-                let (slave_id, function_code, register_address) = match (
-                    slave_id_str.parse::<u8>(),
-                    function_code_str.parse::<u8>(),
-                    register_str.parse::<u16>(),
-                ) {
-                    (Ok(s), Ok(f), Ok(r)) => (s, f, r),
-                    _ => {
-                        warn!(
-                            "Failed to parse Modbus parameters for point {}: slave_id={}, function_code={}, register_address={}",
-                            mapping.point_id, slave_id_str, function_code_str, register_str
-                        );
-                        continue; // 跳过解析失败的点位
-                    }
-                };
-
-                let modbus_point = ModbusPoint {
-                    point_id: mapping.point_id.to_string(),
-                    slave_id,
-                    function_code,
-                    register_address,
-                    data_format: mapping
-                        .protocol_params
-                        .get("data_format")
-                        .unwrap_or(&"uint16".to_string())
-                        .clone(),
-                    register_count: mapping
-                        .protocol_params
-                        .get("register_count")
-                        .and_then(|v| v.parse::<u16>().ok())
-                        .unwrap_or(1),
-                    byte_order: mapping.protocol_params.get("byte_order").cloned(),
-                };
-                modbus_points.push(modbus_point);
-            } else {
-                warn!(
-                    "Missing Modbus parameters for point {}: {:?}",
-                    mapping.point_id, mapping.protocol_params
-                );
-            }
-        }
-
-        // 更新点位
-        {
-            let mut core = self.core.lock().await;
-            core.set_points(modbus_points.clone());
-        }
-        *self.points.write().await = modbus_points;
-
-        Ok(())
-    }
+    // 四遥分离架构下，update_points方法已移除，点位配置在initialize阶段直接加载
 
     async fn start_periodic_tasks(&self) -> Result<()> {
         info!(
@@ -498,11 +489,11 @@ impl ComBase for ModbusProtocol {
             let storage = self.storage.clone();
             let is_connected = self.is_connected.clone();
             let channel_config = self.channel_config.clone();
+            let polling_config_clone = self.polling_config.clone();
 
             let polling_task = tokio::spawn(async move {
-                let mut interval = tokio::time::interval(std::time::Duration::from_millis(
-                    polling_interval as u64,
-                ));
+                let mut interval =
+                    tokio::time::interval(std::time::Duration::from_millis(polling_interval));
 
                 info!(
                     "Polling task started for channel {}, interval {}ms",
@@ -581,10 +572,7 @@ impl ComBase for ModbusProtocol {
                     let mut grouped_points: HashMap<(u8, u8), Vec<ModbusPoint>> = HashMap::new();
                     for point in filtered_points {
                         let key = (point.slave_id, point.function_code);
-                        grouped_points
-                            .entry(key)
-                            .or_insert_with(Vec::new)
-                            .push(point);
+                        grouped_points.entry(key).or_default().push(point);
                     }
 
                     // Read each group
@@ -596,6 +584,9 @@ impl ComBase for ModbusProtocol {
                         };
                         let mut frame_processor = ModbusFrameProcessor::new(mode);
 
+                        // Get max_batch_size from polling config, default to 100
+                        let max_batch_size = polling_config_clone.batch_config.max_batch_size;
+
                         match read_modbus_group_with_processor(
                             &connection_manager,
                             &mut frame_processor,
@@ -603,6 +594,7 @@ impl ComBase for ModbusProtocol {
                             function_code,
                             &group_points,
                             channel_config.as_ref(),
+                            max_batch_size,
                         )
                         .await
                         {
@@ -632,7 +624,7 @@ impl ComBase for ModbusProtocol {
                                                 let config_point = if let Some(point) =
                                                     config.measurement_points.get(&point_id)
                                                 {
-                                                    Some((point, TelemetryType::Telemetry))
+                                                    Some((point, TelemetryType::Measurement))
                                                 } else if let Some(point) =
                                                     config.signal_points.get(&point_id)
                                                 {
@@ -641,12 +633,10 @@ impl ComBase for ModbusProtocol {
                                                     config.control_points.get(&point_id)
                                                 {
                                                     Some((point, TelemetryType::Control))
-                                                } else if let Some(point) =
-                                                    config.adjustment_points.get(&point_id)
-                                                {
-                                                    Some((point, TelemetryType::Adjustment))
                                                 } else {
-                                                    None
+                                                    config.adjustment_points.get(&point_id).map(
+                                                        |point| (point, TelemetryType::Adjustment),
+                                                    )
                                                 };
 
                                                 if let Some((config_point, telemetry_type)) =
@@ -662,25 +652,6 @@ impl ComBase for ModbusProtocol {
                                                         value =
                                                             value * scaling.scale + scaling.offset;
 
-                                                        // Apply reverse for boolean/digital signals
-                                                        if let Some(true) = scaling.reverse {
-                                                            match telemetry_type {
-                                                                TelemetryType::Signal => {
-                                                                    // For signals: 0 <-> 1
-                                                                    value = if value == 0.0 {
-                                                                        1.0
-                                                                    } else {
-                                                                        0.0
-                                                                    };
-                                                                    debug!("Applied reverse to signal point {}: {} -> {}", 
-                                                                           point_id, float_value, value);
-                                                                }
-                                                                _ => {
-                                                                    debug!("Reverse flag ignored for non-signal point {}", point_id);
-                                                                }
-                                                            }
-                                                        }
-
                                                         debug!("Applied scaling to point {}: raw={:.6}, scale={:.6}, offset={:.6}, processed={:.6}", 
                                                                point_id, float_value, scaling.scale, scaling.offset, value);
                                                         value
@@ -691,12 +662,12 @@ impl ComBase for ModbusProtocol {
 
                                                     (telemetry_type, processed_value)
                                                 } else {
-                                                    debug!("Point {} not found in config, using default Telemetry", point_id);
-                                                    (TelemetryType::Telemetry, float_value)
+                                                    debug!("Point {} not found in config, using default Measurement", point_id);
+                                                    (TelemetryType::Measurement, float_value)
                                                 }
                                             } else {
-                                                debug!("No channel config available, using default Telemetry");
-                                                (TelemetryType::Telemetry, float_value)
+                                                debug!("No channel config available, using default Measurement");
+                                                (TelemetryType::Measurement, float_value)
                                             };
 
                                             // Store the processed value with raw value metadata
@@ -804,6 +775,7 @@ async fn read_modbus_group_with_processor(
     function_code: u8,
     points: &[ModbusPoint],
     channel_config: Option<&ChannelConfig>,
+    max_batch_size: u16,
 ) -> Result<Vec<(String, RedisValue)>> {
     if points.is_empty() {
         return Ok(Vec::new());
@@ -823,7 +795,14 @@ async fn read_modbus_group_with_processor(
             batch_start_address + current_batch.len() as u16 * point.register_count,
         );
 
-        if current_batch.is_empty() || gap <= 5 {
+        // Calculate the total registers in current batch if we add this point
+        let batch_end_if_added = point.register_address + point.register_count;
+        let batch_registers_if_added = (batch_end_if_added - batch_start_address) as usize;
+
+        // Check both gap and batch size constraints
+        if current_batch.is_empty()
+            || (gap <= 5 && batch_registers_if_added <= max_batch_size as usize)
+        {
             current_batch.push(point.clone());
         } else {
             // Read current batch
@@ -835,6 +814,7 @@ async fn read_modbus_group_with_processor(
                 batch_start_address,
                 &current_batch,
                 channel_config,
+                max_batch_size,
             )
             .await?;
             results.extend(batch_results);
@@ -856,6 +836,7 @@ async fn read_modbus_group_with_processor(
             batch_start_address,
             &current_batch,
             channel_config,
+            max_batch_size,
         )
         .await?;
         results.extend(batch_results);
@@ -864,7 +845,7 @@ async fn read_modbus_group_with_processor(
     Ok(results)
 }
 
-/// Read a batch of consecutive Modbus registers
+/// Read a batch of consecutive Modbus registers with automatic splitting for large batches
 async fn read_modbus_batch(
     connection_manager: &Arc<ModbusConnectionManager>,
     frame_processor: &mut ModbusFrameProcessor,
@@ -873,6 +854,7 @@ async fn read_modbus_batch(
     start_address: u16,
     points: &[ModbusPoint],
     channel_config: Option<&ChannelConfig>,
+    max_batch_size: u16,
 ) -> Result<Vec<(String, RedisValue)>> {
     if points.is_empty() {
         return Ok(Vec::new());
@@ -883,50 +865,79 @@ async fn read_modbus_batch(
     let total_registers =
         (last_point.register_address - start_address + last_point.register_count) as usize;
 
-    // Build Modbus PDU
-    let pdu = match function_code {
-        3 => build_read_holding_registers_pdu(start_address, total_registers as u16),
-        4 => build_read_input_registers_pdu(start_address, total_registers as u16),
-        _ => {
+    // Collect all register values by reading in batches
+    let mut all_register_values = Vec::new();
+    let mut current_offset = 0;
+
+    // Read registers in chunks no larger than max_batch_size
+    while current_offset < total_registers {
+        let batch_size = std::cmp::min(max_batch_size as usize, total_registers - current_offset);
+        let batch_start = start_address + current_offset as u16;
+
+        debug!(
+            "Reading Modbus batch: slave={}, func={}, start={}, count={} (offset={}/{})",
+            slave_id, function_code, batch_start, batch_size, current_offset, total_registers
+        );
+
+        // Build Modbus PDU for this batch
+        let pdu = match function_code {
+            3 => build_read_holding_registers_pdu(batch_start, batch_size as u16),
+            4 => build_read_input_registers_pdu(batch_start, batch_size as u16),
+            _ => {
+                return Err(ComSrvError::ProtocolError(format!(
+                    "Unsupported function code: {}",
+                    function_code
+                )))
+            }
+        };
+
+        // Build complete frame with proper header (MBAP for TCP, CRC for RTU)
+        let request = frame_processor.build_frame(slave_id, &pdu);
+
+        // Send request and receive response
+        connection_manager.send(&request).await?;
+
+        let mut response = vec![0u8; 256]; // Maximum Modbus frame size
+        let bytes_read = connection_manager
+            .receive(&mut response, Duration::from_secs(5))
+            .await?;
+        response.truncate(bytes_read);
+
+        // Parse response frame
+        let (received_unit_id, pdu) = frame_processor.parse_frame(&response)?;
+
+        // Verify unit ID matches
+        if received_unit_id != slave_id {
             return Err(ComSrvError::ProtocolError(format!(
-                "Unsupported function code: {}",
-                function_code
-            )))
+                "Unit ID mismatch: expected {}, got {}",
+                slave_id, received_unit_id
+            )));
         }
-    };
 
-    // Build complete frame with proper header (MBAP for TCP, CRC for RTU)
-    let request = frame_processor.build_frame(slave_id, &pdu);
+        // Parse PDU to extract register values for this batch
+        let batch_register_values = parse_modbus_pdu(&pdu, function_code)?;
 
-    // Send request and receive response
-    connection_manager.send(&request).await?;
+        // Verify we received the expected number of registers
+        if batch_register_values.len() != batch_size {
+            warn!(
+                "Received {} registers, expected {} for batch at address {}",
+                batch_register_values.len(),
+                batch_size,
+                batch_start
+            );
+        }
 
-    let mut response = vec![0u8; 256]; // Maximum Modbus frame size
-    let bytes_read = connection_manager
-        .receive(&mut response, Duration::from_secs(5))
-        .await?;
-    response.truncate(bytes_read);
-
-    // Parse response frame
-    let (received_unit_id, pdu) = frame_processor.parse_frame(&response)?;
-
-    // Verify unit ID matches
-    if received_unit_id != slave_id {
-        return Err(ComSrvError::ProtocolError(format!(
-            "Unit ID mismatch: expected {}, got {}",
-            slave_id, received_unit_id
-        )));
+        // Append to our complete register collection
+        all_register_values.extend(batch_register_values);
+        current_offset += batch_size;
     }
 
-    // Parse PDU to extract register values
-    let register_values = parse_modbus_pdu(&pdu, function_code)?;
-
-    // Extract values for each point
+    // Extract values for each point from the complete register collection
     let mut results = Vec::new();
     for point in points {
         let offset = (point.register_address - start_address) as usize;
-        if offset + point.register_count as usize <= register_values.len() {
-            let registers = &register_values[offset..offset + point.register_count as usize];
+        if offset + point.register_count as usize <= all_register_values.len() {
+            let registers = &all_register_values[offset..offset + point.register_count as usize];
 
             // Get bit_position from channel configuration if available
             let bit_position = if let Some(config) = channel_config {
@@ -954,6 +965,14 @@ async fn read_modbus_batch(
 
             let value = decode_register_value(registers, &point.data_format, bit_position)?;
             results.push((point.point_id.clone(), value));
+        } else {
+            warn!(
+                "Point {} at address {} is out of range (offset={}, registers_available={})",
+                point.point_id,
+                point.register_address,
+                offset,
+                all_register_values.len()
+            );
         }
     }
 
@@ -1095,7 +1114,7 @@ mod tests {
     fn test_telemetry_type_from_string() {
         assert_eq!(
             telemetry_type_from_string("Measurement"),
-            TelemetryType::Telemetry
+            TelemetryType::Measurement
         );
         assert_eq!(telemetry_type_from_string("Signal"), TelemetryType::Signal);
         assert_eq!(
@@ -1108,7 +1127,7 @@ mod tests {
         );
         assert_eq!(
             telemetry_type_from_string("Unknown"),
-            TelemetryType::Telemetry
+            TelemetryType::Measurement
         );
     }
 

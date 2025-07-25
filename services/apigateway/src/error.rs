@@ -159,12 +159,14 @@ impl From<std::io::Error> for ApiGatewayError {
     }
 }
 
-impl From<voltage_common::Error> for ApiGatewayError {
-    fn from(err: voltage_common::Error) -> Self {
+impl From<voltage_libs::error::VoltageError> for ApiGatewayError {
+    fn from(err: voltage_libs::error::VoltageError) -> Self {
         match err {
-            voltage_common::Error::Storage(msg) => ApiGatewayError::RedisError(msg),
-            voltage_common::Error::Network(msg) => ApiGatewayError::ServiceError(msg),
-            voltage_common::Error::Config(msg) => ApiGatewayError::ConfigParseError(msg),
+            voltage_libs::error::VoltageError::Storage(msg) => ApiGatewayError::RedisError(msg),
+            voltage_libs::error::VoltageError::Network(msg) => ApiGatewayError::ServiceError(msg),
+            voltage_libs::error::VoltageError::Config(msg) => {
+                ApiGatewayError::ConfigParseError(msg)
+            }
             _ => ApiGatewayError::InternalError(err.to_string()),
         }
     }

@@ -151,10 +151,7 @@ pub struct ChannelConfig {
     /// 表配置
     pub table_config: Option<TableConfig>,
 
-    /// 解析后的点位映射
-    #[serde(skip)]
-    pub points: Vec<UnifiedPointMapping>,
-
+    // 四遥分离架构下，不再需要统一的points字段
     /// 四遥点位映射 - 分别存储四种遥测类型
     #[serde(skip)]
     pub measurement_points: HashMap<u32, CombinedPoint>,
@@ -188,10 +185,10 @@ pub struct ChannelLoggingConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TableConfig {
     /// 四遥路径
-    pub four_telemetry_route: String,
+    pub four_remote_route: String,
 
     /// 四遥文件
-    pub four_telemetry_files: FourTelemetryFiles,
+    pub four_remote_files: FourRemoteFiles,
 
     /// 协议映射路径
     pub protocol_mapping_route: String,
@@ -202,9 +199,9 @@ pub struct TableConfig {
 
 /// 四遥文件配置
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct FourTelemetryFiles {
+pub struct FourRemoteFiles {
     /// 遥测文件
-    pub telemetry_file: String,
+    pub measurement_file: String,
 
     /// 遥信文件
     pub signal_file: String,
@@ -220,7 +217,7 @@ pub struct FourTelemetryFiles {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProtocolMappingFiles {
     /// 遥测映射文件
-    pub telemetry_mapping: String,
+    pub measurement_mapping: String,
 
     /// 遥信映射文件
     pub signal_mapping: String,
@@ -256,27 +253,7 @@ pub struct ScalingInfo {
 // 协议配置
 // ============================================================================
 
-/// 统一点位映射
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct UnifiedPointMapping {
-    /// 点位ID
-    pub point_id: u32,
-
-    /// 信号名称
-    pub signal_name: String,
-
-    /// 遥测类型
-    pub telemetry_type: String,
-
-    /// 数据类型
-    pub data_type: String,
-
-    /// 协议特定参数
-    pub protocol_params: HashMap<String, String>,
-
-    /// 缩放信息
-    pub scaling: Option<ScalingParams>,
-}
+// 四遥分离架构下，不再需要UnifiedPointMapping，使用CombinedPoint代替
 
 /// 缩放参数
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -300,7 +277,7 @@ pub struct ProtocolMapping {
 pub enum TelemetryType {
     /// 遥测 (YC)
     #[serde(rename = "m")]
-    Telemetry,
+    Measurement,
     /// 遥信 (YX)
     #[serde(rename = "s")]
     Signal,
@@ -317,11 +294,13 @@ impl std::str::FromStr for TelemetryType {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
-            "m" | "telemetry" | "Telemetry" => Ok(TelemetryType::Telemetry),
+            "m" | "telemetry" | "Telemetry" | "measurement" | "Measurement" => {
+                Ok(TelemetryType::Measurement)
+            }
             "s" | "signal" | "Signal" => Ok(TelemetryType::Signal),
             "c" | "control" | "Control" => Ok(TelemetryType::Control),
             "a" | "adjustment" | "Adjustment" => Ok(TelemetryType::Adjustment),
-            _ => Err(format!("Invalid telemetry type: {}", s)),
+            _ => Err(format!("Invalid remote type: {}", s)),
         }
     }
 }
@@ -486,7 +465,7 @@ impl ChannelConfig {
         point_id: u32,
     ) -> Option<&CombinedPoint> {
         match telemetry_type {
-            TelemetryType::Telemetry => self.measurement_points.get(&point_id),
+            TelemetryType::Measurement => self.measurement_points.get(&point_id),
             TelemetryType::Signal => self.signal_points.get(&point_id),
             TelemetryType::Control => self.control_points.get(&point_id),
             TelemetryType::Adjustment => self.adjustment_points.get(&point_id),
@@ -499,7 +478,7 @@ impl ChannelConfig {
             .map_err(|e| format!("Invalid telemetry type: {}", e))?;
 
         let target_hashmap = match telemetry_type {
-            TelemetryType::Telemetry => &mut self.measurement_points,
+            TelemetryType::Measurement => &mut self.measurement_points,
             TelemetryType::Signal => &mut self.signal_points,
             TelemetryType::Control => &mut self.control_points,
             TelemetryType::Adjustment => &mut self.adjustment_points,
@@ -523,7 +502,7 @@ impl ChannelConfig {
         telemetry_type: TelemetryType,
     ) -> &HashMap<u32, CombinedPoint> {
         match telemetry_type {
-            TelemetryType::Telemetry => &self.measurement_points,
+            TelemetryType::Measurement => &self.measurement_points,
             TelemetryType::Signal => &self.signal_points,
             TelemetryType::Control => &self.control_points,
             TelemetryType::Adjustment => &self.adjustment_points,

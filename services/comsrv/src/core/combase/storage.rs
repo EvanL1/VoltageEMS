@@ -266,7 +266,7 @@ impl OptimizedBatchSync {
         for update in updates {
             updates_by_channel
                 .entry(update.channel_id)
-                .or_insert_with(Vec::new)
+                .or_default()
                 .push(update);
         }
 

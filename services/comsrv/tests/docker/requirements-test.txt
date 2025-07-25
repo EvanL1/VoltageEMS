@@ -1,8 +1,0 @@
-# 测试依赖
-pytest==7.4.4
-pytest-asyncio==0.21.1
-pytest-timeout==2.1.0
-requests==2.31.0
-redis==5.0.1
-pymodbus==3.6.2
-aiohttp==3.9.1

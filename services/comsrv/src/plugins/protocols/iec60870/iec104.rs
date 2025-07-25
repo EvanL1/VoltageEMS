@@ -533,7 +533,7 @@ impl Iec104Client {
                     "IEC 60870 data point {}:{}",
                     asdu.common_addr, "some_point_id"
                 ),
-                telemetry_type: Some(crate::core::combase::TelemetryType::Telemetry),
+                telemetry_type: Some(crate::core::combase::TelemetryType::Measurement),
                 channel_id: Some(self.channel_id),
             };
 
@@ -553,13 +553,13 @@ impl Iec104Client {
                             | TypeId::M_DP_NA_1
                             | TypeId::M_DP_TB_1 => TelemetryType::Signal,
                             TypeId::M_ME_NA_1 | TypeId::M_ME_NB_1 | TypeId::M_ME_NC_1 => {
-                                TelemetryType::Telemetry
+                                TelemetryType::Measurement
                             }
                             TypeId::C_SC_NA_1 | TypeId::C_DC_NA_1 => TelemetryType::Control,
                             TypeId::C_SE_NA_1 | TypeId::C_SE_NB_1 | TypeId::C_SE_NC_1 => {
                                 TelemetryType::Adjustment
                             }
-                            _ => TelemetryType::Telemetry, // Default
+                            _ => TelemetryType::Measurement, // Default
                         };
 
                         if let Ok(value) = point_data.value.parse::<f64>() {

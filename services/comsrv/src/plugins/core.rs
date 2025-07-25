@@ -32,7 +32,7 @@ pub fn get_plugin_registry() -> Arc<RwLock<PluginRegistry>> {
 }
 
 /// 插件注册表，管理所有已注册的协议插件
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct PluginRegistry {
     /// 已注册的插件
     plugins: HashMap<String, PluginEntry>,
@@ -59,16 +59,6 @@ impl std::fmt::Debug for PluginEntry {
             .field("enabled", &self.enabled)
             .field("metadata", &self.metadata)
             .finish()
-    }
-}
-
-impl Default for PluginRegistry {
-    fn default() -> Self {
-        Self {
-            plugins: HashMap::new(),
-            factories: HashMap::new(),
-            load_order: Vec::new(),
-        }
     }
 }
 
@@ -269,7 +259,7 @@ const TYPE_ADJUSTMENT: &str = "a";
 /// 将TelemetryType转换为Redis存储的类型缩写
 pub fn telemetry_type_to_redis(telemetry_type: &TelemetryType) -> &'static str {
     match telemetry_type {
-        TelemetryType::Telemetry => TYPE_MEASUREMENT,
+        TelemetryType::Measurement => TYPE_MEASUREMENT,
         TelemetryType::Signal => TYPE_SIGNAL,
         TelemetryType::Control => TYPE_CONTROL,
         TelemetryType::Adjustment => TYPE_ADJUSTMENT,
@@ -526,7 +516,7 @@ pub mod discovery {
         let registry = PluginRegistry::global();
         let mut reg = registry.write().unwrap();
 
-        let plugin = Box::new(modbus::ModbusTcpPlugin::default());
+        let plugin = Box::new(modbus::ModbusTcpPlugin);
         reg.register_plugin(plugin)?;
         reg.register_factory("modbus_tcp", modbus::create_plugin)?;
         reg.register_factory("modbus_rtu", modbus::create_plugin)?;
@@ -624,7 +614,7 @@ mod tests {
 
     #[test]
     fn test_telemetry_type_conversion() {
-        assert_eq!(telemetry_type_to_redis(&TelemetryType::Telemetry), "m");
+        assert_eq!(telemetry_type_to_redis(&TelemetryType::Measurement), "m");
         assert_eq!(telemetry_type_to_redis(&TelemetryType::Signal), "s");
         assert_eq!(telemetry_type_to_redis(&TelemetryType::Control), "c");
         assert_eq!(telemetry_type_to_redis(&TelemetryType::Adjustment), "a");

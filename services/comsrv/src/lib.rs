@@ -334,19 +334,31 @@ pub mod service {
         }
 
         info!(
-            "Channel creation completed: {} successful, {} failed",
+            "Channel initialization completed: {} successful, {} failed",
             successful_channels, failed_channels
         );
 
-        // Log channel creation results
+        // 等待短暂时间确保所有通道初始化完成
+        tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+
+        // 第二阶段：批量建立所有通道的连接
+        info!("Starting connection phase for all initialized channels...");
         let factory_guard = factory.read().await;
-        info!(
-            "Communication service started with {} channels successfully created",
-            successful_channels
-        );
+        match factory_guard.connect_all_channels().await {
+            Ok(_) => {
+                info!("All channel connections completed successfully");
+            }
+            Err(e) => {
+                error!("Some channel connections failed: {}", e);
+                // 连接失败不应阻止服务启动，继续运行
+            }
+        }
         drop(factory_guard);
 
-        // Redis metadata sync removed - using direct storage now
+        info!(
+            "Communication service started with {} channels successfully initialized",
+            successful_channels
+        );
 
         Ok(())
     }

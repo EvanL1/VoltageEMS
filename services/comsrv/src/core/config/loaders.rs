@@ -2,16 +2,38 @@
 //!
 //! 整合CSV加载、点位映射和协议映射功能
 
-use super::types::{CombinedPoint, ScalingInfo, UnifiedPointMapping};
+use super::types::{CombinedPoint, ScalingInfo};
 use crate::utils::error::{ComSrvError, Result};
 use csv::ReaderBuilder;
-use serde::{Deserialize, Serialize};
+use serde::de::Error;
+use serde::{Deserialize, Deserializer, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::SystemTime;
 use tokio::sync::RwLock;
 use tracing::{debug, trace, warn};
+
+// ============================================================================
+// 自定义反序列化函数
+// ============================================================================
+
+/// 从字符串反序列化bool，支持"0"/"1"/"true"/"false"
+fn deserialize_bool_from_str<'de, D>(deserializer: D) -> std::result::Result<Option<bool>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let s: Option<String> = Option::deserialize(deserializer)?;
+    match s {
+        None => Ok(None),
+        Some(ref s) if s.is_empty() => Ok(None),
+        Some(s) => match s.as_str() {
+            "0" | "false" | "False" | "FALSE" => Ok(Some(false)),
+            "1" | "true" | "True" | "TRUE" => Ok(Some(true)),
+            _ => Err(D::Error::custom(format!("Invalid boolean value: {}", s))),
+        },
+    }
+}
 
 // ============================================================================
 // CSV缓存
@@ -186,12 +208,13 @@ impl CachedCsvLoader {
 
 /// 四遥记录
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct FourTelemetryRecord {
+pub struct FourRemoteRecord {
     pub point_id: u32,
     pub signal_name: String,
     pub data_type: String,
     pub scale: Option<f64>,
     pub offset: Option<f64>,
+    #[serde(default, deserialize_with = "deserialize_bool_from_str")]
     pub reverse: Option<bool>,
     pub unit: Option<String>,
     pub description: Option<String>,
@@ -222,7 +245,7 @@ pub struct PointMapper;
 impl PointMapper {
     /// 合并Modbus点位
     pub fn combine_modbus_points(
-        telemetry_points: Vec<FourTelemetryRecord>,
+        remote_points: Vec<FourRemoteRecord>,
         modbus_mappings: Vec<ModbusMappingRecord>,
         telemetry_type: &str,
     ) -> Result<Vec<CombinedPoint>> {
@@ -234,8 +257,8 @@ impl PointMapper {
 
         let mut combined_points = Vec::new();
 
-        for telemetry in telemetry_points {
-            if let Some(mapping) = mapping_lookup.remove(&telemetry.point_id) {
+        for remote in remote_points {
+            if let Some(mapping) = mapping_lookup.remove(&remote.point_id) {
                 let mut protocol_params = HashMap::new();
                 protocol_params.insert("slave_id".to_string(), mapping.slave_id.to_string());
                 protocol_params.insert(
@@ -259,17 +282,20 @@ impl PointMapper {
                 }
 
                 let combined = CombinedPoint {
-                    point_id: telemetry.point_id,
-                    signal_name: telemetry.signal_name,
+                    point_id: remote.point_id,
+                    signal_name: remote.signal_name,
                     telemetry_type: telemetry_type.to_string(),
-                    data_type: telemetry.data_type,
+                    data_type: remote.data_type,
                     protocol_params,
-                    scaling: if telemetry.scale.is_some() || telemetry.offset.is_some() {
+                    scaling: if remote.scale.is_some()
+                        || remote.offset.is_some()
+                        || remote.reverse.is_some()
+                    {
                         Some(ScalingInfo {
-                            scale: telemetry.scale.unwrap_or(1.0),
-                            offset: telemetry.offset.unwrap_or(0.0),
-                            unit: telemetry.unit,
-                            reverse: telemetry.reverse,
+                            scale: remote.scale.unwrap_or(1.0),
+                            offset: remote.offset.unwrap_or(0.0),
+                            unit: remote.unit,
+                            reverse: remote.reverse,
                         })
                     } else {
                         None
@@ -280,7 +306,7 @@ impl PointMapper {
             } else {
                 warn!(
                     "No protocol mapping found for point_id: {}",
-                    telemetry.point_id
+                    remote.point_id
                 );
             }
         }
@@ -288,7 +314,7 @@ impl PointMapper {
         // 检查未映射的协议映射
         for (point_id, _) in mapping_lookup {
             warn!(
-                "Protocol mapping for point_id {} has no corresponding telemetry point",
+                "Protocol mapping for point_id {} has no corresponding remote point",
                 point_id
             );
         }
@@ -320,25 +346,7 @@ impl PointMapper {
         Ok(())
     }
 
-    /// 转换为统一点位映射
-    pub fn to_unified_mappings(points: Vec<CombinedPoint>) -> Vec<UnifiedPointMapping> {
-        points
-            .into_iter()
-            .map(|point| UnifiedPointMapping {
-                point_id: point.point_id,
-                signal_name: point.signal_name,
-                telemetry_type: point.telemetry_type,
-                data_type: point.data_type,
-                protocol_params: point.protocol_params,
-                scaling: point.scaling.map(|s| super::types::ScalingParams {
-                    scale: s.scale,
-                    offset: s.offset,
-                    unit: s.unit,
-                    reverse: None,
-                }),
-            })
-            .collect()
-    }
+    // 四遥分离架构下，不再需要to_unified_mappings方法
 }
 
 // ============================================================================

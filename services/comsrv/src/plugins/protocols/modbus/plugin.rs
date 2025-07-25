@@ -164,7 +164,19 @@ impl ProtocolPlugin for ModbusRtuPlugin {
 // 辅助函数：提取轮询配置
 fn extract_polling_config(parameters: &HashMap<String, serde_yaml::Value>) -> ModbusPollingConfig {
     if let Some(polling_value) = parameters.get("polling") {
-        if let Ok(config) = serde_yaml::from_value::<ModbusPollingConfig>(polling_value.clone()) {
+        if let Ok(mut config) = serde_yaml::from_value::<ModbusPollingConfig>(polling_value.clone())
+        {
+            // Check for batch_size in the polling config
+            if let Some(polling_map) = polling_value.as_mapping() {
+                if let Some(batch_size_value) =
+                    polling_map.get(&serde_yaml::Value::String("batch_size".to_string()))
+                {
+                    if let Some(batch_size) = batch_size_value.as_u64() {
+                        // Set max_batch_size from batch_size, clamping to valid range
+                        config.batch_config.max_batch_size = (batch_size as u16).min(128).max(1);
+                    }
+                }
+            }
             return config;
         }
     }

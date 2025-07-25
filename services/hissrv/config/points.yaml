@@ -1,0 +1,68 @@
+# hissrv 点位配置文件
+# 控制哪些点位数据会被保存到 InfluxDB
+
+# 全局配置
+enabled: true
+default_policy: "allow_all"  # 默认策略: allow_all 或 deny_all
+
+# 存储规则
+rules:
+  # 通道级别规则
+  channels:
+    - channel_id: 1001
+      enabled: true
+      point_types: ["m", "s"]  # 只保存测量(m)和信号(s)数据
+      name: "主变电站"
+      
+    - channel_id: 1002
+      enabled: true
+      point_types: ["m"]  # 只保存测量数据
+      name: "配电室A"
+      
+    - channel_id: 1003
+      enabled: false  # 整个通道禁用
+      name: "测试通道"
+      
+    - channel_id: 2001
+      enabled: true
+      # 不指定 point_types 表示保存所有类型
+      name: "风电场"
+
+  # 点位级别规则（优先级高于通道规则）
+  points:
+    - channel_id: 1001
+      point_id: 10001
+      point_type: "m"
+      enabled: true
+      name: "A相电压"
+      
+    - channel_id: 1001
+      point_id: 10002
+      point_type: "m"
+      enabled: false  # 特定点位禁用
+      name: "B相电压（测试）"
+      
+    - channel_id: 1002
+      point_id: 20001
+      point_type: "s"
+      enabled: true  # 覆盖通道规则，允许此信号点
+      name: "断路器状态"
+
+# 过滤器规则
+filters:
+  # 值范围过滤器
+  - type: "value_range"
+    point_types: ["m"]
+    min_value: -10000
+    max_value: 10000
+    
+  # 时间间隔过滤器（防止频繁更新）
+  - type: "time_interval"
+    point_types: ["m", "s"]
+    min_interval_seconds: 1
+    
+  # 另一个值范围过滤器（针对特定类型）
+  - type: "value_range"
+    point_types: ["s"]
+    min_value: 0
+    max_value: 1  # 信号值通常是 0/1

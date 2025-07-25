@@ -26,5 +26,5 @@ pub use types::{
 
 // Plugin 工厂函数
 pub fn create_plugin() -> Box<dyn crate::plugins::traits::ProtocolPlugin> {
-    Box::new(ModbusTcpPlugin::default())
+    Box::new(ModbusTcpPlugin)
 }

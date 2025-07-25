@@ -236,7 +236,7 @@ impl CanClientBase {
                 // Determine telemetry type (CAN typically uses telemetry and signal types)
                 let telemetry_type = match point_data.unit.as_str() {
                     "" | "bool" | "status" => TelemetryType::Signal,
-                    _ => TelemetryType::Telemetry,
+                    _ => TelemetryType::Measurement,
                 };
 
                 if let Ok(value) = point_data.value.parse::<f64>() {
@@ -550,7 +550,7 @@ impl ComBase for CanClientBase {
                 timestamp: Utc::now(),
                 unit: mapping.unit.clone().unwrap_or_default(),
                 description: mapping.description.clone().unwrap_or_default(),
-                telemetry_type: Some(crate::core::combase::TelemetryType::Telemetry),
+                telemetry_type: Some(crate::core::combase::TelemetryType::Measurement),
                 channel_id: None,
             };
             points.push(point_data);
@@ -579,7 +579,7 @@ impl ComBase for CanClientBase {
                 timestamp: Utc::now(),
                 unit: mapping.unit.clone().unwrap_or_default(),
                 description: mapping.description.clone().unwrap_or_default(),
-                telemetry_type: Some(crate::core::combase::TelemetryType::Telemetry),
+                telemetry_type: Some(crate::core::combase::TelemetryType::Measurement),
                 channel_id: None,
             })
         } else {

@@ -252,16 +252,14 @@ impl ProtocolFactory {
         client.initialize(channel_config).await?;
         info!("Client initialized successfully for channel {}", channel_id);
 
-        // 加载点位映射
-        if let Some(config_mgr) = config_manager {
-            let mappings = config_mgr.load_unified_mappings(channel_id).await?;
-            client.update_points(mappings).await?;
-        }
+        // 四遥分离架构下，点位配置已在initialize阶段直接从channel_config加载，不需要额外的unified mapping
 
-        // 连接到设备
-        info!("Connecting client for channel {}", channel_id);
-        client.connect().await?;
-        info!("Client connected successfully for channel {}", channel_id);
+        // 跳过连接阶段，仅完成初始化
+        // 连接将在所有通道初始化完成后统一建立
+        info!(
+            "Channel {} initialization completed, connection will be established later",
+            channel_id
+        );
 
         let channel_arc = Arc::new(RwLock::new(client));
 
@@ -332,6 +330,43 @@ impl ProtocolFactory {
             });
             entry.channel.clone()
         })
+    }
+
+    /// 批量连接所有已初始化的通道
+    pub async fn connect_all_channels(&self) -> Result<()> {
+        info!(
+            "Starting batch connection for {} channels",
+            self.channels.len()
+        );
+
+        let channel_ids: Vec<u16> = self.channels.iter().map(|entry| *entry.key()).collect();
+        let mut successful_connections = 0;
+        let mut failed_connections = 0;
+
+        for channel_id in channel_ids {
+            if let Some(entry) = self.channels.get(&channel_id) {
+                info!("Connecting channel {}", channel_id);
+
+                let mut client = entry.channel.write().await;
+                match client.connect().await {
+                    Ok(_) => {
+                        info!("Channel {} connected successfully", channel_id);
+                        successful_connections += 1;
+                    }
+                    Err(e) => {
+                        error!("Failed to connect channel {}: {}", channel_id, e);
+                        failed_connections += 1;
+                    }
+                }
+            }
+        }
+
+        info!(
+            "Batch connection completed: {} successful, {} failed",
+            successful_connections, failed_connections
+        );
+
+        Ok(())
     }
 
     /// 移除通道
