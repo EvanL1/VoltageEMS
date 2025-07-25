@@ -76,7 +76,19 @@ class ComsrvSimulator:
 
     def format_value(self, value: float) -> str:
         """按照规范格式化数值 - 6位小数精度"""
-        return f"{value:.6f}"
+        # 确保所有数值都格式化为6位小数
+        if isinstance(value, bool):
+            # 布尔值转换为0.0或1.0
+            return f"{1.0 if value else 0.0:.6f}"
+        elif isinstance(value, (int, float)):
+            return f"{float(value):.6f}"
+        else:
+            # 尝试将其他类型转换为浮点数
+            try:
+                return f"{float(value):.6f}"
+            except:
+                # 如果转换失败，返回0.0
+                return "0.000000"
 
     def generate_measurement_value(
         self, point_config: Dict[str, Any], current_value: Optional[float] = None
@@ -100,32 +112,31 @@ class ComsrvSimulator:
         return value
 
     def generate_signal_value(
-        self, point_config: Dict[str, Any], current_value: Optional[int] = None
-    ) -> int:
+        self, point_config: Dict[str, Any], current_value: Optional[float] = None
+    ) -> float:
         """生成信号值"""
         states = point_config["states"]
         change_probability = point_config.get("change_probability", 0.1)
 
         if current_value is None:
-            return point_config.get("default", states[0])
+            return float(point_config.get("default", states[0]))
 
         # 根据变化概率决定是否改变状态
         if random.random() < change_probability:
             # 切换到另一个状态
-            current_index = (
-                states.index(current_value) if current_value in states else 0
-            )
+            current_int = int(current_value)
+            current_index = states.index(current_int) if current_int in states else 0
             new_index = (current_index + 1) % len(states)
-            return states[new_index]
+            return float(states[new_index])
         else:
             return current_value
 
     def generate_control_value(
-        self, point_config: Dict[str, Any], current_value: Optional[int] = None
-    ) -> int:
+        self, point_config: Dict[str, Any], current_value: Optional[float] = None
+    ) -> float:
         """生成控制值（通常保持稳定，除非有外部命令）"""
         if current_value is None:
-            return point_config.get("default", 0)
+            return float(point_config.get("default", 0))
         return current_value  # 控制值保持不变，除非有外部命令
 
     def generate_adjustment_value(
@@ -173,10 +184,10 @@ class ComsrvSimulator:
                     formatted_value = self.format_value(new_value)
                 elif point_type == "signal":
                     new_value = self.generate_signal_value(point_config, current_value)
-                    formatted_value = str(new_value)
+                    formatted_value = self.format_value(new_value)
                 elif point_type == "control":
                     new_value = self.generate_control_value(point_config, current_value)
-                    formatted_value = str(new_value)
+                    formatted_value = self.format_value(new_value)
                 elif point_type == "adjustment":
                     new_value = self.generate_adjustment_value(
                         point_config, current_value

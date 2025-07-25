@@ -1,0 +1,167 @@
+# ModSrv完整测试环境 - 内部网络，无外部端口暴露
+version: '3.8'
+
+services:
+  # Redis数据库服务
+  redis:
+    image: redis:8-alpine
+    hostname: redis
+    networks:
+      - modsrv-test-network
+    volumes:
+      - redis-data:/data
+      - ./logs/redis:/var/log/redis
+    command: >
+      redis-server 
+      --appendonly yes 
+      --appendfsync everysec
+      --save 60 1000
+      --loglevel notice
+      --logfile /var/log/redis/redis.log
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+  # ComsRv数据模拟器 (模拟设备数据发布)
+  comsrv-simulator:
+    build:
+      context: ./docker/comsrv-simulator
+      dockerfile: Dockerfile
+    hostname: comsrv-simulator
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - modsrv-test-network
+    volumes:
+      - ./logs/comsrv-simulator:/app/logs
+      - ./docker/comsrv-simulator/config.json:/app/config.json:ro
+    environment:
+      - REDIS_URL=redis://redis:6379
+      - LOG_LEVEL=DEBUG
+    command: ["python", "simulator.py"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "-h", "redis", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+  # ModSrv主服务
+  modsrv:
+    build:
+      context: ../..
+      dockerfile: services/modsrv/Dockerfile.test
+    hostname: modsrv
+    depends_on:
+      redis:
+        condition: service_healthy
+      comsrv-simulator:
+        condition: service_healthy
+    networks:
+      - modsrv-test-network
+    volumes:
+      # 配置文件映射
+      - ./test-configs:/config:ro
+      - ./models:/app/models:ro
+      # 模板映射到本地
+      - ./templates:/app/templates:ro
+      # 日志映射到本地
+      - ./logs/modsrv:/logs
+      # 测试结果输出
+      - ./test-results:/test-results
+    environment:
+      - RUST_LOG=modsrv=debug,redis=info
+      - REDIS_URL=redis://redis:6379
+      - CONFIG_FILE=/config/config.yml
+      - MAPPINGS_DIR=/config/mappings
+    command: ["modsrv", "service"]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8092/health"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+  # 测试执行器
+  test-executor:
+    build:
+      context: ./docker/test-executor
+      dockerfile: Dockerfile
+    hostname: test-executor
+    depends_on:
+      modsrv:
+        condition: service_healthy
+    networks:
+      - modsrv-test-network
+    volumes:
+      # 测试脚本
+      - ./tests:/app/tests:ro
+      # 测试结果和日志输出 (包含API报文目录)
+      - ./test-results:/app/results
+      - ./logs/test-executor:/app/logs
+      # 模板目录映射 (用于模板测试)
+      - ./templates:/app/templates:ro
+    environment:
+      - REDIS_URL=redis://redis:6379
+      - MODSRV_URL=http://modsrv:8092
+      - TEST_OUTPUT=/app/results
+      - LOG_LEVEL=debug
+    command: ["/app/run-tests.sh"]
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+  # 日志收集器
+  log-collector:
+    image: busybox:latest
+    hostname: log-collector
+    depends_on:
+      - modsrv
+      - test-executor
+    networks:
+      - modsrv-test-network
+    volumes:
+      - ./logs:/logs
+      - ./test-results:/results
+    command: >
+      sh -c "
+        echo 'Log collector started at $(date)' > /logs/collector.log &&
+        while true; do
+          echo '=== $(date) - Collecting logs ===' >> /logs/collector.log &&
+          find /logs -name '*.log' -exec wc -l {} \; >> /logs/collector.log &&
+          sleep 60;
+        done
+      "
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "5m"
+        max-file: "3"
+
+networks:
+  modsrv-test-network:
+    driver: bridge
+    internal: true  # 不允许外部访问
+
+volumes:
+  redis-data:
+    driver: local

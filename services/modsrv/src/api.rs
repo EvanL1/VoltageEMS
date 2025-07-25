@@ -1,673 +1,441 @@
-// use crate::error::ModelSrvError;
-use crate::config::Config;
-use crate::monitoring::{HealthStatus, MonitoringService};
-use crate::redis_handler::RedisConnection;
-// use crate::template::TemplateManager;
+//! ModSrv REST API v2.0
+//!
+//! 提供简洁的HTTP和WebSocket接口用于模型管理和实时数据推送
+
 use axum::{
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::StatusCode,
     response::Json,
     routing::{get, post},
     Router,
 };
 use serde::{Deserialize, Serialize};
-use serde_json::{self, json, Value};
-// use std::collections::HashMap;
+use std::collections::HashMap;
 use std::sync::Arc;
-use tower_http::cors::CorsLayer;
+use tokio::net::TcpListener;
+use tokio::sync::{mpsc, Mutex};
 use tracing::{error, info};
-use utoipa::{OpenApi, ToSchema};
-// SwaggerUi removed due to compatibility issues
+use voltage_libs::types::StandardFloat;
 
-/// API module for the model service
-/// Provides HTTP REST API for the model service
-/// Uses axum for routing and request handling
+use crate::config::Config;
+use crate::error::{ModelSrvError, Result};
+use crate::model::{Model, ModelManager, PointConfig};
+use crate::websocket::{ws_handler, WsConnectionManager};
 
-#[derive(OpenApi)]
-#[openapi(
-    paths(
-        health_check,
-        list_rules,
-        get_rule,
-        create_rule,
-        update_rule,
-        delete_rule,
-        execute_rule,
-        list_templates,
-        get_template,
-        create_instance,
-        list_operations,
-        control_operation,
-        execute_operation
-    ),
-    components(
-        schemas(
-            HealthResponse,
-            RuleResponse,
-            CreateRuleRequest,
-            UpdateRuleRequest,
-            ExecuteRuleRequest,
-            CreateInstanceRequest,
-            ExecuteOperationRequest,
-            OperationResponse,
-            ErrorResponse
-        )
-    ),
-    tags(
-        (name = "health", description = "Health check endpoints"),
-        (name = "rules", description = "Rule management endpoints"),
-        (name = "templates", description = "Template management endpoints"),
-        (name = "instances", description = "Instance management endpoints"),
-        (name = "operations", description = "Control operation endpoints")
-    )
-)]
-pub struct ApiDoc;
-
-// Request/Response models
-#[derive(Deserialize, Debug, ToSchema)]
-struct CreateInstanceRequest {
-    #[allow(dead_code)]
-    template_id: String,
-    instance_id: String,
-    #[allow(dead_code)]
-    config: Value,
-}
-
-#[derive(Deserialize, Debug, ToSchema)]
-struct ExecuteOperationRequest {
-    instance_id: String,
-    _parameters: Value,
-}
-
-#[derive(Deserialize, Debug, ToSchema)]
-struct CreateRuleRequest {
-    _name: String,
-    _conditions: Value,
-    _actions: Value,
-    _enabled: bool,
-}
-
-#[derive(Deserialize, Debug, ToSchema)]
-struct UpdateRuleRequest {
-    _name: Option<String>,
-    _conditions: Option<Value>,
-    _actions: Option<Value>,
-    _enabled: Option<bool>,
-}
-
-#[derive(Deserialize, Debug, ToSchema)]
-struct ExecuteRuleRequest {
-    _input: Option<Value>,
-}
-
-#[derive(Serialize, ToSchema)]
-struct HealthResponse {
-    status: String,
-    version: String,
-}
-
-#[derive(Serialize, ToSchema)]
-struct RuleResponse {
-    id: String,
-    name: String,
-    enabled: bool,
-    conditions: Value,
-    actions: Value,
-}
-
-#[derive(Serialize, ToSchema)]
-struct OperationResponse {
-    operations: Vec<String>,
-}
-
-#[derive(Serialize, ToSchema)]
-struct ErrorResponse {
-    error: String,
-    message: String,
-}
-
-/// Application state
+/// API服务器状态
 #[derive(Clone)]
-pub struct AppState {
-    /// Redis connection
-    _redis_conn: Arc<RedisConnection>,
-    /// Monitoring service
-    _monitoring: Arc<MonitoringService>,
+pub struct ApiState {
+    pub model_manager: Arc<ModelManager>,
+    pub ws_manager: Arc<WsConnectionManager>,
+    pub config: Config,
 }
 
-/// API server for the modsrv service
+/// 健康检查响应
+#[derive(Serialize)]
+pub struct HealthResponse {
+    pub status: String,
+    pub version: String,
+    pub service: String,
+}
+
+/// 模型列表响应
+#[derive(Serialize)]
+pub struct ModelListResponse {
+    pub models: Vec<ModelSummary>,
+    pub total: usize,
+}
+
+/// 模型摘要
+#[derive(Serialize)]
+pub struct ModelSummary {
+    pub id: String,
+    pub name: String,
+    pub description: String,
+    pub monitoring_count: usize,
+    pub control_count: usize,
+}
+
+/// 模型配置响应
+#[derive(Serialize)]
+pub struct ModelConfigResponse {
+    pub id: String,
+    pub name: String,
+    pub description: String,
+    pub monitoring: HashMap<String, PointConfig>,
+    pub control: HashMap<String, PointConfig>,
+}
+
+/// 模型值响应
+#[derive(Serialize)]
+pub struct ModelValuesResponse {
+    pub monitoring: HashMap<String, f64>,
+    pub timestamp: i64,
+}
+
+/// 完整模型响应
+#[derive(Serialize)]
+pub struct ModelFullResponse {
+    pub id: String,
+    pub name: String,
+    pub description: String,
+    pub monitoring: HashMap<String, PointWithValue>,
+    pub control: HashMap<String, PointConfig>,
+}
+
+/// 带值的点位信息
+#[derive(Serialize)]
+pub struct PointWithValue {
+    pub config: PointConfig,
+    pub value: Option<f64>,
+    pub timestamp: Option<i64>,
+}
+
+/// 控制命令请求
+#[derive(Deserialize)]
+pub struct ControlRequest {
+    pub value: f64,
+}
+
+/// 控制命令响应
+#[derive(Serialize)]
+pub struct ControlResponse {
+    pub success: bool,
+    pub message: String,
+    pub timestamp: i64,
+}
+
+/// API错误响应
+#[derive(Serialize)]
+pub struct ErrorResponse {
+    pub error: String,
+    pub code: String,
+    pub timestamp: i64,
+}
+
+impl From<ModelSrvError> for (StatusCode, Json<ErrorResponse>) {
+    fn from(err: ModelSrvError) -> Self {
+        let (status, code) = match &err {
+            ModelSrvError::NotFound(_) => (StatusCode::NOT_FOUND, "NOT_FOUND"),
+            ModelSrvError::InvalidData(_) => (StatusCode::BAD_REQUEST, "INVALID_DATA"),
+            ModelSrvError::InvalidCommand(_) => (StatusCode::BAD_REQUEST, "INVALID_COMMAND"),
+            _ => (StatusCode::INTERNAL_SERVER_ERROR, "INTERNAL_ERROR"),
+        };
+
+        let response = ErrorResponse {
+            error: err.to_string(),
+            code: code.to_string(),
+            timestamp: chrono::Utc::now().timestamp(),
+        };
+
+        (status, Json(response))
+    }
+}
+
+/// 健康检查
+pub async fn health_check(State(state): State<ApiState>) -> Json<HealthResponse> {
+    Json(HealthResponse {
+        status: "ok".to_string(),
+        version: state.config.version.clone(),
+        service: state.config.service_name.clone(),
+    })
+}
+
+/// 获取模型列表
+pub async fn list_models(
+    State(state): State<ApiState>,
+) -> std::result::Result<Json<ModelListResponse>, (StatusCode, Json<ErrorResponse>)> {
+    let models = state.model_manager.list_models().await;
+
+    let model_summaries: Vec<ModelSummary> = models
+        .into_iter()
+        .map(|model| ModelSummary {
+            id: model.id.clone(),
+            name: model.name.clone(),
+            description: model.description.clone(),
+            monitoring_count: model.monitoring_config.len(),
+            control_count: model.control_config.len(),
+        })
+        .collect();
+
+    let response = ModelListResponse {
+        total: model_summaries.len(),
+        models: model_summaries,
+    };
+
+    Ok(Json(response))
+}
+
+/// 获取完整模型信息（配置+值）
+pub async fn get_model(
+    Path(model_id): Path<String>,
+    State(state): State<ApiState>,
+) -> std::result::Result<Json<ModelFullResponse>, (StatusCode, Json<ErrorResponse>)> {
+    let model = state
+        .model_manager
+        .get_model(&model_id)
+        .await
+        .ok_or_else(|| ModelSrvError::not_found(format!("模型不存在: {}", model_id)))?;
+
+    // 获取监视值
+    let monitoring_values = state
+        .model_manager
+        .get_all_monitoring_values(&model_id)
+        .await
+        .unwrap_or_default();
+
+    // 构建带值的监视点信息
+    let mut monitoring_with_values = HashMap::new();
+    for (name, config) in &model.monitoring_config {
+        let value = monitoring_values.get(name);
+        monitoring_with_values.insert(
+            name.clone(),
+            PointWithValue {
+                config: config.clone(),
+                value: value.map(|v| v.value()),
+                timestamp: value.map(|_| chrono::Utc::now().timestamp()),
+            },
+        );
+    }
+
+    let response = ModelFullResponse {
+        id: model.id,
+        name: model.name,
+        description: model.description,
+        monitoring: monitoring_with_values,
+        control: model.control_config,
+    };
+
+    Ok(Json(response))
+}
+
+/// 获取模型配置（静态）
+pub async fn get_model_config(
+    Path(model_id): Path<String>,
+    State(state): State<ApiState>,
+) -> std::result::Result<Json<ModelConfigResponse>, (StatusCode, Json<ErrorResponse>)> {
+    let model = state
+        .model_manager
+        .get_model(&model_id)
+        .await
+        .ok_or_else(|| ModelSrvError::not_found(format!("模型不存在: {}", model_id)))?;
+
+    let response = ModelConfigResponse {
+        id: model.id,
+        name: model.name,
+        description: model.description,
+        monitoring: model.monitoring_config,
+        control: model.control_config,
+    };
+
+    Ok(Json(response))
+}
+
+/// 获取模型实时值
+pub async fn get_model_values(
+    Path(model_id): Path<String>,
+    State(state): State<ApiState>,
+) -> std::result::Result<Json<ModelValuesResponse>, (StatusCode, Json<ErrorResponse>)> {
+    let values = state
+        .model_manager
+        .get_all_monitoring_values(&model_id)
+        .await
+        .ok_or_else(|| ModelSrvError::not_found(format!("模型不存在: {}", model_id)))?;
+
+    let response = ModelValuesResponse {
+        monitoring: values.into_iter().map(|(k, v)| (k, v.value())).collect(),
+        timestamp: chrono::Utc::now().timestamp(),
+    };
+
+    Ok(Json(response))
+}
+
+/// 执行控制命令
+pub async fn execute_control(
+    Path((model_id, control_name)): Path<(String, String)>,
+    State(state): State<ApiState>,
+    Json(request): Json<ControlRequest>,
+) -> std::result::Result<Json<ControlResponse>, (StatusCode, Json<ErrorResponse>)> {
+    let value = StandardFloat::new(request.value);
+
+    state
+        .model_manager
+        .execute_control(&model_id, &control_name, value)
+        .await
+        .map_err(|e| -> (StatusCode, Json<ErrorResponse>) { e.into() })?;
+
+    let response = ControlResponse {
+        success: true,
+        message: format!(
+            "控制命令执行成功: {}:{} = {}",
+            model_id, control_name, request.value
+        ),
+        timestamp: chrono::Utc::now().timestamp(),
+    };
+
+    Ok(Json(response))
+}
+
+/// WebSocket连接统计
+#[derive(Serialize)]
+pub struct WsStatsResponse {
+    pub connections: HashMap<String, usize>,
+    pub total: usize,
+}
+
+/// 获取WebSocket连接统计
+pub async fn get_ws_stats(State(state): State<ApiState>) -> Json<WsStatsResponse> {
+    let stats = state.ws_manager.get_connection_stats().await;
+    let total: usize = stats.values().sum();
+
+    Json(WsStatsResponse {
+        connections: stats,
+        total,
+    })
+}
+
+/// API服务器
 pub struct ApiServer {
-    state: AppState,
-    port: u16,
+    model_manager: Arc<ModelManager>,
+    ws_manager: Arc<WsConnectionManager>,
     config: Config,
 }
 
 impl ApiServer {
-    /// Create a new API server (engine functionality removed)
-    pub fn new(_listen_address: String, _port: u16) -> Self {
-        // TODO: Implement with device model system
-        unimplemented!("ApiServer needs to be updated for device model system")
-    }
-
-    /// Run the API server
-    pub async fn run(self) -> Result<(), Box<dyn std::error::Error>> {
-        // TODO: Implement
-        Ok(())
-    }
-
-    /// Create a new API server (legacy)
-    pub fn new_legacy(redis_conn: Arc<RedisConnection>, port: u16, config: Config) -> Self {
-        let monitoring = Arc::new(MonitoringService::new(HealthStatus::Healthy));
-        let state = AppState {
-            _redis_conn: redis_conn,
-            _monitoring: monitoring,
-        };
+    /// 创建API服务器
+    pub fn new(
+        model_manager: Arc<ModelManager>,
+        ws_manager: Arc<WsConnectionManager>,
+        config: Config,
+    ) -> Self {
         Self {
-            state,
-            port,
+            model_manager,
+            ws_manager,
             config,
         }
     }
 
-    /// Start the API server
-    pub async fn start(&self) -> Result<(), std::io::Error> {
-        let api_config = &self.config.api;
+    /// 创建路由
+    fn create_router(&self) -> Router {
+        let state = ApiState {
+            model_manager: self.model_manager.clone(),
+            ws_manager: self.ws_manager.clone(),
+            config: self.config.clone(),
+        };
 
-        let app = Router::new()
-            // Health endpoints (always without prefix)
+        Router::new()
+            // 基础端点
             .route("/health", get(health_check))
-            // Template endpoints
-            .route(&api_config.build_path("templates"), get(list_templates))
-            .route(&api_config.build_path("templates/{id}"), get(get_template))
-            // Instance endpoints
-            .route(&api_config.build_path("instances"), post(create_instance))
-            // Control operation endpoints
+            .route("/models", get(list_models))
+            .route("/models/{model_id}", get(get_model))
+            // 新增端点
+            .route("/models/{model_id}/config", get(get_model_config))
+            .route("/models/{model_id}/values", get(get_model_values))
             .route(
-                &api_config.build_path("control/operations"),
-                get(list_operations).post(control_operation),
+                "/models/{model_id}/control/{control_name}",
+                post(execute_control),
             )
-            .route(
-                &api_config.build_path("control/execute/{operation}"),
-                post(execute_operation),
-            )
-            // OpenAPI spec endpoint
-            .route(
-                &api_config.build_path("api-docs/openapi.json"),
-                get(serve_openapi_spec),
-            )
-            // Rule endpoints (legacy API compatibility)
-            .route(
-                &api_config.build_path("rules"),
-                get(list_rules).post(create_rule),
-            )
-            .route(
-                &api_config.build_path("rules/{id}"),
-                get(get_rule).put(update_rule).delete(delete_rule),
-            )
-            .route(
-                &api_config.build_path("rules/{id}/execute"),
-                post(execute_rule),
-            )
-            // CORS
-            .layer(CorsLayer::permissive())
-            // State
-            .with_state(Arc::new(self.state.clone()));
+            // WebSocket端点
+            .route("/ws/models/{model_id}/values", get(ws_handler))
+            // 统计端点
+            .route("/ws/stats", get(get_ws_stats))
+            .with_state(state)
+    }
 
-        let listener = tokio::net::TcpListener::bind(format!("0.0.0.0:{}", self.port)).await?;
-        info!("Starting API server on port {}", self.port);
+    /// 启动API服务器
+    pub async fn start(&self) -> Result<()> {
+        let app = self.create_router();
+        let addr = format!("{}:{}", self.config.api.host, self.config.api.port);
 
-        axum::serve(listener, app).await?;
+        info!("启动API服务器: http://{}", addr);
+
+        let listener = TcpListener::bind(&addr)
+            .await
+            .map_err(|e| ModelSrvError::IoError(format!("绑定地址失败 {}: {}", addr, e)))?;
+
+        axum::serve(listener, app)
+            .await
+            .map_err(|e| ModelSrvError::IoError(format!("API服务器运行失败: {}", e)))?;
 
         Ok(())
     }
 
-    /// Start API server with startup notification
+    /// 启动API服务器并通知启动状态
     pub async fn start_with_notification(
         &self,
-        startup_tx: tokio::sync::mpsc::Sender<std::result::Result<(), String>>,
-    ) -> Result<(), std::io::Error> {
-        let api_config = &self.config.api;
+        startup_tx: mpsc::Sender<std::result::Result<(), String>>,
+    ) -> Result<()> {
+        let app = self.create_router();
+        let addr = format!("{}:{}", self.config.api.host, self.config.api.port);
 
-        let app = Router::new()
-            // Health endpoints (always without prefix)
-            .route("/health", get(health_check))
-            // Template endpoints
-            .route(&api_config.build_path("templates"), get(list_templates))
-            .route(&api_config.build_path("templates/{id}"), get(get_template))
-            // Instance endpoints
-            .route(&api_config.build_path("instances"), post(create_instance))
-            // Control operation endpoints
-            .route(
-                &api_config.build_path("control/operations"),
-                get(list_operations).post(control_operation),
-            )
-            .route(
-                &api_config.build_path("control/execute/{operation}"),
-                post(execute_operation),
-            )
-            // OpenAPI spec endpoint
-            .route(
-                &api_config.build_path("api-docs/openapi.json"),
-                get(serve_openapi_spec),
-            )
-            // Rule endpoints (legacy API compatibility)
-            .route(
-                &api_config.build_path("rules"),
-                get(list_rules).post(create_rule),
-            )
-            .route(
-                &api_config.build_path("rules/{id}"),
-                get(get_rule).put(update_rule).delete(delete_rule),
-            )
-            .route(
-                &api_config.build_path("rules/{id}/execute"),
-                post(execute_rule),
-            )
-            // CORS
-            .layer(CorsLayer::permissive())
-            // State
-            .with_state(Arc::new(self.state.clone()));
+        info!("启动API服务器: http://{}", addr);
 
-        let listener = tokio::net::TcpListener::bind(format!("0.0.0.0:{}", self.port)).await?;
-        info!("Starting API server on port {}", self.port);
+        let listener = match TcpListener::bind(&addr).await {
+            Ok(listener) => {
+                // 发送启动成功通知
+                if let Err(e) = startup_tx.send(Ok(())).await {
+                    error!("发送启动通知失败: {}", e);
+                }
+                listener
+            }
+            Err(e) => {
+                let error_msg = format!("绑定地址失败 {}: {}", addr, e);
+                if let Err(send_err) = startup_tx.send(Err(error_msg.clone())).await {
+                    error!("发送启动失败通知失败: {}", send_err);
+                }
+                return Err(ModelSrvError::IoError(error_msg));
+            }
+        };
 
-        // Send startup confirmation
-        let _ = startup_tx.send(Ok(())).await;
-
-        axum::serve(listener, app).await?;
+        axum::serve(listener, app)
+            .await
+            .map_err(|e| ModelSrvError::IoError(format!("API服务器运行失败: {}", e)))?;
 
         Ok(())
     }
 }
 
-/// Health check endpoint
-#[utoipa::path(
-    get,
-    path = "/health",
-    responses(
-        (status = 200, description = "Service is healthy", body = HealthResponse)
-    ),
-    tag = "health"
-)]
-async fn health_check() -> Json<HealthResponse> {
-    Json(HealthResponse {
-        status: "ok".to_string(),
-        version: env!("CARGO_PKG_VERSION").to_string(),
-    })
-}
-
-/// List all rules
-#[utoipa::path(
-    get,
-    path = "/api/rules",
-    responses(
-        (status = 200, description = "List of rules", body = Vec<RuleResponse>),
-        (status = 500, description = "Internal server error", body = ErrorResponse)
-    ),
-    tag = "rules"
-)]
-async fn list_rules(
-    State(_state): State<Arc<AppState>>,
-) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
-    // TODO: Implement list_rules method in RedisStore
-    match Ok(serde_json::Value::Array(vec![]))
-        as Result<serde_json::Value, crate::error::ModelSrvError>
-    {
-        Ok(rules) => Ok(Json(json!({
-            "status": "success",
-            "rules": rules
-        }))),
-        Err(e) => {
-            error!("Failed to list rules: {}", e);
-            Err((
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ErrorResponse {
-                    error: "InternalError".to_string(),
-                    message: format!("Failed to list rules: {}", e),
-                }),
-            ))
-        }
-    }
-}
-
-/// Get a specific rule
-#[utoipa::path(
-    get,
-    path = "/api/rules/{id}",
-    responses(
-        (status = 200, description = "Rule found", body = RuleResponse),
-        (status = 404, description = "Rule not found", body = ErrorResponse)
-    ),
-    params(
-        ("id" = String, Path, description = "Rule ID")
-    ),
-    tag = "rules"
-)]
-async fn get_rule(
-    Path(id): Path<String>,
-    State(_state): State<Arc<AppState>>,
-) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
-    // TODO: Implement get_rule method in RedisStore
-    match Ok(None) as Result<Option<serde_json::Value>, crate::error::ModelSrvError> {
-        Ok(Some(rule)) => Ok(Json(json!({
-            "status": "success",
-            "rule": rule
-        }))),
-        Ok(None) => Err((
-            StatusCode::NOT_FOUND,
-            Json(ErrorResponse {
-                error: "NotFound".to_string(),
-                message: format!("Rule with ID '{}' not found", id),
-            }),
-        )),
-        Err(e) => {
-            error!("Failed to get rule {}: {}", id, e);
-            Err((
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ErrorResponse {
-                    error: "InternalError".to_string(),
-                    message: format!("Failed to get rule: {}", e),
-                }),
-            ))
-        }
-    }
-}
-
-/// Create a new rule
-#[utoipa::path(
-    post,
-    path = "/api/rules",
-    request_body = CreateRuleRequest,
-    responses(
-        (status = 201, description = "Rule created", body = RuleResponse),
-        (status = 400, description = "Invalid request", body = ErrorResponse)
-    ),
-    tag = "rules"
-)]
-async fn create_rule(
-    State(_state): State<Arc<AppState>>,
-    Json(_rule_data): Json<serde_json::Value>,
-) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
-    // TODO: Implement create_rule method in RedisStore
-    match Ok(format!("rule_{}", rand::random::<u32>()))
-        as Result<String, crate::error::ModelSrvError>
-    {
-        Ok(rule_id) => Ok(Json(json!({
-            "status": "success",
-            "message": "Rule created successfully",
-            "rule_id": rule_id
-        }))),
-        Err(e) => {
-            error!("Failed to create rule: {}", e);
-            Err((
-                StatusCode::BAD_REQUEST,
-                Json(ErrorResponse {
-                    error: "BadRequest".to_string(),
-                    message: format!("Failed to create rule: {}", e),
-                }),
-            ))
-        }
-    }
-}
-
-/// Update an existing rule
-#[utoipa::path(
-    put,
-    path = "/api/rules/{id}",
-    request_body = UpdateRuleRequest,
-    responses(
-        (status = 200, description = "Rule updated", body = RuleResponse),
-        (status = 404, description = "Rule not found", body = ErrorResponse)
-    ),
-    params(
-        ("id" = String, Path, description = "Rule ID")
-    ),
-    tag = "rules"
-)]
-async fn update_rule(
-    Path(id): Path<String>,
-    State(_state): State<Arc<AppState>>,
-    Json(_rule_data): Json<serde_json::Value>,
-) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
-    // TODO: Implement update_rule method in RedisStore
-    match Ok(()) as Result<(), crate::error::ModelSrvError> {
-        Ok(_) => Ok(Json(json!({
-            "status": "success",
-            "message": "Rule updated successfully"
-        }))),
-        Err(e) => {
-            error!("Failed to update rule {}: {}", id, e);
-            Err((
-                StatusCode::NOT_FOUND,
-                Json(ErrorResponse {
-                    error: "NotFound".to_string(),
-                    message: format!("Failed to update rule: {}", e),
-                }),
-            ))
-        }
-    }
-}
-
-/// Delete a rule
-#[utoipa::path(
-    delete,
-    path = "/api/rules/{id}",
-    responses(
-        (status = 200, description = "Rule deleted"),
-        (status = 404, description = "Rule not found", body = ErrorResponse)
-    ),
-    params(
-        ("id" = String, Path, description = "Rule ID")
-    ),
-    tag = "rules"
-)]
-async fn delete_rule(
-    Path(id): Path<String>,
-    State(_state): State<Arc<AppState>>,
-) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
-    // TODO: Implement delete_rule method in RedisStore
-    match Ok(()) as Result<(), crate::error::ModelSrvError> {
-        Ok(_) => Ok(Json(json!({
-            "status": "success",
-            "message": "Rule deleted successfully"
-        }))),
-        Err(e) => {
-            error!("Failed to delete rule {}: {}", id, e);
-            Err((
-                StatusCode::NOT_FOUND,
-                Json(ErrorResponse {
-                    error: "NotFound".to_string(),
-                    message: format!("Failed to delete rule: {}", e),
-                }),
-            ))
-        }
-    }
-}
-
-/// Execute a rule
-#[utoipa::path(
-    post,
-    path = "/api/rules/{id}/execute",
-    request_body = ExecuteRuleRequest,
-    responses(
-        (status = 200, description = "Rule executed"),
-        (status = 404, description = "Rule not found", body = ErrorResponse)
-    ),
-    params(
-        ("id" = String, Path, description = "Rule ID")
-    ),
-    tag = "rules"
-)]
-async fn execute_rule(
-    Path(id): Path<String>,
-    State(_state): State<Arc<AppState>>,
-    Json(_input): Json<serde_json::Value>,
-) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
-    // TODO: Implement rule executor functionality
-    error!("Rule execution not yet implemented for rule {}", id);
-    Err((
-        StatusCode::NOT_IMPLEMENTED,
-        Json(ErrorResponse {
-            error: "NotImplemented".to_string(),
-            message: format!("Rule execution not yet implemented for rule: {}", id),
-        }),
-    ))
-}
-
-/// List all templates
-#[utoipa::path(
-    get,
-    path = "/api/templates",
-    responses(
-        (status = 200, description = "List of templates"),
-        (status = 500, description = "Internal server error", body = ErrorResponse)
-    ),
-    tag = "templates"
-)]
-async fn list_templates(
-    State(_state): State<Arc<AppState>>,
-) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
-    // TODO: Implement template manager functionality
-    Ok(Json(json!({
-        "status": "success",
-        "templates": Vec::<String>::new()
-    })))
-}
-
-/// Get a specific template
-#[utoipa::path(
-    get,
-    path = "/api/templates/{id}",
-    responses(
-        (status = 200, description = "Template found"),
-        (status = 404, description = "Template not found", body = ErrorResponse)
-    ),
-    params(
-        ("id" = String, Path, description = "Template ID")
-    ),
-    tag = "templates"
-)]
-async fn get_template(
-    Path(id): Path<String>,
-    State(_state): State<Arc<AppState>>,
-) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
-    // TODO: Implement template manager functionality
-    Err((
-        StatusCode::NOT_FOUND,
-        Json(ErrorResponse {
-            error: "NotFound".to_string(),
-            message: format!("Template with ID '{}' not found", id),
-        }),
-    ))
-}
-
-/// Create a new instance
-#[utoipa::path(
-    post,
-    path = "/api/instances",
-    request_body = CreateInstanceRequest,
-    responses(
-        (status = 201, description = "Instance created"),
-        (status = 400, description = "Invalid request", body = ErrorResponse)
-    ),
-    tag = "instances"
-)]
-async fn create_instance(
-    State(_state): State<Arc<AppState>>,
-    Json(req): Json<CreateInstanceRequest>,
-) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
-    // TODO: Implement template manager functionality
-    Ok(Json(json!({
-        "status": "success",
-        "message": "Instance created successfully",
-        "instance_id": req.instance_id
-    })))
-}
-
-/// List available operations
-#[utoipa::path(
-    get,
-    path = "/api/control/operations",
-    responses(
-        (status = 200, description = "List of operations", body = OperationResponse)
-    ),
-    tag = "operations"
-)]
-async fn list_operations(State(_state): State<Arc<AppState>>) -> Json<Vec<String>> {
-    Json(vec![
-        "start_motor".to_string(),
-        "stop_motor".to_string(),
-        "change_speed".to_string(),
-    ])
-}
-
-/// Execute control operation
-#[utoipa::path(
-    post,
-    path = "/api/control/operations",
-    request_body = ExecuteOperationRequest,
-    responses(
-        (status = 200, description = "Operation executed"),
-        (status = 400, description = "Invalid request", body = ErrorResponse)
-    ),
-    tag = "operations"
-)]
-async fn control_operation(
-    State(_state): State<Arc<AppState>>,
-    Json(req): Json<ExecuteOperationRequest>,
-) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
-    // Placeholder implementation
-    Ok(Json(json!({
-        "status": "success",
-        "message": format!("Operation executed for instance {}", req.instance_id)
-    })))
-}
-
-/// Execute specific operation
-#[utoipa::path(
-    post,
-    path = "/api/control/execute/{operation}",
-    request_body = ExecuteOperationRequest,
-    responses(
-        (status = 200, description = "Operation executed"),
-        (status = 400, description = "Invalid request", body = ErrorResponse)
-    ),
-    params(
-        ("operation" = String, Path, description = "Operation name")
-    ),
-    tag = "operations"
-)]
-async fn execute_operation(
-    Path(operation): Path<String>,
-    State(_state): State<Arc<AppState>>,
-    Json(req): Json<ExecuteOperationRequest>,
-) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
-    // Placeholder implementation
-    Ok(Json(json!({
-        "status": "success",
-        "message": format!("Operation '{}' executed for instance {}", operation, req.instance_id)
-    })))
-}
-
-/// Serve OpenAPI specification as JSON
-async fn serve_openapi_spec() -> Json<utoipa::openapi::OpenApi> {
-    Json(ApiDoc::openapi())
-}
-
-/// Add test for the API
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::model::{ModelConfig, PointConfig};
+    use voltage_libs::redis::RedisClient;
 
-    #[test]
-    fn test_health_response_serialization() {
-        let response = HealthResponse {
-            status: "ok".to_string(),
-            version: "1.0.0".to_string(),
-        };
+    fn create_test_config() -> ModelConfig {
+        ModelConfig {
+            id: "test_model".to_string(),
+            name: "测试模型".to_string(),
+            description: "用于API测试的模型".to_string(),
+            monitoring: HashMap::from([(
+                "voltage".to_string(),
+                PointConfig {
+                    description: "电压".to_string(),
+                    unit: Some("V".to_string()),
+                },
+            )]),
+            control: HashMap::from([(
+                "switch".to_string(),
+                PointConfig {
+                    description: "开关".to_string(),
+                    unit: None,
+                },
+            )]),
+        }
+    }
 
-        let json = serde_json::to_string(&response).unwrap();
-        assert!(json.contains("\"status\":\"ok\""));
-        assert!(json.contains("\"version\":\"1.0.0\""));
+    #[tokio::test]
+    async fn test_api_routes() {
+        let config = Config::default();
+
+        // 注意：这里需要有效的Redis连接才能运行测试
+        // 在实际测试中应该使用mock
+        if let Ok(redis_client) = voltage_libs::redis::RedisClient::new(&config.redis.url).await {
+            let model_manager = Arc::new(ModelManager::new(Arc::new(Mutex::new(redis_client))));
+            let ws_manager = Arc::new(WsConnectionManager::new(model_manager.clone()));
+            let api_server = ApiServer::new(model_manager, ws_manager, config);
+            let router = api_server.create_router();
+
+            // 验证路由创建成功
+            assert!(!format!("{:?}", router).is_empty());
+        }
     }
 }

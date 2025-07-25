@@ -1,0 +1,103 @@
+# ModSrv测试环境Dockerfile
+# 基于主Dockerfile，针对测试环境优化
+
+# 构建阶段
+FROM rust:1.88-bullseye as builder
+
+# 设置阿里云镜像加速（中国区用户）
+RUN sed -i 's/deb.debian.org/mirrors.aliyun.com/g' /etc/apt/sources.list && \
+    sed -i 's/security.debian.org/mirrors.aliyun.com/g' /etc/apt/sources.list
+
+# 安装构建依赖
+RUN apt-get update && apt-get install -y \
+    pkg-config \
+    libssl-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# 设置工作目录
+WORKDIR /usr/src/modsrv
+
+# 复制workspace配置文件
+COPY Cargo.toml Cargo.lock /usr/src/voltage-ems/
+
+# 复制libs目录
+COPY libs /usr/src/voltage-ems/libs
+
+# 复制modsrv服务
+COPY services/modsrv /usr/src/voltage-ems/services/modsrv
+
+# 为其他workspace成员创建虚拟Cargo.toml和main.rs文件，避免构建错误
+RUN for service in alarmsrv apigateway comsrv Hissrv netsrv rulesrv; do \
+        mkdir -p /usr/src/voltage-ems/services/$service/src && \
+        echo '[package]' > /usr/src/voltage-ems/services/$service/Cargo.toml && \
+        echo "name = \"$service\"" >> /usr/src/voltage-ems/services/$service/Cargo.toml && \
+        echo 'version = "0.1.0"' >> /usr/src/voltage-ems/services/$service/Cargo.toml && \
+        echo 'edition = "2021"' >> /usr/src/voltage-ems/services/$service/Cargo.toml && \
+        echo '' >> /usr/src/voltage-ems/services/$service/Cargo.toml && \
+        echo '[dependencies]' >> /usr/src/voltage-ems/services/$service/Cargo.toml && \
+        echo 'fn main() {}' > /usr/src/voltage-ems/services/$service/src/main.rs; \
+    done
+
+# 设置工作目录
+WORKDIR /usr/src/voltage-ems
+
+# 构建modsrv（测试模式包含测试代码）
+RUN cargo build --release -p modsrv && \
+    cargo test --no-run -p modsrv
+
+# 运行时阶段
+FROM debian:bullseye-slim
+
+# 设置阿里云镜像加速
+RUN sed -i 's/deb.debian.org/mirrors.aliyun.com/g' /etc/apt/sources.list && \
+    sed -i 's/security.debian.org/mirrors.aliyun.com/g' /etc/apt/sources.list
+
+# 安装运行时依赖和测试工具
+RUN apt-get update && apt-get install -y \
+    ca-certificates \
+    libssl1.1 \
+    curl \
+    netcat \
+    jq \
+    redis-tools \
+    vim \
+    procps \
+    && rm -rf /var/lib/apt/lists/*
+
+# 创建非root用户
+RUN groupadd -r modsrv && useradd -r -g modsrv modsrv
+
+# 创建必要的目录
+RUN mkdir -p /config /logs /data /test-scripts /test-results && \
+    chown -R modsrv:modsrv /config /logs /data /test-scripts /test-results
+
+# 从构建阶段复制二进制文件
+COPY --from=builder /usr/src/voltage-ems/target/release/modsrv /usr/local/bin/modsrv
+
+# 复制测试脚本（如果存在）
+COPY --chown=modsrv:modsrv services/modsrv/docker/test-scripts/ /test-scripts/
+
+# 复制启动脚本
+COPY services/modsrv/docker/entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
+# 设置测试环境变量
+ENV RUST_LOG=debug \
+    RUST_BACKTRACE=1 \
+    MODSRV_CONFIG_FILE=/config/config.yml \
+    MODSRV_REDIS_URL=redis://redis:6379 \
+    MODSRV_TEST_MODE=true
+
+# 暴露端口
+EXPOSE 8092 9092
+
+# 切换到非root用户
+USER modsrv
+
+# 健康检查（更频繁的检查间隔用于测试）
+HEALTHCHECK --interval=10s --timeout=3s --start-period=20s --retries=3 \
+    CMD curl -f http://localhost:8092/health || exit 1
+
+# 启动服务
+ENTRYPOINT ["/entrypoint.sh"]
+CMD ["modsrv"]

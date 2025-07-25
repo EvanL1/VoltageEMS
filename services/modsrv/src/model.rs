@@ -1,693 +1,386 @@
-use crate::error::{ModelSrvError, Result};
-use crate::redis_handler::RedisConnection;
+//! ModSrv核心模型系统 v2.0
+//!
+//! 简化的二分模型设计，只包含监视（Monitoring）和控制（Control）两个概念
+
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
+use tokio::sync::{Mutex, RwLock};
 use tracing::{debug, error, info, warn};
+use voltage_libs::redis::RedisClient;
+use voltage_libs::types::StandardFloat;
 
-/// Data mapping for model inputs and outputs
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DataMapping {
-    /// Source key for data
-    pub source_key: String,
-    /// Field name in source data
-    pub source_field: String,
-    /// Target field name
-    pub target_field: String,
-    /// Optional transformation expression
-    pub transform: Option<String>,
-}
+use crate::error::{ModelSrvError, Result};
+use crate::mapping::{MappingManager, PointMapping};
+use crate::websocket::WsConnectionManager;
 
-/// Model definition
+/// 点位配置（静态元数据）
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ModelDefinition {
-    /// Unique model ID
-    pub id: String,
-    /// Display name
-    pub name: String,
-    /// Model description
+pub struct PointConfig {
+    /// 点位描述
     pub description: String,
-    /// Input mappings
-    pub input_mappings: Vec<DataMapping>,
-    /// Output key
-    pub output_key: String,
-    /// Whether the model is enabled
-    pub enabled: bool,
-    /// Template ID the model is based on
-    pub template_id: String,
-    /// Model configuration
-    pub config: HashMap<String, String>,
+    /// 单位（可选）
+    pub unit: Option<String>,
 }
 
-/// Control action type
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum ControlActionType {
-    /// Remote control action (boolean value)
-    RemoteControl,
-    /// Remote adjustment action (analog value)
-    RemoteAdjust,
+/// 点位值（动态数据）
+#[derive(Debug, Clone)]
+pub struct PointValue {
+    /// 数值（6位小数精度）
+    pub value: StandardFloat,
+    /// 更新时间戳
+    pub timestamp: i64,
 }
 
-/// Control action condition
+/// 模型配置（用于加载）
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ControlActionCondition {
-    /// Condition field
-    pub field: String,
-    /// Comparison operator (>, <, >=, <=, ==, !=)
-    pub operator: String,
-    /// Comparison value
-    pub value: String,
-}
-
-/// Control action
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ControlAction {
-    /// Action ID
+pub struct ModelConfig {
+    /// 模型ID
     pub id: String,
-    /// Action name
+    /// 模型名称
     pub name: String,
-    /// Action type
-    pub action_type: ControlActionType,
-    /// Channel name
-    pub channel: String,
-    /// Point name
-    pub point: String,
-    /// Action value
-    pub value: String,
-    /// Trigger conditions
-    pub conditions: Vec<ControlActionCondition>,
-    /// Whether enabled
-    pub enabled: bool,
+    /// 模型描述
+    pub description: String,
+    /// 监视点配置
+    pub monitoring: HashMap<String, PointConfig>,
+    /// 控制点配置
+    pub control: HashMap<String, PointConfig>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ModelWithActions {
-    /// Basic model definition
-    pub model: ModelDefinition,
-    /// Control action list
-    pub actions: Vec<ControlAction>,
+/// 核心模型
+#[derive(Debug, Clone)]
+pub struct Model {
+    /// 模型ID
+    pub id: String,
+    /// 模型名称
+    pub name: String,
+    /// 模型描述
+    pub description: String,
+    /// 监视点配置（静态）
+    pub monitoring_config: HashMap<String, PointConfig>,
+    /// 控制点配置（静态）
+    pub control_config: HashMap<String, PointConfig>,
+    /// 监视点数值（动态）
+    pub monitoring_values: Arc<RwLock<HashMap<String, PointValue>>>,
+    /// 控制点状态（动态）
+    pub control_states: Arc<RwLock<HashMap<String, PointValue>>>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
-pub enum CommandStatus {
-    Pending,
-    Executing,
-    Completed,
-    Failed,
-    Cancelled,
-    Unknown,
-}
-
-#[derive(Default)]
-pub struct ModelEngine {
-    models: HashMap<String, ModelDefinition>,
-    actions: HashMap<String, Vec<ControlAction>>,
-    key_prefix: String,
-}
-
-impl ModelEngine {
-    pub fn new() -> Self {
-        Self::default()
+impl Model {
+    /// 从配置创建模型
+    pub fn from_config(config: ModelConfig) -> Self {
+        Self {
+            id: config.id,
+            name: config.name,
+            description: config.description,
+            monitoring_config: config.monitoring,
+            control_config: config.control,
+            monitoring_values: Arc::new(RwLock::new(HashMap::new())),
+            control_states: Arc::new(RwLock::new(HashMap::new())),
+        }
     }
 
-    pub fn load_models(&mut self, redis_conn: &mut RedisConnection, pattern: &str) -> Result<()> {
-        // Clear existing models
-        self.models.clear();
-        self.actions.clear();
+    /// 获取监视点配置
+    pub fn get_monitoring_config(&self, name: &str) -> Option<&PointConfig> {
+        self.monitoring_config.get(name)
+    }
 
-        // Get all model configuration keys
-        let model_keys = redis_conn.get_keys(pattern)?;
-        info!("Found {} model configurations", model_keys.len());
+    /// 获取控制点配置
+    pub fn get_control_config(&self, name: &str) -> Option<&PointConfig> {
+        self.control_config.get(name)
+    }
+}
 
-        for key in model_keys {
-            match self.load_model_from_store(redis_conn, &key) {
-                Ok((model, actions)) => {
-                    if model.enabled {
-                        info!("Loaded model: {} ({})", model.name, model.id);
-                        self.models.insert(model.id.clone(), model);
-                        self.actions.insert(key.clone(), actions);
-                    } else {
-                        debug!("Skipped disabled model: {}", key);
-                    }
-                }
-                Err(e) => {
-                    error!("Failed to load model from {}: {}", key, e);
-                }
-            }
+/// 模型管理器
+pub struct ModelManager {
+    /// 模型存储
+    models: Arc<RwLock<HashMap<String, Model>>>,
+    /// 映射管理器
+    mappings: Arc<RwLock<MappingManager>>,
+    /// Redis客户端
+    redis_client: Arc<Mutex<RedisClient>>,
+    /// WebSocket管理器（可选）
+    ws_manager: Option<Arc<WsConnectionManager>>,
+}
+
+impl ModelManager {
+    /// 创建模型管理器
+    pub fn new(redis_client: Arc<Mutex<RedisClient>>) -> Self {
+        Self {
+            models: Arc::new(RwLock::new(HashMap::new())),
+            mappings: Arc::new(RwLock::new(MappingManager::new())),
+            redis_client,
+            ws_manager: None,
+        }
+    }
+
+    /// 设置WebSocket管理器
+    pub fn set_ws_manager(&mut self, ws_manager: Arc<WsConnectionManager>) {
+        self.ws_manager = Some(ws_manager);
+    }
+
+    /// 加载模型配置
+    pub async fn load_models(&self, configs: Vec<ModelConfig>) -> Result<()> {
+        let mut models = self.models.write().await;
+
+        for config in configs {
+            let model = Model::from_config(config);
+            info!("加载模型: {} ({})", model.name, model.id);
+            models.insert(model.id.clone(), model);
         }
 
-        info!("Loaded {} models", self.models.len());
+        info!("已加载 {} 个模型", models.len());
         Ok(())
     }
 
-    fn load_model_from_store(
-        &self,
-        redis_conn: &mut RedisConnection,
-        key: &str,
-    ) -> Result<(ModelDefinition, Vec<ControlAction>)> {
-        // Try to load the model from hash table
-        let model_hash = match redis_conn.get_hash(key) {
-            Ok(hash) => hash,
-            Err(e) => {
-                debug!("Failed to load model as hash, trying string format: {}", e);
-                // If hash table loading fails, try old string format
-                let model_json = redis_conn.get_string(key)?;
-
-                // Try to parse as model with control actions
-                let model_with_actions = serde_json::from_str::<ModelWithActions>(&model_json);
-
-                if let Ok(model_with_actions) = model_with_actions {
-                    return Ok((model_with_actions.model, model_with_actions.actions));
-                }
-
-                // If parsing fails, try parsing as basic model
-                let model: ModelDefinition = serde_json::from_str(&model_json).map_err(|e| {
-                    ModelSrvError::ModelError(format!("Failed to parse model JSON: {}", e))
-                })?;
-
-                return Ok((model, Vec::new()));
-            }
-        };
-
-        debug!("Loading model from hash: {}", key);
-
-        // Build model definition from hash table
-        let id = model_hash
-            .get("id")
-            .ok_or_else(|| ModelSrvError::ModelError("Missing id field in model hash".to_string()))?
-            .to_string();
-
-        let name = model_hash
-            .get("name")
-            .unwrap_or(&"Unnamed Model".to_string())
-            .to_string();
-
-        let description = model_hash
-            .get("description")
-            .unwrap_or(&"No description".to_string())
-            .to_string();
-
-        // Parse input mappings
-        let input_mappings = if let Some(mappings_json) = model_hash.get("input_mappings") {
-            serde_json::from_str::<Vec<DataMapping>>(mappings_json).map_err(|e| {
-                ModelSrvError::ModelError(format!("Failed to parse input mappings: {}", e))
-            })?
-        } else {
-            Vec::new()
-        };
-
-        let output_key = model_hash
-            .get("output_key")
-            .unwrap_or(&format!("modsrv:{}:output", id))
-            .to_string();
-
-        let enabled = model_hash
-            .get("enabled")
-            .map(|v| v == "true")
-            .unwrap_or(true);
-
-        let template_id = model_hash
-            .get("template_id")
-            .unwrap_or(&String::new())
-            .to_string();
-
-        let config = if let Some(config_json) = model_hash.get("config") {
-            serde_json::from_str::<HashMap<String, String>>(config_json)
-                .map_err(|e| ModelSrvError::ModelError(format!("Failed to parse config: {}", e)))?
-        } else {
-            HashMap::new()
-        };
-
-        let model = ModelDefinition {
-            id,
-            name,
-            description,
-            input_mappings,
-            output_key,
-            enabled,
-            template_id,
-            config,
-        };
-
-        // Load actions
-        let mut actions = Vec::new();
-
-        if let Some(action_count_str) = model_hash.get("action_count") {
-            if let Ok(action_count) = action_count_str.parse::<usize>() {
-                for i in 0..action_count {
-                    let action_key = format!("{}model:action:{}:{}", self.key_prefix, model.id, i);
-                    match redis_conn.get_string(&action_key) {
-                        Ok(action_json) => {
-                            match serde_json::from_str::<ControlAction>(&action_json) {
-                                Ok(action) => {
-                                    actions.push(action);
-                                }
-                                Err(e) => {
-                                    warn!("Failed to parse action JSON: {}", e);
-                                }
-                            }
-                        }
-                        Err(e) => {
-                            warn!("Failed to load action {}: {}", i, e);
-                        }
-                    }
-                }
-            }
-        }
-
-        Ok((model, actions))
-    }
-
-    pub fn execute_models(&self, redis_conn: &mut RedisConnection) -> Result<()> {
-        for (id, model) in &self.models {
-            if !model.enabled {
-                debug!("Skipping disabled model: {}", id);
-                continue;
-            }
-
-            match self.execute_model(redis_conn, model) {
-                Ok(_) => {
-                    debug!("Successfully executed model: {}", id);
-
-                    // Check if control actions need to be triggered after model execution
-                    if let Some(_actions) = self.actions.get(id) {
-                        self.check_and_execute_actions(redis_conn, id)?;
-                    }
-                }
-                Err(e) => {
-                    error!("Failed to execute model {}: {}", id, e);
-                }
-            }
-        }
-
+    /// 加载映射配置
+    pub async fn load_mappings_directory(&self, dir: &str) -> Result<()> {
+        let mut mappings = self.mappings.write().await;
+        mappings.load_directory(dir).await?;
         Ok(())
     }
 
-    fn execute_model(
-        &self,
-        redis_conn: &mut RedisConnection,
-        model: &ModelDefinition,
-    ) -> Result<()> {
-        // Collect input data based on mappings
-        let mut model_inputs: HashMap<String, String> = HashMap::new();
-
-        for mapping in &model.input_mappings {
-            // Get the source data
-            if let Ok(value) = redis_conn.get_string(&mapping.source_key) {
-                let transformed_value = self.apply_transform(value, &mapping.transform)?;
-                model_inputs.insert(mapping.source_field.clone(), transformed_value);
-            } else {
-                warn!(
-                    "Source field '{}' not found in key '{}'",
-                    mapping.source_field, mapping.source_key
-                );
-            }
-        }
-
-        // Process the model (in a real implementation, this would apply the actual model logic)
-        let model_outputs = self.process_model_data(model, &model_inputs)?;
-
-        // Store the results in Redis
-        let output_json = serde_json::to_string(&model_outputs)
-            .map_err(|e| ModelSrvError::JsonError(e.to_string()))?;
-
-        redis_conn.set_string(&model.output_key, &output_json)?;
-
-        // Check and execute control actions
-        if let Some(_actions) = self.actions.get(&format!("model:config:{}", model.id)) {
-            if let Err(e) = self.check_and_execute_actions(redis_conn, &model.id) {
-                error!("Failed to execute actions for model {}: {}", model.id, e);
-            }
-        }
-
-        Ok(())
+    /// 获取模型
+    pub async fn get_model(&self, id: &str) -> Option<Model> {
+        let models = self.models.read().await;
+        models.get(id).cloned()
     }
 
-    fn apply_transform(&self, value: String, transform: &Option<String>) -> Result<String> {
-        let value_str = value.as_str();
-        if let Some(transform_expr) = transform {
-            // In a real implementation, this would parse and apply the transformation expression
-            // For now, we'll just implement a simple scaling transform as an example
-            if transform_expr.starts_with("scale:") {
-                let scale_factor: f64 = transform_expr
-                    .strip_prefix("scale:")
-                    .unwrap_or("1.0")
-                    .parse()
-                    .map_err(|_| {
-                        ModelSrvError::DataMappingError(format!(
-                            "Invalid scale factor in transform: {}",
-                            transform_expr
-                        ))
-                    })?;
-
-                let value_f64: f64 = value_str.parse().map_err(|_| {
-                    ModelSrvError::DataMappingError(format!(
-                        "Cannot apply scaling transform to non-numeric value: {}",
-                        value_str
-                    ))
-                })?;
-
-                return Ok((value_f64 * scale_factor).to_string());
-            }
-
-            // Add more transform types as needed
-
-            warn!("Unknown transform expression: {}", transform_expr);
-        }
-
-        // If no transform or unknown transform, return the original value
-        Ok(value_str.to_string())
+    /// 列出所有模型
+    pub async fn list_models(&self) -> Vec<Model> {
+        let models = self.models.read().await;
+        models.values().cloned().collect()
     }
 
-    fn process_model_data(
+    /// 更新监视点值（内部使用）
+    pub async fn update_monitoring_value(
         &self,
-        model: &ModelDefinition,
-        inputs: &HashMap<String, String>,
-    ) -> Result<HashMap<String, String>> {
-        // In a real implementation, this would apply the actual model logic
-        // For this example, we'll just pass through the inputs to outputs
-        // with a timestamp added
-
-        let mut outputs = inputs.clone();
-
-        // Add a timestamp
-        let timestamp = chrono::Utc::now().to_rfc3339();
-        outputs.insert("timestamp".to_string(), timestamp);
-        outputs.insert("model_id".to_string(), model.id.clone());
-        outputs.insert("model_name".to_string(), model.name.clone());
-
-        Ok(outputs)
-    }
-
-    /// Check and execute model actions
-    pub fn check_and_execute_actions(
-        &self,
-        redis_conn: &mut RedisConnection,
         model_id: &str,
+        point_name: &str,
+        value: StandardFloat,
     ) -> Result<()> {
-        let model_key = format!("{}model:config:{}", self.key_prefix, model_id);
-        let model_json = redis_conn.get_string(&model_key)?;
+        let models = self.models.read().await;
 
-        // Try to parse as model with control actions
-        let model_with_actions = serde_json::from_str::<ModelWithActions>(&model_json);
+        if let Some(model) = models.get(model_id) {
+            let mut values = model.monitoring_values.write().await;
+            values.insert(
+                point_name.to_string(),
+                PointValue {
+                    value,
+                    timestamp: chrono::Utc::now().timestamp(),
+                },
+            );
 
-        if model_with_actions.is_err() {
-            // Skip if not a model with actions
-            return Ok(());
+            debug!("更新监视值 {}:{} = {}", model_id, point_name, value);
+
+            // 触发WebSocket推送
+            if let Some(ws_manager) = &self.ws_manager {
+                let updates = HashMap::from([(point_name.to_string(), value)]);
+                ws_manager.broadcast_update(model_id, updates).await;
+            }
+
+            Ok(())
+        } else {
+            Err(ModelSrvError::not_found(format!(
+                "模型不存在: {}",
+                model_id
+            )))
+        }
+    }
+
+    /// 获取单个监视点值
+    pub async fn get_monitoring_value(
+        &self,
+        model_id: &str,
+        point_name: &str,
+    ) -> Option<StandardFloat> {
+        let models = self.models.read().await;
+
+        if let Some(model) = models.get(model_id) {
+            let values = model.monitoring_values.read().await;
+            values.get(point_name).map(|pv| pv.value)
+        } else {
+            None
+        }
+    }
+
+    /// 获取所有监视点值
+    pub async fn get_all_monitoring_values(
+        &self,
+        model_id: &str,
+    ) -> Option<HashMap<String, StandardFloat>> {
+        let models = self.models.read().await;
+
+        if let Some(model) = models.get(model_id) {
+            let values = model.monitoring_values.read().await;
+            Some(values.iter().map(|(k, v)| (k.clone(), v.value)).collect())
+        } else {
+            None
+        }
+    }
+
+    /// 执行控制命令
+    pub async fn execute_control(
+        &self,
+        model_id: &str,
+        control_name: &str,
+        value: StandardFloat,
+    ) -> Result<()> {
+        // 验证控制点存在
+        let models = self.models.read().await;
+        let model = models
+            .get(model_id)
+            .ok_or_else(|| ModelSrvError::not_found(format!("模型不存在: {}", model_id)))?;
+
+        if !model.control_config.contains_key(control_name) {
+            return Err(ModelSrvError::not_found(format!(
+                "控制点不存在: {}:{}",
+                model_id, control_name
+            )));
         }
 
-        let model_with_actions = model_with_actions.unwrap();
-        let model = &model_with_actions.model;
-        let actions = &model_with_actions.actions;
+        // 查找映射
+        let mappings = self.mappings.read().await;
+        let mapping = mappings
+            .get_control_mapping(model_id, control_name)
+            .ok_or_else(|| {
+                ModelSrvError::not_found(format!("控制点映射不存在: {}:{}", model_id, control_name))
+            })?;
 
-        // Skip if model is disabled
-        if !model.enabled {
-            debug!("Model {} is disabled, skipping actions", model_id);
-            return Ok(());
-        }
-
-        // Get model output
-        let output_key = &model.output_key;
-        let output_json = match redis_conn.get_string(output_key) {
-            Ok(json) => json,
-            Err(_) => {
-                debug!("No output found for model {}", model_id);
-                return Ok(());
+        // 构建Redis控制通道
+        let channel = match mapping.point_type.as_str() {
+            "c" => format!("cmd:{}:control", mapping.channel),
+            "a" => format!("cmd:{}:adjustment", mapping.channel),
+            _ => {
+                return Err(ModelSrvError::invalid_data(format!(
+                    "未知的控制类型: {}",
+                    mapping.point_type
+                )))
             }
         };
 
-        // Parse model output
-        let model_outputs: HashMap<String, String> = match serde_json::from_str(&output_json) {
-            Ok(outputs) => outputs,
-            Err(e) => {
-                warn!("Failed to parse model output: {}", e);
-                return Ok(());
+        let command = format!("{}:{:.6}", mapping.point, value.value());
+
+        // 发布到Redis
+        let mut redis_client = self.redis_client.lock().await;
+        redis_client
+            .publish(&channel, &command)
+            .await
+            .map_err(|e| ModelSrvError::redis(format!("发送控制命令失败: {}", e)))?;
+
+        // 更新控制状态
+        let mut states = model.control_states.write().await;
+        states.insert(
+            control_name.to_string(),
+            PointValue {
+                value,
+                timestamp: chrono::Utc::now().timestamp(),
+            },
+        );
+
+        info!("执行控制命令 {}:{} = {}", model_id, control_name, value);
+        Ok(())
+    }
+
+    /// 订阅Redis数据更新
+    pub async fn subscribe_data_updates(&self) -> Result<()> {
+        let models = self.models.read().await;
+        let mappings = self.mappings.read().await;
+
+        // 收集所有需要订阅的通道
+        let mut channels = std::collections::HashSet::new();
+
+        for model in models.values() {
+            if let Some(model_mappings) = mappings.get_all_monitoring_mappings(&model.id) {
+                for mapping in model_mappings.values() {
+                    let channel = format!("comsrv:{}:{}", mapping.channel, mapping.point_type);
+                    channels.insert(channel);
+                }
             }
+        }
+
+        info!("订阅 {} 个数据通道", channels.len());
+
+        // TODO: 实现Redis订阅逻辑
+        // 这里需要创建订阅任务，处理接收到的数据更新
+
+        Ok(())
+    }
+
+    /// 处理Redis数据更新（内部使用）
+    async fn handle_redis_update(&self, channel: &str, message: &str) -> Result<()> {
+        // 解析通道格式: comsrv:{channel}:{type}
+        let parts: Vec<&str> = channel.split(':').collect();
+        if parts.len() != 3 || parts[0] != "comsrv" {
+            return Ok(());
+        }
+
+        let channel_id: u16 = parts[1]
+            .parse()
+            .map_err(|_| ModelSrvError::format("无效的通道ID"))?;
+
+        // 解析消息格式: {point_id}:{value}
+        let msg_parts: Vec<&str> = message.split(':').collect();
+        if msg_parts.len() != 2 {
+            return Ok(());
+        }
+
+        let point_id: u32 = msg_parts[0]
+            .parse()
+            .map_err(|_| ModelSrvError::format("无效的点位ID"))?;
+        let value: f64 = msg_parts[1]
+            .parse()
+            .map_err(|_| ModelSrvError::format("无效的数值"))?;
+
+        // 查找对应的模型和点位
+        let models = self.models.read().await;
+        let mappings = self.mappings.read().await;
+
+        for model in models.values() {
+            if let Some(point_name) =
+                mappings.find_point_name(&model.id, channel_id, point_id, false)
+            {
+                // 更新监视值
+                self.update_monitoring_value(&model.id, &point_name, StandardFloat::new(value))
+                    .await?;
+            }
+        }
+
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_model_creation() {
+        let config = ModelConfig {
+            id: "test_model".to_string(),
+            name: "测试模型".to_string(),
+            description: "用于测试的模型".to_string(),
+            monitoring: HashMap::from([(
+                "voltage".to_string(),
+                PointConfig {
+                    description: "电压".to_string(),
+                    unit: Some("V".to_string()),
+                },
+            )]),
+            control: HashMap::from([(
+                "switch".to_string(),
+                PointConfig {
+                    description: "开关".to_string(),
+                    unit: None,
+                },
+            )]),
         };
 
-        for action in actions {
-            if !action.enabled {
-                debug!("Skipping disabled action: {}", action.id);
-                continue;
-            }
-
-            // Check if all conditions are met
-            let mut conditions_met = true;
-
-            for condition in &action.conditions {
-                // Use String as key for lookup
-                if let Some(field_value) = model_outputs.get(&condition.field) {
-                    if !self.evaluate_condition(
-                        field_value,
-                        &condition.operator,
-                        &condition.value,
-                    )? {
-                        conditions_met = false;
-                        break;
-                    }
-                } else {
-                    warn!("Field '{}' not found in model outputs", condition.field);
-                    conditions_met = false;
-                    break;
-                }
-            }
-
-            if conditions_met {
-                info!("Executing action: {} for model {}", action.id, model_id);
-
-                // Execute action
-                // In a real implementation, this would perform different operations based on action_type
-                // For example, sending control commands to devices, triggering other models, etc.
-
-                // Record action execution
-                let _action_log_key =
-                    format!("{}model:action:{}:{}", self.key_prefix, model_id, action.id);
-                let action_log = format!(
-                    r#"{{"model_id":"{}","action_id":"{}","executed_at":{}}}"#,
-                    model_id,
-                    action.id,
-                    SystemTime::now()
-                        .duration_since(UNIX_EPOCH)
-                        .unwrap()
-                        .as_secs()
-                );
-
-                // An actual Redis connection should be used here to store the log
-                // For this example, we just print the log
-                debug!("Action log: {}", action_log);
-            }
-        }
-
-        Ok(())
-    }
-
-    /// Evaluate condition
-    fn evaluate_condition(
-        &self,
-        field_value: &str,
-        operator: &str,
-        compare_value: &str,
-    ) -> Result<bool> {
-        // Try to parse both values as numbers for comparison
-        let field_num = field_value.parse::<f64>();
-        let compare_num = compare_value.parse::<f64>();
-
-        if let (Ok(field_num), Ok(compare_num)) = (field_num, compare_num) {
-            // Numeric comparison
-            return match operator {
-                ">" => Ok(field_num > compare_num),
-                "<" => Ok(field_num < compare_num),
-                ">=" => Ok(field_num >= compare_num),
-                "<=" => Ok(field_num <= compare_num),
-                "==" => Ok(field_num == compare_num),
-                "!=" => Ok(field_num != compare_num),
-                _ => Err(ModelSrvError::DataMappingError(format!(
-                    "Unknown operator: {}",
-                    operator
-                ))),
-            };
-        }
-
-        // String comparison
-        match operator {
-            "==" => Ok(field_value == compare_value),
-            "!=" => Ok(field_value != compare_value),
-            _ => Err(ModelSrvError::DataMappingError(format!(
-                "Operator {} not supported for string comparison",
-                operator
-            ))),
-        }
-    }
-
-    /// Send remote control command
-    pub fn send_remote_control(
-        &self,
-        _redis_conn: &mut RedisConnection,
-        channel: &str,
-        point: &str,
-        value: bool,
-    ) -> Result<String> {
-        // Simplified implementation, just log the operation
-        let command_id = format!("cmd_{}", uuid::Uuid::new_v4());
-        info!(
-            "Remote control: channel={}, point={}, value={}",
-            channel, point, value
-        );
-        Ok(command_id)
-    }
-
-    /// Send remote adjustment command
-    pub fn send_remote_adjust(
-        &self,
-        _redis_conn: &mut RedisConnection,
-        channel: &str,
-        point: &str,
-        value: f64,
-    ) -> Result<String> {
-        // Simplified implementation, just log the operation
-        let command_id = format!("cmd_{}", uuid::Uuid::new_v4());
-        info!(
-            "Remote adjust: channel={}, point={}, value={}",
-            channel, point, value
-        );
-        Ok(command_id)
-    }
-
-    /// Get command status
-    pub fn get_command_status(
-        &self,
-        _redis_conn: &mut RedisConnection,
-        _command_id: &str,
-    ) -> Result<CommandStatus> {
-        // Simplified implementation, always return completed
-        Ok(CommandStatus::Completed)
-    }
-
-    /// Cancel command
-    pub fn cancel_command(
-        &self,
-        _redis_conn: &mut RedisConnection,
-        command_id: &str,
-    ) -> Result<()> {
-        // Simplified implementation, just log the operation
-        info!("Cancel command: {}", command_id);
-        Ok(())
-    }
-}
-
-impl ModelDefinition {
-    /// Validate the model definition
-    pub fn validate(&self) -> Result<()> {
-        if self.id.is_empty() {
-            return Err(ModelSrvError::ValidationError(
-                "Model ID cannot be empty".to_string(),
-            ));
-        }
-
-        if self.template_id.is_empty() {
-            return Err(ModelSrvError::ValidationError(
-                "Template ID cannot be empty".to_string(),
-            ));
-        }
-
-        Ok(())
-    }
-
-    /// Get an action by ID
-    pub fn get_action(&self, _action_id: &str) -> Option<&ControlAction> {
-        // This method should get actions from elsewhere
-        None // Simplified implementation
-    }
-}
-
-/// Model service for managing models
-pub struct ModelService {
-    /// Redis connection for persistence
-    redis: Arc<RedisConnection>,
-    /// Key prefix for storage
-    key_prefix: String,
-}
-
-impl ModelService {
-    /// Create a new model service
-    pub fn new(redis: Arc<RedisConnection>, key_prefix: String) -> Self {
-        ModelService { redis, key_prefix }
-    }
-
-    /// Get mutable connection
-    fn get_mutable_connection(&self) -> Result<RedisConnection> {
-        let conn = self.redis.clone();
-        conn.duplicate()
-    }
-
-    pub async fn get_model(&self, id: &str) -> Result<ModelDefinition> {
-        let key = format!("{}model:{}", self.key_prefix, id);
-        let mut redis = self.get_mutable_connection()?;
-        let json = redis.get_string(&key)?;
-
-        let model: ModelDefinition = serde_json::from_str(&json)?;
-        Ok(model)
-    }
-
-    pub async fn create_model(&self, model: &ModelDefinition) -> Result<()> {
-        let key = format!("{}model:{}", self.key_prefix, model.id);
-        let mut redis = self.get_mutable_connection()?;
-
-        if redis.exists(&key)? {
-            return Err(ModelSrvError::ModelAlreadyExists(model.id.clone()));
-        }
-
-        let json = serde_json::to_string(model)?;
-        redis.set_string(&key, &json)?;
-
-        Ok(())
-    }
-
-    pub async fn update_model(&self, id: &str, model: &ModelDefinition) -> Result<()> {
-        let key = format!("{}model:{}", self.key_prefix, id);
-        let mut redis = self.get_mutable_connection()?;
-
-        if !redis.exists(&key)? {
-            return Err(ModelSrvError::ModelNotFound(id.to_string()));
-        }
-
-        let json = serde_json::to_string(model)?;
-        redis.set_string(&key, &json)?;
-
-        Ok(())
-    }
-
-    pub async fn delete_model(&self, id: &str) -> Result<()> {
-        let key = format!("{}model:{}", self.key_prefix, id);
-        let mut redis = self.get_mutable_connection()?;
-
-        if !redis.exists(&key)? {
-            return Err(ModelSrvError::ModelNotFound(id.to_string()));
-        }
-
-        redis.delete(&key)?;
-
-        Ok(())
-    }
-
-    pub async fn list_models(&self) -> Result<Vec<ModelDefinition>> {
-        let mut redis = self.get_mutable_connection()?;
-        let pattern = format!("{}model:*", self.key_prefix);
-        let keys = redis.get_keys(&pattern)?;
-
-        let mut models = Vec::new();
-        for key in keys {
-            match redis.get_string(&key) {
-                Ok(json) => {
-                    if let Ok(model) = serde_json::from_str::<ModelDefinition>(&json) {
-                        models.push(model);
-                    }
-                }
-                Err(_) => continue,
-            }
-        }
-
-        Ok(models)
+        let model = Model::from_config(config);
+        assert_eq!(model.id, "test_model");
+        assert_eq!(model.monitoring_config.len(), 1);
+        assert_eq!(model.control_config.len(), 1);
+        assert!(model.get_monitoring_config("voltage").is_some());
+        assert!(model.get_control_config("switch").is_some());
     }
 }

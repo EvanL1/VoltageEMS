@@ -1,38 +1,36 @@
+//! ModSrv主程序
+//!
+//! 提供简洁的服务启动和命令行接口
+
 #![allow(dead_code)]
 #![allow(unused_imports)]
 
 mod api;
-mod cache;
-mod comsrv_interface;
 mod config;
-mod device_model;
-// engine module removed
 mod error;
+mod mapping;
 mod model;
-mod monitoring;
-mod redis_handler;
-mod storage;
-mod template;
+mod websocket;
 
 use crate::api::ApiServer;
-use crate::device_model::ModelRegistry;
-use crate::redis_handler::RedisConnection;
-use config::Config;
-use error::{ModelSrvError, Result};
-use model::ModelEngine;
-use template::TemplateManager;
+use crate::config::Config;
+use crate::error::{ModelSrvError, Result};
+use crate::model::ModelManager;
+use crate::websocket::WsConnectionManager;
 
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
+use tokio::sync::{mpsc, Mutex};
 use tokio::time;
-use tracing::{debug, error, info, warn};
+use tracing::{error, info, warn};
+use voltage_libs::redis::RedisClient;
 
 #[derive(Parser, Debug)]
-#[command(author, version, about, long_about = None)]
+#[command(author, version, about = "ModSrv - 模型服务")]
 struct Args {
-    /// Path to configuration file (supports .toml and .yaml/.yml)
+    /// 配置文件路径
     #[arg(short, long, value_name = "FILE")]
     config: Option<PathBuf>,
 
@@ -42,485 +40,247 @@ struct Args {
 
 #[derive(Debug, Subcommand)]
 enum Commands {
-    /// Create a new instance from a template
-    Create {
-        /// Template ID
-        template_id: String,
-        /// Instance ID
-        instance_id: String,
-        /// Instance name
-        #[arg(short, long)]
-        name: Option<String>,
-    },
-
-    /// Create multiple instances from a template
-    CreateMultiple {
-        /// Template ID
-        template_id: String,
-        /// Number of instances to create
-        count: usize,
-        /// Instance ID prefix
-        #[arg(short, long, default_value = "instance")]
-        prefix: String,
-        /// Starting index
-        #[arg(short, long, default_value_t = 1)]
-        start_index: usize,
-    },
-
-    /// List available templates
-    List,
-
-    /// Show model information
-    Info,
-
-    /// Run in service mode
+    /// 运行服务模式
     Service,
-
-    /// Start API server
-    Api,
-
-    /// Debug Redis data
-    Debug {
-        /// Key pattern to search for
-        #[arg(short, long, default_value = "modsrv:*")]
-        pattern: String,
-    },
+    /// 显示模型信息
+    Info,
+    /// 检查配置文件
+    CheckConfig,
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = Args::parse();
 
-    // Load configuration using the new loader
+    // 加载配置
     let config = if let Some(config_path) = args.config {
-        // Use specified config file
-        let mut loader = config::ConfigLoader::new()
-            .with_file(config_path.to_string_lossy())
-            .with_env_prefix("MODSRV_");
-
-        if let Ok(config_center_url) = std::env::var("CONFIG_CENTER_URL") {
-            loader = loader.with_config_center(config_center_url);
-        }
-
-        match loader.load().await {
-            Ok(cfg) => cfg,
-            Err(e) => {
-                eprintln!("Failed to load configuration: {}", e);
-                eprintln!("Using default configuration");
-                Config::default()
-            }
-        }
+        Config::from_file(config_path)?
+    } else if let Ok(config_file) = std::env::var("CONFIG_FILE") {
+        info!("从环境变量CONFIG_FILE加载配置: {}", config_file);
+        Config::from_file(config_file)?
     } else {
-        // Use automatic config loading
-        match config::load_config().await {
-            Ok(cfg) => cfg,
-            Err(e) => {
-                eprintln!("Failed to load configuration: {}", e);
-                eprintln!("Using default configuration");
-                Config::default()
-            }
-        }
+        Config::load()?
     };
 
-    // Initialize logging using voltage-libs
-    voltage_libs::logging::init(&config.log_level)
-        .map_err(|e| ModelSrvError::ConfigError(format!("Failed to initialize logging: {}", e)))?;
+    // 验证配置
+    config.validate()?;
 
-    info!("Starting Model Service");
+    // 初始化日志
+    voltage_libs::logging::init(&config.log.level)
+        .map_err(|e| ModelSrvError::config(format!("日志初始化失败: {}", e)))?;
 
-    // Create Redis connection
-    let redis_conn = RedisConnection::new();
+    info!("启动ModSrv v{}", config.version);
 
-    // Run command
+    // 执行命令
     match args.command {
-        Some(Commands::Info) => {
-            info!("Displaying model information");
-            display_model_info(&config, &redis_conn)?;
-        }
-        Some(Commands::Service) => {
-            info!("Starting service");
-            run_service(&config).await?;
-        }
-        Some(Commands::Api) => {
-            info!("Starting API server only");
-            if let Err(e) = start_api_server(&config).await {
-                error!("API server error: {}", e);
-            }
-        }
-        Some(Commands::Create {
-            template_id,
-            instance_id,
-            name,
-        }) => {
-            info!("Creating model instance");
-            create_instance(&config, &template_id, &instance_id, name.as_deref())?;
-        }
-        Some(Commands::CreateMultiple {
-            template_id,
-            count,
-            prefix,
-            start_index,
-        }) => {
-            create_instances(&config, &template_id, count, &prefix, start_index)?;
-        }
-        Some(Commands::List) => {
-            list_templates(&config)?;
-        }
-        Some(Commands::Debug { pattern }) => {
-            debug_redis_data(&config, &pattern)?;
-        }
-        None => {
-            // Default to Info
-            info!("Displaying model information (default)");
-            display_model_info(&config, &redis_conn)?;
-        }
+        Some(Commands::Service) => run_service(config).await,
+        Some(Commands::Info) => show_model_info(config).await,
+        Some(Commands::CheckConfig) => check_config(config).await,
+        None => run_service(config).await, // 默认运行服务
     }
-
-    Ok(())
 }
 
-/// Run the model service
-async fn run_service(config: &Config) -> Result<()> {
-    info!("Starting Model Service");
+/// 运行服务模式
+async fn run_service(config: Config) -> Result<()> {
+    info!("启动ModSrv服务模式");
 
-    // Create Redis connection
-    let mut redis_conn = RedisConnection::new();
+    // 创建Redis连接
+    let redis_client = Arc::new(Mutex::new(
+        RedisClient::new(&config.redis.url)
+            .await
+            .map_err(|e| ModelSrvError::redis(format!("Redis连接失败: {}", e)))?,
+    ));
 
-    // Legacy model engine initialization (kept for compatibility)
+    // 创建模型管理器
+    let model_manager = ModelManager::new(redis_client.clone());
 
-    // Main service loop
-    let update_interval = Duration::from_millis(config.model.update_interval_ms);
-    let mut interval = time::interval(update_interval);
+    // 创建WebSocket管理器
+    let ws_manager = Arc::new(WsConnectionManager::new(Arc::new(model_manager)));
 
-    // Start API server with startup confirmation
-    let redis_conn_arc = Arc::new(RedisConnection::new());
-    let api_port = config.service_api.port;
-    let api_server = ApiServer::new_legacy(redis_conn_arc, api_port, config.clone());
+    // 重新创建模型管理器并设置WebSocket管理器
+    let mut model_manager = ModelManager::new(redis_client.clone());
+    model_manager.set_ws_manager(ws_manager.clone());
+    let model_manager = Arc::new(model_manager);
 
-    // Create channel for API server startup confirmation
-    let (startup_tx, mut startup_rx) =
-        tokio::sync::mpsc::channel::<std::result::Result<(), String>>(1);
+    // 加载模型配置
+    let enabled_models = config.enabled_models();
+    let model_configs: Vec<_> = enabled_models.into_iter().cloned().collect();
+
+    info!("发现 {} 个模型配置", config.models.len());
+    info!("已配置 {} 个模型", model_configs.len());
+
+    if !model_configs.is_empty() {
+        for model in &model_configs {
+            info!("加载模型: {} ({})", model.id, model.name);
+        }
+        model_manager.load_models(model_configs).await?;
+        info!("模型加载完成");
+
+        // 加载映射配置
+        let mappings_dir =
+            std::env::var("MAPPINGS_DIR").unwrap_or_else(|_| "config/mappings".to_string());
+        info!("加载映射配置: {}", mappings_dir);
+        if let Err(e) = model_manager.load_mappings_directory(&mappings_dir).await {
+            warn!("加载映射配置失败: {}", e);
+        }
+    } else {
+        info!("未配置模型，服务将仅提供API接口");
+    }
+
+    // 启动数据订阅
+    model_manager.subscribe_data_updates().await?;
+
+    // 启动WebSocket心跳
+    ws_manager.start_heartbeat().await;
+
+    // 创建API服务器
+    let api_server = ApiServer::new(model_manager.clone(), ws_manager.clone(), config.clone());
+
+    // 启动API服务器
+    let (startup_tx, mut startup_rx) = mpsc::channel::<std::result::Result<(), String>>(1);
 
     tokio::spawn(async move {
-        match api_server.start_with_notification(startup_tx).await {
-            Ok(_) => {
-                info!("API server started successfully on port {}", api_port);
-            }
-            Err(e) => {
-                error!("API server failed to start: {}", e);
-            }
+        if let Err(e) = api_server.start_with_notification(startup_tx).await {
+            error!("API服务器启动失败: {}", e);
         }
     });
 
-    // Wait for API server startup confirmation with timeout
-    info!("Waiting for API server to start...");
+    // 等待API服务器启动确认
+    info!("等待API服务器启动...");
     match tokio::time::timeout(Duration::from_secs(10), startup_rx.recv()).await {
         Ok(Some(Ok(_))) => {
             info!(
-                "✓ API server started successfully on http://0.0.0.0:{}",
-                config.service_api.port
+                "✓ API服务器启动成功: http://{}:{}",
+                config.api.host, config.api.port
             );
         }
         Ok(Some(Err(e))) => {
-            error!("✗ API server startup failed: {}", e);
-            return Err(ModelSrvError::ConfigError(
-                "API server startup failed".to_string(),
-            ));
+            error!("✗ API服务器启动失败: {}", e);
+            return Err(ModelSrvError::config("API服务器启动失败".to_string()));
         }
         Ok(None) => {
-            error!("✗ API server startup channel closed unexpectedly");
-            return Err(ModelSrvError::ConfigError(
-                "API server startup channel closed".to_string(),
-            ));
+            error!("✗ API服务器启动通道关闭");
+            return Err(ModelSrvError::config("API服务器启动通道关闭".to_string()));
         }
         Err(_) => {
-            error!("✗ API server startup timed out after 10 seconds");
-            return Err(ModelSrvError::ConfigError(
-                "API server startup timeout".to_string(),
-            ));
+            error!("✗ API服务器启动超时");
+            return Err(ModelSrvError::config("API服务器启动超时".to_string()));
         }
     }
 
     info!(
-        "Model engine started, API server available at http://0.0.0.0:{}",
-        config.service_api.port
+        "ModSrv服务已启动，API地址: http://{}:{}",
+        config.api.host, config.api.port
     );
 
-    // Initialize device model system if enabled
-    if config.device_model.enabled {
-        info!("Initializing device model system...");
-        let model_registry = Arc::new(ModelRegistry::new());
+    // 主服务循环 - 定期更新和健康检查
+    let mut interval = time::interval(Duration::from_millis(config.update_interval_ms));
+    let mut cycle_count = 0u64;
 
-        // Load models from directory
-        let models_path = std::path::Path::new(&config.device_model.models_directory);
-        if models_path.exists() {
-            info!("Loading models from: {}", models_path.display());
-            if let Err(e) = model_registry.load_models_from_directory(models_path).await {
-                error!("Failed to load models from directory: {}", e);
-            } else {
-                info!("Device models loaded successfully");
-            }
-        } else {
-            warn!("Models directory does not exist: {}", models_path.display());
-        }
-
-        // If auto-reload is enabled, set up periodic reload
-        if config.device_model.auto_reload {
-            let registry_clone = model_registry.clone();
-            let models_dir = config.device_model.models_directory.clone();
-            let reload_interval = Duration::from_secs(config.device_model.reload_interval_seconds);
-
-            tokio::spawn(async move {
-                let mut reload_interval = time::interval(reload_interval);
-                loop {
-                    reload_interval.tick().await;
-                    let models_path = std::path::Path::new(&models_dir);
-                    if models_path.exists() {
-                        if let Err(e) = registry_clone.load_models_from_directory(models_path).await
-                        {
-                            error!("Failed to reload models: {}", e);
-                        } else {
-                            info!("Models reloaded successfully");
-                        }
-                    }
-                }
-            });
-            info!(
-                "Auto-reload enabled with interval: {}s",
-                config.device_model.reload_interval_seconds
-            );
-        }
-    } else {
-        info!("Device model system is disabled");
-    }
-
-    // Main service loop
     loop {
         interval.tick().await;
+        cycle_count += 1;
 
-        // Just keep the service running
-        debug!("Service heartbeat");
+        // 每1000个周期输出一次状态信息
+        if cycle_count % 1000 == 0 {
+            let models = model_manager.list_models().await;
+            info!(
+                "服务运行正常 - 周期: {}, 模型数: {}",
+                cycle_count,
+                models.len()
+            );
+        }
+
+        // 这里将来可以添加:
+        // - 定期数据同步
+        // - 健康检查
+        // - 性能统计
     }
 }
 
-/// List available templates
-fn list_templates(config: &Config) -> Result<()> {
-    // Initialize template manager
-    let template_manager =
-        TemplateManager::new(&config.model.templates_dir, &config.redis.key_prefix);
+/// 显示模型信息
+async fn show_model_info(config: Config) -> Result<()> {
+    println!("=== ModSrv 模型信息 ===");
+    println!("服务名称: {}", config.service_name);
+    println!("版本: {}", config.version);
+    println!("Redis地址: {}", config.redis.url);
+    println!("API地址: http://{}:{}", config.api.host, config.api.port);
+    println!();
 
-    // Get templates
-    let templates = template_manager.list_templates()?;
+    println!("=== 配置的模型 ===");
+    if config.models.is_empty() {
+        println!("未配置任何模型");
+    } else {
+        for (index, model) in config.models.iter().enumerate() {
+            println!("{}. {} ({})", index + 1, model.name, model.id);
+            println!("   描述: {}", model.description);
+            println!("   监视点: {} 个", model.monitoring.len());
+            println!("   控制点: {} 个", model.control.len());
 
-    println!("Available templates:");
-    for template in templates {
-        println!(
-            "  - {} ({}): {}",
-            template.name, template.id, template.description
-        );
-    }
-
-    Ok(())
-}
-
-/// Create a new instance from a template
-fn create_instance(
-    config: &Config,
-    template_id: &str,
-    instance_id: &str,
-    instance_name: Option<&str>,
-) -> Result<()> {
-    // Create Redis connection
-    let mut redis_conn = RedisConnection::new();
-
-    // Initialize template manager
-    let mut template_manager =
-        TemplateManager::new(&config.model.templates_dir, &config.redis.key_prefix);
-
-    // Create instance
-    template_manager.create_instance(&mut redis_conn, template_id, instance_id, instance_name)?;
-
-    println!(
-        "Successfully created instance {} from template {}",
-        instance_id, template_id
-    );
-
-    Ok(())
-}
-
-/// Create multiple instances from a template
-fn create_instances(
-    config: &Config,
-    template_id: &str,
-    count: usize,
-    prefix: &str,
-    start_index: usize,
-) -> Result<()> {
-    // Create Redis connection
-    let mut redis_conn = RedisConnection::new();
-
-    // Initialize template manager
-    let mut template_manager =
-        TemplateManager::new(&config.model.templates_dir, &config.redis.key_prefix);
-
-    // Create instances
-    let instance_ids = template_manager.create_instances(
-        &mut redis_conn,
-        template_id,
-        count,
-        prefix,
-        start_index,
-    )?;
-
-    println!(
-        "Successfully created {} instances from template {}:",
-        count, template_id
-    );
-    for id in instance_ids {
-        println!("  - {}", id);
-    }
-
-    Ok(())
-}
-
-/// Display model information in terminal
-fn display_model_info(config: &Config, redis_conn: &RedisConnection) -> Result<()> {
-    let mut redis_conn = redis_conn.clone();
-
-    // Display templates
-    println!("=== Available Templates ===");
-    let template_manager =
-        TemplateManager::new(&config.model.templates_dir, &config.redis.key_prefix);
-
-    // try to load templates, but don't fail if it doesn't work
-    match template_manager.list_templates() {
-        Ok(templates) => {
-            if templates.is_empty() {
-                println!("No templates available");
-            } else {
-                for template in templates {
+            if !model.monitoring.is_empty() {
+                println!("   监视点列表:");
+                for (name, config) in &model.monitoring {
                     println!(
-                        "  - {} ({}): {}",
-                        template.id, template.name, template.description
+                        "     - {}: {} {}",
+                        name,
+                        config.description,
+                        config.unit.as_deref().unwrap_or("")
                     );
                 }
             }
-        }
-        Err(e) => {
-            println!("Error loading templates: {}", e);
-            println!("No templates available");
-        }
-    }
 
-    // Display running models
-    println!("\n=== Running Models ===");
-    let model_pattern = &config.model.config_key_pattern;
-
-    match redis_conn.get_keys(model_pattern) {
-        Ok(keys) => {
-            if keys.is_empty() {
-                println!("No running models");
-            } else {
-                for key in keys {
-                    // Extract model ID from key
-                    let id = key.split(':').last().unwrap_or("unknown");
-
-                    // Try to get model details
-                    match redis_conn.get_string(&key) {
-                        Ok(json_str) => {
-                            // Try to parse as ModelDefinition
-                            let model = if key.ends_with(".yaml") || key.ends_with(".yml") {
-                                serde_yaml::from_str::<model::ModelDefinition>(&json_str)
-                                    .map_err(ModelSrvError::from)
-                            } else {
-                                serde_json::from_str::<model::ModelDefinition>(&json_str)
-                                    .map_err(ModelSrvError::from)
-                            };
-
-                            match model {
-                                Ok(model) => {
-                                    println!(
-                                        "  - {} ({}): {}",
-                                        model.id, model.name, model.description
-                                    );
-
-                                    // Show input mappings
-                                    println!("    Input Mappings:");
-                                    for mapping in &model.input_mappings {
-                                        println!(
-                                            "      - {} -> {}",
-                                            mapping.source_field, mapping.target_field
-                                        );
-                                    }
-
-                                    // Try to get latest output
-                                    let output_key =
-                                        format!("{}model:output:{}", config.redis.key_prefix, id);
-                                    if let Ok(output) = redis_conn.get_string(&output_key) {
-                                        println!("    Latest Output: {}", output);
-                                    }
-                                }
-                                Err(e) => println!("  - {}: Error parsing model: {}", id, e),
-                            }
-                        }
-                        Err(e) => println!("  - {}: Error: {}", id, e),
-                    }
+            if !model.control.is_empty() {
+                println!("   控制点列表:");
+                for (name, config) in &model.control {
+                    println!(
+                        "     - {}: {} {}",
+                        name,
+                        config.description,
+                        config.unit.as_deref().unwrap_or("")
+                    );
                 }
             }
-        }
-        Err(e) => {
-            println!("Error getting model keys: {}", e);
-            println!("No running models");
+            println!();
         }
     }
 
     Ok(())
 }
 
-/// Debug Redis data
-fn debug_redis_data(_config: &Config, pattern: &str) -> Result<()> {
-    // Create Redis connection
-    let mut redis_conn = RedisConnection::new();
+/// 检查配置文件
+async fn check_config(config: Config) -> Result<()> {
+    println!("=== 配置文件检查 ===");
 
-    // Get all keys matching the pattern
-    let keys = redis_conn.get_keys(pattern)?;
+    match config.validate() {
+        Ok(_) => {
+            println!("✓ 配置文件验证通过");
 
-    println!("Found {} keys matching pattern '{}'", keys.len(), pattern);
+            println!("\n=== 配置详情 ===");
+            println!("服务名称: {}", config.service_name);
+            println!("版本: {}", config.version);
+            println!("Redis URL: {}", config.redis.url);
+            println!("Redis前缀: {}", config.redis.key_prefix);
+            println!("API地址: {}:{}", config.api.host, config.api.port);
+            println!("日志级别: {}", config.log.level);
+            println!("更新间隔: {}ms", config.update_interval_ms);
+            println!("模型数量: {}", config.models.len());
 
-    for key in &keys {
-        println!("\nKey: {}", key);
-
-        // For now, just try to get as string
-        match redis_conn.get_string(key) {
-            Ok(value) => println!("Value: {}", value),
-            Err(_) => {
-                // Try as hash
-                if let Ok(hash) = redis_conn.get_hash(key) {
-                    println!("Hash values:");
-                    for (k, v) in hash {
-                        println!("  {}: {}", k, v);
-                    }
-                } else {
-                    println!("  (unable to read value)");
+            // 测试Redis连接
+            println!("\n=== 连接测试 ===");
+            match RedisClient::new(&config.redis.url).await {
+                Ok(_) => println!("✓ Redis连接测试成功"),
+                Err(e) => {
+                    println!("✗ Redis连接测试失败: {}", e);
+                    return Err(ModelSrvError::redis(format!("Redis连接失败: {}", e)));
                 }
             }
         }
+        Err(e) => {
+            println!("✗ 配置文件验证失败: {}", e);
+            return Err(e);
+        }
     }
 
+    println!("\n配置检查完成");
     Ok(())
-}
-
-/// Start the API server
-async fn start_api_server(config: &Config) -> Result<()> {
-    // Create Redis connection
-    let redis_conn = Arc::new(RedisConnection::new());
-
-    // Create API server
-    let api_server = ApiServer::new_legacy(redis_conn, config.service_api.port, config.clone());
-
-    // Start API server
-    api_server
-        .start()
-        .await
-        .map_err(|e| ModelSrvError::IoError(e.to_string()))
 }

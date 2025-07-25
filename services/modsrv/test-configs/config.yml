@@ -1,126 +1,35 @@
-# ModSrv测试环境配置
-service:
-  name: "modsrv-test"
-  version: "0.1.0"
-  description: "Model Service Test Instance"
+# ModSrv v2.0测试环境配置
+service_name: "modsrv"
+version: "2.0.0"
 
 # Redis配置
 redis:
-  url: "redis://redis:6379"  # Docker网络中的Redis服务名
-  database: 0
-  pool_size: 10
+  url: "redis://redis:6379"
+  key_prefix: "modsrv:"
   connection_timeout_ms: 5000
-  operation_timeout_ms: 1000
+  retry_attempts: 3
 
 # 日志配置
-logging:
+log:
   level: "debug"
-  format: "json"
-  console: true
-  file: "/logs/modsrv.log"
-  log_dir: "/logs"
-  max_file_size: 10485760  # 10MB in bytes
-  max_files: 5
+  file_path: "/logs/modsrv.log"
 
 # API配置
 api:
   host: "0.0.0.0"
   port: 8092
-  cors:
-    enabled: true
-    origins: ["*"]
-  
-# 监控配置
-monitoring:
-  enabled: true
-  metrics_port: 9092
-  metrics_path: "/metrics"
+  timeout_seconds: 30
 
-# Model配置
-model:
-  update_interval_ms: 1000
-  config_key_pattern: "voltage:modsrv:model:config:*"
-  data_key_pattern: "voltage:data:*"
-  output_key_pattern: "voltage:modsrv:model:output:*"
-  templates_dir: "/config/templates"
+# 模型配置
+models:
+  # 模型配置文件目录
+  models_dir: "/config/models"
+  # 映射配置目录
+  mappings_dir: "/config/mappings"
+  # 自动加载模型配置文件
+  auto_load: true
+  # 模型配置文件格式 (yaml | json)
+  config_format: "json"
 
-# Control配置
-control:
-  operation_key_pattern: "voltage:control:operation:*"
-  enabled: true
-
-# 模型引擎配置
-engine:
-  # 计算配置
-  calculation:
-    max_concurrent: 10
-    timeout_ms: 5000
-    retry_count: 3
-    cache_ttl_seconds: 60
-  
-  # 监视值配置
-  monitor:
-    update_interval_ms: 100
-    batch_size: 100
-    
-  # 控制命令配置
-  control:
-    command_timeout_seconds: 30
-    max_pending_commands: 100
-
-# 设备模型配置
-device_model:
-  enabled: true
-  models_directory: "/config/models"
-  auto_reload: true
-  reload_interval_seconds: 10
-
-# 存储配置（使用新的扁平化键格式）
-storage:
-  # 监视值键格式
-  monitor_key_pattern: "modsrv:{model_id}:{type}"
-  # 控制命令键格式
-  command_key_pattern: "modsrv:cmd:{channel_id}:{command_id}"
-  # 模型输出键格式
-  output_key_pattern: "modsrv:output:{model_id}"
-  
-# 调试配置
-debug:
-  enabled: true
-  endpoints:
-    - "/debug/models"
-    - "/debug/calculations"
-    - "/debug/redis-keys"
-
-# 测试数据配置
-test_data:
-  # 自动创建测试通道
-  channels:
-    - id: 1001
-      name: "测试通道1"
-      point_count: 100
-    - id: 1002  
-      name: "测试通道2"
-      point_count: 50
-    - id: 1003
-      name: "测试通道3"
-      point_count: 200
-      
-  # 自动创建测试模型
-  models:
-    - id: "test_avg_model"
-      name: "平均值计算模型"
-      inputs:
-        - "1001:m:1"
-        - "1001:m:2"
-        - "1001:m:3"
-      calculation: "avg"
-      output_field: "avg_power"
-      
-    - id: "test_sum_model"
-      name: "求和计算模型"
-      inputs:
-        - "1002:m:1"
-        - "1002:m:2"
-      calculation: "sum"
-      output_field: "total_energy"
+# 更新间隔
+update_interval_ms: 1000
