@@ -1,0 +1,244 @@
+{
+  "simulator": {
+    "update_interval": 1000,
+    "log_level": "INFO"
+  },
+  "channels": {
+    "1001": {
+      "name": "主变压器",
+      "description": "主变压器监控通道",
+      "points": {
+        "measurement": {
+          "10001": {
+            "name": "A相电压",
+            "unit": "V",
+            "base_value": 380.0,
+            "variance": 5.0,
+            "min_value": 360.0,
+            "max_value": 400.0
+          },
+          "10002": {
+            "name": "B相电压", 
+            "unit": "V",
+            "base_value": 380.0,
+            "variance": 5.0,
+            "min_value": 360.0,
+            "max_value": 400.0
+          },
+          "10003": {
+            "name": "C相电压",
+            "unit": "V", 
+            "base_value": 380.0,
+            "variance": 5.0,
+            "min_value": 360.0,
+            "max_value": 400.0
+          },
+          "10004": {
+            "name": "A相电流",
+            "unit": "A",
+            "base_value": 50.0,
+            "variance": 10.0,
+            "min_value": 0.0,
+            "max_value": 100.0
+          },
+          "10005": {
+            "name": "B相电流",
+            "unit": "A", 
+            "base_value": 52.0,
+            "variance": 10.0,
+            "min_value": 0.0,
+            "max_value": 100.0
+          },
+          "10006": {
+            "name": "C相电流",
+            "unit": "A",
+            "base_value": 48.0,
+            "variance": 10.0,
+            "min_value": 0.0,
+            "max_value": 100.0
+          },
+          "10007": {
+            "name": "有功功率",
+            "unit": "kW",
+            "base_value": 30.5,
+            "variance": 5.0,
+            "min_value": 0.0,
+            "max_value": 50.0
+          }
+        },
+        "signal": {
+          "20001": {
+            "name": "相序正常",
+            "states": [0, 1],
+            "default": 1,
+            "change_probability": 0.05
+          },
+          "20002": {
+            "name": "过载告警",
+            "states": [0, 1],
+            "default": 0,
+            "change_probability": 0.1
+          },
+          "20003": {
+            "name": "温度告警",
+            "states": [0, 1], 
+            "default": 0,
+            "change_probability": 0.08
+          }
+        },
+        "control": {
+          "30001": {
+            "name": "分闸操作",
+            "states": [0, 1],
+            "default": 0
+          },
+          "30002": {
+            "name": "合闸操作", 
+            "states": [0, 1],
+            "default": 1
+          }
+        },
+        "adjustment": {
+          "40001": {
+            "name": "电压设定值",
+            "unit": "V",
+            "base_value": 380.0,
+            "variance": 2.0,
+            "min_value": 360.0,
+            "max_value": 400.0
+          }
+        }
+      }
+    },
+    "1002": {
+      "name": "发电机组",
+      "description": "发电机组监控通道", 
+      "points": {
+        "measurement": {
+          "10001": {
+            "name": "发电机电压",
+            "unit": "V",
+            "base_value": 400.0,
+            "variance": 8.0,
+            "min_value": 380.0,
+            "max_value": 420.0
+          },
+          "10004": {
+            "name": "电网频率",
+            "unit": "Hz",
+            "base_value": 50.0,
+            "variance": 0.5,
+            "min_value": 49.0,
+            "max_value": 51.0
+          },
+          "10005": {
+            "name": "机油温度",
+            "unit": "°C",
+            "base_value": 80.0,
+            "variance": 10.0,
+            "min_value": 60.0,
+            "max_value": 120.0
+          },
+          "10006": {
+            "name": "冷却水温",
+            "unit": "°C",
+            "base_value": 75.0,
+            "variance": 8.0,
+            "min_value": 50.0,
+            "max_value": 100.0
+          },
+          "10007": {
+            "name": "排气温度",
+            "unit": "°C",
+            "base_value": 420.0,
+            "variance": 30.0,
+            "min_value": 300.0,
+            "max_value": 550.0
+          }
+        },
+        "signal": {
+          "20001": {
+            "name": "运行状态",
+            "states": [0, 1],
+            "default": 1,
+            "change_probability": 0.02
+          },
+          "20002": {
+            "name": "故障告警",
+            "states": [0, 1],
+            "default": 0,
+            "change_probability": 0.05
+          }
+        },
+        "control": {
+          "30001": {
+            "name": "启动命令",
+            "states": [0, 1],
+            "default": 0
+          },
+          "30002": {
+            "name": "停止命令",
+            "states": [0, 1],
+            "default": 0
+          }
+        },
+        "adjustment": {
+          "40001": {
+            "name": "功率设定",
+            "unit": "kW",
+            "base_value": 25.0,
+            "variance": 5.0,
+            "min_value": 0.0,
+            "max_value": 50.0
+          }
+        }
+      }
+    },
+    "1003": {
+      "name": "环境监测",
+      "description": "环境参数监控通道",
+      "points": {
+        "measurement": {
+          "10001": {
+            "name": "环境温度",
+            "unit": "°C",
+            "base_value": 25.0,
+            "variance": 5.0,
+            "min_value": 0.0,
+            "max_value": 50.0
+          },
+          "10002": {
+            "name": "环境湿度",
+            "unit": "%",
+            "base_value": 65.0,
+            "variance": 10.0,
+            "min_value": 30.0,
+            "max_value": 95.0
+          },
+          "10003": {
+            "name": "大气压力",
+            "unit": "kPa", 
+            "base_value": 101.325,
+            "variance": 2.0,
+            "min_value": 95.0,
+            "max_value": 108.0
+          }
+        },
+        "signal": {
+          "20001": {
+            "name": "门禁状态",
+            "states": [0, 1],
+            "default": 0,
+            "change_probability": 0.15
+          },
+          "20002": {
+            "name": "火灾告警",
+            "states": [0, 1],
+            "default": 0,
+            "change_probability": 0.01
+          }
+        }
+      }
+    }
+  }
+}

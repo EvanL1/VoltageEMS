@@ -1,4 +1,4 @@
-//! Communication Service Library (ComsrvRust)
+//! Communication Service Library (`ComsrvRust`)
 //!
 //! A high-performance, async-first industrial communication service written in Rust.
 //! This library provides a unified interface for communicating with various industrial
@@ -6,14 +6,14 @@
 //!
 //! # Features
 //!
-//! - **Multi-Protocol Support**: Modbus TCP/RTU, IEC60870-5-104, and extensible protocol framework
+//! - **Multi-Protocol Support**: Modbus TCP/RTU, IEC60870-5-104, and extensible protocol architecture
 //! - **High Performance**: Async/await throughout, connection pooling, and optimized batch operations  
 //! - **Reliability**: Automatic retry logic, heartbeat monitoring, and comprehensive error handling
 //! - **Configuration**: YAML-based configuration with hot-reload support and environment overrides
 //! - **Point Tables**: CSV-based point table management with dynamic loading and four telemetry types
-//! - **REST API**: RESTful API built with axum and OpenAPI documentation via utoipa
+//! - **REST API**: `RESTful` API built with axum and `OpenAPI` documentation via utoipa
 //! - **Storage**: Optional Redis integration for data persistence and caching
-//! - **Logging**: Structured logging with tracing instead of traditional log framework
+//! - **Logging**: Structured logging with tracing instead of traditional logging libraries
 //!
 //! # Architecture
 //!
@@ -201,7 +201,7 @@ pub mod core;
 /// Plugin system for protocol implementations
 pub mod plugins;
 /// Service implementation
-/// Storage module for flat key-value storage
+/// Real-time database (RTDB) module for flat key-value storage
 pub mod storage;
 /// Utility functions
 pub mod utils;
@@ -547,3 +547,6 @@ pub use utils::error::{ComSrvError, Result};
 
 // #[cfg(test)]
 // mod test_plugin_debug; // Moved to tests directory
+
+// #[cfg(test)]
+// mod test_validation;

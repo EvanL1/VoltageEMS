@@ -1,38 +1,9 @@
 //! 存储数据类型定义
 
-use serde::{Deserialize, Serialize};
+use voltage_libs::types::PointData as LibPointData;
 
-/// 点位数据
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PointData {
-    /// 点位值
-    pub value: f64,
-    /// 时间戳（毫秒）
-    pub timestamp: i64,
-}
-
-impl PointData {
-    /// 创建新的点位数据
-    pub fn new(value: f64) -> Self {
-        Self {
-            value,
-            timestamp: chrono::Utc::now().timestamp_millis(),
-        }
-    }
-
-    /// 转换为 Redis 存储格式（固定精度）
-    pub fn to_redis(&self) -> String {
-        format!("{:.6}", self.value)
-    }
-
-    /// 从 Redis 格式解析
-    pub fn from_redis(data: &str) -> Result<Self, String> {
-        let value = data
-            .parse::<f64>()
-            .map_err(|e| format!("Failed to parse value: {}", e))?;
-        Ok(Self::new(value))
-    }
-}
+/// 点位数据（使用库中的标准化版本）
+pub type PointData = LibPointData;
 
 /// 点位更新
 #[derive(Debug, Clone)]

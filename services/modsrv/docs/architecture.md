@@ -1,524 +1,353 @@
-# modsrv 架构设计
+# ModSrv v2.0 架构文档
 
 ## 概述
 
-modsrv（Model Service）是 VoltageEMS 的计算引擎服务，负责实时数据处理、物模型映射和规则执行。服务采用高性能的异步架构，支持复杂的计算图和设备建模。
+ModSrv (Model Service) v2.0 是VoltageEMS工业物联网系统中的设备模型管理服务，负责设备模型定义、实时数据处理和控制命令执行。本文档详细描述了ModSrv的系统架构、设计原则和实现细节。
 
-## 架构特点
+## 系统架构
 
-1. **物模型映射**：完整的设备抽象和实例管理
-2. **DAG 计算引擎**：支持复杂依赖的计算图
-3. **高性能缓存**：多级缓存减少 Redis 访问
-4. **规则引擎**：灵活的条件判断和动作执行
-5. **实时数据流**：订阅-处理-发布的流式架构
-
-## 系统架构图
+### 整体架构图
 
 ```
-┌────────────────────────────────────────────────────────────────┐
-│                            modsrv                               │
-├────────────────────────────────────────────────────────────────┤
-│                      Device Model System                        │
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐        │
-│  │Model Registry│  │Instance Mgr  │  │Data Flow Proc│        │
-│  └──────┬───────┘  └──────┬───────┘  └──────┬───────┘        │
-│         └──────────────────┴──────────────────┘                │
-│                            │                                    │
-│                    Calculation Engine                           │
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐        │
-│  │ Built-in Func│  │ Custom Calc  │  │ Rule Engine  │        │
-│  └──────────────┘  └──────────────┘  └──────────────┘        │
-│                            │                                    │
-│                      Storage Layer                              │
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐        │
-│  │Cache Manager │  │comsrv Reader │  │Control Sender│        │
-│  └──────────────┘  └──────────────┘  └──────────────┘        │
-└────────────────────────────────────────────────────────────────┘
-                             │
-                        Redis Pub/Sub
-                             │
-                    ┌────────┴────────┐
-                    │   Data Flow     │
-                    │ ┌─────┐ ┌─────┐│
-                    │ │Input│→│Output││
-                    │ └─────┘ └─────┘│
-                    └─────────────────┘
+┌────────────────────────────────────────────────────────┐
+│                    前端应用层                            │
+│          Web UI | Mobile App | SCADA                   │
+└─────────────────┬──────────────────────────────────────┘
+                  │ HTTP/WebSocket
+┌─────────────────┴──────────────────────────────────────┐
+│                       ModSrv                           │
+│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐     │
+│  │ API Gateway │  │ Model Mgr   │  │ WebSocket   │     │
+│  │   (Axum)    │  │ (Core Logic)│  │  (Real-time)│     │
+│  └─────┬───────┘  └─────┬───────┘  └─────┬───────┘     │
+│        │                │                │             │
+│  ┌─────┴────────────────┴────────────────┴──────┐      │
+│  │            Mapping Manager                   │      │
+│  │        (Logic ↔ Physical Address)            │      │
+│  └─────────────────┬────────────────────────────┘      │
+└────────────────────┼───────────────────────────────────┘
+                     │ Redis Pub/Sub & KV
+┌────────────────────┴───────────────────────────────────┐
+│                    Redis v3.2                          │
+│  Hash: comsrv:{channel}:{type} → {point: value}        │
+│  Pub/Sub: comsrv:{channel}:{type}                      │
+│  Control: cmd:{channel}:control, cmd:{channel}:adjust  │
+└────────────────────┬───────────────────────────────────┘
+                     │
+┌────────────────────┴────────────────────────────────────┐
+│                   ComsRv                                │
+│            工业协议通信服务                                │
+│    Modbus | IEC60870 | CAN | GPIO | Serial              │
+└─────────────────────────────────────────────────────────┘
 ```
 
-## 核心组件
+### ModSrv v2.0 内部架构
 
-### 1. Device Model System（设备模型系统）
+```
+┌─────────────────────────────────────────────────────────┐
+│                    ModSrv Service                       │
+├─────────────────────────────────────────────────────────┤
+│                   API Layer                             │
+│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐     │
+│  │    REST     │  │  WebSocket  │  │   Health    │     │
+│  │  Endpoints  │  │   Handler   │  │   Check     │     │
+│  └─────┬───────┘  └─────┬───────┘  └─────┬───────┘     │
+├───────┼─────────────────┼─────────────────┼─────────────┤
+│       │                 │                 │             │
+│                  Business Logic Layer                   │
+│  ┌─────┴───┐  ┌─────────┴─────────┐  ┌────┴─────┐     │
+│  │ Model   │  │   Data Stream     │  │ Control  │     │
+│  │ Manager │  │   Processor       │  │ Executor │     │
+│  └─────┬───┘  └─────────┬─────────┘  └────┬─────┘     │
+├───────┼─────────────────┼──────────────────┼───────────┤
+│       │                 │                  │           │
+│                  Data Access Layer                     │
+│  ┌─────┴───┐  ┌─────────┴─────────┐  ┌────┴─────┐     │
+│  │ Mapping │  │   Redis Client    │  │ Template │     │
+│  │ Manager │  │   (Async/Sync)    │  │ Engine   │     │
+│  └─────────┘  └───────────────────┘  └──────────┘     │
+├─────────────────────────────────────────────────────────┤
+│                 Infrastructure Layer                    │
+│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐     │
+│  │ Config Mgr  │  │ Log System  │  │ Error Handler│    │
+│  │ (Figment)   │  │ (Tracing)   │  │  (Anyhow)   │     │
+│  └─────────────┘  └─────────────┘  └─────────────┘     │
+└─────────────────────────────────────────────────────────┘
+```
 
-#### DeviceModel 结构
+## 设计原则
+
+### 1. 分层架构 (Layered Architecture)
+
+- **API层**: 处理HTTP请求和WebSocket连接
+- **业务逻辑层**: 实现核心业务功能
+- **数据访问层**: 管理数据存储和访问
+- **基础设施层**: 提供通用服务支持
+
+### 2. 监视与控制分离 (Monitoring-Control Separation)
+
 ```rust
-pub struct DeviceModel {
-    /// 模型标识
+// v2.0简化模型结构
+pub struct Model {
     pub id: String,
-    /// 模型名称
     pub name: String,
-    /// 设备类型
-    pub device_type: DeviceType,
-    /// 属性定义
-    pub properties: Vec<PropertyDefinition>,
-    /// 遥测点定义
-    pub telemetry: Vec<TelemetryDefinition>,
-    /// 命令定义
-    pub commands: Vec<CommandDefinition>,
-    /// 事件定义
-    pub events: Vec<EventDefinition>,
-    /// 计算模型
-    pub calculations: Vec<CalculationDefinition>,
+    pub description: String,
+    pub monitoring_config: HashMap<String, PointConfig>,  // 监视点配置
+    pub control_config: HashMap<String, PointConfig>,     // 控制点配置
 }
 ```
 
-#### 设备类型
+- **Monitoring**: 只读数据，实时更新
+- **Control**: 写操作，需要权限验证
+
+### 3. 映射抽象 (Mapping Abstraction)
+
+逻辑名称与物理地址分离：
+```
+逻辑模型: voltage_a, main_switch
+    ↓ (Mapping Layer)
+物理地址: channel:1001, point:10001
+```
+
+### 4. 事件驱动 (Event-Driven)
+
+- Redis Pub/Sub订阅数据更新
+- WebSocket推送实时数据变化
+- 异步处理提高响应性能
+
+## 核心组件详解
+
+### 1. Model Manager (模型管理器)
+
 ```rust
-pub enum DeviceType {
-    Sensor,      // 传感器
-    Actuator,    // 执行器
-    Gateway,     // 网关
-    Edge,        // 边缘设备
-    Energy,      // 能源设备
-    Industrial,  // 工业设备
-    Custom(String),
+pub struct ModelManager {
+    models: Arc<RwLock<HashMap<String, Model>>>,
+    redis_client: Arc<Mutex<RedisClient>>,
+    mappings: Arc<RwLock<MappingManager>>,
 }
 ```
 
-#### 实例管理
+**职责**:
+- 模型定义加载和管理
+- 遥测数据读取和缓存
+- 控制命令执行
+- 数据订阅和分发
+
+**关键方法**:
+- `load_models_from_config()`: 从配置加载模型
+- `get_monitoring_value()`: 获取监视数据
+- `execute_control()`: 执行控制命令
+- `subscribe_data_updates()`: 订阅数据更新
+
+### 2. Mapping Manager (映射管理器)
+
 ```rust
-pub struct InstanceManager {
-    /// 模型注册表
-    model_registry: Arc<ModelRegistry>,
-    /// 实例存储
-    instances: Arc<RwLock<HashMap<String, DeviceInstance>>>,
-    /// 数据缓存
-    data_cache: Arc<RwLock<HashMap<String, DeviceData>>>,
+pub struct MappingManager {
+    mappings: HashMap<String, ModelMappingConfig>,
+}
+
+pub struct PointMapping {
+    pub channel: u16,    // 通道ID
+    pub point: u32,      // 点位ID
+    pub point_type: String, // 类型: m/s/c/a
 }
 ```
 
-### 2. Calculation Engine（计算引擎）
+**职责**:
+- 逻辑点位名称到物理地址的双向映射
+- 映射配置的加载和验证
+- 点位类型管理
 
-#### 计算定义
+### 3. API Server (API服务器)
+
+基于Axum框架的REST API服务：
+
 ```rust
-pub struct CalculationDefinition {
-    /// 计算标识
-    pub identifier: String,
-    /// 输入变量
-    pub inputs: Vec<String>,
-    /// 输出变量
-    pub outputs: Vec<String>,
-    /// 计算表达式
-    pub expression: CalculationExpression,
-    /// 执行条件
-    pub condition: Option<String>,
-}
-
-pub enum CalculationExpression {
-    Math(String),              // 数学表达式
-    JavaScript(String),        // JS 代码
-    Python(String),           // Python 代码
-    BuiltIn {                 // 内置函数
-        function: String,
-        args: Vec<String>,
-    },
+pub struct ApiServer {
+    model_manager: Arc<ModelManager>,
+    ws_manager: Arc<WsConnectionManager>,
+    config: Config,
 }
 ```
 
-#### 内置函数
+**端点设计**:
+- `GET /health` - 健康检查
+- `GET /models` - 模型列表
+- `GET /models/{id}` - 模型详情
+- `GET /models/{id}/config` - 模型配置
+- `GET /models/{id}/values` - 实时数据
+- `POST /models/{id}/control/{name}` - 控制命令
+- `WS /ws/models/{id}/values` - WebSocket实时推送
+
+### 4. WebSocket Manager (WebSocket管理器)
+
 ```rust
-impl CalculationEngine {
-    pub fn new() -> Self {
-        let mut engine = Self::default();
-        
-        // 注册内置函数
-        engine.register_function("sum", sum_executor);
-        engine.register_function("avg", avg_executor);
-        engine.register_function("min", min_executor);
-        engine.register_function("max", max_executor);
-        engine.register_function("scale", scale_executor);
-        
-        engine
-    }
+pub struct WsConnectionManager {
+    connections: Arc<Mutex<HashMap<String, Vec<WsConnection>>>>,
+    model_manager: Arc<ModelManager>,
 }
 ```
 
-### 3. Data Flow Processor（数据流处理器）
+**功能**:
+- WebSocket连接生命周期管理
+- 实时数据推送
+- 订阅管理（按模型分组）
+- 连接统计和监控
 
-#### 实时数据订阅
-```rust
-pub struct DataFlowProcessor {
-    redis_client: Arc<RedisHandler>,
-    instance_manager: Arc<InstanceManager>,
-    calculation_engine: Arc<CalculationEngine>,
-    subscriptions: Arc<RwLock<HashMap<String, DataSubscription>>>,
-}
+## 数据流架构
 
-impl DataFlowProcessor {
-    /// 订阅实例数据更新
-    pub async fn subscribe_instance(
-        &self,
-        instance_id: String,
-        point_mappings: HashMap<String, String>,
-        update_interval: Duration,
-    ) -> Result<()>;
-    
-    /// 处理数据更新
-    pub async fn process_update(&self, update: DataUpdate) -> Result<()>;
-}
+### 1. 监视数据流 (Monitoring Data Flow)
+
+```
+ComsRv → Redis Hash → ModSrv → WebSocket → Frontend
+  │         │           │          │
+  │         │           │          └─ 实时推送
+  │         │           └─ REST API查询
+  │         └─ comsrv:{channel}:{type}
+  └─ Pub/Sub通知: {point}:{value}
 ```
 
-#### 数据流处理
-```rust
-// 1. 接收数据更新
-let update = DataUpdate {
-    instance_id: "power_meter_01",
-    telemetry_name: "voltage_a",
-    value: json!(220.5),
-    timestamp: Utc::now().timestamp_millis(),
-};
+**详细流程**:
+1. ComsRv写入数据到Redis Hash: `comsrv:1001:m`
+2. ComsRv发布更新通知: channel `comsrv:1001:m`, message `10001:220.5`
+3. ModSrv订阅更新通知，解析点位数据
+4. ModSrv通过映射找到对应的逻辑点位名称
+5. ModSrv推送数据到WebSocket客户端
+6. 前端通过REST API查询最新数据
 
-// 2. 更新实例遥测
-instance_manager.update_telemetry(
-    &update.instance_id,
-    &update.telemetry_name,
-    update.value
-).await?;
+### 2. 控制数据流 (Control Data Flow)
 
-// 3. 触发相关计算
-for calc in affected_calculations {
-    calculation_engine.execute(
-        &instance_id,
-        &model,
-        calc.identifier
-    ).await?;
-}
-
-// 4. 发布计算结果
-redis.publish("calc:update", &results).await?;
+```
+Frontend → REST API → ModSrv → Redis Pub/Sub → ComsRv → Device
+   │          │         │           │            │        │
+   │          │         │           │            │        └─ 物理控制
+   │          │         │           │            └─ 协议转换
+   │          │         │           └─ cmd:{channel}:control
+   │          │         └─ 映射转换 + 权限验证
+   │          └─ POST /models/{id}/control/{name}
+   └─ JSON: {"value": 1.0}
 ```
 
-### 4. Cache Management（缓存管理）
+**详细流程**:
+1. 前端发送控制命令: `POST /models/power_meter/control/main_switch`
+2. ModSrv验证模型和控制点存在性
+3. ModSrv通过映射获取物理地址: channel=1001, point=20001
+4. ModSrv发布控制命令到Redis: `cmd:1001:control`
+5. ComsRv接收控制命令，转换为设备协议
+6. 设备执行控制操作
 
-#### 多级缓存架构
-```rust
-pub struct ModelCacheManager {
-    /// L1: 点位数据缓存
-    point_cache: Arc<RwLock<HashMap<String, CacheEntry<PointData>>>>,
-    /// L2: 模型输出缓存
-    model_output_cache: Arc<RwLock<HashMap<String, CacheEntry<Value>>>>,
-    /// 默认 TTL
-    default_ttl: Duration,
-    /// 缓存统计
-    stats: Arc<RwLock<CacheStats>>,
-}
+## 性能特性
 
-struct CacheEntry<T> {
-    value: T,
-    expires_at: Instant,
-    access_count: AtomicU64,
-    last_access: AtomicU64,
-}
-```
+### 1. 并发处理
 
-#### 缓存策略
-```rust
-impl ModelCacheManager {
-    /// 获取或计算
-    pub async fn get_or_compute<F, Fut>(
-        &self,
-        key: &str,
-        compute_fn: F,
-    ) -> Result<Value>
-    where
-        F: FnOnce() -> Fut,
-        Fut: Future<Output = Result<Value>>,
-    {
-        // 1. 尝试从缓存获取
-        if let Some(cached) = self.get_from_cache(key).await {
-            self.stats.write().await.hits += 1;
-            return Ok(cached);
-        }
-        
-        // 2. 缓存未命中，执行计算
-        self.stats.write().await.misses += 1;
-        let value = compute_fn().await?;
-        
-        // 3. 存入缓存
-        self.put_to_cache(key, value.clone()).await;
-        
-        Ok(value)
-    }
-}
-```
+- **Tokio异步运行时**: 支持高并发请求处理
+- **Arc + RwLock**: 读写分离，支持多读单写
+- **连接池**: Redis连接复用
+- **WebSocket并发**: 支持大量并发WebSocket连接
 
-### 5. Storage Interface（存储接口）
+### 2. 缓存策略
 
-#### comsrv 数据读取
-```rust
-pub struct DataReader {
-    redis_client: Arc<RedisClient>,
-    cache: Arc<ModelCacheManager>,
-}
+- **内存缓存**: 模型配置和映射配置
+- **Redis缓存**: 实时数据和历史数据
+- **懒加载**: 按需加载模型数据
+- **TTL管理**: 自动过期失效数据
 
-impl DataReader {
-    /// 批量读取点位数据
-    pub async fn batch_read_points(
-        &self,
-        requests: Vec<PointReadRequest>,
-    ) -> Result<Vec<PointData>> {
-        // 1. 从缓存读取
-        let mut results = Vec::new();
-        let mut cache_misses = Vec::new();
-        
-        for req in requests {
-            if let Some(cached) = self.cache.get_point(&req.key()).await {
-                results.push(cached);
-            } else {
-                cache_misses.push(req);
-            }
-        }
-        
-        // 2. 批量从 Redis 读取缓存未命中的数据
-        if !cache_misses.is_empty() {
-            let keys: Vec<String> = cache_misses.iter()
-                .map(|r| format!("{}:{}:{}", r.channel_id, r.point_type, r.point_id))
-                .collect();
-            
-            let values = self.redis_client.mget(&keys).await?;
-            
-            // 3. 更新缓存
-            for (req, value) in cache_misses.iter().zip(values.iter()) {
-                if let Some(data) = value {
-                    let point_data = parse_point_data(data)?;
-                    self.cache.put_point(&req.key(), point_data.clone()).await;
-                    results.push(point_data);
-                }
-            }
-        }
-        
-        Ok(results)
-    }
-}
-```
+### 3. 容错机制
 
-#### 控制命令发送
-```rust
-pub struct ControlSender {
-    redis_client: Arc<RedisClient>,
-    pending_commands: Arc<RwLock<HashMap<String, PendingCommand>>>,
-}
+- **重试机制**: Redis连接失败自动重试
+- **熔断器**: 防止雪崩效应
+- **降级策略**: 部分功能失效时的降级处理
+- **健康检查**: 定期检查服务状态
 
-impl ControlSender {
-    /// 发送控制命令
-    pub async fn send_control(
-        &self,
-        channel_id: u16,
-        point_id: u32,
-        value: f64,
-    ) -> Result<String> {
-        let command_id = Uuid::new_v4().to_string();
-        
-        let command = ControlCommand {
-            id: command_id.clone(),
-            channel_id,
-            point_id,
-            value,
-            timestamp: Utc::now().timestamp_millis(),
-        };
-        
-        // 1. 记录待确认命令
-        self.pending_commands.write().await.insert(
-            command_id.clone(),
-            PendingCommand {
-                command: command.clone(),
-                sent_at: Instant::now(),
-                retry_count: 0,
-            }
-        );
-        
-        // 2. 发布到控制通道
-        let channel = format!("cmd:{}:control", channel_id);
-        self.redis_client.publish(&channel, &command).await?;
-        
-        // 3. 启动超时检查
-        self.start_timeout_check(command_id.clone());
-        
-        Ok(command_id)
-    }
-}
-```
+## 扩展性设计
 
-## 物模型示例
+### 1. 水平扩展
 
-### 电力仪表模型
-```rust
-let power_meter = DeviceModel {
-    id: "power_meter_v1".to_string(),
-    name: "三相电力仪表".to_string(),
-    device_type: DeviceType::Energy,
-    
-    properties: vec![
-        PropertyDefinition {
-            identifier: "rated_voltage",
-            name: "额定电压",
-            data_type: DataType::Float64,
-            default_value: Some(json!(380)),
-            unit: Some("V".to_string()),
-        },
-    ],
-    
-    telemetry: vec![
-        TelemetryDefinition {
-            identifier: "voltage_a",
-            name: "A相电压",
-            data_type: DataType::Float64,
-            mapping: TelemetryMapping {
-                channel_id: 1,
-                point_type: "m",
-                point_id: 10001,
-            },
-            unit: Some("V".to_string()),
-        },
-        // ... 其他相电压、电流等
-    ],
-    
-    calculations: vec![
-        CalculationDefinition {
-            identifier: "total_power",
-            name: "总功率",
-            inputs: vec!["power_a", "power_b", "power_c"],
-            outputs: vec!["total_power"],
-            expression: CalculationExpression::BuiltIn {
-                function: "sum".to_string(),
-                args: vec![],
-            },
-        },
-    ],
-};
-```
+- **无状态设计**: 服务实例无状态，支持水平扩展
+- **负载均衡**: 支持多实例部署
+- **分片策略**: 按模型ID分片处理
 
-## 性能优化
+### 2. 模块化扩展
 
-### 1. 并发执行
-```rust
-pub struct OptimizedModelEngine {
-    /// 最大并发数
-    max_concurrency: usize,
-    /// 执行信号量
-    semaphore: Arc<Semaphore>,
-}
+- **插件架构**: 支持自定义数据处理插件
+- **协议扩展**: 支持新的通信协议
+- **模板系统**: 支持设备模型模板化
 
-impl OptimizedModelEngine {
-    pub async fn execute_batch(
-        &self,
-        models: Vec<ModelDefinition>,
-    ) -> Vec<Result<ModelOutput>> {
-        let tasks: Vec<_> = models.into_iter()
-            .map(|model| {
-                let sem = self.semaphore.clone();
-                tokio::spawn(async move {
-                    let _permit = sem.acquire().await?;
-                    self.execute_single(model).await
-                })
-            })
-            .collect();
-        
-        futures::future::join_all(tasks).await
-    }
-}
-```
+### 3. 监控和运维
 
-### 2. 缓存优化
-- **预热策略**：启动时加载热点数据
-- **淘汰算法**：LRU + TTL 组合
-- **分片缓存**：减少锁竞争
+- **指标收集**: Prometheus兼容的指标
+- **链路追踪**: 支持分布式追踪
+- **日志聚合**: 结构化日志输出
+- **告警机制**: 异常情况自动告警
 
-### 3. 批处理优化
-- **聚合小请求**：减少 Redis 往返
-- **Pipeline 执行**：批量读写操作
-- **异步并行**：充分利用 I/O 等待
+## 安全考虑
 
-## 监控指标
+### 1. 访问控制
 
-### 性能指标
-```rust
-// 计算延迟
-metrics::histogram!("modsrv.calculation.duration", duration);
+- **API认证**: 支持JWT令牌认证
+- **权限验证**: 基于角色的访问控制
+- **控制权限**: 控制命令需要特殊权限
 
-// 缓存命中率
-metrics::gauge!("modsrv.cache.hit_rate", hit_rate);
+### 2. 数据安全
 
-// 并发度
-metrics::gauge!("modsrv.concurrency.active", active_tasks);
-```
+- **数据加密**: 敏感数据传输加密
+- **审计日志**: 控制操作审计记录
+- **输入验证**: 严格的输入参数验证
 
-### 业务指标
-- 活跃模型实例数
-- 计算执行频率
-- 规则触发次数
-- 数据更新延迟
+### 3. 网络安全
 
-## 配置管理
+- **内网隔离**: Docker内部网络隔离
+- **防火墙**: 端口访问控制
+- **TLS支持**: HTTPS/WSS安全连接
 
-### 服务配置
+## 部署架构
+
+### 1. 容器化部署
+
 ```yaml
-# modsrv 配置
-redis:
-  url: "redis://localhost:6379"
-  key_prefix: "modsrv"
-
-engine:
-  max_concurrency: 100
-  batch_size: 1000
-  calculation_timeout: 5s
-
-cache:
-  max_size: 10000
-  default_ttl: 300s
-  cleanup_interval: 60s
-
-models:
-  config_path: "./config/models"
-  auto_reload: true
+services:
+  modsrv:
+    image: modsrv:v2.0
+    environment:
+      - REDIS_URL=redis://redis:6379
+      - CONFIG_FILE=/config/config.yml
+    volumes:
+      - ./config:/config:ro
+      - ./logs:/logs
+    networks:
+      - voltage-ems-network
 ```
 
-### 模型配置
-```yaml
-# 设备模型定义
-models:
-  - id: "power_meter_v1"
-    name: "三相电力仪表"
-    file: "models/power_meter.yaml"
-    
-  - id: "transformer_v1"
-    name: "变压器监测"
-    file: "models/transformer.yaml"
-```
+### 2. 服务发现
 
-## 扩展指南
+- **DNS解析**: 基于Docker网络的服务发现
+- **健康检查**: 容器健康状态监控
+- **负载均衡**: 支持多实例负载均衡
 
-### 1. 添加新的计算函数
-```rust
-// 1. 实现计算执行器
-fn my_function_executor(
-    inputs: HashMap<String, Value>,
-    params: HashMap<String, Value>,
-) -> Result<Value> {
-    // 计算逻辑
-    Ok(result)
-}
+### 3. 数据持久化
 
-// 2. 注册到计算引擎
-engine.register_function("my_function", my_function_executor);
-```
+- **配置持久化**: 配置文件外部挂载
+- **日志持久化**: 日志目录外部挂载
+- **Redis数据**: Redis数据卷持久化
 
-### 2. 自定义设备模型
-1. 定义模型 YAML 文件
-2. 实现特定的计算逻辑
-3. 配置数据映射
-4. 注册到模型库
+## 技术栈
 
-### 3. 集成外部系统
-- 实现数据源接口
-- 添加协议转换
-- 配置数据同步策略
+- **核心语言**: Rust 1.88+
+- **Web框架**: Axum 0.8.4
+- **异步运行时**: Tokio 1.35
+- **数据库**: Redis 8.0
+- **配置管理**: Figment + Serde
+- **日志系统**: Tracing + Tracing-subscriber
+- **错误处理**: Anyhow + Thiserror
+- **容器化**: Docker + Docker Compose
+- **文档**: Markdown + API文档
+
+## 版本演进
+
+### v1.0 → v2.0 重大变更
+
+1. **架构简化**: 从四分类(遥测/遥信/遥控/遥调)简化为二分类(监视/控制)
+2. **映射系统**: 引入独立的映射管理器
+3. **WebSocket支持**: 新增实时数据推送
+4. **性能优化**: 异步处理和缓存优化
+5. **容器化**: 完整的Docker化部署方案

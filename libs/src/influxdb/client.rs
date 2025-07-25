@@ -1,11 +1,10 @@
-//! InfluxDB HTTP 客户端
+//! InfluxDB 2.x 官方客户端
 
 use crate::config::InfluxConfig;
 use crate::error::{Error, Result};
-use reqwest::{Client, StatusCode};
-use std::time::Duration;
+use influxdb2::{models::Query, Client};
 
-/// InfluxDB 客户端
+/// InfluxDB 2.x 客户端
 pub struct InfluxClient {
     client: Client,
     config: InfluxConfig,
@@ -14,90 +13,89 @@ pub struct InfluxClient {
 impl InfluxClient {
     /// 从配置创建客户端
     pub fn from_config(config: InfluxConfig) -> Result<Self> {
-        let client = Client::builder()
-            .timeout(Duration::from_secs(config.timeout_seconds))
-            .build()
-            .map_err(|e| Error::Http(format!("Failed to create HTTP client: {}", e)))?;
+        tracing::debug!(
+            "Creating InfluxDB client: url={}, org={}, bucket={}",
+            config.url,
+            config.org,
+            config.get_bucket()
+        );
+        let client = Client::new(&config.url, &config.org, &config.token);
 
         Ok(Self { client, config })
     }
 
     /// 写入线协议数据
     pub async fn write_line_protocol(&self, data: &str) -> Result<()> {
-        let url = format!("{}/write?db={}", self.config.url, self.config.database);
+        let bucket = self.config.get_bucket();
+        let org = &self.config.org;
+        let data_owned = data.to_string();
 
-        let mut request = self.client.post(&url);
+        tracing::debug!(
+            "Writing to InfluxDB: org={}, bucket={}, data_len={}",
+            org,
+            bucket,
+            data.len()
+        );
 
-        if let (Some(ref username), Some(ref password)) =
-            (&self.config.username, &self.config.password)
-        {
-            request = request.basic_auth(username, Some(password));
-        }
-
-        let response = request
-            .body(data.to_string())
-            .send()
+        self.client
+            .write_line_protocol(org, bucket, data_owned)
             .await
-            .map_err(|e| Error::Http(format!("Write request failed: {}", e)))?;
+            .map_err(|e| Error::InfluxDB(format!("Write failed: {}", e)))?;
 
-        match response.status() {
-            StatusCode::NO_CONTENT | StatusCode::OK => Ok(()),
-            status => {
-                let error_text = response.text().await.unwrap_or_else(|_| status.to_string());
-                Err(Error::InfluxDB(format!(
-                    "Write failed: {} - {}",
-                    status, error_text
-                )))
-            }
-        }
+        Ok(())
     }
 
-    /// 执行查询
+    /// 执行查询 (Flux查询语言)
     pub async fn query(&self, query: &str) -> Result<String> {
-        let url = format!("{}/query?db={}", self.config.url, self.config.database);
+        let bucket = self.config.get_bucket();
 
-        let mut request = self.client.get(&url).query(&[("q", query)]);
+        // 如果是简单的查询，转换为Flux格式
+        let flux_query = if query.starts_with("from(") {
+            query.to_string()
+        } else {
+            format!(
+                r#"from(bucket: "{}")
+                |> range(start: -1h)
+                |> filter(fn: (r) => r._measurement == "{}")"#,
+                bucket, query
+            )
+        };
 
-        if let (Some(ref username), Some(ref password)) =
-            (&self.config.username, &self.config.password)
-        {
-            request = request.basic_auth(username, Some(password));
-        }
+        // 构建Query对象
+        let query = Query::new(flux_query);
 
-        let response = request
-            .send()
+        let result = self
+            .client
+            .query_raw(Some(query))
             .await
-            .map_err(|e| Error::Http(format!("Query request failed: {}", e)))?;
+            .map_err(|e| Error::InfluxDB(format!("Query failed: {}", e)))?;
 
-        match response.status() {
-            StatusCode::OK => response
-                .text()
-                .await
-                .map_err(|e| Error::Http(format!("Failed to read response: {}", e))),
-            status => {
-                let error_text = response.text().await.unwrap_or_else(|_| status.to_string());
-                Err(Error::InfluxDB(format!(
-                    "Query failed: {} - {}",
-                    status, error_text
-                )))
-            }
-        }
+        Ok(format!("{:?}", result))
     }
 
     /// 健康检查
     pub async fn ping(&self) -> Result<()> {
-        let url = format!("{}/ping", self.config.url);
-
-        let response = self
+        // 使用InfluxDB 2.x的health检查API
+        let health_result = self
             .client
-            .get(&url)
-            .send()
+            .health()
             .await
-            .map_err(|e| Error::Http(format!("Ping request failed: {}", e)))?;
+            .map_err(|e| Error::InfluxDB(format!("Health check failed: {}", e)))?;
 
-        match response.status() {
-            StatusCode::NO_CONTENT | StatusCode::OK => Ok(()),
-            status => Err(Error::InfluxDB(format!("Ping failed: {}", status))),
+        tracing::debug!("InfluxDB health check: {:?}", health_result);
+
+        // 额外检查ready状态
+        let ready = self
+            .client
+            .ready()
+            .await
+            .map_err(|e| Error::InfluxDB(format!("Ready check failed: {}", e)))?;
+
+        if !ready {
+            return Err(Error::InfluxDB("InfluxDB is not ready".to_string()));
         }
+
+        tracing::debug!("InfluxDB ready check: {}", ready);
+        Ok(())
     }
 }

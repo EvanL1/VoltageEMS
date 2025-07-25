@@ -1,569 +1,383 @@
-# Alarm Service (alarmsrv)
+# alarmsrv - 告警管理服务
 
-Advanced alarm management service for the Voltage EMS system with intelligent classification, Redis storage, and cloud integration.
+## 概述
 
-## 🎯 Core Features
+alarmsrv 是 VoltageEMS 的智能告警管理服务，负责监控系统数据、检测异常状态、生成和管理告警。服务采用简化的 Redis 键结构设计，支持告警分类、优先级管理和自动升级机制。
 
-- ✅ **Advanced Alarm Management**: Complete alarm lifecycle with creation, acknowledgment, resolution, and escalation
-- ✅ **Intelligent Classification**: Rule-based automatic categorization (Environmental, Power, Communication, System, Security)
-- ✅ **Redis Storage & Indexing**: Persistent storage with multi-dimensional indexing for fast queries
-- ✅ **Real-time Monitoring**: Redis data stream listening with automatic alarm triggering
-- ✅ **Edge System Design**: Optimized for edge computing with Redis-based data management
-- ✅ **Cloud Integration**: Seamless integration with netsrv for cloud platform push (AWS IoT, Alibaba Cloud, Azure)
-- ✅ **Statistics & Analytics**: Comprehensive alarm statistics and trend analysis
-- ✅ **Auto Escalation**: Time-based alarm escalation with configurable rules
-- ✅ **RESTful API**: Full-featured REST API for external integrations
-- ✅ **Auto Cleanup**: Automatic cleanup of old resolved alarms
+## 主要特性
 
-## 📊 System Architecture
+- **实时告警检测**: 监控 Redis 数据变化，自动触发告警
+- **智能分类**: 基于规则的告警自动分类（环境、电力、通信、系统、安全）
+- **简化存储**: 使用 `alarm:{id}` 的扁平化键结构
+- **生命周期管理**: 完整的告警创建、确认、解决流程
+- **自动升级**: 基于时间的告警级别自动升级
+- **标准化精度**: 所有数值保持 6 位小数精度
 
-Alarmsrv serves as the intelligent alarm management hub in the Voltage EMS ecosystem, designed for edge computing with distributed responsibility architecture:
+## 快速开始
 
-```mermaid
-graph TD
-    subgraph "Data Sources"
-        Devices["Industrial Devices<br/>Modbus/CAN/IEC104"]
-        External["External Systems<br/>API/MQTT/HTTP"]
-    end
-    
-    subgraph "Data Collection"
-        Comsrv["Communication Service<br/>(Comsrv)"]
-    end
-    
-    subgraph "Message Broker"
-        Redis[("Redis<br/>Message Queue & Storage")]
-    end
-    
-    subgraph "Processing Layer"
-        Modsrv["Model Service<br/>(Modsrv)"]
-        Hissrv["History Service<br/>(Hissrv)"]
-        Netsrv["Network Service<br/>(Netsrv)"]
-        Alarmsrv["🚨 Alarm Service<br/>(Alarmsrv)"]
-    end
-    
-    subgraph "Alarmsrv Internal Architecture"
-        Listener["Redis Listener<br/>Data Monitoring"]
-        Classifier["Smart Classifier<br/>Rule Engine"]
-        Storage["Redis Storage<br/>Multi-Index"]
-        Processor["Alarm Processor<br/>Escalation & Cleanup"]
-        API["REST API<br/>External Interface"]
-    end
-    
-    subgraph "Storage Systems"
-        RedisIndex["Redis Indexes<br/>Category/Level/Status/Date"]
-        InfluxDB[("InfluxDB<br/>Time Series")]
-    end
-    
-    subgraph "User Interfaces"
-        WebUI["Web Interface<br/>Vue.js"]
-        ElectronApp["Desktop App<br/>Electron"]
-        MobileApp["Mobile App"]
-    end
-    
-    subgraph "Cloud Platforms"
-        AWS["AWS IoT Core"]
-        Aliyun["Alibaba Cloud IoT"]
-        Azure["Azure IoT Hub"]
-        MQTT["MQTT Brokers"]
-    end
-    
-    subgraph "Notification Channels"
-        Email["Email Alerts"]
-        SMS["SMS Notifications"]
-        Webhook["Webhook Integration"]
-        Push["Push Notifications"]
-    end
-    
-    %% Data Flow
-    Devices --> Comsrv
-    External --> Comsrv
-    Comsrv --> Redis
-    Redis --> Modsrv
-    Redis --> Hissrv
-    Redis --> Netsrv
-    Redis --> Alarmsrv
-    
-    %% Alarmsrv Internal Flow
-    Alarmsrv --> Listener
-    Listener --> Classifier
-    Classifier --> Storage
-    Storage --> RedisIndex
-    Processor --> Storage
-    API --> Storage
-    
-    %% Output Channels (Edge System Design)
-    Alarmsrv --> Netsrv
-    Netsrv --> AWS
-    Netsrv --> Aliyun
-    Netsrv --> Azure
-    Netsrv --> MQTT
-    Netsrv --> Email
-    Netsrv --> SMS
-    Netsrv --> Webhook
-    Netsrv --> Push
-    
-    %% User Interfaces
-    API --> WebUI
-    API --> ElectronApp
-    API --> MobileApp
-    
-    %% History Storage
-    Hissrv --> InfluxDB
-    
-    style Alarmsrv fill:#ff6b6b,stroke:#333,stroke-width:3px
-    style Classifier fill:#4ecdc4,stroke:#333,stroke-width:2px
-    style Storage fill:#45b7d1,stroke:#333,stroke-width:2px
-```
+### 运行服务
 
-## 🔄 Alarm Processing Flow
-
-```mermaid
-sequenceDiagram
-    participant Device as Industrial Device
-    participant Comsrv as Communication Service
-    participant Redis as Redis Broker
-    participant Alarmsrv as Alarm Service
-    participant Classifier as Smart Classifier
-    participant Storage as Redis Storage
-    participant Netsrv as Network Service
-    participant Cloud as Cloud Platform
-    participant User as User Interface
-    
-    Device->>Comsrv: Send device data
-    Comsrv->>Redis: Publish data to channel
-    Redis->>Alarmsrv: Push data update
-    Alarmsrv->>Alarmsrv: Check alarm conditions
-    
-    alt Alarm condition triggered
-        Alarmsrv->>Classifier: Classify alarm
-        Classifier->>Classifier: Apply rules & patterns
-        Classifier-->>Alarmsrv: Return classification
-        Alarmsrv->>Storage: Store alarm with indexes
-        Storage->>Redis: Multi-dimensional indexing
-        Alarmsrv->>Netsrv: Publish for cloud push
-        Netsrv->>Cloud: Push to cloud platforms
-        Alarmsrv->>User: Send notifications
-        
-        User->>Alarmsrv: Acknowledge alarm
-        Alarmsrv->>Storage: Update alarm status
-        Alarmsrv->>Netsrv: Publish status update
-        
-        User->>Alarmsrv: Resolve alarm
-        Alarmsrv->>Storage: Mark as resolved
-        Alarmsrv->>Netsrv: Publish resolution
-    end
-    
-    loop Escalation Process
-        Alarmsrv->>Alarmsrv: Check escalation rules
-        Alarmsrv->>Storage: Update alarm level
-        Alarmsrv->>User: Send escalation notice
-    end
-    
-    loop Cleanup Process
-        Alarmsrv->>Storage: Remove old resolved alarms
-    end
-```
-
-## 🚀 Quick Start
-
-### 1. Prerequisites
-```bash
-# Start Redis server
-docker run -d --name redis -p 6379:6379 redis:latest
-
-# Or use existing Redis instance
-redis-server --daemonize yes
-```
-
-### 2. Configuration
-Create `alarmsrv.yaml`:
-
-#### TCP Connection (Default)
-```yaml
-redis:
-  connection_type: "Tcp"
-  host: "localhost"
-  port: 6379
-  # password: "your_password"  # optional
-  database: 0
-
-api:
-  host: "0.0.0.0"
-  port: 8080
-
-storage:
-  retention_days: 30
-  auto_cleanup: true
-  cleanup_interval_hours: 24
-```
-
-#### Unix Socket Connection
-```yaml
-redis:
-  connection_type: "Unix"
-  socket_path: "/var/run/redis/redis.sock"
-  database: 0
-  # password: "your_password"  # optional
-
-api:
-  host: "0.0.0.0"
-  port: 8080
-
-storage:
-  retention_days: 30
-  auto_cleanup: true
-  cleanup_interval_hours: 24
-```
-
-### 3. Environment Variables (Optional)
-```bash
-# TCP Connection
-export REDIS_CONNECTION_TYPE=tcp
-export REDIS_HOST=localhost
-export REDIS_PORT=6379
-# export REDIS_PASSWORD=your_password
-
-# Unix Socket Connection
-export REDIS_CONNECTION_TYPE=unix
-export REDIS_SOCKET_PATH=/var/run/redis/redis.sock
-# export REDIS_PASSWORD=your_password
-
-# Common variables
-export REDIS_DB=0
-export API_HOST=0.0.0.0
-export API_PORT=8080
-```
-
-### 4. Run the Service
 ```bash
 cd services/alarmsrv
 cargo run
 ```
 
-Service will start on `http://localhost:8080`
+### 配置文件
 
-## 📡 REST API Reference
+主配置文件位于 `config/default.yml`：
 
-### Health & Status
-```bash
-# Health check
-GET /health
-
-# Service status with statistics
-GET /status
-# Response: service info, active alarms, Redis connection status
+```yaml
+service:
+  name: "alarmsrv"
+  host: "0.0.0.0"
+  port: 8084
+  
+redis:
+  url: "redis://localhost:6379"
+  
+alarm:
+  auto_classify: true
+  auto_escalate: true
+  retention_days: 30
+  
+monitoring:
+  patterns:
+    - "comsrv:*:m"  # 监控测量值
+    - "comsrv:*:s"  # 监控信号值
+    - "modsrv:*:measurement"  # 监控计算结果
+    
+logging:
+  level: "info"
+  file: "logs/alarmsrv.log"
 ```
 
-### Alarm Management
-```bash
-# List alarms with optional filtering
-GET /alarms?category=Environmental&level=Critical&status=Active&limit=50
+## Redis 数据结构
 
-# Create new alarm
-POST /alarms
-Content-Type: application/json
-{
-  "title": "High Temperature Alert",
-  "description": "Critical temperature detected: 95.2°C",
-  "level": "Critical"
-}
+### 告警存储
 
-# Acknowledge alarm
-POST /alarms/{id}/ack
+**键格式**: `alarm:{alarmID}`
 
-# Resolve alarm
-POST /alarms/{id}/resolve
-```
-
-### Classification & Analytics
-```bash
-# Get alarm statistics
-GET /stats
-# Response: counts by category, level, status, trends
-
-# Classify existing alarms
-POST /alarms/classify
-# Response: classification results
-
-# Get available categories
-GET /alarms/categories
-# Response: Environmental, Power, Communication, System, Security
-```
-
-## 🏷️ Alarm Classification System
-
-### Categories
-- **Environmental**: Temperature, humidity, air quality alarms
-- **Power**: Voltage, current, power supply related alarms
-- **Communication**: Network, protocol, connectivity issues
-- **System**: Hardware, software, performance alarms
-- **Security**: Access, authentication, security breaches
-
-### Severity Levels
-- **Critical**: Immediate action required, system failure imminent
-- **Major**: Significant impact, requires urgent attention
-- **Minor**: Limited impact, scheduled maintenance needed
-- **Warning**: Potential issue, monitoring required
-- **Info**: Informational, no action needed
-
-### Classification Rules
-```rust
-// Example classification patterns
-Environmental: ["temperature", "temp", "humidity", "°C", "°F"]
-Power: ["voltage", "current", "power", "supply", "battery"]
-Communication: ["connection", "network", "timeout", "protocol"]
-System: ["cpu", "memory", "disk", "performance", "service"]
-Security: ["access", "auth", "login", "security", "breach"]
-```
-
-## 🔄 Auto-Triggered Alarms
-
-The service monitors Redis data streams and automatically generates alarms based on configured thresholds:
-
-### Temperature Monitoring
-```bash
-# Test auto alarm generation
-redis-cli PUBLISH ems:data:temperature '{"value": 85.5, "unit": "°C", "location": "Server Room"}'
-```
-
-### Custom Data Patterns
+**值格式** (JSON):
 ```json
 {
-  "value": 95.2,
-  "unit": "°C", 
-  "location": "Generator Room",
-  "equipment_id": "GEN_001",
-  "timestamp": "2024-01-15T10:30:00Z"
-}
-```
-
-## 📈 Monitoring & Metrics
-
-### Redis Storage Structure
-```
-alarms:all              # Sorted set of all alarms
-alarms:category:{cat}   # Alarms by category
-alarms:level:{level}    # Alarms by severity level
-alarms:status:{status}  # Alarms by status
-alarms:date:{date}      # Alarms by date
-alarms:stats            # Statistics hash
-alarm:{id}              # Individual alarm data
-```
-
-### Edge System Integration
-
-The alarm data is published to Redis channels for netsrv to handle external communications:
-
-```json
-{
-  "alarm_id": "uuid-string",
-  "title": "High Temperature Alert",
+  "id": "550e8400-e29b-41d4-a716-446655440000",
+  "title": "高温告警",
+  "description": "服务器机房温度超过阈值",
   "category": "Environmental",
   "level": "Critical",
   "status": "Active",
-  "timestamp": "2024-01-15T10:30:00Z",
-  "source": "alarmsrv",
-  "metadata": {
-    "equipment_id": "HVAC_001",
-    "location": "Server Room",
-    "value": 85.5,
-    "unit": "°C"
+  "source": {
+    "channel_id": 1001,
+    "point_id": 10001,
+    "value": 45.500000
+  },
+  "created_at": "2025-07-23T10:00:00Z",
+  "updated_at": "2025-07-23T10:00:00Z",
+  "acknowledged_at": null,
+  "resolved_at": null
+}
+```
+
+### 索引结构
+
+```
+# 按状态索引
+alarm:index:active → SET of alarm IDs
+alarm:index:acknowledged → SET of alarm IDs
+alarm:index:resolved → SET of alarm IDs
+
+# 按级别索引
+alarm:index:level:critical → SET of alarm IDs
+alarm:index:level:major → SET of alarm IDs
+alarm:index:level:minor → SET of alarm IDs
+
+# 按分类索引
+alarm:index:category:environmental → SET of alarm IDs
+alarm:index:category:power → SET of alarm IDs
+
+# 按日期索引
+alarm:index:date:2025-07-23 → SET of alarm IDs
+```
+
+## 告警分类
+
+### 分类规则
+
+```yaml
+categories:
+  Environmental:
+    patterns: ["温度", "temperature", "湿度", "humidity", "°C"]
+    description: "环境监测相关告警"
+    
+  Power:
+    patterns: ["电压", "voltage", "电流", "current", "功率", "power"]
+    description: "电力系统相关告警"
+    
+  Communication:
+    patterns: ["通信", "connection", "超时", "timeout", "离线"]
+    description: "通信和网络相关告警"
+    
+  System:
+    patterns: ["CPU", "内存", "memory", "磁盘", "disk", "服务"]
+    description: "系统性能相关告警"
+    
+  Security:
+    patterns: ["访问", "access", "认证", "auth", "安全", "security"]
+    description: "安全相关告警"
+```
+
+### 严重级别
+
+- **Critical** (严重): 需要立即处理，系统面临故障
+- **Major** (主要): 严重影响，需要紧急处理
+- **Minor** (次要): 有限影响，计划维护
+- **Warning** (警告): 潜在问题，需要监控
+- **Info** (信息): 信息性质，无需行动
+
+## 告警触发机制
+
+### 阈值配置
+
+```yaml
+thresholds:
+  - point_type: "m"
+    field: "temperature"
+    conditions:
+      - operator: ">"
+        value: 40.0
+        level: "Warning"
+      - operator: ">"
+        value: 45.0
+        level: "Critical"
+        
+  - point_type: "m"
+    field: "voltage"
+    conditions:
+      - operator: "<"
+        value: 180.0
+        level: "Major"
+      - operator: ">"
+        value: 250.0
+        level: "Major"
+```
+
+### 数据监控
+
+```rust
+// 监控 comsrv 数据变化
+pub async fn monitor_data_changes(&self) {
+    let mut pubsub = self.redis_client.get_async_pubsub().await?;
+    
+    // 订阅数据通道
+    pubsub.psubscribe("comsrv:*:*").await?;
+    
+    while let Some(msg) = pubsub.on_message().next().await {
+        let channel: String = msg.get_channel_name()?;
+        let payload: String = msg.get_payload()?;
+        
+        // 解析并检查告警条件
+        if let Some(alarm) = self.check_alarm_conditions(&channel, &payload).await {
+            self.create_alarm(alarm).await?;
+        }
+    }
+}
+```
+
+## API 接口
+
+### 告警管理
+
+```bash
+# 获取告警列表
+GET /alarms?status=active&level=critical&limit=50
+
+# 获取单个告警
+GET /alarms/{id}
+
+# 确认告警
+POST /alarms/{id}/acknowledge
+{
+  "acknowledged_by": "operator1",
+  "notes": "正在处理"
+}
+
+# 解决告警
+POST /alarms/{id}/resolve
+{
+  "resolved_by": "operator1",
+  "resolution": "已更换故障设备"
+}
+```
+
+### 统计信息
+
+```bash
+# 获取告警统计
+GET /stats
+```
+
+响应：
+```json
+{
+  "total": 150,
+  "by_status": {
+    "active": 10,
+    "acknowledged": 5,
+    "resolved": 135
+  },
+  "by_level": {
+    "critical": 2,
+    "major": 3,
+    "minor": 5,
+    "warning": 8,
+    "info": 132
+  },
+  "by_category": {
+    "environmental": 45,
+    "power": 60,
+    "communication": 20,
+    "system": 15,
+    "security": 10
   }
 }
 ```
 
-**Redis Channels:**
-- `ems:data:alarms` - Real-time alarm events for netsrv
-- `ems:cloud:alarms:queue` - Batch processing queue
+### 配置管理
 
-## ⚙️ Configuration Details
+```bash
+# 获取阈值配置
+GET /config/thresholds
 
-### Complete Configuration File
+# 更新阈值配置
+PUT /config/thresholds
+Content-Type: application/json
+
+# 重载配置
+POST /config/reload
+```
+
+## 自动升级机制
+
+### 升级规则
+
 ```yaml
-redis:
-  host: localhost
-  port: 6379
-  password: null
-  database: 0
-  timeout_ms: 5000
-  max_connections: 10
-
-api:
-  host: 0.0.0.0
-  port: 8080
-  cors_enabled: true
-  max_request_size: 1048576
-
-storage:
-  retention_days: 30
-  max_alarms_per_category: 10000
-  cleanup_interval_seconds: 3600
-
-classification:
-  confidence_threshold: 0.8
-  auto_escalation_enabled: true
-  escalation_rules:
-    - from_level: "Warning"
-      to_level: "Minor"
-      after_seconds: 3600
-    - from_level: "Minor"
-      to_level: "Major"
-      after_seconds: 1800
-
-edge_system:
-  redis_publish_enabled: true
-  netsrv_integration: true
-  cloud_queue_enabled: true
+escalation_rules:
+  - from_level: "Warning"
+    to_level: "Minor"
+    after_minutes: 60
+    condition: "not_acknowledged"
+    
+  - from_level: "Minor"
+    to_level: "Major"
+    after_minutes: 30
+    condition: "not_acknowledged"
+    
+  - from_level: "Major"
+    to_level: "Critical"
+    after_minutes: 15
+    condition: "not_resolved"
 ```
 
-## 🧪 Testing
+### 升级处理
 
-### Manual Testing
-```bash
-# Start the service
-cargo run
-
-# Create test alarm
-curl -X POST http://localhost:8080/alarms \
-  -H "Content-Type: application/json" \
-  -d '{"title":"Test Alarm","description":"Test description","level":"Warning"}'
-
-# Check statistics
-curl http://localhost:8080/stats
-
-# List alarms
-curl http://localhost:8080/alarms
-```
-
-### Integration Testing
-```bash
-# Run all tests
-cargo test
-
-# Run specific test module
-cargo test classification_tests
-cargo test storage_tests
-```
-
-## 🔧 Development
-
-### Project Structure
-```
-src/
-├── main.rs           # Main service entry point
-├── types.rs          # Data structures and enums
-├── config.rs         # Configuration management
-├── storage.rs        # Redis storage implementation
-├── classifier.rs     # Intelligent classification engine
-└── lib.rs           # Library exports
-```
-
-### Adding New Classification Rules
 ```rust
-// In classifier.rs
-fn create_custom_rules() -> Vec<ClassificationRule> {
-    vec![
-        ClassificationRule {
-            category: AlarmCategory::Custom,
-            patterns: vec!["custom_pattern".to_string()],
-            weight: 1.0,
-            min_confidence: 0.7,
+pub async fn check_escalations(&self) -> Result<()> {
+    let active_alarms = self.get_active_alarms().await?;
+    
+    for alarm in active_alarms {
+        if let Some(new_level) = self.should_escalate(&alarm) {
+            self.escalate_alarm(&alarm.id, new_level).await?;
+            self.notify_escalation(&alarm, new_level).await?;
         }
-    ]
+    }
+    
+    Ok(())
 }
 ```
 
-## 📊 Performance Metrics
+## 通知集成
 
-- **Response Time**: < 10ms for alarm creation
-- **Throughput**: > 1000 alarms/second processing capacity
-- **Storage**: Efficient Redis indexing with O(log N) queries
-- **Memory Usage**: < 100MB baseline, scales with alarm volume
-- **Cleanup**: Automatic cleanup maintains optimal performance
+### 发布告警事件
 
-## 🚀 Deployment
+告警事件发布到 Redis 供其他服务（如 netsrv）处理：
 
-### Docker Deployment
-```dockerfile
-FROM rust:1.75 as builder
-WORKDIR /app
-COPY . .
-RUN cargo build --release
+```rust
+// 发布格式
+let event = AlarmEvent {
+    alarm_id: alarm.id.clone(),
+    event_type: "created", // created, acknowledged, resolved, escalated
+    alarm_data: alarm.clone(),
+    timestamp: Utc::now(),
+};
 
-FROM debian:bookworm-slim
-RUN apt-get update && apt-get install -y ca-certificates
-COPY --from=builder /app/target/release/alarmsrv /usr/local/bin/
-CMD ["alarmsrv"]
+// 发布到通道
+redis_client.publish(
+    "alarm:events",
+    serde_json::to_string(&event)?,
+).await?;
 ```
 
-### Docker Compose
-```yaml
-version: '3.8'
-services:
-  alarmsrv:
-    build: .
-    ports:
-      - "8080:8080"
-    environment:
-      - REDIS_HOST=redis
-      - REDIS_PORT=6379
-    depends_on:
-      - redis
-  
-  redis:
-    image: redis:7-alpine
-    ports:
-      - "6379:6379"
+## 数据清理
+
+### 自动清理策略
+
+```rust
+pub async fn cleanup_old_alarms(&self) -> Result<()> {
+    let cutoff_date = Utc::now() - Duration::days(self.config.retention_days);
+    
+    // 查找过期的已解决告警
+    let old_alarms = self.find_resolved_alarms_before(cutoff_date).await?;
+    
+    for alarm_id in old_alarms {
+        // 从所有索引中移除
+        self.remove_from_indexes(&alarm_id).await?;
+        
+        // 删除告警数据
+        self.redis_client.del(format!("alarm:{}", alarm_id)).await?;
+    }
+    
+    info!("Cleaned up {} old alarms", old_alarms.len());
+    Ok(())
+}
 ```
 
-## 🔍 Troubleshooting
+## 监控指标
 
-### Common Issues
-1. **Redis Connection Failed**: Check Redis server status and network connectivity
-2. **High Memory Usage**: Adjust retention settings and enable cleanup
-3. **Classification Accuracy**: Tune confidence thresholds and add custom rules
-4. **API Rate Limiting**: Implement rate limiting for high-volume scenarios
+通过 `/metrics` 端点暴露 Prometheus 指标：
 
-### Logs Analysis
+- `alarmsrv_alarms_total` - 告警总数
+- `alarmsrv_alarms_active` - 活跃告警数
+- `alarmsrv_alarm_response_time` - 告警响应时间
+- `alarmsrv_escalations_total` - 升级次数
+
+## 故障排查
+
+### 告警未触发
+
+1. 检查监控模式是否正确配置
+2. 验证阈值设置是否合理
+3. 查看日志中的错误信息
+
+### Redis 连接问题
+
 ```bash
-# Enable debug logging
-RUST_LOG=debug cargo run
+# 检查 Redis 连接
+redis-cli ping
 
-# Monitor Redis operations
-redis-cli monitor
+# 查看告警数据
+redis-cli keys "alarm:*" | head -10
 
-# Check alarm statistics
-curl http://localhost:8080/stats | jq
+# 查看索引
+redis-cli smembers "alarm:index:active"
 ```
 
-## 📞 Support
+## 环境变量
 
-For questions, issues, or contributions:
-- Create issues in the project repository
-- Check the main Voltage EMS documentation
-- Review the API documentation and examples
-- Monitor system logs for detailed error information
+- `RUST_LOG` - 日志级别
+- `ALARMSRV_CONFIG` - 配置文件路径
+- `REDIS_URL` - Redis 连接地址
 
-## 🏗️ Edge System Design
+## 相关文档
 
-### Distributed Responsibility Architecture
-
-**Service Responsibilities:**
-- **alarmsrv**: Alarm detection, classification, and storage management
-- **Redis**: Data hub, message queue, and event distribution
-- **netsrv**: External network communications and cloud integrations
-
-**Design Benefits:**
-- 📦 **Resource Optimization**: Reduced network dependencies on edge devices
-- 🔄 **Loose Coupling**: Independent service development and deployment
-- 🚀 **High Performance**: Redis provides millisecond-level data access
-- 🛡️ **Fault Tolerance**: Service failure isolation, high system stability
-
-**Data Flow:**
-```
-Alarm Event → Redis Storage → Redis PUBLISH → netsrv → External Systems
-           ↓
-     Multi-dimensional Indexing
-```
-
-This architecture ensures that alarmsrv remains lightweight and focused on its core mission while leveraging the system's distributed capabilities for comprehensive alarm management and external integrations.
+- [架构设计](docs/architecture.md)
+- [告警规则配置](docs/alarm-rules.md)

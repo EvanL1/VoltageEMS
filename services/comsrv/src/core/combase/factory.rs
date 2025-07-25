@@ -2,16 +2,15 @@
 //!
 //! 提供协议实例的创建、管理和生命周期控制
 
-use ahash::AHashMap;
 use async_trait::async_trait;
 use dashmap::DashMap;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use tracing::{debug, error, info, warn};
+use tracing::{error, info};
 
 use crate::core::combase::command::{CommandSubscriber, CommandSubscriberConfig};
-use crate::core::combase::core::ComBase;
+use crate::core::combase::core::{ComBase, PointData};
 use crate::core::config::{ChannelConfig, ChannelLoggingConfig, ConfigManager, ProtocolType};
 use crate::utils::error::{ComSrvError, Result};
 use std::str::FromStr;
@@ -122,8 +121,7 @@ impl ProtocolFactory {
     /// 注册协议工厂
     pub fn register_protocol_factory(&self, factory: Arc<dyn ProtocolClientFactory>) {
         let protocol_type = factory.protocol_type();
-        self.protocol_factories
-            .insert(protocol_type.clone(), factory);
+        self.protocol_factories.insert(protocol_type, factory);
         info!("Registered protocol factory for {protocol_type:?}");
     }
 
@@ -163,7 +161,7 @@ impl ProtocolFactory {
     pub fn get_registered_protocols(&self) -> Vec<ProtocolType> {
         self.protocol_factories
             .iter()
-            .map(|entry| entry.key().clone())
+            .map(|entry| *entry.key())
             .collect()
     }
 
@@ -171,7 +169,7 @@ impl ProtocolFactory {
     pub async fn create_channel(
         &self,
         channel_config: &ChannelConfig,
-        config_manager: Option<&ConfigManager>,
+        _config_manager: Option<&ConfigManager>,
     ) -> Result<Arc<RwLock<Box<dyn ComBase>>>> {
         let channel_id = channel_config.id;
 
@@ -323,7 +321,7 @@ impl ProtocolFactory {
             Some(ChannelStats {
                 channel_id,
                 name: entry.metadata.name.clone(),
-                protocol_type: entry.metadata.protocol_type.clone(),
+                protocol_type: entry.metadata.protocol_type,
                 is_connected: status.is_connected,
                 created_at: entry.metadata.created_at,
                 last_accessed: *entry.metadata.last_accessed.read().await,
@@ -442,7 +440,7 @@ pub fn create_factory_with_custom_protocols(
 #[cfg(any(test, feature = "test-utils"))]
 pub mod test_support {
     use super::*;
-    use crate::core::combase::core::{ChannelStatus, DefaultProtocol, PointData};
+    use crate::core::combase::core::{ChannelStatus, DefaultProtocol, PointData, RedisValue};
     use std::sync::atomic::{AtomicBool, Ordering};
 
     /// 测试用的Mock通信基础实现
@@ -509,16 +507,13 @@ pub mod test_support {
             Ok(HashMap::new())
         }
 
-        async fn control(
-            &mut self,
-            commands: Vec<(u32, voltage_libs::redis::RedisValue)>,
-        ) -> Result<Vec<(u32, bool)>> {
+        async fn control(&mut self, commands: Vec<(u32, RedisValue)>) -> Result<Vec<(u32, bool)>> {
             Ok(commands.into_iter().map(|(id, _)| (id, true)).collect())
         }
 
         async fn adjustment(
             &mut self,
-            adjustments: Vec<(u32, voltage_libs::redis::RedisValue)>,
+            adjustments: Vec<(u32, RedisValue)>,
         ) -> Result<Vec<(u32, bool)>> {
             Ok(adjustments.into_iter().map(|(id, _)| (id, true)).collect())
         }
@@ -603,10 +598,10 @@ mod tests {
             enabled: true,
             enable_control: Some(false),
             redis_url: None,
-            points_config: None,
+            table_config: None,
             csv_base_path: None,
             point_count: Some(10),
-            logging: None,
+            logging: ChannelLoggingConfig::default(),
         };
 
         let channel = factory.create_channel(&channel_config, None).await.unwrap();

@@ -1,13 +1,13 @@
-//! comsrv 存储模块
+//! comsrv 实时数据库模块
 //!
-//! 实现扁平化的键值存储，专为实时数据优化
+//! 实现扁平化的键值存储，专为实时数据优化的实时数据库(RTDB)
 
 mod publisher;
-mod storage;
+mod rtdb_impl;
 mod types;
 
 pub use publisher::{PublishUpdates, Publisher, PublisherConfig};
-pub use storage::{RetryConfig, Storage};
+pub use rtdb_impl::{RetryConfig, RtdbStorage};
 pub use types::{PointData, PointUpdate};
 
 use crate::utils::error::Result;

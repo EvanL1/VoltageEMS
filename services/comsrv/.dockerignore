@@ -4,7 +4,7 @@
 
 # Build artifacts
 target/
-# Cargo.lock  # Need this for reproducible builds
+Cargo.lock
 
 # IDE files
 .idea/
@@ -17,55 +17,33 @@ target/
 .DS_Store
 Thumbs.db
 
-# Test files
-tests/
-*.test
-*.spec
-test-*.yaml
-integration-test-report.txt
-comsrv-test.log
+# Test results
+test-results/
+coverage/
+*.profraw
+*.profdata
+
+# Logs
+logs/
+*.log
 
 # Documentation
 docs/
 *.md
-!README.md
 
-# Scripts (except necessary ones)
-scripts/
-!scripts/entrypoint.sh
+# Docker files
+Dockerfile
+docker-compose*.yml
+.dockerignore
 
-# Python files
-*.py
-__pycache__/
-*.pyc
-.pytest_cache/
-requirements.txt
+# Development files
+.env
+.env.local
+.env.*.local
 
 # Temporary files
+tmp/
+temp/
 *.tmp
 *.temp
-*.log
-logs/
-
-# PID files
-.test-pids/
-*.pid
-
-# Coverage reports
-coverage/
-*.coverage
-htmlcov/
-
-# Environment files
-.env
-.env.*
-test.env
-
-# Backup files
-*.bak
-*.backup
-*~
-
-# Build scripts (not needed in container)
-build.sh
-test.sh
+EOF < /dev/null

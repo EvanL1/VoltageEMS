@@ -1,0 +1,32 @@
+# Git files
+.git
+.gitignore
+
+# Build artifacts
+target/
+**/target/
+
+# IDE files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Temporary files
+*.tmp
+*.temp
+logs/
+
+# Test artifacts
+test-plan/test-reports/
+
+# Docker files (avoid recursive copy)
+docker-compose*.yml
+Dockerfile*
+
+# 保留所有源代码和配置

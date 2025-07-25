@@ -13,17 +13,10 @@ path = "src/lib.rs"
 name = "comsrv"
 path = "src/main.rs"
 
-[[bin]]
-name = "test_modbus"
-path = "src/bin/test_modbus.rs"
+# [[bin]]
+# name = "test_modbus"
+# path = "src/bin/test_modbus.rs"
 
-[[bin]]
-name = "test_logging"
-path = "src/bin/test_logging.rs"
-
-[[bin]]
-name = "test_debug_logging"
-path = "src/bin/test_debug_logging.rs"
 
 
 [dependencies]
@@ -104,7 +97,7 @@ rppal = { version = "0.17", optional = true }  # Raspberry Pi GPIO (Linux only)
 tracing-test = "0.2"
 
 [features]
-default = []
+default = ["modbus"]
 modbus = []
 can = ["socketcan"]
 iec60870 = []

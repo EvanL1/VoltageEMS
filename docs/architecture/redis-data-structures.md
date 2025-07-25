@@ -1,8 +1,15 @@
 # VoltageEMS Redis数据结构规范
 
-**版本**: v2.0
-**更新日期**: 2025-07-22
+**版本**: v3.2
+**更新日期**: 2025-07-23
 **适用系统**: VoltageEMS v2.x
+
+## 重要更新 v3.2
+
+- **标准化浮点精度**: 所有浮点数值强制使用6位小数精度格式化
+- **modsrv数据简化**: modsrv存储值不再包含时间戳，仅存储计算值
+- **通用数据类型**: 引入 `voltage_libs::types::StandardFloat` 和 `PointData`
+- **库级别标准化**: 提供通用格式化方法，各服务按需选择
 
 ## 1. 概览
 
@@ -31,8 +38,41 @@ VoltageEMS采用Redis作为中央消息总线和实时数据存储，实现各�
 - **点位级精确访问**: 支持O(1)查询性能
 - **Pub/Sub一致性**: 存储键与发布通道格式一致
 - **扩展性**: 支持百万级点位实时处理
+- **标准化数值精度**: 所有浮点数值强制使用6位小数格式 (例: "25.123456")
 
-### 1.3 数据流向
+### 1.3 数值格式标准
+
+**标准化数据类型** (`voltage_libs::types`):
+
+```rust
+// 标准化浮点数 - 强制6位小数精度
+pub struct StandardFloat(f64);
+
+// 点位数据结构
+pub struct PointData {
+    pub value: StandardFloat,   // 标准化数值
+    pub timestamp: i64,         // 时间戳(毫秒)
+}
+```
+
+**通用格式化方法**:
+```rust
+// 通用方法 - 各服务按需选择
+point_data.to_redis_value()              // → "25.123456"
+point_data.to_redis_with_timestamp()     // → "25.123456:1642592400000"
+
+// 解析方法
+PointData::from_redis_value("25.123456")
+PointData::from_redis_with_timestamp("25.123456:1642592400000")
+```
+
+**服务实际使用**:
+- **comsrv**: 使用 `to_redis_value()` - 仅存储数值
+- **modsrv**: 使用 `to_redis_value()` - 仅存储计算值
+- **hissrv**: 根据需要选择带或不带时间戳
+- **所有发布消息**: 统一使用6位小数格式
+
+### 1.4 数据流向
 
 ```
 设备数据 → comsrv → Redis存储/发布 → 其他服务订阅处理
@@ -42,9 +82,80 @@ VoltageEMS采用Redis作为中央消息总线和实时数据存储，实现各�
          批量转存InfluxDB
 ```
 
-## 2. 统一键格式规范
+## 2. 标准化库使用指南
 
-### 2.1 键命名约定
+### 2.1 引入标准化类型
+
+各服务应使用统一的数据类型：
+
+```rust
+use voltage_libs::types::{StandardFloat, PointData};
+
+// 创建标准化数值
+let value = StandardFloat::new(25.123456789);  // 自动格式化为6位小数
+let point = PointData::new(25.123456789);      // 包含时间戳
+
+// 类型转换
+let std_float: StandardFloat = 25.12_f64.into();
+let raw_value: f64 = std_float.into();
+```
+
+### 2.2 Redis存储格式选择
+
+```rust
+// 各服务根据需求选择格式
+let point = PointData::new(25.123456);
+
+// comsrv & modsrv: 仅存储值
+let redis_value = point.to_redis_value();           // "25.123456"
+
+// hissrv或需要时间戳的场景: 值+时间戳  
+let redis_full = point.to_redis_with_timestamp();   // "25.123456:1642592400000"
+
+// 解析回数据结构
+let parsed = PointData::from_redis_value("25.123456")?;
+let parsed_full = PointData::from_redis_with_timestamp("25.123456:1642592400000")?;
+```
+
+### 2.3 服务特定使用模式
+
+**comsrv示例**:
+```rust
+// 存储到Redis Hash
+let hash_key = format!("comsrv:{}:{}", channel_id, point_type);
+let field = point_id.to_string();
+let value = point_data.to_redis_value();  // "25.123456"
+redis_client.hset(&hash_key, &field, value).await?;
+
+// 发布消息 
+let message = format!("{}:{}", point_id, point_data.value);  // "10001:25.123456"
+redis_client.publish(&channel, &message).await?;
+```
+
+**modsrv示例**:
+```rust
+// 存储计算结果（无时间戳）
+let hash_key = format!("modsrv:{}:measurement", model_name);
+let field = "total_power";
+let calculated_value = PointData::new(1200.5);
+let value = calculated_value.to_redis_value();  // "1200.500000"
+redis_client.hset(&hash_key, field, value).await?;
+```
+
+### 2.4 强制精度保证
+
+所有浮点数值在系统中自动维持6位小数精度：
+
+```rust
+// 输入任意精度的数值
+StandardFloat::new(25.1)        // → 显示为 "25.100000"
+StandardFloat::new(25.123456789) // → 显示为 "25.123457" (四舍五入)
+StandardFloat::new(0.000001)    // → 显示为 "0.000001"
+```
+
+## 3. 统一键格式规范
+
+### 3.1 键命名约定
 
 **基本格式**: `{service}:{entity}:{type}:{id}`
 
@@ -58,7 +169,7 @@ VoltageEMS采用Redis作为中央消息总线和实时数据存储，实现各�
 - 冒号`:`用作分隔符，不可在字段中使用
 - 总长度不超过256字符
 
-### 2.2 点位级精确订阅
+### 3.2 点位级精确订阅
 
 Redis键与Pub/Sub通道保持一致，实现点位级精确订阅：
 
@@ -76,9 +187,9 @@ PSUBSCRIBE comsrv:1001:*
 PSUBSCRIBE comsrv:*
 ```
 
-## 3. 服务数据结构定义
+## 4. 服务数据结构定义
 
-### 3.1 comsrv (通信服务)
+### 4.1 comsrv (通信服务)
 
 **职责**: 设备数据采集、协议转换、实时数据发布
 
@@ -254,7 +365,7 @@ alarm:realtime → {
 - **索引数据**: 跟随主数据清理
 - **分片数据**: 按配置保留期清理
 
-### 3.3 modsrv (模型服务)
+### 4.3 modsrv (模型服务)
 
 **职责**: 数据模型计算、监视值管理、控制命令执行
 
@@ -274,16 +385,16 @@ alarm:realtime → {
 ```
 键: modsrv:{modelname}:{type}
 字段: 有意义的属性名
-值: "{value}:{timestamp}:{source}"
+值: "{value}" (标准6位小数格式，不含时间戳)
 ```
 
 **测量值示例**:
 ```
 modsrv:power_calc:measurement → {
-    "total_power": "1200.5:1642592400000:calculation",
-    "efficiency": "0.856:1642592400000:calculation",
-    "load_factor": "0.78:1642592400000:calculation",
-    "reactive_power": "350.2:1642592400000:calculation"
+    "total_power": "1200.500000",      # 仅计算值，6位小数精度
+    "efficiency": "0.856000",          # 效率值
+    "load_factor": "0.780000",         # 负载率
+    "reactive_power": "350.200000"     # 无功功率
 }
 ```
 
@@ -340,15 +451,15 @@ HGETALL modsrv:power_calc:measurement
 **写入操作**:
 ```bash
 # 单个更新
-HSET modsrv:power_calc:measurement total_power "1250.5:1642592401000:calculation"
+HSET modsrv:power_calc:measurement total_power "1250.500000"
 
 # 批量更新
 HMSET modsrv:power_calc:measurement \
-    total_power "1250.5:1642592401000:calculation" \
-    efficiency "0.862:1642592401000:calculation"
+    total_power "1250.500000" \
+    efficiency "0.862000"
 
 # 发布通知
-PUBLISH modsrv:power_calc:measurement "total_power:1250.5"
+PUBLISH modsrv:power_calc:measurement "total_power:1250.500000"
 ```
 
 #### 3.3.5 TTL策略
@@ -455,7 +566,7 @@ PUBLISH modsrv:power_calc:measurement "total_power:1250.5"
 - **执行历史**: 7天过期
 - **临时数据**: 1小时过期
 
-### 3.5 hissrv (历史数据服务)
+### 4.5 hissrv (历史数据服务)
 
 **职责**: 历史数据采集、存储转换、查询服务
 

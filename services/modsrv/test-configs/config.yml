@@ -1,0 +1,35 @@
+# ModSrv v2.0测试环境配置
+service_name: "modsrv"
+version: "2.0.0"
+
+# Redis配置
+redis:
+  url: "redis://redis:6379"
+  key_prefix: "modsrv:"
+  connection_timeout_ms: 5000
+  retry_attempts: 3
+
+# 日志配置
+log:
+  level: "debug"
+  file_path: "/logs/modsrv.log"
+
+# API配置
+api:
+  host: "0.0.0.0"
+  port: 8092
+  timeout_seconds: 30
+
+# 模型配置
+models:
+  # 模型配置文件目录
+  models_dir: "/config/models"
+  # 映射配置目录
+  mappings_dir: "/config/mappings"
+  # 自动加载模型配置文件
+  auto_load: true
+  # 模型配置文件格式 (yaml | json)
+  config_format: "json"
+
+# 更新间隔
+update_interval_ms: 1000

@@ -1,695 +1,319 @@
-//! # Configuration Management for Model Service
+//! ModSrv配置管理
 //!
-//! This module provides comprehensive configuration management for the Model Service (ModSrv),
-//! supporting multiple configuration sources:
-//! 1. Local configuration files (YAML/JSON)
-//! 2. Configuration center service (HTTP)
-//! 3. Environment variables (override)
+//! 提供统一的配置加载和管理功能
 
-use crate::error::ModelSrvError;
-use crate::error::Result;
-// use anyhow::Context;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
-use std::time::Duration;
+use tracing::{debug, info, warn};
 
-/// Service identification and metadata
+use crate::error::{ModelSrvError, Result};
+use crate::model::ModelConfig;
+
+/// Redis配置
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ServiceInfo {
-    pub name: String,
-    pub version: String,
-    pub description: String,
-    #[serde(default)]
-    pub instance_id: String,
-}
-
-/// Redis database connection configuration
-#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct RedisConfig {
-    /// Redis server URL (e.g., redis://localhost:6379)
     pub url: String,
-    /// Redis server hostname (legacy, use url instead)
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub host: Option<String>,
-    /// Redis server port (legacy, use url instead)
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub port: Option<u16>,
-    /// Redis database number
-    #[serde(default)]
-    pub database: u8,
-    /// Prefix for all Redis keys
-    #[serde(default = "default_redis_prefix")]
     pub key_prefix: String,
-    /// Connection pool size
-    #[serde(default = "default_pool_size")]
-    pub pool_size: u32,
-    /// Optional password
-    #[serde(default)]
-    pub password: Option<String>,
+    pub connection_timeout_ms: u64,
+    pub retry_attempts: usize,
 }
 
-/// Logging system configuration
-#[derive(Debug, Deserialize, Serialize, Clone)]
-pub struct LoggingConfig {
-    /// Log level filter (trace, debug, info, warn, error)
-    #[serde(default = "default_log_level")]
-    pub level: String,
-    /// Path to log file for persistent logging
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub file: Option<String>,
-    /// Enable console output for logs
-    #[serde(default = "default_log_console")]
-    pub console: bool,
-    /// Log directory
-    #[serde(default = "default_log_dir")]
-    pub log_dir: String,
-    /// Maximum log file size in bytes
-    #[serde(default = "default_max_file_size")]
-    pub max_file_size: u64,
-    /// Maximum number of log files to keep
-    #[serde(default = "default_max_files")]
-    pub max_files: u32,
+impl Default for RedisConfig {
+    fn default() -> Self {
+        Self {
+            url: "redis://localhost:6379".to_string(),
+            key_prefix: "modsrv:".to_string(),
+            connection_timeout_ms: 5000,
+            retry_attempts: 3,
+        }
+    }
 }
 
-/// Model execution and template configuration
-#[derive(Debug, Deserialize, Serialize, Clone)]
-pub struct ModelConfig {
-    /// Model execution interval in milliseconds
-    pub update_interval_ms: u64,
-    /// Redis key pattern for model configurations
-    pub config_key_pattern: String,
-    /// Redis key pattern for input data
-    pub data_key_pattern: String,
-    /// Redis key pattern for model outputs
-    pub output_key_pattern: String,
-    /// Directory containing model templates
-    #[serde(default = "default_templates_dir")]
-    pub templates_dir: String,
-}
-
-/// API configuration for common settings
-#[derive(Debug, Deserialize, Serialize, Clone)]
+/// API服务配置
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ApiConfig {
-    /// API prefix path
-    #[serde(default = "default_api_prefix")]
-    pub prefix: String,
-
-    /// Whether to enable API versioning
-    #[serde(default)]
-    pub enable_versioning: bool,
-
-    /// API version
-    #[serde(default = "default_api_version")]
-    pub version: String,
+    pub host: String,
+    pub port: u16,
+    pub timeout_seconds: u64,
 }
 
 impl Default for ApiConfig {
     fn default() -> Self {
         Self {
-            prefix: default_api_prefix(),
-            enable_versioning: false,
-            version: default_api_version(),
+            host: "0.0.0.0".to_string(),
+            port: 8092,
+            timeout_seconds: 30,
         }
     }
 }
 
-impl ApiConfig {
-    /// Build a path with the API prefix
-    pub fn build_path(&self, path: &str) -> String {
-        if path.starts_with('/') {
-            format!("{}{}", self.prefix, path)
-        } else {
-            format!("{}/{}", self.prefix, path)
-        }
-    }
+/// 日志配置
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LogConfig {
+    pub level: String,
+    pub file_path: Option<String>,
 }
 
-/// HTTP API server configuration (service-specific)
-#[derive(Debug, Deserialize, Serialize, Clone)]
-pub struct ServiceApiConfig {
-    /// API server host address
-    #[serde(default = "default_api_host")]
-    pub host: String,
-
-    /// API server port number
-    #[serde(default = "default_api_port")]
-    pub port: u16,
-}
-
-impl Default for ServiceApiConfig {
+impl Default for LogConfig {
     fn default() -> Self {
         Self {
-            host: default_api_host(),
-            port: default_api_port(),
+            level: "info".to_string(),
+            file_path: None,
         }
     }
 }
 
-/// Control operations configuration
-#[derive(Debug, Deserialize, Serialize, Clone)]
-pub struct ControlConfig {
-    /// Redis key pattern for control operations
-    pub operation_key_pattern: String,
-    /// Whether control operations are enabled
-    #[serde(default = "default_control_enabled")]
-    pub enabled: bool,
-}
-
-/// System monitoring and alerting configuration
-#[derive(Debug, Deserialize, Serialize, Clone)]
-pub struct MonitoringConfig {
-    /// Whether monitoring is enabled
-    #[serde(default)]
-    pub enabled: bool,
-    /// Performance notification threshold in milliseconds
-    pub notification_threshold_ms: Option<u128>,
-    /// Metrics port
-    #[serde(default = "default_metrics_port")]
-    pub metrics_port: u16,
-}
-
-impl Default for MonitoringConfig {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            notification_threshold_ms: None,
-            metrics_port: default_metrics_port(),
-        }
-    }
-}
-
-/// Storage configuration
-#[derive(Debug, Deserialize, Serialize, Clone)]
-pub struct StorageConfig {
-    /// Whether to use Redis storage backend
-    #[serde(default = "default_use_redis")]
-    pub use_redis: bool,
-
-    /// Storage backend mode (memory, redis, hybrid)
-    #[serde(default = "default_storage_mode")]
-    pub storage_mode: String,
-
-    /// Data synchronization interval in seconds
-    #[serde(default = "default_sync_interval_secs")]
-    pub sync_interval_secs: u64,
-}
-
-/// Performance configuration
-#[derive(Debug, Deserialize, Serialize, Clone)]
-pub struct PerformanceConfig {
-    /// Maximum number of concurrent model executions
-    #[serde(default = "default_max_concurrent_models")]
-    pub max_concurrent_models: usize,
-
-    /// Cache TTL in seconds
-    #[serde(default = "default_cache_ttl_secs")]
-    pub cache_ttl_secs: u64,
-
-    /// Enable performance metrics collection
-    #[serde(default = "default_enable_metrics")]
-    pub enable_metrics: bool,
-
-    /// Model execution timeout in seconds
-    #[serde(default = "default_model_timeout_secs")]
-    pub model_timeout_secs: u64,
-
-    /// Batch size for Redis operations
-    #[serde(default = "default_redis_batch_size")]
-    pub redis_batch_size: usize,
-}
-
-impl Default for StorageConfig {
-    fn default() -> Self {
-        Self {
-            use_redis: default_use_redis(),
-            storage_mode: default_storage_mode(),
-            sync_interval_secs: default_sync_interval_secs(),
-        }
-    }
-}
-
-impl Default for PerformanceConfig {
-    fn default() -> Self {
-        Self {
-            max_concurrent_models: default_max_concurrent_models(),
-            cache_ttl_secs: default_cache_ttl_secs(),
-            enable_metrics: default_enable_metrics(),
-            model_timeout_secs: default_model_timeout_secs(),
-            redis_batch_size: default_redis_batch_size(),
-        }
-    }
-}
-
-/// Configuration for the Model Service
-#[derive(Debug, Deserialize, Serialize, Clone)]
+/// 主配置结构
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
-    /// Service metadata
-    #[serde(default = "default_service_info")]
-    pub service: ServiceInfo,
-    /// Redis database configuration
+    pub service_name: String,
+    pub version: String,
     pub redis: RedisConfig,
-    /// Logging system configuration
-    pub logging: LoggingConfig,
-    /// Model execution configuration
-    pub model: ModelConfig,
-    /// Control operations configuration
-    pub control: ControlConfig,
-    /// Common API prefix configuration
-    #[serde(default)]
     pub api: ApiConfig,
-    /// Service-specific API configuration
-    #[serde(default)]
-    pub service_api: ServiceApiConfig,
-    /// System monitoring configuration
-    #[serde(default)]
-    pub monitoring: MonitoringConfig,
-    /// Storage configuration
-    #[serde(default)]
-    pub storage: StorageConfig,
-    /// Performance configuration
-    #[serde(default)]
-    pub performance: PerformanceConfig,
-
-    // Legacy fields for compatibility
-    #[serde(skip)]
-    pub templates_dir: String,
-    #[serde(skip)]
-    pub log_level: String,
-    #[serde(skip)]
-    pub use_redis: bool,
-    #[serde(skip)]
-    pub storage_mode: String,
-    #[serde(skip)]
-    pub sync_interval_secs: u64,
+    pub log: LogConfig,
+    pub models: Vec<ModelConfig>,
+    pub update_interval_ms: u64,
 }
 
-// Default value functions
-fn default_service_info() -> ServiceInfo {
-    ServiceInfo {
-        name: "modsrv".to_string(),
-        version: env!("CARGO_PKG_VERSION").to_string(),
-        description: "Model Service for VoltageEMS".to_string(),
-        instance_id: format!("modsrv-{}", uuid::Uuid::new_v4()),
+impl Default for Config {
+    fn default() -> Self {
+        Self {
+            service_name: "modsrv".to_string(),
+            version: "1.0.0".to_string(),
+            redis: RedisConfig::default(),
+            api: ApiConfig::default(),
+            log: LogConfig::default(),
+            models: Vec::new(),
+            update_interval_ms: 1000,
+        }
     }
-}
-
-fn default_redis_prefix() -> String {
-    "voltage:modsrv:".to_string()
-}
-fn default_pool_size() -> u32 {
-    10
-}
-fn default_log_level() -> String {
-    "info".to_string()
-}
-fn default_log_console() -> bool {
-    true
-}
-fn default_log_dir() -> String {
-    "logs".to_string()
-}
-fn default_max_file_size() -> u64 {
-    10 * 1024 * 1024
-} // 10MB
-fn default_max_files() -> u32 {
-    5
-}
-fn default_api_host() -> String {
-    "0.0.0.0".to_string()
-}
-fn default_api_port() -> u16 {
-    8092
-}
-fn default_api_prefix() -> String {
-    "/api/v1".to_string()
-}
-fn default_api_version() -> String {
-    "v1".to_string()
-}
-fn default_metrics_port() -> u16 {
-    9092
-}
-fn default_templates_dir() -> String {
-    "templates".to_string()
-}
-fn default_control_enabled() -> bool {
-    true
-}
-fn default_use_redis() -> bool {
-    true
-}
-fn default_storage_mode() -> String {
-    "hybrid".to_string()
-}
-fn default_sync_interval_secs() -> u64 {
-    60
-}
-fn default_max_concurrent_models() -> usize {
-    10
-}
-fn default_cache_ttl_secs() -> u64 {
-    300 // 5 minutes
-}
-fn default_enable_metrics() -> bool {
-    false
-}
-fn default_model_timeout_secs() -> u64 {
-    30
-}
-fn default_redis_batch_size() -> usize {
-    100
 }
 
 impl Config {
-    /// Create configuration from file (legacy method)
-    pub fn new(config_file: &str) -> Result<Self> {
-        Self::from_file(config_file)
-    }
-
-    /// Load configuration from file
+    /// 从文件加载配置
     pub fn from_file<P: AsRef<Path>>(path: P) -> Result<Self> {
-        let path_ref = path.as_ref();
-        if !path_ref.exists() {
-            return Err(ModelSrvError::ConfigError(format!(
-                "Configuration file not found: {}",
-                path_ref.display()
-            )));
-        }
-
-        let content = std::fs::read_to_string(path_ref).map_err(|e| {
-            ModelSrvError::ConfigError(format!("Failed to read config file: {}", e))
+        let path = path.as_ref();
+        let content = std::fs::read_to_string(path).map_err(|e| {
+            ModelSrvError::ConfigError(format!("无法读取配置文件 {}: {}", path.display(), e))
         })?;
 
-        let mut config: Config = if path_ref.extension().and_then(|s| s.to_str()) == Some("json") {
-            serde_json::from_str(&content)
-                .map_err(|e| ModelSrvError::ConfigError(format!("Failed to parse JSON: {}", e)))?
-        } else {
+        let config: Config = if path.extension().and_then(|s| s.to_str()) == Some("yaml")
+            || path.extension().and_then(|s| s.to_str()) == Some("yml")
+        {
             serde_yaml::from_str(&content)
-                .map_err(|e| ModelSrvError::ConfigError(format!("Failed to parse YAML: {}", e)))?
+                .map_err(|e| ModelSrvError::ConfigError(format!("YAML配置解析失败: {}", e)))?
+        } else {
+            serde_json::from_str(&content)
+                .map_err(|e| ModelSrvError::ConfigError(format!("JSON配置解析失败: {}", e)))?
         };
 
-        // Handle legacy Redis config
-        if config.redis.url.is_empty() {
-            if let (Some(host), Some(port)) = (&config.redis.host, &config.redis.port) {
-                config.redis.url = format!("redis://{}:{}", host, port);
-            } else {
-                config.redis.url = "redis://localhost:6379".to_string();
-            }
-        }
-
-        // Set legacy fields for compatibility
-        config.templates_dir = config.model.templates_dir.clone();
-        config.log_level = config.logging.level.clone();
-        config.use_redis = config.storage.use_redis;
-        config.storage_mode = config.storage.storage_mode.clone();
-        config.sync_interval_secs = config.storage.sync_interval_secs;
-
+        info!("配置加载成功: {}", path.display());
+        debug!("配置内容: {:?}", config);
         Ok(config)
     }
 
-    /// Create default configuration
-    pub fn default() -> Self {
-        let service = default_service_info();
-        let redis = RedisConfig {
-            url: "redis://localhost:6379".to_string(),
-            host: None,
-            port: None,
-            database: 0,
-            key_prefix: default_redis_prefix(),
-            pool_size: default_pool_size(),
-            password: None,
-        };
-        let logging = LoggingConfig {
-            level: default_log_level(),
-            file: Some("modsrv.log".to_string()),
-            console: default_log_console(),
-            log_dir: default_log_dir(),
-            max_file_size: default_max_file_size(),
-            max_files: default_max_files(),
-        };
-        let model = ModelConfig {
-            update_interval_ms: 1000,
-            config_key_pattern: "voltage:modsrv:model:config:*".to_string(),
-            data_key_pattern: "voltage:data:*".to_string(),
-            output_key_pattern: "voltage:modsrv:model:output:*".to_string(),
-            templates_dir: default_templates_dir(),
-        };
-        let control = ControlConfig {
-            operation_key_pattern: "voltage:control:operation:*".to_string(),
-            enabled: default_control_enabled(),
-        };
-        let api = ApiConfig::default();
-        let service_api = ServiceApiConfig::default();
-        let monitoring = MonitoringConfig::default();
-        let storage = StorageConfig {
-            use_redis: default_use_redis(),
-            storage_mode: default_storage_mode(),
-            sync_interval_secs: default_sync_interval_secs(),
-        };
-        let performance = PerformanceConfig::default();
-
-        Config {
-            service,
-            redis,
-            logging,
-            model,
-            control,
-            api,
-            service_api,
-            monitoring,
-            storage,
-            performance,
-            templates_dir: default_templates_dir(),
-            log_level: default_log_level(),
-            use_redis: default_use_redis(),
-            storage_mode: default_storage_mode(),
-            sync_interval_secs: default_sync_interval_secs(),
-        }
-    }
-
-    pub fn get_sync_mode(&self) -> String {
-        self.storage.storage_mode.clone()
-    }
-}
-
-/// Configuration loader with multiple source support
-pub struct ConfigLoader {
-    config_file: Option<String>,
-    config_center_url: Option<String>,
-    env_prefix: String,
-}
-
-impl ConfigLoader {
-    pub fn new() -> Self {
-        Self {
-            config_file: None,
-            config_center_url: None,
-            env_prefix: "MODSRV_".to_string(),
-        }
-    }
-
-    pub fn with_file(mut self, path: impl Into<String>) -> Self {
-        self.config_file = Some(path.into());
-        self
-    }
-
-    pub fn with_config_center(mut self, url: impl Into<String>) -> Self {
-        self.config_center_url = Some(url.into());
-        self
-    }
-
-    pub fn with_env_prefix(mut self, prefix: impl Into<String>) -> Self {
-        self.env_prefix = prefix.into();
-        self
-    }
-
-    /// Load configuration from all sources
-    pub async fn load(&self) -> Result<Config> {
-        // 1. Start with default configuration
+    /// 从环境变量加载配置
+    pub fn from_env() -> Result<Self> {
         let mut config = Config::default();
 
-        // 2. Load from local file if specified
-        if let Some(file_path) = &self.config_file {
+        // Redis配置
+        if let Ok(redis_url) = std::env::var("REDIS_URL") {
+            config.redis.url = redis_url;
+        }
+        if let Ok(redis_prefix) = std::env::var("REDIS_KEY_PREFIX") {
+            config.redis.key_prefix = redis_prefix;
+        }
+
+        // API配置
+        if let Ok(api_host) = std::env::var("API_HOST") {
+            config.api.host = api_host;
+        }
+        if let Ok(api_port) = std::env::var("API_PORT") {
+            config.api.port = api_port
+                .parse()
+                .map_err(|e| ModelSrvError::ConfigError(format!("无效的API端口: {}", e)))?;
+        }
+
+        // 日志配置
+        if let Ok(log_level) = std::env::var("LOG_LEVEL") {
+            config.log.level = log_level;
+        }
+        if let Ok(log_file) = std::env::var("LOG_FILE") {
+            config.log.file_path = Some(log_file);
+        }
+
+        // 更新间隔
+        if let Ok(interval) = std::env::var("UPDATE_INTERVAL_MS") {
+            config.update_interval_ms = interval
+                .parse()
+                .map_err(|e| ModelSrvError::ConfigError(format!("无效的更新间隔: {}", e)))?;
+        }
+
+        info!("从环境变量加载配置完成");
+        Ok(config)
+    }
+
+    /// 自动加载配置（文件优先，环境变量补充）
+    pub fn load() -> Result<Self> {
+        // 按优先级尝试加载配置文件
+        let config_files = [
+            "config/modsrv.yaml",
+            "config/modsrv.yml",
+            "config/default.yaml",
+            "config/default.yml",
+            "modsrv.yaml",
+            "modsrv.yml",
+            "config.yaml",
+            "config.yml",
+        ];
+
+        let mut config = None;
+        for file_path in &config_files {
             if Path::new(file_path).exists() {
-                config = Config::from_file(file_path)?;
-                tracing::info!("Loaded configuration from file: {}", file_path);
-            } else {
-                tracing::warn!(
-                    "Configuration file not found: {}, using defaults",
-                    file_path
-                );
-            }
-        }
-
-        // 3. Try to load from config center
-        if let Some(config_center_url) = &self.config_center_url {
-            match self.load_from_config_center(config_center_url).await {
-                Ok(center_config) => {
-                    config = center_config;
-                    tracing::info!(
-                        "Loaded configuration from config center: {}",
-                        config_center_url
-                    );
-                }
-                Err(e) => {
-                    tracing::warn!("Failed to load from config center: {}", e);
+                match Self::from_file(file_path) {
+                    Ok(cfg) => {
+                        config = Some(cfg);
+                        break;
+                    }
+                    Err(e) => {
+                        warn!("配置文件 {} 加载失败: {}", file_path, e);
+                    }
                 }
             }
         }
 
-        // 4. Apply environment variable overrides
-        config = self.apply_env_overrides(config)?;
+        let mut config = config.unwrap_or_else(|| {
+            info!("未找到配置文件，使用默认配置");
+            Config::default()
+        });
 
-        // 5. Validate configuration
-        self.validate_config(&config)?;
-
-        Ok(config)
-    }
-
-    /// Load configuration from config center
-    async fn load_from_config_center(&self, base_url: &str) -> Result<Config> {
-        let url = format!("{}/api/v1/config/modsrv", base_url);
-        let client = reqwest::Client::new();
-
-        let response = client
-            .get(&url)
-            .header("Accept", "application/json")
-            .timeout(Duration::from_secs(10))
-            .send()
-            .await
-            .map_err(|e| {
-                ModelSrvError::ConfigError(format!("Failed to contact config center: {}", e))
-            })?;
-
-        if !response.status().is_success() {
-            return Err(ModelSrvError::ConfigError(format!(
-                "Config center returned error: {}",
-                response.status()
-            )));
+        // 环境变量覆盖配置
+        if let Ok(redis_url) = std::env::var("REDIS_URL") {
+            config.redis.url = redis_url;
         }
-
-        let mut config: Config = response.json().await.map_err(|e| {
-            ModelSrvError::ConfigError(format!("Failed to parse config center response: {}", e))
-        })?;
-
-        // Set legacy fields
-        config.templates_dir = config.model.templates_dir.clone();
-        config.log_level = config.logging.level.clone();
-        config.use_redis = config.storage.use_redis;
-        config.storage_mode = config.storage.storage_mode.clone();
-        config.sync_interval_secs = config.storage.sync_interval_secs;
-
-        Ok(config)
-    }
-
-    /// Apply environment variable overrides
-    fn apply_env_overrides(&self, mut config: Config) -> Result<Config> {
-        // Redis URL
-        if let Ok(url) = std::env::var(format!("{}REDIS_URL", self.env_prefix)) {
-            config.redis.url = url;
+        if let Ok(api_port) = std::env::var("API_PORT") {
+            if let Ok(port) = api_port.parse::<u16>() {
+                config.api.port = port;
+            }
         }
-
-        // API prefix configuration
-        if let Ok(prefix) = std::env::var("API_PREFIX") {
-            config.api.prefix = prefix;
-        }
-        if let Ok(versioning) = std::env::var("API_VERSIONING") {
-            config.api.enable_versioning = versioning.parse().unwrap_or(false);
-        }
-        if let Ok(version) = std::env::var("API_VERSION") {
-            config.api.version = version;
-        }
-
-        // Service-specific API host and port
-        if let Ok(host) = std::env::var(format!("{}API_HOST", self.env_prefix)) {
-            config.service_api.host = host;
-        }
-        if let Ok(port) = std::env::var(format!("{}API_PORT", self.env_prefix)) {
-            config.service_api.port = port
-                .parse()
-                .map_err(|_| ModelSrvError::ConfigError("Invalid API port".to_string()))?;
-        }
-
-        // Log level
-        if let Ok(level) = std::env::var(format!("{}LOG_LEVEL", self.env_prefix)) {
-            config.logging.level = level.clone();
-            config.log_level = level;
-        }
-
-        // Model update interval
-        if let Ok(interval) = std::env::var(format!("{}MODEL_UPDATE_INTERVAL_MS", self.env_prefix))
-        {
-            config.model.update_interval_ms = interval
-                .parse()
-                .map_err(|_| ModelSrvError::ConfigError("Invalid update interval".to_string()))?;
+        if let Ok(log_level) = std::env::var("LOG_LEVEL") {
+            config.log.level = log_level;
         }
 
         Ok(config)
     }
 
-    /// Validate configuration
-    fn validate_config(&self, config: &Config) -> Result<()> {
-        // Validate service info
-        if config.service.name.is_empty() {
-            return Err(ModelSrvError::ConfigError(
-                "Service name cannot be empty".to_string(),
-            ));
+    /// 验证配置
+    pub fn validate(&self) -> Result<()> {
+        // 验证Redis URL
+        if self.redis.url.is_empty() {
+            return Err(ModelSrvError::ConfigError("Redis URL不能为空".to_string()));
         }
 
-        // Validate Redis URL
-        if !config.redis.url.starts_with("redis://") {
-            return Err(ModelSrvError::ConfigError(
-                "Redis URL must start with redis://".to_string(),
-            ));
+        // 验证API端口
+        if self.api.port == 0 {
+            return Err(ModelSrvError::ConfigError("API端口不能为0".to_string()));
         }
 
-        // Validate API port
-        if config.service_api.port == 0 {
-            return Err(ModelSrvError::ConfigError(
-                "API port cannot be 0".to_string(),
-            ));
-        }
-
-        // Validate log level
-        match config.logging.level.as_str() {
-            "trace" | "debug" | "info" | "warn" | "error" => {}
-            _ => {
+        // 验证模型配置
+        for model in &self.models {
+            if model.id.is_empty() {
+                return Err(ModelSrvError::ConfigError("模型ID不能为空".to_string()));
+            }
+            if model.monitoring.is_empty() && model.control.is_empty() {
                 return Err(ModelSrvError::ConfigError(format!(
-                    "Invalid log level: {}",
-                    config.logging.level
-                )))
+                    "模型 {} 必须包含监视或控制点",
+                    model.id
+                )));
             }
         }
 
-        // Validate model update interval
-        if config.model.update_interval_ms == 0 {
-            return Err(ModelSrvError::ConfigError(
-                "Model update interval must be greater than 0".to_string(),
-            ));
-        }
-
+        info!("配置验证通过");
         Ok(())
     }
+
+    /// 保存配置到文件
+    pub fn save_to_file<P: AsRef<Path>>(&self, path: P) -> Result<()> {
+        let path = path.as_ref();
+        let content = if path.extension().and_then(|s| s.to_str()) == Some("yaml")
+            || path.extension().and_then(|s| s.to_str()) == Some("yml")
+        {
+            serde_yaml::to_string(self)
+                .map_err(|e| ModelSrvError::ConfigError(format!("YAML序列化失败: {}", e)))?
+        } else {
+            serde_json::to_string_pretty(self)
+                .map_err(|e| ModelSrvError::ConfigError(format!("JSON序列化失败: {}", e)))?
+        };
+
+        std::fs::write(path, content)
+            .map_err(|e| ModelSrvError::ConfigError(format!("写入配置文件失败: {}", e)))?;
+
+        info!("配置已保存到: {}", path.display());
+        Ok(())
+    }
+
+    /// 添加模型配置
+    pub fn add_model(&mut self, model: ModelConfig) {
+        self.models.push(model);
+        info!("添加模型配置: {}", self.models.last().unwrap().id);
+    }
+
+    /// 移除模型配置
+    pub fn remove_model(&mut self, model_id: &str) -> bool {
+        let original_len = self.models.len();
+        self.models.retain(|m| m.id != model_id);
+        let removed = self.models.len() < original_len;
+        if removed {
+            info!("移除模型配置: {}", model_id);
+        }
+        removed
+    }
+
+    /// 获取启用的模型配置
+    pub fn enabled_models(&self) -> Vec<&ModelConfig> {
+        self.models.iter().collect()
+    }
 }
 
-/// Helper function to load configuration
-pub async fn load_config() -> Result<Config> {
-    // Load .env file if exists
-    dotenv::dotenv().ok();
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::tempdir;
 
-    let loader = ConfigLoader::new()
-        .with_file(
-            std::env::var("MODSRV_CONFIG_FILE")
-                .unwrap_or_else(|_| "config/modsrv.yaml".to_string()),
-        )
-        .with_config_center(std::env::var("CONFIG_CENTER_URL").ok().unwrap_or_default())
-        .with_env_prefix("MODSRV_");
+    #[test]
+    fn test_default_config() {
+        let config = Config::default();
+        assert_eq!(config.service_name, "modsrv");
+        assert_eq!(config.redis.url, "redis://localhost:6379");
+        assert_eq!(config.api.port, 8092);
+        assert!(config.validate().is_ok());
+    }
 
-    loader.load().await
-}
+    #[test]
+    fn test_config_validation() {
+        let mut config = Config::default();
+        assert!(config.validate().is_ok());
 
-/// Generate default configuration file
-pub fn generate_default_config() -> String {
-    let config = Config::default();
-    serde_yaml::to_string(&config).unwrap_or_else(|_| "# Failed to generate config".to_string())
+        // 测试无效配置
+        config.redis.url = "".to_string();
+        assert!(config.validate().is_err());
+
+        config.redis.url = "redis://localhost:6379".to_string();
+        config.api.port = 0;
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn test_config_file_operations() {
+        let dir = tempdir().unwrap();
+        let file_path = dir.path().join("test_config.yaml");
+
+        let config = Config::default();
+        assert!(config.save_to_file(&file_path).is_ok());
+        assert!(file_path.exists());
+
+        let loaded_config = Config::from_file(&file_path).unwrap();
+        assert_eq!(config.service_name, loaded_config.service_name);
+        assert_eq!(config.api.port, loaded_config.api.port);
+    }
 }
