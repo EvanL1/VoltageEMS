@@ -112,7 +112,7 @@ VoltageEMS is a Rust-based microservices architecture for industrial IoT energy 
                    └──────┬──────┘
                           │
 ┌─────────────────────────┴───────────────────────────────────┐
-│                    Redis Message Bus                         │
+│                    Redis Message Bus                        │
 │              Pub/Sub | Key-Value | Streams                  │
 └──┬──────────┬────────┬─────────┬──────────┬──────────┬──────┘
    │          │        │         │          │          │
@@ -316,7 +316,7 @@ channels:
         signal_file: "signal.csv"              # YX - Status signals
         adjustment_file: "adjustment.csv"      # YT - Adjustment setpoints
         control_file: "control.csv"            # YK - Control commands
-      
+
       # Protocol mapping path
       protocol_mapping_route: "ModbusTCP_CH1001/mappings"
       protocol_mapping_file:
