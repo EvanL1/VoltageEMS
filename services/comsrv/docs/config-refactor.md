@@ -140,9 +140,9 @@ point_id,signal_name,data_type,reverse,description
 ### 4.3 遥控点表 (control.csv)
 
 ```csv
-point_id,signal_name,data_type,description
-1,breaker_control,bool,断路器控制
-2,reset_alarm,bool,复位告警
+point_id,signal_name,data_type,reverse,description
+1,breaker_control,bool,0,断路器控制
+2,reset_alarm,bool,0,复位告警
 ```
 
 ### 4.4 遥调点表 (adjustment.csv)

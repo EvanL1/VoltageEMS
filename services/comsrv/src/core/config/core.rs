@@ -928,11 +928,11 @@ mod tests {
         let dir = tempdir().unwrap();
         let config_path = dir.path().join("test.yml");
 
-        let config_content = r#"
+        let config_content = r"
 service:
   name: test
   version: 1.0.0
-"#;
+";
 
         fs::write(&config_path, config_content).await.unwrap();
 

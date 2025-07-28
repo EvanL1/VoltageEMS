@@ -280,7 +280,11 @@ impl ComBase for DefaultProtocol {
     }
 
     fn is_connected(&self) -> bool {
-        *self.is_connected.blocking_read()
+        // 使用 try_read 避免在异步环境中阻塞
+        self.is_connected
+            .try_read()
+            .map(|guard| *guard)
+            .unwrap_or(false)
     }
 
     async fn get_status(&self) -> ChannelStatus {
@@ -442,11 +446,11 @@ mod tests {
 
         assert_eq!(protocol.name(), "test");
         assert_eq!(protocol.protocol_type(), "default");
-        assert!(!protocol.is_connected());
+        assert!(!ComBase::is_connected(&protocol));
 
         // 测试连接
-        protocol.connect().await.unwrap();
-        assert!(protocol.is_connected());
+        ComBase::connect(&mut protocol).await.unwrap();
+        assert!(ComBase::is_connected(&protocol));
 
         // 测试状态
         let status = protocol.get_status().await;

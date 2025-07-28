@@ -48,9 +48,12 @@ impl From<crate::core::combase::ChannelStatus> for ChannelStatus {
             protocol: "Unknown".to_string(), // Will be filled by handler
             connected: status.is_connected,
             running: status.is_connected, // Use is_connected as running status
-            last_update: DateTime::<Utc>::from_timestamp(status.last_update as i64, 0)
-                .unwrap_or_else(Utc::now),
-            error_count: status.error_count as u32,
+            last_update: DateTime::<Utc>::from_timestamp(
+                status.last_update.try_into().unwrap_or(0),
+                0,
+            )
+            .unwrap_or_else(Utc::now),
+            error_count: status.error_count.try_into().unwrap_or(u32::MAX),
             last_error: status.last_error,
             statistics: HashMap::new(), // Will be filled by handler
         }
@@ -752,41 +755,48 @@ mod tests {
 
     #[test]
     fn test_combase_channel_status_conversion() {
-        let combase_status = crate::core::combase::ChannelStatus::new("test_001");
+        let combase_status = crate::core::combase::ChannelStatus {
+            is_connected: true,
+            last_error: Some("Test error".to_string()),
+            last_update: 1_234_567_890,
+            success_count: 100,
+            error_count: 5,
+            reconnect_count: 2,
+            points_count: 50,
+            last_read_duration_ms: Some(100),
+            average_read_duration_ms: Some(95.5),
+        };
         let api_status = ChannelStatus::from(combase_status);
 
-        assert_eq!(api_status.id, 0); // Updated: test_001 cannot parse as u16, so returns 0
+        assert_eq!(api_status.id, 0); // Default value
         assert_eq!(api_status.name, "Unknown");
         assert_eq!(api_status.protocol, "Unknown");
-        assert!(!api_status.connected);
-        assert_eq!(api_status.error_count, 0);
-        assert!(api_status.last_error.is_none());
+        assert!(api_status.connected);
+        assert_eq!(api_status.error_count, 5);
+        assert_eq!(api_status.last_error, Some("Test error".to_string()));
         assert!(api_status.statistics.is_empty());
     }
 
     #[test]
     fn test_combase_point_data_conversion() {
+        use crate::core::combase::RedisValue;
+        let timestamp = Utc::now().timestamp_millis() as u64;
         let combase_point = crate::core::combase::PointData {
-            id: "1".to_string(),
-            name: "Temperature".to_string(),
-            value: "25.5".to_string(),
-            timestamp: Utc::now(),
-            unit: "°C".to_string(),
-            description: "Ambient temperature".to_string(),
-            telemetry_type: None,
-            channel_id: None,
+            value: RedisValue::String("25.5".to_string()),
+            timestamp,
         };
 
         let api_point = PointValue::from(combase_point);
 
-        assert_eq!(api_point.id, "1");
-        assert_eq!(api_point.name, "Temperature");
+        // 验证默认值，因为 PointData 结构已经简化
+        assert_eq!(api_point.id, "0"); // 默认ID
+        assert_eq!(api_point.name, "point"); // 默认名称
         assert_eq!(
             api_point.value,
             serde_json::Value::String("25.5".to_string())
         );
-        assert_eq!(api_point.unit, "°C");
-        assert_eq!(api_point.description, "Ambient temperature");
+        assert_eq!(api_point.unit, ""); // 默认为空
+        assert_eq!(api_point.description, ""); // 默认为空
     }
 
     #[test]

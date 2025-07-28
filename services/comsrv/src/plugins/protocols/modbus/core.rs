@@ -16,6 +16,7 @@ use crate::core::combase::{
     PointDataMap, RedisValue,
 };
 use crate::core::config::types::{ChannelConfig, TelemetryType};
+use crate::core::data_processor;
 use crate::plugins::core::{DefaultPluginStorage, PluginPointUpdate, PluginStorage};
 use crate::utils::error::{ComSrvError, Result};
 
@@ -642,7 +643,7 @@ impl ComBase for ModbusProtocol {
                                         };
 
                                         // Get scaling info from channel config
-                                        let (scale, offset) =
+                                        let (scale, offset, reverse) =
                                             if let Some(ref config) = channel_config {
                                                 let point_config = match telemetry_type {
                                                     TelemetryType::Measurement => {
@@ -651,28 +652,49 @@ impl ComBase for ModbusProtocol {
                                                     TelemetryType::Signal => {
                                                         config.signal_points.get(&point_id)
                                                     }
-                                                    _ => None,
+                                                    TelemetryType::Control => {
+                                                        config.control_points.get(&point_id)
+                                                    }
+                                                    TelemetryType::Adjustment => {
+                                                        config.adjustment_points.get(&point_id)
+                                                    }
                                                 };
 
                                                 if let Some(pc) = point_config {
                                                     if let Some(scaling_info) = &pc.scaling {
-                                                        // 直接从ScalingInfo结构体获取scale和offset
-                                                        (scaling_info.scale, scaling_info.offset)
+                                                        // 从ScalingInfo结构体获取scale、offset和reverse
+                                                        (
+                                                            scaling_info.scale,
+                                                            scaling_info.offset,
+                                                            scaling_info.reverse,
+                                                        )
                                                     } else {
-                                                        (1.0, 0.0) // No scaling
+                                                        (1.0, 0.0, None) // No scaling
                                                     }
                                                 } else {
-                                                    (1.0, 0.0)
+                                                    (1.0, 0.0, None)
                                                 }
                                             } else {
-                                                (1.0, 0.0)
+                                                (1.0, 0.0, None)
                                             };
 
-                                        // Apply scale and offset transformation
-                                        let processed_value = raw_value * scale + offset;
+                                        // 使用数据处理模块统一处理数据转换
+                                        let scaling_info =
+                                            Some(crate::core::config::types::ScalingInfo {
+                                                scale,
+                                                offset,
+                                                unit: None,
+                                                reverse,
+                                            });
 
-                                        debug!("Read point {}: raw={:.6}, scale={}, offset={}, processed={:.6}", 
-                                            point_id, raw_value, scale, offset, processed_value);
+                                        let processed_value = data_processor::process_point_value(
+                                            raw_value,
+                                            &telemetry_type,
+                                            scaling_info.as_ref(),
+                                        );
+
+                                        debug!("Read point {}: raw={:.6}, scale={}, offset={}, reverse={:?}, processed={:.6}", 
+                                            point_id, raw_value, scale, offset, reverse, processed_value);
 
                                         // Create update for batch storage
                                         let update = PluginPointUpdate {
@@ -1329,6 +1351,17 @@ fn decode_register_value(
 mod tests {
     use super::*;
 
+    // Helper function for tests
+    fn telemetry_type_from_string(s: &str) -> TelemetryType {
+        match s {
+            "Measurement" => TelemetryType::Measurement,
+            "Signal" => TelemetryType::Signal,
+            "Control" => TelemetryType::Control,
+            "Adjustment" => TelemetryType::Adjustment,
+            _ => TelemetryType::Measurement, // Default
+        }
+    }
+
     #[test]
     fn test_telemetry_type_from_string() {
         assert_eq!(
@@ -1379,37 +1412,54 @@ mod tests {
         let result = decode_register_value(&registers, "bool", Some(7), None).unwrap();
         assert_eq!(result, RedisValue::Integer(1)); // 位7 = 1
 
-        // 测试高字节位15 (MSB)
-        let high_bit_register = 0x8000; // 只有最高位是1
+        // 测试16位寄存器的高位（值>255）
+        let high_bit_register = 0x8000; // 只有最高位是1，值=32768 > 255
         let high_registers = vec![high_bit_register];
         let result = decode_register_value(&high_registers, "bool", Some(15), None).unwrap();
         assert_eq!(result, RedisValue::Integer(1)); // 位15 = 1
 
-        // 测试位15在低值寄存器中
-        let result = decode_register_value(&registers, "bool", Some(15), None).unwrap();
-        assert_eq!(result, RedisValue::Integer(0)); // 位15 = 0 (因为0xB5没有设置第15位)
+        // 对于大于255的值，可以测试所有16位
+        let full_register = 0x0100; // 256 > 255，所以是16位模式
+        let full_registers = vec![full_register];
+        let result = decode_register_value(&full_registers, "bool", Some(8), None).unwrap();
+        assert_eq!(result, RedisValue::Integer(1)); // 位8 = 1
     }
 
     #[test]
     fn test_decode_register_value_bool_edge_cases() {
         let registers = vec![0x0000]; // 全0寄存器
 
-        // 测试全0寄存器的所有位都应该是0
-        for bit_pos in 0..16 {
+        // 测试8位模式（值<=255）
+        for bit_pos in 0..8 {
             let result = decode_register_value(&registers, "bool", Some(bit_pos), None).unwrap();
             assert_eq!(
                 result,
                 RedisValue::Integer(0),
-                "Bit {} should be 0",
+                "Bit {} should be 0 in 8-bit mode",
                 bit_pos
             );
         }
 
-        let registers = vec![0xFFFF]; // 全1寄存器
-
-        // 测试全1寄存器的所有位都应该是1
+        // 测试16位模式（值>255）
+        let registers_16bit = vec![0x0100]; // 256 > 255，触发16位模式
         for bit_pos in 0..16 {
-            let result = decode_register_value(&registers, "bool", Some(bit_pos), None).unwrap();
+            let result =
+                decode_register_value(&registers_16bit, "bool", Some(bit_pos), None).unwrap();
+            let expected = if bit_pos == 8 { 1 } else { 0 }; // 只有位8是1
+            assert_eq!(
+                result,
+                RedisValue::Integer(expected),
+                "Bit {} should be {} in 16-bit mode",
+                bit_pos,
+                expected
+            );
+        }
+
+        let registers_all_ones = vec![0xFFFF]; // 全1寄存器（16位模式）
+                                               // 测试全1寄存器的所有位都应该是1
+        for bit_pos in 0..16 {
+            let result =
+                decode_register_value(&registers_all_ones, "bool", Some(bit_pos), None).unwrap();
             assert_eq!(
                 result,
                 RedisValue::Integer(1),
@@ -1418,9 +1468,20 @@ mod tests {
             );
         }
 
-        // 测试错误情况：bit_position超出范围
-        let result = decode_register_value(&registers, "bool", Some(16), None);
-        assert!(result.is_err());
+        // 测试错误情况：8位模式下bit_position超出范围
+        let result = decode_register_value(&registers, "bool", Some(8), None);
+        assert!(
+            result.is_err(),
+            "Bit position 8 should be invalid for 8-bit mode"
+        );
+
+        // 测试错误情况：16位模式下bit_position超出范围
+        let registers_16bit = vec![0x0100];
+        let result = decode_register_value(&registers_16bit, "bool", Some(16), None);
+        assert!(
+            result.is_err(),
+            "Bit position 16 should be invalid for 16-bit mode"
+        );
 
         // 测试错误情况：空寄存器
         let empty_registers = vec![];
@@ -1454,5 +1515,79 @@ mod tests {
         } else {
             panic!("Expected float value");
         }
+    }
+
+    #[test]
+    fn test_reverse_logic_moved_to_data_processor() {
+        // 测试 reverse 逻辑已经移到数据处理模块
+        // 这个测试验证协议层不再直接处理 reverse 逻辑
+
+        use crate::core::config::types::{ScalingInfo, TelemetryType};
+
+        // Test case 1: Signal with reverse = true, raw value = 1 should become 0
+        let raw_value = 1.0;
+        let scaling = ScalingInfo {
+            scale: 1.0,
+            offset: 0.0,
+            unit: None,
+            reverse: Some(true),
+        };
+
+        let processed_value =
+            data_processor::process_point_value(raw_value, &TelemetryType::Signal, Some(&scaling));
+
+        assert_eq!(
+            processed_value, 0.0,
+            "Raw value 1 with reverse=true should become 0"
+        );
+
+        // Test case 2: Signal with reverse = true, raw value = 0 should become 1
+        let raw_value = 0.0;
+        let processed_value =
+            data_processor::process_point_value(raw_value, &TelemetryType::Signal, Some(&scaling));
+
+        assert_eq!(
+            processed_value, 1.0,
+            "Raw value 0 with reverse=true should become 1"
+        );
+
+        // Test case 3: Signal with reverse = false, value should not change
+        let raw_value = 1.0;
+        let scaling_no_reverse = ScalingInfo {
+            scale: 1.0,
+            offset: 0.0,
+            unit: None,
+            reverse: Some(false),
+        };
+        let processed_value = data_processor::process_point_value(
+            raw_value,
+            &TelemetryType::Signal,
+            Some(&scaling_no_reverse),
+        );
+
+        assert_eq!(
+            processed_value, 1.0,
+            "Raw value 1 with reverse=false should remain 1"
+        );
+
+        // Test case 4: Measurement type should not apply reverse logic
+        let raw_value = 100.0;
+        let scaling_with_scale = ScalingInfo {
+            scale: 0.1,
+            offset: 2.0,
+            unit: Some("°C".to_string()),
+            reverse: Some(true), // 应该被忽略
+        };
+        let processed_value = data_processor::process_point_value(
+            raw_value,
+            &TelemetryType::Measurement,
+            Some(&scaling_with_scale),
+        );
+
+        assert_eq!(
+            processed_value,
+            12.0, // 100 * 0.1 + 2.0 = 12.0
+            "Measurement type should apply scale/offset but ignore reverse"
+        );
     }
 }

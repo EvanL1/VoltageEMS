@@ -241,12 +241,12 @@ mod tests {
         );
         params.insert(
             "bitrate".to_string(),
-            serde_yaml::Value::Number(serde_yaml::Number::from(500000)),
+            serde_yaml::Value::Number(serde_yaml::Number::from(500_000)),
         );
 
         let result = parse_can_parameters(&params).unwrap();
         assert_eq!(result.interface, "can0");
-        assert_eq!(result.bitrate, 500000);
+        assert_eq!(result.bitrate, 500_000);
         assert!(result.timeout_ms.is_none());
     }
 

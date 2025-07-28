@@ -118,7 +118,7 @@ mod tests {
     fn test_api_module_structure() {
         // Test that all API modules are accessible
         // This serves as a compilation check for the module structure
-        assert!(true, "API module structure is valid");
+        // API module structure is valid if this compiles
     }
 
     #[test]

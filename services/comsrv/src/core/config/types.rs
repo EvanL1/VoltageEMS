@@ -542,7 +542,6 @@ mod tests {
             parameters: HashMap::new(),
             logging: ChannelLoggingConfig::default(),
             table_config: None,
-            points: vec![],
             measurement_points: HashMap::new(),
             signal_points: HashMap::new(),
             control_points: HashMap::new(),

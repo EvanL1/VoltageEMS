@@ -232,7 +232,7 @@ mod tests {
         let pdu = vec![0x03, 0x00, 0x01, 0x00, 0x02]; // Read holding registers
 
         let frame = processor.build_frame(1, &pdu);
-        assert_eq!(frame.len(), 11); // 6 bytes MBAP + 5 bytes PDU
+        assert_eq!(frame.len(), 12); // 7 bytes header (2 trans_id + 2 proto + 2 len + 1 unit) + 5 bytes PDU
 
         let (unit_id, parsed_pdu) = processor.parse_frame(&frame).unwrap();
         assert_eq!(unit_id, 1);
@@ -241,7 +241,7 @@ mod tests {
 
     #[test]
     fn test_rtu_frame_build_parse() {
-        let processor = ModbusFrameProcessor::new(ModbusMode::Rtu);
+        let mut processor = ModbusFrameProcessor::new(ModbusMode::Rtu);
         let pdu = vec![0x03, 0x00, 0x01, 0x00, 0x02]; // Read holding registers
 
         let frame = processor.build_frame(1, &pdu);
@@ -257,7 +257,8 @@ mod tests {
         let processor = ModbusFrameProcessor::new(ModbusMode::Rtu);
         let data = vec![0x01, 0x03, 0x00, 0x00, 0x00, 0x01];
         let crc = processor.calculate_crc16(&data);
-        assert_eq!(crc, 0x8584); // Known CRC for this data
+        // CRC 计算结果应该是 0x0A84 (2692 in decimal)
+        assert_eq!(crc, 0x0A84);
     }
 
     #[test]

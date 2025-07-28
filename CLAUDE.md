@@ -356,8 +356,8 @@ point_id,signal_name,data_type,reverse,description
 
 **control.csv** (YK - Control):
 ```csv
-point_id,signal_name,data_type,description
-1,breaker_control,bool,Breaker open/close control
+point_id,signal_name,data_type,reverse,description
+1,breaker_control,bool,0,Breaker open/close control
 ```
 
 **adjustment.csv** (YT - Adjustment):
