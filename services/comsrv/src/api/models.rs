@@ -2,6 +2,24 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+// ============================================================================
+// 新的简化模型
+// ============================================================================
+
+/// 控制命令（遥控）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ControlCommand {
+    pub point_id: u32,
+    pub value: u8, // 0 或 1
+}
+
+/// 调节命令（遥调）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AdjustmentCommand {
+    pub point_id: u32,
+    pub value: f64,
+}
+
 /// service status response
 #[derive(Debug, Clone, Serialize)]
 pub struct ServiceStatus {
@@ -76,6 +94,7 @@ pub struct ChannelOperation {
 }
 
 /// point value read response
+#[deprecated(note = "Use API Gateway direct Redis read instead")]
 #[derive(Debug, Clone, Serialize)]
 pub struct PointValue {
     pub id: String,
@@ -115,6 +134,7 @@ impl From<crate::core::combase::PointData> for PointValue {
 }
 
 /// point table data response containing all points
+#[deprecated(note = "Use API Gateway direct Redis read instead")]
 #[derive(Debug, Clone, Serialize)]
 pub struct PointTableData {
     pub channel_id: String,
@@ -123,6 +143,7 @@ pub struct PointTableData {
 }
 
 /// point value write request
+#[deprecated(note = "Use send_control or send_adjustment instead")]
 #[derive(Debug, Clone, Deserialize)]
 pub struct WritePointRequest {
     pub value: serde_json::Value,
@@ -197,6 +218,7 @@ impl<T> ApiResponse<T> {
 }
 
 /// Enhanced point with configuration information
+#[deprecated(note = "Use API Gateway direct Redis read instead")]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TelemetryPoint {
     /// Point ID from CSV configuration
@@ -224,6 +246,7 @@ pub struct TelemetryPoint {
 }
 
 /// Protocol mapping trait for different industrial protocols
+#[deprecated(note = "Mappings are handled internally by protocol plugins")]
 pub trait ProtocolMapping: Send + Sync + std::fmt::Debug {
     /// Get protocol type name
     fn protocol_type(&self) -> &str;
@@ -250,6 +273,7 @@ fn default_function_code() -> u8 {
 }
 
 /// Modbus protocol mapping implementation
+#[deprecated(note = "Mappings are handled internally by protocol plugins")]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModbusMapping {
     /// Point ID that links to telemetry table
@@ -323,6 +347,7 @@ impl ProtocolMapping for ModbusMapping {
 }
 
 /// CAN protocol mapping implementation
+#[deprecated(note = "Mappings are handled internally by protocol plugins")]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CanMapping {
     /// Point ID that links to telemetry table
@@ -400,6 +425,7 @@ impl ProtocolMapping for CanMapping {
 }
 
 /// IEC 60870-5-104 protocol mapping implementation  
+#[deprecated(note = "Mappings are handled internally by protocol plugins")]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IecMapping {
     /// Point ID that links to telemetry table
@@ -468,6 +494,7 @@ impl ProtocolMapping for IecMapping {
 }
 
 /// Four-telemetry table view for frontend display
+#[deprecated(note = "Use API Gateway direct Redis read instead")]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TelemetryTableView {
     /// Channel ID
@@ -487,6 +514,7 @@ pub struct TelemetryTableView {
 }
 
 #[cfg(test)]
+#[allow(deprecated)]
 mod tests {
     use super::*;
     use chrono::Utc;
