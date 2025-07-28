@@ -1,3 +1,0 @@
-# Modbus模拟器依赖
-pymodbus==3.6.2
-redis==5.0.1

@@ -53,15 +53,6 @@ pub enum ComSrvError {
     #[error("Modbus error: {0}")]
     ModbusError(String),
 
-    /// IEC 60870 protocol specific errors
-    #[error("IEC 60870 error: {0}")]
-    Iec60870Error(String),
-
-    /// CAN bus protocol specific errors
-    #[cfg(feature = "can")]
-    #[error("CAN bus error: {0}")]
-    CanError(String),
-
     /// Redis data access errors
     #[error("Redis error: {0}")]
     RedisError(String),
@@ -246,15 +237,6 @@ impl ComSrvError {
 
     pub fn modbus(msg: impl Into<String>) -> Self {
         ComSrvError::ModbusError(msg.into())
-    }
-
-    pub fn iec60870(msg: impl Into<String>) -> Self {
-        ComSrvError::Iec60870Error(msg.into())
-    }
-
-    #[cfg(feature = "can")]
-    pub fn can(msg: impl Into<String>) -> Self {
-        ComSrvError::CanError(msg.into())
     }
 
     pub fn redis(msg: impl Into<String>) -> Self {

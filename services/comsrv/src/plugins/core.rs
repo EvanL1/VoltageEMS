@@ -496,12 +496,6 @@ pub mod discovery {
         #[cfg(feature = "modbus")]
         load_modbus_plugin()?;
 
-        #[cfg(feature = "iec60870")]
-        load_iec60870_plugin()?;
-
-        #[cfg(feature = "can")]
-        load_can_plugin()?;
-
         // 加载虚拟协议插件（用于测试）
         load_virt_plugin()?;
 
@@ -518,32 +512,6 @@ pub mod discovery {
         reg.register_plugin(plugin)?;
         reg.register_factory("modbus_tcp", modbus::create_plugin)?;
         reg.register_factory("modbus_rtu", modbus::create_plugin)?;
-
-        Ok(())
-    }
-
-    #[cfg(feature = "iec60870")]
-    fn load_iec60870_plugin() -> Result<()> {
-        use crate::plugins::protocols::iec60870;
-        let registry = PluginRegistry::global();
-        let mut reg = registry.write().unwrap();
-
-        let plugin = Box::new(iec60870::Iec60870Plugin::new());
-        reg.register_plugin(plugin)?;
-        reg.register_factory("iec60870", iec60870::create_plugin)?;
-
-        Ok(())
-    }
-
-    #[cfg(feature = "can")]
-    fn load_can_plugin() -> Result<()> {
-        use crate::plugins::protocols::can;
-        let registry = PluginRegistry::global();
-        let mut reg = registry.write().unwrap();
-
-        let plugin = Box::new(can::CanPlugin::new());
-        reg.register_plugin(plugin)?;
-        reg.register_factory("can", can::create_plugin)?;
 
         Ok(())
     }

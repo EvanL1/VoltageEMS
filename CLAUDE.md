@@ -348,16 +348,16 @@ point_id,signal_name,data_type,scale,offset,unit,description
 
 **signal.csv** (YX - Status):
 ```csv
-point_id,signal_name,data_type,scale,offset,unit,description
-1,breaker_status,bool,1.0,0,,Breaker open/close status
-2,fault_alarm,bool,1.0,0,,Fault alarm signal
-3,communication_ok,bool,1.0,0,,Communication status
+point_id,signal_name,data_type,reverse,description
+1,breaker_status,bool,0,Breaker open/close status
+2,fault_alarm,bool,0,Fault alarm signal
+3,communication_ok,bool,0,Communication status
 ```
 
 **control.csv** (YK - Control):
 ```csv
-point_id,signal_name,data_type,scale,offset,unit,description
-1,breaker_control,bool,1.0,0,,Breaker open/close control
+point_id,signal_name,data_type,description
+1,breaker_control,bool,Breaker open/close control
 ```
 
 **adjustment.csv** (YT - Adjustment):
