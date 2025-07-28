@@ -719,7 +719,7 @@ mod tests {
         let float_point = PointValue {
             id: "float_001".to_string(),
             name: "float_value".to_string(),
-            value: json!(3.14159),
+            value: json!(2.71828_f64),
             timestamp: now,
             unit: "ratio".to_string(),
             description: "Float test point".to_string(),

@@ -226,7 +226,6 @@ pub async fn control_channel(
     Ok(Json(ApiResponse::success(result)))
 }
 
-
 /// Send control command (遥控)
 pub async fn send_control(
     State(state): State<AppState>,
@@ -234,12 +233,15 @@ pub async fn send_control(
     Json(cmd): Json<ControlCommand>,
 ) -> Result<Json<ApiResponse<bool>>, StatusCode> {
     let factory = state.factory.read().await;
-    
+
     if let Some(channel) = factory.get_channel(channel_id).await {
         let mut channel_guard = channel.write().await;
         let redis_value = crate::core::combase::RedisValue::Integer(cmd.value as i64);
-        
-        match channel_guard.control(vec![(cmd.point_id, redis_value)]).await {
+
+        match channel_guard
+            .control(vec![(cmd.point_id, redis_value)])
+            .await
+        {
             Ok(results) => {
                 let success = results.iter().any(|(_, s)| *s);
                 Ok(Json(ApiResponse::success(success)))
@@ -258,12 +260,15 @@ pub async fn send_adjustment(
     Json(cmd): Json<AdjustmentCommand>,
 ) -> Result<Json<ApiResponse<bool>>, StatusCode> {
     let factory = state.factory.read().await;
-    
+
     if let Some(channel) = factory.get_channel(channel_id).await {
         let mut channel_guard = channel.write().await;
         let redis_value = crate::core::combase::RedisValue::Float(cmd.value);
-        
-        match channel_guard.adjustment(vec![(cmd.point_id, redis_value)]).await {
+
+        match channel_guard
+            .adjustment(vec![(cmd.point_id, redis_value)])
+            .await
+        {
             Ok(results) => {
                 let success = results.iter().any(|(_, s)| *s);
                 Ok(Json(ApiResponse::success(success)))
@@ -275,12 +280,6 @@ pub async fn send_adjustment(
     }
 }
 
-
-
-
-
-
-
 /// Create the API router with all routes
 pub fn create_api_routes(factory: Arc<RwLock<ProtocolFactory>>) -> Router {
     let state = AppState::new(factory);
@@ -289,16 +288,13 @@ pub fn create_api_routes(factory: Arc<RwLock<ProtocolFactory>>) -> Router {
         // 服务管理
         .route("/api/status", get(get_service_status))
         .route("/api/health", get(health_check))
-        
         // 通道管理
         .route("/api/channels", get(get_all_channels))
         .route("/api/channels/{id}/status", get(get_channel_status))
         .route("/api/channels/{id}/control", post(control_channel))
-        
         // 控制命令（简化版）
         .route("/api/control/{channel_id}", post(send_control))
         .route("/api/adjustment/{channel_id}", post(send_adjustment))
-        
         .with_state(state)
 }
 

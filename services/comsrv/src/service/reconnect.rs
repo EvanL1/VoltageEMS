@@ -180,7 +180,7 @@ impl ReconnectHelper {
 
     /// 计算下次重试延迟
     pub fn calculate_next_delay(&self) -> Duration {
-        let attempt = self.state.current_attempt.saturating_sub(1) as u32;
+        let attempt = self.state.current_attempt.saturating_sub(1);
         let base_delay = self.policy.initial_delay;
         let multiplier = self.policy.backoff_multiplier;
 

@@ -198,8 +198,10 @@ mod tests {
 
     #[test]
     fn test_round_to_decimals() {
-        assert_eq!(round_to_decimals(std::f64::consts::PI, 2), 3.14);
-        assert_eq!(round_to_decimals(std::f64::consts::PI, 3), 3.142);
+        let pi_2_decimals = round_to_decimals(std::f64::consts::PI, 2);
+        assert!((pi_2_decimals - 3.14).abs() < 0.001);
+        let pi_3_decimals = round_to_decimals(std::f64::consts::PI, 3);
+        assert!((pi_3_decimals - 3.142).abs() < 0.0001);
         assert_eq!(round_to_decimals(std::f64::consts::PI, 0), 3.0);
     }
 

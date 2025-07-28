@@ -539,9 +539,9 @@ impl ComBase for ModbusProtocol {
                                 if let Ok(point_id) = point.point_id.parse::<u32>() {
                                     // 检查点位是否在 measurement_points 或 signal_points 中
                                     // 只允许遥测和遥信类型进行轮询
-                                    if config.measurement_points.contains_key(&point_id) {
-                                        true
-                                    } else if config.signal_points.contains_key(&point_id) {
+                                    if config.measurement_points.contains_key(&point_id)
+                                        || config.signal_points.contains_key(&point_id)
+                                    {
                                         true
                                     } else if config.control_points.contains_key(&point_id)
                                         || config.adjustment_points.contains_key(&point_id)
@@ -1091,9 +1091,9 @@ fn parse_modbus_pdu(pdu: &[u8], function_code: u8) -> Result<Vec<u16>> {
             // Function codes 1 (Read Coils) and 2 (Read Discrete Inputs) return bit data
             // Convert bit data to registers for uniform processing
             let mut registers = Vec::new();
-            for i in 2..2 + byte_count {
+            for &byte in &pdu[2..2 + byte_count] {
                 // Each byte contains 8 bits, store as individual "registers" for bit access
-                registers.push(u16::from(pdu[i]));
+                registers.push(u16::from(byte));
             }
             Ok(registers)
         }
@@ -1505,7 +1505,7 @@ mod tests {
 
         // 测试int16
         let result = decode_register_value(&registers, "int16", None, None).unwrap();
-        assert_eq!(result, RedisValue::Integer(0x1234 as i16 as i64));
+        assert_eq!(result, RedisValue::Integer(i64::from(0x1234_i16)));
 
         // 测试float32需要2个寄存器
         let float_registers = vec![0x4000, 0x0000]; // 2.0 in IEEE 754
