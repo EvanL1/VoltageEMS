@@ -2,17 +2,16 @@
 //!
 //! 整合配置中心、配置管理器和统一加载器的功能
 
+use super::loaders::{CachedCsvLoader, FourRemoteRecord, ModbusMappingRecord, PointMapper};
 use super::types::{AppConfig, ChannelConfig, CombinedPoint, ServiceConfig, TableConfig};
 use crate::utils::error::{ComSrvError, Result};
 use async_trait::async_trait;
-use csv::ReaderBuilder;
 use figment::{
     providers::{Env, Format, Json, Toml, Yaml},
     Figment,
 };
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use tokio::fs;
 use tracing::{debug, info, warn};
 
@@ -120,6 +119,8 @@ pub struct ConfigManager {
     /// 配置中心客户端
     #[allow(dead_code)]
     config_center: Option<ConfigCenterClient>,
+    /// CSV加载器
+    csv_loader: CachedCsvLoader,
 }
 
 impl ConfigManager {
@@ -178,47 +179,273 @@ impl ConfigManager {
         figment = figment.merge(Env::prefixed("COMSRV_"));
 
         // 解析配置
-        let mut config: AppConfig = figment
+        let config: AppConfig = figment
             .extract()
             .map_err(|e| ComSrvError::ConfigError(format!("Failed to parse config: {}", e)))?;
-
-        // 加载CSV配置
-        let config_dir = path.parent().unwrap_or_else(|| Path::new("."));
-        Self::load_csv_configs(&mut config, config_dir)?;
 
         Ok(Self {
             config,
             figment,
             config_center,
+            csv_loader: CachedCsvLoader::new(),
         })
     }
 
+    /// 异步初始化CSV配置
+    pub async fn initialize_csv(&mut self, config_dir: &Path) -> Result<()> {
+        eprintln!(
+            "DEBUG: initialize_csv called with config_dir: {}",
+            config_dir.display()
+        );
+        info!("Initializing CSV configurations");
+        let result = Self::load_csv_configs(&mut self.config, config_dir, &self.csv_loader).await;
+        eprintln!("DEBUG: load_csv_configs returned: {:?}", result.is_ok());
+        result
+    }
+
     /// 加载CSV配置
-    fn load_csv_configs(config: &mut AppConfig, config_dir: &Path) -> Result<()> {
+    async fn load_csv_configs(
+        config: &mut AppConfig,
+        config_dir: &Path,
+        csv_loader: &CachedCsvLoader,
+    ) -> Result<()> {
         for channel in &mut config.channels {
+            eprintln!("DEBUG: Processing channel {}", channel.id);
             if let Some(ref table_config) = channel.table_config {
                 debug!("Loading CSV for channel {}", channel.id);
-                match CsvLoader::load_channel_tables(table_config, config_dir) {
+                eprintln!("DEBUG: Channel {} has table_config", channel.id);
+                match Self::load_channel_tables_v2(table_config, config_dir, csv_loader).await {
                     Ok(points) => {
                         info!(
                             "Loaded {} four remote points for channel {}",
                             points.len(),
                             channel.id
                         );
+                        eprintln!(
+                            "DEBUG: Loaded {} points for channel {}",
+                            points.len(),
+                            channel.id
+                        );
                         // 将点位分别添加到对应的HashMap
                         for point in points {
+                            let point_id = point.point_id;
                             if let Err(e) = channel.add_point(point) {
                                 warn!("Failed to add point: {}", e);
+                                eprintln!("DEBUG: Failed to add point {}: {}", point_id, e);
                             }
                         }
                     }
                     Err(e) => {
                         warn!("Failed to load CSV for channel {}: {}", channel.id, e);
+                        eprintln!(
+                            "DEBUG: Failed to load CSV for channel {}: {}",
+                            channel.id, e
+                        );
                     }
                 }
+            } else {
+                eprintln!("DEBUG: Channel {} has no table_config", channel.id);
             }
         }
         Ok(())
+    }
+
+    /// 使用新的CSV加载器加载通道表
+    async fn load_channel_tables_v2(
+        table_config: &TableConfig,
+        config_dir: &Path,
+        csv_loader: &CachedCsvLoader,
+    ) -> Result<Vec<CombinedPoint>> {
+        info!("Loading CSV tables for channel using new loader");
+        eprintln!(
+            "DEBUG: load_channel_tables_v2 called with config_dir: {}",
+            config_dir.display()
+        );
+        eprintln!(
+            "DEBUG: four_remote_route: {}",
+            table_config.four_remote_route
+        );
+        eprintln!(
+            "DEBUG: protocol_mapping_route: {}",
+            table_config.protocol_mapping_route
+        );
+
+        // 检查环境变量覆盖
+        let base_dir = std::env::var("COMSRV_CSV_BASE_PATH")
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| config_dir.to_path_buf());
+
+        debug!("Using CSV base directory: {}", base_dir.display());
+        eprintln!("DEBUG: Base directory for CSV: {}", base_dir.display());
+
+        let mut combined = Vec::new();
+
+        // 四遥文件路径
+        let four_remote_base = base_dir.join(&table_config.four_remote_route);
+        // 协议映射文件路径
+        let protocol_base = base_dir.join(&table_config.protocol_mapping_route);
+
+        eprintln!("DEBUG: four_remote_base: {}", four_remote_base.display());
+        eprintln!("DEBUG: protocol_base: {}", protocol_base.display());
+
+        // 加载并合并遥测点位
+        if let Ok(points) = Self::load_and_combine_telemetry(
+            &four_remote_base.join(&table_config.four_remote_files.measurement_file),
+            &protocol_base.join(&table_config.protocol_mapping_file.measurement_mapping),
+            "Measurement",
+            csv_loader,
+        )
+        .await
+        {
+            combined.extend(points);
+        }
+
+        // 加载并合并遥信点位
+        if let Ok(points) = Self::load_and_combine_telemetry(
+            &four_remote_base.join(&table_config.four_remote_files.signal_file),
+            &protocol_base.join(&table_config.protocol_mapping_file.signal_mapping),
+            "Signal",
+            csv_loader,
+        )
+        .await
+        {
+            combined.extend(points);
+        }
+
+        // 加载并合并遥控点位
+        if let Ok(points) = Self::load_and_combine_telemetry(
+            &four_remote_base.join(&table_config.four_remote_files.control_file),
+            &protocol_base.join(&table_config.protocol_mapping_file.control_mapping),
+            "Control",
+            csv_loader,
+        )
+        .await
+        {
+            combined.extend(points);
+        }
+
+        // 加载并合并遥调点位
+        if let Ok(points) = Self::load_and_combine_telemetry(
+            &four_remote_base.join(&table_config.four_remote_files.adjustment_file),
+            &protocol_base.join(&table_config.protocol_mapping_file.adjustment_mapping),
+            "Adjustment",
+            csv_loader,
+        )
+        .await
+        {
+            combined.extend(points);
+        }
+
+        info!("Loaded {} total combined points", combined.len());
+        Ok(combined)
+    }
+
+    /// 加载并合并单个遥测类型的点位
+    async fn load_and_combine_telemetry(
+        four_remote_path: &Path,
+        protocol_mapping_path: &Path,
+        telemetry_type: &str,
+        csv_loader: &CachedCsvLoader,
+    ) -> Result<Vec<CombinedPoint>> {
+        eprintln!("DEBUG: load_and_combine_telemetry for {}", telemetry_type);
+        eprintln!("DEBUG: four_remote_path: {}", four_remote_path.display());
+        eprintln!(
+            "DEBUG: protocol_mapping_path: {}",
+            protocol_mapping_path.display()
+        );
+
+        // 检查文件是否存在
+        eprintln!(
+            "DEBUG: Checking if four_remote_path exists: {} - {}",
+            four_remote_path.display(),
+            four_remote_path.exists()
+        );
+        if !four_remote_path.exists() {
+            debug!(
+                "Four remote file not found: {}, skipping",
+                four_remote_path.display()
+            );
+            eprintln!(
+                "DEBUG: Four remote file not found: {}",
+                four_remote_path.display()
+            );
+            return Ok(Vec::new());
+        }
+
+        eprintln!(
+            "DEBUG: Checking if protocol_mapping_path exists: {} - {}",
+            protocol_mapping_path.display(),
+            protocol_mapping_path.exists()
+        );
+        if !protocol_mapping_path.exists() {
+            debug!(
+                "Protocol mapping file not found: {}, skipping",
+                protocol_mapping_path.display()
+            );
+            eprintln!(
+                "DEBUG: Protocol mapping file not found: {}",
+                protocol_mapping_path.display()
+            );
+            return Ok(Vec::new());
+        }
+
+        // 加载四遥文件
+        eprintln!("DEBUG: Loading four_remote_path CSV...");
+        let remote_points: Vec<FourRemoteRecord> = csv_loader
+            .load_csv_cached(four_remote_path)
+            .await
+            .map_err(|e| {
+                ComSrvError::ConfigError(format!(
+                    "Failed to load {} four remote file: {}",
+                    telemetry_type, e
+                ))
+            })?;
+        eprintln!("DEBUG: Loaded {} four remote points", remote_points.len());
+
+        // 加载协议映射文件
+        eprintln!("DEBUG: Loading protocol_mapping_path CSV...");
+        let modbus_mappings_result = csv_loader
+            .load_csv_cached::<ModbusMappingRecord>(protocol_mapping_path)
+            .await;
+
+        let modbus_mappings = match modbus_mappings_result {
+            Ok(mappings) => {
+                eprintln!(
+                    "DEBUG: Successfully loaded {} modbus mappings",
+                    mappings.len()
+                );
+                if !mappings.is_empty() {
+                    eprintln!("DEBUG: First modbus mapping: {:?}", mappings[0]);
+                }
+                mappings
+            }
+            Err(e) => {
+                eprintln!("DEBUG: Error loading modbus mappings: {}", e);
+                return Err(ComSrvError::ConfigError(format!(
+                    "Failed to load {} protocol mapping file: {}",
+                    telemetry_type, e
+                )));
+            }
+        };
+
+        debug!(
+            "Loaded {} {} remote points and {} mappings",
+            remote_points.len(),
+            telemetry_type,
+            modbus_mappings.len()
+        );
+        eprintln!("DEBUG: Combining points...");
+
+        // 使用PointMapper合并点位
+        let combined =
+            PointMapper::combine_modbus_points(remote_points, modbus_mappings, telemetry_type)?;
+        eprintln!(
+            "DEBUG: Combined {} points for {}",
+            combined.len(),
+            telemetry_type
+        );
+
+        Ok(combined)
     }
 
     /// 获取服务配置
@@ -261,9 +488,13 @@ impl ConfigManager {
 }
 
 // ============================================================================
-// CSV加载器
+// CSV加载器 - 已废弃，使用loaders.rs中的新实现
 // ============================================================================
 
+// 注意：以下CsvLoader已被loaders.rs中的CachedCsvLoader替代
+// 保留这些类型定义仅为了向后兼容，后续版本将移除
+
+/*
 /// 统一的CSV加载器
 #[derive(Debug)]
 pub struct CsvLoader;
@@ -292,7 +523,10 @@ pub struct ModbusMapping {
     pub data_format: Option<String>,
     pub register_count: Option<u16>,
 }
+*/
 
+// 已废弃的CsvLoader实现，保留供参考
+/*
 impl CsvLoader {
     /// 加载通道的所有CSV表
     pub fn load_channel_tables(
@@ -562,44 +796,6 @@ impl CsvLoader {
         Ok(mappings)
     }
 
-    /// 合并点位信息
-    fn combine_points(
-        measurement: HashMap<u32, FourRemotePoint>,
-        protocol_mappings: HashMap<u32, HashMap<String, String>>,
-    ) -> Result<Vec<CombinedPoint>> {
-        let mut combined = Vec::new();
-
-        for (point_id, measurement_point) in measurement {
-            if let Some(protocol_params) = protocol_mappings.get(&point_id) {
-                let point = CombinedPoint {
-                    point_id,
-                    signal_name: measurement_point.signal_name,
-                    telemetry_type: measurement_point.telemetry_type,
-                    data_type: measurement_point.data_type,
-                    protocol_params: protocol_params.clone(),
-                    scaling: if measurement_point.scale.is_some()
-                        || measurement_point.offset.is_some()
-                    {
-                        Some(super::types::ScalingInfo {
-                            scale: measurement_point.scale.unwrap_or(1.0),
-                            offset: measurement_point.offset.unwrap_or(0.0),
-                            unit: measurement_point.unit,
-                            reverse: None, // TODO: Load from CSV if needed
-                        })
-                    } else {
-                        None
-                    },
-                };
-                combined.push(point);
-            } else {
-                warn!("No protocol mapping found for point_id: {}", point_id);
-            }
-        }
-
-        info!("Combined {} points with protocol mappings", combined.len());
-        Ok(combined)
-    }
-
     /// 按类型合并点位信息，保持四遥分离
     fn combine_points_by_type(
         measurement_points: HashMap<u32, FourRemotePoint>,
@@ -647,6 +843,7 @@ impl CsvLoader {
         Ok(combined)
     }
 }
+*/
 
 // ============================================================================
 // 文件系统配置源实现

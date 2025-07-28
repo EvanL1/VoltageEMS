@@ -13,37 +13,18 @@ use tracing::{debug, error, info, warn};
 
 use crate::core::combase::{
     ChannelCommand, ChannelStatus, ComBase, CommandSubscriber, CommandSubscriberConfig, PointData,
-    PointDataMap, RedisValue, TelemetryType,
+    PointDataMap, RedisValue,
 };
-use crate::core::config::types::ChannelConfig;
-use crate::plugins::core::PluginStorage;
+use crate::core::config::types::{ChannelConfig, TelemetryType};
+use crate::plugins::core::{DefaultPluginStorage, PluginPointUpdate, PluginStorage};
 use crate::utils::error::{ComSrvError, Result};
 
 use super::connection::{ConnectionParams, ModbusConnectionManager, ModbusMode as ConnectionMode};
 use super::transport::{ModbusFrameProcessor, ModbusMode};
 use super::types::{ModbusPoint, ModbusPollingConfig};
 
-/// 将字符串遥测类型转换为TelemetryType枚举
-fn telemetry_type_from_string(type_str: &str) -> TelemetryType {
-    match type_str {
-        "Measurement" => TelemetryType::Measurement, // 遥测 → "m"
-        "Signal" => TelemetryType::Signal,           // 遥信 → "s"
-        "Control" => TelemetryType::Control,         // 遥控 → "c"
-        "Adjustment" => TelemetryType::Adjustment,   // 遥调 → "a"
-        _ => {
-            debug!(
-                "Unknown telemetry type '{}', defaulting to Telemetry",
-                type_str
-            );
-            TelemetryType::Measurement // 默认值
-        }
-    }
-}
-
 /// Modbus 协议核心引擎
 pub struct ModbusCore {
-    /// 帧处理器
-    frame_processor: ModbusFrameProcessor,
     /// 轮询配置
     _polling_config: ModbusPollingConfig,
     /// 点位映射表
@@ -52,9 +33,8 @@ pub struct ModbusCore {
 
 impl ModbusCore {
     /// 创建新的 Modbus 核心引擎
-    pub fn new(mode: ModbusMode, polling_config: ModbusPollingConfig) -> Self {
+    pub fn new(_mode: ModbusMode, polling_config: ModbusPollingConfig) -> Self {
         Self {
-            frame_processor: ModbusFrameProcessor::new(mode),
             _polling_config: polling_config,
             _points: HashMap::new(),
         }
@@ -88,7 +68,6 @@ pub struct ModbusProtocol {
     /// 核心组件
     core: Arc<Mutex<ModbusCore>>,
     connection_manager: Arc<ModbusConnectionManager>,
-    storage: Arc<Mutex<Option<Arc<dyn PluginStorage>>>>,
 
     /// 命令处理
     command_subscriber: Option<CommandSubscriber>,
@@ -106,6 +85,8 @@ pub struct ModbusProtocol {
     polling_config: ModbusPollingConfig,
     /// 点位映射
     points: Arc<RwLock<Vec<ModbusPoint>>>,
+    /// 存储组件
+    storage: Option<Arc<dyn PluginStorage>>,
 }
 
 impl ModbusProtocol {
@@ -137,7 +118,6 @@ impl ModbusProtocol {
             channel_config: Some(channel_config),
             core: Arc::new(Mutex::new(core)),
             connection_manager,
-            storage: Arc::new(Mutex::new(None)),
             command_subscriber: None,
             command_rx: None,
             is_connected: Arc::new(RwLock::new(false)),
@@ -146,6 +126,7 @@ impl ModbusProtocol {
             command_handle: Arc::new(RwLock::new(None)),
             polling_config,
             points: Arc::new(RwLock::new(Vec::new())),
+            storage: None,
         })
     }
 }
@@ -180,30 +161,9 @@ impl ComBase for ModbusProtocol {
 
         self.channel_config = Some(channel_config.clone());
 
-        // Step 2: 初始化存储
+        // Step 2: 加载和解析点位配置
         info!(
-            "Channel {} - Step 2: Initializing storage",
-            channel_config.id
-        );
-        match crate::plugins::core::DefaultPluginStorage::from_env().await {
-            Ok(storage) => {
-                *self.storage.lock().await = Some(Arc::new(storage) as Arc<dyn PluginStorage>);
-                info!(
-                    "Channel {} - Step 2 completed: Storage initialized successfully",
-                    self.channel_id
-                );
-            }
-            Err(e) => {
-                error!(
-                    "Channel {} - Step 2 failed: Storage initialization error: {}",
-                    self.channel_id, e
-                );
-            }
-        }
-
-        // Step 3: 加载和解析点位配置
-        info!(
-            "Channel {} - Step 3: Loading point configurations",
+            "Channel {} - Step 2: Loading point configurations",
             channel_config.id
         );
         let mut modbus_points = Vec::new();
@@ -221,7 +181,7 @@ impl ComBase for ModbusProtocol {
             + channel_config.control_points.len()
             + channel_config.adjustment_points.len();
 
-        info!("Channel {} - Step 3: Processing {} configured points ({} measurement, {} signal, {} control, {} adjustment)", 
+        info!("Channel {} - Step 2: Processing {} configured points ({} measurement, {} signal, {} control, {} adjustment)", 
             channel_config.id,
             total_configured_points,
             channel_config.measurement_points.len(),
@@ -243,9 +203,11 @@ impl ComBase for ModbusProtocol {
                         function_code_str.parse::<u8>(),
                         register_address_str.parse::<u16>(),
                     ) {
+                        // 修复数据格式获取逻辑
                         let data_format = point
                             .protocol_params
                             .get("data_format")
+                            .or_else(|| point.protocol_params.get("data_type")) // 向后兼容
                             .unwrap_or(&"uint16".to_string())
                             .clone();
 
@@ -289,9 +251,9 @@ impl ComBase for ModbusProtocol {
             }
         }
 
-        // Step 4: 设置点位到核心和本地存储
+        // Step 3: 设置点位到核心和本地存储
         info!(
-            "Channel {} - Step 4: Setting up {} points in storage",
+            "Channel {} - Step 3: Setting up {} points in storage",
             channel_config.id,
             modbus_points.len()
         );
@@ -304,11 +266,42 @@ impl ComBase for ModbusProtocol {
         self.status.write().await.points_count = self.points.read().await.len();
 
         info!(
-            "Channel {} - Step 4 completed: Successfully processed {} out of {} configured points for Modbus protocol",
+            "Channel {} - Step 3 completed: Successfully configured {} out of {} points for Modbus protocol",
             channel_config.id,
             modbus_points.len(),
             total_configured_points
         );
+
+        // Step 4: 初始化存储组件
+        info!(
+            "Channel {} - Step 4: Initializing storage component",
+            channel_config.id
+        );
+
+        // 从channel_config获取redis_url，如果没有则使用默认值
+        let redis_url = channel_config
+            .parameters
+            .get("redis_url")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| "redis://localhost:6379".to_string());
+
+        match DefaultPluginStorage::new(redis_url.clone()).await {
+            Ok(storage) => {
+                self.storage = Some(Arc::new(storage) as Arc<dyn PluginStorage>);
+                info!(
+                    "Channel {} - Storage initialized successfully with Redis URL: {}",
+                    channel_config.id, redis_url
+                );
+            }
+            Err(e) => {
+                error!(
+                    "Channel {} - Failed to initialize storage: {}, continuing without Redis storage",
+                    channel_config.id, e
+                );
+                // 继续运行，但不会有Redis存储功能
+            }
+        }
 
         info!("Channel {} - Initialization completed successfully (connection will be established later)", channel_config.id);
         Ok(())
@@ -486,10 +479,10 @@ impl ComBase for ModbusProtocol {
             let connection_manager = self.connection_manager.clone();
             let points = self.points.clone();
             let status = self.status.clone();
-            let storage = self.storage.clone();
             let is_connected = self.is_connected.clone();
             let channel_config = self.channel_config.clone();
             let polling_config_clone = self.polling_config.clone();
+            let storage = self.storage.clone();
 
             let polling_task = tokio::spawn(async move {
                 let mut interval =
@@ -601,95 +594,104 @@ impl ComBase for ModbusProtocol {
                             Ok(values) => {
                                 success_count += values.len();
 
-                                // Store values if storage is available
-                                if let Some(storage_ref) = &*storage.lock().await {
-                                    debug!("Storage available, storing {} values", values.len());
-                                    for (point_id_str, value) in values {
-                                        // Convert point_id from string to u32
-                                        if let Ok(point_id) = point_id_str.parse::<u32>() {
-                                            // Convert RedisValue to f64
-                                            let float_value = match value {
-                                                RedisValue::Float(f) => f,
-                                                RedisValue::Integer(i) => i as f64,
-                                                _ => continue, // Skip non-numeric values
-                                            };
+                                // Process values and store to Redis
+                                debug!("Processing {} values from Modbus read", values.len());
 
-                                            // Get point configuration and apply data processing
-                                            let (telemetry_type, processed_value) = if let Some(
-                                                ref config,
-                                            ) =
-                                                channel_config
-                                            {
-                                                // 从对应的HashMap中查找点位配置
-                                                let config_point = if let Some(point) =
-                                                    config.measurement_points.get(&point_id)
-                                                {
-                                                    Some((point, TelemetryType::Measurement))
-                                                } else if let Some(point) =
-                                                    config.signal_points.get(&point_id)
-                                                {
-                                                    Some((point, TelemetryType::Signal))
-                                                } else if let Some(point) =
-                                                    config.control_points.get(&point_id)
-                                                {
-                                                    Some((point, TelemetryType::Control))
-                                                } else {
-                                                    config.adjustment_points.get(&point_id).map(
-                                                        |point| (point, TelemetryType::Adjustment),
-                                                    )
+                                // Collect updates for batch storage
+                                let mut batch_updates = Vec::new();
+                                let timestamp = chrono::Utc::now().timestamp_millis();
+
+                                for (point_id_str, value) in values {
+                                    // Convert point_id from string to u32
+                                    if let Ok(point_id) = point_id_str.parse::<u32>() {
+                                        // Convert RedisValue to f64
+                                        let raw_value = match value {
+                                            RedisValue::Float(f) => f,
+                                            RedisValue::Integer(i) => i as f64,
+                                            _ => continue, // Skip non-numeric values
+                                        };
+
+                                        // Determine telemetry type from channel config
+                                        let telemetry_type = if let Some(ref config) =
+                                            channel_config
+                                        {
+                                            if config.measurement_points.contains_key(&point_id) {
+                                                TelemetryType::Measurement
+                                            } else if config.signal_points.contains_key(&point_id) {
+                                                TelemetryType::Signal
+                                            } else {
+                                                // Default to measurement if not found
+                                                TelemetryType::Measurement
+                                            }
+                                        } else {
+                                            TelemetryType::Measurement
+                                        };
+
+                                        // Get scaling info from channel config
+                                        let (scale, offset) =
+                                            if let Some(ref config) = channel_config {
+                                                let point_config = match telemetry_type {
+                                                    TelemetryType::Measurement => {
+                                                        config.measurement_points.get(&point_id)
+                                                    }
+                                                    TelemetryType::Signal => {
+                                                        config.signal_points.get(&point_id)
+                                                    }
+                                                    _ => None,
                                                 };
 
-                                                if let Some((config_point, telemetry_type)) =
-                                                    config_point
-                                                {
-                                                    // Apply scaling parameters if configured
-                                                    let processed_value = if let Some(ref scaling) =
-                                                        config_point.scaling
-                                                    {
-                                                        let mut value = float_value;
-
-                                                        // Apply scale and offset: processed = raw * scale + offset
-                                                        value =
-                                                            value * scaling.scale + scaling.offset;
-
-                                                        debug!("Applied scaling to point {}: raw={:.6}, scale={:.6}, offset={:.6}, processed={:.6}", 
-                                                               point_id, float_value, scaling.scale, scaling.offset, value);
-                                                        value
+                                                if let Some(pc) = point_config {
+                                                    if let Some(scaling_info) = &pc.scaling {
+                                                        // 直接从ScalingInfo结构体获取scale和offset
+                                                        (scaling_info.scale, scaling_info.offset)
                                                     } else {
-                                                        // No scaling configured, use raw value
-                                                        float_value
-                                                    };
-
-                                                    (telemetry_type, processed_value)
+                                                        (1.0, 0.0) // No scaling
+                                                    }
                                                 } else {
-                                                    debug!("Point {} not found in config, using default Measurement", point_id);
-                                                    (TelemetryType::Measurement, float_value)
+                                                    (1.0, 0.0)
                                                 }
                                             } else {
-                                                debug!("No channel config available, using default Measurement");
-                                                (TelemetryType::Measurement, float_value)
+                                                (1.0, 0.0)
                                             };
 
-                                            // Store the processed value with raw value metadata
-                                            if let Err(e) = storage_ref
-                                                .write_point_with_raw(
-                                                    channel_id,
-                                                    &telemetry_type,
-                                                    point_id,
-                                                    processed_value,
-                                                    float_value, // Keep original raw value for reference
-                                                )
-                                                .await
-                                            {
-                                                error!(
-                                                    "Failed to store point {} value: {}",
-                                                    point_id, e
+                                        // Apply scale and offset transformation
+                                        let processed_value = raw_value * scale + offset;
+
+                                        debug!("Read point {}: raw={:.6}, scale={}, offset={}, processed={:.6}", 
+                                            point_id, raw_value, scale, offset, processed_value);
+
+                                        // Create update for batch storage
+                                        let update = PluginPointUpdate {
+                                            channel_id: channel_id as u16,
+                                            telemetry_type,
+                                            point_id,
+                                            value: processed_value,
+                                            timestamp,
+                                            raw_value: Some(raw_value),
+                                        };
+
+                                        batch_updates.push(update);
+                                    }
+                                }
+
+                                // Store batch updates to Redis if storage is available
+                                if !batch_updates.is_empty() {
+                                    let update_count = batch_updates.len();
+                                    if let Some(ref storage) = storage {
+                                        match storage.write_points(batch_updates).await {
+                                            Ok(_) => {
+                                                debug!(
+                                                    "Successfully stored {} points to Redis",
+                                                    update_count
                                                 );
                                             }
+                                            Err(e) => {
+                                                error!("Failed to store points to Redis: {}", e);
+                                            }
                                         }
+                                    } else {
+                                        debug!("No storage configured, skipping Redis storage");
                                     }
-                                } else {
-                                    error!("Storage not initialized for channel {}, skipping data storage", channel_id);
                                 }
                             }
                             Err(e) => {
@@ -881,6 +883,8 @@ async fn read_modbus_batch(
 
         // Build Modbus PDU for this batch
         let pdu = match function_code {
+            1 => build_read_coils_pdu(batch_start, batch_size as u16),
+            2 => build_read_discrete_inputs_pdu(batch_start, batch_size as u16),
             3 => build_read_holding_registers_pdu(batch_start, batch_size as u16),
             4 => build_read_input_registers_pdu(batch_start, batch_size as u16),
             _ => {
@@ -963,7 +967,12 @@ async fn read_modbus_batch(
                 None
             };
 
-            let value = decode_register_value(registers, &point.data_format, bit_position)?;
+            let value = decode_register_value(
+                registers,
+                &point.data_format,
+                bit_position,
+                point.byte_order.as_deref(),
+            )?;
             results.push((point.point_id.clone(), value));
         } else {
             warn!(
@@ -977,6 +986,28 @@ async fn read_modbus_batch(
     }
 
     Ok(results)
+}
+
+/// Build Modbus PDU for reading coils (FC 1)
+fn build_read_coils_pdu(start_address: u16, quantity: u16) -> Vec<u8> {
+    vec![
+        0x01, // Function code
+        (start_address >> 8) as u8,
+        (start_address & 0xFF) as u8,
+        (quantity >> 8) as u8,
+        (quantity & 0xFF) as u8,
+    ]
+}
+
+/// Build Modbus PDU for reading discrete inputs (FC 2)
+fn build_read_discrete_inputs_pdu(start_address: u16, quantity: u16) -> Vec<u8> {
+    vec![
+        0x02, // Function code
+        (start_address >> 8) as u8,
+        (start_address & 0xFF) as u8,
+        (quantity >> 8) as u8,
+        (quantity & 0xFF) as u8,
+    ]
 }
 
 /// Build Modbus PDU for reading holding registers (FC 3)
@@ -1021,13 +1052,129 @@ fn parse_modbus_pdu(pdu: &[u8], function_code: u8) -> Result<Vec<u16>> {
         ));
     }
 
-    let mut registers = Vec::new();
-    for i in (2..2 + byte_count).step_by(2) {
-        let value = ((pdu[i] as u16) << 8) | (pdu[i + 1] as u16);
-        registers.push(value);
+    match function_code {
+        1 | 2 => {
+            // Function codes 1 (Read Coils) and 2 (Read Discrete Inputs) return bit data
+            // Convert bit data to registers for uniform processing
+            let mut registers = Vec::new();
+            for i in 2..2 + byte_count {
+                // Each byte contains 8 bits, store as individual "registers" for bit access
+                registers.push(pdu[i] as u16);
+            }
+            Ok(registers)
+        }
+        3 | 4 => {
+            // Function codes 3 and 4 return register data (16-bit values)
+            let mut registers = Vec::new();
+            for i in (2..2 + byte_count).step_by(2) {
+                let value = ((pdu[i] as u16) << 8) | (pdu[i + 1] as u16);
+                registers.push(value);
+            }
+            Ok(registers)
+        }
+        _ => Err(ComSrvError::ProtocolError(format!(
+            "Unsupported function code in PDU parsing: {}",
+            function_code
+        ))),
+    }
+}
+
+/// Convert registers to bytes with specified byte order
+fn convert_registers_with_byte_order(registers: &[u16], byte_order: Option<&str>) -> Vec<u8> {
+    let mut bytes = Vec::new();
+
+    // Convert registers to bytes (default: ABCD - big endian)
+    for &reg in registers {
+        bytes.push((reg >> 8) as u8); // High byte (A)
+        bytes.push((reg & 0xFF) as u8); // Low byte (B)
     }
 
-    Ok(registers)
+    match byte_order {
+        Some("ABCD") | None => bytes, // Big endian (default)
+        Some("DCBA") => {
+            // Reverse all bytes for complete little endian
+            if bytes.len() >= 4 {
+                let mut result = Vec::new();
+                for chunk in bytes.chunks(4) {
+                    let mut reversed = chunk.to_vec();
+                    reversed.reverse();
+                    result.extend(reversed);
+                }
+                result
+            } else if bytes.len() >= 2 {
+                // For 16-bit data (AB -> BA)
+                let mut result = Vec::new();
+                for chunk in bytes.chunks(2) {
+                    let mut reversed = chunk.to_vec();
+                    reversed.reverse();
+                    result.extend(reversed);
+                }
+                result
+            } else {
+                bytes
+            }
+        }
+        Some("BADC") => {
+            // Swap bytes within each register: ABCD -> BADC
+            if bytes.len() >= 4 {
+                let mut result = Vec::new();
+                for chunk in bytes.chunks(4) {
+                    if chunk.len() == 4 {
+                        result.push(chunk[1]); // B
+                        result.push(chunk[0]); // A
+                        result.push(chunk[3]); // D
+                        result.push(chunk[2]); // C
+                    } else {
+                        result.extend_from_slice(chunk);
+                    }
+                }
+                result
+            } else {
+                bytes
+            }
+        }
+        Some("CDAB") => {
+            // Swap register order but keep bytes within registers: ABCD -> CDAB
+            if bytes.len() >= 4 {
+                let mut result = Vec::new();
+                for chunk in bytes.chunks(4) {
+                    if chunk.len() == 4 {
+                        result.push(chunk[2]); // C
+                        result.push(chunk[3]); // D
+                        result.push(chunk[0]); // A
+                        result.push(chunk[1]); // B
+                    } else {
+                        result.extend_from_slice(chunk);
+                    }
+                }
+                result
+            } else {
+                bytes
+            }
+        }
+        Some("BA") => {
+            // For int16: AB -> BA
+            if bytes.len() >= 2 {
+                let mut result = Vec::new();
+                for chunk in bytes.chunks(2) {
+                    if chunk.len() == 2 {
+                        result.push(chunk[1]); // B
+                        result.push(chunk[0]); // A
+                    } else {
+                        result.extend_from_slice(chunk);
+                    }
+                }
+                result
+            } else {
+                bytes
+            }
+        }
+        Some("AB") => bytes, // Same as default
+        _ => {
+            debug!("Unknown byte order: {:?}, using default ABCD", byte_order);
+            bytes
+        }
+    }
 }
 
 /// Decode register values based on data format
@@ -1035,6 +1182,7 @@ fn decode_register_value(
     registers: &[u16],
     format: &str,
     bit_position: Option<u8>,
+    byte_order: Option<&str>,
 ) -> Result<RedisValue> {
     match format {
         "bool" => {
@@ -1044,20 +1192,40 @@ fn decode_register_value(
                 ));
             }
             let bit_pos = bit_position.unwrap_or(0);
-            if bit_pos > 15 {
-                return Err(ComSrvError::ProtocolError(format!(
-                    "Invalid bit position: {} (must be 0-15)",
-                    bit_pos
-                )));
+
+            // For function code 2 (discrete inputs), registers contain byte values (0-255)
+            // For function codes 3/4, registers contain 16-bit values
+            if registers[0] <= 255 {
+                // This is likely function code 2 data (byte values)
+                if bit_pos > 7 {
+                    return Err(ComSrvError::ProtocolError(format!(
+                        "Invalid bit position for discrete input: {} (must be 0-7)",
+                        bit_pos
+                    )));
+                }
+                let byte_value = registers[0] as u8;
+                let bit_value = (byte_value >> bit_pos) & 0x01;
+                debug!(
+                    "Discrete input bit extraction: byte=0x{:02X}, bit_pos={}, bit_value={}",
+                    byte_value, bit_pos, bit_value
+                );
+                Ok(RedisValue::Integer(bit_value as i64))
+            } else {
+                // This is function code 3/4 data (16-bit register values)
+                if bit_pos > 15 {
+                    return Err(ComSrvError::ProtocolError(format!(
+                        "Invalid bit position for register: {} (must be 0-15)",
+                        bit_pos
+                    )));
+                }
+                let register_value = registers[0];
+                let bit_value = (register_value >> bit_pos) & 0x01;
+                debug!(
+                    "Register bit extraction: register=0x{:04X}, bit_pos={}, bit_value={}",
+                    register_value, bit_pos, bit_value
+                );
+                Ok(RedisValue::Integer(bit_value as i64))
             }
-            // Extract bit from register: bit 0 is LSB, bit 15 is MSB
-            let register_value = registers[0];
-            let bit_value = (register_value >> bit_pos) & 0x01;
-            debug!(
-                "Bit extraction: register=0x{:04X}, bit_pos={}, bit_value={}",
-                register_value, bit_pos, bit_value
-            );
-            Ok(RedisValue::Integer(bit_value as i64))
         }
         "uint16" => {
             if registers.is_empty() {
@@ -1073,7 +1241,13 @@ fn decode_register_value(
                     "No registers for int16".to_string(),
                 ));
             }
-            Ok(RedisValue::Integer(registers[0] as i16 as i64))
+            let bytes = convert_registers_with_byte_order(registers, byte_order);
+            if bytes.len() >= 2 {
+                let value = i16::from_be_bytes([bytes[0], bytes[1]]);
+                Ok(RedisValue::Integer(value as i64))
+            } else {
+                Ok(RedisValue::Integer(registers[0] as i16 as i64))
+            }
         }
         "uint32" | "uint32_be" => {
             if registers.len() < 2 {
@@ -1081,8 +1255,31 @@ fn decode_register_value(
                     "Not enough registers for uint32".to_string(),
                 ));
             }
-            let value = ((registers[0] as u32) << 16) | (registers[1] as u32);
-            Ok(RedisValue::Integer(value as i64))
+            let bytes = convert_registers_with_byte_order(registers, byte_order);
+            if bytes.len() >= 4 {
+                let value = u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
+                Ok(RedisValue::Integer(value as i64))
+            } else {
+                // Fallback to old method if bytes conversion fails
+                let value = ((registers[0] as u32) << 16) | (registers[1] as u32);
+                Ok(RedisValue::Integer(value as i64))
+            }
+        }
+        "int32" | "int32_be" => {
+            if registers.len() < 2 {
+                return Err(ComSrvError::ProtocolError(
+                    "Not enough registers for int32".to_string(),
+                ));
+            }
+            let bytes = convert_registers_with_byte_order(registers, byte_order);
+            if bytes.len() >= 4 {
+                let value = i32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
+                Ok(RedisValue::Integer(value as i64))
+            } else {
+                // Fallback to old method if bytes conversion fails
+                let value = ((registers[0] as i32) << 16) | (registers[1] as i32);
+                Ok(RedisValue::Integer(value as i64))
+            }
         }
         "float32" | "float32_be" => {
             if registers.len() < 2 {
@@ -1090,14 +1287,28 @@ fn decode_register_value(
                     "Not enough registers for float32".to_string(),
                 ));
             }
-            let bytes = [
-                (registers[0] >> 8) as u8,
-                (registers[0] & 0xFF) as u8,
-                (registers[1] >> 8) as u8,
-                (registers[1] & 0xFF) as u8,
-            ];
-            let value = f32::from_be_bytes(bytes);
-            Ok(RedisValue::Float(value as f64))
+            let bytes = convert_registers_with_byte_order(registers, byte_order);
+            if bytes.len() >= 4 {
+                let value = f32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
+                debug!(
+                    "Float32 conversion: registers={:?}, byte_order={:?}, bytes={:02X?}, value={}",
+                    registers,
+                    byte_order,
+                    &bytes[0..4],
+                    value
+                );
+                Ok(RedisValue::Float(value as f64))
+            } else {
+                // Fallback to old method if bytes conversion fails
+                let bytes = [
+                    (registers[0] >> 8) as u8,
+                    (registers[0] & 0xFF) as u8,
+                    (registers[1] >> 8) as u8,
+                    (registers[1] & 0xFF) as u8,
+                ];
+                let value = f32::from_be_bytes(bytes);
+                Ok(RedisValue::Float(value as f64))
+            }
         }
         _ => Err(ComSrvError::ProtocolError(format!(
             "Unsupported data format: {}",
@@ -1141,33 +1352,33 @@ mod tests {
         let registers = vec![register_value];
 
         // 测试位0 (LSB)
-        let result = decode_register_value(&registers, "bool", Some(0)).unwrap();
+        let result = decode_register_value(&registers, "bool", Some(0), None).unwrap();
         assert_eq!(result, RedisValue::Integer(1)); // 位0 = 1
 
         // 测试位1
-        let result = decode_register_value(&registers, "bool", Some(1)).unwrap();
+        let result = decode_register_value(&registers, "bool", Some(1), None).unwrap();
         assert_eq!(result, RedisValue::Integer(0)); // 位1 = 0
 
         // 测试位2
-        let result = decode_register_value(&registers, "bool", Some(2)).unwrap();
+        let result = decode_register_value(&registers, "bool", Some(2), None).unwrap();
         assert_eq!(result, RedisValue::Integer(1)); // 位2 = 1
 
         // 测试位3
-        let result = decode_register_value(&registers, "bool", Some(3)).unwrap();
+        let result = decode_register_value(&registers, "bool", Some(3), None).unwrap();
         assert_eq!(result, RedisValue::Integer(0)); // 位3 = 0
 
         // 测试位7 (MSB in byte)
-        let result = decode_register_value(&registers, "bool", Some(7)).unwrap();
+        let result = decode_register_value(&registers, "bool", Some(7), None).unwrap();
         assert_eq!(result, RedisValue::Integer(1)); // 位7 = 1
 
         // 测试高字节位15 (MSB)
         let high_bit_register = 0x8000; // 只有最高位是1
         let high_registers = vec![high_bit_register];
-        let result = decode_register_value(&high_registers, "bool", Some(15)).unwrap();
+        let result = decode_register_value(&high_registers, "bool", Some(15), None).unwrap();
         assert_eq!(result, RedisValue::Integer(1)); // 位15 = 1
 
         // 测试位15在低值寄存器中
-        let result = decode_register_value(&registers, "bool", Some(15)).unwrap();
+        let result = decode_register_value(&registers, "bool", Some(15), None).unwrap();
         assert_eq!(result, RedisValue::Integer(0)); // 位15 = 0 (因为0xB5没有设置第15位)
     }
 
@@ -1177,7 +1388,7 @@ mod tests {
 
         // 测试全0寄存器的所有位都应该是0
         for bit_pos in 0..16 {
-            let result = decode_register_value(&registers, "bool", Some(bit_pos)).unwrap();
+            let result = decode_register_value(&registers, "bool", Some(bit_pos), None).unwrap();
             assert_eq!(
                 result,
                 RedisValue::Integer(0),
@@ -1190,7 +1401,7 @@ mod tests {
 
         // 测试全1寄存器的所有位都应该是1
         for bit_pos in 0..16 {
-            let result = decode_register_value(&registers, "bool", Some(bit_pos)).unwrap();
+            let result = decode_register_value(&registers, "bool", Some(bit_pos), None).unwrap();
             assert_eq!(
                 result,
                 RedisValue::Integer(1),
@@ -1200,17 +1411,17 @@ mod tests {
         }
 
         // 测试错误情况：bit_position超出范围
-        let result = decode_register_value(&registers, "bool", Some(16));
+        let result = decode_register_value(&registers, "bool", Some(16), None);
         assert!(result.is_err());
 
         // 测试错误情况：空寄存器
         let empty_registers = vec![];
-        let result = decode_register_value(&empty_registers, "bool", Some(0));
+        let result = decode_register_value(&empty_registers, "bool", Some(0), None);
         assert!(result.is_err());
 
         // 测试默认bit_position (应该是0)
         let registers = vec![0x0001]; // 只有位0是1
-        let result = decode_register_value(&registers, "bool", None).unwrap();
+        let result = decode_register_value(&registers, "bool", None, None).unwrap();
         assert_eq!(result, RedisValue::Integer(1)); // 默认位0 = 1
     }
 
@@ -1220,16 +1431,16 @@ mod tests {
         let registers = vec![0x1234];
 
         // 测试uint16
-        let result = decode_register_value(&registers, "uint16", None).unwrap();
+        let result = decode_register_value(&registers, "uint16", None, None).unwrap();
         assert_eq!(result, RedisValue::Integer(0x1234));
 
         // 测试int16
-        let result = decode_register_value(&registers, "int16", None).unwrap();
+        let result = decode_register_value(&registers, "int16", None, None).unwrap();
         assert_eq!(result, RedisValue::Integer(0x1234 as i16 as i64));
 
         // 测试float32需要2个寄存器
         let float_registers = vec![0x4000, 0x0000]; // 2.0 in IEEE 754
-        let result = decode_register_value(&float_registers, "float32", None).unwrap();
+        let result = decode_register_value(&float_registers, "float32", None, None).unwrap();
         if let RedisValue::Float(f) = result {
             assert!((f - 2.0).abs() < 0.0001);
         } else {

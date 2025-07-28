@@ -7,7 +7,7 @@ members = [
     "services/comsrv",
     "services/hissrv",
     "services/modsrv",
-    "services/netsrv",
+    # "services/netsrv",  # 临时注释，有依赖问题
     "services/rulesrv",
 ]
 

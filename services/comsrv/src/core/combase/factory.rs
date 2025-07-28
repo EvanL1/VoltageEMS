@@ -211,7 +211,7 @@ impl ProtocolFactory {
     pub async fn create_channel(
         &self,
         channel_config: &ChannelConfig,
-        config_manager: Option<&ConfigManager>,
+        _config_manager: Option<&ConfigManager>,
     ) -> Result<Arc<RwLock<Box<dyn ComBase>>>> {
         let channel_id = channel_config.id;
 
@@ -253,6 +253,11 @@ impl ProtocolFactory {
         info!("Client initialized successfully for channel {}", channel_id);
 
         // 四遥分离架构下，点位配置已在initialize阶段直接从channel_config加载，不需要额外的unified mapping
+
+        // 在ComBase层初始化Redis中的点位（初始值为0）
+        info!("Initializing Redis keys for channel {}", channel_id);
+        self.initialize_channel_points(channel_config).await?;
+        info!("Redis keys initialized for channel {}", channel_id);
 
         // 跳过连接阶段，仅完成初始化
         // 连接将在所有通道初始化完成后统一建立
@@ -474,6 +479,119 @@ impl ProtocolFactory {
             )
         })
     }
+
+    /// 初始化通道的所有点位到Redis（默认值为0）
+    async fn initialize_channel_points(&self, channel_config: &ChannelConfig) -> Result<()> {
+        use crate::core::config::TelemetryType;
+        use crate::plugins::core::{DefaultPluginStorage, PluginPointUpdate, PluginStorage};
+        use std::path::PathBuf;
+
+        // 获取Redis URL
+        let redis_url = channel_config
+            .parameters
+            .get("redis_url")
+            .and_then(|v| v.as_str())
+            .unwrap_or("redis://localhost:6379")
+            .to_string();
+
+        // 创建存储实例
+        let storage = DefaultPluginStorage::new(redis_url).await?;
+
+        // 加载点表配置
+        let table_config = channel_config.table_config.as_ref().ok_or_else(|| {
+            ComSrvError::ConfigError("Missing table_config in channel configuration".to_string())
+        })?;
+
+        // 获取CSV基础路径，如果没有配置则使用默认路径
+        let csv_base_path = PathBuf::from("/app/config");
+
+        // 初始化四遥类型的点位
+        let telemetry_types = vec![
+            (
+                "measurement",
+                &table_config.four_remote_files.measurement_file,
+                "m",
+            ),
+            ("signal", &table_config.four_remote_files.signal_file, "s"),
+            ("control", &table_config.four_remote_files.control_file, "c"),
+            (
+                "adjustment",
+                &table_config.four_remote_files.adjustment_file,
+                "a",
+            ),
+        ];
+
+        for (telemetry_name, file_name, redis_type) in telemetry_types {
+            let file_path = csv_base_path
+                .join(&table_config.four_remote_route)
+                .join(file_name);
+
+            if !file_path.exists() {
+                info!(
+                    "Skipping {} initialization for channel {}: file not found at {:?}",
+                    telemetry_name, channel_config.id, file_path
+                );
+                continue;
+            }
+
+            // 读取CSV文件获取点位ID列表
+            let mut reader = csv::Reader::from_path(&file_path).map_err(|e| {
+                ComSrvError::ConfigError(format!(
+                    "Failed to read {} CSV file: {}",
+                    telemetry_name, e
+                ))
+            })?;
+
+            let mut updates = Vec::new();
+
+            // 读取每个点位并准备初始化更新
+            for result in reader.records() {
+                let record = result.map_err(|e| {
+                    ComSrvError::ConfigError(format!("Error reading CSV record: {}", e))
+                })?;
+
+                // 获取point_id（第一列）
+                if let Some(point_id_str) = record.get(0) {
+                    if let Ok(point_id) = point_id_str.parse::<u32>() {
+                        // 获取当前时间戳
+                        let timestamp = chrono::Utc::now().timestamp();
+
+                        // 转换遥测类型
+                        let telemetry_type = match redis_type {
+                            "m" => TelemetryType::Measurement,
+                            "s" => TelemetryType::Signal,
+                            "c" => TelemetryType::Control,
+                            "a" => TelemetryType::Adjustment,
+                            _ => continue,
+                        };
+
+                        // 创建初始值为0的更新
+                        let update = PluginPointUpdate {
+                            channel_id: channel_config.id,
+                            telemetry_type,
+                            point_id,
+                            value: 0.0,
+                            timestamp,
+                            raw_value: None,
+                        };
+                        updates.push(update);
+                    }
+                }
+            }
+
+            // 批量初始化点位
+            if !updates.is_empty() {
+                let count = updates.len();
+                storage.write_points(updates).await?;
+                info!(
+                    "Initialized {} {} points for channel {} with default value 0",
+                    count, telemetry_name, channel_config.id
+                );
+            }
+        }
+
+        Ok(())
+    }
 }
 
 impl Default for ProtocolFactory {
@@ -574,7 +692,7 @@ impl ProtocolClientFactory for PluginAdapterFactory {
         Ok(instance)
     }
 
-    fn validate_config(&self, config: &ConfigValue) -> Result<()> {
+    fn validate_config(&self, _config: &ConfigValue) -> Result<()> {
         // TODO: 调用插件的配置验证
         Ok(())
     }

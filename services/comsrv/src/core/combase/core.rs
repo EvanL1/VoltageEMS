@@ -3,7 +3,7 @@
 //! 整合了基础trait定义、类型定义和默认实现
 
 use crate::core::config::{ChannelConfig, TelemetryType};
-use crate::plugins::core::{PluginPointUpdate, PluginStorage};
+use crate::plugins::core::PluginStorage;
 use crate::utils::error::{ComSrvError, Result};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -267,27 +267,6 @@ impl DefaultProtocol {
     }
 
     // 四遥分离架构下，不再需要get_mappings方法
-
-    /// 处理存储更新
-    async fn handle_storage_update(&self, updates: Vec<PluginPointUpdate>) -> Result<()> {
-        if let Some(storage) = &self.storage {
-            let storage = storage.lock().await;
-            // 逐个写入点位数据
-            for update in updates {
-                let raw_value = update.raw_value.unwrap_or(update.value);
-                storage
-                    .write_point_with_raw(
-                        update.channel_id,
-                        &update.telemetry_type,
-                        update.point_id,
-                        update.value,
-                        raw_value,
-                    )
-                    .await?;
-            }
-        }
-        Ok(())
-    }
 }
 
 #[async_trait]

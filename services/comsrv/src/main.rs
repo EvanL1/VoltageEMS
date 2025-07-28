@@ -118,10 +118,27 @@ async fn main() -> Result<()> {
         eprintln!("Config center URL detected: {url}");
     }
 
-    let config_manager = Arc::new(ConfigManager::from_file(&args.config).map_err(|e| {
+    let mut config_manager = ConfigManager::from_file(&args.config).map_err(|e| {
         eprintln!("Failed to load configuration: {e}");
         e
-    })?);
+    })?;
+
+    // 异步初始化CSV配置
+    let config_dir = std::path::Path::new(&args.config)
+        .parent()
+        .unwrap_or_else(|| std::path::Path::new("."));
+    eprintln!("DEBUG: Config directory for CSV: {}", config_dir.display());
+    eprintln!("DEBUG: About to call initialize_csv...");
+    config_manager
+        .initialize_csv(config_dir)
+        .await
+        .map_err(|e| {
+            eprintln!("Failed to initialize CSV configurations: {e}");
+            e
+        })?;
+    eprintln!("DEBUG: CSV initialization completed");
+
+    let config_manager = Arc::new(config_manager);
 
     // Initialize logging/tracing with configuration and channels
     initialize_logging(

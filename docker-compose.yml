@@ -1,0 +1,319 @@
+# VoltageEMS Comsrv测试环境
+# 不对外暴露任何端口，所有服务在内部网络运行
+
+services:
+  # Redis数据库服务
+  redis:
+    image: redis:8-alpine
+    container_name: voltage-test-redis
+    command: redis-server --save 60 1 --loglevel warning
+    networks:
+      - voltage-internal
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # Modbus TCP模拟器1 - Channel 1001
+  modbus-sim-1001:
+    build:
+      context: .
+      dockerfile: services/comsrv/tests/docker/Dockerfile.modbus-simulator
+    container_name: voltage-modbus-1001
+    environment:
+      - MODBUS_PORT=502
+      - SLAVE_ID=1
+      - REGISTER_COUNT=500
+      - CHANNEL_ID=1001
+    networks:
+      voltage-internal:
+        ipv4_address: 172.30.1.11
+    volumes:
+      - ./logs/modbus-1001:/app/logs
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket; s=socket.socket(); s.connect(('localhost', 502)); s.close()"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # Modbus TCP模拟器2 - Channel 1002
+  modbus-sim-1002:
+    build:
+      context: .
+      dockerfile: services/comsrv/tests/docker/Dockerfile.modbus-simulator
+    container_name: voltage-modbus-1002
+    environment:
+      - MODBUS_PORT=502
+      - SLAVE_ID=1
+      - REGISTER_COUNT=500
+      - CHANNEL_ID=1002
+    networks:
+      voltage-internal:
+        ipv4_address: 172.30.1.12
+    volumes:
+      - ./logs/modbus-1002:/app/logs
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket; s=socket.socket(); s.connect(('localhost', 502)); s.close()"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # Modbus TCP模拟器3 - Channel 1003
+  modbus-sim-1003:
+    build:
+      context: .
+      dockerfile: services/comsrv/tests/docker/Dockerfile.modbus-simulator
+    container_name: voltage-modbus-1003
+    environment:
+      - MODBUS_PORT=502
+      - SLAVE_ID=1
+      - REGISTER_COUNT=500
+      - CHANNEL_ID=1003
+    networks:
+      voltage-internal:
+        ipv4_address: 172.30.1.13
+    volumes:
+      - ./logs/modbus-1003:/app/logs
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket; s=socket.socket(); s.connect(('localhost', 502)); s.close()"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # Modbus TCP模拟器4 - Channel 1004
+  modbus-sim-1004:
+    build:
+      context: .
+      dockerfile: services/comsrv/tests/docker/Dockerfile.modbus-simulator
+    container_name: voltage-modbus-1004
+    environment:
+      - MODBUS_PORT=502
+      - SLAVE_ID=1
+      - REGISTER_COUNT=500
+      - CHANNEL_ID=1004
+    networks:
+      voltage-internal:
+        ipv4_address: 172.30.1.14
+    volumes:
+      - ./logs/modbus-1004:/app/logs
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket; s=socket.socket(); s.connect(('localhost', 502)); s.close()"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # Modbus TCP模拟器5 - Channel 1005
+  modbus-sim-1005:
+    build:
+      context: .
+      dockerfile: services/comsrv/tests/docker/Dockerfile.modbus-simulator
+    container_name: voltage-modbus-1005
+    environment:
+      - MODBUS_PORT=502
+      - SLAVE_ID=1
+      - REGISTER_COUNT=500
+      - CHANNEL_ID=1005
+    networks:
+      voltage-internal:
+        ipv4_address: 172.30.1.15
+    volumes:
+      - ./logs/modbus-1005:/app/logs
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket; s=socket.socket(); s.connect(('localhost', 502)); s.close()"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # Modbus TCP模拟器6 - Channel 1006
+  modbus-sim-1006:
+    build:
+      context: .
+      dockerfile: services/comsrv/tests/docker/Dockerfile.modbus-simulator
+    container_name: voltage-modbus-1006
+    environment:
+      - MODBUS_PORT=502
+      - SLAVE_ID=1
+      - REGISTER_COUNT=500
+      - CHANNEL_ID=1006
+    networks:
+      voltage-internal:
+        ipv4_address: 172.30.1.16
+    volumes:
+      - ./logs/modbus-1006:/app/logs
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket; s=socket.socket(); s.connect(('localhost', 502)); s.close()"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # Modbus RTU over TCP模拟器1 - Channel 2001
+  modbus-rtu-2001:
+    build:
+      context: .
+      dockerfile: services/comsrv/tests/docker/Dockerfile.modbus-simulator
+    container_name: voltage-modbus-2001
+    environment:
+      - MODBUS_PORT=503
+      - SLAVE_ID=1
+      - REGISTER_COUNT=500
+      - CHANNEL_ID=2001
+      - MODBUS_MODE=RTU
+    networks:
+      voltage-internal:
+        ipv4_address: 172.30.1.21
+    volumes:
+      - ./logs/modbus-2001:/app/logs
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket; s=socket.socket(); s.connect(('localhost', 503)); s.close()"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # Modbus RTU over TCP模拟器2 - Channel 2002
+  modbus-rtu-2002:
+    build:
+      context: .
+      dockerfile: services/comsrv/tests/docker/Dockerfile.modbus-simulator
+    container_name: voltage-modbus-2002
+    environment:
+      - MODBUS_PORT=503
+      - SLAVE_ID=1
+      - REGISTER_COUNT=500
+      - CHANNEL_ID=2002
+      - MODBUS_MODE=RTU
+    networks:
+      voltage-internal:
+        ipv4_address: 172.30.1.22
+    volumes:
+      - ./logs/modbus-2002:/app/logs
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket; s=socket.socket(); s.connect(('localhost', 503)); s.close()"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # comsrv主服务
+  comsrv:
+    build:
+      context: .
+      dockerfile: services/comsrv/Dockerfile
+    container_name: voltage-comsrv
+    depends_on:
+      redis:
+        condition: service_healthy
+      modbus-sim-1001:
+        condition: service_healthy
+      modbus-sim-1002:
+        condition: service_healthy
+      modbus-sim-1003:
+        condition: service_healthy
+      modbus-sim-1004:
+        condition: service_healthy
+      modbus-sim-1005:
+        condition: service_healthy
+      modbus-sim-1006:
+        condition: service_healthy
+      modbus-rtu-2001:
+        condition: service_healthy
+      modbus-rtu-2002:
+        condition: service_healthy
+    environment:
+      - RUST_LOG=comsrv=debug,voltage_libs=info
+      - COMSRV_CONFIG_FILE=/opt/comsrv/config/channels.yml
+    volumes:
+      - ./test-config/docker-test:/opt/comsrv/config:ro
+      - ./logs/comsrv:/opt/comsrv/logs
+      - ./logs:/opt/comsrv/channel-logs  # 通道日志目录
+    networks:
+      - voltage-internal
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  # 数据验证器
+  data-validator:
+    build:
+      context: .
+      dockerfile: test-scripts/Dockerfile.validator
+    container_name: voltage-validator
+    depends_on:
+      comsrv:
+        condition: service_healthy
+    environment:
+      - REDIS_URL=redis://redis:6379
+      - EXPECTED_CHANNELS=8
+      - EXPECTED_POINTS_PER_CHANNEL=1000
+      - PYTHONUNBUFFERED=1
+    volumes:
+      - ./logs/validator:/app/logs
+      - ./test-results:/app/results
+    networks:
+      - voltage-internal
+    command: >
+      sh -c "
+        echo 'Waiting for data collection to start...' &&
+        sleep 30 &&
+        echo 'Starting data validation...' &&
+        python /app/validator.py
+      "
+
+  # Redis监控器
+  redis-monitor:
+    image: alpine:latest
+    container_name: voltage-redis-monitor
+    depends_on:
+      - redis
+    networks:
+      - voltage-internal
+    volumes:
+      - ./logs/redis-monitor:/logs
+    command: >
+      sh -c "
+        apk add --no-cache redis &&
+        echo 'Starting Redis monitoring...' &&
+        redis-cli -h redis monitor | tee /logs/redis-monitor-$(date +%Y%m%d-%H%M%S).log
+      "
+
+  # 日志聚合器
+  log-aggregator:
+    image: alpine:latest
+    container_name: voltage-log-aggregator
+    depends_on:
+      - comsrv
+    volumes:
+      - ./logs:/logs:ro
+      - ./test-results:/results
+    networks:
+      - voltage-internal
+    command: >
+      sh -c "
+        echo 'Log aggregator started' &&
+        while true; do
+          echo '=== Log Summary at $(date) ===' > /results/log-summary.txt &&
+          find /logs -name '*.log' -type f | while read file; do
+            echo \"File: \$file\" >> /results/log-summary.txt &&
+            echo \"Size: \$(du -h \"\$file\" | cut -f1)\" >> /results/log-summary.txt &&
+            echo \"Lines: \$(wc -l < \"\$file\")\" >> /results/log-summary.txt &&
+            echo \"---\" >> /results/log-summary.txt
+          done &&
+          sleep 60
+        done
+      "
+
+networks:
+  voltage-internal:
+    name: voltage-test-network
+    driver: bridge
+    internal: true  # 内部网络，不对外暴露
+    ipam:
+      config:
+        - subnet: 172.30.0.0/16
+
+volumes:
+  redis-data:
+    name: voltage-test-redis-data

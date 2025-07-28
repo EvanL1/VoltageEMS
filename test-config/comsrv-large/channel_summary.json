@@ -1,0 +1,70 @@
+{
+  "total_points": 9030,
+  "channels": [
+    {
+      "id": 1001,
+      "name": "PowerMeter_Group1",
+      "type": "TCP",
+      "measurements": 1200,
+      "signals": 200,
+      "slave_id": 1
+    },
+    {
+      "id": 1002,
+      "name": "PowerMeter_Group2",
+      "type": "TCP",
+      "measurements": 1000,
+      "signals": 150,
+      "slave_id": 2
+    },
+    {
+      "id": 1003,
+      "name": "PowerMeter_Group3",
+      "type": "TCP",
+      "measurements": 1100,
+      "signals": 180,
+      "slave_id": 1
+    },
+    {
+      "id": 1004,
+      "name": "PowerMeter_Group4",
+      "type": "TCP",
+      "measurements": 900,
+      "signals": 120,
+      "slave_id": 2
+    },
+    {
+      "id": 1005,
+      "name": "Transformer_Group1",
+      "type": "TCP",
+      "measurements": 1300,
+      "signals": 250,
+      "slave_id": 1
+    },
+    {
+      "id": 1006,
+      "name": "Transformer_Group2",
+      "type": "TCP",
+      "measurements": 1150,
+      "signals": 200,
+      "slave_id": 2
+    },
+    {
+      "id": 2001,
+      "name": "RTU_Device_Group1",
+      "type": "RTU",
+      "measurements": 600,
+      "signals": 100,
+      "slave_id": 1
+    },
+    {
+      "id": 2002,
+      "name": "RTU_Device_Group2",
+      "type": "RTU",
+      "measurements": 500,
+      "signals": 80,
+      "slave_id": 2
+    }
+  ],
+  "timestamp": "2025-07-26T08:48:02.663646"
+}

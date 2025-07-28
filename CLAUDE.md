@@ -136,6 +136,12 @@ alarm:{alarmID}             # Alarm data
 rulesrv:rule:{ruleID}       # Rule definitions
 ```
 
+**重要**：在Hash中，每种类型的点位ID都从1开始：
+- `comsrv:1001:m` → fields: "1", "2", "3"... (遥测点)
+- `comsrv:1001:s` → fields: "1", "2", "3"... (遥信点)
+- `comsrv:1001:c` → fields: "1"              (遥控点)
+- `comsrv:1001:a` → fields: "1", "2"         (遥调点)
+
 ### Data Standards
 - **Float Precision**: 6 decimal places (e.g., "25.123456")
 - **Hash Access**: O(1) field queries
@@ -333,52 +339,94 @@ channels:
 **measurement.csv** (YC - Telemetry):
 ```csv
 point_id,signal_name,data_type,scale,offset,unit,description
-10001,voltage_a,float,0.1,0,V,Phase A voltage
-10002,current_a,float,0.01,0,A,Phase A current
-10003,power_active,float,1.0,0,kW,Active power
-10004,power_reactive,float,1.0,0,kVar,Reactive power
+1,voltage_a,float,0.1,0,V,Phase A voltage
+2,current_a,float,0.01,0,A,Phase A current
+3,power_active,float,1.0,0,kW,Active power
+4,power_reactive,float,1.0,0,kVar,Reactive power
+5,frequency,float,0.01,0,Hz,Frequency
 ```
 
 **signal.csv** (YX - Status):
 ```csv
 point_id,signal_name,data_type,scale,offset,unit,description
-20001,breaker_status,bool,1.0,0,,Breaker open/close status
-20002,fault_alarm,bool,1.0,0,,Fault alarm signal
-20003,communication_ok,bool,1.0,0,,Communication status
-```
-
-**adjustment.csv** (YT - Adjustment):
-```csv
-point_id,signal_name,data_type,scale,offset,unit,description
-40001,voltage_setpoint,float,0.1,0,V,Voltage setpoint
-40002,power_limit,float,1.0,0,kW,Power limit setpoint
+1,breaker_status,bool,1.0,0,,Breaker open/close status
+2,fault_alarm,bool,1.0,0,,Fault alarm signal
+3,communication_ok,bool,1.0,0,,Communication status
 ```
 
 **control.csv** (YK - Control):
 ```csv
 point_id,signal_name,data_type,scale,offset,unit,description
-30001,breaker_control,bool,1.0,0,,Breaker open/close control
-30002,reset_alarm,bool,1.0,0,,Reset alarm command
+1,breaker_control,bool,1.0,0,,Breaker open/close control
 ```
 
-#### Protocol Mapping Tables (in config/{Protocol}_CH{ChannelID}/mappings/)
+**adjustment.csv** (YT - Adjustment):
+```csv
+point_id,signal_name,data_type,scale,offset,unit,description
+1,voltage_setpoint,float,0.1,0,V,Voltage setpoint
+2,power_limit,float,1.0,0,kW,Power limit setpoint
+```
 
-**modbus_measurement.csv**:
+**注意：每种类型的点位ID都从1开始**，不再使用10001、20001等分段方式。
+
+#### Protocol Mapping Tables (简化版本 - in config/{Protocol}_CH{ChannelID}/mappings/)
+
+**modbus_measurement.csv** (简化版本):
 ```csv
 point_id,slave_id,function_code,register_address,data_type,byte_order
-10001,1,3,0,float32,ABCD
-10002,1,3,2,float32,ABCD
-10003,1,3,4,float32,ABCD
-10004,1,3,6,float32,ABCD
+1,1,3,0,uint16,
+2,1,3,2,uint16,
+3,1,3,4,float32,ABCD
+4,1,3,6,float32,ABCD
+5,1,3,8,int32,ABCD
 ```
 
-**modbus_signal.csv**:
+**modbus_signal.csv** (简化版本):
 ```csv
-point_id,slave_id,function_code,register_address,bit_position
-20001,1,2,0,0
-20002,1,2,0,1
-20003,1,2,0,2
+point_id,slave_id,function_code,register_address,data_type,bit_position
+1,1,2,0,bool,0
+2,1,2,0,bool,1
+3,1,1,0,bool,0
 ```
+
+**modbus_control.csv**:
+```csv
+point_id,slave_id,function_code,register_address,data_type,bit_position
+1,1,5,0,bool,0
+```
+
+**modbus_adjustment.csv**:
+```csv
+point_id,slave_id,function_code,register_address,data_type,byte_order
+1,1,6,10,uint16,
+2,1,6,12,float32,ABCD
+```
+
+#### 自动推断规则
+
+系统根据`data_type`字段自动推断以下参数：
+
+| 数据类型 | 寄存器数量 | 字节数 | 默认字节序 | 默认位位置 |
+|---------|-----------|--------|-----------|-----------|
+| bool    | 1         | 1      | AB        | 0         |
+| int8    | 1         | 1      | AB        | 0         |
+| uint8   | 1         | 1      | AB        | 0         |
+| int16   | 1         | 2      | AB        | 0         |
+| uint16  | 1         | 2      | AB        | 0         |
+| int32   | 2         | 4      | ABCD      | 0         |
+| uint32  | 2         | 4      | ABCD      | 0         |
+| float32 | 2         | 4      | ABCD      | 0         |
+| int64   | 4         | 8      | ABCDEFGH  | 0         |
+| uint64  | 4         | 8      | ABCDEFGH  | 0         |
+| float64 | 4         | 8      | ABCDEFGH  | 0         |
+
+**字节序说明**:
+- AB: 16位数据，A为高字节
+- ABCD: 32位数据，标准大端序  
+- DCBA: 32位数据，小端序
+- BADC: 32位数据，字节交换
+- CDAB: 32位数据，字交换
+- ABCDEFGH: 64位数据，标准大端序
 
 ## Performance Optimization
 

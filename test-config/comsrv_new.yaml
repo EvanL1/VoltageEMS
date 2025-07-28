@@ -1,0 +1,83 @@
+service:
+  name: "comsrv"
+  redis:
+    url: "redis://redis:6379"
+    retry_attempts: 3
+    retry_delay_ms: 1000
+  logging:
+    level: "debug"
+    file: "/tmp/comsrv.log"
+  api:
+    enabled: true
+    host: "0.0.0.0"
+    port: 8001
+    cors:
+      allowed_origins: ["*"]
+      allowed_methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"]
+      allowed_headers: ["*"]
+      max_age: 3600
+
+channels:
+  - id: 1001
+    name: "ModbusTCP测试通道1001（新格式）"
+    protocol: "modbus_tcp"
+    enabled: true
+    table_config:
+      # 四遥点表路径
+      four_remote_route: "test_channel_1001"
+      four_remote_files:
+        measurement_file: "measurement_v2.csv"    
+        signal_file: "signal_v2.csv"              
+        adjustment_file: "adjustment_v2.csv"      
+        control_file: "control_v2.csv"            
+
+      # 协议映射路径
+      protocol_mapping_route: "test_channel_1001/mappings"
+      protocol_mapping_file:
+        measurement_mapping: "modbus_measurement_v2.csv"
+        signal_mapping: "modbus_signal_v2.csv"
+        adjustment_mapping: "modbus_adjustment_v2.csv"
+        control_mapping: "modbus_control_v2.csv"
+    
+    protocol_config:
+      connection:
+        tcp:
+          host: "172.30.1.11"
+          port: 5020
+      polling:
+        interval_ms: 1000
+        timeout_ms: 500
+        batch_size: 100
+        retry_attempts: 3
+
+  - id: 1002
+    name: "ModbusTCP测试通道1002（新格式）"
+    protocol: "modbus_tcp"
+    enabled: true
+    table_config:
+      # 四遥点表路径
+      four_remote_route: "test_channel_1002"
+      four_remote_files:
+        measurement_file: "measurement_v2.csv"    
+        signal_file: "signal_v2.csv"              
+        adjustment_file: "adjustment_v2.csv"      
+        control_file: "control_v2.csv"            
+
+      # 协议映射路径
+      protocol_mapping_route: "test_channel_1002/mappings"
+      protocol_mapping_file:
+        measurement_mapping: "modbus_measurement_v2.csv"
+        signal_mapping: "modbus_signal_v2.csv"
+        adjustment_mapping: "modbus_adjustment_v2.csv"
+        control_mapping: "modbus_control_v2.csv"
+    
+    protocol_config:
+      connection:
+        tcp:
+          host: "172.30.1.12"
+          port: 5020
+      polling:
+        interval_ms: 1000
+        timeout_ms: 500
+        batch_size: 100
+        retry_attempts: 3

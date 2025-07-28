@@ -46,9 +46,9 @@ service:
 
 ```yaml
 channels:
-  - id: 1001
+  - id: 1
     name: "ModbusTCP Channel 1001"
-    protocol_type: "modbus_tcp"
+    protocol: "modbus_tcp"
     enabled: true
     table_config:
       # 四遥点表路径
@@ -74,10 +74,10 @@ channels:
 
 ```csv
 point_id,signal_name,data_type,scale,offset,unit,description
-10001,voltage_a,float,0.1,0,V,Phase A voltage
-10002,current_a,float,0.01,0,A,Phase A current
-10003,power_active,float,1.0,0,kW,Active power
-10004,power_reactive,float,1.0,0,kVar,Reactive power
+1,voltage_a,float,0.1,0,V,Phase A voltage
+2,current_a,float,0.01,0,A,Phase A current
+3,power_active,float,1.0,0,kW,Active power
+4,power_reactive,float,1.0,0,kVar,Reactive power
 ```
 
 ### 遥信点表 (signal.csv)
@@ -111,10 +111,10 @@ point_id,signal_name,data_type,scale,offset,unit,description
 
 ```csv
 point_id,slave_id,function_code,register_address,data_type,byte_order
-10001,1,3,0,float32,ABCD
-10002,1,3,2,float32,ABCD
-10003,1,3,4,float32,ABCD
-10004,1,3,6,float32,ABCD
+1,1,3,0,float32,ABCD
+2,1,3,2,float32,ABCD
+3,1,3,4,float32,ABCD
+4,1,3,6,float32,ABCD
 ```
 
 ### Modbus遥信映射 (modbus_signal.csv)

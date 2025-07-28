@@ -35,18 +35,17 @@ class ModbusSimulator:
     def create_datastore(self):
         """创建Modbus数据存储"""
         # 创建保持寄存器 (Holding Registers) - 功能码3,6,16
-        holding_registers = ModbusSequentialDataBlock(40001, [0] * self.register_count)
+        # 注意：起始地址设为0，与CSV配置匹配
+        holding_registers = ModbusSequentialDataBlock(0, [0] * self.register_count)
 
         # 创建输入寄存器 (Input Registers) - 功能码4
-        input_registers = ModbusSequentialDataBlock(30001, [0] * self.register_count)
+        input_registers = ModbusSequentialDataBlock(0, [0] * self.register_count)
 
         # 创建线圈 (Coils) - 功能码1,5,15
-        coils = ModbusSequentialDataBlock(1, [False] * self.register_count)
+        coils = ModbusSequentialDataBlock(0, [False] * self.register_count)
 
         # 创建离散输入 (Discrete Inputs) - 功能码2
-        discrete_inputs = ModbusSequentialDataBlock(
-            10001, [False] * self.register_count
-        )
+        discrete_inputs = ModbusSequentialDataBlock(0, [False] * self.register_count)
 
         # 创建从站上下文
         slave_context = ModbusSlaveContext(
@@ -71,31 +70,47 @@ class ModbusSimulator:
         try:
             slave_context = context[self.slave_id]
 
-            # 模拟温度数据 (40001-40010)
-            for i in range(10):
-                # 温度范围: 20-30度，带小数
-                temp_value = int(
-                    (20 + (i * 0.5) + (time.time() % 10)) * 100
-                )  # 扩大100倍存储
-                slave_context.setValues(3, 40001 + i, [temp_value])
+            # 根据CSV配置，更新对应地址的寄存器
+            # 地址0-1: uint16类型的电压值 (对应point_id 10001-10002)
+            voltage_a = int(220 + (time.time() % 10))  # 220-230V
+            current_a = int(50 + (time.time() % 5))  # 50-55A
+            slave_context.setValues(3, 0, [voltage_a])
+            slave_context.setValues(3, 2, [current_a])
 
-            # 模拟电压数据 (40011-40020)
-            for i in range(10):
-                # 电压范围: 220-240V
-                voltage_value = int(220 + (i * 2) + (time.time() % 5))
-                slave_context.setValues(3, 40011 + i, [voltage_value])
+            # 地址4-5: float32类型的功率值 (对应point_id 10003)
+            # Float32需要2个寄存器，按ABCD字节序
+            power_value = 1500.5 + (time.time() % 100)  # 1500.5-1600.5 kW
+            import struct
 
-            # 模拟状态数据 (线圈1-10)
-            for i in range(10):
-                # 随机开关状态
-                status = bool((int(time.time()) + i) % 3)
-                slave_context.setValues(1, 1 + i, [status])
+            power_bytes = struct.pack(">f", power_value)  # 大端序
+            power_regs = struct.unpack(">HH", power_bytes)  # 转为2个uint16
+            slave_context.setValues(3, 4, list(power_regs))
 
-            # 模拟计数器 (40021-40030)
-            counter_base = int(time.time()) % 65536
-            for i in range(10):
-                counter_value = (counter_base + i * 100) % 65536
-                slave_context.setValues(3, 40021 + i, [counter_value])
+            # 地址6-7: float32类型的无功功率 (对应point_id 10004)
+            reactive_power = 800.25 + (time.time() % 50)
+            reactive_bytes = struct.pack(">f", reactive_power)
+            reactive_regs = struct.unpack(">HH", reactive_bytes)
+            slave_context.setValues(3, 6, list(reactive_regs))
+
+            # 地址8-9: int32类型的能耗值 (对应point_id 10005)
+            energy_value = int(10000 + time.time() % 1000)
+            energy_bytes = struct.pack(">i", energy_value)  # 大端序有符号整数
+            energy_regs = struct.unpack(">HH", energy_bytes)
+            slave_context.setValues(3, 8, list(energy_regs))
+
+            # 离散输入 (功能码2)
+            # 地址0: 断路器状态 (对应point_id 20001)
+            breaker_status = bool(int(time.time()) % 2)
+            slave_context.setValues(2, 0, [breaker_status])
+
+            # 地址1: 故障报警 (对应point_id 20002) - 目前没有在CSV中
+            alarm_status = False
+            slave_context.setValues(2, 1, [alarm_status])
+
+            # 线圈 (功能码1)
+            # 地址0: 通信状态 (对应point_id 20003)
+            comm_status = True  # 始终在线
+            slave_context.setValues(1, 0, [comm_status])
 
         except Exception as e:
             logger.error(f"更新寄存器数据失败: {e}")

@@ -35,6 +35,86 @@ where
     }
 }
 
+/// 从字符串反序列化f64，支持空字符串
+fn deserialize_f64_from_str<'de, D>(deserializer: D) -> std::result::Result<Option<f64>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let s: Option<String> = Option::deserialize(deserializer)?;
+    match s {
+        None => Ok(None),
+        Some(ref s) if s.is_empty() => Ok(None),
+        Some(s) => s
+            .parse::<f64>()
+            .map(Some)
+            .map_err(|_| D::Error::custom(format!("Invalid float value: {}", s))),
+    }
+}
+
+/// 从字符串反序列化u32
+fn deserialize_u32_from_str<'de, D>(deserializer: D) -> std::result::Result<u32, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let s: String = String::deserialize(deserializer)?;
+    s.parse::<u32>()
+        .map_err(|_| D::Error::custom(format!("Invalid u32 value: {}", s)))
+}
+
+/// 从字符串反序列化u8
+fn deserialize_u8_from_str<'de, D>(deserializer: D) -> std::result::Result<u8, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let s: String = String::deserialize(deserializer)?;
+    s.parse::<u8>()
+        .map_err(|_| D::Error::custom(format!("Invalid u8 value: {}", s)))
+}
+
+/// 从字符串反序列化u16
+fn deserialize_u16_from_str<'de, D>(deserializer: D) -> std::result::Result<u16, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let s: String = String::deserialize(deserializer)?;
+    s.parse::<u16>()
+        .map_err(|_| D::Error::custom(format!("Invalid u16 value: {}", s)))
+}
+
+/// 从字符串反序列化可选u8
+fn deserialize_opt_u8_from_str<'de, D>(deserializer: D) -> std::result::Result<Option<u8>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let s: Option<String> = Option::deserialize(deserializer)?;
+    match s {
+        None => Ok(None),
+        Some(ref s) if s.is_empty() => Ok(None),
+        Some(s) => s
+            .parse::<u8>()
+            .map(Some)
+            .map_err(|_| D::Error::custom(format!("Invalid u8 value: {}", s))),
+    }
+}
+
+/// 从字符串反序列化可选u32
+fn deserialize_optional_u32_from_str<'de, D>(
+    deserializer: D,
+) -> std::result::Result<Option<u32>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let s: Option<String> = Option::deserialize(deserializer)?;
+    match s {
+        None => Ok(None),
+        Some(ref s) if s.is_empty() => Ok(None),
+        Some(s) => s
+            .parse::<u32>()
+            .map(Some)
+            .map_err(|_| D::Error::custom(format!("Invalid u32 value: {}", s))),
+    }
+}
+
 // ============================================================================
 // CSV缓存
 // ============================================================================
@@ -148,17 +228,31 @@ impl CachedCsvLoader {
         }
 
         // 反序列化为目标类型
-        data.into_iter()
-            .map(|v| {
-                serde_json::from_value(v).map_err(|e| {
-                    ComSrvError::ConfigError(format!("Failed to deserialize CSV data: {e}"))
+        let result: Result<Vec<T>> = data
+            .into_iter()
+            .enumerate()
+            .map(|(i, v)| {
+                serde_json::from_value(v.clone()).map_err(|e| {
+                    eprintln!("DEBUG: Failed to deserialize record {} - Error: {}", i, e);
+                    eprintln!("DEBUG: Record content: {:?}", v);
+                    ComSrvError::ConfigError(format!(
+                        "Failed to deserialize CSV data at row {}: {e}",
+                        i
+                    ))
                 })
             })
-            .collect()
+            .collect();
+
+        eprintln!(
+            "DEBUG: Deserialization result: {} records converted",
+            result.as_ref().map(|v| v.len()).unwrap_or(0)
+        );
+        result
     }
 
     /// 加载CSV文件
     fn load_csv_file(path: &Path) -> Result<Vec<serde_json::Value>> {
+        eprintln!("DEBUG: load_csv_file called for: {}", path.display());
         let mut reader = ReaderBuilder::new()
             .has_headers(true)
             .from_path(path)
@@ -170,6 +264,7 @@ impl CachedCsvLoader {
             .clone();
 
         let mut records = Vec::new();
+        eprintln!("DEBUG: Headers: {:?}", headers);
 
         for result in reader.records() {
             let record = result
@@ -188,6 +283,10 @@ impl CachedCsvLoader {
             records.push(serde_json::Value::Object(map));
         }
 
+        eprintln!("DEBUG: Read {} records from CSV", records.len());
+        if !records.is_empty() {
+            eprintln!("DEBUG: First record: {:?}", records[0]);
+        }
         Ok(records)
     }
 
@@ -209,29 +308,87 @@ impl CachedCsvLoader {
 /// 四遥记录
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FourRemoteRecord {
+    #[serde(deserialize_with = "deserialize_u32_from_str")]
     pub point_id: u32,
     pub signal_name: String,
     pub data_type: String,
+    #[serde(default, deserialize_with = "deserialize_f64_from_str")]
     pub scale: Option<f64>,
+    #[serde(default, deserialize_with = "deserialize_f64_from_str")]
     pub offset: Option<f64>,
     #[serde(default, deserialize_with = "deserialize_bool_from_str")]
     pub reverse: Option<bool>,
+    #[serde(default)]
     pub unit: Option<String>,
+    #[serde(default)]
     pub description: Option<String>,
 }
 
-/// Modbus映射记录
+/// Modbus映射记录 - 简化版本
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModbusMappingRecord {
+    #[serde(deserialize_with = "deserialize_u32_from_str")]
     pub point_id: u32,
+    #[serde(deserialize_with = "deserialize_u8_from_str")]
     pub slave_id: u8,
+    #[serde(deserialize_with = "deserialize_u8_from_str")]
     pub function_code: u8,
+    #[serde(deserialize_with = "deserialize_u16_from_str")]
     pub register_address: u16,
+    #[serde(rename = "data_type")]
     pub data_format: String,
-    pub number_of_bytes: Option<u8>,
-    pub bit_position: Option<u8>,
+    #[serde(default)]
     pub byte_order: Option<String>,
-    pub register_count: Option<u16>,
+    // 可选字段，仅在特殊情况下使用（如信号位操作）
+    #[serde(default, deserialize_with = "deserialize_opt_u8_from_str")]
+    pub bit_position: Option<u8>,
+}
+
+impl ModbusMappingRecord {
+    /// 根据数据类型推断寄存器数量
+    pub fn register_count(&self) -> u16 {
+        match self.data_format.as_str() {
+            "bool" | "int8" | "uint8" => 1,
+            "int16" | "uint16" => 1,
+            "int32" | "uint32" | "float32" => 2,
+            "int64" | "uint64" | "float64" => 4,
+            _ => {
+                tracing::warn!("未知数据类型: {}, 默认使用1个寄存器", self.data_format);
+                1
+            }
+        }
+    }
+
+    /// 根据数据类型推断字节数
+    pub fn byte_count(&self) -> u8 {
+        match self.data_format.as_str() {
+            "bool" | "int8" | "uint8" => 1,
+            "int16" | "uint16" => 2,
+            "int32" | "uint32" | "float32" => 4,
+            "int64" | "uint64" | "float64" => 8,
+            _ => {
+                tracing::warn!("未知数据类型: {}, 默认使用2字节", self.data_format);
+                2
+            }
+        }
+    }
+
+    /// 获取默认字节序（如果未指定）
+    pub fn effective_byte_order(&self) -> String {
+        self.byte_order
+            .clone()
+            .unwrap_or_else(|| match self.data_format.as_str() {
+                "int16" | "uint16" => "AB".to_string(),
+                "int32" | "uint32" | "float32" => "ABCD".to_string(),
+                "int64" | "uint64" | "float64" => "ABCDEFGH".to_string(),
+                _ => "AB".to_string(),
+            })
+    }
+
+    /// 获取有效位位置（如果未指定，默认为0）
+    pub fn effective_bit_position(&self) -> u8 {
+        self.bit_position.unwrap_or(0)
+    }
 }
 
 // ============================================================================
@@ -271,15 +428,17 @@ impl PointMapper {
                 );
                 protocol_params.insert("data_format".to_string(), mapping.data_format.clone());
 
-                if let Some(bit_pos) = mapping.bit_position {
-                    protocol_params.insert("bit_position".to_string(), bit_pos.to_string());
-                }
-                if let Some(byte_order) = mapping.byte_order {
-                    protocol_params.insert("byte_order".to_string(), byte_order);
-                }
-                if let Some(reg_count) = mapping.register_count {
-                    protocol_params.insert("register_count".to_string(), reg_count.to_string());
-                }
+                // 使用自动推断的值
+                protocol_params.insert(
+                    "register_count".to_string(),
+                    mapping.register_count().to_string(),
+                );
+                protocol_params.insert("byte_count".to_string(), mapping.byte_count().to_string());
+                protocol_params.insert("byte_order".to_string(), mapping.effective_byte_order());
+                protocol_params.insert(
+                    "bit_position".to_string(),
+                    mapping.effective_bit_position().to_string(),
+                );
 
                 let combined = CombinedPoint {
                     point_id: remote.point_id,
@@ -371,7 +530,7 @@ pub trait ProtocolMapping: Send + Sync {
     fn data_size(&self) -> u8;
 }
 
-/// Modbus协议映射
+/// Modbus协议映射 - 简化版本
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModbusMapping {
     pub point_id: u32,
@@ -380,11 +539,50 @@ pub struct ModbusMapping {
     pub function_code: u8,
     pub register_address: u16,
     pub data_format: String,
-    pub number_of_bytes: Option<u8>,
-    pub bit_position: Option<u8>,
     pub byte_order: Option<String>,
-    pub register_count: Option<u16>,
+    pub bit_position: Option<u8>,
     pub description: Option<String>,
+}
+
+impl ModbusMapping {
+    /// 根据数据类型推断寄存器数量
+    pub fn register_count(&self) -> u16 {
+        match self.data_format.as_str() {
+            "bool" | "int8" | "uint8" => 1,
+            "int16" | "uint16" => 1,
+            "int32" | "uint32" | "float32" => 2,
+            "int64" | "uint64" | "float64" => 4,
+            _ => 1,
+        }
+    }
+
+    /// 根据数据类型推断字节数
+    pub fn byte_count(&self) -> u8 {
+        match self.data_format.as_str() {
+            "bool" | "int8" | "uint8" => 1,
+            "int16" | "uint16" => 2,
+            "int32" | "uint32" | "float32" => 4,
+            "int64" | "uint64" | "float64" => 8,
+            _ => 2,
+        }
+    }
+
+    /// 获取有效字节序
+    pub fn effective_byte_order(&self) -> String {
+        self.byte_order
+            .clone()
+            .unwrap_or_else(|| match self.data_format.as_str() {
+                "int16" | "uint16" => "AB".to_string(),
+                "int32" | "uint32" | "float32" => "ABCD".to_string(),
+                "int64" | "uint64" | "float64" => "ABCDEFGH".to_string(),
+                _ => "AB".to_string(),
+            })
+    }
+
+    /// 获取有效位位置（如果未指定，默认为0）
+    pub fn effective_bit_position(&self) -> u8 {
+        self.bit_position.unwrap_or(0)
+    }
 }
 
 impl ProtocolMapping for ModbusMapping {
@@ -405,15 +603,17 @@ impl ProtocolMapping for ModbusMapping {
             self.register_address.to_string(),
         );
 
-        if let Some(bit_pos) = self.bit_position {
-            params.insert("bit_position".to_string(), bit_pos.to_string());
-        }
-        if let Some(byte_order) = &self.byte_order {
-            params.insert("byte_order".to_string(), byte_order.clone());
-        }
-        if let Some(reg_count) = self.register_count {
-            params.insert("register_count".to_string(), reg_count.to_string());
-        }
+        // 使用自动推断的值
+        params.insert(
+            "register_count".to_string(),
+            self.register_count().to_string(),
+        );
+        params.insert("byte_count".to_string(), self.byte_count().to_string());
+        params.insert("byte_order".to_string(), self.effective_byte_order());
+        params.insert(
+            "bit_position".to_string(),
+            self.effective_bit_position().to_string(),
+        );
 
         params
     }
@@ -423,7 +623,7 @@ impl ProtocolMapping for ModbusMapping {
     }
 
     fn data_size(&self) -> u8 {
-        self.register_count.unwrap_or(1) as u8
+        self.register_count() as u8
     }
 }
 
@@ -574,10 +774,8 @@ mod tests {
             function_code: 3,
             register_address: 1000,
             data_format: "float32".to_string(),
-            number_of_bytes: None,
             bit_position: None,
-            byte_order: Some("big".to_string()),
-            register_count: Some(2),
+            byte_order: Some("DCBA".to_string()),
             description: None,
         };
 
@@ -585,7 +783,28 @@ mod tests {
         assert_eq!(params.get("slave_id").unwrap(), "1");
         assert_eq!(params.get("function_code").unwrap(), "3");
         assert_eq!(params.get("register_address").unwrap(), "1000");
-        assert_eq!(params.get("byte_order").unwrap(), "big");
+        assert_eq!(params.get("byte_order").unwrap(), "DCBA");
+        assert_eq!(params.get("register_count").unwrap(), "2");
+        assert_eq!(params.get("byte_count").unwrap(), "4");
         assert_eq!(mapping.data_size(), 2);
+
+        // 测试自动推断
+        let mapping_auto = ModbusMapping {
+            point_id: 101,
+            signal_name: "Test Auto".to_string(),
+            slave_id: 1,
+            function_code: 3,
+            register_address: 1002,
+            data_format: "int16".to_string(),
+            bit_position: None,
+            byte_order: None, // 未指定，应该自动推断
+            description: None,
+        };
+
+        let params_auto = mapping_auto.to_protocol_params();
+        assert_eq!(params_auto.get("byte_order").unwrap(), "AB");
+        assert_eq!(params_auto.get("register_count").unwrap(), "1");
+        assert_eq!(params_auto.get("byte_count").unwrap(), "2");
+        assert_eq!(params_auto.get("bit_position").unwrap(), "0"); // 默认为0
     }
 }

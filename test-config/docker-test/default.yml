@@ -1,0 +1,27 @@
+# comsrv Docker测试主配置文件
+service:
+  name: "comsrv-test"
+  redis:
+    url: "redis://redis:6379"
+  logging:
+    level: "debug"
+    console: true
+    file: "/opt/comsrv/logs/comsrv.log"
+
+# API配置
+api:
+  enabled: true
+  host: "0.0.0.0"
+  port: 3000
+
+# Redis配置
+redis:
+  enabled: true
+  url: "redis://redis:6379"
+  pool_size: 20
+  
+# 批量读取配置
+batch:
+  enabled: true
+  size: 100  # 每批读取100个点
+  interval_ms: 1000  # 每秒读取一次

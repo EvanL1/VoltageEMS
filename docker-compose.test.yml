@@ -1,0 +1,102 @@
+version: '3.8'
+
+services:
+  # Redis服务
+  redis:
+    image: redis:8-alpine
+    container_name: voltage-redis
+    networks:
+      - voltage-internal
+    ports:
+      - "6379:6379"  # 暴露Redis端口用于调试
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # 构建并运行comsrv
+  comsrv:
+    build:
+      context: .
+      dockerfile: services/comsrv/Dockerfile
+    container_name: voltage-comsrv
+    depends_on:
+      redis:
+        condition: service_healthy
+    environment:
+      - RUST_LOG=debug,comsrv=debug
+      - REDIS_URL=redis://redis:6379
+    volumes:
+      - ./test-config:/app/config:ro
+      - ./test-logs:/app/logs
+    command: ["/app/comsrv", "--config", "/app/config/comsrv_new.yaml"]
+    networks:
+      - voltage-internal
+    ports:
+      - "8001:8001"  # API端口
+
+  # Modbus模拟器 - 通道1001
+  modbus-sim-1001:
+    build:
+      context: .
+      dockerfile: services/comsrv/tests/docker/Dockerfile.modbus-simulator
+    container_name: modbus-sim-1001
+    networks:
+      voltage-internal:
+        ipv4_address: 172.30.1.11
+    ports:
+      - "5021:5020"
+    environment:
+      - MODBUS_PORT=5020
+      - SLAVE_ID=1
+      - REGISTER_COUNT=500
+
+  # Modbus模拟器 - 通道1002 
+  modbus-sim-1002:
+    build:
+      context: .
+      dockerfile: services/comsrv/tests/docker/Dockerfile.modbus-simulator
+    container_name: modbus-sim-1002
+    networks:
+      voltage-internal:
+        ipv4_address: 172.30.1.12
+    ports:
+      - "5022:5020"
+    environment:
+      - MODBUS_PORT=5020
+      - SLAVE_ID=1
+      - REGISTER_COUNT=500
+
+  # 测试监控容器
+  test-monitor:
+    image: redis:8-alpine
+    container_name: test-monitor
+    depends_on:
+      - redis
+      - comsrv
+    networks:
+      - voltage-internal
+    volumes:
+      - ./test-scripts:/scripts:ro
+    entrypoint: ["/bin/sh", "-c"]
+    command: |
+      "echo 'Waiting for services to start...' && \
+       sleep 30 && \
+       echo 'Starting Redis monitoring...' && \
+       while true; do \
+         echo '===== Redis Monitor =====' && \
+         redis-cli -h redis KEYS 'comsrv:*' | head -20 && \
+         echo '===== Channel 1001 Measurements =====' && \
+         redis-cli -h redis HGETALL 'comsrv:1001:m' | head -20 && \
+         echo '===== Channel 1002 Measurements =====' && \
+         redis-cli -h redis HGETALL 'comsrv:1002:m' | head -20 && \
+         sleep 10; \
+       done"
+
+networks:
+  voltage-internal:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.30.0.0/16
