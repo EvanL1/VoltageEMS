@@ -201,7 +201,7 @@ pub trait ConfigValidator {
 /// 协议数据包解析器trait
 #[async_trait]
 pub trait ProtocolPacketParser: Send + Sync {
-    fn protocol_name(&self) -> &str {
+    fn protocol_name(&self) -> &'static str {
         "Unknown"
     }
     async fn parse_packet(&self, data: &[u8]) -> Result<PacketParseResult>;
@@ -222,7 +222,7 @@ pub enum PacketParseResult {
 
 /// 默认协议实现
 ///
-/// 提供ComBase trait的参考实现
+/// `提供ComBase` trait的参考实现
 pub struct DefaultProtocol {
     name: String,
     protocol_type: String,
@@ -293,7 +293,7 @@ impl ComBase for DefaultProtocol {
         let point_count = channel_config
             .parameters
             .get("point_count")
-            .and_then(|v| v.as_u64())
+            .and_then(serde_yaml::Value::as_u64)
             .unwrap_or(0) as usize;
 
         self.update_status(|status| {
@@ -369,6 +369,17 @@ impl ComBase for DefaultProtocol {
     }
 
     // 四遥分离架构下，update_points方法已移除
+}
+
+impl std::fmt::Debug for DefaultProtocol {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DefaultProtocol")
+            .field("name", &self.name)
+            .field("protocol_type", &self.protocol_type)
+            .field("is_connected", &self.is_connected)
+            .field("channel_config", &self.channel_config)
+            .finish()
+    }
 }
 
 #[async_trait]

@@ -45,7 +45,7 @@ pub fn format_duration(duration: Duration) -> String {
     let secs = duration.as_secs();
 
     if secs < 60 {
-        format!("{}s", secs)
+        format!("{secs}s")
     } else if secs < 3600 {
         format!("{}m {}s", secs / 60, secs % 60)
     } else if secs < 86400 {
@@ -62,7 +62,7 @@ pub mod hex {
     /// Format bytes as hex string with spaces
     pub fn format_hex_pretty(data: &[u8]) -> String {
         data.iter()
-            .map(|b| format!("{:02X}", b))
+            .map(|b| format!("{b:02X}"))
             .collect::<Vec<_>>()
             .join(" ")
     }
@@ -115,6 +115,7 @@ pub fn clamp<T: PartialOrd>(value: T, min: T, max: T) -> T {
 }
 
 /// Calculate simple moving average
+#[derive(Debug)]
 pub struct MovingAverage {
     window_size: usize,
     values: Vec<f64>,

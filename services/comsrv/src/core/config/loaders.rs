@@ -30,7 +30,7 @@ where
         Some(s) => match s.as_str() {
             "0" | "false" | "False" | "FALSE" => Ok(Some(false)),
             "1" | "true" | "True" | "TRUE" => Ok(Some(true)),
-            _ => Err(D::Error::custom(format!("Invalid boolean value: {}", s))),
+            _ => Err(D::Error::custom(format!("Invalid boolean value: {s}"))),
         },
     }
 }
@@ -47,7 +47,7 @@ where
         Some(s) => s
             .parse::<f64>()
             .map(Some)
-            .map_err(|_| D::Error::custom(format!("Invalid float value: {}", s))),
+            .map_err(|_| D::Error::custom(format!("Invalid float value: {s}"))),
     }
 }
 
@@ -58,7 +58,7 @@ where
 {
     let s: String = String::deserialize(deserializer)?;
     s.parse::<u32>()
-        .map_err(|_| D::Error::custom(format!("Invalid u32 value: {}", s)))
+        .map_err(|_| D::Error::custom(format!("Invalid u32 value: {s}")))
 }
 
 /// 从字符串反序列化u8
@@ -68,7 +68,7 @@ where
 {
     let s: String = String::deserialize(deserializer)?;
     s.parse::<u8>()
-        .map_err(|_| D::Error::custom(format!("Invalid u8 value: {}", s)))
+        .map_err(|_| D::Error::custom(format!("Invalid u8 value: {s}")))
 }
 
 /// 从字符串反序列化u16
@@ -78,7 +78,7 @@ where
 {
     let s: String = String::deserialize(deserializer)?;
     s.parse::<u16>()
-        .map_err(|_| D::Error::custom(format!("Invalid u16 value: {}", s)))
+        .map_err(|_| D::Error::custom(format!("Invalid u16 value: {s}")))
 }
 
 /// 从字符串反序列化可选u8
@@ -93,25 +93,7 @@ where
         Some(s) => s
             .parse::<u8>()
             .map(Some)
-            .map_err(|_| D::Error::custom(format!("Invalid u8 value: {}", s))),
-    }
-}
-
-/// 从字符串反序列化可选u32
-fn deserialize_optional_u32_from_str<'de, D>(
-    deserializer: D,
-) -> std::result::Result<Option<u32>, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    let s: Option<String> = Option::deserialize(deserializer)?;
-    match s {
-        None => Ok(None),
-        Some(ref s) if s.is_empty() => Ok(None),
-        Some(s) => s
-            .parse::<u32>()
-            .map(Some)
-            .map_err(|_| D::Error::custom(format!("Invalid u32 value: {}", s))),
+            .map_err(|_| D::Error::custom(format!("Invalid u8 value: {s}"))),
     }
 }
 
@@ -233,11 +215,10 @@ impl CachedCsvLoader {
             .enumerate()
             .map(|(i, v)| {
                 serde_json::from_value(v.clone()).map_err(|e| {
-                    eprintln!("DEBUG: Failed to deserialize record {} - Error: {}", i, e);
-                    eprintln!("DEBUG: Record content: {:?}", v);
+                    eprintln!("DEBUG: Failed to deserialize record {i} - Error: {e}");
+                    eprintln!("DEBUG: Record content: {v:?}");
                     ComSrvError::ConfigError(format!(
-                        "Failed to deserialize CSV data at row {}: {e}",
-                        i
+                        "Failed to deserialize CSV data at row {i}: {e}"
                     ))
                 })
             })
@@ -245,7 +226,7 @@ impl CachedCsvLoader {
 
         eprintln!(
             "DEBUG: Deserialization result: {} records converted",
-            result.as_ref().map(|v| v.len()).unwrap_or(0)
+            result.as_ref().map(std::vec::Vec::len).unwrap_or(0)
         );
         result
     }
@@ -264,7 +245,7 @@ impl CachedCsvLoader {
             .clone();
 
         let mut records = Vec::new();
-        eprintln!("DEBUG: Headers: {:?}", headers);
+        eprintln!("DEBUG: Headers: {headers:?}");
 
         for result in reader.records() {
             let record = result
@@ -663,7 +644,7 @@ impl ProtocolMapping for CanMapping {
     }
 
     fn data_size(&self) -> u8 {
-        (self.bit_length + 7) / 8
+        self.bit_length.div_ceil(8)
     }
 }
 

@@ -1,6 +1,6 @@
 //! 参数相关类型定义
 //!
-//! 简化的参数处理，移除了复杂的 ChannelParameters 枚举
+//! 简化的参数处理，移除了复杂的 `ChannelParameters` 枚举
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -67,7 +67,7 @@ pub struct Iec60870Parameters {
 // 参数转换辅助函数
 // ============================================================================
 
-/// 从通用HashMap转换为Modbus参数
+/// `从通用HashMap转换为Modbus参数`
 pub fn parse_modbus_parameters(
     params: &HashMap<String, serde_yaml::Value>,
 ) -> Result<ModbusParameters, String> {
@@ -79,23 +79,23 @@ pub fn parse_modbus_parameters(
 
     let port = params
         .get("port")
-        .and_then(|v| v.as_u64())
+        .and_then(serde_yaml::Value::as_u64)
         .ok_or("Missing 'port' parameter")? as u16;
 
     let timeout_ms = params
         .get("timeout_ms")
-        .and_then(|v| v.as_u64())
+        .and_then(serde_yaml::Value::as_u64)
         .unwrap_or(5000);
 
     let max_retries = params
         .get("max_retries")
-        .and_then(|v| v.as_u64())
+        .and_then(serde_yaml::Value::as_u64)
         .unwrap_or(3) as u32;
 
     // 解析轮询配置
     let polling = if let Some(polling_value) = params.get("polling") {
         serde_yaml::from_value(polling_value.clone())
-            .map_err(|e| format!("Failed to parse polling config: {}", e))?
+            .map_err(|e| format!("Failed to parse polling config: {e}"))?
     } else {
         ModbusPollingConfig::default()
     };
@@ -109,7 +109,7 @@ pub fn parse_modbus_parameters(
     })
 }
 
-/// 从通用HashMap转换为CAN参数
+/// `从通用HashMap转换为CAN参数`
 pub fn parse_can_parameters(
     params: &HashMap<String, serde_yaml::Value>,
 ) -> Result<CanParameters, String> {
@@ -121,10 +121,10 @@ pub fn parse_can_parameters(
 
     let bitrate = params
         .get("bitrate")
-        .and_then(|v| v.as_u64())
+        .and_then(serde_yaml::Value::as_u64)
         .ok_or("Missing 'bitrate' parameter")? as u32;
 
-    let timeout_ms = params.get("timeout_ms").and_then(|v| v.as_u64());
+    let timeout_ms = params.get("timeout_ms").and_then(serde_yaml::Value::as_u64);
 
     Ok(CanParameters {
         interface,
@@ -133,7 +133,7 @@ pub fn parse_can_parameters(
     })
 }
 
-/// 从通用HashMap转换为IEC60870参数
+/// `从通用HashMap转换为IEC60870参数`
 pub fn parse_iec60870_parameters(
     params: &HashMap<String, serde_yaml::Value>,
 ) -> Result<Iec60870Parameters, String> {
@@ -145,19 +145,19 @@ pub fn parse_iec60870_parameters(
 
     let port = params
         .get("port")
-        .and_then(|v| v.as_u64())
+        .and_then(serde_yaml::Value::as_u64)
         .ok_or("Missing 'port' parameter")? as u16;
 
-    let timeout_ms = params.get("timeout_ms").and_then(|v| v.as_u64());
+    let timeout_ms = params.get("timeout_ms").and_then(serde_yaml::Value::as_u64);
 
     let common_address = params
         .get("common_address")
-        .and_then(|v| v.as_u64())
+        .and_then(serde_yaml::Value::as_u64)
         .unwrap_or(1) as u16;
 
     let link_address = params
         .get("link_address")
-        .and_then(|v| v.as_u64())
+        .and_then(serde_yaml::Value::as_u64)
         .unwrap_or(1) as u16;
 
     Ok(Iec60870Parameters {

@@ -45,7 +45,7 @@ impl StandardFloat {
     pub fn from_redis(data: &str) -> Result<Self, String> {
         let value = data
             .parse::<f64>()
-            .map_err(|e| format!("Failed to parse StandardFloat: {}", e))?;
+            .map_err(|e| format!("Failed to parse StandardFloat: {e}"))?;
         Ok(Self::new(value))
     }
 }
@@ -64,7 +64,7 @@ impl From<f64> for StandardFloat {
 
 impl From<f32> for StandardFloat {
     fn from(value: f32) -> Self {
-        Self::new(value as f64)
+        Self::new(f64::from(value))
     }
 }
 
@@ -129,7 +129,7 @@ impl PointData {
         let value = StandardFloat::from_redis(parts[0])?;
         let timestamp = parts[1]
             .parse::<i64>()
-            .map_err(|e| format!("Failed to parse timestamp: {}", e))?;
+            .map_err(|e| format!("Failed to parse timestamp: {e}"))?;
 
         Ok(Self { value, timestamp })
     }

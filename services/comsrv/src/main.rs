@@ -219,19 +219,19 @@ async fn main() -> Result<()> {
         Ok(Some(true)) => info!("Communication service confirmed started"),
         Ok(Some(false)) => warn!("Communication service reported failure, but continuing..."),
         Ok(None) | Err(_) => {
-            info!("Communication service still initializing, continuing with API server...")
+            info!("Communication service still initializing, continuing with API server...");
         }
     }
 
     // Start cleanup task
     let cleanup_factory = factory.clone();
-    let cleanup_handle = start_cleanup_task(cleanup_factory);
+    let (cleanup_handle, cleanup_token) = start_cleanup_task(cleanup_factory);
 
     // Start API server (always enabled)
     let api_handle = {
         let host = &config_manager.service_config().api.host;
         let port = config_manager.service_config().api.port;
-        let bind_address = format!("{}:{}", host, port);
+        let bind_address = format!("{host}:{port}");
         info!("Preparing to start API server on {bind_address}");
 
         let addr: SocketAddr = bind_address.parse().map_err(|e| {
@@ -285,7 +285,7 @@ async fn main() -> Result<()> {
     shutdown_handler(factory.clone()).await;
 
     // Cancel background tasks
-    cleanup_handle.abort();
+    cleanup_token.cancel();
     if let Some(handle) = api_handle.as_ref() {
         handle.abort();
     }
@@ -315,7 +315,7 @@ fn initialize_logging(
     let env_filter = tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| {
         let level = &logging_config.level;
         // Default filter
-        format!("comsrv={},tower_http=info", level).into()
+        format!("comsrv={level},tower_http=info").into()
     });
 
     // Start with the registry
@@ -330,7 +330,7 @@ fn initialize_logging(
             // Check if this is a modbus packet log by looking for specific field names
             let fields = metadata.fields();
             // Check if the field names contain "direction" which indicates a packet log
-            for field in fields.iter() {
+            for field in fields {
                 if field.name() == "direction" {
                     return false; // Exclude packet logs from main log
                 }
@@ -353,10 +353,7 @@ fn initialize_logging(
 
         // Create log directory if it doesn't exist
         if let Err(e) = std::fs::create_dir_all(log_dir) {
-            eprintln!(
-                "Warning: Could not create log directory {:?}: {}",
-                log_dir, e
-            );
+            eprintln!("Warning: Could not create log directory {log_dir:?}: {e}");
         }
 
         // Create rolling file appender for main log
@@ -414,10 +411,7 @@ fn initialize_logging(
 
         // Create log directory if it doesn't exist
         if let Err(e) = std::fs::create_dir_all(log_dir) {
-            eprintln!(
-                "Warning: Could not create log directory {:?}: {}",
-                log_dir, e
-            );
+            eprintln!("Warning: Could not create log directory {log_dir:?}: {e}");
         }
 
         // Create rolling file appender
@@ -473,10 +467,10 @@ async fn shutdown_signal() {
     let terminate = std::future::pending::<()>();
 
     tokio::select! {
-        _ = ctrl_c => {
+        () = ctrl_c => {
             info!("Received Ctrl+C signal");
         },
-        _ = terminate => {
+        () = terminate => {
             info!("Received terminate signal");
         },
     }

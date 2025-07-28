@@ -1,4 +1,4 @@
-//! ComBase Module
+//! `ComBase` Module
 //!
 //! This module provides the base infrastructure for communication protocol implementations.
 //! Actual protocol implementations are provided as plugins.

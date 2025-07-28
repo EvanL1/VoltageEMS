@@ -168,8 +168,7 @@ impl ConfigManager {
                 "yaml" | "yml" => figment.merge(Yaml::file(path)),
                 _ => {
                     return Err(ComSrvError::ConfigError(format!(
-                        "Unsupported config format: {}",
-                        extension
+                        "Unsupported config format: {extension}"
                     )))
                 }
             };
@@ -181,7 +180,7 @@ impl ConfigManager {
         // 解析配置
         let config: AppConfig = figment
             .extract()
-            .map_err(|e| ComSrvError::ConfigError(format!("Failed to parse config: {}", e)))?;
+            .map_err(|e| ComSrvError::ConfigError(format!("Failed to parse config: {e}")))?;
 
         Ok(Self {
             config,
@@ -231,7 +230,7 @@ impl ConfigManager {
                             let point_id = point.point_id;
                             if let Err(e) = channel.add_point(point) {
                                 warn!("Failed to add point: {}", e);
-                                eprintln!("DEBUG: Failed to add point {}: {}", point_id, e);
+                                eprintln!("DEBUG: Failed to add point {point_id}: {e}");
                             }
                         }
                     }
@@ -272,8 +271,7 @@ impl ConfigManager {
 
         // 检查环境变量覆盖
         let base_dir = std::env::var("COMSRV_CSV_BASE_PATH")
-            .map(PathBuf::from)
-            .unwrap_or_else(|_| config_dir.to_path_buf());
+            .map_or_else(|_| config_dir.to_path_buf(), PathBuf::from);
 
         debug!("Using CSV base directory: {}", base_dir.display());
         eprintln!("DEBUG: Base directory for CSV: {}", base_dir.display());
@@ -347,7 +345,7 @@ impl ConfigManager {
         telemetry_type: &str,
         csv_loader: &CachedCsvLoader,
     ) -> Result<Vec<CombinedPoint>> {
-        eprintln!("DEBUG: load_and_combine_telemetry for {}", telemetry_type);
+        eprintln!("DEBUG: load_and_combine_telemetry for {telemetry_type}");
         eprintln!("DEBUG: four_remote_path: {}", four_remote_path.display());
         eprintln!(
             "DEBUG: protocol_mapping_path: {}",
@@ -396,8 +394,7 @@ impl ConfigManager {
             .await
             .map_err(|e| {
                 ComSrvError::ConfigError(format!(
-                    "Failed to load {} four remote file: {}",
-                    telemetry_type, e
+                    "Failed to load {telemetry_type} four remote file: {e}"
                 ))
             })?;
         eprintln!("DEBUG: Loaded {} four remote points", remote_points.len());
@@ -420,10 +417,9 @@ impl ConfigManager {
                 mappings
             }
             Err(e) => {
-                eprintln!("DEBUG: Error loading modbus mappings: {}", e);
+                eprintln!("DEBUG: Error loading modbus mappings: {e}");
                 return Err(ComSrvError::ConfigError(format!(
-                    "Failed to load {} protocol mapping file: {}",
-                    telemetry_type, e
+                    "Failed to load {telemetry_type} protocol mapping file: {e}"
                 )));
             }
         };
@@ -850,6 +846,7 @@ impl CsvLoader {
 // ============================================================================
 
 /// 文件系统配置源
+#[derive(Debug)]
 pub struct FileSystemSource {
     base_path: String,
 }
@@ -863,14 +860,14 @@ impl FileSystemSource {
 #[async_trait]
 impl ConfigSource for FileSystemSource {
     async fn fetch_config(&self, service_name: &str) -> Result<ConfigResponse> {
-        let path = Path::new(&self.base_path).join(format!("{}.yml", service_name));
+        let path = Path::new(&self.base_path).join(format!("{service_name}.yml"));
 
         let content = fs::read_to_string(&path)
             .await
-            .map_err(|e| ComSrvError::IoError(format!("Failed to read config file: {}", e)))?;
+            .map_err(|e| ComSrvError::IoError(format!("Failed to read config file: {e}")))?;
 
         let value: serde_json::Value = serde_yaml::from_str(&content)
-            .map_err(|e| ComSrvError::ConfigError(format!("Failed to parse YAML: {}", e)))?;
+            .map_err(|e| ComSrvError::ConfigError(format!("Failed to parse YAML: {e}")))?;
 
         Ok(ConfigResponse {
             version: "1.0.0".to_string(),
@@ -878,8 +875,7 @@ impl ConfigSource for FileSystemSource {
             last_modified: std::fs::metadata(&path)
                 .ok()
                 .and_then(|m| m.modified().ok())
-                .map(|t| format!("{:?}", t))
-                .unwrap_or_else(|| "Unknown".to_string()),
+                .map_or_else(|| "Unknown".to_string(), |t| format!("{t:?}")),
             content: value,
         })
     }
@@ -890,7 +886,7 @@ impl ConfigSource for FileSystemSource {
         let value = config
             .content
             .get(key)
-            .ok_or_else(|| ComSrvError::ConfigError(format!("Key '{}' not found", key)))?
+            .ok_or_else(|| ComSrvError::ConfigError(format!("Key '{key}' not found")))?
             .clone();
 
         Ok(ConfigItemResponse {
@@ -908,7 +904,7 @@ impl ConfigSource for FileSystemSource {
         })
     }
 
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "filesystem"
     }
 }

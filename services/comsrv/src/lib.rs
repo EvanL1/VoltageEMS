@@ -1,4 +1,4 @@
-//! Communication Service Library (ComsrvRust)
+//! Communication Service Library (`ComsrvRust`)
 //!
 //! A high-performance, async-first industrial communication service written in Rust.
 //! This library provides a unified interface for communicating with various industrial
@@ -11,7 +11,7 @@
 //! - **Reliability**: Automatic retry logic, heartbeat monitoring, and comprehensive error handling
 //! - **Configuration**: YAML-based configuration with hot-reload support and environment overrides
 //! - **Point Tables**: CSV-based point table management with dynamic loading and four telemetry types
-//! - **REST API**: RESTful API built with axum
+//! - **REST API**: `RESTful` API built with axum
 //! - **Storage**: Optional Redis integration for data persistence and caching
 //! - **Logging**: Structured logging with tracing instead of traditional log framework
 //!
@@ -345,7 +345,7 @@ pub mod service {
         info!("Starting connection phase for all initialized channels...");
         let factory_guard = factory.read().await;
         match factory_guard.connect_all_channels().await {
-            Ok(_) => {
+            Ok(()) => {
                 info!("All channel connections completed successfully");
             }
             Err(e) => {
@@ -500,6 +500,12 @@ pub mod service {
     /// └─────────────────────┘
     /// ```
     ///
+    /// # Returns
+    ///
+    /// Returns a tuple of:
+    /// - `JoinHandle<()>` - The task handle to await completion
+    /// - `CancellationToken` - Token to gracefully stop the task
+    ///
     /// # Examples
     ///
     /// ```rust,no_run
@@ -509,7 +515,7 @@ pub mod service {
     /// use comsrv::ProtocolFactory;
     ///
     /// async fn setup_maintenance(factory: Arc<RwLock<ProtocolFactory>>) {
-    ///     let cleanup_handle = start_cleanup_task(factory);
+    ///     let (cleanup_handle, cancel_token) = start_cleanup_task(factory);
     ///     
     ///     // Keep the handle to cancel if needed
     ///     tokio::select! {
@@ -518,6 +524,7 @@ pub mod service {
     ///         }
     ///         _ = tokio::signal::ctrl_c() => {
     ///             println!("Shutting down cleanup task");
+    ///             cancel_token.cancel();
     ///         }
     ///     }
     /// }
@@ -526,26 +533,44 @@ pub mod service {
     /// This function provides a convenient public interface for resource cleanup management.
     pub fn start_cleanup_task(
         factory: Arc<RwLock<ProtocolFactory>>,
-    ) -> tokio::task::JoinHandle<()> {
-        tokio::spawn(async move {
+    ) -> (
+        tokio::task::JoinHandle<()>,
+        tokio_util::sync::CancellationToken,
+    ) {
+        use tokio_util::sync::CancellationToken;
+
+        let token = CancellationToken::new();
+        let task_token = token.clone();
+
+        let handle = tokio::spawn(async move {
             let mut interval = tokio::time::interval(std::time::Duration::from_secs(300)); // 5 minutes
 
             loop {
-                interval.tick().await;
+                tokio::select! {
+                    _ = interval.tick() => {
+                        // Clean up idle channels (1 hour idle time)
+                        let factory_guard = factory.read().await;
 
-                // Clean up idle channels (1 hour idle time)
-                let factory_guard = factory.read().await;
-
-                // Log statistics
-                let all_stats = factory_guard.get_all_channel_stats().await;
-                info!(
-                    "Channel stats: total={}, active={}",
-                    all_stats.len(),
-                    all_stats.iter().filter(|s| s.is_connected).count()
-                );
-                drop(factory_guard);
+                        // Log statistics
+                        let all_stats = factory_guard.get_all_channel_stats().await;
+                        info!(
+                            "Channel stats: total={}, active={}",
+                            all_stats.len(),
+                            all_stats.iter().filter(|s| s.is_connected).count()
+                        );
+                        drop(factory_guard);
+                    }
+                    () = task_token.cancelled() => {
+                        info!("Cleanup task received cancellation signal, shutting down");
+                        break;
+                    }
+                }
             }
-        })
+
+            info!("Cleanup task terminated");
+        });
+
+        (handle, token)
     }
 }
 

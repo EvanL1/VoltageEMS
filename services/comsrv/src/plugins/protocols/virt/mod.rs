@@ -74,7 +74,7 @@ impl ComBase for VirtualProtocol {
         &self.name
     }
 
-    fn protocol_type(&self) -> &str {
+    fn protocol_type(&self) -> &'static str {
         "virtual"
     }
 

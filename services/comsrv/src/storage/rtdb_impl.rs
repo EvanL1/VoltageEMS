@@ -29,6 +29,7 @@ impl Default for RetryConfig {
 }
 
 /// 实时数据库存储实现
+#[derive(Debug)]
 pub struct RtdbStorage {
     redis_url: String,
     #[allow(dead_code)]
@@ -42,11 +43,11 @@ impl RtdbStorage {
         // 测试连接
         let mut client = RedisClient::new(redis_url)
             .await
-            .map_err(|e| ComSrvError::Storage(format!("Failed to connect to Redis: {}", e)))?;
+            .map_err(|e| ComSrvError::Storage(format!("Failed to connect to Redis: {e}")))?;
         client
             .ping()
             .await
-            .map_err(|e| ComSrvError::Storage(format!("Failed to ping Redis: {}", e)))?;
+            .map_err(|e| ComSrvError::Storage(format!("Failed to ping Redis: {e}")))?;
 
         Ok(Self {
             redis_url: redis_url.to_string(),
@@ -64,11 +65,11 @@ impl RtdbStorage {
         // 测试连接
         let mut client = RedisClient::new(redis_url)
             .await
-            .map_err(|e| ComSrvError::Storage(format!("Failed to connect to Redis: {}", e)))?;
+            .map_err(|e| ComSrvError::Storage(format!("Failed to connect to Redis: {e}")))?;
         client
             .ping()
             .await
-            .map_err(|e| ComSrvError::Storage(format!("Failed to ping Redis: {}", e)))?;
+            .map_err(|e| ComSrvError::Storage(format!("Failed to ping Redis: {e}")))?;
 
         let publisher = if let Some(pub_config) = publisher_config {
             Some(Arc::new(
@@ -89,7 +90,7 @@ impl RtdbStorage {
     async fn get_client(&self) -> Result<RedisClient> {
         RedisClient::new(&self.redis_url)
             .await
-            .map_err(|e| ComSrvError::Storage(format!("Failed to connect to Redis: {}", e)))
+            .map_err(|e| ComSrvError::Storage(format!("Failed to connect to Redis: {e}")))
     }
 }
 
@@ -102,7 +103,7 @@ impl PointStorage for RtdbStorage {
         point_id: u32,
         value: f64,
     ) -> Result<()> {
-        let hash_key = format!("comsrv:{}:{}", channel_id, point_type);
+        let hash_key = format!("comsrv:{channel_id}:{point_type}");
         let field = point_id.to_string();
         let data = PointData::new(value);
 
@@ -110,7 +111,7 @@ impl PointStorage for RtdbStorage {
         client
             .hset(&hash_key, &field, data.to_redis_value())
             .await
-            .map_err(|e| ComSrvError::Storage(format!("Failed to write point: {}", e)))?;
+            .map_err(|e| ComSrvError::Storage(format!("Failed to write point: {e}")))?;
 
         Ok(())
     }
@@ -123,7 +124,7 @@ impl PointStorage for RtdbStorage {
         value: f64,
         raw_value: Option<f64>,
     ) -> Result<()> {
-        let hash_key = format!("comsrv:{}:{}", channel_id, point_type);
+        let hash_key = format!("comsrv:{channel_id}:{point_type}");
         let field = point_id.to_string();
         let data = PointData::new(value);
 
@@ -138,19 +139,15 @@ impl PointStorage for RtdbStorage {
 
         // 写入元数据（仍使用单独的键）
         if let Some(raw) = raw_value {
-            pipe.hset(format!("{}:raw", hash_key), &field, format!("{:.6}", raw));
-            pipe.hset(
-                format!("{}:ts", hash_key),
-                &field,
-                data.timestamp.to_string(),
-            );
+            pipe.hset(format!("{hash_key}:raw"), &field, format!("{raw:.6}"));
+            pipe.hset(format!("{hash_key}:ts"), &field, data.timestamp.to_string());
         }
 
         let conn = client.get_connection_mut();
         let _: () = pipe
             .query_async(conn)
             .await
-            .map_err(|e| ComSrvError::Storage(format!("Failed to write with metadata: {}", e)))?;
+            .map_err(|e| ComSrvError::Storage(format!("Failed to write with metadata: {e}")))?;
 
         // 发布更新
         if let Some(ref publisher) = self.publisher {
@@ -187,9 +184,9 @@ impl PointStorage for RtdbStorage {
                 pipe.hset(&hash_key, &field, update.data.to_redis_value());
 
                 if let Some(raw) = update.raw_value {
-                    pipe.hset(format!("{}:raw", hash_key), &field, format!("{:.6}", raw));
+                    pipe.hset(format!("{hash_key}:raw"), &field, format!("{raw:.6}"));
                     pipe.hset(
-                        format!("{}:ts", hash_key),
+                        format!("{hash_key}:ts"),
                         &field,
                         update.data.timestamp.to_string(),
                     );
@@ -201,7 +198,7 @@ impl PointStorage for RtdbStorage {
         let _: () = pipe
             .query_async(conn)
             .await
-            .map_err(|e| ComSrvError::Storage(format!("Failed to write batch: {}", e)))?;
+            .map_err(|e| ComSrvError::Storage(format!("Failed to write batch: {e}")))?;
 
         // 批量发布
         if let Some(ref publisher) = self.publisher {
@@ -217,19 +214,19 @@ impl PointStorage for RtdbStorage {
         point_type: &str,
         point_id: u32,
     ) -> Result<Option<PointData>> {
-        let hash_key = format!("comsrv:{}:{}", channel_id, point_type);
+        let hash_key = format!("comsrv:{channel_id}:{point_type}");
         let field = point_id.to_string();
 
         let mut client = self.get_client().await?;
         let data: Option<String> = client
             .hget(&hash_key, &field)
             .await
-            .map_err(|e| ComSrvError::Storage(format!("Failed to read point: {}", e)))?;
+            .map_err(|e| ComSrvError::Storage(format!("Failed to read point: {e}")))?;
 
         match data {
             Some(value) => {
                 let point = PointData::from_redis_value(&value).map_err(|e| {
-                    ComSrvError::Storage(format!("Failed to parse point data: {}", e))
+                    ComSrvError::Storage(format!("Failed to parse point data: {e}"))
                 })?;
                 Ok(Some(point))
             }
@@ -256,12 +253,12 @@ impl PointStorage for RtdbStorage {
                 let data: Option<String> = client
                     .hget(&hash_key, field)
                     .await
-                    .map_err(|e| ComSrvError::Storage(format!("Failed to read point: {}", e)))?;
+                    .map_err(|e| ComSrvError::Storage(format!("Failed to read point: {e}")))?;
 
                 match data {
                     Some(value) => {
                         let point = PointData::from_redis_value(&value).map_err(|e| {
-                            ComSrvError::Storage(format!("Failed to parse point data: {}", e))
+                            ComSrvError::Storage(format!("Failed to parse point data: {e}"))
                         })?;
                         results.push(Some(point));
                     }
@@ -280,7 +277,7 @@ impl PointStorage for RtdbStorage {
         channel_id: u16,
         point_type: &str,
     ) -> Result<Vec<(u32, PointData)>> {
-        let hash_key = format!("comsrv:{}:{}", channel_id, point_type);
+        let hash_key = format!("comsrv:{channel_id}:{point_type}");
 
         let mut client = self.get_client().await?;
 
@@ -288,7 +285,7 @@ impl PointStorage for RtdbStorage {
         let data: std::collections::HashMap<String, String> = client
             .hgetall(&hash_key)
             .await
-            .map_err(|e| ComSrvError::Storage(format!("Failed to get channel points: {}", e)))?;
+            .map_err(|e| ComSrvError::Storage(format!("Failed to get channel points: {e}")))?;
 
         let mut results = Vec::new();
         for (field, value) in data {

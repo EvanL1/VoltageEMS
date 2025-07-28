@@ -68,6 +68,37 @@ services:
       - SLAVE_ID=1
       - REGISTER_COUNT=500
 
+  # Modbus模拟器 - 通道1003 (gRPC插件)
+  modbus-sim-1003:
+    build:
+      context: .
+      dockerfile: services/comsrv/tests/docker/Dockerfile.modbus-simulator
+    container_name: modbus-sim-1003
+    networks:
+      voltage-internal:
+        ipv4_address: 172.30.1.13
+    ports:
+      - "5023:5020"
+    environment:
+      - MODBUS_PORT=5020
+      - SLAVE_ID=1
+      - REGISTER_COUNT=500
+
+  # Python Modbus 插件
+  modbus-plugin:
+    build:
+      context: ./plugins/modbus-python
+      dockerfile: Dockerfile
+    container_name: modbus-plugin
+    networks:
+      - voltage-internal
+    ports:
+      - "50051:50051"
+    environment:
+      - GRPC_PORT=50051
+      - PYTHONUNBUFFERED=1
+    restart: unless-stopped
+
   # 测试监控容器
   test-monitor:
     image: redis:8-alpine
@@ -91,6 +122,8 @@ services:
          redis-cli -h redis HGETALL 'comsrv:1001:m' | head -20 && \
          echo '===== Channel 1002 Measurements =====' && \
          redis-cli -h redis HGETALL 'comsrv:1002:m' | head -20 && \
+         echo '===== Channel 1003 Measurements (gRPC) =====' && \
+         redis-cli -h redis HGETALL 'comsrv:1003:m' | head -20 && \
          sleep 10; \
        done"
 

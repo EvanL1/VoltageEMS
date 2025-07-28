@@ -16,12 +16,7 @@ pub use error::{ComSrvError, ErrorExt, Result};
 
 /// 规范化协议名称为标准格式（小写下划线）
 pub fn normalize_protocol_name(name: &str) -> String {
-    match name
-        .to_lowercase()
-        .replace("_", "")
-        .replace("-", "")
-        .as_str()
-    {
+    match name.to_lowercase().replace(['_', '-'], "").as_str() {
         "modbustcp" => "modbus_tcp".to_string(),
         "modbusrtu" => "modbus_rtu".to_string(),
         "iec60870" | "iec104" => "iec60870".to_string(),

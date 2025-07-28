@@ -1,7 +1,7 @@
-use std::collections::{HashMap, HashSet};
-use std::sync::Arc;
 use log::{debug, error, info};
 use serde::{Deserialize, Serialize};
+use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 use tokio::sync::mpsc;
 
 use crate::redis_client::RedisClient;
@@ -70,16 +70,21 @@ impl Hub {
     }
 
     /// Register a new session
-    pub fn register_session(&mut self, session_id: SessionId, sender: mpsc::UnboundedSender<HubMessage>) {
+    pub fn register_session(
+        &mut self,
+        session_id: SessionId,
+        sender: mpsc::UnboundedSender<HubMessage>,
+    ) {
         info!("Registering WebSocket session: {}", session_id);
         self.sessions.insert(session_id.clone(), sender);
-        self.session_subscriptions.insert(session_id, SubscriptionInfo::new());
+        self.session_subscriptions
+            .insert(session_id, SubscriptionInfo::new());
     }
 
     /// Unregister a session
     pub fn unregister_session(&mut self, session_id: &SessionId) {
         info!("Unregistering WebSocket session: {}", session_id);
-        
+
         // Remove from all subscriptions
         if let Some(sub_info) = self.session_subscriptions.remove(session_id) {
             // Remove from channel subscribers
@@ -91,7 +96,7 @@ impl Hub {
                     }
                 }
             }
-            
+
             // Remove from type subscribers
             for data_type in &sub_info.types {
                 if let Some(sessions) = self.type_subscribers.get_mut(data_type) {
@@ -102,7 +107,7 @@ impl Hub {
                 }
             }
         }
-        
+
         // Remove session sender
         self.sessions.remove(session_id);
     }
@@ -110,7 +115,7 @@ impl Hub {
     /// Subscribe a session to channels and data types
     pub fn subscribe(&mut self, session_id: SessionId, filter: SubscriptionFilter) {
         debug!("Session {} subscribing to {:?}", session_id, filter);
-        
+
         if let Some(sub_info) = self.session_subscriptions.get_mut(&session_id) {
             // Subscribe to channels
             for channel_id in filter.channels {
@@ -120,7 +125,7 @@ impl Hub {
                     .or_insert_with(HashSet::new)
                     .insert(session_id.clone());
             }
-            
+
             // Subscribe to data types
             for data_type in filter.types {
                 sub_info.types.insert(data_type.clone());
@@ -135,12 +140,12 @@ impl Hub {
     /// Unsubscribe a session from channels and data types
     pub fn unsubscribe(&mut self, session_id: SessionId, filter: SubscriptionFilter) {
         debug!("Session {} unsubscribing from {:?}", session_id, filter);
-        
+
         if let Some(sub_info) = self.session_subscriptions.get_mut(&session_id) {
             // Only remove specified data types
             for data_type in &filter.types {
                 sub_info.types.remove(data_type);
-                
+
                 // Remove from type subscribers
                 if let Some(sessions) = self.type_subscribers.get_mut(data_type) {
                     sessions.remove(&session_id);
@@ -149,13 +154,13 @@ impl Hub {
                     }
                 }
             }
-            
+
             // Only remove channel subscription if no data types are subscribed
             if sub_info.types.is_empty() {
                 // Remove from channel subscribers
                 for channel_id in &filter.channels {
                     sub_info.channels.remove(channel_id);
-                    
+
                     if let Some(sessions) = self.channel_subscribers.get_mut(channel_id) {
                         sessions.remove(&session_id);
                         if sessions.is_empty() {
@@ -170,7 +175,7 @@ impl Hub {
     /// Broadcast message to all sessions subscribed to a channel and data type
     pub fn broadcast_to_channel(&self, channel_id: u32, data_type: &str, message: &str) {
         let mut recipients = HashSet::new();
-        
+
         // Get sessions subscribed to this channel
         if let Some(channel_sessions) = self.channel_subscribers.get(&channel_id) {
             // Get sessions subscribed to this data type
@@ -181,7 +186,7 @@ impl Hub {
                 }
             }
         }
-        
+
         // Send message to recipients
         for session_id in recipients {
             if let Some(sender) = self.sessions.get(session_id) {
@@ -208,11 +213,8 @@ impl Hub {
 
     /// Get session subscription info (for debugging)
     pub fn get_session_info(&self, session_id: &SessionId) -> Option<String> {
-        self.session_subscriptions.get(session_id).map(|info| {
-            format!(
-                "Channels: {:?}, Types: {:?}",
-                info.channels, info.types
-            )
-        })
+        self.session_subscriptions
+            .get(session_id)
+            .map(|info| format!("Channels: {:?}, Types: {:?}", info.channels, info.types))
     }
 }

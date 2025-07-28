@@ -59,6 +59,7 @@ pub struct CommandSubscriberConfig {
 }
 
 /// 命令订阅器
+#[derive(Debug)]
 pub struct CommandSubscriber {
     config: CommandSubscriberConfig,
     redis_client: Arc<Mutex<RedisClient>>,
@@ -167,13 +168,10 @@ impl CommandSubscriber {
         channels: Vec<String>,
     ) -> Result<()> {
         // 创建订阅
-        let channel_refs: Vec<&str> = channels.iter().map(|s| s.as_str()).collect();
+        let channel_refs: Vec<&str> = channels.iter().map(std::string::String::as_str).collect();
         let mut redis_client = redis_client.lock().await;
         let mut pubsub = redis_client.subscribe(&channel_refs).await.map_err(|e| {
-            crate::error::ComSrvError::InternalError(format!(
-                "Failed to create subscription: {}",
-                e
-            ))
+            crate::error::ComSrvError::InternalError(format!("Failed to create subscription: {e}"))
         })?;
 
         info!(
@@ -223,10 +221,7 @@ impl CommandSubscriber {
     ) -> Result<()> {
         // 获取消息内容
         let payload: String = msg.get_payload().map_err(|e| {
-            crate::error::ComSrvError::InternalError(format!(
-                "Failed to get message payload: {}",
-                e
-            ))
+            crate::error::ComSrvError::InternalError(format!("Failed to get message payload: {e}"))
         })?;
 
         debug!(
@@ -236,7 +231,7 @@ impl CommandSubscriber {
 
         // 解析命令
         let command: ControlCommand = serde_json::from_str(&payload).map_err(|e| {
-            crate::error::ComSrvError::ParsingError(format!("Failed to parse command: {}", e))
+            crate::error::ComSrvError::ParsingError(format!("Failed to parse command: {e}"))
         })?;
 
         // 确保命令是发给正确的通道

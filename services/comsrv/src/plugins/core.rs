@@ -80,8 +80,7 @@ impl PluginRegistry {
 
         if self.plugins.contains_key(&plugin_id) {
             return Err(Error::ConfigError(format!(
-                "Plugin '{}' is already registered",
-                plugin_id
+                "Plugin '{plugin_id}' is already registered"
             )));
         }
 
@@ -222,8 +221,7 @@ impl PluginManager {
             Ok(())
         } else {
             Err(Error::ConfigError(format!(
-                "Plugin '{}' not found",
-                plugin_id
+                "Plugin '{plugin_id}' not found"
             )))
         }
     }
@@ -239,8 +237,7 @@ impl PluginManager {
             Ok(())
         } else {
             Err(Error::ConfigError(format!(
-                "Plugin '{}' not found",
-                plugin_id
+                "Plugin '{plugin_id}' not found"
             )))
         }
     }
@@ -256,7 +253,7 @@ const TYPE_SIGNAL: &str = "s";
 const TYPE_CONTROL: &str = "c";
 const TYPE_ADJUSTMENT: &str = "a";
 
-/// 将TelemetryType转换为Redis存储的类型缩写
+/// `将TelemetryType转换为Redis存储的类型缩写`
 pub fn telemetry_type_to_redis(telemetry_type: &TelemetryType) -> &'static str {
     match telemetry_type {
         TelemetryType::Measurement => TYPE_MEASUREMENT,
@@ -358,6 +355,7 @@ pub trait PluginStorage: Send + Sync {
 }
 
 /// 默认插件存储实现
+#[derive(Debug)]
 pub struct DefaultPluginStorage {
     storage: Arc<RtdbStorage>,
 }
@@ -377,7 +375,7 @@ impl DefaultPluginStorage {
         })
     }
 
-    /// 从已有的RtdbStorage创建
+    /// `从已有的RtdbStorage创建`
     pub fn from_storage(storage: Arc<RtdbStorage>) -> Self {
         Self { storage }
     }
@@ -465,7 +463,7 @@ impl PluginStorage for DefaultPluginStorage {
         config: PluginPointConfig,
     ) -> Result<()> {
         let point_type = telemetry_type_to_redis(telemetry_type);
-        let _key = format!("cfg:{}:{}:{}", channel_id, point_type, point_id);
+        let _key = format!("cfg:{channel_id}:{point_type}:{point_id}");
         let _value =
             serde_json::to_string(&config).map_err(|e| Error::SerializationError(e.to_string()))?;
 
@@ -490,7 +488,7 @@ impl PluginStorage for DefaultPluginStorage {
 // ============================================================================
 
 pub mod discovery {
-    use super::*;
+    use super::{PluginRegistry, Result};
 
     /// 加载所有插件
     pub fn load_all_plugins() -> Result<()> {

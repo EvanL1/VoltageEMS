@@ -23,7 +23,7 @@ pub enum ModbusConnection {
 impl ModbusConnection {
     /// Create a TCP connection
     pub async fn connect_tcp(host: &str, port: u16, timeout_duration: Duration) -> Result<Self> {
-        let addr = format!("{}:{}", host, port);
+        let addr = format!("{host}:{port}");
         info!("Connecting to Modbus TCP endpoint: {}", addr);
 
         match timeout(timeout_duration, TcpStream::connect(&addr)).await {
@@ -39,15 +39,13 @@ impl ModbusConnection {
             Ok(Err(e)) => {
                 error!("Failed to connect to {}: {}", addr, e);
                 Err(ComSrvError::ConnectionError(format!(
-                    "Failed to connect to {}: {}",
-                    addr, e
+                    "Failed to connect to {addr}: {e}"
                 )))
             }
             Err(_) => {
                 warn!("Connection to {} timed out", addr);
                 Err(ComSrvError::TimeoutError(format!(
-                    "Connection to {} timed out",
-                    addr
+                    "Connection to {addr} timed out"
                 )))
             }
         }
@@ -96,8 +94,7 @@ impl ModbusConnection {
             Err(e) => {
                 error!("Failed to open serial port {}: {}", port, e);
                 Err(ComSrvError::ConnectionError(format!(
-                    "Failed to open serial port {}: {}",
-                    port, e
+                    "Failed to open serial port {port}: {e}"
                 )))
             }
         }
@@ -109,18 +106,18 @@ impl ModbusConnection {
             ModbusConnection::Tcp(stream) => {
                 stream.write_all(data).await.map_err(|e| {
                     error!("TCP send error: {}", e);
-                    ComSrvError::IoError(format!("TCP send error: {}", e))
+                    ComSrvError::IoError(format!("TCP send error: {e}"))
                 })?;
                 debug!("Sent {} bytes via TCP", data.len());
             }
             ModbusConnection::Rtu(port) => {
                 port.write_all(data).await.map_err(|e| {
                     error!("Serial send error: {}", e);
-                    ComSrvError::IoError(format!("Serial send error: {}", e))
+                    ComSrvError::IoError(format!("Serial send error: {e}"))
                 })?;
                 port.flush().await.map_err(|e| {
                     error!("Serial flush error: {}", e);
-                    ComSrvError::IoError(format!("Serial flush error: {}", e))
+                    ComSrvError::IoError(format!("Serial flush error: {e}"))
                 })?;
                 debug!("Sent {} bytes via serial", data.len());
             }
@@ -148,7 +145,7 @@ impl ModbusConnection {
                     }
                     Ok(Err(e)) => {
                         error!("TCP receive error: {}", e);
-                        Err(ComSrvError::IoError(format!("TCP receive error: {}", e)))
+                        Err(ComSrvError::IoError(format!("TCP receive error: {e}")))
                     }
                     Err(_) => {
                         debug!("TCP receive timeout");
@@ -164,7 +161,7 @@ impl ModbusConnection {
                     }
                     Ok(Err(e)) => {
                         error!("Serial receive error: {}", e);
-                        Err(ComSrvError::IoError(format!("Serial receive error: {}", e)))
+                        Err(ComSrvError::IoError(format!("Serial receive error: {e}")))
                     }
                     Err(_) => {
                         debug!("Serial receive timeout");
@@ -189,6 +186,7 @@ impl ModbusConnection {
 }
 
 /// Modbus connection manager
+#[derive(Debug)]
 pub struct ModbusConnectionManager {
     /// Connection instance
     connection: Mutex<Option<ModbusConnection>>,

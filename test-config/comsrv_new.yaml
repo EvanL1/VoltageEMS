@@ -81,3 +81,30 @@ channels:
         timeout_ms: 500
         batch_size: 100
         retry_attempts: 3
+
+  - id: 1003
+    name: "gRPC Modbus 插件通道"
+    protocol: "grpc_modbus"
+    enabled: true
+    parameters:
+      endpoint: "http://modbus-plugin:50051"
+      protocol: "modbus_tcp"
+      host: "172.30.1.13"
+      port: "5020"
+      slave_id: "1"
+    table_config:
+      # 四遥点表路径
+      four_remote_route: "test_channel_1003"
+      four_remote_files:
+        measurement_file: "measurement_v2.csv"    
+        signal_file: "signal_v2.csv"              
+        adjustment_file: "adjustment_v2.csv"      
+        control_file: "control_v2.csv"            
+
+      # 协议映射路径
+      protocol_mapping_route: "test_channel_1003/mappings"
+      protocol_mapping_file:
+        measurement_mapping: "modbus_measurement_v2.csv"
+        signal_mapping: "modbus_signal_v2.csv"
+        adjustment_mapping: "modbus_adjustment_v2.csv"
+        control_mapping: "modbus_control_v2.csv"

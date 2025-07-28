@@ -1,0 +1,43 @@
+service:
+  name: "comsrv"
+  version: "2.0.0"
+  api:
+    host: "0.0.0.0"
+    port: 8001
+  logging:
+    level: "debug"
+    console: true
+    file: "/app/logs/comsrv.log"
+    dir: "/app/logs"
+  redis:
+    enabled: true
+    url: "redis://redis:6379"
+
+channels:
+  - id: 1001
+    name: "Modbus Test Channel 1001"
+    protocol: "modbus_tcp"
+    enabled: true
+    enable_control: true
+    parameters:
+      host: "172.30.1.11"
+      port: 5020
+      timeout_ms: 3000
+      retry_count: 3
+      redis_url: "redis://redis:6379"
+      polling_enabled: false  # 先禁用轮询
+      batch_config:
+        enabled: false  # 先禁用批量
+    table_config:
+      four_remote_route: "test_channel_1001"
+      four_remote_files:
+        measurement_file: "measurement_v2.csv"
+        signal_file: "signal_v2.csv"
+        control_file: "control_v2.csv"
+        adjustment_file: "adjustment_v2.csv"
+      protocol_mapping_route: "test_channel_1001/mappings"
+      protocol_mapping_file:
+        measurement_mapping: "modbus_measurement_v2.csv"
+        signal_mapping: "modbus_signal_v2.csv"
+        control_mapping: "modbus_control_v2.csv"
+        adjustment_mapping: "modbus_adjustment_v2.csv"

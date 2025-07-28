@@ -104,7 +104,10 @@ where
                         if let Some(token) = cookie.strip_prefix("token=") {
                             match JwtManager::verify_token(token) {
                                 Ok(claims) => {
-                                    debug!("Token verified for user (from cookie): {}", claims.username);
+                                    debug!(
+                                        "Token verified for user (from cookie): {}",
+                                        claims.username
+                                    );
                                     request.extensions_mut().insert(claims);
                                     return inner.call(request).await;
                                 }

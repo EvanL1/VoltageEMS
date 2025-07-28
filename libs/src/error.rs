@@ -8,7 +8,7 @@ pub enum Error {
     #[error("Redis error: {0}")]
     Redis(String),
 
-    /// InfluxDB 错误
+    /// `InfluxDB` 错误
     #[cfg(feature = "influxdb")]
     #[error("InfluxDB error: {0}")]
     InfluxDB(String),

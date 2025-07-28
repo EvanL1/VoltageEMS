@@ -1,0 +1,6 @@
+grpcio==1.62.0
+grpcio-tools==1.62.0
+protobuf==4.25.3
+pymodbus==3.6.4
+asyncio==3.4.3
+redis==5.0.1

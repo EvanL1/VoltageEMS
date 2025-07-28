@@ -25,7 +25,7 @@ pub struct ChannelStatusResponse {
     pub last_error: Option<String>,
 }
 
-/// channel status response - Enhanced version combining API and ComBase requirements
+/// channel status response - Enhanced version combining API and `ComBase` requirements
 #[derive(Debug, Clone, Serialize)]
 pub struct ChannelStatus {
     pub id: u16,
@@ -40,7 +40,7 @@ pub struct ChannelStatus {
 }
 
 impl From<crate::core::combase::ChannelStatus> for ChannelStatus {
-    /// Convert from ComBase ChannelStatus to API ChannelStatus
+    /// Convert from `ComBase` `ChannelStatus` to API `ChannelStatus`
     fn from(status: crate::core::combase::ChannelStatus) -> Self {
         Self {
             id: 0,                           // Will be filled by handler
@@ -84,7 +84,7 @@ pub struct PointValue {
 }
 
 impl From<crate::core::combase::PointData> for PointValue {
-    /// Convert from protocols common PointData to API PointValue
+    /// Convert from protocols common `PointData` to API `PointValue`
     fn from(point: crate::core::combase::PointData) -> Self {
         let value = match point.value {
             crate::core::combase::RedisValue::String(s) => serde_json::Value::String(s),
@@ -105,8 +105,8 @@ impl From<crate::core::combase::PointData> for PointValue {
             name: "point".to_string(), // Default name
             value,
             timestamp: Utc::now(), // Use current time since timestamp is u64
-            unit: "".to_string(),
-            description: "".to_string(),
+            unit: String::new(),
+            description: String::new(),
         }
     }
 }
@@ -267,7 +267,7 @@ pub struct ModbusMapping {
 }
 
 impl ProtocolMapping for ModbusMapping {
-    fn protocol_type(&self) -> &str {
+    fn protocol_type(&self) -> &'static str {
         "modbus"
     }
 
@@ -334,14 +334,14 @@ pub struct CanMapping {
     pub bit_position: Option<u8>,
     /// Data length (1, 2, 4, or 8 bytes for multi-byte values)
     pub data_length: u8,
-    /// Byte order (big_endian or little_endian)
+    /// Byte order (`big_endian` or `little_endian`)
     pub byte_order: String,
     /// Message polling interval
     pub polling_interval: Option<u32>,
 }
 
 impl ProtocolMapping for CanMapping {
-    fn protocol_type(&self) -> &str {
+    fn protocol_type(&self) -> &'static str {
         "can"
     }
 
@@ -416,7 +416,7 @@ pub struct IecMapping {
 }
 
 impl ProtocolMapping for IecMapping {
-    fn protocol_type(&self) -> &str {
+    fn protocol_type(&self) -> &'static str {
         "iec60870"
     }
 
@@ -537,7 +537,7 @@ mod tests {
         let health = HealthStatus {
             status: "OK".to_string(),
             uptime: 7200,
-            memory_usage: 1024000,
+            memory_usage: 1_024_000,
             cpu_usage: 15.5,
         };
 

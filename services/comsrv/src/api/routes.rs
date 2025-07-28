@@ -190,15 +190,15 @@ pub async fn control_channel(
         "start" => {
             let mut channel_guard = channel.write().await;
             match channel_guard.connect().await {
-                Ok(_) => format!("Channel {} connected successfully", id_u16),
-                Err(e) => format!("Failed to connect channel {}: {e}", id_u16),
+                Ok(()) => format!("Channel {id_u16} connected successfully"),
+                Err(e) => format!("Failed to connect channel {id_u16}: {e}"),
             }
         }
         "stop" => {
             let mut channel_guard = channel.write().await;
             match channel_guard.disconnect().await {
-                Ok(_) => format!("Channel {} disconnected successfully", id_u16),
-                Err(e) => format!("Failed to disconnect channel {}: {e}", id_u16),
+                Ok(()) => format!("Channel {id_u16} disconnected successfully"),
+                Err(e) => format!("Failed to disconnect channel {id_u16}: {e}"),
             }
         }
         "restart" => {
@@ -207,8 +207,7 @@ pub async fn control_channel(
             let stop_result = channel_guard.disconnect().await;
             if let Err(e) = stop_result {
                 return Ok(Json(ApiResponse::success(format!(
-                    "Failed to stop channel {} during restart: {}",
-                    id_u16, e
+                    "Failed to stop channel {id_u16} during restart: {e}"
                 ))));
             }
 
@@ -217,8 +216,8 @@ pub async fn control_channel(
 
             // Then start it again
             match channel_guard.connect().await {
-                Ok(_) => format!("Channel {} restarted successfully", id_u16),
-                Err(e) => format!("Failed to restart channel {}: {e}", id_u16),
+                Ok(()) => format!("Channel {id_u16} restarted successfully"),
+                Err(e) => format!("Failed to restart channel {id_u16}: {e}"),
             }
         }
         _ => {
@@ -297,7 +296,7 @@ pub async fn write_point(
         let mut channel_guard = channel.write().await;
 
         // Build point ID from table and name
-        let point_id = format!("{}_{point_name}", point_table);
+        let point_id = format!("{point_table}_{point_name}");
 
         // Convert JSON value to string for writing
         let _value_str = match &value.value {
@@ -321,10 +320,8 @@ pub async fn write_point(
         match channel_guard.control(vec![(1, redis_value)]).await {
             Ok(results) => {
                 if results.iter().any(|(_, success)| *success) {
-                    let result = format!(
-                        "Successfully wrote value {} to point {}",
-                        value_f64, point_id
-                    );
+                    let result =
+                        format!("Successfully wrote value {value_f64} to point {point_id}");
                     Ok(Json(ApiResponse::success(result)))
                 } else {
                     Err(StatusCode::INTERNAL_SERVER_ERROR)
@@ -361,7 +358,7 @@ pub async fn get_channel_points(
         let mut all_points = Vec::new();
 
         // Read all telemetry types
-        for telemetry_type in ["m", "s"].iter() {
+        for telemetry_type in &["m", "s"] {
             if let Ok(point_map) = channel_guard.read_four_telemetry(telemetry_type).await {
                 for (point_id, point_data) in point_map {
                     let mut point_value = PointValue::from(point_data);
@@ -407,22 +404,22 @@ pub async fn get_channel_telemetry_tables(
 
         // Read protocol mapping files
         let telemetry_mappings = read_mapping_csv(
-            &format!("{}/mapping_telemetry.csv", config_route),
+            &format!("{config_route}/mapping_telemetry.csv"),
             &protocol_type,
         )
         .unwrap_or_default();
         let signal_mappings = read_mapping_csv(
-            &format!("{}/mapping_signal.csv", config_route),
+            &format!("{config_route}/mapping_signal.csv"),
             &protocol_type,
         )
         .unwrap_or_default();
         let adjustment_mappings = read_mapping_csv(
-            &format!("{}/mapping_adjustment.csv", config_route),
+            &format!("{config_route}/mapping_adjustment.csv"),
             &protocol_type,
         )
         .unwrap_or_default();
         let control_mappings = read_mapping_csv(
-            &format!("{}/mapping_control.csv", config_route),
+            &format!("{config_route}/mapping_control.csv"),
             &protocol_type,
         )
         .unwrap_or_default();
@@ -486,19 +483,19 @@ async fn read_channel_csv_config(
 
     // Read protocol mapping files (synchronous call, no .await)
     let telemetry_mapping = read_mapping_csv(
-        &format!("{}/mapping_telemetry.csv", config_base_path),
+        &format!("{config_base_path}/mapping_telemetry.csv"),
         protocol_type,
     )?;
     let signal_mapping = read_mapping_csv(
-        &format!("{}/mapping_signal.csv", config_base_path),
+        &format!("{config_base_path}/mapping_signal.csv"),
         protocol_type,
     )?;
     let adjustment_mapping = read_mapping_csv(
-        &format!("{}/mapping_adjustment.csv", config_base_path),
+        &format!("{config_base_path}/mapping_adjustment.csv"),
         protocol_type,
     )?;
     let control_mapping = read_mapping_csv(
-        &format!("{}/mapping_control.csv", config_base_path),
+        &format!("{config_base_path}/mapping_control.csv"),
         protocol_type,
     )?;
 
@@ -526,7 +523,7 @@ async fn read_telemetry_csv(
 ) -> Result<Vec<TelemetryPoint>, Box<dyn std::error::Error + Send + Sync>> {
     use tokio::fs;
 
-    let file_path = format!("{}/{}.csv", base_path, table_type);
+    let file_path = format!("{base_path}/{table_type}.csv");
     let contents = fs::read_to_string(&file_path).await?;
 
     let mut points = Vec::new();
@@ -544,7 +541,7 @@ async fn read_telemetry_csv(
         let unit = if table_type == "telemetry" || table_type == "adjustment" {
             record.get(3).unwrap_or("").to_string()
         } else {
-            "".to_string()
+            String::new()
         };
         let data_type = if table_type == "telemetry" || table_type == "adjustment" {
             record.get(4).unwrap_or("").to_string()

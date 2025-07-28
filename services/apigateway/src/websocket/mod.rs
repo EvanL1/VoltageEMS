@@ -1,5 +1,5 @@
-pub mod hub;
 pub mod handlers;
+pub mod hub;
 
 use axum::{
     extract::{ws::WebSocketUpgrade, State},
@@ -15,10 +15,7 @@ struct TokenQuery {
 }
 
 /// WebSocket connection handler
-pub async fn ws_handler(
-    ws: WebSocketUpgrade,
-    State(state): State<AppState>,
-) -> impl IntoResponse {
+pub async fn ws_handler(ws: WebSocketUpgrade, State(state): State<AppState>) -> impl IntoResponse {
     // For now, we'll allow anonymous connections
     // TODO: Add token extraction from query parameters or headers
     let user_info: Option<(String, String)> = None;
@@ -79,7 +76,9 @@ async fn handle_socket(
                     }
                 }
                 hub::HubMessage::Close => {
-                    let _ = ws_sender.send(axum::extract::ws::Message::Close(None)).await;
+                    let _ = ws_sender
+                        .send(axum::extract::ws::Message::Close(None))
+                        .await;
                     break;
                 }
             }
@@ -94,7 +93,8 @@ async fn handle_socket(
         while let Some(Ok(msg)) = ws_receiver.next().await {
             match msg {
                 axum::extract::ws::Message::Text(text) => {
-                    if let Err(e) = handle_websocket_message(&session_id_rx, &text, &state_rx).await {
+                    if let Err(e) = handle_websocket_message(&session_id_rx, &text, &state_rx).await
+                    {
                         log::error!("Error handling WebSocket message: {}", e);
                     }
                 }
@@ -141,7 +141,7 @@ async fn handle_websocket_message(
             ) {
                 let mut hub = state.ws_hub.write().await;
                 hub.subscribe(session_id.to_string(), filter);
-                
+
                 // Send acknowledgment
                 let ack = serde_json::json!({
                     "type": "subscribed",
@@ -150,7 +150,10 @@ async fn handle_websocket_message(
                         "timestamp": chrono::Utc::now().to_rfc3339()
                     }
                 });
-                hub.send_to_session(&session_id.to_string(), hub::HubMessage::Text(ack.to_string()));
+                hub.send_to_session(
+                    &session_id.to_string(),
+                    hub::HubMessage::Text(ack.to_string()),
+                );
             }
         }
         Some("unsubscribe") => {
@@ -159,7 +162,7 @@ async fn handle_websocket_message(
             ) {
                 let mut hub = state.ws_hub.write().await;
                 hub.unsubscribe(session_id.to_string(), filter);
-                
+
                 // Send acknowledgment
                 let ack = serde_json::json!({
                     "type": "unsubscribed",
@@ -168,7 +171,10 @@ async fn handle_websocket_message(
                         "timestamp": chrono::Utc::now().to_rfc3339()
                     }
                 });
-                hub.send_to_session(&session_id.to_string(), hub::HubMessage::Text(ack.to_string()));
+                hub.send_to_session(
+                    &session_id.to_string(),
+                    hub::HubMessage::Text(ack.to_string()),
+                );
             }
         }
         Some("ping") => {
@@ -179,7 +185,10 @@ async fn handle_websocket_message(
                     "timestamp": chrono::Utc::now().to_rfc3339()
                 }
             });
-            hub.send_to_session(&session_id.to_string(), hub::HubMessage::Text(pong.to_string()));
+            hub.send_to_session(
+                &session_id.to_string(),
+                hub::HubMessage::Text(pong.to_string()),
+            );
         }
         _ => {
             log::debug!("Unknown WebSocket message type: {:?}", msg);

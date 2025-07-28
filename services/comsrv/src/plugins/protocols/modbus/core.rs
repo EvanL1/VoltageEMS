@@ -24,6 +24,7 @@ use super::transport::{ModbusFrameProcessor, ModbusMode};
 use super::types::{ModbusPoint, ModbusPollingConfig};
 
 /// Modbus 协议核心引擎
+#[derive(Debug)]
 pub struct ModbusCore {
     /// 轮询配置
     _polling_config: ModbusPollingConfig,
@@ -56,7 +57,7 @@ impl ModbusCore {
     // 当前暂时注释掉复杂的实现以通过编译
 }
 
-/// Modbus 协议实现，实现 ComBase trait
+/// Modbus 协议实现，实现 `ComBase` trait
 pub struct ModbusProtocol {
     /// 协议名称
     name: String,
@@ -87,6 +88,17 @@ pub struct ModbusProtocol {
     points: Arc<RwLock<Vec<ModbusPoint>>>,
     /// 存储组件
     storage: Option<Arc<dyn PluginStorage>>,
+}
+
+impl std::fmt::Debug for ModbusProtocol {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ModbusProtocol")
+            .field("name", &self.name)
+            .field("channel_id", &self.channel_id)
+            .field("is_connected", &self.is_connected)
+            .field("polling_config", &self.polling_config)
+            .finish()
+    }
 }
 
 impl ModbusProtocol {
@@ -137,7 +149,7 @@ impl ComBase for ModbusProtocol {
         &self.name
     }
 
-    fn protocol_type(&self) -> &str {
+    fn protocol_type(&self) -> &'static str {
         "modbus"
     }
 
@@ -283,8 +295,10 @@ impl ComBase for ModbusProtocol {
             .parameters
             .get("redis_url")
             .and_then(|v| v.as_str())
-            .map(|s| s.to_string())
-            .unwrap_or_else(|| "redis://localhost:6379".to_string());
+            .map_or_else(
+                || "redis://localhost:6379".to_string(),
+                std::string::ToString::to_string,
+            );
 
         match DefaultPluginStorage::new(redis_url.clone()).await {
             Ok(storage) => {
@@ -662,7 +676,7 @@ impl ComBase for ModbusProtocol {
 
                                         // Create update for batch storage
                                         let update = PluginPointUpdate {
-                                            channel_id: channel_id as u16,
+                                            channel_id,
                                             telemetry_type,
                                             point_id,
                                             value: processed_value,
@@ -679,7 +693,7 @@ impl ComBase for ModbusProtocol {
                                     let update_count = batch_updates.len();
                                     if let Some(ref storage) = storage {
                                         match storage.write_points(batch_updates).await {
-                                            Ok(_) => {
+                                            Ok(()) => {
                                                 debug!(
                                                     "Successfully stored {} points to Redis",
                                                     update_count
@@ -889,8 +903,7 @@ async fn read_modbus_batch(
             4 => build_read_input_registers_pdu(batch_start, batch_size as u16),
             _ => {
                 return Err(ComSrvError::ProtocolError(format!(
-                    "Unsupported function code: {}",
-                    function_code
+                    "Unsupported function code: {function_code}"
                 )))
             }
         };
@@ -913,8 +926,7 @@ async fn read_modbus_batch(
         // Verify unit ID matches
         if received_unit_id != slave_id {
             return Err(ComSrvError::ProtocolError(format!(
-                "Unit ID mismatch: expected {}, got {}",
-                slave_id, received_unit_id
+                "Unit ID mismatch: expected {slave_id}, got {received_unit_id}"
             )));
         }
 
@@ -1059,7 +1071,7 @@ fn parse_modbus_pdu(pdu: &[u8], function_code: u8) -> Result<Vec<u16>> {
             let mut registers = Vec::new();
             for i in 2..2 + byte_count {
                 // Each byte contains 8 bits, store as individual "registers" for bit access
-                registers.push(pdu[i] as u16);
+                registers.push(u16::from(pdu[i]));
             }
             Ok(registers)
         }
@@ -1067,14 +1079,13 @@ fn parse_modbus_pdu(pdu: &[u8], function_code: u8) -> Result<Vec<u16>> {
             // Function codes 3 and 4 return register data (16-bit values)
             let mut registers = Vec::new();
             for i in (2..2 + byte_count).step_by(2) {
-                let value = ((pdu[i] as u16) << 8) | (pdu[i + 1] as u16);
+                let value = (u16::from(pdu[i]) << 8) | u16::from(pdu[i + 1]);
                 registers.push(value);
             }
             Ok(registers)
         }
         _ => Err(ComSrvError::ProtocolError(format!(
-            "Unsupported function code in PDU parsing: {}",
-            function_code
+            "Unsupported function code in PDU parsing: {function_code}"
         ))),
     }
 }
@@ -1199,8 +1210,7 @@ fn decode_register_value(
                 // This is likely function code 2 data (byte values)
                 if bit_pos > 7 {
                     return Err(ComSrvError::ProtocolError(format!(
-                        "Invalid bit position for discrete input: {} (must be 0-7)",
-                        bit_pos
+                        "Invalid bit position for discrete input: {bit_pos} (must be 0-7)"
                     )));
                 }
                 let byte_value = registers[0] as u8;
@@ -1209,13 +1219,12 @@ fn decode_register_value(
                     "Discrete input bit extraction: byte=0x{:02X}, bit_pos={}, bit_value={}",
                     byte_value, bit_pos, bit_value
                 );
-                Ok(RedisValue::Integer(bit_value as i64))
+                Ok(RedisValue::Integer(i64::from(bit_value)))
             } else {
                 // This is function code 3/4 data (16-bit register values)
                 if bit_pos > 15 {
                     return Err(ComSrvError::ProtocolError(format!(
-                        "Invalid bit position for register: {} (must be 0-15)",
-                        bit_pos
+                        "Invalid bit position for register: {bit_pos} (must be 0-15)"
                     )));
                 }
                 let register_value = registers[0];
@@ -1224,7 +1233,7 @@ fn decode_register_value(
                     "Register bit extraction: register=0x{:04X}, bit_pos={}, bit_value={}",
                     register_value, bit_pos, bit_value
                 );
-                Ok(RedisValue::Integer(bit_value as i64))
+                Ok(RedisValue::Integer(i64::from(bit_value)))
             }
         }
         "uint16" => {
@@ -1233,7 +1242,7 @@ fn decode_register_value(
                     "No registers for uint16".to_string(),
                 ));
             }
-            Ok(RedisValue::Integer(registers[0] as i64))
+            Ok(RedisValue::Integer(i64::from(registers[0])))
         }
         "int16" => {
             if registers.is_empty() {
@@ -1244,9 +1253,9 @@ fn decode_register_value(
             let bytes = convert_registers_with_byte_order(registers, byte_order);
             if bytes.len() >= 2 {
                 let value = i16::from_be_bytes([bytes[0], bytes[1]]);
-                Ok(RedisValue::Integer(value as i64))
+                Ok(RedisValue::Integer(i64::from(value)))
             } else {
-                Ok(RedisValue::Integer(registers[0] as i16 as i64))
+                Ok(RedisValue::Integer(i64::from(registers[0] as i16)))
             }
         }
         "uint32" | "uint32_be" => {
@@ -1258,11 +1267,11 @@ fn decode_register_value(
             let bytes = convert_registers_with_byte_order(registers, byte_order);
             if bytes.len() >= 4 {
                 let value = u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
-                Ok(RedisValue::Integer(value as i64))
+                Ok(RedisValue::Integer(i64::from(value)))
             } else {
                 // Fallback to old method if bytes conversion fails
-                let value = ((registers[0] as u32) << 16) | (registers[1] as u32);
-                Ok(RedisValue::Integer(value as i64))
+                let value = (u32::from(registers[0]) << 16) | u32::from(registers[1]);
+                Ok(RedisValue::Integer(i64::from(value)))
             }
         }
         "int32" | "int32_be" => {
@@ -1274,11 +1283,11 @@ fn decode_register_value(
             let bytes = convert_registers_with_byte_order(registers, byte_order);
             if bytes.len() >= 4 {
                 let value = i32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
-                Ok(RedisValue::Integer(value as i64))
+                Ok(RedisValue::Integer(i64::from(value)))
             } else {
                 // Fallback to old method if bytes conversion fails
-                let value = ((registers[0] as i32) << 16) | (registers[1] as i32);
-                Ok(RedisValue::Integer(value as i64))
+                let value = (i32::from(registers[0]) << 16) | i32::from(registers[1]);
+                Ok(RedisValue::Integer(i64::from(value)))
             }
         }
         "float32" | "float32_be" => {
@@ -1297,7 +1306,7 @@ fn decode_register_value(
                     &bytes[0..4],
                     value
                 );
-                Ok(RedisValue::Float(value as f64))
+                Ok(RedisValue::Float(f64::from(value)))
             } else {
                 // Fallback to old method if bytes conversion fails
                 let bytes = [
@@ -1307,12 +1316,11 @@ fn decode_register_value(
                     (registers[1] & 0xFF) as u8,
                 ];
                 let value = f32::from_be_bytes(bytes);
-                Ok(RedisValue::Float(value as f64))
+                Ok(RedisValue::Float(f64::from(value)))
             }
         }
         _ => Err(ComSrvError::ProtocolError(format!(
-            "Unsupported data format: {}",
-            format
+            "Unsupported data format: {format}"
         ))),
     }
 }

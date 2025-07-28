@@ -152,6 +152,13 @@ impl ProtocolFactory {
             )));
         }
 
+        // gRPC 插件工厂
+        self.register_protocol_factory(Arc::new(GrpcPluginFactory::new(
+            ProtocolType::GrpcModbus,
+            "http://modbus-plugin:50051".to_string(),
+            "modbus_tcp".to_string(),
+        )));
+
         // 虚拟协议工厂（用于测试）
         #[cfg(any(test, feature = "test-utils"))]
         {
@@ -218,8 +225,7 @@ impl ProtocolFactory {
         // 检查通道是否已存在
         if self.channels.contains_key(&channel_id) {
             return Err(ComSrvError::InvalidOperation(format!(
-                "Channel {} already exists",
-                channel_id
+                "Channel {channel_id} already exists"
             )));
         }
 
@@ -229,15 +235,13 @@ impl ProtocolFactory {
         // 查找协议工厂
         let factory = self.protocol_factories.get(&protocol_type).ok_or_else(|| {
             ComSrvError::ConfigError(format!(
-                "No factory registered for protocol: {:?}",
-                protocol_type
+                "No factory registered for protocol: {protocol_type:?}"
             ))
         })?;
 
         // 将channel_config.parameters转换为ConfigValue
-        let config_value = serde_json::to_value(&channel_config.parameters).map_err(|e| {
-            ComSrvError::ConfigError(format!("Failed to convert parameters: {}", e))
-        })?;
+        let config_value = serde_json::to_value(&channel_config.parameters)
+            .map_err(|e| ComSrvError::ConfigError(format!("Failed to convert parameters: {e}")))?;
 
         // 验证配置
         factory.validate_config(&config_value)?;
@@ -272,7 +276,7 @@ impl ProtocolFactory {
         let enable_control = channel_config
             .parameters
             .get("enable_control")
-            .and_then(|v| v.as_bool())
+            .and_then(serde_yaml::Value::as_bool)
             .unwrap_or(false);
 
         let command_subscriber = if enable_control {
@@ -354,7 +358,7 @@ impl ProtocolFactory {
 
                 let mut client = entry.channel.write().await;
                 match client.connect().await {
-                    Ok(_) => {
+                    Ok(()) => {
                         info!("Channel {} connected successfully", channel_id);
                         successful_connections += 1;
                     }
@@ -391,8 +395,7 @@ impl ProtocolFactory {
             Ok(())
         } else {
             Err(ComSrvError::InvalidOperation(format!(
-                "Channel {} not found",
-                channel_id
+                "Channel {channel_id} not found"
             )))
         }
     }
@@ -428,7 +431,7 @@ impl ProtocolFactory {
     pub async fn get_all_channel_stats(&self) -> Vec<ChannelStats> {
         let mut stats = Vec::new();
 
-        for entry in self.channels.iter() {
+        for entry in &self.channels {
             let channel_id = *entry.key();
             if let Some(channel_stats) = self.get_channel_stats(channel_id).await {
                 stats.push(channel_stats);
@@ -459,7 +462,7 @@ impl ProtocolFactory {
     /// 获取运行中的通道数量
     pub async fn running_channel_count(&self) -> usize {
         let mut count = 0;
-        for entry in self.channels.iter() {
+        for entry in &self.channels {
             let channel = entry.value();
             let channel_guard = channel.channel.read().await;
             if channel_guard.is_connected() {
@@ -536,10 +539,7 @@ impl ProtocolFactory {
 
             // 读取CSV文件获取点位ID列表
             let mut reader = csv::Reader::from_path(&file_path).map_err(|e| {
-                ComSrvError::ConfigError(format!(
-                    "Failed to read {} CSV file: {}",
-                    telemetry_name, e
-                ))
+                ComSrvError::ConfigError(format!("Failed to read {telemetry_name} CSV file: {e}"))
             })?;
 
             let mut updates = Vec::new();
@@ -547,7 +547,7 @@ impl ProtocolFactory {
             // 读取每个点位并准备初始化更新
             for result in reader.records() {
                 let record = result.map_err(|e| {
-                    ComSrvError::ConfigError(format!("Error reading CSV record: {}", e))
+                    ComSrvError::ConfigError(format!("Error reading CSV record: {e}"))
                 })?;
 
                 // 获取point_id（第一列）
@@ -641,7 +641,7 @@ pub fn create_factory_with_custom_protocols(
 // ============================================================================
 
 /// 插件系统适配器工厂
-/// 将插件系统的 ProtocolPlugin 适配为 ProtocolClientFactory
+/// 将插件系统的 `ProtocolPlugin` 适配为 `ProtocolClientFactory`
 struct PluginAdapterFactory {
     protocol_type: ProtocolType,
     plugin_id: String,
@@ -704,6 +704,66 @@ impl ProtocolClientFactory for PluginAdapterFactory {
 }
 
 // ============================================================================
+// gRPC 插件工厂
+// ============================================================================
+
+/// gRPC 插件工厂
+/// 用于创建通过 gRPC 连接的远程插件客户端
+#[derive(Debug)]
+pub struct GrpcPluginFactory {
+    protocol_type: ProtocolType,
+    endpoint: String,
+    plugin_protocol: String,
+}
+
+impl GrpcPluginFactory {
+    pub fn new(protocol_type: ProtocolType, endpoint: String, plugin_protocol: String) -> Self {
+        Self {
+            protocol_type,
+            endpoint,
+            plugin_protocol,
+        }
+    }
+}
+
+#[async_trait]
+impl ProtocolClientFactory for GrpcPluginFactory {
+    fn protocol_type(&self) -> ProtocolType {
+        self.protocol_type
+    }
+
+    async fn create_client(
+        &self,
+        _channel_config: &ChannelConfig,
+        _config_value: ConfigValue,
+    ) -> Result<Box<dyn ComBase>> {
+        use crate::plugins::grpc::adapter::GrpcPluginAdapter;
+
+        info!(
+            "Creating gRPC plugin client for protocol {} at {}",
+            self.plugin_protocol, self.endpoint
+        );
+
+        let adapter = GrpcPluginAdapter::new(&self.endpoint, &self.plugin_protocol).await?;
+        Ok(Box::new(adapter))
+    }
+
+    fn validate_config(&self, _config: &ConfigValue) -> Result<()> {
+        // TODO: 验证 gRPC 端点格式
+        Ok(())
+    }
+
+    fn get_config_template(&self) -> ConfigValue {
+        serde_json::json!({
+            "endpoint": "http://localhost:50051",
+            "protocol": self.plugin_protocol,
+            "timeout": 30,
+            "retry_count": 3
+        })
+    }
+}
+
+// ============================================================================
 // 测试支持
 // ============================================================================
 
@@ -711,6 +771,7 @@ impl ProtocolClientFactory for PluginAdapterFactory {
 pub mod test_support {
     use super::*;
     use crate::core::combase::core::{ChannelStatus, PointData, RedisValue};
+    use crate::core::config::ChannelLoggingConfig;
     use std::collections::HashMap;
     use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -787,13 +848,6 @@ pub mod test_support {
             adjustments: Vec<(u32, RedisValue)>,
         ) -> Result<Vec<(u32, bool)>> {
             Ok(adjustments.into_iter().map(|(id, _)| (id, true)).collect())
-        }
-
-        async fn update_points(
-            &mut self,
-            _mappings: Vec<crate::core::config::UnifiedPointMapping>,
-        ) -> Result<()> {
-            Ok(())
         }
     }
 

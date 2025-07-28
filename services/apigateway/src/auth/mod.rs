@@ -18,10 +18,22 @@ impl Claims {
     pub fn has_permission(&self, permission: &str) -> bool {
         // Map permission strings to roles
         match permission {
-            "channel:read" => self.roles.iter().any(|r| matches!(r.as_str(), "admin" | "operator" | "engineer" | "viewer")),
-            "channel:write" => self.roles.iter().any(|r| matches!(r.as_str(), "admin" | "operator" | "engineer")),
-            "alarm:read" => self.roles.iter().any(|r| matches!(r.as_str(), "admin" | "operator" | "viewer")),
-            "alarm:write" => self.roles.iter().any(|r| matches!(r.as_str(), "admin" | "operator")),
+            "channel:read" => self
+                .roles
+                .iter()
+                .any(|r| matches!(r.as_str(), "admin" | "operator" | "engineer" | "viewer")),
+            "channel:write" => self
+                .roles
+                .iter()
+                .any(|r| matches!(r.as_str(), "admin" | "operator" | "engineer")),
+            "alarm:read" => self
+                .roles
+                .iter()
+                .any(|r| matches!(r.as_str(), "admin" | "operator" | "viewer")),
+            "alarm:write" => self
+                .roles
+                .iter()
+                .any(|r| matches!(r.as_str(), "admin" | "operator")),
             "system:read" => self.roles.iter().any(|r| matches!(r.as_str(), "admin")),
             "system:write" => self.roles.iter().any(|r| matches!(r.as_str(), "admin")),
             _ => false,
@@ -82,5 +94,8 @@ fn has_permission(role: &str, permission: &Permission) -> bool {
 // In production, use proper password hashing like bcrypt
 pub fn verify_password(password: &str, _hash: &str) -> bool {
     // For demo, just check against known passwords
-    matches!(password, "admin123" | "operator123" | "engineer123" | "viewer123")
+    matches!(
+        password,
+        "admin123" | "operator123" | "engineer123" | "viewer123"
+    )
 }
