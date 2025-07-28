@@ -40,9 +40,9 @@ uuid = { workspace = true }
 url = "2.3"
 
 # Configuration framework
-voltage-config = { workspace = true }
 serde_yaml = { workspace = true }
 anyhow = { workspace = true }
+figment = { workspace = true }
 
 # Web server for configuration management
 axum = { workspace = true }

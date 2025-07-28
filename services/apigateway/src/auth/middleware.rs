@@ -1,7 +1,6 @@
 use axum::{
     extract::Request,
     http::header,
-    middleware::Next,
     response::{IntoResponse, Response},
 };
 use futures::future::BoxFuture;
@@ -9,28 +8,35 @@ use log::debug;
 use std::task::{Context, Poll};
 use tower::{Layer, Service};
 
-use super::{check_permission, jwt::JwtManager, Claims, Permission};
+use super::jwt::JwtManager;
 use crate::error::ApiError;
 
 // JWT Authentication Layer
-pub fn jwt_auth_layer() -> JwtAuthLayer {
-    JwtAuthLayer
+pub fn auth_layer(jwt_secret: String) -> JwtAuthLayer {
+    JwtAuthLayer { jwt_secret }
 }
 
 #[derive(Clone)]
-pub struct JwtAuthLayer;
+pub struct JwtAuthLayer {
+    jwt_secret: String,
+}
 
 impl<S> Layer<S> for JwtAuthLayer {
     type Service = JwtAuthMiddleware<S>;
 
     fn layer(&self, inner: S) -> Self::Service {
-        JwtAuthMiddleware { inner }
+        JwtAuthMiddleware {
+            inner,
+            jwt_secret: self.jwt_secret.clone(),
+        }
     }
 }
 
 #[derive(Clone)]
 pub struct JwtAuthMiddleware<S> {
     inner: S,
+    #[allow(dead_code)]
+    jwt_secret: String,
 }
 
 impl<S> Service<Request> for JwtAuthMiddleware<S>
@@ -61,9 +67,7 @@ where
 
             if let Some(auth_value) = auth_header {
                 if let Ok(auth_str) = auth_value.to_str() {
-                    if auth_str.starts_with("Bearer ") {
-                        let token = &auth_str[7..];
-
+                    if let Some(token) = auth_str.strip_prefix("Bearer ") {
                         match JwtManager::verify_token(token) {
                             Ok(claims) => {
                                 debug!("Token verified for user: {}", claims.username);
@@ -104,7 +108,10 @@ where
                         if let Some(token) = cookie.strip_prefix("token=") {
                             match JwtManager::verify_token(token) {
                                 Ok(claims) => {
-                                    debug!("Token verified for user (from cookie): {}", claims.username);
+                                    debug!(
+                                        "Token verified for user (from cookie): {}",
+                                        claims.username
+                                    );
                                     request.extensions_mut().insert(claims);
                                     return inner.call(request).await;
                                 }
@@ -121,29 +128,4 @@ where
             Ok(ApiError::Unauthorized.into_response())
         })
     }
-}
-
-// Permission middleware function
-pub async fn require_permission(
-    permission: Permission,
-    request: Request,
-    next: Next,
-) -> Result<Response, ApiError> {
-    // Get claims from request extensions
-    let has_permission = request
-        .extensions()
-        .get::<Claims>()
-        .map(|claims| check_permission(&claims.roles, permission))
-        .unwrap_or(false);
-
-    if has_permission {
-        Ok(next.run(request).await)
-    } else {
-        Err(ApiError::Forbidden)
-    }
-}
-
-// Helper function to extract claims from request
-pub fn extract_claims(request: &Request) -> Option<&Claims> {
-    request.extensions().get::<Claims>()
 }

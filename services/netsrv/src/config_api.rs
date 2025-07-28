@@ -1,4 +1,4 @@
-use crate::config_new::NetServiceConfig;
+use crate::config::Config;
 use axum::{
     extract::{Path, State},
     http::StatusCode,
@@ -11,15 +11,14 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{error, info};
-use voltage_config::{load_config, Configurable};
 
 /// Configuration management state
 #[derive(Clone)]
 pub struct ConfigState {
     /// Current active configuration
-    pub current_config: Arc<RwLock<NetServiceConfig>>,
+    pub current_config: Arc<RwLock<Config>>,
     /// Configuration versions for rollback
-    pub config_versions: Arc<RwLock<HashMap<String, NetServiceConfig>>>,
+    pub config_versions: Arc<RwLock<HashMap<String, Config>>>,
     /// Configuration file path
     pub config_path: std::path::PathBuf,
 }
