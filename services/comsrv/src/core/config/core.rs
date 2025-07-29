@@ -86,6 +86,7 @@ impl ConfigCenterClient {
     }
 
     /// 设置后备配置路径
+    #[must_use]
     pub fn with_fallback(mut self, path: String) -> Self {
         self.fallback_path = Some(path);
         self

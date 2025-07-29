@@ -308,6 +308,7 @@ impl OptimizedPointManager {
     }
 
     /// Get cache hit rate
+    #[allow(clippy::cast_precision_loss)]
     pub async fn get_cache_hit_rate(&self) -> f64 {
         let stats = self.stats.read().await;
         let total = stats.cache_hits + stats.cache_misses;
@@ -361,7 +362,7 @@ pub fn generate_test_points(count: usize) -> Vec<PollingPoint> {
         let point = PollingPoint {
             id: format!("point_{i}"),
             name: format!("Test Point {i}"),
-            address: i as u32 + 1000,
+            address: u32::try_from(i).unwrap_or(u32::MAX).saturating_add(1000),
             telemetry_type,
             access_mode: "rw".to_string(),
         };

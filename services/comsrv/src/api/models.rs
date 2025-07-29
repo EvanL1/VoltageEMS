@@ -205,7 +205,7 @@ mod tests {
         };
 
         let serialized = serde_json::to_string(&status).unwrap();
-        assert!(serialized.contains("1"));
+        assert!(serialized.contains('1'));
         assert!(serialized.contains("ModbusTcp"));
         assert!(serialized.contains("true"));
     }
@@ -297,7 +297,7 @@ mod tests {
         };
 
         let serialized = serde_json::to_string(&status).unwrap();
-        assert!(serialized.contains("1"));
+        assert!(serialized.contains('1'));
         assert!(serialized.contains("false"));
         assert!(serialized.contains("Connection timeout"));
     }

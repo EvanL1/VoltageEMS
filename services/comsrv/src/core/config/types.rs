@@ -2,6 +2,8 @@
 //!
 //! 包含所有配置相关的类型定义
 
+use crate::core::combase::CommandSubscriberConfig;
+use crate::core::sync::LuaSyncConfig;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -44,6 +46,14 @@ pub struct ServiceConfig {
     /// 日志配置
     #[serde(default)]
     pub logging: LoggingConfig,
+
+    /// Lua 同步配置
+    #[serde(default)]
+    pub lua_sync: LuaSyncConfig,
+
+    /// 命令订阅配置
+    #[serde(default)]
+    pub command_subscriber: CommandSubscriberConfig,
 }
 
 /// API配置

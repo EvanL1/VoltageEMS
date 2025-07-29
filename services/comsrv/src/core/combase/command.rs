@@ -52,7 +52,7 @@ pub struct CommandStatus {
 }
 
 /// 命令订阅器配置
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct CommandSubscriberConfig {
     pub channel_id: u16,
     pub redis_url: String,
@@ -293,6 +293,6 @@ mod tests {
         assert_eq!(command.channel_id, 1);
         assert!(matches!(command.command_type, CommandType::Control));
         assert_eq!(command.point_id, 1001);
-        assert_eq!(command.value, 1.0);
+        assert!((command.value - 1.0).abs() < f64::EPSILON);
     }
 }

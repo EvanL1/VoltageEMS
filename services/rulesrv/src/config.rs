@@ -1,7 +1,7 @@
 use crate::error::{Result, RulesrvError};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
-use voltage_common::config::ApiConfig as CommonApiConfig;
+// Remove voltage_common dependency
 
 /// Main configuration structure
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -16,7 +16,7 @@ pub struct Config {
     pub engine: EngineConfig,
 
     /// API configuration
-    pub api: CommonApiConfig,
+    pub api: ApiConfig,
 
     /// Log level
     #[serde(default = "default_log_level")]
@@ -75,6 +75,14 @@ pub struct EngineConfig {
     pub rule_key_pattern: String,
 }
 
+/// API configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ApiConfig {
+    pub host: String,
+    pub port: u16,
+    pub timeout_seconds: u64,
+}
+
 impl Config {
     /// Load configuration from file
     pub fn from_file<P: AsRef<Path>>(path: P) -> Result<Self> {
@@ -126,7 +134,17 @@ impl Config {
                 rule_key_pattern: std::env::var("RULE_KEY_PATTERN")
                     .unwrap_or_else(|_| default_rule_key_pattern()),
             },
-            api: CommonApiConfig::from_env_or_default(),
+            api: ApiConfig {
+                host: std::env::var("API_HOST").unwrap_or_else(|_| "0.0.0.0".to_string()),
+                port: std::env::var("API_PORT")
+                    .ok()
+                    .and_then(|s| s.parse().ok())
+                    .unwrap_or(8080),
+                timeout_seconds: std::env::var("API_TIMEOUT")
+                    .ok()
+                    .and_then(|s| s.parse().ok())
+                    .unwrap_or(30),
+            },
             log_level: std::env::var("LOG_LEVEL").unwrap_or_else(|_| default_log_level()),
             redis_url,
         })
@@ -141,7 +159,11 @@ impl Default for Config {
             service: ServiceConfig::default(),
             redis: redis_config,
             engine: EngineConfig::default(),
-            api: CommonApiConfig::default(),
+            api: ApiConfig {
+                host: "0.0.0.0".to_string(),
+                port: 8080,
+                timeout_seconds: 30,
+            },
             log_level: default_log_level(),
             redis_url,
         }

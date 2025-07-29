@@ -78,7 +78,7 @@ impl std::fmt::Debug for ChannelEntry {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ChannelEntry")
             .field("metadata", &self.metadata)
-            .finish()
+            .finish_non_exhaustive()
     }
 }
 
@@ -769,8 +769,12 @@ impl ProtocolClientFactory for GrpcPluginFactory {
 
 #[cfg(any(test, feature = "test-utils"))]
 pub mod test_support {
-    use super::*;
+    use super::{
+        Arc, ChannelConfig, ComBase, ConfigValue, ProtocolClientFactory, ProtocolType, Result,
+        RwLock,
+    };
     use crate::core::combase::core::{ChannelStatus, PointData, RedisValue};
+    use async_trait::async_trait;
     use std::collections::HashMap;
     use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -891,7 +895,7 @@ pub mod test_support {
 #[cfg(test)]
 mod tests {
     use super::test_support::*;
-    use super::*;
+    use super::{Arc, ChannelConfig, ProtocolFactory, ProtocolType};
 
     #[tokio::test]
     async fn test_protocol_factory_creation() {

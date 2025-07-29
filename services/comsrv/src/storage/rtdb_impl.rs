@@ -1,10 +1,9 @@
 //! 实时数据库(RTDB) 实现
 
 use async_trait::async_trait;
-use std::sync::Arc;
 use voltage_libs::redis::RedisClient;
 
-use super::{PointData, PointStorage, PointUpdate, PublishUpdates, Publisher, PublisherConfig};
+use super::{PointData, PointStorage, PointUpdate};
 use crate::utils::error::{ComSrvError, Result};
 
 /// 重试配置
@@ -34,7 +33,6 @@ pub struct RtdbStorage {
     redis_url: String,
     #[allow(dead_code)]
     retry_config: RetryConfig,
-    publisher: Option<Arc<Publisher>>,
 }
 
 impl RtdbStorage {
@@ -52,16 +50,11 @@ impl RtdbStorage {
         Ok(Self {
             redis_url: redis_url.to_string(),
             retry_config: RetryConfig::default(),
-            publisher: None,
         })
     }
 
     /// 带配置创建
-    pub async fn with_config(
-        redis_url: &str,
-        retry_config: RetryConfig,
-        publisher_config: Option<PublisherConfig>,
-    ) -> Result<Self> {
+    pub async fn with_config(redis_url: &str, retry_config: RetryConfig) -> Result<Self> {
         // 测试连接
         let mut client = RedisClient::new(redis_url)
             .await
@@ -71,18 +64,9 @@ impl RtdbStorage {
             .await
             .map_err(|e| ComSrvError::Storage(format!("Failed to ping Redis: {e}")))?;
 
-        let publisher = if let Some(pub_config) = publisher_config {
-            Some(Arc::new(
-                Publisher::new(redis_url.to_string(), pub_config).await?,
-            ))
-        } else {
-            None
-        };
-
         Ok(Self {
             redis_url: redis_url.to_string(),
             retry_config,
-            publisher,
         })
     }
 
@@ -149,13 +133,6 @@ impl PointStorage for RtdbStorage {
             .await
             .map_err(|e| ComSrvError::Storage(format!("Failed to write with metadata: {e}")))?;
 
-        // 发布更新
-        if let Some(ref publisher) = self.publisher {
-            let update = PointUpdate::new(channel_id, point_type.to_string(), point_id, value)
-                .with_raw_value(raw_value.unwrap_or(value));
-            publisher.publish(update).await?;
-        }
-
         Ok(())
     }
 
@@ -199,11 +176,6 @@ impl PointStorage for RtdbStorage {
             .query_async(conn)
             .await
             .map_err(|e| ComSrvError::Storage(format!("Failed to write batch: {e}")))?;
-
-        // 批量发布
-        if let Some(ref publisher) = self.publisher {
-            publisher.publish_batch(updates).await?;
-        }
 
         Ok(())
     }

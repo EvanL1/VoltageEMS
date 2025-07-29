@@ -2,6 +2,18 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Version Information
+
+All services and libraries in the VoltageEMS project use version 0.0.1 as the initial pre-demo version:
+- libs (voltage-libs): 0.0.1
+- alarmsrv: 0.0.1
+- apigateway: 0.0.1
+- comsrv: 0.0.1
+- hissrv: 0.0.1
+- modsrv: 0.0.1
+- netsrv: 0.0.1
+- rulesrv: 0.0.1
+
 ## Common Development Commands
 
 ### Workspace-Level Commands

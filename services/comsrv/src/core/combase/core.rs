@@ -248,6 +248,7 @@ impl DefaultProtocol {
     }
 
     /// 设置存储后端
+    #[must_use]
     pub fn with_storage(mut self, storage: Box<dyn PluginStorage>) -> Self {
         self.storage = Some(Arc::new(Mutex::new(storage)));
         self
@@ -298,7 +299,9 @@ impl ComBase for DefaultProtocol {
             .parameters
             .get("point_count")
             .and_then(serde_yaml::Value::as_u64)
-            .unwrap_or(0) as usize;
+            .unwrap_or(0)
+            .try_into()
+            .unwrap_or(usize::MAX);
 
         self.update_status(|status| {
             status.points_count = point_count;
@@ -382,7 +385,7 @@ impl std::fmt::Debug for DefaultProtocol {
             .field("protocol_type", &self.protocol_type)
             .field("is_connected", &self.is_connected)
             .field("channel_config", &self.channel_config)
-            .finish()
+            .finish_non_exhaustive()
     }
 }
 
@@ -463,7 +466,7 @@ mod tests {
         let point = PointData::default();
         assert_eq!(point.timestamp, 0);
         match point.value {
-            RedisValue::Float(v) => assert_eq!(v, 0.0),
+            RedisValue::Float(v) => assert!(v.abs() < f64::EPSILON),
             _ => panic!("Expected float value"),
         }
     }

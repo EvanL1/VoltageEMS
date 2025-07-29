@@ -117,6 +117,7 @@ pub struct CsvCacheStats {
 }
 
 impl CsvCacheStats {
+    #[allow(clippy::cast_precision_loss)]
     pub fn hit_rate(&self) -> f64 {
         let total = self.hits + self.misses;
         if total == 0 {
@@ -329,8 +330,7 @@ impl ModbusMappingRecord {
     /// 根据数据类型推断寄存器数量
     pub fn register_count(&self) -> u16 {
         match self.data_format.as_str() {
-            "bool" | "int8" | "uint8" => 1,
-            "int16" | "uint16" => 1,
+            "bool" | "int8" | "uint8" | "int16" | "uint16" => 1,
             "int32" | "uint32" | "float32" => 2,
             "int64" | "uint64" | "float64" => 4,
             _ => {
@@ -359,7 +359,6 @@ impl ModbusMappingRecord {
         self.byte_order
             .clone()
             .unwrap_or_else(|| match self.data_format.as_str() {
-                "int16" | "uint16" => "AB".to_string(),
                 "int32" | "uint32" | "float32" => "ABCD".to_string(),
                 "int64" | "uint64" | "float64" => "ABCDEFGH".to_string(),
                 _ => "AB".to_string(),
@@ -529,8 +528,6 @@ impl ModbusMapping {
     /// 根据数据类型推断寄存器数量
     pub fn register_count(&self) -> u16 {
         match self.data_format.as_str() {
-            "bool" | "int8" | "uint8" => 1,
-            "int16" | "uint16" => 1,
             "int32" | "uint32" | "float32" => 2,
             "int64" | "uint64" | "float64" => 4,
             _ => 1,
@@ -541,7 +538,6 @@ impl ModbusMapping {
     pub fn byte_count(&self) -> u8 {
         match self.data_format.as_str() {
             "bool" | "int8" | "uint8" => 1,
-            "int16" | "uint16" => 2,
             "int32" | "uint32" | "float32" => 4,
             "int64" | "uint64" | "float64" => 8,
             _ => 2,
@@ -553,7 +549,6 @@ impl ModbusMapping {
         self.byte_order
             .clone()
             .unwrap_or_else(|| match self.data_format.as_str() {
-                "int16" | "uint16" => "AB".to_string(),
                 "int32" | "uint32" | "float32" => "ABCD".to_string(),
                 "int64" | "uint64" | "float64" => "ABCDEFGH".to_string(),
                 _ => "AB".to_string(),
@@ -604,7 +599,7 @@ impl ProtocolMapping for ModbusMapping {
     }
 
     fn data_size(&self) -> u8 {
-        self.register_count() as u8
+        self.byte_count()
     }
 }
 
@@ -688,7 +683,6 @@ impl ProtocolMapping for Iec60870Mapping {
 
     fn data_size(&self) -> u8 {
         match self.type_id {
-            1..=14 => 1,
             15..=40 => 4,
             _ => 1,
         }
