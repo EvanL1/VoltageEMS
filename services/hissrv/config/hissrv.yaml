@@ -1,70 +1,76 @@
-# hissrv 多服务兼容配置文件 - 支持Redis数据结构规范v3.2
+# hissrv 配置文件 - 极简轮询模式
+# 专为边端设备设计的历史数据归档服务
 
 # 服务配置
 service:
   name: "hissrv"
-  version: "0.3.0"
+  polling_interval: 10s     # 轮询间隔
+  enable_api: true          # 启用配置管理 API
+  api_port: 8082            # API 服务端口
 
-# Redis 多服务配置
+# Redis 配置
 redis:
-  host: "127.0.0.1"
-  port: 6379
-  database: 0
-  timeout_seconds: 30
-  # password: "your_redis_password"  # 可选
-  
-  # 方式1: 传统订阅模式（向后兼容）
-  # patterns:
-  #   - "comsrv:*"      # 订阅所有comsrv通道
-  #   - "modsrv:*"      # 订阅所有modsrv数据
-  #   - "*:m:*"         # 订阅所有测量数据
-  
-  # 方式2: 多服务数据源配置（推荐）
-  data_sources:
-    # comsrv 通信服务数据
-    comsrv:
-      enabled: true
-      data_types: ["m", "s", "c", "a"]  # 测量、状态、控制、调节
-      measurement: "comsrv_data"        # InfluxDB measurement名称
-      # channels: [1001, 1002]         # 可选：只订阅特定通道
+  url: "redis://localhost:6379"
+  data_keys:
+    # 从列表中获取 JSON 格式的归档数据
+    - pattern: "archive:pending"
+      type: "list"
     
-    # modsrv 模型服务数据
-    modsrv:
-      enabled: false                    # 默认关闭
-      data_types: ["measurement", "control"]
-      measurement: "modsrv_data"
+    # 从 Hash 中获取聚合后的数据
+    - pattern: "archive:1m:*"
+      type: "hash"
     
-    # alarmsrv 告警服务数据
-    alarmsrv:
-      enabled: false                    # 默认关闭
-      data_types: ["alarm", "event"]
-      measurement: "alarm_data"
-    
-    # rulesrv 规则服务数据
-    rulesrv:
-      enabled: false                    # 默认关闭
-      data_types: ["rule"]
-      measurement: "rule_data"
-  
-  # comsrv数据类型映射（向后兼容）
-  type_mappings:
-    m: "measurement"    # 测量值 (YC)
-    s: "signal"         # 信号值 (YX)
-    c: "control"        # 控制值 (YK)
-    a: "adjustment"     # 调节值 (YT)
+    - pattern: "archive:5m:*"
+      type: "hash"
 
 # InfluxDB 配置
 influxdb:
   url: "http://localhost:8086"
-  database: "hissrv_data"
-  timeout_seconds: 30
-  # username: "your_username"  # 可选
-  # password: "your_password"  # 可选
-  
-  # 批量写入配置
-  batch_size: 1000
-  flush_interval_seconds: 10
+  org: "voltage"
+  bucket: "ems"
+  token: "${INFLUXDB_TOKEN}"    # 从环境变量读取
+  batch_size: 1000              # 批量写入大小
+  write_timeout: 30s            # 写入超时
 
-# 日志配置
-logging:
-  level: "info"
+# 数据映射规则
+mappings:
+  # 1分钟聚合数据映射
+  - source: "archive:1m:*"
+    measurement: "metrics_1m"
+    tags:
+      - type: "extract"
+        field: "channel"       # 从 key 中提取 channel
+      - type: "static"
+        value: "interval=1m"   # 静态标签
+    fields:
+      - name: "voltage_avg"
+        field_type: "float"
+      - name: "voltage_max"
+        field_type: "float"
+      - name: "voltage_min"
+        field_type: "float"
+      - name: "current_avg"
+        field_type: "float"
+      - name: "power_avg"
+        field_type: "float"
+  
+  # 5分钟聚合数据映射
+  - source: "archive:5m:*"
+    measurement: "metrics_5m"
+    tags:
+      - type: "extract"
+        field: "channel"
+      - type: "static"
+        value: "interval=5m"
+    fields:
+      - name: "voltage_avg"
+        field_type: "float"
+      - name: "current_avg"
+        field_type: "float"
+      - name: "power_avg"
+        field_type: "float"
+
+# 示例环境变量：
+# export INFLUXDB_TOKEN=your_token_here
+# export HISSRV_REDIS_URL=redis://password@redis-server:6379
+# export RUST_LOG=hissrv=info
