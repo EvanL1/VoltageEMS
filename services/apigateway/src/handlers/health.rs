@@ -1,32 +1,17 @@
-use actix_web::{get, web, HttpResponse};
+use axum::{extract::State, response::IntoResponse, Json};
 use serde_json::json;
-use std::sync::Arc;
 
-use crate::config::Config;
-use crate::error::ApiResult;
-use crate::redis_client::RedisClient;
-use crate::response::success_response;
+use crate::response::ApiResponse;
+use crate::AppState;
 
-#[get("/health")]
-pub async fn health_check() -> ApiResult<HttpResponse> {
-    Ok(success_response(json!({
+pub async fn health_check() -> impl IntoResponse {
+    Json(ApiResponse::success(json!({
         "status": "healthy",
         "service": "apigateway"
     })))
 }
 
-pub async fn simple_health() -> ApiResult<HttpResponse> {
-    Ok(success_response(json!({
-        "status": "ok"
-    })))
-}
-
-#[get("/health/detailed")]
-pub async fn detailed_health(
-    config: web::Data<Config>,
-    redis_client: web::Data<Arc<RedisClient>>,
-    http_client: web::Data<Arc<reqwest::Client>>,
-) -> ApiResult<HttpResponse> {
+pub async fn detailed_health(State(app_state): State<AppState>) -> impl IntoResponse {
     let mut health_status = json!({
         "status": "healthy",
         "service": "apigateway",
@@ -36,7 +21,8 @@ pub async fn detailed_health(
 
     // Check Redis connection
     let redis_status = {
-        match redis_client.ping().await {
+        use crate::redis_client::RedisClientExt;
+        match app_state.redis_client.ping_api().await {
             Ok(_pong) => json!({
                 "status": "healthy",
                 "message": "Redis connection successful"
@@ -53,9 +39,10 @@ pub async fn detailed_health(
     let services = vec!["comsrv", "modsrv", "hissrv", "netsrv", "alarmsrv"];
 
     for service in services {
-        if let Some(service_url) = config.get_service_url(service) {
+        if let Some(service_url) = app_state.config.get_service_url(service) {
             let health_url = format!("{}/health", service_url);
-            let status = match http_client
+            let status = match app_state
+                .http_client
                 .get(&health_url)
                 .timeout(std::time::Duration::from_secs(5))
                 .send()
@@ -88,5 +75,5 @@ pub async fn detailed_health(
         health_status["status"] = json!("degraded");
     }
 
-    Ok(success_response(health_status))
+    Json(ApiResponse::success(health_status))
 }

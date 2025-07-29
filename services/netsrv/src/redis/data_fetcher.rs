@@ -1,4 +1,4 @@
-use voltage_config::RedisConfig;
+use crate::config::RedisConfig;
 use crate::error::{NetSrvError, Result};
 use crate::redis::RedisConnection;
 use serde_json::{json, Value};

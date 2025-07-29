@@ -20,7 +20,7 @@ pub enum ApiGatewayError {
 
     // Auth errors
     Unauthorized,
-    Forbidden,
+    Forbidden(String),
     InvalidToken(String),
     TokenExpired,
 
@@ -55,7 +55,7 @@ impl fmt::Display for ApiGatewayError {
             ApiGatewayError::ServiceError(msg) => write!(f, "Service error: {}", msg),
 
             ApiGatewayError::Unauthorized => write!(f, "Unauthorized"),
-            ApiGatewayError::Forbidden => write!(f, "Forbidden"),
+            ApiGatewayError::Forbidden(msg) => write!(f, "Forbidden: {}", msg),
             ApiGatewayError::InvalidToken(msg) => write!(f, "Invalid token: {}", msg),
             ApiGatewayError::TokenExpired => write!(f, "Token expired"),
 
@@ -91,7 +91,7 @@ impl IntoResponse for ApiGatewayError {
             ApiGatewayError::ServiceError(_) => (StatusCode::BAD_GATEWAY, "SERVICE_ERROR"),
 
             ApiGatewayError::Unauthorized => (StatusCode::UNAUTHORIZED, "UNAUTHORIZED"),
-            ApiGatewayError::Forbidden => (StatusCode::FORBIDDEN, "FORBIDDEN"),
+            ApiGatewayError::Forbidden(_) => (StatusCode::FORBIDDEN, "FORBIDDEN"),
             ApiGatewayError::InvalidToken(_) => (StatusCode::UNAUTHORIZED, "INVALID_TOKEN"),
             ApiGatewayError::TokenExpired => (StatusCode::UNAUTHORIZED, "TOKEN_EXPIRED"),
 
@@ -159,25 +159,12 @@ impl From<std::io::Error> for ApiGatewayError {
     }
 }
 
-impl From<voltage_common::Error> for ApiGatewayError {
-    fn from(err: voltage_common::Error) -> Self {
+impl From<voltage_libs::error::Error> for ApiGatewayError {
+    fn from(err: voltage_libs::error::Error) -> Self {
         match err {
-            voltage_common::Error::Storage(msg) => ApiGatewayError::RedisError(msg),
-            voltage_common::Error::Network(msg) => ApiGatewayError::ServiceError(msg),
-            voltage_common::Error::Config(msg) => ApiGatewayError::ConfigParseError(msg),
+            voltage_libs::error::Error::Redis(msg) => ApiGatewayError::RedisError(msg),
             _ => ApiGatewayError::InternalError(err.to_string()),
         }
-    }
-}
-
-// Helper function to convert ApiResult to Response
-pub fn api_result_to_response<T>(result: ApiResult<T>) -> axum::response::Response
-where
-    T: IntoResponse,
-{
-    match result {
-        Ok(value) => value.into_response(),
-        Err(error) => error.into_response(),
     }
 }
 
