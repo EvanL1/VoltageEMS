@@ -12,15 +12,12 @@ service:
 redis:
   url: "redis://localhost:6379"
   data_keys:
-    # 从列表中获取 JSON 格式的归档数据
-    - pattern: "archive:pending"
-      type: "list"
-    
-    # 从 Hash 中获取聚合后的数据
-    - pattern: "archive:1m:*"
+    # 从 comsrv 获取实时测量数据
+    - pattern: "comsrv:*:m"
       type: "hash"
     
-    - pattern: "archive:5m:*"
+    # 从 modsrv 获取计算后的数据
+    - pattern: "modsrv:*:measurement"
       type: "hash"
 
 # InfluxDB 配置
@@ -34,41 +31,33 @@ influxdb:
 
 # 数据映射规则
 mappings:
-  # 1分钟聚合数据映射
-  - source: "archive:1m:*"
-    measurement: "metrics_1m"
+  # comsrv 实时测量数据映射
+  - source: "comsrv:*:m"
+    measurement: "raw_measurements"
     tags:
       - type: "extract"
-        field: "channel"       # 从 key 中提取 channel
+        field: "channel"       # 从 key 中提取 channel ID
       - type: "static"
-        value: "interval=1m"   # 静态标签
+        value: "source=comsrv"
     fields:
-      - name: "voltage_avg"
+      - name: "value"
         field_type: "float"
-      - name: "voltage_max"
-        field_type: "float"
-      - name: "voltage_min"
-        field_type: "float"
-      - name: "current_avg"
-        field_type: "float"
-      - name: "power_avg"
-        field_type: "float"
+      - name: "point_id"
+        field_type: "string"
   
-  # 5分钟聚合数据映射
-  - source: "archive:5m:*"
-    measurement: "metrics_5m"
+  # modsrv 计算数据映射
+  - source: "modsrv:*:measurement"
+    measurement: "calculated_measurements"
     tags:
       - type: "extract"
-        field: "channel"
+        field: "model"         # 从 key 中提取 model name
       - type: "static"
-        value: "interval=5m"
+        value: "source=modsrv"
     fields:
-      - name: "voltage_avg"
+      - name: "value"
         field_type: "float"
-      - name: "current_avg"
-        field_type: "float"
-      - name: "power_avg"
-        field_type: "float"
+      - name: "field_name"
+        field_type: "string"
 
 # 示例环境变量：
 # export INFLUXDB_TOKEN=your_token_here
