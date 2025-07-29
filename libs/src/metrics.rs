@@ -1,4 +1,4 @@
-//! Common metrics utilities for VoltageEMS services
+//! Common metrics utilities for `VoltageEMS` services
 
 use once_cell::sync::Lazy;
 use prometheus::{

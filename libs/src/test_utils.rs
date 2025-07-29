@@ -1,6 +1,5 @@
-//! Test utilities for VoltageEMS services
+//! Test utilities for `VoltageEMS` services
 
-use crate::types::PointId;
 use std::net::TcpListener;
 use tempfile::{TempDir, TempPath};
 use tokio::sync::oneshot;
@@ -70,7 +69,7 @@ impl MockService {
 
             tokio::select! {
                 _ = rx => {},
-                _ = async {
+                () = async {
                     loop {
                         if let Ok((stream, _)) = listener.accept().await {
                             // Handle connection
@@ -106,10 +105,7 @@ impl Drop for MockService {
 pub fn assert_approx_eq(a: f64, b: f64, epsilon: f64) {
     assert!(
         (a - b).abs() < epsilon,
-        "Values are not approximately equal: {} != {} (epsilon: {})",
-        a,
-        b,
-        epsilon
+        "Values are not approximately equal: {a} != {b} (epsilon: {epsilon})"
     );
 }
 
@@ -118,7 +114,7 @@ pub fn create_test_config<T: serde::Serialize>(
     config: &T,
     format: &str,
 ) -> Result<TempPath, Box<dyn std::error::Error>> {
-    let path = temp_file_path(&format!(".{}", format));
+    let path = temp_file_path(&format!(".{format}"));
     let content = match format {
         "yaml" | "yml" => serde_yaml::to_string(config)?,
         "json" => serde_json::to_string_pretty(config)?,

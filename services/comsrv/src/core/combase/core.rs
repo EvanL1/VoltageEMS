@@ -3,7 +3,7 @@
 //! 整合了基础trait定义、类型定义和默认实现
 
 use crate::core::config::{ChannelConfig, TelemetryType};
-use crate::plugins::core::{PluginPointUpdate, PluginStorage};
+use crate::plugins::core::PluginStorage;
 use crate::utils::error::{ComSrvError, Result};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -201,7 +201,7 @@ pub trait ConfigValidator {
 /// 协议数据包解析器trait
 #[async_trait]
 pub trait ProtocolPacketParser: Send + Sync {
-    fn protocol_name(&self) -> &str {
+    fn protocol_name(&self) -> &'static str {
         "Unknown"
     }
     async fn parse_packet(&self, data: &[u8]) -> Result<PacketParseResult>;
@@ -222,7 +222,7 @@ pub enum PacketParseResult {
 
 /// 默认协议实现
 ///
-/// 提供ComBase trait的参考实现
+/// `提供ComBase` trait的参考实现
 pub struct DefaultProtocol {
     name: String,
     protocol_type: String,
@@ -267,27 +267,6 @@ impl DefaultProtocol {
     }
 
     // 四遥分离架构下，不再需要get_mappings方法
-
-    /// 处理存储更新
-    async fn handle_storage_update(&self, updates: Vec<PluginPointUpdate>) -> Result<()> {
-        if let Some(storage) = &self.storage {
-            let storage = storage.lock().await;
-            // 逐个写入点位数据
-            for update in updates {
-                let raw_value = update.raw_value.unwrap_or(update.value);
-                storage
-                    .write_point_with_raw(
-                        update.channel_id,
-                        &update.telemetry_type,
-                        update.point_id,
-                        update.value,
-                        raw_value,
-                    )
-                    .await?;
-            }
-        }
-        Ok(())
-    }
 }
 
 #[async_trait]
@@ -301,7 +280,11 @@ impl ComBase for DefaultProtocol {
     }
 
     fn is_connected(&self) -> bool {
-        *self.is_connected.blocking_read()
+        // 使用 try_read 避免在异步环境中阻塞
+        self.is_connected
+            .try_read()
+            .map(|guard| *guard)
+            .unwrap_or(false)
     }
 
     async fn get_status(&self) -> ChannelStatus {
@@ -314,7 +297,7 @@ impl ComBase for DefaultProtocol {
         let point_count = channel_config
             .parameters
             .get("point_count")
-            .and_then(|v| v.as_u64())
+            .and_then(serde_yaml::Value::as_u64)
             .unwrap_or(0) as usize;
 
         self.update_status(|status| {
@@ -392,6 +375,17 @@ impl ComBase for DefaultProtocol {
     // 四遥分离架构下，update_points方法已移除
 }
 
+impl std::fmt::Debug for DefaultProtocol {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DefaultProtocol")
+            .field("name", &self.name)
+            .field("protocol_type", &self.protocol_type)
+            .field("is_connected", &self.is_connected)
+            .field("channel_config", &self.channel_config)
+            .finish()
+    }
+}
+
 #[async_trait]
 impl FourTelemetryOperations for DefaultProtocol {
     async fn read_yc(&self) -> Result<PointDataMap> {
@@ -452,11 +446,11 @@ mod tests {
 
         assert_eq!(protocol.name(), "test");
         assert_eq!(protocol.protocol_type(), "default");
-        assert!(!protocol.is_connected());
+        assert!(!ComBase::is_connected(&protocol));
 
         // 测试连接
-        protocol.connect().await.unwrap();
-        assert!(protocol.is_connected());
+        ComBase::connect(&mut protocol).await.unwrap();
+        assert!(ComBase::is_connected(&protocol));
 
         // 测试状态
         let status = protocol.get_status().await;

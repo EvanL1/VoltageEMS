@@ -1,7 +1,7 @@
 //! Point Manager Module
 //!
 //! High-performance point manager with optimized data structures and indices.
-//! Consolidated from point_manager.rs and optimized_point_manager.rs
+//! Consolidated from `point_manager.rs` and `optimized_point_manager.rs`
 
 use chrono::Utc;
 use std::collections::{HashMap, HashSet};
@@ -53,7 +53,7 @@ pub struct OptimizedPointManager {
     /// Real-time point data cache indexed by numeric point ID
     realtime_cache: Arc<RwLock<HashMap<u32, PointData>>>,
 
-    /// Points grouped by telemetry type using HashSet for O(1) lookups
+    /// Points grouped by telemetry type using `HashSet` for O(1) lookups
     points_by_type: Arc<RwLock<HashMap<TelemetryType, HashSet<u32>>>>,
 
     /// Name to ID mapping for fast name-based lookups

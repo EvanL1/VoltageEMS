@@ -74,7 +74,7 @@ impl ComBase for VirtualProtocol {
         &self.name
     }
 
-    fn protocol_type(&self) -> &str {
+    fn protocol_type(&self) -> &'static str {
         "virtual"
     }
 
@@ -266,8 +266,10 @@ mod tests {
             parameters: HashMap::new(),
             logging: Default::default(),
             table_config: None,
-            combined_points: vec![],
-            points: vec![],
+            measurement_points: HashMap::new(),
+            signal_points: HashMap::new(),
+            control_points: HashMap::new(),
+            adjustment_points: HashMap::new(),
         };
 
         let mut protocol = VirtualProtocol::new(config).unwrap();

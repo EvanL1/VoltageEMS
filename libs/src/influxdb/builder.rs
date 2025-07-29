@@ -15,16 +15,17 @@ pub enum FieldValue {
 impl fmt::Display for FieldValue {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            FieldValue::Float(v) => write!(f, "{}", v),
-            FieldValue::Integer(v) => write!(f, "{}i", v),
-            FieldValue::UnsignedInteger(v) => write!(f, "{}u", v),
+            FieldValue::Float(v) => write!(f, "{v}"),
+            FieldValue::Integer(v) => write!(f, "{v}i"),
+            FieldValue::UnsignedInteger(v) => write!(f, "{v}u"),
             FieldValue::String(v) => write!(f, "\"{}\"", v.replace('"', "\\\"")),
-            FieldValue::Boolean(v) => write!(f, "{}", v),
+            FieldValue::Boolean(v) => write!(f, "{v}"),
         }
     }
 }
 
-/// InfluxDB 线协议构建器
+/// `InfluxDB` 线协议构建器
+#[derive(Debug)]
 pub struct LineProtocolBuilder {
     measurement: String,
     tags: Vec<(String, String)>,
@@ -44,18 +45,21 @@ impl LineProtocolBuilder {
     }
 
     /// 添加标签
+    #[must_use]
     pub fn tag(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
         self.tags.push((key.into(), value.into()));
         self
     }
 
     /// 添加字段
+    #[must_use]
     pub fn field(mut self, key: impl Into<String>, value: impl Into<FieldValue>) -> Self {
         self.fields.push((key.into(), value.into()));
         self
     }
 
     /// 设置时间戳（纳秒）
+    #[must_use]
     pub fn timestamp(mut self, timestamp: i64) -> Self {
         self.timestamp = Some(timestamp);
         self
@@ -92,7 +96,7 @@ impl LineProtocolBuilder {
 
         // 时间戳
         if let Some(ts) = self.timestamp {
-            write!(&mut result, " {}", ts).unwrap();
+            write!(&mut result, " {ts}").unwrap();
         }
 
         result

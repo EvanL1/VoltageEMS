@@ -1,10 +1,11 @@
-//! InfluxDB 2.x 官方客户端
+//! `InfluxDB` 2.x 官方客户端
 
 use crate::config::InfluxConfig;
 use crate::error::{Error, Result};
 use influxdb2::{models::Query, Client};
 
-/// InfluxDB 2.x 客户端
+/// `InfluxDB` 2.x 客户端
+#[derive(Debug)]
 pub struct InfluxClient {
     client: Client,
     config: InfluxConfig,
@@ -40,7 +41,7 @@ impl InfluxClient {
         self.client
             .write_line_protocol(org, bucket, data_owned)
             .await
-            .map_err(|e| Error::InfluxDB(format!("Write failed: {}", e)))?;
+            .map_err(|e| Error::InfluxDB(format!("Write failed: {e}")))?;
 
         Ok(())
     }
@@ -54,10 +55,9 @@ impl InfluxClient {
             query.to_string()
         } else {
             format!(
-                r#"from(bucket: "{}")
+                r#"from(bucket: "{bucket}")
                 |> range(start: -1h)
-                |> filter(fn: (r) => r._measurement == "{}")"#,
-                bucket, query
+                |> filter(fn: (r) => r._measurement == "{query}")"#
             )
         };
 
@@ -68,9 +68,9 @@ impl InfluxClient {
             .client
             .query_raw(Some(query))
             .await
-            .map_err(|e| Error::InfluxDB(format!("Query failed: {}", e)))?;
+            .map_err(|e| Error::InfluxDB(format!("Query failed: {e}")))?;
 
-        Ok(format!("{:?}", result))
+        Ok(format!("{result:?}"))
     }
 
     /// 健康检查
@@ -80,7 +80,7 @@ impl InfluxClient {
             .client
             .health()
             .await
-            .map_err(|e| Error::InfluxDB(format!("Health check failed: {}", e)))?;
+            .map_err(|e| Error::InfluxDB(format!("Health check failed: {e}")))?;
 
         tracing::debug!("InfluxDB health check: {:?}", health_result);
 
@@ -89,7 +89,7 @@ impl InfluxClient {
             .client
             .ready()
             .await
-            .map_err(|e| Error::InfluxDB(format!("Ready check failed: {}", e)))?;
+            .map_err(|e| Error::InfluxDB(format!("Ready check failed: {e}")))?;
 
         if !ready {
             return Err(Error::InfluxDB("InfluxDB is not ready".to_string()));

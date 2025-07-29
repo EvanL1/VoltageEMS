@@ -39,6 +39,7 @@ pub trait PublishUpdates: Send + Sync {
 }
 
 /// Redis发布器
+#[derive(Debug)]
 pub struct Publisher {
     #[allow(dead_code)]
     redis_url: String,
@@ -103,7 +104,7 @@ impl Publisher {
 
         let mut client = RedisClient::new(redis_url)
             .await
-            .map_err(|e| ComSrvError::Storage(format!("Failed to connect to Redis: {}", e)))?;
+            .map_err(|e| ComSrvError::Storage(format!("Failed to connect to Redis: {e}")))?;
 
         let mut pipe = redis::pipe();
 
@@ -128,7 +129,7 @@ impl Publisher {
         let _: () = pipe
             .query_async(conn)
             .await
-            .map_err(|e| ComSrvError::Storage(format!("Failed to publish batch: {}", e)))?;
+            .map_err(|e| ComSrvError::Storage(format!("Failed to publish batch: {e}")))?;
 
         buffer.clear();
         Ok(())
@@ -141,7 +142,7 @@ impl PublishUpdates for Publisher {
         self.tx
             .send(update)
             .await
-            .map_err(|e| ComSrvError::Storage(format!("Failed to send update: {}", e)))?;
+            .map_err(|e| ComSrvError::Storage(format!("Failed to send update: {e}")))?;
         Ok(())
     }
 
@@ -150,7 +151,7 @@ impl PublishUpdates for Publisher {
             self.tx
                 .send(update)
                 .await
-                .map_err(|e| ComSrvError::Storage(format!("Failed to send update: {}", e)))?;
+                .map_err(|e| ComSrvError::Storage(format!("Failed to send update: {e}")))?;
         }
         Ok(())
     }

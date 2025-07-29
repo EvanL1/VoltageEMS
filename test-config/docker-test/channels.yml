@@ -1,0 +1,207 @@
+# comsrv通道配置 - 8个通道，总计8000+个点
+channels:
+  # ModbusTCP通道1 - 1200个点
+  - id: 1001
+    name: "ModbusTCP Channel 1001"
+    protocol: "modbus_tcp"
+    enabled: true
+    parameters:
+      host: "172.30.1.11"
+      port: 502
+      timeout_ms: 1000
+      batch_size: 100
+      read_interval_ms: 1000
+    table_config:
+      # 四遥点表路径
+      four_remote_route: "ModbusTCP_CH1001"
+      four_remote_files:
+        measurement_file: "measurement.csv"
+        signal_file: "signal.csv"
+        adjustment_file: "adjustment.csv"
+        control_file: "control.csv"
+      # 协议映射路径
+      protocol_mapping_route: "ModbusTCP_CH1001/mappings"
+      protocol_mapping_file:
+        measurement_mapping: "modbus_measurement.csv"
+        signal_mapping: "modbus_signal.csv"
+        adjustment_mapping: "modbus_adjustment.csv"
+        control_mapping: "modbus_control.csv"
+    logging:
+      enabled: true
+      path: "/opt/comsrv/channel-logs/CH1001"
+      level: "debug"
+
+  # ModbusTCP通道2 - 1000个点
+  - id: 1002
+    name: "ModbusTCP Channel 1002"
+    protocol: "modbus_tcp"
+    enabled: true
+    parameters:
+      host: "172.30.1.12"
+      port: 502
+      timeout_ms: 1000
+      batch_size: 100
+      read_interval_ms: 1000
+    table_config:
+      four_remote_route: "ModbusTCP_CH1002"
+      four_remote_files:
+        measurement_file: "measurement.csv"
+        signal_file: "signal.csv"
+      protocol_mapping_route: "ModbusTCP_CH1002/mappings"
+      protocol_mapping_file:
+        measurement_mapping: "modbus_measurement.csv"
+        signal_mapping: "modbus_signal.csv"
+    logging:
+      enabled: true
+      path: "/opt/comsrv/channel-logs/CH1002"
+      level: "debug"
+
+  # ModbusTCP通道3 - 1000个点
+  - id: 1003
+    name: "ModbusTCP Channel 1003"
+    protocol: "modbus_tcp"
+    enabled: true
+    parameters:
+      host: "172.30.1.13"
+      port: 502
+      timeout_ms: 1000
+      batch_size: 100
+      read_interval_ms: 1000
+    table_config:
+      four_remote_route: "ModbusTCP_CH1003"
+      four_remote_files:
+        measurement_file: "measurement.csv"
+        signal_file: "signal.csv"
+      protocol_mapping_route: "ModbusTCP_CH1003/mappings"
+      protocol_mapping_file:
+        measurement_mapping: "modbus_measurement.csv"
+        signal_mapping: "modbus_signal.csv"
+    logging:
+      enabled: true
+      path: "/opt/comsrv/channel-logs/CH1003"
+      level: "debug"
+
+  # ModbusTCP通道4 - 1000个点
+  - id: 1004
+    name: "ModbusTCP Channel 1004"
+    protocol: "modbus_tcp"
+    enabled: true
+    parameters:
+      host: "172.30.1.14"
+      port: 502
+      timeout_ms: 1000
+      batch_size: 100
+      read_interval_ms: 1000
+    table_config:
+      four_remote_route: "ModbusTCP_CH1004"
+      four_remote_files:
+        measurement_file: "measurement.csv"
+        signal_file: "signal.csv"
+      protocol_mapping_route: "ModbusTCP_CH1004/mappings"
+      protocol_mapping_file:
+        measurement_mapping: "modbus_measurement.csv"
+        signal_mapping: "modbus_signal.csv"
+    logging:
+      enabled: true
+      path: "/opt/comsrv/channel-logs/CH1004"
+      level: "debug"
+
+  # ModbusTCP通道5 - 1000个点
+  - id: 1005
+    name: "ModbusTCP Channel 1005"
+    protocol: "modbus_tcp"
+    enabled: true
+    parameters:
+      host: "172.30.1.15"
+      port: 502
+      timeout_ms: 1000
+      batch_size: 100
+      read_interval_ms: 1000
+    table_config:
+      four_remote_route: "ModbusTCP_CH1005"
+      four_remote_files:
+        measurement_file: "measurement.csv"
+        signal_file: "signal.csv"
+      protocol_mapping_route: "ModbusTCP_CH1005/mappings"
+      protocol_mapping_file:
+        measurement_mapping: "modbus_measurement.csv"
+        signal_mapping: "modbus_signal.csv"
+    logging:
+      enabled: true
+      path: "/opt/comsrv/channel-logs/CH1005"
+      level: "debug"
+
+  # ModbusTCP通道6 - 1000个点
+  - id: 1006
+    name: "ModbusTCP Channel 1006"
+    protocol: "modbus_tcp"
+    enabled: true
+    parameters:
+      host: "172.30.1.16"
+      port: 502
+      timeout_ms: 1000
+      batch_size: 100
+      read_interval_ms: 1000
+    table_config:
+      four_remote_route: "ModbusTCP_CH1006"
+      four_remote_files:
+        measurement_file: "measurement.csv"
+        signal_file: "signal.csv"
+      protocol_mapping_route: "ModbusTCP_CH1006/mappings"
+      protocol_mapping_file:
+        measurement_mapping: "modbus_measurement.csv"
+        signal_mapping: "modbus_signal.csv"
+    logging:
+      enabled: true
+      path: "/opt/comsrv/channel-logs/CH1006"
+      level: "debug"
+
+  # ModbusRTU通道1 - 1000个点
+  - id: 2001
+    name: "ModbusRTU Channel 2001"
+    protocol: "modbus_rtu"
+    enabled: true
+    parameters:
+      host: "172.30.1.21"
+      port: 503
+      timeout_ms: 1000
+      batch_size: 100
+      read_interval_ms: 1000
+    table_config:
+      four_remote_route: "ModbusRTU_CH2001"
+      four_remote_files:
+        measurement_file: "measurement.csv"
+        signal_file: "signal.csv"
+      protocol_mapping_route: "ModbusRTU_CH2001/mappings"
+      protocol_mapping_file:
+        measurement_mapping: "modbus_measurement.csv"
+        signal_mapping: "modbus_signal.csv"
+    logging:
+      enabled: true
+      path: "/opt/comsrv/channel-logs/CH2001"
+      level: "debug"
+
+  # ModbusRTU通道2 - 1000个点
+  - id: 2002
+    name: "ModbusRTU Channel 2002"
+    protocol: "modbus_rtu"
+    enabled: true
+    parameters:
+      host: "172.30.1.22"
+      port: 503
+      timeout_ms: 1000
+      batch_size: 100
+      read_interval_ms: 1000
+    table_config:
+      four_remote_route: "ModbusRTU_CH2002"
+      four_remote_files:
+        measurement_file: "measurement.csv"
+        signal_file: "signal.csv"
+      protocol_mapping_route: "ModbusRTU_CH2002/mappings"
+      protocol_mapping_file:
+        measurement_mapping: "modbus_measurement.csv"
+        signal_mapping: "modbus_signal.csv"
+    logging:
+      enabled: true
+      path: "/opt/comsrv/channel-logs/CH2002"
+      level: "debug"

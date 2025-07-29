@@ -9,6 +9,15 @@ pub struct RedisClient {
     url: String,
 }
 
+impl std::fmt::Debug for RedisClient {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RedisClient")
+            .field("url", &self.url)
+            .field("conn", &"<ConnectionManager>")
+            .finish()
+    }
+}
+
 impl RedisClient {
     /// 创建新的客户端
     pub async fn new(url: &str) -> Result<Self> {
@@ -107,7 +116,7 @@ impl RedisClient {
             .arg(value)
             .query_async(&mut self.conn)
             .await
-            .map_err(|e| e.into())
+            .map_err(Into::into)
     }
 
     /// Hash 操作 - 获取字段
@@ -117,7 +126,7 @@ impl RedisClient {
             .arg(field)
             .query_async(&mut self.conn)
             .await
-            .map_err(|e| e.into())
+            .map_err(Into::into)
     }
 
     /// Hash 操作 - 获取多个字段
@@ -127,7 +136,7 @@ impl RedisClient {
             .arg(fields)
             .query_async(&mut self.conn)
             .await
-            .map_err(|e| e.into())
+            .map_err(Into::into)
     }
 
     /// Hash 操作 - 获取所有字段
@@ -139,7 +148,7 @@ impl RedisClient {
             .arg(key)
             .query_async(&mut self.conn)
             .await
-            .map_err(|e| e.into())
+            .map_err(Into::into)
     }
 
     /// 创建订阅连接
@@ -158,6 +167,6 @@ impl RedisClient {
             .arg(value)
             .query_async(&mut self.conn)
             .await
-            .map_err(|e| e.into())
+            .map_err(Into::into)
     }
 }

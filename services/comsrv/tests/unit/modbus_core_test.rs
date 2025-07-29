@@ -1,19 +1,21 @@
 //! Modbus核心功能单元测试
 
-use chrono::Utc;
-use comsrv::core::config::types::{ChannelConfig, TelemetryType};
-// use comsrv::plugins::protocols::modbus::core::ModbusProtocol;
-use comsrv::plugins::protocols::modbus::types::{ModbusPoint, ModbusPollingConfig};
-use comsrv::plugins::protocols::modbus::transport::MockTransport;
+use comsrv::core::config::types::{ChannelConfig, ChannelLoggingConfig, TelemetryType};
+use comsrv::plugins::protocols::modbus::types::{BatchConfig, ModbusPollingConfig};
 use std::collections::HashMap;
-use std::sync::Arc;
 
 /// 创建测试用的通道配置
 fn create_test_channel_config() -> ChannelConfig {
     let mut parameters = HashMap::new();
-    parameters.insert("host".to_string(), serde_yaml::Value::String("127.0.0.1".to_string()));
+    parameters.insert(
+        "host".to_string(),
+        serde_yaml::Value::String("127.0.0.1".to_string()),
+    );
     parameters.insert("port".to_string(), serde_yaml::Value::Number(502.into()));
-    parameters.insert("timeout".to_string(), serde_yaml::Value::Number(5000.into()));
+    parameters.insert(
+        "timeout".to_string(),
+        serde_yaml::Value::Number(5000.into()),
+    );
 
     ChannelConfig {
         id: 1001,
@@ -21,100 +23,34 @@ fn create_test_channel_config() -> ChannelConfig {
         description: Some("Unit test channel".to_string()),
         protocol: "modbus_tcp".to_string(),
         parameters,
-        logging: Default::default(),
+        logging: ChannelLoggingConfig::default(),
         table_config: None,
-        points: vec![],
-        combined_points: vec![],
+        measurement_points: HashMap::new(),
+        signal_points: HashMap::new(),
+        control_points: HashMap::new(),
+        adjustment_points: HashMap::new(),
     }
 }
 
 /// 创建测试用的轮询配置
 fn create_test_polling_config() -> ModbusPollingConfig {
     ModbusPollingConfig {
-        polling_interval: 1000,
-        timeout: 5000,
-        retry_count: 3,
-        retry_delay: 1000,
-        max_concurrent_requests: 5,
-        batch_size: 100,
+        enabled: true,
+        default_interval_ms: 1000,
+        batch_config: BatchConfig {
+            max_batch_size: 100,
+            max_gap_registers: 5,
+            enable_batch_optimization: true,
+        },
+        connection_config: Default::default(),
     }
 }
 
-/// 创建测试点位
-fn create_test_points() -> Vec<ModbusPoint> {
-    vec![
-        ModbusPoint {
-            point_id: "10001".to_string(),
-            slave_id: 1,
-            function_code: 3,
-            register_address: 40001,
-            data_format: "UINT16".to_string(),
-            register_count: 1,
-            byte_order: Some("big_endian".to_string()),
-        },
-        ModbusPoint {
-            point_id: "10002".to_string(),
-            slave_id: 1,
-            function_code: 3,
-            register_address: 40002,
-            data_format: "FLOAT32".to_string(),
-            register_count: 2,
-            byte_order: Some("big_endian".to_string()),
-        },
-    ]
-}
-
-// #[tokio::test]
-// async fn test_modbus_protocol_creation() {
-//     let config = create_test_channel_config();
-//     let transport = Arc::new(MockTransport::new());
-//     let polling_config = create_test_polling_config();
-
-//     let result = ModbusProtocol::new(config, transport, polling_config);
-//     assert!(result.is_ok());
-
-//     let protocol = result.unwrap();
-//     assert_eq!(protocol.name(), "Test Modbus Channel");
-//     assert_eq!(protocol.channel_id(), 1001);
-// }
-
-#[tokio::test]
-async fn test_modbus_point_parsing() {
-    let points = create_test_points();
-    
-    // 验证第一个点
-    let point1 = &points[0];
-    assert_eq!(point1.point_id, "10001");
-    assert_eq!(point1.slave_id, 1);
-    assert_eq!(point1.function_code, 3);
-    assert_eq!(point1.register_address, 40001);
-    assert_eq!(point1.data_format, "UINT16");
-    assert_eq!(point1.register_count, 1);
-
-    // 验证第二个点
-    let point2 = &points[1];
-    assert_eq!(point2.point_id, "10002");
-    assert_eq!(point2.data_format, "FLOAT32");
-    assert_eq!(point2.register_count, 2);
-}
-
-#[tokio::test]
-async fn test_polling_config() {
-    let config = create_test_polling_config();
-    
-    assert_eq!(config.polling_interval, 1000);
-    assert_eq!(config.timeout, 5000);
-    assert_eq!(config.retry_count, 3);
-    assert_eq!(config.retry_delay, 1000);
-    assert_eq!(config.max_concurrent_requests, 5);
-    assert_eq!(config.batch_size, 100);
-}
-
-#[tokio::test]
-async fn test_telemetry_type_mapping() {
+#[test]
+fn test_telemetry_type_mapping() {
     // 测试遥测类型映射
     let telemetry_types = vec![
-        TelemetryType::Telemetry,
+        TelemetryType::Measurement,
         TelemetryType::Signal,
         TelemetryType::Control,
         TelemetryType::Adjustment,
@@ -123,8 +59,8 @@ async fn test_telemetry_type_mapping() {
     for telemetry_type in telemetry_types {
         // 简单验证类型存在且可以使用
         let _type_str = match telemetry_type {
-            TelemetryType::Telemetry => "m",
-            TelemetryType::Signal => "s", 
+            TelemetryType::Measurement => "m",
+            TelemetryType::Signal => "s",
             TelemetryType::Control => "c",
             TelemetryType::Adjustment => "a",
         };
@@ -132,43 +68,30 @@ async fn test_telemetry_type_mapping() {
     }
 }
 
-#[cfg(test)]
-mod mock_transport_tests {
-    use super::*;
-    use comsrv::plugins::protocols::modbus::transport::MockTransport;
+#[test]
+fn test_polling_config() {
+    let config = create_test_polling_config();
 
-    #[tokio::test]
-    async fn test_mock_transport_basic() {
-        let transport = MockTransport::new();
-        
-        // 测试默认状态
-        assert!(!transport.is_connected());
-        
-        // 测试连接
-        let result = transport.connect().await;
-        assert!(result.is_ok());
-        assert!(transport.is_connected());
-        
-        // 测试断开连接
-        let result = transport.disconnect().await;
-        assert!(result.is_ok());
-        assert!(!transport.is_connected());
-    }
-
-    #[tokio::test]
-    async fn test_mock_transport_read_write() {
-        let transport = MockTransport::new();
-        transport.connect().await.unwrap();
-        
-        // 测试写入数据
-        let write_data = vec![0x01, 0x03, 0x00, 0x00, 0x00, 0x01];
-        let result = transport.write(&write_data).await;
-        assert!(result.is_ok());
-        
-        // 测试读取数据  
-        let result = transport.read().await;
-        assert!(result.is_ok());
-        let response = result.unwrap();
-        assert!(!response.is_empty());
-    }
+    assert!(config.enabled);
+    assert_eq!(config.default_interval_ms, 1000);
+    assert_eq!(config.batch_config.max_batch_size, 100);
+    assert_eq!(config.batch_config.max_gap_registers, 5);
+    assert!(config.batch_config.enable_batch_optimization);
 }
+
+#[test]
+fn test_channel_config_creation() {
+    let config = create_test_channel_config();
+
+    assert_eq!(config.id, 1001);
+    assert_eq!(config.name, "Test Modbus Channel");
+    assert_eq!(config.protocol, "modbus_tcp");
+
+    // 验证四遥点位HashMap初始化
+    assert!(config.measurement_points.is_empty());
+    assert!(config.signal_points.is_empty());
+    assert!(config.control_points.is_empty());
+    assert!(config.adjustment_points.is_empty());
+}
+
+// Mock transport 测试已经移到 transport.rs 模块中

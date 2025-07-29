@@ -300,7 +300,7 @@ impl std::str::FromStr for TelemetryType {
             "s" | "signal" | "Signal" => Ok(TelemetryType::Signal),
             "c" | "control" | "Control" => Ok(TelemetryType::Control),
             "a" | "adjustment" | "Adjustment" => Ok(TelemetryType::Adjustment),
-            _ => Err(format!("Invalid remote type: {}", s)),
+            _ => Err(format!("Invalid remote type: {s}")),
         }
     }
 }
@@ -313,6 +313,7 @@ pub enum ProtocolType {
     Can,
     Iec60870,
     Virtual,
+    GrpcModbus, // gRPC 插件 - Modbus
 }
 
 impl std::str::FromStr for ProtocolType {
@@ -327,9 +328,9 @@ impl std::str::FromStr for ProtocolType {
             "can" => Ok(ProtocolType::Can),
             "iec60870" => Ok(ProtocolType::Iec60870),
             "virtual" => Ok(ProtocolType::Virtual),
+            "grpc_modbus" => Ok(ProtocolType::GrpcModbus),
             _ => Err(crate::utils::error::ComSrvError::ConfigError(format!(
-                "Unknown protocol type: {}",
-                s
+                "Unknown protocol type: {s}"
             ))),
         }
     }
@@ -445,17 +446,19 @@ impl ChannelConfig {
         self.parameters
             .get(key)
             .and_then(|v| v.as_str())
-            .map(|s| s.to_string())
+            .map(std::string::ToString::to_string)
     }
 
     /// 获取整数参数
     pub fn get_int_parameter(&self, key: &str) -> Option<i64> {
-        self.parameters.get(key).and_then(|v| v.as_i64())
+        self.parameters.get(key).and_then(serde_yaml::Value::as_i64)
     }
 
     /// 获取布尔参数
     pub fn get_bool_parameter(&self, key: &str) -> Option<bool> {
-        self.parameters.get(key).and_then(|v| v.as_bool())
+        self.parameters
+            .get(key)
+            .and_then(serde_yaml::Value::as_bool)
     }
 
     /// 根据遥测类型获取点位
@@ -472,10 +475,10 @@ impl ChannelConfig {
         }
     }
 
-    /// 添加点位到对应的HashMap
+    /// `添加点位到对应的HashMap`
     pub fn add_point(&mut self, point: CombinedPoint) -> Result<(), String> {
         let telemetry_type = TelemetryType::from_str(&point.telemetry_type)
-            .map_err(|e| format!("Invalid telemetry type: {}", e))?;
+            .map_err(|e| format!("Invalid telemetry type: {e}"))?;
 
         let target_hashmap = match telemetry_type {
             TelemetryType::Measurement => &mut self.measurement_points,
@@ -539,7 +542,6 @@ mod tests {
             parameters: HashMap::new(),
             logging: ChannelLoggingConfig::default(),
             table_config: None,
-            points: vec![],
             measurement_points: HashMap::new(),
             signal_points: HashMap::new(),
             control_points: HashMap::new(),

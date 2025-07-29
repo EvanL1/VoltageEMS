@@ -1,6 +1,6 @@
 //! 框架存储模块
 //!
-//! 整合了ComBase存储接口和优化的批量同步功能
+//! `整合了ComBase存储接口和优化的批量同步功能`
 
 use super::core::RedisValue;
 use crate::plugins::core::{telemetry_type_to_redis, PluginPointUpdate, PluginStorage};
@@ -54,7 +54,7 @@ pub struct StorageStats {
     pub storage_errors: u64,
 }
 
-/// 默认ComBase存储实现
+/// `默认ComBase存储实现`
 pub struct DefaultComBaseStorage {
     storage: Arc<Mutex<Box<dyn PluginStorage>>>,
     stats: Arc<Mutex<StorageStats>>,
@@ -97,7 +97,7 @@ impl ComBaseStorage for DefaultComBaseStorage {
         let update_count = updates.len();
 
         match self.internal_batch_update(channel_id, updates).await {
-            Ok(_) => {
+            Ok(()) => {
                 let mut stats = self.stats.lock().await;
                 stats.total_updates += update_count as u64;
                 stats.batch_updates += 1;
@@ -145,7 +145,7 @@ impl ComBaseStorage for DefaultComBaseStorage {
         };
 
         match self.internal_batch_update(channel_id, vec![update]).await {
-            Ok(_) => {
+            Ok(()) => {
                 let mut stats = self.stats.lock().await;
                 stats.total_updates += 1;
                 stats.single_updates += 1;
@@ -161,6 +161,14 @@ impl ComBaseStorage for DefaultComBaseStorage {
 
     async fn get_stats(&self) -> StorageStats {
         self.stats.lock().await.clone()
+    }
+}
+
+impl std::fmt::Debug for DefaultComBaseStorage {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DefaultComBaseStorage")
+            .field("stats", &self.stats)
+            .finish()
     }
 }
 
@@ -203,6 +211,7 @@ pub struct SyncStats {
 }
 
 /// 优化的批量同步器
+#[derive(Debug)]
 pub struct OptimizedBatchSync {
     config: OptimizedSyncConfig,
     redis_client: Arc<Mutex<AsyncRedisClient>>,
@@ -346,7 +355,7 @@ impl OptimizedBatchSync {
         }
 
         // 发布更新通知
-        let channel = format!("data:{}:update", channel_id);
+        let channel = format!("data:{channel_id}:update");
         let message = serde_json::json!({
             "count": updates.len(),
             "timestamp": std::time::SystemTime::now()
@@ -361,20 +370,40 @@ impl OptimizedBatchSync {
     }
 
     /// 启动定期同步任务
-    pub async fn start_periodic_sync(self: Arc<Self>) {
+    pub async fn start_periodic_sync(
+        self: Arc<Self>,
+    ) -> (
+        tokio::task::JoinHandle<()>,
+        tokio_util::sync::CancellationToken,
+    ) {
+        use tokio_util::sync::CancellationToken;
+
         let sync_interval = Duration::from_millis(self.config.sync_interval_ms);
         let mut ticker = interval(sync_interval);
         let sync_interval_ms = self.config.sync_interval_ms;
         let self_clone = self.clone();
 
-        tokio::spawn(async move {
+        let token = CancellationToken::new();
+        let task_token = token.clone();
+
+        let handle = tokio::spawn(async move {
             loop {
-                ticker.tick().await;
-                self_clone.sync_batch().await;
+                tokio::select! {
+                    _ = ticker.tick() => {
+                        self_clone.sync_batch().await;
+                    }
+                    () = task_token.cancelled() => {
+                        info!("Periodic sync task received cancellation signal, shutting down");
+                        break;
+                    }
+                }
             }
+
+            info!("Periodic sync task terminated");
         });
 
         info!("Started periodic sync with interval {}ms", sync_interval_ms);
+        (handle, token)
     }
 
     /// 获取统计信息
@@ -403,7 +432,7 @@ impl OptimizedBatchSync {
 // 辅助函数
 // ============================================================================
 
-/// 创建带存储的ComBase存储实例
+/// `创建带存储的ComBase存储实例`
 pub fn create_combase_storage(storage: Box<dyn PluginStorage>) -> Box<dyn ComBaseStorage> {
     Box::new(DefaultComBaseStorage::new(storage))
 }
