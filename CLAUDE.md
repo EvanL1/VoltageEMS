@@ -2,6 +2,12 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Version Information
+
+**Current Phase**: Demo/Development (v0.0.1)
+- All services are in demo phase (v0.0.1)
+- Production versions will start from v1.0.0
+
 ## Common Development Commands
 
 ### Workspace-Level Commands
