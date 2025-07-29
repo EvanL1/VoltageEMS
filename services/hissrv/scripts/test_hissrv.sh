@@ -6,39 +6,28 @@ REDIS_CLI=${REDIS_CLI:-redis-cli}
 echo "=== hissrv 功能测试 ==="
 echo ""
 
-# 1. 测试列表数据（JSON格式）
-echo "1. 推送 JSON 测试数据到列表..."
-$REDIS_CLI LPUSH archive:pending '{
-  "timestamp": 1234567890,
-  "measurement": "test_metrics",
-  "tags": {
-    "source": "test",
-    "type": "demo"
-  },
-  "fields": {
-    "value": 123.456,
-    "count": 10
-  }
-}'
+# 1. 测试 comsrv 数据
+echo "1. 创建测试 comsrv 数据..."
+$REDIS_CLI HSET comsrv:1001:m "1" "220.123456"
+$REDIS_CLI HSET comsrv:1001:m "2" "15.234567"
+$REDIS_CLI HSET comsrv:1001:m "3" "3456.789012"
+$REDIS_CLI HSET comsrv:1001:m "timestamp" "$(date +%s)"
 
-# 2. 测试 Hash 数据
+# 2. 测试 modsrv 数据
 echo ""
-echo "2. 创建测试 Hash 数据..."
-TIMESTAMP=$(date +%s)
-TEST_KEY="archive:1m:$TIMESTAMP:1001"
-
-$REDIS_CLI HSET $TEST_KEY voltage_avg "220.123456"
-$REDIS_CLI HSET $TEST_KEY voltage_max "230.000000"
-$REDIS_CLI HSET $TEST_KEY voltage_min "210.000000"
-$REDIS_CLI HSET $TEST_KEY current_avg "15.234567"
-$REDIS_CLI HSET $TEST_KEY power_avg "3456.789012"
-$REDIS_CLI HSET $TEST_KEY timestamp "$TIMESTAMP"
+echo "2. 创建测试 modsrv 数据..."
+$REDIS_CLI HSET modsrv:power_meter_1:measurement "voltage_a" "220.5"
+$REDIS_CLI HSET modsrv:power_meter_1:measurement "current_a" "15.3"
+$REDIS_CLI HSET modsrv:power_meter_1:measurement "power" "3366.5"
+$REDIS_CLI HSET modsrv:power_meter_1:measurement "timestamp" "$(date +%s)"
 
 echo ""
 echo "3. 查看创建的数据..."
-echo "列表长度: $($REDIS_CLI LLEN archive:pending)"
-echo "Hash 内容:"
-$REDIS_CLI HGETALL $TEST_KEY
+echo "comsrv 数据:"
+$REDIS_CLI HGETALL comsrv:1001:m
+echo ""
+echo "modsrv 数据:"
+$REDIS_CLI HGETALL modsrv:power_meter_1:measurement
 
 echo ""
 echo "测试数据已准备就绪。"
@@ -47,4 +36,4 @@ echo ""
 echo "运行命令："
 echo "  export INFLUXDB_TOKEN=your_token_here"
 echo "  export RUST_LOG=hissrv=debug"
-echo "  cargo run --release"
+echo "  cargo run"
