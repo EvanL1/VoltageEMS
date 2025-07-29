@@ -4,6 +4,9 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
+/// 测点ID类型
+pub type PointId = u32;
+
 /// 时间范围
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TimeRange {

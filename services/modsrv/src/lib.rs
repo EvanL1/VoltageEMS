@@ -5,15 +5,15 @@
 //! ## 核心功能
 //!
 //! 1. **配置读取**: 从配置文件加载模型定义，在Redis中初始化
-//! 2. **数据订阅**: 订阅ComsRv服务的数据点位，映射到模型遥测
+//! 2. **数据同步**: 通过Lua脚本实现与ComsRv的双向数据同步
 //! 3. **控制接口**: 提供HTTP API接口，处理外部控制命令
 //!
 //! ## 架构设计
 //!
 //! ```text
-//! 配置加载 → 模型初始化 → 数据订阅 → API接口
+//! 配置加载 → 模型初始化 → Lua同步 → API接口
 //!    ↓           ↓           ↓         ↓
-//! config.rs → model.rs → Redis订阅 → api.rs
+//! config.rs → model.rs → EdgeRedis → api.rs
 //! ```
 //!
 //! ## 基本使用
@@ -69,21 +69,15 @@
 //! # 获取模型列表
 //! GET /models
 //!
-//! # 获取模型详情
-//! GET /models/{model_id}
+//! # 获取模型实时数据
+//! GET /models/{model_id}/values
 //!
 //! # 执行控制命令
 //! POST /models/{model_id}/control/{control_name}
 //! {"value": 1.0}
 //!
-//! # 获取模型配置
-//! GET /models/{model_id}/config
-//!
-//! # 获取实时数据
-//! GET /models/{model_id}/values
-//!
 //! # WebSocket连接
-//! WS /ws/models/{model_id}/values
+//! WS /ws/{model_id}
 //! ```
 
 #![allow(dead_code)]
@@ -101,7 +95,7 @@ pub mod error;
 
 /// 核心模型模块
 ///
-/// 包含模型定义、数据订阅、控制命令处理等核心功能
+/// 包含模型定义、数据读取、控制命令处理等核心功能
 pub mod model;
 
 /// 点位映射管理模块
@@ -124,7 +118,7 @@ pub use api::ApiServer;
 pub use config::Config;
 pub use error::{ModelSrvError, Result};
 pub use mapping::{MappingManager, PointMapping};
-pub use model::{Model, ModelConfig, ModelManager, PointConfig, PointValue};
+pub use model::{Model, ModelConfig, ModelManager, PointConfig};
 pub use websocket::{ws_handler, WsConnectionManager};
 
 /// 服务版本信息
@@ -139,7 +133,8 @@ mod tests {
 
     #[test]
     fn test_version_info() {
-        assert!(!VERSION.is_empty());
+        // VERSION是编译时常量，总是有值
+        assert_eq!(VERSION, "2.0.0");
         assert_eq!(SERVICE_NAME, "modsrv");
     }
 }
