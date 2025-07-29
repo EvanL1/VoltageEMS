@@ -1,353 +1,258 @@
-# ModSrv v2.0 架构文档
+# ModSrv 架构文档
 
 ## 概述
 
-ModSrv (Model Service) v2.0 是VoltageEMS工业物联网系统中的设备模型管理服务，负责设备模型定义、实时数据处理和控制命令执行。本文档详细描述了ModSrv的系统架构、设计原则和实现细节。
+ModSrv（Model Service）是VoltageEMS系统中的轻量级模型服务，专为边端设备设计。它将底层设备数据抽象为统一的设备模型，提供标准化的监视（Monitoring）和控制（Control）接口。
+
+## 架构特点
+
+### 1. 轻量级设计
+- **无内存缓存**：直接从Redis读取数据，减少内存占用
+- **简化订阅**：不再维护复杂的数据订阅逻辑
+- **资源友好**：适合资源受限的边端设备
+
+### 2. 高效同步
+- **Lua脚本**：使用Redis内置Lua脚本实现原子性数据同步
+- **零延迟**：数据在Redis层面直接同步，无需网络往返
+- **双向同步**：支持ComsRv到ModSrv以及反向的数据流
+
+### 3. 简洁API
+- **RESTful接口**：提供标准的HTTP API
+- **WebSocket推送**：支持实时数据推送
+- **最小依赖**：仅依赖Redis，部署简单
 
 ## 系统架构
 
-### 整体架构图
-
-```
-┌────────────────────────────────────────────────────────┐
-│                    前端应用层                            │
-│          Web UI | Mobile App | SCADA                   │
-└─────────────────┬──────────────────────────────────────┘
-                  │ HTTP/WebSocket
-┌─────────────────┴──────────────────────────────────────┐
-│                       ModSrv                           │
-│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐     │
-│  │ API Gateway │  │ Model Mgr   │  │ WebSocket   │     │
-│  │   (Axum)    │  │ (Core Logic)│  │  (Real-time)│     │
-│  └─────┬───────┘  └─────┬───────┘  └─────┬───────┘     │
-│        │                │                │             │
-│  ┌─────┴────────────────┴────────────────┴──────┐      │
-│  │            Mapping Manager                   │      │
-│  │        (Logic ↔ Physical Address)            │      │
-│  └─────────────────┬────────────────────────────┘      │
-└────────────────────┼───────────────────────────────────┘
-                     │ Redis Pub/Sub & KV
-┌────────────────────┴───────────────────────────────────┐
-│                    Redis v3.2                          │
-│  Hash: comsrv:{channel}:{type} → {point: value}        │
-│  Pub/Sub: comsrv:{channel}:{type}                      │
-│  Control: cmd:{channel}:control, cmd:{channel}:adjust  │
-└────────────────────┬───────────────────────────────────┘
-                     │
-┌────────────────────┴────────────────────────────────────┐
-│                   ComsRv                                │
-│            工业协议通信服务                                │
-│    Modbus | IEC60870 | CAN | GPIO | Serial              │
-└─────────────────────────────────────────────────────────┘
-```
-
-### ModSrv v2.0 内部架构
-
 ```
 ┌─────────────────────────────────────────────────────────┐
-│                    ModSrv Service                       │
-├─────────────────────────────────────────────────────────┤
-│                   API Layer                             │
-│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐     │
-│  │    REST     │  │  WebSocket  │  │   Health    │     │
-│  │  Endpoints  │  │   Handler   │  │   Check     │     │
-│  └─────┬───────┘  └─────┬───────┘  └─────┬───────┘     │
-├───────┼─────────────────┼─────────────────┼─────────────┤
-│       │                 │                 │             │
-│                  Business Logic Layer                   │
-│  ┌─────┴───┐  ┌─────────┴─────────┐  ┌────┴─────┐     │
-│  │ Model   │  │   Data Stream     │  │ Control  │     │
-│  │ Manager │  │   Processor       │  │ Executor │     │
-│  └─────┬───┘  └─────────┬─────────┘  └────┬─────┘     │
-├───────┼─────────────────┼──────────────────┼───────────┤
-│       │                 │                  │           │
-│                  Data Access Layer                     │
-│  ┌─────┴───┐  ┌─────────┴─────────┐  ┌────┴─────┐     │
-│  │ Mapping │  │   Redis Client    │  │ Template │     │
-│  │ Manager │  │   (Async/Sync)    │  │ Engine   │     │
-│  └─────────┘  └───────────────────┘  └──────────┘     │
-├─────────────────────────────────────────────────────────┤
-│                 Infrastructure Layer                    │
-│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐     │
-│  │ Config Mgr  │  │ Log System  │  │ Error Handler│    │
-│  │ (Figment)   │  │ (Tracing)   │  │  (Anyhow)   │     │
-│  └─────────────┘  └─────────────┘  └─────────────┘     │
+│                    前端应用 / HMI                        │
+└─────────────────────┬───────────────────────────────────┘
+                      │ HTTP/WebSocket
+                      ▼
+┌─────────────────────────────────────────────────────────┐
+│                      ModSrv                             │
+│  ┌─────────────┐  ┌──────────────┐  ┌───────────────┐  │
+│  │ API Server  │  │ Model Manager│  │ WebSocket Mgr │  │
+│  └──────┬──────┘  └──────┬───────┘  └───────┬───────┘  │
+│         │                 │                   │          │
+│         └─────────────────┴───────────────────┘          │
+│                           │                              │
+│                    ┌──────▼──────┐                      │
+│                    │  EdgeRedis  │                      │
+│                    └──────┬──────┘                      │
+└───────────────────────────┼─────────────────────────────┘
+                            │
+                     ┌──────▼──────┐
+                     │    Redis    │
+                     │  + Lua脚本  │
+                     └──────┬──────┘
+                            │
+┌───────────────────────────┼─────────────────────────────┐
+│                        ComsRv                           │
+│                   (设备通信服务)                         │
 └─────────────────────────────────────────────────────────┘
 ```
 
-## 设计原则
+## 核心组件
 
-### 1. 分层架构 (Layered Architecture)
+### 1. Model Manager
+负责模型元数据管理：
+- 加载和存储模型定义
+- 管理点位映射关系
+- 提供模型查询接口
 
-- **API层**: 处理HTTP请求和WebSocket连接
-- **业务逻辑层**: 实现核心业务功能
-- **数据访问层**: 管理数据存储和访问
-- **基础设施层**: 提供通用服务支持
+### 2. EdgeRedis
+轻量级Redis连接管理器：
+- 管理Redis连接池
+- 加载和执行Lua脚本
+- 提供数据读写接口
 
-### 2. 监视与控制分离 (Monitoring-Control Separation)
+### 3. API Server
+提供HTTP REST接口：
+- 模型管理API
+- 数据查询API
+- 控制命令API
 
-```rust
-// v2.0简化模型结构
-pub struct Model {
-    pub id: String,
-    pub name: String,
-    pub description: String,
-    pub monitoring_config: HashMap<String, PointConfig>,  // 监视点配置
-    pub control_config: HashMap<String, PointConfig>,     // 控制点配置
-}
+### 4. WebSocket Manager
+管理WebSocket连接：
+- 客户端连接管理
+- 订阅Redis更新通道
+- 推送实时数据变化
+
+## 数据流
+
+### 1. 测量数据流
+```
+设备 → ComsRv → Redis(Lua脚本) → ModSrv Hash → API/WebSocket → 客户端
 ```
 
-- **Monitoring**: 只读数据，实时更新
-- **Control**: 写操作，需要权限验证
-
-### 3. 映射抽象 (Mapping Abstraction)
-
-逻辑名称与物理地址分离：
+### 2. 控制命令流
 ```
-逻辑模型: voltage_a, main_switch
-    ↓ (Mapping Layer)
-物理地址: channel:1001, point:10001
+客户端 → API → EdgeRedis(Lua脚本) → Redis Pub/Sub → ComsRv → 设备
 ```
 
-### 4. 事件驱动 (Event-Driven)
+### 3. 数据同步机制
 
-- Redis Pub/Sub订阅数据更新
-- WebSocket推送实时数据变化
-- 异步处理提高响应性能
+#### Lua脚本功能
+```lua
+-- 同步测量数据
+sync_measurement(channel, point, value)
+  → 查找映射: mapping:c2m:{channel}:{point}
+  → 更新Hash: modsrv:{model}:measurement
+  → 发布更新: modsrv:{model}:update
 
-## 核心组件详解
-
-### 1. Model Manager (模型管理器)
-
-```rust
-pub struct ModelManager {
-    models: Arc<RwLock<HashMap<String, Model>>>,
-    redis_client: Arc<Mutex<RedisClient>>,
-    mappings: Arc<RwLock<MappingManager>>,
-}
+-- 发送控制命令  
+send_control(model, control, value)
+  → 查找映射: mapping:m2c:{model}:{control}
+  → 发布命令: cmd:{channel}:control/adjustment
 ```
 
-**职责**:
-- 模型定义加载和管理
-- 遥测数据读取和缓存
-- 控制命令执行
-- 数据订阅和分发
+## Redis数据结构
 
-**关键方法**:
-- `load_models_from_config()`: 从配置加载模型
-- `get_monitoring_value()`: 获取监视数据
-- `execute_control()`: 执行控制命令
-- `subscribe_data_updates()`: 订阅数据更新
-
-### 2. Mapping Manager (映射管理器)
-
-```rust
-pub struct MappingManager {
-    mappings: HashMap<String, ModelMappingConfig>,
-}
-
-pub struct PointMapping {
-    pub channel: u16,    // 通道ID
-    pub point: u32,      // 点位ID
-    pub point_type: String, // 类型: m/s/c/a
-}
+### 1. 模型数据存储
+```
+# Hash结构存储实时数据
+modsrv:{model_id}:measurement
+  voltage_a: "220.123456"
+  current_a: "10.567890"
+  power: "2205.123456"
 ```
 
-**职责**:
-- 逻辑点位名称到物理地址的双向映射
-- 映射配置的加载和验证
-- 点位类型管理
+### 2. 映射存储
+```
+# C2M映射（ComsRv到ModSrv）
+mapping:c2m:{channel}:{point} → "{model}:{point_name}"
 
-### 3. API Server (API服务器)
-
-基于Axum框架的REST API服务：
-
-```rust
-pub struct ApiServer {
-    model_manager: Arc<ModelManager>,
-    ws_manager: Arc<WsConnectionManager>,
-    config: Config,
-}
+# M2C映射（ModSrv到ComsRv）  
+mapping:m2c:{model}:{control} → "{channel}:{point}"
 ```
 
-**端点设计**:
-- `GET /health` - 健康检查
-- `GET /models` - 模型列表
-- `GET /models/{id}` - 模型详情
-- `GET /models/{id}/config` - 模型配置
-- `GET /models/{id}/values` - 实时数据
-- `POST /models/{id}/control/{name}` - 控制命令
-- `WS /ws/models/{id}/values` - WebSocket实时推送
-
-### 4. WebSocket Manager (WebSocket管理器)
-
-```rust
-pub struct WsConnectionManager {
-    connections: Arc<Mutex<HashMap<String, Vec<WsConnection>>>>,
-    model_manager: Arc<ModelManager>,
-}
+### 3. 更新通道
 ```
-
-**功能**:
-- WebSocket连接生命周期管理
-- 实时数据推送
-- 订阅管理（按模型分组）
-- 连接统计和监控
-
-## 数据流架构
-
-### 1. 监视数据流 (Monitoring Data Flow)
-
+# 数据更新通知
+modsrv:{model_id}:update → "{point}:{value}"
 ```
-ComsRv → Redis Hash → ModSrv → WebSocket → Frontend
-  │         │           │          │
-  │         │           │          └─ 实时推送
-  │         │           └─ REST API查询
-  │         └─ comsrv:{channel}:{type}
-  └─ Pub/Sub通知: {point}:{value}
-```
-
-**详细流程**:
-1. ComsRv写入数据到Redis Hash: `comsrv:1001:m`
-2. ComsRv发布更新通知: channel `comsrv:1001:m`, message `10001:220.5`
-3. ModSrv订阅更新通知，解析点位数据
-4. ModSrv通过映射找到对应的逻辑点位名称
-5. ModSrv推送数据到WebSocket客户端
-6. 前端通过REST API查询最新数据
-
-### 2. 控制数据流 (Control Data Flow)
-
-```
-Frontend → REST API → ModSrv → Redis Pub/Sub → ComsRv → Device
-   │          │         │           │            │        │
-   │          │         │           │            │        └─ 物理控制
-   │          │         │           │            └─ 协议转换
-   │          │         │           └─ cmd:{channel}:control
-   │          │         └─ 映射转换 + 权限验证
-   │          └─ POST /models/{id}/control/{name}
-   └─ JSON: {"value": 1.0}
-```
-
-**详细流程**:
-1. 前端发送控制命令: `POST /models/power_meter/control/main_switch`
-2. ModSrv验证模型和控制点存在性
-3. ModSrv通过映射获取物理地址: channel=1001, point=20001
-4. ModSrv发布控制命令到Redis: `cmd:1001:control`
-5. ComsRv接收控制命令，转换为设备协议
-6. 设备执行控制操作
 
 ## 性能特性
 
-### 1. 并发处理
+### 1. 内存优化
+- 不缓存数据，按需从Redis读取
+- 仅保存模型元数据
+- 典型内存占用 < 50MB
 
-- **Tokio异步运行时**: 支持高并发请求处理
-- **Arc + RwLock**: 读写分离，支持多读单写
-- **连接池**: Redis连接复用
-- **WebSocket并发**: 支持大量并发WebSocket连接
+### 2. 延迟特性
+- 数据同步延迟 < 1ms（Lua脚本执行）
+- API响应时间 < 10ms
+- WebSocket推送延迟 < 5ms
 
-### 2. 缓存策略
+### 3. 并发处理
+- 支持数百个WebSocket连接
+- API请求并发处理
+- Redis连接池复用
 
-- **内存缓存**: 模型配置和映射配置
-- **Redis缓存**: 实时数据和历史数据
-- **懒加载**: 按需加载模型数据
-- **TTL管理**: 自动过期失效数据
+## 部署模式
 
-### 3. 容错机制
+### 1. 单机部署
+适用于边端设备：
+```yaml
+services:
+  redis:
+    image: redis:7-alpine
+  modsrv:
+    image: voltage/modsrv
+    environment:
+      - REDIS_URL=redis://redis:6379
+```
 
-- **重试机制**: Redis连接失败自动重试
-- **熔断器**: 防止雪崩效应
-- **降级策略**: 部分功能失效时的降级处理
-- **健康检查**: 定期检查服务状态
+### 2. 高可用部署
+适用于关键应用：
+- Redis主从复制
+- ModSrv多实例
+- 负载均衡
 
-## 扩展性设计
+## 扩展性
 
-### 1. 水平扩展
+### 1. 模型扩展
+- 支持动态添加模型
+- 热加载映射配置
+- 无需重启服务
 
-- **无状态设计**: 服务实例无状态，支持水平扩展
-- **负载均衡**: 支持多实例部署
-- **分片策略**: 按模型ID分片处理
-
-### 2. 模块化扩展
-
-- **插件架构**: 支持自定义数据处理插件
-- **协议扩展**: 支持新的通信协议
-- **模板系统**: 支持设备模型模板化
-
-### 3. 监控和运维
-
-- **指标收集**: Prometheus兼容的指标
-- **链路追踪**: 支持分布式追踪
-- **日志聚合**: 结构化日志输出
-- **告警机制**: 异常情况自动告警
+### 2. 功能扩展
+- 插件式数据处理
+- 自定义API端点
+- 扩展WebSocket协议
 
 ## 安全考虑
 
 ### 1. 访问控制
-
-- **API认证**: 支持JWT令牌认证
-- **权限验证**: 基于角色的访问控制
-- **控制权限**: 控制命令需要特殊权限
+- API Token认证
+- WebSocket连接验证
+- Redis ACL权限
 
 ### 2. 数据安全
+- 敏感数据加密
+- 审计日志记录
+- 异常检测告警
 
-- **数据加密**: 敏感数据传输加密
-- **审计日志**: 控制操作审计记录
-- **输入验证**: 严格的输入参数验证
+## 与其他服务集成
 
-### 3. 网络安全
+### 1. ComsRv集成
+- 通过Redis Pub/Sub通信
+- Lua脚本自动同步数据
+- 支持所有协议类型
 
-- **内网隔离**: Docker内部网络隔离
-- **防火墙**: 端口访问控制
-- **TLS支持**: HTTPS/WSS安全连接
+### 2. RuleSrv集成
+- RuleSrv直接读取ModSrv数据
+- 支持基于模型的规则定义
+- 控制命令通过ModSrv下发
 
-## 部署架构
+### 3. API Gateway集成
+- Gateway可直接读取Redis数据
+- ModSrv提供模型元数据
+- 统一的认证和路由
 
-### 1. 容器化部署
+## 开发指南
 
-```yaml
-services:
-  modsrv:
-    image: modsrv:v2.0
-    environment:
-      - REDIS_URL=redis://redis:6379
-      - CONFIG_FILE=/config/config.yml
-    volumes:
-      - ./config:/config:ro
-      - ./logs:/logs
-    networks:
-      - voltage-ems-network
-```
+### 1. 添加新模型
+1. 在配置文件中定义模型
+2. 创建映射文件
+3. 重启服务加载配置
 
-### 2. 服务发现
+### 2. 扩展API
+1. 在api.rs中添加新路由
+2. 实现处理函数
+3. 更新API文档
 
-- **DNS解析**: 基于Docker网络的服务发现
-- **健康检查**: 容器健康状态监控
-- **负载均衡**: 支持多实例负载均衡
+### 3. 自定义Lua脚本
+1. 修改edge_sync.lua
+2. 添加新的同步逻辑
+3. 重新加载脚本
 
-### 3. 数据持久化
+## 故障处理
 
-- **配置持久化**: 配置文件外部挂载
-- **日志持久化**: 日志目录外部挂载
-- **Redis数据**: Redis数据卷持久化
+### 1. 常见问题
+- **数据不同步**：检查Lua脚本和映射配置
+- **WebSocket断开**：检查网络和心跳设置
+- **内存增长**：检查是否有连接泄漏
 
-## 技术栈
+### 2. 调试方法
+- 启用DEBUG日志
+- 使用Redis Monitor
+- 查看Lua脚本执行日志
 
-- **核心语言**: Rust 1.88+
-- **Web框架**: Axum 0.8.4
-- **异步运行时**: Tokio 1.35
-- **数据库**: Redis 8.0
-- **配置管理**: Figment + Serde
-- **日志系统**: Tracing + Tracing-subscriber
-- **错误处理**: Anyhow + Thiserror
-- **容器化**: Docker + Docker Compose
-- **文档**: Markdown + API文档
+### 3. 性能调优
+- 调整Redis连接池大小
+- 优化Lua脚本逻辑
+- 使用批量操作
 
-## 版本演进
+## 版本历史
 
-### v1.0 → v2.0 重大变更
+### v2.0.0（当前版本）
+- 重构为轻量级服务
+- 引入Lua脚本同步
+- 移除内存缓存机制
 
-1. **架构简化**: 从四分类(遥测/遥信/遥控/遥调)简化为二分类(监视/控制)
-2. **映射系统**: 引入独立的映射管理器
-3. **WebSocket支持**: 新增实时数据推送
-4. **性能优化**: 异步处理和缓存优化
-5. **容器化**: 完整的Docker化部署方案
+### v1.0.0
+- 初始版本
+- 基于内存缓存
+- 复杂的订阅机制
