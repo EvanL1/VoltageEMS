@@ -57,18 +57,11 @@ async fn main() -> Result<()> {
         Config::from_env()?
     };
 
-    // Initialize logging
-    let log_config = voltage_common::logging::LogConfig {
-        level: config.log_level.clone(),
-        console: true,
-        file: None,
-        format: voltage_common::logging::LogFormat::Pretty,
-        ansi: true,
-        span_events: false,
-    };
-
-    let _log_guard = voltage_common::logging::init_logging(&log_config)
-        .map_err(|e| RulesrvError::ConfigError(format!("Failed to initialize logging: {}", e)))?;
+    // Initialize tracing directly
+    tracing_subscriber::fmt()
+        .with_env_filter(&config.log_level)
+        .with_target(false)
+        .init();
 
     info!("Starting Rules Service");
 

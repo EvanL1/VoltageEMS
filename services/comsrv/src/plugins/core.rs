@@ -13,8 +13,8 @@ use tracing::{debug, info, warn};
 use super::traits::{PluginFactory, ProtocolMetadata, ProtocolPlugin};
 use crate::core::config::TelemetryType;
 use crate::storage::{
-    PointData, PointStorage as VoltagePointStorage, PointUpdate as VoltagePointUpdate,
-    PublisherConfig, RetryConfig, RtdbStorage,
+    PointData, PointStorage as VoltagePointStorage, PointUpdate as VoltagePointUpdate, RetryConfig,
+    RtdbStorage,
 };
 use crate::utils::error::{ComSrvError as Error, Result};
 
@@ -363,12 +363,7 @@ pub struct DefaultPluginStorage {
 impl DefaultPluginStorage {
     /// 创建新的存储实例
     pub async fn new(redis_url: String) -> Result<Self> {
-        let storage = RtdbStorage::with_config(
-            &redis_url,
-            RetryConfig::default(),
-            Some(PublisherConfig::default()),
-        )
-        .await?;
+        let storage = RtdbStorage::with_config(&redis_url, RetryConfig::default()).await?;
 
         Ok(Self {
             storage: Arc::new(storage),

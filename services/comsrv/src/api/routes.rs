@@ -61,8 +61,8 @@ pub async fn get_service_status(
         version: env!("CARGO_PKG_VERSION").to_string(),
         uptime: uptime_seconds,
         start_time,
-        channels: total_channels as u32,
-        active_channels: active_channels as u32,
+        channels: u32::try_from(total_channels).unwrap_or(u32::MAX),
+        active_channels: u32::try_from(active_channels).unwrap_or(u32::MAX),
     };
 
     Ok(Json(ApiResponse::success(status)))
@@ -109,9 +109,12 @@ pub async fn get_all_channels(
                 name,
                 protocol,
                 connected: status.is_connected,
-                last_update: DateTime::<Utc>::from_timestamp(status.last_update as i64, 0)
-                    .unwrap_or_else(Utc::now),
-                error_count: status.error_count as u32,
+                last_update: DateTime::<Utc>::from_timestamp(
+                    i64::try_from(status.last_update).unwrap_or(0),
+                    0,
+                )
+                .unwrap_or_else(Utc::now),
+                error_count: u32::try_from(status.error_count).unwrap_or(u32::MAX),
                 last_error: status.last_error,
             };
             channels.push(channel_response);
@@ -152,9 +155,12 @@ pub async fn get_channel_status(
             protocol,
             connected: channel_status.is_connected,
             running: is_running,
-            last_update: DateTime::<Utc>::from_timestamp(channel_status.last_update as i64, 0)
-                .unwrap_or_else(Utc::now),
-            error_count: channel_status.error_count as u32,
+            last_update: DateTime::<Utc>::from_timestamp(
+                i64::try_from(channel_status.last_update).unwrap_or(0),
+                0,
+            )
+            .unwrap_or_else(Utc::now),
+            error_count: u32::try_from(channel_status.error_count).unwrap_or(u32::MAX),
             last_error: channel_status.last_error,
             statistics: diagnostics
                 .as_object()
@@ -178,9 +184,8 @@ pub async fn control_channel(
     let factory = state.factory.read().await;
 
     // Check if channel exists and get the channel
-    let channel = match factory.get_channel(id_u16).await {
-        Some(ch) => ch,
-        None => return Err(StatusCode::NOT_FOUND),
+    let Some(channel) = factory.get_channel(id_u16).await else {
+        return Err(StatusCode::NOT_FOUND);
     };
 
     // Execute operation based on type
@@ -236,7 +241,7 @@ pub async fn send_control(
 
     if let Some(channel) = factory.get_channel(channel_id).await {
         let mut channel_guard = channel.write().await;
-        let redis_value = crate::core::combase::RedisValue::Integer(cmd.value as i64);
+        let redis_value = crate::core::combase::RedisValue::Integer(i64::from(cmd.value));
 
         match channel_guard
             .control(vec![(cmd.point_id, redis_value)])
