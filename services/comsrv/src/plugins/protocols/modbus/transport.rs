@@ -90,7 +90,7 @@ impl ModbusFrameProcessor {
         frame
     }
 
-    /// 构建RTU帧 (unit_id + PDU + CRC)
+    /// 构建RTU帧 (`unit_id` + PDU + CRC)
     fn build_rtu_frame(&self, unit_id: u8, pdu: &[u8]) -> Vec<u8> {
         let mut frame = Vec::with_capacity(1 + pdu.len() + 2);
 
@@ -159,8 +159,7 @@ impl ModbusFrameProcessor {
         let calculated_crc = self.calculate_crc16(&data[..frame_len - 2]);
         if received_crc != calculated_crc {
             return Err(ComSrvError::ProtocolError(format!(
-                "CRC mismatch: expected 0x{:04X}, got 0x{:04X}",
-                calculated_crc, received_crc
+                "CRC mismatch: expected 0x{calculated_crc:04X}, got 0x{received_crc:04X}"
             )));
         }
 
@@ -172,7 +171,7 @@ impl ModbusFrameProcessor {
         let mut crc: u16 = 0xFFFF;
 
         for &byte in data {
-            crc ^= byte as u16;
+            crc ^= u16::from(byte);
             for _ in 0..8 {
                 if crc & 1 != 0 {
                     crc >>= 1;
@@ -233,7 +232,7 @@ mod tests {
         let pdu = vec![0x03, 0x00, 0x01, 0x00, 0x02]; // Read holding registers
 
         let frame = processor.build_frame(1, &pdu);
-        assert_eq!(frame.len(), 11); // 6 bytes MBAP + 5 bytes PDU
+        assert_eq!(frame.len(), 12); // 7 bytes header (2 trans_id + 2 proto + 2 len + 1 unit) + 5 bytes PDU
 
         let (unit_id, parsed_pdu) = processor.parse_frame(&frame).unwrap();
         assert_eq!(unit_id, 1);
@@ -242,7 +241,7 @@ mod tests {
 
     #[test]
     fn test_rtu_frame_build_parse() {
-        let processor = ModbusFrameProcessor::new(ModbusMode::Rtu);
+        let mut processor = ModbusFrameProcessor::new(ModbusMode::Rtu);
         let pdu = vec![0x03, 0x00, 0x01, 0x00, 0x02]; // Read holding registers
 
         let frame = processor.build_frame(1, &pdu);
@@ -258,7 +257,8 @@ mod tests {
         let processor = ModbusFrameProcessor::new(ModbusMode::Rtu);
         let data = vec![0x01, 0x03, 0x00, 0x00, 0x00, 0x01];
         let crc = processor.calculate_crc16(&data);
-        assert_eq!(crc, 0x8584); // Known CRC for this data
+        // CRC 计算结果应该是 0x0A84 (2692 in decimal)
+        assert_eq!(crc, 0x0A84);
     }
 
     #[test]
@@ -286,11 +286,11 @@ pub fn create_connection_params(config: &ChannelConfig) -> Result<ConnectionPara
                 .parameters
                 .get("host")
                 .and_then(|v| v.as_str())
-                .map(|s| s.to_string());
+                .map(std::string::ToString::to_string);
             let port = config
                 .parameters
                 .get("port")
-                .and_then(|v| v.as_u64())
+                .and_then(serde_yaml::Value::as_u64)
                 .map(|p| p as u16);
 
             Ok(ConnectionParams {
@@ -310,27 +310,27 @@ pub fn create_connection_params(config: &ChannelConfig) -> Result<ConnectionPara
                 .parameters
                 .get("device")
                 .and_then(|v| v.as_str())
-                .map(|s| s.to_string());
+                .map(std::string::ToString::to_string);
             let baud_rate = config
                 .parameters
                 .get("baud_rate")
-                .and_then(|v| v.as_u64())
+                .and_then(serde_yaml::Value::as_u64)
                 .map(|b| b as u32);
             let data_bits = config
                 .parameters
                 .get("data_bits")
-                .and_then(|v| v.as_u64())
+                .and_then(serde_yaml::Value::as_u64)
                 .map(|d| d as u8);
             let stop_bits = config
                 .parameters
                 .get("stop_bits")
-                .and_then(|v| v.as_u64())
+                .and_then(serde_yaml::Value::as_u64)
                 .map(|s| s as u8);
             let parity = config
                 .parameters
                 .get("parity")
                 .and_then(|v| v.as_str())
-                .map(|s| s.to_string());
+                .map(std::string::ToString::to_string);
 
             Ok(ConnectionParams {
                 host: None,

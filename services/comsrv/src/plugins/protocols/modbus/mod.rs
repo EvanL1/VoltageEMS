@@ -9,7 +9,6 @@
 pub mod connection;
 pub mod core;
 pub mod plugin;
-pub mod test_helpers;
 pub mod transport;
 pub mod types;
 

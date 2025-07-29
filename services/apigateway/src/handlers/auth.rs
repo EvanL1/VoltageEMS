@@ -1,4 +1,7 @@
-use axum::{extract::{Extension, Json, State}, response::IntoResponse};
+use axum::{
+    extract::{Extension, Json, State},
+    response::IntoResponse,
+};
 use serde::{Deserialize, Serialize};
 
 use crate::auth::{jwt::JwtManager, Claims, UserInfo};
@@ -90,7 +93,8 @@ pub async fn login(
 
     // Store refresh token in Redis (optional, for token revocation)
     let key = format!("refresh_token:{}", user_info.id);
-    state.redis_client
+    state
+        .redis_client
         .set_ex_api(&key, &refresh_token, 30 * 24 * 3600)
         .await?;
 
@@ -151,9 +155,7 @@ pub async fn logout(
     })))
 }
 
-pub async fn current_user(
-    Extension(claims): Extension<Claims>,
-) -> ApiResult<impl IntoResponse> {
+pub async fn current_user(Extension(claims): Extension<Claims>) -> ApiResult<impl IntoResponse> {
     let user_info = UserInfo {
         id: claims.sub.clone(),
         username: claims.username.clone(),

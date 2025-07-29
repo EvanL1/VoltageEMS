@@ -53,15 +53,6 @@ pub enum ComSrvError {
     #[error("Modbus error: {0}")]
     ModbusError(String),
 
-    /// IEC 60870 protocol specific errors
-    #[error("IEC 60870 error: {0}")]
-    Iec60870Error(String),
-
-    /// CAN bus protocol specific errors
-    #[cfg(feature = "can")]
-    #[error("CAN bus error: {0}")]
-    CanError(String),
-
     /// Redis data access errors
     #[error("Redis error: {0}")]
     RedisError(String),
@@ -185,28 +176,28 @@ impl From<std::io::Error> for ComSrvError {
 // Conversion from serde_json::Error
 impl From<serde_json::Error> for ComSrvError {
     fn from(err: serde_json::Error) -> Self {
-        ComSrvError::SerializationError(format!("JSON error: {}", err))
+        ComSrvError::SerializationError(format!("JSON error: {err}"))
     }
 }
 
 // Conversion from serde_yaml::Error
 impl From<serde_yaml::Error> for ComSrvError {
     fn from(err: serde_yaml::Error) -> Self {
-        ComSrvError::SerializationError(format!("YAML error: {}", err))
+        ComSrvError::SerializationError(format!("YAML error: {err}"))
     }
 }
 
 // Conversion from figment::Error
 impl From<figment::Error> for ComSrvError {
     fn from(err: figment::Error) -> Self {
-        ComSrvError::ConfigError(format!("Configuration error: {}", err))
+        ComSrvError::ConfigError(format!("Configuration error: {err}"))
     }
 }
 
 // Conversion from redis::RedisError
 impl From<redis::RedisError> for ComSrvError {
     fn from(err: redis::RedisError) -> Self {
-        ComSrvError::RedisError(format!("Redis error: {}", err))
+        ComSrvError::RedisError(format!("Redis error: {err}"))
     }
 }
 
@@ -248,15 +239,6 @@ impl ComSrvError {
         ComSrvError::ModbusError(msg.into())
     }
 
-    pub fn iec60870(msg: impl Into<String>) -> Self {
-        ComSrvError::Iec60870Error(msg.into())
-    }
-
-    #[cfg(feature = "can")]
-    pub fn can(msg: impl Into<String>) -> Self {
-        ComSrvError::CanError(msg.into())
-    }
-
     pub fn redis(msg: impl Into<String>) -> Self {
         ComSrvError::RedisError(msg.into())
     }
@@ -284,22 +266,22 @@ where
     E: std::fmt::Display,
 {
     fn config_error(self, msg: &str) -> Result<T> {
-        self.map_err(|e| ComSrvError::ConfigError(format!("{}: {}", msg, e)))
+        self.map_err(|e| ComSrvError::ConfigError(format!("{msg}: {e}")))
     }
 
     fn io_error(self, msg: &str) -> Result<T> {
-        self.map_err(|e| ComSrvError::IoError(format!("{}: {}", msg, e)))
+        self.map_err(|e| ComSrvError::IoError(format!("{msg}: {e}")))
     }
 
     fn protocol_error(self, msg: &str) -> Result<T> {
-        self.map_err(|e| ComSrvError::ProtocolError(format!("{}: {}", msg, e)))
+        self.map_err(|e| ComSrvError::ProtocolError(format!("{msg}: {e}")))
     }
 
     fn connection_error(self, msg: &str) -> Result<T> {
-        self.map_err(|e| ComSrvError::ConnectionError(format!("{}: {}", msg, e)))
+        self.map_err(|e| ComSrvError::ConnectionError(format!("{msg}: {e}")))
     }
 
     fn context(self, msg: &str) -> Result<T> {
-        self.map_err(|e| ComSrvError::InternalError(format!("{}: {}", msg, e)))
+        self.map_err(|e| ComSrvError::InternalError(format!("{msg}: {e}")))
     }
 }

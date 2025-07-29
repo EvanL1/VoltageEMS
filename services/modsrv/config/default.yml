@@ -1,0 +1,40 @@
+service_name: "modsrv"
+version: "1.0.0"
+
+redis:
+  url: "redis://localhost:6379"
+  key_prefix: "modsrv:"
+
+api:
+  host: "0.0.0.0"
+  port: 8092
+
+log:
+  level: "info"
+  file: "logs/modsrv.log"
+
+update_interval_ms: 1000
+
+models:
+  - id: "power_meter_demo"
+    name: "演示电表"
+    description: "用于演示的智能电表模型"
+    monitoring:
+      voltage_a:
+        description: "A相电压"
+        unit: "V"
+      current_a:
+        description: "A相电流"
+        unit: "A"
+      power:
+        description: "有功功率"
+        unit: "kW"
+      energy:
+        description: "累计电量"
+        unit: "kWh"
+    control:
+      main_switch:
+        description: "主开关控制"
+      power_limit:
+        description: "功率限制"
+        unit: "kW"

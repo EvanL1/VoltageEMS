@@ -2,6 +2,24 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+// ============================================================================
+// 新的简化模型
+// ============================================================================
+
+/// 控制命令（遥控）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ControlCommand {
+    pub point_id: u32,
+    pub value: u8, // 0 或 1
+}
+
+/// 调节命令（遥调）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AdjustmentCommand {
+    pub point_id: u32,
+    pub value: f64,
+}
+
 /// service status response
 #[derive(Debug, Clone, Serialize)]
 pub struct ServiceStatus {
@@ -25,7 +43,7 @@ pub struct ChannelStatusResponse {
     pub last_error: Option<String>,
 }
 
-/// channel status response - Enhanced version combining API and ComBase requirements
+/// channel status response - Enhanced version combining API and `ComBase` requirements
 #[derive(Debug, Clone, Serialize)]
 pub struct ChannelStatus {
     pub id: u16,
@@ -40,7 +58,7 @@ pub struct ChannelStatus {
 }
 
 impl From<crate::core::combase::ChannelStatus> for ChannelStatus {
-    /// Convert from ComBase ChannelStatus to API ChannelStatus
+    /// Convert from `ComBase` `ChannelStatus` to API `ChannelStatus`
     fn from(status: crate::core::combase::ChannelStatus) -> Self {
         Self {
             id: 0,                           // Will be filled by handler
@@ -48,9 +66,12 @@ impl From<crate::core::combase::ChannelStatus> for ChannelStatus {
             protocol: "Unknown".to_string(), // Will be filled by handler
             connected: status.is_connected,
             running: status.is_connected, // Use is_connected as running status
-            last_update: DateTime::<Utc>::from_timestamp(status.last_update as i64, 0)
-                .unwrap_or_else(Utc::now),
-            error_count: status.error_count as u32,
+            last_update: DateTime::<Utc>::from_timestamp(
+                status.last_update.try_into().unwrap_or(0),
+                0,
+            )
+            .unwrap_or_else(Utc::now),
+            error_count: status.error_count.try_into().unwrap_or(u32::MAX),
             last_error: status.last_error,
             statistics: HashMap::new(), // Will be filled by handler
         }
@@ -70,59 +91,6 @@ pub struct HealthStatus {
 #[derive(Debug, Clone, Deserialize)]
 pub struct ChannelOperation {
     pub operation: String, // "start", "stop", "restart"
-}
-
-/// point value read response
-#[derive(Debug, Clone, Serialize)]
-pub struct PointValue {
-    pub id: String,
-    pub name: String,
-    pub value: serde_json::Value,
-    pub timestamp: DateTime<Utc>,
-    pub unit: String,
-    pub description: String,
-}
-
-impl From<crate::core::combase::PointData> for PointValue {
-    /// Convert from protocols common PointData to API PointValue
-    fn from(point: crate::core::combase::PointData) -> Self {
-        let value = match point.value {
-            crate::core::combase::RedisValue::String(s) => serde_json::Value::String(s),
-            crate::core::combase::RedisValue::Integer(i) => serde_json::Value::Number(i.into()),
-            crate::core::combase::RedisValue::Float(f) => {
-                if let Some(n) = serde_json::Number::from_f64(f) {
-                    serde_json::Value::Number(n)
-                } else {
-                    serde_json::Value::String(f.to_string())
-                }
-            }
-            crate::core::combase::RedisValue::Bool(b) => serde_json::Value::Bool(b),
-            crate::core::combase::RedisValue::Null => serde_json::Value::Null,
-        };
-
-        Self {
-            id: "0".to_string(),       // Default ID since PointData doesn't have it
-            name: "point".to_string(), // Default name
-            value,
-            timestamp: Utc::now(), // Use current time since timestamp is u64
-            unit: "".to_string(),
-            description: "".to_string(),
-        }
-    }
-}
-
-/// point table data response containing all points
-#[derive(Debug, Clone, Serialize)]
-pub struct PointTableData {
-    pub channel_id: String,
-    pub points: Vec<PointValue>,
-    pub timestamp: DateTime<Utc>,
-}
-
-/// point value write request
-#[derive(Debug, Clone, Deserialize)]
-pub struct WritePointRequest {
-    pub value: serde_json::Value,
 }
 
 /// error response
@@ -193,296 +161,6 @@ impl<T> ApiResponse<T> {
     }
 }
 
-/// Enhanced point with configuration information
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TelemetryPoint {
-    /// Point ID from CSV configuration
-    pub point_id: u32,
-    /// Point name from CSV
-    pub name: String,
-    /// Description from CSV
-    pub description: String,
-    /// Engineering unit from CSV
-    pub unit: String,
-    /// Data type from CSV (uint16, float32, etc.)
-    pub data_type: String,
-    /// Scale factor from CSV
-    pub scale: f64,
-    /// Offset value from CSV
-    pub offset: f64,
-    /// Current real-time value (changes)
-    pub current_value: Option<serde_json::Value>,
-    /// Last update timestamp
-    pub last_update: Option<DateTime<Utc>>,
-    /// Point status (connected, error, etc.)
-    pub status: String,
-    /// Protocol mapping information (serialized as JSON)
-    pub protocol_mapping: Option<serde_json::Value>,
-}
-
-/// Protocol mapping trait for different industrial protocols
-pub trait ProtocolMapping: Send + Sync + std::fmt::Debug {
-    /// Get protocol type name
-    fn protocol_type(&self) -> &str;
-
-    /// Get unique mapping identifier for this point
-    fn mapping_id(&self) -> String;
-
-    /// Get polling interval in milliseconds (if applicable)
-    fn polling_interval(&self) -> Option<u32>;
-
-    /// Get protocol-specific parameters as key-value pairs
-    fn get_parameters(&self) -> std::collections::HashMap<String, String>;
-
-    /// Serialize to JSON for API response
-    fn to_json(&self) -> serde_json::Value;
-
-    /// Validate mapping configuration
-    fn validate(&self) -> Result<(), String>;
-}
-
-/// Default function code for Modbus (Read Holding Registers)
-fn default_function_code() -> u8 {
-    3
-}
-
-/// Modbus protocol mapping implementation
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ModbusMapping {
-    /// Point ID that links to telemetry table
-    pub point_id: u32,
-    /// Register address for Modbus
-    pub address: u32,
-    /// Function code for Modbus (1=coils, 2=discrete, 3=holding, 4=input)
-    #[serde(default = "default_function_code")]
-    pub function_code: u8,
-    /// Slave/Unit ID
-    pub slave_id: Option<u8>,
-    /// Data format (AB, ABCD, DCBA, etc.)
-    pub data_format: String,
-    /// Number of bytes/registers
-    pub number_of_bytes: u16,
-    /// Polling interval in milliseconds
-    pub polling_interval: Option<u32>,
-}
-
-impl ProtocolMapping for ModbusMapping {
-    fn protocol_type(&self) -> &str {
-        "modbus"
-    }
-
-    fn mapping_id(&self) -> String {
-        format!("modbus_{}_{}", self.slave_id.unwrap_or(1), self.address)
-    }
-
-    fn polling_interval(&self) -> Option<u32> {
-        self.polling_interval
-    }
-
-    fn get_parameters(&self) -> std::collections::HashMap<String, String> {
-        let mut params = std::collections::HashMap::new();
-        params.insert("point_id".to_string(), self.point_id.to_string());
-        params.insert("address".to_string(), self.address.to_string());
-        params.insert("function_code".to_string(), self.function_code.to_string());
-        if let Some(sid) = self.slave_id {
-            params.insert("slave_id".to_string(), sid.to_string());
-        }
-        params.insert("data_format".to_string(), self.data_format.clone());
-        params.insert(
-            "number_of_bytes".to_string(),
-            self.number_of_bytes.to_string(),
-        );
-        params
-    }
-
-    fn to_json(&self) -> serde_json::Value {
-        serde_json::to_value(self).unwrap_or(serde_json::Value::Null)
-    }
-
-    fn validate(&self) -> Result<(), String> {
-        if self.point_id == 0 {
-            return Err("Point ID must be > 0".to_string());
-        }
-        if self.address > 65535 {
-            return Err("Modbus address must be <= 65535".to_string());
-        }
-        // Modbus function codes: 1=ReadCoils, 2=ReadDiscreteInputs, 3=ReadHoldingRegisters, 4=ReadInputRegisters
-        // 5=WriteSingleCoil, 6=WriteSingleRegister, 15=WriteMultipleCoils, 16=WriteMultipleRegisters
-        match self.function_code {
-            1..=6 | 15 | 16 => {} // Valid function codes
-            _ => return Err("Invalid Modbus function code, supported: 1-6, 15, 16".to_string()),
-        }
-        if self.number_of_bytes == 0 || self.number_of_bytes > 125 {
-            return Err("Number of bytes must be 1-125".to_string());
-        }
-        Ok(())
-    }
-}
-
-/// CAN protocol mapping implementation
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CanMapping {
-    /// Point ID that links to telemetry table
-    pub point_id: u32,
-    /// CAN ID (29-bit for extended, 11-bit for standard)
-    pub can_id: u32,
-    /// Extended CAN ID flag
-    pub extended: bool,
-    /// Data byte position (0-7)
-    pub byte_position: u8,
-    /// Bit position within byte (0-7, optional for digital signals)
-    pub bit_position: Option<u8>,
-    /// Data length (1, 2, 4, or 8 bytes for multi-byte values)
-    pub data_length: u8,
-    /// Byte order (big_endian or little_endian)
-    pub byte_order: String,
-    /// Message polling interval
-    pub polling_interval: Option<u32>,
-}
-
-impl ProtocolMapping for CanMapping {
-    fn protocol_type(&self) -> &str {
-        "can"
-    }
-
-    fn mapping_id(&self) -> String {
-        format!("can_{:X}_{}", self.can_id, self.byte_position)
-    }
-
-    fn polling_interval(&self) -> Option<u32> {
-        self.polling_interval
-    }
-
-    fn get_parameters(&self) -> std::collections::HashMap<String, String> {
-        let mut params = std::collections::HashMap::new();
-        params.insert("point_id".to_string(), self.point_id.to_string());
-        params.insert("can_id".to_string(), format!("0x{:X}", self.can_id));
-        params.insert("extended".to_string(), self.extended.to_string());
-        params.insert("byte_position".to_string(), self.byte_position.to_string());
-        if let Some(bit_pos) = self.bit_position {
-            params.insert("bit_position".to_string(), bit_pos.to_string());
-        }
-        params.insert("data_length".to_string(), self.data_length.to_string());
-        params.insert("byte_order".to_string(), self.byte_order.clone());
-        params
-    }
-
-    fn to_json(&self) -> serde_json::Value {
-        serde_json::to_value(self).unwrap_or(serde_json::Value::Null)
-    }
-
-    fn validate(&self) -> Result<(), String> {
-        if self.point_id == 0 {
-            return Err("Point ID must be > 0".to_string());
-        }
-        if !self.extended && self.can_id > 0x7FF {
-            return Err("Standard CAN ID must be <= 0x7FF".to_string());
-        }
-        if self.extended && self.can_id > 0x1FFF_FFFF {
-            return Err("Extended CAN ID must be <= 0x1FFFFFFF".to_string());
-        }
-        if self.byte_position > 7 {
-            return Err("Byte position must be 0-7".to_string());
-        }
-        if let Some(bit_pos) = self.bit_position {
-            if bit_pos > 7 {
-                return Err("Bit position must be 0-7".to_string());
-            }
-        }
-        if ![1, 2, 4, 8].contains(&self.data_length) {
-            return Err("Data length must be 1, 2, 4, or 8 bytes".to_string());
-        }
-        Ok(())
-    }
-}
-
-/// IEC 60870-5-104 protocol mapping implementation  
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct IecMapping {
-    /// Point ID that links to telemetry table
-    pub point_id: u32,
-    /// Information Object Address (IOA)
-    pub ioa: u32,
-    /// Common Address of ASDU (CA)
-    pub ca: u16,
-    /// Type identification
-    pub type_id: u8,
-    /// Cause of transmission
-    pub cot: Option<u8>,
-    /// Qualifier of interrogation
-    pub qoi: Option<u8>,
-    /// Update interval for polling
-    pub polling_interval: Option<u32>,
-}
-
-impl ProtocolMapping for IecMapping {
-    fn protocol_type(&self) -> &str {
-        "iec60870"
-    }
-
-    fn mapping_id(&self) -> String {
-        format!("iec_{}_{}", self.ca, self.ioa)
-    }
-
-    fn polling_interval(&self) -> Option<u32> {
-        self.polling_interval
-    }
-
-    fn get_parameters(&self) -> std::collections::HashMap<String, String> {
-        let mut params = std::collections::HashMap::new();
-        params.insert("point_id".to_string(), self.point_id.to_string());
-        params.insert("ioa".to_string(), self.ioa.to_string());
-        params.insert("ca".to_string(), self.ca.to_string());
-        params.insert("type_id".to_string(), self.type_id.to_string());
-        if let Some(cot) = self.cot {
-            params.insert("cot".to_string(), cot.to_string());
-        }
-        if let Some(qoi) = self.qoi {
-            params.insert("qoi".to_string(), qoi.to_string());
-        }
-        params
-    }
-
-    fn to_json(&self) -> serde_json::Value {
-        serde_json::to_value(self).unwrap_or(serde_json::Value::Null)
-    }
-
-    fn validate(&self) -> Result<(), String> {
-        if self.point_id == 0 {
-            return Err("Point ID must be > 0".to_string());
-        }
-        if self.ioa > 0x00FF_FFFF {
-            return Err("IOA must be <= 0xFFFFFF".to_string());
-        }
-        if self.ca == 0 {
-            return Err("Common Address must be > 0".to_string());
-        }
-        if self.type_id == 0 {
-            return Err("Type ID must be > 0".to_string());
-        }
-        Ok(())
-    }
-}
-
-/// Four-telemetry table view for frontend display
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TelemetryTableView {
-    /// Channel ID
-    pub channel_id: u16,
-    /// Channel name
-    pub channel_name: String,
-    /// Telemetry points (遥测 - analog measurements)
-    pub telemetry: Vec<TelemetryPoint>,
-    /// Signal points (遥信 - digital status)  
-    pub signal: Vec<TelemetryPoint>,
-    /// Adjustment points (遥调 - analog setpoints)
-    pub adjustment: Vec<TelemetryPoint>,
-    /// Control points (遥控 - digital commands)
-    pub control: Vec<TelemetryPoint>,
-    /// Last refresh timestamp
-    pub timestamp: DateTime<Utc>,
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -527,7 +205,7 @@ mod tests {
         };
 
         let serialized = serde_json::to_string(&status).unwrap();
-        assert!(serialized.contains("1"));
+        assert!(serialized.contains('1'));
         assert!(serialized.contains("ModbusTcp"));
         assert!(serialized.contains("true"));
     }
@@ -537,7 +215,7 @@ mod tests {
         let health = HealthStatus {
             status: "OK".to_string(),
             uptime: 7200,
-            memory_usage: 1024000,
+            memory_usage: 1_024_000,
             cpu_usage: 15.5,
         };
 
@@ -561,74 +239,6 @@ mod tests {
         let operation: ChannelOperation = serde_json::from_str(json_data).unwrap();
         assert_eq!(operation.operation, "restart");
     }
-
-    #[test]
-    fn test_point_value_serialization() {
-        let now = Utc::now();
-        let point = PointValue {
-            id: "temp_001".to_string(),
-            name: "temperature".to_string(),
-            value: json!(23.5),
-            timestamp: now,
-            unit: "°C".to_string(),
-            description: "Temperature sensor".to_string(),
-        };
-
-        let serialized = serde_json::to_string(&point).unwrap();
-        assert!(serialized.contains("temperature"));
-        assert!(serialized.contains("23.5"));
-        assert!(serialized.contains("temp_001"));
-        assert!(serialized.contains("°C"));
-    }
-
-    #[test]
-    fn test_point_table_data_serialization() {
-        let now = Utc::now();
-        let points = vec![
-            PointValue {
-                id: "point1_id".to_string(),
-                name: "point1".to_string(),
-                value: json!(100),
-                timestamp: now,
-                unit: "unit".to_string(),
-                description: "Test point 1".to_string(),
-            },
-            PointValue {
-                id: "point2_id".to_string(),
-                name: "point2".to_string(),
-                value: json!("active"),
-                timestamp: now,
-                unit: "status".to_string(),
-                description: "Test point 2".to_string(),
-            },
-        ];
-
-        let table_data = PointTableData {
-            channel_id: "channel_1".to_string(),
-            points,
-            timestamp: now,
-        };
-
-        let serialized = serde_json::to_string(&table_data).unwrap();
-        assert!(serialized.contains("channel_1"));
-        assert!(serialized.contains("point1"));
-        assert!(serialized.contains("point2"));
-    }
-
-    // #[test]
-    // fn test_write_point_request_deserialization() {
-    //     let json_data = r#"{"value": 42}"#;
-    //     let request: WritePointRequest = serde_json::from_str(json_data).unwrap();
-    //     assert_eq!(request.value, json!(42));
-    //
-    //     let json_data = r#"{"value": "hello"}"#;
-    //     let request: WritePointRequest = serde_json::from_str(json_data).unwrap();
-    //     assert_eq!(request.value, json!("hello"));
-    //
-    //     let json_data = r#"{"value": true}"#;
-    //     let request: WritePointRequest = serde_json::from_str(json_data).unwrap();
-    //     assert_eq!(request.value, json!(true));
-    // }
 
     #[test]
     fn test_error_response_serialization() {
@@ -672,64 +282,6 @@ mod tests {
     }
 
     #[test]
-    fn test_complex_point_value_types() {
-        let now = Utc::now();
-
-        // Test with different value types
-        let int_point = PointValue {
-            id: "int_001".to_string(),
-            name: "int_value".to_string(),
-            value: json!(42),
-            timestamp: now,
-            unit: "count".to_string(),
-            description: "Integer test point".to_string(),
-        };
-
-        let float_point = PointValue {
-            id: "float_001".to_string(),
-            name: "float_value".to_string(),
-            value: json!(3.14159),
-            timestamp: now,
-            unit: "ratio".to_string(),
-            description: "Float test point".to_string(),
-        };
-
-        let bool_point = PointValue {
-            id: "bool_001".to_string(),
-            name: "bool_value".to_string(),
-            value: json!(false),
-            timestamp: now,
-            unit: "state".to_string(),
-            description: "Boolean test point".to_string(),
-        };
-
-        let string_point = PointValue {
-            id: "string_001".to_string(),
-            name: "string_value".to_string(),
-            value: json!("test string"),
-            timestamp: now,
-            unit: "text".to_string(),
-            description: "String test point".to_string(),
-        };
-
-        let array_point = PointValue {
-            id: "array_001".to_string(),
-            name: "array_value".to_string(),
-            value: json!([1, 2, 3, 4, 5]),
-            timestamp: now,
-            unit: "list".to_string(),
-            description: "Array test point".to_string(),
-        };
-
-        // All should serialize without error
-        assert!(serde_json::to_string(&int_point).is_ok());
-        assert!(serde_json::to_string(&float_point).is_ok());
-        assert!(serde_json::to_string(&bool_point).is_ok());
-        assert!(serde_json::to_string(&string_point).is_ok());
-        assert!(serde_json::to_string(&array_point).is_ok());
-    }
-
-    #[test]
     fn test_channel_status_with_empty_parameters() {
         let now = Utc::now();
         let status = ChannelStatus {
@@ -745,48 +297,33 @@ mod tests {
         };
 
         let serialized = serde_json::to_string(&status).unwrap();
-        assert!(serialized.contains("1"));
+        assert!(serialized.contains('1'));
         assert!(serialized.contains("false"));
         assert!(serialized.contains("Connection timeout"));
     }
 
     #[test]
     fn test_combase_channel_status_conversion() {
-        let combase_status = crate::core::combase::ChannelStatus::new("test_001");
+        let combase_status = crate::core::combase::ChannelStatus {
+            is_connected: true,
+            last_error: Some("Test error".to_string()),
+            last_update: 1_234_567_890,
+            success_count: 100,
+            error_count: 5,
+            reconnect_count: 2,
+            points_count: 50,
+            last_read_duration_ms: Some(100),
+            average_read_duration_ms: Some(95.5),
+        };
         let api_status = ChannelStatus::from(combase_status);
 
-        assert_eq!(api_status.id, 0); // Updated: test_001 cannot parse as u16, so returns 0
+        assert_eq!(api_status.id, 0); // Default value
         assert_eq!(api_status.name, "Unknown");
         assert_eq!(api_status.protocol, "Unknown");
-        assert!(!api_status.connected);
-        assert_eq!(api_status.error_count, 0);
-        assert!(api_status.last_error.is_none());
+        assert!(api_status.connected);
+        assert_eq!(api_status.error_count, 5);
+        assert_eq!(api_status.last_error, Some("Test error".to_string()));
         assert!(api_status.statistics.is_empty());
-    }
-
-    #[test]
-    fn test_combase_point_data_conversion() {
-        let combase_point = crate::core::combase::PointData {
-            id: "1".to_string(),
-            name: "Temperature".to_string(),
-            value: "25.5".to_string(),
-            timestamp: Utc::now(),
-            unit: "°C".to_string(),
-            description: "Ambient temperature".to_string(),
-            telemetry_type: None,
-            channel_id: None,
-        };
-
-        let api_point = PointValue::from(combase_point);
-
-        assert_eq!(api_point.id, "1");
-        assert_eq!(api_point.name, "Temperature");
-        assert_eq!(
-            api_point.value,
-            serde_json::Value::String("25.5".to_string())
-        );
-        assert_eq!(api_point.unit, "°C");
-        assert_eq!(api_point.description, "Ambient temperature");
     }
 
     #[test]

@@ -142,6 +142,11 @@ impl MappingManager {
 
         Ok(())
     }
+
+    /// 获取所有映射（用于加载到Redis）
+    pub fn get_all_mappings(&self) -> &HashMap<String, ModelMappingConfig> {
+        &self.mappings
+    }
 }
 
 impl Default for MappingManager {

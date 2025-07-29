@@ -4,10 +4,9 @@ use serde::{Deserialize, Serialize};
 pub struct Config {
     pub server: ServerConfig,
     pub redis: RedisConfig,
-    pub influxdb: InfluxDbConfig,
     pub services: ServicesConfig,
-    pub cors: CorsConfig,
-    pub logging: LoggingConfig,
+    pub api: ApiConfig,
+    pub auth: AuthConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -25,12 +24,14 @@ pub struct RedisConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct InfluxDbConfig {
-    pub url: String,
-    pub database: String,
-    pub username: Option<String>,
-    pub password: Option<String>,
-    pub timeout_seconds: u64,
+pub struct ApiConfig {
+    pub prefix: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AuthConfig {
+    pub jwt_secret: String,
+    pub jwt_expiry_hours: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -47,20 +48,6 @@ pub struct ServicesConfig {
 pub struct ServiceConfig {
     pub url: String,
     pub timeout_seconds: u64,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CorsConfig {
-    pub allowed_origins: Vec<String>,
-    pub allowed_methods: Vec<String>,
-    pub allowed_headers: Vec<String>,
-    pub max_age: u64,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct LoggingConfig {
-    pub level: String,
-    pub format: String,
 }
 
 impl Config {
@@ -109,16 +96,16 @@ impl Default for Config {
                 workers: 4,
             },
             redis: RedisConfig {
-                url: "redis://redis:6379".to_string(),
+                url: "redis://localhost:6379".to_string(),
                 pool_size: 10,
                 timeout_seconds: 5,
             },
-            influxdb: InfluxDbConfig {
-                url: "http://influxdb:8086".to_string(),
-                database: "voltage_ems".to_string(),
-                username: None,
-                password: None,
-                timeout_seconds: 30,
+            api: ApiConfig {
+                prefix: "/api".to_string(),
+            },
+            auth: AuthConfig {
+                jwt_secret: "your-secret-key-change-in-production".to_string(),
+                jwt_expiry_hours: 24,
             },
             services: ServicesConfig {
                 comsrv: ServiceConfig {
@@ -145,30 +132,6 @@ impl Default for Config {
                     url: "http://localhost:8084".to_string(),
                     timeout_seconds: 30,
                 },
-            },
-            cors: CorsConfig {
-                allowed_origins: vec!["*".to_string()],
-                allowed_methods: vec![
-                    "GET".to_string(),
-                    "POST".to_string(),
-                    "PUT".to_string(),
-                    "DELETE".to_string(),
-                    "OPTIONS".to_string(),
-                    "HEAD".to_string(),
-                    "PATCH".to_string(),
-                ],
-                allowed_headers: vec![
-                    "Content-Type".to_string(),
-                    "Authorization".to_string(),
-                    "Origin".to_string(),
-                    "Accept".to_string(),
-                    "X-Requested-With".to_string(),
-                ],
-                max_age: 3600,
-            },
-            logging: LoggingConfig {
-                level: "info".to_string(),
-                format: "json".to_string(),
             },
         }
     }

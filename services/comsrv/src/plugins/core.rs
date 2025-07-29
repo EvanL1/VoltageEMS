@@ -13,8 +13,8 @@ use tracing::{debug, info, warn};
 use super::traits::{PluginFactory, ProtocolMetadata, ProtocolPlugin};
 use crate::core::config::TelemetryType;
 use crate::storage::{
-    PointData, PointStorage as VoltagePointStorage, PointUpdate as VoltagePointUpdate,
-    PublisherConfig, RetryConfig, RtdbStorage,
+    PointData, PointStorage as VoltagePointStorage, PointUpdate as VoltagePointUpdate, RetryConfig,
+    RtdbStorage,
 };
 use crate::utils::error::{ComSrvError as Error, Result};
 
@@ -80,8 +80,7 @@ impl PluginRegistry {
 
         if self.plugins.contains_key(&plugin_id) {
             return Err(Error::ConfigError(format!(
-                "Plugin '{}' is already registered",
-                plugin_id
+                "Plugin '{plugin_id}' is already registered"
             )));
         }
 
@@ -222,8 +221,7 @@ impl PluginManager {
             Ok(())
         } else {
             Err(Error::ConfigError(format!(
-                "Plugin '{}' not found",
-                plugin_id
+                "Plugin '{plugin_id}' not found"
             )))
         }
     }
@@ -239,8 +237,7 @@ impl PluginManager {
             Ok(())
         } else {
             Err(Error::ConfigError(format!(
-                "Plugin '{}' not found",
-                plugin_id
+                "Plugin '{plugin_id}' not found"
             )))
         }
     }
@@ -256,7 +253,7 @@ const TYPE_SIGNAL: &str = "s";
 const TYPE_CONTROL: &str = "c";
 const TYPE_ADJUSTMENT: &str = "a";
 
-/// 将TelemetryType转换为Redis存储的类型缩写
+/// `将TelemetryType转换为Redis存储的类型缩写`
 pub fn telemetry_type_to_redis(telemetry_type: &TelemetryType) -> &'static str {
     match telemetry_type {
         TelemetryType::Measurement => TYPE_MEASUREMENT,
@@ -358,6 +355,7 @@ pub trait PluginStorage: Send + Sync {
 }
 
 /// 默认插件存储实现
+#[derive(Debug)]
 pub struct DefaultPluginStorage {
     storage: Arc<RtdbStorage>,
 }
@@ -365,19 +363,14 @@ pub struct DefaultPluginStorage {
 impl DefaultPluginStorage {
     /// 创建新的存储实例
     pub async fn new(redis_url: String) -> Result<Self> {
-        let storage = RtdbStorage::with_config(
-            &redis_url,
-            RetryConfig::default(),
-            Some(PublisherConfig::default()),
-        )
-        .await?;
+        let storage = RtdbStorage::with_config(&redis_url, RetryConfig::default()).await?;
 
         Ok(Self {
             storage: Arc::new(storage),
         })
     }
 
-    /// 从已有的RtdbStorage创建
+    /// `从已有的RtdbStorage创建`
     pub fn from_storage(storage: Arc<RtdbStorage>) -> Self {
         Self { storage }
     }
@@ -465,7 +458,7 @@ impl PluginStorage for DefaultPluginStorage {
         config: PluginPointConfig,
     ) -> Result<()> {
         let point_type = telemetry_type_to_redis(telemetry_type);
-        let _key = format!("cfg:{}:{}:{}", channel_id, point_type, point_id);
+        let _key = format!("cfg:{channel_id}:{point_type}:{point_id}");
         let _value =
             serde_json::to_string(&config).map_err(|e| Error::SerializationError(e.to_string()))?;
 
@@ -490,19 +483,13 @@ impl PluginStorage for DefaultPluginStorage {
 // ============================================================================
 
 pub mod discovery {
-    use super::*;
+    use super::{PluginRegistry, Result};
 
     /// 加载所有插件
     pub fn load_all_plugins() -> Result<()> {
         // 加载内置协议插件
         #[cfg(feature = "modbus")]
         load_modbus_plugin()?;
-
-        #[cfg(feature = "iec60870")]
-        load_iec60870_plugin()?;
-
-        #[cfg(feature = "can")]
-        load_can_plugin()?;
 
         // 加载虚拟协议插件（用于测试）
         load_virt_plugin()?;
@@ -520,32 +507,6 @@ pub mod discovery {
         reg.register_plugin(plugin)?;
         reg.register_factory("modbus_tcp", modbus::create_plugin)?;
         reg.register_factory("modbus_rtu", modbus::create_plugin)?;
-
-        Ok(())
-    }
-
-    #[cfg(feature = "iec60870")]
-    fn load_iec60870_plugin() -> Result<()> {
-        use crate::plugins::protocols::iec60870;
-        let registry = PluginRegistry::global();
-        let mut reg = registry.write().unwrap();
-
-        let plugin = Box::new(iec60870::Iec60870Plugin::new());
-        reg.register_plugin(plugin)?;
-        reg.register_factory("iec60870", iec60870::create_plugin)?;
-
-        Ok(())
-    }
-
-    #[cfg(feature = "can")]
-    fn load_can_plugin() -> Result<()> {
-        use crate::plugins::protocols::can;
-        let registry = PluginRegistry::global();
-        let mut reg = registry.write().unwrap();
-
-        let plugin = Box::new(can::CanPlugin::new());
-        reg.register_plugin(plugin)?;
-        reg.register_factory("can", can::create_plugin)?;
 
         Ok(())
     }

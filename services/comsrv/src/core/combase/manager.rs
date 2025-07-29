@@ -1,7 +1,7 @@
 //! Point Manager Module
 //!
 //! High-performance point manager with optimized data structures and indices.
-//! Consolidated from point_manager.rs and optimized_point_manager.rs
+//! Consolidated from `point_manager.rs` and `optimized_point_manager.rs`
 
 use chrono::Utc;
 use std::collections::{HashMap, HashSet};
@@ -53,7 +53,7 @@ pub struct OptimizedPointManager {
     /// Real-time point data cache indexed by numeric point ID
     realtime_cache: Arc<RwLock<HashMap<u32, PointData>>>,
 
-    /// Points grouped by telemetry type using HashSet for O(1) lookups
+    /// Points grouped by telemetry type using `HashSet` for O(1) lookups
     points_by_type: Arc<RwLock<HashMap<TelemetryType, HashSet<u32>>>>,
 
     /// Name to ID mapping for fast name-based lookups
@@ -308,6 +308,7 @@ impl OptimizedPointManager {
     }
 
     /// Get cache hit rate
+    #[allow(clippy::cast_precision_loss)]
     pub async fn get_cache_hit_rate(&self) -> f64 {
         let stats = self.stats.read().await;
         let total = stats.cache_hits + stats.cache_misses;
@@ -361,7 +362,7 @@ pub fn generate_test_points(count: usize) -> Vec<PollingPoint> {
         let point = PollingPoint {
             id: format!("point_{i}"),
             name: format!("Test Point {i}"),
-            address: i as u32 + 1000,
+            address: u32::try_from(i).unwrap_or(u32::MAX).saturating_add(1000),
             telemetry_type,
             access_mode: "rw".to_string(),
         };

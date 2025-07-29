@@ -1,4 +1,4 @@
-//! ComBase Module
+//! `ComBase` Module
 //!
 //! This module provides the base infrastructure for communication protocol implementations.
 //! Actual protocol implementations are provided as plugins.
@@ -23,10 +23,7 @@ pub use factory::{
     DynComClient, ProtocolClientFactory, ProtocolFactory,
 };
 pub use manager::{OptimizedPointManager, PointManagerStats, PollingPoint};
-pub use storage::{
-    create_batch_sync, create_combase_storage, ComBaseStorage, DefaultComBaseStorage,
-    OptimizedBatchSync, OptimizedSyncConfig, StorageStats, SyncStats,
-};
+pub use storage::{create_combase_storage, ComBaseStorage, DefaultComBaseStorage, StorageStats};
 
 /// Initialize combase module
 pub fn init_combase() {

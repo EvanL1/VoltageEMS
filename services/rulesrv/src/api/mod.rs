@@ -10,7 +10,7 @@ use tracing::info;
 
 use crate::engine::RuleExecutor;
 use crate::redis::RedisStore;
-use voltage_common::config::ApiConfig;
+// ApiConfig is defined locally in config.rs
 
 pub use handlers::ApiState;
 

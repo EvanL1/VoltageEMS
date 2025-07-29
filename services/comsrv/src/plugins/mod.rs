@@ -3,6 +3,7 @@
 //! 提供灵活的插件架构，支持协议实现的动态加载、配置管理和标准化接口
 
 pub mod core;
+pub mod grpc;
 pub mod protocols;
 pub mod traits;
 

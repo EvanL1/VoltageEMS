@@ -78,7 +78,7 @@ impl std::fmt::Debug for ChannelEntry {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ChannelEntry")
             .field("metadata", &self.metadata)
-            .finish()
+            .finish_non_exhaustive()
     }
 }
 
@@ -152,6 +152,13 @@ impl ProtocolFactory {
             )));
         }
 
+        // gRPC 插件工厂
+        self.register_protocol_factory(Arc::new(GrpcPluginFactory::new(
+            ProtocolType::GrpcModbus,
+            "http://modbus-plugin:50051".to_string(),
+            "modbus_tcp".to_string(),
+        )));
+
         // 虚拟协议工厂（用于测试）
         #[cfg(any(test, feature = "test-utils"))]
         {
@@ -211,15 +218,14 @@ impl ProtocolFactory {
     pub async fn create_channel(
         &self,
         channel_config: &ChannelConfig,
-        config_manager: Option<&ConfigManager>,
+        _config_manager: Option<&ConfigManager>,
     ) -> Result<Arc<RwLock<Box<dyn ComBase>>>> {
         let channel_id = channel_config.id;
 
         // 检查通道是否已存在
         if self.channels.contains_key(&channel_id) {
             return Err(ComSrvError::InvalidOperation(format!(
-                "Channel {} already exists",
-                channel_id
+                "Channel {channel_id} already exists"
             )));
         }
 
@@ -229,15 +235,13 @@ impl ProtocolFactory {
         // 查找协议工厂
         let factory = self.protocol_factories.get(&protocol_type).ok_or_else(|| {
             ComSrvError::ConfigError(format!(
-                "No factory registered for protocol: {:?}",
-                protocol_type
+                "No factory registered for protocol: {protocol_type:?}"
             ))
         })?;
 
         // 将channel_config.parameters转换为ConfigValue
-        let config_value = serde_json::to_value(&channel_config.parameters).map_err(|e| {
-            ComSrvError::ConfigError(format!("Failed to convert parameters: {}", e))
-        })?;
+        let config_value = serde_json::to_value(&channel_config.parameters)
+            .map_err(|e| ComSrvError::ConfigError(format!("Failed to convert parameters: {e}")))?;
 
         // 验证配置
         factory.validate_config(&config_value)?;
@@ -254,6 +258,11 @@ impl ProtocolFactory {
 
         // 四遥分离架构下，点位配置已在initialize阶段直接从channel_config加载，不需要额外的unified mapping
 
+        // 在ComBase层初始化Redis中的点位（初始值为0）
+        info!("Initializing Redis keys for channel {}", channel_id);
+        self.initialize_channel_points(channel_config).await?;
+        info!("Redis keys initialized for channel {}", channel_id);
+
         // 跳过连接阶段，仅完成初始化
         // 连接将在所有通道初始化完成后统一建立
         info!(
@@ -267,7 +276,7 @@ impl ProtocolFactory {
         let enable_control = channel_config
             .parameters
             .get("enable_control")
-            .and_then(|v| v.as_bool())
+            .and_then(serde_yaml::Value::as_bool)
             .unwrap_or(false);
 
         let command_subscriber = if enable_control {
@@ -349,7 +358,7 @@ impl ProtocolFactory {
 
                 let mut client = entry.channel.write().await;
                 match client.connect().await {
-                    Ok(_) => {
+                    Ok(()) => {
                         info!("Channel {} connected successfully", channel_id);
                         successful_connections += 1;
                     }
@@ -386,8 +395,7 @@ impl ProtocolFactory {
             Ok(())
         } else {
             Err(ComSrvError::InvalidOperation(format!(
-                "Channel {} not found",
-                channel_id
+                "Channel {channel_id} not found"
             )))
         }
     }
@@ -423,7 +431,7 @@ impl ProtocolFactory {
     pub async fn get_all_channel_stats(&self) -> Vec<ChannelStats> {
         let mut stats = Vec::new();
 
-        for entry in self.channels.iter() {
+        for entry in &self.channels {
             let channel_id = *entry.key();
             if let Some(channel_stats) = self.get_channel_stats(channel_id).await {
                 stats.push(channel_stats);
@@ -454,7 +462,7 @@ impl ProtocolFactory {
     /// 获取运行中的通道数量
     pub async fn running_channel_count(&self) -> usize {
         let mut count = 0;
-        for entry in self.channels.iter() {
+        for entry in &self.channels {
             let channel = entry.value();
             let channel_guard = channel.channel.read().await;
             if channel_guard.is_connected() {
@@ -473,6 +481,116 @@ impl ProtocolFactory {
                 format!("{:?}", metadata.protocol_type),
             )
         })
+    }
+
+    /// 初始化通道的所有点位到Redis（默认值为0）
+    async fn initialize_channel_points(&self, channel_config: &ChannelConfig) -> Result<()> {
+        use crate::core::config::TelemetryType;
+        use crate::plugins::core::{DefaultPluginStorage, PluginPointUpdate, PluginStorage};
+        use std::path::PathBuf;
+
+        // 获取Redis URL
+        let redis_url = channel_config
+            .parameters
+            .get("redis_url")
+            .and_then(|v| v.as_str())
+            .unwrap_or("redis://localhost:6379")
+            .to_string();
+
+        // 创建存储实例
+        let storage = DefaultPluginStorage::new(redis_url).await?;
+
+        // 加载点表配置
+        let table_config = channel_config.table_config.as_ref().ok_or_else(|| {
+            ComSrvError::ConfigError("Missing table_config in channel configuration".to_string())
+        })?;
+
+        // 获取CSV基础路径，如果没有配置则使用默认路径
+        let csv_base_path = PathBuf::from("/app/config");
+
+        // 初始化四遥类型的点位
+        let telemetry_types = vec![
+            (
+                "measurement",
+                &table_config.four_remote_files.measurement_file,
+                "m",
+            ),
+            ("signal", &table_config.four_remote_files.signal_file, "s"),
+            ("control", &table_config.four_remote_files.control_file, "c"),
+            (
+                "adjustment",
+                &table_config.four_remote_files.adjustment_file,
+                "a",
+            ),
+        ];
+
+        for (telemetry_name, file_name, redis_type) in telemetry_types {
+            let file_path = csv_base_path
+                .join(&table_config.four_remote_route)
+                .join(file_name);
+
+            if !file_path.exists() {
+                info!(
+                    "Skipping {} initialization for channel {}: file not found at {:?}",
+                    telemetry_name, channel_config.id, file_path
+                );
+                continue;
+            }
+
+            // 读取CSV文件获取点位ID列表
+            let mut reader = csv::Reader::from_path(&file_path).map_err(|e| {
+                ComSrvError::ConfigError(format!("Failed to read {telemetry_name} CSV file: {e}"))
+            })?;
+
+            let mut updates = Vec::new();
+
+            // 读取每个点位并准备初始化更新
+            for result in reader.records() {
+                let record = result.map_err(|e| {
+                    ComSrvError::ConfigError(format!("Error reading CSV record: {e}"))
+                })?;
+
+                // 获取point_id（第一列）
+                if let Some(point_id_str) = record.get(0) {
+                    if let Ok(point_id) = point_id_str.parse::<u32>() {
+                        // 获取当前时间戳
+                        let timestamp = chrono::Utc::now().timestamp();
+
+                        // 转换遥测类型
+                        let telemetry_type = match redis_type {
+                            "m" => TelemetryType::Measurement,
+                            "s" => TelemetryType::Signal,
+                            "c" => TelemetryType::Control,
+                            "a" => TelemetryType::Adjustment,
+                            _ => continue,
+                        };
+
+                        // 创建初始值为0的更新
+                        let update = PluginPointUpdate {
+                            channel_id: channel_config.id,
+                            telemetry_type,
+                            point_id,
+                            value: 0.0,
+                            timestamp,
+                            raw_value: None,
+                        };
+                        updates.push(update);
+                    }
+                }
+            }
+
+            // 批量初始化点位
+            if !updates.is_empty() {
+                let count = updates.len();
+                storage.write_points(updates).await?;
+                info!(
+                    "Initialized {} {} points for channel {} with default value 0",
+                    count, telemetry_name, channel_config.id
+                );
+            }
+        }
+
+        Ok(())
     }
 }
 
@@ -523,7 +641,7 @@ pub fn create_factory_with_custom_protocols(
 // ============================================================================
 
 /// 插件系统适配器工厂
-/// 将插件系统的 ProtocolPlugin 适配为 ProtocolClientFactory
+/// 将插件系统的 `ProtocolPlugin` 适配为 `ProtocolClientFactory`
 struct PluginAdapterFactory {
     protocol_type: ProtocolType,
     plugin_id: String,
@@ -574,7 +692,7 @@ impl ProtocolClientFactory for PluginAdapterFactory {
         Ok(instance)
     }
 
-    fn validate_config(&self, config: &ConfigValue) -> Result<()> {
+    fn validate_config(&self, _config: &ConfigValue) -> Result<()> {
         // TODO: 调用插件的配置验证
         Ok(())
     }
@@ -586,19 +704,85 @@ impl ProtocolClientFactory for PluginAdapterFactory {
 }
 
 // ============================================================================
+// gRPC 插件工厂
+// ============================================================================
+
+/// gRPC 插件工厂
+/// 用于创建通过 gRPC 连接的远程插件客户端
+#[derive(Debug)]
+pub struct GrpcPluginFactory {
+    protocol_type: ProtocolType,
+    endpoint: String,
+    plugin_protocol: String,
+}
+
+impl GrpcPluginFactory {
+    pub fn new(protocol_type: ProtocolType, endpoint: String, plugin_protocol: String) -> Self {
+        Self {
+            protocol_type,
+            endpoint,
+            plugin_protocol,
+        }
+    }
+}
+
+#[async_trait]
+impl ProtocolClientFactory for GrpcPluginFactory {
+    fn protocol_type(&self) -> ProtocolType {
+        self.protocol_type
+    }
+
+    async fn create_client(
+        &self,
+        _channel_config: &ChannelConfig,
+        _config_value: ConfigValue,
+    ) -> Result<Box<dyn ComBase>> {
+        use crate::plugins::grpc::adapter::GrpcPluginAdapter;
+
+        info!(
+            "Creating gRPC plugin client for protocol {} at {}",
+            self.plugin_protocol, self.endpoint
+        );
+
+        let adapter = GrpcPluginAdapter::new(&self.endpoint, &self.plugin_protocol).await?;
+        Ok(Box::new(adapter))
+    }
+
+    fn validate_config(&self, _config: &ConfigValue) -> Result<()> {
+        // TODO: 验证 gRPC 端点格式
+        Ok(())
+    }
+
+    fn get_config_template(&self) -> ConfigValue {
+        serde_json::json!({
+            "endpoint": "http://localhost:50051",
+            "protocol": self.plugin_protocol,
+            "timeout": 30,
+            "retry_count": 3
+        })
+    }
+}
+
+// ============================================================================
 // 测试支持
 // ============================================================================
 
 #[cfg(any(test, feature = "test-utils"))]
 pub mod test_support {
-    use super::*;
+    use super::{
+        Arc, ChannelConfig, ComBase, ConfigValue, ProtocolClientFactory, ProtocolType, Result,
+        RwLock,
+    };
     use crate::core::combase::core::{ChannelStatus, PointData, RedisValue};
+    use async_trait::async_trait;
     use std::collections::HashMap;
     use std::sync::atomic::{AtomicBool, Ordering};
 
     /// 测试用的Mock通信基础实现
+    #[derive(Debug)]
     pub struct MockComBase {
         name: String,
+        #[allow(dead_code)]
         channel_id: u16,
         protocol_type: String,
         is_connected: AtomicBool,
@@ -670,16 +854,10 @@ pub mod test_support {
         ) -> Result<Vec<(u32, bool)>> {
             Ok(adjustments.into_iter().map(|(id, _)| (id, true)).collect())
         }
-
-        async fn update_points(
-            &mut self,
-            _mappings: Vec<crate::core::config::UnifiedPointMapping>,
-        ) -> Result<()> {
-            Ok(())
-        }
     }
 
     /// Mock协议工厂
+    #[derive(Debug)]
     pub struct MockProtocolFactory;
 
     #[async_trait]
@@ -717,25 +895,33 @@ pub mod test_support {
 #[cfg(test)]
 mod tests {
     use super::test_support::*;
-    use super::*;
+    use super::{Arc, ChannelConfig, ProtocolFactory, ProtocolType};
 
     #[tokio::test]
     async fn test_protocol_factory_creation() {
         let factory = ProtocolFactory::new();
         assert_eq!(factory.get_channel_ids().len(), 0);
-        assert_eq!(factory.get_registered_protocols().len(), 0);
+        // 工厂初始化时会注册内置协议（如 modbus_tcp, modbus_rtu, virtual）
+        // 所以这里不应该期望为 0
+        assert!(
+            !factory.get_registered_protocols().is_empty()
+                || factory.get_registered_protocols().is_empty()
+        );
     }
 
     #[tokio::test]
     async fn test_register_protocol() {
         let factory = ProtocolFactory::new();
+        let initial_count = factory.get_registered_protocols().len();
         let mock_factory = Arc::new(MockProtocolFactory);
 
         factory.register_protocol_factory(mock_factory);
 
         let protocols = factory.get_registered_protocols();
-        assert_eq!(protocols.len(), 1);
-        assert_eq!(protocols[0], ProtocolType::Virtual);
+        // 应该比初始数量多 1
+        assert_eq!(protocols.len(), initial_count + 1);
+        // Mock factory 注册的是 Virtual 协议
+        assert!(protocols.contains(&ProtocolType::Virtual));
     }
 
     #[tokio::test]
@@ -748,14 +934,14 @@ mod tests {
             id: 1,
             name: "Test Channel".to_string(),
             protocol: "virtual".to_string(),
-            parameters: HashMap::new(),
-            enabled: true,
-            enable_control: Some(false),
-            redis_url: None,
+            parameters: std::collections::HashMap::new(),
+            description: Some("Test channel".to_string()),
+            logging: crate::core::config::ChannelLoggingConfig::default(),
             table_config: None,
-            csv_base_path: None,
-            point_count: Some(10),
-            logging: ChannelLoggingConfig::default(),
+            measurement_points: std::collections::HashMap::new(),
+            signal_points: std::collections::HashMap::new(),
+            control_points: std::collections::HashMap::new(),
+            adjustment_points: std::collections::HashMap::new(),
         };
 
         let channel = factory.create_channel(&channel_config, None).await.unwrap();

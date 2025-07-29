@@ -1,6 +1,6 @@
 [package]
 name = "netsrv"
-version = "0.1.0"
+version = "0.0.1"
 edition = "2021"
 authors = ["Your Name <your.email@voltageenergy.com>"]
 description = "Network service for data transmission from Redis to various protocols"
@@ -40,9 +40,9 @@ uuid = { workspace = true }
 url = "2.3"
 
 # Configuration framework
-# voltage-config = { workspace = true }  # TODO: 需要在workspace中添加
 serde_yaml = { workspace = true }
 anyhow = { workspace = true }
+figment = { workspace = true }
 
 # Web server for configuration management
 axum = { workspace = true }

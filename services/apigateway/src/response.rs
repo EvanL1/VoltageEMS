@@ -65,6 +65,7 @@ pub fn success_response<T: Serialize>(data: T) -> impl IntoResponse {
     Json(ApiResponse::success(data))
 }
 
+#[allow(dead_code)]
 pub fn error_response(
     status: StatusCode,
     code: &str,
@@ -77,6 +78,7 @@ pub fn error_response(
     )
 }
 
+#[allow(dead_code)]
 pub fn paginated_response<T: Serialize>(
     data: Vec<T>,
     total: usize,

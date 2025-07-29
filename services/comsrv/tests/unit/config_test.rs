@@ -1,6 +1,8 @@
 //! 配置系统单元测试
 
-use comsrv::core::config::types::{ChannelConfig, CombinedPoint, ScalingInfo, TelemetryType};
+use comsrv::core::config::types::{
+    ChannelConfig, ChannelLoggingConfig, CombinedPoint, ScalingInfo, TelemetryType,
+};
 use std::collections::HashMap;
 
 /// 创建测试配置
@@ -22,10 +24,12 @@ fn create_test_channel_config() -> ChannelConfig {
         description: Some("Test channel for unit testing".to_string()),
         protocol: "modbus_tcp".to_string(),
         parameters,
-        logging: Default::default(),
+        logging: ChannelLoggingConfig::default(),
         table_config: None,
-        points: vec![],
-        combined_points: vec![],
+        measurement_points: HashMap::new(),
+        signal_points: HashMap::new(),
+        control_points: HashMap::new(),
+        adjustment_points: HashMap::new(),
     }
 }
 
@@ -46,6 +50,30 @@ fn create_test_point() -> CombinedPoint {
             scale: 0.1,
             offset: 0.0,
             unit: Some("°C".to_string()),
+            reverse: None,
+        }),
+    }
+}
+
+/// 创建测试信号点位（带reverse）
+fn create_test_signal_point() -> CombinedPoint {
+    let mut protocol_params = HashMap::new();
+    protocol_params.insert("slave_id".to_string(), "1".to_string());
+    protocol_params.insert("function_code".to_string(), "2".to_string());
+    protocol_params.insert("register_address".to_string(), "10001".to_string());
+    protocol_params.insert("bit_position".to_string(), "0".to_string());
+
+    CombinedPoint {
+        point_id: 1,
+        signal_name: "Breaker_Status".to_string(),
+        telemetry_type: "Signal".to_string(),
+        data_type: "bool".to_string(),
+        protocol_params,
+        scaling: Some(ScalingInfo {
+            scale: 1.0,
+            offset: 0.0,
+            unit: None,
+            reverse: Some(true),
         }),
     }
 }
@@ -105,6 +133,19 @@ fn test_scaling_info() {
     assert_eq!(scaling.offset, 0.0);
     assert!(scaling.unit.is_some());
     assert_eq!(scaling.unit.unwrap(), "°C");
+    assert!(scaling.reverse.is_none());
+}
+
+#[test]
+fn test_signal_point_with_reverse() {
+    let point = create_test_signal_point();
+
+    assert_eq!(point.point_id, 1);
+    assert_eq!(point.telemetry_type, "Signal");
+    assert_eq!(point.data_type, "bool");
+
+    let scaling = point.scaling.unwrap();
+    assert_eq!(scaling.reverse, Some(true));
 }
 
 #[test]
@@ -132,7 +173,7 @@ fn test_protocol_parameters() {
 #[test]
 fn test_telemetry_type_parsing() {
     let telemetry_types = vec![
-        ("Measurement", TelemetryType::Telemetry),
+        ("Measurement", TelemetryType::Measurement),
         ("Signal", TelemetryType::Signal),
         ("Control", TelemetryType::Control),
         ("Adjustment", TelemetryType::Adjustment),
@@ -142,11 +183,11 @@ fn test_telemetry_type_parsing() {
         // 这里可以添加字符串到TelemetryType的转换测试
         // 目前只验证类型定义正确
         let _telemetry_type = match type_str {
-            "Measurement" => TelemetryType::Telemetry,
+            "Measurement" => TelemetryType::Measurement,
             "Signal" => TelemetryType::Signal,
             "Control" => TelemetryType::Control,
             "Adjustment" => TelemetryType::Adjustment,
-            _ => TelemetryType::Telemetry,
+            _ => TelemetryType::Measurement,
         };
     }
 }
@@ -156,31 +197,48 @@ fn test_channel_config_with_points() {
     let mut config = create_test_channel_config();
     let point = create_test_point();
 
-    config.combined_points.push(point);
+    config
+        .measurement_points
+        .insert(point.point_id, point.clone());
 
-    assert_eq!(config.combined_points.len(), 1);
-    assert_eq!(config.combined_points[0].point_id, 10001);
-    assert_eq!(config.combined_points[0].signal_name, "Temperature");
+    assert_eq!(config.measurement_points.len(), 1);
+    assert_eq!(
+        config.measurement_points.get(&10001).unwrap().point_id,
+        10001
+    );
+    assert_eq!(
+        config.measurement_points.get(&10001).unwrap().signal_name,
+        "Temperature"
+    );
 }
 
 #[test]
 fn test_multiple_points() {
     let mut config = create_test_channel_config();
 
-    // 添加多个不同的点位
+    // 添加多个不同的点位到不同的遥测类型
     for i in 1..=5 {
         let mut point = create_test_point();
-        point.point_id = 10000 + i;
+        point.point_id = i;
         point.signal_name = format!("Point_{}", i);
-        config.combined_points.push(point);
+
+        match i {
+            1..=2 => config.measurement_points.insert(point.point_id, point),
+            3..=4 => config.signal_points.insert(point.point_id, point),
+            _ => config.control_points.insert(point.point_id, point),
+        };
     }
 
-    assert_eq!(config.combined_points.len(), 5);
+    assert_eq!(config.measurement_points.len(), 2);
+    assert_eq!(config.signal_points.len(), 2);
+    assert_eq!(config.control_points.len(), 1);
 
-    for (i, point) in config.combined_points.iter().enumerate() {
-        assert_eq!(point.point_id, 10001 + i as u32);
-        assert_eq!(point.signal_name, format!("Point_{}", i + 1));
-    }
+    // 验证点位ID都是从1开始
+    assert!(config.measurement_points.contains_key(&1));
+    assert!(config.measurement_points.contains_key(&2));
+    assert!(config.signal_points.contains_key(&3));
+    assert!(config.signal_points.contains_key(&4));
+    assert!(config.control_points.contains_key(&5));
 }
 
 #[test]
@@ -196,7 +254,9 @@ fn test_config_validation() {
 
 #[test]
 fn test_data_types() {
-    let data_types = vec!["UINT16", "INT16", "UINT32", "INT32", "FLOAT32", "DOUBLE"];
+    let data_types = vec![
+        "UINT16", "INT16", "UINT32", "INT32", "FLOAT32", "DOUBLE", "bool",
+    ];
 
     for data_type in data_types {
         let mut point = create_test_point();
@@ -204,4 +264,50 @@ fn test_data_types() {
 
         assert_eq!(point.data_type, data_type);
     }
+}
+
+#[test]
+fn test_four_telemetry_separation() {
+    let mut config = create_test_channel_config();
+
+    // 创建不同类型的点位
+    let mut measurement_point = create_test_point();
+    measurement_point.point_id = 1;
+    measurement_point.telemetry_type = "Measurement".to_string();
+
+    let mut signal_point = create_test_signal_point();
+    signal_point.point_id = 1;
+    signal_point.telemetry_type = "Signal".to_string();
+
+    let mut control_point = create_test_point();
+    control_point.point_id = 1;
+    control_point.telemetry_type = "Control".to_string();
+    control_point.scaling = Some(ScalingInfo {
+        scale: 1.0,
+        offset: 0.0,
+        unit: None,
+        reverse: Some(true),
+    });
+
+    let mut adjustment_point = create_test_point();
+    adjustment_point.point_id = 1;
+    adjustment_point.telemetry_type = "Adjustment".to_string();
+
+    // 插入到不同的HashMap
+    config.measurement_points.insert(1, measurement_point);
+    config.signal_points.insert(1, signal_point);
+    config.control_points.insert(1, control_point);
+    config.adjustment_points.insert(1, adjustment_point);
+
+    // 验证四个HashMap相互独立，都可以有相同的点位ID
+    assert_eq!(config.measurement_points.len(), 1);
+    assert_eq!(config.signal_points.len(), 1);
+    assert_eq!(config.control_points.len(), 1);
+    assert_eq!(config.adjustment_points.len(), 1);
+
+    // 验证每种类型都有点位ID=1
+    assert!(config.measurement_points.contains_key(&1));
+    assert!(config.signal_points.contains_key(&1));
+    assert!(config.control_points.contains_key(&1));
+    assert!(config.adjustment_points.contains_key(&1));
 }

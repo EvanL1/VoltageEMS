@@ -4,6 +4,9 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
+/// 测点ID类型
+pub type PointId = u32;
+
 /// 时间范围
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TimeRange {
@@ -45,7 +48,7 @@ impl StandardFloat {
     pub fn from_redis(data: &str) -> Result<Self, String> {
         let value = data
             .parse::<f64>()
-            .map_err(|e| format!("Failed to parse StandardFloat: {}", e))?;
+            .map_err(|e| format!("Failed to parse StandardFloat: {e}"))?;
         Ok(Self::new(value))
     }
 }
@@ -64,7 +67,7 @@ impl From<f64> for StandardFloat {
 
 impl From<f32> for StandardFloat {
     fn from(value: f32) -> Self {
-        Self::new(value as f64)
+        Self::new(f64::from(value))
     }
 }
 
@@ -129,7 +132,7 @@ impl PointData {
         let value = StandardFloat::from_redis(parts[0])?;
         let timestamp = parts[1]
             .parse::<i64>()
-            .map_err(|e| format!("Failed to parse timestamp: {}", e))?;
+            .map_err(|e| format!("Failed to parse timestamp: {e}"))?;
 
         Ok(Self { value, timestamp })
     }
