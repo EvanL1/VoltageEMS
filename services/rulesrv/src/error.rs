@@ -69,9 +69,7 @@ pub enum RulesrvError {
     #[error("API error: {0}")]
     ApiError(String),
 
-    #[error("Voltage common error: {0}")]
-    VoltageCommonError(#[from] voltage_common::error::Error),
-
+    // Removed voltage_common dependency
     #[error("Internal error: {0}")]
     InternalError(#[from] anyhow::Error),
 }

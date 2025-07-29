@@ -16,12 +16,7 @@ pub use error::{ComSrvError, ErrorExt, Result};
 
 /// 规范化协议名称为标准格式（小写下划线）
 pub fn normalize_protocol_name(name: &str) -> String {
-    match name
-        .to_lowercase()
-        .replace("_", "")
-        .replace("-", "")
-        .as_str()
-    {
+    match name.to_lowercase().replace(['_', '-'], "").as_str() {
         "modbustcp" => "modbus_tcp".to_string(),
         "modbusrtu" => "modbus_rtu".to_string(),
         "iec60870" | "iec104" => "iec60870".to_string(),
@@ -57,7 +52,7 @@ mod tests {
         // Test Result type alias
         let result: Result<i32> = Ok(42);
         assert!(result.is_ok());
-        assert_eq!(result.unwrap(), 42);
+        assert_eq!(result.unwrap_or(0), 42);
 
         let error_result: Result<i32> = Err(ComSrvError::IoError("test io error".to_string()));
         assert!(error_result.is_err());
@@ -110,7 +105,7 @@ mod tests {
         // but we can verify the module exists by checking compilation
 
         // This test mainly serves as a compilation check for module structure
-        assert!(true, "Module structure is valid if this compiles");
+        // Module structure is valid if this compiles
     }
 
     #[test]
@@ -149,11 +144,11 @@ mod tests {
     #[tokio::test]
     async fn test_async_error_handling() {
         // Test error handling in async context
-        async fn failing_async_operation() -> Result<String> {
+        fn failing_async_operation() -> Result<String> {
             Err(ComSrvError::TimeoutError("async timeout".to_string()))
         }
 
-        let result = failing_async_operation().await;
+        let result = failing_async_operation();
         assert!(result.is_err());
 
         if let Err(error) = result {

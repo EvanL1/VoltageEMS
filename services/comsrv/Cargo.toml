@@ -1,6 +1,6 @@
 [package]
 name = "comsrv"
-version = "0.1.0"
+version = "0.0.1"
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
@@ -11,12 +11,11 @@ path = "src/lib.rs"
 
 [[bin]]
 name = "comsrv"
-path = "src/main.rs"
+path = "src/bin/comsrv.rs"
 
 # [[bin]]
 # name = "test_modbus"
 # path = "src/bin/test_modbus.rs"
-
 
 
 [dependencies]
@@ -25,6 +24,7 @@ voltage-libs = { path = "../../libs", features = ["redis"] }
 
 # Core async runtime
 tokio = { workspace = true }
+tokio-util = { workspace = true }
 async-trait = { workspace = true }
 futures = { workspace = true }
 
@@ -77,6 +77,11 @@ reqwest = { workspace = true }
 # Redis client
 redis = { workspace = true }
 
+# gRPC
+tonic = { workspace = true }
+prost = { workspace = true }
+tokio-stream = { workspace = true }
+
 # WebSocket and UUID dependencies removed - not currently used
 
 # Plugin system dependencies
@@ -84,13 +89,15 @@ semver = "1.0"
 regex = "1.10"
 
 # Industrial GPIO and hardware interfaces
-i2cdev = { version = "0.6", optional = true }  # I2C device support
-spidev = { version = "0.6", optional = true }  # SPI device support
+i2cdev = { version = "0.6", optional = true } # I2C device support
+spidev = { version = "0.6", optional = true } # SPI device support
 
 # Platform-specific dependencies
 [target.'cfg(target_os = "linux")'.dependencies]
-socketcan = { version = "3.0", optional = true }  # CAN bus support (Linux only)
-rppal = { version = "0.17", optional = true }  # Raspberry Pi GPIO (Linux only)
+rppal = { version = "0.17", optional = true } # Raspberry Pi GPIO (Linux only)
+
+[build-dependencies]
+tonic-build = "0.11"
 
 [dev-dependencies]
 tracing-test = "0.2"
@@ -98,8 +105,11 @@ tracing-test = "0.2"
 [features]
 default = ["modbus"]
 modbus = []
-can = ["socketcan"]
-iec60870 = []
-gpio = ["rppal"]  # GPIO support for embedded systems (Raspberry Pi)
-industrial-io = ["i2cdev", "spidev"]  # Industrial I/O support
-test-utils = []  # Enable mock implementations for testing
+gpio = ["rppal"]                     # GPIO support for embedded systems (Raspberry Pi)
+industrial-io = ["i2cdev", "spidev"] # Industrial I/O support
+test-utils = []                      # Enable mock implementations for testing
+
+[lints.clippy]
+cast-possible-truncation = "allow" # 例如: u64 as u32，当值不会超过u32范围时
+cast-possible-wrap = "allow"       # 例如: u64 as i64，用于时间戳转换
+cast-sign-loss = "allow"           # 例如: i64 as u64，当已确保值为非负时

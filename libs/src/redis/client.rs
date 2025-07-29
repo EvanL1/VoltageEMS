@@ -9,6 +9,15 @@ pub struct RedisClient {
     url: String,
 }
 
+impl std::fmt::Debug for RedisClient {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RedisClient")
+            .field("url", &self.url)
+            .field("conn", &"<ConnectionManager>")
+            .finish()
+    }
+}
+
 impl RedisClient {
     /// 创建新的客户端
     pub async fn new(url: &str) -> Result<Self> {
@@ -107,7 +116,7 @@ impl RedisClient {
             .arg(value)
             .query_async(&mut self.conn)
             .await
-            .map_err(|e| e.into())
+            .map_err(Into::into)
     }
 
     /// Hash 操作 - 获取字段
@@ -117,7 +126,7 @@ impl RedisClient {
             .arg(field)
             .query_async(&mut self.conn)
             .await
-            .map_err(|e| e.into())
+            .map_err(Into::into)
     }
 
     /// Hash 操作 - 获取多个字段
@@ -127,7 +136,7 @@ impl RedisClient {
             .arg(fields)
             .query_async(&mut self.conn)
             .await
-            .map_err(|e| e.into())
+            .map_err(Into::into)
     }
 
     /// Hash 操作 - 获取所有字段
@@ -139,7 +148,7 @@ impl RedisClient {
             .arg(key)
             .query_async(&mut self.conn)
             .await
-            .map_err(|e| e.into())
+            .map_err(Into::into)
     }
 
     /// 创建订阅连接
@@ -158,6 +167,77 @@ impl RedisClient {
             .arg(value)
             .query_async(&mut self.conn)
             .await
-            .map_err(|e| e.into())
+            .map_err(Into::into)
+    }
+
+    /// 加载 Lua 脚本并返回 SHA
+    pub async fn script_load(&mut self, script: &str) -> Result<String> {
+        redis::cmd("SCRIPT")
+            .arg("LOAD")
+            .arg(script)
+            .query_async(&mut self.conn)
+            .await
+            .map_err(Into::into)
+    }
+
+    /// 执行 Lua 脚本（通过 SHA）
+    pub async fn evalsha(
+        &mut self,
+        sha: &str,
+        keys: &[&str],
+        args: &[&str],
+    ) -> Result<redis::Value> {
+        let mut cmd = redis::cmd("EVALSHA");
+        cmd.arg(sha).arg(keys.len());
+
+        for key in keys {
+            cmd.arg(key);
+        }
+
+        for arg in args {
+            cmd.arg(arg);
+        }
+
+        cmd.query_async(&mut self.conn).await.map_err(Into::into)
+    }
+
+    /// 检查脚本是否存在
+    pub async fn script_exists(&mut self, shas: &[&str]) -> Result<Vec<bool>> {
+        redis::cmd("SCRIPT")
+            .arg("EXISTS")
+            .arg(shas)
+            .query_async(&mut self.conn)
+            .await
+            .map_err(Into::into)
+    }
+
+    /// 执行 Lua 脚本（直接执行）
+    pub async fn eval(
+        &mut self,
+        script: &str,
+        keys: &[&str],
+        args: &[&str],
+    ) -> Result<redis::Value> {
+        let mut cmd = redis::cmd("EVAL");
+        cmd.arg(script).arg(keys.len());
+
+        for key in keys {
+            cmd.arg(key);
+        }
+
+        for arg in args {
+            cmd.arg(arg);
+        }
+
+        cmd.query_async(&mut self.conn).await.map_err(Into::into)
+    }
+
+    /// 清空所有 Lua 脚本缓存
+    pub async fn script_flush(&mut self) -> Result<String> {
+        redis::cmd("SCRIPT")
+            .arg("FLUSH")
+            .query_async(&mut self.conn)
+            .await
+            .map_err(Into::into)
     }
 }

@@ -19,7 +19,7 @@ use crate::utils::error::Result;
 /// 协议插件元数据
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProtocolMetadata {
-    /// 唯一协议标识符 (如 "modbus_tcp", "iec60870")
+    /// 唯一协议标识符 (如 "`modbus_tcp`", "iec60870")
     pub id: String,
     /// 人类可读的协议名称
     pub name: String,
@@ -60,7 +60,7 @@ pub trait ProtocolPlugin: Send + Sync + Any {
     }
 
     /// 获取协议文档
-    fn documentation(&self) -> &str {
+    fn documentation(&self) -> &'static str {
         "No documentation available"
     }
 

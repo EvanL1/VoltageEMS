@@ -38,6 +38,7 @@ fixlog*
 **/test_*.yaml
 **/simple_test.*
 **/*_old.rs
+test-logs/
 
 # Dependencies
 **/node_modules/

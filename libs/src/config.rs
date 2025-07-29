@@ -81,7 +81,7 @@ impl Default for RedisConfig {
     }
 }
 
-/// InfluxDB 2.x 配置
+/// `InfluxDB` 2.x 配置
 #[cfg(feature = "influxdb")]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct InfluxConfig {

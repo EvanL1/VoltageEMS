@@ -1,0 +1,53 @@
+# comsrv主配置文件
+service:
+  name: "comsrv"
+  redis:
+    url: "redis://localhost:6379"
+  logging:
+    level: "debug"
+    console: true
+    file: "/opt/comsrv/logs/comsrv.log"
+
+# API配置
+api:
+  enabled: true
+  host: "0.0.0.0"
+  port: 3000
+
+# Redis配置
+redis:
+  enabled: true
+  url: "redis://redis:6379"
+  pool_size: 10
+
+# 日志配置
+logging:
+  level: "debug"
+  console: true
+  file: "/opt/comsrv/logs/comsrv.log"
+
+# 通道配置
+channels:
+  - id: 1001
+    name: "ModbusTCP Channel 1001"
+    protocol: "modbus_tcp"
+    enabled: true
+    parameters:
+      host: "localhost"
+      port: 502
+      timeout_ms: 1000
+    table_config:
+      # 四遥点表路径
+      four_remote_route: "ModbusTCP_CH1001"
+      four_remote_files:
+        measurement_file: "measurement.csv"
+        signal_file: "signal.csv"
+        adjustment_file: "adjustment.csv"
+        control_file: "control.csv"
+      # 协议映射路径
+      protocol_mapping_route: "ModbusTCP_CH1001/mappings"
+      protocol_mapping_file:
+        measurement_mapping: "modbus_measurement.csv"
+        signal_mapping: "modbus_signal.csv"
+        adjustment_mapping: "modbus_adjustment.csv"
+        control_mapping: "modbus_control.csv"

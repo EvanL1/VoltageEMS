@@ -1,8 +1,8 @@
 use crate::error::{NetSrvError, Result};
 use serde_json::Value;
 use tracing::{debug, error};
-use voltage_common::redis::RedisClient;
-use voltage_config::RedisConfig;
+use voltage_libs::redis::RedisClient;
+use crate::config::RedisConfig;
 
 use std::time::{Duration, Instant};
 use tokio::time;

@@ -17,7 +17,7 @@ pub struct ModbusPoint {
     pub function_code: u8,
     /// 寄存器地址
     pub register_address: u16,
-    /// 数据格式 (e.g., "float32_be", "uint16", "bool")
+    /// 数据格式 (e.g., "`float32_be`", "uint16", "bool")
     pub data_format: String,
     /// 读取寄存器数量 (e.g., 2 for float32)
     pub register_count: u16,

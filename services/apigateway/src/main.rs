@@ -1,58 +1,45 @@
-use actix_cors::Cors;
-use actix_web::{middleware, web, App, HttpServer};
-use env_logger::Env;
-use log::info;
+use axum::{
+    routing::{get, post},
+    Router,
+};
+use std::net::SocketAddr;
 use std::sync::Arc;
+use tower_http::cors::{Any, CorsLayer};
+use tracing::info;
 
 mod auth;
 mod config;
-mod config_client;
+mod direct_reader;
 mod error;
 mod handlers;
-mod realtime;
 mod redis_client;
+mod redis_wrapper;
 mod response;
 mod websocket;
 
-use auth::middleware::JwtAuthMiddleware;
 use config::Config;
-use config_client::ConfigClient;
+use direct_reader::DirectReader;
 use redis_client::RedisClient;
+use redis_wrapper::RedisWrapper;
 
-#[actix_web::main]
-async fn main() -> std::io::Result<()> {
-    // Initialize logger
-    env_logger::init_from_env(Env::default().default_filter_or("info"));
+#[derive(Clone)]
+pub struct AppState {
+    pub config: Arc<Config>,
+    pub redis_client: Arc<RedisClient>,
+    pub direct_reader: Arc<DirectReader>,
+    pub http_client: Arc<reqwest::Client>,
+}
 
-    // Initialize configuration client
-    let config_service_url =
-        std::env::var("CONFIG_SERVICE_URL").unwrap_or_else(|_| "http://localhost:8000".to_string());
-    let service_name = "apigateway";
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Initialize tracing
+    tracing_subscriber::fmt::init();
 
-    let config_client = Arc::new(ConfigClient::new(
-        config_service_url,
-        service_name.to_string(),
-    ));
+    // Load configuration from local file
+    let config = Arc::new(Config::load().expect("Failed to load configuration"));
 
-    // Fetch initial configuration from config service
-    let config = match config_client.fetch_config().await {
-        Ok(cfg) => Arc::new(cfg),
-        Err(e) => {
-            log::warn!(
-                "Failed to fetch config from service: {}, falling back to local config",
-                e
-            );
-            // Fallback to local configuration
-            Arc::new(Config::load().expect("Failed to load local configuration"))
-        }
-    };
-
-    let bind_addr = format!("{}:{}", config.server.host, config.server.port);
+    let bind_addr: SocketAddr = format!("{}:{}", config.server.host, config.server.port).parse()?;
     info!("Starting API Gateway on {}", bind_addr);
-
-    // Start configuration watch loop
-    let update_interval = std::time::Duration::from_secs(30);
-    config_client.start_watch_loop(update_interval).await;
 
     // Initialize Redis client
     let redis_client = Arc::new(
@@ -61,73 +48,76 @@ async fn main() -> std::io::Result<()> {
             .expect("Failed to connect to Redis"),
     );
 
+    // Initialize Redis wrapper for direct reader
+    let redis_wrapper = Arc::new(RedisWrapper::new(config.redis.url.clone()));
+    let direct_reader = Arc::new(DirectReader::new(redis_wrapper));
+
     // Create HTTP client for backend services
     let http_client = Arc::new(reqwest::Client::new());
 
-    let workers = config.server.workers;
-    let api_prefix = config.api.prefix.clone();
+    // Create app state
+    let app_state = AppState {
+        config: config.clone(),
+        redis_client: redis_client.clone(),
+        direct_reader: direct_reader.clone(),
+        http_client: http_client.clone(),
+    };
 
-    // Start HTTP server
-    HttpServer::new(move || {
-        let api_prefix = api_prefix.clone();
-        let cors = Cors::default()
-            .allowed_origin_fn(|origin, _req_head| {
-                origin.as_bytes().starts_with(b"http://localhost")
-            })
-            .allowed_methods(vec!["GET", "POST", "PUT", "DELETE", "OPTIONS"])
-            .allowed_headers(vec!["Content-Type", "Authorization"])
-            .max_age(3600);
+    // Build the application
+    let app = Router::new()
+        // Health check (no auth)
+        .route("/health", get(handlers::health_check))
+        .route("/health/detailed", get(handlers::detailed_health))
+        // API routes
+        .nest(
+            "/api",
+            Router::new()
+                // Auth routes (no auth required)
+                .route("/auth/login", post(handlers::login))
+                .route("/auth/refresh", post(handlers::refresh_token))
+                // Protected routes
+                .nest(
+                    "",
+                    Router::new()
+                        .route("/auth/logout", post(handlers::logout))
+                        .route("/auth/me", get(handlers::current_user))
+                        // Direct read endpoints
+                        .route("/v2/realtime/:type/:id", get(handlers::direct_read))
+                        .route("/v2/realtime/batch", post(handlers::batch_read))
+                        // Service proxy endpoints
+                        .route("/comsrv/*path", axum::routing::any(handlers::comsrv_proxy))
+                        .route("/modsrv/*path", axum::routing::any(handlers::modsrv_proxy))
+                        .route("/hissrv/*path", axum::routing::any(handlers::hissrv_proxy))
+                        .route("/netsrv/*path", axum::routing::any(handlers::netsrv_proxy))
+                        .route(
+                            "/alarmsrv/*path",
+                            axum::routing::any(handlers::alarmsrv_proxy),
+                        )
+                        .route(
+                            "/rulesrv/*path",
+                            axum::routing::any(handlers::rulesrv_proxy),
+                        )
+                        .layer(auth::middleware::auth_layer(config.auth.jwt_secret.clone())),
+                ),
+        )
+        // WebSocket endpoint (需要认证)
+        .nest(
+            "/ws",
+            Router::new()
+                .route("/realtime", get(websocket::ws_handler))
+                .layer(auth::middleware::auth_layer(config.auth.jwt_secret.clone())),
+        )
+        .layer(
+            CorsLayer::new()
+                .allow_origin(Any)
+                .allow_methods(Any)
+                .allow_headers(Any),
+        )
+        .with_state(app_state);
 
-        App::new()
-            .app_data(web::Data::new(config.clone()))
-            .app_data(web::Data::new(redis_client.clone()))
-            .app_data(web::Data::new(http_client.clone()))
-            .wrap(cors)
-            .wrap(middleware::Logger::default())
-            .service(
-                web::scope(&api_prefix)
-                    // Public endpoints (no auth required)
-                    .route("/auth/login", web::post().to(handlers::auth::login))
-                    .route(
-                        "/auth/refresh",
-                        web::post().to(handlers::auth::refresh_token),
-                    )
-                    .service(handlers::health::health_check)
-                    .service(handlers::health::detailed_health)
-                    // Real-time data endpoints (temporarily public for testing)
-                    .route("/realtime/channels", web::get().to(realtime::get_channels))
-                    .route(
-                        "/realtime/channels/{channel_id}/points",
-                        web::get().to(realtime::get_points),
-                    )
-                    .route(
-                        "/realtime/statistics",
-                        web::get().to(realtime::get_statistics),
-                    )
-                    // Protected endpoints (auth required)
-                    .service(
-                        web::scope("")
-                            .wrap(JwtAuthMiddleware)
-                            .route("/auth/logout", web::post().to(handlers::auth::logout))
-                            .route("/auth/me", web::get().to(handlers::auth::current_user))
-                            .service(web::scope("/comsrv").service(handlers::comsrv::proxy_handler))
-                            .service(web::scope("/modsrv").service(handlers::modsrv::proxy_handler))
-                            .service(web::scope("/hissrv").service(handlers::hissrv::proxy_handler))
-                            .service(web::scope("/netsrv").service(handlers::netsrv::proxy_handler))
-                            .service(
-                                web::scope("/alarmsrv").service(handlers::alarmsrv::proxy_handler),
-                            )
-                            .service(
-                                web::scope("/rulesrv").service(handlers::rulesrv::proxy_handler),
-                            ),
-                    ),
-            )
-            // WebSocket endpoint
-            .route("/ws/realtime", web::get().to(websocket::ws_handler))
-            .route("/health", web::get().to(handlers::health::simple_health))
-    })
-    .workers(workers)
-    .bind(&bind_addr)?
-    .run()
-    .await
+    // Run the server
+    let listener = tokio::net::TcpListener::bind(bind_addr).await?;
+    axum::serve(listener, app).await?;
+
+    Ok(())
 }

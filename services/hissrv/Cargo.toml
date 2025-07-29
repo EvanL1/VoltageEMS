@@ -1,6 +1,6 @@
 [package]
 name = "hissrv"
-version = "0.3.0"
+version = "0.0.1"
 edition = "2021"
 authors = ["Evan Liu <Evan.Liu@voltageenergy.com>"]
 description = "Simple Redis to InfluxDB data bridge service"
