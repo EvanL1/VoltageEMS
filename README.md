@@ -88,12 +88,10 @@ VoltageEMS使用Lua脚本进行特定的数据处理任务：
     └── 5分钟聚合：从1分钟数据二次聚合
 ```
 
-#### 其他Lua脚本
+#### 服务间数据同步
 ```lua
 -- scripts/
-├── comsrv_sync.lua      # 数据同步示例
-├── data_processor.lua   # 数据处理工具
-└── rule_engine.lua      # 规则引擎示例
+└── sync.lua             # comsrv与modsrv双向数据同步
 ```
 
 Lua脚本主要用于：

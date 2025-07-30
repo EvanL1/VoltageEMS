@@ -31,7 +31,7 @@ impl Default for LuaSyncConfig {
     fn default() -> Self {
         Self {
             enabled: false,
-            script_path: "scripts/comsrv_sync.lua".to_string(),
+            script_path: "scripts/sync.lua".to_string(),
             script_sha: None,
             batch_size: 100,
             retry_count: 3,
@@ -346,7 +346,7 @@ mod tests {
     fn test_sync_config_default() {
         let config = LuaSyncConfig::default();
         assert!(!config.enabled);
-        assert_eq!(config.script_path, "scripts/comsrv_sync.lua");
+        assert_eq!(config.script_path, "scripts/sync.lua");
         assert_eq!(config.batch_size, 100);
         assert_eq!(config.retry_count, 3);
         assert!(config.async_sync);

@@ -30,7 +30,7 @@ impl EdgeRedis {
         // 加载脚本并获取SHA
         let sha: String = redis::cmd("SCRIPT")
             .arg("LOAD")
-            .arg(include_str!("../../../scripts/edge_sync.lua"))
+            .arg(include_str!("../../../scripts/sync.lua"))
             .query_async(&mut self.conn)
             .await?;
 
@@ -82,7 +82,7 @@ impl EdgeRedis {
                 .await?
         } else {
             redis::cmd("EVAL")
-                .arg(include_str!("../../../scripts/edge_sync.lua"))
+                .arg(include_str!("../../../scripts/sync.lua"))
                 .arg(0)
                 .arg(&args)
                 .query_async(&mut self.conn)
@@ -126,7 +126,7 @@ impl EdgeRedis {
                 .await?
         } else {
             redis::cmd("EVAL")
-                .arg(include_str!("../../../scripts/edge_sync.lua"))
+                .arg(include_str!("../../../scripts/sync.lua"))
                 .arg(0)
                 .arg(&args)
                 .query_async(&mut self.conn)
@@ -147,7 +147,7 @@ impl EdgeRedis {
                 .await?
         } else {
             redis::cmd("EVAL")
-                .arg(include_str!("../../../scripts/edge_sync.lua"))
+                .arg(include_str!("../../../scripts/sync.lua"))
                 .arg(0)
                 .arg(&args)
                 .query_async(&mut self.conn)

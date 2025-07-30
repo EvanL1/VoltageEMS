@@ -1,6 +1,6 @@
--- 统一的数据同步脚本
--- 支持所有微服务间的数据同步
--- 兼容多种映射格式，支持灵活的数据路由
+-- 数据同步脚本
+-- 实现服务间的双向数据同步
+-- 映射格式: mapping:comsrv:channelID:type:pointID → "modsrv:modelID:pointName"
 
 local action = ARGV[1]
 

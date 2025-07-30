@@ -90,16 +90,18 @@ else
     echo -e "${RED}文件不存在${NC}"
 fi
 
-# 4. 保留兼容性：加载旧的 comsrv_sync.lua（如果存在）
-if [ -f "$LUA_SCRIPTS_DIR/comsrv_sync.lua" ]; then
-    echo -n "加载 comsrv_sync.lua (兼容性)... "
-    COMSRV_SYNC_SHA=$($REDIS_CMD SCRIPT LOAD "$(cat $LUA_SCRIPTS_DIR/comsrv_sync.lua)")
-    if [ -n "$COMSRV_SYNC_SHA" ]; then
-        $REDIS_CMD SET "script:comsrv_sync" "$COMSRV_SYNC_SHA" > /dev/null
-        echo -e "${GREEN}OK${NC} (SHA: ${COMSRV_SYNC_SHA:0:8}...)"
+# 4. 加载 sync.lua 脚本
+if [ -f "$LUA_SCRIPTS_DIR/sync.lua" ]; then
+    echo -n "加载 sync.lua... "
+    SYNC_SHA=$($REDIS_CMD SCRIPT LOAD "$(cat $LUA_SCRIPTS_DIR/sync.lua)")
+    if [ -n "$SYNC_SHA" ]; then
+        $REDIS_CMD SET "script:sync" "$SYNC_SHA" > /dev/null
+        echo -e "${GREEN}OK${NC} (SHA: ${SYNC_SHA:0:8}...)"
     else
         echo -e "${RED}失败${NC}"
     fi
+else
+    echo -e "${YELLOW}警告：sync.lua 文件不存在${NC}"
 fi
 
 # 初始化服务间映射
