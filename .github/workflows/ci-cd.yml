@@ -28,6 +28,11 @@ jobs:
         with:
           components: rustfmt, clippy
       
+      - name: Install Protoc
+        uses: arduino/setup-protoc@v3
+        with:
+          version: "25.x"
+      
       - name: Cache Cargo dependencies
         uses: actions/cache@v3
         with:
@@ -61,6 +66,11 @@ jobs:
       
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
+      
+      - name: Install Protoc
+        uses: arduino/setup-protoc@v3
+        with:
+          version: "25.x"
       
       - name: Cache Cargo dependencies
         uses: actions/cache@v3
