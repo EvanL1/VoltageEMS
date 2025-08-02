@@ -1,0 +1,18 @@
+# Clippy configuration
+
+# 允许混合的内联和非内联 format 参数
+# 这样既可以使用新语法，也可以保留旧语法
+allow-mixed-uninlined-format-args = true
+
+# 其他有用的配置
+# 设置认知复杂度阈值
+cognitive-complexity-threshold = 30
+
+# 设置函数参数数量阈值
+too-many-arguments-threshold = 8
+
+# 设置行数阈值
+too-many-lines-threshold = 200
+
+# 避免破坏导出的 API
+avoid-breaking-exported-api = true

@@ -48,7 +48,7 @@ jobs:
         run: cargo fmt --all -- --check
       
       - name: Run Clippy
-        run: cargo clippy --all-targets --all-features -- -D warnings
+        run: cargo clippy --all-targets --all-features -- -D warnings -A clippy::uninlined_format_args
       
       # 可选的严格检查（仅在特定分支或标签上运行）
       # - name: Run strict Clippy checks (optional)
