@@ -1,7 +1,7 @@
-//mod connection;  // Not used anymore
-//mod data_fetcher; // Old implementation, not used
-mod data_fetcher_new;
+mod data_fetcher;
+mod fetcher;
+mod function_client;
 
-//pub use connection::RedisConnection;
-//pub use data_fetcher::RedisDataFetcher;
-pub use data_fetcher_new::RedisDataFetcher as NewRedisDataFetcher;
+pub use data_fetcher::RedisDataFetcher;
+pub use fetcher::{OptimizedDataFetcher, RouteConfig, NetworkStats};
+pub use function_client::RedisFunctionClient;

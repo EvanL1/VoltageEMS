@@ -25,7 +25,7 @@ fn create_test_channel_config() -> ChannelConfig {
         parameters,
         logging: ChannelLoggingConfig::default(),
         table_config: None,
-        measurement_points: HashMap::new(),
+        telemetry_points: HashMap::new(),
         signal_points: HashMap::new(),
         control_points: HashMap::new(),
         adjustment_points: HashMap::new(),
@@ -50,7 +50,7 @@ fn create_test_polling_config() -> ModbusPollingConfig {
 fn test_telemetry_type_mapping() {
     // 测试遥测类型映射
     let telemetry_types = vec![
-        TelemetryType::Measurement,
+        TelemetryType::Telemetry,
         TelemetryType::Signal,
         TelemetryType::Control,
         TelemetryType::Adjustment,
@@ -59,7 +59,7 @@ fn test_telemetry_type_mapping() {
     for telemetry_type in telemetry_types {
         // 简单验证类型存在且可以使用
         let _type_str = match telemetry_type {
-            TelemetryType::Measurement => "m",
+            TelemetryType::Telemetry => "m",
             TelemetryType::Signal => "s",
             TelemetryType::Control => "c",
             TelemetryType::Adjustment => "a",
@@ -88,7 +88,7 @@ fn test_channel_config_creation() {
     assert_eq!(config.protocol, "modbus_tcp");
 
     // 验证四遥点位HashMap初始化
-    assert!(config.measurement_points.is_empty());
+    assert!(config.telemetry_points.is_empty());
     assert!(config.signal_points.is_empty());
     assert!(config.control_points.is_empty());
     assert!(config.adjustment_points.is_empty());

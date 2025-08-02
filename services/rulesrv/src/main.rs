@@ -6,16 +6,16 @@ mod error;
 mod redis;
 mod rules;
 
-use crate::api::ApiServer;
+use crate::api::{ApiServer, SimpleApiServer};
 use crate::config::Config;
-use crate::engine::RuleExecutor;
+use crate::engine::{RuleExecutor, SimpleRuleEngine};
 use crate::error::{Result, RulesrvError};
 use crate::redis::{RedisStore, RedisSubscriber};
 
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 use std::sync::Arc;
-use tracing::{error, info};
+use tracing::info;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -30,8 +30,11 @@ struct Args {
 
 #[derive(Debug, Subcommand)]
 enum Commands {
-    /// Run in service mode
+    /// Run in service mode (default: simple engine)
     Service,
+
+    /// Run in service mode with DAG engine
+    ServiceDag,
 
     /// Start API server only
     Api,
@@ -42,6 +45,12 @@ enum Commands {
     /// Test a specific rule
     Test {
         /// Rule ID to test
+        rule_id: String,
+    },
+
+    /// Execute a specific rule once (simple engine)
+    Execute {
+        /// Rule ID to execute
         rule_id: String,
     },
 }
@@ -68,6 +77,9 @@ async fn main() -> Result<()> {
     // Run command
     match args.command {
         Some(Commands::Service) | None => {
+            run_simple_service(&config).await?;
+        }
+        Some(Commands::ServiceDag) => {
             run_service(&config).await?;
         }
         Some(Commands::Api) => {
@@ -79,12 +91,46 @@ async fn main() -> Result<()> {
         Some(Commands::Test { rule_id }) => {
             test_rule(&config, &rule_id).await?;
         }
+        Some(Commands::Execute { rule_id }) => {
+            execute_simple_rule(&config, &rule_id).await?;
+        }
     }
 
     Ok(())
 }
 
-/// Run the rules service
+/// Run the simplified rules service
+async fn run_simple_service(config: &Config) -> Result<()> {
+    info!("Starting Simple Rules Service");
+
+    // Create Redis store
+    let store = Arc::new(RedisStore::new(&config.redis_url, None)?);
+
+    // Create simple rule engine
+    let engine = SimpleRuleEngine::new(store.clone());
+
+    // TODO: Add Redis subscriber for rule triggers
+    // For now, this runs as a simple service that executes rules on demand
+
+    info!(
+        "Simple Rules Service started, API available at http://0.0.0.0:{}",
+        config.service.api_port
+    );
+
+    // Start Simple API server
+    let api_server = SimpleApiServer::new(
+        engine,
+        store.clone(),
+        config.service.api_port,
+        config.api.clone(),
+    );
+
+    api_server.start().await?;
+
+    Ok(())
+}
+
+/// Run the traditional DAG rules service
 async fn run_service(config: &Config) -> Result<()> {
     info!("Starting Rules Service in service mode");
 
@@ -165,6 +211,40 @@ async fn test_rule(config: &Config, rule_id: &str) -> Result<()> {
 
     // TODO: Implement rule testing logic
     println!("Rule test not implemented yet");
+
+    Ok(())
+}
+
+/// Execute a specific rule using the simple engine
+async fn execute_simple_rule(config: &Config, rule_id: &str) -> Result<()> {
+    let store = Arc::new(RedisStore::new(&config.redis_url, None)?);
+    let mut engine = SimpleRuleEngine::new(store);
+
+    println!("Executing rule: {}", rule_id);
+
+    match engine.execute_rule(rule_id).await {
+        Ok(result) => {
+            println!("Rule execution completed:");
+            println!("  Execution ID: {}", result.execution_id);
+            println!("  Conditions met: {}", result.conditions_met);
+            println!("  Success: {}", result.success);
+            println!("  Duration: {}ms", result.duration_ms);
+
+            if !result.actions_executed.is_empty() {
+                println!("  Actions executed:");
+                for action in &result.actions_executed {
+                    println!("    - {}", action);
+                }
+            }
+
+            if let Some(error) = &result.error {
+                println!("  Error: {}", error);
+            }
+        }
+        Err(e) => {
+            println!("Rule execution failed: {}", e);
+        }
+    }
 
     Ok(())
 }

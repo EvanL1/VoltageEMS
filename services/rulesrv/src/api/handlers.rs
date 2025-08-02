@@ -244,7 +244,7 @@ pub async fn test_rule(
 
     let save_result = state.store.save_rule(&test_rule).await;
     if let Err(e) = save_result {
-        return handle_result::<Value>(Err(e.into()));
+        return handle_result::<Value>(Err(e));
     }
 
     // Execute test

@@ -1,6 +1,6 @@
-//! 配置类型定义
+//! Configuration type definitions
 //!
-//! 包含所有配置相关的类型定义
+//! Contains all configuration-related type definitions
 
 use crate::core::combase::CommandSubscriberConfig;
 use crate::core::sync::LuaSyncConfig;
@@ -8,163 +8,166 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::str::FromStr;
+use voltage_libs::config::utils::{get_global_log_level, get_global_redis_url};
 
 // ============================================================================
-// 应用配置
+// Application configuration
 // ============================================================================
 
-/// 应用配置根结构
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// Application configuration root structure
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct AppConfig {
-    /// 服务配置
+    /// Service configuration
+    #[serde(default)]
     pub service: ServiceConfig,
 
-    /// 通道配置列表
+    /// Channel configuration list
     pub channels: Vec<ChannelConfig>,
 }
 
-/// 服务配置
+/// Service configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ServiceConfig {
-    /// 服务名称
+    /// Service name
+    #[serde(default = "default_service_name")]
     pub name: String,
 
-    /// 服务版本
+    /// Service version
     pub version: Option<String>,
 
-    /// 服务描述
+    /// Service description
     pub description: Option<String>,
 
-    /// API配置
+    /// API configuration
     #[serde(default)]
     pub api: ApiConfig,
 
-    /// Redis配置
+    /// Redis configuration
     #[serde(default)]
     pub redis: RedisConfig,
 
-    /// 日志配置
+    /// Log configuration
     #[serde(default)]
     pub logging: LoggingConfig,
 
-    /// Lua 同步配置
+    /// Lua synchronization configuration
     #[serde(default)]
     pub lua_sync: LuaSyncConfig,
 
-    /// 命令订阅配置
+    /// Command subscription configuration
     #[serde(default)]
     pub command_subscriber: CommandSubscriberConfig,
 }
 
-/// API配置
+/// API configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ApiConfig {
-    /// 监听地址
+    /// Listen address
     #[serde(default = "default_api_host")]
     pub host: String,
 
-    /// 监听端口
+    /// Listen port
     #[serde(default = "default_api_port")]
     pub port: u16,
 
-    /// 工作线程数
+    /// Worker thread count
     #[serde(default = "default_workers")]
     pub workers: usize,
 }
 
-/// Redis配置
+/// Redis configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RedisConfig {
     /// Redis URL
     #[serde(default = "default_redis_url")]
     pub url: String,
 
-    /// 连接池大小
+    /// Connection pool size
     #[serde(default = "default_pool_size")]
     pub pool_size: u32,
 
-    /// 连接超时（毫秒）
+    /// Connection timeout (milliseconds)
     #[serde(default = "default_timeout")]
     pub timeout_ms: u64,
 
-    /// 是否启用
+    /// Whether enabled
     #[serde(default = "default_true")]
     pub enabled: bool,
 }
 
-/// 日志配置
+/// Log configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LoggingConfig {
-    /// 日志级别
+    /// Log level
     #[serde(default = "default_log_level")]
     pub level: String,
 
-    /// 日志格式
+    /// Log format
     #[serde(default = "default_log_format")]
     pub format: String,
 
-    /// 日志文件路径
+    /// Log file path
     pub file: Option<PathBuf>,
 
-    /// 是否输出到控制台
+    /// Whether to output to console
     #[serde(default = "default_true")]
     pub console: bool,
 
-    /// 日志轮转配置
+    /// Log rotation configuration
     #[serde(default)]
     pub rotation: LogRotationConfig,
 }
 
-/// 日志轮转配置
+/// Log rotation configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LogRotationConfig {
-    /// 轮转策略
+    /// Rotation strategy
     #[serde(default = "default_rotation_strategy")]
     pub strategy: String,
 
-    /// 最大文件大小（MB）
+    /// Maximum file size (MB)
     #[serde(default = "default_max_size")]
     pub max_size_mb: u64,
 
-    /// 保留文件数
+    /// Number of files to retain
     #[serde(default = "default_max_files")]
     pub max_files: u32,
 }
 
 // ============================================================================
-// 通道配置
+// Channel configuration
 // ============================================================================
 
-/// 通道配置
+/// Channel configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChannelConfig {
-    /// 通道ID
+    /// Channel ID
     pub id: u16,
 
-    /// 通道名称
+    /// Channel name
     pub name: String,
 
-    /// 描述
+    /// Description
     pub description: Option<String>,
 
-    /// 协议类型
+    /// Protocol type
     pub protocol: String,
 
-    /// 协议参数（通用HashMap存储）
+    /// Protocol parameters (generic HashMap storage)
     #[serde(default)]
     pub parameters: HashMap<String, serde_yaml::Value>,
 
-    /// 通道日志配置
+    /// Channel log configuration
     #[serde(default)]
     pub logging: ChannelLoggingConfig,
 
-    /// 表配置
+    /// Table configuration
     pub table_config: Option<TableConfig>,
 
-    // 四遥分离架构下，不再需要统一的points字段
-    /// 四遥点位映射 - 分别存储四种遥测类型
+    // Under the four-telemetry separated architecture, unified points field is no longer needed
+    /// Four-telemetry point mapping - stores four telemetry types separately
     #[serde(skip)]
-    pub measurement_points: HashMap<u32, CombinedPoint>,
+    pub telemetry_points: HashMap<u32, CombinedPoint>,
     #[serde(skip)]
     pub signal_points: HashMap<u32, CombinedPoint>,
     #[serde(skip)]
@@ -173,73 +176,118 @@ pub struct ChannelConfig {
     pub adjustment_points: HashMap<u32, CombinedPoint>,
 }
 
-/// 通道日志配置
+/// Channel log configuration
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ChannelLoggingConfig {
-    /// 是否启用
+    /// Whether enabled
     #[serde(default)]
     pub enabled: bool,
 
-    /// 日志级别
+    /// Log level
     pub level: Option<String>,
 
-    /// 日志文件
+    /// Log file
     pub file: Option<String>,
 
-    /// 是否包含协议细节
+    /// Whether to include protocol details
     #[serde(default)]
     pub protocol_details: bool,
 }
 
-/// 表配置
+/// Table configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TableConfig {
-    /// 四遥路径
+    /// Four-telemetry path
+    #[serde(default = "default_four_remote_route")]
     pub four_remote_route: String,
 
-    /// 四遥文件
+    /// Four-telemetry files
+    #[serde(default)]
     pub four_remote_files: FourRemoteFiles,
 
-    /// 协议映射路径
+    /// Protocol mapping path
+    #[serde(default = "default_protocol_mapping_route")]
     pub protocol_mapping_route: String,
 
-    /// 协议映射文件
+    /// Protocol mapping files
+    #[serde(default)]
     pub protocol_mapping_file: ProtocolMappingFiles,
 }
 
-/// 四遥文件配置
+impl Default for TableConfig {
+    fn default() -> Self {
+        Self {
+            four_remote_route: default_four_remote_route(),
+            four_remote_files: FourRemoteFiles::default(),
+            protocol_mapping_route: default_protocol_mapping_route(),
+            protocol_mapping_file: ProtocolMappingFiles::default(),
+        }
+    }
+}
+
+/// Four-telemetry files configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FourRemoteFiles {
-    /// 遥测文件
-    pub measurement_file: String,
+    /// Telemetry file
+    #[serde(default = "default_telemetry_file")]
+    pub telemetry_file: String,
 
-    /// 遥信文件
+    /// Signal file
+    #[serde(default = "default_signal_file")]
     pub signal_file: String,
 
-    /// 遥调文件
+    /// Adjustment file
+    #[serde(default = "default_adjustment_file")]
     pub adjustment_file: String,
 
-    /// 遥控文件
+    /// Control file
+    #[serde(default = "default_control_file")]
     pub control_file: String,
 }
 
-/// 协议映射文件配置
+impl Default for FourRemoteFiles {
+    fn default() -> Self {
+        Self {
+            telemetry_file: default_telemetry_file(),
+            signal_file: default_signal_file(),
+            adjustment_file: default_adjustment_file(),
+            control_file: default_control_file(),
+        }
+    }
+}
+
+/// Protocol mapping files configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProtocolMappingFiles {
-    /// 遥测映射文件
-    pub measurement_mapping: String,
+    /// Telemetry mapping file
+    #[serde(default = "default_telemetry_mapping")]
+    pub telemetry_mapping: String,
 
-    /// 遥信映射文件
+    /// Signal mapping file
+    #[serde(default = "default_signal_mapping")]
     pub signal_mapping: String,
 
-    /// 遥调映射文件
+    /// Adjustment mapping file
+    #[serde(default = "default_adjustment_mapping")]
     pub adjustment_mapping: String,
 
-    /// 遥控映射文件
+    /// Control mapping file
+    #[serde(default = "default_control_mapping")]
     pub control_mapping: String,
 }
 
-/// 合并的点位
+impl Default for ProtocolMappingFiles {
+    fn default() -> Self {
+        Self {
+            telemetry_mapping: default_telemetry_mapping(),
+            signal_mapping: default_signal_mapping(),
+            adjustment_mapping: default_adjustment_mapping(),
+            control_mapping: default_control_mapping(),
+        }
+    }
+}
+
+/// Combined point
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CombinedPoint {
     pub point_id: u32,
@@ -250,7 +298,7 @@ pub struct CombinedPoint {
     pub scaling: Option<ScalingInfo>,
 }
 
-/// 缩放信息
+/// Scaling information
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ScalingInfo {
     pub scale: f64,
@@ -260,12 +308,12 @@ pub struct ScalingInfo {
 }
 
 // ============================================================================
-// 协议配置
+// Protocol configuration
 // ============================================================================
 
-// 四遥分离架构下，不再需要UnifiedPointMapping，使用CombinedPoint代替
+// Under the four-telemetry separated architecture, UnifiedPointMapping is no longer needed, replaced with CombinedPoint
 
-/// 缩放参数
+/// Scaling parameters
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ScalingParams {
     pub scale: f64,
@@ -274,7 +322,7 @@ pub struct ScalingParams {
     pub reverse: Option<bool>,
 }
 
-/// 协议映射
+/// Protocol mapping
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProtocolMapping {
     pub point_id: u32,
@@ -282,20 +330,20 @@ pub struct ProtocolMapping {
     pub protocol_params: HashMap<String, String>,
 }
 
-/// 遥测类型枚举
+/// Telemetry type enumeration
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum TelemetryType {
-    /// 遥测 (YC)
-    #[serde(rename = "m")]
-    Measurement,
-    /// 遥信 (YX)
-    #[serde(rename = "s")]
+    /// Telemetry (YC)
+    #[serde(rename = "T")]
+    Telemetry,
+    /// Signal (YX)
+    #[serde(rename = "S")]
     Signal,
-    /// 遥控 (YK)
-    #[serde(rename = "c")]
+    /// Control (YK)
+    #[serde(rename = "C")]
     Control,
-    /// 遥调 (YT)
-    #[serde(rename = "a")]
+    /// Adjustment (YT)
+    #[serde(rename = "A")]
     Adjustment,
 }
 
@@ -304,18 +352,16 @@ impl std::str::FromStr for TelemetryType {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
-            "m" | "telemetry" | "Telemetry" | "measurement" | "Measurement" => {
-                Ok(TelemetryType::Measurement)
-            }
-            "s" | "signal" | "Signal" => Ok(TelemetryType::Signal),
-            "c" | "control" | "Control" => Ok(TelemetryType::Control),
-            "a" | "adjustment" | "Adjustment" => Ok(TelemetryType::Adjustment),
+            "T" | "telemetry" | "Telemetry" => Ok(TelemetryType::Telemetry),
+            "S" | "signal" | "Signal" => Ok(TelemetryType::Signal),
+            "C" | "control" | "Control" => Ok(TelemetryType::Control),
+            "A" | "adjustment" | "Adjustment" => Ok(TelemetryType::Adjustment),
             _ => Err(format!("Invalid remote type: {s}")),
         }
     }
 }
 
-/// 协议类型枚举
+/// Protocol type enumeration
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum ProtocolType {
     ModbusTcp,
@@ -347,15 +393,19 @@ impl std::str::FromStr for ProtocolType {
 }
 
 // ============================================================================
-// 默认值函数
+// Default value functions
 // ============================================================================
+
+fn default_service_name() -> String {
+    "comsrv".to_string()
+}
 
 fn default_api_host() -> String {
     "0.0.0.0".to_string()
 }
 
 fn default_api_port() -> u16 {
-    3000
+    8081 // Fixed port - ComSrv standard port
 }
 
 fn default_workers() -> usize {
@@ -363,7 +413,7 @@ fn default_workers() -> usize {
 }
 
 fn default_redis_url() -> String {
-    "redis://127.0.0.1:6379".to_string()
+    get_global_redis_url("COMSRV")
 }
 
 fn default_pool_size() -> u32 {
@@ -378,8 +428,50 @@ fn default_true() -> bool {
     true
 }
 
+// Default path configuration
+fn default_four_remote_route() -> String {
+    "four_remote".to_string()
+}
+
+fn default_protocol_mapping_route() -> String {
+    "protocol_mapping".to_string()
+}
+
+// Default file name configuration
+fn default_telemetry_file() -> String {
+    "telemetry.csv".to_string()
+}
+
+fn default_signal_file() -> String {
+    "signal.csv".to_string()
+}
+
+fn default_control_file() -> String {
+    "control.csv".to_string()
+}
+
+fn default_adjustment_file() -> String {
+    "adjustment.csv".to_string()
+}
+
+fn default_telemetry_mapping() -> String {
+    "telemetry_mapping.csv".to_string()
+}
+
+fn default_signal_mapping() -> String {
+    "signal_mapping.csv".to_string()
+}
+
+fn default_control_mapping() -> String {
+    "control_mapping.csv".to_string()
+}
+
+fn default_adjustment_mapping() -> String {
+    "adjustment_mapping.csv".to_string()
+}
+
 fn default_log_level() -> String {
-    "info".to_string()
+    get_global_log_level("COMSRV")
 }
 
 fn default_log_format() -> String {
@@ -399,7 +491,7 @@ fn default_max_files() -> u32 {
 }
 
 // ============================================================================
-// 实现
+// Implementation
 // ============================================================================
 
 impl Default for ApiConfig {
@@ -445,13 +537,28 @@ impl Default for LogRotationConfig {
     }
 }
 
+impl Default for ServiceConfig {
+    fn default() -> Self {
+        Self {
+            name: "comsrv".to_string(),
+            version: Some("0.0.1".to_string()),
+            description: Some("Communication Service".to_string()),
+            api: ApiConfig::default(),
+            redis: RedisConfig::default(),
+            logging: LoggingConfig::default(),
+            lua_sync: LuaSyncConfig::default(),
+            command_subscriber: CommandSubscriberConfig::default(),
+        }
+    }
+}
+
 impl ChannelConfig {
-    /// 获取参数值
+    /// Get parameter value
     pub fn get_parameter(&self, key: &str) -> Option<&serde_yaml::Value> {
         self.parameters.get(key)
     }
 
-    /// 获取字符串参数
+    /// Get string parameter
     pub fn get_string_parameter(&self, key: &str) -> Option<String> {
         self.parameters
             .get(key)
@@ -459,39 +566,39 @@ impl ChannelConfig {
             .map(std::string::ToString::to_string)
     }
 
-    /// 获取整数参数
+    /// Get integer parameter
     pub fn get_int_parameter(&self, key: &str) -> Option<i64> {
         self.parameters.get(key).and_then(serde_yaml::Value::as_i64)
     }
 
-    /// 获取布尔参数
+    /// Get boolean parameter
     pub fn get_bool_parameter(&self, key: &str) -> Option<bool> {
         self.parameters
             .get(key)
             .and_then(serde_yaml::Value::as_bool)
     }
 
-    /// 根据遥测类型获取点位
+    /// Get point by telemetry type
     pub fn get_point(
         &self,
         telemetry_type: TelemetryType,
         point_id: u32,
     ) -> Option<&CombinedPoint> {
         match telemetry_type {
-            TelemetryType::Measurement => self.measurement_points.get(&point_id),
+            TelemetryType::Telemetry => self.telemetry_points.get(&point_id),
             TelemetryType::Signal => self.signal_points.get(&point_id),
             TelemetryType::Control => self.control_points.get(&point_id),
             TelemetryType::Adjustment => self.adjustment_points.get(&point_id),
         }
     }
 
-    /// `添加点位到对应的HashMap`
+    /// Add point to corresponding HashMap
     pub fn add_point(&mut self, point: CombinedPoint) -> Result<(), String> {
         let telemetry_type = TelemetryType::from_str(&point.telemetry_type)
             .map_err(|e| format!("Invalid telemetry type: {e}"))?;
 
         let target_hashmap = match telemetry_type {
-            TelemetryType::Measurement => &mut self.measurement_points,
+            TelemetryType::Telemetry => &mut self.telemetry_points,
             TelemetryType::Signal => &mut self.signal_points,
             TelemetryType::Control => &mut self.control_points,
             TelemetryType::Adjustment => &mut self.adjustment_points,
@@ -501,21 +608,21 @@ impl ChannelConfig {
         Ok(())
     }
 
-    /// 获取所有点位数量
+    /// Get total points count
     pub fn get_total_points_count(&self) -> usize {
-        self.measurement_points.len()
+        self.telemetry_points.len()
             + self.signal_points.len()
             + self.control_points.len()
             + self.adjustment_points.len()
     }
 
-    /// 获取指定类型的所有点位
+    /// Get all points of specified type
     pub fn get_points_by_type(
         &self,
         telemetry_type: TelemetryType,
     ) -> &HashMap<u32, CombinedPoint> {
         match telemetry_type {
-            TelemetryType::Measurement => &self.measurement_points,
+            TelemetryType::Telemetry => &self.telemetry_points,
             TelemetryType::Signal => &self.signal_points,
             TelemetryType::Control => &self.control_points,
             TelemetryType::Adjustment => &self.adjustment_points,
@@ -531,7 +638,7 @@ mod tests {
     fn test_default_values() {
         let api = ApiConfig::default();
         assert_eq!(api.host, "0.0.0.0");
-        assert_eq!(api.port, 3000);
+        assert_eq!(api.port, 8081);
 
         let redis = RedisConfig::default();
         assert_eq!(redis.url, "redis://127.0.0.1:6379");
@@ -552,13 +659,13 @@ mod tests {
             parameters: HashMap::new(),
             logging: ChannelLoggingConfig::default(),
             table_config: None,
-            measurement_points: HashMap::new(),
+            telemetry_points: HashMap::new(),
             signal_points: HashMap::new(),
             control_points: HashMap::new(),
             adjustment_points: HashMap::new(),
         };
 
-        // 添加参数
+        // Add parameters
         channel.parameters.insert(
             "host".to_string(),
             serde_yaml::Value::String("192.168.1.1".to_string()),
@@ -571,7 +678,7 @@ mod tests {
             .parameters
             .insert("enabled".to_string(), serde_yaml::Value::Bool(true));
 
-        // 测试获取参数
+        // Test getting parameters
         assert_eq!(
             channel.get_string_parameter("host"),
             Some("192.168.1.1".to_string())

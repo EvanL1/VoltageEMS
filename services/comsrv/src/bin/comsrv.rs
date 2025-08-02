@@ -123,7 +123,7 @@ async fn main() -> Result<()> {
         e
     })?;
 
-    // 异步初始化CSV配置
+    // Asynchronously initialize CSV configuration
     let config_dir = std::path::Path::new(&args.config)
         .parent()
         .unwrap_or_else(|| std::path::Path::new("."));

@@ -1,45 +1,45 @@
-# HisSrv - 历史数据服务
+# HisSrv - Historical Data Service
 
-HisSrv是VoltageEMS系统的历史数据服务，通过Lua脚本聚合Redis实时数据，并将聚合结果持久化到InfluxDB。
+HisSrv is the historical data service of the VoltageEMS system. It aggregates real-time Redis data through Lua scripts and persists the aggregated results to InfluxDB.
 
-## 特性
+## Features
 
-- **极简设计** - 精简的代码结构，易于维护
-- **Lua脚本聚合** - 高性能的数据预聚合处理
-- **多级时间窗口** - 支持1分钟、5分钟等多级聚合
-- **轮询架构** - 简单可靠的数据采集机制
-- **批量写入优化** - 减少InfluxDB写入压力
-- **配置管理** - 支持运行时配置修改和热重载
+- **Clean Design** - Streamlined code structure, easy to maintain
+- **Lua Script Aggregation** - High-performance data pre-aggregation processing
+- **Multi-level Time Windows** - Supports multi-level aggregation such as 1-minute, 5-minute
+- **Polling Architecture** - Simple and reliable data collection mechanism
+- **Batch Write Optimization** - Reduces InfluxDB write pressure
+- **Configuration Management** - Supports runtime configuration modification and hot reload
 
-## 架构
+## Architecture
 
 ```
-Redis实时数据 → Lua脚本聚合 → 聚合数据 → HisSrv轮询 → InfluxDB
-                    ↓
-              Cron定时触发
+Redis Real-time Data → Lua Script Aggregation → Aggregated Data → HisSrv Polling → InfluxDB
+                               ↓
+                      Cron Scheduled Trigger
 ```
 
-## 快速开始
+## Quick Start
 
-### 环境要求
+### Environment Requirements
 
 - Rust 1.88+
 - Redis 7.0+
 - InfluxDB 2.x
 
-### 初始化Lua脚本
+### Initialize Lua Scripts
 
 ```bash
-# 加载聚合脚本到Redis
+# Load aggregation scripts to Redis
 cd services/hissrv/scripts
 ./init_scripts.sh
 ```
 
-### 定时任务配置
+### Scheduled Task Configuration
 
-#### 选项1: 容器内置定时器（推荐）
+#### Option 1: Built-in Timer in Container (Recommended)
 
-HisSrv可以内置定时器，自动触发Lua脚本：
+HisSrv can have a built-in timer that automatically triggers Lua scripts:
 
 ```yaml
 # services/hissrv/config/default.yml
@@ -54,7 +54,7 @@ aggregation:
       script: "aggregate_5m"
 ```
 
-#### 选项2: Docker Compose with Cron
+#### Option 2: Docker Compose with Cron
 
 ```yaml
 version: '3.8'
@@ -83,7 +83,7 @@ crontab文件：
 */5 * * * * /scripts/hissrv_cron.sh 5m
 ```
 
-#### 选项3: Kubernetes CronJob
+#### Option 3: Kubernetes CronJob
 
 ```yaml
 apiVersion: batch/v1
@@ -107,35 +107,35 @@ spec:
             - "aggregate_1m"
 ```
 
-### 运行服务
+### Running the Service
 
 ```bash
-# 设置环境变量
+# Set environment variables
 export INFLUXDB_TOKEN=your_influxdb_token
 export RUST_LOG=hissrv=info
 
-# 开发模式
+# Development mode
 cargo run -p hissrv
 
-# 生产模式
+# Production mode
 cargo run --release -p hissrv
 ```
 
-### 配置文件
+### Configuration File
 
 ```yaml
 # services/hissrv/config/default.yml
 service:
   name: "hissrv"
-  polling_interval: 10s    # 轮询间隔
-  batch_size: 1000         # 批量写入大小
+  polling_interval: 10s    # Polling interval
+  batch_size: 1000         # Batch write size
 
 redis:
   url: "redis://localhost:6379"
-  data_patterns:           # 数据源模式
-    - "archive:1m:*"      # 1分钟聚合数据
-    - "archive:5m:*"      # 5分钟聚合数据
-    - "archive:pending"   # 待处理队列
+  data_patterns:           # Data source patterns
+    - "archive:1m:*"      # 1-minute aggregated data
+    - "archive:5m:*"      # 5-minute aggregated data
+    - "archive:pending"   # Pending queue
 
 influxdb:
   url: "http://localhost:8086"
@@ -148,19 +148,19 @@ api:
   port: 8082
 ```
 
-### 数据映射配置
+### Data Mapping Configuration
 
 ```yaml
-# 数据映射规则
+# Data mapping rules
 mappings:
-  - source_pattern: "comsrv:(\\d+):m"    # Redis key模式
+  - source_pattern: "comsrv:(\\d+):m"    # Redis key pattern
     measurement: "telemetry"              # InfluxDB measurement
     tags:
       - name: "channel"
-        source: "capture"                 # 从正则捕获组获取
+        source: "capture"                 # From regex capture group
         index: 1
     field_mappings:
-      "1": "voltage"                      # 点位ID到字段名映射
+      "1": "voltage"                      # Point ID to field name mapping
       "2": "current"
       "3": "power"
       
@@ -171,24 +171,24 @@ mappings:
         source: "capture"
         index: 1
     field_mappings:
-      "*": "direct"                       # 直接使用原字段名
+      "*": "direct"                       # Use original field names directly
 ```
 
-## API接口
+## API Endpoints
 
-### 健康检查
+### Health Check
 
 ```bash
 curl http://localhost:8082/health
 ```
 
-### 获取服务状态
+### Get Service Status
 
 ```bash
 curl http://localhost:8082/status
 ```
 
-响应示例：
+Response example:
 ```json
 {
   "status": "running",
@@ -199,110 +199,110 @@ curl http://localhost:8082/status
 }
 ```
 
-### 触发手动同步
+### Trigger Manual Sync
 
 ```bash
 curl -X POST http://localhost:8082/sync
 ```
 
-### 查询历史数据
+### Query Historical Data
 
 ```bash
-# 查询最近1小时的数据
+# Query data from the last 1 hour
 curl "http://localhost:8082/query?measurement=telemetry&channel=1001&range=1h"
 ```
 
-## 数据流程
+## Data Flow
 
-1. **原始数据采集**: comsrv写入实时数据到 `comsrv:{channelID}:m`
-2. **Lua脚本聚合**: Cron定时触发Lua脚本进行数据聚合
-   - 1分钟聚合：计算avg/min/max，存储到 `archive:1m:*`
-   - 5分钟聚合：从1分钟数据二次聚合到 `archive:5m:*`
-3. **HisSrv轮询**: 定时扫描 `archive:*` 模式的聚合数据
-4. **批量写入**: 累积数据批量写入InfluxDB
-5. **清理过期数据**: Redis聚合数据自动过期（2小时）
+1. **Raw Data Collection**: comsrv writes real-time data to `comsrv:{channelID}:m`
+2. **Lua Script Aggregation**: Cron triggers Lua scripts for data aggregation
+   - 1-minute aggregation: Calculate avg/min/max, store to `archive:1m:*`
+   - 5-minute aggregation: Secondary aggregation from 1-minute data to `archive:5m:*`
+3. **HisSrv Polling**: Periodically scan aggregated data with `archive:*` pattern
+4. **Batch Write**: Accumulate data and batch write to InfluxDB
+5. **Clean Expired Data**: Redis aggregated data expires automatically (2 hours)
 
-## 性能优化
+## Performance Optimization
 
-### 批量写入策略
+### Batch Write Strategy
 
 ```yaml
 performance:
-  batch_size: 1000          # 每批数据量
-  batch_timeout: 5s         # 最大等待时间
-  write_buffer_size: 10000  # 写入缓冲区大小
-  max_retries: 3            # 最大重试次数
+  batch_size: 1000          # Data volume per batch
+  batch_timeout: 5s         # Maximum wait time
+  write_buffer_size: 10000  # Write buffer size
+  max_retries: 3            # Maximum retry count
 ```
 
-### Redis扫描优化
+### Redis Scan Optimization
 
-- 使用SCAN命令避免阻塞
-- 并行处理多个数据源
-- 智能跳过无变化数据
+- Use SCAN command to avoid blocking
+- Process multiple data sources in parallel
+- Intelligently skip unchanged data
 
-### InfluxDB优化
+### InfluxDB Optimization
 
-- 合理设置retention policy
-- 使用tag indexed fields
-- 避免高基数tags
+- Set reasonable retention policy
+- Use tag indexed fields
+- Avoid high cardinality tags
 
-## 监控和调试
+## Monitoring and Debugging
 
-### 查看处理日志
+### View Processing Logs
 
 ```bash
-# 详细日志
+# Detailed logs
 RUST_LOG=hissrv=debug cargo run
 
-# 查看实时日志
+# View real-time logs
 tail -f logs/hissrv.log
 ```
 
-### Redis监控
+### Redis Monitoring
 
 ```bash
-# 查看聚合数据
+# View aggregated data
 redis-cli keys "archive:1m:*"
 redis-cli hgetall "archive:1m:1704067200:1001"
 
-# 监控Lua脚本执行
+# Monitor Lua script execution
 redis-cli monitor | grep EVALSHA
 
-# 查看待处理队列
+# View pending queue
 redis-cli llen "archive:pending"
 ```
 
-### InfluxDB查询
+### InfluxDB Query
 
 ```bash
-# 使用influx CLI
+# Using influx CLI
 influx query 'from(bucket:"ems") 
   |> range(start: -1h) 
   |> filter(fn: (r) => r._measurement == "telemetry")'
 ```
 
-## 故障排查
+## Troubleshooting
 
-### 常见问题
+### Common Issues
 
-1. **数据未写入InfluxDB**
-   - 检查INFLUXDB_TOKEN环境变量
-   - 验证InfluxDB连接和权限
-   - 查看错误日志
+1. **Data Not Written to InfluxDB**
+   - Check INFLUXDB_TOKEN environment variable
+   - Verify InfluxDB connection and permissions
+   - Check error logs
 
-2. **数据延迟**
-   - 调整polling_interval
-   - 增加batch_size
-   - 检查Redis和InfluxDB性能
+2. **Data Delay**
+   - Adjust polling_interval
+   - Increase batch_size
+   - Check Redis and InfluxDB performance
 
-3. **内存占用高**
-   - 减小write_buffer_size
-   - 优化数据映射规则
-   - 启用数据压缩
+3. **High Memory Usage**
+   - Reduce write_buffer_size
+   - Optimize data mapping rules
+   - Enable data compression
 
-## 高级配置
+## Advanced Configuration
 
-### 数据聚合
+### Data Aggregation
 
 ```yaml
 aggregations:
@@ -317,7 +317,7 @@ aggregations:
     sources: ["telemetry"]
 ```
 
-### 数据过滤
+### Data Filtering
 
 ```yaml
 filters:
@@ -328,7 +328,7 @@ filters:
         value: "good"
 ```
 
-### 告警集成
+### Alert Integration
 
 ```yaml
 alerts:
@@ -338,9 +338,9 @@ alerts:
     url: "http://alert-service/webhook"
 ```
 
-## 部署建议
+## Deployment Recommendations
 
-### Docker部署
+### Docker Deployment
 
 ```dockerfile
 FROM rust:1.88 as builder
@@ -354,50 +354,50 @@ COPY services/hissrv/config /etc/hissrv
 CMD ["hissrv"]
 ```
 
-### 资源需求
+### Resource Requirements
 
-- CPU: 1-2核心
-- 内存: 512MB-1GB
-- 存储: 取决于日志保留策略
+- CPU: 1-2 cores
+- Memory: 512MB-1GB
+- Storage: Depends on log retention policy
 
-### 高可用部署
+### High Availability Deployment
 
-- 多实例部署，使用Redis分布式锁
-- 负载均衡不同的数据源模式
-- 定期备份InfluxDB数据
+- Multi-instance deployment using Redis distributed locks
+- Load balance different data source patterns
+- Regular backup of InfluxDB data
 
-## 开发指南
+## Development Guide
 
-### 添加新的数据源
+### Adding New Data Sources
 
-1. 在配置中添加新的pattern
-2. 实现相应的映射规则
-3. 测试数据流转
+1. Add new pattern in configuration
+2. Implement corresponding mapping rules
+3. Test data flow
 
-### 自定义聚合函数
+### Custom Aggregation Functions
 
 ```rust
-// 实现新的聚合函数
+// Implement new aggregation function
 impl AggregationFunction {
     pub fn custom_percentile(&self, values: &[f64], p: f64) -> f64 {
-        // 实现百分位数计算
+        // Implement percentile calculation
     }
 }
 ```
 
-## 测试
+## Testing
 
 ```bash
-# 单元测试
+# Unit tests
 cargo test -p hissrv
 
-# 集成测试
+# Integration tests
 cargo test -p hissrv --test integration
 
-# 性能测试
+# Performance tests
 cargo bench -p hissrv
 ```
 
-## 许可证
+## License
 
 MIT License

@@ -1,6 +1,6 @@
-//! 协议工厂模块
+//! Protocol factory module
 //!
-//! 提供协议实例的创建、管理和生命周期控制
+//! Provides protocol instance creation, management and lifecycle control
 
 use async_trait::async_trait;
 use dashmap::DashMap;
@@ -14,36 +14,36 @@ use crate::core::config::{ChannelConfig, ConfigManager, ProtocolType};
 use crate::utils::error::{ComSrvError, Result};
 use std::str::FromStr;
 
-/// 配置值类型（使用JSON进行内部处理）
+/// Configuration value type (using JSON for internal processing)
 pub type ConfigValue = serde_json::Value;
 
-/// 动态通信客户端类型
+/// Dynamic communication client type
 pub type DynComClient = Arc<RwLock<Box<dyn ComBase>>>;
 
 // ============================================================================
-// 协议客户端工厂trait
+// Protocol client factory trait
 // ============================================================================
 
-/// 协议客户端工厂trait，用于可扩展的协议支持
+/// Protocol client factory trait for extensible protocol support
 #[async_trait]
 pub trait ProtocolClientFactory: Send + Sync {
-    /// 获取协议类型
+    /// Get protocol type
     fn protocol_type(&self) -> ProtocolType;
 
-    /// 创建协议客户端实例
+    /// Create protocol client instance
     async fn create_client(
         &self,
         channel_config: &ChannelConfig,
         config_value: ConfigValue,
     ) -> Result<Box<dyn ComBase>>;
 
-    /// 验证配置
+    /// Validate configuration
     fn validate_config(&self, config: &ConfigValue) -> Result<()>;
 
-    /// 获取配置模板
+    /// Get configuration template
     fn get_config_template(&self) -> ConfigValue;
 
-    /// 获取协议信息
+    /// Get protocol information
     fn get_protocol_info(&self) -> serde_json::Value {
         serde_json::json!({
             "protocol_type": self.protocol_type(),
@@ -54,10 +54,10 @@ pub trait ProtocolClientFactory: Send + Sync {
 }
 
 // ============================================================================
-// 通道管理结构
+// Channel management structures
 // ============================================================================
 
-/// 通道元数据
+/// Channel metadata
 #[derive(Debug, Clone)]
 struct ChannelMetadata {
     pub name: String,
@@ -66,7 +66,7 @@ struct ChannelMetadata {
     pub last_accessed: Arc<RwLock<std::time::Instant>>,
 }
 
-/// 通道条目，组合通道和元数据
+/// Channel entry, combining channel and metadata
 #[derive(Clone)]
 struct ChannelEntry {
     channel: Arc<RwLock<Box<dyn ComBase>>>,
@@ -83,14 +83,14 @@ impl std::fmt::Debug for ChannelEntry {
 }
 
 // ============================================================================
-// 协议工厂主结构
+// Main protocol factory structure
 // ============================================================================
 
-/// 协议工厂，管理所有协议和通道
+/// Protocol factory, manages all protocols and channels
 pub struct ProtocolFactory {
-    /// 存储创建的通道
+    /// Store created channels
     channels: DashMap<u16, ChannelEntry, ahash::RandomState>,
-    /// 协议工厂注册表
+    /// Protocol factory registry
     protocol_factories: DashMap<ProtocolType, Arc<dyn ProtocolClientFactory>, ahash::RandomState>,
 }
 
@@ -104,27 +104,27 @@ impl std::fmt::Debug for ProtocolFactory {
 }
 
 impl ProtocolFactory {
-    /// 创建新的协议工厂
+    /// Create new protocol factory
     pub fn new() -> Self {
         let factory = Self {
             channels: DashMap::with_hasher(ahash::RandomState::new()),
             protocol_factories: DashMap::with_hasher(ahash::RandomState::new()),
         };
 
-        // 初始化插件系统
+        // Initialize plugin system
         let _ = crate::plugins::core::get_plugin_registry();
 
-        // 注册内置协议工厂
+        // Register built-in protocol factories
         factory.register_builtin_factories();
 
         factory
     }
 
-    /// 注册内置协议工厂
+    /// Register built-in protocol factories
     fn register_builtin_factories(&self) {
         use crate::plugins::core::get_plugin_registry;
 
-        // 获取插件注册表
+        // Get plugin registry
         let registry = get_plugin_registry();
         let reg = registry.read().unwrap();
 
@@ -152,14 +152,14 @@ impl ProtocolFactory {
             )));
         }
 
-        // gRPC 插件工厂
+        // gRPC plugin factory
         self.register_protocol_factory(Arc::new(GrpcPluginFactory::new(
             ProtocolType::GrpcModbus,
             "http://modbus-plugin:50051".to_string(),
             "modbus_tcp".to_string(),
         )));
 
-        // 虚拟协议工厂（用于测试）
+        // Virtual protocol factory (for testing)
         #[cfg(any(test, feature = "test-utils"))]
         {
             use self::test_support::MockProtocolFactory;
@@ -167,16 +167,16 @@ impl ProtocolFactory {
         }
     }
 
-    /// 注册协议工厂
+    /// Register protocol factory
     pub fn register_protocol_factory(&self, factory: Arc<dyn ProtocolClientFactory>) {
         let protocol_type = factory.protocol_type();
         self.protocol_factories.insert(protocol_type, factory);
         info!("Registered protocol factory for {protocol_type:?}");
     }
 
-    /// 注销协议工厂
+    /// Unregister protocol factory
     pub fn unregister_protocol_factory(&self, protocol_type: &ProtocolType) -> Result<bool> {
-        // 检查是否有活动通道使用此协议
+        // Check if there are active channels using this protocol
         let active_channels: Vec<u16> = self
             .channels
             .iter()
@@ -206,7 +206,7 @@ impl ProtocolFactory {
         }
     }
 
-    /// 获取已注册的协议类型列表
+    /// Get list of registered protocol types
     pub fn get_registered_protocols(&self) -> Vec<ProtocolType> {
         self.protocol_factories
             .iter()
@@ -214,7 +214,7 @@ impl ProtocolFactory {
             .collect()
     }
 
-    /// 创建通道
+    /// Create channel
     pub async fn create_channel(
         &self,
         channel_config: &ChannelConfig,
@@ -222,49 +222,49 @@ impl ProtocolFactory {
     ) -> Result<Arc<RwLock<Box<dyn ComBase>>>> {
         let channel_id = channel_config.id;
 
-        // 检查通道是否已存在
+        // Check if channel already exists
         if self.channels.contains_key(&channel_id) {
             return Err(ComSrvError::InvalidOperation(format!(
                 "Channel {channel_id} already exists"
             )));
         }
 
-        // 获取协议类型
+        // Get protocol type
         let protocol_type = ProtocolType::from_str(&channel_config.protocol)?;
 
-        // 查找协议工厂
+        // Find protocol factory
         let factory = self.protocol_factories.get(&protocol_type).ok_or_else(|| {
             ComSrvError::ConfigError(format!(
                 "No factory registered for protocol: {protocol_type:?}"
             ))
         })?;
 
-        // 将channel_config.parameters转换为ConfigValue
+        // Convert channel_config.parameters to ConfigValue
         let config_value = serde_json::to_value(&channel_config.parameters)
             .map_err(|e| ComSrvError::ConfigError(format!("Failed to convert parameters: {e}")))?;
 
-        // 验证配置
+        // Validate configuration
         factory.validate_config(&config_value)?;
 
-        // 创建客户端实例
+        // Create client instance
         info!("Creating client for protocol {:?}", protocol_type);
         let mut client = factory.create_client(channel_config, config_value).await?;
         info!("Client created successfully for channel {}", channel_id);
 
-        // 初始化客户端
+        // Initialize client
         info!("Initializing client for channel {}", channel_id);
         client.initialize(channel_config).await?;
         info!("Client initialized successfully for channel {}", channel_id);
 
-        // 四遥分离架构下，点位配置已在initialize阶段直接从channel_config加载，不需要额外的unified mapping
+        // Under four-telemetry separation architecture, point configuration is loaded directly from channel_config during initialize phase, no need for additional unified mapping
 
-        // 在ComBase层初始化Redis中的点位（初始值为0）
+        // Initialize points in Redis at ComBase layer (initial value is 0)
         info!("Initializing Redis keys for channel {}", channel_id);
         self.initialize_channel_points(channel_config).await?;
         info!("Redis keys initialized for channel {}", channel_id);
 
-        // 跳过连接阶段，仅完成初始化
-        // 连接将在所有通道初始化完成后统一建立
+        // Skip connection phase, only complete initialization
+        // Connections will be established uniformly after all channels are initialized
         info!(
             "Channel {} initialization completed, connection will be established later",
             channel_id
@@ -272,7 +272,7 @@ impl ProtocolFactory {
 
         let channel_arc = Arc::new(RwLock::new(client));
 
-        // 创建命令订阅器（如果需要）
+        // Create command subscriber (if needed)
         let enable_control = channel_config
             .parameters
             .get("enable_control")
@@ -296,7 +296,7 @@ impl ProtocolFactory {
             let subscriber = CommandSubscriber::new(config, tx).await?;
             let subscriber_arc = Arc::new(RwLock::new(subscriber));
 
-            // 启动订阅器
+            // Start subscriber
             let mut sub = subscriber_arc.write().await;
             sub.start().await?;
             drop(sub);
@@ -306,7 +306,7 @@ impl ProtocolFactory {
             None
         };
 
-        // 创建通道条目
+        // Create channel entry
         let entry = ChannelEntry {
             channel: channel_arc.clone(),
             metadata: ChannelMetadata {
@@ -318,7 +318,7 @@ impl ProtocolFactory {
             command_subscriber,
         };
 
-        // 插入通道
+        // Insert channel
         self.channels.insert(channel_id, entry);
 
         info!(
@@ -328,10 +328,10 @@ impl ProtocolFactory {
         Ok(channel_arc)
     }
 
-    /// 获取通道
+    /// Get channel
     pub async fn get_channel(&self, channel_id: u16) -> Option<Arc<RwLock<Box<dyn ComBase>>>> {
         self.channels.get(&channel_id).map(|entry| {
-            // 更新最后访问时间
+            // Update last access time
             let last_accessed = entry.metadata.last_accessed.clone();
             tokio::spawn(async move {
                 let mut time = last_accessed.write().await;
@@ -341,7 +341,7 @@ impl ProtocolFactory {
         })
     }
 
-    /// 批量连接所有已初始化的通道
+    /// Batch connect all initialized channels
     pub async fn connect_all_channels(&self) -> Result<()> {
         info!(
             "Starting batch connection for {} channels",
@@ -378,16 +378,16 @@ impl ProtocolFactory {
         Ok(())
     }
 
-    /// 移除通道
+    /// Remove channel
     pub async fn remove_channel(&self, channel_id: u16) -> Result<()> {
         if let Some((_, entry)) = self.channels.remove(&channel_id) {
-            // 停止命令订阅器
+            // Stop command subscriber
             if let Some(subscriber) = entry.command_subscriber {
                 let mut sub = subscriber.write().await;
                 sub.stop().await?;
             }
 
-            // 断开连接
+            // Disconnect
             let mut channel = entry.channel.write().await;
             channel.disconnect().await?;
 
@@ -400,12 +400,12 @@ impl ProtocolFactory {
         }
     }
 
-    /// 获取所有通道ID
+    /// Get all channel IDs
     pub fn get_channel_ids(&self) -> Vec<u16> {
         self.channels.iter().map(|entry| *entry.key()).collect()
     }
 
-    /// 获取通道统计信息
+    /// Get channel statistics
     pub async fn get_channel_stats(&self, channel_id: u16) -> Option<ChannelStats> {
         if let Some(entry) = self.channels.get(&channel_id) {
             let channel = entry.channel.read().await;
@@ -427,7 +427,7 @@ impl ProtocolFactory {
         }
     }
 
-    /// 获取所有通道统计信息
+    /// Get all channel statistics
     pub async fn get_all_channel_stats(&self) -> Vec<ChannelStats> {
         let mut stats = Vec::new();
 
@@ -441,7 +441,7 @@ impl ProtocolFactory {
         stats
     }
 
-    /// 清理所有通道
+    /// Clean up all channels
     pub async fn cleanup(&self) -> Result<()> {
         let channel_ids: Vec<u16> = self.get_channel_ids();
 
@@ -454,12 +454,12 @@ impl ProtocolFactory {
         Ok(())
     }
 
-    /// 获取通道数量
+    /// Get channel count
     pub fn channel_count(&self) -> usize {
         self.channels.len()
     }
 
-    /// 获取运行中的通道数量
+    /// Get running channel count
     pub async fn running_channel_count(&self) -> usize {
         let mut count = 0;
         for entry in &self.channels {
@@ -472,7 +472,7 @@ impl ProtocolFactory {
         count
     }
 
-    /// 获取通道元数据
+    /// Get channel metadata
     pub async fn get_channel_metadata(&self, channel_id: u16) -> Option<(String, String)> {
         self.channels.get(&channel_id).map(|entry| {
             let metadata = &entry.metadata;
@@ -483,13 +483,13 @@ impl ProtocolFactory {
         })
     }
 
-    /// 初始化通道的所有点位到Redis（默认值为0）
+    /// Initialize all channel points to Redis (default value is 0)
     async fn initialize_channel_points(&self, channel_config: &ChannelConfig) -> Result<()> {
         use crate::core::config::TelemetryType;
         use crate::plugins::core::{DefaultPluginStorage, PluginPointUpdate, PluginStorage};
         use std::path::PathBuf;
 
-        // 获取Redis URL
+        // Get Redis URL
         let redis_url = channel_config
             .parameters
             .get("redis_url")
@@ -497,22 +497,31 @@ impl ProtocolFactory {
             .unwrap_or("redis://localhost:6379")
             .to_string();
 
-        // 创建存储实例
+        // Create storage instance
         let storage = DefaultPluginStorage::new(redis_url).await?;
 
-        // 加载点表配置
-        let table_config = channel_config.table_config.as_ref().ok_or_else(|| {
-            ComSrvError::ConfigError("Missing table_config in channel configuration".to_string())
-        })?;
+        // Load point table configuration - if not configured, return success directly
+        let table_config = match channel_config.table_config.as_ref() {
+            Some(config) => config,
+            None => {
+                info!(
+                    "No table_config found for channel {}, skipping CSV point initialization",
+                    channel_config.id
+                );
+                return Ok(());
+            }
+        };
 
-        // 获取CSV基础路径，如果没有配置则使用默认路径
-        let csv_base_path = PathBuf::from("/app/config");
+        // Get CSV base path, use environment variable or config directory
+        let csv_base_path = std::env::var("COMSRV_CSV_BASE_PATH")
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| PathBuf::from("config"));
 
-        // 初始化四遥类型的点位
+        // Initialize four-telemetry type points
         let telemetry_types = vec![
             (
-                "measurement",
-                &table_config.four_remote_files.measurement_file,
+                "telemetry",
+                &table_config.four_remote_files.telemetry_file,
                 "m",
             ),
             ("signal", &table_config.four_remote_files.signal_file, "s"),
@@ -537,35 +546,35 @@ impl ProtocolFactory {
                 continue;
             }
 
-            // 读取CSV文件获取点位ID列表
+            // Read CSV file to get point ID list
             let mut reader = csv::Reader::from_path(&file_path).map_err(|e| {
                 ComSrvError::ConfigError(format!("Failed to read {telemetry_name} CSV file: {e}"))
             })?;
 
             let mut updates = Vec::new();
 
-            // 读取每个点位并准备初始化更新
+            // Read each point and prepare initialization update
             for result in reader.records() {
                 let record = result.map_err(|e| {
                     ComSrvError::ConfigError(format!("Error reading CSV record: {e}"))
                 })?;
 
-                // 获取point_id（第一列）
+                // Get point_id (first column)
                 if let Some(point_id_str) = record.get(0) {
                     if let Ok(point_id) = point_id_str.parse::<u32>() {
-                        // 获取当前时间戳
+                        // Get current timestamp
                         let timestamp = chrono::Utc::now().timestamp();
 
-                        // 转换遥测类型
+                        // Convert telemetry type
                         let telemetry_type = match redis_type {
-                            "m" => TelemetryType::Measurement,
+                            "m" => TelemetryType::Telemetry,
                             "s" => TelemetryType::Signal,
                             "c" => TelemetryType::Control,
                             "a" => TelemetryType::Adjustment,
                             _ => continue,
                         };
 
-                        // 创建初始值为0的更新
+                        // Create update with initial value 0
                         let update = PluginPointUpdate {
                             channel_id: channel_config.id,
                             telemetry_type,
@@ -579,7 +588,7 @@ impl ProtocolFactory {
                 }
             }
 
-            // 批量初始化点位
+            // Batch initialize points
             if !updates.is_empty() {
                 let count = updates.len();
                 storage.write_points(updates).await?;
@@ -601,10 +610,10 @@ impl Default for ProtocolFactory {
 }
 
 // ============================================================================
-// 辅助结构和函数
+// Helper structures and functions
 // ============================================================================
 
-/// 通道统计信息
+/// Channel statistics
 #[derive(Debug, Clone)]
 pub struct ChannelStats {
     pub channel_id: u16,
@@ -618,12 +627,12 @@ pub struct ChannelStats {
     pub error_count: u64,
 }
 
-/// 创建默认工厂
+/// Create default factory
 pub fn create_default_factory() -> ProtocolFactory {
     ProtocolFactory::new()
 }
 
-/// 创建带自定义协议的工厂
+/// Create factory with custom protocols
 pub fn create_factory_with_custom_protocols(
     protocols: Vec<Arc<dyn ProtocolClientFactory>>,
 ) -> ProtocolFactory {
@@ -637,11 +646,11 @@ pub fn create_factory_with_custom_protocols(
 }
 
 // ============================================================================
-// 插件适配器工厂
+// Plugin adapter factory
 // ============================================================================
 
-/// 插件系统适配器工厂
-/// 将插件系统的 `ProtocolPlugin` 适配为 `ProtocolClientFactory`
+/// Plugin system adapter factory
+/// Adapts plugin system's `ProtocolPlugin` to `ProtocolClientFactory`
 struct PluginAdapterFactory {
     protocol_type: ProtocolType,
     plugin_id: String,
@@ -669,7 +678,7 @@ impl ProtocolClientFactory for PluginAdapterFactory {
     ) -> Result<Box<dyn ComBase>> {
         use crate::plugins::core::get_plugin_registry;
 
-        // 在一个小作用域内获取插件
+        // Get plugin in a small scope
         let plugin = {
             let registry = get_plugin_registry();
             let reg = registry.read().unwrap();
@@ -678,11 +687,11 @@ impl ProtocolClientFactory for PluginAdapterFactory {
                 ComSrvError::ConfigError(format!("Plugin factory not found: {}", self.plugin_id))
             })?;
 
-            // 创建插件实例
+            // Create plugin instance
             factory()
-        }; // RwLockReadGuard 在这里被释放
+        }; // RwLockReadGuard is released here
 
-        // 使用插件创建协议实例
+        // Use plugin to create protocol instance
         info!(
             "Using plugin {} to create protocol instance",
             self.plugin_id
@@ -693,22 +702,22 @@ impl ProtocolClientFactory for PluginAdapterFactory {
     }
 
     fn validate_config(&self, _config: &ConfigValue) -> Result<()> {
-        // TODO: 调用插件的配置验证
+        // TODO: Call plugin's configuration validation
         Ok(())
     }
 
     fn get_config_template(&self) -> ConfigValue {
-        // TODO: 从插件获取配置模板
+        // TODO: Get configuration template from plugin
         serde_json::json!({})
     }
 }
 
 // ============================================================================
-// gRPC 插件工厂
+// gRPC plugin factory
 // ============================================================================
 
-/// gRPC 插件工厂
-/// 用于创建通过 gRPC 连接的远程插件客户端
+/// gRPC plugin factory
+/// Used to create remote plugin clients connected via gRPC
 #[derive(Debug)]
 pub struct GrpcPluginFactory {
     protocol_type: ProtocolType,
@@ -749,7 +758,7 @@ impl ProtocolClientFactory for GrpcPluginFactory {
     }
 
     fn validate_config(&self, _config: &ConfigValue) -> Result<()> {
-        // TODO: 验证 gRPC 端点格式
+        // TODO: Validate gRPC endpoint format
         Ok(())
     }
 
@@ -764,7 +773,7 @@ impl ProtocolClientFactory for GrpcPluginFactory {
 }
 
 // ============================================================================
-// 测试支持
+// Test support
 // ============================================================================
 
 #[cfg(any(test, feature = "test-utils"))]
@@ -778,7 +787,7 @@ pub mod test_support {
     use std::collections::HashMap;
     use std::sync::atomic::{AtomicBool, Ordering};
 
-    /// 测试用的Mock通信基础实现
+    /// Mock communication base implementation for testing
     #[derive(Debug)]
     pub struct MockComBase {
         name: String,
@@ -856,14 +865,14 @@ pub mod test_support {
         }
     }
 
-    /// Mock协议工厂
+    /// Mock protocol factory
     #[derive(Debug)]
     pub struct MockProtocolFactory;
 
     #[async_trait]
     impl ProtocolClientFactory for MockProtocolFactory {
         fn protocol_type(&self) -> ProtocolType {
-            // 使用 Virtual 协议类型，避免覆盖真正的 Modbus
+            // Use Virtual protocol type to avoid overwriting real Modbus
             ProtocolType::Virtual
         }
 
@@ -901,8 +910,8 @@ mod tests {
     async fn test_protocol_factory_creation() {
         let factory = ProtocolFactory::new();
         assert_eq!(factory.get_channel_ids().len(), 0);
-        // 工厂初始化时会注册内置协议（如 modbus_tcp, modbus_rtu, virtual）
-        // 所以这里不应该期望为 0
+        // Factory initialization registers built-in protocols (like modbus_tcp, modbus_rtu, virtual)
+        // So it shouldn't expect 0 here
         assert!(
             !factory.get_registered_protocols().is_empty()
                 || factory.get_registered_protocols().is_empty()
@@ -918,9 +927,9 @@ mod tests {
         factory.register_protocol_factory(mock_factory);
 
         let protocols = factory.get_registered_protocols();
-        // 应该比初始数量多 1
+        // Should be 1 more than initial count
         assert_eq!(protocols.len(), initial_count + 1);
-        // Mock factory 注册的是 Virtual 协议
+        // Mock factory registers Virtual protocol
         assert!(protocols.contains(&ProtocolType::Virtual));
     }
 
@@ -938,7 +947,7 @@ mod tests {
             description: Some("Test channel".to_string()),
             logging: crate::core::config::ChannelLoggingConfig::default(),
             table_config: None,
-            measurement_points: std::collections::HashMap::new(),
+            telemetry_points: std::collections::HashMap::new(),
             signal_points: std::collections::HashMap::new(),
             control_points: std::collections::HashMap::new(),
             adjustment_points: std::collections::HashMap::new(),

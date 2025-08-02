@@ -231,7 +231,7 @@ pub async fn control_channel(
     Ok(Json(ApiResponse::success(result)))
 }
 
-/// Send control command (遥控)
+/// Send control command (remote control)
 pub async fn send_control(
     State(state): State<AppState>,
     Path(channel_id): Path<u16>,
@@ -258,7 +258,7 @@ pub async fn send_control(
     }
 }
 
-/// Send adjustment command (遥调)
+/// Send adjustment command (remote adjustment)
 pub async fn send_adjustment(
     State(state): State<AppState>,
     Path(channel_id): Path<u16>,
@@ -290,14 +290,14 @@ pub fn create_api_routes(factory: Arc<RwLock<ProtocolFactory>>) -> Router {
     let state = AppState::new(factory);
 
     Router::new()
-        // 服务管理
+        // Service management
         .route("/api/status", get(get_service_status))
         .route("/api/health", get(health_check))
-        // 通道管理
+        // Channel management
         .route("/api/channels", get(get_all_channels))
         .route("/api/channels/{id}/status", get(get_channel_status))
         .route("/api/channels/{id}/control", post(control_channel))
-        // 控制命令（简化版）
+        // Control commands (simplified version)
         .route("/api/control/{channel_id}", post(send_control))
         .route("/api/adjustment/{channel_id}", post(send_adjustment))
         .with_state(state)

@@ -75,26 +75,37 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 // Auth routes (no auth required)
                 .route("/auth/login", post(handlers::login))
                 .route("/auth/refresh", post(handlers::refresh_token))
-                // Protected routes
-                .nest(
-                    "",
+                // Protected routes - merged instead of nested
+                .merge(
                     Router::new()
                         .route("/auth/logout", post(handlers::logout))
                         .route("/auth/me", get(handlers::current_user))
                         // Direct read endpoints
-                        .route("/v2/realtime/:type/:id", get(handlers::direct_read))
+                        .route("/v2/realtime/{type}/{id}", get(handlers::direct_read))
                         .route("/v2/realtime/batch", post(handlers::batch_read))
                         // Service proxy endpoints
-                        .route("/comsrv/*path", axum::routing::any(handlers::comsrv_proxy))
-                        .route("/modsrv/*path", axum::routing::any(handlers::modsrv_proxy))
-                        .route("/hissrv/*path", axum::routing::any(handlers::hissrv_proxy))
-                        .route("/netsrv/*path", axum::routing::any(handlers::netsrv_proxy))
                         .route(
-                            "/alarmsrv/*path",
+                            "/comsrv/{*path}",
+                            axum::routing::any(handlers::comsrv_proxy),
+                        )
+                        .route(
+                            "/modsrv/{*path}",
+                            axum::routing::any(handlers::modsrv_proxy),
+                        )
+                        .route(
+                            "/hissrv/{*path}",
+                            axum::routing::any(handlers::hissrv_proxy),
+                        )
+                        .route(
+                            "/netsrv/{*path}",
+                            axum::routing::any(handlers::netsrv_proxy),
+                        )
+                        .route(
+                            "/alarmsrv/{*path}",
                             axum::routing::any(handlers::alarmsrv_proxy),
                         )
                         .route(
-                            "/rulesrv/*path",
+                            "/rulesrv/{*path}",
                             axum::routing::any(handlers::rulesrv_proxy),
                         )
                         .layer(auth::middleware::auth_layer(config.auth.jwt_secret.clone())),

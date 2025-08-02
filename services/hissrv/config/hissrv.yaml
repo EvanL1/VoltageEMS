@@ -1,42 +1,42 @@
-# hissrv 配置文件 - 极简轮询模式
-# 专为边端设备设计的历史数据归档服务
+# hissrv configuration file - default polling mode
+# Historical data archival service designed for edge devices
 
-# 服务配置
+# Service configuration
 service:
   name: "hissrv"
-  polling_interval: 10s     # 轮询间隔
-  enable_api: true          # 启用配置管理 API
-  api_port: 8082            # API 服务端口
+  polling_interval: 10s     # Polling interval
+  enable_api: true          # Enable configuration management API
+  api_port: 8082            # API service port
 
-# Redis 配置
+# Redis configuration
 redis:
   url: "redis://localhost:6379"
   data_keys:
-    # 从 comsrv 获取实时测量数据
+    # Get real-time measurement data from comsrv
     - pattern: "comsrv:*:m"
       type: "hash"
     
-    # 从 modsrv 获取计算后的数据
+    # Get calculated data from modsrv
     - pattern: "modsrv:*:measurement"
       type: "hash"
 
-# InfluxDB 配置
+# InfluxDB configuration
 influxdb:
   url: "http://localhost:8086"
   org: "voltage"
   bucket: "ems"
-  token: "${INFLUXDB_TOKEN}"    # 从环境变量读取
-  batch_size: 1000              # 批量写入大小
-  write_timeout: 30s            # 写入超时
+  token: "${INFLUXDB_TOKEN}"    # Read from environment variable
+  batch_size: 1000              # Batch write size
+  write_timeout: 30s            # Write timeout
 
-# 数据映射规则
+# Data mapping rules
 mappings:
-  # comsrv 实时测量数据映射
+  # comsrv real-time measurement data mapping
   - source: "comsrv:*:m"
     measurement: "raw_measurements"
     tags:
       - type: "extract"
-        field: "channel"       # 从 key 中提取 channel ID
+        field: "channel"       # Extract channel ID from key
       - type: "static"
         value: "source=comsrv"
     fields:
@@ -45,12 +45,12 @@ mappings:
       - name: "point_id"
         field_type: "string"
   
-  # modsrv 计算数据映射
+  # modsrv calculated data mapping
   - source: "modsrv:*:measurement"
     measurement: "calculated_measurements"
     tags:
       - type: "extract"
-        field: "model"         # 从 key 中提取 model name
+        field: "model"         # Extract model name from key
       - type: "static"
         value: "source=modsrv"
     fields:
@@ -59,7 +59,7 @@ mappings:
       - name: "field_name"
         field_type: "string"
 
-# 示例环境变量：
+# Example environment variables:
 # export INFLUXDB_TOKEN=your_token_here
 # export HISSRV_REDIS_URL=redis://password@redis-server:6379
 # export RUST_LOG=hissrv=info

@@ -5,10 +5,10 @@
 
 pub mod plugin;
 
-// 重新导出插件
+// Re-export plugin
 pub use plugin::VirtualPlugin as VirtPlugin;
 
-// 导出创建函数
+// Export create function
 pub fn create_plugin() -> Box<dyn crate::plugins::traits::ProtocolPlugin> {
     Box::new(VirtPlugin::new())
 }
@@ -79,7 +79,7 @@ impl ComBase for VirtualProtocol {
     }
 
     fn is_connected(&self) -> bool {
-        true // 虚拟协议始终连接
+        true // Virtual protocol always connected
     }
 
     async fn get_status(&self) -> ChannelStatus {
@@ -97,7 +97,7 @@ impl ComBase for VirtualProtocol {
     }
 
     async fn initialize(&mut self, _channel_config: &ChannelConfig) -> Result<()> {
-        // 初始化存储
+        // Initialize storage
         let storage = DefaultPluginStorage::from_env().await?;
         *self.storage.lock().await = Some(Arc::new(storage) as Arc<dyn PluginStorage>);
         Ok(())
@@ -148,7 +148,7 @@ impl ComBase for VirtualProtocol {
                         let _ = storage
                             .write_point(
                                 channel_id,
-                                &crate::core::config::TelemetryType::Measurement,
+                                &crate::core::config::TelemetryType::Telemetry,
                                 i as u32 + 1,
                                 value,
                             )
@@ -266,7 +266,7 @@ mod tests {
             parameters: HashMap::new(),
             logging: Default::default(),
             table_config: None,
-            measurement_points: HashMap::new(),
+            telemetry_points: HashMap::new(),
             signal_points: HashMap::new(),
             control_points: HashMap::new(),
             adjustment_points: HashMap::new(),

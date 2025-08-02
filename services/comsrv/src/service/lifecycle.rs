@@ -1,6 +1,6 @@
-//! 服务生命周期管理
+//! Service lifecycle management
 //!
-//! 提供服务启动、停止和维护任务的管理功能
+//! Provides management functions for service startup, shutdown, and maintenance tasks
 
 use crate::core::combase::factory::ProtocolFactory;
 use crate::core::config::ConfigManager;
@@ -132,10 +132,10 @@ pub async fn start_communication_service(
         successful_channels, failed_channels
     );
 
-    // 等待短暂时间确保所有通道初始化完成
+    // Wait briefly to ensure all channels are initialized
     tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
 
-    // 第二阶段：批量建立所有通道的连接
+    // Phase 2: Establish connections for all channels in batch
     info!("Starting connection phase for all initialized channels...");
     let factory_guard = factory.read().await;
     match factory_guard.connect_all_channels().await {
@@ -144,7 +144,7 @@ pub async fn start_communication_service(
         }
         Err(e) => {
             error!("Some channel connections failed: {}", e);
-            // 连接失败不应阻止服务启动，继续运行
+            // Connection failure should not prevent service startup, continue running
         }
     }
     drop(factory_guard);

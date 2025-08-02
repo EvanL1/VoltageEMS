@@ -33,8 +33,6 @@ pub trait ActionHandler: Send + Sync {
 
 /// Context for rule execution
 pub struct ExecutionContext {
-    /// Device status cache
-    device_status: HashMap<String, Value>,
     /// Variables storage for rule execution
     variables: HashMap<String, Value>,
     /// Data store for persistence and device interaction
@@ -49,7 +47,6 @@ impl ExecutionContext {
     /// Create a new execution context
     pub fn new(store: Arc<RedisStore>) -> Self {
         Self {
-            device_status: HashMap::new(),
             variables: HashMap::new(),
             store,
             action_handlers: Vec::new(),
@@ -796,9 +793,9 @@ async fn execute_node(
                     match context.execute_action("device_control", &config).await {
                         Ok(result) => Ok(result),
                         Err(e) => {
-                            // Fall back to legacy implementation if handler doesn't work
+                            // Fall back to default implementation if handler doesn't work
                             warn!(
-                                "Action handler failed: {}, falling back to legacy implementation",
+                                "Action handler failed: {}, falling back to default implementation",
                                 e
                             );
                             context
@@ -807,7 +804,7 @@ async fn execute_node(
                         }
                     }
                 } else {
-                    // Use legacy implementation directly
+                    // Use default implementation directly
                     context
                         .execute_device_action(device_id, operation, &parameters)
                         .await
@@ -958,18 +955,15 @@ impl RulePostProcessor for LoggingPostProcessor {
 pub struct NotificationPostProcessor {
     /// Notification threshold in milliseconds
     threshold_ms: u128,
-    /// Redis key prefix
-    key_prefix: String,
     // /// Redis connection
     // redis: Mutex<Option<RedisConnection>>,
 }
 
 impl NotificationPostProcessor {
     /// Create a new notification post-processor
-    pub fn new(threshold_ms: u128, key_prefix: &str) -> Self {
+    pub fn new(threshold_ms: u128, _key_prefix: &str) -> Self {
         Self {
             threshold_ms,
-            key_prefix: key_prefix.to_string(),
             // redis: Mutex::new(None),
         }
     }
@@ -991,7 +985,7 @@ impl RulePostProcessor for NotificationPostProcessor {
     async fn process(&self, rule_id: &str, result: &RuleExecutionResult) -> Result<()> {
         // Only send notifications for slow rule executions or failures
         if result.duration_ms > self.threshold_ms || result.status == "failed" {
-            let notification = json!({
+            let _notification = json!({
                 "rule_id": rule_id,
                 "timestamp": result.timestamp,
                 "duration_ms": result.duration_ms,

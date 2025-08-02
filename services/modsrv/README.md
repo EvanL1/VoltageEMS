@@ -1,45 +1,45 @@
-# ModSrv - 设备模型计算引擎
+# ModSrv - Device Model Computation Engine
 
-ModSrv是VoltageEMS系统的核心计算引擎，负责执行基于DAG的实时数据计算和设备模型管理。
+ModSrv is the core computation engine of the VoltageEMS system, responsible for executing real-time data calculations based on DAG and device model management.
 
-## 特性
+## Features
 
-- **DAG计算引擎** - 支持复杂的数据流计算图
-- **设备模型系统** - 统一的设备抽象和管理
-- **实时数据处理** - 毫秒级计算延迟
-- **内置函数库** - sum、avg、min、max、scale等
-- **Redis集成** - 高性能数据存储和发布
+- **DAG Computation Engine** - Supports complex data flow computation graphs
+- **Device Model System** - Unified device abstraction and management
+- **Real-time Data Processing** - Millisecond-level computation latency
+- **Built-in Function Library** - sum, avg, min, max, scale, etc.
+- **Redis Integration** - High-performance data storage and publishing
 
-## 架构
+## Architecture
 
 ```
-Redis Hash (comsrv数据) → ModSrv计算引擎 → Redis Hash (计算结果)
-                            ↓
-                        告警触发 → AlarmSrv
-                        规则触发 → RuleSrv
+Redis Hash (comsrv data) → ModSrv Engine → Redis Hash (results)
+                               ↓
+                        Alarm Trigger → AlarmSrv
+                        Rule Trigger → RuleSrv
 ```
 
-## 快速开始
+## Quick Start
 
-### 环境要求
+### Environment Requirements
 
 - Rust 1.88+
 - Redis 7.0+
 
-### 运行服务
+### Running the Service
 
 ```bash
-# 开发模式
+# Development mode
 cargo run -p modsrv
 
-# 生产模式
+# Production mode
 cargo run --release -p modsrv
 
-# 指定日志级别
+# Specify log level
 RUST_LOG=modsrv=debug cargo run -p modsrv
 ```
 
-### 配置文件
+### Configuration File
 
 ```yaml
 # services/modsrv/config/default.yml
@@ -56,27 +56,27 @@ api:
 
 models:
   - id: "power_meter_demo"
-    name: "演示电表模型"
-    description: "用于演示的简单电表监控模型"
+    name: "Demo Power Meter Model"
+    description: "Simple power meter monitoring model for demonstration"
     monitoring:
       voltage_a:
-        description: "A相电压"
+        description: "Phase A voltage"
         unit: "V"
       current_a:
-        description: "A相电流"
+        description: "Phase A current"
         unit: "A"
       power:
-        description: "有功功率"
+        description: "Active power"
         unit: "kW"
     control:
       main_switch:
-        description: "主开关"
+        description: "Main switch"
       power_limit:
-        description: "功率限制设定"
+        description: "Power limit setting"
         unit: "kW"
 ```
 
-### 点位映射
+### Point Mapping
 
 ```json
 // services/modsrv/mappings/power_meter_demo.json
@@ -84,7 +84,7 @@ models:
   "monitoring": {
     "voltage_a": {
       "channel": 1001,
-      "point": 1,      // 注意：点位ID从1开始
+      "point": 1,      // Note: Point IDs start from 1
       "type": "m"
     },
     "current_a": {
@@ -96,34 +96,34 @@ models:
   "control": {
     "main_switch": {
       "channel": 1001,
-      "point": 1,      // 控制点也从1开始
+      "point": 1,      // Control points also start from 1
       "type": "c"
     }
   }
 }
 ```
 
-## API接口
+## API Endpoints
 
-### 健康检查
+### Health Check
 
 ```bash
 curl http://localhost:8092/health
 ```
 
-### 获取模型列表
+### Get Model List
 
 ```bash
 curl http://localhost:8092/models
 ```
 
-### 获取模型数据
+### Get Model Data
 
 ```bash
 curl http://localhost:8092/models/power_meter_demo
 ```
 
-### 发送控制命令
+### Send Control Command
 
 ```bash
 curl -X POST http://localhost:8092/models/power_meter_demo/control/main_switch \
@@ -131,140 +131,140 @@ curl -X POST http://localhost:8092/models/power_meter_demo/control/main_switch \
   -d '{"value": 1}'
 ```
 
-## DAG计算示例
+## DAG Computation Example
 
 ```rust
-// 内部计算逻辑示例
+// Internal computation logic example
 let dag = DAGBuilder::new()
-    .add_node("voltage", Source::Redis("comsrv:1001:m", "1"))
-    .add_node("current", Source::Redis("comsrv:1001:m", "2"))
+    .add_node("voltage", Source::Redis("comsrv:1001:T", "1"))
+    .add_node("current", Source::Redis("comsrv:1001:T", "2"))
     .add_node("power", Function::Multiply(vec!["voltage", "current"]))
-    .add_node("scaled_power", Function::Scale("power", 0.001))  // W转kW
+    .add_node("scaled_power", Function::Scale("power", 0.001))  // W to kW
     .build();
 
-// 执行计算
+// Execute computation
 let results = dag.execute().await?;
 ```
 
-## 数据流
+## Data Flow
 
-1. **数据输入**: 从Redis Hash读取 `comsrv:{channelID}:{type}`
-2. **计算处理**: 执行DAG定义的计算流程
-3. **结果存储**: 写入 `modsrv:{modelname}:measurement`
-4. **事件发布**: 发布到 `modsrv:{modelname}:update`
+1. **Data Input**: Read from Redis Hash `comsrv:{channelID}:{type}`
+2. **Computation Processing**: Execute DAG-defined computation flow
+3. **Result Storage**: Write to `modsrv:{modelname}:measurement`
+4. **Event Publishing**: Publish to `modsrv:{modelname}:update`
 
-## 监控和调试
+## Monitoring and Debugging
 
-### 查看Redis数据
+### View Redis Data
 
 ```bash
-# 查看输入数据
-redis-cli hgetall "comsrv:1001:m"
+# View input data
+redis-cli hgetall "comsrv:1001:T"
 
-# 查看计算结果
+# View computation results
 redis-cli hgetall "modsrv:power_meter_demo:measurement"
 
-# 监控数据更新
+# Monitor data updates
 redis-cli subscribe "modsrv:power_meter_demo:update"
 ```
 
-### 日志监控
+### Log Monitoring
 
 ```bash
-# 查看服务日志
+# View service logs
 tail -f logs/modsrv.log
 
-# 调试模式
+# Debug mode
 RUST_LOG=modsrv=trace cargo run
 ```
 
-## 性能优化
+## Performance Optimization
 
-- **批量读取**: 使用HGETALL减少Redis往返
-- **计算缓存**: 避免重复计算相同的节点
-- **并行处理**: 独立的计算分支并行执行
-- **连接池**: Redis连接复用
+- **Batch Reading**: Use HGETALL to reduce Redis round trips
+- **Computation Caching**: Avoid recalculating the same nodes
+- **Parallel Processing**: Execute independent computation branches in parallel
+- **Connection Pooling**: Redis connection reuse
 
-## 开发指南
+## Development Guide
 
-### 添加新函数
+### Adding New Functions
 
 ```rust
-// 在Function枚举中添加
+// Add to Function enum
 pub enum Function {
     // ...
-    MyNewFunction(Vec<String>),  // 输入参数列表
+    MyNewFunction(Vec<String>),  // Input parameter list
 }
 
-// 实现计算逻辑
+// Implement computation logic
 impl Function {
     pub fn execute(&self, inputs: &HashMap<String, f64>) -> Result<f64> {
         match self {
             Function::MyNewFunction(params) => {
-                // 实现函数逻辑
+                // Implement function logic
             }
         }
     }
 }
 ```
 
-### 测试
+### Testing
 
 ```bash
-# 运行单元测试
+# Run unit tests
 cargo test -p modsrv
 
-# 运行特定测试
+# Run specific test
 cargo test -p modsrv test_dag_calculation
 
-# 运行集成测试
+# Run integration tests
 cargo test -p modsrv --test integration
 ```
 
-## 故障排查
+## Troubleshooting
 
-### 常见问题
+### Common Issues
 
-1. **无数据输出**
-   - 检查Redis连接
-   - 验证点位映射配置
-   - 确认comsrv数据存在
+1. **No Data Output**
+   - Check Redis connection
+   - Verify point mapping configuration
+   - Confirm comsrv data exists
 
-2. **计算错误**
-   - 检查DAG定义是否有循环依赖
-   - 验证输入数据格式
-   - 查看错误日志
+2. **Computation Errors**
+   - Check DAG definition for circular dependencies
+   - Verify input data format
+   - Check error logs
 
-3. **性能问题**
-   - 监控Redis操作延迟
-   - 检查计算图复杂度
-   - 优化批量操作
+3. **Performance Issues**
+   - Monitor Redis operation latency
+   - Check computation graph complexity
+   - Optimize batch operations
 
-## 配置参考
+## Configuration Reference
 
-### 环境变量
+### Environment Variables
 
 ```bash
-RUST_LOG=modsrv=info      # 日志级别
+RUST_LOG=modsrv=info      # Log level
 REDIS_URL=redis://localhost:6379
 MODSRV_PORT=8092
 ```
 
-### 高级配置
+### Advanced Configuration
 
 ```yaml
-# 计算引擎配置
+# Computation engine configuration
 compute:
-  max_dag_depth: 10        # DAG最大深度
-  cache_ttl: 60            # 缓存时间(秒)
-  batch_size: 100          # 批处理大小
+  max_dag_depth: 10        # Maximum DAG depth
+  cache_ttl: 60            # Cache time (seconds)
+  batch_size: 100          # Batch processing size
   
-# 性能调优
+# Performance tuning
 performance:
-  worker_threads: 4        # 工作线程数
-  queue_size: 1000        # 任务队列大小
+  worker_threads: 4        # Number of worker threads
+  queue_size: 1000        # Task queue size
 ```
 
-## 许可证
+## License
 
 MIT License

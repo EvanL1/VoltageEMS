@@ -106,7 +106,7 @@
 //!   description: "Industrial Communication Service"
 //!   api:
 //!     enabled: true
-//!     bind_address: "0.0.0.0:3000"
+//!     bind_address: "0.0.0.0:8081"
 //!     version: "v1"
 //!   logging:
 //!     level: "info"

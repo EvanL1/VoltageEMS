@@ -1,6 +1,5 @@
 //! `InfluxDB` 2.x 官方客户端
 
-use crate::config::InfluxConfig;
 use crate::error::{Error, Result};
 use influxdb2::{models::Query, Client};
 
@@ -8,27 +7,32 @@ use influxdb2::{models::Query, Client};
 #[derive(Debug)]
 pub struct InfluxClient {
     client: Client,
-    config: InfluxConfig,
+    org: String,
+    bucket: String,
 }
 
 impl InfluxClient {
-    /// 从配置创建客户端
-    pub fn from_config(config: InfluxConfig) -> Result<Self> {
+    /// 创建新的客户端
+    pub fn new(url: &str, org: &str, bucket: &str, token: &str) -> Result<Self> {
         tracing::debug!(
             "Creating InfluxDB client: url={}, org={}, bucket={}",
-            config.url,
-            config.org,
-            config.get_bucket()
+            url,
+            org,
+            bucket
         );
-        let client = Client::new(&config.url, &config.org, &config.token);
+        let client = Client::new(url, org, token);
 
-        Ok(Self { client, config })
+        Ok(Self {
+            client,
+            org: org.to_string(),
+            bucket: bucket.to_string(),
+        })
     }
 
     /// 写入线协议数据
     pub async fn write_line_protocol(&self, data: &str) -> Result<()> {
-        let bucket = self.config.get_bucket();
-        let org = &self.config.org;
+        let bucket = &self.bucket;
+        let org = &self.org;
         let data_owned = data.to_string();
 
         tracing::debug!(
@@ -48,7 +52,7 @@ impl InfluxClient {
 
     /// 执行查询 (Flux查询语言)
     pub async fn query(&self, query: &str) -> Result<String> {
-        let bucket = self.config.get_bucket();
+        let bucket = &self.bucket;
 
         // 如果是简单的查询，转换为Flux格式
         let flux_query = if query.starts_with("from(") {

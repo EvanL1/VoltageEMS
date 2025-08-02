@@ -9,7 +9,7 @@ use std::sync::Arc;
 fn create_test_point_update(channel_id: u16, point_id: u32, value: f64) -> PluginPointUpdate {
     PluginPointUpdate {
         channel_id,
-        telemetry_type: TelemetryType::Measurement,
+        telemetry_type: TelemetryType::Telemetry,
         point_id,
         value,
         timestamp: Utc::now().timestamp_millis(),
@@ -24,7 +24,7 @@ async fn test_plugin_point_update_creation() {
     assert_eq!(update.channel_id, 1001);
     assert_eq!(update.point_id, 10001);
     assert_eq!(update.value, 25.5);
-    assert!(matches!(update.telemetry_type, TelemetryType::Measurement));
+    assert!(matches!(update.telemetry_type, TelemetryType::Telemetry));
     assert!(update.timestamp > 0);
     assert!(update.raw_value.is_none());
 }
@@ -41,7 +41,7 @@ async fn test_plugin_point_update_with_raw_value() {
 #[tokio::test]
 async fn test_telemetry_type_variants() {
     let types = vec![
-        TelemetryType::Measurement,
+        TelemetryType::Telemetry,
         TelemetryType::Signal, 
         TelemetryType::Control,
         TelemetryType::Adjustment,
@@ -105,10 +105,10 @@ async fn test_default_plugin_storage_if_available() {
         let storage: Arc<dyn PluginStorage> = Arc::new(storage);
         
         // 测试单点写入
-        let result = storage.write_point(9999, &TelemetryType::Measurement, 99999, 123.45).await;
+        let result = storage.write_point(9999, &TelemetryType::Telemetry, 99999, 123.45).await;
         if result.is_ok() {
             // 测试读取
-            let read_result = storage.read_point(9999, &TelemetryType::Measurement, 99999).await;
+            let read_result = storage.read_point(9999, &TelemetryType::Telemetry, 99999).await;
             if let Ok(Some((value, _timestamp))) = read_result {
                 assert!((value - 123.45).abs() < 0.001);
             }
@@ -145,7 +145,7 @@ fn test_four_telemetry_types_in_storage() {
     // 遥测 - 点位ID从1开始
     let measurement = PluginPointUpdate {
         channel_id,
-        telemetry_type: TelemetryType::Measurement,
+        telemetry_type: TelemetryType::Telemetry,
         point_id: 1,
         value: 100.5,
         timestamp: 0,

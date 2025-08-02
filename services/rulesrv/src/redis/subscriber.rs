@@ -59,7 +59,7 @@ impl RedisSubscriber {
 
         // 克隆必要的引用
         let rule_executor = Arc::clone(&self.rule_executor);
-        let subscriptions = Arc::clone(&self.subscriptions);
+        let _subscriptions = Arc::clone(&self.subscriptions);
 
         // 启动订阅处理任务
         tokio::spawn(async move {

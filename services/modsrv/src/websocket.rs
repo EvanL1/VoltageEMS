@@ -1,6 +1,6 @@
-//! WebSocket管理模块
+//! WebSocket management module
 //!
-//! 提供WebSocket连接管理和实时数据推送功能
+//! Provides WebSocket connection management and real-time data push functionality
 
 use axum::{
     extract::{ws::WebSocket, Path, State, WebSocketUpgrade},
@@ -10,40 +10,39 @@ use futures_util::{sink::SinkExt, stream::StreamExt};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::{mpsc, Mutex, RwLock};
+use tokio::sync::{mpsc, RwLock};
 use tokio::time::{interval, Duration};
-use tracing::{debug, error, info, warn};
-use voltage_libs::redis::EdgeRedis;
+use tracing::{debug, info, warn};
 
 use crate::api::ApiState;
 use crate::model::ModelManager;
 
-/// WebSocket消息
+/// WebSocket message
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", content = "data")]
 pub enum WsMessage {
-    /// 数据更新
+    /// Data update
     Update { point: String, value: f64 },
-    /// 心跳
+    /// Heartbeat
     Heartbeat,
-    /// 错误
+    /// Error
     Error { message: String },
 }
 
-/// WebSocket连接信息
+/// WebSocket connection information
 struct WsConnection {
     model_id: String,
     tx: mpsc::UnboundedSender<WsMessage>,
 }
 
-/// WebSocket连接管理器
+/// WebSocket connection manager
 pub struct WsConnectionManager {
     connections: Arc<RwLock<HashMap<String, Vec<WsConnection>>>>,
     model_manager: Arc<ModelManager>,
 }
 
 impl WsConnectionManager {
-    /// 创建新的连接管理器
+    /// Create new connection manager
     pub fn new(model_manager: Arc<ModelManager>) -> Self {
         Self {
             connections: Arc::new(RwLock::new(HashMap::new())),
@@ -51,17 +50,17 @@ impl WsConnectionManager {
         }
     }
 
-    /// 启动Redis订阅（监听数据更新）
+    /// Start Redis subscription (listen for data updates)
     pub async fn start_redis_subscription(&self) -> Result<(), Box<dyn std::error::Error>> {
         let connections = self.connections.clone();
 
-        // 创建新的Redis连接用于订阅
+        // Create new Redis connection for subscription
         let redis_url =
             std::env::var("REDIS_URL").unwrap_or_else(|_| "redis://localhost:6379".to_string());
         let client = redis::Client::open(redis_url)?;
         let mut pubsub = client.get_async_pubsub().await?;
 
-        // 订阅所有模型的更新通道
+        // Subscribe to all model update channels
         pubsub.psubscribe("modsrv:*:update").await?;
 
         tokio::spawn(async move {
@@ -72,17 +71,17 @@ impl WsConnectionManager {
                 let channel: String = msg.get_channel().unwrap();
                 let payload: String = msg.get_payload().unwrap();
 
-                // 解析channel获取model_id
+                // Parse channel to get model_id
                 if let Some(model_id) = parse_model_id_from_channel(&channel) {
-                    // 解析payload获取point和value
+                    // Parse payload to get point and value
                     if let Some((point, value)) = parse_update_payload(&payload) {
-                        // 广播给订阅该模型的所有连接
+                        // Broadcast to all connections subscribed to this model
                         let conns = connections.read().await;
                         if let Some(model_conns) = conns.get(&model_id) {
                             let update_msg = WsMessage::Update { point, value };
                             for conn in model_conns {
                                 if let Err(e) = conn.tx.send(update_msg.clone()) {
-                                    warn!("发送WebSocket消息失败: {}", e);
+                                    warn!("Failed to send WebSocket message: {}", e);
                                 }
                             }
                         }
@@ -94,7 +93,7 @@ impl WsConnectionManager {
         Ok(())
     }
 
-    /// 添加连接
+    /// Add connection
     async fn add_connection(
         &self,
         model_id: String,
@@ -115,13 +114,13 @@ impl WsConnectionManager {
         conn_id
     }
 
-    /// 移除连接
+    /// Remove connection
     async fn remove_connection(&self, model_id: &str, _conn_id: &str) {
         let mut connections = self.connections.write().await;
         if let Some(model_conns) = connections.get_mut(model_id) {
-            // 由于我们简化了实现，这里只是清理断开的连接
+            // Since we simplified the implementation, here we just clean up disconnected connections
             model_conns.retain(|conn| {
-                // 测试连接是否还活着
+                // Test if the connection is still alive
                 !conn.tx.is_closed()
             });
 
@@ -131,7 +130,7 @@ impl WsConnectionManager {
         }
     }
 
-    /// 启动心跳任务
+    /// Start heartbeat task
     pub async fn start_heartbeat(&self) {
         let connections = self.connections.clone();
 
@@ -145,7 +144,7 @@ impl WsConnectionManager {
                 for (model_id, model_conns) in conns.iter_mut() {
                     model_conns.retain(|conn| {
                         if conn.tx.send(WsMessage::Heartbeat).is_err() {
-                            debug!("移除断开的WebSocket连接: {}", model_id);
+                            debug!("Removed disconnected WebSocket connection: {}", model_id);
                             false
                         } else {
                             true
@@ -153,39 +152,39 @@ impl WsConnectionManager {
                     });
                 }
 
-                // 清理空的模型条目
+                // Clean up empty model entries
                 conns.retain(|_, v| !v.is_empty());
             }
         });
     }
 }
 
-/// WebSocket处理器
+/// WebSocket handler
 pub async fn ws_handler(
     ws: WebSocketUpgrade,
     Path(model_id): Path<String>,
     State(state): State<ApiState>,
 ) -> Response {
-    // 检查模型是否存在
-    if state.model_manager.get_model(&model_id).is_none() {
+    // Check if model exists
+    if state.model_manager.get_model(&model_id).await.is_none() {
         return ws.on_upgrade(move |socket| async move {
-            handle_error_socket(socket, "模型不存在").await;
+            handle_error_socket(socket, "Model not found").await;
         });
     }
 
     ws.on_upgrade(move |socket| handle_socket(socket, model_id, state))
 }
 
-/// 处理WebSocket连接
+/// Handle WebSocket connection
 async fn handle_socket(socket: WebSocket, model_id: String, state: ApiState) {
     let (mut sender, mut receiver) = socket.split();
     let (tx, mut rx) = mpsc::unbounded_channel::<WsMessage>();
 
-    // 添加连接
+    // Add connection
     let conn_id = state.ws_manager.add_connection(model_id.clone(), tx).await;
-    info!("WebSocket连接建立: model_id={}", model_id);
+    info!("WebSocket connection established: model_id={}", model_id);
 
-    // 发送初始数据
+    // Send initial data
     if let Ok(values) = state.model_manager.get_model_values(&model_id).await {
         for (point, value) in values {
             let msg = WsMessage::Update { point, value };
@@ -201,7 +200,7 @@ async fn handle_socket(socket: WebSocket, model_id: String, state: ApiState) {
         }
     }
 
-    // 启动发送任务
+    // Start send task
     let mut send_task = tokio::spawn(async move {
         while let Some(msg) = rx.recv().await {
             let text = serde_json::to_string(&msg).unwrap();
@@ -215,15 +214,15 @@ async fn handle_socket(socket: WebSocket, model_id: String, state: ApiState) {
         }
     });
 
-    // 启动接收任务（处理客户端消息）
+    // Start receive task (handle client messages)
     let mut recv_task = tokio::spawn(async move {
         while let Some(Ok(msg)) = receiver.next().await {
             match msg {
                 axum::extract::ws::Message::Text(text) => {
-                    debug!("收到WebSocket消息: {}", text);
+                    debug!("Received WebSocket message: {}", text);
                 }
                 axum::extract::ws::Message::Close(_) => {
-                    debug!("WebSocket连接关闭");
+                    debug!("WebSocket connection closed");
                     break;
                 }
                 _ => {}
@@ -231,21 +230,21 @@ async fn handle_socket(socket: WebSocket, model_id: String, state: ApiState) {
         }
     });
 
-    // 等待任一任务结束
+    // Wait for any task to end
     tokio::select! {
         _ = (&mut send_task) => recv_task.abort(),
         _ = (&mut recv_task) => send_task.abort(),
     }
 
-    // 清理连接
+    // Clean up connection
     state
         .ws_manager
         .remove_connection(&model_id, &conn_id)
         .await;
-    info!("WebSocket连接断开: model_id={}", model_id);
+    info!("WebSocket connection disconnected: model_id={}", model_id);
 }
 
-/// 处理错误的WebSocket连接
+/// Handle erroneous WebSocket connection
 async fn handle_error_socket(mut socket: WebSocket, error: &str) {
     let error_msg = WsMessage::Error {
         message: error.to_string(),
@@ -260,9 +259,9 @@ async fn handle_error_socket(mut socket: WebSocket, error: &str) {
     let _ = socket.close().await;
 }
 
-/// 解析channel获取model_id
+/// Parse channel to get model_id
 fn parse_model_id_from_channel(channel: &str) -> Option<String> {
-    // channel格式: "modsrv:{model_id}:update"
+    // channel format: "modsrv:{model_id}:update"
     let parts: Vec<&str> = channel.split(':').collect();
     if parts.len() == 3 && parts[0] == "modsrv" && parts[2] == "update" {
         Some(parts[1].to_string())
@@ -271,9 +270,9 @@ fn parse_model_id_from_channel(channel: &str) -> Option<String> {
     }
 }
 
-/// 解析更新payload
+/// Parse update payload
 fn parse_update_payload(payload: &str) -> Option<(String, f64)> {
-    // payload格式: "{point}:{value}"
+    // payload format: "{point}:{value}"
     let parts: Vec<&str> = payload.split(':').collect();
     if parts.len() == 2 {
         if let Ok(value) = parts[1].parse::<f64>() {

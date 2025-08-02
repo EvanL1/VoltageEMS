@@ -1,7 +1,8 @@
 use crate::error::{Result, RulesrvError};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
-// Remove voltage_common dependency
+use voltage_libs::config::utils::{get_global_log_level, get_global_redis_url};
+use voltage_libs::config::ConfigLoader;
 
 /// Main configuration structure
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -50,8 +51,8 @@ pub struct RedisConfig {
     #[serde(default = "default_redis_url")]
     pub url: String,
 
-    /// Key prefix
-    #[serde(default = "default_key_prefix")]
+    /// Key prefix (hardcoded, not configurable)
+    #[serde(skip_serializing, skip_deserializing)]
     pub key_prefix: String,
 
     /// Subscribe patterns
@@ -84,70 +85,81 @@ pub struct ApiConfig {
 }
 
 impl Config {
-    /// Load configuration from file
-    pub fn from_file<P: AsRef<Path>>(path: P) -> Result<Self> {
-        let content = std::fs::read_to_string(path)
-            .map_err(|e| RulesrvError::ConfigError(format!("Failed to read config file: {}", e)))?;
+    /// Load configuration
+    pub fn load() -> Result<Self> {
+        // 尝试多个配置文件路径
+        let config_paths = [
+            "config/rulesrv/rulesrv.yaml",
+            "config/rulesrv.yaml",
+            "rulesrv.yaml",
+        ];
 
-        let mut config: Config = serde_yaml::from_str(&content)
-            .map_err(|e| RulesrvError::ConfigError(format!("Failed to parse config: {}", e)))?;
+        let mut yaml_path = None;
+        for path in &config_paths {
+            if Path::new(path).exists() {
+                yaml_path = Some(path.to_string());
+                break;
+            }
+        }
 
-        // Set the redis_url from redis.url
+        // 使用新的 ConfigLoader
+        let loader = ConfigLoader::new()
+            .with_defaults(Config::default())
+            .with_env_prefix("RULESRV");
+
+        let mut config = if let Some(path) = yaml_path {
+            loader.with_yaml_file(&path).build()
+        } else {
+            loader.build()
+        }
+        .map_err(|e| RulesrvError::ConfigError(format!("Failed to load config: {}", e)))?;
+
+        // 确保硬编码值
+        config.redis.key_prefix = "rulesrv:".to_string();
+        config.service.port = 8084;
+        config.service.api_port = 8084;
+        config.api.port = 8084;
         config.redis_url = config.redis.url.clone();
 
         Ok(config)
     }
 
-    /// Load configuration from environment variables
+    /// Load configuration from file (backward compatibility)
+    pub fn from_file<P: AsRef<Path>>(path: P) -> Result<Self> {
+        let path = path.as_ref();
+        if path.exists() {
+            let loader = ConfigLoader::new()
+                .with_defaults(Config::default())
+                .with_env_prefix("RULESRV")
+                .with_yaml_file(&path.to_string_lossy());
+
+            let mut config = loader
+                .build()
+                .map_err(|e| RulesrvError::ConfigError(format!("Failed to load config: {}", e)))?;
+
+            // 确保硬编码值
+            config.redis.key_prefix = "rulesrv:".to_string();
+            config.service.port = 8084;
+            config.service.api_port = 8084;
+            config.api.port = 8084;
+            config.redis_url = config.redis.url.clone();
+
+            Ok(config)
+        } else {
+            Self::load()
+        }
+    }
+
+    /// Load configuration from environment variables (backward compatibility)
     pub fn from_env() -> Result<Self> {
-        let redis_url = std::env::var("REDIS_URL").unwrap_or_else(|_| default_redis_url());
-        Ok(Config {
-            service: ServiceConfig {
-                name: std::env::var("SERVICE_NAME").unwrap_or_else(|_| default_service_name()),
-                port: std::env::var("SERVICE_PORT")
-                    .ok()
-                    .and_then(|s| s.parse().ok())
-                    .unwrap_or_else(default_service_port),
-                api_port: std::env::var("API_PORT")
-                    .ok()
-                    .and_then(|s| s.parse().ok())
-                    .unwrap_or_else(default_api_port),
-            },
-            redis: RedisConfig {
-                url: redis_url.clone(),
-                key_prefix: std::env::var("REDIS_KEY_PREFIX")
-                    .unwrap_or_else(|_| default_key_prefix()),
-                subscribe_patterns: std::env::var("REDIS_SUBSCRIBE_PATTERNS")
-                    .ok()
-                    .map(|s| s.split(',').map(|p| p.trim().to_string()).collect())
-                    .unwrap_or_else(default_subscribe_patterns),
-            },
-            engine: EngineConfig {
-                max_workers: std::env::var("ENGINE_MAX_WORKERS")
-                    .ok()
-                    .and_then(|s| s.parse().ok())
-                    .unwrap_or_else(default_max_workers),
-                evaluation_timeout_ms: std::env::var("ENGINE_TIMEOUT_MS")
-                    .ok()
-                    .and_then(|s| s.parse().ok())
-                    .unwrap_or_else(default_evaluation_timeout_ms),
-                rule_key_pattern: std::env::var("RULE_KEY_PATTERN")
-                    .unwrap_or_else(|_| default_rule_key_pattern()),
-            },
-            api: ApiConfig {
-                host: std::env::var("API_HOST").unwrap_or_else(|_| "0.0.0.0".to_string()),
-                port: std::env::var("API_PORT")
-                    .ok()
-                    .and_then(|s| s.parse().ok())
-                    .unwrap_or(8080),
-                timeout_seconds: std::env::var("API_TIMEOUT")
-                    .ok()
-                    .and_then(|s| s.parse().ok())
-                    .unwrap_or(30),
-            },
-            log_level: std::env::var("LOG_LEVEL").unwrap_or_else(|_| default_log_level()),
-            redis_url,
-        })
+        Self::load()
+    }
+}
+
+impl ApiConfig {
+    /// Build a path with API prefix
+    pub fn build_path(&self, path: &str) -> String {
+        format!("/api/v1/{}", path.trim_start_matches('/'))
     }
 }
 
@@ -161,7 +173,7 @@ impl Default for Config {
             engine: EngineConfig::default(),
             api: ApiConfig {
                 host: "0.0.0.0".to_string(),
-                port: 8080,
+                port: 8084, // 固定端口
                 timeout_seconds: 30,
             },
             log_level: default_log_level(),
@@ -206,15 +218,15 @@ fn default_service_name() -> String {
 }
 
 fn default_service_port() -> u16 {
-    8086
+    8084 // 固定端口
 }
 
 fn default_redis_url() -> String {
-    "redis://localhost:6379".to_string()
+    get_global_redis_url("RULESRV")
 }
 
 fn default_key_prefix() -> String {
-    "rulesrv:".to_string()
+    "rulesrv:".to_string() // 硬编码
 }
 
 fn default_subscribe_patterns() -> Vec<String> {
@@ -234,9 +246,9 @@ fn default_rule_key_pattern() -> String {
 }
 
 fn default_api_port() -> u16 {
-    8083
+    8084 // 与服务端口相同
 }
 
 fn default_log_level() -> String {
-    "info".to_string()
+    get_global_log_level("RULESRV")
 }

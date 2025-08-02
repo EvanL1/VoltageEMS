@@ -11,5 +11,7 @@ mod edge_redis;
 pub use client::RedisClient;
 pub use edge_redis::EdgeRedis;
 
-// 重导出配置
-pub use crate::config::RedisConfig;
+// Re-export commonly used types from redis crate
+pub use redis::Msg;
+
+// 配置结构由各服务自定义

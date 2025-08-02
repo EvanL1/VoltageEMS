@@ -26,6 +26,8 @@ fixlog*
 .env.development.local
 .env.test.local
 .env.production.local
+.env.production
+.env.staging
 .venv/
 
 # Build

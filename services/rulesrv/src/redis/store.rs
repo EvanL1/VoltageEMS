@@ -39,7 +39,7 @@ impl RedisStore {
     /// 设置字符串值
     pub async fn set_string(&self, key: &str, value: &str) -> Result<()> {
         let mut conn = self.redis_client.get_multiplexed_async_connection().await?;
-        conn.set(key, value).await?;
+        let _: () = conn.set(key, value).await?;
         Ok(())
     }
 
@@ -50,16 +50,16 @@ impl RedisStore {
         let key = self.make_key(&format!("rule:{}", rule.id));
         let value = serde_json::to_string(rule)?;
 
-        conn.set(&key, &value).await?;
+        let _: () = conn.set(&key, &value).await?;
 
         // 将规则ID添加到规则列表
         let list_key = self.make_key("rules");
-        conn.sadd(&list_key, &rule.id).await?;
+        let _: () = conn.sadd(&list_key, &rule.id).await?;
 
         // 如果规则属于某个组，更新组的规则列表
         if let Some(group_id) = &rule.group_id {
             let group_rules_key = self.make_key(&format!("group:{}:rules", group_id));
-            conn.sadd(&group_rules_key, &rule.id).await?;
+            let _: () = conn.sadd(&group_rules_key, &rule.id).await?;
         }
 
         info!("Saved rule: {} ({})", rule.name, rule.id);
@@ -96,13 +96,13 @@ impl RedisStore {
         if deleted {
             // 从规则列表中移除
             let list_key = self.make_key("rules");
-            conn.srem(&list_key, rule_id).await?;
+            let _: () = conn.srem(&list_key, rule_id).await?;
 
             // 如果规则属于某个组，从组的规则列表中移除
             if let Some(rule) = rule {
                 if let Some(group_id) = &rule.group_id {
                     let group_rules_key = self.make_key(&format!("group:{}:rules", group_id));
-                    conn.srem(&group_rules_key, rule_id).await?;
+                    let _: () = conn.srem(&group_rules_key, rule_id).await?;
                 }
             }
 
@@ -155,11 +155,11 @@ impl RedisStore {
         let key = self.make_key(&format!("group:{}", group.id));
         let value = serde_json::to_string(group)?;
 
-        conn.set(&key, &value).await?;
+        let _: () = conn.set(&key, &value).await?;
 
         // 将组ID添加到组列表
         let list_key = self.make_key("groups");
-        conn.sadd(&list_key, &group.id).await?;
+        let _: () = conn.sadd(&list_key, &group.id).await?;
 
         info!("Saved rule group: {} ({})", group.name, group.id);
         Ok(())
@@ -204,10 +204,10 @@ impl RedisStore {
         if deleted {
             // 从组列表中移除
             let list_key = self.make_key("groups");
-            conn.srem(&list_key, group_id).await?;
+            let _: () = conn.srem(&list_key, group_id).await?;
 
             // 删除组的规则列表键
-            conn.del(&group_rules_key).await?;
+            let _: () = conn.del(&group_rules_key).await?;
 
             info!("Deleted rule group: {}", group_id);
         }
@@ -299,13 +299,13 @@ impl RedisStore {
         let value = serde_json::to_string(execution_result)?;
 
         // 使用列表存储历史，新的在前
-        conn.lpush(&key, &value).await?;
+        let _: () = conn.lpush(&key, &value).await?;
 
         // 限制历史记录数量（保留最近1000条）
-        conn.ltrim(&key, 0, 999).await?;
+        let _: () = conn.ltrim(&key, 0, 999).await?;
 
         // 设置过期时间（7天）
-        conn.expire(&key, 604800).await?;
+        let _: () = conn.expire(&key, 604800).await?;
 
         debug!("Saved execution history for rule: {}", rule_id);
         Ok(())
@@ -348,8 +348,47 @@ impl RedisStore {
     /// Publish a message to a Redis channel
     pub async fn publish(&self, channel: &str, message: &str) -> Result<()> {
         let mut conn = self.redis_client.get_multiplexed_async_connection().await?;
-        redis::AsyncCommands::publish(&mut conn, channel, message).await?;
+        let _: () = redis::AsyncCommands::publish(&mut conn, channel, message).await?;
         Ok(())
+    }
+
+    /// Delete a key
+    pub async fn delete(&self, key: &str) -> Result<bool> {
+        let mut conn = self.redis_client.get_multiplexed_async_connection().await?;
+        let deleted: bool = conn.del(key).await?;
+        Ok(deleted)
+    }
+
+    /// Get hash field value
+    pub async fn get_hash_field(&self, key: &str, field: &str) -> Result<Option<String>> {
+        let mut conn = self.redis_client.get_multiplexed_async_connection().await?;
+        let value: Option<String> = conn.hget(key, field).await?;
+        Ok(value)
+    }
+
+    /// Call Redis Function
+    pub async fn call_function(
+        &self,
+        function_name: &str,
+        keys: &[&str],
+        args: &[&str],
+    ) -> Result<String> {
+        let mut conn = self.redis_client.get_multiplexed_async_connection().await?;
+
+        // Build FCALL command
+        let mut cmd = redis::cmd("FCALL");
+        cmd.arg(function_name).arg(keys.len());
+
+        for key in keys {
+            cmd.arg(*key);
+        }
+
+        for arg in args {
+            cmd.arg(*arg);
+        }
+
+        let result: String = cmd.query_async(&mut conn).await?;
+        Ok(result)
     }
 }
 

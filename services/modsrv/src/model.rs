@@ -1,58 +1,58 @@
-//! ModSrv核心模型系统
+//! ModSrv core model system
 //!
-//! 轻量级模型管理，专注于元数据管理和API服务
+//! Lightweight model management, focusing on metadata management and API services
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::Mutex;
-use tracing::{debug, error, info};
+use tokio::sync::{Mutex, RwLock};
+use tracing::info;
 use voltage_libs::redis::EdgeRedis;
 
 use crate::error::{ModelSrvError, Result};
-use crate::mapping::{MappingManager, ModelMappingConfig};
+use crate::mapping::MappingManager;
 
-/// 点位配置（静态元数据）
+/// Point configuration (static metadata)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PointConfig {
-    /// 点位描述
+    /// Point description
     pub description: String,
-    /// 单位（可选）
+    /// Unit (optional)
     pub unit: Option<String>,
 }
 
-/// 模型配置（用于加载）
+/// Model configuration (for loading)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModelConfig {
-    /// 模型ID
+    /// Model ID
     pub id: String,
-    /// 模型名称
+    /// Model name
     pub name: String,
-    /// 模型描述
+    /// Model description
     pub description: String,
-    /// 监视点配置
+    /// Monitoring point configuration
     pub monitoring: HashMap<String, PointConfig>,
-    /// 控制点配置
+    /// Control point configuration
     pub control: HashMap<String, PointConfig>,
 }
 
-/// 模型结构（仅保留元数据）
+/// Model structure (metadata only)
 #[derive(Debug, Clone)]
 pub struct Model {
-    /// 模型ID
+    /// Model ID
     pub id: String,
-    /// 模型名称
+    /// Model name
     pub name: String,
-    /// 模型描述
+    /// Model description
     pub description: String,
-    /// 监视点配置
+    /// Monitoring point configuration
     pub monitoring_config: HashMap<String, PointConfig>,
-    /// 控制点配置
+    /// Control point configuration
     pub control_config: HashMap<String, PointConfig>,
 }
 
 impl Model {
-    /// 从配置创建模型
+    /// Create model from configuration
     pub fn from_config(config: ModelConfig) -> Self {
         Self {
             id: config.id,
@@ -64,59 +64,54 @@ impl Model {
     }
 }
 
-/// 模型管理器
+/// Model manager
 pub struct ModelManager {
-    /// 模型元数据存储
-    models: HashMap<String, Model>,
-    /// Redis连接
+    /// Model metadata storage
+    models: Arc<RwLock<HashMap<String, Model>>>,
+    /// Redis connection
     redis: Arc<Mutex<EdgeRedis>>,
 }
 
 impl ModelManager {
-    /// 创建模型管理器
+    /// Create model manager
     pub async fn new(redis_url: &str) -> Result<Self> {
-        let mut edge_redis = EdgeRedis::new(redis_url)
+        let edge_redis = EdgeRedis::new(redis_url)
             .await
-            .map_err(|e| ModelSrvError::redis(format!("Redis连接失败: {}", e)))?;
-
-        // 初始化Lua脚本
-        edge_redis
-            .init_scripts()
-            .await
-            .map_err(|e| ModelSrvError::redis(format!("Lua脚本初始化失败: {}", e)))?;
+            .map_err(|e| ModelSrvError::redis(format!("Redis connection failed: {}", e)))?;
 
         Ok(Self {
-            models: HashMap::new(),
+            models: Arc::new(RwLock::new(HashMap::new())),
             redis: Arc::new(Mutex::new(edge_redis)),
         })
     }
 
-    /// 加载模型配置
-    pub async fn load_models(&mut self, configs: Vec<ModelConfig>) -> Result<()> {
+    /// Load model configurations
+    pub async fn load_models(&self, configs: Vec<ModelConfig>) -> Result<()> {
+        let mut models = self.models.write().await;
         for config in configs {
             let model = Model::from_config(config);
-            info!("加载模型: {} ({})", model.name, model.id);
-            self.models.insert(model.id.clone(), model);
+            info!("Loading model: {} ({})", model.name, model.id);
+            models.insert(model.id.clone(), model);
         }
 
-        info!("已加载 {} 个模型", self.models.len());
+        info!("Loaded {} models", models.len());
         Ok(())
     }
 
-    /// 加载映射到Redis
+    /// Load mappings to Redis
     pub async fn load_mappings(&self, mappings: &MappingManager) -> Result<()> {
         let mut redis = self.redis.lock().await;
 
-        // 清空旧映射
+        // Clear old mappings
         let cleared = redis.clear_mappings().await?;
         if cleared > 0 {
-            info!("清理了 {} 个旧映射", cleared);
+            info!("Cleared {} old mappings", cleared);
         }
 
-        // 加载新映射
+        // Load new mappings
         let mut count = 0;
         for (model_id, config) in mappings.get_all_mappings() {
-            // 加载监视点映射 (C2M)
+            // Load monitoring point mappings (C2M)
             for (point_name, mapping) in &config.monitoring {
                 let key = format!("{}:{}", mapping.channel, mapping.point);
                 let value = format!("{}:{}", model_id, point_name);
@@ -124,7 +119,7 @@ impl ModelManager {
                 count += 1;
             }
 
-            // 加载控制点映射 (M2C)
+            // Load control point mappings (M2C)
             for (control_name, mapping) in &config.control {
                 let key = format!("{}:{}", model_id, control_name);
                 let value = format!("{}:{}", mapping.channel, mapping.point);
@@ -133,26 +128,23 @@ impl ModelManager {
             }
         }
 
-        info!("加载了 {} 个映射到Redis", count);
+        info!("Loaded {} mappings to Redis", count);
         Ok(())
     }
 
-    /// 获取模型元数据
-    pub fn get_model(&self, id: &str) -> Option<&Model> {
-        self.models.get(id)
+    /// Get model metadata
+    pub async fn get_model(&self, id: &str) -> Option<Model> {
+        let models = self.models.read().await;
+        models.get(id).cloned()
     }
 
-    /// 列出所有模型
-    pub fn list_models(&self) -> Vec<&Model> {
-        self.models.values().collect()
+    /// List all models
+    pub async fn list_models(&self) -> Vec<Model> {
+        let models = self.models.read().await;
+        models.values().cloned().collect()
     }
 
-    /// 获取Redis连接（用于测试）
-    pub fn get_redis(&self) -> Arc<Mutex<EdgeRedis>> {
-        self.redis.clone()
-    }
-
-    /// 获取模型当前值（从Redis读取）
+    /// Get current model values (read from Redis)
     pub async fn get_model_values(&self, model_id: &str) -> Result<HashMap<String, f64>> {
         let mut redis = self.redis.lock().await;
         let values = redis.get_model_values(model_id).await?;
@@ -167,29 +159,60 @@ impl ModelManager {
         Ok(result)
     }
 
-    /// 发送控制命令
+    /// Create new model
+    pub async fn create_model(&self, config: ModelConfig) -> Result<()> {
+        let mut models = self.models.write().await;
+        let model = Model::from_config(config);
+        info!("Created model: {} ({})", model.name, model.id);
+        models.insert(model.id.clone(), model);
+        Ok(())
+    }
+
+    /// Update model
+    pub async fn update_model(&self, config: ModelConfig) -> Result<()> {
+        let mut models = self.models.write().await;
+        let model = Model::from_config(config);
+        info!("Updated model: {} ({})", model.name, model.id);
+        models.insert(model.id.clone(), model);
+        Ok(())
+    }
+
+    /// Delete model
+    pub async fn delete_model(&self, model_id: &str) -> Result<()> {
+        let mut models = self.models.write().await;
+        if let Some(model) = models.remove(model_id) {
+            info!("Deleted model: {} ({})", model.name, model.id);
+        }
+        Ok(())
+    }
+
+    /// Send control command
     pub async fn send_control(&self, model_id: &str, control_name: &str, value: f64) -> Result<()> {
-        // 检查控制点是否存在
-        let model = self
-            .models
+        // Check if control point exists
+        let models = self.models.read().await;
+        let model = models
             .get(model_id)
-            .ok_or_else(|| ModelSrvError::NotFound(format!("模型 {} 不存在", model_id)))?;
+            .ok_or_else(|| ModelSrvError::NotFound(format!("Model {} not found", model_id)))?;
 
         if !model.control_config.contains_key(control_name) {
             return Err(ModelSrvError::InvalidCommand(format!(
-                "控制点 {} 不存在",
+                "Control point {} not found",
                 control_name
             )));
         }
+        drop(models); // Release read lock
 
-        // 通过Lua脚本发送控制命令
+        // Send control command via Lua script
         let mut redis = self.redis.lock().await;
         redis
             .send_control(model_id, control_name, value)
             .await
-            .map_err(|e| ModelSrvError::redis(format!("发送控制命令失败: {}", e)))?;
+            .map_err(|e| ModelSrvError::redis(format!("Failed to send control command: {}", e)))?;
 
-        info!("发送控制命令: {}.{} = {:.6}", model_id, control_name, value);
+        info!(
+            "Control command sent: {}.{} = {:.6}",
+            model_id, control_name, value
+        );
         Ok(())
     }
 }

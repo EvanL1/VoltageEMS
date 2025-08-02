@@ -1,9 +1,6 @@
-//! ModSrv主程序
+//! ModSrv main program
 //!
-//! 提供简洁的服务启动和命令行接口
-
-#![allow(dead_code)]
-#![allow(unused_imports)]
+//! Provides concise service startup and command line interface
 
 mod api;
 mod config;
@@ -28,9 +25,9 @@ use tokio::time;
 use tracing::{error, info, warn};
 
 #[derive(Parser, Debug)]
-#[command(author, version, about = "ModSrv - 模型服务")]
+#[command(author, version, about = "ModSrv - Model Service")]
 struct Args {
-    /// 配置文件路径
+    /// Configuration file path
     #[arg(short, long, value_name = "FILE")]
     config: Option<PathBuf>,
 
@@ -40,7 +37,7 @@ struct Args {
 
 #[derive(Debug, Subcommand)]
 enum Commands {
-    /// 检查配置和连接
+    /// Check configuration and connections
     Check,
 }
 
@@ -48,123 +45,132 @@ enum Commands {
 async fn main() -> Result<()> {
     let args = Args::parse();
 
-    // 加载配置
+    // Load configuration
     let config = if let Some(config_path) = args.config {
         Config::from_file(config_path)?
     } else if let Ok(config_file) = std::env::var("CONFIG_FILE") {
-        info!("从环境变量CONFIG_FILE加载配置: {}", config_file);
+        info!(
+            "Loading config from environment variable CONFIG_FILE: {}",
+            config_file
+        );
         Config::from_file(config_file)?
     } else {
         Config::load()?
     };
 
-    // 验证配置
+    // Validate configuration
     config.validate()?;
 
-    // 初始化日志
+    // Initialize logging
     voltage_libs::logging::init(&config.log.level)
-        .map_err(|e| ModelSrvError::config(format!("日志初始化失败: {}", e)))?;
+        .map_err(|e| ModelSrvError::config(format!("Failed to initialize logging: {}", e)))?;
 
-    info!("启动ModSrv v{}", config.version);
+    info!("Starting ModSrv v{}", config.version);
 
-    // 执行命令
+    // Execute command
     match args.command {
         Some(Commands::Check) => check_config(config).await,
-        None => run_service(config).await, // 默认运行服务
+        None => run_service(config).await, // Default: run service
     }
 }
 
-/// 运行服务模式
+/// Run service mode
 async fn run_service(config: Config) -> Result<()> {
-    info!("启动ModSrv服务模式");
+    info!("Starting ModSrv service mode");
 
-    // 创建模型管理器（使用EdgeRedis）
-    let mut model_manager = ModelManager::new(&config.redis.url).await?;
+    // Create model manager (using EdgeRedis)
+    let model_manager = ModelManager::new(&config.redis.url).await?;
 
-    // 加载模型配置
+    // Load model configurations
     let enabled_models = config.enabled_models();
     let model_configs: Vec<_> = enabled_models.into_iter().cloned().collect();
 
-    info!("发现 {} 个模型配置", config.models.len());
-    info!("已配置 {} 个模型", model_configs.len());
+    info!("Found {} model configurations", config.models.len());
+    info!("Configured {} models", model_configs.len());
 
     if !model_configs.is_empty() {
         for model in &model_configs {
-            info!("加载模型: {} ({})", model.id, model.name);
+            info!("Loading model: {} ({})", model.id, model.name);
         }
         model_manager.load_models(model_configs).await?;
-        info!("模型加载完成");
+        info!("Model loading completed");
     } else {
-        info!("未配置模型，服务将仅提供API接口");
+        info!("No models configured, service will only provide API interface");
     }
 
     let model_manager = Arc::new(model_manager);
 
-    // 加载映射配置
+    // Load mapping configuration
     let mut mapping_manager = MappingManager::new();
     let mappings_dir =
         std::env::var("MAPPINGS_DIR").unwrap_or_else(|_| "config/mappings".to_string());
-    info!("加载映射配置: {}", mappings_dir);
+    info!("Loading mapping configuration: {}", mappings_dir);
 
     if let Err(e) = mapping_manager.load_directory(&mappings_dir).await {
-        warn!("加载映射配置失败: {}", e);
+        warn!("Failed to load mapping configuration: {}", e);
     } else {
-        // 将映射加载到Redis
+        // Load mappings to Redis
         model_manager.load_mappings(&mapping_manager).await?;
     }
 
-    // 创建WebSocket管理器
+    // Create WebSocket manager
     let ws_manager = Arc::new(WsConnectionManager::new(model_manager.clone()));
 
-    // 启动Redis订阅
+    // Start Redis subscription
     if let Err(e) = ws_manager.start_redis_subscription().await {
-        warn!("启动Redis订阅失败: {}", e);
+        warn!("Failed to start Redis subscription: {}", e);
     }
 
-    // 启动WebSocket心跳
+    // Start WebSocket heartbeat
     ws_manager.start_heartbeat().await;
 
-    // 创建API服务器
+    // Create API server
     let api_server = ApiServer::new(model_manager.clone(), ws_manager.clone(), config.clone());
 
-    // 启动API服务器
+    // Start API server
     let (startup_tx, mut startup_rx) = mpsc::channel::<std::result::Result<(), String>>(1);
 
     tokio::spawn(async move {
         if let Err(e) = api_server.start_with_notification(startup_tx).await {
-            error!("API服务器启动失败: {}", e);
+            error!("Failed to start API server: {}", e);
         }
     });
 
-    // 等待API服务器启动确认
-    info!("等待API服务器启动...");
+    // Wait for API server startup confirmation
+    info!("Waiting for API server to start...");
     match tokio::time::timeout(Duration::from_secs(10), startup_rx.recv()).await {
         Ok(Some(Ok(_))) => {
             info!(
-                "✓ API服务器启动成功: http://{}:{}",
+                "✓ API server started successfully: http://{}:{}",
                 config.api.host, config.api.port
             );
         }
         Ok(Some(Err(e))) => {
-            error!("✗ API服务器启动失败: {}", e);
-            return Err(ModelSrvError::config("API服务器启动失败".to_string()));
+            error!("✗ Failed to start API server: {}", e);
+            return Err(ModelSrvError::config(
+                "Failed to start API server".to_string(),
+            ));
         }
         Ok(None) => {
-            error!("✗ API服务器启动通道关闭");
-            return Err(ModelSrvError::config("API服务器启动通道关闭".to_string()));
+            error!("✗ API server startup channel closed");
+            return Err(ModelSrvError::config(
+                "API server startup channel closed".to_string(),
+            ));
         }
         Err(_) => {
-            error!("✗ API服务器启动超时");
-            return Err(ModelSrvError::config("API服务器启动超时".to_string()));
+            error!("✗ API server startup timeout");
+            return Err(ModelSrvError::config(
+                "API server startup timeout".to_string(),
+            ));
         }
     }
 
     info!(
-        "ModSrv服务已启动，API地址: http://{}:{}",
+        "ModSrv service started, API address: http://{}:{}",
         config.api.host, config.api.port
     );
 
-    // 主服务循环 - 定期健康检查
+    // Main service loop - periodic health check
     let mut interval = time::interval(Duration::from_secs(60));
     let mut cycle_count = 0u64;
 
@@ -172,77 +178,83 @@ async fn run_service(config: Config) -> Result<()> {
         interval.tick().await;
         cycle_count += 1;
 
-        let models = model_manager.list_models();
+        let models = model_manager.list_models().await;
         info!(
-            "服务运行正常 - 周期: {}, 模型数: {}",
+            "Service running normally - cycle: {}, models: {}",
             cycle_count,
             models.len()
         );
     }
 }
 
-/// 检查配置和环境
+/// Check configuration and environment
 async fn check_config(config: Config) -> Result<()> {
-    println!("=== ModSrv 配置检查 ===\n");
+    println!("=== ModSrv Configuration Check ===\n");
 
-    // 1. 验证配置
+    // 1. Validate configuration
     match config.validate() {
-        Ok(_) => println!("✓ 配置文件验证通过"),
+        Ok(_) => println!("✓ Configuration file validation passed"),
         Err(e) => {
-            println!("✗ 配置文件验证失败: {}", e);
+            println!("✗ Configuration file validation failed: {}", e);
             return Err(e);
         }
     }
 
-    // 2. 显示服务配置
-    println!("\n--- 服务配置 ---");
-    println!("服务名称: {}", config.service_name);
-    println!("版本: {}", config.version);
-    println!("API地址: http://{}:{}", config.api.host, config.api.port);
-    println!("日志级别: {}", config.log.level);
+    // 2. Display service configuration
+    println!("\n--- Service Configuration ---");
+    println!("Service name: {}", config.service_name);
+    println!("Version: {}", config.version);
+    println!(
+        "API address: http://{}:{}",
+        config.api.host, config.api.port
+    );
+    println!("Log level: {}", config.log.level);
 
-    // 3. 显示Redis配置
-    println!("\n--- Redis配置 ---");
+    // 3. Display Redis configuration
+    println!("\n--- Redis Configuration ---");
     println!("URL: {}", config.redis.url);
-    println!("前缀: {}", config.redis.key_prefix);
+    println!("Prefix: {}", config.redis.key_prefix);
 
-    // 4. 测试Redis连接
-    print!("连接测试: ");
+    // 4. Test Redis connection
+    print!("Connection test: ");
     match ModelManager::new(&config.redis.url).await {
         Ok(_) => {
-            println!("✓ 成功");
+            println!("✓ Success");
 
-            // 测试Lua脚本
-            println!("Lua脚本: ✓ 已加载");
+            // Test Lua scripts
+            println!("Lua scripts: ✓ Loaded");
         }
         Err(e) => {
-            println!("✗ 失败 - {}", e);
-            return Err(ModelSrvError::redis(format!("Redis连接失败: {}", e)));
+            println!("✗ Failed - {}", e);
+            return Err(ModelSrvError::redis(format!(
+                "Redis connection failed: {}",
+                e
+            )));
         }
     }
 
-    // 5. 显示模型信息
-    println!("\n--- 模型配置 ---");
+    // 5. Display model information
+    println!("\n--- Model Configuration ---");
     if config.models.is_empty() {
-        println!("未配置任何模型");
+        println!("No models configured");
     } else {
-        println!("已配置 {} 个模型:", config.models.len());
+        println!("Configured {} models:", config.models.len());
         for model in &config.models {
             println!("\n• {} ({})", model.name, model.id);
-            println!("  描述: {}", model.description);
+            println!("  Description: {}", model.description);
 
-            // 显示监视点
+            // Display monitoring points
             if !model.monitoring.is_empty() {
-                println!("  监视点 ({}):", model.monitoring.len());
+                println!("  Monitoring points ({}):", model.monitoring.len());
                 for (name, point) in &model.monitoring {
                     let unit = point.unit.as_deref().unwrap_or("");
                     println!("    - {}: {} {}", name, point.description, unit);
                 }
             }
 
-            // 显示控制点
+            // Display control points
             if !model.control.is_empty() {
-                println!("  控制点 ({}):", model.control.len());
+                println!("  Control points ({}):", model.control.len());
                 for (name, point) in &model.control {
                     let unit = point.unit.as_deref().unwrap_or("");
                     println!("    - {}: {} {}", name, point.description, unit);
@@ -251,6 +263,6 @@ async fn check_config(config: Config) -> Result<()> {
         }
     }
 
-    println!("\n✓ 所有检查通过");
+    println!("\n✓ All checks passed");
     Ok(())
 }

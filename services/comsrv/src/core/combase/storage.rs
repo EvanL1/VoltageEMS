@@ -1,6 +1,6 @@
-//! 框架存储模块
+//! Framework storage module
 //!
-//! `整合了ComBase存储接口和优化的批量同步功能`
+//! `Integrates ComBase storage interface and optimized batch synchronization functionality`
 
 use super::core::RedisValue;
 use crate::core::sync::{DataSync, LuaSyncManager};
@@ -12,20 +12,20 @@ use tokio::sync::Mutex;
 use tracing::{debug, warn};
 
 // ============================================================================
-// ComBase统一存储接口
+// ComBase unified storage interface
 // ============================================================================
 
-/// ComBase层统一存储trait
+/// ComBase layer unified storage trait
 #[async_trait]
 pub trait ComBaseStorage: Send + Sync {
-    /// 批量更新并发布数据
+    /// Batch update and publish data
     async fn batch_update_and_publish(
         &mut self,
         channel_id: u16,
         updates: Vec<PluginPointUpdate>,
     ) -> Result<()>;
 
-    /// 单点更新并发布
+    /// Single point update and publish
     async fn update_and_publish(
         &mut self,
         channel_id: u16,
@@ -34,11 +34,11 @@ pub trait ComBaseStorage: Send + Sync {
         telemetry_type: &str,
     ) -> Result<()>;
 
-    /// 获取存储统计信息
+    /// Get storage statistics
     async fn get_stats(&self) -> StorageStats;
 }
 
-/// 存储统计信息
+/// Storage statistics
 #[derive(Debug, Clone, Default)]
 pub struct StorageStats {
     pub total_updates: u64,
@@ -49,29 +49,29 @@ pub struct StorageStats {
     pub storage_errors: u64,
 }
 
-/// `默认ComBase存储实现`
+/// `Default ComBase storage implementation`
 pub struct DefaultComBaseStorage {
     storage: Arc<Mutex<Box<dyn PluginStorage>>>,
-    stats: Arc<Mutex<StorageStats>>,
+    stats: Mutex<StorageStats>,
     sync_manager: Option<Arc<LuaSyncManager>>,
 }
 
 impl DefaultComBaseStorage {
-    /// 创建新实例
+    /// Create new instance
     pub fn new(storage: Box<dyn PluginStorage>) -> Self {
         Self {
             storage: Arc::new(Mutex::new(storage)),
-            stats: Arc::new(Mutex::new(StorageStats::default())),
+            stats: Mutex::new(StorageStats::default()),
             sync_manager: None,
         }
     }
 
-    /// 设置同步管理器
+    /// Set synchronization manager
     pub fn set_sync_manager(&mut self, sync_manager: Arc<LuaSyncManager>) {
         self.sync_manager = Some(sync_manager);
     }
 
-    /// 内部批量更新方法
+    /// Internal batch update method
     async fn internal_batch_update(
         &self,
         channel_id: u16,
@@ -79,10 +79,10 @@ impl DefaultComBaseStorage {
     ) -> Result<()> {
         let storage = self.storage.lock().await;
 
-        // 执行批量更新
+        // Execute batch update
         storage.write_points(updates.clone()).await?;
 
-        // 如果启用了 Lua 同步，异步同步数据
+        // If Lua synchronization is enabled, asynchronously synchronize data
         if let Some(sync_manager) = &self.sync_manager {
             let sync_updates: Vec<(u16, String, u32, f64)> = updates
                 .into_iter()
@@ -96,7 +96,7 @@ impl DefaultComBaseStorage {
                 })
                 .collect();
 
-            // 异步同步，不阻塞主流程
+            // Asynchronous synchronization, non-blocking main flow
             if !sync_updates.is_empty() {
                 let update_count = sync_updates.len();
                 match sync_manager.batch_sync(sync_updates).await {
@@ -167,7 +167,7 @@ impl ComBaseStorage for DefaultComBaseStorage {
                     .as_secs(),
             )
             .unwrap_or(i64::MAX),
-            telemetry_type: telemetry_type.parse().unwrap(), // 需要从字符串转换为枚举
+            telemetry_type: telemetry_type.parse().unwrap(), // Need to convert from string to enum
             raw_value: None,
         };
 
@@ -180,10 +180,10 @@ impl ComBaseStorage for DefaultComBaseStorage {
                 stats.total_updates += 1;
                 stats.single_updates += 1;
 
-                // 单点同步（如果启用）
+                // Single point synchronization (if enabled)
                 if let Some(sync_manager) = &self.sync_manager {
                     match sync_manager
-                        .sync_measurement(channel_id, telemetry_type, point_id, float_value)
+                        .sync_telemetry(channel_id, telemetry_type, point_id, float_value)
                         .await
                     {
                         Ok(()) => debug!("Single point sync initiated"),
@@ -215,16 +215,16 @@ impl std::fmt::Debug for DefaultComBaseStorage {
 }
 
 // ============================================================================
-// 辅助函数
+// Helper functions
 // ============================================================================
 
-/// `创建带存储的ComBase存储实例`
+/// Create ComBase storage instance with storage
 pub fn create_combase_storage(storage: Box<dyn PluginStorage>) -> Box<dyn ComBaseStorage> {
     Box::new(DefaultComBaseStorage::new(storage))
 }
 
 // ============================================================================
-// 测试模块
+// Test module
 // ============================================================================
 
 #[cfg(test)]
@@ -234,18 +234,18 @@ mod tests {
 
     #[tokio::test]
     async fn test_combase_storage() {
-        // 使用默认存储进行测试
+        // Use default storage for testing
         if let Ok(default_storage) = DefaultPluginStorage::from_env().await {
             let plugin_storage = Box::new(default_storage) as Box<dyn PluginStorage>;
             let mut storage = DefaultComBaseStorage::new(plugin_storage);
 
-            // 测试单点更新
+            // Test single point update
             let result = storage
                 .update_and_publish(1, 100, RedisValue::Float(42.0), "m")
                 .await;
             assert!(result.is_ok());
 
-            // 获取统计信息
+            // Get statistics
             let stats = storage.get_stats().await;
             assert_eq!(stats.total_updates, 1);
             assert_eq!(stats.single_updates, 1);

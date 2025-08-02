@@ -1,40 +1,36 @@
-//! Modbus 协议核心实现
+//! Modbus protocol core implementation
 //!
-//! 集成了协议处理、轮询机制和批量优化功能
-//! 注意：当前版本为临时实现，专注于编译通过
+//! Integrates protocol processing, polling mechanism and batch optimization features
+//! Note: Current version is a temporary implementation, focused on compilation
 
 use async_trait::async_trait;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::{mpsc, Mutex, RwLock};
+use tokio::sync::{Mutex, RwLock};
 use tokio::task::JoinHandle;
 use tracing::{debug, error, info, warn};
 
-use crate::core::combase::{
-    ChannelCommand, ChannelStatus, ComBase, CommandSubscriber, CommandSubscriberConfig, PointData,
-    PointDataMap, RedisValue,
-};
+use crate::core::combase::{ChannelStatus, ComBase, PointData, PointDataMap, RedisValue};
 use crate::core::config::types::{ChannelConfig, TelemetryType};
 use crate::core::data_processor;
-use crate::plugins::core::{DefaultPluginStorage, PluginPointUpdate, PluginStorage};
 use crate::utils::error::{ComSrvError, Result};
 
 use super::connection::{ConnectionParams, ModbusConnectionManager, ModbusMode as ConnectionMode};
 use super::transport::{ModbusFrameProcessor, ModbusMode};
 use super::types::{ModbusPoint, ModbusPollingConfig};
 
-/// Modbus 协议核心引擎
+/// Modbus protocol core engine
 #[derive(Debug)]
 pub struct ModbusCore {
-    /// 轮询配置
+    /// Polling configuration
     _polling_config: ModbusPollingConfig,
-    /// 点位映射表
+    /// Point mapping table
     _points: HashMap<String, ModbusPoint>,
 }
 
 impl ModbusCore {
-    /// 创建新的 Modbus 核心引擎
+    /// Create new Modbus core engine
     pub fn new(_mode: ModbusMode, polling_config: ModbusPollingConfig) -> Self {
         Self {
             _polling_config: polling_config,
@@ -42,7 +38,7 @@ impl ModbusCore {
         }
     }
 
-    /// 设置点位映射表
+    /// Set point mapping table
     pub fn set_points(&mut self, points: Vec<ModbusPoint>) {
         self._points.clear();
         for point in points {
@@ -54,41 +50,34 @@ impl ModbusCore {
         );
     }
 
-    // TODO: 实现完整的轮询和批量读取功能
-    // 当前暂时注释掉复杂的实现以通过编译
+    // TODO: Implement complete polling and batch reading functionality
+    // Currently commenting out complex implementation to pass compilation
 }
 
-/// Modbus 协议实现，实现 `ComBase` trait
+/// Modbus protocol implementation, implements `ComBase` trait
 pub struct ModbusProtocol {
-    /// 协议名称
+    /// Protocol name
     name: String,
-    /// 通道ID
+    /// Channel ID
     channel_id: u16,
-    /// 通道配置
+    /// Channel configuration
     channel_config: Option<ChannelConfig>,
 
-    /// 核心组件
+    /// Core components
     core: Arc<Mutex<ModbusCore>>,
     connection_manager: Arc<ModbusConnectionManager>,
 
-    /// 命令处理
-    command_subscriber: Option<CommandSubscriber>,
-    command_rx: Option<mpsc::Receiver<ChannelCommand>>,
-
-    /// 状态管理
+    /// State management
     is_connected: Arc<RwLock<bool>>,
     status: Arc<RwLock<ChannelStatus>>,
 
-    /// 任务管理
+    /// Task management
     polling_handle: Arc<RwLock<Option<JoinHandle<()>>>>,
-    command_handle: Arc<RwLock<Option<JoinHandle<()>>>>,
 
-    /// 轮询配置
+    /// Polling configuration
     polling_config: ModbusPollingConfig,
-    /// 点位映射
+    /// Point mapping
     points: Arc<RwLock<Vec<ModbusPoint>>>,
-    /// 存储组件
-    storage: Option<Arc<dyn PluginStorage>>,
 }
 
 impl std::fmt::Debug for ModbusProtocol {
@@ -103,7 +92,7 @@ impl std::fmt::Debug for ModbusProtocol {
 }
 
 impl ModbusProtocol {
-    /// 创建新的 Modbus 协议实例
+    /// Create new Modbus protocol instance
     pub fn new(
         channel_config: ChannelConfig,
         connection_params: ConnectionParams,
@@ -131,15 +120,11 @@ impl ModbusProtocol {
             channel_config: Some(channel_config),
             core: Arc::new(Mutex::new(core)),
             connection_manager,
-            command_subscriber: None,
-            command_rx: None,
             is_connected: Arc::new(RwLock::new(false)),
             status: Arc::new(RwLock::new(ChannelStatus::default())),
             polling_handle: Arc::new(RwLock::new(None)),
-            command_handle: Arc::new(RwLock::new(None)),
             polling_config,
             points: Arc::new(RwLock::new(Vec::new())),
-            storage: None,
         })
     }
 }
@@ -174,30 +159,30 @@ impl ComBase for ModbusProtocol {
 
         self.channel_config = Some(channel_config.clone());
 
-        // Step 2: 加载和解析点位配置
+        // Step 2: Load and parse point configurations
         info!(
             "Channel {} - Step 2: Loading point configurations",
             channel_config.id
         );
         let mut modbus_points = Vec::new();
 
-        // 合并所有四种遥测类型的点位进行处理
+        // Merge all four telemetry types of points for processing
         let all_points = vec![
-            &channel_config.measurement_points,
+            &channel_config.telemetry_points,
             &channel_config.signal_points,
             &channel_config.control_points,
             &channel_config.adjustment_points,
         ];
 
-        let total_configured_points = channel_config.measurement_points.len()
+        let total_configured_points = channel_config.telemetry_points.len()
             + channel_config.signal_points.len()
             + channel_config.control_points.len()
             + channel_config.adjustment_points.len();
 
-        info!("Channel {} - Step 2: Processing {} configured points ({} measurement, {} signal, {} control, {} adjustment)", 
+        info!("Channel {} - Step 2: Processing {} configured points ({} telemetry, {} signal, {} control, {} adjustment)", 
             channel_config.id,
             total_configured_points,
-            channel_config.measurement_points.len(),
+            channel_config.telemetry_points.len(),
             channel_config.signal_points.len(),
             channel_config.control_points.len(),
             channel_config.adjustment_points.len()
@@ -205,7 +190,7 @@ impl ComBase for ModbusProtocol {
 
         for point_map in all_points {
             for point in point_map.values() {
-                // 直接从protocol_params中读取各个字段
+                // Read fields directly from protocol_params
                 if let (Some(slave_id_str), Some(function_code_str), Some(register_address_str)) = (
                     point.protocol_params.get("slave_id"),
                     point.protocol_params.get("function_code"),
@@ -216,11 +201,10 @@ impl ComBase for ModbusProtocol {
                         function_code_str.parse::<u8>(),
                         register_address_str.parse::<u16>(),
                     ) {
-                        // 修复数据格式获取逻辑
-                        let data_format = point
+                        // Get data type
+                        let data_type = point
                             .protocol_params
-                            .get("data_format")
-                            .or_else(|| point.protocol_params.get("data_type")) // 向后兼容
+                            .get("data_type")
                             .unwrap_or(&"uint16".to_string())
                             .clone();
 
@@ -229,7 +213,7 @@ impl ComBase for ModbusProtocol {
                             slave_id,
                             function_code,
                             register_address,
-                            data_format: data_format.clone(),
+                            data_type: data_type.clone(),
                             register_count: point
                                 .protocol_params
                                 .get("register_count")
@@ -244,7 +228,7 @@ impl ComBase for ModbusProtocol {
                             slave_id,
                             function_code,
                             register_address,
-                            data_format,
+                            &data_type,
                             point.protocol_params.get("bit_position")
                         );
 
@@ -264,7 +248,7 @@ impl ComBase for ModbusProtocol {
             }
         }
 
-        // Step 3: 设置点位到核心和本地存储
+        // Step 3: Set points to core and local storage
         info!(
             "Channel {} - Step 3: Setting up {} points in storage",
             channel_config.id,
@@ -285,39 +269,6 @@ impl ComBase for ModbusProtocol {
             total_configured_points
         );
 
-        // Step 4: 初始化存储组件
-        info!(
-            "Channel {} - Step 4: Initializing storage component",
-            channel_config.id
-        );
-
-        // 从channel_config获取redis_url，如果没有则使用默认值
-        let redis_url = channel_config
-            .parameters
-            .get("redis_url")
-            .and_then(|v| v.as_str())
-            .map_or_else(
-                || "redis://localhost:6379".to_string(),
-                std::string::ToString::to_string,
-            );
-
-        match DefaultPluginStorage::new(redis_url.clone()).await {
-            Ok(storage) => {
-                self.storage = Some(Arc::new(storage) as Arc<dyn PluginStorage>);
-                info!(
-                    "Channel {} - Storage initialized successfully with Redis URL: {}",
-                    channel_config.id, redis_url
-                );
-            }
-            Err(e) => {
-                error!(
-                    "Channel {} - Failed to initialize storage: {}, continuing without Redis storage",
-                    channel_config.id, e
-                );
-                // 继续运行，但不会有Redis存储功能
-            }
-        }
-
         info!("Channel {} - Initialization completed successfully (connection will be established later)", channel_config.id);
         Ok(())
     }
@@ -328,7 +279,7 @@ impl ComBase for ModbusProtocol {
             self.channel_id
         );
 
-        // 建立连接
+        // Establish connection
         info!(
             "Channel {} - Establishing Modbus connection...",
             self.channel_id
@@ -342,25 +293,7 @@ impl ComBase for ModbusProtocol {
         *self.is_connected.write().await = true;
         self.status.write().await.is_connected = true;
 
-        // 创建命令订阅器
-        if let Some(ref config) = self.channel_config {
-            if let Some(redis_url) = config.parameters.get("redis_url").and_then(|v| v.as_str()) {
-                let (cmd_tx, cmd_rx) = mpsc::channel(100);
-                let subscriber = CommandSubscriber::new(
-                    CommandSubscriberConfig {
-                        channel_id: self.channel_id,
-                        redis_url: redis_url.to_string(),
-                    },
-                    cmd_tx,
-                )
-                .await?;
-
-                self.command_subscriber = Some(subscriber);
-                self.command_rx = Some(cmd_rx);
-            }
-        }
-
-        // 启动周期性任务（轮询等）
+        // Start periodic tasks (polling, etc.)
         info!("Channel {} - Starting periodic tasks...", self.channel_id);
         self.start_periodic_tasks().await?;
         info!(
@@ -405,7 +338,7 @@ impl ComBase for ModbusProtocol {
             if let Ok(point_id) = point.point_id.parse::<u32>() {
                 // 根据telemetry_type选择正确的HashMap
                 let config_point = match telemetry_type {
-                    "Measurement" => channel_config.measurement_points.get(&point_id),
+                    "Telemetry" => channel_config.telemetry_points.get(&point_id),
                     "Signal" => channel_config.signal_points.get(&point_id),
                     "Control" => channel_config.control_points.get(&point_id),
                     "Adjustment" => channel_config.adjustment_points.get(&point_id),
@@ -438,16 +371,182 @@ impl ComBase for ModbusProtocol {
         }
 
         let mut results = Vec::new();
+        let channel_config = self
+            .channel_config
+            .as_ref()
+            .ok_or_else(|| ComSrvError::config("Channel configuration not initialized"))?;
+
+        // Get frame processor
+        let mode = match self.connection_manager.mode() {
+            ConnectionMode::Tcp => ModbusMode::Tcp,
+            ConnectionMode::Rtu => ModbusMode::Rtu,
+        };
+        let mut frame_processor = ModbusFrameProcessor::new(mode);
 
         for (point_id, value) in commands {
-            // TODO: 实际的 Modbus 写操作
-            debug!(
+            info!(
                 "Executing control command: point {}, value {:?}",
                 point_id, value
             );
-            results.push((point_id, true));
+
+            // Find point configuration
+            let point_config = channel_config.control_points.get(&point_id);
+            if point_config.is_none() {
+                error!("Control point {} not found in configuration", point_id);
+                results.push((point_id, false));
+                continue;
+            }
+            let point_config = point_config.unwrap();
+
+            // Get Modbus parameters
+            let slave_id = point_config
+                .protocol_params
+                .get("slave_id")
+                .and_then(|v| v.parse::<u8>().ok())
+                .unwrap_or(1);
+
+            let function_code = point_config
+                .protocol_params
+                .get("function_code")
+                .and_then(|v| v.parse::<u8>().ok())
+                .unwrap_or(5); // Default to FC05 for control
+
+            let register_address = point_config
+                .protocol_params
+                .get("register_address")
+                .and_then(|v| v.parse::<u16>().ok())
+                .ok_or_else(|| {
+                    ComSrvError::config(format!("Missing register_address for point {}", point_id))
+                })?;
+
+            let data_type = point_config
+                .protocol_params
+                .get("data_type")
+                .map(|s| s.as_str())
+                .unwrap_or("bool");
+
+            let byte_order = point_config
+                .protocol_params
+                .get("byte_order")
+                .map(|s| s.as_str());
+
+            // Encode value
+            let register_values = match encode_value_for_modbus(&value, data_type, byte_order) {
+                Ok(values) => values,
+                Err(e) => {
+                    error!("Failed to encode value for point {}: {}", point_id, e);
+                    results.push((point_id, false));
+                    continue;
+                }
+            };
+
+            // Build PDU based on function code
+            let pdu = match function_code {
+                5 => {
+                    // FC05: Write Single Coil
+                    let bool_value = register_values.first().map(|&v| v != 0).unwrap_or(false);
+                    build_write_fc05_single_coil_pdu(register_address, bool_value)
+                }
+                6 => {
+                    // FC06: Write Single Register
+                    let reg_value = register_values.first().copied().unwrap_or(0);
+                    build_write_fc06_single_register_pdu(register_address, reg_value)
+                }
+                15 => {
+                    // FC15: Write Multiple Coils
+                    let bool_values: Vec<bool> = register_values.iter().map(|&v| v != 0).collect();
+                    build_write_fc15_multiple_coils_pdu(register_address, &bool_values)
+                }
+                16 => {
+                    // FC16: Write Multiple Registers
+                    build_write_fc16_multiple_registers_pdu(register_address, &register_values)
+                }
+                _ => {
+                    error!("Unsupported function code {} for control", function_code);
+                    results.push((point_id, false));
+                    continue;
+                }
+            };
+
+            // Build frame and send
+            let request = frame_processor.build_frame(slave_id, &pdu);
+
+            match self.connection_manager.send(&request).await {
+                Ok(()) => {
+                    // Receive response
+                    let mut response = vec![0u8; 256];
+                    match self
+                        .connection_manager
+                        .receive(&mut response, Duration::from_secs(5))
+                        .await
+                    {
+                        Ok(bytes_read) => {
+                            response.truncate(bytes_read);
+
+                            // Parse response
+                            match frame_processor.parse_frame(&response) {
+                                Ok((received_unit_id, response_pdu)) => {
+                                    if received_unit_id != slave_id {
+                                        error!(
+                                            "Unit ID mismatch: expected {}, got {}",
+                                            slave_id, received_unit_id
+                                        );
+                                        results.push((point_id, false));
+                                        continue;
+                                    }
+
+                                    // Parse write response
+                                    match parse_modbus_write_response(&response_pdu, function_code)
+                                    {
+                                        Ok(_) => {
+                                            info!(
+                                                "Control command successful for point {}",
+                                                point_id
+                                            );
+                                            results.push((point_id, true));
+
+                                            // Update status
+                                            self.status.write().await.success_count += 1;
+                                        }
+                                        Err(e) => {
+                                            error!(
+                                                "Control command failed for point {}: {}",
+                                                point_id, e
+                                            );
+                                            results.push((point_id, false));
+                                            self.status.write().await.error_count += 1;
+                                        }
+                                    }
+                                }
+                                Err(e) => {
+                                    error!(
+                                        "Failed to parse response for point {}: {}",
+                                        point_id, e
+                                    );
+                                    results.push((point_id, false));
+                                    self.status.write().await.error_count += 1;
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            error!("Failed to receive response for point {}: {}", point_id, e);
+                            results.push((point_id, false));
+                            self.status.write().await.error_count += 1;
+                        }
+                    }
+                }
+                Err(e) => {
+                    error!(
+                        "Failed to send control command for point {}: {}",
+                        point_id, e
+                    );
+                    results.push((point_id, false));
+                    self.status.write().await.error_count += 1;
+                }
+            }
         }
 
+        self.status.write().await.last_update = chrono::Utc::now().timestamp() as u64;
         Ok(results)
     }
 
@@ -460,16 +559,193 @@ impl ComBase for ModbusProtocol {
         }
 
         let mut results = Vec::new();
+        let channel_config = self
+            .channel_config
+            .as_ref()
+            .ok_or_else(|| ComSrvError::config("Channel configuration not initialized"))?;
+
+        // Get frame processor
+        let mode = match self.connection_manager.mode() {
+            ConnectionMode::Tcp => ModbusMode::Tcp,
+            ConnectionMode::Rtu => ModbusMode::Rtu,
+        };
+        let mut frame_processor = ModbusFrameProcessor::new(mode);
 
         for (point_id, value) in adjustments {
-            // TODO: 实际的 Modbus 写操作
-            debug!(
+            info!(
                 "Executing adjustment command: point {}, value {:?}",
                 point_id, value
             );
-            results.push((point_id, true));
+
+            // Find point configuration
+            let point_config = channel_config.adjustment_points.get(&point_id);
+            if point_config.is_none() {
+                error!("Adjustment point {} not found in configuration", point_id);
+                results.push((point_id, false));
+                continue;
+            }
+            let point_config = point_config.unwrap();
+
+            // Get Modbus parameters
+            let slave_id = point_config
+                .protocol_params
+                .get("slave_id")
+                .and_then(|v| v.parse::<u8>().ok())
+                .unwrap_or(1);
+
+            let function_code = point_config
+                .protocol_params
+                .get("function_code")
+                .and_then(|v| v.parse::<u8>().ok())
+                .unwrap_or(6); // Default to FC06 for adjustment
+
+            let register_address = point_config
+                .protocol_params
+                .get("register_address")
+                .and_then(|v| v.parse::<u16>().ok())
+                .ok_or_else(|| {
+                    ComSrvError::config(format!("Missing register_address for point {}", point_id))
+                })?;
+
+            let data_type = point_config
+                .protocol_params
+                .get("data_type")
+                .map(|s| s.as_str())
+                .unwrap_or("uint16");
+
+            let byte_order = point_config
+                .protocol_params
+                .get("byte_order")
+                .map(|s| s.as_str());
+
+            // Apply scaling if configured (reverse scaling for write)
+            let scaled_value = if let Some(scaling_info) = &point_config.scaling {
+                match &value {
+                    RedisValue::Float(f) => {
+                        // Reverse scaling: (value - offset) / scale
+                        let raw = (f - scaling_info.offset) / scaling_info.scale;
+                        RedisValue::Float(raw)
+                    }
+                    RedisValue::Integer(i) => {
+                        // Convert to float, reverse scale, then back to integer
+                        let f = *i as f64;
+                        let raw = ((f - scaling_info.offset) / scaling_info.scale) as i64;
+                        RedisValue::Integer(raw)
+                    }
+                    _ => value.clone(),
+                }
+            } else {
+                value.clone()
+            };
+
+            // Encode value
+            let register_values =
+                match encode_value_for_modbus(&scaled_value, data_type, byte_order) {
+                    Ok(values) => values,
+                    Err(e) => {
+                        error!("Failed to encode value for point {}: {}", point_id, e);
+                        results.push((point_id, false));
+                        continue;
+                    }
+                };
+
+            // Build PDU based on function code
+            let pdu = match function_code {
+                6 => {
+                    // FC06: Write Single Register
+                    let reg_value = register_values.first().copied().unwrap_or(0);
+                    build_write_fc06_single_register_pdu(register_address, reg_value)
+                }
+                16 => {
+                    // FC16: Write Multiple Registers
+                    build_write_fc16_multiple_registers_pdu(register_address, &register_values)
+                }
+                _ => {
+                    error!("Unsupported function code {} for adjustment", function_code);
+                    results.push((point_id, false));
+                    continue;
+                }
+            };
+
+            // Build frame and send
+            let request = frame_processor.build_frame(slave_id, &pdu);
+
+            match self.connection_manager.send(&request).await {
+                Ok(()) => {
+                    // Receive response
+                    let mut response = vec![0u8; 256];
+                    match self
+                        .connection_manager
+                        .receive(&mut response, Duration::from_secs(5))
+                        .await
+                    {
+                        Ok(bytes_read) => {
+                            response.truncate(bytes_read);
+
+                            // Parse response
+                            match frame_processor.parse_frame(&response) {
+                                Ok((received_unit_id, response_pdu)) => {
+                                    if received_unit_id != slave_id {
+                                        error!(
+                                            "Unit ID mismatch: expected {}, got {}",
+                                            slave_id, received_unit_id
+                                        );
+                                        results.push((point_id, false));
+                                        continue;
+                                    }
+
+                                    // Parse write response
+                                    match parse_modbus_write_response(&response_pdu, function_code)
+                                    {
+                                        Ok(_) => {
+                                            info!(
+                                                "Adjustment command successful for point {}",
+                                                point_id
+                                            );
+                                            results.push((point_id, true));
+
+                                            // Update status
+                                            self.status.write().await.success_count += 1;
+                                        }
+                                        Err(e) => {
+                                            error!(
+                                                "Adjustment command failed for point {}: {}",
+                                                point_id, e
+                                            );
+                                            results.push((point_id, false));
+                                            self.status.write().await.error_count += 1;
+                                        }
+                                    }
+                                }
+                                Err(e) => {
+                                    error!(
+                                        "Failed to parse response for point {}: {}",
+                                        point_id, e
+                                    );
+                                    results.push((point_id, false));
+                                    self.status.write().await.error_count += 1;
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            error!("Failed to receive response for point {}: {}", point_id, e);
+                            results.push((point_id, false));
+                            self.status.write().await.error_count += 1;
+                        }
+                    }
+                }
+                Err(e) => {
+                    error!(
+                        "Failed to send adjustment command for point {}: {}",
+                        point_id, e
+                    );
+                    results.push((point_id, false));
+                    self.status.write().await.error_count += 1;
+                }
+            }
         }
 
+        self.status.write().await.last_update = chrono::Utc::now().timestamp() as u64;
         Ok(results)
     }
 
@@ -481,12 +757,6 @@ impl ComBase for ModbusProtocol {
             self.channel_id
         );
 
-        // 启动命令订阅
-        if let Some(ref _subscriber) = &self.command_subscriber {
-            // 命令订阅将在协议初始化时启动
-            debug!("Command subscriber ready for channel {}", self.channel_id);
-        }
-
         // 启动轮询任务
         if self.polling_config.enabled {
             let channel_id = self.channel_id;
@@ -497,7 +767,6 @@ impl ComBase for ModbusProtocol {
             let is_connected = self.is_connected.clone();
             let channel_config = self.channel_config.clone();
             let polling_config_clone = self.polling_config.clone();
-            let storage = self.storage.clone();
 
             let polling_task = tokio::spawn(async move {
                 let mut interval =
@@ -528,7 +797,7 @@ impl ComBase for ModbusProtocol {
                     let mut success_count = 0;
                     let mut error_count = 0;
 
-                    // Filter points to only read Measurement and Signal types
+                    // Filter points to only read Telemetry and Signal types
                     // Control and Adjustment should only be written via command channels
                     let points_count = points_to_read.len();
                     let filtered_points: Vec<ModbusPoint> = if let Some(ref config) = channel_config
@@ -537,9 +806,9 @@ impl ComBase for ModbusProtocol {
                             .into_iter()
                             .filter(|point| {
                                 if let Ok(point_id) = point.point_id.parse::<u32>() {
-                                    // 检查点位是否在 measurement_points 或 signal_points 中
+                                    // 检查点位是否在 telemetry_points 或 signal_points 中
                                     // 只允许遥测和遥信类型进行轮询
-                                    if config.measurement_points.contains_key(&point_id)
+                                    if config.telemetry_points.contains_key(&point_id)
                                         || config.signal_points.contains_key(&point_id)
                                     {
                                         true
@@ -609,12 +878,8 @@ impl ComBase for ModbusProtocol {
                             Ok(values) => {
                                 success_count += values.len();
 
-                                // Process values and store to Redis
+                                // Process values
                                 debug!("Processing {} values from Modbus read", values.len());
-
-                                // Collect updates for batch storage
-                                let mut batch_updates = Vec::new();
-                                let timestamp = chrono::Utc::now().timestamp_millis();
 
                                 for (point_id_str, value) in values {
                                     // Convert point_id from string to u32
@@ -630,24 +895,24 @@ impl ComBase for ModbusProtocol {
                                         let telemetry_type = if let Some(ref config) =
                                             channel_config
                                         {
-                                            if config.measurement_points.contains_key(&point_id) {
-                                                TelemetryType::Measurement
+                                            if config.telemetry_points.contains_key(&point_id) {
+                                                TelemetryType::Telemetry
                                             } else if config.signal_points.contains_key(&point_id) {
                                                 TelemetryType::Signal
                                             } else {
-                                                // Default to measurement if not found
-                                                TelemetryType::Measurement
+                                                // Default to telemetry if not found
+                                                TelemetryType::Telemetry
                                             }
                                         } else {
-                                            TelemetryType::Measurement
+                                            TelemetryType::Telemetry
                                         };
 
                                         // Get scaling info from channel config
                                         let (scale, offset, reverse) =
                                             if let Some(ref config) = channel_config {
                                                 let point_config = match telemetry_type {
-                                                    TelemetryType::Measurement => {
-                                                        config.measurement_points.get(&point_id)
+                                                    TelemetryType::Telemetry => {
+                                                        config.telemetry_points.get(&point_id)
                                                     }
                                                     TelemetryType::Signal => {
                                                         config.signal_points.get(&point_id)
@@ -695,38 +960,6 @@ impl ComBase for ModbusProtocol {
 
                                         debug!("Read point {}: raw={:.6}, scale={}, offset={}, reverse={:?}, processed={:.6}", 
                                             point_id, raw_value, scale, offset, reverse, processed_value);
-
-                                        // Create update for batch storage
-                                        let update = PluginPointUpdate {
-                                            channel_id,
-                                            telemetry_type,
-                                            point_id,
-                                            value: processed_value,
-                                            timestamp,
-                                            raw_value: Some(raw_value),
-                                        };
-
-                                        batch_updates.push(update);
-                                    }
-                                }
-
-                                // Store batch updates to Redis if storage is available
-                                if !batch_updates.is_empty() {
-                                    let update_count = batch_updates.len();
-                                    if let Some(ref storage) = storage {
-                                        match storage.write_points(batch_updates).await {
-                                            Ok(()) => {
-                                                debug!(
-                                                    "Successfully stored {} points to Redis",
-                                                    update_count
-                                                );
-                                            }
-                                            Err(e) => {
-                                                error!("Failed to store points to Redis: {}", e);
-                                            }
-                                        }
-                                    } else {
-                                        debug!("No storage configured, skipping Redis storage");
                                     }
                                 }
                             }
@@ -765,28 +998,10 @@ impl ComBase for ModbusProtocol {
             self.channel_id
         );
 
-        // 停止命令订阅
-        if let Some(ref _subscriber) = &self.command_subscriber {
-            // 命令订阅将在协议停止时自动清理
-            debug!(
-                "Cleaning up command subscriber for channel {}",
-                self.channel_id
-            );
-        }
-
         // 停止轮询任务
         if let Some(handle) = self.polling_handle.write().await.take() {
             handle.abort();
             info!("Polling task stopped for channel {}", self.channel_id);
-        }
-
-        // 停止命令处理任务
-        if let Some(handle) = self.command_handle.write().await.take() {
-            handle.abort();
-            info!(
-                "Command handler task stopped for channel {}",
-                self.channel_id
-            );
         }
 
         Ok(())
@@ -919,10 +1134,10 @@ async fn read_modbus_batch(
 
         // Build Modbus PDU for this batch
         let pdu = match function_code {
-            1 => build_read_coils_pdu(batch_start, batch_size as u16),
-            2 => build_read_discrete_inputs_pdu(batch_start, batch_size as u16),
-            3 => build_read_holding_registers_pdu(batch_start, batch_size as u16),
-            4 => build_read_input_registers_pdu(batch_start, batch_size as u16),
+            1 => build_read_fc01_coils_pdu(batch_start, batch_size as u16),
+            2 => build_read_fc02_discrete_inputs_pdu(batch_start, batch_size as u16),
+            3 => build_read_fc03_holding_registers_pdu(batch_start, batch_size as u16),
+            4 => build_read_fc04_input_registers_pdu(batch_start, batch_size as u16),
             _ => {
                 return Err(ComSrvError::ProtocolError(format!(
                     "Unsupported function code: {function_code}"
@@ -982,7 +1197,7 @@ async fn read_modbus_batch(
                 if let Ok(point_id) = point.point_id.parse::<u32>() {
                     // 从四个HashMap中查找点位配置
                     let config_point = config
-                        .measurement_points
+                        .telemetry_points
                         .get(&point_id)
                         .or_else(|| config.signal_points.get(&point_id))
                         .or_else(|| config.control_points.get(&point_id))
@@ -1003,7 +1218,7 @@ async fn read_modbus_batch(
 
             let value = decode_register_value(
                 registers,
-                &point.data_format,
+                &point.data_type,
                 bit_position,
                 point.byte_order.as_deref(),
             )?;
@@ -1022,10 +1237,84 @@ async fn read_modbus_batch(
     Ok(results)
 }
 
-/// Build Modbus PDU for reading coils (FC 1)
-fn build_read_coils_pdu(start_address: u16, quantity: u16) -> Vec<u8> {
+/// Build Modbus PDU for FC05: Write Single Coil (写单个线圈)
+fn build_write_fc05_single_coil_pdu(address: u16, value: bool) -> Vec<u8> {
     vec![
-        0x01, // Function code
+        0x05, // Function code 05: Write Single Coil
+        (address >> 8) as u8,
+        (address & 0xFF) as u8,
+        if value { 0xFF } else { 0x00 }, // 0xFF00 for ON, 0x0000 for OFF
+        0x00,
+    ]
+}
+
+/// Build Modbus PDU for FC06: Write Single Register (写单个保持寄存器)
+fn build_write_fc06_single_register_pdu(address: u16, value: u16) -> Vec<u8> {
+    vec![
+        0x06, // Function code 06: Write Single Register
+        (address >> 8) as u8,
+        (address & 0xFF) as u8,
+        (value >> 8) as u8,
+        (value & 0xFF) as u8,
+    ]
+}
+
+/// Build Modbus PDU for FC15: Write Multiple Coils (写多个线圈)
+fn build_write_fc15_multiple_coils_pdu(start_address: u16, values: &[bool]) -> Vec<u8> {
+    let quantity = values.len() as u16;
+    let byte_count = ((quantity + 7) / 8) as u8;
+
+    let mut pdu = vec![
+        0x0F, // Function code 15: Write Multiple Coils
+        (start_address >> 8) as u8,
+        (start_address & 0xFF) as u8,
+        (quantity >> 8) as u8,
+        (quantity & 0xFF) as u8,
+        byte_count,
+    ];
+
+    // Pack bool values into bytes
+    let mut byte_value = 0u8;
+    for (i, &value) in values.iter().enumerate() {
+        if value {
+            byte_value |= 1 << (i % 8);
+        }
+        if (i + 1) % 8 == 0 || i == values.len() - 1 {
+            pdu.push(byte_value);
+            byte_value = 0;
+        }
+    }
+
+    pdu
+}
+
+/// Build Modbus PDU for FC16: Write Multiple Registers (写多个保持寄存器)
+fn build_write_fc16_multiple_registers_pdu(start_address: u16, values: &[u16]) -> Vec<u8> {
+    let quantity = values.len() as u16;
+    let byte_count = (quantity * 2) as u8;
+
+    let mut pdu = vec![
+        0x10, // Function code 16: Write Multiple Registers
+        (start_address >> 8) as u8,
+        (start_address & 0xFF) as u8,
+        (quantity >> 8) as u8,
+        (quantity & 0xFF) as u8,
+        byte_count,
+    ];
+
+    // Add register values
+    for value in values {
+        pdu.push((value >> 8) as u8);
+        pdu.push((value & 0xFF) as u8);
+    }
+
+    pdu
+}
+
+/// Build Modbus PDU for FC01: Read Coils (读线圈状态)
+fn build_read_fc01_coils_pdu(start_address: u16, quantity: u16) -> Vec<u8> {
+    vec![
+        0x01, // Function code 01: Read Coils
         (start_address >> 8) as u8,
         (start_address & 0xFF) as u8,
         (quantity >> 8) as u8,
@@ -1033,10 +1322,10 @@ fn build_read_coils_pdu(start_address: u16, quantity: u16) -> Vec<u8> {
     ]
 }
 
-/// Build Modbus PDU for reading discrete inputs (FC 2)
-fn build_read_discrete_inputs_pdu(start_address: u16, quantity: u16) -> Vec<u8> {
+/// Build Modbus PDU for FC02: Read Discrete Inputs (读离散输入状态)
+fn build_read_fc02_discrete_inputs_pdu(start_address: u16, quantity: u16) -> Vec<u8> {
     vec![
-        0x02, // Function code
+        0x02, // Function code 02: Read Discrete Inputs
         (start_address >> 8) as u8,
         (start_address & 0xFF) as u8,
         (quantity >> 8) as u8,
@@ -1044,10 +1333,10 @@ fn build_read_discrete_inputs_pdu(start_address: u16, quantity: u16) -> Vec<u8> 
     ]
 }
 
-/// Build Modbus PDU for reading holding registers (FC 3)
-fn build_read_holding_registers_pdu(start_address: u16, quantity: u16) -> Vec<u8> {
+/// Build Modbus PDU for FC03: Read Holding Registers (读保持寄存器)
+fn build_read_fc03_holding_registers_pdu(start_address: u16, quantity: u16) -> Vec<u8> {
     vec![
-        0x03, // Function code
+        0x03, // Function code 03: Read Holding Registers
         (start_address >> 8) as u8,
         (start_address & 0xFF) as u8,
         (quantity >> 8) as u8,
@@ -1055,15 +1344,205 @@ fn build_read_holding_registers_pdu(start_address: u16, quantity: u16) -> Vec<u8
     ]
 }
 
-/// Build Modbus PDU for reading input registers (FC 4)
-fn build_read_input_registers_pdu(start_address: u16, quantity: u16) -> Vec<u8> {
+/// Build Modbus PDU for FC04: Read Input Registers (读输入寄存器)
+fn build_read_fc04_input_registers_pdu(start_address: u16, quantity: u16) -> Vec<u8> {
     vec![
-        0x04, // Function code
+        0x04, // Function code 04: Read Input Registers
         (start_address >> 8) as u8,
         (start_address & 0xFF) as u8,
         (quantity >> 8) as u8,
         (quantity & 0xFF) as u8,
     ]
+}
+
+/// Parse Modbus write response PDU
+fn parse_modbus_write_response(pdu: &[u8], expected_fc: u8) -> Result<bool> {
+    if pdu.is_empty() {
+        return Err(ComSrvError::ProtocolError("Empty PDU response".to_string()));
+    }
+
+    // Check for exception response (function code + 0x80)
+    if pdu[0] == expected_fc + 0x80 {
+        let exception_code = if pdu.len() > 1 { pdu[1] } else { 0 };
+        let error_msg = match exception_code {
+            1 => "Illegal function",
+            2 => "Illegal data address",
+            3 => "Illegal data value",
+            4 => "Slave device failure",
+            _ => "Unknown exception",
+        };
+        return Err(ComSrvError::ProtocolError(format!(
+            "Modbus exception {}: {}",
+            exception_code, error_msg
+        )));
+    }
+
+    // Check normal response
+    if pdu[0] != expected_fc {
+        return Err(ComSrvError::ProtocolError(format!(
+            "Function code mismatch: expected {}, got {}",
+            expected_fc, pdu[0]
+        )));
+    }
+
+    // For write functions, the response echoes the request
+    match expected_fc {
+        5 | 6 => {
+            // FC05/06: Response should be 5 bytes (FC + address + value)
+            if pdu.len() >= 5 {
+                Ok(true)
+            } else {
+                Err(ComSrvError::ProtocolError(
+                    "Incomplete write response".to_string(),
+                ))
+            }
+        }
+        15 | 16 => {
+            // FC15/16: Response should be 5 bytes (FC + address + quantity)
+            if pdu.len() >= 5 {
+                Ok(true)
+            } else {
+                Err(ComSrvError::ProtocolError(
+                    "Incomplete write response".to_string(),
+                ))
+            }
+        }
+        _ => Err(ComSrvError::ProtocolError(format!(
+            "Unsupported write function code: {}",
+            expected_fc
+        ))),
+    }
+}
+
+/// Encode RedisValue to register values based on data type
+fn encode_value_for_modbus(
+    value: &RedisValue,
+    data_type: &str,
+    byte_order: Option<&str>,
+) -> Result<Vec<u16>> {
+    match data_type {
+        "bool" => {
+            let bool_value = match value {
+                RedisValue::Integer(i) => *i != 0,
+                RedisValue::Float(f) => *f != 0.0,
+                _ => {
+                    return Err(ComSrvError::ProtocolError(
+                        "Invalid value type for bool".to_string(),
+                    ))
+                }
+            };
+            // For bool, return 1 or 0 as u16
+            Ok(vec![if bool_value { 1 } else { 0 }])
+        }
+        "uint16" => {
+            let int_value = match value {
+                RedisValue::Integer(i) => *i as u16,
+                RedisValue::Float(f) => *f as u16,
+                _ => {
+                    return Err(ComSrvError::ProtocolError(
+                        "Invalid value type for uint16".to_string(),
+                    ))
+                }
+            };
+            Ok(vec![int_value])
+        }
+        "int16" => {
+            let int_value = match value {
+                RedisValue::Integer(i) => *i as i16,
+                RedisValue::Float(f) => *f as i16,
+                _ => {
+                    return Err(ComSrvError::ProtocolError(
+                        "Invalid value type for int16".to_string(),
+                    ))
+                }
+            };
+            Ok(vec![int_value as u16])
+        }
+        "uint32" | "int32" => {
+            let int_value = match value {
+                RedisValue::Integer(i) => *i as u32,
+                RedisValue::Float(f) => *f as u32,
+                _ => {
+                    return Err(ComSrvError::ProtocolError(
+                        "Invalid value type for 32-bit int".to_string(),
+                    ))
+                }
+            };
+
+            // Apply byte order conversion
+            let bytes = int_value.to_be_bytes();
+            let registers = convert_bytes_to_registers_with_order(&bytes, byte_order);
+            Ok(registers)
+        }
+        "float32" => {
+            let float_value = match value {
+                RedisValue::Float(f) => *f as f32,
+                RedisValue::Integer(i) => *i as f32,
+                _ => {
+                    return Err(ComSrvError::ProtocolError(
+                        "Invalid value type for float32".to_string(),
+                    ))
+                }
+            };
+
+            let bytes = float_value.to_be_bytes();
+            let registers = convert_bytes_to_registers_with_order(&bytes, byte_order);
+            Ok(registers)
+        }
+        _ => Err(ComSrvError::ProtocolError(format!(
+            "Unsupported data type for writing: {}",
+            data_type
+        ))),
+    }
+}
+
+/// Convert bytes to registers with byte order
+fn convert_bytes_to_registers_with_order(bytes: &[u8], byte_order: Option<&str>) -> Vec<u16> {
+    if bytes.len() < 4 {
+        // For 2-byte values
+        if bytes.len() >= 2 {
+            return vec![((bytes[0] as u16) << 8) | (bytes[1] as u16)];
+        }
+        return vec![];
+    }
+
+    match byte_order {
+        Some("ABCD") | None => {
+            // Big endian (default)
+            vec![
+                ((bytes[0] as u16) << 8) | (bytes[1] as u16),
+                ((bytes[2] as u16) << 8) | (bytes[3] as u16),
+            ]
+        }
+        Some("DCBA") => {
+            // Little endian
+            vec![
+                ((bytes[3] as u16) << 8) | (bytes[2] as u16),
+                ((bytes[1] as u16) << 8) | (bytes[0] as u16),
+            ]
+        }
+        Some("BADC") => {
+            // Swap bytes within registers
+            vec![
+                ((bytes[1] as u16) << 8) | (bytes[0] as u16),
+                ((bytes[3] as u16) << 8) | (bytes[2] as u16),
+            ]
+        }
+        Some("CDAB") => {
+            // Swap register order
+            vec![
+                ((bytes[2] as u16) << 8) | (bytes[3] as u16),
+                ((bytes[0] as u16) << 8) | (bytes[1] as u16),
+            ]
+        }
+        _ => {
+            // Default to big endian
+            vec![
+                ((bytes[0] as u16) << 8) | (bytes[1] as u16),
+                ((bytes[2] as u16) << 8) | (bytes[3] as u16),
+            ]
+        }
+    }
 }
 
 /// Parse Modbus PDU and extract register values
@@ -1354,19 +1833,19 @@ mod tests {
     // Helper function for tests
     fn telemetry_type_from_string(s: &str) -> TelemetryType {
         match s {
-            "Measurement" => TelemetryType::Measurement,
+            "Telemetry" => TelemetryType::Telemetry,
             "Signal" => TelemetryType::Signal,
             "Control" => TelemetryType::Control,
             "Adjustment" => TelemetryType::Adjustment,
-            _ => TelemetryType::Measurement, // Default
+            _ => TelemetryType::Telemetry, // Default
         }
     }
 
     #[test]
     fn test_telemetry_type_from_string() {
         assert_eq!(
-            telemetry_type_from_string("Measurement"),
-            TelemetryType::Measurement
+            telemetry_type_from_string("Telemetry"),
+            TelemetryType::Telemetry
         );
         assert_eq!(telemetry_type_from_string("Signal"), TelemetryType::Signal);
         assert_eq!(
@@ -1379,7 +1858,7 @@ mod tests {
         );
         assert_eq!(
             telemetry_type_from_string("Unknown"),
-            TelemetryType::Measurement
+            TelemetryType::Telemetry
         );
     }
 
@@ -1570,7 +2049,7 @@ mod tests {
             "Raw value 1 with reverse=false should remain 1"
         );
 
-        // Test case 4: Measurement type should not apply reverse logic
+        // Test case 4: Telemetry type should not apply reverse logic
         let raw_value = 100.0;
         let scaling_with_scale = ScalingInfo {
             scale: 0.1,
@@ -1580,14 +2059,14 @@ mod tests {
         };
         let processed_value = data_processor::process_point_value(
             raw_value,
-            &TelemetryType::Measurement,
+            &TelemetryType::Telemetry,
             Some(&scaling_with_scale),
         );
 
         assert_eq!(
             processed_value,
             12.0, // 100 * 0.1 + 2.0 = 12.0
-            "Measurement type should apply scale/offset but ignore reverse"
+            "Telemetry type should apply scale/offset but ignore reverse"
         );
     }
 }

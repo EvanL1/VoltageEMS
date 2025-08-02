@@ -1,5 +1,5 @@
-//! 配置管理 API 模块
-//! 提供 RESTful API 用于配置的增删改查
+//! Configuration management API module
+//! Provides RESTful API for CRUD operations on configuration
 
 use crate::config::{Config, DataMapping};
 use crate::Result;
@@ -16,7 +16,7 @@ use tower_http::cors::CorsLayer;
 
 type SharedState = Arc<ApiState>;
 
-/// API 状态
+/// API state
 #[derive(Clone)]
 pub struct ApiState {
     pub config: Arc<RwLock<Config>>,
@@ -24,20 +24,20 @@ pub struct ApiState {
     pub update_tx: Option<tokio::sync::mpsc::Sender<()>>,
 }
 
-/// API 错误响应
+/// API error response
 #[derive(serde::Serialize)]
 struct ErrorResponse {
     error: String,
 }
 
-/// 映射查询响应
+/// Mapping query response
 #[derive(serde::Serialize)]
 struct MappingResponse {
     found: bool,
     mapping: Option<DataMapping>,
 }
 
-/// 配置更新响应
+/// Configuration update response
 #[derive(serde::Serialize)]
 struct UpdateResponse {
     success: bool,
@@ -67,7 +67,7 @@ impl ApiState {
     }
 }
 
-/// 创建配置管理 API 路由
+/// Create configuration management API routes
 pub fn create_router(state: ApiState) -> Router {
     let shared_state = Arc::new(state);
 
@@ -75,16 +75,16 @@ pub fn create_router(state: ApiState) -> Router {
         .route("/config", get(get_config))
         .route("/mappings", get(list_mappings))
         .route("/mappings", post(add_mapping))
-        .route("/mappings/:source", get(find_mapping))
-        .route("/mappings/:source", put(update_mapping))
-        .route("/mappings/:source", delete(remove_mapping))
+        .route("/mappings/{source}", get(find_mapping))
+        .route("/mappings/{source}", put(update_mapping))
+        .route("/mappings/{source}", delete(remove_mapping))
         .route("/reload", post(reload_config))
         .route("/validate", post(validate_config))
         .layer(CorsLayer::permissive())
         .with_state(shared_state)
 }
 
-/// 启动 API 服务器
+/// Start API server
 #[allow(dead_code)]
 pub async fn start_api_server(
     port: u16,
@@ -103,9 +103,9 @@ pub async fn start_api_server(
     Ok(())
 }
 
-// API 处理函数
+// API handler functions
 
-/// 获取完整配置
+/// Get complete configuration
 async fn get_config(State(state): State<SharedState>) -> impl IntoResponse {
     match state.config.read() {
         Ok(config) => Json(&*config).into_response(),
@@ -119,7 +119,7 @@ async fn get_config(State(state): State<SharedState>) -> impl IntoResponse {
     }
 }
 
-/// 列出所有映射
+/// List all mappings
 async fn list_mappings(State(state): State<SharedState>) -> impl IntoResponse {
     match state.config.read() {
         Ok(config) => Json(&config.mappings).into_response(),
@@ -133,7 +133,7 @@ async fn list_mappings(State(state): State<SharedState>) -> impl IntoResponse {
     }
 }
 
-/// 查找特定映射
+/// Find specific mapping
 async fn find_mapping(
     State(state): State<SharedState>,
     Path(source): Path<String>,
@@ -157,12 +157,12 @@ async fn find_mapping(
     }
 }
 
-/// 添加新映射
+/// Add new mapping
 async fn add_mapping(
     State(state): State<SharedState>,
     Json(mapping): Json<DataMapping>,
 ) -> impl IntoResponse {
-    // 在一个作用域内完成所有需要锁的操作
+    // Complete all operations requiring lock in one scope
     let save_result = {
         let mut config = match state.config.write() {
             Ok(config) => config,
@@ -189,9 +189,9 @@ async fn add_mapping(
                     .into_response()
             }
         }
-    }; // 锁在这里自动释放
+    }; // Lock is automatically released here
 
-    // 检查保存结果
+    // Check save result
     if let Err(e) = save_result {
         return (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -202,7 +202,7 @@ async fn add_mapping(
             .into_response();
     }
 
-    // 通知 poller 配置已更新
+    // Notify poller that configuration has been updated
     if let Some(tx) = &state.update_tx {
         if let Err(e) = tx.send(()).await {
             tracing::error!("Failed to notify poller: {}", e);
@@ -219,13 +219,13 @@ async fn add_mapping(
         .into_response()
 }
 
-/// 更新映射
+/// Update mapping
 async fn update_mapping(
     State(state): State<SharedState>,
     Path(source): Path<String>,
     Json(mapping): Json<DataMapping>,
 ) -> impl IntoResponse {
-    // 在一个作用域内完成所有需要锁的操作
+    // Complete all operations requiring lock in one scope
     let save_result = {
         let mut config = match state.config.write() {
             Ok(config) => config,
@@ -252,9 +252,9 @@ async fn update_mapping(
                     .into_response()
             }
         }
-    }; // 锁在这里自动释放
+    }; // Lock is automatically released here
 
-    // 检查保存结果
+    // Check save result
     if let Err(e) = save_result {
         return (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -265,7 +265,7 @@ async fn update_mapping(
             .into_response();
     }
 
-    // 通知 poller 配置已更新
+    // Notify poller that configuration has been updated
     if let Some(tx) = &state.update_tx {
         if let Err(e) = tx.send(()).await {
             tracing::error!("Failed to notify poller: {}", e);
@@ -279,12 +279,12 @@ async fn update_mapping(
     .into_response()
 }
 
-/// 删除映射
+/// Remove mapping
 async fn remove_mapping(
     State(state): State<SharedState>,
     Path(source): Path<String>,
 ) -> impl IntoResponse {
-    // 在一个作用域内完成所有需要锁的操作
+    // Complete all operations requiring lock in one scope
     let save_result = {
         let mut config = match state.config.write() {
             Ok(config) => config,
@@ -311,9 +311,9 @@ async fn remove_mapping(
                     .into_response()
             }
         }
-    }; // 锁在这里自动释放
+    }; // Lock is automatically released here
 
-    // 检查保存结果
+    // Check save result
     if let Err(e) = save_result {
         return (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -324,7 +324,7 @@ async fn remove_mapping(
             .into_response();
     }
 
-    // 通知 poller 配置已更新
+    // Notify poller that configuration has been updated
     if let Some(tx) = &state.update_tx {
         if let Err(e) = tx.send(()).await {
             tracing::error!("Failed to notify poller: {}", e);
@@ -338,11 +338,11 @@ async fn remove_mapping(
     .into_response()
 }
 
-/// 重新加载配置
+/// Reload configuration
 async fn reload_config(State(state): State<SharedState>) -> impl IntoResponse {
     match Config::reload() {
         Ok(new_config) => {
-            // 验证新配置
+            // Validate new configuration
             if let Err(e) = new_config.validate() {
                 return (
                     StatusCode::BAD_REQUEST,
@@ -353,7 +353,7 @@ async fn reload_config(State(state): State<SharedState>) -> impl IntoResponse {
                     .into_response();
             }
 
-            // 更新配置
+            // Update configuration
             let update_result = match state.config.write() {
                 Ok(mut config) => {
                     *config = new_config;
@@ -372,7 +372,7 @@ async fn reload_config(State(state): State<SharedState>) -> impl IntoResponse {
                     .into_response();
             }
 
-            // 通知 poller 配置已更新
+            // Notify poller that configuration has been updated
             if let Some(tx) = &state.update_tx {
                 if let Err(e) = tx.send(()).await {
                     tracing::error!("Failed to notify poller: {}", e);
@@ -395,7 +395,7 @@ async fn reload_config(State(state): State<SharedState>) -> impl IntoResponse {
     }
 }
 
-/// 验证配置
+/// Validate configuration
 async fn validate_config(State(state): State<SharedState>) -> impl IntoResponse {
     match state.config.read() {
         Ok(config) => match config.validate() {

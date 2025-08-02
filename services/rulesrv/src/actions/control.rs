@@ -119,7 +119,7 @@ impl ControlActionHandler {
         // 发布到 comsrv 的控制命令通道
         let channel = format!("cmd:{}:{}", channel_id, point_type);
         let command_json = serde_json::to_string(&command)?;
-        conn.publish(&channel, &command_json).await?;
+        let _: () = conn.publish(&channel, &command_json).await?;
 
         info!(
             "Published control command {} to channel {}",
@@ -148,7 +148,7 @@ impl ControlActionHandler {
             "timestamp": chrono::Utc::now().timestamp_millis(),
         });
 
-        conn.publish(channel, command.to_string()).await?;
+        let _: () = conn.publish(channel, command.to_string()).await?;
 
         info!(
             "Published model control command {} for model {}",
@@ -184,7 +184,7 @@ impl ControlActionHandler {
         let mut conn = self.redis_client.get_multiplexed_async_connection().await?;
         let status_key = format!("rulesrv:operation:status:{}", operation_id);
         let status_json = serde_json::to_string(&status_record)?;
-        conn.set_ex(&status_key, &status_json, 86400).await?; // 24小时过期
+        let _: () = conn.set_ex(&status_key, &status_json, 86400).await?; // 24小时过期
 
         Ok(())
     }
@@ -238,7 +238,7 @@ impl ActionHandler for ControlActionHandler {
         match action_type {
             "control" => {
                 // 通用控制动作
-                if let Some(control_id) = config.get("control_id").and_then(|v| v.as_str()) {
+                if let Some(_control_id) = config.get("control_id").and_then(|v| v.as_str()) {
                     // 基于预定义的控制操作执行
                     let target_type = config
                         .get("target_type")

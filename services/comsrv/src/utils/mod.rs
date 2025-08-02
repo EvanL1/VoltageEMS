@@ -14,7 +14,7 @@ pub mod hex;
 // Re-export error types for convenience
 pub use error::{ComSrvError, ErrorExt, Result};
 
-/// 规范化协议名称为标准格式（小写下划线）
+/// Normalize protocol name to standard format (lowercase underscore)
 pub fn normalize_protocol_name(name: &str) -> String {
     match name.to_lowercase().replace(['_', '-'], "").as_str() {
         "modbustcp" => "modbus_tcp".to_string(),
@@ -26,7 +26,7 @@ pub fn normalize_protocol_name(name: &str) -> String {
     }
 }
 
-/// 将协议名称转换为显示格式（PascalCase）
+/// Convert protocol name to display format (PascalCase)
 pub fn protocol_display_name(normalized_name: &str) -> String {
     match normalized_name {
         "modbus_tcp" => "ModbusTcp".to_string(),
@@ -52,7 +52,7 @@ mod tests {
         // Test Result type alias
         let result: Result<i32> = Ok(42);
         assert!(result.is_ok());
-        assert_eq!(result.unwrap_or(0), 42);
+        assert_eq!(result.unwrap(), 42);
 
         let error_result: Result<i32> = Err(ComSrvError::IoError("test io error".to_string()));
         assert!(error_result.is_err());

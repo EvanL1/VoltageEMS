@@ -1,119 +1,119 @@
-//! # ModSrv - 模型服务
+//! # ModSrv - Model Service
 //!
-//! 简洁高效的工业IoT模型服务，提供设备模型管理、数据订阅和控制接口。
+//! Concise and efficient industrial IoT model service providing device model management, data subscription and control interfaces.
 //!
-//! ## 核心功能
+//! ## Core Features
 //!
-//! 1. **配置读取**: 从配置文件加载模型定义，在Redis中初始化
-//! 2. **数据同步**: 通过Lua脚本实现与ComsRv的双向数据同步
-//! 3. **控制接口**: 提供HTTP API接口，处理外部控制命令
+//! 1. **Configuration Loading**: Load model definitions from configuration files and initialize in Redis
+//! 2. **Data Synchronization**: Implement bidirectional data synchronization with ComsRv through Lua scripts
+//! 3. **Control Interface**: Provide HTTP API interface to handle external control commands
 //!
-//! ## 架构设计
+//! ## Architecture Design
 //!
 //! ```text
-//! 配置加载 → 模型初始化 → Lua同步 → API接口
-//!    ↓           ↓           ↓         ↓
-//! config.rs → model.rs → EdgeRedis → api.rs
+//! Config Loading → Model Initialization → Lua Sync → API Interface
+//!       ↓                  ↓                ↓           ↓
+//!  config.rs → model.rs → EdgeRedis → api.rs
 //! ```
 //!
-//! ## 基本使用
+//! ## Basic Usage
 //!
-//! ### 配置模型
+//! ### Configure Model
 //!
 //! ```json
 //! {
 //!   "id": "power_meter",
-//!   "name": "电力仪表",
-//!   "description": "智能电表监控",
+//!   "name": "Power Meter",
+//!   "description": "Smart power meter monitoring",
 //!   "monitoring": {
 //!     "voltage": {
-//!       "description": "电压",
+//!       "description": "Voltage",
 //!       "unit": "V"
 //!     },
 //!     "current": {
-//!       "description": "电流",
+//!       "description": "Current",
 //!       "unit": "A"
 //!     }
 //!   },
 //!   "control": {
 //!     "switch": {
-//!       "description": "主开关"
+//!       "description": "Main switch"
 //!     },
 //!     "limit": {
-//!       "description": "功率限制",
+//!       "description": "Power limit",
 //!       "unit": "kW"
 //!     }
 //!   }
 //! }
 //! ```
 //!
-//! ### 启动服务
+//! ### Start Service
 //!
 //! ```bash
-//! # 运行服务
+//! # Run service
 //! modsrv service
 //!
-//! # 查看模型信息
+//! # View model information
 //! modsrv info
 //!
-//! # 检查配置
+//! # Check configuration
 //! modsrv check-config
 //! ```
 //!
-//! ### API接口
+//! ### API Endpoints
 //!
 //! ```bash
-//! # 健康检查
+//! # Health check
 //! GET /health
 //!
-//! # 获取模型列表
+//! # Get model list
 //! GET /models
 //!
-//! # 获取模型实时数据
+//! # Get model real-time data
 //! GET /models/{model_id}/values
 //!
-//! # 执行控制命令
+//! # Execute control command
 //! POST /models/{model_id}/control/{control_name}
 //! {"value": 1.0}
 //!
-//! # WebSocket连接
+//! # WebSocket connection
 //! WS /ws/{model_id}
 //! ```
 
 #![allow(dead_code)]
 #![allow(unused_imports)]
 
-/// 配置管理模块
+/// Configuration management module
 ///
-/// 提供配置文件加载、环境变量处理和配置验证功能
+/// Provides configuration file loading, environment variable processing and configuration validation
 pub mod config;
 
-/// 错误处理模块
+/// Error handling module
 ///
-/// 定义统一的错误类型和结果处理
+/// Defines unified error types and result handling
 pub mod error;
 
-/// 核心模型模块
+/// Core model module
 ///
-/// 包含模型定义、数据读取、控制命令处理等核心功能
+/// Contains model definitions, data reading, control command processing and other core functions
 pub mod model;
 
-/// 点位映射管理模块
+/// Point mapping management module
 ///
-/// 处理ModSrv与底层comsrv的映射关系
+/// Handles mapping relationships between ModSrv and underlying comsrv
 pub mod mapping;
 
-/// WebSocket实时推送模块
+/// WebSocket real-time push module
 ///
-/// 提供WebSocket连接管理和实时数据推送
+/// Provides WebSocket connection management and real-time data push
 pub mod websocket;
 
-/// REST API模块
+/// REST API module
 ///
-/// 提供HTTP接口用于模型管理和控制操作
+/// Provides HTTP interfaces for model management and control operations
 pub mod api;
 
-// 重新导出常用类型
+// Re-export commonly used types
 pub use api::ApiServer;
 pub use config::Config;
 pub use error::{ModelSrvError, Result};
@@ -121,10 +121,10 @@ pub use mapping::{MappingManager, PointMapping};
 pub use model::{Model, ModelConfig, ModelManager, PointConfig};
 pub use websocket::{ws_handler, WsConnectionManager};
 
-/// 服务版本信息
+/// Service version information
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
-/// 服务名称
+/// Service name
 pub const SERVICE_NAME: &str = "modsrv";
 
 #[cfg(test)]
@@ -133,7 +133,7 @@ mod tests {
 
     #[test]
     fn test_version_info() {
-        // VERSION是编译时常量，总是有值
+        // VERSION is a compile-time constant and always has a value
         assert_eq!(VERSION, "2.0.0");
         assert_eq!(SERVICE_NAME, "modsrv");
     }

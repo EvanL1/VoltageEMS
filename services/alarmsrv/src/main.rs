@@ -1,18 +1,15 @@
+//! Simplified AlarmSrv Main Entry Point
+//!
+//! This main function demonstrates the streamlined approach using direct Redis Functions.
+
 use anyhow::Result;
 use std::sync::Arc;
-use tokio::sync::RwLock;
 use tracing::info;
 
 use alarmsrv::{
-    api::routes,
+    alarm_service::AlarmService,
+    api::{create_router, AppState},
     config::AlarmConfig,
-    redis::{AlarmQueryService, AlarmRedisClient, AlarmStatisticsManager, AlarmStore},
-    services::{
-        rules::AlarmRulesEngine,
-        scanner::{MonitorConfig, RedisDataScanner},
-        start_alarm_processor, start_redis_listener,
-    },
-    AppState,
 };
 
 #[tokio::main]
@@ -28,72 +25,49 @@ async fn main() -> Result<()> {
         .with_level(true)
         .init();
 
-    info!("Starting Voltage EMS Alarm Service...");
+    info!("Starting Simplified Voltage EMS Alarm Service...");
 
     // Load configuration
-    let config = Arc::new(AlarmConfig::load().await?);
+    let config = AlarmConfig::load().await?;
     info!("Configuration loaded successfully");
 
-    // Initialize Redis client
-    let redis_client = Arc::new(AlarmRedisClient::new(config.clone()).await?);
-    info!("Redis client initialized");
-
-    // Initialize Redis-based services
-    let alarm_store = Arc::new(AlarmStore::new(redis_client.clone()).await?);
-    let query_service = Arc::new(AlarmQueryService::new(redis_client.clone()));
-    let stats_manager = Arc::new(AlarmStatisticsManager::new(redis_client.clone()));
+    // Initialize alarm service with Redis Functions
+    let alarm_service = Arc::new(AlarmService::new(&config.redis.url).await?);
+    info!("Alarm service initialized with Redis Functions");
 
     // Create application state
     let state = AppState {
-        alarms: Arc::new(RwLock::new(Vec::new())),
-        config: config.clone(),
-        redis_client: redis_client.clone(),
-        alarm_store,
-        query_service,
-        stats_manager,
+        alarm_service: alarm_service.clone(),
     };
 
-    // Start background services
-    start_redis_listener(state.clone()).await?;
-    start_alarm_processor(state.clone()).await?;
-
-    // Start data scanner if monitoring is enabled
+    // Simple monitoring setup (optional)
     if config.monitoring.enabled {
-        info!(
-            "Starting data scanner with {} rules",
-            config.alarm_rules.len()
-        );
-
-        // Create rules engine
-        let mut rules_engine = AlarmRulesEngine::new();
-        rules_engine.load_rules(config.alarm_rules.clone());
-        let rules_engine = Arc::new(RwLock::new(rules_engine));
-
-        // Create scanner configuration
-        let monitor_config = MonitorConfig {
-            channels: config.monitoring.channels.clone(),
-            point_types: config.monitoring.point_types.clone(),
-            scan_interval: config.monitoring.scan_interval,
-        };
-
-        // Start scanner
-        let scanner =
-            RedisDataScanner::new(redis_client.clone(), monitor_config, rules_engine).await?;
-
-        scanner.start(state.clone()).await?;
-        info!("Data scanner started successfully");
+        info!("Monitoring is enabled but simplified - no complex scanning");
+        // TODO: Add simple threshold monitoring if needed
     } else {
-        info!("Data scanning is disabled");
+        info!("Monitoring is disabled");
     }
 
     // Create API routes
-    let app = routes::create_router(state);
+    let app = create_router(state);
 
     // Start HTTP server
     let addr = format!("{}:{}", config.api.host, config.api.port);
     let listener = tokio::net::TcpListener::bind(&addr).await?;
 
-    info!("Alarm service started successfully, listening on: {}", addr);
+    info!(
+        "Simplified Alarm service started successfully, listening on: {}",
+        addr
+    );
+    info!("API endpoints:");
+    info!("  GET /health - Health check");
+    info!("  GET /api/v1/status - Service status");
+    info!("  GET /api/v1/alarms - List alarms");
+    info!("  POST /api/v1/alarms - Create alarm");
+    info!("  GET /api/v1/alarms/{{id}} - Get alarm");
+    info!("  POST /api/v1/alarms/{{id}}/ack - Acknowledge alarm");
+    info!("  POST /api/v1/alarms/{{id}}/resolve - Resolve alarm");
+    info!("  GET /api/v1/stats - Get statistics");
 
     axum::serve(listener, app).await?;
 

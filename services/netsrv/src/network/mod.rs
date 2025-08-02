@@ -1,3 +1,3 @@
-pub mod client_new;
+pub mod client;
 
-pub use client_new::{create_network_client, NetworkClient};
+pub use client::{create_network_client, NetworkClient};

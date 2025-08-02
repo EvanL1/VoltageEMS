@@ -1,10 +1,15 @@
+//! Simplified AlarmSrv Configuration
+//!
+//! This module provides a streamlined configuration system without complex abstractions.
+
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
+use std::path::Path;
+use voltage_libs::config::utils::get_global_redis_url;
+use voltage_libs::config::ConfigLoader;
 
-use crate::services::rules::AlarmRule;
-
-/// Alarm service configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// Simplified alarm service configuration
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct AlarmConfig {
     /// Redis configuration
     pub redis: RedisConfig,
@@ -12,96 +17,19 @@ pub struct AlarmConfig {
     pub api: ApiConfig,
     /// Storage configuration
     pub storage: StorageConfig,
-    /// Monitoring configuration
+    /// Simple monitoring configuration
     #[serde(default)]
     pub monitoring: MonitoringConfig,
-    /// Alarm rules
-    #[serde(default)]
-    pub alarm_rules: Vec<AlarmRule>,
-}
-
-/// Redis connection type
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum RedisConnectionType {
-    /// TCP connection
-    Tcp,
-    /// Unix socket connection  
-    Unix,
-}
-
-impl Default for RedisConnectionType {
-    fn default() -> Self {
-        RedisConnectionType::Tcp
-    }
 }
 
 /// Redis configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RedisConfig {
-    /// Connection type (TCP or Unix socket)
-    #[serde(default)]
-    pub connection_type: RedisConnectionType,
-    /// Redis host address (for TCP connections)
-    #[serde(default = "default_redis_host")]
-    pub host: String,
-    /// Redis port (for TCP connections)
-    #[serde(default = "default_redis_port")]
-    pub port: u16,
-    /// Unix socket path (for Unix socket connections)
-    #[serde(default)]
-    pub socket_path: Option<String>,
-    /// Redis password
-    pub password: Option<String>,
-    /// Database number
-    #[serde(default)]
-    pub database: u8,
-}
-
-impl RedisConfig {
-    /// Get Redis connection URL based on connection type
-    pub fn get_connection_url(&self) -> String {
-        match self.connection_type {
-            RedisConnectionType::Tcp => {
-                let auth = if let Some(ref password) = self.password {
-                    format!(":{}@", password)
-                } else {
-                    String::new()
-                };
-                format!(
-                    "redis://{}{}/{}",
-                    auth,
-                    format!("{}:{}", self.host, self.port),
-                    self.database
-                )
-            }
-            RedisConnectionType::Unix => {
-                if let Some(ref path) = self.socket_path {
-                    format!("unix://{}?db={}", path, self.database)
-                } else {
-                    // Fallback to TCP if socket path is not provided
-                    let auth = if let Some(ref password) = self.password {
-                        format!(":{}@", password)
-                    } else {
-                        String::new()
-                    };
-                    format!(
-                        "redis://{}{}/{}",
-                        auth,
-                        format!("{}:{}", self.host, self.port),
-                        self.database
-                    )
-                }
-            }
-        }
-    }
-}
-
-fn default_redis_host() -> String {
-    "localhost".to_string()
-}
-
-fn default_redis_port() -> u16 {
-    6379
+    /// Redis connection URL
+    pub url: String,
+    /// Key prefix (hardcoded, not configurable)
+    #[serde(skip_serializing, skip_deserializing)]
+    pub key_prefix: String,
 }
 
 /// API configuration
@@ -131,18 +59,12 @@ pub struct StorageConfig {
     pub cleanup_interval_hours: u32,
 }
 
-/// Monitoring configuration
+/// Simple monitoring configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MonitoringConfig {
-    /// Enable data scanning
-    #[serde(default = "default_true")]
+    /// Enable monitoring
+    #[serde(default = "default_false")]
     pub enabled: bool,
-    /// Channels to monitor
-    #[serde(default)]
-    pub channels: Vec<u16>,
-    /// Point types to monitor (m/s/c/a)
-    #[serde(default = "default_point_types")]
-    pub point_types: Vec<String>,
     /// Scan interval in seconds
     #[serde(default = "default_scan_interval")]
     pub scan_interval: u64,
@@ -151,48 +73,44 @@ pub struct MonitoringConfig {
 impl Default for MonitoringConfig {
     fn default() -> Self {
         Self {
-            enabled: true,
-            channels: vec![],
-            point_types: default_point_types(),
+            enabled: false,
             scan_interval: default_scan_interval(),
         }
     }
 }
 
-fn default_true() -> bool {
-    true
-}
-
-fn default_point_types() -> Vec<String> {
-    vec!["m".to_string(), "s".to_string()]
+fn default_false() -> bool {
+    false
 }
 
 fn default_scan_interval() -> u64 {
     10
 }
 
-impl Default for AlarmConfig {
+impl Default for RedisConfig {
     fn default() -> Self {
         Self {
-            redis: RedisConfig {
-                connection_type: RedisConnectionType::Tcp,
-                host: "localhost".to_string(),
-                port: 6379,
-                socket_path: None,
-                password: None,
-                database: 0,
-            },
-            api: ApiConfig {
-                host: "0.0.0.0".to_string(),
-                port: 8080,
-            },
-            storage: StorageConfig {
-                retention_days: 30,
-                auto_cleanup: true,
-                cleanup_interval_hours: 24,
-            },
-            monitoring: MonitoringConfig::default(),
-            alarm_rules: Vec::new(),
+            url: get_global_redis_url("ALARMSRV"),
+            key_prefix: "alarmsrv:".to_string(),
+        }
+    }
+}
+
+impl Default for ApiConfig {
+    fn default() -> Self {
+        Self {
+            host: "0.0.0.0".to_string(),
+            port: 8083,
+        }
+    }
+}
+
+impl Default for StorageConfig {
+    fn default() -> Self {
+        Self {
+            retention_days: 30,
+            auto_cleanup: true,
+            cleanup_interval_hours: 24,
         }
     }
 }
@@ -200,79 +118,47 @@ impl Default for AlarmConfig {
 impl AlarmConfig {
     /// Load configuration
     pub async fn load() -> Result<Self> {
-        // Try to load from configuration file first
-        let config_path = "alarmsrv.yaml";
-        if std::path::Path::new(config_path).exists() {
-            let config_str = std::fs::read_to_string(config_path)?;
-            let mut config: AlarmConfig = serde_yaml::from_str(&config_str)?;
+        // 尝试多个配置文件路径
+        let config_paths = [
+            "config/alarmsrv/alarmsrv.yaml",
+            "config/alarmsrv.yaml",
+            "alarmsrv.yaml",
+        ];
 
-            // Override with environment variables if set
-            if let Ok(host) = std::env::var("REDIS_HOST") {
-                config.redis.host = host;
+        let mut yaml_path = None;
+        for path in &config_paths {
+            if Path::new(path).exists() {
+                yaml_path = Some(path.to_string());
+                break;
             }
-            if let Ok(port) = std::env::var("REDIS_PORT") {
-                if let Ok(p) = port.parse() {
-                    config.redis.port = p;
-                }
-            }
-            if let Ok(api_port) = std::env::var("API_PORT") {
-                if let Ok(p) = api_port.parse() {
-                    config.api.port = p;
-                }
-            }
-
-            Ok(config)
-        } else {
-            // Fallback to environment variables only
-            let config = Self {
-                redis: RedisConfig {
-                    connection_type: match std::env::var("REDIS_CONNECTION_TYPE")
-                        .unwrap_or_else(|_| "tcp".to_string())
-                        .to_lowercase()
-                        .as_str()
-                    {
-                        "unix" => RedisConnectionType::Unix,
-                        _ => RedisConnectionType::Tcp,
-                    },
-                    host: std::env::var("REDIS_HOST").unwrap_or_else(|_| "localhost".to_string()),
-                    port: std::env::var("REDIS_PORT")
-                        .unwrap_or_else(|_| "6379".to_string())
-                        .parse()
-                        .unwrap_or(6379),
-                    socket_path: std::env::var("REDIS_SOCKET_PATH").ok(),
-                    password: std::env::var("REDIS_PASSWORD").ok(),
-                    database: std::env::var("REDIS_DB")
-                        .unwrap_or_else(|_| "0".to_string())
-                        .parse()
-                        .unwrap_or(0),
-                },
-                api: ApiConfig {
-                    host: std::env::var("API_HOST").unwrap_or_else(|_| "0.0.0.0".to_string()),
-                    port: std::env::var("API_PORT")
-                        .unwrap_or_else(|_| "8087".to_string())
-                        .parse()
-                        .unwrap_or(8087),
-                },
-                storage: StorageConfig {
-                    retention_days: std::env::var("STORAGE_RETENTION_DAYS")
-                        .unwrap_or_else(|_| "30".to_string())
-                        .parse()
-                        .unwrap_or(30),
-                    auto_cleanup: std::env::var("STORAGE_AUTO_CLEANUP")
-                        .unwrap_or_else(|_| "true".to_string())
-                        .parse()
-                        .unwrap_or(true),
-                    cleanup_interval_hours: std::env::var("STORAGE_CLEANUP_INTERVAL_HOURS")
-                        .unwrap_or_else(|_| "24".to_string())
-                        .parse()
-                        .unwrap_or(24),
-                },
-                monitoring: MonitoringConfig::default(),
-                alarm_rules: Vec::new(),
-            };
-
-            Ok(config)
         }
+
+        // 使用新的 ConfigLoader
+        let loader = ConfigLoader::new()
+            .with_defaults(AlarmConfig::default())
+            .with_env_prefix("ALARMSRV");
+
+        let mut config = if let Some(path) = yaml_path {
+            loader.with_yaml_file(&path).build()
+        } else {
+            loader.build()
+        }?;
+
+        // 确保硬编码值
+        config.redis.key_prefix = "alarmsrv:".to_string();
+        config.api.port = 8083;
+
+        // Override specific environment variables if set
+        if let Ok(retention_days) = std::env::var("ALARMSRV_STORAGE_RETENTION_DAYS") {
+            if let Ok(days) = retention_days.parse() {
+                config.storage.retention_days = days;
+            }
+        }
+
+        // Disable monitoring by default for simplified implementation
+        config.monitoring.enabled = false;
+
+        Ok(config)
     }
 
     /// Generate default configuration file
@@ -290,10 +176,10 @@ mod tests {
     #[test]
     fn test_default_config() {
         let config = AlarmConfig::default();
-        assert_eq!(config.redis.host, "localhost");
-        assert_eq!(config.redis.port, 6379);
+        assert!(config.redis.url.contains("redis://"));
+        assert_eq!(config.redis.key_prefix, "alarmsrv:");
         assert_eq!(config.api.host, "0.0.0.0");
-        assert_eq!(config.api.port, 8080);
+        assert_eq!(config.api.port, 8083);
         assert_eq!(config.storage.retention_days, 30);
         assert!(config.storage.auto_cleanup);
     }
@@ -301,9 +187,9 @@ mod tests {
     #[tokio::test]
     async fn test_config_load() {
         let config = AlarmConfig::load().await.unwrap();
-        assert!(!config.redis.host.is_empty());
-        assert!(config.redis.port > 0);
-        assert!(config.api.port > 0);
+        assert!(!config.redis.url.is_empty());
+        assert_eq!(config.redis.key_prefix, "alarmsrv:");
+        assert_eq!(config.api.port, 8083);
         assert!(config.storage.retention_days > 0);
     }
 
@@ -313,65 +199,5 @@ mod tests {
         assert!(yaml.contains("redis"));
         assert!(yaml.contains("api"));
         assert!(yaml.contains("storage"));
-    }
-
-    #[test]
-    fn test_redis_connection_url_tcp() {
-        let config = RedisConfig {
-            connection_type: RedisConnectionType::Tcp,
-            host: "127.0.0.1".to_string(),
-            port: 6379,
-            socket_path: None,
-            password: None,
-            database: 0,
-        };
-
-        let url = config.get_connection_url();
-        assert_eq!(url, "redis://127.0.0.1:6379/0");
-    }
-
-    #[test]
-    fn test_redis_connection_url_tcp_with_password() {
-        let config = RedisConfig {
-            connection_type: RedisConnectionType::Tcp,
-            host: "127.0.0.1".to_string(),
-            port: 6379,
-            socket_path: None,
-            password: Some("mypassword".to_string()),
-            database: 1,
-        };
-
-        let url = config.get_connection_url();
-        assert_eq!(url, "redis://:mypassword@127.0.0.1:6379/1");
-    }
-
-    #[test]
-    fn test_redis_connection_url_unix() {
-        let config = RedisConfig {
-            connection_type: RedisConnectionType::Unix,
-            host: "localhost".to_string(),
-            port: 6379,
-            socket_path: Some("/tmp/redis.sock".to_string()),
-            password: None,
-            database: 2,
-        };
-
-        let url = config.get_connection_url();
-        assert_eq!(url, "unix:///tmp/redis.sock?db=2");
-    }
-
-    #[test]
-    fn test_redis_connection_url_unix_fallback() {
-        let config = RedisConfig {
-            connection_type: RedisConnectionType::Unix,
-            host: "localhost".to_string(),
-            port: 6379,
-            socket_path: None, // No socket path provided
-            password: None,
-            database: 0,
-        };
-
-        let url = config.get_connection_url();
-        assert_eq!(url, "redis://localhost:6379/0");
     }
 }

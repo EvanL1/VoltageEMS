@@ -2,6 +2,7 @@ use std::fmt;
 
 /// Network service errors
 #[derive(Debug)]
+#[allow(dead_code)]
 pub enum NetSrvError {
     /// Connection errors
     Connection(String),

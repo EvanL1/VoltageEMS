@@ -25,7 +25,7 @@ impl RedisClient {
         let conn = ConnectionManager::new(client).await?;
         Ok(Self {
             conn,
-            url: url.to_string(),
+            url: url.into(),
         })
     }
 
@@ -236,6 +236,79 @@ impl RedisClient {
     pub async fn script_flush(&mut self) -> Result<String> {
         redis::cmd("SCRIPT")
             .arg("FLUSH")
+            .query_async(&mut self.conn)
+            .await
+            .map_err(Into::into)
+    }
+
+    /// 调用 Redis Function
+    pub async fn fcall<T: redis::FromRedisValue>(
+        &mut self,
+        function: &str,
+        keys: &[&str],
+        args: &[&str],
+    ) -> Result<T> {
+        let mut cmd = redis::cmd("FCALL");
+        cmd.arg(function).arg(keys.len());
+
+        for key in keys {
+            cmd.arg(key);
+        }
+
+        for arg in args {
+            cmd.arg(arg);
+        }
+
+        cmd.query_async(&mut self.conn).await.map_err(Into::into)
+    }
+
+    /// 调用 Redis Function 返回原始 Redis Value
+    pub async fn fcall_raw(
+        &mut self,
+        function: &str,
+        keys: &[&str],
+        args: &[&str],
+    ) -> Result<redis::Value> {
+        let mut cmd = redis::cmd("FCALL");
+        cmd.arg(function).arg(keys.len());
+
+        for key in keys {
+            cmd.arg(key);
+        }
+
+        for arg in args {
+            cmd.arg(arg);
+        }
+
+        cmd.query_async(&mut self.conn).await.map_err(Into::into)
+    }
+
+    /// 列出所有已加载的 Redis Functions
+    pub async fn function_list(&mut self) -> Result<redis::Value> {
+        redis::cmd("FUNCTION")
+            .arg("LIST")
+            .query_async(&mut self.conn)
+            .await
+            .map_err(Into::into)
+    }
+
+    /// 加载 Redis Function
+    pub async fn function_load(&mut self, script: &str, replace: bool) -> Result<String> {
+        let mut cmd = redis::cmd("FUNCTION");
+        cmd.arg("LOAD");
+        if replace {
+            cmd.arg("REPLACE");
+        }
+        cmd.arg(script);
+
+        cmd.query_async(&mut self.conn).await.map_err(Into::into)
+    }
+
+    /// 删除 Redis Function 库
+    pub async fn function_delete(&mut self, library_name: &str) -> Result<String> {
+        redis::cmd("FUNCTION")
+            .arg("DELETE")
+            .arg(library_name)
             .query_async(&mut self.conn)
             .await
             .map_err(Into::into)

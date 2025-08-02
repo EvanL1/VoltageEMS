@@ -1,35 +1,35 @@
-//! Modbus 传输层实现
+//! Modbus transport layer implementation
 //!
-//! 支持 TCP 和 RTU 两种传输模式的帧处理
+//! Supports frame processing for both TCP and RTU transport modes
 
 use super::connection::ConnectionParams;
 use crate::core::config::types::ChannelConfig;
 use crate::utils::error::{ComSrvError, Result};
 use tracing::debug;
 
-/// Modbus 传输模式
+/// Modbus transport mode
 #[derive(Debug, Clone, PartialEq)]
 pub enum ModbusMode {
-    /// TCP 模式 (使用 MBAP 头)
+    /// TCP mode (using MBAP header)
     Tcp,
-    /// RTU 模式 (使用 CRC 校验)
+    /// RTU mode (using CRC check)
     Rtu,
 }
 
-/// Modbus TCP MBAP 头
+/// Modbus TCP MBAP header
 #[derive(Debug, Clone)]
 pub struct MbapHeader {
-    /// 事务标识符
+    /// Transaction identifier
     pub transaction_id: u16,
-    /// 协议标识符 (固定为 0)
+    /// Protocol identifier (fixed to 0)
     pub protocol_id: u16,
-    /// 长度字段
+    /// Length field
     pub length: u16,
-    /// 单元标识符 (从站ID)
+    /// Unit identifier (slave ID)
     pub unit_id: u8,
 }
 
-/// Modbus 帧处理器
+/// Modbus frame processor
 #[derive(Debug)]
 pub struct ModbusFrameProcessor {
     mode: ModbusMode,
@@ -37,7 +37,7 @@ pub struct ModbusFrameProcessor {
 }
 
 impl ModbusFrameProcessor {
-    /// 创建新的帧处理器
+    /// Create new frame processor
     pub fn new(mode: ModbusMode) -> Self {
         Self {
             mode,
@@ -45,7 +45,7 @@ impl ModbusFrameProcessor {
         }
     }
 
-    /// 获取下一个事务ID（仅TCP模式使用）
+    /// Get next transaction ID (TCP mode only)
     pub fn next_transaction_id(&mut self) -> u16 {
         let id = self.next_transaction_id;
         self.next_transaction_id = self.next_transaction_id.wrapping_add(1);
@@ -55,7 +55,7 @@ impl ModbusFrameProcessor {
         id
     }
 
-    /// 构建完整的Modbus帧
+    /// Build complete Modbus frame
     pub fn build_frame(&mut self, unit_id: u8, pdu: &[u8]) -> Vec<u8> {
         match self.mode {
             ModbusMode::Tcp => self.build_tcp_frame(unit_id, pdu),
@@ -63,7 +63,7 @@ impl ModbusFrameProcessor {
         }
     }
 
-    /// 解析接收到的帧
+    /// Parse received frame
     pub fn parse_frame(&self, data: &[u8]) -> Result<(u8, Vec<u8>)> {
         match self.mode {
             ModbusMode::Tcp => self.parse_tcp_frame(data),
@@ -71,14 +71,14 @@ impl ModbusFrameProcessor {
         }
     }
 
-    /// 构建TCP帧 (MBAP + PDU)
+    /// Build TCP frame (MBAP + PDU)
     fn build_tcp_frame(&mut self, unit_id: u8, pdu: &[u8]) -> Vec<u8> {
         let transaction_id = self.next_transaction_id();
-        let length = (pdu.len() + 1) as u16; // PDU长度 + unit_id
+        let length = (pdu.len() + 1) as u16; // PDU length + unit_id
 
         let mut frame = Vec::with_capacity(6 + pdu.len());
 
-        // MBAP 头
+        // MBAP header
         frame.extend_from_slice(&transaction_id.to_be_bytes());
         frame.extend_from_slice(&0u16.to_be_bytes()); // protocol_id
         frame.extend_from_slice(&length.to_be_bytes());
@@ -90,7 +90,7 @@ impl ModbusFrameProcessor {
         frame
     }
 
-    /// 构建RTU帧 (`unit_id` + PDU + CRC)
+    /// Build RTU frame (`unit_id` + PDU + CRC)
     fn build_rtu_frame(&self, unit_id: u8, pdu: &[u8]) -> Vec<u8> {
         let mut frame = Vec::with_capacity(1 + pdu.len() + 2);
 
@@ -107,7 +107,7 @@ impl ModbusFrameProcessor {
         frame
     }
 
-    /// 解析TCP帧
+    /// Parse TCP frame
     fn parse_tcp_frame(&self, data: &[u8]) -> Result<(u8, Vec<u8>)> {
         if data.len() < 8 {
             return Err(ComSrvError::ProtocolError(
@@ -115,20 +115,20 @@ impl ModbusFrameProcessor {
             ));
         }
 
-        // 解析MBAP头
+        // Parse MBAP header
         let _transaction_id = u16::from_be_bytes([data[0], data[1]]);
         let _protocol_id = u16::from_be_bytes([data[2], data[3]]);
         let length = u16::from_be_bytes([data[4], data[5]]);
         let unit_id = data[6];
 
-        // 验证长度
+        // Validate length
         if data.len() != (6 + length as usize) {
             return Err(ComSrvError::ProtocolError(
                 "Invalid TCP frame length".to_string(),
             ));
         }
 
-        // 提取PDU
+        // Extract PDU
         let pdu = data[7..].to_vec();
 
         debug!(
@@ -142,7 +142,7 @@ impl ModbusFrameProcessor {
         Ok((unit_id, pdu))
     }
 
-    /// 解析RTU帧
+    /// Parse RTU frame
     fn parse_rtu_frame(&self, data: &[u8]) -> Result<(u8, Vec<u8>)> {
         if data.len() < 4 {
             return Err(ComSrvError::ProtocolError(
@@ -155,7 +155,7 @@ impl ModbusFrameProcessor {
         let pdu_data = &data[1..frame_len - 2];
         let received_crc = u16::from_le_bytes([data[frame_len - 2], data[frame_len - 1]]);
 
-        // 验证CRC
+        // Validate CRC
         let calculated_crc = self.calculate_crc16(&data[..frame_len - 2]);
         if received_crc != calculated_crc {
             return Err(ComSrvError::ProtocolError(format!(
@@ -166,7 +166,7 @@ impl ModbusFrameProcessor {
         Ok((unit_id, pdu_data.to_vec()))
     }
 
-    /// 计算CRC16校验码 (Modbus RTU标准)
+    /// Calculate CRC16 checksum (Modbus RTU standard)
     fn calculate_crc16(&self, data: &[u8]) -> u16 {
         let mut crc: u16 = 0xFFFF;
 
@@ -185,12 +185,12 @@ impl ModbusFrameProcessor {
         crc
     }
 
-    /// 验证PDU是否为异常响应
+    /// Verify if PDU is exception response
     pub fn is_exception_response(pdu: &[u8]) -> bool {
         !pdu.is_empty() && (pdu[0] & 0x80) != 0
     }
 
-    /// 解析异常响应
+    /// Parse exception response
     pub fn parse_exception(pdu: &[u8]) -> Result<(u8, u8)> {
         if pdu.len() < 2 {
             return Err(ComSrvError::ProtocolError(
@@ -198,13 +198,13 @@ impl ModbusFrameProcessor {
             ));
         }
 
-        let function_code = pdu[0] & 0x7F; // 移除错误位
+        let function_code = pdu[0] & 0x7F; // Remove error bit
         let exception_code = pdu[1];
 
         Ok((function_code, exception_code))
     }
 
-    /// 获取异常描述
+    /// Get exception description
     pub fn exception_description(exception_code: u8) -> &'static str {
         match exception_code {
             0x01 => "Illegal Function",
@@ -222,66 +222,12 @@ impl ModbusFrameProcessor {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_tcp_frame_build_parse() {
-        let mut processor = ModbusFrameProcessor::new(ModbusMode::Tcp);
-        let pdu = vec![0x03, 0x00, 0x01, 0x00, 0x02]; // Read holding registers
-
-        let frame = processor.build_frame(1, &pdu);
-        assert_eq!(frame.len(), 12); // 7 bytes header (2 trans_id + 2 proto + 2 len + 1 unit) + 5 bytes PDU
-
-        let (unit_id, parsed_pdu) = processor.parse_frame(&frame).unwrap();
-        assert_eq!(unit_id, 1);
-        assert_eq!(parsed_pdu, pdu);
-    }
-
-    #[test]
-    fn test_rtu_frame_build_parse() {
-        let mut processor = ModbusFrameProcessor::new(ModbusMode::Rtu);
-        let pdu = vec![0x03, 0x00, 0x01, 0x00, 0x02]; // Read holding registers
-
-        let frame = processor.build_frame(1, &pdu);
-        assert_eq!(frame.len(), 8); // 1 byte unit_id + 5 bytes PDU + 2 bytes CRC
-
-        let (unit_id, parsed_pdu) = processor.parse_frame(&frame).unwrap();
-        assert_eq!(unit_id, 1);
-        assert_eq!(parsed_pdu, pdu);
-    }
-
-    #[test]
-    fn test_crc16_calculation() {
-        let processor = ModbusFrameProcessor::new(ModbusMode::Rtu);
-        let data = vec![0x01, 0x03, 0x00, 0x00, 0x00, 0x01];
-        let crc = processor.calculate_crc16(&data);
-        // CRC 计算结果应该是 0x0A84 (2692 in decimal)
-        assert_eq!(crc, 0x0A84);
-    }
-
-    #[test]
-    fn test_exception_response() {
-        let exception_pdu = vec![0x83, 0x02]; // Function 03 with exception code 02
-
-        assert!(ModbusFrameProcessor::is_exception_response(&exception_pdu));
-
-        let (func_code, exc_code) = ModbusFrameProcessor::parse_exception(&exception_pdu).unwrap();
-        assert_eq!(func_code, 0x03);
-        assert_eq!(exc_code, 0x02);
-
-        let desc = ModbusFrameProcessor::exception_description(0x02);
-        assert_eq!(desc, "Illegal Data Address");
-    }
-}
-
-/// 创建连接参数
-/// 从通道配置中提取连接参数
+/// Create connection parameters
+/// Extract connection parameters from channel configuration
 pub fn create_connection_params(config: &ChannelConfig) -> Result<ConnectionParams> {
     match config.protocol.as_str() {
         "modbus_tcp" => {
-            // 从parameters中提取TCP配置
+            // Extract TCP configuration from parameters
             let host = config
                 .parameters
                 .get("host")
@@ -305,7 +251,7 @@ pub fn create_connection_params(config: &ChannelConfig) -> Result<ConnectionPara
             })
         }
         "modbus_rtu" => {
-            // 从parameters中提取串口配置
+            // Extract serial port configuration from parameters
             let device = config
                 .parameters
                 .get("device")
@@ -347,5 +293,59 @@ pub fn create_connection_params(config: &ChannelConfig) -> Result<ConnectionPara
             "Unsupported protocol type: {}",
             config.protocol
         ))),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_tcp_frame_build_parse() {
+        let mut processor = ModbusFrameProcessor::new(ModbusMode::Tcp);
+        let pdu = vec![0x03, 0x00, 0x01, 0x00, 0x02]; // Read holding registers
+
+        let frame = processor.build_frame(1, &pdu);
+        assert_eq!(frame.len(), 12); // 7 bytes header (2 trans_id + 2 proto + 2 len + 1 unit) + 5 bytes PDU
+
+        let (unit_id, parsed_pdu) = processor.parse_frame(&frame).unwrap();
+        assert_eq!(unit_id, 1);
+        assert_eq!(parsed_pdu, pdu);
+    }
+
+    #[test]
+    fn test_rtu_frame_build_parse() {
+        let mut processor = ModbusFrameProcessor::new(ModbusMode::Rtu);
+        let pdu = vec![0x03, 0x00, 0x01, 0x00, 0x02]; // Read holding registers
+
+        let frame = processor.build_frame(1, &pdu);
+        assert_eq!(frame.len(), 8); // 1 byte unit_id + 5 bytes PDU + 2 bytes CRC
+
+        let (unit_id, parsed_pdu) = processor.parse_frame(&frame).unwrap();
+        assert_eq!(unit_id, 1);
+        assert_eq!(parsed_pdu, pdu);
+    }
+
+    #[test]
+    fn test_crc16_calculation() {
+        let processor = ModbusFrameProcessor::new(ModbusMode::Rtu);
+        let data = vec![0x01, 0x03, 0x00, 0x00, 0x00, 0x01];
+        let crc = processor.calculate_crc16(&data);
+        // CRC calculation result should be 0x0A84 (2692 in decimal)
+        assert_eq!(crc, 0x0A84);
+    }
+
+    #[test]
+    fn test_exception_response() {
+        let exception_pdu = vec![0x83, 0x02]; // Function 03 with exception code 02
+
+        assert!(ModbusFrameProcessor::is_exception_response(&exception_pdu));
+
+        let (func_code, exc_code) = ModbusFrameProcessor::parse_exception(&exception_pdu).unwrap();
+        assert_eq!(func_code, 0x03);
+        assert_eq!(exc_code, 0x02);
+
+        let desc = ModbusFrameProcessor::exception_description(0x02);
+        assert_eq!(desc, "Illegal Data Address");
     }
 }

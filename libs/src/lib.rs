@@ -32,10 +32,10 @@ pub mod prelude {
     pub use crate::error::{Error, Result};
 
     #[cfg(feature = "redis")]
-    pub use crate::redis::{RedisClient, RedisConfig};
+    pub use crate::redis::RedisClient;
 
     #[cfg(feature = "influxdb")]
-    pub use crate::influxdb::{InfluxClient, InfluxConfig};
+    pub use crate::influxdb::InfluxClient;
 
     pub use crate::types::*;
 }

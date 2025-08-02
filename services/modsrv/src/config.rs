@@ -1,275 +1,321 @@
-//! ModSrv配置管理
+//! ModSrv configuration management
 //!
-//! 提供统一的配置加载和管理功能
+//! Provides unified configuration loading and management
 
 use serde::{Deserialize, Serialize};
 use std::path::Path;
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 
 use crate::error::{ModelSrvError, Result};
 use crate::model::ModelConfig;
+use voltage_libs::config::utils::{get_global_log_level, get_global_redis_url};
+use voltage_libs::config::ConfigLoader;
 
-/// Redis配置
+/// Redis configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RedisConfig {
+    #[serde(default = "default_redis_url")]
     pub url: String,
-    pub key_prefix: String,
+    #[serde(skip_serializing, skip_deserializing)]
+    pub key_prefix: String, // Hard-coded, not loaded from config
+    #[serde(default = "default_connection_timeout")]
     pub connection_timeout_ms: u64,
+    #[serde(default = "default_retry_attempts")]
     pub retry_attempts: usize,
+}
+
+fn default_redis_url() -> String {
+    get_global_redis_url("MODSRV")
+}
+
+fn default_connection_timeout() -> u64 {
+    5000
+}
+
+fn default_retry_attempts() -> usize {
+    3
 }
 
 impl Default for RedisConfig {
     fn default() -> Self {
         Self {
-            url: "redis://localhost:6379".to_string(),
-            key_prefix: "modsrv:".to_string(),
+            url: get_global_redis_url("MODSRV"),
+            key_prefix: "modsrv:".to_string(), // Hard-coded
             connection_timeout_ms: 5000,
             retry_attempts: 3,
         }
     }
 }
 
-/// API服务配置
+/// API service configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ApiConfig {
+    #[serde(default = "default_api_host")]
     pub host: String,
+    #[serde(default = "default_modsrv_port")]
     pub port: u16,
+    #[serde(default = "default_api_timeout")]
     pub timeout_seconds: u64,
+}
+
+fn default_api_host() -> String {
+    "0.0.0.0".to_string()
+}
+
+fn default_modsrv_port() -> u16 {
+    8082
+}
+
+fn default_api_timeout() -> u64 {
+    30
 }
 
 impl Default for ApiConfig {
     fn default() -> Self {
         Self {
-            host: "0.0.0.0".to_string(),
-            port: 8092,
-            timeout_seconds: 30,
+            host: default_api_host(),
+            port: default_modsrv_port(),
+            timeout_seconds: default_api_timeout(),
         }
     }
 }
 
-/// 日志配置
+/// Log configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LogConfig {
+    #[serde(default = "default_log_level")]
     pub level: String,
+    #[serde(default)]
     pub file_path: Option<String>,
+}
+
+fn default_log_level() -> String {
+    get_global_log_level("MODSRV")
 }
 
 impl Default for LogConfig {
     fn default() -> Self {
         Self {
-            level: "info".to_string(),
+            level: default_log_level(),
             file_path: None,
         }
     }
 }
 
-/// 主配置结构
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// Main configuration structure
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Config {
+    #[serde(default = "default_service_name")]
     pub service_name: String,
+    #[serde(default = "default_version")]
     pub version: String,
+    #[serde(default)]
     pub redis: RedisConfig,
+    #[serde(default)]
     pub api: ApiConfig,
+    #[serde(default)]
     pub log: LogConfig,
+    #[serde(default)]
     pub models: Vec<ModelConfig>,
+    #[serde(default = "default_update_interval")]
     pub update_interval_ms: u64,
 }
 
-impl Default for Config {
-    fn default() -> Self {
-        Self {
-            service_name: "modsrv".to_string(),
-            version: "1.0.0".to_string(),
-            redis: RedisConfig::default(),
-            api: ApiConfig::default(),
-            log: LogConfig::default(),
-            models: Vec::new(),
-            update_interval_ms: 1000,
-        }
-    }
+fn default_service_name() -> String {
+    "modsrv".to_string()
 }
 
+fn default_version() -> String {
+    "0.0.1".to_string()
+}
+
+fn default_update_interval() -> u64 {
+    1000
+}
+
+// Default implementation is automatically derived
+
 impl Config {
-    /// 从文件加载配置
+    /// Load configuration from file
     pub fn from_file<P: AsRef<Path>>(path: P) -> Result<Self> {
         let path = path.as_ref();
         let content = std::fs::read_to_string(path).map_err(|e| {
-            ModelSrvError::ConfigError(format!("无法读取配置文件 {}: {}", path.display(), e))
+            ModelSrvError::ConfigError(format!(
+                "Failed to read config file {}: {}",
+                path.display(),
+                e
+            ))
         })?;
 
         let config: Config = if path.extension().and_then(|s| s.to_str()) == Some("yaml")
             || path.extension().and_then(|s| s.to_str()) == Some("yml")
         {
-            serde_yaml::from_str(&content)
-                .map_err(|e| ModelSrvError::ConfigError(format!("YAML配置解析失败: {}", e)))?
+            serde_yaml::from_str(&content).map_err(|e| {
+                ModelSrvError::ConfigError(format!("Failed to parse YAML config: {}", e))
+            })?
         } else {
-            serde_json::from_str(&content)
-                .map_err(|e| ModelSrvError::ConfigError(format!("JSON配置解析失败: {}", e)))?
+            serde_json::from_str(&content).map_err(|e| {
+                ModelSrvError::ConfigError(format!("Failed to parse JSON config: {}", e))
+            })?
         };
 
-        info!("配置加载成功: {}", path.display());
-        debug!("配置内容: {:?}", config);
+        info!("Config loaded successfully: {}", path.display());
+        debug!("Config content: {:?}", config);
         Ok(config)
     }
 
-    /// 从环境变量加载配置
+    /// Load configuration from environment variables
+    #[allow(dead_code)]
     pub fn from_env() -> Result<Self> {
         let mut config = Config::default();
 
-        // Redis配置
-        if let Ok(redis_url) = std::env::var("REDIS_URL") {
-            config.redis.url = redis_url;
-        }
-        if let Ok(redis_prefix) = std::env::var("REDIS_KEY_PREFIX") {
-            config.redis.key_prefix = redis_prefix;
-        }
+        // Redis config (using global variables)
+        config.redis.url = get_global_redis_url("MODSRV");
+        // key_prefix is hard-coded, not loaded from env vars
+        config.redis.key_prefix = "modsrv:".to_string();
 
-        // API配置
-        if let Ok(api_host) = std::env::var("API_HOST") {
+        // API config
+        if let Ok(api_host) = std::env::var("MODSRV_API_HOST") {
             config.api.host = api_host;
         }
-        if let Ok(api_port) = std::env::var("API_PORT") {
-            config.api.port = api_port
-                .parse()
-                .map_err(|e| ModelSrvError::ConfigError(format!("无效的API端口: {}", e)))?;
-        }
+        // Port is fixed, not loaded from env vars
+        config.api.port = 8082;
 
-        // 日志配置
-        if let Ok(log_level) = std::env::var("LOG_LEVEL") {
-            config.log.level = log_level;
-        }
-        if let Ok(log_file) = std::env::var("LOG_FILE") {
+        // Log config (using global variables)
+        config.log.level = get_global_log_level("MODSRV");
+        if let Ok(log_file) = std::env::var("MODSRV_LOG_FILE") {
             config.log.file_path = Some(log_file);
         }
 
-        // 更新间隔
-        if let Ok(interval) = std::env::var("UPDATE_INTERVAL_MS") {
-            config.update_interval_ms = interval
-                .parse()
-                .map_err(|e| ModelSrvError::ConfigError(format!("无效的更新间隔: {}", e)))?;
+        // Update interval
+        if let Ok(interval) = std::env::var("MODSRV_UPDATE_INTERVAL_MS") {
+            config.update_interval_ms = interval.parse().map_err(|e| {
+                ModelSrvError::ConfigError(format!("Invalid update interval: {}", e))
+            })?;
         }
 
-        info!("从环境变量加载配置完成");
+        info!("Config loaded from environment variables");
         Ok(config)
     }
 
-    /// 自动加载配置（文件优先，环境变量补充）
+    /// Auto-load config (YAML highest priority > env vars > defaults)
     pub fn load() -> Result<Self> {
-        // 按优先级尝试加载配置文件
-        let config_files = [
+        // Try multiple config file paths
+        let config_paths = [
+            "config/modsrv/modsrv.yaml",
             "config/modsrv.yaml",
-            "config/modsrv.yml",
-            "config/default.yaml",
-            "config/default.yml",
             "modsrv.yaml",
-            "modsrv.yml",
-            "config.yaml",
-            "config.yml",
         ];
 
-        let mut config = None;
-        for file_path in &config_files {
-            if Path::new(file_path).exists() {
-                match Self::from_file(file_path) {
-                    Ok(cfg) => {
-                        config = Some(cfg);
-                        break;
-                    }
-                    Err(e) => {
-                        warn!("配置文件 {} 加载失败: {}", file_path, e);
-                    }
-                }
+        let mut yaml_path = None;
+        for path in &config_paths {
+            if Path::new(path).exists() {
+                yaml_path = Some(path.to_string());
+                break;
             }
         }
 
-        let mut config = config.unwrap_or_else(|| {
-            info!("未找到配置文件，使用默认配置");
-            Config::default()
-        });
+        // Use new ConfigLoader
+        let loader = ConfigLoader::new()
+            .with_defaults(Config::default())
+            .with_env_prefix("MODSRV");
 
-        // 环境变量覆盖配置
-        if let Ok(redis_url) = std::env::var("REDIS_URL") {
-            config.redis.url = redis_url;
+        let mut config = if let Some(path) = yaml_path {
+            loader.with_yaml_file(&path).build()
+        } else {
+            loader.build()
         }
-        if let Ok(api_port) = std::env::var("API_PORT") {
-            if let Ok(port) = api_port.parse::<u16>() {
-                config.api.port = port;
-            }
-        }
-        if let Ok(log_level) = std::env::var("LOG_LEVEL") {
-            config.log.level = log_level;
-        }
+        .map_err(|e| ModelSrvError::ConfigError(format!("Failed to load config: {}", e)))?;
+
+        // Hard-code some fields, not allowed to override from config
+        config.redis.key_prefix = "modsrv:".to_string();
+        config.api.port = 8082;
+
+        // Validate config
+        config.validate()?;
 
         Ok(config)
     }
 
-    /// 验证配置
+    /// Validate configuration
     pub fn validate(&self) -> Result<()> {
-        // 验证Redis URL
+        // Validate Redis URL
         if self.redis.url.is_empty() {
-            return Err(ModelSrvError::ConfigError("Redis URL不能为空".to_string()));
+            return Err(ModelSrvError::ConfigError(
+                "Redis URL cannot be empty".to_string(),
+            ));
         }
 
-        // 验证API端口
+        // Validate API port
         if self.api.port == 0 {
-            return Err(ModelSrvError::ConfigError("API端口不能为0".to_string()));
+            return Err(ModelSrvError::ConfigError(
+                "API port cannot be 0".to_string(),
+            ));
         }
 
-        // 验证模型配置
+        // Validate model config
         for model in &self.models {
             if model.id.is_empty() {
-                return Err(ModelSrvError::ConfigError("模型ID不能为空".to_string()));
+                return Err(ModelSrvError::ConfigError(
+                    "Model ID cannot be empty".to_string(),
+                ));
             }
             if model.monitoring.is_empty() && model.control.is_empty() {
                 return Err(ModelSrvError::ConfigError(format!(
-                    "模型 {} 必须包含监视或控制点",
+                    "Model {} must contain monitoring or control points",
                     model.id
                 )));
             }
         }
 
-        info!("配置验证通过");
+        info!("Config validation passed");
         Ok(())
     }
 
-    /// 保存配置到文件
+    /// Save configuration to file
+    #[allow(dead_code)]
     pub fn save_to_file<P: AsRef<Path>>(&self, path: P) -> Result<()> {
         let path = path.as_ref();
         let content = if path.extension().and_then(|s| s.to_str()) == Some("yaml")
             || path.extension().and_then(|s| s.to_str()) == Some("yml")
         {
-            serde_yaml::to_string(self)
-                .map_err(|e| ModelSrvError::ConfigError(format!("YAML序列化失败: {}", e)))?
+            serde_yaml::to_string(self).map_err(|e| {
+                ModelSrvError::ConfigError(format!("Failed to serialize YAML: {}", e))
+            })?
         } else {
-            serde_json::to_string_pretty(self)
-                .map_err(|e| ModelSrvError::ConfigError(format!("JSON序列化失败: {}", e)))?
+            serde_json::to_string_pretty(self).map_err(|e| {
+                ModelSrvError::ConfigError(format!("Failed to serialize JSON: {}", e))
+            })?
         };
 
-        std::fs::write(path, content)
-            .map_err(|e| ModelSrvError::ConfigError(format!("写入配置文件失败: {}", e)))?;
+        std::fs::write(path, content).map_err(|e| {
+            ModelSrvError::ConfigError(format!("Failed to write config file: {}", e))
+        })?;
 
-        info!("配置已保存到: {}", path.display());
+        info!("Config saved to: {}", path.display());
         Ok(())
     }
 
-    /// 添加模型配置
+    /// Add model configuration
+    #[allow(dead_code)]
     pub fn add_model(&mut self, model: ModelConfig) {
         self.models.push(model);
-        info!("添加模型配置: {}", self.models.last().unwrap().id);
+        info!("Added model config: {}", self.models.last().unwrap().id);
     }
 
-    /// 移除模型配置
+    /// Remove model configuration
+    #[allow(dead_code)]
     pub fn remove_model(&mut self, model_id: &str) -> bool {
         let original_len = self.models.len();
         self.models.retain(|m| m.id != model_id);
         let removed = self.models.len() < original_len;
         if removed {
-            info!("移除模型配置: {}", model_id);
+            info!("Removed model config: {}", model_id);
         }
         removed
     }
 
-    /// 获取启用的模型配置
+    /// Get enabled model configurations
     pub fn enabled_models(&self) -> Vec<&ModelConfig> {
         self.models.iter().collect()
     }
@@ -284,8 +330,8 @@ mod tests {
     fn test_default_config() {
         let config = Config::default();
         assert_eq!(config.service_name, "modsrv");
-        assert_eq!(config.redis.url, "redis://localhost:6379");
-        assert_eq!(config.api.port, 8092);
+        assert_eq!(config.redis.url, get_global_redis_url("MODSRV"));
+        assert_eq!(config.api.port, 8082);
         assert!(config.validate().is_ok());
     }
 
@@ -294,7 +340,7 @@ mod tests {
         let mut config = Config::default();
         assert!(config.validate().is_ok());
 
-        // 测试无效配置
+        // Test invalid config
         config.redis.url = "".to_string();
         assert!(config.validate().is_err());
 

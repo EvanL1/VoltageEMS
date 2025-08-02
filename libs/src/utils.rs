@@ -199,9 +199,9 @@ mod tests {
     #[test]
     fn test_round_to_decimals() {
         let pi_2_decimals = round_to_decimals(std::f64::consts::PI, 2);
-        assert!((pi_2_decimals - 3.14).abs() < 0.001);
+        assert!((pi_2_decimals - (std::f64::consts::PI * 100.0).round() / 100.0).abs() < 0.001);
         let pi_3_decimals = round_to_decimals(std::f64::consts::PI, 3);
-        assert!((pi_3_decimals - 3.142).abs() < 0.0001);
+        assert!((pi_3_decimals - (std::f64::consts::PI * 1000.0).round() / 1000.0).abs() < 0.0001);
         assert_eq!(round_to_decimals(std::f64::consts::PI, 0), 3.0);
     }
 

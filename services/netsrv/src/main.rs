@@ -1,12 +1,11 @@
 mod config;
 mod error;
 
-use crate::config::{load_config, Config};
+use crate::config::load_config;
 use crate::error::Result;
 use clap::Parser;
 use std::path::PathBuf;
 use tracing::{error, info};
-use tracing_subscriber;
 
 #[derive(Parser, Debug)]
 #[clap(author, version, about, long_about = None)]
@@ -22,7 +21,7 @@ async fn main() -> Result<()> {
     tracing_subscriber::fmt().with_env_filter("info").init();
 
     // Parse command line arguments
-    let args = Args::parse();
+    let _args = Args::parse();
 
     // Load configuration
     let config = match load_config() {

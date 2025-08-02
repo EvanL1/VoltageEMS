@@ -1,23 +1,23 @@
-//! 数据处理模块
+//! Data processing module
 //!
-//! 负责统一处理所有协议的数据转换逻辑，包括：
-//! - scale/offset 计算
-//! - reverse 逻辑（布尔值反转）
-//! - 数据类型转换
+//! Responsible for unified processing of data conversion logic for all protocols, including:
+//! - scale/offset calculation
+//! - reverse logic (boolean value inversion)
+//! - data type conversion
 
 use crate::core::config::types::{ScalingInfo, TelemetryType};
 
-/// 处理点位数据值
+/// Process point data value
 ///
-/// 根据遥测类型和缩放信息处理原始数据值
+/// Process raw data value based on telemetry type and scaling information
 ///
 /// # Arguments
-/// * `raw_value` - 从协议读取的原始值
-/// * `telemetry_type` - 遥测类型（遥测、遥信、遥控、遥调）
-/// * `scaling` - 可选的缩放信息
+/// * `raw_value` - Raw value read from protocol
+/// * `telemetry_type` - Telemetry type (telemetry, signal, control, adjustment)
+/// * `scaling` - Optional scaling information
 ///
 /// # Returns
-/// 处理后的值
+/// Processed value
 pub fn process_point_value(
     raw_value: f64,
     telemetry_type: &TelemetryType,
@@ -26,15 +26,15 @@ pub fn process_point_value(
     let mut processed_value = raw_value;
 
     if let Some(scaling_info) = scaling {
-        // 对于遥测和遥调类型，应用 scale 和 offset
+        // For telemetry and adjustment types, apply scale and offset
         match telemetry_type {
-            TelemetryType::Measurement | TelemetryType::Adjustment => {
+            TelemetryType::Telemetry | TelemetryType::Adjustment => {
                 processed_value = raw_value * scaling_info.scale + scaling_info.offset;
             }
-            // 对于遥信和遥控类型，检查是否需要反转
+            // For signal and control types, check if reversal is needed
             TelemetryType::Signal | TelemetryType::Control => {
                 if let Some(true) = scaling_info.reverse {
-                    // 反转逻辑：0->1, 非0->0
+                    // Reversal logic: 0->1, non-0->0
                     processed_value = if raw_value == 0.0 { 1.0 } else { 0.0 };
                 }
             }
@@ -44,15 +44,15 @@ pub fn process_point_value(
     processed_value
 }
 
-/// 批量处理点位数据
+/// Batch process point data
 ///
 /// # Arguments
-/// * `points` - 点位ID到原始值的映射
-/// * `telemetry_type` - 遥测类型
-/// * `scaling_map` - 点位ID到缩放信息的映射
+/// * `points` - Mapping from point ID to raw value
+/// * `telemetry_type` - Telemetry type
+/// * `scaling_map` - Mapping from point ID to scaling information
 ///
 /// # Returns
-/// 处理后的点位数据映射
+/// Processed point data mapping
 pub fn process_point_batch(
     points: &[(u32, f64)],
     telemetry_type: &TelemetryType,
@@ -73,7 +73,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_measurement_scaling() {
+    fn test_telemetry_scaling() {
         let scaling = ScalingInfo {
             scale: 0.1,
             offset: 2.0,
@@ -81,7 +81,7 @@ mod tests {
             reverse: None,
         };
 
-        let result = process_point_value(100.0, &TelemetryType::Measurement, Some(&scaling));
+        let result = process_point_value(100.0, &TelemetryType::Telemetry, Some(&scaling));
         assert_eq!(result, 12.0); // 100 * 0.1 + 2.0 = 12.0
     }
 
@@ -94,11 +94,11 @@ mod tests {
             reverse: Some(true),
         };
 
-        // 测试 0 -> 1
+        // Test 0 -> 1
         let result = process_point_value(0.0, &TelemetryType::Signal, Some(&scaling));
         assert_eq!(result, 1.0);
 
-        // 测试 1 -> 0
+        // Test 1 -> 0
         let result = process_point_value(1.0, &TelemetryType::Signal, Some(&scaling));
         assert_eq!(result, 0.0);
     }
@@ -113,7 +113,7 @@ mod tests {
         };
 
         let result = process_point_value(1.0, &TelemetryType::Signal, Some(&scaling));
-        assert_eq!(result, 1.0); // 不反转
+        assert_eq!(result, 1.0); // No reversal
     }
 
     #[test]
@@ -135,7 +135,7 @@ mod tests {
             scale: 10.0,
             offset: -50.0,
             unit: Some("kW".to_string()),
-            reverse: None, // adjustment 不使用 reverse
+            reverse: None, // adjustment doesn't use reverse
         };
 
         let result = process_point_value(15.0, &TelemetryType::Adjustment, Some(&scaling));
@@ -144,8 +144,8 @@ mod tests {
 
     #[test]
     fn test_no_scaling() {
-        let result = process_point_value(42.0, &TelemetryType::Measurement, None);
-        assert_eq!(result, 42.0); // 无缩放时返回原值
+        let result = process_point_value(42.0, &TelemetryType::Telemetry, None);
+        assert_eq!(result, 42.0); // Return original value when no scaling
     }
 
     #[test]
@@ -172,14 +172,14 @@ mod tests {
 
         let points = vec![(1, 100.0), (2, 1.0)];
 
-        // 测试遥测批处理
-        let result = process_point_batch(&points, &TelemetryType::Measurement, &scaling_map);
+        // Test telemetry batch processing
+        let result = process_point_batch(&points, &TelemetryType::Telemetry, &scaling_map);
         assert_eq!(result[0], (1, 10.0)); // 100 * 0.1
-        assert_eq!(result[1], (2, 1.0)); // 遥测不使用 reverse
+        assert_eq!(result[1], (2, 1.0)); // Telemetry doesn't use reverse
 
-        // 测试遥信批处理
+        // Test signal batch processing
         let result = process_point_batch(&points, &TelemetryType::Signal, &scaling_map);
-        assert_eq!(result[0], (1, 100.0)); // 遥信不使用 scale
+        assert_eq!(result[0], (1, 100.0)); // Signal doesn't use scale
         assert_eq!(result[1], (2, 0.0)); // reverse: 1 -> 0
     }
 }

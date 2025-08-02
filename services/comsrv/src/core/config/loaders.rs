@@ -1,6 +1,6 @@
-//! 配置加载器模块
+//! Configuration loader module
 //!
-//! 整合CSV加载、点位映射和协议映射功能
+//! Integrates CSV loading, point mapping and protocol mapping functionality
 
 use super::types::{CombinedPoint, ScalingInfo};
 use crate::utils::error::{ComSrvError, Result};
@@ -15,10 +15,10 @@ use tokio::sync::RwLock;
 use tracing::{debug, trace, warn};
 
 // ============================================================================
-// 自定义反序列化函数
+// Custom deserialization functions
 // ============================================================================
 
-/// 从字符串反序列化bool，支持"0"/"1"/"true"/"false"
+/// Deserialize bool from string, supports "0"/"1"/"true"/"false"
 fn deserialize_bool_from_str<'de, D>(deserializer: D) -> std::result::Result<Option<bool>, D::Error>
 where
     D: Deserializer<'de>,
@@ -35,7 +35,7 @@ where
     }
 }
 
-/// 从字符串反序列化f64，支持空字符串
+/// Deserialize f64 from string, supports empty string
 fn deserialize_f64_from_str<'de, D>(deserializer: D) -> std::result::Result<Option<f64>, D::Error>
 where
     D: Deserializer<'de>,
@@ -51,7 +51,7 @@ where
     }
 }
 
-/// 从字符串反序列化u32
+/// Deserialize u32 from string
 fn deserialize_u32_from_str<'de, D>(deserializer: D) -> std::result::Result<u32, D::Error>
 where
     D: Deserializer<'de>,
@@ -61,7 +61,7 @@ where
         .map_err(|_| D::Error::custom(format!("Invalid u32 value: {s}")))
 }
 
-/// 从字符串反序列化u8
+/// Deserialize u8 from string
 fn deserialize_u8_from_str<'de, D>(deserializer: D) -> std::result::Result<u8, D::Error>
 where
     D: Deserializer<'de>,
@@ -71,7 +71,7 @@ where
         .map_err(|_| D::Error::custom(format!("Invalid u8 value: {s}")))
 }
 
-/// 从字符串反序列化u16
+/// Deserialize u16 from string
 fn deserialize_u16_from_str<'de, D>(deserializer: D) -> std::result::Result<u16, D::Error>
 where
     D: Deserializer<'de>,
@@ -81,7 +81,7 @@ where
         .map_err(|_| D::Error::custom(format!("Invalid u16 value: {s}")))
 }
 
-/// 从字符串反序列化可选u8
+/// Deserialize optional u8 from string
 fn deserialize_opt_u8_from_str<'de, D>(deserializer: D) -> std::result::Result<Option<u8>, D::Error>
 where
     D: Deserializer<'de>,
@@ -98,17 +98,17 @@ where
 }
 
 // ============================================================================
-// CSV缓存
+// CSV cache
 // ============================================================================
 
-/// CSV缓存条目
+/// CSV cache entry
 #[derive(Debug, Clone)]
 struct CsvCacheEntry<T> {
     data: Vec<T>,
     modified_time: SystemTime,
 }
 
-/// CSV缓存统计
+/// CSV cache statistics
 #[derive(Debug, Clone, Default)]
 pub struct CsvCacheStats {
     pub hits: u64,
@@ -128,7 +128,7 @@ impl CsvCacheStats {
     }
 }
 
-/// 带缓存的CSV加载器
+/// CSV loader with cache
 #[derive(Debug)]
 pub struct CachedCsvLoader {
     cache: Arc<RwLock<HashMap<PathBuf, CsvCacheEntry<serde_json::Value>>>>,
@@ -142,7 +142,7 @@ impl Default for CachedCsvLoader {
 }
 
 impl CachedCsvLoader {
-    /// 创建新的缓存CSV加载器
+    /// Create new cached CSV loader
     pub fn new() -> Self {
         Self {
             cache: Arc::new(RwLock::new(HashMap::new())),
@@ -150,30 +150,30 @@ impl CachedCsvLoader {
         }
     }
 
-    /// 带缓存加载CSV
+    /// Load CSV with cache
     pub async fn load_csv_cached<T>(&self, file_path: &Path) -> Result<Vec<T>>
     where
         T: for<'de> Deserialize<'de> + Serialize + Clone,
     {
         let path = file_path.to_path_buf();
 
-        // 获取文件修改时间
+        // Get file modification time
         let metadata = std::fs::metadata(&path)
             .map_err(|e| ComSrvError::IoError(format!("Failed to get file metadata: {e}")))?;
         let current_modified = metadata
             .modified()
             .map_err(|e| ComSrvError::IoError(format!("Failed to get modified time: {e}")))?;
 
-        // 检查缓存
+        // Check cache
         {
             let cache = self.cache.read().await;
             if let Some(entry) = cache.get(&path) {
                 if entry.modified_time == current_modified {
-                    // 缓存命中
+                    // Cache hit
                     self.stats.write().await.hits += 1;
                     trace!("CSV cache hit for: {}", path.display());
 
-                    // 从缓存的JSON值反序列化
+                    // Deserialize from cached JSON values
                     let result: Result<Vec<T>> = entry
                         .data
                         .iter()
@@ -191,13 +191,13 @@ impl CachedCsvLoader {
             }
         }
 
-        // 缓存未命中，加载文件
+        // Cache miss, load file
         self.stats.write().await.misses += 1;
         debug!("Loading CSV file: {}", path.display());
 
         let data = Self::load_csv_file(&path)?;
 
-        // 更新缓存
+        // Update cache
         {
             let mut cache = self.cache.write().await;
             cache.insert(
@@ -210,7 +210,7 @@ impl CachedCsvLoader {
             self.stats.write().await.reloads += 1;
         }
 
-        // 反序列化为目标类型
+        // Deserialize to target type
         let result: Result<Vec<T>> = data
             .into_iter()
             .enumerate()
@@ -232,7 +232,7 @@ impl CachedCsvLoader {
         result
     }
 
-    /// 加载CSV文件
+    /// Load CSV file
     fn load_csv_file(path: &Path) -> Result<Vec<serde_json::Value>> {
         eprintln!("DEBUG: load_csv_file called for: {}", path.display());
         let mut reader = ReaderBuilder::new()
@@ -272,22 +272,22 @@ impl CachedCsvLoader {
         Ok(records)
     }
 
-    /// 获取缓存统计
+    /// Get cache statistics
     pub async fn get_stats(&self) -> CsvCacheStats {
         self.stats.read().await.clone()
     }
 
-    /// 清空缓存
+    /// Clear cache
     pub async fn clear_cache(&self) {
         self.cache.write().await.clear();
     }
 }
 
 // ============================================================================
-// CSV记录类型
+// CSV record types
 // ============================================================================
 
-/// 四遥记录
+/// Four-telemetry record
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FourRemoteRecord {
     #[serde(deserialize_with = "deserialize_u32_from_str")]
@@ -306,7 +306,7 @@ pub struct FourRemoteRecord {
     pub description: Option<String>,
 }
 
-/// Modbus映射记录 - 简化版本
+/// Modbus mapping record - simplified version
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModbusMappingRecord {
     #[serde(deserialize_with = "deserialize_u32_from_str")]
@@ -317,76 +317,81 @@ pub struct ModbusMappingRecord {
     pub function_code: u8,
     #[serde(deserialize_with = "deserialize_u16_from_str")]
     pub register_address: u16,
-    #[serde(rename = "data_type")]
-    pub data_format: String,
+    pub data_type: String,
     #[serde(default)]
     pub byte_order: Option<String>,
-    // 可选字段，仅在特殊情况下使用（如信号位操作）
+    // Optional field, only used in special cases (e.g., signal bit operations)
     #[serde(default, deserialize_with = "deserialize_opt_u8_from_str")]
     pub bit_position: Option<u8>,
 }
 
 impl ModbusMappingRecord {
-    /// 根据数据类型推断寄存器数量
+    /// Infer register count based on data type
     pub fn register_count(&self) -> u16 {
-        match self.data_format.as_str() {
+        match self.data_type.as_str() {
             "bool" | "int8" | "uint8" | "int16" | "uint16" => 1,
             "int32" | "uint32" | "float32" => 2,
             "int64" | "uint64" | "float64" => 4,
             _ => {
-                tracing::warn!("未知数据类型: {}, 默认使用1个寄存器", self.data_format);
+                tracing::warn!(
+                    "Unknown data type: {}, defaulting to 1 register",
+                    self.data_type
+                );
                 1
             }
         }
     }
 
-    /// 根据数据类型推断字节数
+    /// Infer byte count based on data type
     pub fn byte_count(&self) -> u8 {
-        match self.data_format.as_str() {
+        match self.data_type.as_str() {
             "bool" | "int8" | "uint8" => 1,
             "int16" | "uint16" => 2,
             "int32" | "uint32" | "float32" => 4,
             "int64" | "uint64" | "float64" => 8,
             _ => {
-                tracing::warn!("未知数据类型: {}, 默认使用2字节", self.data_format);
+                tracing::warn!(
+                    "Unknown data type: {}, defaulting to 2 bytes",
+                    self.data_type
+                );
                 2
             }
         }
     }
 
-    /// 获取默认字节序（如果未指定）
+    /// Get default byte order (if not specified)
     pub fn effective_byte_order(&self) -> String {
         self.byte_order
             .clone()
-            .unwrap_or_else(|| match self.data_format.as_str() {
+            .unwrap_or_else(|| match self.data_type.as_str() {
                 "int32" | "uint32" | "float32" => "ABCD".to_string(),
                 "int64" | "uint64" | "float64" => "ABCDEFGH".to_string(),
                 _ => "AB".to_string(),
             })
     }
 
-    /// 获取有效位位置（如果未指定，默认为0）
+    /// Get effective bit position (defaults to 0 if not specified)
     pub fn effective_bit_position(&self) -> u8 {
         self.bit_position.unwrap_or(0)
     }
 }
 
 // ============================================================================
-// 点位映射
+// Point mapping
 // ============================================================================
 
-/// 点位映射器
+/// Point mapper
 #[derive(Debug)]
 pub struct PointMapper;
 
 impl PointMapper {
-    /// 合并Modbus点位
+    /// Merge Modbus points
     pub fn combine_modbus_points(
         remote_points: Vec<FourRemoteRecord>,
         modbus_mappings: Vec<ModbusMappingRecord>,
         telemetry_type: &str,
     ) -> Result<Vec<CombinedPoint>> {
-        // 创建映射查找表
+        // Create mapping lookup table
         let mut mapping_lookup: HashMap<u32, ModbusMappingRecord> = HashMap::new();
         for mapping in modbus_mappings {
             mapping_lookup.insert(mapping.point_id, mapping);
@@ -406,9 +411,9 @@ impl PointMapper {
                     "register_address".to_string(),
                     mapping.register_address.to_string(),
                 );
-                protocol_params.insert("data_format".to_string(), mapping.data_format.clone());
+                protocol_params.insert("data_type".to_string(), mapping.data_type.clone());
 
-                // 使用自动推断的值
+                // Use automatically inferred values
                 protocol_params.insert(
                     "register_count".to_string(),
                     mapping.register_count().to_string(),
@@ -450,7 +455,7 @@ impl PointMapper {
             }
         }
 
-        // 检查未映射的协议映射
+        // Check unmapped protocol mappings
         for (point_id, _) in mapping_lookup {
             warn!(
                 "Protocol mapping for point_id {} has no corresponding remote point",
@@ -461,7 +466,7 @@ impl PointMapper {
         Ok(combined_points)
     }
 
-    /// 验证点位映射
+    /// Validate point mappings
     pub fn validate_mappings(points: &[CombinedPoint]) -> Result<()> {
         let mut seen_ids = HashMap::new();
 
@@ -473,7 +478,7 @@ impl PointMapper {
                 )));
             }
 
-            // 验证协议参数
+            // Validate protocol parameters
             if !point.protocol_params.contains_key("slave_id") {
                 return Err(ComSrvError::ConfigError(format!(
                     "Missing slave_id for point_id {}",
@@ -485,32 +490,32 @@ impl PointMapper {
         Ok(())
     }
 
-    // 四遥分离架构下，不再需要to_unified_mappings方法
+    // Under four-telemetry separation architecture, to_unified_mappings method is no longer needed
 }
 
 // ============================================================================
-// 协议映射
+// Protocol mapping
 // ============================================================================
 
-/// 协议映射trait
+/// Protocol mapping trait
 pub trait ProtocolMapping: Send + Sync {
-    /// 获取点位ID
+    /// Get point ID
     fn point_id(&self) -> u32;
 
-    /// 获取信号名称
+    /// Get signal name
     fn signal_name(&self) -> &str;
 
-    /// 转换为协议参数
+    /// Convert to protocol parameters
     fn to_protocol_params(&self) -> HashMap<String, String>;
 
-    /// 获取数据格式
+    /// Get data format
     fn data_format(&self) -> &str;
 
-    /// 获取数据大小
+    /// Get data size
     fn data_size(&self) -> u8;
 }
 
-/// Modbus协议映射 - 简化版本
+/// Modbus protocol mapping - simplified version
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModbusMapping {
     pub point_id: u32,
@@ -518,25 +523,25 @@ pub struct ModbusMapping {
     pub slave_id: u8,
     pub function_code: u8,
     pub register_address: u16,
-    pub data_format: String,
+    pub data_type: String,
     pub byte_order: Option<String>,
     pub bit_position: Option<u8>,
     pub description: Option<String>,
 }
 
 impl ModbusMapping {
-    /// 根据数据类型推断寄存器数量
+    /// Infer register count based on data type
     pub fn register_count(&self) -> u16 {
-        match self.data_format.as_str() {
+        match self.data_type.as_str() {
             "int32" | "uint32" | "float32" => 2,
             "int64" | "uint64" | "float64" => 4,
             _ => 1,
         }
     }
 
-    /// 根据数据类型推断字节数
+    /// Infer byte count based on data type
     pub fn byte_count(&self) -> u8 {
-        match self.data_format.as_str() {
+        match self.data_type.as_str() {
             "bool" | "int8" | "uint8" => 1,
             "int32" | "uint32" | "float32" => 4,
             "int64" | "uint64" | "float64" => 8,
@@ -544,18 +549,18 @@ impl ModbusMapping {
         }
     }
 
-    /// 获取有效字节序
+    /// Get effective byte order
     pub fn effective_byte_order(&self) -> String {
         self.byte_order
             .clone()
-            .unwrap_or_else(|| match self.data_format.as_str() {
+            .unwrap_or_else(|| match self.data_type.as_str() {
                 "int32" | "uint32" | "float32" => "ABCD".to_string(),
                 "int64" | "uint64" | "float64" => "ABCDEFGH".to_string(),
                 _ => "AB".to_string(),
             })
     }
 
-    /// 获取有效位位置（如果未指定，默认为0）
+    /// Get effective bit position (defaults to 0 if not specified)
     pub fn effective_bit_position(&self) -> u8 {
         self.bit_position.unwrap_or(0)
     }
@@ -595,7 +600,7 @@ impl ProtocolMapping for ModbusMapping {
     }
 
     fn data_format(&self) -> &str {
-        &self.data_format
+        &self.data_type
     }
 
     fn data_size(&self) -> u8 {
@@ -603,7 +608,7 @@ impl ProtocolMapping for ModbusMapping {
     }
 }
 
-/// CAN协议映射
+/// CAN protocol mapping
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CanMapping {
     pub point_id: u32,
@@ -643,7 +648,7 @@ impl ProtocolMapping for CanMapping {
     }
 }
 
-/// IEC60870协议映射
+/// IEC60870 protocol mapping
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Iec60870Mapping {
     pub point_id: u32,
@@ -709,7 +714,7 @@ mod tests {
             CombinedPoint {
                 point_id: 1,
                 signal_name: "Test1".to_string(),
-                telemetry_type: "Measurement".to_string(),
+                telemetry_type: "Telemetry".to_string(),
                 data_type: "float".to_string(),
                 protocol_params: {
                     let mut params = HashMap::new();
@@ -721,7 +726,7 @@ mod tests {
             CombinedPoint {
                 point_id: 1, // Duplicate ID
                 signal_name: "Test2".to_string(),
-                telemetry_type: "Measurement".to_string(),
+                telemetry_type: "Telemetry".to_string(),
                 data_type: "float".to_string(),
                 protocol_params: {
                     let mut params = HashMap::new();
@@ -748,7 +753,7 @@ mod tests {
             slave_id: 1,
             function_code: 3,
             register_address: 1000,
-            data_format: "float32".to_string(),
+            data_type: "float32".to_string(),
             bit_position: None,
             byte_order: Some("DCBA".to_string()),
             description: None,
@@ -763,16 +768,16 @@ mod tests {
         assert_eq!(params.get("byte_count").unwrap(), "4");
         assert_eq!(mapping.data_size(), 2);
 
-        // 测试自动推断
+        // Test automatic inference
         let mapping_auto = ModbusMapping {
             point_id: 101,
             signal_name: "Test Auto".to_string(),
             slave_id: 1,
             function_code: 3,
             register_address: 1002,
-            data_format: "int16".to_string(),
+            data_type: "int16".to_string(),
             bit_position: None,
-            byte_order: None, // 未指定，应该自动推断
+            byte_order: None, // Not specified, should be automatically inferred
             description: None,
         };
 
@@ -780,6 +785,6 @@ mod tests {
         assert_eq!(params_auto.get("byte_order").unwrap(), "AB");
         assert_eq!(params_auto.get("register_count").unwrap(), "1");
         assert_eq!(params_auto.get("byte_count").unwrap(), "2");
-        assert_eq!(params_auto.get("bit_position").unwrap(), "0"); // 默认为0
+        assert_eq!(params_auto.get("bit_position").unwrap(), "0"); // Defaults to 0
     }
 }

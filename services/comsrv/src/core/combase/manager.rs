@@ -114,7 +114,7 @@ impl OptimizedPointManager {
             let point_id = config.id.parse::<u32>().unwrap_or(config.address); // Use id as point ID, fallback to address
 
             // Add to name mapping
-            name_to_id.insert(config.name.to_string(), point_id);
+            name_to_id.insert(config.name.clone(), point_id);
 
             // Add to type index
             points_by_type
@@ -353,7 +353,7 @@ pub fn generate_test_points(count: usize) -> Vec<PollingPoint> {
 
     for i in 0..count {
         let telemetry_type = match i % 4 {
-            0 => TelemetryType::Measurement,
+            0 => TelemetryType::Telemetry,
             1 => TelemetryType::Signal,
             2 => TelemetryType::Control,
             _ => TelemetryType::Adjustment,
@@ -394,12 +394,12 @@ mod tests {
 
         // Test by type queries
         let telemetry_points = manager
-            .get_point_data_by_type(&TelemetryType::Measurement)
+            .get_point_data_by_type(&TelemetryType::Telemetry)
             .await;
         assert_eq!(telemetry_points.len(), 0); // No data in cache yet
 
         let enabled_telemetry = manager
-            .get_enabled_points_by_type(&TelemetryType::Measurement)
+            .get_enabled_points_by_type(&TelemetryType::Telemetry)
             .await;
         assert_eq!(enabled_telemetry.len(), 25); // 25% of points are telemetry
 
@@ -421,7 +421,7 @@ mod tests {
         // Test query performance
         let start = std::time::Instant::now();
         let _telemetry_points = manager
-            .get_enabled_points_by_type(&TelemetryType::Measurement)
+            .get_enabled_points_by_type(&TelemetryType::Telemetry)
             .await;
         let query_time = start.elapsed();
 

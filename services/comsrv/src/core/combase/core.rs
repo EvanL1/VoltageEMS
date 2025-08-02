@@ -1,6 +1,6 @@
-//! 框架核心模块
+//! Framework core module
 //!
-//! 整合了基础trait定义、类型定义和默认实现
+//! Integrates basic trait definitions, type definitions and default implementations
 
 use crate::core::config::{ChannelConfig, TelemetryType};
 use crate::plugins::core::PluginStorage;
@@ -11,10 +11,10 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::{Mutex, RwLock};
 // ============================================================================
-// Redis值类型定义
+// Redis value type definitions
 // ============================================================================
 
-/// Redis值类型
+/// Redis value type
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum RedisValue {
     String(String),
@@ -24,17 +24,17 @@ pub enum RedisValue {
     Null,
 }
 
-/// 通道命令枚举
+/// Channel command enumeration
 #[derive(Debug, Clone)]
 pub enum ChannelCommand {
-    /// 控制命令 (YK)
+    /// Control command (YK)
     Control {
         command_id: String,
         point_id: u32,
         value: f64,
         timestamp: i64,
     },
-    /// 调节命令 (YT)
+    /// Adjustment command (YT)
     Adjustment {
         command_id: String,
         point_id: u32,
@@ -44,10 +44,10 @@ pub enum ChannelCommand {
 }
 
 // ============================================================================
-// 基础类型定义（来自types.rs）
+// Basic type definitions (from types.rs)
 // ============================================================================
 
-/// 通道操作状态和健康信息
+/// Channel operation status and health information
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ChannelStatus {
     pub is_connected: bool,
@@ -61,14 +61,14 @@ pub struct ChannelStatus {
     pub average_read_duration_ms: Option<f64>,
 }
 
-/// 点位数据结构 - 使用 combase 的包装类型
+/// Point data structure - using combase wrapper type
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PointData {
     pub value: RedisValue,
     pub timestamp: u64,
 }
 
-/// 扩展的点位数据（用于API和展示）
+/// Extended point data (for API and display)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExtendedPointData {
     pub id: String,
@@ -90,10 +90,10 @@ impl Default for PointData {
     }
 }
 
-/// 点位映射表
+/// Point mapping table
 pub type PointDataMap = HashMap<u32, PointData>;
 
-/// 测试用的通道参数
+/// Test channel parameters
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TestChannelParams {
     pub initial_value: f64,
@@ -112,58 +112,58 @@ impl Default for TestChannelParams {
 }
 
 // ============================================================================
-// 核心Trait定义（来自traits.rs）
+// Core trait definitions (from traits.rs)
 // ============================================================================
 
-/// 主通信服务trait
+/// Main communication service trait
 ///
-/// 此trait定义了所有通信协议实现必须提供的核心接口
+/// This trait defines the core interface that all communication protocol implementations must provide
 #[async_trait]
 pub trait ComBase: Send + Sync {
-    /// 获取实现名称
+    /// Get implementation name
     fn name(&self) -> &str;
 
-    /// 获取协议类型
+    /// Get protocol type
     fn protocol_type(&self) -> &str;
 
-    /// 检查连接状态
+    /// Check connection status
     fn is_connected(&self) -> bool;
 
-    /// 获取通道状态
+    /// Get channel status
     async fn get_status(&self) -> ChannelStatus;
 
-    /// 初始化通道
+    /// Initialize channel
     async fn initialize(&mut self, channel_config: &ChannelConfig) -> Result<()>;
 
-    /// 连接到目标系统
+    /// Connect to target system
     async fn connect(&mut self) -> Result<()>;
 
-    /// 断开连接
+    /// Disconnect
     async fn disconnect(&mut self) -> Result<()>;
 
-    /// 读取四遥数据
+    /// Read four-telemetry data
     async fn read_four_telemetry(&self, telemetry_type: &str) -> Result<PointDataMap>;
 
-    /// 执行控制命令
+    /// Execute control command
     async fn control(&mut self, commands: Vec<(u32, RedisValue)>) -> Result<Vec<(u32, bool)>>;
 
-    /// 执行调节命令
+    /// Execute adjustment command
     async fn adjustment(&mut self, adjustments: Vec<(u32, RedisValue)>)
         -> Result<Vec<(u32, bool)>>;
 
-    // 四遥分离架构下，不再需要update_points方法，点位配置在initialize阶段直接加载
+    // Under the four-telemetry separated architecture, update_points method is no longer needed, point configuration is directly loaded during initialize phase
 
-    /// 启动周期性任务
+    /// Start periodic tasks
     async fn start_periodic_tasks(&self) -> Result<()> {
         Ok(())
     }
 
-    /// 停止周期性任务
+    /// Stop periodic tasks
     async fn stop_periodic_tasks(&self) -> Result<()> {
         Ok(())
     }
 
-    /// 获取诊断信息
+    /// Get diagnostic information
     async fn get_diagnostics(&self) -> Result<serde_json::Value> {
         Ok(serde_json::json!({
             "name": self.name(),
@@ -173,7 +173,7 @@ pub trait ComBase: Send + Sync {
     }
 }
 
-/// 四遥操作trait
+/// Four-telemetry operations trait
 #[async_trait]
 pub trait FourTelemetryOperations: Send + Sync {
     async fn read_yc(&self) -> Result<PointDataMap>;
@@ -183,7 +183,7 @@ pub trait FourTelemetryOperations: Send + Sync {
         -> Result<Vec<(u32, bool)>>;
 }
 
-/// 连接管理trait
+/// Connection management trait
 #[async_trait]
 pub trait ConnectionManager: Send + Sync {
     async fn connect(&mut self) -> Result<()>;
@@ -193,12 +193,12 @@ pub trait ConnectionManager: Send + Sync {
     async fn check_connection(&self) -> Result<bool>;
 }
 
-/// 配置验证trait
+/// Configuration validation trait
 pub trait ConfigValidator {
     fn validate_config(config: &serde_json::Value) -> Result<()>;
 }
 
-/// 协议数据包解析器trait
+/// Protocol packet parser trait
 #[async_trait]
 pub trait ProtocolPacketParser: Send + Sync {
     fn protocol_name(&self) -> &'static str {
@@ -208,7 +208,7 @@ pub trait ProtocolPacketParser: Send + Sync {
     async fn build_packet(&self, data: &PointDataMap) -> Result<Vec<u8>>;
 }
 
-/// 数据包解析结果
+/// Packet parse result
 #[derive(Debug, Clone)]
 pub enum PacketParseResult {
     TelemetryData(PointDataMap),
@@ -217,24 +217,24 @@ pub enum PacketParseResult {
 }
 
 // ============================================================================
-// 默认实现（来自base.rs）
+// Default implementation (from base.rs)
 // ============================================================================
 
-/// 默认协议实现
+/// Default protocol implementation
 ///
-/// `提供ComBase` trait的参考实现
+/// Provides reference implementation of ComBase trait
 pub struct DefaultProtocol {
     name: String,
     protocol_type: String,
     status: Arc<RwLock<ChannelStatus>>,
     is_connected: Arc<RwLock<bool>>,
     channel_config: Option<ChannelConfig>,
-    // 四遥分离架构下，不再需要统一的point_mappings
+    // Under the four-telemetry separated architecture, unified point_mappings is no longer needed
     storage: Option<Arc<Mutex<Box<dyn PluginStorage>>>>,
 }
 
 impl DefaultProtocol {
-    /// 创建新实例
+    /// Create new instance
     pub fn new(name: String, protocol_type: String) -> Self {
         Self {
             name,
@@ -242,19 +242,19 @@ impl DefaultProtocol {
             status: Arc::new(RwLock::new(ChannelStatus::default())),
             is_connected: Arc::new(RwLock::new(false)),
             channel_config: None,
-            // 四遥分离架构下，不再需要统一的point_mappings
+            // Under the four-telemetry separated architecture, unified point_mappings is no longer needed
             storage: None,
         }
     }
 
-    /// 设置存储后端
+    /// Set storage backend
     #[must_use]
     pub fn with_storage(mut self, storage: Box<dyn PluginStorage>) -> Self {
         self.storage = Some(Arc::new(Mutex::new(storage)));
         self
     }
 
-    /// 更新状态信息
+    /// Update status information
     async fn update_status<F>(&self, updater: F)
     where
         F: FnOnce(&mut ChannelStatus),
@@ -267,7 +267,7 @@ impl DefaultProtocol {
             .as_secs();
     }
 
-    // 四遥分离架构下，不再需要get_mappings方法
+    // Under the four-telemetry separated architecture, get_mappings method is no longer needed
 }
 
 #[async_trait]
@@ -281,7 +281,7 @@ impl ComBase for DefaultProtocol {
     }
 
     fn is_connected(&self) -> bool {
-        // 使用 try_read 避免在异步环境中阻塞
+        // Use try_read to avoid blocking in async environment
         self.is_connected
             .try_read()
             .map(|guard| *guard)
@@ -339,8 +339,8 @@ impl ComBase for DefaultProtocol {
             return Err(ComSrvError::NotConnected);
         }
 
-        // 四遥分离架构下，DefaultProtocol仅提供基础实现
-        // 实际协议应该重写此方法以提供真实数据
+        // Under the four-telemetry separated architecture, DefaultProtocol only provides basic implementation
+        // Actual protocols should override this method to provide real data
         Ok(HashMap::new())
     }
 
@@ -349,7 +349,7 @@ impl ComBase for DefaultProtocol {
             return Err(ComSrvError::NotConnected);
         }
 
-        // 模拟控制执行
+        // Simulate control execution
         let results = commands
             .into_iter()
             .map(|(point_id, _value)| (point_id, true))
@@ -366,7 +366,7 @@ impl ComBase for DefaultProtocol {
             return Err(ComSrvError::NotConnected);
         }
 
-        // 模拟调节执行
+        // Simulate adjustment execution
         let results = adjustments
             .into_iter()
             .map(|(point_id, _value)| (point_id, true))
@@ -375,7 +375,7 @@ impl ComBase for DefaultProtocol {
         Ok(results)
     }
 
-    // 四遥分离架构下，update_points方法已移除
+    // Under the four-telemetry separated architecture, update_points method has been removed
 }
 
 impl std::fmt::Debug for DefaultProtocol {
@@ -436,7 +436,7 @@ impl ConnectionManager for DefaultProtocol {
 }
 
 // ============================================================================
-// 测试模块
+// Test module
 // ============================================================================
 
 #[cfg(test)]
@@ -451,11 +451,11 @@ mod tests {
         assert_eq!(protocol.protocol_type(), "default");
         assert!(!ComBase::is_connected(&protocol));
 
-        // 测试连接
+        // Test connection
         ComBase::connect(&mut protocol).await.unwrap();
         assert!(ComBase::is_connected(&protocol));
 
-        // 测试状态
+        // Test status
         let status = protocol.get_status().await;
         assert!(status.is_connected);
         assert_eq!(status.error_count, 0);

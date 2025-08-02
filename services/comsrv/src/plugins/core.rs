@@ -1,6 +1,6 @@
-//! 插件核心模块
+//! Plugin core module
 //!
-//! 包含插件管理器、注册表和存储功能的核心实现
+//! Contains core implementation of plugin manager, registry and storage functionality
 
 use async_trait::async_trait;
 use once_cell::sync::Lazy;
@@ -19,30 +19,30 @@ use crate::storage::{
 use crate::utils::error::{ComSrvError as Error, Result};
 
 // ============================================================================
-// 插件注册表
+// Plugin registry
 // ============================================================================
 
-/// 全局插件注册表实例
+/// Global plugin registry instance
 static PLUGIN_REGISTRY: Lazy<Arc<RwLock<PluginRegistry>>> =
     Lazy::new(|| Arc::new(RwLock::new(PluginRegistry::new())));
 
-/// 获取全局插件注册表
+/// Get global plugin registry
 pub fn get_plugin_registry() -> Arc<RwLock<PluginRegistry>> {
     PLUGIN_REGISTRY.clone()
 }
 
-/// 插件注册表，管理所有已注册的协议插件
+/// Plugin registry, manages all registered protocol plugins
 #[derive(Debug, Default)]
 pub struct PluginRegistry {
-    /// 已注册的插件
+    /// Registered plugins
     plugins: HashMap<String, PluginEntry>,
-    /// 插件工厂函数
+    /// Plugin factory functions
     factories: HashMap<String, PluginFactory>,
-    /// 插件加载顺序
+    /// Plugin load order
     load_order: Vec<String>,
 }
 
-/// 已注册插件的条目
+/// Registered plugin entry
 #[allow(dead_code)]
 struct PluginEntry {
     plugin: Box<dyn ProtocolPlugin>,
@@ -63,17 +63,17 @@ impl std::fmt::Debug for PluginEntry {
 }
 
 impl PluginRegistry {
-    /// 创建新的插件注册表
+    /// Create new plugin registry
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// 获取全局注册表实例
+    /// Get global registry instance
     pub fn global() -> Arc<RwLock<Self>> {
         PLUGIN_REGISTRY.clone()
     }
 
-    /// 注册插件
+    /// Register plugin
     pub fn register_plugin(&mut self, plugin: Box<dyn ProtocolPlugin>) -> Result<()> {
         let metadata = plugin.metadata();
         let plugin_id = metadata.id.clone();
@@ -84,7 +84,7 @@ impl PluginRegistry {
             )));
         }
 
-        // 验证版本号
+        // Validate version number
         if let Err(e) = Version::parse(&metadata.version) {
             return Err(Error::ConfigError(format!(
                 "Invalid version '{}' for plugin '{}': {}",
@@ -110,31 +110,31 @@ impl PluginRegistry {
         Ok(())
     }
 
-    /// 注册插件工厂
+    /// Register plugin factory
     pub fn register_factory(&mut self, plugin_id: &str, factory: PluginFactory) -> Result<()> {
         debug!("Registering factory for plugin: {}", plugin_id);
         self.factories.insert(plugin_id.to_string(), factory);
         Ok(())
     }
 
-    /// 获取插件工厂
+    /// Get plugin factory
     pub fn get_factory(&self, plugin_id: &str) -> Option<&PluginFactory> {
         self.factories.get(plugin_id)
     }
 
-    /// 获取插件元数据
+    /// Get plugin metadata
     pub fn get_plugin_metadata(&self, plugin_id: &str) -> Option<ProtocolMetadata> {
         self.plugins
             .get(plugin_id)
             .map(|entry| entry.metadata.clone())
     }
 
-    /// 列出所有插件ID
+    /// List all plugin IDs
     pub fn list_plugin_ids(&self) -> Vec<String> {
         self.plugins.keys().cloned().collect()
     }
 
-    /// 获取统计信息
+    /// Get statistics
     pub fn get_statistics(&self) -> PluginStatistics {
         let total_plugins = self.plugins.len();
         let enabled_plugins = self.plugins.values().filter(|e| e.enabled).count();
@@ -149,7 +149,7 @@ impl PluginRegistry {
     }
 }
 
-/// 插件统计信息
+/// Plugin statistics
 #[derive(Debug)]
 pub struct PluginStatistics {
     pub total_plugins: usize,
@@ -158,22 +158,22 @@ pub struct PluginStatistics {
 }
 
 // ============================================================================
-// 插件管理器
+// Plugin manager
 // ============================================================================
 
-/// 插件管理器，协调插件操作
+/// Plugin manager, coordinates plugin operations
 #[derive(Debug)]
 pub struct PluginManager;
 
 impl PluginManager {
-    /// 初始化插件系统
+    /// Initialize plugin system
     pub fn initialize() -> Result<()> {
         info!("Initializing plugin system...");
 
-        // 加载内置插件
+        // Load built-in plugins
         discovery::load_all_plugins()?;
 
-        // 获取统计信息
+        // Get statistics
         let registry = PluginRegistry::global();
         let stats = registry.read().unwrap().get_statistics();
 
@@ -185,14 +185,14 @@ impl PluginManager {
         Ok(())
     }
 
-    /// 列出所有可用的插件
+    /// List all available plugins
     pub fn list_plugins() -> Vec<String> {
         let registry = PluginRegistry::global();
         let reg = registry.read().unwrap();
         reg.list_plugin_ids()
     }
 
-    /// 获取插件信息
+    /// Get plugin information
     pub fn get_plugin_info(plugin_id: &str) -> Option<String> {
         let registry = PluginRegistry::global();
         let reg = registry.read().unwrap();
@@ -210,7 +210,7 @@ impl PluginManager {
         })
     }
 
-    /// 启用插件
+    /// Enable plugin
     pub fn enable_plugin(plugin_id: &str) -> Result<()> {
         let registry = PluginRegistry::global();
         let mut reg = registry.write().unwrap();
@@ -226,7 +226,7 @@ impl PluginManager {
         }
     }
 
-    /// 禁用插件
+    /// Disable plugin
     pub fn disable_plugin(plugin_id: &str) -> Result<()> {
         let registry = PluginRegistry::global();
         let mut reg = registry.write().unwrap();
@@ -244,26 +244,26 @@ impl PluginManager {
 }
 
 // ============================================================================
-// 插件存储
+// Plugin storage
 // ============================================================================
 
-// 类型常量定义
-const TYPE_MEASUREMENT: &str = "m";
-const TYPE_SIGNAL: &str = "s";
-const TYPE_CONTROL: &str = "c";
-const TYPE_ADJUSTMENT: &str = "a";
+// Type constant definitions
+const TYPE_MEASUREMENT: &str = "T";
+const TYPE_SIGNAL: &str = "S";
+const TYPE_CONTROL: &str = "C";
+const TYPE_ADJUSTMENT: &str = "A";
 
-/// `将TelemetryType转换为Redis存储的类型缩写`
+/// `Convert TelemetryType to Redis storage type abbreviation`
 pub fn telemetry_type_to_redis(telemetry_type: &TelemetryType) -> &'static str {
     match telemetry_type {
-        TelemetryType::Measurement => TYPE_MEASUREMENT,
+        TelemetryType::Telemetry => TYPE_MEASUREMENT,
         TelemetryType::Signal => TYPE_SIGNAL,
         TelemetryType::Control => TYPE_CONTROL,
         TelemetryType::Adjustment => TYPE_ADJUSTMENT,
     }
 }
 
-/// 插件点位更新数据
+/// Plugin point update data
 #[derive(Debug, Clone)]
 pub struct PluginPointUpdate {
     pub channel_id: u16,
@@ -274,7 +274,7 @@ pub struct PluginPointUpdate {
     pub raw_value: Option<f64>,
 }
 
-/// 插件点位配置
+/// Plugin point configuration
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct PluginPointConfig {
     pub name: String,
@@ -284,10 +284,10 @@ pub struct PluginPointConfig {
     pub description: Option<String>,
 }
 
-/// 插件存储trait
+/// Plugin storage trait
 #[async_trait]
 pub trait PluginStorage: Send + Sync {
-    /// 写入单个点位数据
+    /// Write single point data
     async fn write_point(
         &self,
         channel_id: u16,
@@ -296,7 +296,7 @@ pub trait PluginStorage: Send + Sync {
         value: f64,
     ) -> Result<()>;
 
-    /// 写入点位数据（带原始值）
+    /// Write point data (with raw value)
     async fn write_point_with_raw(
         &self,
         channel_id: u16,
@@ -305,12 +305,12 @@ pub trait PluginStorage: Send + Sync {
         value: f64,
         _raw_value: f64,
     ) -> Result<()> {
-        // 默认实现：只写入处理后的值
+        // Default implementation: only write processed value
         self.write_point(channel_id, telemetry_type, point_id, value)
             .await
     }
 
-    /// 写入点位数据（带缩放参数）
+    /// Write point data (with scaling parameters)
     async fn write_point_with_scaling(
         &self,
         channel_id: u16,
@@ -325,10 +325,10 @@ pub trait PluginStorage: Send + Sync {
             .await
     }
 
-    /// 批量写入点位数据
+    /// Batch write point data
     async fn write_points(&self, updates: Vec<PluginPointUpdate>) -> Result<()>;
 
-    /// 读取单个点位数据
+    /// Read single point data
     async fn read_point(
         &self,
         channel_id: u16,
@@ -336,7 +336,7 @@ pub trait PluginStorage: Send + Sync {
         point_id: u32,
     ) -> Result<Option<(f64, i64)>>;
 
-    /// 写入点位配置
+    /// Write point configuration
     async fn write_config(
         &self,
         channel_id: u16,
@@ -345,7 +345,7 @@ pub trait PluginStorage: Send + Sync {
         config: PluginPointConfig,
     ) -> Result<()>;
 
-    /// 初始化点位
+    /// Initialize point
     async fn initialize_point(
         &self,
         channel_id: u16,
@@ -354,14 +354,14 @@ pub trait PluginStorage: Send + Sync {
     ) -> Result<()>;
 }
 
-/// 默认插件存储实现
+/// Default plugin storage implementation
 #[derive(Debug)]
 pub struct DefaultPluginStorage {
     storage: Arc<RtdbStorage>,
 }
 
 impl DefaultPluginStorage {
-    /// 创建新的存储实例
+    /// Create new storage instance
     pub async fn new(redis_url: String) -> Result<Self> {
         let storage = RtdbStorage::with_config(&redis_url, RetryConfig::default()).await?;
 
@@ -370,12 +370,12 @@ impl DefaultPluginStorage {
         })
     }
 
-    /// `从已有的RtdbStorage创建`
+    /// `Create from existing RtdbStorage`
     pub fn from_storage(storage: Arc<RtdbStorage>) -> Self {
         Self { storage }
     }
 
-    /// 从环境变量创建
+    /// Create from environment variables
     pub async fn from_env() -> Result<Self> {
         let redis_url =
             std::env::var("REDIS_URL").unwrap_or_else(|_| "redis://localhost:6379".to_string());
@@ -462,7 +462,7 @@ impl PluginStorage for DefaultPluginStorage {
         let _value =
             serde_json::to_string(&config).map_err(|e| Error::SerializationError(e.to_string()))?;
 
-        // 临时实现，后续可以扩展Storage接口
+        // Temporary implementation, can extend Storage interface later
         Ok(())
     }
 
@@ -472,26 +472,26 @@ impl PluginStorage for DefaultPluginStorage {
         telemetry_type: &TelemetryType,
         point_id: u32,
     ) -> Result<()> {
-        // 写入初始值0
+        // Write initial value 0
         self.write_point(channel_id, telemetry_type, point_id, 0.0)
             .await
     }
 }
 
 // ============================================================================
-// 插件发现模块
+// Plugin discovery module
 // ============================================================================
 
 pub mod discovery {
     use super::{PluginRegistry, Result};
 
-    /// 加载所有插件
+    /// Load all plugins
     pub fn load_all_plugins() -> Result<()> {
-        // 加载内置协议插件
+        // Load built-in protocol plugins
         #[cfg(feature = "modbus")]
         load_modbus_plugin()?;
 
-        // 加载虚拟协议插件（用于测试）
+        // Load virtual protocol plugin (for testing)
         load_virt_plugin()?;
 
         Ok(())
@@ -532,7 +532,7 @@ mod tests {
     fn test_plugin_registry() {
         let mut registry = PluginRegistry::new();
 
-        // 测试插件注册
+        // Test plugin registration
         struct TestPlugin;
         #[async_trait::async_trait]
         impl ProtocolPlugin for TestPlugin {
@@ -568,14 +568,14 @@ mod tests {
         let plugin = Box::new(TestPlugin);
         assert!(registry.register_plugin(plugin).is_ok());
 
-        // 测试重复注册
+        // Test duplicate registration
         let plugin2 = Box::new(TestPlugin);
         assert!(registry.register_plugin(plugin2).is_err());
     }
 
     #[test]
     fn test_telemetry_type_conversion() {
-        assert_eq!(telemetry_type_to_redis(&TelemetryType::Measurement), "m");
+        assert_eq!(telemetry_type_to_redis(&TelemetryType::Telemetry), "m");
         assert_eq!(telemetry_type_to_redis(&TelemetryType::Signal), "s");
         assert_eq!(telemetry_type_to_redis(&TelemetryType::Control), "c");
         assert_eq!(telemetry_type_to_redis(&TelemetryType::Adjustment), "a");

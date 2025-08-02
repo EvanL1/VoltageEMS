@@ -9,6 +9,7 @@ description = "Rule execution service for VoltageEMS"
 name = "rulesrv"
 path = "src/main.rs"
 
+
 [dependencies]
 # Local dependencies
 voltage-libs = { path = "../../libs", features = ["redis"] }

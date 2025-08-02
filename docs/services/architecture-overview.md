@@ -163,7 +163,7 @@ alarm:threshold:{modelName}:{field} → value
 ### 1. 设备数据上报
 ```
 1. 设备 → ComSrv: Modbus 数据包
-2. ComSrv → Redis: HSET comsrv:1001:m field value
+2. ComSrv → Redis: HSET comsrv:1001:T field value
 3. ComSrv → ModSrv: 通知数据更新
 4. ModSrv: 更新 reported 状态，计算 delta
 5. ModSrv → RuleSrv: 发布状态变更事件

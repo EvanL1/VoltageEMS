@@ -1,6 +1,6 @@
-//! 控制命令订阅器
+//! Control command subscriber
 //!
-//! 负责从Redis订阅控制命令并分发给相应的通道处理
+//! Responsible for subscribing to control commands from Redis and distributing them to corresponding channels for processing
 
 use futures::StreamExt;
 use serde::{Deserialize, Serialize};
@@ -13,7 +13,7 @@ use voltage_libs::redis::RedisClient;
 use super::core::ChannelCommand;
 use crate::utils::error::Result;
 
-/// 控制命令类型
+/// Control command type
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum CommandType {
@@ -21,27 +21,27 @@ pub enum CommandType {
     Adjustment,
 }
 
-/// 控制命令消息
+/// Control command message
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ControlCommand {
-    /// 命令ID
+    /// Command ID
     pub command_id: String,
-    /// 通道ID
+    /// Channel ID
     pub channel_id: u16,
-    /// 命令类型
+    /// Command type
     pub command_type: CommandType,
-    /// 点位ID
+    /// Point ID
     pub point_id: u32,
-    /// 命令值
+    /// Command value
     pub value: f64,
-    /// 时间戳
+    /// Timestamp
     pub timestamp: i64,
-    /// 可选的元数据
+    /// Optional metadata
     #[serde(default)]
     pub metadata: serde_json::Value,
 }
 
-/// 命令状态
+/// Command status
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CommandStatus {
     pub command_id: String,
@@ -51,14 +51,14 @@ pub struct CommandStatus {
     pub timestamp: i64,
 }
 
-/// 命令订阅器配置
+/// Command subscriber configuration
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct CommandSubscriberConfig {
     pub channel_id: u16,
     pub redis_url: String,
 }
 
-/// 命令订阅器
+/// Command subscriber
 #[derive(Debug)]
 pub struct CommandSubscriber {
     config: CommandSubscriberConfig,
@@ -69,7 +69,7 @@ pub struct CommandSubscriber {
 }
 
 impl CommandSubscriber {
-    /// 创建新的命令订阅器
+    /// Create new command subscriber
     pub async fn new(
         config: CommandSubscriberConfig,
         command_tx: mpsc::Sender<ChannelCommand>,
@@ -85,7 +85,7 @@ impl CommandSubscriber {
         })
     }
 
-    /// 启动订阅
+    /// Start subscription
     pub async fn start(&mut self) -> Result<()> {
         {
             let mut running = self.is_running.write().await;
@@ -99,7 +99,7 @@ impl CommandSubscriber {
             *running = true;
         }
 
-        // 订阅控制和调节命令通道
+        // Subscribe to control and adjustment command channels
         let control_channel = format!("cmd:{}:control", self.config.channel_id);
         let adjustment_channel = format!("cmd:{}:adjustment", self.config.channel_id);
 
@@ -108,13 +108,13 @@ impl CommandSubscriber {
             self.config.channel_id, control_channel, adjustment_channel
         );
 
-        // 克隆必要的对象用于任务
+        // Clone necessary objects for task
         let redis_client = self.redis_client.clone();
         let command_tx = self.command_tx.clone();
         let is_running = self.is_running.clone();
         let channel_id = self.config.channel_id;
 
-        // 启动订阅任务
+        // Start subscription task
         let task_handle = tokio::spawn(async move {
             if let Err(e) = Self::subscription_loop(
                 redis_client,
@@ -136,16 +136,16 @@ impl CommandSubscriber {
         Ok(())
     }
 
-    /// 停止订阅
+    /// Stop subscription
     pub async fn stop(&mut self) -> Result<()> {
         {
             let mut running = self.is_running.write().await;
             *running = false;
         }
 
-        // 等待任务结束
+        // Wait for task to finish
         if let Some(handle) = self.task_handle.take() {
-            // 给任务一些时间优雅退出
+            // Give the task some time to exit gracefully
             match tokio::time::timeout(std::time::Duration::from_secs(5), handle).await {
                 Ok(Ok(())) => info!(
                     "Command subscriber stopped for channel {}",
@@ -159,7 +159,7 @@ impl CommandSubscriber {
         Ok(())
     }
 
-    /// 订阅循环
+    /// Subscription loop
     async fn subscription_loop(
         redis_client: Arc<Mutex<RedisClient>>,
         command_tx: mpsc::Sender<ChannelCommand>,
@@ -167,7 +167,7 @@ impl CommandSubscriber {
         channel_id: u16,
         channels: Vec<String>,
     ) -> Result<()> {
-        // 创建订阅
+        // Create subscription
         let channel_refs: Vec<&str> = channels.iter().map(std::string::String::as_str).collect();
         let mut redis_client = redis_client.lock().await;
         let mut pubsub = redis_client.subscribe(&channel_refs).await.map_err(|e| {
@@ -180,13 +180,13 @@ impl CommandSubscriber {
         );
 
         loop {
-            // 检查是否应该停止
+            // Check if should stop
             if !*is_running.read().await {
                 info!("Stopping command subscription for channel {}", channel_id);
                 break;
             }
 
-            // 接收消息（带超时）
+            // Receive message (with timeout)
             match tokio::time::timeout(
                 std::time::Duration::from_secs(1),
                 pubsub.on_message().next(),
@@ -194,7 +194,7 @@ impl CommandSubscriber {
             .await
             {
                 Ok(Some(msg)) => {
-                    // 处理消息
+                    // Process message
                     if let Err(e) = Self::process_message(&command_tx, channel_id, msg).await {
                         error!("Failed to process command message: {}", e);
                     }
@@ -204,7 +204,7 @@ impl CommandSubscriber {
                     break;
                 }
                 Err(_) => {
-                    // 超时，继续循环
+                    // Timeout, continue loop
                     continue;
                 }
             }
@@ -213,13 +213,13 @@ impl CommandSubscriber {
         Ok(())
     }
 
-    /// 处理单个消息
+    /// Process single message
     async fn process_message(
         command_tx: &mpsc::Sender<ChannelCommand>,
         channel_id: u16,
-        msg: redis::Msg,
+        msg: voltage_libs::redis::Msg,
     ) -> Result<()> {
-        // 获取消息内容
+        // Get message content
         let payload: String = msg.get_payload().map_err(|e| {
             crate::error::ComSrvError::InternalError(format!("Failed to get message payload: {e}"))
         })?;
@@ -229,12 +229,12 @@ impl CommandSubscriber {
             channel_id, payload
         );
 
-        // 解析命令
+        // Parse command
         let command: ControlCommand = serde_json::from_str(&payload).map_err(|e| {
             crate::error::ComSrvError::ParsingError(format!("Failed to parse command: {e}"))
         })?;
 
-        // 确保命令是发给正确的通道
+        // Ensure command is sent to correct channel
         if command.channel_id != channel_id {
             warn!(
                 "Received command for wrong channel: expected {}, got {}",
@@ -243,7 +243,7 @@ impl CommandSubscriber {
             return Ok(());
         }
 
-        // 转换为ChannelCommand并发送
+        // Convert to ChannelCommand and send
         let channel_command = match command.command_type {
             CommandType::Control => ChannelCommand::Control {
                 command_id: command.command_id,
@@ -259,7 +259,7 @@ impl CommandSubscriber {
             },
         };
 
-        // 发送命令到协议处理器
+        // Send command to protocol processor
         if let Err(e) = command_tx.send(channel_command).await {
             error!("Failed to send command to protocol handler: {}", e);
             return Err(crate::error::ComSrvError::InternalError(

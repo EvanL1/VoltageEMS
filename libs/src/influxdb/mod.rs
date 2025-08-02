@@ -11,5 +11,4 @@ mod client;
 pub use builder::{FieldValue, LineProtocolBuilder};
 pub use client::InfluxClient;
 
-// 重导出配置
-pub use crate::config::InfluxConfig;
+// 配置结构由各服务自定义

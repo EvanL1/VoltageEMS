@@ -1,6 +1,6 @@
 //! Modbus Protocol Plugin Implementation
 //!
-//! 精简的 Modbus 插件实现，适配现有的插件接口
+//! Streamlined Modbus plugin implementation, adapted for existing plugin interface
 
 use async_trait::async_trait;
 use serde_json::{json, Value};
@@ -56,8 +56,7 @@ impl ProtocolPlugin for ModbusTcpPlugin {
                 "batch_config": {
                     "enabled": true,
                     "max_batch_size": 100,
-                    "max_gap": 5,
-                    "merge_function_codes": false
+                    "max_gap": 5
                 }
             })),
             validation: Some(ValidationRule {
@@ -70,7 +69,7 @@ impl ProtocolPlugin for ModbusTcpPlugin {
     }
 
     fn validate_config(&self, _config: &HashMap<String, Value>) -> Result<()> {
-        // 基本验证已在 config_template 中定义
+        // Basic validation is already defined in config_template
         Ok(())
     }
 
@@ -80,13 +79,13 @@ impl ProtocolPlugin for ModbusTcpPlugin {
             channel_config.id
         );
 
-        // 提取轮询配置
+        // Extract polling configuration
         let polling_config = extract_polling_config(&channel_config.parameters);
 
-        // 创建连接参数
+        // Create connection parameters
         let connection_params = create_connection_params(&channel_config)?;
 
-        // 创建 Modbus 协议实例
+        // Create Modbus protocol instance
         let protocol = ModbusProtocol::new(channel_config, connection_params, polling_config)?;
 
         Ok(Box::new(protocol))
@@ -125,8 +124,7 @@ impl ProtocolPlugin for ModbusRtuPlugin {
                 "batch_config": {
                     "enabled": true,
                     "max_batch_size": 100,
-                    "max_gap": 5,
-                    "merge_function_codes": false
+                    "max_gap": 5
                 }
             })),
             validation: Some(ValidationRule {
@@ -148,20 +146,20 @@ impl ProtocolPlugin for ModbusRtuPlugin {
             channel_config.id
         );
 
-        // 提取轮询配置
+        // Extract polling configuration
         let polling_config = extract_polling_config(&channel_config.parameters);
 
-        // 创建连接参数
+        // Create connection parameters
         let connection_params = create_connection_params(&channel_config)?;
 
-        // 创建 Modbus 协议实例
+        // Create Modbus protocol instance
         let protocol = ModbusProtocol::new(channel_config, connection_params, polling_config)?;
 
         Ok(Box::new(protocol))
     }
 }
 
-// 辅助函数：提取轮询配置
+// Helper function: extract polling configuration
 fn extract_polling_config(parameters: &HashMap<String, serde_yaml::Value>) -> ModbusPollingConfig {
     if let Some(polling_value) = parameters.get("polling") {
         if let Ok(mut config) = serde_yaml::from_value::<ModbusPollingConfig>(polling_value.clone())
@@ -173,7 +171,7 @@ fn extract_polling_config(parameters: &HashMap<String, serde_yaml::Value>) -> Mo
                 {
                     if let Some(batch_size) = batch_size_value.as_u64() {
                         // Set max_batch_size from batch_size, clamping to valid range
-                        config.batch_config.max_batch_size = (batch_size as u16).min(128).max(1);
+                        config.batch_config.max_batch_size = (batch_size as u16).clamp(1, 128);
                     }
                 }
             }

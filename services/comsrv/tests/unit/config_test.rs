@@ -26,7 +26,7 @@ fn create_test_channel_config() -> ChannelConfig {
         parameters,
         logging: ChannelLoggingConfig::default(),
         table_config: None,
-        measurement_points: HashMap::new(),
+        telemetry_points: HashMap::new(),
         signal_points: HashMap::new(),
         control_points: HashMap::new(),
         adjustment_points: HashMap::new(),
@@ -43,7 +43,7 @@ fn create_test_point() -> CombinedPoint {
     CombinedPoint {
         point_id: 10001,
         signal_name: "Temperature".to_string(),
-        telemetry_type: "Measurement".to_string(),
+        telemetry_type: "Telemetry".to_string(),
         data_type: "FLOAT32".to_string(),
         protocol_params,
         scaling: Some(ScalingInfo {
@@ -118,7 +118,7 @@ fn test_combined_point_creation() {
 
     assert_eq!(point.point_id, 10001);
     assert_eq!(point.signal_name, "Temperature");
-    assert_eq!(point.telemetry_type, "Measurement");
+    assert_eq!(point.telemetry_type, "Telemetry");
     assert_eq!(point.data_type, "FLOAT32");
 }
 
@@ -173,7 +173,7 @@ fn test_protocol_parameters() {
 #[test]
 fn test_telemetry_type_parsing() {
     let telemetry_types = vec![
-        ("Measurement", TelemetryType::Measurement),
+        ("Telemetry", TelemetryType::Telemetry),
         ("Signal", TelemetryType::Signal),
         ("Control", TelemetryType::Control),
         ("Adjustment", TelemetryType::Adjustment),
@@ -183,11 +183,11 @@ fn test_telemetry_type_parsing() {
         // 这里可以添加字符串到TelemetryType的转换测试
         // 目前只验证类型定义正确
         let _telemetry_type = match type_str {
-            "Measurement" => TelemetryType::Measurement,
+            "Telemetry" => TelemetryType::Telemetry,
             "Signal" => TelemetryType::Signal,
             "Control" => TelemetryType::Control,
             "Adjustment" => TelemetryType::Adjustment,
-            _ => TelemetryType::Measurement,
+            _ => TelemetryType::Telemetry,
         };
     }
 }
@@ -198,16 +198,16 @@ fn test_channel_config_with_points() {
     let point = create_test_point();
 
     config
-        .measurement_points
+        .telemetry_points
         .insert(point.point_id, point.clone());
 
-    assert_eq!(config.measurement_points.len(), 1);
+    assert_eq!(config.telemetry_points.len(), 1);
     assert_eq!(
-        config.measurement_points.get(&10001).unwrap().point_id,
+        config.telemetry_points.get(&10001).unwrap().point_id,
         10001
     );
     assert_eq!(
-        config.measurement_points.get(&10001).unwrap().signal_name,
+        config.telemetry_points.get(&10001).unwrap().signal_name,
         "Temperature"
     );
 }
@@ -223,19 +223,19 @@ fn test_multiple_points() {
         point.signal_name = format!("Point_{}", i);
 
         match i {
-            1..=2 => config.measurement_points.insert(point.point_id, point),
+            1..=2 => config.telemetry_points.insert(point.point_id, point),
             3..=4 => config.signal_points.insert(point.point_id, point),
             _ => config.control_points.insert(point.point_id, point),
         };
     }
 
-    assert_eq!(config.measurement_points.len(), 2);
+    assert_eq!(config.telemetry_points.len(), 2);
     assert_eq!(config.signal_points.len(), 2);
     assert_eq!(config.control_points.len(), 1);
 
     // 验证点位ID都是从1开始
-    assert!(config.measurement_points.contains_key(&1));
-    assert!(config.measurement_points.contains_key(&2));
+    assert!(config.telemetry_points.contains_key(&1));
+    assert!(config.telemetry_points.contains_key(&2));
     assert!(config.signal_points.contains_key(&3));
     assert!(config.signal_points.contains_key(&4));
     assert!(config.control_points.contains_key(&5));
@@ -273,7 +273,7 @@ fn test_four_telemetry_separation() {
     // 创建不同类型的点位
     let mut measurement_point = create_test_point();
     measurement_point.point_id = 1;
-    measurement_point.telemetry_type = "Measurement".to_string();
+    measurement_point.telemetry_type = "Telemetry".to_string();
 
     let mut signal_point = create_test_signal_point();
     signal_point.point_id = 1;
@@ -294,19 +294,19 @@ fn test_four_telemetry_separation() {
     adjustment_point.telemetry_type = "Adjustment".to_string();
 
     // 插入到不同的HashMap
-    config.measurement_points.insert(1, measurement_point);
+    config.telemetry_points.insert(1, measurement_point);
     config.signal_points.insert(1, signal_point);
     config.control_points.insert(1, control_point);
     config.adjustment_points.insert(1, adjustment_point);
 
     // 验证四个HashMap相互独立，都可以有相同的点位ID
-    assert_eq!(config.measurement_points.len(), 1);
+    assert_eq!(config.telemetry_points.len(), 1);
     assert_eq!(config.signal_points.len(), 1);
     assert_eq!(config.control_points.len(), 1);
     assert_eq!(config.adjustment_points.len(), 1);
 
     // 验证每种类型都有点位ID=1
-    assert!(config.measurement_points.contains_key(&1));
+    assert!(config.telemetry_points.contains_key(&1));
     assert!(config.signal_points.contains_key(&1));
     assert!(config.control_points.contains_key(&1));
     assert!(config.adjustment_points.contains_key(&1));

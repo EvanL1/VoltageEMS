@@ -1,21 +1,23 @@
-//! hissrv 配置模块 - 极简配置系统
-//! 支持灵活的数据源配置和映射规则
+//! hissrv configuration module - minimal configuration system
+//! Supports flexible data source configuration and mapping rules
 
 use crate::Result;
-use figment::{
-    providers::{Env, Format, Yaml},
-    Figment,
-};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::Path;
 use std::time::Duration;
+use voltage_libs::config::utils::{
+    get_global_influxdb_bucket, get_global_influxdb_org, get_global_influxdb_token,
+    get_global_influxdb_url, get_global_redis_url,
+};
+use voltage_libs::config::ConfigLoader;
 
-/// 服务配置
+/// Service configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ServiceConfig {
+    #[serde(default = "default_service_name")]
     pub name: String,
-    #[serde(with = "humantime_serde")]
+    #[serde(with = "humantime_serde", default = "default_polling_interval")]
     pub polling_interval: Duration,
     #[serde(default)]
     pub enable_api: bool,
@@ -23,11 +25,19 @@ pub struct ServiceConfig {
     pub api_port: u16,
 }
 
-fn default_api_port() -> u16 {
-    8082
+fn default_service_name() -> String {
+    "hissrv".to_string()
 }
 
-/// Redis 数据源配置
+fn default_polling_interval() -> Duration {
+    Duration::from_secs(10)
+}
+
+fn default_api_port() -> u16 {
+    8085 // Fixed port
+}
+
+/// Redis data source configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RedisDataKey {
     pub pattern: String,
@@ -35,26 +45,61 @@ pub struct RedisDataKey {
     pub data_type: String, // "list" or "hash"
 }
 
-/// Redis 配置
+/// Redis configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RedisConfig {
+    #[serde(default = "default_redis_url")]
     pub url: String,
+    #[serde(default)]
     pub data_keys: Vec<RedisDataKey>,
 }
 
-/// InfluxDB 配置
+fn default_redis_url() -> String {
+    get_global_redis_url("HISSRV")
+}
+
+/// InfluxDB configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct InfluxConfig {
+    #[serde(default = "default_influx_url")]
     pub url: String,
+    #[serde(default = "default_influx_org")]
     pub org: String,
+    #[serde(default = "default_influx_bucket")]
     pub bucket: String,
+    #[serde(default = "default_influx_token")]
     pub token: String,
+    #[serde(default = "default_batch_size")]
     pub batch_size: usize,
-    #[serde(with = "humantime_serde")]
+    #[serde(with = "humantime_serde", default = "default_write_timeout")]
     pub write_timeout: Duration,
 }
 
-/// 标签提取规则
+fn default_influx_url() -> String {
+    get_global_influxdb_url("HISSRV")
+}
+
+fn default_influx_org() -> String {
+    get_global_influxdb_org("HISSRV")
+}
+
+fn default_influx_bucket() -> String {
+    get_global_influxdb_bucket("HISSRV")
+}
+
+fn default_influx_token() -> String {
+    get_global_influxdb_token("HISSRV")
+}
+
+fn default_batch_size() -> usize {
+    1000
+}
+
+fn default_write_timeout() -> Duration {
+    Duration::from_secs(30)
+}
+
+/// Tag extraction rules
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum TagRule {
@@ -64,14 +109,14 @@ pub enum TagRule {
     Static { value: String },
 }
 
-/// 字段映射规则
+/// Field mapping rules
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FieldMapping {
     pub name: String,
     pub field_type: String, // "float", "int", "bool", "string"
 }
 
-/// 数据映射配置
+/// Data mapping configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DataMapping {
     pub source: String,
@@ -80,14 +125,18 @@ pub struct DataMapping {
     pub fields: Vec<FieldMapping>,
 }
 
-/// 完整配置
+/// Complete configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
     #[serde(default = "default_version")]
     pub version: String,
+    #[serde(default)]
     pub service: ServiceConfig,
+    #[serde(default)]
     pub redis: RedisConfig,
+    #[serde(default)]
     pub influxdb: InfluxConfig,
+    #[serde(default)]
     pub mappings: Vec<DataMapping>,
 }
 
@@ -95,26 +144,96 @@ fn default_version() -> String {
     "0.0.1".to_string()
 }
 
+// Default implementation
+impl Default for ServiceConfig {
+    fn default() -> Self {
+        Self {
+            name: "hissrv".to_string(),
+            polling_interval: Duration::from_secs(10),
+            enable_api: false,
+            api_port: 8085,
+        }
+    }
+}
+
+impl Default for RedisConfig {
+    fn default() -> Self {
+        Self {
+            url: get_global_redis_url("HISSRV"),
+            data_keys: vec![],
+        }
+    }
+}
+
+impl Default for InfluxConfig {
+    fn default() -> Self {
+        Self {
+            url: get_global_influxdb_url("HISSRV"),
+            org: get_global_influxdb_org("HISSRV"),
+            bucket: get_global_influxdb_bucket("HISSRV"),
+            token: get_global_influxdb_token("HISSRV"),
+            batch_size: 1000,
+            write_timeout: Duration::from_secs(30),
+        }
+    }
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Self {
+            version: default_version(),
+            service: ServiceConfig::default(),
+            redis: RedisConfig::default(),
+            influxdb: InfluxConfig::default(),
+            mappings: vec![],
+        }
+    }
+}
+
 impl Config {
-    /// 加载配置文件
+    /// Load configuration file
     pub fn load() -> Result<Self> {
-        let config = Figment::new()
-            .merge(Yaml::file("config/hissrv.yaml"))
-            .merge(Env::prefixed("HISSRV_").split("_"))
-            .extract()
-            .map_err(|e| hissrv::anyhow!("Failed to load configuration: {}", e))?;
+        // Try multiple configuration file paths
+        let config_paths = [
+            "config/hissrv/hissrv.yaml",
+            "config/hissrv.yaml",
+            "hissrv.yaml",
+        ];
+
+        let mut yaml_path = None;
+        for path in &config_paths {
+            if Path::new(path).exists() {
+                yaml_path = Some(path.to_string());
+                break;
+            }
+        }
+
+        // Use new ConfigLoader
+        let loader = ConfigLoader::new()
+            .with_defaults(Config::default())
+            .with_env_prefix("HISSRV");
+
+        let config = if let Some(path) = yaml_path {
+            loader.with_yaml_file(&path).build()
+        } else {
+            loader.build()
+        }
+        .map_err(|e| hissrv::anyhow!("Failed to load configuration: {}", e))?;
+
+        // Validate configuration
+        config.validate()?;
 
         Ok(config)
     }
 
-    /// 根据源模式查找映射规则
+    /// Find mapping rules by source pattern
     pub fn find_mapping(&self, source: &str) -> Option<&DataMapping> {
         self.mappings
             .iter()
             .find(|m| source.starts_with(&m.source.replace("*", "")))
     }
 
-    /// 根据源模式查找映射规则（可变引用）
+    /// Find mapping rules by source pattern (mutable reference)
     #[allow(dead_code)]
     pub fn find_mapping_mut(&mut self, source: &str) -> Option<&mut DataMapping> {
         self.mappings
@@ -122,9 +241,9 @@ impl Config {
             .find(|m| source.starts_with(&m.source.replace("*", "")))
     }
 
-    /// 添加新的映射规则
+    /// Add new mapping rules
     pub fn add_mapping(&mut self, mapping: DataMapping) -> Result<()> {
-        // 检查是否已存在相同的源模式
+        // Check if mapping with same source pattern already exists
         if self.find_mapping(&mapping.source).is_some() {
             return Err(hissrv::anyhow!(
                 "Mapping for source '{}' already exists",
@@ -135,7 +254,7 @@ impl Config {
         Ok(())
     }
 
-    /// 更新现有映射规则
+    /// Update existing mapping rules
     pub fn update_mapping(&mut self, source: &str, new_mapping: DataMapping) -> Result<()> {
         if let Some(pos) = self.mappings.iter().position(|m| m.source == source) {
             self.mappings[pos] = new_mapping;
@@ -145,7 +264,7 @@ impl Config {
         }
     }
 
-    /// 删除映射规则
+    /// Remove mapping rules
     pub fn remove_mapping(&mut self, source: &str) -> Result<()> {
         if let Some(pos) = self.mappings.iter().position(|m| m.source == source) {
             self.mappings.remove(pos);
@@ -155,34 +274,34 @@ impl Config {
         }
     }
 
-    /// 保存配置到文件
+    /// Save configuration to file
     pub fn save_to_file(&self, path: impl AsRef<Path>) -> Result<()> {
-        // 备份原文件
+        // Backup original file
         let path = path.as_ref();
         if path.exists() {
             let backup_path = path.with_extension("yaml.bak");
             fs::copy(path, backup_path)?;
         }
 
-        // 写入新配置
+        // Write new configuration
         let yaml = serde_yaml::to_string(self)?;
         fs::write(path, yaml)?;
         Ok(())
     }
 
-    /// 重新加载配置
+    /// Reload configuration
     pub fn reload() -> Result<Self> {
         Self::load()
     }
 
-    /// 验证配置完整性
+    /// Validate configuration integrity
     pub fn validate(&self) -> Result<()> {
-        // 验证服务配置
+        // Validate service configuration
         if self.service.name.is_empty() {
             return Err(hissrv::anyhow!("Service name cannot be empty"));
         }
 
-        // 验证 Redis 配置
+        // Validate Redis configuration
         if self.redis.url.is_empty() {
             return Err(hissrv::anyhow!("Redis URL cannot be empty"));
         }
@@ -191,7 +310,7 @@ impl Config {
             return Err(hissrv::anyhow!("At least one data key must be configured"));
         }
 
-        // 验证 InfluxDB 配置
+        // Validate InfluxDB configuration
         if self.influxdb.url.is_empty() {
             return Err(hissrv::anyhow!("InfluxDB URL cannot be empty"));
         }
@@ -208,7 +327,7 @@ impl Config {
             return Err(hissrv::anyhow!("InfluxDB token cannot be empty"));
         }
 
-        // 验证映射规则
+        // Validate mapping rules
         for mapping in &self.mappings {
             if mapping.source.is_empty() {
                 return Err(hissrv::anyhow!("Mapping source cannot be empty"));
@@ -241,7 +360,7 @@ mod tests {
                 name: "hissrv".to_string(),
                 polling_interval: Duration::from_secs(10),
                 enable_api: false,
-                api_port: 8082,
+                api_port: 8085,
             },
             redis: RedisConfig {
                 url: "redis://localhost".to_string(),
@@ -290,7 +409,7 @@ mod tests {
         assert!(config.add_mapping(new_mapping.clone()).is_ok());
         assert!(config.find_mapping("archive:5m:test").is_some());
 
-        // 测试重复添加
+        // Test duplicate addition
         assert!(config.add_mapping(new_mapping).is_err());
     }
 
@@ -309,7 +428,7 @@ mod tests {
             .is_ok());
         assert_eq!(config.mappings[0].measurement, "metrics_1m_updated");
 
-        // 测试更新不存在的映射
+        // Test updating non-existent mapping
         assert!(config
             .update_mapping(
                 "non_existent",
@@ -329,7 +448,7 @@ mod tests {
         assert!(config.remove_mapping("archive:1m:*").is_ok());
         assert!(config.mappings.is_empty());
 
-        // 测试删除不存在的映射
+        // Test removing non-existent mapping
         assert!(config.remove_mapping("non_existent").is_err());
     }
 
@@ -338,7 +457,7 @@ mod tests {
         let mut config = create_test_config();
         assert!(config.validate().is_ok());
 
-        // 测试空服务名
+        // Test empty service name
         config.service.name.clear();
         assert!(config.validate().is_err());
     }

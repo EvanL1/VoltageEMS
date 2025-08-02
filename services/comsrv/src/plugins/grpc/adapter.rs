@@ -1,6 +1,6 @@
-//! gRPC 插件适配器
+//! gRPC Plugin Adapter
 //!
-//! 实现 `ComBase` trait，通过 gRPC 调用远程插件
+//! Implements `ComBase` trait to call remote plugins via gRPC
 
 use crate::core::combase::{ChannelStatus, ComBase, PointData, PointDataMap, RedisValue};
 use crate::core::config::ChannelConfig;
@@ -17,25 +17,25 @@ use super::proto::{
     PointData as ProtoPointData,
 };
 
-/// gRPC 插件适配器
+/// gRPC Plugin Adapter
 #[derive(Debug)]
 pub struct GrpcPluginAdapter {
-    /// 插件客户端
+    /// Plugin client
     client: Arc<Mutex<GrpcPluginClient>>,
-    /// 通道配置
+    /// Channel configuration
     channel_config: Option<ChannelConfig>,
-    /// 连接状态
+    /// Connection status
     connected: bool,
-    /// 插件端点
+    /// Plugin endpoint
     endpoint: String,
-    /// 协议类型
+    /// Protocol type
     protocol_type: String,
-    /// 连接参数缓存
+    /// Connection parameters cache
     connection_params: HashMap<String, String>,
 }
 
 impl GrpcPluginAdapter {
-    /// 创建新的 gRPC 插件适配器
+    /// Create new gRPC plugin adapter
     pub async fn new(endpoint: &str, protocol_type: &str) -> Result<Self> {
         info!(
             "Creating gRPC plugin adapter for {} at {}",
@@ -54,7 +54,7 @@ impl GrpcPluginAdapter {
         })
     }
 
-    /// 转换 protobuf `PointData` 到内部格式
+    /// Convert protobuf `PointData` to internal format
     fn convert_proto_point(&self, proto_point: ProtoPointData) -> Result<(u32, PointData)> {
         let value = match proto_point.value {
             Some(point_data::Value::FloatValue(v)) => RedisValue::Float(v),
@@ -73,19 +73,19 @@ impl GrpcPluginAdapter {
         ))
     }
 
-    /// 构建连接参数
+    /// Build connection parameters
     fn build_connection_params(&self) -> HashMap<String, String> {
         let mut params = self.connection_params.clone();
 
-        // 从通道配置中提取连接参数
+        // Extract connection parameters from channel configuration
         if let Some(config) = &self.channel_config {
-            // 添加通用参数
+            // Add common parameters
             params.insert("channel_id".to_string(), config.id.to_string());
             params.insert("channel_name".to_string(), config.name.clone());
 
-            // 添加协议特定参数
+            // Add protocol-specific parameters
             for (key, value) in &config.parameters {
-                // 将 YAML Value 转换为字符串
+                // Convert YAML Value to string
                 let value_str = match value {
                     serde_yaml::Value::String(s) => s.clone(),
                     serde_yaml::Value::Number(n) => n.to_string(),
@@ -120,7 +120,7 @@ impl ComBase for GrpcPluginAdapter {
             ..Default::default()
         };
 
-        // 获取健康状态
+        // Get health status
         if let Ok(mut client) = self.client.try_lock() {
             if let Ok(health) = client.health_check().await {
                 if !health.healthy {
@@ -141,7 +141,7 @@ impl ComBase for GrpcPluginAdapter {
         self.channel_config = Some(channel_config.clone());
         self.connection_params = self.build_connection_params();
 
-        // 获取插件信息
+        // Get plugin information
         let mut client = self.client.lock().await;
         let info = client.get_info().await?;
 
@@ -150,7 +150,7 @@ impl ComBase for GrpcPluginAdapter {
             info.name, info.version, info.protocol_type
         );
 
-        // 验证协议类型匹配
+        // Verify protocol type match
         if info.protocol_type != self.protocol_type {
             return Err(ComSrvError::config(format!(
                 "Protocol type mismatch: expected {}, got {}",
@@ -164,7 +164,7 @@ impl ComBase for GrpcPluginAdapter {
     async fn connect(&mut self) -> Result<()> {
         info!("Connecting to gRPC plugin at {}", self.endpoint);
 
-        // 健康检查
+        // Health check
         let mut client = self.client.lock().await;
         let health = client.health_check().await?;
 
@@ -178,15 +178,15 @@ impl ComBase for GrpcPluginAdapter {
         self.connected = true;
         info!("Successfully connected to gRPC plugin");
 
-        // 发送初始BatchRead请求来触发插件端的轮询
+        // Send initial BatchRead request to trigger plugin polling
         if let Some(channel_config) = &self.channel_config {
             info!(
                 "Triggering initial batch read to start plugin polling for channel {}",
                 channel_config.id
             );
 
-            // 读取measurement类型的点位来触发轮询
-            let _ = self.read_four_telemetry("measurement").await;
+            // Read telemetry type points to trigger polling
+            let _ = self.read_four_telemetry("telemetry").await;
         }
 
         Ok(())
@@ -208,10 +208,10 @@ impl ComBase for GrpcPluginAdapter {
             .as_ref()
             .ok_or_else(|| ComSrvError::config("No channel config"))?;
 
-        // 构建批量读取请求
-        // 根据 telemetry_type 获取对应的点位列表
+        // Build batch read request
+        // Get point list based on telemetry_type
         let point_ids: Vec<u32> = match telemetry_type {
-            "measurement" => channel_config.measurement_points.keys().copied().collect(),
+            "telemetry" => channel_config.telemetry_points.keys().copied().collect(),
             "signal" => channel_config.signal_points.keys().copied().collect(),
             "control" => channel_config.control_points.keys().copied().collect(),
             "adjustment" => channel_config.adjustment_points.keys().copied().collect(),
@@ -235,9 +235,9 @@ impl ComBase for GrpcPluginAdapter {
             telemetry_type
         );
 
-        // 构建读取参数
-        // TODO: 从配置中获取每个点位的Modbus参数
-        // 目前简化处理，让插件使用默认配置
+        // Build read parameters
+        // TODO: Get Modbus parameters for each point from configuration
+        // Currently simplified, let plugin use default configuration
         let read_params = HashMap::new();
 
         let request = BatchReadRequest {
@@ -254,7 +254,7 @@ impl ComBase for GrpcPluginAdapter {
             return Err(ComSrvError::protocol(response.error));
         }
 
-        // 转换响应数据
+        // Convert response data
         let mut results = PointDataMap::new();
         for point in response.points {
             match self.convert_proto_point(point) {
@@ -295,7 +295,7 @@ impl ComBase for GrpcPluginAdapter {
                 }
             };
 
-            // 构建编码请求
+            // Build encode request
             let request = EncodeRequest {
                 channel_id: self.channel_config.as_ref().map_or(0, |c| u32::from(c.id)),
                 point_id,
@@ -308,7 +308,7 @@ impl ComBase for GrpcPluginAdapter {
             let mut client = self.client.lock().await;
             match client.encode_command(request).await {
                 Ok(response) if response.error.is_empty() => {
-                    // TODO: 实际发送编码后的数据到设备
+                    // TODO: Actually send encoded data to device
                     debug!(
                         "Encoded command for point {}: {} bytes",
                         point_id,
@@ -337,7 +337,7 @@ impl ComBase for GrpcPluginAdapter {
         &mut self,
         adjustments: Vec<(u32, RedisValue)>,
     ) -> Result<Vec<(u32, bool)>> {
-        // 调节命令的实现与控制命令类似
+        // Adjustment command implementation is similar to control command
         self.control(adjustments).await
     }
 }

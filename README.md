@@ -2,6 +2,8 @@
 
 高性能的微服务架构工业物联网能源管理系统，基于Rust构建，支持多种工业协议和实时数据处理。
 
+[![CI/CD Pipeline](https://github.com/your-org/VoltageEMS/actions/workflows/ci-cd.yml/badge.svg)](https://github.com/your-org/VoltageEMS/actions/workflows/ci-cd.yml)
+
 ## 🚀 核心特性
 
 ### 微服务架构
@@ -103,21 +105,40 @@ Lua脚本主要用于：
 ## 🚀 快速开始
 
 ### 环境要求
-- Rust 1.88+
-- Redis 7.0+ (推荐Redis 8)
-- InfluxDB 2.x
-- Docker (可选)
+- Docker & Docker Compose
+- Rust 1.88+ (仅开发需要)
+- Make (可选，简化命令)
 
-### 启动顺序
+### 使用 Docker Compose (推荐)
 
 ```bash
-# 1. 启动Redis
-docker run -d --name redis-dev -p 6379:6379 redis:7-alpine
+# 1. 克隆仓库
+git clone https://github.com/your-org/VoltageEMS.git
+cd VoltageEMS
 
-# 2. 启动InfluxDB
+# 2. 复制环境配置
+cp .env.example .env
+# 编辑 .env 文件设置必要的配置
+
+# 3. 启动所有服务
+make up
+# 或者
+docker-compose up -d
+
+# 4. 检查服务状态
+make monitor
+# 或者
+docker-compose ps
+```
+
+### 本地开发
+
+```bash
+# 1. 启动基础设施
+docker run -d --name redis-dev -p 6379:6379 redis:8-alpine
 docker run -d --name influxdb-dev -p 8086:8086 influxdb:2.7-alpine
 
-# 3. 按顺序启动服务
+# 2. 按顺序启动服务
 cargo run -p comsrv      # 工业协议网关
 cargo run -p modsrv      # 计算引擎
 cargo run -p hissrv      # 历史数据服务
@@ -145,7 +166,7 @@ cargo test --workspace
 redis-cli monitor | grep comsrv
 
 # 查看Hash数据
-redis-cli hgetall "comsrv:1001:m"
+redis-cli hgetall "comsrv:1001:T"
 ```
 
 ## 📊 数据流
@@ -204,6 +225,30 @@ INFLUXDB_URL=http://localhost:8086
 - 连接池复用
 - 异步I/O处理
 - 6位小数精度标准化
+
+## 🚢 CI/CD 流程
+
+项目使用 GitHub Actions 实现完整的 CI/CD 流程：
+
+### 自动化流程
+- **代码质量检查**: 每次推送自动运行格式化和 lint 检查
+- **单元测试**: 并行运行所有服务的测试
+- **Docker 构建**: 自动构建并推送镜像到 GitHub Container Registry
+- **集成测试**: 使用 docker-compose 启动完整系统进行测试
+- **自动部署**: 
+  - `develop` 分支自动部署到测试环境
+  - 创建 release 时自动部署到生产环境
+
+### 手动部署
+```bash
+# 部署到测试环境
+make deploy-staging
+
+# 部署到生产环境
+make deploy-prod
+```
+
+详细的 CI/CD 配置说明请参考 [CI/CD Setup Guide](docs/ci-cd-setup.md)
 
 ## 🤝 贡献指南
 

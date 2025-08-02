@@ -1,25 +1,23 @@
-//! 配置管理核心模块
+//! Configuration management core module
 //!
-//! 整合配置中心、配置管理器和统一加载器的功能
+//! Integrates configuration center, configuration manager and unified loader functionality
 
 use super::loaders::{CachedCsvLoader, FourRemoteRecord, ModbusMappingRecord, PointMapper};
 use super::types::{AppConfig, ChannelConfig, CombinedPoint, ServiceConfig, TableConfig};
 use crate::utils::error::{ComSrvError, Result};
 use async_trait::async_trait;
-use figment::{
-    providers::{Env, Format, Json, Toml, Yaml},
-    Figment,
-};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use tokio::fs;
 use tracing::{debug, info, warn};
+use voltage_libs::config::utils::{get_global_log_level, get_global_redis_url};
+use voltage_libs::config::ConfigLoader;
 
 // ============================================================================
-// 配置中心集成
+// Configuration center integration
 // ============================================================================
 
-/// 配置响应
+/// Configuration response
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConfigResponse {
     pub version: String,
@@ -28,7 +26,7 @@ pub struct ConfigResponse {
     pub content: serde_json::Value,
 }
 
-/// 配置项响应
+/// Configuration item response
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConfigItemResponse {
     pub key: String,
@@ -37,7 +35,7 @@ pub struct ConfigItemResponse {
     pub value_type: String,
 }
 
-/// 配置变更事件
+/// Configuration change event
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConfigChangeEvent {
     pub event: String,
@@ -46,20 +44,20 @@ pub struct ConfigChangeEvent {
     pub version: String,
 }
 
-/// 配置源trait
+/// Configuration source trait
 #[async_trait]
 pub trait ConfigSource: Send + Sync {
-    /// 获取完整配置
+    /// Get complete configuration
     async fn fetch_config(&self, service_name: &str) -> Result<ConfigResponse>;
 
-    /// 获取特定配置项
+    /// Get specific configuration item
     async fn fetch_item(&self, service_name: &str, key: &str) -> Result<ConfigItemResponse>;
 
-    /// 获取源名称
+    /// Get source name
     fn name(&self) -> &str;
 }
 
-/// 配置中心客户端
+/// Configuration center client
 #[derive(Debug, Clone)]
 pub struct ConfigCenterClient {
     pub service_name: String,
@@ -69,7 +67,7 @@ pub struct ConfigCenterClient {
 }
 
 impl ConfigCenterClient {
-    /// 从环境变量创建客户端
+    /// Create client from environment variables
     pub fn from_env(service_name: String) -> Self {
         let config_center_url = std::env::var("CONFIG_CENTER_URL").ok();
         let cache_duration = std::env::var("CONFIG_CACHE_DURATION")
@@ -85,19 +83,19 @@ impl ConfigCenterClient {
         }
     }
 
-    /// 设置后备配置路径
+    /// Set fallback configuration path
     #[must_use]
     pub fn with_fallback(mut self, path: String) -> Self {
         self.fallback_path = Some(path);
         self
     }
 
-    /// 获取配置（带缓存和后备）
+    /// Get configuration (with cache and fallback)
     pub async fn get_config(&self) -> Result<Option<serde_json::Value>> {
         if let Some(url) = &self.config_center_url {
             debug!("Fetching config from config center: {}", url);
-            // TODO: 实际的配置中心实现
-            // 这里返回None表示从配置中心获取失败，使用本地配置
+            // TODO: Actual configuration center implementation
+            // Returning None here means failed to get from config center, use local configuration
             Ok(None)
         } else {
             Ok(None)
@@ -106,31 +104,28 @@ impl ConfigCenterClient {
 }
 
 // ============================================================================
-// 配置管理器
+// Configuration manager
 // ============================================================================
 
-/// 配置管理器
+/// Configuration manager
 #[derive(Debug)]
 pub struct ConfigManager {
-    /// 加载的应用配置
+    /// Loaded application configuration
     config: AppConfig,
-    /// Figment实例用于重新加载
-    #[allow(dead_code)]
-    figment: Figment,
-    /// 配置中心客户端
+    /// Configuration center client
     #[allow(dead_code)]
     config_center: Option<ConfigCenterClient>,
-    /// CSV加载器
+    /// CSV loader
     csv_loader: CachedCsvLoader,
 }
 
 impl ConfigManager {
-    /// 从文件加载配置
+    /// Load configuration from file
     pub fn from_file<P: AsRef<Path>>(path: P) -> Result<Self> {
         let path = path.as_ref();
         let service_name = "comsrv";
 
-        // 初始化配置中心客户端
+        // Initialize configuration center client
         let config_center = if std::env::var("CONFIG_CENTER_URL").is_ok() {
             info!("Config center URL detected, initializing client");
             Some(
@@ -141,57 +136,54 @@ impl ConfigManager {
             None
         };
 
-        // 尝试从配置中心加载
-        let mut figment = Figment::new();
-        let mut from_config_center = false;
-
-        if let Some(ref cc_client) = config_center {
+        // Load configuration
+        let config = if let Some(ref cc_client) = config_center {
+            // Try to load from configuration center
             let runtime = tokio::runtime::Handle::try_current()
                 .unwrap_or_else(|_| tokio::runtime::Runtime::new().unwrap().handle().clone());
 
             if let Ok(Some(remote_config)) = runtime.block_on(cc_client.get_config()) {
                 info!("Successfully loaded configuration from config center");
-                figment = figment.merge(Json::string(&remote_config.to_string()));
-                from_config_center = true;
+                // JSON configuration loaded from configuration center
+                serde_json::from_value::<AppConfig>(remote_config).map_err(|e| {
+                    ComSrvError::ConfigError(format!("Failed to parse remote config: {e}"))
+                })
+            } else {
+                // Failed to load from configuration center, use local file
+                Self::load_from_file(path)
             }
-        }
-
-        // 如果没有从配置中心加载，则从文件加载
-        if !from_config_center {
-            let extension = path
-                .extension()
-                .and_then(|s| s.to_str())
-                .ok_or_else(|| ComSrvError::ConfigError("Invalid file extension".to_string()))?;
-
-            figment = match extension {
-                "json" => figment.merge(Json::file(path)),
-                "toml" => figment.merge(Toml::file(path)),
-                "yaml" | "yml" => figment.merge(Yaml::file(path)),
-                _ => {
-                    return Err(ComSrvError::ConfigError(format!(
-                        "Unsupported config format: {extension}"
-                    )))
-                }
-            };
-        }
-
-        // 合并环境变量
-        figment = figment.merge(Env::prefixed("COMSRV_"));
-
-        // 解析配置
-        let config: AppConfig = figment
-            .extract()
-            .map_err(|e| ComSrvError::ConfigError(format!("Failed to parse config: {e}")))?;
+        } else {
+            // No configuration center, load directly from file
+            Self::load_from_file(path)
+        }?;
 
         Ok(Self {
             config,
-            figment,
             config_center,
             csv_loader: CachedCsvLoader::new(),
         })
     }
 
-    /// 异步初始化CSV配置
+    /// Load configuration from file (using generic ConfigLoader)
+    fn load_from_file(path: &Path) -> Result<AppConfig> {
+        // Use generic ConfigLoader
+        let loader = ConfigLoader::new()
+            .with_defaults(AppConfig::default())
+            .with_env_prefix("COMSRV")
+            .with_yaml_file(&path.to_string_lossy());
+
+        let mut config: AppConfig = loader
+            .build()
+            .map_err(|e| ComSrvError::ConfigError(format!("Failed to load config: {e}")))?;
+
+        // Apply global environment variables (already handled in ConfigLoader, but ensure again here)
+        config.service.redis.url = get_global_redis_url("COMSRV");
+        config.service.logging.level = get_global_log_level("COMSRV");
+
+        Ok(config)
+    }
+
+    /// Asynchronously initialize CSV configuration
     pub async fn initialize_csv(&mut self, config_dir: &Path) -> Result<()> {
         eprintln!(
             "DEBUG: initialize_csv called with config_dir: {}",
@@ -203,7 +195,7 @@ impl ConfigManager {
         result
     }
 
-    /// 加载CSV配置
+    /// Load CSV configuration
     async fn load_csv_configs(
         config: &mut AppConfig,
         config_dir: &Path,
@@ -226,7 +218,7 @@ impl ConfigManager {
                             points.len(),
                             channel.id
                         );
-                        // 将点位分别添加到对应的HashMap
+                        // Add points to corresponding HashMap separately
                         for point in points {
                             let point_id = point.point_id;
                             if let Err(e) = channel.add_point(point) {
@@ -250,7 +242,7 @@ impl ConfigManager {
         Ok(())
     }
 
-    /// 使用新的CSV加载器加载通道表
+    /// Load channel tables using new CSV loader
     async fn load_channel_tables_v2(
         table_config: &TableConfig,
         config_dir: &Path,
@@ -270,7 +262,7 @@ impl ConfigManager {
             table_config.protocol_mapping_route
         );
 
-        // 检查环境变量覆盖
+        // Check environment variable override
         let base_dir = std::env::var("COMSRV_CSV_BASE_PATH")
             .map_or_else(|_| config_dir.to_path_buf(), PathBuf::from);
 
@@ -279,19 +271,19 @@ impl ConfigManager {
 
         let mut combined = Vec::new();
 
-        // 四遥文件路径
+        // Four-telemetry file path
         let four_remote_base = base_dir.join(&table_config.four_remote_route);
-        // 协议映射文件路径
+        // Protocol mapping file path
         let protocol_base = base_dir.join(&table_config.protocol_mapping_route);
 
         eprintln!("DEBUG: four_remote_base: {}", four_remote_base.display());
         eprintln!("DEBUG: protocol_base: {}", protocol_base.display());
 
-        // 加载并合并遥测点位
+        // Load and merge telemetry points
         if let Ok(points) = Self::load_and_combine_telemetry(
-            &four_remote_base.join(&table_config.four_remote_files.measurement_file),
-            &protocol_base.join(&table_config.protocol_mapping_file.measurement_mapping),
-            "Measurement",
+            &four_remote_base.join(&table_config.four_remote_files.telemetry_file),
+            &protocol_base.join(&table_config.protocol_mapping_file.telemetry_mapping),
+            "Telemetry",
             csv_loader,
         )
         .await
@@ -299,7 +291,7 @@ impl ConfigManager {
             combined.extend(points);
         }
 
-        // 加载并合并遥信点位
+        // Load and merge signal points
         if let Ok(points) = Self::load_and_combine_telemetry(
             &four_remote_base.join(&table_config.four_remote_files.signal_file),
             &protocol_base.join(&table_config.protocol_mapping_file.signal_mapping),
@@ -311,7 +303,7 @@ impl ConfigManager {
             combined.extend(points);
         }
 
-        // 加载并合并遥控点位
+        // Load and merge control points
         if let Ok(points) = Self::load_and_combine_telemetry(
             &four_remote_base.join(&table_config.four_remote_files.control_file),
             &protocol_base.join(&table_config.protocol_mapping_file.control_mapping),
@@ -323,7 +315,7 @@ impl ConfigManager {
             combined.extend(points);
         }
 
-        // 加载并合并遥调点位
+        // Load and merge adjustment points
         if let Ok(points) = Self::load_and_combine_telemetry(
             &four_remote_base.join(&table_config.four_remote_files.adjustment_file),
             &protocol_base.join(&table_config.protocol_mapping_file.adjustment_mapping),
@@ -339,7 +331,7 @@ impl ConfigManager {
         Ok(combined)
     }
 
-    /// 加载并合并单个遥测类型的点位
+    /// Load and merge points of single telemetry type
     async fn load_and_combine_telemetry(
         four_remote_path: &Path,
         protocol_mapping_path: &Path,
@@ -353,7 +345,7 @@ impl ConfigManager {
             protocol_mapping_path.display()
         );
 
-        // 检查文件是否存在
+        // Check if file exists
         eprintln!(
             "DEBUG: Checking if four_remote_path exists: {} - {}",
             four_remote_path.display(),
@@ -388,7 +380,7 @@ impl ConfigManager {
             return Ok(Vec::new());
         }
 
-        // 加载四遥文件
+        // Load four-telemetry file
         eprintln!("DEBUG: Loading four_remote_path CSV...");
         let remote_points: Vec<FourRemoteRecord> = csv_loader
             .load_csv_cached(four_remote_path)
@@ -400,7 +392,7 @@ impl ConfigManager {
             })?;
         eprintln!("DEBUG: Loaded {} four remote points", remote_points.len());
 
-        // 加载协议映射文件
+        // Load protocol mapping file
         eprintln!("DEBUG: Loading protocol_mapping_path CSV...");
         let modbus_mappings_result = csv_loader
             .load_csv_cached::<ModbusMappingRecord>(protocol_mapping_path)
@@ -433,7 +425,7 @@ impl ConfigManager {
         );
         eprintln!("DEBUG: Combining points...");
 
-        // 使用PointMapper合并点位
+        // Use PointMapper to merge points
         let combined =
             PointMapper::combine_modbus_points(remote_points, modbus_mappings, telemetry_type)?;
         eprintln!(
@@ -445,29 +437,29 @@ impl ConfigManager {
         Ok(combined)
     }
 
-    /// 获取服务配置
+    /// Get service configuration
     pub fn service_config(&self) -> &ServiceConfig {
         &self.config.service
     }
 
-    /// 获取所有通道配置
+    /// Get all channel configurations
     pub fn channels(&self) -> &[ChannelConfig] {
         &self.config.channels
     }
 
-    /// 根据ID获取通道配置
+    /// Get channel configuration by ID
     pub fn get_channel(&self, channel_id: u16) -> Option<&ChannelConfig> {
         self.config.channels.iter().find(|c| c.id == channel_id)
     }
 
-    /// 获取通道数量
+    /// Get channel count
     pub fn channel_count(&self) -> usize {
         self.config.channels.len()
     }
 
-    /// 验证配置
+    /// Validate configuration
     pub fn validate(&self) -> Result<()> {
-        // 检查通道ID唯一性
+        // Check channel ID uniqueness
         let mut channel_ids = std::collections::HashSet::new();
         for channel in &self.config.channels {
             if !channel_ids.insert(channel.id) {
@@ -481,22 +473,22 @@ impl ConfigManager {
         Ok(())
     }
 
-    // 四遥分离架构下，不再需要统一映射方法
+    // Under the four-telemetry separated architecture, unified mapping method is no longer needed
 }
 
 // ============================================================================
-// CSV加载器 - 已废弃，使用loaders.rs中的新实现
+// CSV loader - deprecated, use new implementation in loaders.rs
 // ============================================================================
 
-// 注意：以下CsvLoader已被loaders.rs中的CachedCsvLoader替代
-// 保留这些类型定义仅为了向后兼容，后续版本将移除
+// Note: The following CsvLoader has been replaced by CachedCsvLoader in loaders.rs
+// These type definitions are retained only for backward compatibility and will be removed in future versions
 
 /*
-/// 统一的CSV加载器
+/// Unified CSV loader
 #[derive(Debug)]
 pub struct CsvLoader;
 
-/// 四遥点位
+/// Four-telemetry point
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FourRemotePoint {
     pub point_id: u32,
@@ -509,7 +501,7 @@ pub struct FourRemotePoint {
     pub data_type: String,
 }
 
-/// Modbus映射
+/// Modbus mapping
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModbusMapping {
     pub point_id: u32,
@@ -522,43 +514,43 @@ pub struct ModbusMapping {
 }
 */
 
-// 已废弃的CsvLoader实现，保留供参考
+// Deprecated CsvLoader implementation, kept for reference
 /*
 impl CsvLoader {
-    /// 加载通道的所有CSV表
+    /// Load all CSV tables for channel
     pub fn load_channel_tables(
         table_config: &TableConfig,
         config_dir: &Path,
     ) -> Result<Vec<CombinedPoint>> {
         info!("Loading CSV tables for channel");
 
-        // 按四遥类型分别存储点位
-        let mut measurement_points = HashMap::new();
+        // Store points separately by four-telemetry type
+        let mut telemetry_points = HashMap::new();
         let mut signal_points = HashMap::new();
         let mut control_points = HashMap::new();
         let mut adjustment_points = HashMap::new();
 
-        // 检查环境变量覆盖
+        // Check environment variable override
         let base_dir = std::env::var("COMSRV_CSV_BASE_PATH")
             .map(std::path::PathBuf::from)
             .unwrap_or_else(|_| config_dir.to_path_buf());
 
         debug!("Using CSV base directory: {}", base_dir.display());
 
-        // 加载遥测文件
+        // Load telemetry file
         let base_path = base_dir.join(&table_config.four_remote_route);
 
-        // 遥测
-        if let Some(measurement_data) = Self::load_measurement_file(
-            &base_path.join(&table_config.four_remote_files.measurement_file),
-            "Measurement",
+        // Telemetry
+        if let Some(telemetry_data) = Self::load_telemetry_file(
+            &base_path.join(&table_config.four_remote_files.telemetry_file),
+            "Telemetry",
         )? {
-            for point in measurement_data {
-                measurement_points.insert(point.point_id, point);
+            for point in telemetry_data {
+                telemetry_points.insert(point.point_id, point);
             }
         }
 
-        // 遥信
+        // Signal
         if let Some(signal_data) = Self::load_signal_file(
             &base_path.join(&table_config.four_remote_files.signal_file),
             "Signal",
@@ -568,8 +560,8 @@ impl CsvLoader {
             }
         }
 
-        // 遥调
-        if let Some(adjustment_data) = Self::load_measurement_file(
+        // Adjustment
+        if let Some(adjustment_data) = Self::load_telemetry_file(
             &base_path.join(&table_config.four_remote_files.adjustment_file),
             "Adjustment",
         )? {
@@ -578,7 +570,7 @@ impl CsvLoader {
             }
         }
 
-        // 遥控
+        // Control
         if let Some(control_data) = Self::load_signal_file(
             &base_path.join(&table_config.four_remote_files.control_file),
             "Control",
@@ -588,26 +580,26 @@ impl CsvLoader {
             }
         }
 
-        // 加载协议映射
+        // Load protocol mapping
         let protocol_path = base_dir.join(&table_config.protocol_mapping_route);
 
-        // 为每种遥测类型分别加载对应的映射文件，避免点位ID冲突
+        // Load corresponding mapping files for each telemetry type separately to avoid point ID conflicts
         let mut combined = Vec::new();
 
-        // 合并遥测点位
-        if let Ok(measurement_mappings) = Self::load_protocol_mappings(
-            &protocol_path.join(&table_config.protocol_mapping_file.measurement_mapping),
+        // Merge telemetry points
+        if let Ok(telemetry_mappings) = Self::load_protocol_mappings(
+            &protocol_path.join(&table_config.protocol_mapping_file.telemetry_mapping),
         ) {
-            debug!("Loaded {} measurement mappings", measurement_mappings.len());
-            let measurement_combined = Self::combine_points_by_type(
-                measurement_points,
-                &measurement_mappings,
-                "Measurement",
+            debug!("Loaded {} telemetry mappings", telemetry_mappings.len());
+            let telemetry_combined = Self::combine_points_by_type(
+                telemetry_points,
+                &telemetry_mappings,
+                "Telemetry",
             )?;
-            combined.extend(measurement_combined);
+            combined.extend(telemetry_combined);
         }
 
-        // 合并遥信点位
+        // Merge signal points
         if let Ok(signal_mappings) = Self::load_protocol_mappings(
             &protocol_path.join(&table_config.protocol_mapping_file.signal_mapping),
         ) {
@@ -617,7 +609,7 @@ impl CsvLoader {
             combined.extend(signal_combined);
         }
 
-        // 合并遥调点位
+        // Merge adjustment points
         if let Ok(adjustment_mappings) = Self::load_protocol_mappings(
             &protocol_path.join(&table_config.protocol_mapping_file.adjustment_mapping),
         ) {
@@ -630,7 +622,7 @@ impl CsvLoader {
             combined.extend(adjustment_combined);
         }
 
-        // 合并遥控点位
+        // Merge control points
         if let Ok(control_mappings) = Self::load_protocol_mappings(
             &protocol_path.join(&table_config.protocol_mapping_file.control_mapping),
         ) {
@@ -643,8 +635,8 @@ impl CsvLoader {
         Ok(combined)
     }
 
-    /// 加载遥测文件（带缩放参数）
-    fn load_measurement_file(
+    /// Load telemetry file (with scaling parameters)
+    fn load_telemetry_file(
         path: &Path,
         telemetry_type: &str,
     ) -> Result<Option<Vec<FourRemotePoint>>> {
@@ -688,7 +680,7 @@ impl CsvLoader {
         Ok(Some(points))
     }
 
-    /// 加载信号文件（不带缩放参数）
+    /// Load signal file (without scaling parameters)
     fn load_signal_file(path: &Path, telemetry_type: &str) -> Result<Option<Vec<FourRemotePoint>>> {
         if !path.exists() {
             debug!("File not found: {}, skipping", path.display());
@@ -730,7 +722,7 @@ impl CsvLoader {
         Ok(Some(points))
     }
 
-    /// 加载协议映射
+    /// Load protocol mapping
     fn load_protocol_mappings(path: &Path) -> Result<HashMap<u32, HashMap<String, String>>> {
         if !path.exists() {
             return Err(ComSrvError::ConfigError(format!(
@@ -760,7 +752,7 @@ impl CsvLoader {
 
             let mut params = HashMap::new();
 
-            // Modbus参数
+            // Modbus parameters
             if let (Some(slave_id), Some(function_code), Some(register_address)) =
                 (record.get(1), record.get(2), record.get(3))
             {
@@ -768,7 +760,7 @@ impl CsvLoader {
                 params.insert("function_code".to_string(), function_code.to_string());
                 params.insert("register_address".to_string(), register_address.to_string());
 
-                // 可选参数
+                // Optional parameters
                 if let Some(bit_position) = record.get(4) {
                     if !bit_position.is_empty() {
                         params.insert("bit_position".to_string(), bit_position.to_string());
@@ -793,31 +785,31 @@ impl CsvLoader {
         Ok(mappings)
     }
 
-    /// 按类型合并点位信息，保持四遥分离
+    /// Merge point information by type, maintaining four-telemetry separation
     fn combine_points_by_type(
-        measurement_points: HashMap<u32, FourRemotePoint>,
+        telemetry_points: HashMap<u32, FourRemotePoint>,
         protocol_mappings: &HashMap<u32, HashMap<String, String>>,
         telemetry_type: &str,
     ) -> Result<Vec<CombinedPoint>> {
         let mut combined = Vec::new();
 
-        for (point_id, measurement_point) in measurement_points {
+        for (point_id, telemetry_point) in telemetry_points {
             if let Some(protocol_params) = protocol_mappings.get(&point_id) {
                 let point = CombinedPoint {
                     point_id,
-                    signal_name: measurement_point.signal_name,
-                    telemetry_type: measurement_point.telemetry_type,
-                    data_type: measurement_point.data_type,
+                    signal_name: telemetry_point.signal_name,
+                    telemetry_type: telemetry_point.telemetry_type,
+                    data_type: telemetry_point.data_type,
                     protocol_params: protocol_params.clone(),
-                    scaling: if measurement_point.scale.is_some()
-                        || measurement_point.offset.is_some()
-                        || measurement_point.reverse.is_some()
+                    scaling: if telemetry_point.scale.is_some()
+                        || telemetry_point.offset.is_some()
+                        || telemetry_point.reverse.is_some()
                     {
                         Some(super::types::ScalingInfo {
-                            scale: measurement_point.scale.unwrap_or(1.0),
-                            offset: measurement_point.offset.unwrap_or(0.0),
-                            unit: measurement_point.unit,
-                            reverse: measurement_point.reverse,
+                            scale: telemetry_point.scale.unwrap_or(1.0),
+                            offset: telemetry_point.offset.unwrap_or(0.0),
+                            unit: telemetry_point.unit,
+                            reverse: telemetry_point.reverse,
                         })
                     } else {
                         None
@@ -843,10 +835,10 @@ impl CsvLoader {
 */
 
 // ============================================================================
-// 文件系统配置源实现
+// File system configuration source implementation
 // ============================================================================
 
-/// 文件系统配置源
+/// File system configuration source
 #[derive(Debug)]
 pub struct FileSystemSource {
     base_path: String,

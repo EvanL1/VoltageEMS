@@ -1,14 +1,12 @@
 use anyhow::Result;
-use figment::{
-    providers::{Env, Format, Yaml},
-    Figment,
-};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use voltage_libs::config::utils::{get_global_log_level, get_global_redis_url};
+use voltage_libs::config::ConfigLoader;
 
 /// Network service configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Config {
     /// Service configuration
     pub service: ServiceConfig,
@@ -135,29 +133,51 @@ pub struct HttpConfig {
 }
 
 /// Data format type
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum FormatType {
+    #[default]
     Json,
     Ascii,
     Binary,
 }
 
-impl Default for FormatType {
-    fn default() -> Self {
-        FormatType::Json
+impl Config {
+    /// Load configuration from file and environment
+    pub fn load() -> Result<Config> {
+        // 尝试多个配置文件路径
+        let config_paths = [
+            "config/netsrv/netsrv.yaml",
+            "config/netsrv.yaml",
+            "netsrv.yaml",
+        ];
+
+        let mut yaml_path = None;
+        for path in &config_paths {
+            if Path::new(path).exists() {
+                yaml_path = Some(path.to_string());
+                break;
+            }
+        }
+
+        // 使用新的 ConfigLoader
+        let loader = ConfigLoader::new()
+            .with_defaults(Config::default())
+            .with_env_prefix("NETSRV");
+
+        let config = if let Some(path) = yaml_path {
+            loader.with_yaml_file(&path).build()
+        } else {
+            loader.build()
+        }?;
+
+        Ok(config)
     }
 }
 
-/// Load configuration from file and environment
+/// Load configuration from file and environment (backward compatibility)
 pub fn load_config() -> Result<Config> {
-    let figment = Figment::new()
-        .merge(Yaml::file("config/netsrv.yml"))
-        .merge(Yaml::file("config/netsrv.yaml"))
-        .merge(Env::prefixed("NETSRV_").split("_"));
-
-    let config: Config = figment.extract()?;
-    Ok(config)
+    Config::load()
 }
 
 // Default functions
@@ -166,11 +186,11 @@ fn default_service_name() -> String {
 }
 
 fn default_log_level() -> String {
-    "info".to_string()
+    get_global_log_level("NETSRV")
 }
 
 fn default_redis_url() -> String {
-    "redis://localhost:6379".to_string()
+    get_global_redis_url("NETSRV")
 }
 
 fn default_pool_size() -> u32 {
@@ -178,7 +198,7 @@ fn default_pool_size() -> u32 {
 }
 
 fn default_data_key_pattern() -> String {
-    "comsrv:*:m".to_string()
+    "comsrv:*:T".to_string() // 使用大写T表示遥测
 }
 
 fn default_polling_interval() -> u64 {
@@ -187,6 +207,36 @@ fn default_polling_interval() -> u64 {
 
 fn default_true() -> bool {
     true
+}
+
+impl Default for ServiceConfig {
+    fn default() -> Self {
+        Self {
+            name: default_service_name(),
+            log_level: default_log_level(),
+            log_file: None,
+        }
+    }
+}
+
+impl Default for RedisConfig {
+    fn default() -> Self {
+        Self {
+            url: default_redis_url(),
+            pool_size: default_pool_size(),
+        }
+    }
+}
+
+impl Default for DataConfig {
+    fn default() -> Self {
+        Self {
+            redis_data_key: default_data_key_pattern(),
+            redis_polling_interval_secs: default_polling_interval(),
+            enable_buffering: default_true(),
+            buffer_size: default_buffer_size(),
+        }
+    }
 }
 
 fn default_buffer_size() -> usize {
