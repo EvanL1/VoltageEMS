@@ -34,7 +34,7 @@ pub fn get_env_with_fallback(global_key: &str, service_key: &str, default: &str)
 pub fn get_global_redis_url(service_prefix: &str) -> String {
     get_env_with_fallback(
         "VOLTAGE_REDIS_URL",
-        &format!("{}_REDIS_URL", service_prefix),
+        &format!("{service_prefix}_REDIS_URL"),
         "redis://redis:6379",
     )
 }
@@ -43,7 +43,7 @@ pub fn get_global_redis_url(service_prefix: &str) -> String {
 pub fn get_global_log_level(service_prefix: &str) -> String {
     get_env_with_fallback(
         "VOLTAGE_LOG_LEVEL",
-        &format!("{}_LOG_LEVEL", service_prefix),
+        &format!("{service_prefix}_LOG_LEVEL"),
         "info",
     )
 }
@@ -52,7 +52,7 @@ pub fn get_global_log_level(service_prefix: &str) -> String {
 pub fn get_global_influxdb_url(service_prefix: &str) -> String {
     get_env_with_fallback(
         "VOLTAGE_INFLUXDB_URL",
-        &format!("{}_INFLUXDB_URL", service_prefix),
+        &format!("{service_prefix}_INFLUXDB_URL"),
         "http://influxdb:8086",
     )
 }
@@ -61,7 +61,7 @@ pub fn get_global_influxdb_url(service_prefix: &str) -> String {
 pub fn get_global_influxdb_token(service_prefix: &str) -> String {
     get_env_with_fallback(
         "VOLTAGE_INFLUXDB_TOKEN",
-        &format!("{}_INFLUXDB_TOKEN", service_prefix),
+        &format!("{service_prefix}_INFLUXDB_TOKEN"),
         "",
     )
 }
@@ -70,7 +70,7 @@ pub fn get_global_influxdb_token(service_prefix: &str) -> String {
 pub fn get_global_influxdb_org(service_prefix: &str) -> String {
     get_env_with_fallback(
         "VOLTAGE_INFLUXDB_ORG",
-        &format!("{}_INFLUXDB_ORG", service_prefix),
+        &format!("{service_prefix}_INFLUXDB_ORG"),
         "voltage",
     )
 }
@@ -79,7 +79,7 @@ pub fn get_global_influxdb_org(service_prefix: &str) -> String {
 pub fn get_global_influxdb_bucket(service_prefix: &str) -> String {
     get_env_with_fallback(
         "VOLTAGE_INFLUXDB_BUCKET",
-        &format!("{}_INFLUXDB_BUCKET", service_prefix),
+        &format!("{service_prefix}_INFLUXDB_BUCKET"),
         "ems",
     )
 }
@@ -88,7 +88,7 @@ pub fn get_global_influxdb_bucket(service_prefix: &str) -> String {
 pub fn get_global_jwt_secret(service_prefix: &str) -> String {
     get_env_with_fallback(
         "VOLTAGE_JWT_SECRET",
-        &format!("{}_JWT_SECRET", service_prefix),
+        &format!("{service_prefix}_JWT_SECRET"),
         "dev-secret",
     )
 }
@@ -104,7 +104,7 @@ pub fn get_service_url(service_name: &str) -> String {
         "rulesrv" => "http://rulesrv:8084".to_string(),
         "hissrv" => "http://hissrv:8085".to_string(),
         "netsrv" => "http://netsrv:8086".to_string(),
-        _ => format!("http://{}:8080", service_name),
+        _ => format!("http://{service_name}:8080"),
     }
 }
 

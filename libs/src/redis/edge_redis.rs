@@ -29,7 +29,7 @@ impl EdgeRedis {
             .arg(channel.to_string()) // key
             .arg("m") // telemetry type
             .arg(point.to_string())
-            .arg(format!("{:.6}", value))
+            .arg(format!("{value:.6}"))
             .query_async(&mut self.conn)
             .await?;
         Ok(())
@@ -42,7 +42,7 @@ impl EdgeRedis {
             .arg(1) // key count
             .arg(model_id) // key
             .arg(control)
-            .arg(format!("{:.6}", value))
+            .arg(format!("{value:.6}"))
             .query_async(&mut self.conn)
             .await?;
         Ok(())
