@@ -205,7 +205,7 @@ async fn list_rules(config: &Config) -> Result<()> {
 /// Test a specific rule
 async fn test_rule(config: &Config, rule_id: &str) -> Result<()> {
     let store = Arc::new(RedisStore::new(&config.redis_url, None)?);
-    let executor = RuleExecutor::new(store);
+    let _executor = RuleExecutor::new(store);
 
     println!("Testing rule: {}", rule_id);
 

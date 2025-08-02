@@ -584,7 +584,7 @@ impl SimpleRuleEngine {
 
         // Publish to control queue (if implemented)
         let queue_key = "ems:control:queue";
-        if let Err(e) = self.store.publish(&queue_key, &cmd_id).await {
+        if let Err(e) = self.store.publish(queue_key, &cmd_id).await {
             warn!("Failed to publish to control queue: {}", e);
         }
 

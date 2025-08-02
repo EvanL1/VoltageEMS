@@ -4,6 +4,7 @@ use serde_json::Value;
 
 /// Action handler trait for control operations
 #[async_trait]
+#[allow(dead_code)]
 pub trait ActionHandler: Send + Sync {
     /// Get the name of this action handler
     fn name(&self) -> &str;

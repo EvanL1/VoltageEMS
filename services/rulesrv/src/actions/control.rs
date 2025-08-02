@@ -87,6 +87,7 @@ pub struct ControlActionHandler {
 
 impl ControlActionHandler {
     /// 创建新的控制动作处理器
+    #[allow(dead_code)]
     pub fn new(redis_url: &str) -> Result<Self> {
         let redis_client = redis::Client::open(redis_url)?;
 
@@ -190,6 +191,7 @@ impl ControlActionHandler {
     }
 
     /// 获取操作状态
+    #[allow(dead_code)]
     pub async fn get_operation_status(
         &self,
         operation_id: &str,

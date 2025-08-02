@@ -1,5 +1,5 @@
 use anyhow::Result;
-use redis::{aio::PubSub, AsyncCommands};
+use redis::aio::PubSub;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -116,6 +116,7 @@ impl RedisSubscriber {
     }
 
     /// 添加自定义订阅
+    #[allow(dead_code)]
     pub async fn add_subscription(&self, pattern: &str) -> Result<()> {
         let mut conn = self.redis_client.get_multiplexed_async_connection().await?;
         conn.subscribe(pattern).await?;
@@ -132,6 +133,7 @@ impl RedisSubscriber {
     }
 
     /// 移除订阅
+    #[allow(dead_code)]
     pub async fn remove_subscription(&self, pattern: &str) -> Result<()> {
         let mut conn = self.redis_client.get_multiplexed_async_connection().await?;
         conn.unsubscribe(pattern).await?;
@@ -251,69 +253,9 @@ impl RedisSubscriber {
     }
 
     /// 获取当前订阅列表
+    #[allow(dead_code)]
     pub async fn get_subscriptions(&self) -> HashMap<String, Vec<String>> {
         self.subscriptions.read().await.clone()
-    }
-}
-
-/// 批量数据获取器
-pub struct BatchDataFetcher {
-    redis_client: redis::Client,
-}
-
-impl BatchDataFetcher {
-    /// 创建新的批量获取器
-    pub fn new(redis_url: &str) -> Result<Self> {
-        let redis_client = redis::Client::open(redis_url)?;
-        Ok(Self { redis_client })
-    }
-
-    /// 批量获取点位数据
-    pub async fn fetch_points(&self, point_ids: &[String]) -> Result<HashMap<String, f64>> {
-        let mut conn = self.redis_client.get_multiplexed_async_connection().await?;
-        let mut result = HashMap::new();
-
-        // 使用 pipeline 批量获取
-        let mut pipe = redis::pipe();
-        for point_id in point_ids {
-            pipe.get(point_id);
-        }
-
-        let values: Vec<Option<String>> = pipe.query_async(&mut conn).await?;
-
-        for (i, value) in values.iter().enumerate() {
-            if let Some(v) = value {
-                // 解析值（格式：value:timestamp）
-                if let Some(val_str) = v.split(':').next() {
-                    if let Ok(val) = val_str.parse::<f64>() {
-                        result.insert(point_ids[i].clone(), val);
-                    }
-                }
-            }
-        }
-
-        Ok(result)
-    }
-
-    /// 获取模型输出
-    pub async fn fetch_model_outputs(
-        &self,
-        model_id: &str,
-    ) -> Result<HashMap<String, serde_json::Value>> {
-        let mut conn = self.redis_client.get_multiplexed_async_connection().await?;
-
-        // 获取模型输出 hash
-        let key = format!("modsrv:output:{}", model_id);
-        let outputs: HashMap<String, String> = conn.hgetall(&key).await?;
-
-        let mut result = HashMap::new();
-        for (field, value) in outputs {
-            if let Ok(v) = serde_json::from_str(&value) {
-                result.insert(field, v);
-            }
-        }
-
-        Ok(result)
     }
 }
 

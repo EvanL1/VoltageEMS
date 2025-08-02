@@ -114,7 +114,7 @@ async fn run_service(config: Config) -> Result<()> {
     }
 
     // Create WebSocket manager
-    let ws_manager = Arc::new(WsConnectionManager::new(model_manager.clone()));
+    let ws_manager = Arc::new(WsConnectionManager::new());
 
     // Start Redis subscription
     if let Err(e) = ws_manager.start_redis_subscription().await {

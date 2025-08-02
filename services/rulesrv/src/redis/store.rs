@@ -288,6 +288,7 @@ impl RedisStore {
     }
 
     /// 保存执行历史
+    #[allow(dead_code)]
     pub async fn save_execution_history(
         &self,
         rule_id: &str,
@@ -336,6 +337,7 @@ impl RedisStore {
     }
 
     /// 清理过期数据
+    #[allow(dead_code)]
     pub async fn cleanup_expired_data(&self) -> Result<()> {
         info!("Starting cleanup of expired data");
 

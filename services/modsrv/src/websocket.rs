@@ -15,7 +15,6 @@ use tokio::time::{interval, Duration};
 use tracing::{debug, info, warn};
 
 use crate::api::ApiState;
-use crate::model::ModelManager;
 
 /// WebSocket message
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -31,22 +30,25 @@ pub enum WsMessage {
 
 /// WebSocket connection information
 struct WsConnection {
-    model_id: String,
     tx: mpsc::UnboundedSender<WsMessage>,
 }
 
 /// WebSocket connection manager
 pub struct WsConnectionManager {
     connections: Arc<RwLock<HashMap<String, Vec<WsConnection>>>>,
-    model_manager: Arc<ModelManager>,
+}
+
+impl Default for WsConnectionManager {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl WsConnectionManager {
     /// Create new connection manager
-    pub fn new(model_manager: Arc<ModelManager>) -> Self {
+    pub fn new() -> Self {
         Self {
             connections: Arc::new(RwLock::new(HashMap::new())),
-            model_manager,
         }
     }
 
@@ -100,10 +102,7 @@ impl WsConnectionManager {
         tx: mpsc::UnboundedSender<WsMessage>,
     ) -> String {
         let conn_id = uuid::Uuid::new_v4().to_string();
-        let conn = WsConnection {
-            model_id: model_id.clone(),
-            tx,
-        };
+        let conn = WsConnection { tx };
 
         let mut connections = self.connections.write().await;
         connections

@@ -1099,6 +1099,7 @@ async fn read_modbus_group_with_processor(
 }
 
 /// Read a batch of consecutive Modbus registers with automatic splitting for large batches
+#[allow(clippy::too_many_arguments)]
 async fn read_modbus_batch(
     connection_manager: &Arc<ModbusConnectionManager>,
     frame_processor: &mut ModbusFrameProcessor,

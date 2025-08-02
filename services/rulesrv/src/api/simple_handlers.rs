@@ -218,6 +218,7 @@ pub async fn delete_simple_rule(
 #[derive(Debug, Deserialize)]
 pub struct ExecuteSimpleRuleRequest {
     /// Optional context data for rule evaluation
+    #[allow(dead_code)]
     pub context: Option<Value>,
 }
 
@@ -244,6 +245,7 @@ pub async fn execute_simple_rule(
 #[derive(Debug, Deserialize)]
 pub struct TestSimpleRuleRequest {
     pub rule: SimpleRule,
+    #[allow(dead_code)]
     pub context: Option<Value>,
 }
 

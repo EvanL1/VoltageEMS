@@ -17,6 +17,7 @@ use uuid::Uuid;
 
 /// Action handler trait for control operations
 #[async_trait]
+#[allow(dead_code)]
 pub trait ActionHandler: Send + Sync {
     /// Get the name of this action handler
     fn name(&self) -> &str;
@@ -43,6 +44,7 @@ pub struct ExecutionContext {
     post_processors: Vec<Arc<dyn RulePostProcessor + Send + Sync>>,
 }
 
+#[allow(dead_code)]
 impl ExecutionContext {
     /// Create a new execution context
     pub fn new(store: Arc<RedisStore>) -> Self {
@@ -125,8 +127,7 @@ impl ExecutionContext {
         variables: &HashMap<String, Value>,
     ) -> Result<Value> {
         // Check if it's a variable reference
-        if name.starts_with("$") {
-            let var_name = &name[1..];
+        if let Some(var_name) = name.strip_prefix("$") {
             // First check external variables, then internal
             match variables
                 .get(var_name)
@@ -238,8 +239,7 @@ impl ExecutionContext {
     /// Resolve a variable or literal
     pub fn resolve_variable(&self, name: &str) -> Result<Value> {
         // Check if it's a variable reference
-        if name.starts_with("$") {
-            let var_name = &name[1..];
+        if let Some(var_name) = name.strip_prefix("$") {
             match self.get_variable(var_name) {
                 Some(value) => Ok(value.clone()),
                 None => Err(RulesrvError::RuleError(format!(
@@ -314,6 +314,7 @@ impl ExecutionContext {
 }
 
 /// Runtime rule node
+#[allow(dead_code)]
 pub struct RuleNode {
     /// Node ID
     pub id: String,
@@ -330,6 +331,7 @@ pub struct RuleNode {
 }
 
 /// Runtime rule
+#[allow(dead_code)]
 pub struct RuntimeRule {
     /// Rule ID
     pub id: String,
@@ -911,6 +913,12 @@ pub trait RulePostProcessor: Send + Sync {
 /// Logger post-processor for rule execution results
 pub struct LoggingPostProcessor;
 
+impl Default for LoggingPostProcessor {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl LoggingPostProcessor {
     /// Create a new logging post-processor
     pub fn new() -> Self {
@@ -961,6 +969,7 @@ pub struct NotificationPostProcessor {
 
 impl NotificationPostProcessor {
     /// Create a new notification post-processor
+    #[allow(dead_code)]
     pub fn new(threshold_ms: u128, _key_prefix: &str) -> Self {
         Self {
             threshold_ms,
@@ -1029,8 +1038,7 @@ impl RuleExecutor {
     /// Create a new rule executor
     pub fn new(store: Arc<RedisStore>) -> Self {
         // Initialize with default post-processors
-        let mut post_processors = Vec::new();
-        post_processors.push(Arc::new(LoggingPostProcessor::new()) as Arc<dyn RulePostProcessor + Send + Sync>);
+        let post_processors = vec![Arc::new(LoggingPostProcessor::new()) as Arc<dyn RulePostProcessor + Send + Sync>];
 
         Self {
             store,
@@ -1040,6 +1048,7 @@ impl RuleExecutor {
     }
 
     /// Register an action handler
+    #[allow(dead_code)]
     pub async fn register_action_handler<T: ActionHandler + Send + Sync + 'static>(
         &self,
         handler: T,
@@ -1053,6 +1062,7 @@ impl RuleExecutor {
     }
 
     /// Register a post-processor
+    #[allow(dead_code)]
     pub async fn register_post_processor<T: RulePostProcessor + Send + Sync + 'static>(
         &self,
         processor: T,
@@ -1130,11 +1140,9 @@ impl RuleExecutor {
 
         // Create variables map and set input data
         let mut variables = HashMap::new();
-        if let Some(input) = &input_data {
-            if let Value::Object(map) = input {
-                for (key, value) in map {
-                    variables.insert(key.clone(), value.clone());
-                }
+        if let Some(Value::Object(map)) = &input_data {
+            for (key, value) in map {
+                variables.insert(key.clone(), value.clone());
             }
         }
 

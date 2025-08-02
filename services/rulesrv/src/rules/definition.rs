@@ -18,6 +18,7 @@ pub enum NodeType {
 
 /// Node execution state
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[allow(dead_code)]
 pub enum NodeState {
     /// Node is waiting to be processed
     Pending,
