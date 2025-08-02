@@ -1277,7 +1277,7 @@ fn build_write_fc06_single_register_pdu(address: u16, value: u16) -> Vec<u8> {
 /// Build Modbus PDU for FC15: Write Multiple Coils (写多个线圈)
 fn build_write_fc15_multiple_coils_pdu(start_address: u16, values: &[bool]) -> Vec<u8> {
     let quantity = values.len() as u16;
-    let byte_count = ((quantity + 7) / 8) as u8;
+    let byte_count = quantity.div_ceil(8) as u8;
 
     let mut pdu = vec![
         0x0F, // Function code 15: Write Multiple Coils
