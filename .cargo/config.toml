@@ -1,19 +1,31 @@
 [build]
-# 使用所有CPU核心进行并行编译
-jobs = 11
+# 使用更多 CPU 核心进行并行编译
+jobs = 8
 
-[target.aarch64-apple-darwin]
-# macOS M3 优化
-rustflags = ["-C", "target-cpu=native"]
+[target.x86_64-unknown-linux-gnu]
+# 优化链接器以加快编译速度
+linker = "clang"
+rustflags = ["-C", "link-arg=-fuse-ld=lld"]
 
-[profile.dev]
-# 开发模式优化
-opt-level = 0
-debug = true
-incremental = true
+[target.x86_64-apple-darwin]
+rustflags = ["-C", "link-arg=-fuse-ld=lld"]
 
-[profile.release]
-# 发布模式优化
-opt-level = 3
-lto = "thin"
-codegen-units = 1
+# 开发时的别名
+[alias]
+# 检查所有目标
+check-all = "check --all-targets --all-features"
+# 运行所有测试
+test-all = "test --workspace --all-features"
+# 严格的 clippy 检查
+clippy-strict = """clippy --all-targets --all-features -- 
+    -D warnings 
+    -W clippy::unwrap_used 
+    -W clippy::expect_used 
+    -W clippy::panic 
+    -W clippy::unimplemented"""
+# 修复所有可自动修复的问题
+fix-all = "clippy --all-targets --all-features --fix -- -D warnings"
+# 更新依赖
+update-deps = "update --workspace"
+# 清理并重新构建
+clean-build = "build --workspace --release"

@@ -50,6 +50,16 @@ jobs:
       - name: Run Clippy
         run: cargo clippy --all-targets --all-features -- -D warnings
       
+      - name: Run strict Clippy checks
+        run: |
+          cargo clippy --all-targets --all-features -- \
+            -D warnings \
+            -W clippy::unwrap_used \
+            -W clippy::expect_used \
+            -W clippy::panic \
+            -W clippy::unimplemented \
+            -W clippy::todo
+      
       - name: Check compilation
         run: cargo check --workspace
 

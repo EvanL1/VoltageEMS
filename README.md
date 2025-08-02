@@ -226,6 +226,44 @@ INFLUXDB_URL=http://localhost:8086
 - 异步I/O处理
 - 6位小数精度标准化
 
+## 🔧 开发工具与代码质量
+
+### Git Hooks 配置
+项目包含预配置的 Git hooks 来确保代码质量：
+
+```bash
+# 配置 Git hooks
+./scripts/setup-hooks.sh
+
+# 可用的 hooks:
+# - pre-commit: 运行格式化、clippy 和测试
+# - pre-push: 运行严格检查和安全审计  
+# - commit-msg: 验证提交信息格式
+```
+
+### 推荐安装的工具
+```bash
+# 安全漏洞扫描
+cargo install cargo-audit
+
+# 查找未使用的依赖
+cargo install cargo-udeps
+
+# 检查过时的依赖
+cargo install cargo-outdated
+
+# 代码覆盖率
+cargo install cargo-tarpaulin
+```
+
+### Cargo 别名
+```bash
+cargo check-all      # 检查所有目标
+cargo test-all       # 运行所有测试
+cargo clippy-strict  # 严格的 clippy 检查
+cargo fix-all        # 修复所有可自动修复的问题
+```
+
 ## 🚢 CI/CD 流程
 
 项目使用 GitHub Actions 实现完整的 CI/CD 流程：
