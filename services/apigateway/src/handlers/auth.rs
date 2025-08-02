@@ -41,8 +41,8 @@ pub async fn login(
     State(state): State<AppState>,
     Json(req): Json<LoginRequest>,
 ) -> ApiResult<impl IntoResponse> {
-    // TODO: In production, verify credentials against a user database
-    // For now, we'll use hardcoded users for demonstration
+    // SECURITY WARNING: Hardcoded credentials - must implement proper authentication before production
+    // Options: 1) User database 2) LDAP/AD integration 3) OAuth2/OIDC
     let user_info = match req.username.as_str() {
         "admin" => {
             if req.password != "admin123" {

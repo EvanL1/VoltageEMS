@@ -36,8 +36,12 @@ async fn main() -> Result<()> {
     info!("Redis URL: {}", config.redis.url);
     info!("Networks configured: {}", config.networks.len());
 
-    // TODO: Implement actual service logic
-    info!("Service starting successfully - TODO: implement network forwarding logic");
+    // IMPLEMENTATION REQUIRED: Core network forwarding functionality
+    // 1. Initialize Redis subscriptions for data updates
+    // 2. Initialize network clients (HTTP/MQTT) based on configuration
+    // 3. Start data forwarding loops for each configured network
+    // 4. Implement retry logic and error handling
+    error!("Network service is not implemented - core functionality missing");
 
     // Keep the service running
     loop {

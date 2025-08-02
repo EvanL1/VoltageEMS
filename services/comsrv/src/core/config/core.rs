@@ -94,8 +94,7 @@ impl ConfigCenterClient {
     pub async fn get_config(&self) -> Result<Option<serde_json::Value>> {
         if let Some(url) = &self.config_center_url {
             debug!("Fetching config from config center: {}", url);
-            // TODO: Actual configuration center implementation
-            // Returning None here means failed to get from config center, use local configuration
+            // Configuration center not implemented - using local YAML files instead
             Ok(None)
         } else {
             Ok(None)

@@ -21,12 +21,6 @@ pub mod logging;
 pub mod types;
 pub mod utils;
 
-#[cfg(feature = "metrics")]
-pub mod metrics;
-
-#[cfg(test)]
-pub mod test_utils;
-
 // 预导入常用类型
 pub mod prelude {
     pub use crate::error::{Error, Result};

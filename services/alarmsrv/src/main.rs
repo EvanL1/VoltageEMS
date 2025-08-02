@@ -43,7 +43,6 @@ async fn main() -> Result<()> {
     // Simple monitoring setup (optional)
     if config.monitoring.enabled {
         info!("Monitoring is enabled but simplified - no complex scanning");
-        // TODO: Add simple threshold monitoring if needed
     } else {
         info!("Monitoring is disabled");
     }

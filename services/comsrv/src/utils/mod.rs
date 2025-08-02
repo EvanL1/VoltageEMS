@@ -52,7 +52,7 @@ mod tests {
         // Test Result type alias
         let result: Result<i32> = Ok(42);
         assert!(result.is_ok());
-        assert_eq!(result.unwrap(), 42);
+        assert_eq!(result.ok(), Some(42));
 
         let error_result: Result<i32> = Err(ComSrvError::IoError("test io error".to_string()));
         assert!(error_result.is_err());

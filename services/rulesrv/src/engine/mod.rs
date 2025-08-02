@@ -1,8 +1,6 @@
-pub mod executor;
-pub mod simple_engine;
+pub mod rule_engine;
 
-pub use executor::RuleExecutor;
-pub use simple_engine::{
-    ActionConfig, ActionType, ComparisonOperator, Condition, ConditionGroup, LogicOperator,
-    RuleAction, /* RuleExecutionResult, */ SimpleRule, SimpleRuleEngine,
+pub use rule_engine::{
+    ActionConfig, ActionType, ComparisonOperator, Condition, ConditionGroup, LogicOperator, Rule,
+    RuleAction, RuleEngine,
 };

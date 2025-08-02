@@ -6,15 +6,15 @@
 //! ## Overview
 //!
 //! rulesrv is designed to handle rule-based decision making, condition evaluation,
-//! and action execution in response to data changes from the model service (modsrv).
-//! It subscribes to model outputs via Redis pub/sub and executes configured rules.
+//! and action execution based on real-time data from Redis.
+//! It provides a simple rule engine with condition evaluation and action execution.
 //!
 //! ## Architecture
 //!
 //! ```text
 //! ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
-//! │  Redis Sub      │───►│  Rule Engine    │───►│ Action Handler  │
-//! │  (Model Output) │    │  (DAG Executor) │    │  (Control/Alert)│
+//! │  Redis Store    │───►│  Rule Engine    │───►│ Action Handler  │
+//! │  (Data Source)  │    │  (Conditions)   │    │  (Control/Alert)│
 //! └─────────────────┘    └─────────────────┘    └─────────────────┘
 //! ```
 
@@ -30,14 +30,8 @@ pub mod engine;
 /// Error types and result handling
 pub mod error;
 
-/// Redis integration for pub/sub
+/// Redis integration
 pub mod redis;
-
-/// Rule definitions and management
-pub mod rules;
-
-/// Action handlers for rule execution
-pub mod actions;
 
 // Re-export commonly used types
 pub use config::Config;

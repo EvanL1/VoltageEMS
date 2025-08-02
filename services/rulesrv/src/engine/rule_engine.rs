@@ -7,9 +7,9 @@ use std::sync::Arc;
 use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 
-/// Simple rule structure for practical automation
+/// Rule structure for practical automation
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SimpleRule {
+pub struct Rule {
     /// Rule ID
     pub id: String,
     /// Rule name  
@@ -155,15 +155,15 @@ pub struct RuleExecutionResult {
     pub duration_ms: u128,
 }
 
-/// Simple rule engine for practical automation
-pub struct SimpleRuleEngine {
+/// Rule engine for practical automation
+pub struct RuleEngine {
     store: Arc<RedisStore>,
     /// Last execution timestamps for cooldown management
     last_execution: HashMap<String, std::time::Instant>,
 }
 
-impl SimpleRuleEngine {
-    /// Create a new simple rule engine
+impl RuleEngine {
+    /// Create a new rule engine
     pub fn new(store: Arc<RedisStore>) -> Self {
         Self {
             store,
@@ -281,7 +281,7 @@ impl SimpleRuleEngine {
     }
 
     /// Load rule from Redis store
-    async fn load_rule(&self, rule_id: &str) -> Result<SimpleRule> {
+    async fn load_rule(&self, rule_id: &str) -> Result<Rule> {
         let rule_key = format!("rulesrv:rule:{}", rule_id);
 
         match self.store.get_string(&rule_key).await {
@@ -676,7 +676,7 @@ impl SimpleRuleEngine {
     }
 
     /// List all rules
-    pub async fn list_rules(&self) -> Result<Vec<SimpleRule>> {
+    pub async fn list_rules(&self) -> Result<Vec<Rule>> {
         // Use Redis Functions to query rules efficiently
         match self
             .store
@@ -691,7 +691,7 @@ impl SimpleRuleEngine {
                 if let Some(rules_array) = query_result.get("data").and_then(|d| d.as_array()) {
                     let mut rules = vec![];
                     for rule_value in rules_array {
-                        match serde_json::from_value::<SimpleRule>(rule_value.clone()) {
+                        match serde_json::from_value::<Rule>(rule_value.clone()) {
                             Ok(rule) => rules.push(rule),
                             Err(e) => warn!("Failed to parse rule: {}", e),
                         }
@@ -710,7 +710,7 @@ impl SimpleRuleEngine {
     }
 
     /// Fallback method to list rules without Redis Functions
-    async fn list_rules_fallback(&self) -> Result<Vec<SimpleRule>> {
+    async fn list_rules_fallback(&self) -> Result<Vec<Rule>> {
         // This is a simplified fallback - in production you might want to
         // implement pattern matching for rule keys
         warn!("Fallback rule listing not fully implemented");
@@ -718,7 +718,7 @@ impl SimpleRuleEngine {
     }
 
     /// Store a rule
-    pub async fn store_rule(&self, rule: &SimpleRule) -> Result<()> {
+    pub async fn store_rule(&self, rule: &Rule) -> Result<()> {
         let rule_key = format!("rulesrv:rule:{}", rule.id);
         let rule_json = serde_json::to_string(rule).map_err(|e| {
             RulesrvError::RuleParsingError(format!("Failed to serialize rule: {}", e))

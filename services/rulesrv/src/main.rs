@@ -1,16 +1,14 @@
-mod actions;
 mod api;
 mod config;
 mod engine;
 mod error;
 mod redis;
-mod rules;
 
-use crate::api::{ApiServer, SimpleApiServer};
+use crate::api::ApiServer;
 use crate::config::Config;
-use crate::engine::{RuleExecutor, SimpleRuleEngine};
+use crate::engine::RuleEngine;
 use crate::error::{Result, RulesrvError};
-use crate::redis::{RedisStore, RedisSubscriber};
+use crate::redis::RedisStore;
 
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
@@ -30,11 +28,8 @@ struct Args {
 
 #[derive(Debug, Subcommand)]
 enum Commands {
-    /// Run in service mode (default: simple engine)
+    /// Run in service mode (default)
     Service,
-
-    /// Run in service mode with DAG engine
-    ServiceDag,
 
     /// Start API server only
     Api,
@@ -48,7 +43,7 @@ enum Commands {
         rule_id: String,
     },
 
-    /// Execute a specific rule once (simple engine)
+    /// Execute a specific rule once
     Execute {
         /// Rule ID to execute
         rule_id: String,
@@ -77,9 +72,6 @@ async fn main() -> Result<()> {
     // Run command
     match args.command {
         Some(Commands::Service) | None => {
-            run_simple_service(&config).await?;
-        }
-        Some(Commands::ServiceDag) => {
             run_service(&config).await?;
         }
         Some(Commands::Api) => {
@@ -92,33 +84,33 @@ async fn main() -> Result<()> {
             test_rule(&config, &rule_id).await?;
         }
         Some(Commands::Execute { rule_id }) => {
-            execute_simple_rule(&config, &rule_id).await?;
+            execute_rule(&config, &rule_id).await?;
         }
     }
 
     Ok(())
 }
 
-/// Run the simplified rules service
-async fn run_simple_service(config: &Config) -> Result<()> {
-    info!("Starting Simple Rules Service");
+/// Run the rules service
+async fn run_service(config: &Config) -> Result<()> {
+    info!("Starting Rules Service");
 
     // Create Redis store
-    let store = Arc::new(RedisStore::new(&config.redis_url, None)?);
+    let store =
+        Arc::new(RedisStore::new(&config.redis_url, None).map_err(|e| {
+            RulesrvError::ConfigError(format!("Failed to create Redis store: {}", e))
+        })?);
 
-    // Create simple rule engine
-    let engine = SimpleRuleEngine::new(store.clone());
-
-    // TODO: Add Redis subscriber for rule triggers
-    // For now, this runs as a simple service that executes rules on demand
+    // Create rule engine
+    let engine = RuleEngine::new(store.clone());
 
     info!(
-        "Simple Rules Service started, API available at http://0.0.0.0:{}",
+        "Rules Service started, API available at http://0.0.0.0:{}",
         config.service.api_port
     );
 
-    // Start Simple API server
-    let api_server = SimpleApiServer::new(
+    // Start API server
+    let api_server = ApiServer::new(
         engine,
         store.clone(),
         config.service.api_port,
@@ -130,52 +122,14 @@ async fn run_simple_service(config: &Config) -> Result<()> {
     Ok(())
 }
 
-/// Run the traditional DAG rules service
-async fn run_service(config: &Config) -> Result<()> {
-    info!("Starting Rules Service in service mode");
-
-    // Create Redis store
-    let store = Arc::new(RedisStore::new(&config.redis_url, None)?);
-
-    // Create rule executor
-    let executor = Arc::new(RuleExecutor::new(store.clone()));
-
-    // Start Redis subscriber
-    let mut subscriber = RedisSubscriber::new(&config.redis_url, executor.clone())?;
-    subscriber.start().await?;
-
-    // Start API server in a separate task
-    let api_server = ApiServer::new(
-        executor.clone(),
-        store.clone(),
-        config.service.api_port,
-        config.api.clone(),
-    );
-    let api_port = config.service.api_port;
-
-    let api_handle = tokio::spawn(async move { api_server.start().await });
-
-    info!(
-        "Rules service started, API server available at http://0.0.0.0:{}",
-        api_port
-    );
-
-    // Keep the subscriber alive and wait for the API server
-    api_handle
-        .await
-        .map_err(|e| RulesrvError::InternalError(e.into()))??;
-
-    // Clean shutdown
-    subscriber.stop().await?;
-
-    Ok(())
-}
-
 /// Start API server only
 async fn start_api_server(config: &Config) -> Result<()> {
-    let store = Arc::new(RedisStore::new(&config.redis_url, None)?);
-    let executor = Arc::new(RuleExecutor::new(store.clone()));
-    let api_server = ApiServer::new(executor, store, config.service.api_port, config.api.clone());
+    let store =
+        Arc::new(RedisStore::new(&config.redis_url, None).map_err(|e| {
+            RulesrvError::ConfigError(format!("Failed to create Redis store: {}", e))
+        })?);
+    let engine = RuleEngine::new(store.clone());
+    let api_server = ApiServer::new(engine, store, config.service.api_port, config.api.clone());
 
     info!("Starting API server on port {}", config.service.api_port);
     api_server.start().await?;
@@ -185,9 +139,12 @@ async fn start_api_server(config: &Config) -> Result<()> {
 
 /// List all rules
 async fn list_rules(config: &Config) -> Result<()> {
-    let store = Arc::new(RedisStore::new(&config.redis_url, None)?);
-    let executor = RuleExecutor::new(store);
-    let rules = executor.list_rules().await?;
+    let store =
+        Arc::new(RedisStore::new(&config.redis_url, None).map_err(|e| {
+            RulesrvError::ConfigError(format!("Failed to create Redis store: {}", e))
+        })?);
+    let engine = RuleEngine::new(store);
+    let rules = engine.list_rules().await?;
 
     println!("Available rules:");
     for rule in rules {
@@ -204,21 +161,48 @@ async fn list_rules(config: &Config) -> Result<()> {
 
 /// Test a specific rule
 async fn test_rule(config: &Config, rule_id: &str) -> Result<()> {
-    let store = Arc::new(RedisStore::new(&config.redis_url, None)?);
-    let _executor = RuleExecutor::new(store);
+    let store =
+        Arc::new(RedisStore::new(&config.redis_url, None).map_err(|e| {
+            RulesrvError::ConfigError(format!("Failed to create Redis store: {}", e))
+        })?);
+    let mut engine = RuleEngine::new(store);
 
     println!("Testing rule: {}", rule_id);
 
-    // TODO: Implement rule testing logic
-    println!("Rule test not implemented yet");
+    match engine.execute_rule(rule_id).await {
+        Ok(result) => {
+            println!("Rule test completed:");
+            println!("  Execution ID: {}", result.execution_id);
+            println!("  Conditions met: {}", result.conditions_met);
+            println!("  Success: {}", result.success);
+            println!("  Duration: {}ms", result.duration_ms);
+
+            if !result.actions_executed.is_empty() {
+                println!("  Actions executed:");
+                for action in &result.actions_executed {
+                    println!("    - {}", action);
+                }
+            }
+
+            if let Some(error) = &result.error {
+                println!("  Error: {}", error);
+            }
+        }
+        Err(e) => {
+            println!("Rule test failed: {}", e);
+        }
+    }
 
     Ok(())
 }
 
-/// Execute a specific rule using the simple engine
-async fn execute_simple_rule(config: &Config, rule_id: &str) -> Result<()> {
-    let store = Arc::new(RedisStore::new(&config.redis_url, None)?);
-    let mut engine = SimpleRuleEngine::new(store);
+/// Execute a specific rule
+async fn execute_rule(config: &Config, rule_id: &str) -> Result<()> {
+    let store =
+        Arc::new(RedisStore::new(&config.redis_url, None).map_err(|e| {
+            RulesrvError::ConfigError(format!("Failed to create Redis store: {}", e))
+        })?);
+    let mut engine = RuleEngine::new(store);
 
     println!("Executing rule: {}", rule_id);
 

@@ -88,7 +88,7 @@ pub async fn start_communication_service(
     info!("DEBUG: start_communication_service called");
 
     // Get channel configurations
-    let configs = config_manager.channels().to_vec();
+    let configs = config_manager.channels();
 
     if configs.is_empty() {
         warn!("No channels configured");
@@ -109,7 +109,7 @@ pub async fn start_communication_service(
 
         let factory_guard = factory.write().await;
         match factory_guard
-            .create_channel(&channel_config, Some(&*config_manager))
+            .create_channel(channel_config, Some(&*config_manager))
             .await
         {
             Ok(_) => {

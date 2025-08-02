@@ -103,8 +103,6 @@ pub struct ModelDetailResponse {
     pub description: String,
     pub monitoring: HashMap<String, PointConfig>,
     pub control: HashMap<String, PointConfig>,
-    pub created_at: Option<i64>,
-    pub updated_at: Option<i64>,
 }
 
 /// Generic success response
@@ -213,8 +211,6 @@ pub async fn get_model(
         description: model.description.clone(),
         monitoring: model.monitoring_config.clone(),
         control: model.control_config.clone(),
-        created_at: None, // TODO: Get from ModelManager
-        updated_at: None, // TODO: Get from ModelManager
     }))
 }
 
@@ -252,8 +248,6 @@ pub async fn create_model(
         description: request.description,
         monitoring: request.monitoring,
         control: request.control,
-        created_at: Some(chrono::Utc::now().timestamp()),
-        updated_at: Some(chrono::Utc::now().timestamp()),
     }))
 }
 
@@ -298,8 +292,6 @@ pub async fn update_model(
         description: updated_config.description,
         monitoring: updated_config.monitoring,
         control: updated_config.control,
-        created_at: None,
-        updated_at: Some(chrono::Utc::now().timestamp()),
     }))
 }
 

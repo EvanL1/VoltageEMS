@@ -8,15 +8,15 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::sync::Arc;
+use tokio::sync::RwLock;
 use tracing::{debug, info};
 
-use crate::engine::RuleExecutor;
+use crate::engine::{Rule, RuleEngine};
 use crate::redis::RedisStore;
-use crate::rules::{Rule, RuleGroup};
 
-/// API state shared across handlers
+/// API state for the rule engine
 pub struct ApiState {
-    pub executor: Arc<RuleExecutor>,
+    pub engine: Arc<RwLock<RuleEngine>>,
     pub store: Arc<RedisStore>,
 }
 
@@ -57,8 +57,8 @@ pub fn handle_result<T: Serialize>(result: Result<T>) -> impl IntoResponse {
 /// List rules query parameters
 #[derive(Debug, Deserialize)]
 pub struct ListRulesQuery {
-    pub group_id: Option<String>,
     pub enabled: Option<bool>,
+    pub limit: Option<usize>,
 }
 
 /// List all rules
@@ -67,16 +67,17 @@ pub async fn list_rules(
     Query(query): Query<ListRulesQuery>,
 ) -> impl IntoResponse {
     let result = async {
-        let mut rules = state.store.list_rules().await?;
-
-        // Filter by group if specified
-        if let Some(group_id) = query.group_id {
-            rules.retain(|r| r.group_id.as_ref() == Some(&group_id));
-        }
+        let engine = state.engine.read().await;
+        let mut rules = engine.list_rules().await?;
 
         // Filter by enabled status if specified
         if let Some(enabled) = query.enabled {
             rules.retain(|r| r.enabled == enabled);
+        }
+
+        // Apply limit if specified
+        if let Some(limit) = query.limit {
+            rules.truncate(limit);
         }
 
         Ok::<Vec<Rule>, anyhow::Error>(rules)
@@ -92,8 +93,12 @@ pub async fn get_rule(
     Path(rule_id): Path<String>,
 ) -> impl IntoResponse {
     let result = async {
-        match state.store.get_rule(&rule_id).await? {
-            Some(rule) => Ok(rule),
+        let rule_key = format!("rulesrv:rule:{}", rule_id);
+        match state.store.get_string(&rule_key).await? {
+            Some(rule_json) => {
+                let rule: Rule = serde_json::from_str(&rule_json)?;
+                Ok(rule)
+            }
             None => Err(anyhow::anyhow!("Rule not found: {}", rule_id)),
         }
     }
@@ -121,13 +126,19 @@ pub async fn create_rule(
             return Err(anyhow::anyhow!("Rule ID cannot be empty"));
         }
 
+        if rule.name.is_empty() {
+            return Err(anyhow::anyhow!("Rule name cannot be empty"));
+        }
+
         // Check if rule already exists
-        if state.store.get_rule(&rule.id).await?.is_some() {
+        let rule_key = format!("rulesrv:rule:{}", rule.id);
+        if state.store.get_string(&rule_key).await?.is_some() {
             return Err(anyhow::anyhow!("Rule already exists: {}", rule.id));
         }
 
-        // Save rule
-        state.store.save_rule(&rule).await?;
+        // Store rule
+        let engine = state.engine.read().await;
+        engine.store_rule(&rule).await?;
 
         info!("Created rule: {} ({})", rule.name, rule.id);
         Ok(rule)
@@ -158,12 +169,14 @@ pub async fn update_rule(
         }
 
         // Check if rule exists
-        if state.store.get_rule(&rule_id).await?.is_none() {
+        let rule_key = format!("rulesrv:rule:{}", rule_id);
+        if state.store.get_string(&rule_key).await?.is_none() {
             return Err(anyhow::anyhow!("Rule not found: {}", rule_id));
         }
 
         // Update rule
-        state.store.save_rule(&rule).await?;
+        let engine = state.engine.read().await;
+        engine.store_rule(&rule).await?;
 
         info!("Updated rule: {} ({})", rule.name, rule.id);
         Ok(rule)
@@ -179,14 +192,22 @@ pub async fn delete_rule(
     Path(rule_id): Path<String>,
 ) -> impl IntoResponse {
     let result = async {
-        let deleted = state.store.delete_rule(&rule_id).await?;
+        let rule_key = format!("rulesrv:rule:{}", rule_id);
 
-        if deleted {
-            info!("Deleted rule: {}", rule_id);
-            Ok(json!({ "deleted": true }))
-        } else {
-            Err(anyhow::anyhow!("Rule not found: {}", rule_id))
+        // Check if rule exists
+        if state.store.get_string(&rule_key).await?.is_none() {
+            return Err(anyhow::anyhow!("Rule not found: {}", rule_id));
         }
+
+        // Delete rule
+        state.store.delete(&rule_key).await?;
+
+        // Also delete any execution results and statistics
+        let stats_key = format!("rulesrv:rule:{}:stats", rule_id);
+        let _ = state.store.delete(&stats_key).await;
+
+        info!("Deleted rule: {}", rule_id);
+        Ok(json!({ "deleted": true }))
     }
     .await;
 
@@ -196,22 +217,22 @@ pub async fn delete_rule(
 /// Execute rule request
 #[derive(Debug, Deserialize)]
 pub struct ExecuteRuleRequest {
-    pub input: Option<Value>,
+    /// Optional context data for rule evaluation
+    #[allow(dead_code)]
+    pub context: Option<Value>,
 }
 
 /// Execute a rule
 pub async fn execute_rule(
     State(state): State<Arc<ApiState>>,
     Path(rule_id): Path<String>,
-    Json(request): Json<ExecuteRuleRequest>,
+    Json(_request): Json<ExecuteRuleRequest>,
 ) -> impl IntoResponse {
     let result = async {
-        debug!(
-            "Executing rule: {} with input: {:?}",
-            rule_id, request.input
-        );
+        debug!("Executing rule: {}", rule_id);
 
-        let result = state.executor.execute_rule(&rule_id, request.input).await?;
+        let mut engine = state.engine.write().await;
+        let result = engine.execute_rule(&rule_id).await?;
 
         Ok(result)
     }
@@ -224,7 +245,8 @@ pub async fn execute_rule(
 #[derive(Debug, Deserialize)]
 pub struct TestRuleRequest {
     pub rule: Rule,
-    pub input: Option<Value>,
+    #[allow(dead_code)]
+    pub context: Option<Value>,
 }
 
 /// Test a rule without saving
@@ -232,28 +254,35 @@ pub async fn test_rule(
     State(state): State<Arc<ApiState>>,
     Json(request): Json<TestRuleRequest>,
 ) -> impl IntoResponse {
-    let rule = request.rule;
-    let input = request.input;
+    let result = async {
+        let rule = request.rule;
 
-    debug!("Testing rule: {} with input: {:?}", rule.name, input);
+        debug!("Testing rule: {}", rule.name);
 
-    // Temporarily save rule for testing
-    let temp_id = format!("test_{}", uuid::Uuid::new_v4());
-    let mut test_rule = rule.clone();
-    test_rule.id = temp_id.clone();
+        // Create a temporary rule ID for testing
+        let temp_id = format!("test_{}", uuid::Uuid::new_v4());
+        let mut test_rule = rule.clone();
+        test_rule.id = temp_id.clone();
 
-    let save_result = state.store.save_rule(&test_rule).await;
-    if let Err(e) = save_result {
-        return handle_result::<Value>(Err(e));
+        // Temporarily store the rule
+        let engine = state.engine.read().await;
+        engine.store_rule(&test_rule).await?;
+        drop(engine);
+
+        // Execute the test rule
+        let mut engine = state.engine.write().await;
+        let result = engine.execute_rule(&temp_id).await;
+        drop(engine);
+
+        // Clean up the temporary rule
+        let temp_key = format!("rulesrv:rule:{}", temp_id);
+        let _ = state.store.delete(&temp_key).await;
+
+        result.map_err(|e| e.into())
     }
+    .await;
 
-    // Execute test
-    let result = state.executor.execute_rule(&temp_id, input).await;
-
-    // Clean up
-    let _ = state.store.delete_rule(&temp_id).await;
-
-    handle_result(result.map_err(|e| e.into()))
+    handle_result(result)
 }
 
 /// Get rule execution history
@@ -263,10 +292,26 @@ pub async fn get_rule_history(
     Query(query): Query<ListHistoryQuery>,
 ) -> impl IntoResponse {
     let result = async {
-        let limit = query.limit.unwrap_or(100).min(1000);
-        let history = state.store.get_execution_history(&rule_id, limit).await?;
+        let _limit = query.limit.unwrap_or(100).min(1000);
 
-        Ok(history)
+        // TODO: Implement proper history retrieval
+        // For now, return basic stats
+        let stats_key = format!("rulesrv:rule:{}:stats", rule_id);
+        match state.store.get_string(&stats_key).await? {
+            Some(stats_json) => {
+                let stats: Value = serde_json::from_str(&stats_json)?;
+                Ok(json!({
+                    "rule_id": rule_id,
+                    "stats": stats,
+                    "history": []
+                }))
+            }
+            None => Ok(json!({
+                "rule_id": rule_id,
+                "stats": {},
+                "history": []
+            })),
+        }
     }
     .await;
 
@@ -279,89 +324,28 @@ pub struct ListHistoryQuery {
     pub limit: Option<usize>,
 }
 
-/// List all rule groups
-pub async fn list_rule_groups(State(state): State<Arc<ApiState>>) -> impl IntoResponse {
-    let result = state.store.list_rule_groups().await;
-    handle_result(result)
-}
-
-/// Get a specific rule group
-pub async fn get_rule_group(
+/// Get rule statistics
+pub async fn get_rule_stats(
     State(state): State<Arc<ApiState>>,
-    Path(group_id): Path<String>,
+    Path(rule_id): Path<String>,
 ) -> impl IntoResponse {
     let result = async {
-        match state.store.get_rule_group(&group_id).await? {
-            Some(group) => Ok(group),
-            None => Err(anyhow::anyhow!("Rule group not found: {}", group_id)),
+        let stats_key = format!("rulesrv:rule:{}:stats", rule_id);
+        match state.store.get_string(&stats_key).await? {
+            Some(stats_json) => {
+                let stats: Value = serde_json::from_str(&stats_json)?;
+                Ok(stats)
+            }
+            None => Ok(json!({
+                "rule_id": rule_id,
+                "last_execution": null,
+                "last_result": null,
+                "conditions_met": null
+            })),
         }
     }
     .await;
 
-    handle_result(result)
-}
-
-/// Create rule group request
-#[derive(Debug, Deserialize)]
-pub struct CreateRuleGroupRequest {
-    pub group: RuleGroup,
-}
-
-/// Create a new rule group
-pub async fn create_rule_group(
-    State(state): State<Arc<ApiState>>,
-    Json(request): Json<CreateRuleGroupRequest>,
-) -> impl IntoResponse {
-    let result = async {
-        let group = request.group;
-
-        // Validate group
-        if group.id.is_empty() {
-            return Err(anyhow::anyhow!("Group ID cannot be empty"));
-        }
-
-        // Check if group already exists
-        if state.store.get_rule_group(&group.id).await?.is_some() {
-            return Err(anyhow::anyhow!("Rule group already exists: {}", group.id));
-        }
-
-        // Save group
-        state.store.save_rule_group(&group).await?;
-
-        info!("Created rule group: {} ({})", group.name, group.id);
-        Ok(group)
-    }
-    .await;
-
-    handle_result(result)
-}
-
-/// Delete a rule group
-pub async fn delete_rule_group(
-    State(state): State<Arc<ApiState>>,
-    Path(group_id): Path<String>,
-) -> impl IntoResponse {
-    let result = async {
-        let deleted = state.store.delete_rule_group(&group_id).await?;
-
-        if deleted {
-            info!("Deleted rule group: {}", group_id);
-            Ok(json!({ "deleted": true }))
-        } else {
-            Err(anyhow::anyhow!("Rule group not found: {}", group_id))
-        }
-    }
-    .await;
-
-    handle_result(result)
-}
-
-/// Get rules in a group
-pub async fn get_group_rules(
-    State(state): State<Arc<ApiState>>,
-    Path(group_id): Path<String>,
-) -> impl IntoResponse {
-    let result = state.store.get_group_rules(&group_id).await;
     handle_result(result)
 }
 
@@ -370,14 +354,15 @@ pub async fn get_group_rules(
 pub struct HealthResponse {
     pub status: String,
     pub version: String,
+    pub engine: String,
     pub redis_connected: bool,
 }
 
-/// Health check endpoint
+/// Health check endpoint for rule engine
 pub async fn health_check(State(state): State<Arc<ApiState>>) -> impl IntoResponse {
     let redis_connected = state
         .store
-        .list_rules()
+        .get_string("rulesrv:health_check")
         .await
         .map(|_| true)
         .unwrap_or(false);
@@ -385,8 +370,142 @@ pub async fn health_check(State(state): State<Arc<ApiState>>) -> impl IntoRespon
     let response = HealthResponse {
         status: "ok".to_string(),
         version: env!("CARGO_PKG_VERSION").to_string(),
+        engine: "rule_engine".to_string(),
         redis_connected,
     };
 
+    (StatusCode::OK, Json(response))
+}
+
+/// Example rules response for documentation
+#[derive(Debug, Serialize)]
+pub struct ExampleRulesResponse {
+    pub examples: Vec<Rule>,
+}
+
+/// Get example rules for documentation/testing
+pub async fn get_example_rules() -> impl IntoResponse {
+    use crate::engine::{
+        ActionConfig, ActionType, ComparisonOperator, Condition, ConditionGroup, LogicOperator,
+        Rule, RuleAction,
+    };
+
+    let examples = vec![
+        Rule {
+            id: "battery_low_start_generator".to_string(),
+            name: "Start Generator on Low Battery".to_string(),
+            description: Some(
+                "Start diesel generator when battery SOC drops below 20%".to_string(),
+            ),
+            conditions: ConditionGroup {
+                operator: LogicOperator::And,
+                conditions: vec![Condition {
+                    source: "battery.soc".to_string(),
+                    operator: ComparisonOperator::LessThanOrEqual,
+                    value: json!(20.0),
+                    description: Some("Battery SOC at or below 20%".to_string()),
+                }],
+            },
+            actions: vec![
+                RuleAction {
+                    action_type: ActionType::DeviceControl,
+                    config: ActionConfig::DeviceControl {
+                        device_id: "generator_001".to_string(),
+                        channel: "control".to_string(),
+                        point: "start".to_string(),
+                        value: json!(true),
+                    },
+                    description: Some("Start the diesel generator".to_string()),
+                },
+                RuleAction {
+                    action_type: ActionType::Notify,
+                    config: ActionConfig::Notify {
+                        level: "info".to_string(),
+                        message: "Diesel generator started due to low battery SOC".to_string(),
+                        recipients: None,
+                    },
+                    description: Some("Send notification".to_string()),
+                },
+            ],
+            enabled: true,
+            priority: 1,
+            cooldown_seconds: Some(300), // 5 minutes cooldown
+        },
+        Rule {
+            id: "battery_high_stop_generator".to_string(),
+            name: "Stop Generator on High Battery".to_string(),
+            description: Some("Stop diesel generator when battery SOC reaches 80%".to_string()),
+            conditions: ConditionGroup {
+                operator: LogicOperator::And,
+                conditions: vec![Condition {
+                    source: "battery.soc".to_string(),
+                    operator: ComparisonOperator::GreaterThanOrEqual,
+                    value: json!(80.0),
+                    description: Some("Battery SOC at or above 80%".to_string()),
+                }],
+            },
+            actions: vec![
+                RuleAction {
+                    action_type: ActionType::DeviceControl,
+                    config: ActionConfig::DeviceControl {
+                        device_id: "generator_001".to_string(),
+                        channel: "control".to_string(),
+                        point: "stop".to_string(),
+                        value: json!(true),
+                    },
+                    description: Some("Stop the diesel generator".to_string()),
+                },
+                RuleAction {
+                    action_type: ActionType::Notify,
+                    config: ActionConfig::Notify {
+                        level: "info".to_string(),
+                        message: "Diesel generator stopped - battery fully charged".to_string(),
+                        recipients: None,
+                    },
+                    description: Some("Send notification".to_string()),
+                },
+            ],
+            enabled: true,
+            priority: 1,
+            cooldown_seconds: Some(300), // 5 minutes cooldown
+        },
+        Rule {
+            id: "voltage_monitoring".to_string(),
+            name: "Voltage Monitoring Alert".to_string(),
+            description: Some(
+                "Alert when voltage drops below threshold or rises above limit".to_string(),
+            ),
+            conditions: ConditionGroup {
+                operator: LogicOperator::Or,
+                conditions: vec![
+                    Condition {
+                        source: "comsrv:1001:V".to_string(),
+                        operator: ComparisonOperator::LessThan,
+                        value: json!(220.0),
+                        description: Some("Voltage below 220V".to_string()),
+                    },
+                    Condition {
+                        source: "comsrv:1001:V".to_string(),
+                        operator: ComparisonOperator::GreaterThan,
+                        value: json!(250.0),
+                        description: Some("Voltage above 250V".to_string()),
+                    },
+                ],
+            },
+            actions: vec![RuleAction {
+                action_type: ActionType::Publish,
+                config: ActionConfig::Publish {
+                    channel: "ems:alerts".to_string(),
+                    message: "Voltage out of normal range".to_string(),
+                },
+                description: Some("Send voltage alert".to_string()),
+            }],
+            enabled: true,
+            priority: 2,
+            cooldown_seconds: Some(60), // 1 minute cooldown
+        },
+    ];
+
+    let response = ExampleRulesResponse { examples };
     (StatusCode::OK, Json(response))
 }

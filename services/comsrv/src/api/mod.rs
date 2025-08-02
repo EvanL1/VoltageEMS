@@ -101,10 +101,6 @@
 //! }
 //! ```
 
-// Legacy API modules - temporarily disabled
-// pub mod handlers;
-// pub mod routes;
-
 // Active API modules
 pub mod models;
 pub mod routes;

@@ -50,7 +50,7 @@ async fn proxy_handler(
     let mut proxy_req = app_state
         .http_client
         .request(parts.method, &target_url)
-        .body(body_bytes.to_vec());
+        .body(body_bytes);
 
     // 复制请求头（除了Host和Authorization）
     for (name, value) in &parts.headers {

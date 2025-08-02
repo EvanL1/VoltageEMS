@@ -19,7 +19,6 @@ tokio = { workspace = true }
 
 # Web framework
 axum = { workspace = true }
-tower = { workspace = true }
 
 # Serialization
 serde = { workspace = true }
@@ -45,11 +44,6 @@ tracing-subscriber = { workspace = true }
 # Error handling
 anyhow = { workspace = true }
 
-# Configuration
-config = { workspace = true }
 
-# Utilities
-futures = { workspace = true }
 
-[dev-dependencies]
-tower = { workspace = true, features = ["util"] } 
+[dev-dependencies] 

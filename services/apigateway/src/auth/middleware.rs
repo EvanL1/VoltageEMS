@@ -4,9 +4,9 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use futures::future::BoxFuture;
-use log::debug;
 use std::task::{Context, Poll};
 use tower::{Layer, Service};
+use tracing::debug;
 
 use super::jwt::JwtManager;
 use crate::error::ApiError;
