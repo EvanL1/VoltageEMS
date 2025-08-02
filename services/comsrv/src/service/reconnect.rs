@@ -263,7 +263,7 @@ impl ReconnectHelper {
                 self.stats.successful_reconnects += 1;
 
                 Ok(())
-            }
+            },
             Err(e) => {
                 // 连接失败
                 warn!(
@@ -283,7 +283,7 @@ impl ReconnectHelper {
                 }
 
                 Err(ReconnectError::ConnectionFailed(e.to_string()))
-            }
+            },
         }
     }
 

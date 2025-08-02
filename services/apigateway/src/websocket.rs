@@ -56,7 +56,8 @@ async fn handle_socket(mut socket: WebSocket, _app_state: AppState, claims: Clai
                     if let Ok(msg) = serde_json::from_str::<WsMessage>(text) {
                         match msg {
                             WsMessage::Ping => {
-                                let pong = serde_json::to_string(&WsMessage::Pong).unwrap();
+                                let pong = serde_json::to_string(&WsMessage::Pong)
+                                    .expect("serializing Pong message should not fail");
                                 if socket
                                     .send(axum::extract::ws::Message::Text(pong.into()))
                                     .await
@@ -64,20 +65,20 @@ async fn handle_socket(mut socket: WebSocket, _app_state: AppState, claims: Clai
                                 {
                                     break;
                                 }
-                            }
+                            },
                             WsMessage::Subscribe { patterns } => {
                                 info!("User {} subscribing to: {:?}", claims.sub, patterns);
                                 // TODO: 实现Redis订阅逻辑
-                            }
-                            _ => {}
+                            },
+                            _ => {},
                         }
                     }
                 }
-            }
+            },
             Err(e) => {
                 warn!("WebSocket error: {}", e);
                 break;
-            }
+            },
         }
     }
 

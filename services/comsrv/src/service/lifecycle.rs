@@ -8,7 +8,7 @@ use crate::utils::Result;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 
 /// Start the communication service with optimized performance and monitoring
 ///
@@ -85,7 +85,7 @@ pub async fn start_communication_service(
     config_manager: Arc<ConfigManager>,
     factory: Arc<RwLock<ProtocolFactory>>,
 ) -> Result<()> {
-    info!("DEBUG: start_communication_service called");
+    debug!("start_communication_service called");
 
     // Get channel configurations
     let configs = config_manager.channels();
@@ -115,14 +115,14 @@ pub async fn start_communication_service(
             Ok(_) => {
                 info!("Channel created successfully: {}", channel_config.id);
                 successful_channels += 1;
-            }
+            },
             Err(e) => {
                 error!("Failed to create channel {}: {e}", channel_config.id);
                 failed_channels += 1;
 
                 // Continue with other channels instead of failing completely
                 continue;
-            }
+            },
         }
         drop(factory_guard); // Release the lock for each iteration
     }
@@ -141,11 +141,11 @@ pub async fn start_communication_service(
     match factory_guard.connect_all_channels().await {
         Ok(()) => {
             info!("All channel connections completed successfully");
-        }
+        },
         Err(e) => {
             error!("Some channel connections failed: {}", e);
             // Connection failure should not prevent service startup, continue running
-        }
+        },
     }
     drop(factory_guard);
 

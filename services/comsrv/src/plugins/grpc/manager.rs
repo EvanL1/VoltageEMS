@@ -160,7 +160,7 @@ impl PluginManager {
                         instance.endpoint, status.message
                     );
                 }
-            }
+            },
             Err(e) => {
                 error!(
                     "Health check failed for plugin at {}: {}",
@@ -168,7 +168,7 @@ impl PluginManager {
                 );
                 *instance.healthy.write().await = false;
                 *instance.last_check.write().await = std::time::Instant::now();
-            }
+            },
         }
     }
 

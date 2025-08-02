@@ -29,7 +29,7 @@ async fn main() -> Result<()> {
         Err(e) => {
             error!("Failed to load configuration: {}", e);
             std::process::exit(1);
-        }
+        },
     };
 
     info!("Starting Network Service: {}", config.service.name);

@@ -83,19 +83,29 @@ mod tests {
     #[tokio::test]
     async fn test_redis_store() {
         // 测试需要本地运行的 Redis 实例
-        let store = RedisStore::new("redis://127.0.0.1/", None).unwrap();
+        let store = RedisStore::new("redis://127.0.0.1/", None)
+            .expect("test Redis connection should succeed");
 
         // 测试字符串操作
         let key = "test:key";
         let value = "test_value";
 
-        store.set_string(key, value).await.unwrap();
-        let retrieved = store.get_string(key).await.unwrap();
+        store
+            .set_string(key, value)
+            .await
+            .expect("set_string should succeed");
+        let retrieved = store
+            .get_string(key)
+            .await
+            .expect("get_string should succeed");
         assert_eq!(retrieved, Some(value.to_string()));
 
         // 清理
-        store.delete(key).await.unwrap();
-        let deleted = store.get_string(key).await.unwrap();
+        store.delete(key).await.expect("delete should succeed");
+        let deleted = store
+            .get_string(key)
+            .await
+            .expect("get_string after delete should succeed");
         assert_eq!(deleted, None);
     }
 }

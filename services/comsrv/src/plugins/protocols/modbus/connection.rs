@@ -35,19 +35,19 @@ impl ModbusConnection {
 
                 info!("Successfully connected to Modbus TCP endpoint: {}", addr);
                 Ok(ModbusConnection::Tcp(stream))
-            }
+            },
             Ok(Err(e)) => {
                 error!("Failed to connect to {}: {}", addr, e);
                 Err(ComSrvError::ConnectionError(format!(
                     "Failed to connect to {addr}: {e}"
                 )))
-            }
+            },
             Err(_) => {
                 warn!("Connection to {} timed out", addr);
                 Err(ComSrvError::TimeoutError(format!(
                     "Connection to {addr} timed out"
                 )))
-            }
+            },
         }
     }
 
@@ -90,13 +90,13 @@ impl ModbusConnection {
             Ok(serial_port) => {
                 info!("Successfully opened serial port: {}", port);
                 Ok(ModbusConnection::Rtu(serial_port))
-            }
+            },
             Err(e) => {
                 error!("Failed to open serial port {}: {}", port, e);
                 Err(ComSrvError::ConnectionError(format!(
                     "Failed to open serial port {port}: {e}"
                 )))
-            }
+            },
         }
     }
 
@@ -109,7 +109,7 @@ impl ModbusConnection {
                     ComSrvError::IoError(format!("TCP send error: {e}"))
                 })?;
                 debug!("Sent {} bytes via TCP", data.len());
-            }
+            },
             ModbusConnection::Rtu(port) => {
                 port.write_all(data).await.map_err(|e| {
                     error!("Serial send error: {}", e);
@@ -120,7 +120,7 @@ impl ModbusConnection {
                     ComSrvError::IoError(format!("Serial flush error: {e}"))
                 })?;
                 debug!("Sent {} bytes via serial", data.len());
-            }
+            },
         }
         Ok(())
     }
@@ -142,35 +142,35 @@ impl ModbusConnection {
                         }
                         debug!("Received {} bytes via TCP", bytes);
                         Ok(bytes)
-                    }
+                    },
                     Ok(Err(e)) => {
                         error!("TCP receive error: {}", e);
                         Err(ComSrvError::IoError(format!("TCP receive error: {e}")))
-                    }
+                    },
                     Err(_) => {
                         debug!("TCP receive timeout");
                         Err(ComSrvError::TimeoutError("TCP receive timeout".to_string()))
-                    }
+                    },
                 }
-            }
+            },
             ModbusConnection::Rtu(port) => {
                 match timeout(timeout_duration, port.read(buffer)).await {
                     Ok(Ok(bytes)) => {
                         debug!("Received {} bytes via serial", bytes);
                         Ok(bytes)
-                    }
+                    },
                     Ok(Err(e)) => {
                         error!("Serial receive error: {}", e);
                         Err(ComSrvError::IoError(format!("Serial receive error: {e}")))
-                    }
+                    },
                     Err(_) => {
                         debug!("Serial receive timeout");
                         Err(ComSrvError::TimeoutError(
                             "Serial receive timeout".to_string(),
                         ))
-                    }
+                    },
                 }
-            }
+            },
         }
     }
 
@@ -251,7 +251,7 @@ impl ModbusConnectionManager {
                 })?;
 
                 ModbusConnection::connect_tcp(host, port, self.params.timeout).await?
-            }
+            },
             ModbusMode::Rtu => {
                 let device = self.params.device.as_ref().ok_or_else(|| {
                     ComSrvError::ConfigError("Serial device not specified".to_string())
@@ -270,7 +270,7 @@ impl ModbusConnectionManager {
                     self.params.timeout,
                 )
                 .await?
-            }
+            },
         };
 
         *conn = Some(new_conn);

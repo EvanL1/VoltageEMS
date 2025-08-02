@@ -138,8 +138,12 @@ impl ConfigManager {
         // Load configuration
         let config = if let Some(ref cc_client) = config_center {
             // Try to load from configuration center
-            let runtime = tokio::runtime::Handle::try_current()
-                .unwrap_or_else(|_| tokio::runtime::Runtime::new().unwrap().handle().clone());
+            let runtime = tokio::runtime::Handle::try_current().unwrap_or_else(|_| {
+                tokio::runtime::Runtime::new()
+                    .expect("failed to create tokio runtime")
+                    .handle()
+                    .clone()
+            });
 
             if let Ok(Some(remote_config)) = runtime.block_on(cc_client.get_config()) {
                 info!("Successfully loaded configuration from config center");
@@ -184,13 +188,13 @@ impl ConfigManager {
 
     /// Asynchronously initialize CSV configuration
     pub async fn initialize_csv(&mut self, config_dir: &Path) -> Result<()> {
-        eprintln!(
-            "DEBUG: initialize_csv called with config_dir: {}",
+        debug!(
+            "initialize_csv called with config_dir: {}",
             config_dir.display()
         );
         info!("Initializing CSV configurations");
         let result = Self::load_csv_configs(&mut self.config, config_dir, &self.csv_loader).await;
-        eprintln!("DEBUG: load_csv_configs returned: {:?}", result.is_ok());
+        debug!("load_csv_configs returned: {:?}", result.is_ok());
         result
     }
 
@@ -201,19 +205,14 @@ impl ConfigManager {
         csv_loader: &CachedCsvLoader,
     ) -> Result<()> {
         for channel in &mut config.channels {
-            eprintln!("DEBUG: Processing channel {}", channel.id);
+            debug!("Processing channel {}", channel.id);
             if let Some(ref table_config) = channel.table_config {
                 debug!("Loading CSV for channel {}", channel.id);
-                eprintln!("DEBUG: Channel {} has table_config", channel.id);
+                debug!("Channel {} has table_config", channel.id);
                 match Self::load_channel_tables_v2(table_config, config_dir, csv_loader).await {
                     Ok(points) => {
                         info!(
                             "Loaded {} four remote points for channel {}",
-                            points.len(),
-                            channel.id
-                        );
-                        eprintln!(
-                            "DEBUG: Loaded {} points for channel {}",
                             points.len(),
                             channel.id
                         );
@@ -222,20 +221,17 @@ impl ConfigManager {
                             let point_id = point.point_id;
                             if let Err(e) = channel.add_point(point) {
                                 warn!("Failed to add point: {}", e);
-                                eprintln!("DEBUG: Failed to add point {point_id}: {e}");
+                                debug!("Failed to add point {point_id}: {e}");
                             }
                         }
-                    }
+                    },
                     Err(e) => {
                         warn!("Failed to load CSV for channel {}: {}", channel.id, e);
-                        eprintln!(
-                            "DEBUG: Failed to load CSV for channel {}: {}",
-                            channel.id, e
-                        );
-                    }
+                        debug!("Failed to load CSV for channel {}: {}", channel.id, e);
+                    },
                 }
             } else {
-                eprintln!("DEBUG: Channel {} has no table_config", channel.id);
+                debug!("Channel {} has no table_config", channel.id);
             }
         }
         Ok(())
@@ -248,16 +244,13 @@ impl ConfigManager {
         csv_loader: &CachedCsvLoader,
     ) -> Result<Vec<CombinedPoint>> {
         info!("Loading CSV tables for channel using new loader");
-        eprintln!(
-            "DEBUG: load_channel_tables_v2 called with config_dir: {}",
+        debug!(
+            "load_channel_tables_v2 called with config_dir: {}",
             config_dir.display()
         );
-        eprintln!(
-            "DEBUG: four_remote_route: {}",
-            table_config.four_remote_route
-        );
-        eprintln!(
-            "DEBUG: protocol_mapping_route: {}",
+        debug!("four_remote_route: {}", table_config.four_remote_route);
+        debug!(
+            "protocol_mapping_route: {}",
             table_config.protocol_mapping_route
         );
 
@@ -266,7 +259,7 @@ impl ConfigManager {
             .map_or_else(|_| config_dir.to_path_buf(), PathBuf::from);
 
         debug!("Using CSV base directory: {}", base_dir.display());
-        eprintln!("DEBUG: Base directory for CSV: {}", base_dir.display());
+        debug!("Base directory for CSV: {}", base_dir.display());
 
         let mut combined = Vec::new();
 
@@ -275,8 +268,8 @@ impl ConfigManager {
         // Protocol mapping file path
         let protocol_base = base_dir.join(&table_config.protocol_mapping_route);
 
-        eprintln!("DEBUG: four_remote_base: {}", four_remote_base.display());
-        eprintln!("DEBUG: protocol_base: {}", protocol_base.display());
+        debug!("four_remote_base: {}", four_remote_base.display());
+        debug!("protocol_base: {}", protocol_base.display());
 
         // Load and merge telemetry points
         if let Ok(points) = Self::load_and_combine_telemetry(
@@ -337,16 +330,13 @@ impl ConfigManager {
         telemetry_type: &str,
         csv_loader: &CachedCsvLoader,
     ) -> Result<Vec<CombinedPoint>> {
-        eprintln!("DEBUG: load_and_combine_telemetry for {telemetry_type}");
-        eprintln!("DEBUG: four_remote_path: {}", four_remote_path.display());
-        eprintln!(
-            "DEBUG: protocol_mapping_path: {}",
-            protocol_mapping_path.display()
-        );
+        debug!("load_and_combine_telemetry for {telemetry_type}");
+        debug!("four_remote_path: {}", four_remote_path.display());
+        debug!("protocol_mapping_path: {}", protocol_mapping_path.display());
 
         // Check if file exists
-        eprintln!(
-            "DEBUG: Checking if four_remote_path exists: {} - {}",
+        debug!(
+            "Checking if four_remote_path exists: {} - {}",
             four_remote_path.display(),
             four_remote_path.exists()
         );
@@ -355,15 +345,11 @@ impl ConfigManager {
                 "Four remote file not found: {}, skipping",
                 four_remote_path.display()
             );
-            eprintln!(
-                "DEBUG: Four remote file not found: {}",
-                four_remote_path.display()
-            );
             return Ok(Vec::new());
         }
 
-        eprintln!(
-            "DEBUG: Checking if protocol_mapping_path exists: {} - {}",
+        debug!(
+            "Checking if protocol_mapping_path exists: {} - {}",
             protocol_mapping_path.display(),
             protocol_mapping_path.exists()
         );
@@ -372,15 +358,15 @@ impl ConfigManager {
                 "Protocol mapping file not found: {}, skipping",
                 protocol_mapping_path.display()
             );
-            eprintln!(
-                "DEBUG: Protocol mapping file not found: {}",
+            debug!(
+                "Protocol mapping file not found: {}",
                 protocol_mapping_path.display()
             );
             return Ok(Vec::new());
         }
 
         // Load four-telemetry file
-        eprintln!("DEBUG: Loading four_remote_path CSV...");
+        debug!("Loading four_remote_path CSV...");
         let remote_points: Vec<FourRemoteRecord> = csv_loader
             .load_csv_cached(four_remote_path)
             .await
@@ -389,31 +375,28 @@ impl ConfigManager {
                     "Failed to load {telemetry_type} four remote file: {e}"
                 ))
             })?;
-        eprintln!("DEBUG: Loaded {} four remote points", remote_points.len());
+        debug!("Loaded {} four remote points", remote_points.len());
 
         // Load protocol mapping file
-        eprintln!("DEBUG: Loading protocol_mapping_path CSV...");
+        debug!("Loading protocol_mapping_path CSV...");
         let modbus_mappings_result = csv_loader
             .load_csv_cached::<ModbusMappingRecord>(protocol_mapping_path)
             .await;
 
         let modbus_mappings = match modbus_mappings_result {
             Ok(mappings) => {
-                eprintln!(
-                    "DEBUG: Successfully loaded {} modbus mappings",
-                    mappings.len()
-                );
+                debug!("Successfully loaded {} modbus mappings", mappings.len());
                 if !mappings.is_empty() {
-                    eprintln!("DEBUG: First modbus mapping: {:?}", mappings[0]);
+                    debug!("First modbus mapping: {:?}", mappings[0]);
                 }
                 mappings
-            }
+            },
             Err(e) => {
-                eprintln!("DEBUG: Error loading modbus mappings: {e}");
+                debug!("Error loading modbus mappings: {e}");
                 return Err(ComSrvError::ConfigError(format!(
                     "Failed to load {telemetry_type} protocol mapping file: {e}"
                 )));
-            }
+            },
         };
 
         debug!(
@@ -422,16 +405,12 @@ impl ConfigManager {
             telemetry_type,
             modbus_mappings.len()
         );
-        eprintln!("DEBUG: Combining points...");
+        debug!("Combining points...");
 
         // Use PointMapper to merge points
         let combined =
             PointMapper::combine_modbus_points(remote_points, modbus_mappings, telemetry_type)?;
-        eprintln!(
-            "DEBUG: Combined {} points for {}",
-            combined.len(),
-            telemetry_type
-        );
+        debug!("Combined {} points for {}", combined.len(), telemetry_type);
 
         Ok(combined)
     }
@@ -917,7 +896,7 @@ mod tests {
         use tempfile::tempdir;
         use tokio::fs;
 
-        let dir = tempdir().unwrap();
+        let dir = tempdir().expect("failed to create temporary directory for test");
         let config_path = dir.path().join("test.yml");
 
         let config_content = r"
@@ -926,10 +905,15 @@ service:
   version: 1.0.0
 ";
 
-        fs::write(&config_path, config_content).await.unwrap();
+        fs::write(&config_path, config_content)
+            .await
+            .expect("failed to write test config file");
 
         let source = FileSystemSource::new(dir.path().to_string_lossy().to_string());
-        let config = source.fetch_config("test").await.unwrap();
+        let config = source
+            .fetch_config("test")
+            .await
+            .expect("failed to fetch test config");
 
         assert_eq!(config.version, "1.0.0");
         assert!(config.content.get("service").is_some());

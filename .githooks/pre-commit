@@ -23,37 +23,42 @@ if ! cargo fmt --all -- --check; then
 fi
 
 echo "🔍 Running clippy..."
-if ! cargo clippy --all-targets --all-features -- -D warnings; then
+if ! cargo clippy --all-targets --all-features -- -D warnings 2>/dev/null; then
     echo -e "${RED}❌ Clippy check failed!${NC}"
+    echo "Running clippy again to show errors:"
+    cargo clippy --all-targets --all-features -- -D warnings
     exit 1
 fi
 
-echo "🧪 Running tests..."
-if ! cargo test --workspace --quiet; then
-    echo -e "${RED}❌ Tests failed!${NC}"
-    exit 1
-fi
+# 测试应该在 CI 中运行，不在 pre-commit 中运行
+# echo "🧪 Running tests..."
+# if ! cargo test --workspace --quiet; then
+#     echo -e "${RED}❌ Tests failed!${NC}"
+#     exit 1
+# fi
 
 echo "🔎 Checking for common issues..."
 
-# 检查 println! 使用（生产代码应使用日志）
-PRINTLN_COUNT=$(git diff --cached --name-only | grep '\.rs$' | xargs grep -l "println!" 2>/dev/null | grep -v "src/bin/" | grep -v "examples/" | wc -l || true)
-if [ "$PRINTLN_COUNT" -gt 0 ]; then
-    echo -e "${YELLOW}⚠️  Warning: Found println! in production code (use tracing/log instead)${NC}"
-    git diff --cached --name-only | grep '\.rs$' | xargs grep -n "println!" 2>/dev/null | grep -v "src/bin/" | grep -v "examples/" || true
+# 检查 println! 使用（生产代码应使用日志）- 仅警告，不阻止提交
+PRINTLN_FILES=$(git diff --cached --name-only | grep '\.rs$' | xargs grep -l "println!" 2>/dev/null | grep -v "src/bin/" | grep -v "examples/" | grep -v "tests/" || true)
+if [ -n "$PRINTLN_FILES" ]; then
+    echo -e "${YELLOW}⚠️  Info: Found println! in the following files (consider using tracing/log):${NC}"
+    echo "$PRINTLN_FILES" | head -5
+    if [ $(echo "$PRINTLN_FILES" | wc -l) -gt 5 ]; then
+        echo "... and $(($(echo "$PRINTLN_FILES" | wc -l) - 5)) more files"
+    fi
 fi
 
-# 检查 unwrap() 使用
-UNWRAP_COUNT=$(git diff --cached --name-only | grep '\.rs$' | xargs grep -n "\.unwrap()" 2>/dev/null | grep -v "tests/" | grep -v "test_" | wc -l || true)
-if [ "$UNWRAP_COUNT" -gt 5 ]; then
-    echo -e "${YELLOW}⚠️  Warning: High usage of unwrap() detected (consider proper error handling)${NC}"
+# 检查 unwrap() 使用 - 提高阈值，更合理
+UNWRAP_COUNT=$(git diff --cached --name-only | grep '\.rs$' | xargs grep -n "\.unwrap()" 2>/dev/null | grep -v "tests/" | grep -v "test_" | grep -v "examples/" | wc -l || true)
+if [ "$UNWRAP_COUNT" -gt 20 ]; then
+    echo -e "${YELLOW}⚠️  Info: Many unwrap() calls detected ($UNWRAP_COUNT). Consider using ? or proper error handling where appropriate.${NC}"
 fi
 
-# 检查 TODO 注释
-TODO_COUNT=$(git diff --cached --name-only | grep '\.rs$' | xargs grep -n "TODO\|FIXME\|HACK\|XXX" 2>/dev/null | wc -l || true)
-if [ "$TODO_COUNT" -gt 0 ]; then
-    echo -e "${YELLOW}⚠️  Found TODO/FIXME comments:${NC}"
-    git diff --cached --name-only | grep '\.rs$' | xargs grep -n "TODO\|FIXME\|HACK\|XXX" 2>/dev/null || true
+# 检查 TODO 注释 - 仅显示新增的
+NEW_TODOS=$(git diff --cached -U0 | grep '^+' | grep -E 'TODO|FIXME|HACK|XXX' | wc -l || true)
+if [ "$NEW_TODOS" -gt 0 ]; then
+    echo -e "${YELLOW}ℹ️  Info: Found $NEW_TODOS new TODO/FIXME comments in this commit${NC}"
 fi
 
 # 检查大文件

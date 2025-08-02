@@ -3,21 +3,27 @@
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 /// Get current timestamp in milliseconds since Unix epoch
+///
+/// # Panics
+/// Panics if system time is before UNIX_EPOCH or if timestamp overflows u64
 pub fn current_timestamp_millis() -> u64 {
     u64::try_from(
         SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .expect("Time went backwards")
+            .unwrap_or_else(|_| Duration::from_secs(0))
             .as_millis(),
     )
-    .expect("Timestamp overflow")
+    .unwrap_or(u64::MAX)
 }
 
 /// Get current timestamp in seconds since Unix epoch
+///
+/// # Panics
+/// Panics if system time is before UNIX_EPOCH
 pub fn current_timestamp_secs() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .expect("Time went backwards")
+        .unwrap_or_else(|_| Duration::from_secs(0))
         .as_secs()
 }
 
@@ -91,7 +97,7 @@ where
                 }
                 tokio::time::sleep(delay).await;
                 delay = delay.saturating_mul(2);
-            }
+            },
         }
     }
 }

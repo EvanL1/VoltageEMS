@@ -174,18 +174,18 @@ where
                         Some(base_value) => {
                             // 递归合并
                             Self::merge_json_values(base_value, overlay_value);
-                        }
+                        },
                         None => {
                             // 新键，直接插入
                             base_map.insert(key.clone(), overlay_value.clone());
-                        }
+                        },
                     }
                 }
-            }
+            },
             (base, overlay) => {
                 // 其他类型直接替换
                 *base = overlay.clone();
-            }
+            },
         }
     }
 
@@ -282,7 +282,9 @@ mod tests {
 
     #[test]
     fn test_default_config() {
-        let config: TestConfig = ConfigLoader::new().build().unwrap();
+        let config: TestConfig = ConfigLoader::new()
+            .build()
+            .expect("Failed to build config with defaults");
         assert_eq!(config.name, "");
         assert_eq!(config.port, 0);
         assert_eq!(config.redis.url, "redis://localhost:6379");
@@ -295,7 +297,10 @@ mod tests {
         env::set_var("TEST_PORT", "8080");
         env::set_var("TEST_REDIS_URL", "redis://custom:6379");
 
-        let config: TestConfig = ConfigLoader::new().with_env_prefix("TEST").build().unwrap();
+        let config: TestConfig = ConfigLoader::new()
+            .with_env_prefix("TEST")
+            .build()
+            .expect("Failed to build config with env overrides");
 
         assert_eq!(config.name, "test-service");
         assert_eq!(config.port, 8080);

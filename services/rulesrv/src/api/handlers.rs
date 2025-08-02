@@ -98,7 +98,7 @@ pub async fn get_rule(
             Some(rule_json) => {
                 let rule: Rule = serde_json::from_str(&rule_json)?;
                 Ok(rule)
-            }
+            },
             None => Err(anyhow::anyhow!("Rule not found: {}", rule_id)),
         }
     }
@@ -305,7 +305,7 @@ pub async fn get_rule_history(
                     "stats": stats,
                     "history": []
                 }))
-            }
+            },
             None => Ok(json!({
                 "rule_id": rule_id,
                 "stats": {},
@@ -335,7 +335,7 @@ pub async fn get_rule_stats(
             Some(stats_json) => {
                 let stats: Value = serde_json::from_str(&stats_json)?;
                 Ok(stats)
-            }
+            },
             None => Ok(json!({
                 "rule_id": rule_id,
                 "last_execution": null,

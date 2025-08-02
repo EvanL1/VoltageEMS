@@ -210,11 +210,11 @@ impl AlarmService {
                 let alarm: Alarm = serde_json::from_str(&data)?;
                 debug!("Found alarm: {}", alarm_id);
                 Ok(Some(alarm))
-            }
+            },
             None => {
                 debug!("Alarm not found: {}", alarm_id);
                 Ok(None)
-            }
+            },
         }
     }
 

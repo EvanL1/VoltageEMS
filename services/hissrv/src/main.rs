@@ -57,7 +57,7 @@ async fn main() -> Result<()> {
     // Start API server (if enabled)
     let api_handle = if enable_api {
         let api_config = shared_config.clone();
-        let api_tx = tx.clone().unwrap();
+        let api_tx = tx.clone().expect("tx should be Some when API is enabled");
         let api_config_path = config_path.clone();
 
         tracing::info!("Starting configuration API server on port {}", api_port);
@@ -73,7 +73,7 @@ async fn main() -> Result<()> {
                 Err(e) => {
                     tracing::error!("Failed to bind API server: {}", e);
                     return;
-                }
+                },
             };
 
             if let Err(e) = axum::serve(listener, app.into_make_service()).await {
@@ -105,7 +105,7 @@ async fn main() -> Result<()> {
                 Err(e) => {
                     tracing::error!("Failed to create SIGHUP listener: {}", e);
                     return;
-                }
+                },
             };
 
             loop {
@@ -125,11 +125,11 @@ async fn main() -> Result<()> {
                             Ok(mut config) => {
                                 *config = new_config;
                                 tracing::info!("Configuration updated successfully");
-                            }
+                            },
                             Err(e) => {
                                 tracing::error!("Failed to acquire write lock: {}", e);
                                 continue;
-                            }
+                            },
                         }
 
                         // Notify poller (after lock is released)
@@ -138,10 +138,10 @@ async fn main() -> Result<()> {
                                 tracing::error!("Failed to notify poller: {}", e);
                             }
                         }
-                    }
+                    },
                     Err(e) => {
                         tracing::error!("Failed to reload configuration: {}", e);
-                    }
+                    },
                 }
             }
         }
@@ -151,10 +151,10 @@ async fn main() -> Result<()> {
     match signal::ctrl_c().await {
         Ok(()) => {
             tracing::info!("Received shutdown signal");
-        }
+        },
         Err(e) => {
             tracing::error!("Failed to listen for shutdown signal: {}", e);
-        }
+        },
     }
 
     // Graceful shutdown

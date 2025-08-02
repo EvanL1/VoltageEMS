@@ -73,10 +73,10 @@ where
                                 debug!("Token verified for user: {}", claims.username);
                                 request.extensions_mut().insert(claims);
                                 return inner.call(request).await;
-                            }
+                            },
                             Err(e) => {
                                 debug!("Token verification failed: {}", e);
-                            }
+                            },
                         }
                     }
                 }
@@ -91,10 +91,10 @@ where
                                 debug!("Token verified for user (from query): {}", claims.username);
                                 request.extensions_mut().insert(claims);
                                 return inner.call(request).await;
-                            }
+                            },
                             Err(e) => {
                                 debug!("Token verification failed (from query): {}", e);
-                            }
+                            },
                         }
                     }
                 }
@@ -114,10 +114,10 @@ where
                                     );
                                     request.extensions_mut().insert(claims);
                                     return inner.call(request).await;
-                                }
+                                },
                                 Err(e) => {
                                     debug!("Token verification failed (from cookie): {}", e);
-                                }
+                                },
                             }
                         }
                     }

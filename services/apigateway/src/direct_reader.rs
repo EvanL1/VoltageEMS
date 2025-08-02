@@ -70,7 +70,7 @@ impl DirectReader {
         match read_type {
             DirectReadType::Measurements | DirectReadType::Models => {
                 self.read_float_hash(&key).await
-            }
+            },
             DirectReadType::Signals => self.read_bool_hash(&key).await,
             DirectReadType::Status => self.read_string(&key).await,
         }
@@ -198,11 +198,11 @@ pub fn check_direct_read_permission(user_roles: &[String], read_type: DirectRead
     match read_type {
         DirectReadType::Measurements | DirectReadType::Signals => {
             has_role("operator") || has_role("admin")
-        }
+        },
         DirectReadType::Models => has_role("viewer") || has_role("operator") || has_role("admin"),
         DirectReadType::Status => {
             // 所有登录用户都可以查看状态
             true
-        }
+        },
     }
 }

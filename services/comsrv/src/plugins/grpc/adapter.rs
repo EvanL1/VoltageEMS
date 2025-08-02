@@ -218,7 +218,7 @@ impl ComBase for GrpcPluginAdapter {
             _ => {
                 warn!("Unknown telemetry type: {}", telemetry_type);
                 vec![]
-            }
+            },
         };
 
         if point_ids.is_empty() {
@@ -260,10 +260,10 @@ impl ComBase for GrpcPluginAdapter {
             match self.convert_proto_point(point) {
                 Ok((id, data)) => {
                     results.insert(id, data);
-                }
+                },
                 Err(e) => {
                     warn!("Failed to convert point data: {}", e);
-                }
+                },
             }
         }
 
@@ -288,11 +288,11 @@ impl ComBase for GrpcPluginAdapter {
                     } else {
                         0.0
                     }
-                }
+                },
                 _ => {
                     results.push((point_id, false));
                     continue;
-                }
+                },
             };
 
             // Build encode request
@@ -315,18 +315,18 @@ impl ComBase for GrpcPluginAdapter {
                         response.encoded_data.len()
                     );
                     results.push((point_id, true));
-                }
+                },
                 Ok(response) => {
                     warn!(
                         "Command encoding failed for point {}: {}",
                         point_id, response.error
                     );
                     results.push((point_id, false));
-                }
+                },
                 Err(e) => {
                     warn!("Command encoding error for point {}: {}", point_id, e);
                     results.push((point_id, false));
-                }
+                },
             }
         }
 

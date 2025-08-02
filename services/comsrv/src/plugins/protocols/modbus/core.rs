@@ -206,21 +206,7 @@ impl ComBase for ModbusProtocol {
                             .protocol_params
                             .get("data_type")
                             .unwrap_or(&"uint16".to_string())
-                            .clone();
-
-                        let modbus_point = ModbusPoint {
-                            point_id: point.point_id.to_string(),
-                            slave_id,
-                            function_code,
-                            register_address,
-                            data_type: data_type.clone(),
-                            register_count: point
-                                .protocol_params
-                                .get("register_count")
-                                .and_then(|v| v.parse::<u16>().ok())
-                                .unwrap_or(1),
-                            byte_order: point.protocol_params.get("byte_order").cloned(),
-                        };
+                            .to_string();
 
                         debug!(
                             "Loaded Modbus point: id={}, slave={}, func={}, addr={}, format={}, bit_pos={:?}",
@@ -231,6 +217,20 @@ impl ComBase for ModbusProtocol {
                             &data_type,
                             point.protocol_params.get("bit_position")
                         );
+
+                        let modbus_point = ModbusPoint {
+                            point_id: point.point_id.to_string(),
+                            slave_id,
+                            function_code,
+                            register_address,
+                            data_type,
+                            register_count: point
+                                .protocol_params
+                                .get("register_count")
+                                .and_then(|v| v.parse::<u16>().ok())
+                                .unwrap_or(1),
+                            byte_order: point.protocol_params.get("byte_order").cloned(),
+                        };
 
                         modbus_points.push(modbus_point);
                     } else {
@@ -258,14 +258,15 @@ impl ComBase for ModbusProtocol {
             let mut core = self.core.lock().await;
             core.set_points(modbus_points.clone());
         }
-        *self.points.write().await = modbus_points.clone();
+        let points_count = modbus_points.len();
+        *self.points.write().await = modbus_points;
 
-        self.status.write().await.points_count = self.points.read().await.len();
+        self.status.write().await.points_count = points_count;
 
         info!(
             "Channel {} - Step 3 completed: Successfully configured {} out of {} points for Modbus protocol",
             channel_config.id,
-            modbus_points.len(),
+            points_count,
             total_configured_points
         );
 
@@ -390,13 +391,14 @@ impl ComBase for ModbusProtocol {
             );
 
             // Find point configuration
-            let point_config = channel_config.control_points.get(&point_id);
-            if point_config.is_none() {
-                error!("Control point {} not found in configuration", point_id);
-                results.push((point_id, false));
-                continue;
-            }
-            let point_config = point_config.unwrap();
+            let point_config = match channel_config.control_points.get(&point_id) {
+                Some(config) => config,
+                None => {
+                    error!("Control point {} not found in configuration", point_id);
+                    results.push((point_id, false));
+                    continue;
+                },
+            };
 
             // Get Modbus parameters
             let slave_id = point_config
@@ -437,7 +439,7 @@ impl ComBase for ModbusProtocol {
                     error!("Failed to encode value for point {}: {}", point_id, e);
                     results.push((point_id, false));
                     continue;
-                }
+                },
             };
 
             // Build PDU based on function code
@@ -446,26 +448,26 @@ impl ComBase for ModbusProtocol {
                     // FC05: Write Single Coil
                     let bool_value = register_values.first().map(|&v| v != 0).unwrap_or(false);
                     build_write_fc05_single_coil_pdu(register_address, bool_value)
-                }
+                },
                 6 => {
                     // FC06: Write Single Register
                     let reg_value = register_values.first().copied().unwrap_or(0);
                     build_write_fc06_single_register_pdu(register_address, reg_value)
-                }
+                },
                 15 => {
                     // FC15: Write Multiple Coils
                     let bool_values: Vec<bool> = register_values.iter().map(|&v| v != 0).collect();
                     build_write_fc15_multiple_coils_pdu(register_address, &bool_values)
-                }
+                },
                 16 => {
                     // FC16: Write Multiple Registers
                     build_write_fc16_multiple_registers_pdu(register_address, &register_values)
-                }
+                },
                 _ => {
                     error!("Unsupported function code {} for control", function_code);
                     results.push((point_id, false));
                     continue;
-                }
+                },
             };
 
             // Build frame and send
@@ -507,7 +509,7 @@ impl ComBase for ModbusProtocol {
 
                                             // Update status
                                             self.status.write().await.success_count += 1;
-                                        }
+                                        },
                                         Err(e) => {
                                             error!(
                                                 "Control command failed for point {}: {}",
@@ -515,9 +517,9 @@ impl ComBase for ModbusProtocol {
                                             );
                                             results.push((point_id, false));
                                             self.status.write().await.error_count += 1;
-                                        }
+                                        },
                                     }
-                                }
+                                },
                                 Err(e) => {
                                     error!(
                                         "Failed to parse response for point {}: {}",
@@ -525,16 +527,16 @@ impl ComBase for ModbusProtocol {
                                     );
                                     results.push((point_id, false));
                                     self.status.write().await.error_count += 1;
-                                }
+                                },
                             }
-                        }
+                        },
                         Err(e) => {
                             error!("Failed to receive response for point {}: {}", point_id, e);
                             results.push((point_id, false));
                             self.status.write().await.error_count += 1;
-                        }
+                        },
                     }
-                }
+                },
                 Err(e) => {
                     error!(
                         "Failed to send control command for point {}: {}",
@@ -542,7 +544,7 @@ impl ComBase for ModbusProtocol {
                     );
                     results.push((point_id, false));
                     self.status.write().await.error_count += 1;
-                }
+                },
             }
         }
 
@@ -578,13 +580,14 @@ impl ComBase for ModbusProtocol {
             );
 
             // Find point configuration
-            let point_config = channel_config.adjustment_points.get(&point_id);
-            if point_config.is_none() {
-                error!("Adjustment point {} not found in configuration", point_id);
-                results.push((point_id, false));
-                continue;
-            }
-            let point_config = point_config.unwrap();
+            let point_config = match channel_config.adjustment_points.get(&point_id) {
+                Some(config) => config,
+                None => {
+                    error!("Adjustment point {} not found in configuration", point_id);
+                    results.push((point_id, false));
+                    continue;
+                },
+            };
 
             // Get Modbus parameters
             let slave_id = point_config
@@ -625,13 +628,13 @@ impl ComBase for ModbusProtocol {
                         // Reverse scaling: (value - offset) / scale
                         let raw = (f - scaling_info.offset) / scaling_info.scale;
                         RedisValue::Float(raw)
-                    }
+                    },
                     RedisValue::Integer(i) => {
                         // Convert to float, reverse scale, then back to integer
                         let f = *i as f64;
                         let raw = ((f - scaling_info.offset) / scaling_info.scale) as i64;
                         RedisValue::Integer(raw)
-                    }
+                    },
                     _ => value.clone(),
                 }
             } else {
@@ -646,7 +649,7 @@ impl ComBase for ModbusProtocol {
                         error!("Failed to encode value for point {}: {}", point_id, e);
                         results.push((point_id, false));
                         continue;
-                    }
+                    },
                 };
 
             // Build PDU based on function code
@@ -655,16 +658,16 @@ impl ComBase for ModbusProtocol {
                     // FC06: Write Single Register
                     let reg_value = register_values.first().copied().unwrap_or(0);
                     build_write_fc06_single_register_pdu(register_address, reg_value)
-                }
+                },
                 16 => {
                     // FC16: Write Multiple Registers
                     build_write_fc16_multiple_registers_pdu(register_address, &register_values)
-                }
+                },
                 _ => {
                     error!("Unsupported function code {} for adjustment", function_code);
                     results.push((point_id, false));
                     continue;
-                }
+                },
             };
 
             // Build frame and send
@@ -706,7 +709,7 @@ impl ComBase for ModbusProtocol {
 
                                             // Update status
                                             self.status.write().await.success_count += 1;
-                                        }
+                                        },
                                         Err(e) => {
                                             error!(
                                                 "Adjustment command failed for point {}: {}",
@@ -714,9 +717,9 @@ impl ComBase for ModbusProtocol {
                                             );
                                             results.push((point_id, false));
                                             self.status.write().await.error_count += 1;
-                                        }
+                                        },
                                     }
-                                }
+                                },
                                 Err(e) => {
                                     error!(
                                         "Failed to parse response for point {}: {}",
@@ -724,16 +727,16 @@ impl ComBase for ModbusProtocol {
                                     );
                                     results.push((point_id, false));
                                     self.status.write().await.error_count += 1;
-                                }
+                                },
                             }
-                        }
+                        },
                         Err(e) => {
                             error!("Failed to receive response for point {}: {}", point_id, e);
                             results.push((point_id, false));
                             self.status.write().await.error_count += 1;
-                        }
+                        },
                     }
-                }
+                },
                 Err(e) => {
                     error!(
                         "Failed to send adjustment command for point {}: {}",
@@ -741,7 +744,7 @@ impl ComBase for ModbusProtocol {
                     );
                     results.push((point_id, false));
                     self.status.write().await.error_count += 1;
-                }
+                },
             }
         }
 
@@ -766,7 +769,7 @@ impl ComBase for ModbusProtocol {
             let status = self.status.clone();
             let is_connected = self.is_connected.clone();
             let channel_config = self.channel_config.clone();
-            let polling_config_clone = self.polling_config.clone();
+            let polling_config = self.polling_config.clone();
 
             let polling_task = tokio::spawn(async move {
                 let mut interval =
@@ -862,7 +865,7 @@ impl ComBase for ModbusProtocol {
                         let mut frame_processor = ModbusFrameProcessor::new(mode);
 
                         // Get max_batch_size from polling config, default to 100
-                        let max_batch_size = polling_config_clone.batch_config.max_batch_size;
+                        let max_batch_size = polling_config.batch_config.max_batch_size;
 
                         match read_modbus_group_with_processor(
                             &connection_manager,
@@ -913,16 +916,16 @@ impl ComBase for ModbusProtocol {
                                                 let point_config = match telemetry_type {
                                                     TelemetryType::Telemetry => {
                                                         config.telemetry_points.get(&point_id)
-                                                    }
+                                                    },
                                                     TelemetryType::Signal => {
                                                         config.signal_points.get(&point_id)
-                                                    }
+                                                    },
                                                     TelemetryType::Control => {
                                                         config.control_points.get(&point_id)
-                                                    }
+                                                    },
                                                     TelemetryType::Adjustment => {
                                                         config.adjustment_points.get(&point_id)
-                                                    }
+                                                    },
                                                 };
 
                                                 if let Some(pc) = point_config {
@@ -962,14 +965,14 @@ impl ComBase for ModbusProtocol {
                                             point_id, raw_value, scale, offset, reverse, processed_value);
                                     }
                                 }
-                            }
+                            },
                             Err(e) => {
                                 error_count += group_points.len();
                                 error!(
                                     "Failed to read modbus group (slave={}, func={}): {}",
                                     slave_id, function_code, e
                                 );
-                            }
+                            },
                         }
                     }
 
@@ -1035,17 +1038,18 @@ async fn read_modbus_group_with_processor(
     }
 
     // Sort points by register address for efficient batch reading
-    let mut sorted_points = points.to_vec();
-    sorted_points.sort_by_key(|p| p.register_address);
+    let mut sorted_indices: Vec<usize> = (0..points.len()).collect();
+    sorted_indices.sort_by_key(|&i| points[i].register_address);
 
     let mut results = Vec::new();
-    let mut current_batch = Vec::new();
-    let mut batch_start_address = sorted_points[0].register_address;
+    let mut current_batch_indices = Vec::new();
+    let mut batch_start_address = points[sorted_indices[0]].register_address;
 
-    for point in sorted_points {
+    for &idx in &sorted_indices {
+        let point = &points[idx];
         // Check if this point can be added to the current batch
         let gap = point.register_address.saturating_sub(
-            batch_start_address + current_batch.len() as u16 * point.register_count,
+            batch_start_address + current_batch_indices.len() as u16 * point.register_count,
         );
 
         // Calculate the total registers in current batch if we add this point
@@ -1053,12 +1057,16 @@ async fn read_modbus_group_with_processor(
         let batch_registers_if_added = (batch_end_if_added - batch_start_address) as usize;
 
         // Check both gap and batch size constraints
-        if current_batch.is_empty()
+        if current_batch_indices.is_empty()
             || (gap <= 5 && batch_registers_if_added <= max_batch_size as usize)
         {
-            current_batch.push(point.clone());
+            current_batch_indices.push(idx);
         } else {
             // Read current batch
+            let current_batch: Vec<ModbusPoint> = current_batch_indices
+                .iter()
+                .map(|&i| points[i].clone())
+                .collect();
             let batch_results = read_modbus_batch(
                 connection_manager,
                 frame_processor,
@@ -1073,14 +1081,18 @@ async fn read_modbus_group_with_processor(
             results.extend(batch_results);
 
             // Start new batch
-            current_batch.clear();
-            current_batch.push(point.clone());
+            current_batch_indices.clear();
+            current_batch_indices.push(idx);
             batch_start_address = point.register_address;
         }
     }
 
     // Read final batch
-    if !current_batch.is_empty() {
+    if !current_batch_indices.is_empty() {
+        let current_batch: Vec<ModbusPoint> = current_batch_indices
+            .iter()
+            .map(|&i| points[i].clone())
+            .collect();
         let batch_results = read_modbus_batch(
             connection_manager,
             frame_processor,
@@ -1115,7 +1127,9 @@ async fn read_modbus_batch(
     }
 
     // Calculate total registers to read
-    let last_point = points.last().unwrap();
+    let last_point = points
+        .last()
+        .expect("points should not be empty after is_empty check");
     let total_registers =
         (last_point.register_address - start_address + last_point.register_count) as usize;
 
@@ -1143,7 +1157,7 @@ async fn read_modbus_batch(
                 return Err(ComSrvError::ProtocolError(format!(
                     "Unsupported function code: {function_code}"
                 )))
-            }
+            },
         };
 
         // Build complete frame with proper header (MBAP for TCP, CRC for RTU)
@@ -1397,7 +1411,7 @@ fn parse_modbus_write_response(pdu: &[u8], expected_fc: u8) -> Result<bool> {
                     "Incomplete write response".to_string(),
                 ))
             }
-        }
+        },
         15 | 16 => {
             // FC15/16: Response should be 5 bytes (FC + address + quantity)
             if pdu.len() >= 5 {
@@ -1407,7 +1421,7 @@ fn parse_modbus_write_response(pdu: &[u8], expected_fc: u8) -> Result<bool> {
                     "Incomplete write response".to_string(),
                 ))
             }
-        }
+        },
         _ => Err(ComSrvError::ProtocolError(format!(
             "Unsupported write function code: {}",
             expected_fc
@@ -1430,11 +1444,11 @@ fn encode_value_for_modbus(
                     return Err(ComSrvError::ProtocolError(
                         "Invalid value type for bool".to_string(),
                     ))
-                }
+                },
             };
             // For bool, return 1 or 0 as u16
             Ok(vec![if bool_value { 1 } else { 0 }])
-        }
+        },
         "uint16" => {
             let int_value = match value {
                 RedisValue::Integer(i) => *i as u16,
@@ -1443,10 +1457,10 @@ fn encode_value_for_modbus(
                     return Err(ComSrvError::ProtocolError(
                         "Invalid value type for uint16".to_string(),
                     ))
-                }
+                },
             };
             Ok(vec![int_value])
-        }
+        },
         "int16" => {
             let int_value = match value {
                 RedisValue::Integer(i) => *i as i16,
@@ -1455,10 +1469,10 @@ fn encode_value_for_modbus(
                     return Err(ComSrvError::ProtocolError(
                         "Invalid value type for int16".to_string(),
                     ))
-                }
+                },
             };
             Ok(vec![int_value as u16])
-        }
+        },
         "uint32" | "int32" => {
             let int_value = match value {
                 RedisValue::Integer(i) => *i as u32,
@@ -1467,14 +1481,14 @@ fn encode_value_for_modbus(
                     return Err(ComSrvError::ProtocolError(
                         "Invalid value type for 32-bit int".to_string(),
                     ))
-                }
+                },
             };
 
             // Apply byte order conversion
             let bytes = int_value.to_be_bytes();
             let registers = convert_bytes_to_registers_with_order(&bytes, byte_order);
             Ok(registers)
-        }
+        },
         "float32" => {
             let float_value = match value {
                 RedisValue::Float(f) => *f as f32,
@@ -1483,13 +1497,13 @@ fn encode_value_for_modbus(
                     return Err(ComSrvError::ProtocolError(
                         "Invalid value type for float32".to_string(),
                     ))
-                }
+                },
             };
 
             let bytes = float_value.to_be_bytes();
             let registers = convert_bytes_to_registers_with_order(&bytes, byte_order);
             Ok(registers)
-        }
+        },
         _ => Err(ComSrvError::ProtocolError(format!(
             "Unsupported data type for writing: {}",
             data_type
@@ -1514,35 +1528,35 @@ fn convert_bytes_to_registers_with_order(bytes: &[u8], byte_order: Option<&str>)
                 ((bytes[0] as u16) << 8) | (bytes[1] as u16),
                 ((bytes[2] as u16) << 8) | (bytes[3] as u16),
             ]
-        }
+        },
         Some("DCBA") => {
             // Little endian
             vec![
                 ((bytes[3] as u16) << 8) | (bytes[2] as u16),
                 ((bytes[1] as u16) << 8) | (bytes[0] as u16),
             ]
-        }
+        },
         Some("BADC") => {
             // Swap bytes within registers
             vec![
                 ((bytes[1] as u16) << 8) | (bytes[0] as u16),
                 ((bytes[3] as u16) << 8) | (bytes[2] as u16),
             ]
-        }
+        },
         Some("CDAB") => {
             // Swap register order
             vec![
                 ((bytes[2] as u16) << 8) | (bytes[3] as u16),
                 ((bytes[0] as u16) << 8) | (bytes[1] as u16),
             ]
-        }
+        },
         _ => {
             // Default to big endian
             vec![
                 ((bytes[0] as u16) << 8) | (bytes[1] as u16),
                 ((bytes[2] as u16) << 8) | (bytes[3] as u16),
             ]
-        }
+        },
     }
 }
 
@@ -1576,7 +1590,7 @@ fn parse_modbus_pdu(pdu: &[u8], function_code: u8) -> Result<Vec<u16>> {
                 registers.push(u16::from(byte));
             }
             Ok(registers)
-        }
+        },
         3 | 4 => {
             // Function codes 3 and 4 return register data (16-bit values)
             let mut registers = Vec::new();
@@ -1585,7 +1599,7 @@ fn parse_modbus_pdu(pdu: &[u8], function_code: u8) -> Result<Vec<u16>> {
                 registers.push(value);
             }
             Ok(registers)
-        }
+        },
         _ => Err(ComSrvError::ProtocolError(format!(
             "Unsupported function code in PDU parsing: {function_code}"
         ))),
@@ -1626,7 +1640,7 @@ fn convert_registers_with_byte_order(registers: &[u16], byte_order: Option<&str>
             } else {
                 bytes
             }
-        }
+        },
         Some("BADC") => {
             // Swap bytes within each register: ABCD -> BADC
             if bytes.len() >= 4 {
@@ -1645,7 +1659,7 @@ fn convert_registers_with_byte_order(registers: &[u16], byte_order: Option<&str>
             } else {
                 bytes
             }
-        }
+        },
         Some("CDAB") => {
             // Swap register order but keep bytes within registers: ABCD -> CDAB
             if bytes.len() >= 4 {
@@ -1664,7 +1678,7 @@ fn convert_registers_with_byte_order(registers: &[u16], byte_order: Option<&str>
             } else {
                 bytes
             }
-        }
+        },
         Some("BA") => {
             // For int16: AB -> BA
             if bytes.len() >= 2 {
@@ -1681,12 +1695,12 @@ fn convert_registers_with_byte_order(registers: &[u16], byte_order: Option<&str>
             } else {
                 bytes
             }
-        }
+        },
         Some("AB") => bytes, // Same as default
         _ => {
             debug!("Unknown byte order: {:?}, using default ABCD", byte_order);
             bytes
-        }
+        },
     }
 }
 
@@ -1737,7 +1751,7 @@ fn decode_register_value(
                 );
                 Ok(RedisValue::Integer(i64::from(bit_value)))
             }
-        }
+        },
         "uint16" => {
             if registers.is_empty() {
                 return Err(ComSrvError::ProtocolError(
@@ -1745,7 +1759,7 @@ fn decode_register_value(
                 ));
             }
             Ok(RedisValue::Integer(i64::from(registers[0])))
-        }
+        },
         "int16" => {
             if registers.is_empty() {
                 return Err(ComSrvError::ProtocolError(
@@ -1759,7 +1773,7 @@ fn decode_register_value(
             } else {
                 Ok(RedisValue::Integer(i64::from(registers[0] as i16)))
             }
-        }
+        },
         "uint32" | "uint32_be" => {
             if registers.len() < 2 {
                 return Err(ComSrvError::ProtocolError(
@@ -1775,7 +1789,7 @@ fn decode_register_value(
                 let value = (u32::from(registers[0]) << 16) | u32::from(registers[1]);
                 Ok(RedisValue::Integer(i64::from(value)))
             }
-        }
+        },
         "int32" | "int32_be" => {
             if registers.len() < 2 {
                 return Err(ComSrvError::ProtocolError(
@@ -1791,7 +1805,7 @@ fn decode_register_value(
                 let value = (i32::from(registers[0]) << 16) | i32::from(registers[1]);
                 Ok(RedisValue::Integer(i64::from(value)))
             }
-        }
+        },
         "float32" | "float32_be" => {
             if registers.len() < 2 {
                 return Err(ComSrvError::ProtocolError(
@@ -1820,7 +1834,7 @@ fn decode_register_value(
                 let value = f32::from_be_bytes(bytes);
                 Ok(RedisValue::Float(f64::from(value)))
             }
-        }
+        },
         _ => Err(ComSrvError::ProtocolError(format!(
             "Unsupported data format: {format}"
         ))),
@@ -1873,35 +1887,42 @@ mod tests {
         let registers = vec![register_value];
 
         // 测试位0 (LSB)
-        let result = decode_register_value(&registers, "bool", Some(0), None).unwrap();
+        let result = decode_register_value(&registers, "bool", Some(0), None)
+            .expect("decoding bit 0 should succeed");
         assert_eq!(result, RedisValue::Integer(1)); // 位0 = 1
 
         // 测试位1
-        let result = decode_register_value(&registers, "bool", Some(1), None).unwrap();
+        let result = decode_register_value(&registers, "bool", Some(1), None)
+            .expect("decoding bit 1 should succeed");
         assert_eq!(result, RedisValue::Integer(0)); // 位1 = 0
 
         // 测试位2
-        let result = decode_register_value(&registers, "bool", Some(2), None).unwrap();
+        let result = decode_register_value(&registers, "bool", Some(2), None)
+            .expect("decoding bit 2 should succeed");
         assert_eq!(result, RedisValue::Integer(1)); // 位2 = 1
 
         // 测试位3
-        let result = decode_register_value(&registers, "bool", Some(3), None).unwrap();
+        let result = decode_register_value(&registers, "bool", Some(3), None)
+            .expect("decoding bit 3 should succeed");
         assert_eq!(result, RedisValue::Integer(0)); // 位3 = 0
 
         // 测试位7 (MSB in byte)
-        let result = decode_register_value(&registers, "bool", Some(7), None).unwrap();
+        let result = decode_register_value(&registers, "bool", Some(7), None)
+            .expect("decoding bit 7 should succeed");
         assert_eq!(result, RedisValue::Integer(1)); // 位7 = 1
 
         // 测试16位寄存器的高位（值>255）
         let high_bit_register = 0x8000; // 只有最高位是1，值=32768 > 255
         let high_registers = vec![high_bit_register];
-        let result = decode_register_value(&high_registers, "bool", Some(15), None).unwrap();
+        let result = decode_register_value(&high_registers, "bool", Some(15), None)
+            .expect("decoding bit 15 should succeed");
         assert_eq!(result, RedisValue::Integer(1)); // 位15 = 1
 
         // 对于大于255的值，可以测试所有16位
         let full_register = 0x0100; // 256 > 255，所以是16位模式
         let full_registers = vec![full_register];
-        let result = decode_register_value(&full_registers, "bool", Some(8), None).unwrap();
+        let result = decode_register_value(&full_registers, "bool", Some(8), None)
+            .expect("decoding bit 8 should succeed");
         assert_eq!(result, RedisValue::Integer(1)); // 位8 = 1
     }
 
@@ -1911,7 +1932,8 @@ mod tests {
 
         // 测试8位模式（值<=255）
         for bit_pos in 0..8 {
-            let result = decode_register_value(&registers, "bool", Some(bit_pos), None).unwrap();
+            let result = decode_register_value(&registers, "bool", Some(bit_pos), None)
+                .expect("decoding bool at bit position should succeed");
             assert_eq!(
                 result,
                 RedisValue::Integer(0),
@@ -1923,8 +1945,8 @@ mod tests {
         // 测试16位模式（值>255）
         let registers_16bit = vec![0x0100]; // 256 > 255，触发16位模式
         for bit_pos in 0..16 {
-            let result =
-                decode_register_value(&registers_16bit, "bool", Some(bit_pos), None).unwrap();
+            let result = decode_register_value(&registers_16bit, "bool", Some(bit_pos), None)
+                .expect("decoding 16-bit bool should succeed");
             let expected = if bit_pos == 8 { 1 } else { 0 }; // 只有位8是1
             assert_eq!(
                 result,
@@ -1938,8 +1960,8 @@ mod tests {
         let registers_all_ones = vec![0xFFFF]; // 全1寄存器（16位模式）
                                                // 测试全1寄存器的所有位都应该是1
         for bit_pos in 0..16 {
-            let result =
-                decode_register_value(&registers_all_ones, "bool", Some(bit_pos), None).unwrap();
+            let result = decode_register_value(&registers_all_ones, "bool", Some(bit_pos), None)
+                .expect("decoding all ones register should succeed");
             assert_eq!(
                 result,
                 RedisValue::Integer(1),
@@ -1970,7 +1992,8 @@ mod tests {
 
         // 测试默认bit_position (应该是0)
         let registers = vec![0x0001]; // 只有位0是1
-        let result = decode_register_value(&registers, "bool", None, None).unwrap();
+        let result = decode_register_value(&registers, "bool", None, None)
+            .expect("decoding bool with default bit position should succeed");
         assert_eq!(result, RedisValue::Integer(1)); // 默认位0 = 1
     }
 
@@ -1980,16 +2003,19 @@ mod tests {
         let registers = vec![0x1234];
 
         // 测试uint16
-        let result = decode_register_value(&registers, "uint16", None, None).unwrap();
+        let result = decode_register_value(&registers, "uint16", None, None)
+            .expect("decoding uint16 should succeed");
         assert_eq!(result, RedisValue::Integer(0x1234));
 
         // 测试int16
-        let result = decode_register_value(&registers, "int16", None, None).unwrap();
+        let result = decode_register_value(&registers, "int16", None, None)
+            .expect("decoding int16 should succeed");
         assert_eq!(result, RedisValue::Integer(i64::from(0x1234_i16)));
 
         // 测试float32需要2个寄存器
         let float_registers = vec![0x4000, 0x0000]; // 2.0 in IEEE 754
-        let result = decode_register_value(&float_registers, "float32", None, None).unwrap();
+        let result = decode_register_value(&float_registers, "float32", None, None)
+            .expect("decoding float32 should succeed");
         if let RedisValue::Float(f) = result {
             assert!((f - 2.0).abs() < 0.0001);
         } else {

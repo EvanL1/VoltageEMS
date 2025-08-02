@@ -198,15 +198,15 @@ impl CommandSubscriber {
                     if let Err(e) = Self::process_message(&command_tx, channel_id, msg).await {
                         error!("Failed to process command message: {}", e);
                     }
-                }
+                },
                 Ok(None) => {
                     warn!("Subscription closed for channel {}", channel_id);
                     break;
-                }
+                },
                 Err(_) => {
                     // Timeout, continue loop
                     continue;
-                }
+                },
             }
         }
 
@@ -288,7 +288,8 @@ mod tests {
             "metadata": {}
         }"#;
 
-        let command: ControlCommand = serde_json::from_str(json).unwrap();
+        let command: ControlCommand =
+            serde_json::from_str(json).expect("test JSON should be valid");
         assert_eq!(command.command_id, "test-123");
         assert_eq!(command.channel_id, 1);
         assert!(matches!(command.command_type, CommandType::Control));

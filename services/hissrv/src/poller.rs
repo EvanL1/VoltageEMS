@@ -97,14 +97,14 @@ impl Poller {
                         if let Err(e) = self.reload_config().await {
                             error!("Failed to reload configuration: {}", e);
                         }
-                    }
+                    },
                     Err(tokio::sync::mpsc::error::TryRecvError::Empty) => {
                         // No updates, continue
-                    }
+                    },
                     Err(tokio::sync::mpsc::error::TryRecvError::Disconnected) => {
                         warn!("Configuration update channel disconnected");
                         self.config_update_rx = None;
-                    }
+                    },
                 }
             }
 
@@ -237,11 +237,11 @@ impl Poller {
                     if let Some((k, v)) = value.split_once('=') {
                         tags.insert(k.trim().to_string(), v.trim().to_string());
                     }
-                }
+                },
                 TagRule::Extract { field } => {
                     // Mark fields for extraction from key
                     tags.insert(format!("__extract_{}", field), "true".to_string());
-                }
+                },
             }
         }
         tags
@@ -294,7 +294,7 @@ pub mod migration {
 
         // Create test data
         let redis_url = {
-            let cfg = config.read().unwrap();
+            let cfg = config.read().expect("config lock should not be poisoned");
             cfg.redis.url.clone()
         };
 

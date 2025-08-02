@@ -26,7 +26,7 @@ async fn proxy_handler(
                 "Unknown service: {}",
                 service_name
             )))
-        }
+        },
     };
 
     // 提取请求信息
@@ -81,7 +81,9 @@ async fn proxy_handler(
         .await
         .map_err(|e| ApiGatewayError::InternalError(format!("Failed to read response: {}", e)))?;
 
-    Ok(response.body(body.into()).unwrap())
+    response
+        .body(body.into())
+        .map_err(|_| ApiGatewayError::InternalError("Failed to build response body".to_string()))
 }
 
 /// 为每个服务创建代理handler

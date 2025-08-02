@@ -48,10 +48,10 @@ impl fmt::Display for ApiGatewayError {
         match self {
             ApiGatewayError::ServiceUnavailable(service) => {
                 write!(f, "Service unavailable: {}", service)
-            }
+            },
             ApiGatewayError::ServiceTimeout(service) => {
                 write!(f, "Service timeout: {}", service)
-            }
+            },
             ApiGatewayError::ServiceError(msg) => write!(f, "Service error: {}", msg),
 
             ApiGatewayError::Unauthorized => write!(f, "Unauthorized"),
@@ -73,10 +73,10 @@ impl fmt::Display for ApiGatewayError {
             ApiGatewayError::ConfigUpdateError(msg) => write!(f, "Config update error: {}", msg),
             ApiGatewayError::ConfigChecksumError => {
                 write!(f, "Config checksum verification failed")
-            }
+            },
             ApiGatewayError::ConfigSubscriptionError(msg) => {
                 write!(f, "Config subscription error: {}", msg)
-            }
+            },
         }
     }
 }
@@ -86,7 +86,7 @@ impl IntoResponse for ApiGatewayError {
         let (status, code) = match &self {
             ApiGatewayError::ServiceUnavailable(_) => {
                 (StatusCode::SERVICE_UNAVAILABLE, "SERVICE_UNAVAILABLE")
-            }
+            },
             ApiGatewayError::ServiceTimeout(_) => (StatusCode::GATEWAY_TIMEOUT, "SERVICE_TIMEOUT"),
             ApiGatewayError::ServiceError(_) => (StatusCode::BAD_GATEWAY, "SERVICE_ERROR"),
 
@@ -99,29 +99,29 @@ impl IntoResponse for ApiGatewayError {
             ApiGatewayError::NotFound(_) => (StatusCode::NOT_FOUND, "NOT_FOUND"),
             ApiGatewayError::MethodNotAllowed => {
                 (StatusCode::METHOD_NOT_ALLOWED, "METHOD_NOT_ALLOWED")
-            }
+            },
 
             ApiGatewayError::InternalError(_) => {
                 (StatusCode::INTERNAL_SERVER_ERROR, "INTERNAL_ERROR")
-            }
+            },
             ApiGatewayError::DatabaseError(_) => {
                 (StatusCode::INTERNAL_SERVER_ERROR, "DATABASE_ERROR")
-            }
+            },
             ApiGatewayError::RedisError(_) => (StatusCode::INTERNAL_SERVER_ERROR, "REDIS_ERROR"),
             ApiGatewayError::InfluxDb(_) => (StatusCode::INTERNAL_SERVER_ERROR, "INFLUXDB_ERROR"),
 
             ApiGatewayError::ConfigFetchError(_) => {
                 (StatusCode::INTERNAL_SERVER_ERROR, "CONFIG_FETCH_ERROR")
-            }
+            },
             ApiGatewayError::ConfigParseError(_) => {
                 (StatusCode::INTERNAL_SERVER_ERROR, "CONFIG_PARSE_ERROR")
-            }
+            },
             ApiGatewayError::ConfigUpdateError(_) => {
                 (StatusCode::INTERNAL_SERVER_ERROR, "CONFIG_UPDATE_ERROR")
-            }
+            },
             ApiGatewayError::ConfigChecksumError => {
                 (StatusCode::INTERNAL_SERVER_ERROR, "CONFIG_CHECKSUM_ERROR")
-            }
+            },
             ApiGatewayError::ConfigSubscriptionError(_) => (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "CONFIG_SUBSCRIPTION_ERROR",

@@ -53,7 +53,7 @@ pub async fn login(
                 username: "admin".to_string(),
                 roles: vec!["admin".to_string()],
             }
-        }
+        },
         "operator" => {
             if req.password != "operator123" {
                 return Err(ApiError::BadRequest("Invalid credentials".to_string()));
@@ -63,7 +63,7 @@ pub async fn login(
                 username: "operator".to_string(),
                 roles: vec!["operator".to_string()],
             }
-        }
+        },
         "engineer" => {
             if req.password != "engineer123" {
                 return Err(ApiError::BadRequest("Invalid credentials".to_string()));
@@ -73,7 +73,7 @@ pub async fn login(
                 username: "engineer".to_string(),
                 roles: vec!["engineer".to_string()],
             }
-        }
+        },
         "viewer" => {
             if req.password != "viewer123" {
                 return Err(ApiError::BadRequest("Invalid credentials".to_string()));
@@ -83,7 +83,7 @@ pub async fn login(
                 username: "viewer".to_string(),
                 roles: vec!["viewer".to_string()],
             }
-        }
+        },
         _ => return Err(ApiError::BadRequest("Invalid credentials".to_string())),
     };
 
@@ -120,8 +120,13 @@ pub async fn refresh_token(
     let key = format!("refresh_token:{}", claims.sub);
     let stored_token: Option<String> = state.redis_client.get_api(&key).await?;
 
-    if stored_token.is_none() || stored_token.unwrap() != req.refresh_token {
-        return Err(ApiError::InvalidToken("Invalid refresh token".to_string()));
+    match stored_token {
+        Some(token) if token == req.refresh_token => {
+            // Token is valid, continue
+        },
+        _ => {
+            return Err(ApiError::InvalidToken("Invalid refresh token".to_string()));
+        },
     }
 
     // Generate new access token

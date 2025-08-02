@@ -425,8 +425,8 @@ mod tests {
             .await;
         let query_time = start.elapsed();
 
-        println!("Load time for 10k points: {load_time:?}");
-        println!("Query time for telemetry points: {query_time:?}");
+        info!("Load time for 10k points: {load_time:?}");
+        info!("Query time for telemetry points: {query_time:?}");
 
         // Query should be very fast with indices
         assert!(query_time.as_millis() < 10);

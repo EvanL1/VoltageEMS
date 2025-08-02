@@ -126,7 +126,9 @@ impl ProtocolFactory {
 
         // Get plugin registry
         let registry = get_plugin_registry();
-        let reg = registry.read().unwrap();
+        let reg = registry
+            .read()
+            .expect("plugin registry lock should not be poisoned");
 
         // Modbus TCP
         if reg.get_factory("modbus_tcp").is_some() {
@@ -201,7 +203,7 @@ impl ProtocolFactory {
             Some(_) => {
                 info!("Unregistered protocol factory for {protocol_type:?}");
                 Ok(true)
-            }
+            },
             None => Ok(false),
         }
     }
@@ -361,11 +363,11 @@ impl ProtocolFactory {
                     Ok(()) => {
                         info!("Channel {} connected successfully", channel_id);
                         successful_connections += 1;
-                    }
+                    },
                     Err(e) => {
                         error!("Failed to connect channel {}: {}", channel_id, e);
                         failed_connections += 1;
-                    }
+                    },
                 }
             }
         }
@@ -509,7 +511,7 @@ impl ProtocolFactory {
                     channel_config.id
                 );
                 return Ok(());
-            }
+            },
         };
 
         // Get CSV base path, use environment variable or config directory
@@ -681,7 +683,9 @@ impl ProtocolClientFactory for PluginAdapterFactory {
         // Get plugin in a small scope
         let plugin = {
             let registry = get_plugin_registry();
-            let reg = registry.read().unwrap();
+            let reg = registry
+                .read()
+                .expect("plugin registry lock should not be poisoned");
 
             let factory = reg.get_factory(&self.plugin_id).ok_or_else(|| {
                 ComSrvError::ConfigError(format!("Plugin factory not found: {}", self.plugin_id))
@@ -953,7 +957,10 @@ mod tests {
             adjustment_points: std::collections::HashMap::new(),
         };
 
-        let channel = factory.create_channel(&channel_config, None).await.unwrap();
+        let channel = factory
+            .create_channel(&channel_config, None)
+            .await
+            .expect("channel creation should succeed");
 
         assert_eq!(factory.get_channel_ids(), vec![1]);
 

@@ -249,7 +249,7 @@ pub fn create_connection_params(config: &ChannelConfig) -> Result<ConnectionPara
                 parity: None,
                 timeout: std::time::Duration::from_secs(5),
             })
-        }
+        },
         "modbus_rtu" => {
             // Extract serial port configuration from parameters
             let device = config
@@ -288,7 +288,7 @@ pub fn create_connection_params(config: &ChannelConfig) -> Result<ConnectionPara
                 parity,
                 timeout: std::time::Duration::from_secs(1),
             })
-        }
+        },
         _ => Err(ComSrvError::ConfigError(format!(
             "Unsupported protocol type: {}",
             config.protocol
@@ -308,7 +308,9 @@ mod tests {
         let frame = processor.build_frame(1, &pdu);
         assert_eq!(frame.len(), 12); // 7 bytes header (2 trans_id + 2 proto + 2 len + 1 unit) + 5 bytes PDU
 
-        let (unit_id, parsed_pdu) = processor.parse_frame(&frame).unwrap();
+        let (unit_id, parsed_pdu) = processor
+            .parse_frame(&frame)
+            .expect("TCP frame parsing should succeed");
         assert_eq!(unit_id, 1);
         assert_eq!(parsed_pdu, pdu);
     }
@@ -321,7 +323,9 @@ mod tests {
         let frame = processor.build_frame(1, &pdu);
         assert_eq!(frame.len(), 8); // 1 byte unit_id + 5 bytes PDU + 2 bytes CRC
 
-        let (unit_id, parsed_pdu) = processor.parse_frame(&frame).unwrap();
+        let (unit_id, parsed_pdu) = processor
+            .parse_frame(&frame)
+            .expect("RTU frame parsing should succeed");
         assert_eq!(unit_id, 1);
         assert_eq!(parsed_pdu, pdu);
     }
@@ -341,7 +345,8 @@ mod tests {
 
         assert!(ModbusFrameProcessor::is_exception_response(&exception_pdu));
 
-        let (func_code, exc_code) = ModbusFrameProcessor::parse_exception(&exception_pdu).unwrap();
+        let (func_code, exc_code) = ModbusFrameProcessor::parse_exception(&exception_pdu)
+            .expect("exception parsing should succeed");
         assert_eq!(func_code, 0x03);
         assert_eq!(exc_code, 0x02);
 

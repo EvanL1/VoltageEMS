@@ -125,12 +125,12 @@ impl ComBaseStorage for DefaultComBaseStorage {
                 stats.total_updates += update_count as u64;
                 stats.batch_updates += 1;
                 Ok(())
-            }
+            },
             Err(e) => {
                 let mut stats = self.stats.lock().await;
                 stats.storage_errors += 1;
                 Err(e)
-            }
+            },
         }
     }
 
@@ -151,7 +151,7 @@ impl ComBaseStorage for DefaultComBaseStorage {
                 } else {
                     0.0
                 }
-            }
+            },
             RedisValue::String(s) => s.parse::<f64>().unwrap_or(0.0),
             RedisValue::Null => 0.0,
         };
@@ -163,11 +163,16 @@ impl ComBaseStorage for DefaultComBaseStorage {
             timestamp: i64::try_from(
                 std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
+                    .expect("system time should not be before UNIX epoch")
                     .as_secs(),
             )
             .unwrap_or(i64::MAX),
-            telemetry_type: telemetry_type.parse().unwrap(), // Need to convert from string to enum
+            telemetry_type: telemetry_type.parse().map_err(|_| {
+                crate::utils::error::ComSrvError::ParsingError(format!(
+                    "Invalid telemetry type: {}",
+                    telemetry_type
+                ))
+            })?, // Need to convert from string to enum
             raw_value: None,
         };
 
@@ -192,12 +197,12 @@ impl ComBaseStorage for DefaultComBaseStorage {
                 }
 
                 Ok(())
-            }
+            },
             Err(e) => {
                 let mut stats = self.stats.lock().await;
                 stats.storage_errors += 1;
                 Err(e)
-            }
+            },
         }
     }
 

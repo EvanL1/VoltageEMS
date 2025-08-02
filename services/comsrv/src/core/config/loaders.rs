@@ -216,8 +216,8 @@ impl CachedCsvLoader {
             .enumerate()
             .map(|(i, v)| {
                 serde_json::from_value(v.clone()).map_err(|e| {
-                    eprintln!("DEBUG: Failed to deserialize record {i} - Error: {e}");
-                    eprintln!("DEBUG: Record content: {v:?}");
+                    debug!("Failed to deserialize record {i} - Error: {e}");
+                    debug!("Record content: {v:?}");
                     ComSrvError::ConfigError(format!(
                         "Failed to deserialize CSV data at row {i}: {e}"
                     ))
@@ -225,8 +225,8 @@ impl CachedCsvLoader {
             })
             .collect();
 
-        eprintln!(
-            "DEBUG: Deserialization result: {} records converted",
+        debug!(
+            "Deserialization result: {} records converted",
             result.as_ref().map(std::vec::Vec::len).unwrap_or(0)
         );
         result
@@ -234,7 +234,7 @@ impl CachedCsvLoader {
 
     /// Load CSV file
     fn load_csv_file(path: &Path) -> Result<Vec<serde_json::Value>> {
-        eprintln!("DEBUG: load_csv_file called for: {}", path.display());
+        debug!("load_csv_file called for: {}", path.display());
         let mut reader = ReaderBuilder::new()
             .has_headers(true)
             .from_path(path)
@@ -246,7 +246,7 @@ impl CachedCsvLoader {
             .clone();
 
         let mut records = Vec::new();
-        eprintln!("DEBUG: Headers: {headers:?}");
+        debug!("Headers: {headers:?}");
 
         for result in reader.records() {
             let record = result
@@ -265,9 +265,9 @@ impl CachedCsvLoader {
             records.push(serde_json::Value::Object(map));
         }
 
-        eprintln!("DEBUG: Read {} records from CSV", records.len());
+        debug!("Read {} records from CSV", records.len());
         if !records.is_empty() {
-            eprintln!("DEBUG: First record: {:?}", records[0]);
+            debug!("First record: {:?}", records[0]);
         }
         Ok(records)
     }
@@ -338,7 +338,7 @@ impl ModbusMappingRecord {
                     self.data_type
                 );
                 1
-            }
+            },
         }
     }
 
@@ -355,14 +355,15 @@ impl ModbusMappingRecord {
                     self.data_type
                 );
                 2
-            }
+            },
         }
     }
 
     /// Get default byte order (if not specified)
     pub fn effective_byte_order(&self) -> String {
         self.byte_order
-            .clone()
+            .as_ref()
+            .cloned()
             .unwrap_or_else(|| match self.data_type.as_str() {
                 "int32" | "uint32" | "float32" => "ABCD".to_string(),
                 "int64" | "uint64" | "float64" => "ABCDEFGH".to_string(),
@@ -552,7 +553,8 @@ impl ModbusMapping {
     /// Get effective byte order
     pub fn effective_byte_order(&self) -> String {
         self.byte_order
-            .clone()
+            .as_ref()
+            .cloned()
             .unwrap_or_else(|| match self.data_type.as_str() {
                 "int32" | "uint32" | "float32" => "ABCD".to_string(),
                 "int64" | "uint64" | "float64" => "ABCDEFGH".to_string(),
@@ -740,7 +742,7 @@ mod tests {
         let result = PointMapper::validate_mappings(&points);
         assert!(result.is_err());
         assert!(result
-            .unwrap_err()
+            .expect_err("validation should fail for duplicate point_id")
             .to_string()
             .contains("Duplicate point_id"));
     }
@@ -760,12 +762,33 @@ mod tests {
         };
 
         let params = mapping.to_protocol_params();
-        assert_eq!(params.get("slave_id").unwrap(), "1");
-        assert_eq!(params.get("function_code").unwrap(), "3");
-        assert_eq!(params.get("register_address").unwrap(), "1000");
-        assert_eq!(params.get("byte_order").unwrap(), "DCBA");
-        assert_eq!(params.get("register_count").unwrap(), "2");
-        assert_eq!(params.get("byte_count").unwrap(), "4");
+        assert_eq!(params.get("slave_id").expect("slave_id should exist"), "1");
+        assert_eq!(
+            params
+                .get("function_code")
+                .expect("function_code should exist"),
+            "3"
+        );
+        assert_eq!(
+            params
+                .get("register_address")
+                .expect("register_address should exist"),
+            "1000"
+        );
+        assert_eq!(
+            params.get("byte_order").expect("byte_order should exist"),
+            "DCBA"
+        );
+        assert_eq!(
+            params
+                .get("register_count")
+                .expect("register_count should exist"),
+            "2"
+        );
+        assert_eq!(
+            params.get("byte_count").expect("byte_count should exist"),
+            "4"
+        );
         assert_eq!(mapping.data_size(), 2);
 
         // Test automatic inference
@@ -782,9 +805,29 @@ mod tests {
         };
 
         let params_auto = mapping_auto.to_protocol_params();
-        assert_eq!(params_auto.get("byte_order").unwrap(), "AB");
-        assert_eq!(params_auto.get("register_count").unwrap(), "1");
-        assert_eq!(params_auto.get("byte_count").unwrap(), "2");
-        assert_eq!(params_auto.get("bit_position").unwrap(), "0"); // Defaults to 0
+        assert_eq!(
+            params_auto
+                .get("byte_order")
+                .expect("byte_order should be auto-inferred"),
+            "AB"
+        );
+        assert_eq!(
+            params_auto
+                .get("register_count")
+                .expect("register_count should be auto-inferred"),
+            "1"
+        );
+        assert_eq!(
+            params_auto
+                .get("byte_count")
+                .expect("byte_count should be auto-inferred"),
+            "2"
+        );
+        assert_eq!(
+            params_auto
+                .get("bit_position")
+                .expect("bit_position should default to 0"),
+            "0"
+        ); // Defaults to 0
     }
 }

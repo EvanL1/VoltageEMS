@@ -201,7 +201,7 @@ impl PointStorage for RtdbStorage {
                     ComSrvError::Storage(format!("Failed to parse point data: {e}"))
                 })?;
                 Ok(Some(point))
-            }
+            },
             None => Ok(None),
         }
     }
@@ -233,7 +233,7 @@ impl PointStorage for RtdbStorage {
                             ComSrvError::Storage(format!("Failed to parse point data: {e}"))
                         })?;
                         results.push(Some(point));
-                    }
+                    },
                     None => results.push(None),
                 }
             } else {

@@ -12,7 +12,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::{mpsc, RwLock};
 use tokio::time::{interval, Duration};
-use tracing::{debug, info, warn};
+use tracing::{debug, error, info, warn};
 
 use crate::api::ApiState;
 
@@ -70,8 +70,20 @@ impl WsConnectionManager {
             let mut stream = pubsub.on_message();
 
             while let Some(msg) = stream.next().await {
-                let channel: String = msg.get_channel().unwrap();
-                let payload: String = msg.get_payload().unwrap();
+                let channel: String = match msg.get_channel() {
+                    Ok(ch) => ch,
+                    Err(e) => {
+                        error!("Failed to get channel from message: {}", e);
+                        continue;
+                    },
+                };
+                let payload: String = match msg.get_payload() {
+                    Ok(p) => p,
+                    Err(e) => {
+                        error!("Failed to get payload from message: {}", e);
+                        continue;
+                    },
+                };
 
                 // Parse channel to get model_id
                 if let Some(model_id) = parse_model_id_from_channel(&channel) {
@@ -189,7 +201,13 @@ async fn handle_socket(socket: WebSocket, model_id: String, state: ApiState) {
             let msg = WsMessage::Update { point, value };
             if sender
                 .send(axum::extract::ws::Message::Text(
-                    serde_json::to_string(&msg).unwrap().into(),
+                    match serde_json::to_string(&msg) {
+                        Ok(json) => json.into(),
+                        Err(e) => {
+                            error!("Failed to serialize update message: {}", e);
+                            break;
+                        },
+                    },
                 ))
                 .await
                 .is_err()
@@ -202,7 +220,13 @@ async fn handle_socket(socket: WebSocket, model_id: String, state: ApiState) {
     // Start send task
     let mut send_task = tokio::spawn(async move {
         while let Some(msg) = rx.recv().await {
-            let text = serde_json::to_string(&msg).unwrap();
+            let text = match serde_json::to_string(&msg) {
+                Ok(t) => t,
+                Err(e) => {
+                    error!("Failed to serialize WebSocket message: {}", e);
+                    continue;
+                },
+            };
             if sender
                 .send(axum::extract::ws::Message::Text(text.into()))
                 .await
@@ -219,12 +243,12 @@ async fn handle_socket(socket: WebSocket, model_id: String, state: ApiState) {
             match msg {
                 axum::extract::ws::Message::Text(text) => {
                     debug!("Received WebSocket message: {}", text);
-                }
+                },
                 axum::extract::ws::Message::Close(_) => {
                     debug!("WebSocket connection closed");
                     break;
-                }
-                _ => {}
+                },
+                _ => {},
             }
         }
     });

@@ -58,9 +58,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Create app state
     let app_state = AppState {
         config: config.clone(),
-        redis_client: redis_client.clone(),
-        direct_reader: direct_reader.clone(),
-        http_client: http_client.clone(),
+        redis_client,
+        direct_reader,
+        http_client,
     };
 
     // Build the application

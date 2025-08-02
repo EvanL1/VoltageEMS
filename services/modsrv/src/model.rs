@@ -67,7 +67,7 @@ impl Model {
 /// Model manager
 pub struct ModelManager {
     /// Model metadata storage
-    models: Arc<RwLock<HashMap<String, Model>>>,
+    models: Arc<RwLock<HashMap<String, Arc<Model>>>>,
     /// Redis connection
     redis: Arc<Mutex<EdgeRedis>>,
 }
@@ -89,7 +89,7 @@ impl ModelManager {
     pub async fn load_models(&self, configs: Vec<ModelConfig>) -> Result<()> {
         let mut models = self.models.write().await;
         for config in configs {
-            let model = Model::from_config(config);
+            let model = Arc::new(Model::from_config(config));
             info!("Loading model: {} ({})", model.name, model.id);
             models.insert(model.id.clone(), model);
         }
@@ -133,13 +133,13 @@ impl ModelManager {
     }
 
     /// Get model metadata
-    pub async fn get_model(&self, id: &str) -> Option<Model> {
+    pub async fn get_model(&self, id: &str) -> Option<Arc<Model>> {
         let models = self.models.read().await;
         models.get(id).cloned()
     }
 
     /// List all models
-    pub async fn list_models(&self) -> Vec<Model> {
+    pub async fn list_models(&self) -> Vec<Arc<Model>> {
         let models = self.models.read().await;
         models.values().cloned().collect()
     }
@@ -162,7 +162,7 @@ impl ModelManager {
     /// Create new model
     pub async fn create_model(&self, config: ModelConfig) -> Result<()> {
         let mut models = self.models.write().await;
-        let model = Model::from_config(config);
+        let model = Arc::new(Model::from_config(config));
         info!("Created model: {} ({})", model.name, model.id);
         models.insert(model.id.clone(), model);
         Ok(())
@@ -171,7 +171,7 @@ impl ModelManager {
     /// Update model
     pub async fn update_model(&self, config: ModelConfig) -> Result<()> {
         let mut models = self.models.write().await;
-        let model = Model::from_config(config);
+        let model = Arc::new(Model::from_config(config));
         info!("Updated model: {} ({})", model.name, model.id);
         models.insert(model.id.clone(), model);
         Ok(())

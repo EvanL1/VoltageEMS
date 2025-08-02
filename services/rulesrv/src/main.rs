@@ -13,7 +13,7 @@ use crate::redis::RedisStore;
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 use std::sync::Arc;
-use tracing::info;
+use tracing::{error, info};
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -73,19 +73,19 @@ async fn main() -> Result<()> {
     match args.command {
         Some(Commands::Service) | None => {
             run_service(&config).await?;
-        }
+        },
         Some(Commands::Api) => {
             start_api_server(&config).await?;
-        }
+        },
         Some(Commands::List) => {
             list_rules(&config).await?;
-        }
+        },
         Some(Commands::Test { rule_id }) => {
             test_rule(&config, &rule_id).await?;
-        }
+        },
         Some(Commands::Execute { rule_id }) => {
             execute_rule(&config, &rule_id).await?;
-        }
+        },
     }
 
     Ok(())
@@ -146,9 +146,9 @@ async fn list_rules(config: &Config) -> Result<()> {
     let engine = RuleEngine::new(store);
     let rules = engine.list_rules().await?;
 
-    println!("Available rules:");
+    info!("Available rules:");
     for rule in rules {
-        println!(
+        info!(
             "  - {} ({}): {}",
             rule.id,
             rule.name,
@@ -167,30 +167,30 @@ async fn test_rule(config: &Config, rule_id: &str) -> Result<()> {
         })?);
     let mut engine = RuleEngine::new(store);
 
-    println!("Testing rule: {}", rule_id);
+    info!("Testing rule: {}", rule_id);
 
     match engine.execute_rule(rule_id).await {
         Ok(result) => {
-            println!("Rule test completed:");
-            println!("  Execution ID: {}", result.execution_id);
-            println!("  Conditions met: {}", result.conditions_met);
-            println!("  Success: {}", result.success);
-            println!("  Duration: {}ms", result.duration_ms);
+            info!("Rule test completed:");
+            info!("  Execution ID: {}", result.execution_id);
+            info!("  Conditions met: {}", result.conditions_met);
+            info!("  Success: {}", result.success);
+            info!("  Duration: {}ms", result.duration_ms);
 
             if !result.actions_executed.is_empty() {
-                println!("  Actions executed:");
+                info!("  Actions executed:");
                 for action in &result.actions_executed {
-                    println!("    - {}", action);
+                    info!("    - {}", action);
                 }
             }
 
             if let Some(error) = &result.error {
-                println!("  Error: {}", error);
+                error!("  Error: {}", error);
             }
-        }
+        },
         Err(e) => {
-            println!("Rule test failed: {}", e);
-        }
+            error!("Rule test failed: {}", e);
+        },
     }
 
     Ok(())
@@ -204,30 +204,30 @@ async fn execute_rule(config: &Config, rule_id: &str) -> Result<()> {
         })?);
     let mut engine = RuleEngine::new(store);
 
-    println!("Executing rule: {}", rule_id);
+    info!("Executing rule: {}", rule_id);
 
     match engine.execute_rule(rule_id).await {
         Ok(result) => {
-            println!("Rule execution completed:");
-            println!("  Execution ID: {}", result.execution_id);
-            println!("  Conditions met: {}", result.conditions_met);
-            println!("  Success: {}", result.success);
-            println!("  Duration: {}ms", result.duration_ms);
+            info!("Rule execution completed:");
+            info!("  Execution ID: {}", result.execution_id);
+            info!("  Conditions met: {}", result.conditions_met);
+            info!("  Success: {}", result.success);
+            info!("  Duration: {}ms", result.duration_ms);
 
             if !result.actions_executed.is_empty() {
-                println!("  Actions executed:");
+                info!("  Actions executed:");
                 for action in &result.actions_executed {
-                    println!("    - {}", action);
+                    info!("    - {}", action);
                 }
             }
 
             if let Some(error) = &result.error {
-                println!("  Error: {}", error);
+                error!("  Error: {}", error);
             }
-        }
+        },
         Err(e) => {
-            println!("Rule execution failed: {}", e);
-        }
+            error!("Rule execution failed: {}", e);
+        },
     }
 
     Ok(())

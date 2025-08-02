@@ -196,14 +196,14 @@ pub async fn control_channel(
                 Ok(()) => format!("Channel {id_u16} connected successfully"),
                 Err(e) => format!("Failed to connect channel {id_u16}: {e}"),
             }
-        }
+        },
         "stop" => {
             let mut channel_guard = channel.write().await;
             match channel_guard.disconnect().await {
                 Ok(()) => format!("Channel {id_u16} disconnected successfully"),
                 Err(e) => format!("Failed to disconnect channel {id_u16}: {e}"),
             }
-        }
+        },
         "restart" => {
             let mut channel_guard = channel.write().await;
             // First stop the channel
@@ -222,10 +222,10 @@ pub async fn control_channel(
                 Ok(()) => format!("Channel {id_u16} restarted successfully"),
                 Err(e) => format!("Failed to restart channel {id_u16}: {e}"),
             }
-        }
+        },
         _ => {
             return Err(StatusCode::BAD_REQUEST);
-        }
+        },
     };
 
     Ok(Json(ApiResponse::success(result)))
@@ -250,7 +250,7 @@ pub async fn send_control(
             Ok(results) => {
                 let success = results.iter().any(|(_, s)| *s);
                 Ok(Json(ApiResponse::success(success)))
-            }
+            },
             Err(_) => Err(StatusCode::INTERNAL_SERVER_ERROR),
         }
     } else {
@@ -277,7 +277,7 @@ pub async fn send_adjustment(
             Ok(results) => {
                 let success = results.iter().any(|(_, s)| *s);
                 Ok(Json(ApiResponse::success(success)))
-            }
+            },
             Err(_) => Err(StatusCode::INTERNAL_SERVER_ERROR),
         }
     } else {

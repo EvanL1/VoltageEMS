@@ -146,7 +146,7 @@ async fn find_mapping(
                 mapping,
             })
             .into_response()
-        }
+        },
         Err(_) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(ErrorResponse {
@@ -174,7 +174,7 @@ async fn add_mapping(
                     }),
                 )
                     .into_response()
-            }
+            },
         };
 
         match config.add_mapping(mapping) {
@@ -187,7 +187,7 @@ async fn add_mapping(
                     }),
                 )
                     .into_response()
-            }
+            },
         }
     }; // Lock is automatically released here
 
@@ -237,7 +237,7 @@ async fn update_mapping(
                     }),
                 )
                     .into_response()
-            }
+            },
         };
 
         match config.update_mapping(&source, mapping) {
@@ -250,7 +250,7 @@ async fn update_mapping(
                     }),
                 )
                     .into_response()
-            }
+            },
         }
     }; // Lock is automatically released here
 
@@ -296,7 +296,7 @@ async fn remove_mapping(
                     }),
                 )
                     .into_response()
-            }
+            },
         };
 
         match config.remove_mapping(&source) {
@@ -309,7 +309,7 @@ async fn remove_mapping(
                     }),
                 )
                     .into_response()
-            }
+            },
         }
     }; // Lock is automatically released here
 
@@ -358,7 +358,7 @@ async fn reload_config(State(state): State<SharedState>) -> impl IntoResponse {
                 Ok(mut config) => {
                     *config = new_config;
                     Ok(())
-                }
+                },
                 Err(_) => Err("Failed to acquire write lock"),
             };
 
@@ -384,7 +384,7 @@ async fn reload_config(State(state): State<SharedState>) -> impl IntoResponse {
                 message: "Configuration reloaded successfully".to_string(),
             })
             .into_response()
-        }
+        },
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(ErrorResponse {

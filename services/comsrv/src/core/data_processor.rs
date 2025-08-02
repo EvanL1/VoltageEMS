@@ -30,14 +30,14 @@ pub fn process_point_value(
         match telemetry_type {
             TelemetryType::Telemetry | TelemetryType::Adjustment => {
                 processed_value = raw_value * scaling_info.scale + scaling_info.offset;
-            }
+            },
             // For signal and control types, check if reversal is needed
             TelemetryType::Signal | TelemetryType::Control => {
                 if let Some(true) = scaling_info.reverse {
                     // Reversal logic: 0->1, non-0->0
                     processed_value = if raw_value == 0.0 { 1.0 } else { 0.0 };
                 }
-            }
+            },
         }
     }
 

@@ -398,13 +398,13 @@ impl ApiServer {
                 info!("API server started: http://{}", addr);
                 let _ = tx.send(Ok(())).await;
                 listener
-            }
+            },
             Err(e) => {
                 let err_msg = format!("Failed to bind address {}: {}", addr, e);
                 error!("{}", err_msg);
                 let _ = tx.send(Err(err_msg.clone())).await;
                 return Err(ModelSrvError::io(err_msg));
-            }
+            },
         };
 
         axum::serve(listener, app)

@@ -175,7 +175,10 @@ impl PluginManager {
 
         // Get statistics
         let registry = PluginRegistry::global();
-        let stats = registry.read().unwrap().get_statistics();
+        let stats = registry
+            .read()
+            .expect("plugin registry lock should not be poisoned")
+            .get_statistics();
 
         info!(
             "Plugin system initialized: {} plugins loaded ({} enabled)",
@@ -188,14 +191,18 @@ impl PluginManager {
     /// List all available plugins
     pub fn list_plugins() -> Vec<String> {
         let registry = PluginRegistry::global();
-        let reg = registry.read().unwrap();
+        let reg = registry
+            .read()
+            .expect("plugin registry lock should not be poisoned");
         reg.list_plugin_ids()
     }
 
     /// Get plugin information
     pub fn get_plugin_info(plugin_id: &str) -> Option<String> {
         let registry = PluginRegistry::global();
-        let reg = registry.read().unwrap();
+        let reg = registry
+            .read()
+            .expect("plugin registry lock should not be poisoned");
 
         reg.get_plugin_metadata(plugin_id).map(|metadata| {
             format!(
@@ -213,7 +220,9 @@ impl PluginManager {
     /// Enable plugin
     pub fn enable_plugin(plugin_id: &str) -> Result<()> {
         let registry = PluginRegistry::global();
-        let mut reg = registry.write().unwrap();
+        let mut reg = registry
+            .write()
+            .expect("plugin registry lock should not be poisoned");
 
         if let Some(entry) = reg.plugins.get_mut(plugin_id) {
             entry.enabled = true;
@@ -229,7 +238,9 @@ impl PluginManager {
     /// Disable plugin
     pub fn disable_plugin(plugin_id: &str) -> Result<()> {
         let registry = PluginRegistry::global();
-        let mut reg = registry.write().unwrap();
+        let mut reg = registry
+            .write()
+            .expect("plugin registry lock should not be poisoned");
 
         if let Some(entry) = reg.plugins.get_mut(plugin_id) {
             entry.enabled = false;
@@ -501,7 +512,9 @@ pub mod discovery {
     fn load_modbus_plugin() -> Result<()> {
         use crate::plugins::protocols::modbus;
         let registry = PluginRegistry::global();
-        let mut reg = registry.write().unwrap();
+        let mut reg = registry
+            .write()
+            .expect("plugin registry lock should not be poisoned");
 
         let plugin = Box::new(modbus::ModbusTcpPlugin);
         reg.register_plugin(plugin)?;
@@ -514,7 +527,9 @@ pub mod discovery {
     fn load_virt_plugin() -> Result<()> {
         use crate::plugins::protocols::virt;
         let registry = PluginRegistry::global();
-        let mut reg = registry.write().unwrap();
+        let mut reg = registry
+            .write()
+            .expect("plugin registry lock should not be poisoned");
 
         let plugin = Box::new(virt::VirtPlugin::new());
         reg.register_plugin(plugin)?;

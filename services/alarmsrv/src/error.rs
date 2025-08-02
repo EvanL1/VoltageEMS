@@ -40,7 +40,7 @@ impl fmt::Display for AlarmError {
             AlarmError::AlarmNotFound(id) => write!(f, "Alarm not found: {}", id),
             AlarmError::InvalidStateTransition { from, to } => {
                 write!(f, "Invalid state transition from {} to {}", from, to)
-            }
+            },
             AlarmError::Config(msg) => write!(f, "Configuration error: {}", msg),
             AlarmError::InvalidInput(msg) => write!(f, "Invalid input: {}", msg),
             AlarmError::Internal(msg) => write!(f, "Internal error: {}", msg),

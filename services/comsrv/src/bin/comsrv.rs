@@ -127,8 +127,8 @@ async fn main() -> Result<()> {
     let config_dir = std::path::Path::new(&args.config)
         .parent()
         .unwrap_or_else(|| std::path::Path::new("."));
-    eprintln!("DEBUG: Config directory for CSV: {}", config_dir.display());
-    eprintln!("DEBUG: About to call initialize_csv...");
+    eprintln!("Config directory for CSV: {}", config_dir.display());
+    eprintln!("About to call initialize_csv...");
     config_manager
         .initialize_csv(config_dir)
         .await
@@ -136,7 +136,7 @@ async fn main() -> Result<()> {
             eprintln!("Failed to initialize CSV configurations: {e}");
             e
         })?;
-    eprintln!("DEBUG: CSV initialization completed");
+    eprintln!("CSV initialization completed");
 
     let config_manager = Arc::new(config_manager);
 
@@ -197,15 +197,15 @@ async fn main() -> Result<()> {
             Ok(Ok(())) => {
                 info!("Communication service started successfully");
                 let _ = comm_tx.send(true).await;
-            }
+            },
             Ok(Err(e)) => {
                 error!("Communication service failed: {e}");
                 let _ = comm_tx.send(false).await;
-            }
+            },
             Err(_) => {
                 error!("Communication service startup timed out after 30 seconds");
                 let _ = comm_tx.send(false).await;
-            }
+            },
         }
     });
 
@@ -220,7 +220,7 @@ async fn main() -> Result<()> {
         Ok(Some(false)) => warn!("Communication service reported failure, but continuing..."),
         Ok(None) | Err(_) => {
             info!("Communication service still initializing, continuing with API server...");
-        }
+        },
     }
 
     // Start cleanup task
@@ -343,7 +343,10 @@ fn initialize_logging(
             .event_format(ConditionalTargetFormatter)
             .with_filter(main_filter.clone());
 
-        let log_file_path = logging_config.file.as_ref().unwrap();
+        let log_file_path = logging_config
+            .file
+            .as_ref()
+            .expect("file path should exist when both console and file logging are enabled");
         let log_path = Path::new(log_file_path);
         let log_dir = log_path.parent().unwrap_or_else(|| Path::new("."));
         let log_filename = log_path

@@ -144,25 +144,25 @@ async fn run_service(config: Config) -> Result<()> {
                 "✓ API server started successfully: http://{}:{}",
                 config.api.host, config.api.port
             );
-        }
+        },
         Ok(Some(Err(e))) => {
             error!("✗ Failed to start API server: {}", e);
             return Err(ModelSrvError::config(
                 "Failed to start API server".to_string(),
             ));
-        }
+        },
         Ok(None) => {
             error!("✗ API server startup channel closed");
             return Err(ModelSrvError::config(
                 "API server startup channel closed".to_string(),
             ));
-        }
+        },
         Err(_) => {
             error!("✗ API server startup timeout");
             return Err(ModelSrvError::config(
                 "API server startup timeout".to_string(),
             ));
-        }
+        },
     }
 
     info!(
@@ -189,80 +189,78 @@ async fn run_service(config: Config) -> Result<()> {
 
 /// Check configuration and environment
 async fn check_config(config: Config) -> Result<()> {
-    println!("=== ModSrv Configuration Check ===\n");
+    info!("=== ModSrv Configuration Check ===");
 
     // 1. Validate configuration
     match config.validate() {
-        Ok(_) => println!("✓ Configuration file validation passed"),
+        Ok(_) => info!("✓ Configuration file validation passed"),
         Err(e) => {
-            println!("✗ Configuration file validation failed: {}", e);
+            error!("✗ Configuration file validation failed: {}", e);
             return Err(e);
-        }
+        },
     }
 
     // 2. Display service configuration
-    println!("\n--- Service Configuration ---");
-    println!("Service name: {}", config.service_name);
-    println!("Version: {}", config.version);
-    println!(
+    info!("--- Service Configuration ---");
+    info!("Service name: {}", config.service_name);
+    info!("Version: {}", config.version);
+    info!(
         "API address: http://{}:{}",
         config.api.host, config.api.port
     );
-    println!("Log level: {}", config.log.level);
+    info!("Log level: {}", config.log.level);
 
     // 3. Display Redis configuration
-    println!("\n--- Redis Configuration ---");
-    println!("URL: {}", config.redis.url);
-    println!("Prefix: {}", config.redis.key_prefix);
+    info!("--- Redis Configuration ---");
+    info!("URL: {}", config.redis.url);
+    info!("Prefix: {}", config.redis.key_prefix);
 
     // 4. Test Redis connection
-    print!("Connection test: ");
+    info!("Connection test in progress...");
     match ModelManager::new(&config.redis.url).await {
         Ok(_) => {
-            println!("✓ Success");
-
-            // Test Lua scripts
-            println!("Lua scripts: ✓ Loaded");
-        }
+            info!("✓ Connection test: Success");
+            info!("Lua scripts: ✓ Loaded");
+        },
         Err(e) => {
-            println!("✗ Failed - {}", e);
+            error!("✗ Connection test: Failed - {}", e);
             return Err(ModelSrvError::redis(format!(
                 "Redis connection failed: {}",
                 e
             )));
-        }
+        },
     }
 
     // 5. Display model information
-    println!("\n--- Model Configuration ---");
+    info!("--- Model Configuration ---");
     if config.models.is_empty() {
-        println!("No models configured");
+        info!("No models configured");
     } else {
-        println!("Configured {} models:", config.models.len());
+        info!("Configured {} models:", config.models.len());
         for model in &config.models {
-            println!("\n• {} ({})", model.name, model.id);
-            println!("  Description: {}", model.description);
+            info!("• {} ({})", model.name, model.id);
+            info!("  Description: {}", model.description);
 
             // Display monitoring points
             if !model.monitoring.is_empty() {
-                println!("  Monitoring points ({}):", model.monitoring.len());
+                info!("  Monitoring points ({}):", model.monitoring.len());
                 for (name, point) in &model.monitoring {
                     let unit = point.unit.as_deref().unwrap_or("");
-                    println!("    - {}: {} {}", name, point.description, unit);
+                    info!("    - {}: {} {}", name, point.description, unit);
                 }
             }
 
             // Display control points
             if !model.control.is_empty() {
-                println!("  Control points ({}):", model.control.len());
+                info!("  Control points ({}):", model.control.len());
                 for (name, point) in &model.control {
                     let unit = point.unit.as_deref().unwrap_or("");
-                    println!("    - {}: {} {}", name, point.description, unit);
+                    info!("    - {}: {} {}", name, point.description, unit);
                 }
             }
         }
     }
 
-    println!("\n✓ All checks passed");
+    info!("✓ All checks passed");
     Ok(())
 }

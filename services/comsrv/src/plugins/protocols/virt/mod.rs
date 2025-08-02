@@ -182,7 +182,7 @@ impl ComBase for VirtualProtocol {
                         },
                     );
                 }
-            }
+            },
             "s" | "signal" => {
                 let signals = self.signal_data.read().await;
                 for (i, &signal) in signals.iter().enumerate() {
@@ -194,8 +194,8 @@ impl ComBase for VirtualProtocol {
                         },
                     );
                 }
-            }
-            _ => {}
+            },
+            _ => {},
         }
 
         Ok(data_map)
@@ -272,19 +272,26 @@ mod tests {
             adjustment_points: HashMap::new(),
         };
 
-        let mut protocol = VirtualProtocol::new(config).unwrap();
+        let mut protocol =
+            VirtualProtocol::new(config).expect("virtual protocol creation should succeed");
 
         // Test connection
         assert!(protocol.connect().await.is_ok());
         assert!(protocol.is_connected());
 
         // Test reading telemetry
-        let telemetry = protocol.read_four_telemetry("m").await.unwrap();
+        let telemetry = protocol
+            .read_four_telemetry("m")
+            .await
+            .expect("telemetry read should succeed");
         assert_eq!(telemetry.len(), 100);
 
         // Test control
         let commands = vec![(1, RedisValue::Bool(true))];
-        let results = protocol.control(commands).await.unwrap();
+        let results = protocol
+            .control(commands)
+            .await
+            .expect("control command should succeed");
         assert_eq!(results.len(), 1);
         assert!(results[0].1);
 

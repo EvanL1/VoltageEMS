@@ -241,13 +241,13 @@ impl RuleEngine {
                     Ok(action_result) => {
                         actions_executed.push(format!("action_{}: {}", idx, action_result));
                         debug!("Action {} executed successfully", idx);
-                    }
+                    },
                     Err(e) => {
                         let error_msg = format!("Action {} failed: {}", idx, e);
                         error!("{}", error_msg);
                         execution_error = Some(error_msg);
                         break; // Stop on first action failure
-                    }
+                    },
                 }
             }
 
@@ -311,7 +311,7 @@ impl RuleEngine {
             match condition_group.operator {
                 LogicOperator::And if !result => return Ok(false),
                 LogicOperator::Or if result => return Ok(true),
-                _ => {}
+                _ => {},
             }
         }
 
@@ -335,14 +335,14 @@ impl RuleEngine {
                     condition.source
                 );
                 return Ok(false);
-            }
+            },
             Err(e) => {
                 warn!(
                     "Failed to get source value for '{}': {}",
                     condition.source, e
                 );
                 return Ok(false);
-            }
+            },
         };
 
         let result = self.compare_values(&source_value, &condition.operator, &condition.value)?;
@@ -382,7 +382,7 @@ impl RuleEngine {
                         } else {
                             Ok(Some(json!(value_str)))
                         }
-                    }
+                    },
                     Ok(None) => Ok(None),
                     Err(e) => Err(RulesrvError::RedisError(e.to_string())),
                 }
@@ -417,7 +417,7 @@ impl RuleEngine {
                 } else {
                     Ok(Some(json!(value_str)))
                 }
-            }
+            },
             Ok(None) => Ok(None),
             Err(e) => Err(RulesrvError::RedisError(e.to_string())),
         }
@@ -443,7 +443,7 @@ impl RuleEngine {
                     .map(|s| s.to_string())
                     .unwrap_or_else(|| right.to_string());
                 Ok(left_string.contains(&right_string))
-            }
+            },
             _ => {
                 // Numeric comparisons
                 let left_num = self.extract_number(left)?;
@@ -456,7 +456,7 @@ impl RuleEngine {
                     ComparisonOperator::LessThanOrEqual => Ok(left_num <= right_num),
                     _ => unreachable!(),
                 }
-            }
+            },
         }
     }
 
@@ -507,7 +507,7 @@ impl RuleEngine {
                         "Invalid device control configuration".to_string(),
                     ))
                 }
-            }
+            },
             ActionType::Publish => {
                 if let ActionConfig::Publish { channel, message } = &action.config {
                     self.execute_publish(channel, message).await
@@ -516,7 +516,7 @@ impl RuleEngine {
                         "Invalid publish configuration".to_string(),
                     ))
                 }
-            }
+            },
             ActionType::SetValue => {
                 if let ActionConfig::SetValue { key, value, ttl } = &action.config {
                     self.execute_set_value(key, value, *ttl).await
@@ -525,7 +525,7 @@ impl RuleEngine {
                         "Invalid set value configuration".to_string(),
                     ))
                 }
-            }
+            },
             ActionType::Notify => {
                 if let ActionConfig::Notify {
                     level,
@@ -539,7 +539,7 @@ impl RuleEngine {
                         "Invalid notify configuration".to_string(),
                     ))
                 }
-            }
+            },
         }
     }
 
@@ -700,12 +700,12 @@ impl RuleEngine {
                 } else {
                     Ok(vec![])
                 }
-            }
+            },
             Err(_) => {
                 // Fallback to direct Redis query if Redis Functions not available
                 warn!("Redis Functions not available, using fallback query");
                 self.list_rules_fallback().await
-            }
+            },
         }
     }
 
