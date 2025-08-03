@@ -78,29 +78,57 @@ rulesrv:rule:{ruleID}
 - 6位小数精度标准化
 - 点位ID从1开始（不再使用10001等分段）
 
-### Lua脚本数据处理
+### Redis Functions (Lua脚本)
 
-VoltageEMS使用Lua脚本进行特定的数据处理任务：
+VoltageEMS使用Redis Functions进行高性能数据处理，脚本按功能分层组织：
 
-#### HisSrv数据聚合
-```lua
--- services/hissrv/scripts/
-└── archive_aggregator.lua  # 历史数据聚合脚本
-    ├── 1分钟聚合：从实时数据计算avg/min/max
-    └── 5分钟聚合：从1分钟数据二次聚合
+#### 核心函数库 (core.lua)
+通用的数据处理逻辑，占80%的功能：
+- **generic_store**: 通用实体存储，支持多索引
+- **generic_batch_sync**: 批量数据同步
+- **generic_query**: 灵活的查询功能
+- **generic_state_machine**: 状态机管理
+- **generic_condition_eval**: 条件评估引擎
+- **generic_statistics**: 统计数据收集
+
+#### 领域函数库 (domain.lua)
+业务领域相关功能：
+- **告警管理**: store_alarm, acknowledge_alarm, resolve_alarm
+- **规则引擎**: save_rule, delete_rule, save_rule_group
+- **数据同步**: sync_channel_data, sync_all_channels
+- **设备计算**: calculate_device_delta, set_thresholds
+
+#### 服务适配层 (services.lua)
+各微服务的专用函数：
+- **hissrv**: 历史数据收集、InfluxDB行协议转换、批量处理
+- **modsrv**: 测点映射初始化、实时同步、控制下发
+- **rulesrv**: 规则存储、查询、DAG执行
+- **netsrv**: 数据转发、路由配置、队列管理
+- **alarmsrv**: 告警存储（使用通用存储）
+
+#### 特殊逻辑 (specific.lua)
+无法通用化的特定功能（20%）：
+- **dag_executor**: DAG规则执行器
+- **line_protocol_converter**: InfluxDB行协议转换
+
+#### 加载与使用
+```bash
+# 加载所有Redis Functions
+cd scripts/redis-functions
+./load_all_functions.sh
+
+# 验证函数加载
+./verify_functions.sh
+
+# 在服务中调用（示例）
+redis-cli FCALL hissrv_collect_data 0 "comsrv:1001:m" "60"
 ```
 
-#### 服务间数据同步
-```lua
--- scripts/
-└── sync.lua             # comsrv与modsrv双向数据同步
-```
-
-Lua脚本主要用于：
-- HisSrv的时序数据聚合
-- 高性能的批量数据处理
-- Redis内部的原子性操作
-- 减少服务间的网络开销
+Redis Functions的优势：
+- **原子性操作**: 避免竞态条件
+- **减少网络开销**: 数据处理在Redis内部完成
+- **高性能**: 避免多次往返通信
+- **代码复用**: 80%的逻辑通过通用函数实现
 
 ## 🚀 快速开始
 
