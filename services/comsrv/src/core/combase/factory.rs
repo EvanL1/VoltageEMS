@@ -5,12 +5,12 @@
 use async_trait::async_trait;
 use dashmap::DashMap;
 use std::sync::Arc;
-use tokio::sync::RwLock;
-use tracing::{error, info};
+use tokio::sync::{Mutex, RwLock};
+use tracing::{debug, error, info, warn};
 
-use crate::core::combase::command::{CommandSubscriber, CommandSubscriberConfig};
-use crate::core::combase::core::ComBase;
-use crate::core::config::{ChannelConfig, ConfigManager, ProtocolType};
+use crate::core::combase::core::{ComBase, TelemetryBatch};
+use crate::core::combase::trigger::{CommandTrigger, CommandTriggerConfig};
+use crate::core::config::{ChannelConfig, ProtocolType};
 use crate::utils::error::{ComSrvError, Result};
 use std::str::FromStr;
 
@@ -71,7 +71,8 @@ struct ChannelMetadata {
 struct ChannelEntry {
     channel: Arc<RwLock<Box<dyn ComBase>>>,
     metadata: ChannelMetadata,
-    command_subscriber: Option<Arc<RwLock<CommandSubscriber>>>,
+    command_trigger: Option<Arc<RwLock<CommandTrigger>>>,
+    channel_config: ChannelConfig,
 }
 
 impl std::fmt::Debug for ChannelEntry {
@@ -92,6 +93,14 @@ pub struct ProtocolFactory {
     channels: DashMap<u16, ChannelEntry, ahash::RandomState>,
     /// Protocol factory registry
     protocol_factories: DashMap<ProtocolType, Arc<dyn ProtocolClientFactory>, ahash::RandomState>,
+    /// Global Redis URL for all channels
+    redis_url: String,
+    /// Telemetry sync task handle
+    sync_task_handle: Arc<RwLock<Option<tokio::task::JoinHandle<()>>>>,
+    /// Data receiver for batch processing
+    data_receiver: Arc<Mutex<Option<tokio::sync::mpsc::Receiver<TelemetryBatch>>>>,
+    /// Data sender for protocols
+    data_sender: tokio::sync::mpsc::Sender<TelemetryBatch>,
 }
 
 impl std::fmt::Debug for ProtocolFactory {
@@ -99,6 +108,7 @@ impl std::fmt::Debug for ProtocolFactory {
         f.debug_struct("ProtocolFactory")
             .field("channels", &self.channels.len())
             .field("protocol_factories", &self.protocol_factories.len())
+            .field("redis_url", &self.redis_url)
             .finish()
     }
 }
@@ -106,9 +116,43 @@ impl std::fmt::Debug for ProtocolFactory {
 impl ProtocolFactory {
     /// Create new protocol factory
     pub fn new() -> Self {
+        // Get Redis URL from environment or use default
+        let redis_url =
+            std::env::var("REDIS_URL").unwrap_or_else(|_| "redis://localhost:6379".to_string());
+
+        // Create channel with larger buffer for batch processing
+        let (tx, rx) = tokio::sync::mpsc::channel(1000);
+
         let factory = Self {
             channels: DashMap::with_hasher(ahash::RandomState::new()),
             protocol_factories: DashMap::with_hasher(ahash::RandomState::new()),
+            redis_url,
+            sync_task_handle: Arc::new(RwLock::new(None)),
+            data_receiver: Arc::new(Mutex::new(Some(rx))),
+            data_sender: tx,
+        };
+
+        // Initialize plugin system
+        let _ = crate::plugins::core::get_plugin_registry();
+
+        // Register built-in protocol factories
+        factory.register_builtin_factories();
+
+        factory
+    }
+
+    /// Create new protocol factory with custom Redis URL
+    pub fn with_redis_url(redis_url: String) -> Self {
+        // Create channel with larger buffer for batch processing
+        let (tx, rx) = tokio::sync::mpsc::channel(1000);
+
+        let factory = Self {
+            channels: DashMap::with_hasher(ahash::RandomState::new()),
+            protocol_factories: DashMap::with_hasher(ahash::RandomState::new()),
+            redis_url,
+            sync_task_handle: Arc::new(RwLock::new(None)),
+            data_receiver: Arc::new(Mutex::new(Some(rx))),
+            data_sender: tx,
         };
 
         // Initialize plugin system
@@ -220,7 +264,6 @@ impl ProtocolFactory {
     pub async fn create_channel(
         &self,
         channel_config: &ChannelConfig,
-        _config_manager: Option<&ConfigManager>,
     ) -> Result<Arc<RwLock<Box<dyn ComBase>>>> {
         let channel_id = channel_config.id;
 
@@ -258,12 +301,54 @@ impl ProtocolFactory {
         client.initialize(channel_config).await?;
         info!("Client initialized successfully for channel {}", channel_id);
 
+        // Set data channel for protocols that support it
+        client.set_data_channel(self.data_sender.clone());
+
         // Under four-telemetry separation architecture, point configuration is loaded directly from channel_config during initialize phase, no need for additional unified mapping
 
         // Initialize points in Redis at ComBase layer (initial value is 0)
         info!("Initializing Redis keys for channel {}", channel_id);
-        self.initialize_channel_points(channel_config).await?;
+
+        // Create a Redis client once for all operations
+        info!("Creating Redis client with URL: {}", &self.redis_url);
+        let mut redis_client = voltage_libs::redis::RedisClient::new(&self.redis_url)
+            .await
+            .map_err(|e| ComSrvError::Storage(format!("Failed to connect to Redis: {e}")))?;
+        info!("Redis client created successfully");
+
+        self.initialize_channel_points(channel_config, &mut redis_client)
+            .await?;
         info!("Redis keys initialized for channel {}", channel_id);
+
+        // Create command trigger (always enabled)
+        info!("Creating CommandTrigger for channel {}", channel_id);
+        let config = CommandTriggerConfig {
+            channel_id,
+            redis_url: self.redis_url.clone(),
+        };
+
+        let (tx, rx) = tokio::sync::mpsc::channel(100);
+        let subscriber = CommandTrigger::new(config, tx).await?;
+        let subscriber_arc = Arc::new(RwLock::new(subscriber));
+
+        // Set command receiver on the protocol instance before moving client
+        info!(
+            "Setting command receiver on protocol for channel {}",
+            channel_id
+        );
+        client.set_command_receiver(rx);
+
+        // Start subscriber
+        info!("Starting CommandTrigger for channel {}", channel_id);
+        let mut sub = subscriber_arc.write().await;
+        sub.start().await?;
+        drop(sub);
+
+        let command_trigger = Some(subscriber_arc);
+        info!(
+            "CommandTrigger started successfully for channel {}",
+            channel_id
+        );
 
         // Skip connection phase, only complete initialization
         // Connections will be established uniformly after all channels are initialized
@@ -274,40 +359,6 @@ impl ProtocolFactory {
 
         let channel_arc = Arc::new(RwLock::new(client));
 
-        // Create command subscriber (if needed)
-        let enable_control = channel_config
-            .parameters
-            .get("enable_control")
-            .and_then(serde_yaml::Value::as_bool)
-            .unwrap_or(false);
-
-        let command_subscriber = if enable_control {
-            let redis_url = channel_config
-                .parameters
-                .get("redis_url")
-                .and_then(|v| v.as_str())
-                .unwrap_or("redis://localhost:6379")
-                .to_string();
-
-            let config = CommandSubscriberConfig {
-                channel_id,
-                redis_url,
-            };
-
-            let (tx, _rx) = tokio::sync::mpsc::channel(100);
-            let subscriber = CommandSubscriber::new(config, tx).await?;
-            let subscriber_arc = Arc::new(RwLock::new(subscriber));
-
-            // Start subscriber
-            let mut sub = subscriber_arc.write().await;
-            sub.start().await?;
-            drop(sub);
-
-            Some(subscriber_arc)
-        } else {
-            None
-        };
-
         // Create channel entry
         let entry = ChannelEntry {
             channel: channel_arc.clone(),
@@ -317,7 +368,8 @@ impl ProtocolFactory {
                 created_at: std::time::Instant::now(),
                 last_accessed: Arc::new(RwLock::new(std::time::Instant::now())),
             },
-            command_subscriber,
+            command_trigger,
+            channel_config: channel_config.clone(),
         };
 
         // Insert channel
@@ -377,15 +429,18 @@ impl ProtocolFactory {
             successful_connections, failed_connections
         );
 
+        // Start telemetry sync task after all channels are connected
+        self.start_telemetry_sync_task().await?;
+
         Ok(())
     }
 
     /// Remove channel
     pub async fn remove_channel(&self, channel_id: u16) -> Result<()> {
         if let Some((_, entry)) = self.channels.remove(&channel_id) {
-            // Stop command subscriber
-            if let Some(subscriber) = entry.command_subscriber {
-                let mut sub = subscriber.write().await;
+            // Stop command trigger
+            if let Some(trigger) = entry.command_trigger {
+                let mut sub = trigger.write().await;
                 sub.stop().await?;
             }
 
@@ -443,8 +498,213 @@ impl ProtocolFactory {
         stats
     }
 
+    /// Start telemetry synchronization task
+    async fn start_telemetry_sync_task(&self) -> Result<()> {
+        info!("Starting telemetry sync task...");
+
+        // Take the receiver from the factory
+        let receiver = {
+            let mut receiver_opt = self.data_receiver.lock().await;
+            receiver_opt.take()
+        };
+
+        let Some(mut receiver) = receiver else {
+            return Err(ComSrvError::InvalidOperation(
+                "Data receiver already taken".to_string(),
+            ));
+        };
+
+        // Clone necessary references for the task
+        let channels = self.channels.clone();
+        let redis_url = self.redis_url.clone();
+        let sync_handle = self.sync_task_handle.clone();
+
+        // Create the sync task
+        let sync_task = tokio::spawn(async move {
+            // Create storage instance for immediate writing
+            let plugin_storage =
+                match crate::plugins::core::DefaultPluginStorage::new(redis_url.clone()).await {
+                    Ok(storage) => storage,
+                    Err(e) => {
+                        error!("Failed to create plugin storage for sync task: {}", e);
+                        return;
+                    },
+                };
+
+            // Create and configure LuaSyncManager
+            let lua_sync_config = crate::core::sync::LuaSyncConfig {
+                enabled: true, // Enable Lua synchronization
+                batch_size: 1000,
+                retry_count: 3,
+                async_sync: true,
+                trigger_alarms: true,
+            };
+
+            let redis_client = match voltage_libs::redis::RedisClient::new(&redis_url).await {
+                Ok(client) => client,
+                Err(e) => {
+                    error!("Failed to create Redis client for LuaSyncManager: {}", e);
+                    return;
+                },
+            };
+
+            let lua_sync_manager =
+                match crate::core::sync::LuaSyncManager::new(lua_sync_config, redis_client).await {
+                    Ok(manager) => Arc::new(manager),
+                    Err(e) => {
+                        error!("Failed to create LuaSyncManager: {}", e);
+                        return;
+                    },
+                };
+
+            // Create storage with Lua sync manager
+            let mut storage =
+                crate::core::combase::storage::DefaultComBaseStorage::new(Box::new(plugin_storage));
+            storage.set_sync_manager(lua_sync_manager);
+            let storage = Arc::new(Mutex::new(
+                Box::new(storage) as Box<dyn crate::core::combase::storage::ComBaseStorage>
+            ));
+
+            // Event-driven processing: immediately write data upon receipt
+            loop {
+                // Receive data from protocols
+                match receiver.recv().await {
+                    Some(batch) => {
+                        debug!("Received telemetry batch for channel {}", batch.channel_id);
+
+                        // Get channel config for scaling
+                        let channel_config = channels
+                            .get(&batch.channel_id)
+                            .map(|entry| entry.channel_config.clone());
+
+                        let mut updates = Vec::new();
+
+                        // Process telemetry data
+                        for (point_id, raw_value, timestamp) in batch.telemetry {
+                            let processed_value = if let Some(ref config) = channel_config {
+                                // Apply scaling from channel config
+                                if let Some(point_config) = config.telemetry_points.get(&point_id) {
+                                    crate::core::data_processor::process_point_value(
+                                        raw_value,
+                                        &crate::core::config::TelemetryType::Telemetry,
+                                        point_config.scaling.as_ref(),
+                                    )
+                                } else {
+                                    raw_value
+                                }
+                            } else {
+                                raw_value
+                            };
+
+                            let update = crate::plugins::core::PluginPointUpdate {
+                                channel_id: batch.channel_id,
+                                telemetry_type: crate::core::config::TelemetryType::Telemetry,
+                                point_id,
+                                value: processed_value,
+                                timestamp,
+                                raw_value: Some(raw_value),
+                            };
+                            updates.push(update);
+                        }
+
+                        // Process signal data
+                        for (point_id, raw_value, timestamp) in batch.signal {
+                            let processed_value = if let Some(ref config) = channel_config {
+                                // Apply scaling/reverse from channel config
+                                if let Some(point_config) = config.signal_points.get(&point_id) {
+                                    debug!(
+                                        "Processing signal point {}: raw={}, scaling={:?}",
+                                        point_id, raw_value, point_config.scaling
+                                    );
+                                    let processed =
+                                        crate::core::data_processor::process_point_value(
+                                            raw_value,
+                                            &crate::core::config::TelemetryType::Signal,
+                                            point_config.scaling.as_ref(),
+                                        );
+                                    debug!(
+                                        "Signal point {} processed: raw={} -> processed={}",
+                                        point_id, raw_value, processed
+                                    );
+                                    processed
+                                } else {
+                                    debug!(
+                                        "Signal point {} not found in config, using raw value",
+                                        point_id
+                                    );
+                                    raw_value
+                                }
+                            } else {
+                                raw_value
+                            };
+
+                            let update = crate::plugins::core::PluginPointUpdate {
+                                channel_id: batch.channel_id,
+                                telemetry_type: crate::core::config::TelemetryType::Signal,
+                                point_id,
+                                value: processed_value,
+                                timestamp,
+                                raw_value: Some(raw_value),
+                            };
+                            updates.push(update);
+                        }
+
+                        // Immediately write updates to Redis (event-driven, no delay)
+                        if !updates.is_empty() {
+                            debug!(
+                                "Immediately writing {} updates for channel {}",
+                                updates.len(),
+                                batch.channel_id
+                            );
+
+                            // Use spawn to avoid blocking the receiver
+                            let storage_clone = storage.clone();
+                            let channel_id = batch.channel_id;
+                            tokio::spawn(async move {
+                                let start = std::time::Instant::now();
+                                if let Err(e) = storage_clone
+                                    .lock()
+                                    .await
+                                    .batch_update_and_publish(channel_id, updates)
+                                    .await
+                                {
+                                    error!(
+                                        "Failed to sync telemetry for channel {}: {}",
+                                        channel_id, e
+                                    );
+                                } else {
+                                    let elapsed = start.elapsed();
+                                    debug!(
+                                        "Successfully synced telemetry for channel {} in {:?}",
+                                        channel_id, elapsed
+                                    );
+                                }
+                            });
+                        }
+                    },
+                    None => {
+                        warn!("Telemetry sync receiver closed, exiting sync task");
+                        break;
+                    },
+                }
+            }
+        });
+
+        // Store the task handle
+        *sync_handle.write().await = Some(sync_task);
+
+        info!("Telemetry sync task started successfully (event-driven mode)");
+        Ok(())
+    }
+
     /// Clean up all channels
     pub async fn cleanup(&self) -> Result<()> {
+        // Stop sync task first
+        if let Some(handle) = self.sync_task_handle.write().await.take() {
+            handle.abort();
+            info!("Telemetry sync task stopped");
+        }
+
         let channel_ids: Vec<u16> = self.get_channel_ids();
 
         for channel_id in channel_ids {
@@ -485,22 +745,18 @@ impl ProtocolFactory {
         })
     }
 
-    /// Initialize all channel points to Redis (default value is 0)
-    async fn initialize_channel_points(&self, channel_config: &ChannelConfig) -> Result<()> {
-        use crate::core::config::TelemetryType;
-        use crate::plugins::core::{DefaultPluginStorage, PluginPointUpdate, PluginStorage};
+    /// Initialize all channel points to Redis using batch Lua function
+    async fn initialize_channel_points(
+        &self,
+        channel_config: &ChannelConfig,
+        redis_client: &mut voltage_libs::redis::RedisClient,
+    ) -> Result<()> {
         use std::path::PathBuf;
 
-        // Get Redis URL
-        let redis_url = channel_config
-            .parameters
-            .get("redis_url")
-            .and_then(|v| v.as_str())
-            .unwrap_or("redis://localhost:6379")
-            .to_string();
-
-        // Create storage instance
-        let storage = DefaultPluginStorage::new(redis_url).await?;
+        info!(
+            "Starting initialize_channel_points for channel {}",
+            channel_config.id
+        );
 
         // Load point table configuration - if not configured, return success directly
         let table_config = match channel_config.table_config.as_ref() {
@@ -524,14 +780,14 @@ impl ProtocolFactory {
             (
                 "telemetry",
                 &table_config.four_remote_files.telemetry_file,
-                "m",
+                "T",
             ),
-            ("signal", &table_config.four_remote_files.signal_file, "s"),
-            ("control", &table_config.four_remote_files.control_file, "c"),
+            ("signal", &table_config.four_remote_files.signal_file, "S"),
+            ("control", &table_config.four_remote_files.control_file, "C"),
             (
                 "adjustment",
                 &table_config.four_remote_files.adjustment_file,
-                "a",
+                "A",
             ),
         ];
 
@@ -553,9 +809,8 @@ impl ProtocolFactory {
                 ComSrvError::ConfigError(format!("Failed to read {telemetry_name} CSV file: {e}"))
             })?;
 
-            let mut updates = Vec::new();
-
-            // Read each point and prepare initialization update
+            // Collect all point IDs from CSV
+            let mut point_ids = Vec::new();
             for result in reader.records() {
                 let record = result.map_err(|e| {
                     ComSrvError::ConfigError(format!("Error reading CSV record: {e}"))
@@ -564,40 +819,76 @@ impl ProtocolFactory {
                 // Get point_id (first column)
                 if let Some(point_id_str) = record.get(0) {
                     if let Ok(point_id) = point_id_str.parse::<u32>() {
-                        // Get current timestamp
-                        let timestamp = chrono::Utc::now().timestamp();
-
-                        // Convert telemetry type
-                        let telemetry_type = match redis_type {
-                            "m" => TelemetryType::Telemetry,
-                            "s" => TelemetryType::Signal,
-                            "c" => TelemetryType::Control,
-                            "a" => TelemetryType::Adjustment,
-                            _ => continue,
-                        };
-
-                        // Create update with initial value 0
-                        let update = PluginPointUpdate {
-                            channel_id: channel_config.id,
-                            telemetry_type,
-                            point_id,
-                            value: 0.0,
-                            timestamp,
-                            raw_value: None,
-                        };
-                        updates.push(update);
+                        point_ids.push(point_id);
                     }
                 }
             }
 
-            // Batch initialize points
-            if !updates.is_empty() {
-                let count = updates.len();
-                storage.write_points(updates).await?;
+            if point_ids.is_empty() {
                 info!(
-                    "Initialized {} {} points for channel {} with default value 0",
-                    count, telemetry_name, channel_config.id
+                    "No valid point IDs found in {} file for channel {}",
+                    telemetry_name, channel_config.id
                 );
+                continue;
+            }
+
+            // Use Lua function for batch initialization
+            let start_time = std::time::Instant::now();
+
+            // Prepare parameters for Lua function
+            let channel_id = channel_config.id.to_string();
+            let points_json = serde_json::to_string(&point_ids).map_err(|e| {
+                ComSrvError::ConfigError(format!("Failed to serialize point IDs: {e}"))
+            })?;
+
+            let options = serde_json::json!({
+                "default_value": 0.0,
+                "force_overwrite": true
+            });
+            let options_json = options.to_string();
+
+            // Call Redis Lua function for batch initialization
+            info!(
+                "Calling generic_batch_init_points for channel {} {} with {} points",
+                channel_config.id,
+                telemetry_name,
+                point_ids.len()
+            );
+
+            let result: String = redis_client
+                .fcall(
+                    "generic_batch_init_points",
+                    &[],
+                    &[&channel_id, redis_type, &points_json, &options_json],
+                )
+                .await
+                .map_err(|e| {
+                    ComSrvError::RedisError(format!(
+                        "Failed to call batch init function for {}: {}",
+                        telemetry_name, e
+                    ))
+                })?;
+
+            let elapsed = start_time.elapsed();
+
+            // Parse result
+            match serde_json::from_str::<serde_json::Value>(&result) {
+                Ok(result_json) => {
+                    let total_points = result_json["total_points"].as_u64().unwrap_or(0);
+                    let new_points = result_json["new_points"].as_u64().unwrap_or(0);
+                    let existing_points = result_json["existing_points"].as_u64().unwrap_or(0);
+
+                    info!(
+                        "Batch initialized {} points for channel {} {}: {} new, {} existing (took {:?})",
+                        total_points, channel_config.id, telemetry_name, new_points, existing_points, elapsed
+                    );
+                },
+                Err(e) => {
+                    warn!(
+                        "Failed to parse batch init result for channel {} {}: {} (raw: {})",
+                        channel_config.id, telemetry_name, e, result
+                    );
+                },
             }
         }
 
@@ -958,7 +1249,7 @@ mod tests {
         };
 
         let channel = factory
-            .create_channel(&channel_config, None)
+            .create_channel(&channel_config)
             .await
             .expect("channel creation should succeed");
 

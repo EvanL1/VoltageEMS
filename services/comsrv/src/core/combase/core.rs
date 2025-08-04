@@ -43,6 +43,14 @@ pub enum ChannelCommand {
     },
 }
 
+/// Batch telemetry data for channel transmission
+#[derive(Debug, Clone)]
+pub struct TelemetryBatch {
+    pub channel_id: u16,
+    pub telemetry: Vec<(u32, f64, i64)>, // (point_id, raw_value, timestamp)
+    pub signal: Vec<(u32, f64, i64)>,    // (point_id, raw_value, timestamp)
+}
+
 // ============================================================================
 // Basic type definitions (from types.rs)
 // ============================================================================
@@ -161,6 +169,20 @@ pub trait ComBase: Send + Sync {
     /// Stop periodic tasks
     async fn stop_periodic_tasks(&self) -> Result<()> {
         Ok(())
+    }
+
+    /// Set data channel for sending telemetry data
+    /// Protocols will send data through this channel instead of caching
+    fn set_data_channel(&mut self, _tx: tokio::sync::mpsc::Sender<TelemetryBatch>) {
+        // Default implementation does nothing
+        // Protocols that support channel-based data flow should override this
+    }
+
+    /// Set command receiver for receiving control commands
+    /// Protocols that support command processing should override this
+    fn set_command_receiver(&mut self, _rx: tokio::sync::mpsc::Receiver<ChannelCommand>) {
+        // Default implementation does nothing
+        // Protocols that support command processing should override this
     }
 
     /// Get diagnostic information

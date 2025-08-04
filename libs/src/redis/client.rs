@@ -22,7 +22,17 @@ impl RedisClient {
     /// 创建新的客户端
     pub async fn new(url: &str) -> Result<Self> {
         let client = Client::open(url)?;
-        let conn = ConnectionManager::new(client).await?;
+
+        // Add timeout for connection
+        let conn = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            ConnectionManager::new(client),
+        )
+        .await
+        .map_err(|_| {
+            crate::error::Error::Redis("Redis connection timeout after 5 seconds".into())
+        })??;
+
         Ok(Self {
             conn,
             url: url.into(),
@@ -145,6 +155,15 @@ impl RedisClient {
         key: &str,
     ) -> Result<std::collections::HashMap<String, String>> {
         redis::cmd("HGETALL")
+            .arg(key)
+            .query_async(&mut self.conn)
+            .await
+            .map_err(Into::into)
+    }
+
+    /// Hash 操作 - 获取所有字段名
+    pub async fn hkeys(&mut self, key: &str) -> Result<Vec<String>> {
+        redis::cmd("HKEYS")
             .arg(key)
             .query_async(&mut self.conn)
             .await

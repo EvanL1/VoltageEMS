@@ -2,7 +2,7 @@
 //!
 //! Contains all configuration-related type definitions
 
-use crate::core::combase::CommandSubscriberConfig;
+use crate::core::combase::CommandTriggerConfig;
 use crate::core::sync::LuaSyncConfig;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -54,9 +54,9 @@ pub struct ServiceConfig {
     #[serde(default)]
     pub lua_sync: LuaSyncConfig,
 
-    /// Command subscription configuration
+    /// Command trigger configuration
     #[serde(default)]
-    pub command_subscriber: CommandSubscriberConfig,
+    pub command_trigger: CommandTriggerConfig,
 }
 
 /// API configuration
@@ -198,11 +198,11 @@ pub struct ChannelLoggingConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TableConfig {
     /// Four-telemetry path
-    #[serde(default = "default_four_remote_route")]
+    #[serde(alias = "four_telemetry_route", default = "default_four_remote_route")]
     pub four_remote_route: String,
 
     /// Four-telemetry files
-    #[serde(default)]
+    #[serde(alias = "four_telemetry_files", default)]
     pub four_remote_files: FourRemoteFiles,
 
     /// Protocol mapping path
@@ -210,7 +210,7 @@ pub struct TableConfig {
     pub protocol_mapping_route: String,
 
     /// Protocol mapping files
-    #[serde(default)]
+    #[serde(alias = "protocol_mapping_files", default)]
     pub protocol_mapping_file: ProtocolMappingFiles,
 }
 
@@ -547,7 +547,7 @@ impl Default for ServiceConfig {
             redis: RedisConfig::default(),
             logging: LoggingConfig::default(),
             lua_sync: LuaSyncConfig::default(),
-            command_subscriber: CommandSubscriberConfig::default(),
+            command_trigger: CommandTriggerConfig::default(),
         }
     }
 }

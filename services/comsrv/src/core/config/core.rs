@@ -180,8 +180,13 @@ impl ConfigManager {
             .map_err(|e| ComSrvError::ConfigError(format!("Failed to load config: {e}")))?;
 
         // Apply global environment variables (already handled in ConfigLoader, but ensure again here)
-        config.service.redis.url = get_global_redis_url("COMSRV");
-        config.service.logging.level = get_global_log_level("COMSRV");
+        // Only override if environment variables are actually set
+        if std::env::var("VOLTAGE_REDIS_URL").is_ok() || std::env::var("COMSRV_REDIS_URL").is_ok() {
+            config.service.redis.url = get_global_redis_url("COMSRV");
+        }
+        if std::env::var("VOLTAGE_LOG_LEVEL").is_ok() || std::env::var("COMSRV_LOG_LEVEL").is_ok() {
+            config.service.logging.level = get_global_log_level("COMSRV");
+        }
 
         Ok(config)
     }
@@ -195,6 +200,19 @@ impl ConfigManager {
         info!("Initializing CSV configurations");
         let result = Self::load_csv_configs(&mut self.config, config_dir, &self.csv_loader).await;
         debug!("load_csv_configs returned: {:?}", result.is_ok());
+
+        // Debug: Print loaded points summary
+        for channel in &self.config.channels {
+            info!(
+                "Channel {} after CSV load: {} telemetry, {} signal, {} control, {} adjustment points",
+                channel.id,
+                channel.telemetry_points.len(),
+                channel.signal_points.len(),
+                channel.control_points.len(),
+                channel.adjustment_points.len()
+            );
+        }
+
         result
     }
 
@@ -271,8 +289,22 @@ impl ConfigManager {
         debug!("four_remote_base: {}", four_remote_base.display());
         debug!("protocol_base: {}", protocol_base.display());
 
+        // Debug: Print actual file paths to be loaded
+        debug!(
+            "Will load telemetry from: {}",
+            four_remote_base
+                .join(&table_config.four_remote_files.telemetry_file)
+                .display()
+        );
+        debug!(
+            "Will load telemetry mapping from: {}",
+            protocol_base
+                .join(&table_config.protocol_mapping_file.telemetry_mapping)
+                .display()
+        );
+
         // Load and merge telemetry points
-        if let Ok(points) = Self::load_and_combine_telemetry(
+        match Self::load_and_combine_telemetry(
             &four_remote_base.join(&table_config.four_remote_files.telemetry_file),
             &protocol_base.join(&table_config.protocol_mapping_file.telemetry_mapping),
             "Telemetry",
@@ -280,11 +312,17 @@ impl ConfigManager {
         )
         .await
         {
-            combined.extend(points);
+            Ok(points) => {
+                debug!("Successfully loaded {} telemetry points", points.len());
+                combined.extend(points);
+            },
+            Err(e) => {
+                warn!("Failed to load telemetry points: {}", e);
+            },
         }
 
         // Load and merge signal points
-        if let Ok(points) = Self::load_and_combine_telemetry(
+        match Self::load_and_combine_telemetry(
             &four_remote_base.join(&table_config.four_remote_files.signal_file),
             &protocol_base.join(&table_config.protocol_mapping_file.signal_mapping),
             "Signal",
@@ -292,11 +330,17 @@ impl ConfigManager {
         )
         .await
         {
-            combined.extend(points);
+            Ok(points) => {
+                debug!("Successfully loaded {} signal points", points.len());
+                combined.extend(points);
+            },
+            Err(e) => {
+                warn!("Failed to load signal points: {}", e);
+            },
         }
 
         // Load and merge control points
-        if let Ok(points) = Self::load_and_combine_telemetry(
+        match Self::load_and_combine_telemetry(
             &four_remote_base.join(&table_config.four_remote_files.control_file),
             &protocol_base.join(&table_config.protocol_mapping_file.control_mapping),
             "Control",
@@ -304,11 +348,17 @@ impl ConfigManager {
         )
         .await
         {
-            combined.extend(points);
+            Ok(points) => {
+                debug!("Successfully loaded {} control points", points.len());
+                combined.extend(points);
+            },
+            Err(e) => {
+                warn!("Failed to load control points: {}", e);
+            },
         }
 
         // Load and merge adjustment points
-        if let Ok(points) = Self::load_and_combine_telemetry(
+        match Self::load_and_combine_telemetry(
             &four_remote_base.join(&table_config.four_remote_files.adjustment_file),
             &protocol_base.join(&table_config.protocol_mapping_file.adjustment_mapping),
             "Adjustment",
@@ -316,7 +366,13 @@ impl ConfigManager {
         )
         .await
         {
-            combined.extend(points);
+            Ok(points) => {
+                debug!("Successfully loaded {} adjustment points", points.len());
+                combined.extend(points);
+            },
+            Err(e) => {
+                warn!("Failed to load adjustment points: {}", e);
+            },
         }
 
         info!("Loaded {} total combined points", combined.len());

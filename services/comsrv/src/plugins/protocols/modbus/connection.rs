@@ -108,7 +108,7 @@ impl ModbusConnection {
                     error!("TCP send error: {}", e);
                     ComSrvError::IoError(format!("TCP send error: {e}"))
                 })?;
-                debug!("Sent {} bytes via TCP", data.len());
+                debug!("Sent {} bytes via TCP: {:02X?}", data.len(), data);
             },
             ModbusConnection::Rtu(port) => {
                 port.write_all(data).await.map_err(|e| {
@@ -140,7 +140,11 @@ impl ModbusConnection {
                                 "Connection closed by peer".to_string(),
                             ));
                         }
-                        debug!("Received {} bytes via TCP", bytes);
+                        debug!(
+                            "Received {} bytes via TCP: {:02X?}",
+                            bytes,
+                            &buffer[..bytes]
+                        );
                         Ok(bytes)
                     },
                     Ok(Err(e)) => {
@@ -194,6 +198,8 @@ pub struct ModbusConnectionManager {
     mode: ModbusMode,
     /// Connection parameters
     params: ConnectionParams,
+    /// Request/response synchronization lock to prevent concurrent operations
+    request_lock: Mutex<()>,
 }
 
 /// Connection mode
@@ -228,6 +234,7 @@ impl ModbusConnectionManager {
             connection: Mutex::new(None),
             mode,
             params,
+            request_lock: Mutex::new(()),
         }
     }
 
@@ -311,5 +318,23 @@ impl ModbusConnectionManager {
     /// Get connection mode
     pub fn mode(&self) -> &ModbusMode {
         &self.mode
+    }
+
+    /// Send request and receive response atomically
+    /// This ensures that only one request/response pair is in flight at a time
+    pub async fn send_and_receive(
+        &self,
+        request: &[u8],
+        response_buffer: &mut [u8],
+        timeout: Duration,
+    ) -> Result<usize> {
+        // Acquire the request lock to ensure exclusive access
+        let _lock = self.request_lock.lock().await;
+
+        // Send the request
+        self.send(request).await?;
+
+        // Receive the response
+        self.receive(response_buffer, timeout).await
     }
 }

@@ -28,7 +28,7 @@ pub struct LuaSyncConfig {
 impl Default for LuaSyncConfig {
     fn default() -> Self {
         Self {
-            enabled: false,
+            enabled: true, // 同步是核心功能，应该默认启用
             batch_size: 100,
             retry_count: 3,
             async_sync: true,
@@ -285,7 +285,7 @@ mod tests {
     #[test]
     fn test_sync_config_default() {
         let config = LuaSyncConfig::default();
-        assert!(!config.enabled);
+        assert!(config.enabled); // 同步应该默认启用
         assert_eq!(config.batch_size, 100);
         assert_eq!(config.retry_count, 3);
         assert!(config.async_sync);

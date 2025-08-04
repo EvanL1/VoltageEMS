@@ -4,15 +4,14 @@
 //! Actual protocol implementations are provided as plugins.
 
 // 核心模块
-pub mod command; // Redis命令订阅
 pub mod core; // 核心trait和类型定义
 pub mod factory; // 协议工厂
 pub mod manager; // 点位管理器
-pub mod storage; // 存储和同步
+pub mod storage;
+pub mod trigger; // 命令触发器 // 存储和同步
 
 // 重新导出常用类型
 pub use crate::core::config::types::TelemetryType;
-pub use command::{CommandStatus, CommandSubscriber, CommandSubscriberConfig, ControlCommand};
 pub use core::{
     ChannelCommand, ChannelStatus, ComBase, ConfigValidator, ConnectionManager, DefaultProtocol,
     ExtendedPointData, FourTelemetryOperations, PacketParseResult, PointData, PointDataMap,
@@ -24,6 +23,7 @@ pub use factory::{
 };
 pub use manager::{OptimizedPointManager, PointManagerStats, PollingPoint};
 pub use storage::{create_combase_storage, ComBaseStorage, DefaultComBaseStorage, StorageStats};
+pub use trigger::{CommandStatus, CommandTrigger, CommandTriggerConfig, ControlCommand};
 
 /// Initialize combase module
 pub fn init_combase() {

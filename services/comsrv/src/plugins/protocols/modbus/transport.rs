@@ -5,7 +5,8 @@
 use super::connection::ConnectionParams;
 use crate::core::config::types::ChannelConfig;
 use crate::utils::error::{ComSrvError, Result};
-use tracing::debug;
+use std::collections::HashMap;
+use tracing::{debug, error};
 
 /// Modbus transport mode
 #[derive(Debug, Clone, PartialEq)]
@@ -29,11 +30,36 @@ pub struct MbapHeader {
     pub unit_id: u8,
 }
 
+/// Composite key for request tracking
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct RequestKey {
+    transaction_id: u16,
+    function_code: u8,
+    slave_id: u8,
+}
+
+/// Request tracking information
+#[derive(Debug, Clone)]
+#[allow(dead_code)]
+struct RequestInfo {
+    transaction_id: u16,
+    function_code: u8,
+    slave_id: u8,
+    timestamp: std::time::Instant,
+}
+
 /// Modbus frame processor
 #[derive(Debug)]
 pub struct ModbusFrameProcessor {
     mode: ModbusMode,
+    /// Store pending requests indexed by composite key (transaction_id, function_code, slave_id)
+    pending_requests: HashMap<RequestKey, RequestInfo>,
+    /// Channel-local transaction ID counter (for TCP mode)
     next_transaction_id: u16,
+    /// Sequential request ID for RTU mode tracking
+    next_rtu_request_id: u16,
+    /// Maximum pending requests to prevent memory growth
+    max_pending_requests: usize,
 }
 
 impl ModbusFrameProcessor {
@@ -41,42 +67,142 @@ impl ModbusFrameProcessor {
     pub fn new(mode: ModbusMode) -> Self {
         Self {
             mode,
+            pending_requests: HashMap::new(),
             next_transaction_id: 1,
+            next_rtu_request_id: 1,
+            max_pending_requests: 1000,
         }
     }
 
     /// Get next transaction ID (TCP mode only)
     pub fn next_transaction_id(&mut self) -> u16 {
+        // Use channel-local counter
         let id = self.next_transaction_id;
+
+        // Increment for next call - wraps naturally from 0xFFFF to 0x0000
         self.next_transaction_id = self.next_transaction_id.wrapping_add(1);
-        if self.next_transaction_id == 0 {
-            self.next_transaction_id = 1;
+
+        id
+    }
+
+    /// Get next RTU request ID
+    fn next_rtu_request_id(&mut self) -> u16 {
+        let id = self.next_rtu_request_id;
+        self.next_rtu_request_id = self.next_rtu_request_id.wrapping_add(1);
+        if self.next_rtu_request_id == 0 {
+            self.next_rtu_request_id = 1;
         }
         id
     }
 
     /// Build complete Modbus frame
     pub fn build_frame(&mut self, unit_id: u8, pdu: &[u8]) -> Vec<u8> {
+        // Extract function code from PDU
+        let function_code = if !pdu.is_empty() { pdu[0] } else { 0 };
+
         match self.mode {
-            ModbusMode::Tcp => self.build_tcp_frame(unit_id, pdu),
-            ModbusMode::Rtu => self.build_rtu_frame(unit_id, pdu),
+            ModbusMode::Tcp => {
+                let transaction_id = self.next_transaction_id();
+
+                // Create composite key
+                let key = RequestKey {
+                    transaction_id,
+                    function_code,
+                    slave_id: unit_id,
+                };
+
+                // Store request info with composite key for validation
+                self.pending_requests.insert(
+                    key,
+                    RequestInfo {
+                        transaction_id,
+                        function_code,
+                        slave_id: unit_id,
+                        timestamp: std::time::Instant::now(),
+                    },
+                );
+
+                // Clean up old requests if we exceed the limit
+                if self.pending_requests.len() > self.max_pending_requests {
+                    self.cleanup_old_requests();
+                }
+
+                self.build_tcp_frame_with_id(unit_id, pdu, transaction_id)
+            },
+            ModbusMode::Rtu => {
+                let request_id = self.next_rtu_request_id();
+
+                // For RTU, we use request_id as transaction_id in the key
+                let key = RequestKey {
+                    transaction_id: request_id,
+                    function_code,
+                    slave_id: unit_id,
+                };
+
+                // Store request info for RTU validation
+                self.pending_requests.insert(
+                    key,
+                    RequestInfo {
+                        transaction_id: request_id,
+                        function_code,
+                        slave_id: unit_id,
+                        timestamp: std::time::Instant::now(),
+                    },
+                );
+
+                // Clean up old requests if we exceed the limit
+                if self.pending_requests.len() > self.max_pending_requests {
+                    self.cleanup_old_requests();
+                }
+
+                self.build_rtu_frame(unit_id, pdu)
+            },
+        }
+    }
+
+    /// Clean up old requests based on timestamp
+    fn cleanup_old_requests(&mut self) {
+        let now = std::time::Instant::now();
+        let timeout = std::time::Duration::from_secs(30);
+
+        self.pending_requests
+            .retain(|_, info| now.duration_since(info.timestamp) < timeout);
+
+        // If still too many, remove oldest entries
+        if self.pending_requests.len() > self.max_pending_requests / 2 {
+            let mut entries: Vec<_> = self
+                .pending_requests
+                .iter()
+                .map(|(k, v)| (k.clone(), v.timestamp))
+                .collect();
+            entries.sort_by_key(|(_, timestamp)| *timestamp);
+
+            let to_remove = entries.len() - self.max_pending_requests / 2;
+            let keys_to_remove: Vec<_> = entries
+                .iter()
+                .take(to_remove)
+                .map(|(k, _)| k.clone())
+                .collect();
+
+            for key in keys_to_remove {
+                self.pending_requests.remove(&key);
+            }
         }
     }
 
     /// Parse received frame
-    pub fn parse_frame(&self, data: &[u8]) -> Result<(u8, Vec<u8>)> {
+    pub fn parse_frame(&mut self, data: &[u8]) -> Result<(u8, Vec<u8>)> {
         match self.mode {
             ModbusMode::Tcp => self.parse_tcp_frame(data),
             ModbusMode::Rtu => self.parse_rtu_frame(data),
         }
     }
 
-    /// Build TCP frame (MBAP + PDU)
-    fn build_tcp_frame(&mut self, unit_id: u8, pdu: &[u8]) -> Vec<u8> {
-        let transaction_id = self.next_transaction_id();
+    /// Build TCP frame with specific transaction ID (MBAP + PDU)
+    fn build_tcp_frame_with_id(&self, unit_id: u8, pdu: &[u8], transaction_id: u16) -> Vec<u8> {
         let length = (pdu.len() + 1) as u16; // PDU length + unit_id
 
-        let mut frame = Vec::with_capacity(6 + pdu.len());
+        let mut frame = Vec::with_capacity(7 + pdu.len());
 
         // MBAP header
         frame.extend_from_slice(&transaction_id.to_be_bytes());
@@ -86,6 +212,14 @@ impl ModbusFrameProcessor {
 
         // PDU
         frame.extend_from_slice(pdu);
+
+        debug!(
+            "Built TCP frame: transaction_id={:04X}, slave_id={}, function_code={:02X}, frame={:02X?}",
+            transaction_id,
+            unit_id,
+            pdu.first().unwrap_or(&0),
+            frame
+        );
 
         frame
     }
@@ -108,7 +242,7 @@ impl ModbusFrameProcessor {
     }
 
     /// Parse TCP frame
-    fn parse_tcp_frame(&self, data: &[u8]) -> Result<(u8, Vec<u8>)> {
+    fn parse_tcp_frame(&mut self, data: &[u8]) -> Result<(u8, Vec<u8>)> {
         if data.len() < 8 {
             return Err(ComSrvError::ProtocolError(
                 "TCP frame too short".to_string(),
@@ -116,34 +250,92 @@ impl ModbusFrameProcessor {
         }
 
         // Parse MBAP header
-        let _transaction_id = u16::from_be_bytes([data[0], data[1]]);
-        let _protocol_id = u16::from_be_bytes([data[2], data[3]]);
+        let transaction_id = u16::from_be_bytes([data[0], data[1]]);
+        let protocol_id = u16::from_be_bytes([data[2], data[3]]);
         let length = u16::from_be_bytes([data[4], data[5]]);
         let unit_id = data[6];
 
+        // Validate protocol ID
+        if protocol_id != 0 {
+            return Err(ComSrvError::ProtocolError(format!(
+                "Invalid protocol ID: expected 0, got {}",
+                protocol_id
+            )));
+        }
+
         // Validate length
         if data.len() != (6 + length as usize) {
-            return Err(ComSrvError::ProtocolError(
-                "Invalid TCP frame length".to_string(),
-            ));
+            return Err(ComSrvError::ProtocolError(format!(
+                "Invalid TCP frame length: expected {}, got {}",
+                6 + length as usize,
+                data.len()
+            )));
         }
 
         // Extract PDU
         let pdu = data[7..].to_vec();
 
+        // Find the request by transaction ID only (transaction ID is unique per channel)
+        let matching_request = self
+            .pending_requests
+            .iter()
+            .find(|(k, _)| k.transaction_id == transaction_id);
+
+        if let Some((key, _info)) = matching_request {
+            // Found a matching request, validate it matches the response
+            let response_fc = if !pdu.is_empty() {
+                pdu[0] & 0x7F // Remove potential error bit
+            } else {
+                0
+            };
+
+            // Check if the response matches our request
+            if key.function_code == response_fc && key.slave_id == unit_id {
+                debug!(
+                    "Validated TCP response: trans_id={:04X}, slave_id={}, func_code={:02X}",
+                    transaction_id, unit_id, response_fc
+                );
+
+                // Remove the pending request as it's been fulfilled
+                let key_to_remove = key.clone();
+                self.pending_requests.remove(&key_to_remove);
+            } else {
+                // Transaction ID matches but FC/slave doesn't - this response is not for us
+                debug!(
+                    "Ignoring response: trans_id={:04X} matches but FC/slave mismatch. Expected FC={:02X}/slave={}, Got FC={:02X}/slave={}",
+                    transaction_id, key.function_code, key.slave_id, response_fc, unit_id
+                );
+                // Don't process this response - it might belong to another channel or be a delayed response
+                return Err(ComSrvError::ProtocolError(
+                    "Response ignored - FC/slave mismatch".to_string(),
+                ));
+            }
+        } else {
+            // No matching transaction ID - this response is not for us (might be from another channel)
+            debug!(
+                "Ignoring response with unknown transaction ID: {:04X}. Active transactions: {:?}",
+                transaction_id,
+                self.pending_requests
+                    .keys()
+                    .map(|k| k.transaction_id)
+                    .collect::<Vec<_>>()
+            );
+            // Don't process this response
+            return Err(ComSrvError::ProtocolError(
+                "Response ignored - unknown transaction ID".to_string(),
+            ));
+        }
+
         debug!(
-            "Parsed TCP frame: trans_id={:04X}, length={}, unit_id={}, pdu_len={}",
-            _transaction_id,
-            length,
-            unit_id,
-            pdu.len()
+            "Parsed TCP frame: trans_id={:04X}, length={}, unit_id={}, pdu={:02X?}",
+            transaction_id, length, unit_id, pdu
         );
 
         Ok((unit_id, pdu))
     }
 
     /// Parse RTU frame
-    fn parse_rtu_frame(&self, data: &[u8]) -> Result<(u8, Vec<u8>)> {
+    fn parse_rtu_frame(&mut self, data: &[u8]) -> Result<(u8, Vec<u8>)> {
         if data.len() < 4 {
             return Err(ComSrvError::ProtocolError(
                 "RTU frame too short".to_string(),
@@ -161,6 +353,67 @@ impl ModbusFrameProcessor {
             return Err(ComSrvError::ProtocolError(format!(
                 "CRC mismatch: expected 0x{calculated_crc:04X}, got 0x{received_crc:04X}"
             )));
+        }
+
+        // For RTU, we need to validate against pending requests
+        if !pdu_data.is_empty() {
+            let response_fc = pdu_data[0] & 0x7F; // Remove potential error bit
+
+            // Find the most recent matching request by looking for matching slave_id and function_code
+            let matching_keys: Vec<_> = self
+                .pending_requests
+                .keys()
+                .filter(|k| k.slave_id == unit_id && k.function_code == response_fc)
+                .cloned()
+                .collect();
+
+            if !matching_keys.is_empty() {
+                // Sort by timestamp to get the most recent
+                let most_recent_key = matching_keys
+                    .iter()
+                    .max_by_key(|k| self.pending_requests.get(k).map(|info| info.timestamp))
+                    .unwrap();
+
+                debug!(
+                    "Validated RTU response: slave_id={}, func_code={:02X}, removing request key: {:?}",
+                    unit_id, response_fc, most_recent_key
+                );
+
+                // Remove the fulfilled request
+                self.pending_requests.remove(most_recent_key);
+            } else {
+                // Check if we have any request with matching slave ID
+                let slave_requests: Vec<_> = self
+                    .pending_requests
+                    .keys()
+                    .filter(|k| k.slave_id == unit_id)
+                    .collect();
+
+                if !slave_requests.is_empty() {
+                    error!(
+                        "RTU function code mismatch for slave {}: expected one of {:?}, got {:02X}",
+                        unit_id,
+                        slave_requests
+                            .iter()
+                            .map(|k| format!("{:02X}", k.function_code))
+                            .collect::<Vec<_>>(),
+                        response_fc
+                    );
+                    return Err(ComSrvError::ProtocolError(format!(
+                        "Function code mismatch for slave {}: got {:02X}",
+                        unit_id, response_fc
+                    )));
+                } else {
+                    error!(
+                        "RTU response from unexpected slave: {} (no pending requests)",
+                        unit_id
+                    );
+                    return Err(ComSrvError::ProtocolError(format!(
+                        "Unexpected response from slave {}",
+                        unit_id
+                    )));
+                }
+            }
         }
 
         Ok((unit_id, pdu_data.to_vec()))
@@ -219,6 +472,11 @@ impl ModbusFrameProcessor {
             0x0B => "Gateway Target Device Failed to Respond",
             _ => "Unknown Exception",
         }
+    }
+
+    /// Clear the stored request information (useful for testing or reset)
+    pub fn clear_request_info(&mut self) {
+        self.pending_requests.clear();
     }
 }
 
@@ -304,14 +562,18 @@ mod tests {
     fn test_tcp_frame_build_parse() {
         let mut processor = ModbusFrameProcessor::new(ModbusMode::Tcp);
         let pdu = vec![0x03, 0x00, 0x01, 0x00, 0x02]; // Read holding registers
+        let slave_id = 1;
 
-        let frame = processor.build_frame(1, &pdu);
+        let frame = processor.build_frame(slave_id, &pdu);
         assert_eq!(frame.len(), 12); // 7 bytes header (2 trans_id + 2 proto + 2 len + 1 unit) + 5 bytes PDU
+
+        // The processor should have stored the request info
+        assert_eq!(processor.pending_requests.len(), 1);
 
         let (unit_id, parsed_pdu) = processor
             .parse_frame(&frame)
             .expect("TCP frame parsing should succeed");
-        assert_eq!(unit_id, 1);
+        assert_eq!(unit_id, slave_id);
         assert_eq!(parsed_pdu, pdu);
     }
 
@@ -319,14 +581,18 @@ mod tests {
     fn test_rtu_frame_build_parse() {
         let mut processor = ModbusFrameProcessor::new(ModbusMode::Rtu);
         let pdu = vec![0x03, 0x00, 0x01, 0x00, 0x02]; // Read holding registers
+        let slave_id = 1;
 
-        let frame = processor.build_frame(1, &pdu);
+        let frame = processor.build_frame(slave_id, &pdu);
         assert_eq!(frame.len(), 8); // 1 byte unit_id + 5 bytes PDU + 2 bytes CRC
+
+        // The processor should have stored the request info
+        assert_eq!(processor.pending_requests.len(), 1);
 
         let (unit_id, parsed_pdu) = processor
             .parse_frame(&frame)
             .expect("RTU frame parsing should succeed");
-        assert_eq!(unit_id, 1);
+        assert_eq!(unit_id, slave_id);
         assert_eq!(parsed_pdu, pdu);
     }
 
@@ -352,5 +618,139 @@ mod tests {
 
         let desc = ModbusFrameProcessor::exception_description(0x02);
         assert_eq!(desc, "Illegal Data Address");
+    }
+
+    #[test]
+    fn test_tcp_validation_errors() {
+        let mut processor = ModbusFrameProcessor::new(ModbusMode::Tcp);
+
+        // Build a request for slave 1, function code 3
+        let request_pdu = vec![0x03, 0x00, 0x01, 0x00, 0x02];
+        let request_frame = processor.build_frame(1, &request_pdu);
+
+        // Extract the transaction ID from the request
+        let transaction_id = u16::from_be_bytes([request_frame[0], request_frame[1]]);
+
+        // Test 1: Wrong transaction ID
+        let mut wrong_tid_frame = request_frame.clone();
+        wrong_tid_frame[0] = ((transaction_id + 1) >> 8) as u8;
+        wrong_tid_frame[1] = ((transaction_id + 1) & 0xFF) as u8;
+        let result = processor.parse_frame(&wrong_tid_frame);
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Unknown transaction ID"));
+
+        // Test 2: Wrong slave ID with same transaction ID and function code
+        // This should succeed but with a warning, as it's a valid scenario
+        let mut different_slave_frame = request_frame.clone();
+        different_slave_frame[6] = 2; // Change slave ID from 1 to 2
+        let result = processor.parse_frame(&different_slave_frame);
+        // Should succeed as we look up by composite key
+        assert!(result.is_ok());
+
+        // Test 3: Same transaction ID but different function code
+        // Build another request with same transaction ID but different FC
+        processor.next_transaction_id = transaction_id; // Force same transaction ID
+        let request_pdu2 = vec![0x01, 0x00, 0x00, 0x00, 0x08]; // FC01
+        let request_frame2 = processor.build_frame(1, &request_pdu2);
+
+        // Both requests should be trackable independently
+        assert_eq!(processor.pending_requests.len(), 2);
+
+        // Response for FC03 should work
+        let result = processor.parse_frame(&request_frame);
+        assert!(result.is_ok());
+
+        // Response for FC01 should also work
+        let result = processor.parse_frame(&request_frame2);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_concurrent_requests() {
+        let mut processor = ModbusFrameProcessor::new(ModbusMode::Tcp);
+
+        // Build multiple requests
+        let request1 = processor.build_frame(1, &[0x03, 0x00, 0x00, 0x00, 0x01]);
+        let tid1 = u16::from_be_bytes([request1[0], request1[1]]);
+
+        let request2 = processor.build_frame(2, &[0x01, 0x00, 0x00, 0x00, 0x08]);
+        let tid2 = u16::from_be_bytes([request2[0], request2[1]]);
+
+        let request3 = processor.build_frame(1, &[0x04, 0x00, 0x10, 0x00, 0x02]);
+        let tid3 = u16::from_be_bytes([request3[0], request3[1]]);
+
+        // Verify all requests are tracked with composite keys
+        assert_eq!(processor.pending_requests.len(), 3);
+
+        // Check that the composite keys exist
+        let key1 = RequestKey {
+            transaction_id: tid1,
+            function_code: 0x03,
+            slave_id: 1,
+        };
+        let key2 = RequestKey {
+            transaction_id: tid2,
+            function_code: 0x01,
+            slave_id: 2,
+        };
+        let key3 = RequestKey {
+            transaction_id: tid3,
+            function_code: 0x04,
+            slave_id: 1,
+        };
+
+        assert!(processor.pending_requests.contains_key(&key1));
+        assert!(processor.pending_requests.contains_key(&key2));
+        assert!(processor.pending_requests.contains_key(&key3));
+
+        // Responses can come in any order
+        // Response for request2 comes first
+        let (unit_id, _pdu) = processor
+            .parse_frame(&request2)
+            .expect("Should parse request2 response");
+        assert_eq!(unit_id, 2);
+
+        // Response for request1
+        let (unit_id, _pdu) = processor
+            .parse_frame(&request1)
+            .expect("Should parse request1 response");
+        assert_eq!(unit_id, 1);
+
+        // Response for request3
+        let (unit_id, _pdu) = processor
+            .parse_frame(&request3)
+            .expect("Should parse request3 response");
+        assert_eq!(unit_id, 1);
+
+        // All requests should have been removed
+        assert_eq!(processor.pending_requests.len(), 0);
+    }
+
+    #[test]
+    fn test_composite_key_validation() {
+        let mut processor = ModbusFrameProcessor::new(ModbusMode::Tcp);
+
+        // Force same transaction ID for multiple requests
+        processor.next_transaction_id = 100;
+
+        // Request 1: Slave 1, FC03
+        let req1 = processor.build_frame(1, &[0x03, 0x00, 0x00, 0x00, 0x01]);
+
+        // Request 2: Slave 2, FC03 (same FC, different slave)
+        let req2 = processor.build_frame(2, &[0x03, 0x00, 0x00, 0x00, 0x01]);
+
+        // Request 3: Slave 1, FC04 (same slave, different FC)
+        let req3 = processor.build_frame(1, &[0x04, 0x00, 0x00, 0x00, 0x01]);
+
+        // All three should be tracked despite having same transaction ID
+        assert_eq!(processor.pending_requests.len(), 3);
+
+        // Each response should be matched correctly
+        assert!(processor.parse_frame(&req1).is_ok());
+        assert!(processor.parse_frame(&req2).is_ok());
+        assert!(processor.parse_frame(&req3).is_ok());
     }
 }

@@ -51,27 +51,27 @@ pub struct CommandStatus {
     pub timestamp: i64,
 }
 
-/// Command subscriber configuration
+/// Command trigger configuration
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct CommandSubscriberConfig {
+pub struct CommandTriggerConfig {
     pub channel_id: u16,
     pub redis_url: String,
 }
 
-/// Command subscriber
+/// Command trigger - 监听Redis命令并触发协议执行
 #[derive(Debug)]
-pub struct CommandSubscriber {
-    config: CommandSubscriberConfig,
+pub struct CommandTrigger {
+    config: CommandTriggerConfig,
     redis_client: Arc<Mutex<RedisClient>>,
     command_tx: mpsc::Sender<ChannelCommand>,
     is_running: Arc<RwLock<bool>>,
     task_handle: Option<JoinHandle<()>>,
 }
 
-impl CommandSubscriber {
-    /// Create new command subscriber
+impl CommandTrigger {
+    /// Create new command trigger
     pub async fn new(
-        config: CommandSubscriberConfig,
+        config: CommandTriggerConfig,
         command_tx: mpsc::Sender<ChannelCommand>,
     ) -> Result<Self> {
         let redis_client = RedisClient::new(&config.redis_url).await?;
@@ -91,7 +91,7 @@ impl CommandSubscriber {
             let mut running = self.is_running.write().await;
             if *running {
                 warn!(
-                    "Command subscriber already running for channel {}",
+                    "Command trigger already running for channel {}",
                     self.config.channel_id
                 );
                 return Ok(());
@@ -104,7 +104,7 @@ impl CommandSubscriber {
         let adjustment_channel = format!("cmd:{}:adjustment", self.config.channel_id);
 
         info!(
-            "Starting command subscriber for channel {}, subscribing to: {} and {}",
+            "Starting command trigger for channel {}, subscribing to: {} and {}",
             self.config.channel_id, control_channel, adjustment_channel
         );
 
@@ -148,11 +148,11 @@ impl CommandSubscriber {
             // Give the task some time to exit gracefully
             match tokio::time::timeout(std::time::Duration::from_secs(5), handle).await {
                 Ok(Ok(())) => info!(
-                    "Command subscriber stopped for channel {}",
+                    "Command trigger stopped for channel {}",
                     self.config.channel_id
                 ),
-                Ok(Err(e)) => warn!("Command subscriber task error: {}", e),
-                Err(_) => warn!("Command subscriber task timeout, forcing stop"),
+                Ok(Err(e)) => warn!("Command trigger task error: {}", e),
+                Err(_) => warn!("Command trigger task timeout, forcing stop"),
             }
         }
 

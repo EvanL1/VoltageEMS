@@ -107,11 +107,18 @@ pub async fn start_communication_service(
             channel_config.id, channel_config.name
         );
 
+        // Debug: Verify points are available before creating channel
+        debug!(
+            "Channel {} points before creation: {} telemetry, {} signal, {} control, {} adjustment",
+            channel_config.id,
+            channel_config.telemetry_points.len(),
+            channel_config.signal_points.len(),
+            channel_config.control_points.len(),
+            channel_config.adjustment_points.len()
+        );
+
         let factory_guard = factory.write().await;
-        match factory_guard
-            .create_channel(channel_config, Some(&*config_manager))
-            .await
-        {
+        match factory_guard.create_channel(channel_config).await {
             Ok(_) => {
                 info!("Channel created successfully: {}", channel_config.id);
                 successful_channels += 1;

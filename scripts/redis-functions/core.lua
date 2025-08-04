@@ -982,6 +982,82 @@ local function generic_statistics(keys, args)
     end
 end
 
+-- 通用批量点位初始化函数
+local function generic_batch_init_points(keys, args)
+    if #args < 3 then
+        return redis.error_reply("Usage: channel_id telemetry_type points_json [options_json]")
+    end
+    
+    local channel_id = args[1]
+    local telemetry_type = args[2]
+    local points = cjson.decode(args[3])
+    local options = args[4] and cjson.decode(args[4]) or {}
+    
+    local default_value = options.default_value or 0.0
+    local force_overwrite = options.force_overwrite or false
+    
+    -- 构建Hash key
+    local hash_key = string.format("comsrv:%s:%s", channel_id, telemetry_type)
+    
+    -- Process points in batches to avoid unpack limit
+    local batch_size = 1000
+    local existing_count = 0
+    local new_points = 0
+    
+    for i = 1, #points, batch_size do
+        local batch_end = math.min(i + batch_size - 1, #points)
+        local batch_points = {}
+        
+        -- Extract batch
+        for j = i, batch_end do
+            table.insert(batch_points, tostring(points[j]))
+        end
+        
+        -- Check existing points in this batch
+        local existing_values = redis.call('HMGET', hash_key, unpack(batch_points))
+        local existing_in_batch = {}
+        
+        for k, value in ipairs(existing_values) do
+            if value ~= false then
+                existing_in_batch[batch_points[k]] = true
+                existing_count = existing_count + 1
+            end
+        end
+        
+        -- Prepare batch initialization data
+        local init_data = {}
+        
+        for k, point_id in ipairs(batch_points) do
+            if force_overwrite or not existing_in_batch[point_id] then
+                table.insert(init_data, point_id)
+                table.insert(init_data, tostring(default_value))
+                new_points = new_points + 1
+            end
+        end
+        
+        -- Initialize this batch
+        if #init_data > 0 then
+            redis.call('HMSET', hash_key, unpack(init_data))
+        end
+    end
+    
+    -- 设置过期时间（如果指定）
+    if options.ttl and options.ttl > 0 then
+        redis.call('EXPIRE', hash_key, options.ttl)
+    end
+    
+    -- 返回初始化结果
+    return cjson.encode({
+        status = "success",
+        channel_id = channel_id,
+        telemetry_type = telemetry_type,
+        total_points = #points,
+        new_points = new_points,
+        existing_points = existing_count,
+        hash_key = hash_key
+    })
+end
+
 -- 注册函数
 redis.register_function('generic_store', generic_store)
 redis.register_function('generic_batch_sync', generic_batch_sync)
@@ -993,3 +1069,4 @@ redis.register_function('generic_condition_eval', generic_condition_eval)
 redis.register_function('generic_batch_collect', generic_batch_collect)
 redis.register_function('generic_event_publish', generic_event_publish)
 redis.register_function('generic_statistics', generic_statistics)
+redis.register_function('generic_batch_init_points', generic_batch_init_points)

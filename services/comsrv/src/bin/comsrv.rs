@@ -175,8 +175,10 @@ async fn main() -> Result<()> {
         e
     })?;
 
-    // Create protocol factory (this will initialize the plugin system)
-    let factory = Arc::new(RwLock::new(ProtocolFactory::new()));
+    // Create protocol factory with Redis URL from config
+    let redis_url = config_manager.service_config().redis.url.clone();
+    info!("Creating ProtocolFactory with Redis URL: {}", redis_url);
+    let factory = Arc::new(RwLock::new(ProtocolFactory::with_redis_url(redis_url)));
 
     // Start communication service in background
     info!("Starting communication channels in background...");
@@ -190,7 +192,7 @@ async fn main() -> Result<()> {
         info!("Communication service task started");
 
         // Use timeout to prevent indefinite blocking
-        let start_timeout = std::time::Duration::from_secs(30);
+        let start_timeout = std::time::Duration::from_secs(300); // 5 minutes for 8000 points initialization
         let start_task = start_communication_service(start_service_config, start_service_factory);
 
         match tokio::time::timeout(start_timeout, start_task).await {

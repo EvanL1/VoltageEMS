@@ -244,7 +244,7 @@ local function query_alarms(keys, args)
     elseif query.time_range then
         alarm_ids = redis.call('ZRANGEBYSCORE', 'idx:alarm:time',
             query.time_range.start or '-inf',
-            query.time_range.end or '+inf',
+            query.time_range['end'] or '+inf',
             'LIMIT', query.offset or 0, query.limit or 100)
     else
         -- 默认返回最新的告警
@@ -491,47 +491,53 @@ end
 
 -- 同步通道数据
 local function sync_channel_data(keys, args)
-    if #keys < 1 or #args < 1 then
-        return redis.error_reply("Usage: channel_id data_json")
+    if #keys < 1 or #args < 4 then
+        return redis.error_reply("Usage: channel_id point_type updates_json trigger_alarms timestamp")
     end
     
     local channel_id = keys[1]
-    local data = cjson.decode(args[1])
+    local point_type = args[1]
+    local updates_json = args[2]
+    local trigger_alarms = args[3] == "true"
+    local timestamp = args[4]
     
-    -- 存储到Hash
-    local hash_key = 'sync:channel:' .. channel_id
-    local timestamp = redis.call('TIME')[1]
+    -- 解析更新数据
+    local updates = cjson.decode(updates_json)
+    
+    -- 存储到正确的Hash键 (comsrv:channel_id:point_type)
+    local hash_key = 'comsrv:' .. channel_id .. ':' .. point_type
+    local update_count = 0
+    local alarm_count = 0
     
     -- 批量更新数据点
-    if data.points then
-        for point_id, value in pairs(data.points) do
-            redis.call('HSET', hash_key, point_id, cjson.encode({
-                value = value,
-                timestamp = timestamp,
-                quality = data.quality or 'good'
-            }))
+    for _, update in ipairs(updates) do
+        local point_id = tostring(update.point_id)
+        local value = update.value
+        
+        -- 写入标准化的6位小数格式
+        redis.call('HSET', hash_key, point_id, string.format("%.6f", value))
+        update_count = update_count + 1
+        
+        -- 如果需要触发告警，这里可以添加告警逻辑
+        if trigger_alarms then
+            -- TODO: 实现告警触发逻辑
         end
     end
     
-    -- 更新元数据
-    redis.call('HSET', hash_key .. ':meta',
-        'last_sync', timestamp,
-        'point_count', data.point_count or 0,
-        'source', data.source or 'unknown'
-    )
-    
     -- 发布同步事件
-    redis.call('PUBLISH', 'sync:channel:' .. channel_id, cjson.encode({
+    redis.call('PUBLISH', 'comsrv:' .. channel_id .. ':' .. point_type, cjson.encode({
         channel_id = channel_id,
+        point_type = point_type,
         timestamp = timestamp,
-        point_count = data.point_count or 0
+        update_count = update_count
     }))
     
     -- 更新统计
     redis.call('HINCRBY', 'stats:sync', 'total_syncs', 1)
     redis.call('HINCRBY', 'stats:sync:channel', channel_id, 1)
     
-    return redis.status_reply('OK')
+    -- 返回结果数组 [update_count, alarm_count]
+    return cjson.encode({update_count, alarm_count})
 end
 
 -- 批量同步多个通道

@@ -62,7 +62,7 @@
 //!     let channels = config_manager.get_channels();
 //!     for channel_config in channels {
 //!         // Create and register channel
-//!         factory.write().await.create_channel(channel_config.clone())?;
+//!         factory.write().await.create_channel(channel_config)?;
 //!     }
 //!     
 //!     tracing::info!("Communication service initialized");
