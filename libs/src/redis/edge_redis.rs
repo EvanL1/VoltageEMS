@@ -88,7 +88,7 @@ impl EdgeRedis {
         }]);
 
         let _: String = redis::cmd("FCALL")
-            .arg("init_modsrv_mappings")
+            .arg("modsrv_init_mappings")
             .arg(0) // no keys
             .arg(mapping.to_string())
             .query_async(&mut self.conn)

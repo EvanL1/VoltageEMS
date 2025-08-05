@@ -18,14 +18,13 @@ use tracing::{error, info};
 
 use crate::config::Config;
 use crate::error::{ModelSrvError, Result};
-use crate::model::{ModelConfig, ModelManager, PointConfig};
-use crate::websocket::{ws_handler, WsConnectionManager};
+use crate::model::{ModelManager, ModelMapping};
+use crate::template::Template;
 
 /// API server state
 #[derive(Clone)]
 pub struct ApiState {
     pub model_manager: Arc<ModelManager>,
-    pub ws_manager: Arc<WsConnectionManager>,
     pub config: Config,
 }
 
@@ -49,9 +48,10 @@ pub struct ModelListResponse {
 pub struct ModelSummary {
     pub id: String,
     pub name: String,
-    pub description: String,
-    pub monitoring_count: usize,
-    pub control_count: usize,
+    pub template: Option<String>,
+    pub channel: u32,
+    pub data_count: usize,
+    pub action_count: usize,
 }
 
 /// Model values response
@@ -81,18 +81,7 @@ pub struct ControlResponse {
 pub struct CreateModelRequest {
     pub id: String,
     pub name: String,
-    pub description: String,
-    pub monitoring: HashMap<String, PointConfig>,
-    pub control: HashMap<String, PointConfig>,
-}
-
-/// Model update request
-#[derive(Deserialize)]
-pub struct UpdateModelRequest {
-    pub name: Option<String>,
-    pub description: Option<String>,
-    pub monitoring: Option<HashMap<String, PointConfig>>,
-    pub control: Option<HashMap<String, PointConfig>>,
+    pub mapping: ModelMapping,
 }
 
 /// Model detail response
@@ -100,9 +89,8 @@ pub struct UpdateModelRequest {
 pub struct ModelDetailResponse {
     pub id: String,
     pub name: String,
-    pub description: String,
-    pub monitoring: HashMap<String, PointConfig>,
-    pub control: HashMap<String, PointConfig>,
+    pub template: Option<String>,
+    pub mapping: ModelMapping,
 }
 
 /// Generic success response
@@ -111,6 +99,30 @@ pub struct SuccessResponse {
     pub success: bool,
     pub message: String,
     pub timestamp: i64,
+}
+
+/// Template list response
+#[derive(Serialize)]
+pub struct TemplateListResponse {
+    pub templates: Vec<TemplateSummary>,
+    pub total: usize,
+}
+
+/// Template summary
+#[derive(Serialize)]
+pub struct TemplateSummary {
+    pub id: String,
+    pub data_count: usize,
+    pub action_count: usize,
+}
+
+/// Create model from template request
+#[derive(Deserialize)]
+pub struct CreateModelFromTemplateRequest {
+    pub template_id: String,
+    pub model_id: String,
+    pub model_name: String,
+    pub mapping: crate::model::ModelMapping,
 }
 
 /// API error response
@@ -158,9 +170,10 @@ pub async fn list_models(State(state): State<ApiState>) -> Json<ModelListRespons
         .map(|model| ModelSummary {
             id: model.id.clone(),
             name: model.name.clone(),
-            description: model.description.clone(),
-            monitoring_count: model.monitoring_config.len(),
-            control_count: model.control_config.len(),
+            template: model.template.clone(),
+            channel: model.mapping.channel,
+            data_count: model.mapping.data.len(),
+            action_count: model.mapping.action.len(),
         })
         .collect();
 
@@ -183,7 +196,7 @@ pub async fn get_model_values(
     // Get real-time values from Redis
     let values = state
         .model_manager
-        .get_model_values(&model_id)
+        .get_model_data(&model_id)
         .await
         .map_err(|e| ModelSrvError::redis(format!("Failed to get model values: {}", e)))?;
 
@@ -208,9 +221,8 @@ pub async fn get_model(
     Ok(Json(ModelDetailResponse {
         id: model.id.clone(),
         name: model.name.clone(),
-        description: model.description.clone(),
-        monitoring: model.monitoring_config.clone(),
-        control: model.control_config.clone(),
+        template: model.template.clone(),
+        mapping: model.mapping.clone(),
     }))
 }
 
@@ -226,72 +238,25 @@ pub async fn create_model(
         );
     }
 
-    // Create model configuration
-    let model_config = ModelConfig {
-        id: request.id.clone(),
-        name: request.name.clone(),
-        description: request.description.clone(),
-        monitoring: request.monitoring.clone(),
-        control: request.control.clone(),
-    };
-
-    // Add to ModelManager
+    // Create model
     state
         .model_manager
-        .create_model(model_config)
+        .create_model(&request.id, &request.name, request.mapping.clone())
         .await
         .map_err(|e| ModelSrvError::redis(format!("Failed to create model: {}", e)))?;
 
-    Ok(Json(ModelDetailResponse {
-        id: request.id,
-        name: request.name,
-        description: request.description,
-        monitoring: request.monitoring,
-        control: request.control,
-    }))
-}
-
-/// Update model
-pub async fn update_model(
-    Path(model_id): Path<String>,
-    State(state): State<ApiState>,
-    Json(request): Json<UpdateModelRequest>,
-) -> std::result::Result<Json<ModelDetailResponse>, (StatusCode, Json<ErrorResponse>)> {
-    // Check if model exists
-    let existing_model = state
+    // Get the created model
+    let model = state
         .model_manager
-        .get_model(&model_id)
+        .get_model(&request.id)
         .await
-        .ok_or_else(|| ModelSrvError::NotFound(format!("Model {} not found", model_id)))?;
-
-    // Create updated model configuration
-    let updated_config = ModelConfig {
-        id: model_id.clone(),
-        name: request.name.unwrap_or_else(|| existing_model.name.clone()),
-        description: request
-            .description
-            .unwrap_or_else(|| existing_model.description.clone()),
-        monitoring: request
-            .monitoring
-            .unwrap_or_else(|| existing_model.monitoring_config.clone()),
-        control: request
-            .control
-            .unwrap_or_else(|| existing_model.control_config.clone()),
-    };
-
-    // Update model
-    state
-        .model_manager
-        .update_model(updated_config.clone())
-        .await
-        .map_err(|e| ModelSrvError::redis(format!("Failed to update model: {}", e)))?;
+        .ok_or_else(|| ModelSrvError::InternalError("Failed to get created model".into()))?;
 
     Ok(Json(ModelDetailResponse {
-        id: updated_config.id,
-        name: updated_config.name,
-        description: updated_config.description,
-        monitoring: updated_config.monitoring,
-        control: updated_config.control,
+        id: model.id.clone(),
+        name: model.name.clone(),
+        template: model.template.clone(),
+        mapping: model.mapping.clone(),
     }))
 }
 
@@ -327,7 +292,7 @@ pub async fn send_control(
 ) -> std::result::Result<Json<ControlResponse>, (StatusCode, Json<ErrorResponse>)> {
     state
         .model_manager
-        .send_control(&model_id, &control_name, request.value)
+        .execute_action(&model_id, &control_name, Some(request.value))
         .await?;
 
     Ok(Json(ControlResponse {
@@ -340,41 +305,94 @@ pub async fn send_control(
     }))
 }
 
+/// List templates
+pub async fn list_templates(State(state): State<ApiState>) -> Json<TemplateListResponse> {
+    let templates = state.model_manager.list_templates().await;
+
+    let summaries: Vec<TemplateSummary> = templates
+        .into_iter()
+        .map(|template| TemplateSummary {
+            id: template.id,
+            data_count: template.data.len(),
+            action_count: template.action.len(),
+        })
+        .collect();
+
+    let total = summaries.len();
+
+    Json(TemplateListResponse {
+        templates: summaries,
+        total,
+    })
+}
+
+/// Get template
+pub async fn get_template(
+    Path(template_id): Path<String>,
+    State(state): State<ApiState>,
+) -> std::result::Result<Json<Template>, (StatusCode, Json<ErrorResponse>)> {
+    let template = state
+        .model_manager
+        .get_template(&template_id)
+        .await
+        .ok_or_else(|| ModelSrvError::NotFound(format!("Template {} not found", template_id)))?;
+
+    Ok(Json(template))
+}
+
+/// Create model from template
+pub async fn create_model_from_template(
+    State(state): State<ApiState>,
+    Json(request): Json<CreateModelFromTemplateRequest>,
+) -> std::result::Result<Json<SuccessResponse>, (StatusCode, Json<ErrorResponse>)> {
+    state
+        .model_manager
+        .create_model_from_template(
+            &request.template_id,
+            &request.model_id,
+            &request.model_name,
+            request.mapping,
+        )
+        .await?;
+
+    Ok(Json(SuccessResponse {
+        success: true,
+        message: format!(
+            "Model {} created from template {}",
+            request.model_id, request.template_id
+        ),
+        timestamp: chrono::Utc::now().timestamp(),
+    }))
+}
+
 /// Create API routes
 pub fn create_routes(api_state: ApiState) -> Router {
     Router::new()
         .route("/health", get(health_check))
         .route("/models", get(list_models).post(create_model))
-        .route(
-            "/models/{model_id}",
-            get(get_model).put(update_model).delete(delete_model),
-        )
+        .route("/models/{model_id}", get(get_model).delete(delete_model))
         .route("/models/{model_id}/values", get(get_model_values))
         .route(
             "/models/{model_id}/control/{control_name}",
             post(send_control),
         )
-        .route("/ws/{model_id}", get(ws_handler))
+        .route("/templates", get(list_templates))
+        .route("/templates/{template_id}", get(get_template))
+        .route("/templates/create-model", post(create_model_from_template))
         .with_state(api_state)
 }
 
 /// API server
 pub struct ApiServer {
     model_manager: Arc<ModelManager>,
-    ws_manager: Arc<WsConnectionManager>,
     config: Config,
 }
 
 impl ApiServer {
     /// Create new API server
-    pub fn new(
-        model_manager: Arc<ModelManager>,
-        ws_manager: Arc<WsConnectionManager>,
-        config: Config,
-    ) -> Self {
+    pub fn new(model_manager: Arc<ModelManager>, config: Config) -> Self {
         Self {
             model_manager,
-            ws_manager,
             config,
         }
     }
@@ -386,7 +404,6 @@ impl ApiServer {
     ) -> Result<()> {
         let api_state = ApiState {
             model_manager: self.model_manager.clone(),
-            ws_manager: self.ws_manager.clone(),
             config: self.config.clone(),
         };
 

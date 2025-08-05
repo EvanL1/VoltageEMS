@@ -22,10 +22,10 @@ async fn main() -> Result<()> {
     let config = config::Config::load()?;
 
     // Get configuration information
-    let (polling_interval, enable_api, api_port) = (
+    let (polling_interval, enable_api, port) = (
         config.service.polling_interval,
         config.service.enable_api,
-        config.service.api_port,
+        config.service.port,
     );
 
     tracing::info!(
@@ -60,14 +60,14 @@ async fn main() -> Result<()> {
         let api_tx = tx.clone().expect("tx should be Some when API is enabled");
         let api_config_path = config_path.clone();
 
-        tracing::info!("Starting configuration API server on port {}", api_port);
+        tracing::info!("Starting configuration API server on port {}", port);
 
         Some(tokio::spawn(async move {
             // Create API state with notification feature
             let state = api::ApiState::with_update_channel(api_config, api_config_path, api_tx);
             let app = api::create_router(state);
 
-            let addr = std::net::SocketAddr::from(([0, 0, 0, 0], api_port));
+            let addr = std::net::SocketAddr::from(([0, 0, 0, 0], port));
             let listener = match tokio::net::TcpListener::bind(addr).await {
                 Ok(listener) => listener,
                 Err(e) => {

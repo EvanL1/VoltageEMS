@@ -28,8 +28,8 @@ COPY --from=builder /app/target/release/hissrv /app/hissrv
 # Copy config if exists
 # COPY --from=builder /app/services/hissrv/config ./config
 
-# Create log directory
-RUN mkdir -p /app/logs
+# Create log and config directories
+RUN mkdir -p /app/logs /app/config
 
 ENV RUST_LOG=info
 

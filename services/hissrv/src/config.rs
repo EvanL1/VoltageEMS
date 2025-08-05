@@ -21,8 +21,8 @@ pub struct ServiceConfig {
     pub polling_interval: Duration,
     #[serde(default)]
     pub enable_api: bool,
-    #[serde(default = "default_api_port")]
-    pub api_port: u16,
+    #[serde(default = "default_port")]
+    pub port: u16,
 }
 
 fn default_service_name() -> String {
@@ -33,8 +33,8 @@ fn default_polling_interval() -> Duration {
     Duration::from_secs(10)
 }
 
-fn default_api_port() -> u16 {
-    8085 // Fixed port
+fn default_port() -> u16 {
+    6004 // Fixed port for hissrv
 }
 
 /// Redis data source configuration
@@ -151,7 +151,7 @@ impl Default for ServiceConfig {
             name: "hissrv".to_string(),
             polling_interval: Duration::from_secs(10),
             enable_api: false,
-            api_port: 8085,
+            port: 6004,
         }
     }
 }
@@ -219,6 +219,9 @@ impl Config {
             loader.build()
         }
         .map_err(|e| hissrv::anyhow!("Failed to load configuration: {}", e))?;
+
+        // Force hardcoded port
+        config.service.port = 6004;
 
         // Validate configuration
         config.validate()?;
@@ -360,7 +363,7 @@ mod tests {
                 name: "hissrv".to_string(),
                 polling_interval: Duration::from_secs(10),
                 enable_api: false,
-                api_port: 8085,
+                port: 6004,
             },
             redis: RedisConfig {
                 url: "redis://localhost".to_string(),

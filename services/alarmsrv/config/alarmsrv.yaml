@@ -1,0 +1,26 @@
+# AlarmSrv Configuration
+# Alarm management service for VoltageEMS
+
+# Redis configuration
+redis:
+  url: "redis://redis:6379"
+  
+# API configuration  
+api:
+  host: "0.0.0.0"
+
+# Storage configuration
+storage:
+  # Retention period for resolved alarms (in days)
+  retention_days: 30
+  # Enable automatic cleanup
+  auto_cleanup: true
+  # Cleanup interval (in hours)
+  cleanup_interval_hours: 24
+
+# Monitoring configuration
+monitoring:
+  # Enable monitoring
+  enabled: true
+  # Scan interval in seconds
+  scan_interval: 10

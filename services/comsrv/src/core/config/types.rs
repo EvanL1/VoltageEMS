@@ -405,7 +405,7 @@ fn default_api_host() -> String {
 }
 
 fn default_api_port() -> u16 {
-    8081 // Fixed port - ComSrv standard port
+    6000 // Fixed port - ComSrv standard port
 }
 
 fn default_workers() -> usize {
@@ -638,7 +638,7 @@ mod tests {
     fn test_default_values() {
         let api = ApiConfig::default();
         assert_eq!(api.host, "0.0.0.0");
-        assert_eq!(api.port, 8081);
+        assert_eq!(api.port, 6000);
 
         let redis = RedisConfig::default();
         assert_eq!(redis.url, "redis://127.0.0.1:6379");

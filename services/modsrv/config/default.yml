@@ -2,12 +2,16 @@ service_name: "modsrv"
 version: "1.0.0"
 
 redis:
-  url: "redis://localhost:6379"
+  url: "redis://redis:6379"
   key_prefix: "modsrv:"
+  connection_timeout_ms: 5000
+  retry_attempts: 3
+  retry_delay_ms: 1000
+  pool_size: 10
 
 api:
   host: "0.0.0.0"
-  port: 8092
+  timeout_seconds: 30
 
 log:
   level: "info"
@@ -16,22 +20,58 @@ log:
 update_interval_ms: 1000
 
 models:
-  - id: "power_meter_demo"
-    name: "演示电表"
-    description: "用于演示的智能电表模型"
-    monitoring:
-      voltage_a:
+  # 三相电力监测模型
+  - id: "power_monitor_ch1"
+    name: "通道1电力监测"
+    description: "基于comsrv通道1的三相电力监测模型"
+    enabled: true
+    # 输入映射
+    inputs:
+      - name: "voltage_a"
+        source: "comsrv:1:T:1"
         description: "A相电压"
-        unit: "V"
-      current_a:
+      - name: "voltage_b"
+        source: "comsrv:1:T:2"
+        description: "B相电压"
+      - name: "voltage_c"
+        source: "comsrv:1:T:3"
+        description: "C相电压"
+      - name: "current_a"
+        source: "comsrv:1:T:4"
         description: "A相电流"
-        unit: "A"
-      power:
+      - name: "current_b"
+        source: "comsrv:1:T:5"
+        description: "B相电流"
+      - name: "current_c"
+        source: "comsrv:1:T:6"
+        description: "C相电流"
+      - name: "power"
+        source: "comsrv:1:T:7"
         description: "有功功率"
-        unit: "kW"
-      energy:
-        description: "累计电量"
-        unit: "kWh"
+      - name: "reactive_power"
+        source: "comsrv:1:T:8"
+        description: "无功功率"
+      - name: "power_factor"
+        source: "comsrv:1:T:9"
+        description: "功率因数"
+      - name: "breaker_status"
+        source: "comsrv:1:S:1"
+        description: "断路器状态"
+    # 输出（监测点）
+    monitoring:
+      voltage_avg:
+        description: "三相电压平均值"
+        unit: "V"
+      current_avg:
+        description: "三相电流平均值"
+        unit: "A"
+      voltage_imbalance:
+        description: "电压不平衡度"
+        unit: "%"
+      power_utilization:
+        description: "功率利用率"
+        unit: "%"
+    # 控制点（可选）
     control:
       main_switch:
         description: "主开关控制"

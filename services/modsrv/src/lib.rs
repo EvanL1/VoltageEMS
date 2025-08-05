@@ -76,8 +76,6 @@
 //! POST /models/{model_id}/control/{control_name}
 //! {"value": 1.0}
 //!
-//! # WebSocket connection
-//! WS /ws/{model_id}
 //! ```
 
 #![allow(dead_code)]
@@ -98,28 +96,22 @@ pub mod error;
 /// Contains model definitions, data reading, control command processing and other core functions
 pub mod model;
 
-/// Point mapping management module
-///
-/// Handles mapping relationships between ModSrv and underlying comsrv
-pub mod mapping;
-
-/// WebSocket real-time push module
-///
-/// Provides WebSocket connection management and real-time data push
-pub mod websocket;
-
 /// REST API module
 ///
 /// Provides HTTP interfaces for model management and control operations
 pub mod api;
 
+/// Template management module
+///
+/// Provides device model template functionality for quick model creation
+pub mod template;
+
 // Re-export commonly used types
 pub use api::ApiServer;
 pub use config::Config;
 pub use error::{ModelSrvError, Result};
-pub use mapping::{MappingManager, PointMapping};
-pub use model::{Model, ModelConfig, ModelManager, PointConfig};
-pub use websocket::{ws_handler, WsConnectionManager};
+pub use model::{ModelInstance, ModelManager, ModelMapping};
+pub use template::{Template, TemplateManager};
 
 /// Service version information
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -134,7 +126,7 @@ mod tests {
     #[test]
     fn test_version_info() {
         // VERSION is a compile-time constant and always has a value
-        assert_eq!(VERSION, "2.0.0");
+        assert_eq!(VERSION, "0.0.1");
         assert_eq!(SERVICE_NAME, "modsrv");
     }
 }

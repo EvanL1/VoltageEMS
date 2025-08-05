@@ -160,6 +160,10 @@ pub enum ModelSrvError {
     /// Invalid model error
     #[error("Invalid model: {0}")]
     InvalidModel(String),
+
+    /// Invalid mapping error
+    #[error("Invalid mapping: {0}")]
+    InvalidMapping(String),
 }
 
 /// Result type alias for Model Service

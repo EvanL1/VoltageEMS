@@ -1,0 +1,192 @@
+version: '3.8'
+
+services:
+  # Nginx作为统一入口
+  nginx:
+    image: nginx:alpine
+    container_name: voltageems-nginx
+    ports:
+      - "80:80"      # HTTP入口
+      - "443:443"    # HTTPS入口（如需要）
+    volumes:
+      - ./docker/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./docker/nginx/html:/usr/share/nginx/html:ro
+    depends_on:
+      - apigateway
+      - comsrv
+      - modsrv
+      - hissrv
+      - alarmsrv
+      - rulesrv
+    networks:
+      - voltageems
+
+  # Redis with functions
+  redis:
+    build:
+      context: .
+      dockerfile: docker/redis/Dockerfile
+    container_name: voltageems-redis
+    ports:
+      - "6379:6379"  # 仅供开发调试，生产环境应该关闭
+    volumes:
+      - redis-data:/data
+    networks:
+      - voltageems
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # InfluxDB时序数据库
+  influxdb:
+    image: influxdb:2.7-alpine
+    container_name: voltageems-influxdb
+    ports:
+      - "8086:8086"  # 仅供开发调试
+    environment:
+      - DOCKER_INFLUXDB_INIT_MODE=setup
+      - DOCKER_INFLUXDB_INIT_USERNAME=admin
+      - DOCKER_INFLUXDB_INIT_PASSWORD=password123
+      - DOCKER_INFLUXDB_INIT_ORG=voltageems
+      - DOCKER_INFLUXDB_INIT_BUCKET=ems_data
+      - DOCKER_INFLUXDB_INIT_ADMIN_TOKEN=mytoken
+    volumes:
+      - influxdb-storage:/var/lib/influxdb2
+    networks:
+      - voltageems
+
+  # Modbus模拟器
+  modbus-simulator:
+    image: oitc/modbus-server
+    container_name: voltageems-modbus-sim
+    ports:
+      - "5020:5020"  # 仅供开发调试
+    networks:
+      - voltageems
+
+  # API Gateway - 专注于数据聚合和业务逻辑
+  apigateway:
+    build:
+      context: .
+      dockerfile: services/apigateway/Dockerfile
+    container_name: voltageems-apigateway
+    # 不再对外暴露端口，通过nginx访问
+    environment:
+      - RUST_LOG=debug,apigateway=trace
+      - REDIS_URL=redis://redis:6379
+      - JWT_SECRET=your-secret-key-change-in-production
+    depends_on:
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./services/apigateway/config:/app/config:ro
+    networks:
+      - voltageems
+
+  # 通信服务
+  comsrv:
+    build:
+      context: .
+      dockerfile: services/comsrv/Dockerfile
+    container_name: voltageems-comsrv
+    # 端口仅供调试，生产环境通过nginx访问
+    ports:
+      - "3000:3000"   # gRPC调试
+      - "6000:6000"   # HTTP API调试
+    environment:
+      - RUST_LOG=info,comsrv=debug
+      - REDIS_URL=redis://redis:6379
+      - CSV_BASE_PATH=/app/config
+    depends_on:
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./config:/app/config:ro
+      - ./services/comsrv/config/comsrv.yaml:/app/comsrv.yaml:ro
+    command: ["/app/comsrv", "-c", "/app/comsrv.yaml"]
+    networks:
+      - voltageems
+
+  # 模型服务
+  modsrv:
+    build:
+      context: .
+      dockerfile: services/modsrv/Dockerfile
+    container_name: voltageems-modsrv
+    environment:
+      - RUST_LOG=info,modsrv=debug
+      - REDIS_URL=redis://redis:6379
+    depends_on:
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./services/modsrv/config:/app/config:ro
+    networks:
+      - voltageems
+
+  # 历史服务
+  hissrv:
+    build:
+      context: .
+      dockerfile: services/hissrv/Dockerfile
+    container_name: voltageems-hissrv
+    environment:
+      - RUST_LOG=info,hissrv=debug
+      - REDIS_URL=redis://redis:6379
+      - INFLUXDB_URL=http://influxdb:8086
+      - INFLUXDB_TOKEN=mytoken
+      - INFLUXDB_ORG=voltageems
+      - INFLUXDB_BUCKET=ems_data
+    depends_on:
+      redis:
+        condition: service_healthy
+      influxdb:
+        condition: service_started
+    volumes:
+      - ./services/hissrv/config:/app/config:ro
+    networks:
+      - voltageems
+
+  # 告警服务
+  alarmsrv:
+    build:
+      context: .
+      dockerfile: services/alarmsrv/Dockerfile
+    container_name: voltageems-alarmsrv
+    environment:
+      - RUST_LOG=info,alarmsrv=debug
+      - REDIS_URL=redis://redis:6379
+    depends_on:
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./services/alarmsrv/config:/app/config:ro
+    networks:
+      - voltageems
+
+  # 规则引擎服务
+  rulesrv:
+    build:
+      context: .
+      dockerfile: services/rulesrv/Dockerfile
+    container_name: voltageems-rulesrv
+    environment:
+      - RUST_LOG=info,rulesrv=debug
+      - REDIS_URL=redis://redis:6379
+    depends_on:
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./services/rulesrv/config:/app/config:ro
+    networks:
+      - voltageems
+
+networks:
+  voltageems:
+    driver: bridge
+
+volumes:
+  redis-data:
+  influxdb-storage:

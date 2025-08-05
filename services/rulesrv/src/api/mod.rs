@@ -96,7 +96,6 @@ impl ApiServer {
             .with_state(state);
 
         let addr = format!("0.0.0.0:{}", self.port);
-        info!("Starting API server on {}", addr);
 
         let listener = tokio::net::TcpListener::bind(&addr).await.map_err(|e| {
             crate::error::RulesrvError::ApiError(format!("Failed to bind to {}: {}", addr, e))

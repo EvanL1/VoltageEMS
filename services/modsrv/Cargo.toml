@@ -28,7 +28,7 @@ async-trait = { workspace = true }
 futures = { workspace = true }
 uuid = { workspace = true }
 regex = "1.10.2"
-axum = { workspace = true, features = ["ws"] }
+axum = { workspace = true }
 utoipa = { version = "5.4", features = ["axum_extras"] }
 # utoipa-swagger-ui = { version = "9.0", features = ["axum"] }
 tower = { workspace = true }
@@ -41,7 +41,21 @@ base64 = "0.22"
 criterion = { version = "0.5", features = ["async_tokio"] }
 futures = { workspace = true }
 tempfile = "3.2"
+warp = "0.3"
 
 [features]
 default = ["redis"]
 redis = []
+
+[[test]]
+name = "basic_test"
+path = "tests/basic_test.rs"
+
+[[test]]
+name = "model_management_test"
+path = "tests/model_management_test.rs"
+
+[[test]]
+name = "api_integration_test"
+path = "tests/api_integration_test.rs"
+

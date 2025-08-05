@@ -188,6 +188,9 @@ impl ConfigManager {
             config.service.logging.level = get_global_log_level("COMSRV");
         }
 
+        // Force hardcoded port - not configurable
+        config.service.api.port = 6000;
+
         Ok(config)
     }
 

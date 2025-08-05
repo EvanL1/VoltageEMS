@@ -34,39 +34,7 @@ pub async fn detailed_health(State(app_state): State<AppState>) -> impl IntoResp
         }
     };
 
-    // Check backend services
-    let mut services_status = json!({});
-    let services = vec!["comsrv", "modsrv", "hissrv", "netsrv", "alarmsrv"];
-
-    for service in services {
-        if let Some(service_url) = app_state.config.get_service_url(service) {
-            let health_url = format!("{}/health", service_url);
-            let status = match app_state
-                .http_client
-                .get(&health_url)
-                .timeout(std::time::Duration::from_secs(5))
-                .send()
-                .await
-            {
-                Ok(response) if response.status().is_success() => json!({
-                    "status": "healthy",
-                    "message": format!("{} is responding", service)
-                }),
-                Ok(response) => json!({
-                    "status": "unhealthy",
-                    "message": format!("{} returned status: {}", service, response.status())
-                }),
-                Err(e) => json!({
-                    "status": "unhealthy",
-                    "message": format!("{} is unreachable: {}", service, e)
-                }),
-            };
-            services_status[service] = status;
-        }
-    }
-
     health_status["dependencies"]["redis"] = redis_status;
-    health_status["dependencies"]["services"] = services_status;
 
     // Determine overall health
     let is_healthy = health_status["dependencies"]["redis"]["status"] == "healthy";

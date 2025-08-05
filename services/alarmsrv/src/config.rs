@@ -100,7 +100,7 @@ impl Default for ApiConfig {
     fn default() -> Self {
         Self {
             host: "0.0.0.0".to_string(),
-            port: 8083,
+            port: 6002, // Fixed port for alarmsrv
         }
     }
 }
@@ -146,7 +146,8 @@ impl AlarmConfig {
 
         // 确保硬编码值
         config.redis.key_prefix = "alarmsrv:".to_string();
-        config.api.port = 8083;
+        // 硬编码端口，不可配置
+        config.api.port = 6002;
 
         // Override specific environment variables if set
         if let Ok(retention_days) = std::env::var("ALARMSRV_STORAGE_RETENTION_DAYS") {
@@ -179,7 +180,7 @@ mod tests {
         assert!(config.redis.url.contains("redis://"));
         assert_eq!(config.redis.key_prefix, "alarmsrv:");
         assert_eq!(config.api.host, "0.0.0.0");
-        assert_eq!(config.api.port, 8083);
+        assert_eq!(config.api.port, 6002);
         assert_eq!(config.storage.retention_days, 30);
         assert!(config.storage.auto_cleanup);
     }
@@ -189,7 +190,7 @@ mod tests {
         let config = AlarmConfig::load().await.unwrap();
         assert!(!config.redis.url.is_empty());
         assert_eq!(config.redis.key_prefix, "alarmsrv:");
-        assert_eq!(config.api.port, 8083);
+        assert_eq!(config.api.port, 6002);
         assert!(config.storage.retention_days > 0);
     }
 

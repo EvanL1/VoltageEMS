@@ -60,9 +60,12 @@ COPY --from=builder /app/target/release/comsrv /app/comsrv
 # COPY --from=builder /app/services/comsrv/config ./config
 # COPY --from=builder /app/services/comsrv/plugins ./plugins
 
-# Create log directory
-RUN mkdir -p /app/logs
+# Create log and config directories
+RUN mkdir -p /app/logs /app/config
 
 ENV RUST_LOG=info
+
+# Expose ports
+EXPOSE 3000 8081
 
 CMD ["/app/comsrv"]

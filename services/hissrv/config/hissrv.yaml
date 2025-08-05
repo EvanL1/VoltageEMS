@@ -6,11 +6,10 @@ service:
   name: "hissrv"
   polling_interval: 10s     # Polling interval
   enable_api: true          # Enable configuration management API
-  api_port: 8082            # API service port
 
 # Redis configuration
 redis:
-  url: "redis://localhost:6379"
+  url: "redis://redis:6379"
   data_keys:
     # Get real-time measurement data from comsrv
     - pattern: "comsrv:*:m"
@@ -22,10 +21,10 @@ redis:
 
 # InfluxDB configuration
 influxdb:
-  url: "http://localhost:8086"
-  org: "voltage"
-  bucket: "ems"
-  token: "${INFLUXDB_TOKEN}"    # Read from environment variable
+  url: "http://influxdb:8086"
+  org: "voltageems"
+  bucket: "ems_data"
+  token: "voltageems-token"    # Read from environment variable
   batch_size: 1000              # Batch write size
   write_timeout: 30s            # Write timeout
 

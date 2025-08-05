@@ -67,8 +67,6 @@ async fn main() -> Result<()> {
         .with_target(false)
         .init();
 
-    info!("Starting Rules Service");
-
     // Run command
     match args.command {
         Some(Commands::Service) | None => {
@@ -93,29 +91,44 @@ async fn main() -> Result<()> {
 
 /// Run the rules service
 async fn run_service(config: &Config) -> Result<()> {
-    info!("Starting Rules Service");
+    println!(
+        "
+╔═══════════════════════════════════════════════════════════╗
+║            VoltageEMS Rules Service v{}           ║
+╚═══════════════════════════════════════════════════════════╝
+    ",
+        env!("CARGO_PKG_VERSION")
+    );
+
+    info!("Initializing Rules Service...");
 
     // Create Redis store
     let store =
         Arc::new(RedisStore::new(&config.redis_url, None).map_err(|e| {
             RulesrvError::ConfigError(format!("Failed to create Redis store: {}", e))
         })?);
+    info!("✓ Connected to Redis: {}", config.redis_url);
 
     // Create rule engine
     let engine = RuleEngine::new(store.clone());
-
-    info!(
-        "Rules Service started, API available at http://0.0.0.0:{}",
-        config.service.api_port
-    );
+    info!("✓ Rule engine initialized");
 
     // Start API server
     let api_server = ApiServer::new(
         engine,
         store.clone(),
-        config.service.api_port,
+        config.service.port,
         config.api.clone(),
     );
+
+    info!("✓ Starting API server on 0.0.0.0:{}", config.service.port);
+    println!("\n🚀 Rules Service is ready!");
+    println!("   API: http://0.0.0.0:{}", config.service.port);
+    println!(
+        "   Health check: http://0.0.0.0:{}/health",
+        config.service.port
+    );
+    println!("   Docs: http://0.0.0.0:{}/docs\n", config.service.port);
 
     api_server.start().await?;
 
@@ -129,9 +142,9 @@ async fn start_api_server(config: &Config) -> Result<()> {
             RulesrvError::ConfigError(format!("Failed to create Redis store: {}", e))
         })?);
     let engine = RuleEngine::new(store.clone());
-    let api_server = ApiServer::new(engine, store, config.service.api_port, config.api.clone());
+    let api_server = ApiServer::new(engine, store, config.service.port, config.api.clone());
 
-    info!("Starting API server on port {}", config.service.api_port);
+    info!("Starting API server on port {}", config.service.port);
     api_server.start().await?;
 
     Ok(())

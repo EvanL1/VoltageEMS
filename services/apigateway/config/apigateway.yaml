@@ -1,0 +1,43 @@
+# API Gateway Configuration
+# Central API gateway for VoltageEMS
+
+# Server configuration
+server:
+  host: "0.0.0.0"
+  workers: 4
+
+# Redis configuration
+redis:
+  url: "redis://redis:6379"
+  pool_size: 10
+  timeout_seconds: 5
+
+# API configuration
+api:
+  prefix: "/api/v1"
+
+# Authentication configuration
+auth:
+  jwt_secret: "your-secret-key-change-in-production"
+  jwt_expiry_hours: 24
+
+# Service endpoints configuration
+services:
+  comsrv:
+    url: "http://comsrv:6000"
+    timeout_seconds: 30
+  modsrv:
+    url: "http://modsrv:6001"
+    timeout_seconds: 30
+  hissrv:
+    url: "http://hissrv:6004"
+    timeout_seconds: 30
+  alarmsrv:
+    url: "http://alarmsrv:6002"
+    timeout_seconds: 30
+  rulesrv:
+    url: "http://rulesrv:6003"
+    timeout_seconds: 30
+  netsrv:
+    url: "http://netsrv:6006"
+    timeout_seconds: 30

@@ -8,50 +8,21 @@ edition = "2021"
 voltage-libs = { path = "../../libs", features = ["redis"] }
 
 # Web framework
-axum = { workspace = true, features = ["ws"] }
+axum = { workspace = true }
 tower = { workspace = true }
-tower-http = { version = "0.5", features = ["cors", "trace", "auth"] }
-tower-layer = "0.3"
-tower-service = "0.3"
-http = "1"
-http-body-util = "0.1"
-bytes = "1.9"
-
-# WebSocket support
-tokio-tungstenite = "0.21"
-tungstenite = "0.21"
+tower-http = { version = "0.5", features = ["cors"] }
 
 # Async runtime
 tokio = { workspace = true }
-futures = { workspace = true }
-tokio-stream = "0.1"
-futures-util = "0.3"
 
 # Serialization
 serde = { workspace = true }
 serde_json = { workspace = true }
 
-# Utils (re-exported from voltage-common)
-uuid = { workspace = true }
+# Utils
 chrono = { workspace = true }
-once_cell = "1"
 tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
 
-# HTTP client
-reqwest = { workspace = true }
-
-
-# Authentication
-jsonwebtoken = "9"
-
-
-# Async traits and error handling
-async-trait = "0.1"
+# Error handling
 thiserror = "1.0"
-
-
-tracing-subscriber.workspace = true
-
-[dev-dependencies]
-anyhow = "1"
-sysinfo = "0.30"

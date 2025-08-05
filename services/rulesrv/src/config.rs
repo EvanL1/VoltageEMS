@@ -38,10 +38,6 @@ pub struct ServiceConfig {
     /// Service port
     #[serde(default = "default_service_port")]
     pub port: u16,
-
-    /// API server port
-    #[serde(default = "default_api_port")]
-    pub api_port: u16,
 }
 
 /// Redis configuration
@@ -80,7 +76,6 @@ pub struct EngineConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ApiConfig {
     pub host: String,
-    pub port: u16,
     pub timeout_seconds: u64,
 }
 
@@ -116,9 +111,8 @@ impl Config {
 
         // 确保硬编码值
         config.redis.key_prefix = "rulesrv:".to_string();
-        config.service.port = 8084;
-        config.service.api_port = 8084;
-        config.api.port = 8084;
+        // 强制硬编码端口，不可配置
+        config.service.port = 6003;
         config.redis_url = config.redis.url.clone();
 
         Ok(config)
@@ -139,9 +133,8 @@ impl Config {
 
             // 确保硬编码值
             config.redis.key_prefix = "rulesrv:".to_string();
-            config.service.port = 8084;
-            config.service.api_port = 8084;
-            config.api.port = 8084;
+            // 强制硬编码端口，不可配置
+            config.service.port = 6003;
             config.redis_url = config.redis.url.clone();
 
             Ok(config)
@@ -173,7 +166,6 @@ impl Default for Config {
             engine: EngineConfig::default(),
             api: ApiConfig {
                 host: "0.0.0.0".to_string(),
-                port: 8084, // 固定端口
                 timeout_seconds: 30,
             },
             log_level: default_log_level(),
@@ -187,7 +179,6 @@ impl Default for ServiceConfig {
         ServiceConfig {
             name: default_service_name(),
             port: default_service_port(),
-            api_port: default_api_port(),
         }
     }
 }
@@ -218,7 +209,7 @@ fn default_service_name() -> String {
 }
 
 fn default_service_port() -> u16 {
-    8084 // 固定端口
+    6003 // 默认端口
 }
 
 fn default_redis_url() -> String {
@@ -243,10 +234,6 @@ fn default_evaluation_timeout_ms() -> u64 {
 
 fn default_rule_key_pattern() -> String {
     "rulesrv:rule:config:*".to_string()
-}
-
-fn default_api_port() -> u16 {
-    8084 // 与服务端口相同
 }
 
 fn default_log_level() -> String {

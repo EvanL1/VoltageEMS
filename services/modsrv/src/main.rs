@@ -5,16 +5,13 @@
 mod api;
 mod config;
 mod error;
-mod mapping;
 mod model;
-mod websocket;
+mod template;
 
 use crate::api::ApiServer;
 use crate::config::Config;
 use crate::error::{ModelSrvError, Result};
-use crate::mapping::MappingManager;
 use crate::model::ModelManager;
-use crate::websocket::WsConnectionManager;
 
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
@@ -22,7 +19,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::mpsc;
 use tokio::time;
-use tracing::{error, info, warn};
+use tracing::{error, info};
 
 #[derive(Parser, Debug)]
 #[command(author, version, about = "ModSrv - Model Service")]
@@ -79,53 +76,16 @@ async fn run_service(config: Config) -> Result<()> {
     info!("Starting ModSrv service mode");
 
     // Create model manager (using EdgeRedis)
-    let model_manager = ModelManager::new(&config.redis.url).await?;
+    let template_dir = std::env::var("TEMPLATE_DIR").unwrap_or_else(|_| "templates".to_string());
+    let model_manager = ModelManager::new(&config.redis.url, &template_dir).await?;
 
-    // Load model configurations
-    let enabled_models = config.enabled_models();
-    let model_configs: Vec<_> = enabled_models.into_iter().cloned().collect();
-
-    info!("Found {} model configurations", config.models.len());
-    info!("Configured {} models", model_configs.len());
-
-    if !model_configs.is_empty() {
-        for model in &model_configs {
-            info!("Loading model: {} ({})", model.id, model.name);
-        }
-        model_manager.load_models(model_configs).await?;
-        info!("Model loading completed");
-    } else {
-        info!("No models configured, service will only provide API interface");
-    }
+    // No pre-configured models in the new design
+    info!("ModSrv started in API mode - models will be created via API");
 
     let model_manager = Arc::new(model_manager);
 
-    // Load mapping configuration
-    let mut mapping_manager = MappingManager::new();
-    let mappings_dir =
-        std::env::var("MAPPINGS_DIR").unwrap_or_else(|_| "config/mappings".to_string());
-    info!("Loading mapping configuration: {}", mappings_dir);
-
-    if let Err(e) = mapping_manager.load_directory(&mappings_dir).await {
-        warn!("Failed to load mapping configuration: {}", e);
-    } else {
-        // Load mappings to Redis
-        model_manager.load_mappings(&mapping_manager).await?;
-    }
-
-    // Create WebSocket manager
-    let ws_manager = Arc::new(WsConnectionManager::new());
-
-    // Start Redis subscription
-    if let Err(e) = ws_manager.start_redis_subscription().await {
-        warn!("Failed to start Redis subscription: {}", e);
-    }
-
-    // Start WebSocket heartbeat
-    ws_manager.start_heartbeat().await;
-
     // Create API server
-    let api_server = ApiServer::new(model_manager.clone(), ws_manager.clone(), config.clone());
+    let api_server = ApiServer::new(model_manager.clone(), config.clone());
 
     // Start API server
     let (startup_tx, mut startup_rx) = mpsc::channel::<std::result::Result<(), String>>(1);
@@ -217,7 +177,8 @@ async fn check_config(config: Config) -> Result<()> {
 
     // 4. Test Redis connection
     info!("Connection test in progress...");
-    match ModelManager::new(&config.redis.url).await {
+    let template_dir = std::env::var("TEMPLATE_DIR").unwrap_or_else(|_| "templates".to_string());
+    match ModelManager::new(&config.redis.url, &template_dir).await {
         Ok(_) => {
             info!("✓ Connection test: Success");
             info!("Lua scripts: ✓ Loaded");
@@ -231,32 +192,32 @@ async fn check_config(config: Config) -> Result<()> {
         },
     }
 
-    // 5. Display model information
-    info!("--- Model Configuration ---");
-    if config.models.is_empty() {
-        info!("No models configured");
+    // 5. Display template information
+    info!("--- Template Configuration ---");
+    info!("Template directory: {}", template_dir);
+    let model_manager = ModelManager::new(&config.redis.url, &template_dir).await?;
+    let template_manager = model_manager.template_manager();
+    let templates = {
+        let tm = template_manager.lock().await;
+        tm.list_templates().into_iter().cloned().collect::<Vec<_>>()
+    };
+    if templates.is_empty() {
+        info!("No templates loaded");
     } else {
-        info!("Configured {} models:", config.models.len());
-        for model in &config.models {
-            info!("• {} ({})", model.name, model.id);
-            info!("  Description: {}", model.description);
-
-            // Display monitoring points
-            if !model.monitoring.is_empty() {
-                info!("  Monitoring points ({}):", model.monitoring.len());
-                for (name, point) in &model.monitoring {
-                    let unit = point.unit.as_deref().unwrap_or("");
-                    info!("    - {}: {} {}", name, point.description, unit);
-                }
+        info!("Loaded {} templates:", templates.len());
+        for template in templates {
+            info!("• Template: {}", template.id);
+            if !template.data.is_empty() {
+                info!(
+                    "  Data points: {:?}",
+                    template.data.keys().collect::<Vec<_>>()
+                );
             }
-
-            // Display control points
-            if !model.control.is_empty() {
-                info!("  Control points ({}):", model.control.len());
-                for (name, point) in &model.control {
-                    let unit = point.unit.as_deref().unwrap_or("");
-                    info!("    - {}: {} {}", name, point.description, unit);
-                }
+            if !template.action.is_empty() {
+                info!(
+                    "  Actions: {:?}",
+                    template.action.keys().collect::<Vec<_>>()
+                );
             }
         }
     }

@@ -8,17 +8,48 @@ VoltageEMS is a high-performance industrial IoT energy management system built w
 
 ## Architecture
 
-### Service Architecture
-The system uses a microservice architecture with Redis as the central message bus:
+### Service Architecture (Updated 2025-08-05)
+The system uses a microservice architecture with Nginx as the unified entry point:
 
 ```
-Web App → API Gateway (8089) → Redis Message Bus → Services → Devices
-                                       ↓
-                          ┌────────────┼────────────┐
-                          │            │            │
-                      comsrv(3000)  modsrv(8092)  hissrv(8082)
-                      alarmsrv(8080) rulesrv(8080) netsrv(TBD)
+                ┌─────────────┐
+                │   Client    │
+                └──────┬──────┘
+                       │
+                ┌──────▼──────┐
+                │ Nginx (:80) │ ← Unified entry point, reverse proxy
+                └──────┬──────┘
+                       │
+       ┌───────────────┴───────────────────────────┐
+       │                                           │
+       ▼                                           ▼
+┌─────────────┐                         ┌──────────────────┐
+│ API Gateway │                         │   Microservices  │
+│   (:6005)   │                         │                  │
+│ (Minimal)   │                         │ comsrv(:6000)    │
+└─────────────┘                         │ modsrv(:6001)    │
+                                        │ hissrv(:6004)    │
+                                        │ alarmsrv(:6002)  │
+                                        │ rulesrv(:6003)   │
+                                        └──────────────────┘
+                                                 │
+                                                 ▼
+                                    ┌─────────────────────────┐
+                                    │ Redis(:6379) & Storage  │
+                                    └─────────────────────────┘
 ```
+
+### Fixed Port Assignments (Hardcoded)
+All service ports are hardcoded in the source code and not configurable via configuration files:
+- **Nginx**: 80 (HTTP), 443 (HTTPS)
+- **comsrv**: 6000
+- **modsrv**: 6001
+- **alarmsrv**: 6002
+- **rulesrv**: 6003
+- **hissrv**: 6004
+- **apigateway**: 6005
+- **netsrv**: 6006
+- **Redis**: 6379
 
 ### Key Design Patterns
 
@@ -30,8 +61,8 @@ Web App → API Gateway (8089) → Redis Message Bus → Services → Devices
 
 2. **Redis Data Structure**
    - Hash-based storage for O(1) access: `{service}:{channelID}:{type}`
-   - Types: m (measurement), s (signal), c (control), a (adjustment)
-   - Point IDs start from 1 (not 10001)
+   - Types: T (telemetry), S (signal), C (control), A (adjustment)
+   - Point IDs start from 1 (sequential numbering)
    - 6 decimal precision standardization
 
 3. **Shared Libraries (libs/)**
@@ -97,9 +128,9 @@ cd scripts/redis-functions
 redis-cli monitor | grep {service_name}
 
 # Check data
-redis-cli hgetall "comsrv:1001:m"    # View measurements
-redis-cli hget "comsrv:1001:m" "1"   # Get point ID 1
-redis-cli hlen "comsrv:1001:m"       # Count points
+redis-cli hgetall "comsrv:1001:T"    # View telemetry values
+redis-cli hget "comsrv:1001:T" "1"   # Get point ID 1
+redis-cli hlen "comsrv:1001:T"       # Count points
 
 # Pub/Sub monitoring
 redis-cli psubscribe "comsrv:*"
@@ -108,11 +139,18 @@ redis-cli psubscribe "comsrv:*"
 ### Docker Environment
 
 ```bash
-# Each service has its own Dockerfile
+# Build individual service
 cd services/{service_name}
 docker build -t {service_name} .
 
-# No docker-compose files in the project (removed during cleanup)
+# Start entire system
+docker-compose up -d
+
+# Rebuild specific service
+docker-compose build {service_name}
+
+# View logs
+docker logs voltageems-{service_name}
 ```
 
 ### Python Scripts
@@ -132,10 +170,10 @@ uv pip install -r requirements.txt
 - Channel-based configuration in CSV files
 
 ### Redis Hash Storage
-- Measurement: `comsrv:{channel}:m` → `{pointId: value}`
-- Signal: `comsrv:{channel}:s` → `{pointId: 0/1}`
-- Control: `comsrv:{channel}:c` → `{pointId: value}`
-- Adjustment: `comsrv:{channel}:a` → `{pointId: value}`
+- Telemetry: `comsrv:{channel}:T` → `{pointId: value}`
+- Signal: `comsrv:{channel}:S` → `{pointId: 0/1}`
+- Control: `comsrv:{channel}:C` → `{pointId: value}`
+- Adjustment: `comsrv:{channel}:A` → `{pointId: value}`
 
 ### Service Communication
 - Pub/Sub for real-time events
@@ -229,3 +267,20 @@ config/
 - All numeric values use 6 decimal precision
 - Prefer Hash operations over Keys scanning
 - For bool types in CSV: scale=1.0, offset=0.0
+
+## Quick Start
+
+```bash
+# Start the entire system
+./start.sh
+
+# Stop the system
+docker-compose down
+
+# View service logs
+docker logs -f voltageems-{service_name}
+
+# Access services through Nginx
+curl http://localhost/api/comsrv/channels
+curl http://localhost/api/alarmsrv/health
+```

@@ -1,0 +1,31 @@
+services:
+  redis:
+    image: redis:8-alpine
+    container_name: rulesrv-redis-test
+    ports:
+      - "6379:6379"
+    networks:
+      - rulesrv-test
+
+  rulesrv:
+    build:
+      context: ../..
+      dockerfile: services/rulesrv/Dockerfile
+    container_name: rulesrv-test
+    depends_on:
+      - redis
+    environment:
+      - RUST_LOG=info,rulesrv=debug
+      - REDIS_URL=redis://redis:6379
+    ports:
+      - "6003:6003"
+    volumes:
+      - ./config:/app/config:ro
+      - ./examples:/app/examples:ro
+    networks:
+      - rulesrv-test
+    command: ["/app/rulesrv", "service"]
+
+networks:
+  rulesrv-test:
+    driver: bridge

@@ -5,7 +5,7 @@ service:
 
 # Redis configuration
 redis:
-  url: "redis://localhost:6379"
+  url: "redis://redis:6379"
   key_prefix: "rulesrv"
   pool_size: 20
   connection_timeout: 5s
@@ -13,7 +13,6 @@ redis:
 # API server configuration
 api:
   host: "0.0.0.0"
-  port: 8080
   cors:
     enabled: true
     allowed_origins:

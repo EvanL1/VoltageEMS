@@ -7,7 +7,6 @@ use std::path::Path;
 use tracing::{debug, info};
 
 use crate::error::{ModelSrvError, Result};
-use crate::model::ModelConfig;
 use voltage_libs::config::utils::{get_global_log_level, get_global_redis_url};
 use voltage_libs::config::ConfigLoader;
 
@@ -63,7 +62,7 @@ fn default_api_host() -> String {
 }
 
 fn default_modsrv_port() -> u16 {
-    8082
+    6001
 }
 
 fn default_api_timeout() -> u64 {
@@ -103,7 +102,7 @@ impl Default for LogConfig {
 }
 
 /// Main configuration structure
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
     #[serde(default = "default_service_name")]
     pub service_name: String,
@@ -115,8 +114,6 @@ pub struct Config {
     pub api: ApiConfig,
     #[serde(default)]
     pub log: LogConfig,
-    #[serde(default)]
-    pub models: Vec<ModelConfig>,
     #[serde(default = "default_update_interval")]
     pub update_interval_ms: u64,
 }
@@ -133,7 +130,18 @@ fn default_update_interval() -> u64 {
     1000
 }
 
-// Default implementation is automatically derived
+impl Default for Config {
+    fn default() -> Self {
+        Self {
+            service_name: default_service_name(),
+            version: default_version(),
+            redis: RedisConfig::default(),
+            api: ApiConfig::default(),
+            log: LogConfig::default(),
+            update_interval_ms: default_update_interval(),
+        }
+    }
+}
 
 impl Config {
     /// Load configuration from file
@@ -179,7 +187,7 @@ impl Config {
             config.api.host = api_host;
         }
         // Port is fixed, not loaded from env vars
-        config.api.port = 8082;
+        config.api.port = 6001;
 
         // Log config (using global variables)
         config.log.level = get_global_log_level("MODSRV");
@@ -229,7 +237,7 @@ impl Config {
 
         // Hard-code some fields, not allowed to override from config
         config.redis.key_prefix = "modsrv:".to_string();
-        config.api.port = 8082;
+        config.api.port = 6001;
 
         // Validate config
         config.validate()?;
@@ -251,21 +259,6 @@ impl Config {
             return Err(ModelSrvError::ConfigError(
                 "API port cannot be 0".to_string(),
             ));
-        }
-
-        // Validate model config
-        for model in &self.models {
-            if model.id.is_empty() {
-                return Err(ModelSrvError::ConfigError(
-                    "Model ID cannot be empty".to_string(),
-                ));
-            }
-            if model.monitoring.is_empty() && model.control.is_empty() {
-                return Err(ModelSrvError::ConfigError(format!(
-                    "Model {} must contain monitoring or control points",
-                    model.id
-                )));
-            }
         }
 
         info!("Config validation passed");
@@ -295,30 +288,6 @@ impl Config {
         info!("Config saved to: {}", path.display());
         Ok(())
     }
-
-    /// Add model configuration
-    #[allow(dead_code)]
-    pub fn add_model(&mut self, model: ModelConfig) {
-        self.models.push(model);
-        info!("Added model config: {}", self.models.last().unwrap().id);
-    }
-
-    /// Remove model configuration
-    #[allow(dead_code)]
-    pub fn remove_model(&mut self, model_id: &str) -> bool {
-        let original_len = self.models.len();
-        self.models.retain(|m| m.id != model_id);
-        let removed = self.models.len() < original_len;
-        if removed {
-            info!("Removed model config: {}", model_id);
-        }
-        removed
-    }
-
-    /// Get enabled model configurations
-    pub fn enabled_models(&self) -> Vec<&ModelConfig> {
-        self.models.iter().collect()
-    }
 }
 
 #[cfg(test)]
@@ -331,7 +300,7 @@ mod tests {
         let config = Config::default();
         assert_eq!(config.service_name, "modsrv");
         assert_eq!(config.redis.url, get_global_redis_url("MODSRV"));
-        assert_eq!(config.api.port, 8082);
+        assert_eq!(config.api.port, 6001);
         assert!(config.validate().is_ok());
     }
 

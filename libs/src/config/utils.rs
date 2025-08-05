@@ -32,10 +32,17 @@ pub fn get_env_with_fallback(global_key: &str, service_key: &str, default: &str)
 
 /// 获取全局 Redis URL
 pub fn get_global_redis_url(service_prefix: &str) -> String {
+    // Check if running in Docker/container environment
+    let default_url = if std::env::var("DOCKER_ENV").unwrap_or_default() == "true" {
+        "redis://redis:6379"
+    } else {
+        "redis://localhost:6379"
+    };
+
     get_env_with_fallback(
         "VOLTAGE_REDIS_URL",
         &format!("{service_prefix}_REDIS_URL"),
-        "redis://redis:6379",
+        default_url,
     )
 }
 
@@ -97,14 +104,31 @@ pub fn get_global_jwt_secret(service_prefix: &str) -> String {
 ///
 /// 在 Docker 环境中，服务名即主机名
 pub fn get_service_url(service_name: &str) -> String {
-    match service_name {
-        "comsrv" => "http://comsrv:3000".to_string(),
-        "modsrv" => "http://modsrv:8082".to_string(),
-        "alarmsrv" => "http://alarmsrv:8083".to_string(),
-        "rulesrv" => "http://rulesrv:8084".to_string(),
-        "hissrv" => "http://hissrv:8085".to_string(),
-        "netsrv" => "http://netsrv:8086".to_string(),
-        _ => format!("http://{service_name}:8080"),
+    // Check if running in Docker/container environment
+    let use_docker_urls = std::env::var("DOCKER_ENV").unwrap_or_default() == "true";
+
+    if use_docker_urls {
+        // Docker environment - use service names as hostnames
+        match service_name {
+            "comsrv" => "http://comsrv:8081".to_string(),
+            "modsrv" => "http://modsrv:8092".to_string(),
+            "alarmsrv" => "http://alarmsrv:8080".to_string(),
+            "rulesrv" => "http://rulesrv:8080".to_string(),
+            "hissrv" => "http://hissrv:8082".to_string(),
+            "netsrv" => "http://netsrv:8087".to_string(),
+            _ => format!("http://{service_name}:8080"),
+        }
+    } else {
+        // Development environment - use localhost
+        match service_name {
+            "comsrv" => "http://localhost:8081".to_string(),
+            "modsrv" => "http://localhost:8092".to_string(),
+            "alarmsrv" => "http://localhost:8080".to_string(),
+            "rulesrv" => "http://localhost:8080".to_string(),
+            "hissrv" => "http://localhost:8082".to_string(),
+            "netsrv" => "http://localhost:8087".to_string(),
+            _ => format!("http://localhost:8080"),
+        }
     }
 }
 
@@ -142,8 +166,18 @@ mod tests {
 
     #[test]
     fn test_service_discovery() {
-        assert_eq!(get_service_url("comsrv"), "http://comsrv:3000");
-        assert_eq!(get_service_url("modsrv"), "http://modsrv:8082");
+        // Test development environment (default)
+        assert_eq!(get_service_url("comsrv"), "http://localhost:8081");
+        assert_eq!(get_service_url("modsrv"), "http://localhost:8092");
+        assert_eq!(get_service_url("unknown"), "http://localhost:8080");
+
+        // Test Docker environment
+        env::set_var("DOCKER_ENV", "true");
+        assert_eq!(get_service_url("comsrv"), "http://comsrv:8081");
+        assert_eq!(get_service_url("modsrv"), "http://modsrv:8092");
         assert_eq!(get_service_url("unknown"), "http://unknown:8080");
+
+        // Cleanup
+        env::remove_var("DOCKER_ENV");
     }
 }
