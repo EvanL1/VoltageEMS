@@ -57,6 +57,7 @@ test-logs/
 # Misc
 .DS_Store
 Thumbs.db
+.serena/
 *.csv
 **/*-demo.*
 **/*_demo.*
