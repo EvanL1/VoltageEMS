@@ -9,6 +9,10 @@ description = "Rule execution service for VoltageEMS"
 name = "rulesrv"
 path = "src/main.rs"
 
+[[bin]]
+name = "rulesrv-lightweight"
+path = "src/main_lightweight.rs"
+
 
 [dependencies]
 # Local dependencies
@@ -19,6 +23,7 @@ redis = { workspace = true }
 tokio = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+serde_yaml = { workspace = true }
 clap = { version = "4.0", features = ["derive"] }
 anyhow = { workspace = true }
 thiserror = { workspace = true }

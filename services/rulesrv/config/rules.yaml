@@ -1,0 +1,139 @@
+# RuleSrv 配置文件示例
+# 用于定义规则的YAML格式
+
+rules:
+  # 温度过高告警规则
+  - id: "temp_high_alarm"
+    name: "温度过高告警"
+    description: "当设备温度超过80度时触发告警"
+    enabled: true
+    priority: 1
+    cooldown: 300  # 冷却时间（秒）
+    condition_logic: "AND"  # AND/OR
+    condition_groups:
+      - logic: "OR"
+        conditions:
+          - source: "comsrv:1001:T:1"  # 温度传感器1
+            op: ">"
+            value: 80
+          - source: "comsrv:1001:T:2"  # 温度传感器2
+            op: ">"
+            value: 80
+    actions:
+      - action_type: "set_value"
+        target: "comsrv:1001:S:10"  # 设置告警标志
+        value: 1
+      - action_type: "publish"
+        topic: "alarm:temperature"
+        payload:
+          level: "critical"
+          message: "设备温度超过80度"
+      - action_type: "notify"
+        level: "critical"
+        message: "设备温度过高，请立即检查"
+        recipients: ["admin", "operator"]
+
+  # 电池电量低规则
+  - id: "battery_low"
+    name: "电池电量低"
+    description: "当电池电量低于20%时发送通知"
+    enabled: true
+    priority: 2
+    cooldown: 600
+    condition_logic: "AND"
+    condition_groups:
+      - logic: "AND"
+        conditions:
+          - source: "battery.soc"  # 电池电量
+            op: "<"
+            value: 20
+          - source: "battery.status"  # 电池状态
+            op: "=="
+            value: "discharging"
+    actions:
+      - action_type: "publish"
+        topic: "notification:battery"
+        payload:
+          level: "warning"
+          message: "电池电量低于20%"
+      - action_type: "set_value"
+        target: "battery.alert"
+        value: 1
+
+  # 设备离线检测
+  - id: "device_offline"
+    name: "设备离线检测"
+    description: "检测设备是否离线"
+    enabled: true
+    priority: 1
+    cooldown: 60
+    condition_logic: "OR"
+    condition_groups:
+      - logic: "AND"
+        conditions:
+          - source: "comsrv:1001:S:1"  # 通信状态
+            op: "=="
+            value: 0
+      - logic: "AND"
+        conditions:
+          - source: "comsrv:1002:S:1"
+            op: "=="
+            value: 0
+    actions:
+      - action_type: "device_control"
+        device_id: "gateway_1"
+        command: "reconnect"
+        parameters:
+          retry_count: 3
+          retry_interval: 10
+
+  # 功率因数优化
+  - id: "power_factor_optimization"
+    name: "功率因数优化"
+    description: "当功率因数低于0.9时启动电容补偿"
+    enabled: true
+    priority: 3
+    cooldown: 1800  # 30分钟
+    condition_logic: "AND"
+    condition_groups:
+      - logic: "AND"
+        conditions:
+          - source: "comsrv:1001:T:50"  # 功率因数
+            op: "<"
+            value: 0.9
+          - source: "comsrv:1001:T:51"  # 负载率
+            op: ">"
+            value: 30
+    actions:
+      - action_type: "set_value"
+        target: "comsrv:1001:C:20"  # 电容补偿控制
+        value: 1
+      - action_type: "publish"
+        topic: "control:power_factor"
+        payload:
+          action: "compensate"
+          target_pf: 0.95
+
+# 规则组（可选）
+rule_groups:
+  - name: "安全规则组"
+    description: "所有安全相关的规则"
+    rule_ids: ["temp_high_alarm", "device_offline"]
+    
+  - name: "能效规则组"
+    description: "能源效率优化规则"
+    rule_ids: ["power_factor_optimization", "battery_low"]
+
+# 全局设置
+settings:
+  # 规则引擎执行间隔（毫秒）
+  execution_interval: 1000
+  
+  # 是否启用规则日志
+  enable_logging: true
+  
+  # 最大并发执行数
+  max_concurrent_executions: 10
+  
+  # 默认冷却时间（秒）
+  default_cooldown: 60

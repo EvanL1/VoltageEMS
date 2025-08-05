@@ -5,6 +5,14 @@ edition = "2021"
 authors = ["Your Name <your.email@voltageenergy.com>"]
 description = "Real-time model execution service"
 
+[[bin]]
+name = "modsrv"
+path = "src/main.rs"
+
+[[bin]]
+name = "modsrv-lightweight"
+path = "src/main_lightweight.rs"
+
 [dependencies]
 # Local dependencies
 voltage-libs = { path = "../../libs", features = ["redis"] }
