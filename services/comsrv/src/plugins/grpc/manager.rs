@@ -1,6 +1,6 @@
-//! gRPC 插件管理器
+//! gRPC pluginmanaging器
 //!
-//! 负责插件的生命周期管理、健康检查和负载均衡
+//! 负责plugin的生命periodmanaging、健康checking和load均衡
 
 use crate::utils::error::{ComSrvError, Result};
 use dashmap::DashMap;
@@ -12,30 +12,30 @@ use tracing::{debug, error, info, warn};
 
 use super::client::GrpcPluginClient;
 
-/// 插件实例信息
+/// plugininstanceinfo
 #[derive(Clone, Debug)]
 struct PluginInstance {
-    /// 插件端点
+    /// plugin端点
     endpoint: String,
-    /// 插件客户端
+    /// pluginclient
     client: Arc<RwLock<GrpcPluginClient>>,
-    /// 健康状态
+    /// 健康state
     healthy: Arc<RwLock<bool>>,
-    /// 最后健康检查时间
+    /// 最后健康checkingtime
     last_check: Arc<RwLock<std::time::Instant>>,
 }
 
-/// 插件管理器
+/// pluginmanaging器
 #[derive(Debug)]
 pub struct PluginManager {
-    /// 协议类型到插件实例的映射
+    /// protocoltype到plugininstance的mapping
     plugins: Arc<DashMap<String, Vec<PluginInstance>>>,
-    /// 健康检查间隔
+    /// 健康checkinginterval
     health_check_interval: Duration,
 }
 
 impl PluginManager {
-    /// 创建新的插件管理器
+    /// Create新的pluginmanaging器
     pub fn new() -> Self {
         Self {
             plugins: Arc::new(DashMap::new()),
@@ -43,17 +43,17 @@ impl PluginManager {
         }
     }
 
-    /// 注册插件
+    /// registeringplugin
     pub async fn register_plugin(&self, protocol_type: &str, endpoint: &str) -> Result<()> {
         info!(
             "Registering plugin for protocol {} at {}",
             protocol_type, endpoint
         );
 
-        // 创建客户端
+        // createclient
         let client = GrpcPluginClient::new(endpoint).await?;
 
-        // 获取插件信息验证
+        // acquiringplugininfovalidation
         let mut client_guard = client.clone();
         let info = client_guard.get_info().await?;
 
@@ -71,7 +71,7 @@ impl PluginManager {
             last_check: Arc::new(RwLock::new(std::time::Instant::now())),
         };
 
-        // 添加到插件列表
+        // 添加到pluginlist
         self.plugins
             .entry(protocol_type.to_string())
             .or_default()
@@ -85,7 +85,7 @@ impl PluginManager {
         Ok(())
     }
 
-    /// 注销插件
+    /// unregisteringplugin
     pub async fn unregister_plugin(&self, protocol_type: &str, endpoint: &str) {
         info!(
             "Unregistering plugin for protocol {} at {}",
@@ -97,7 +97,7 @@ impl PluginManager {
         }
     }
 
-    /// 获取健康的插件客户端
+    /// Get健康的pluginclient
     pub async fn get_client(&self, protocol_type: &str) -> Result<Arc<RwLock<GrpcPluginClient>>> {
         let instances = self.plugins.get(protocol_type).ok_or_else(|| {
             ComSrvError::config(format!(
@@ -105,7 +105,7 @@ impl PluginManager {
             ))
         })?;
 
-        // 查找健康的实例
+        // 查找健康的instance
         for instance in instances.iter() {
             if *instance.healthy.read().await {
                 return Ok(instance.client.clone());
@@ -117,7 +117,7 @@ impl PluginManager {
         )))
     }
 
-    /// 启动健康检查任务
+    /// Start健康checkingtask
     pub fn start_health_check(&self) {
         let plugins = self.plugins.clone();
         let interval_duration = self.health_check_interval;
@@ -128,7 +128,7 @@ impl PluginManager {
             loop {
                 interval.tick().await;
 
-                // 检查所有插件
+                // checkingallplugin
                 for entry in plugins.iter() {
                     let _protocol_type = entry.key();
                     let instances = entry.value();
@@ -141,7 +141,7 @@ impl PluginManager {
         });
     }
 
-    /// 检查单个实例健康状态
+    /// Check单个instance健康state
     async fn check_instance_health(instance: &PluginInstance) {
         debug!("Checking health of plugin at {}", instance.endpoint);
 
@@ -172,7 +172,7 @@ impl PluginManager {
         }
     }
 
-    /// 获取所有注册的插件信息
+    /// Getallregistering的plugininfo
     pub async fn list_plugins(&self) -> Vec<(String, Vec<String>)> {
         let mut result = Vec::new();
 

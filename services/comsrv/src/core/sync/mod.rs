@@ -1,4 +1,4 @@
-//! 同步模块
+//! synchronousmodular
 
 pub mod lua_sync;
 

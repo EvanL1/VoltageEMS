@@ -29,10 +29,10 @@ local function alarmsrv_store_alarm(keys, args)
     -- 直接实现存储逻辑
     local entity_key = 'alarmsrv:' .. alarm_id
     
-    -- 存储实体数据
+    -- Store entity data
     redis.call('HSET', entity_key, 'type', 'alarm', 'data', alarm_data, 'updated_at', tostring(redis.call('TIME')[1]))
     
-    -- 处理索引
+    -- Process indexes
     for _, idx in ipairs(entity.indexes) do
         if idx.type == "single" then
             local idx_key = string.format("idx:alarm:%s:%s", idx.field, idx.value)
@@ -102,7 +102,7 @@ local function hissrv_collect_data(keys, args)
         redis.call('RPUSH', data_key, cjson.encode(item))
     end
     
-    -- 设置过期时间
+    -- Set expiration time
     redis.call('EXPIRE', batch_key, 3600)
     redis.call('EXPIRE', data_key, 3600)
     
@@ -181,7 +181,7 @@ local function hissrv_get_batch(keys, args)
         batch[batch_info[i]] = batch_info[i + 1]
     end
 
-    -- 获取批次数据
+    -- Get batch data
     local data_key = batch_key .. ':data'
     local data = redis.call('LRANGE', data_key, 0, -1)
 
@@ -359,7 +359,7 @@ local function modsrv_sync_measurement(keys, args)
     local hash_key = 'comsrv:' .. channel_id .. ':' .. telemetry_type
     redis.call('HSET', hash_key, point_id, value)
 
-    -- 发布到频道
+    -- Publish to channel
     local pub_channel = hash_key
     redis.call('PUBLISH', pub_channel, cjson.encode({
         point_id = point_id,
@@ -391,7 +391,7 @@ local function modsrv_send_control(keys, args)
         return redis.error_reply("Control mapping not found")
     end
 
-    -- 发送控制命令
+    -- Send control command
     local control_data = {
         model_id = model_id,
         control_name = control_name,
@@ -556,7 +556,7 @@ local function netsrv_forward_data(keys, args)
     }))
     redis.call('LTRIM', history_key, 0, 999)
 
-    -- 更新统计
+    -- Update statistics
     redis.call('HINCRBY', 'netsrv:stats:forward', destination, 1)
     redis.call('HINCRBY', 'netsrv:stats:forward', 'total', 1)
 
@@ -667,7 +667,7 @@ local function netsrv_get_routes(keys, args)
         route_ids = redis.call('SMEMBERS', 'netsrv:routes:by_source:' .. filter)
     end
 
-    -- 获取路由详情
+    -- Get routes详情
     for _, route_id in ipairs(route_ids) do
         local route_key = 'netsrv:route:' .. route_id
         local route_data = redis.call('HGETALL', route_key)
@@ -749,7 +749,7 @@ local function netsrv_clear_queues(keys, args)
         until cursor == "0"
     end
 
-    -- 重置统计
+    -- Reset statistics
     if queue_type == "all" then
         redis.call('DEL', 'netsrv:stats:forward')
         redis.call('DEL', 'netsrv:stats:collect')
@@ -945,7 +945,7 @@ local function hissrv_configure_mapping(keys, args)
         'field_mappings', cjson.encode(config.field_mappings or {})
     )
 
-    -- 设置过期时间（30天）
+    -- Set expiration time（30天）
     redis.call('EXPIRE', mapping_key, 2592000)
 
     -- 更新映射索引

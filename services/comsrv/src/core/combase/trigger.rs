@@ -58,7 +58,7 @@ pub struct CommandTriggerConfig {
     pub redis_url: String,
 }
 
-/// Command trigger - 监听Redis命令并触发协议执行
+/// Command trigger - listenRedis命令并triggerprotocolexecuting
 #[derive(Debug)]
 pub struct CommandTrigger {
     config: CommandTriggerConfig,

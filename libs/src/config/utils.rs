@@ -1,36 +1,36 @@
-//! 配置工具函数
+//! configuring工具function
 //!
-//! 提供全局环境变量优先级处理
+//! 提供globalcycle境variablepriorityprocessing
 
 use std::env;
 
-/// 获取环境变量，支持全局和服务特定的前缀
+/// Getcycle境variable，supportingglobal和serving特定的前缀
 ///
 /// # Arguments
 ///
-/// * `global_key` - 全局环境变量名 (如 "VOLTAGE_REDIS_URL")
-/// * `service_key` - 服务特定环境变量名 (如 "APIGATEWAY_REDIS_URL")
-/// * `default` - 默认值
+/// * `global_key` - globalcycle境variable名 (如 "VOLTAGE_REDIS_URL")
+/// * `service_key` - serving特定cycle境variable名 (如 "APIGATEWAY_REDIS_URL")
+/// * `default` - defaultvalue
 ///
 /// # Returns
 ///
-/// 按优先级返回：全局变量 > 服务变量 > 默认值
+/// 按priorityreturn：globalvariable > servingvariable > defaultvalue
 pub fn get_env_with_fallback(global_key: &str, service_key: &str, default: &str) -> String {
-    // 首先检查全局环境变量
+    // 首先checkingglobalcycle境variable
     if let Ok(value) = env::var(global_key) {
         return value;
     }
 
-    // 其次检查服务特定环境变量
+    // 其次checkingserving特定cycle境variable
     if let Ok(value) = env::var(service_key) {
         return value;
     }
 
-    // 最后返回默认值
+    // 最后returndefaultvalue
     default.to_string()
 }
 
-/// 获取全局 Redis URL
+/// Getglobal Redis URL
 pub fn get_global_redis_url(service_prefix: &str) -> String {
     // Check if running in Docker/container environment
     let default_url = if std::env::var("DOCKER_ENV").unwrap_or_default() == "true" {
@@ -46,7 +46,7 @@ pub fn get_global_redis_url(service_prefix: &str) -> String {
     )
 }
 
-/// 获取全局日志级别
+/// Getgloballogginglevel
 pub fn get_global_log_level(service_prefix: &str) -> String {
     get_env_with_fallback(
         "VOLTAGE_LOG_LEVEL",
@@ -55,7 +55,7 @@ pub fn get_global_log_level(service_prefix: &str) -> String {
     )
 }
 
-/// 获取全局 InfluxDB URL
+/// Getglobal InfluxDB URL
 pub fn get_global_influxdb_url(service_prefix: &str) -> String {
     get_env_with_fallback(
         "VOLTAGE_INFLUXDB_URL",
@@ -64,7 +64,7 @@ pub fn get_global_influxdb_url(service_prefix: &str) -> String {
     )
 }
 
-/// 获取全局 InfluxDB Token
+/// Getglobal InfluxDB Token
 pub fn get_global_influxdb_token(service_prefix: &str) -> String {
     get_env_with_fallback(
         "VOLTAGE_INFLUXDB_TOKEN",
@@ -73,7 +73,7 @@ pub fn get_global_influxdb_token(service_prefix: &str) -> String {
     )
 }
 
-/// 获取全局 InfluxDB Org
+/// Getglobal InfluxDB Org
 pub fn get_global_influxdb_org(service_prefix: &str) -> String {
     get_env_with_fallback(
         "VOLTAGE_INFLUXDB_ORG",
@@ -82,7 +82,7 @@ pub fn get_global_influxdb_org(service_prefix: &str) -> String {
     )
 }
 
-/// 获取全局 InfluxDB Bucket
+/// Getglobal InfluxDB Bucket
 pub fn get_global_influxdb_bucket(service_prefix: &str) -> String {
     get_env_with_fallback(
         "VOLTAGE_INFLUXDB_BUCKET",
@@ -91,7 +91,7 @@ pub fn get_global_influxdb_bucket(service_prefix: &str) -> String {
     )
 }
 
-/// 获取全局 JWT Secret
+/// Getglobal JWT Secret
 pub fn get_global_jwt_secret(service_prefix: &str) -> String {
     get_env_with_fallback(
         "VOLTAGE_JWT_SECRET",
@@ -100,9 +100,9 @@ pub fn get_global_jwt_secret(service_prefix: &str) -> String {
     )
 }
 
-/// 获取服务发现 URL
+/// Getserving发现 URL
 ///
-/// 在 Docker 环境中，服务名即主机名
+/// 在 Docker cycle境medium，serving名即host名
 pub fn get_service_url(service_name: &str) -> String {
     // Check if running in Docker/container environment
     let use_docker_urls = std::env::var("DOCKER_ENV").unwrap_or_default() == "true";
@@ -139,27 +139,27 @@ mod tests {
 
     #[test]
     fn test_get_env_with_fallback() {
-        // 测试默认值
+        // testingdefaultvalue
         assert_eq!(
             get_env_with_fallback("TEST_GLOBAL", "TEST_SERVICE", "default"),
             "default"
         );
 
-        // 测试服务特定变量
+        // testingserving特定variable
         env::set_var("TEST_SERVICE", "service_value");
         assert_eq!(
             get_env_with_fallback("TEST_GLOBAL", "TEST_SERVICE", "default"),
             "service_value"
         );
 
-        // 测试全局变量优先级
+        // testingglobalvariablepriority
         env::set_var("TEST_GLOBAL", "global_value");
         assert_eq!(
             get_env_with_fallback("TEST_GLOBAL", "TEST_SERVICE", "default"),
             "global_value"
         );
 
-        // 清理
+        // cleaning
         env::remove_var("TEST_GLOBAL");
         env::remove_var("TEST_SERVICE");
     }

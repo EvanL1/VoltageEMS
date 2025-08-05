@@ -322,10 +322,10 @@ impl ComBase for ModbusProtocol {
     async fn disconnect(&mut self) -> Result<()> {
         info!("Disconnecting Modbus for channel {}", self.channel_id);
 
-        // 停止所有任务
+        // stoppingalltask
         self.stop_periodic_tasks().await?;
 
-        // 断开连接
+        // disconnectedconnection
         self.connection_manager.disconnect().await?;
 
         *self.is_connected.write().await = false;
@@ -341,7 +341,7 @@ impl ComBase for ModbusProtocol {
 
         let mut result = HashMap::new();
 
-        // 根据遥测类型过滤点位
+        // 根据遥测typefiltering点位
         let points = self.points.read().await;
         let channel_config = self
             .channel_config
@@ -349,9 +349,9 @@ impl ComBase for ModbusProtocol {
             .ok_or_else(|| ComSrvError::config("Channel configuration not initialized"))?;
 
         for point in points.iter() {
-            // 根据遥测类型从对应的HashMap中查找点位
+            // 根据遥测typeslavepair应的HashMapmedium查找点位
             if let Ok(point_id) = point.point_id.parse::<u32>() {
-                // 根据telemetry_type选择正确的HashMap
+                // 根据telemetry_typeselection正确的HashMap
                 let config_point = match telemetry_type {
                     "Telemetry" => channel_config.telemetry_points.get(&point_id),
                     "Signal" => channel_config.signal_points.get(&point_id),
@@ -361,8 +361,8 @@ impl ComBase for ModbusProtocol {
                 };
 
                 if let Some(config_point) = config_point {
-                    // TODO: 实际的 Modbus 读取逻辑
-                    // 这里暂时返回模拟数据
+                    // TODO: 实际的 Modbus readlogic
+                    // 这里暂时return模拟data
                     let value = RedisValue::Float(rand::random::<f64>() * 100.0);
                     let point_data = PointData {
                         value,
@@ -373,7 +373,7 @@ impl ComBase for ModbusProtocol {
             }
         }
 
-        // 更新状态
+        // updatestate
         self.status.write().await.last_update = chrono::Utc::now().timestamp() as u64;
         self.status.write().await.success_count += 1;
 
@@ -769,7 +769,7 @@ impl ComBase for ModbusProtocol {
         Ok(results)
     }
 
-    // 四遥分离架构下，update_points方法已移除，点位配置在initialize阶段直接加载
+    // 四遥detaching架构下，update_pointsmethod已移除，点位configuring在initializestage直接loading
 
     async fn start_periodic_tasks(&self) -> Result<()> {
         info!(
@@ -777,7 +777,7 @@ impl ComBase for ModbusProtocol {
             self.channel_id
         );
 
-        // 启动轮询任务
+        // starting轮询task
         if self.polling_config.enabled {
             let channel_id = self.channel_id;
             let polling_interval = self.polling_config.default_interval_ms;
@@ -828,8 +828,8 @@ impl ComBase for ModbusProtocol {
                             .into_iter()
                             .filter(|point| {
                                 if let Ok(point_id) = point.point_id.parse::<u32>() {
-                                    // 检查点位是否在 telemetry_points 或 signal_points 中
-                                    // 只允许遥测和遥信类型进行轮询
+                                    // checking点位yesno在 telemetry_points 或 signal_points medium
+                                    // 只allowing遥测和遥信type进row轮询
                                     if config.telemetry_points.contains_key(&point_id)
                                         || config.signal_points.contains_key(&point_id)
                                     {
@@ -837,7 +837,7 @@ impl ComBase for ModbusProtocol {
                                     } else if config.control_points.contains_key(&point_id)
                                         || config.adjustment_points.contains_key(&point_id)
                                     {
-                                        // 遥控和遥调不允许轮询读取
+                                        // 遥控和遥调不allowing轮询read
                                         false
                                     } else {
                                         // If not found in any config, default to allow reading
@@ -1018,7 +1018,7 @@ impl ComBase for ModbusProtocol {
             self.channel_id
         );
 
-        // 停止轮询任务
+        // stopping轮询task
         if let Some(handle) = self.polling_handle.write().await.take() {
             handle.abort();
             info!("Polling task stopped for channel {}", self.channel_id);
@@ -1455,7 +1455,7 @@ async fn read_modbus_batch(
             Some(override_pos)
         } else if let Some(config) = channel_config {
             if let Ok(point_id) = point.point_id.parse::<u32>() {
-                // 从四个HashMap中查找点位配置
+                // slave四个HashMapmedium查找点位configuring
                 let config_point = config
                     .telemetry_points
                     .get(&point_id)
@@ -1562,7 +1562,7 @@ fn build_write_fc16_multiple_registers_pdu(start_address: u16, values: &[u16]) -
     pdu
 }
 
-/// Build Modbus PDU for FC01: Read Coils (读线圈状态)
+/// Build Modbus PDU for FC01: Read Coils (读线圈state)
 fn build_read_fc01_coils_pdu(start_address: u16, quantity: u16) -> Vec<u8> {
     vec![
         0x01, // Function code 01: Read Coils
@@ -1573,7 +1573,7 @@ fn build_read_fc01_coils_pdu(start_address: u16, quantity: u16) -> Vec<u8> {
     ]
 }
 
-/// Build Modbus PDU for FC02: Read Discrete Inputs (读离散输入状态)
+/// Build Modbus PDU for FC02: Read Discrete Inputs (读discreteinputstate)
 fn build_read_fc02_discrete_inputs_pdu(start_address: u16, quantity: u16) -> Vec<u8> {
     vec![
         0x02, // Function code 02: Read Discrete Inputs
@@ -1595,7 +1595,7 @@ fn build_read_fc03_holding_registers_pdu(start_address: u16, quantity: u16) -> V
     ]
 }
 
-/// Build Modbus PDU for FC04: Read Input Registers (读输入寄存器)
+/// Build Modbus PDU for FC04: Read Input Registers (读input寄存器)
 fn build_read_fc04_input_registers_pdu(start_address: u16, quantity: u16) -> Vec<u8> {
     vec![
         0x04, // Function code 04: Read Input Registers
@@ -2141,47 +2141,47 @@ mod tests {
 
     #[test]
     fn test_decode_register_value_bool_bitwise() {
-        // 测试按位解析功能
+        // testing按位parsefunction
 
-        // 测试案例1：寄存器值 0b1011 0101 (0xB5 = 181)
+        // testing案例1：寄存器value 0b1011 0101 (0xB5 = 181)
         // 位0: 1, 位1: 0, 位2: 1, 位3: 0, 位4: 1, 位5: 1, 位6: 0, 位7: 1
         let register_value = 0xB5; // 181 in decimal, 10110101 in binary
         let registers = vec![register_value];
 
-        // 测试位0 (LSB)
+        // testing位0 (LSB)
         let result = decode_register_value(&registers, "bool", Some(0), None)
             .expect("decoding bit 0 should succeed");
         assert_eq!(result, RedisValue::Integer(1)); // 位0 = 1
 
-        // 测试位1
+        // testing位1
         let result = decode_register_value(&registers, "bool", Some(1), None)
             .expect("decoding bit 1 should succeed");
         assert_eq!(result, RedisValue::Integer(0)); // 位1 = 0
 
-        // 测试位2
+        // testing位2
         let result = decode_register_value(&registers, "bool", Some(2), None)
             .expect("decoding bit 2 should succeed");
         assert_eq!(result, RedisValue::Integer(1)); // 位2 = 1
 
-        // 测试位3
+        // testing位3
         let result = decode_register_value(&registers, "bool", Some(3), None)
             .expect("decoding bit 3 should succeed");
         assert_eq!(result, RedisValue::Integer(0)); // 位3 = 0
 
-        // 测试位7 (MSB in byte)
+        // testing位7 (MSB in byte)
         let result = decode_register_value(&registers, "bool", Some(7), None)
             .expect("decoding bit 7 should succeed");
         assert_eq!(result, RedisValue::Integer(1)); // 位7 = 1
 
-        // 测试16位寄存器的高位（值>255）
-        let high_bit_register = 0x8000; // 只有最高位是1，值=32768 > 255
+        // testing16位寄存器的high位（value>255）
+        let high_bit_register = 0x8000; // 只有最high位yes1，value=32768 > 255
         let high_registers = vec![high_bit_register];
         let result = decode_register_value(&high_registers, "bool", Some(15), None)
             .expect("decoding bit 15 should succeed");
         assert_eq!(result, RedisValue::Integer(1)); // 位15 = 1
 
-        // 对于大于255的值，可以测试所有16位
-        let full_register = 0x0100; // 256 > 255，所以是16位模式
+        // pair于greater than255的value，可以testingall16位
+        let full_register = 0x0100; // 256 > 255，所以yes16位pattern
         let full_registers = vec![full_register];
         let result = decode_register_value(&full_registers, "bool", Some(8), None)
             .expect("decoding bit 8 should succeed");
@@ -2192,7 +2192,7 @@ mod tests {
     fn test_decode_register_value_bool_edge_cases() {
         let registers = vec![0x0000]; // 全0寄存器
 
-        // 测试8位模式（值<=255）
+        // testing8位pattern（value<=255）
         for bit_pos in 0..8 {
             let result = decode_register_value(&registers, "bool", Some(bit_pos), None)
                 .expect("decoding bool at bit position should succeed");
@@ -2204,12 +2204,12 @@ mod tests {
             );
         }
 
-        // 测试16位模式（值>255）
-        let registers_16bit = vec![0x0100]; // 256 > 255，触发16位模式
+        // testing16位pattern（value>255）
+        let registers_16bit = vec![0x0100]; // 256 > 255，trigger16位pattern
         for bit_pos in 0..16 {
             let result = decode_register_value(&registers_16bit, "bool", Some(bit_pos), None)
                 .expect("decoding 16-bit bool should succeed");
-            let expected = if bit_pos == 8 { 1 } else { 0 }; // 只有位8是1
+            let expected = if bit_pos == 8 { 1 } else { 0 }; // 只有位8yes1
             assert_eq!(
                 result,
                 RedisValue::Integer(expected),
@@ -2219,8 +2219,8 @@ mod tests {
             );
         }
 
-        let registers_all_ones = vec![0xFFFF]; // 全1寄存器（16位模式）
-                                               // 测试全1寄存器的所有位都应该是1
+        let registers_all_ones = vec![0xFFFF]; // 全1寄存器（16位pattern）
+                                               // testing全1寄存器的all位都应该yes1
         for bit_pos in 0..16 {
             let result = decode_register_value(&registers_all_ones, "bool", Some(bit_pos), None)
                 .expect("decoding all ones register should succeed");
@@ -2232,14 +2232,14 @@ mod tests {
             );
         }
 
-        // 测试错误情况：8位模式下bit_position超出范围
+        // testingerror情况：8位pattern下bit_position超出range
         let result = decode_register_value(&registers, "bool", Some(8), None);
         assert!(
             result.is_err(),
             "Bit position 8 should be invalid for 8-bit mode"
         );
 
-        // 测试错误情况：16位模式下bit_position超出范围
+        // testingerror情况：16位pattern下bit_position超出range
         let registers_16bit = vec![0x0100];
         let result = decode_register_value(&registers_16bit, "bool", Some(16), None);
         assert!(
@@ -2247,34 +2247,34 @@ mod tests {
             "Bit position 16 should be invalid for 16-bit mode"
         );
 
-        // 测试错误情况：空寄存器
+        // testingerror情况：empty寄存器
         let empty_registers = vec![];
         let result = decode_register_value(&empty_registers, "bool", Some(0), None);
         assert!(result.is_err());
 
-        // 测试默认bit_position (应该是0)
-        let registers = vec![0x0001]; // 只有位0是1
+        // testingdefaultbit_position (应该yes0)
+        let registers = vec![0x0001]; // 只有位0yes1
         let result = decode_register_value(&registers, "bool", None, None)
             .expect("decoding bool with default bit position should succeed");
-        assert_eq!(result, RedisValue::Integer(1)); // 默认位0 = 1
+        assert_eq!(result, RedisValue::Integer(1)); // default位0 = 1
     }
 
     #[test]
     fn test_decode_register_value_other_formats() {
-        // 确保其他数据格式仍然正常工作
+        // 确保otherdata格式仍然normalwork
         let registers = vec![0x1234];
 
-        // 测试uint16
+        // testinguint16
         let result = decode_register_value(&registers, "uint16", None, None)
             .expect("decoding uint16 should succeed");
         assert_eq!(result, RedisValue::Integer(0x1234));
 
-        // 测试int16
+        // testingint16
         let result = decode_register_value(&registers, "int16", None, None)
             .expect("decoding int16 should succeed");
         assert_eq!(result, RedisValue::Integer(i64::from(0x1234_i16)));
 
-        // 测试float32需要2个寄存器
+        // testingfloat32需要2个寄存器
         let float_registers = vec![0x4000, 0x0000]; // 2.0 in IEEE 754
         let result = decode_register_value(&float_registers, "float32", None, None)
             .expect("decoding float32 should succeed");
@@ -2287,8 +2287,8 @@ mod tests {
 
     #[test]
     fn test_reverse_logic_moved_to_data_processor() {
-        // 测试 reverse 逻辑已经移到数据处理模块
-        // 这个测试验证协议层不再直接处理 reverse 逻辑
+        // testing reverse logic已经移到dataprocessingmodular
+        // 这个testingvalidationprotocol层不再直接processing reverse logic
 
         use crate::core::config::types::{ScalingInfo, TelemetryType};
 

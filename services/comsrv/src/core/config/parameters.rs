@@ -1,15 +1,15 @@
-//! 参数相关类型定义
+//! parameter相offtypedefinition
 //!
-//! 简化的参数处理，移除了复杂的 `ChannelParameters` 枚举
+//! 简化的parameterprocessing，移除了complex的 `ChannelParameters` enum
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 // ============================================================================
-// 协议特定参数（仅用于强类型验证）
+// protocol特定parameter（仅用于强typevalidation）
 // ============================================================================
 
-/// Modbus协议参数
+/// Modbusprotocolparameter
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModbusParameters {
     pub host: String,
@@ -20,7 +20,7 @@ pub struct ModbusParameters {
     pub polling: ModbusPollingConfig,
 }
 
-/// Modbus轮询配置
+/// Modbus轮询configuring
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModbusPollingConfig {
     #[serde(default = "default_polling_interval")]
@@ -35,7 +35,7 @@ pub struct ModbusPollingConfig {
     pub slave_configs: HashMap<u8, SlavePollingConfig>,
 }
 
-/// 从站轮询配置
+/// slave站轮询configuring
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SlavePollingConfig {
     pub interval_ms: Option<u64>,
@@ -45,7 +45,7 @@ pub struct SlavePollingConfig {
     pub retry_count: u8,
 }
 
-/// CAN协议参数
+/// CANprotocolparameter
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CanParameters {
     pub interface: String,
@@ -53,7 +53,7 @@ pub struct CanParameters {
     pub timeout_ms: Option<u64>,
 }
 
-/// IEC60870协议参数
+/// IEC60870protocolparameter
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Iec60870Parameters {
     pub host: String,
@@ -64,10 +64,10 @@ pub struct Iec60870Parameters {
 }
 
 // ============================================================================
-// 参数转换辅助函数
+// parameterconverting辅助function
 // ============================================================================
 
-/// `从通用HashMap转换为Modbus参数`
+/// `slave通用HashMapconverting为Modbusparameter`
 pub fn parse_modbus_parameters(
     params: &HashMap<String, serde_yaml::Value>,
 ) -> Result<ModbusParameters, String> {
@@ -92,7 +92,7 @@ pub fn parse_modbus_parameters(
         .and_then(serde_yaml::Value::as_u64)
         .unwrap_or(3) as u32;
 
-    // 解析轮询配置
+    // parse轮询configuring
     let polling = if let Some(polling_value) = params.get("polling") {
         serde_yaml::from_value(polling_value.clone())
             .map_err(|e| format!("Failed to parse polling config: {e}"))?
@@ -109,7 +109,7 @@ pub fn parse_modbus_parameters(
     })
 }
 
-/// `从通用HashMap转换为CAN参数`
+/// `slave通用HashMapconverting为CANparameter`
 pub fn parse_can_parameters(
     params: &HashMap<String, serde_yaml::Value>,
 ) -> Result<CanParameters, String> {
@@ -133,7 +133,7 @@ pub fn parse_can_parameters(
     })
 }
 
-/// `从通用HashMap转换为IEC60870参数`
+/// `slave通用HashMapconverting为IEC60870parameter`
 pub fn parse_iec60870_parameters(
     params: &HashMap<String, serde_yaml::Value>,
 ) -> Result<Iec60870Parameters, String> {
@@ -170,7 +170,7 @@ pub fn parse_iec60870_parameters(
 }
 
 // ============================================================================
-// 默认值函数
+// defaultvaluefunction
 // ============================================================================
 
 fn default_polling_interval() -> u64 {

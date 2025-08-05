@@ -1,6 +1,6 @@
-//! 插件系统接口定义
+//! pluginsysteminterfacedefinition
 //!
-//! 包含协议插件trait定义、配置模板系统和相关的类型定义
+//! package含protocolplugintraitdefinition、configuring模板system和相off的typedefinition
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -13,58 +13,58 @@ use crate::core::config::types::ChannelConfig;
 use crate::utils::error::Result;
 
 // ============================================================================
-// 协议插件接口
+// protocolplugininterface
 // ============================================================================
 
-/// 协议插件元数据
+/// protocolpluginmetadata
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProtocolMetadata {
-    /// 唯一协议标识符 (如 "`modbus_tcp`", "iec60870")
+    /// uniqueprotocolidentifier符 (如 "`modbus_tcp`", "iec60870")
     pub id: String,
-    /// 人类可读的协议名称
+    /// 人class可读的protocolname
     pub name: String,
-    /// 协议版本
+    /// protocolversion
     pub version: String,
-    /// 协议描述
+    /// protocoldescription
     pub description: String,
-    /// 作者信息
+    /// 作者info
     pub author: String,
-    /// 许可证信息
+    /// 许可证info
     pub license: String,
-    /// 支持的特性
+    /// supporting的feature
     pub features: Vec<String>,
-    /// 依赖项
+    /// dependency项
     pub dependencies: HashMap<String, String>,
 }
 
-/// 协议插件trait
+/// protocolplugintrait
 ///
-/// 所有协议插件必须实现此trait才能与插件系统兼容
+/// allprotocolplugin必须implement此trait才能与pluginsystem兼容
 #[async_trait]
 pub trait ProtocolPlugin: Send + Sync + Any {
-    /// 获取协议元数据
+    /// Getprotocolmetadata
     fn metadata(&self) -> ProtocolMetadata;
 
-    /// 获取配置模板
+    /// Getconfiguring模板
     fn config_template(&self) -> Vec<ConfigTemplate>;
 
-    /// 验证配置
+    /// Validateconfiguring
     fn validate_config(&self, config: &HashMap<String, Value>) -> Result<()>;
 
-    /// 创建协议实例
+    /// Createprotocolinstance
     async fn create_instance(&self, channel_config: ChannelConfig) -> Result<Box<dyn ComBase>>;
 
-    /// 获取协议特定的CLI命令
+    /// Getprotocol特定的CLI命令
     fn cli_commands(&self) -> Vec<CliCommand> {
         vec![]
     }
 
-    /// 获取协议文档
+    /// Getprotocoldocumentation
     fn documentation(&self) -> &'static str {
         "No documentation available"
     }
 
-    /// 生成示例配置
+    /// 生成exampleconfiguring
     fn generate_example_config(&self) -> HashMap<String, Value> {
         let mut config = HashMap::new();
         for template in self.config_template() {
@@ -76,94 +76,94 @@ pub trait ProtocolPlugin: Send + Sync + Any {
     }
 }
 
-/// 插件工厂函数类型
+/// plugin工厂functiontype
 pub type PluginFactory = fn() -> Box<dyn ProtocolPlugin>;
 
-/// 创建插件实例的辅助函数
+/// Createplugininstance的辅助function
 pub fn create_plugin_instance<T: ProtocolPlugin + Default + 'static>() -> Box<dyn ProtocolPlugin> {
     Box::new(T::default())
 }
 
 // ============================================================================
-// 配置模板系统
+// configuring模板system
 // ============================================================================
 
-/// 配置模板
+/// Configuration模板
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConfigTemplate {
-    /// 参数名称
+    /// Parametername
     pub name: String,
-    /// 参数描述
+    /// Parameterdescription
     pub description: String,
-    /// 参数类型
+    /// Parametertype
     pub param_type: String,
-    /// 是否必需
+    /// yesno必需
     pub required: bool,
-    /// 默认值
+    /// defaultvalue
     pub default_value: Option<Value>,
-    /// 验证规则
+    /// Validaterule
     pub validation: Option<ValidationRule>,
 }
 
-/// 验证规则
+/// Validaterule
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ValidationRule {
-    /// 最小值（数值类型）
+    /// minvalue（数valuetype）
     pub min: Option<f64>,
-    /// 最大值（数值类型）
+    /// maxvalue（数valuetype）
     pub max: Option<f64>,
-    /// 正则表达式模式（字符串类型）
+    /// 正则expressionpattern（字符串type）
     pub pattern: Option<String>,
-    /// 允许的值（枚举类型）
+    /// allowing的value（enumtype）
     pub allowed_values: Option<Vec<String>>,
 }
 
-/// 配置模式（用于UI生成）
+/// Configurationpattern（用于UI生成）
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConfigSchema {
-    /// 模式版本
+    /// patternversion
     pub version: String,
-    /// 协议ID
+    /// protocolID
     pub protocol_id: String,
-    /// 配置分组
+    /// Configurationgrouping
     pub sections: Vec<ConfigSection>,
 }
 
-/// 配置分组
+/// Configurationgrouping
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConfigSection {
-    /// 分组名称
+    /// groupingname
     pub name: String,
-    /// 分组描述
+    /// groupingdescription
     pub description: String,
-    /// 该分组的参数
+    /// 该grouping的parameter
     pub parameters: Vec<ConfigParameter>,
 }
 
-/// 配置参数定义
+/// Configurationparameterdefinition
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConfigParameter {
-    /// 参数键
+    /// Parameterkey
     pub key: String,
-    /// 显示名称
+    /// 显示name
     pub display_name: String,
-    /// 参数描述
+    /// Parameterdescription
     pub description: String,
-    /// 参数类型
+    /// Parametertype
     pub param_type: ParameterType,
-    /// 是否必需
+    /// yesno必需
     pub required: bool,
-    /// 默认值
+    /// defaultvalue
     pub default: Option<Value>,
-    /// 验证规则
+    /// Validaterule
     pub validation: Option<ParameterValidation>,
-    /// 是否为高级参数
+    /// yesno为advancedparameter
     pub advanced: bool,
-    /// 参数依赖
+    /// Parameterdependency
     pub depends_on: Option<ParameterDependency>,
 }
 
-/// 参数类型
+/// Parametertype
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum ParameterType {
@@ -193,7 +193,7 @@ pub enum ParameterType {
     Secret,
 }
 
-/// 枚举值定义
+/// enumvaluedefinition
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EnumValue {
     pub value: String,
@@ -201,27 +201,27 @@ pub struct EnumValue {
     pub description: Option<String>,
 }
 
-/// 参数验证规则
+/// Parametervalidationrule
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ParameterValidation {
-    /// 正则表达式模式
+    /// 正则expressionpattern
     pub pattern: Option<String>,
-    /// 自定义验证函数名
+    /// customvalidationfunction名
     pub custom_validator: Option<String>,
-    /// 验证错误消息
+    /// Validateerrormessage
     pub error_message: Option<String>,
 }
 
-/// 参数依赖定义
+/// Parameterdependencydefinition
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ParameterDependency {
-    /// 依赖的参数键
+    /// dependency的parameterkey
     pub key: String,
-    /// 依赖条件
+    /// dependencycondition
     pub condition: DependencyCondition,
 }
 
-/// 依赖条件
+/// dependencycondition
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum DependencyCondition {
@@ -234,15 +234,15 @@ pub enum DependencyCondition {
 }
 
 // ============================================================================
-// CLI命令定义
+// CLI命令definition
 // ============================================================================
 
-/// CLI命令定义
+/// CLI命令definition
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CliCommand {
-    /// 命令名称
+    /// 命令name
     pub name: String,
-    /// 命令描述
+    /// 命令description
     pub description: String,
     /// 子命令
     pub subcommands: Vec<CliSubcommand>,
@@ -251,42 +251,42 @@ pub struct CliCommand {
 /// CLI子命令
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CliSubcommand {
-    /// 子命令名称
+    /// 子命令name
     pub name: String,
-    /// 子命令描述
+    /// 子命令description
     pub description: String,
-    /// 参数列表
+    /// Parameterlist
     pub arguments: Vec<CliArgument>,
-    /// 处理函数名
+    /// Processfunction名
     pub handler: String,
 }
 
-/// CLI参数
+/// CLIparameter
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CliArgument {
-    /// 参数名称
+    /// Parametername
     pub name: String,
-    /// 参数描述
+    /// Parameterdescription
     pub description: String,
-    /// 是否必需
+    /// yesno必需
     pub required: bool,
-    /// 参数类型
+    /// Parametertype
     pub arg_type: String,
-    /// 默认值
+    /// defaultvalue
     pub default: Option<String>,
 }
 
 // ============================================================================
-// 配置验证和生成
+// configuringvalidation和生成
 // ============================================================================
 
-/// 配置验证器trait
+/// Configurationvalidation器trait
 pub trait ConfigValidator {
-    /// 验证配置值
+    /// Validateconfiguringvalue
     fn validate(&self, value: &Value) -> ValidationResult;
 }
 
-/// 验证结果
+/// Validateresult
 #[derive(Debug)]
 pub struct ValidationResult {
     pub valid: bool,
@@ -312,23 +312,23 @@ impl ValidationResult {
     }
 }
 
-/// 配置生成器trait
+/// Configuration生成器trait
 pub trait ConfigGenerator {
-    /// 生成默认配置
+    /// 生成defaultconfiguring
     fn generate_default(&self) -> Value;
 
-    /// 生成示例配置
+    /// 生成exampleconfiguring
     fn generate_example(&self) -> Value;
 
-    /// 从模板生成配置
+    /// slave模板生成configuring
     fn generate_from_template(&self, template: &ConfigSchema) -> Value;
 }
 
 // ============================================================================
-// 插件注册宏
+// pluginregisteringmacro
 // ============================================================================
 
-/// 注册插件的宏
+/// registeringplugin的macro
 #[macro_export]
 macro_rules! register_plugin {
     ($plugin_type:ty, $plugin_id:expr) => {
@@ -346,7 +346,7 @@ macro_rules! register_plugin {
     };
 }
 
-/// 协议插件宏，简化插件定义
+/// protocolpluginmacro，简化plugindefinition
 #[macro_export]
 macro_rules! protocol_plugin {
     (

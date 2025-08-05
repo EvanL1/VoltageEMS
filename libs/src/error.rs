@@ -1,52 +1,52 @@
 use thiserror::Error;
 
-/// 基础库错误类型
+/// 基础libraryerrortype
 #[derive(Debug, Error)]
 pub enum Error {
-    /// Redis 错误
+    /// Redis error
     #[cfg(feature = "redis")]
     #[error("Redis error: {0}")]
     Redis(String),
 
-    /// `InfluxDB` 错误
+    /// `InfluxDB` error
     #[cfg(feature = "influxdb")]
     #[error("InfluxDB error: {0}")]
     InfluxDB(String),
 
-    /// HTTP 错误
+    /// HTTP error
     #[cfg(feature = "influxdb")]
     #[error("HTTP error: {0}")]
     Http(String),
 
-    /// 配置错误
+    /// Configurationerror
     #[error("Configuration error: {0}")]
     Config(String),
 
-    /// IO 错误
+    /// IO error
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
 
-    /// 序列化错误
+    /// serializingerror
     #[error("Serialization error: {0}")]
     Serialization(String),
 
-    /// 解析错误
+    /// Parseerror
     #[error("Parse error: {0}")]
     Parse(String),
 
-    /// 超时错误
+    /// timeouterror
     #[error("Operation timeout: {0}")]
     Timeout(String),
 
-    /// 通用错误
+    /// 通用error
     #[error("{0}")]
     Generic(String),
 }
 
-/// 错误结果类型
+/// Errorresulttype
 pub type Result<T> = std::result::Result<T, Error>;
 
-// Redis 错误转换
+// Redis errorconverting
 #[cfg(feature = "redis")]
 impl From<redis::RedisError> for Error {
     fn from(err: redis::RedisError) -> Self {
@@ -54,7 +54,7 @@ impl From<redis::RedisError> for Error {
     }
 }
 
-// 序列化错误转换
+// serializingerrorconverting
 impl From<serde_json::Error> for Error {
     fn from(err: serde_json::Error) -> Self {
         Error::Serialization(err.to_string())

@@ -1,4 +1,4 @@
-//! 实时数据库(RTDB) 实现
+//! real-timedatalibrary(RTDB) implement
 
 use async_trait::async_trait;
 use voltage_libs::redis::RedisClient;
@@ -6,14 +6,14 @@ use voltage_libs::redis::RedisClient;
 use super::{PointData, PointStorage, PointUpdate};
 use crate::utils::error::{ComSrvError, Result};
 
-/// 重试配置
+/// retryconfiguring
 #[derive(Debug, Clone)]
 pub struct RetryConfig {
-    /// 最大重试次数
+    /// maxretry次数
     pub max_retries: u32,
-    /// 初始重试延迟（毫秒）
+    /// 初始retrylatency（毫秒）
     pub initial_delay_ms: u64,
-    /// 最大重试延迟（毫秒）
+    /// maxretrylatency（毫秒）
     pub max_delay_ms: u64,
 }
 
@@ -27,7 +27,7 @@ impl Default for RetryConfig {
     }
 }
 
-/// 实时数据库存储实现
+/// real-timedatalibrarystorageimplement
 #[derive(Debug)]
 pub struct RtdbStorage {
     redis_url: String,
@@ -36,9 +36,9 @@ pub struct RtdbStorage {
 }
 
 impl RtdbStorage {
-    /// 创建新的实时数据库实例
+    /// Create新的real-timedatalibraryinstance
     pub async fn new(redis_url: &str) -> Result<Self> {
-        // 测试连接
+        // testingconnection
         let mut client = RedisClient::new(redis_url)
             .await
             .map_err(|e| ComSrvError::Storage(format!("Failed to connect to Redis: {e}")))?;
@@ -53,9 +53,9 @@ impl RtdbStorage {
         })
     }
 
-    /// 带配置创建
+    /// 带configuringcreate
     pub async fn with_config(redis_url: &str, retry_config: RetryConfig) -> Result<Self> {
-        // 测试连接
+        // testingconnection
         let mut client = RedisClient::new(redis_url)
             .await
             .map_err(|e| ComSrvError::Storage(format!("Failed to connect to Redis: {e}")))?;
@@ -70,7 +70,7 @@ impl RtdbStorage {
         })
     }
 
-    /// 获取 Redis 客户端
+    /// Get Redis client
     async fn get_client(&self) -> Result<RedisClient> {
         RedisClient::new(&self.redis_url)
             .await
@@ -114,14 +114,14 @@ impl PointStorage for RtdbStorage {
 
         let mut client = self.get_client().await?;
 
-        // 使用事务写入多个值
+        // usingtransactionwrite多个value
         let mut pipe = redis::pipe();
         pipe.atomic();
 
-        // 写入主Hash值
+        // writemasterHashvalue
         pipe.hset(&hash_key, &field, data.to_redis_value());
 
-        // 写入元数据（仍使用单独的键）
+        // writemetadata（仍using单独的key）
         if let Some(raw) = raw_value {
             pipe.hset(format!("{hash_key}:raw"), &field, format!("{raw:.6}"));
             pipe.hset(format!("{hash_key}:ts"), &field, data.timestamp.to_string());
@@ -145,7 +145,7 @@ impl PointStorage for RtdbStorage {
         let mut pipe = redis::pipe();
         pipe.atomic();
 
-        // 按通道和类型分组
+        // 按channel和typegrouping
         use std::collections::HashMap;
         let mut grouped: HashMap<String, Vec<&PointUpdate>> = HashMap::new();
 
@@ -154,7 +154,7 @@ impl PointStorage for RtdbStorage {
             grouped.entry(hash_key).or_default().push(update);
         }
 
-        // 批量写入每个Hash
+        // batchwriteeachHash
         for (hash_key, updates) in grouped {
             for update in updates {
                 let field = update.point_id.to_string();
@@ -214,7 +214,7 @@ impl PointStorage for RtdbStorage {
         let mut client = self.get_client().await?;
         let mut results = Vec::new();
 
-        // 解析键并按Hash分组
+        // parsekey并按Hashgrouping
         for key in keys {
             // 期望格式: "comsrv:{channel_id}:{type}:{point_id}"
             let parts: Vec<&str> = key.split(':').collect();
@@ -253,7 +253,7 @@ impl PointStorage for RtdbStorage {
 
         let mut client = self.get_client().await?;
 
-        // 使用HGETALL获取所有字段
+        // usingHGETALLacquiringallfield
         let data: std::collections::HashMap<String, String> = client
             .hgetall(&hash_key)
             .await

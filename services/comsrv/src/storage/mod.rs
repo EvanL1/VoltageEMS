@@ -1,6 +1,6 @@
-//! comsrv 实时数据库模块
+//! comsrv real-timedatalibrarymodular
 //!
-//! 实现扁平化的键值存储，专为实时数据优化的实时数据库(RTDB)
+//! implementflat化的keyvaluestorage，专为real-timedataoptimization的real-timedatalibrary(RTDB)
 
 mod rtdb_impl;
 mod types;
@@ -11,10 +11,10 @@ pub use types::{PointData, PointUpdate};
 use crate::utils::error::Result;
 use async_trait::async_trait;
 
-/// 点位存储 trait
+/// 点位storage trait
 #[async_trait]
 pub trait PointStorage: Send + Sync {
-    /// 写入单个点位
+    /// write单个点位
     async fn write_point(
         &self,
         channel_id: u16,
@@ -23,7 +23,7 @@ pub trait PointStorage: Send + Sync {
         value: f64,
     ) -> Result<()>;
 
-    /// 写入点位（带元数据）
+    /// write点位（带metadata）
     async fn write_point_with_metadata(
         &self,
         channel_id: u16,
@@ -33,10 +33,10 @@ pub trait PointStorage: Send + Sync {
         raw_value: Option<f64>,
     ) -> Result<()>;
 
-    /// 批量写入
+    /// batchwrite
     async fn write_batch(&self, updates: Vec<PointUpdate>) -> Result<()>;
 
-    /// 读取单个点位
+    /// read单个点位
     async fn read_point(
         &self,
         channel_id: u16,
@@ -44,10 +44,10 @@ pub trait PointStorage: Send + Sync {
         point_id: u32,
     ) -> Result<Option<PointData>>;
 
-    /// 读取多个点位
+    /// read多个点位
     async fn read_points(&self, keys: Vec<String>) -> Result<Vec<Option<PointData>>>;
 
-    /// 获取指定通道和类型的所有点位
+    /// Get指定channel和type的all点位
     async fn get_channel_points(
         &self,
         channel_id: u16,

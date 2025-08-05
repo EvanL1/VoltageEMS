@@ -145,7 +145,7 @@ pub enum FormatType {
 impl Config {
     /// Load configuration from file and environment
     pub fn load() -> Result<Config> {
-        // 尝试多个配置文件路径
+        // 尝试多个configuringfilepath
         let config_paths = [
             "config/netsrv/netsrv.yaml",
             "config/netsrv.yaml",
@@ -160,7 +160,7 @@ impl Config {
             }
         }
 
-        // 使用新的 ConfigLoader
+        // using新的 ConfigLoader
         let loader = ConfigLoader::new()
             .with_defaults(Config::default())
             .with_env_prefix("NETSRV");
@@ -198,7 +198,7 @@ fn default_pool_size() -> u32 {
 }
 
 fn default_data_key_pattern() -> String {
-    "comsrv:*:T".to_string() // 使用大写T表示遥测
+    "comsrv:*:T".to_string() // using大写Ttable示遥测
 }
 
 fn default_polling_interval() -> u64 {

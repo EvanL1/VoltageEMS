@@ -369,14 +369,14 @@ pub enum ProtocolType {
     Can,
     Iec60870,
     Virtual,
-    GrpcModbus, // gRPC 插件 - Modbus
+    GrpcModbus, // gRPC plugin - Modbus
 }
 
 impl std::str::FromStr for ProtocolType {
     type Err = crate::utils::error::ComSrvError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        // 使用normalize_protocol_name函数来实现大小写不敏感的匹配
+        // usingnormalize_protocol_namefunction来implementsize写不敏感的match
         let normalized = crate::utils::normalize_protocol_name(s);
         match normalized.as_str() {
             "modbus_tcp" => Ok(ProtocolType::ModbusTcp),

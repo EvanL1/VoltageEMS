@@ -1,6 +1,6 @@
-//! 重连机制实现
+//! reconnection机制implement
 //!
-//! 提供通用的重连助手，支持指数退避和抖动
+//! 提供通用的reconnection助手，supporting指数退避和抖动
 
 use rand::Rng;
 use std::future::Future;
@@ -8,47 +8,47 @@ use std::time::{Duration, Instant};
 use thiserror::Error;
 use tracing::{debug, info, warn};
 
-/// 重连错误
+/// reconnectionerror
 #[derive(Error, Debug)]
 pub enum ReconnectError {
-    /// 达到最大重试次数
+    /// 达到maxretry次数
     #[error("Maximum reconnection attempts exceeded")]
     MaxAttemptsExceeded,
 
-    /// 连接失败
+    /// Connectfailed
     #[error("Connection failed: {0}")]
     ConnectionFailed(String),
 
-    /// 重连被取消
+    /// reconnection被cancelled
     #[error("Reconnection cancelled")]
     Cancelled,
 }
 
-/// 连接状态
+/// Connectstate
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ConnectionState {
-    /// 已连接
+    /// 已connection
     Connected,
-    /// 断开连接
+    /// Disconnectconnection
     Disconnected,
-    /// 正在重连
+    /// 正在reconnection
     Reconnecting,
-    /// 重连失败（达到最大次数）
+    /// reconnectionfailed（达到max次数）
     Failed,
 }
 
-/// 重连策略配置
+/// reconnectionpolicyconfiguring
 #[derive(Debug, Clone)]
 pub struct ReconnectPolicy {
-    /// 最大重试次数（0 表示无限）
+    /// maxretry次数（0 table示none限）
     pub max_attempts: u32,
-    /// 初始延迟
+    /// 初始latency
     pub initial_delay: Duration,
-    /// 最大延迟
+    /// maxlatency
     pub max_delay: Duration,
     /// 退避倍数
     pub backoff_multiplier: f64,
-    /// 是否添加抖动
+    /// yesno添加抖动
     pub jitter: bool,
 }
 
@@ -65,7 +65,7 @@ impl Default for ReconnectPolicy {
 }
 
 impl ReconnectPolicy {
-    /// 从配置值创建
+    /// slaveconfiguringvaluecreate
     pub fn from_config(
         max_attempts: u32,
         initial_delay_ms: u64,
@@ -82,16 +82,16 @@ impl ReconnectPolicy {
     }
 }
 
-/// 重连状态
+/// reconnectionstate
 #[derive(Debug, Clone)]
 pub struct ReconnectState {
-    /// 当前重试次数
+    /// 当前retry次数
     pub current_attempt: u32,
-    /// 上次重试时间
+    /// 上次retrytime
     pub last_attempt: Option<Instant>,
-    /// 下次重试时间
+    /// 下次retrytime
     pub next_attempt: Option<Instant>,
-    /// 连接状态
+    /// Connectstate
     pub connection_state: ConnectionState,
 }
 
@@ -106,34 +106,34 @@ impl Default for ReconnectState {
     }
 }
 
-/// 重连统计信息
+/// reconnectioncountinginfo
 #[derive(Debug, Default, Clone)]
 pub struct ReconnectStats {
-    /// 总重连次数
+    /// 总reconnection次数
     pub total_attempts: u64,
-    /// 成功重连次数
+    /// Successreconnection次数
     pub successful_reconnects: u64,
-    /// 失败重连次数
+    /// Failedreconnection次数
     pub failed_reconnects: u64,
-    /// 最后成功连接时间
+    /// 最后succeededconnectiontime
     pub last_connected: Option<Instant>,
-    /// 连接开始时间
+    /// Connectstarttime
     pub connection_start: Option<Instant>,
 }
 
-/// 通用重连助手
+/// 通用reconnection助手
 #[derive(Debug)]
 pub struct ReconnectHelper {
-    /// 重连策略
+    /// reconnectionpolicy
     policy: ReconnectPolicy,
-    /// 当前状态
+    /// 当前state
     state: ReconnectState,
-    /// 统计信息
+    /// countinginfo
     stats: ReconnectStats,
 }
 
 impl ReconnectHelper {
-    /// 创建新的重连助手
+    /// Create新的reconnection助手
     pub fn new(policy: ReconnectPolicy) -> Self {
         Self {
             policy,
@@ -142,17 +142,17 @@ impl ReconnectHelper {
         }
     }
 
-    /// 获取当前连接状态
+    /// Get当前connectionstate
     pub fn connection_state(&self) -> ConnectionState {
         self.state.connection_state
     }
 
-    /// 获取统计信息
+    /// Getcountinginfo
     pub fn stats(&self) -> &ReconnectStats {
         &self.stats
     }
 
-    /// 重置重连状态
+    /// Resetreconnectionstate
     pub fn reset(&mut self) {
         self.state.current_attempt = 0;
         self.state.last_attempt = None;
@@ -162,7 +162,7 @@ impl ReconnectHelper {
         }
     }
 
-    /// 标记连接成功
+    /// markconnectionsucceeded
     pub fn mark_connected(&mut self) {
         self.state.connection_state = ConnectionState::Connected;
         self.state.current_attempt = 0;
@@ -171,14 +171,14 @@ impl ReconnectHelper {
         debug!("Connection marked as successful");
     }
 
-    /// 标记连接断开
+    /// markconnectiondisconnected
     pub fn mark_disconnected(&mut self) {
         self.state.connection_state = ConnectionState::Disconnected;
         self.stats.connection_start = None;
         debug!("Connection marked as disconnected");
     }
 
-    /// 计算下次重试延迟
+    /// computing下次retrylatency
     pub fn calculate_next_delay(&self) -> Duration {
         let attempt = self.state.current_attempt.saturating_sub(1);
         let base_delay = self.policy.initial_delay;
@@ -187,7 +187,7 @@ impl ReconnectHelper {
         // 指数退避：delay = initial_delay * (multiplier ^ attempt)
         let mut delay = base_delay.mul_f64(multiplier.powi(attempt as i32));
 
-        // 限制最大延迟
+        // limitingmaxlatency
         if delay > self.policy.max_delay {
             delay = self.policy.max_delay;
         }
@@ -203,7 +203,7 @@ impl ReconnectHelper {
         delay
     }
 
-    /// 执行重连
+    /// Executereconnection
     pub async fn execute_reconnect<F, Fut, E>(
         &mut self,
         mut connect_fn: F,
@@ -213,7 +213,7 @@ impl ReconnectHelper {
         Fut: Future<Output = Result<(), E>>,
         E: std::fmt::Display,
     {
-        // 检查是否已达到最大重试次数
+        // checkingyesno已达到maxretry次数
         if self.policy.max_attempts > 0 && self.state.current_attempt >= self.policy.max_attempts {
             self.state.connection_state = ConnectionState::Failed;
             warn!(
@@ -223,7 +223,7 @@ impl ReconnectHelper {
             return Err(ReconnectError::MaxAttemptsExceeded);
         }
 
-        // 更新状态
+        // updatestate
         self.state.connection_state = ConnectionState::Reconnecting;
         self.state.current_attempt += 1;
         self.stats.total_attempts += 1;
@@ -238,21 +238,21 @@ impl ReconnectHelper {
             }
         );
 
-        // 如果不是第一次尝试，计算并等待延迟
+        // 如果不yes第一次尝试，computing并waitinglatency
         if self.state.current_attempt > 1 {
             let delay = self.calculate_next_delay();
             info!("Waiting {:?} before reconnection attempt", delay);
             tokio::time::sleep(delay).await;
         }
 
-        // 记录尝试时间
+        // record尝试time
         let start_time = Instant::now();
         self.state.last_attempt = Some(start_time);
 
-        // 尝试连接
+        // 尝试connection
         match connect_fn().await {
             Ok(()) => {
-                // 连接成功
+                // connectionsucceeded
                 let reconnect_time = start_time.elapsed();
                 info!(
                     "Reconnection successful after {:?} (attempt {})",
@@ -265,7 +265,7 @@ impl ReconnectHelper {
                 Ok(())
             },
             Err(e) => {
-                // 连接失败
+                // connectionfailed
                 warn!(
                     "Reconnection attempt {} failed: {}",
                     self.state.current_attempt, e
@@ -273,7 +273,7 @@ impl ReconnectHelper {
 
                 self.stats.failed_reconnects += 1;
 
-                // 如果还有重试机会，保持 Reconnecting 状态
+                // 如果还有retry机会，保持 Reconnecting state
                 if self.policy.max_attempts == 0
                     || self.state.current_attempt < self.policy.max_attempts
                 {
@@ -287,7 +287,7 @@ impl ReconnectHelper {
         }
     }
 
-    /// 获取下次重试延迟（用于显示）
+    /// Get下次retrylatency（用于显示）
     pub fn next_delay(&self) -> Option<Duration> {
         if self.state.connection_state == ConnectionState::Failed {
             return None;
@@ -317,10 +317,10 @@ mod tests {
 
         let mut helper = ReconnectHelper::new(policy);
 
-        // 第一次尝试没有延迟
+        // 第一次尝试nonelatency
         assert_eq!(helper.state.current_attempt, 0);
 
-        // 设置当前尝试次数并验证延迟
+        // setting当前尝试次数并validationlatency
         helper.state.current_attempt = 1;
         assert_eq!(helper.calculate_next_delay(), Duration::from_millis(100));
 
@@ -346,7 +346,7 @@ mod tests {
 
         let mut helper = ReconnectHelper::new(policy);
 
-        // 测试延迟不超过最大值
+        // testinglatency不超过maxvalue
         helper.state.current_attempt = 10;
         let delay = helper.calculate_next_delay();
         assert!(delay <= Duration::from_secs(5));
@@ -364,7 +364,7 @@ mod tests {
 
         let mut helper = ReconnectHelper::new(policy);
 
-        // 模拟失败的连接函数
+        // 模拟failed的connectionfunction
         let connect_fn = || async { Err::<(), _>("Connection failed") };
 
         // 第一次尝试
@@ -377,7 +377,7 @@ mod tests {
         assert!(result.is_err());
         assert_eq!(helper.state.current_attempt, 2);
 
-        // 第三次尝试应该立即失败
+        // 第三次尝试应该立即failed
         let result = helper.execute_reconnect(connect_fn).await;
         assert!(matches!(result, Err(ReconnectError::MaxAttemptsExceeded)));
         assert_eq!(helper.state.connection_state, ConnectionState::Failed);
@@ -388,7 +388,7 @@ mod tests {
         let policy = ReconnectPolicy::default();
         let mut helper = ReconnectHelper::new(policy);
 
-        // 模拟成功的连接函数
+        // 模拟succeeded的connectionfunction
         let connect_fn = || async { Ok::<(), &str>(()) };
 
         let result = helper.execute_reconnect(connect_fn).await;

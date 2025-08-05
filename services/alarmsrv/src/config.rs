@@ -118,7 +118,7 @@ impl Default for StorageConfig {
 impl AlarmConfig {
     /// Load configuration
     pub async fn load() -> Result<Self> {
-        // 尝试多个配置文件路径
+        // 尝试多个configuringfilepath
         let config_paths = [
             "config/alarmsrv/alarmsrv.yaml",
             "config/alarmsrv.yaml",
@@ -133,7 +133,7 @@ impl AlarmConfig {
             }
         }
 
-        // 使用新的 ConfigLoader
+        // using新的 ConfigLoader
         let loader = ConfigLoader::new()
             .with_defaults(AlarmConfig::default())
             .with_env_prefix("ALARMSRV");
@@ -144,9 +144,9 @@ impl AlarmConfig {
             loader.build()
         }?;
 
-        // 确保硬编码值
+        // 确保硬encodingvalue
         config.redis.key_prefix = "alarmsrv:".to_string();
-        // 硬编码端口，不可配置
+        // 硬encodingport，不可configuring
         config.api.port = 6002;
 
         // Override specific environment variables if set

@@ -1,8 +1,8 @@
-//! 线协议构建器
+//! Line Protocol Builder
 
 use std::fmt::{self, Write};
 
-/// 字段值类型
+/// Field value type
 #[derive(Debug, Clone)]
 pub enum FieldValue {
     Float(f64),
@@ -24,7 +24,7 @@ impl fmt::Display for FieldValue {
     }
 }
 
-/// `InfluxDB` 线协议构建器
+/// `InfluxDB` Line Protocol Builder
 #[derive(Debug)]
 pub struct LineProtocolBuilder {
     measurement: String,
@@ -34,7 +34,7 @@ pub struct LineProtocolBuilder {
 }
 
 impl LineProtocolBuilder {
-    /// 创建新的构建器
+    /// Create new builder
     pub fn new(measurement: impl Into<String>) -> Self {
         Self {
             measurement: measurement.into(),
@@ -44,35 +44,35 @@ impl LineProtocolBuilder {
         }
     }
 
-    /// 添加标签
+    /// Add tag
     #[must_use]
     pub fn tag(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
         self.tags.push((key.into(), value.into()));
         self
     }
 
-    /// 添加字段
+    /// Add field
     #[must_use]
     pub fn field(mut self, key: impl Into<String>, value: impl Into<FieldValue>) -> Self {
         self.fields.push((key.into(), value.into()));
         self
     }
 
-    /// 设置时间戳（纳秒）
+    /// Set timestamp (nanoseconds)
     #[must_use]
     pub fn timestamp(mut self, timestamp: i64) -> Self {
         self.timestamp = Some(timestamp);
         self
     }
 
-    /// 构建线协议字符串
+    /// Build line protocol string
     pub fn build(self) -> String {
         let mut result = String::new();
 
-        // 测量名称
+        // Measurement name
         write!(&mut result, "{}", escape_measurement(&self.measurement)).unwrap();
 
-        // 标签
+        // Tags
         for (key, value) in &self.tags {
             write!(
                 &mut result,
@@ -83,7 +83,7 @@ impl LineProtocolBuilder {
             .unwrap();
         }
 
-        // 字段
+        // Fields
         result.push(' ');
         let mut first = true;
         for (key, value) in &self.fields {
@@ -94,7 +94,7 @@ impl LineProtocolBuilder {
             first = false;
         }
 
-        // 时间戳
+        // Timestamp
         if let Some(ts) = self.timestamp {
             write!(&mut result, " {ts}").unwrap();
         }
@@ -103,7 +103,7 @@ impl LineProtocolBuilder {
     }
 }
 
-// 转义函数
+// Escape functions
 fn escape_measurement(s: &str) -> String {
     s.replace(',', "\\,").replace(' ', "\\ ")
 }
@@ -126,7 +126,7 @@ fn escape_field_key(s: &str) -> String {
         .replace(' ', "\\ ")
 }
 
-// 便捷转换
+// 便捷converting
 impl From<f64> for FieldValue {
     fn from(value: f64) -> Self {
         FieldValue::Float(value)

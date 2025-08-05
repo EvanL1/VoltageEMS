@@ -1,9 +1,9 @@
-//! Redis 异步客户端
+//! Redis asynchronousclient
 
 use crate::error::Result;
 use redis::{aio::ConnectionManager, AsyncCommands, Client};
 
-/// Redis 异步客户端
+/// Redis asynchronousclient
 pub struct RedisClient {
     pub(crate) conn: ConnectionManager,
     url: String,
@@ -19,7 +19,7 @@ impl std::fmt::Debug for RedisClient {
 }
 
 impl RedisClient {
-    /// 创建新的客户端
+    /// Create新的client
     pub async fn new(url: &str) -> Result<Self> {
         let client = Client::open(url)?;
 
@@ -39,12 +39,12 @@ impl RedisClient {
         })
     }
 
-    /// GET 操作
+    /// GET operation
     pub async fn get<T: redis::FromRedisValue>(&mut self, key: &str) -> Result<Option<T>> {
         Ok(self.conn.get(key).await?)
     }
 
-    /// SET 操作
+    /// SET operation
     pub async fn set<T: redis::ToRedisArgs + Send + Sync>(
         &mut self,
         key: &str,
@@ -65,33 +65,33 @@ impl RedisClient {
         Ok(())
     }
 
-    /// DELETE 操作
+    /// DELETE operation
     pub async fn del(&mut self, keys: &[&str]) -> Result<u32> {
         Ok(self.conn.del(keys).await?)
     }
 
-    /// EXISTS 操作
+    /// EXISTS operation
     pub async fn exists(&mut self, key: &str) -> Result<bool> {
         Ok(self.conn.exists(key).await?)
     }
 
-    /// EXPIRE 操作
+    /// EXPIRE operation
     pub async fn expire(&mut self, key: &str, seconds: i64) -> Result<bool> {
         Ok(self.conn.expire(key, seconds).await?)
     }
 
-    /// PUBLISH 操作
+    /// PUBLISH operation
     pub async fn publish(&mut self, channel: &str, message: &str) -> Result<u32> {
         Ok(self.conn.publish(channel, message).await?)
     }
 
-    /// PING 操作
+    /// PING operation
     pub async fn ping(&mut self) -> Result<String> {
         let pong: String = redis::cmd("PING").query_async(&mut self.conn).await?;
         Ok(pong)
     }
 
-    /// 批量 GET
+    /// batch GET
     pub async fn mget<T: redis::FromRedisValue>(
         &mut self,
         keys: &[&str],
@@ -99,7 +99,7 @@ impl RedisClient {
         Ok(self.conn.get(keys).await?)
     }
 
-    /// 批量 SET
+    /// batch SET
     pub async fn mset<T: redis::ToRedisArgs + Send + Sync>(
         &mut self,
         items: &[(String, T)],
@@ -108,17 +108,17 @@ impl RedisClient {
         Ok(())
     }
 
-    /// 获取所有匹配的键
+    /// Getallmatch的key
     pub async fn keys(&mut self, pattern: &str) -> Result<Vec<String>> {
         Ok(self.conn.keys(pattern).await?)
     }
 
-    /// 获取连接管理器的可变引用
+    /// Getconnectionmanaging器的mutablereference
     pub fn get_connection_mut(&mut self) -> &mut ConnectionManager {
         &mut self.conn
     }
 
-    /// Hash 操作 - 设置字段
+    /// Hash operation - settingfield
     pub async fn hset(&mut self, key: &str, field: &str, value: String) -> Result<()> {
         redis::cmd("HSET")
             .arg(key)
@@ -129,7 +129,7 @@ impl RedisClient {
             .map_err(Into::into)
     }
 
-    /// Hash 操作 - 获取字段
+    /// Hash operation - acquiringfield
     pub async fn hget(&mut self, key: &str, field: &str) -> Result<Option<String>> {
         redis::cmd("HGET")
             .arg(key)
@@ -139,7 +139,7 @@ impl RedisClient {
             .map_err(Into::into)
     }
 
-    /// Hash 操作 - 获取多个字段
+    /// Hash operation - acquiring多个field
     pub async fn hmget(&mut self, key: &str, fields: &[&str]) -> Result<Vec<Option<String>>> {
         redis::cmd("HMGET")
             .arg(key)
@@ -149,7 +149,7 @@ impl RedisClient {
             .map_err(Into::into)
     }
 
-    /// Hash 操作 - 获取所有字段
+    /// Hash operation - acquiringallfield
     pub async fn hgetall(
         &mut self,
         key: &str,
@@ -161,7 +161,7 @@ impl RedisClient {
             .map_err(Into::into)
     }
 
-    /// Hash 操作 - 获取所有字段名
+    /// Hash operation - acquiringallfield名
     pub async fn hkeys(&mut self, key: &str) -> Result<Vec<String>> {
         redis::cmd("HKEYS")
             .arg(key)
@@ -170,7 +170,7 @@ impl RedisClient {
             .map_err(Into::into)
     }
 
-    /// 创建订阅连接
+    /// Createsubscribingconnection
     pub async fn subscribe(&mut self, channels: &[&str]) -> Result<redis::aio::PubSub> {
         let client = Client::open(self.url.as_str())?;
         let mut pubsub = client.get_async_pubsub().await?;
@@ -178,7 +178,7 @@ impl RedisClient {
         Ok(pubsub)
     }
 
-    /// CONFIG SET 操作
+    /// CONFIG SET operation
     pub async fn config_set(&mut self, parameter: &str, value: &str) -> Result<String> {
         redis::cmd("CONFIG")
             .arg("SET")
@@ -189,7 +189,7 @@ impl RedisClient {
             .map_err(Into::into)
     }
 
-    /// 加载 Lua 脚本并返回 SHA
+    /// Load Lua 脚本并return SHA
     pub async fn script_load(&mut self, script: &str) -> Result<String> {
         redis::cmd("SCRIPT")
             .arg("LOAD")
@@ -199,7 +199,7 @@ impl RedisClient {
             .map_err(Into::into)
     }
 
-    /// 执行 Lua 脚本（通过 SHA）
+    /// Execute Lua 脚本（通过 SHA）
     pub async fn evalsha(
         &mut self,
         sha: &str,
@@ -220,7 +220,7 @@ impl RedisClient {
         cmd.query_async(&mut self.conn).await.map_err(Into::into)
     }
 
-    /// 检查脚本是否存在
+    /// Check脚本yesnoexists
     pub async fn script_exists(&mut self, shas: &[&str]) -> Result<Vec<bool>> {
         redis::cmd("SCRIPT")
             .arg("EXISTS")
@@ -230,7 +230,7 @@ impl RedisClient {
             .map_err(Into::into)
     }
 
-    /// 执行 Lua 脚本（直接执行）
+    /// Execute Lua 脚本（直接executing）
     pub async fn eval(
         &mut self,
         script: &str,
@@ -251,7 +251,7 @@ impl RedisClient {
         cmd.query_async(&mut self.conn).await.map_err(Into::into)
     }
 
-    /// 清空所有 Lua 脚本缓存
+    /// clearall Lua 脚本cache
     pub async fn script_flush(&mut self) -> Result<String> {
         redis::cmd("SCRIPT")
             .arg("FLUSH")
@@ -260,7 +260,7 @@ impl RedisClient {
             .map_err(Into::into)
     }
 
-    /// 调用 Redis Function
+    /// call Redis Function
     pub async fn fcall<T: redis::FromRedisValue>(
         &mut self,
         function: &str,
@@ -281,7 +281,7 @@ impl RedisClient {
         cmd.query_async(&mut self.conn).await.map_err(Into::into)
     }
 
-    /// 调用 Redis Function 返回原始 Redis Value
+    /// call Redis Function returnprimal Redis Value
     pub async fn fcall_raw(
         &mut self,
         function: &str,
@@ -302,7 +302,7 @@ impl RedisClient {
         cmd.query_async(&mut self.conn).await.map_err(Into::into)
     }
 
-    /// 列出所有已加载的 Redis Functions
+    /// column出all已loading的 Redis Functions
     pub async fn function_list(&mut self) -> Result<redis::Value> {
         redis::cmd("FUNCTION")
             .arg("LIST")
@@ -311,7 +311,7 @@ impl RedisClient {
             .map_err(Into::into)
     }
 
-    /// 加载 Redis Function
+    /// Load Redis Function
     pub async fn function_load(&mut self, script: &str, replace: bool) -> Result<String> {
         let mut cmd = redis::cmd("FUNCTION");
         cmd.arg("LOAD");
@@ -323,7 +323,7 @@ impl RedisClient {
         cmd.query_async(&mut self.conn).await.map_err(Into::into)
     }
 
-    /// 删除 Redis Function 库
+    /// Delete Redis Function library
     pub async fn function_delete(&mut self, library_name: &str) -> Result<String> {
         redis::cmd("FUNCTION")
             .arg("DELETE")

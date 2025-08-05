@@ -1,0 +1,73 @@
+# Alarm Service Configuration
+
+# 告警模板定义
+templates:
+  - id: high_temperature
+    name: 高温告警模板
+    description: 设备温度过高时使用的告警模板
+    level: Major
+    title_template: "${device_name} 温度过高"
+    description_template: "设备 ${device_name} 当前温度 ${temperature}°C，超过阈值 ${threshold}°C"
+    tags:
+      - temperature
+      - safety
+
+  - id: device_offline
+    name: 设备离线模板
+    description: 设备失去连接时的告警模板
+    level: Critical
+    title_template: "${device_name} 离线"
+    description_template: "设备 ${device_name} 已失去连接超过 ${offline_duration} 分钟"
+    tags:
+      - connectivity
+      - device_status
+
+  - id: low_battery
+    name: 电池电量低模板
+    description: 电池电量不足时的告警模板
+    level: Warning
+    title_template: "${device_name} 电池电量低"
+    description_template: "设备 ${device_name} 电池电量仅剩 ${battery_level}%"
+    tags:
+      - battery
+      - maintenance
+
+# 告警规则（可选，用于自动生成告警）
+alarm_rules:
+  - id: transformer_overheat
+    name: 变压器过热规则
+    description: 监测变压器温度
+    enabled: true
+    condition: "comsrv:1001:T:20 > 85"
+    template_id: high_temperature
+    level: Major
+    source: transformer_01
+
+  - id: battery_low_soc
+    name: 电池电量低规则
+    description: 监测电池电量
+    enabled: true
+    condition: "battery.soc < 20"
+    template_id: low_battery
+    level: Warning
+    source: battery_ess_01
+
+  - id: switchgear_offline
+    name: 开关柜离线规则
+    description: 监测开关柜连接状态
+    enabled: true
+    condition: "comsrv:2001:S:1 == 0"
+    template_id: device_offline
+    level: Critical
+    source: switchgear_incoming
+
+# 系统设置
+settings:
+  # 告警保留天数
+  retention_days: 30
+  
+  # 清理任务执行间隔（毫秒）
+  cleanup_interval: 86400000  # 24小时
+  
+  # 最大活跃告警数量
+  max_active_alarms: 10000

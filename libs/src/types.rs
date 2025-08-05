@@ -1,13 +1,13 @@
-//! 共享的基础类型定义
+//! 共享的基础typedefinition
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
-/// 测点ID类型
+/// 测点IDtype
 pub type PointId = u32;
 
-/// 时间范围
+/// timerange
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TimeRange {
     pub start: DateTime<Utc>,
@@ -24,27 +24,27 @@ impl TimeRange {
     }
 }
 
-/// 标准化的浮点数值，强制使用6位小数精度
+/// standard化的浮点数value，强制using6位小数精度
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct StandardFloat(f64);
 
 impl StandardFloat {
-    /// 创建新的标准化浮点数
+    /// Create新的standard化浮点数
     pub fn new(value: f64) -> Self {
         Self(value)
     }
 
-    /// 获取原始值
+    /// Getprimalvalue
     pub fn value(&self) -> f64 {
         self.0
     }
 
-    /// 转换为Redis存储格式（固定6位小数）
+    /// Convert为Redisstorage格式（固定6位小数）
     pub fn to_redis(&self) -> String {
         format!("{:.6}", self.0)
     }
 
-    /// 从Redis格式解析
+    /// slaveRedis格式parse
     pub fn from_redis(data: &str) -> Result<Self, String> {
         let value = data
             .parse::<f64>()
@@ -77,17 +77,17 @@ impl From<StandardFloat> for f64 {
     }
 }
 
-/// 数据点值，用于不同服务的统一数据表示
+/// data点value，用于不同serving的统一datatable示
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PointData {
-    /// 点位值（标准化6位小数）
+    /// 点位value（standard化6位小数）
     pub value: StandardFloat,
-    /// 时间戳（毫秒）
+    /// Timestamp（毫秒）
     pub timestamp: i64,
 }
 
 impl PointData {
-    /// 创建新的点位数据
+    /// Create新的点位data
     pub fn new(value: f64) -> Self {
         Self {
             value: StandardFloat::new(value),
@@ -95,7 +95,7 @@ impl PointData {
         }
     }
 
-    /// 带时间戳创建
+    /// 带time戳create
     pub fn with_timestamp(value: f64, timestamp: i64) -> Self {
         Self {
             value: StandardFloat::new(value),
@@ -103,17 +103,17 @@ impl PointData {
         }
     }
 
-    /// 转换为Redis存储格式（仅值）
+    /// Convert为Redisstorage格式（仅value）
     pub fn to_redis_value(&self) -> String {
         self.value.to_redis()
     }
 
-    /// 转换为Redis存储格式（值:时间戳）
+    /// Convert为Redisstorage格式（value:time戳）
     pub fn to_redis_with_timestamp(&self) -> String {
         format!("{}:{}", self.value.to_redis(), self.timestamp)
     }
 
-    /// 从Redis格式解析（仅值）
+    /// slaveRedis格式parse（仅value）
     pub fn from_redis_value(data: &str) -> Result<Self, String> {
         let value = StandardFloat::from_redis(data)?;
         Ok(Self {
@@ -122,7 +122,7 @@ impl PointData {
         })
     }
 
-    /// 从Redis格式解析（值:时间戳）
+    /// slaveRedis格式parse（value:time戳）
     pub fn from_redis_with_timestamp(data: &str) -> Result<Self, String> {
         let parts: Vec<&str> = data.split(':').collect();
         if parts.len() != 2 {

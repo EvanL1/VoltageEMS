@@ -9,10 +9,6 @@ description = "Rule execution service for VoltageEMS"
 name = "rulesrv"
 path = "src/main.rs"
 
-[[bin]]
-name = "rulesrv-lightweight"
-path = "src/main_lightweight.rs"
-
 
 [dependencies]
 # Local dependencies
@@ -38,11 +34,3 @@ tower-http = { workspace = true }
 [features]
 default = []
 
-# Test configuration
-[[test]]
-name = "unit_tests"
-path = "tests/unit/mod.rs"
-
-[[test]]
-name = "integration_tests"
-path = "tests/integration/mod.rs"

@@ -6,7 +6,6 @@ use axum::{
 };
 use std::sync::Arc;
 use tower_http::cors::CorsLayer;
-use tracing::info;
 
 use crate::config::ApiConfig;
 use crate::engine::RuleEngine;

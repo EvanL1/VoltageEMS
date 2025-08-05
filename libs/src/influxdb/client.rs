@@ -1,9 +1,9 @@
-//! `InfluxDB` 2.x 官方客户端
+//! `InfluxDB` 2.x 官方client
 
 use crate::error::{Error, Result};
 use influxdb2::{models::Query, Client};
 
-/// `InfluxDB` 2.x 客户端
+/// `InfluxDB` 2.x client
 #[derive(Debug)]
 pub struct InfluxClient {
     client: Client,
@@ -12,7 +12,7 @@ pub struct InfluxClient {
 }
 
 impl InfluxClient {
-    /// 创建新的客户端
+    /// Create新的client
     pub fn new(url: &str, org: &str, bucket: &str, token: &str) -> Result<Self> {
         tracing::debug!(
             "Creating InfluxDB client: url={}, org={}, bucket={}",
@@ -29,7 +29,7 @@ impl InfluxClient {
         })
     }
 
-    /// 写入线协议数据
+    /// write线protocoldata
     pub async fn write_line_protocol(&self, data: &str) -> Result<()> {
         let bucket = &self.bucket;
         let org = &self.org;
@@ -50,11 +50,11 @@ impl InfluxClient {
         Ok(())
     }
 
-    /// 执行查询 (Flux查询语言)
+    /// Executequery (Fluxquery语言)
     pub async fn query(&self, query: &str) -> Result<String> {
         let bucket = &self.bucket;
 
-        // 如果是简单的查询，转换为Flux格式
+        // 如果yessimple的query，converting为Flux格式
         let flux_query = if query.starts_with("from(") {
             query.to_string()
         } else {
@@ -65,7 +65,7 @@ impl InfluxClient {
             )
         };
 
-        // 构建Query对象
+        // buildingQuerypair象
         let query = Query::new(flux_query);
 
         let result = self
@@ -77,9 +77,9 @@ impl InfluxClient {
         Ok(format!("{result:?}"))
     }
 
-    /// 健康检查
+    /// 健康checking
     pub async fn ping(&self) -> Result<()> {
-        // 使用InfluxDB 2.x的health检查API
+        // usingInfluxDB 2.x的healthcheckingAPI
         let health_result = self
             .client
             .health()
@@ -88,7 +88,7 @@ impl InfluxClient {
 
         tracing::debug!("InfluxDB health check: {:?}", health_result);
 
-        // 额外检查ready状态
+        // extracheckingreadystate
         let ready = self
             .client
             .ready()

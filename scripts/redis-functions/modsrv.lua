@@ -83,7 +83,7 @@ local function model_delete(keys, args)
         if ok and model.mapping then
             local channel = model.mapping.channel
             
-            -- 清理数据点反向映射
+            -- Clean data点反向映射
             if model.mapping.data then
                 for _, point_id in pairs(model.mapping.data) do
                     redis.call('DEL', string.format("modsrv:reverse:%d:%d", channel, point_id))

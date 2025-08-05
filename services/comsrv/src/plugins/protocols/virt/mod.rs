@@ -248,7 +248,7 @@ impl ComBase for VirtualProtocol {
         Ok(results)
     }
 
-    // 四遥分离架构下，update_points方法已移除
+    // 四遥detaching架构下，update_pointsmethod已移除
 }
 
 #[cfg(test)]

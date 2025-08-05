@@ -8,14 +8,17 @@ use std::fmt;
 use crate::response::ApiResponse;
 
 // Type aliases for backward compatibility
-pub type ApiError = ApiGatewayError;
 pub type ApiResult<T> = Result<T, ApiGatewayError>;
 
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum ApiGatewayError {
     // Request errors
+    #[allow(dead_code)]
     BadRequest(String),
+    #[allow(dead_code)]
     NotFound(String),
+    #[allow(dead_code)]
     MethodNotAllowed,
 
     // Internal errors

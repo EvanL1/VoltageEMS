@@ -35,18 +35,18 @@ local function store_alarm(keys, args)
         redis.call('HSET', alarm_key, unpack(fields))
     end
     
-    -- 设置过期时间（如果配置了）
+    -- Set expiration time（如果配置了）
     if alarm.ttl then
         redis.call('EXPIRE', alarm_key, alarm.ttl)
     end
     
     -- 更新索引
-    -- 按状态索引
+    -- Index by status
     if alarm.status then
         redis.call('SADD', 'idx:alarm:status:' .. alarm.status, alarm_id)
     end
     
-    -- 按级别索引
+    -- Index by level
     if alarm.level then
         redis.call('SADD', 'idx:alarm:level:' .. alarm.level, alarm_id)
     end
@@ -56,11 +56,11 @@ local function store_alarm(keys, args)
         redis.call('SADD', 'idx:alarm:category:' .. alarm.category, alarm_id)
     end
     
-    -- 按时间排序索引
+    -- Sort by time索引
     local timestamp = alarm.created_at or redis.call('TIME')[1]
     redis.call('ZADD', 'idx:alarm:time', timestamp, alarm_id)
     
-    -- 更新统计
+    -- Update statistics
     redis.call('HINCRBY', 'stats:alarm', 'total', 1)
     if alarm.status then
         redis.call('HINCRBY', 'stats:alarm:status', alarm.status, 1)
@@ -80,7 +80,7 @@ local function store_alarm(keys, args)
     return redis.status_reply('OK')
 end
 
--- 确认告警
+-- Acknowledge alarm
 local function acknowledge_alarm(keys, args)
     if #keys ~= 1 or #args < 1 then
         return redis.error_reply("Wrong number of arguments")
@@ -100,7 +100,7 @@ local function acknowledge_alarm(keys, args)
     -- 获取当前状态
     local current_status = redis.call('HGET', alarm_key, 'status')
     
-    -- 更新状态
+    -- Update status
     local timestamp = redis.call('TIME')[1]
     redis.call('HSET', alarm_key,
         'status', 'acknowledged',
@@ -115,7 +115,7 @@ local function acknowledge_alarm(keys, args)
     end
     redis.call('SADD', 'idx:alarm:status:acknowledged', alarm_id)
     
-    -- 更新统计
+    -- Update statistics
     if current_status then
         redis.call('HINCRBY', 'stats:alarm:status', current_status, -1)
     end
@@ -131,7 +131,7 @@ local function acknowledge_alarm(keys, args)
     return redis.status_reply('OK')
 end
 
--- 解决告警
+-- Resolve alarm
 local function resolve_alarm(keys, args)
     if #keys ~= 1 then
         return redis.error_reply("Wrong number of arguments")
@@ -150,7 +150,7 @@ local function resolve_alarm(keys, args)
     -- 获取当前状态
     local current_status = redis.call('HGET', alarm_key, 'status')
     
-    -- 更新状态
+    -- Update status
     local timestamp = redis.call('TIME')[1]
     redis.call('HSET', alarm_key,
         'status', 'resolved',
@@ -164,7 +164,7 @@ local function resolve_alarm(keys, args)
     end
     redis.call('SADD', 'idx:alarm:status:resolved', alarm_id)
     
-    -- 更新统计
+    -- Update statistics
     if current_status then
         redis.call('HINCRBY', 'stats:alarm:status', current_status, -1)
     end
@@ -218,13 +218,13 @@ local function cleanup_old_alarms(keys, args)
         deleted = deleted + 1
     end
     
-    -- 更新统计
+    -- Update statistics
     redis.call('HINCRBY', 'stats:alarm', 'cleaned', deleted)
     
     return deleted
 end
 
--- 查询告警
+-- Query alarms
 local function query_alarms(keys, args)
     if #args < 1 then
         return redis.error_reply("Wrong number of arguments")
@@ -266,7 +266,7 @@ local function query_alarms(keys, args)
         end
     end
     
-    -- 排序（如果需要）
+    -- Sort（如果需要）
     if query.sort_by and #results > 0 then
         table.sort(results, function(a, b)
             if query.sort_order == 'desc' then
@@ -330,7 +330,7 @@ local function save_rule(keys, args)
     -- 按优先级排序索引
     redis.call('ZADD', 'idx:rule:priority', rule.priority or 0, rule_id)
     
-    -- 更新统计
+    -- Update statistics
     redis.call('HINCRBY', 'stats:rule', 'total', 1)
     
     return redis.status_reply('OK')
@@ -369,7 +369,7 @@ local function delete_rule(keys, args)
     -- 删除执行历史
     redis.call('DEL', rule_key .. ':history')
     
-    -- 更新统计
+    -- Update statistics
     redis.call('HINCRBY', 'stats:rule', 'total', -1)
     
     return redis.status_reply('OK')
@@ -409,7 +409,7 @@ local function save_rule_group(keys, args)
         redis.call('SREM', 'idx:rule_group:enabled', group_id)
     end
     
-    -- 更新统计
+    -- Update statistics
     redis.call('HINCRBY', 'stats:rule_group', 'total', 1)
     
     return redis.status_reply('OK')
@@ -441,7 +441,7 @@ local function delete_rule_group(keys, args)
     -- 删除规则组数据
     redis.call('DEL', group_key)
     
-    -- 更新统计
+    -- Update statistics
     redis.call('HINCRBY', 'stats:rule_group', 'total', -1)
     
     return redis.status_reply('OK')
@@ -469,7 +469,7 @@ local function save_execution_history(keys, args)
     -- 只保留最新的N条记录
     redis.call('LTRIM', history_key, 0, 999)
     
-    -- 设置过期时间（30天）
+    -- Set expiration time（30天）
     redis.call('EXPIRE', history_key, 2592000)
     
     -- 更新规则的最后执行时间
@@ -478,7 +478,7 @@ local function save_execution_history(keys, args)
         'last_execution_result', execution.result or 'unknown'
     )
     
-    -- 更新统计
+    -- Update statistics
     redis.call('HINCRBY', 'stats:rule:execution', 'total', 1)
     if execution.result then
         redis.call('HINCRBY', 'stats:rule:execution', execution.result, 1)
@@ -532,7 +532,7 @@ local function sync_channel_data(keys, args)
         update_count = update_count
     }))
     
-    -- 更新统计
+    -- Update statistics
     redis.call('HINCRBY', 'stats:sync', 'total_syncs', 1)
     redis.call('HINCRBY', 'stats:sync:channel', channel_id, 1)
     

@@ -586,7 +586,7 @@ impl ProtocolMapping for ModbusMapping {
             self.register_address.to_string(),
         );
 
-        // 使用自动推断的值
+        // using自动push断的value
         params.insert(
             "register_count".to_string(),
             self.register_count().to_string(),

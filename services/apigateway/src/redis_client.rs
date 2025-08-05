@@ -23,7 +23,7 @@ pub trait RedisClientExt {
 impl RedisClientExt for RedisClient {
     async fn get_api(&self, _key: &str) -> ApiResult<Option<String>> {
         // 注意: voltage_libs的get需要mut self
-        // 暂时返回None
+        // 暂时returnNone
         Ok(None)
     }
 
@@ -71,8 +71,8 @@ impl RedisClientExt for RedisClient {
         &self,
         _key: &str,
     ) -> ApiResult<std::collections::HashMap<String, String>> {
-        // 注意: voltage_libs的RedisClient需要mut self来调用hgetall
-        // 这里我们使用get命令作为临时解决方案
+        // 注意: voltage_libs的RedisClient需要mut self来callhgetall
+        // 这里我们usingget命令作为临时解决方案
         Err(ApiGatewayError::InternalError(
             "hgetall not supported in current implementation".to_string(),
         ))
@@ -80,7 +80,7 @@ impl RedisClientExt for RedisClient {
 
     async fn ping_api(&self) -> ApiResult<bool> {
         // 注意: voltage_libs的ping需要mut self
-        // 返回固定值用于健康检查
+        // return固定value用于健康checking
         Ok(true)
     }
 

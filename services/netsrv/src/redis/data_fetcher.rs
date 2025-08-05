@@ -46,7 +46,7 @@ impl RedisDataFetcher {
 
         let client = self.client.as_ref().unwrap();
 
-        // 获取匹配的所有键
+        // acquiringmatch的allkey
         let keys: Vec<String> = client
             .keys(&self.data_key_pattern)
             .await

@@ -1,6 +1,6 @@
-//! 极简模型实例管理模块
+//! 极简模型instancemanagingmodular
 //!
-//! 提供模型实例的创建、管理和映射功能
+//! 提供模型instance的create、managing和mappingfunction
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -12,42 +12,42 @@ use voltage_libs::redis::EdgeRedis;
 use crate::error::{ModelSrvError, Result};
 use crate::template::{Template, TemplateManager};
 
-/// 模型映射配置
+/// 模型mappingconfiguring
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModelMapping {
-    /// 通道ID
+    /// channelID
     pub channel: u32,
-    /// 数据点映射 (点名 -> point_id)
+    /// data点mapping (点名 -> point_id)
     pub data: HashMap<String, u32>,
-    /// 操作映射 (操作名 -> point_id)
+    /// operationmapping (operation名 -> point_id)
     pub action: HashMap<String, u32>,
 }
 
-/// 模型实例定义
+/// 模型instancedefinition
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModelInstance {
     /// 模型ID
     pub id: String,
-    /// 模型名称
+    /// 模型name
     pub name: String,
     /// 来源模板ID（可选）
     pub template: Option<String>,
-    /// 映射配置
+    /// mappingconfiguring
     pub mapping: ModelMapping,
 }
 
-/// 模型管理器
+/// 模型managing器
 pub struct ModelManager {
-    /// 模型实例存储
+    /// 模型instancestorage
     models: Arc<RwLock<HashMap<String, Arc<ModelInstance>>>>,
-    /// Redis连接
+    /// Redisconnection
     redis: Arc<Mutex<EdgeRedis>>,
-    /// 模板管理器
+    /// 模板managing器
     template_manager: Arc<Mutex<TemplateManager>>,
 }
 
 impl ModelManager {
-    /// 创建模型管理器
+    /// Create模型managing器
     pub async fn new(redis_url: &str, template_dir: &str) -> Result<Self> {
         let edge_redis = EdgeRedis::new(redis_url)
             .await
@@ -63,7 +63,7 @@ impl ModelManager {
         })
     }
 
-    /// 从模板创建模型实例
+    /// slave模板create模型instance
     pub async fn create_model_from_template(
         &self,
         template_id: &str,
@@ -71,17 +71,17 @@ impl ModelManager {
         model_name: &str,
         mapping: ModelMapping,
     ) -> Result<()> {
-        // 验证模板存在
+        // validation模板exists
         let template_manager = self.template_manager.lock().await;
         let template = template_manager.get_template(template_id).ok_or_else(|| {
             ModelSrvError::NotFound(format!("Template {} not found", template_id))
         })?;
 
-        // 验证映射完整性
-        self.validate_mapping(&template, &mapping)?;
+        // validationmapping完整性
+        self.validate_mapping(template, &mapping)?;
         drop(template_manager);
 
-        // 创建模型实例
+        // create模型instance
         let model = Arc::new(ModelInstance {
             id: model_id.to_string(),
             name: model_name.to_string(),
@@ -89,19 +89,19 @@ impl ModelManager {
             mapping,
         });
 
-        // 存储模型
+        // storage模型
         let mut models = self.models.write().await;
         models.insert(model.id.clone(), model.clone());
 
         info!("Created model {} from template {}", model_id, template_id);
 
-        // 加载映射到Redis
+        // loadingmapping到Redis
         self.load_model_mapping(&model).await?;
 
         Ok(())
     }
 
-    /// 创建独立模型（不基于模板）
+    /// Create独立模型（不基于模板）
     pub async fn create_model(
         &self,
         model_id: &str,
@@ -120,15 +120,15 @@ impl ModelManager {
 
         info!("Created standalone model {}", model_id);
 
-        // 加载映射到Redis
+        // loadingmapping到Redis
         self.load_model_mapping(&model).await?;
 
         Ok(())
     }
 
-    /// 验证映射配置
+    /// Validatemappingconfiguring
     fn validate_mapping(&self, template: &Template, mapping: &ModelMapping) -> Result<()> {
-        // 检查数据点映射
+        // checkingdata点mapping
         for data_key in template.data.keys() {
             if !mapping.data.contains_key(data_key) {
                 return Err(ModelSrvError::InvalidMapping(format!(
@@ -138,7 +138,7 @@ impl ModelManager {
             }
         }
 
-        // 检查操作映射
+        // checkingoperationmapping
         for action_key in template.action.keys() {
             if !mapping.action.contains_key(action_key) {
                 return Err(ModelSrvError::InvalidMapping(format!(
@@ -151,18 +151,18 @@ impl ModelManager {
         Ok(())
     }
 
-    /// 加载模型映射到Redis
+    /// Load模型mapping到Redis
     async fn load_model_mapping(&self, model: &ModelInstance) -> Result<()> {
         let mut redis = self.redis.lock().await;
 
-        // 加载数据点映射 (C2M: channel:point -> model:data_name)
+        // loadingdata点mapping (C2M: channel:point -> model:data_name)
         for (data_name, point_id) in &model.mapping.data {
             let key = format!("{}:{}", model.mapping.channel, point_id);
             let value = format!("{}:{}", model.id, data_name);
             redis.init_mapping("c2m", &key, &value).await?;
         }
 
-        // 加载操作映射 (M2C: model:action_name -> channel:point)
+        // loadingoperationmapping (M2C: model:action_name -> channel:point)
         for (action_name, point_id) in &model.mapping.action {
             let key = format!("{}:{}", model.id, action_name);
             let value = format!("{}:{}", model.mapping.channel, point_id);
@@ -172,19 +172,19 @@ impl ModelManager {
         Ok(())
     }
 
-    /// 获取模型实例
+    /// Get模型instance
     pub async fn get_model(&self, id: &str) -> Option<Arc<ModelInstance>> {
         let models = self.models.read().await;
         models.get(id).cloned()
     }
 
-    /// 列出所有模型
+    /// column出all模型
     pub async fn list_models(&self) -> Vec<Arc<ModelInstance>> {
         let models = self.models.read().await;
         models.values().cloned().collect()
     }
 
-    /// 获取模型数据值
+    /// Get模型datavalue
     pub async fn get_model_data(&self, model_id: &str) -> Result<HashMap<String, f64>> {
         let models = self.models.read().await;
         let model = models
@@ -194,12 +194,12 @@ impl ModelManager {
         let mut redis = self.redis.lock().await;
         let mut result = HashMap::new();
 
-        // 使用新的映射系统获取数据
+        // using新的mappingsystemacquiringdata
         let channel_key = format!("comsrv:{}:T", model.mapping.channel);
 
-        // 遍历数据映射，获取每个数据点的值
+        // 遍历datamapping，acquiringeachdata点的value
         for (data_name, point_id) in &model.mapping.data {
-            // 从Redis获取值
+            // slaveRedisacquiringvalue
             if let Ok(Some(value_str)) = redis
                 .hget::<_, _, String>(&channel_key, &point_id.to_string())
                 .await
@@ -213,7 +213,7 @@ impl ModelManager {
         Ok(result)
     }
 
-    /// 执行模型操作
+    /// Execute模型operation
     pub async fn execute_action(
         &self,
         model_id: &str,
@@ -232,13 +232,13 @@ impl ModelManager {
             ))
         })?;
 
-        // 复制需要的值
+        // replication需要的value
         let channel = model.mapping.channel;
         let point_id = *point_id;
 
         drop(models);
 
-        // 使用新的映射系统发送控制命令
+        // using新的mappingsystemsendingcontrolling命令
         let mut redis = self.redis.lock().await;
         let control_key = format!("comsrv:{}:C", channel);
         let value_str = format!("{:.6}", value.unwrap_or(1.0));
@@ -255,23 +255,23 @@ impl ModelManager {
         Ok(())
     }
 
-    /// 删除模型
+    /// Delete模型
     pub async fn delete_model(&self, model_id: &str) -> Result<()> {
         let mut models = self.models.write().await;
         if let Some(model) = models.remove(model_id) {
             info!("Deleted model: {} ({})", model.name, model.id);
 
-            // TODO: 清理Redis中的映射
+            // TODO: cleaningRedismedium的mapping
         }
         Ok(())
     }
 
-    /// 获取模板管理器
+    /// Get模板managing器
     pub fn template_manager(&self) -> Arc<Mutex<TemplateManager>> {
         self.template_manager.clone()
     }
 
-    /// 列出所有模板
+    /// column出all模板
     pub async fn list_templates(&self) -> Vec<Template> {
         let template_manager = self.template_manager.lock().await;
         template_manager
@@ -281,7 +281,7 @@ impl ModelManager {
             .collect()
     }
 
-    /// 获取模板
+    /// Get模板
     pub async fn get_template(&self, template_id: &str) -> Option<Template> {
         let template_manager = self.template_manager.lock().await;
         template_manager.get_template(template_id).cloned()

@@ -33,6 +33,7 @@ humantime-serde = "1.1"
 # Data handling
 redis = { workspace = true }
 chrono = { workspace = true }
+uuid = { workspace = true }
 
 # Web framework for API
 axum = { workspace = true }

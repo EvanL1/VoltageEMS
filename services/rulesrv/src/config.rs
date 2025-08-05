@@ -82,7 +82,7 @@ pub struct ApiConfig {
 impl Config {
     /// Load configuration
     pub fn load() -> Result<Self> {
-        // 尝试多个配置文件路径
+        // 尝试多个configuringfilepath
         let config_paths = [
             "config/rulesrv/rulesrv.yaml",
             "config/rulesrv.yaml",
@@ -97,7 +97,7 @@ impl Config {
             }
         }
 
-        // 使用新的 ConfigLoader
+        // using新的 ConfigLoader
         let loader = ConfigLoader::new()
             .with_defaults(Config::default())
             .with_env_prefix("RULESRV");
@@ -109,9 +109,9 @@ impl Config {
         }
         .map_err(|e| RulesrvError::ConfigError(format!("Failed to load config: {}", e)))?;
 
-        // 确保硬编码值
+        // 确保硬encodingvalue
         config.redis.key_prefix = "rulesrv:".to_string();
-        // 强制硬编码端口，不可配置
+        // 强制硬encodingport，不可configuring
         config.service.port = 6003;
         config.redis_url = config.redis.url.clone();
 
@@ -131,9 +131,9 @@ impl Config {
                 .build()
                 .map_err(|e| RulesrvError::ConfigError(format!("Failed to load config: {}", e)))?;
 
-            // 确保硬编码值
+            // 确保硬encodingvalue
             config.redis.key_prefix = "rulesrv:".to_string();
-            // 强制硬编码端口，不可配置
+            // 强制硬encodingport，不可configuring
             config.service.port = 6003;
             config.redis_url = config.redis.url.clone();
 
@@ -209,7 +209,7 @@ fn default_service_name() -> String {
 }
 
 fn default_service_port() -> u16 {
-    6003 // 默认端口
+    6003 // defaultport
 }
 
 fn default_redis_url() -> String {
@@ -217,7 +217,7 @@ fn default_redis_url() -> String {
 }
 
 fn default_key_prefix() -> String {
-    "rulesrv:".to_string() // 硬编码
+    "rulesrv:".to_string() // 硬encoding
 }
 
 fn default_subscribe_patterns() -> Vec<String> {

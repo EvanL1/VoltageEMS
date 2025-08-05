@@ -76,7 +76,7 @@ local function evaluate_comparison(left, op, right)
     return false
 end
 
--- 评估单个条件
+-- Evaluate single condition
 local function evaluate_condition(condition)
     local source_value = get_source_value(condition.source)
     
@@ -87,7 +87,7 @@ local function evaluate_condition(condition)
     return evaluate_comparison(source_value, condition.op, condition.value)
 end
 
--- 评估条件组
+-- Evaluate condition group
 local function evaluate_condition_group(group)
     if not group.conditions or #group.conditions == 0 then
         return false
@@ -386,7 +386,7 @@ local function rule_execute(keys, args)
         table.insert(action_results, result)
     end
     
-    -- 更新状态
+    -- Update status
     local current_time = redis.call('TIME')[1]
     redis.call('HSET', 'rulesrv:rule:' .. rule_id .. ':state',
         'last_executed', current_time,

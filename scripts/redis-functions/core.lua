@@ -1,10 +1,10 @@
 #!lua name=core
 
 -- ========================================
--- VoltageEMS 核心通用函数 (80%逻辑)
+-- VoltageEMS Core Common Functions (80% logic)
 -- ========================================
 
--- 通用实体存储
+-- Generic Entity Storage
 local function generic_store(keys, args)
     if #keys < 1 or #args < 2 then
         return redis.error_reply("Usage: entity_key entity_type entity_data [indexes_json]")
@@ -15,10 +15,10 @@ local function generic_store(keys, args)
     local entity_data = args[2]
     local indexes = args[3] and cjson.decode(args[3]) or {}
     
-    -- 存储实体数据
+    -- Store entity data
     redis.call('HSET', entity_key, 'type', entity_type, 'data', entity_data, 'updated_at', tostring(redis.call('TIME')[1]))
     
-    -- 处理索引
+    -- Process indexes
     for _, idx in ipairs(indexes) do
         if idx.type == "single" then
             local idx_key = string.format("idx:%s:%s:%s", entity_type, idx.field, idx.value)
@@ -38,13 +38,13 @@ local function generic_store(keys, args)
         end
     end
     
-    -- 更新统计
+    -- Update statistics
     redis.call('HINCRBY', string.format("stats:%s", entity_type), 'total_stored', 1)
     
     return redis.status_reply('OK')
 end
 
--- 通用批量同步
+-- Generic Batch Sync
 local function generic_batch_sync(keys, args)
     if #args < 3 then
         return redis.error_reply("Usage: source_pattern dest_prefix transform_type [options_json]")
@@ -104,7 +104,7 @@ local function generic_batch_sync(keys, args)
             
             synced_count = synced_count + 1
             
-            -- 设置过期时间
+            -- Set expiration time
             if options.ttl then
                 redis.call('EXPIRE', dest_key, options.ttl)
             end
@@ -117,7 +117,7 @@ local function generic_batch_sync(keys, args)
     })
 end
 
--- 通用查询
+-- Generic Query
 local function generic_query(keys, args)
     if #args < 1 then
         return redis.error_reply("Usage: query_config_json")
@@ -127,7 +127,7 @@ local function generic_query(keys, args)
     local results = {}
     
     if config.type == "index" then
-        -- 基于索引查询
+        -- Index-based query
         local idx_key = string.format("idx:%s:%s:%s", config.entity_type, config.field, config.value)
         local entity_keys = redis.call('SMEMBERS', idx_key)
         
@@ -141,7 +141,7 @@ local function generic_query(keys, args)
             end
         end
     elseif config.type == "range" then
-        -- 范围查询（用于排序索引）
+        -- Range query (for sorted indexes)
         local idx_key = string.format("idx:%s:%s", config.entity_type, config.field)
         local entity_keys = redis.call('ZRANGEBYSCORE', idx_key, config.min or '-inf', config.max or '+inf', 'LIMIT', config.offset or 0, config.limit or 100)
         
@@ -155,7 +155,7 @@ local function generic_query(keys, args)
             end
         end
     elseif config.type == "pattern" then
-        -- 模式匹配查询
+        -- Pattern matching query
         local cursor = "0"
         local count = 0
         
@@ -178,7 +178,7 @@ local function generic_query(keys, args)
         until cursor == "0" or count >= (config.limit or 1000)
     end
     
-    -- 应用过滤器
+    -- Apply filters
     if config.filters then
         local filtered_results = {}
         for _, result in ipairs(results) do
@@ -196,7 +196,7 @@ local function generic_query(keys, args)
         results = filtered_results
     end
     
-    -- 排序
+    -- Sort
     if config.sort_by then
         table.sort(results, function(a, b)
             local a_val = a.data[config.sort_by]
@@ -209,7 +209,7 @@ local function generic_query(keys, args)
         end)
     end
     
-    -- 分页
+    -- Pagination
     if config.page and config.page_size then
         local start_idx = (config.page - 1) * config.page_size + 1
         local end_idx = config.page * config.page_size
@@ -227,7 +227,7 @@ local function generic_query(keys, args)
     })
 end
 
--- 实体管理器
+-- Entity Manager
 local function entity_manager(keys, args)
     if #args < 2 then
         return redis.error_reply("Usage: action entity_type [params...]")
@@ -274,12 +274,12 @@ local function entity_manager(keys, args)
         return cleaned
         
     elseif action == "reindex" then
-        -- 重建索引
+        -- Rebuild indexes
         local pattern = string.format("%s:*", entity_type)
         local reindexed = 0
         local cursor = "0"
         
-        -- 清理旧索引
+        -- Clear old indexes
         local idx_pattern = string.format("idx:%s:*", entity_type)
         local idx_cursor = "0"
         repeat
@@ -290,7 +290,7 @@ local function entity_manager(keys, args)
             end
         until idx_cursor == "0"
         
-        -- 重建索引
+        -- Rebuild indexes
         repeat
             local result = redis.call('SCAN', cursor, 'MATCH', pattern, 'COUNT', 100)
             cursor = result[1]
@@ -299,7 +299,7 @@ local function entity_manager(keys, args)
                 local data = redis.call('HGET', key, 'data')
                 if data then
                     local entity = cjson.decode(data)
-                    -- 这里需要根据实体类型定义索引规则
+                    -- Here we need to define index rules based on entity type
                     reindexed = reindexed + 1
                 end
             end
@@ -311,7 +311,7 @@ local function entity_manager(keys, args)
     end
 end
 
--- 通用状态机
+-- Generic State Machine
 local function generic_state_machine(keys, args)
     if #keys < 1 or #args < 2 then
         return redis.error_reply("Usage: entity_key current_state transition [context_json]")
@@ -322,7 +322,7 @@ local function generic_state_machine(keys, args)
     local transition = args[2]
     local context = args[3] and cjson.decode(args[3]) or {}
     
-    -- 状态机定义（可以从配置中读取）
+    -- State machine definition (can be read from config)
     local state_machines = {
         alarm = {
             states = {"active", "acknowledged", "resolved", "closed"},
@@ -344,7 +344,7 @@ local function generic_state_machine(keys, args)
         }
     }
     
-    -- 获取实体类型
+    -- Get entity type
     local entity_type = redis.call('HGET', entity_key, 'type')
     if not entity_type then
         return redis.error_reply("Entity not found")
@@ -355,22 +355,22 @@ local function generic_state_machine(keys, args)
         return redis.error_reply("No state machine defined for entity type: " .. entity_type)
     end
     
-    -- 验证当前状态
+    -- Verify current state
     local actual_state = redis.call('HGET', entity_key, 'state')
     if actual_state ~= current_state then
         return redis.error_reply("State mismatch. Expected: " .. current_state .. ", Actual: " .. tostring(actual_state))
     end
     
-    -- 验证转换
+    -- Verify transition
     local next_state = sm.transitions[current_state] and sm.transitions[current_state][transition]
     if not next_state then
         return redis.error_reply("Invalid transition: " .. transition .. " from state: " .. current_state)
     end
     
-    -- 执行转换
+    -- Execute transition
     redis.call('HSET', entity_key, 'state', next_state, 'last_transition', transition, 'transition_time', tostring(redis.call('TIME')[1]))
     
-    -- 记录状态历史
+    -- Record state history
     local history_key = entity_key .. ":state_history"
     redis.call('LPUSH', history_key, cjson.encode({
         from = current_state,
@@ -379,9 +379,9 @@ local function generic_state_machine(keys, args)
         timestamp = redis.call('TIME')[1],
         context = context
     }))
-    redis.call('LTRIM', history_key, 0, 99) -- 保留最近100条
+    redis.call('LTRIM', history_key, 0, 99) -- Keep last 100 records
     
-    -- 发布状态变更事件
+    -- Publish state change event
     redis.call('PUBLISH', string.format("state_change:%s", entity_type), cjson.encode({
         entity_key = entity_key,
         from = current_state,
@@ -397,7 +397,7 @@ local function generic_state_machine(keys, args)
     })
 end
 
--- 通用多维索引管理
+-- Generic Multi-dimensional Index Management
 local function generic_multi_index(keys, args)
     if #args < 2 then
         return redis.error_reply("Usage: action index_config_json [params...]")
@@ -410,7 +410,7 @@ local function generic_multi_index(keys, args)
         local entity_key = args[3]
         local values = cjson.decode(args[4])
         
-        -- 单字段索引
+        -- Single field index
         if config.single_fields then
             for _, field in ipairs(config.single_fields) do
                 if values[field] then
@@ -423,7 +423,7 @@ local function generic_multi_index(keys, args)
             end
         end
         
-        -- 复合索引
+        -- Composite index
         if config.composite_indexes then
             for _, comp_idx in ipairs(config.composite_indexes) do
                 local idx_values = {}
@@ -451,7 +451,7 @@ local function generic_multi_index(keys, args)
             end
         end
         
-        -- 排序索引
+        -- Sorted index
         if config.sorted_fields then
             for _, field_config in ipairs(config.sorted_fields) do
                 local field = field_config.field
@@ -471,7 +471,7 @@ local function generic_multi_index(keys, args)
     elseif action == "remove" then
         local entity_key = args[3]
         
-        -- 删除所有相关索引
+        -- Delete all related indexes
         local cursor = "0"
         local pattern = string.format("idx:%s:*", config.entity_type)
         
@@ -496,7 +496,7 @@ local function generic_multi_index(keys, args)
         local results = {}
         
         if query_params.type == "intersection" then
-            -- 多条件交集查询
+            -- Multi-condition intersection query
             local idx_keys = {}
             for field, value in pairs(query_params.conditions) do
                 table.insert(idx_keys, string.format("idx:%s:%s:%s", config.entity_type, field, value))
@@ -507,7 +507,7 @@ local function generic_multi_index(keys, args)
             end
             
         elseif query_params.type == "union" then
-            -- 多条件并集查询
+            -- Multi-condition union query
             local idx_keys = {}
             for field, value in pairs(query_params.conditions) do
                 table.insert(idx_keys, string.format("idx:%s:%s:%s", config.entity_type, field, value))
@@ -518,7 +518,7 @@ local function generic_multi_index(keys, args)
             end
             
         elseif query_params.type == "range" then
-            -- 范围查询
+            -- Range query
             local idx_key = string.format("idx:%s:%s:sorted", config.entity_type, query_params.field)
             results = redis.call('ZRANGEBYSCORE', idx_key, 
                 query_params.min or '-inf', 
@@ -533,7 +533,7 @@ local function generic_multi_index(keys, args)
     end
 end
 
--- 通用条件评估器
+-- Generic Condition Evaluator
 local function generic_condition_eval(keys, args)
     if #args < 2 then
         return redis.error_reply("Usage: conditions_json context_json")
@@ -542,7 +542,7 @@ local function generic_condition_eval(keys, args)
     local conditions = cjson.decode(args[1])
     local context = cjson.decode(args[2])
     
-    -- 评估单个条件
+    -- Evaluate single condition
     local function evaluate_single_condition(condition, ctx)
         local field_value = ctx[condition.field]
         local operator = condition.operator
@@ -588,16 +588,16 @@ local function generic_condition_eval(keys, args)
         end
     end
     
-    -- 评估条件组
+    -- Evaluate condition group
     local function evaluate_conditions(conds, ctx, logic)
         local results = {}
         
         for _, cond in ipairs(conds) do
             if cond.conditions then
-                -- 嵌套条件组
+                -- Nested condition group
                 table.insert(results, evaluate_conditions(cond.conditions, ctx, cond.logic or "and"))
             else
-                -- 单个条件
+                -- Single condition
                 table.insert(results, evaluate_single_condition(cond, ctx))
             end
         end
@@ -627,7 +627,7 @@ local function generic_condition_eval(keys, args)
     })
 end
 
--- 通用批量数据收集器
+-- Generic Batch Data Collector
 local function generic_batch_collect(keys, args)
     if #args < 1 then
         return redis.error_reply("Usage: collect_config_json")
@@ -636,10 +636,10 @@ local function generic_batch_collect(keys, args)
     local config = cjson.decode(args[1])
     local results = {}
     
-    -- 收集数据
+    -- Collect data
     for _, source in ipairs(config.sources) do
         if source.type == "keys" then
-            -- 直接指定的键
+            -- Directly specified keys
             for _, key in ipairs(source.keys) do
                 local key_type = redis.call('TYPE', key).ok
                 local data = nil
@@ -666,7 +666,7 @@ local function generic_batch_collect(keys, args)
             end
             
         elseif source.type == "pattern" then
-            -- 模式匹配
+            -- Pattern matching
             local cursor = "0"
             local count = 0
             local limit = source.limit or 1000
@@ -699,7 +699,7 @@ local function generic_batch_collect(keys, args)
             until cursor == "0" or count >= limit
             
         elseif source.type == "index" then
-            -- 从索引收集
+            -- Collect from index
             local idx_key = string.format("idx:%s:%s:%s", source.entity_type, source.field, source.value)
             local entity_keys = redis.call('SMEMBERS', idx_key)
             
@@ -716,13 +716,13 @@ local function generic_batch_collect(keys, args)
         end
     end
     
-    -- 应用转换
+    -- Apply transformation
     if config.transform then
         local transformed_results = {}
         
         for _, result in ipairs(results) do
             if config.transform == "flatten" and result.type == "hash" then
-                -- 将hash扁平化为对象
+                -- Flatten hash to object
                 local obj = {}
                 for i = 1, #result.data, 2 do
                     obj[result.data[i]] = result.data[i + 1]
@@ -739,7 +739,7 @@ local function generic_batch_collect(keys, args)
         results = transformed_results
     end
     
-    -- 聚合
+    -- Aggregate
     if config.aggregate then
         local aggregated = {}
         
@@ -749,7 +749,7 @@ local function generic_batch_collect(keys, args)
             aggregated.groups = {}
             
             for _, result in ipairs(results) do
-                -- 假设数据已经被扁平化
+                -- Assume data has been flattened
                 local group_value = result.data[config.aggregate.field]
                 if group_value then
                     if not aggregated.groups[group_value] then
@@ -769,7 +769,7 @@ local function generic_batch_collect(keys, args)
     })
 end
 
--- 通用事件发布器
+-- Generic Event Publisher
 local function generic_event_publish(keys, args)
     if #args < 2 then
         return redis.error_reply("Usage: event_type event_data [options_json]")
@@ -790,7 +790,7 @@ local function generic_event_publish(keys, args)
         source = options.source or "system"
     }
     
-    -- 存储事件
+    -- Store event
     if options.persist then
         local event_key = string.format("event:%s:%d", event_type, event_id)
         redis.call('HSET', event_key, 
@@ -805,7 +805,7 @@ local function generic_event_publish(keys, args)
             redis.call('EXPIRE', event_key, options.ttl)
         end
         
-        -- 添加到事件流
+        -- Add to event stream
         local stream_key = string.format("event:stream:%s", event_type)
         redis.call('XADD', stream_key, 'MAXLEN', '~', options.max_stream_length or 10000, '*',
             'id', event_id,
@@ -814,7 +814,7 @@ local function generic_event_publish(keys, args)
         )
     end
     
-    -- 发布到频道
+    -- Publish to channel
     local channels = {
         string.format("event:%s", event_type),
         "event:all"
@@ -831,7 +831,7 @@ local function generic_event_publish(keys, args)
         redis.call('PUBLISH', channel, event_json)
     end
     
-    -- 更新统计
+    -- Update statistics
     redis.call('HINCRBY', 'event:stats', event_type, 1)
     redis.call('HINCRBY', 'event:stats', 'total', 1)
     
@@ -842,7 +842,7 @@ local function generic_event_publish(keys, args)
     })
 end
 
--- 通用统计引擎
+-- Generic Statistics Engine
 local function generic_statistics(keys, args)
     if #args < 2 then
         return redis.error_reply("Usage: action stat_config_json [params...]")
@@ -852,7 +852,7 @@ local function generic_statistics(keys, args)
     local config = cjson.decode(args[2])
     
     if action == "increment" then
-        -- 增量统计
+        -- Incremental statistics
         local value = tonumber(args[3] or 1)
         local results = {}
         
@@ -869,7 +869,7 @@ local function generic_statistics(keys, args)
                 table.insert(results, {name = stat.name, value = value})
                 
             elseif stat.type == "histogram" then
-                -- 简单的直方图实现
+                -- Simple histogram implementation
                 local bucket = math.floor(value / (stat.bucket_size or 10)) * (stat.bucket_size or 10)
                 redis.call('HINCRBY', stat_key, 'bucket:' .. bucket, 1)
                 redis.call('HINCRBY', stat_key, 'count', 1)
@@ -885,7 +885,7 @@ local function generic_statistics(keys, args)
                 })
             end
             
-            -- 时间窗口统计
+            -- Time window statistics
             if stat.time_window then
                 local window_key = string.format("%s:window:%d", stat_key, 
                     math.floor(redis.call('TIME')[1] / stat.time_window))
@@ -897,7 +897,7 @@ local function generic_statistics(keys, args)
         return cjson.encode(results)
         
     elseif action == "get" then
-        -- 获取统计
+        -- Get statistics
         local results = {}
         
         for _, stat in ipairs(config.stats) do
@@ -912,7 +912,7 @@ local function generic_statistics(keys, args)
                 stat_data.sum = tonumber(redis.call('HGET', stat_key, 'sum')) or 0
                 stat_data.avg = stat_data.count > 0 and (stat_data.sum / stat_data.count) or 0
                 
-                -- 获取分布
+                -- Get distribution
                 if args[3] == "detailed" then
                     stat_data.distribution = {}
                     local all_fields = redis.call('HGETALL', stat_key)
@@ -925,7 +925,7 @@ local function generic_statistics(keys, args)
                 end
             end
             
-            -- 时间窗口统计
+            -- Time window statistics
             if stat.time_window and args[3] == "windowed" then
                 stat_data.windows = {}
                 local current_time = redis.call('TIME')[1]
@@ -952,14 +952,14 @@ local function generic_statistics(keys, args)
         return cjson.encode(results)
         
     elseif action == "reset" then
-        -- 重置统计
+        -- Reset statistics
         local reset_count = 0
         
         for _, stat in ipairs(config.stats) do
             local stat_key = string.format("stat:%s:%s", config.namespace, stat.name)
             redis.call('DEL', stat_key)
             
-            -- 删除时间窗口数据
+            -- Delete time window data
             if stat.time_window then
                 local pattern = stat_key .. ":window:*"
                 local cursor = "0"
@@ -982,7 +982,7 @@ local function generic_statistics(keys, args)
     end
 end
 
--- 通用批量点位初始化函数
+-- Generic Batch Point Initialization Function
 local function generic_batch_init_points(keys, args)
     if #args < 3 then
         return redis.error_reply("Usage: channel_id telemetry_type points_json [options_json]")
@@ -996,7 +996,7 @@ local function generic_batch_init_points(keys, args)
     local default_value = options.default_value or 0.0
     local force_overwrite = options.force_overwrite or false
     
-    -- 构建Hash key
+    -- Build Hash key
     local hash_key = string.format("comsrv:%s:%s", channel_id, telemetry_type)
     
     -- Process points in batches to avoid unpack limit
@@ -1041,12 +1041,12 @@ local function generic_batch_init_points(keys, args)
         end
     end
     
-    -- 设置过期时间（如果指定）
+    -- Set expiration time (if specified)
     if options.ttl and options.ttl > 0 then
         redis.call('EXPIRE', hash_key, options.ttl)
     end
     
-    -- 返回初始化结果
+    -- Return initialization result
     return cjson.encode({
         status = "success",
         channel_id = channel_id,
@@ -1058,7 +1058,7 @@ local function generic_batch_init_points(keys, args)
     })
 end
 
--- 注册函数
+-- Register functions
 redis.register_function('generic_store', generic_store)
 redis.register_function('generic_batch_sync', generic_batch_sync)
 redis.register_function('generic_query', generic_query)

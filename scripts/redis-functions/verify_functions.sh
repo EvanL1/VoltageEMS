@@ -1,21 +1,21 @@
 #!/bin/bash
 
-# 验证 Redis Functions 整合后的兼容性
+# Verify Redis Functions compatibility after integration
 
-echo "=== 验证 Redis Functions 兼容性 ==="
+echo "=== Verifying Redis Functions Compatibility ==="
 
-# 颜色定义
+# Color definitions
 GREEN='\033[0;32m'
 RED='\033[0;31m'
 YELLOW='\033[0;33m'
 NC='\033[0m' # No Color
 
-# Redis 连接
+# Redis connection
 REDIS_CLI="${REDIS_CLI:-redis-cli}"
 REDIS_HOST="${REDIS_HOST:-localhost}"
 REDIS_PORT="${REDIS_PORT:-6379}"
 
-# 需要验证的函数列表
+# Functions to verify
 declare -A FUNCTIONS=(
     # Core functions
     ["generic_store"]="core.lua"
@@ -60,8 +60,8 @@ declare -A FUNCTIONS=(
     ["hissrv_collect_data"]="services.lua"
     ["hissrv_convert_to_line_protocol"]="services.lua"
     ["hissrv_get_batch"]="services.lua"
-    ["hissrv_ack_batch"]="services.lua (新增)"
-    ["hissrv_get_batch_lines"]="services.lua (新增)"
+    ["hissrv_ack_batch"]="services.lua (new)"
+    ["hissrv_get_batch_lines"]="services.lua (new)"
     
     # Service functions - ModSrv
     ["modsrv_init_mappings"]="services.lua"
@@ -72,9 +72,9 @@ declare -A FUNCTIONS=(
     ["netsrv_collect_data"]="services.lua"
     ["netsrv_forward_data"]="services.lua"
     ["netsrv_get_stats"]="services.lua"
-    ["netsrv_configure_route"]="services.lua (新增)"
-    ["netsrv_get_routes"]="services.lua (新增)"
-    ["netsrv_clear_queues"]="services.lua (新增)"
+    ["netsrv_configure_route"]="services.lua (new)"
+    ["netsrv_get_routes"]="services.lua (new)"
+    ["netsrv_clear_queues"]="services.lua (new)"
     
     # Service functions - RuleSrv
     ["rulesrv_store_rule"]="services.lua"
@@ -83,58 +83,58 @@ declare -A FUNCTIONS=(
     ["rulesrv_execute_dag"]="services.lua"
 )
 
-# 检查 Redis 连接
-echo -n "检查 Redis 连接... "
+# Check Redis connection
+echo -n "Checking Redis connection... "
 if $REDIS_CLI -h $REDIS_HOST -p $REDIS_PORT ping > /dev/null 2>&1; then
-    echo -e "${GREEN}成功${NC}"
+    echo -e "${GREEN}Success${NC}"
 else
-    echo -e "${RED}失败${NC}"
-    echo "请确保 Redis 已启动"
+    echo -e "${RED}Failed${NC}"
+    echo "Please ensure Redis is running"
     exit 1
 fi
 
-# 获取已加载的函数
+# Get loaded functions
 echo ""
-echo "获取已加载的函数..."
+echo "Getting loaded functions..."
 LOADED_FUNCTIONS=$($REDIS_CLI -h $REDIS_HOST -p $REDIS_PORT FUNCTION LIST 2>/dev/null | grep -E "name" | awk -F'"' '{print $4}')
 
-# 统计
+# Statistics
 TOTAL=0
 FOUND=0
 MISSING=0
 
 echo ""
-echo "验证函数列表："
+echo "Verifying function list:"
 echo "================================================================"
-printf "%-35s %-20s %s\n" "函数名" "来源文件" "状态"
+printf "%-35s %-20s %s\n" "Function Name" "Source File" "Status"
 echo "================================================================"
 
-# 验证每个函数
+# Verify each function
 for func in "${!FUNCTIONS[@]}"; do
     TOTAL=$((TOTAL + 1))
     SOURCE="${FUNCTIONS[$func]}"
     
     if echo "$LOADED_FUNCTIONS" | grep -q "^${func}$"; then
         printf "%-35s %-20s " "$func" "$SOURCE"
-        echo -e "${GREEN}✓ 已加载${NC}"
+        echo -e "${GREEN}✓ Loaded${NC}"
         FOUND=$((FOUND + 1))
     else
         printf "%-35s %-20s " "$func" "$SOURCE"
-        echo -e "${RED}✗ 未找到${NC}"
+        echo -e "${RED}✗ Not found${NC}"
         MISSING=$((MISSING + 1))
     fi
 done
 
 echo "================================================================"
 echo ""
-echo "统计结果："
-echo "  总计函数: $TOTAL"
-echo -e "  已加载: ${GREEN}$FOUND${NC}"
-echo -e "  缺失: ${RED}$MISSING${NC}"
+echo "Statistics:"
+echo "  Total functions: $TOTAL"
+echo -e "  Loaded: ${GREEN}$FOUND${NC}"
+echo -e "  Missing: ${RED}$MISSING${NC}"
 
-# 检查服务调用的函数
+# Check service functions
 echo ""
-echo "检查服务兼容性："
+echo "Checking service compatibility:"
 echo "================================"
 
 # AlarmSrv
@@ -148,9 +148,9 @@ for func in "${ALARM_FUNCS[@]}"; do
     fi
 done
 if $ALARM_OK; then
-    echo -e "${GREEN}✓ 兼容${NC}"
+    echo -e "${GREEN}✓ Compatible${NC}"
 else
-    echo -e "${RED}✗ 不兼容${NC}"
+    echo -e "${RED}✗ Incompatible${NC}"
 fi
 
 # HisSrv
@@ -164,20 +164,20 @@ for func in "${HISSRV_FUNCS[@]}"; do
     fi
 done
 if $HISSRV_OK; then
-    echo -e "${GREEN}✓ 兼容${NC}"
+    echo -e "${GREEN}✓ Compatible${NC}"
 else
-    echo -e "${RED}✗ 不兼容${NC}"
+    echo -e "${RED}✗ Incompatible${NC}"
 fi
 
 # RuleSrv
 echo -n "RuleSrv: "
 RULESRV_FUNCS=("store_rule" "get_rule" "delete_rule" "execute_dag_rule")
 RULESRV_OK=true
-# RuleSrv 使用 store_rule 而不是 save_rule
+# RuleSrv uses store_rule instead of save_rule
 if echo "$LOADED_FUNCTIONS" | grep -q "^store_rule$"; then
-    echo -e "${GREEN}✓ 兼容（store_rule 别名可用）${NC}"
+    echo -e "${GREEN}✓ Compatible (store_rule alias available)${NC}"
 else
-    echo -e "${RED}✗ 不兼容${NC}"
+    echo -e "${RED}✗ Incompatible${NC}"
 fi
 
 # NetSrv
@@ -191,25 +191,25 @@ for func in "${NETSRV_FUNCS[@]}"; do
     fi
 done
 if $NETSRV_OK; then
-    echo -e "${GREEN}✓ 兼容${NC}"
+    echo -e "${GREEN}✓ Compatible${NC}"
 else
-    echo -e "${RED}✗ 不兼容${NC}"
+    echo -e "${RED}✗ Incompatible${NC}"
 fi
 
 # ComSrv
 echo -n "ComSrv: "
 if echo "$LOADED_FUNCTIONS" | grep -q "^sync_channel_data$"; then
-    echo -e "${GREEN}✓ 兼容${NC}"
+    echo -e "${GREEN}✓ Compatible${NC}"
 else
-    echo -e "${RED}✗ 不兼容${NC}"
+    echo -e "${RED}✗ Incompatible${NC}"
 fi
 
 echo "================================"
 
 if [ $MISSING -eq 0 ]; then
     echo ""
-    echo -e "${GREEN}✅ 所有函数已正确加载，服务兼容性验证通过！${NC}"
+    echo -e "${GREEN}✅ All functions loaded correctly, service compatibility verified!${NC}"
 else
     echo ""
-    echo -e "${YELLOW}⚠️  有 $MISSING 个函数未加载，请重启 Redis 服务或运行独立加载脚本${NC}"
+    echo -e "${YELLOW}⚠️  $MISSING functions not loaded, please restart Redis service or run standalone loading script${NC}"
 fi

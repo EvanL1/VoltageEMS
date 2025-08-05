@@ -1,6 +1,6 @@
-//! 配置工具模块
+//! configuring工具modular
 //!
-//! 提供统一的环境变量处理和配置加载功能
+//! 提供统一的cycle境variableprocessing和configuringloadingfunction
 
 pub mod loader;
 pub mod utils;

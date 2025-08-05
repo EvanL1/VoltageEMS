@@ -62,7 +62,7 @@ local function dag_executor(keys, args)
         local current_id = table.remove(queue, 1)
         local node = node_map[current_id]
         
-        -- 执行节点
+        -- Execute node
         local result = nil
         if node.type == "condition" then
             -- 评估条件
@@ -231,7 +231,7 @@ function convert_single_to_line_protocol(data, config)
         end
     end
     
-    -- 构建字段
+    -- Build fields
     local fields = {}
     if data.fields then
         for k, v in pairs(data.fields) do
@@ -260,7 +260,7 @@ function convert_single_to_line_protocol(data, config)
     
     table.insert(parts, table.concat(fields, ","))
     
-    -- 添加时间戳
+    -- Add timestamp
     if data.timestamp then
         -- 确保时间戳是纳秒级
         local ts = tonumber(data.timestamp)
@@ -317,6 +317,6 @@ function format_field_value(value, field_type)
     end
 end
 
--- 注册函数
+-- Register functions
 redis.register_function('dag_executor', dag_executor)
 redis.register_function('line_protocol_converter', line_protocol_converter)

@@ -1,6 +1,6 @@
-//! 极简模板管理模块
+//! 极简模板managingmodular
 //!
-//! 提供设备模板的管理功能，支持JSON格式的模板定义
+//! 提供device模板的managingfunction，supportingJSON格式的模板definition
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -9,27 +9,27 @@ use tracing::{debug, info, warn};
 
 use crate::error::{ModelSrvError, Result};
 
-/// 极简模板定义
+/// 极简模板definition
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Template {
     /// 模板ID
     pub id: String,
-    /// 数据点定义 (key: 点名, value: 单位，null表示无单位)
+    /// data点definition (key: 点名, value: 单位，nulltable示none单位)
     pub data: HashMap<String, Option<String>>,
-    /// 操作定义 (key: 操作名, value: 参数单位，null表示无参数)
+    /// operationdefinition (key: operation名, value: parameter单位，nulltable示noneparameter)
     pub action: HashMap<String, Option<String>>,
 }
 
-/// 模板管理器
+/// 模板managing器
 pub struct TemplateManager {
-    /// 模板存储路径
+    /// 模板storagepath
     template_dir: PathBuf,
-    /// 已加载的模板缓存
+    /// 已loading的模板cache
     pub templates: HashMap<String, Template>,
 }
 
 impl TemplateManager {
-    /// 创建模板管理器
+    /// Create模板managing器
     pub fn new<P: AsRef<Path>>(template_dir: P) -> Self {
         Self {
             template_dir: template_dir.as_ref().to_path_buf(),
@@ -37,7 +37,7 @@ impl TemplateManager {
         }
     }
 
-    /// 加载所有模板
+    /// Loadall模板
     pub async fn load_all_templates(&mut self) -> Result<()> {
         info!("Loading templates from: {:?}", self.template_dir);
 
@@ -53,7 +53,7 @@ impl TemplateManager {
         Ok(())
     }
 
-    /// 递归加载目录中的模板（只支持JSON格式）
+    /// recursiveloadingdirectorymedium的模板（只supportingJSON格式）
     fn load_templates_from_dir(&mut self, dir: &Path) -> Result<()> {
         let entries = std::fs::read_dir(dir).map_err(|e| {
             ModelSrvError::template(format!("Failed to read template directory: {}", e))
@@ -67,7 +67,7 @@ impl TemplateManager {
             let path = entry.path();
 
             if path.is_dir() {
-                // 递归加载子目录
+                // recursiveloading子directory
                 self.load_templates_from_dir(&path)?;
             } else if path.extension().and_then(|s| s.to_str()) == Some("json") {
                 match self.load_template_file(&path) {
@@ -85,7 +85,7 @@ impl TemplateManager {
         Ok(())
     }
 
-    /// 加载单个模板文件
+    /// Load单个模板file
     fn load_template_file(&self, path: &Path) -> Result<Template> {
         let content = std::fs::read_to_string(path)
             .map_err(|e| ModelSrvError::template(format!("Failed to read template file: {}", e)))?;
@@ -94,30 +94,30 @@ impl TemplateManager {
             ModelSrvError::template(format!("Failed to parse template JSON: {}", e))
         })?;
 
-        // 验证模板
+        // validation模板
         self.validate_template(&template)?;
 
         Ok(template)
     }
 
-    /// 获取模板
+    /// Get模板
     pub fn get_template(&self, template_id: &str) -> Option<&Template> {
         self.templates.get(template_id)
     }
 
-    /// 列出所有模板
+    /// column出all模板
     pub fn list_templates(&self) -> Vec<&Template> {
         self.templates.values().collect()
     }
 
-    /// 验证模板
+    /// Validate模板
     pub fn validate_template(&self, template: &Template) -> Result<()> {
-        // 验证模板ID
+        // validation模板ID
         if template.id.is_empty() {
             return Err(ModelSrvError::template("Template ID cannot be empty"));
         }
 
-        // 至少需要一个数据点或操作
+        // 至少需要一个data点或operation
         if template.data.is_empty() && template.action.is_empty() {
             return Err(ModelSrvError::template(
                 "Template must have at least one data point or action",
@@ -127,26 +127,26 @@ impl TemplateManager {
         Ok(())
     }
 
-    /// 保存模板到文件
+    /// Save模板到file
     pub async fn save_template(&self, template: &Template) -> Result<()> {
-        // 验证模板
+        // validation模板
         self.validate_template(template)?;
 
         let file_path = self.template_dir.join(format!("{}.json", template.id));
 
-        // 创建目录（如果不存在）
+        // createdirectory（如果不exists）
         if let Some(parent) = file_path.parent() {
             std::fs::create_dir_all(parent).map_err(|e| {
                 ModelSrvError::template(format!("Failed to create template directory: {}", e))
             })?;
         }
 
-        // 序列化内容
+        // serializing内容
         let content = serde_json::to_string_pretty(template).map_err(|e| {
             ModelSrvError::template(format!("Failed to serialize template to JSON: {}", e))
         })?;
 
-        // 写入文件
+        // writefile
         std::fs::write(&file_path, content).map_err(|e| {
             ModelSrvError::template(format!("Failed to write template file: {}", e))
         })?;
@@ -164,7 +164,7 @@ mod tests {
     fn test_template_validation() {
         let manager = TemplateManager::new("templates");
 
-        // 空模板应该失败
+        // empty模板应该failed
         let empty_template = Template {
             id: "test".to_string(),
             data: HashMap::new(),
@@ -172,7 +172,7 @@ mod tests {
         };
         assert!(manager.validate_template(&empty_template).is_err());
 
-        // 有数据点的模板应该通过
+        // 有data点的模板应该通过
         let mut data_template = Template {
             id: "test".to_string(),
             data: HashMap::new(),
@@ -183,7 +183,7 @@ mod tests {
             .insert("voltage".to_string(), Some("V".to_string()));
         assert!(manager.validate_template(&data_template).is_ok());
 
-        // 有操作的模板应该通过
+        // 有operation的模板应该通过
         let mut action_template = Template {
             id: "test".to_string(),
             data: HashMap::new(),
@@ -195,14 +195,14 @@ mod tests {
 
     #[test]
     fn test_template_creation() {
-        // 创建电表模板
+        // create电table模板
         let mut power_meter = Template {
             id: "power_meter".to_string(),
             data: HashMap::new(),
             action: HashMap::new(),
         };
 
-        // 添加数据点
+        // 添加data点
         power_meter
             .data
             .insert("voltage".to_string(), Some("V".to_string()));
@@ -220,7 +220,7 @@ mod tests {
             .insert("frequency".to_string(), Some("Hz".to_string()));
         power_meter.data.insert("power_factor".to_string(), None);
 
-        // 添加操作
+        // 添加operation
         power_meter.action.insert("reset".to_string(), None);
         power_meter
             .action

@@ -1,12 +1,12 @@
-//! gRPC 插件支持模块
+//! gRPC pluginsupportingmodular
 //!
-//! 提供通过 gRPC 与外部协议插件通信的能力
+//! 提供通过 gRPC 与exteriorprotocolplugincommunicate的capability
 
 pub mod adapter;
 pub mod client;
 pub mod manager;
 
-// 重新导出主要类型
+// 重新exportmaster要type
 pub use adapter::GrpcPluginAdapter;
 pub use client::GrpcPluginClient;
 pub use manager::PluginManager;

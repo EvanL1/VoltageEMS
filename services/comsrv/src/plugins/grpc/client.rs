@@ -1,4 +1,4 @@
-//! gRPC 插件客户端封装
+//! gRPC pluginclient封装
 
 use crate::utils::error::{ComSrvError, Result};
 use std::time::Duration;
@@ -10,7 +10,7 @@ use super::proto::{
     EncodeRequest, EncodeResponse, HealthStatus, ParseRequest, ParseResponse, PluginInfo,
 };
 
-/// gRPC 插件客户端
+/// gRPC pluginclient
 #[derive(Clone, Debug)]
 pub struct GrpcPluginClient {
     client: ProtocolPluginClient<Channel>,
@@ -18,7 +18,7 @@ pub struct GrpcPluginClient {
 }
 
 impl GrpcPluginClient {
-    /// 创建新的 gRPC 插件客户端
+    /// Create新的 gRPC pluginclient
     pub async fn new(endpoint: &str) -> Result<Self> {
         info!("Creating gRPC plugin client for endpoint: {}", endpoint);
 
@@ -38,7 +38,7 @@ impl GrpcPluginClient {
         })
     }
 
-    /// 获取插件信息
+    /// Getplugininfo
     pub async fn get_info(&mut self) -> Result<PluginInfo> {
         debug!("Getting plugin info from {}", self.endpoint);
 
@@ -51,7 +51,7 @@ impl GrpcPluginClient {
         Ok(response.into_inner())
     }
 
-    /// 健康检查
+    /// 健康checking
     pub async fn health_check(&mut self) -> Result<HealthStatus> {
         let response = self
             .client
@@ -62,7 +62,7 @@ impl GrpcPluginClient {
         Ok(response.into_inner())
     }
 
-    /// 批量读取数据
+    /// batchreaddata
     pub async fn batch_read(&mut self, request: BatchReadRequest) -> Result<BatchReadResponse> {
         info!(
             "Sending BatchRead request to plugin: channel_id={}, points={:?}, params={:?}",
@@ -84,7 +84,7 @@ impl GrpcPluginClient {
         Ok(result)
     }
 
-    /// 解析原始数据
+    /// Parseprimaldata
     pub async fn parse_data(&mut self, request: ParseRequest) -> Result<ParseResponse> {
         debug!("Parsing {} bytes of raw data", request.raw_data.len());
 
@@ -103,7 +103,7 @@ impl GrpcPluginClient {
         Ok(result)
     }
 
-    /// 编码控制命令
+    /// encodingcontrolling命令
     pub async fn encode_command(&mut self, request: EncodeRequest) -> Result<EncodeResponse> {
         debug!("Encoding command for point {}", request.point_id);
 

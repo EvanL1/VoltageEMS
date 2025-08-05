@@ -3,7 +3,7 @@ use std::path::Path;
 use voltage_libs::config::utils::get_global_redis_url;
 use voltage_libs::config::ConfigLoader;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Config {
     #[serde(default)]
     pub server: ServerConfig,
@@ -47,7 +47,7 @@ impl Config {
             .with_defaults(Config::default())
             .with_env_prefix("APIGATEWAY");
 
-        let mut config = if let Some(path) = yaml_path {
+        let config = if let Some(path) = yaml_path {
             loader.with_yaml_file(&path).build()
         } else {
             loader.build()
@@ -83,15 +83,6 @@ impl Default for RedisConfig {
         Self {
             url: default_redis_url(),
             pool_size: default_pool_size(),
-        }
-    }
-}
-
-impl Default for Config {
-    fn default() -> Self {
-        Self {
-            server: ServerConfig::default(),
-            redis: RedisConfig::default(),
         }
     }
 }

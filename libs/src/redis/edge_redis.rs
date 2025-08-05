@@ -1,19 +1,19 @@
-//! 边端设备Redis连接管理
+//! edge端deviceRedisconnectionmanaging
 //!
-//! 提供轻量级的Redis连接和Lua脚本管理功能
+//! 提供轻量级的Redisconnection和Lua脚本managingfunction
 
 use crate::error::Result;
 use redis::{aio::ConnectionManager, AsyncCommands, Client};
 use serde_json;
 
-/// 边端设备Redis连接管理器
+/// edge端deviceRedisconnectionmanaging器
 pub struct EdgeRedis {
-    /// Redis连接管理器
+    /// Redisconnectionmanaging器
     conn: ConnectionManager,
 }
 
 impl EdgeRedis {
-    /// 创建新的边端Redis连接
+    /// Create新的edge端Redisconnection
     pub async fn new(redis_url: &str) -> Result<Self> {
         let client = Client::open(redis_url)?;
         let conn = ConnectionManager::new(client).await?;
@@ -21,7 +21,7 @@ impl EdgeRedis {
         Ok(Self { conn })
     }
 
-    /// 同步测量数据
+    /// synchronous测量data
     pub async fn sync_measurement(&mut self, channel: u32, point: u32, value: f64) -> Result<()> {
         let _: String = redis::cmd("FCALL")
             .arg("modsrv_sync_measurement")
@@ -35,7 +35,7 @@ impl EdgeRedis {
         Ok(())
     }
 
-    /// 发送控制命令
+    /// Sendcontrolling命令
     pub async fn send_control(&mut self, model_id: &str, control: &str, value: f64) -> Result<()> {
         let _: String = redis::cmd("FCALL")
             .arg("modsrv_send_control")
@@ -48,7 +48,7 @@ impl EdgeRedis {
         Ok(())
     }
 
-    /// 获取模型所有值
+    /// Get模型allvalue
     pub async fn get_model_values(&mut self, model_id: &str) -> Result<Vec<(String, String)>> {
         let result: String = redis::cmd("FCALL")
             .arg("modsrv_get_values")
@@ -57,7 +57,7 @@ impl EdgeRedis {
             .query_async(&mut self.conn)
             .await?;
 
-        // 解析 JSON 结果
+        // parse JSON result
         if let Ok(json_data) = serde_json::from_str::<serde_json::Value>(&result) {
             if let Some(obj) = json_data.as_object() {
                 return Ok(obj
@@ -67,7 +67,7 @@ impl EdgeRedis {
             }
         }
 
-        // 如果解析失败，尝试作为字符串数组处理
+        // 如果parsefailed，尝试作为字符串arrayprocessing
         let parts: Vec<&str> = result.split_whitespace().collect();
         let mut pairs = Vec::new();
         for chunk in parts.chunks(2) {
@@ -78,7 +78,7 @@ impl EdgeRedis {
         Ok(pairs)
     }
 
-    /// 初始化映射
+    /// Initializemapping
     pub async fn init_mapping(&mut self, mapping_type: &str, key: &str, value: &str) -> Result<()> {
         let mapping = serde_json::json!([{
             "key": key,
@@ -96,7 +96,7 @@ impl EdgeRedis {
         Ok(())
     }
 
-    /// 清理所有映射
+    /// Cleanallmapping
     pub async fn clear_mappings(&mut self) -> Result<i64> {
         let count: i64 = redis::cmd("FCALL")
             .arg("modsrv_clear_mappings")
@@ -107,12 +107,12 @@ impl EdgeRedis {
         Ok(count)
     }
 
-    /// 获取底层连接（用于兼容现有代码）
+    /// Get底层connection（用于兼容现有代码）
     pub fn get_connection(&mut self) -> &mut ConnectionManager {
         &mut self.conn
     }
 
-    /// 基础Redis操作 - HSET
+    /// 基础Redisoperation - HSET
     pub async fn hset<K, F, V>(&mut self, key: K, field: F, value: V) -> Result<()>
     where
         K: redis::ToRedisArgs + Send + Sync,
@@ -123,7 +123,7 @@ impl EdgeRedis {
         Ok(())
     }
 
-    /// 基础Redis操作 - HGET
+    /// 基础Redisoperation - HGET
     pub async fn hget<K, F, RV>(&mut self, key: K, field: F) -> Result<Option<RV>>
     where
         K: redis::ToRedisArgs + Send + Sync,
@@ -133,7 +133,7 @@ impl EdgeRedis {
         Ok(self.conn.hget(key, field).await?)
     }
 
-    /// 基础Redis操作 - HGETALL
+    /// 基础Redisoperation - HGETALL
     pub async fn hgetall<K, RV>(&mut self, key: K) -> Result<RV>
     where
         K: redis::ToRedisArgs + Send + Sync,
@@ -142,7 +142,7 @@ impl EdgeRedis {
         Ok(self.conn.hgetall(key).await?)
     }
 
-    /// 基础Redis操作 - PUBLISH
+    /// 基础Redisoperation - PUBLISH
     pub async fn publish<K, V>(&mut self, channel: K, message: V) -> Result<()>
     where
         K: redis::ToRedisArgs + Send + Sync,
@@ -159,7 +159,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_edge_redis_creation() {
-        // 这个测试需要Redis运行
+        // 这个testing需要Redisrunning
         if let Ok(_edge_redis) = EdgeRedis::new("redis://localhost:6379/0").await {
             // Connection manager created successfully, indicating Redis is accessible
             // This test passes if EdgeRedis creation succeeds

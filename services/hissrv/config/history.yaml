@@ -1,0 +1,125 @@
+# History Service Configuration
+
+# 数据映射配置
+mappings:
+  # 变压器遥测数据
+  - id: transformer_telemetry
+    name: 变压器遥测数据映射
+    description: 将变压器遥测数据映射到 InfluxDB
+    enabled: true
+    source: "comsrv:*:T"
+    measurement: transformer_telemetry
+    tags:
+      - type: Extract
+        field: channel
+      - type: Static
+        value: "device_type=transformer"
+    fields:
+      - source: "1"
+        target: voltage_a
+      - source: "2"
+        target: voltage_b
+      - source: "3"
+        target: voltage_c
+      - source: "4"
+        target: current_a
+      - source: "5"
+        target: current_b
+      - source: "6"
+        target: current_c
+      - source: "10"
+        target: power_active
+      - source: "11"
+        target: power_reactive
+      - source: "12"
+        target: power_factor
+      - source: "20"
+        target: oil_temperature
+      - source: "21"
+        target: winding_temperature
+
+  # 开关柜信号数据
+  - id: switchgear_signals
+    name: 开关柜信号数据映射
+    description: 将开关柜信号数据映射到 InfluxDB
+    enabled: true
+    source: "comsrv:*:S"
+    measurement: switchgear_signals
+    tags:
+      - type: Extract
+        field: channel
+      - type: Static
+        value: "device_type=switchgear"
+    fields:
+      - source: "1"
+        target: communication_status
+      - source: "10"
+        target: breaker_status
+      - source: "11"
+        target: earth_switch_status
+      - source: "20"
+        target: overcurrent_alarm
+      - source: "21"
+        target: short_circuit_alarm
+
+  # 电池储能系统数据
+  - id: battery_ess
+    name: 电池储能系统数据映射
+    description: 将电池数据映射到 InfluxDB
+    enabled: true
+    source: "battery:*"
+    measurement: battery_ess
+    tags:
+      - type: Static
+        value: "device_type=battery"
+      - type: Extract
+        field: channel
+    fields:
+      - source: "soc"
+        target: state_of_charge
+      - source: "voltage"
+        target: total_voltage
+      - source: "current"
+        target: current
+      - source: "temperature"
+        target: temperature
+      - source: "power"
+        target: power
+      - source: "health"
+        target: state_of_health
+      - source: "cycles"
+        target: cycle_count
+      - source: "status"
+        target: operating_status
+
+# 数据收集规则（可选）
+collection_rules:
+  - id: high_frequency_transformer
+    name: 高频变压器数据收集
+    description: 对关键变压器进行高频数据收集
+    enabled: true
+    source_pattern: "comsrv:1001:*"
+    interval_seconds: 10
+    retention_days: 7
+
+  - id: normal_collection
+    name: 常规数据收集
+    description: 所有设备的常规数据收集
+    enabled: true
+    source_pattern: "comsrv:*:*"
+    interval_seconds: 60
+    retention_days: 30
+
+# 系统设置
+settings:
+  # 轮询间隔（毫秒）
+  polling_interval_ms: 60000
+  
+  # 批次大小
+  batch_size: 1000
+  
+  # 默认数据保留天数
+  default_retention_days: 30
+  
+  # 清理任务间隔（小时）
+  cleanup_interval_hours: 24

@@ -1,13 +1,20 @@
 [build]
 # 使用更多 CPU 核心进行并行编译
-jobs = 8
+jobs = 11
 
+# Apple Silicon
+# Commented out due to lld not available on macOS by default
+# [target.aarch64-apple-darwin]
+# rustflags = ["-C", "link-arg=-fuse-ld=lld"]
+
+# Intel macOS 配置
+# Commented out due to lld not available on macOS by default
+# [target.x86_64-apple-darwin]
+# rustflags = ["-C", "link-arg=-fuse-ld=lld"]
+
+# Intel Linux 配置
 [target.x86_64-unknown-linux-gnu]
-# 优化链接器以加快编译速度
 linker = "clang"
-rustflags = ["-C", "link-arg=-fuse-ld=lld"]
-
-[target.x86_64-apple-darwin]
 rustflags = ["-C", "link-arg=-fuse-ld=lld"]
 
 # 开发时的别名
@@ -17,21 +24,34 @@ check-all = "check --all-targets --all-features"
 # 运行所有测试
 test-all = "test --workspace --all-features"
 # 严格的 clippy 检查（可选，用于代码审查）
-clippy-strict = """clippy --all-targets --all-features -- 
-    -D warnings 
-    -W clippy::unwrap_used 
-    -W clippy::expect_used 
-    -W clippy::panic 
-    -W clippy::unimplemented"""
+clippy-strict = """clippy --all-targets --all-features --
+   -D warnings
+   -W clippy::unwrap_used
+   -W clippy::expect_used
+   -W clippy::panic
+   -W clippy::unimplemented"""
 # 标准 clippy 检查（推荐日常使用）
 clippy-standard = "clippy --all-targets --all-features -- -D warnings"
 # 快速质量检查
-quality-check = """do fmt --all, 
-    clippy --all-targets --all-features -- -D warnings,
-    test --workspace --quiet"""
+quality-check = """do fmt --all,
+   clippy --all-targets --all-features -- -D warnings,
+   test --workspace --quiet"""
 # 修复所有可自动修复的问题
 fix-all = "clippy --all-targets --all-features --fix -- -D warnings"
 # 更新依赖
 update-deps = "update --workspace"
 # 清理并重新构建
 clean-build = "build --workspace --release"
+
+# 开发配置 - 快速编译
+[profile.dev]
+opt-level = 0
+debug = true
+incremental = true
+
+# 发布配置 - 最优性能
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+panic = "abort"

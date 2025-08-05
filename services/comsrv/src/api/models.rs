@@ -6,7 +6,7 @@ use std::collections::HashMap;
 // 新的简化模型
 // ============================================================================
 
-/// 控制命令（遥控）
+/// controlling命令（遥控）
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ControlCommand {
     pub point_id: u32,
