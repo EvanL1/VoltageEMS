@@ -19,7 +19,7 @@ use tokio::{
     fs,
     sync::{mpsc, RwLock},
 };
-use tracing::{error, info, warn};
+use tracing::{error, info};
 use uuid::Uuid;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -285,7 +285,7 @@ async fn sync_models_to_redis(state: &AppState) -> Result<()> {
 
     // Then, process and store models
     let models = state.models.read().await;
-    for (id, model) in models.iter() {
+    for (_id, model) in models.iter() {
         // Expand model with template data if using offsets
         let expanded_model = expand_model_with_template(model, &templates)?;
         let model_json = serde_json::to_string(&expanded_model)?;
@@ -346,17 +346,17 @@ fn create_router(state: Arc<AppState>) -> Router {
     Router::new()
         .route("/health", get(health_check))
         .route("/api/v1/templates", get(list_templates))
-        .route("/api/v1/templates/:id", get(get_template))
+        .route("/api/v1/templates/{id}", get(get_template))
         .route("/api/v1/models", get(list_models).post(create_model))
         .route(
-            "/api/v1/models/:id",
+            "/api/v1/models/{id}",
             get(get_model).patch(update_model).delete(delete_model),
         )
         .route(
-            "/api/v1/models/:id/values/:point",
+            "/api/v1/models/{id}/values/{point_name}",
             get(get_model_value).post(set_model_value),
         )
-        .route("/api/v1/models/:id/values", post(get_model_values))
+        .route("/api/v1/models/{id}/values", post(get_model_values))
         .route("/api/v1/reload", post(reload_config))
         .route("/api/v1/stats", get(get_stats))
         .with_state(state)

@@ -11,7 +11,6 @@ use axum::{
     routing::{delete, get, patch, post},
     Router,
 };
-use redis::AsyncCommands;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::{collections::HashMap, net::SocketAddr, path::PathBuf, sync::Arc};
@@ -20,7 +19,7 @@ use tokio::{
     sync::{mpsc, RwLock},
     time::{interval, Duration},
 };
-use tracing::{error, info, warn};
+use tracing::{error, info};
 use uuid::Uuid;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -176,7 +175,7 @@ async fn main() -> Result<()> {
     let execution_state = state.clone();
     let execution_handle = tokio::spawn(async move {
         let mut interval = interval(Duration::from_millis(
-            *execution_state.settings.read().await.execution_interval,
+            execution_state.settings.read().await.execution_interval,
         ));
 
         loop {
@@ -273,7 +272,7 @@ async fn sync_rules_to_redis(state: &AppState) -> Result<()> {
 
     let rules = state.rules.read().await;
 
-    for (id, rule) in rules.iter() {
+    for (_id, rule) in rules.iter() {
         let rule_json = serde_json::to_string(rule)?;
 
         // Call Redis function to upsert rule
@@ -313,10 +312,10 @@ fn create_router(state: Arc<AppState>) -> Router {
         .route("/health", get(health_check))
         .route("/api/v1/rules", get(list_rules).post(create_rule))
         .route(
-            "/api/v1/rules/:id",
+            "/api/v1/rules/{id}",
             get(get_rule).patch(update_rule).delete(delete_rule),
         )
-        .route("/api/v1/rules/:id/execute", post(execute_rule))
+        .route("/api/v1/rules/{id}/execute", post(execute_rule))
         .route("/api/v1/rules/execute", post(execute_all_rules_handler))
         .route("/api/v1/reload", post(reload_config))
         .route("/api/v1/stats", get(get_stats))

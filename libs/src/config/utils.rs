@@ -121,13 +121,13 @@ pub fn get_service_url(service_name: &str) -> String {
     } else {
         // Development environment - use localhost
         match service_name {
-            "comsrv" => "http://localhost:8081".to_string(),
-            "modsrv" => "http://localhost:8092".to_string(),
-            "alarmsrv" => "http://localhost:8080".to_string(),
-            "rulesrv" => "http://localhost:8080".to_string(),
-            "hissrv" => "http://localhost:8082".to_string(),
-            "netsrv" => "http://localhost:8087".to_string(),
-            _ => format!("http://localhost:8080"),
+            "comsrv" => "http://localhost:6000".to_string(),
+            "modsrv" => "http://localhost:6001".to_string(),
+            "alarmsrv" => "http://localhost:6002".to_string(),
+            "rulesrv" => "http://localhost:6003".to_string(),
+            "hissrv" => "http://localhost:6004".to_string(),
+            "netsrv" => "http://localhost:6006".to_string(),
+            _ => "http://localhost:6005".to_string(),
         }
     }
 }
