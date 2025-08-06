@@ -506,6 +506,134 @@ impl ConfigManager {
         Ok(())
     }
 
+    /// Validate all configuration files exist and are accessible
+    pub async fn validate_files(&self, config_dir: &Path) -> Result<()> {
+        info!("Validating configuration files...");
+
+        // Check environment variable override for base path
+        let base_dir = std::env::var("COMSRV_CSV_BASE_PATH")
+            .map_or_else(|_| config_dir.to_path_buf(), PathBuf::from);
+
+        debug!(
+            "Validating files with base directory: {}",
+            base_dir.display()
+        );
+
+        // Validate each channel's configuration files
+        for channel in &self.config.channels {
+            info!("Validating files for channel {}", channel.id);
+
+            // Skip if no table config
+            let table_config = channel.table_config.as_ref().ok_or_else(|| {
+                ComSrvError::ConfigError(format!("Channel {} missing table_config", channel.id))
+            })?;
+
+            // Check four-telemetry files
+            let four_remote_base = base_dir.join(&table_config.four_remote_route);
+            if !four_remote_base.exists() {
+                return Err(ComSrvError::ConfigError(format!(
+                    "Channel {}: four_remote_route directory '{}' does not exist",
+                    channel.id,
+                    four_remote_base.display()
+                )));
+            }
+
+            // Check each telemetry file
+            let telemetry_file =
+                four_remote_base.join(&table_config.four_remote_files.telemetry_file);
+            if !telemetry_file.exists() {
+                return Err(ComSrvError::ConfigError(format!(
+                    "Channel {}: telemetry file '{}' does not exist",
+                    channel.id,
+                    telemetry_file.display()
+                )));
+            }
+
+            let signal_file = four_remote_base.join(&table_config.four_remote_files.signal_file);
+            if !signal_file.exists() {
+                return Err(ComSrvError::ConfigError(format!(
+                    "Channel {}: signal file '{}' does not exist",
+                    channel.id,
+                    signal_file.display()
+                )));
+            }
+
+            let control_file = four_remote_base.join(&table_config.four_remote_files.control_file);
+            if !control_file.exists() {
+                return Err(ComSrvError::ConfigError(format!(
+                    "Channel {}: control file '{}' does not exist",
+                    channel.id,
+                    control_file.display()
+                )));
+            }
+
+            let adjustment_file =
+                four_remote_base.join(&table_config.four_remote_files.adjustment_file);
+            if !adjustment_file.exists() {
+                return Err(ComSrvError::ConfigError(format!(
+                    "Channel {}: adjustment file '{}' does not exist",
+                    channel.id,
+                    adjustment_file.display()
+                )));
+            }
+
+            // Check protocol mapping files
+            let protocol_base = base_dir.join(&table_config.protocol_mapping_route);
+            if !protocol_base.exists() {
+                return Err(ComSrvError::ConfigError(format!(
+                    "Channel {}: protocol_mapping_route directory '{}' does not exist",
+                    channel.id,
+                    protocol_base.display()
+                )));
+            }
+
+            let telemetry_mapping =
+                protocol_base.join(&table_config.protocol_mapping_file.telemetry_mapping);
+            if !telemetry_mapping.exists() {
+                return Err(ComSrvError::ConfigError(format!(
+                    "Channel {}: telemetry mapping file '{}' does not exist",
+                    channel.id,
+                    telemetry_mapping.display()
+                )));
+            }
+
+            let signal_mapping =
+                protocol_base.join(&table_config.protocol_mapping_file.signal_mapping);
+            if !signal_mapping.exists() {
+                return Err(ComSrvError::ConfigError(format!(
+                    "Channel {}: signal mapping file '{}' does not exist",
+                    channel.id,
+                    signal_mapping.display()
+                )));
+            }
+
+            let control_mapping =
+                protocol_base.join(&table_config.protocol_mapping_file.control_mapping);
+            if !control_mapping.exists() {
+                return Err(ComSrvError::ConfigError(format!(
+                    "Channel {}: control mapping file '{}' does not exist",
+                    channel.id,
+                    control_mapping.display()
+                )));
+            }
+
+            let adjustment_mapping =
+                protocol_base.join(&table_config.protocol_mapping_file.adjustment_mapping);
+            if !adjustment_mapping.exists() {
+                return Err(ComSrvError::ConfigError(format!(
+                    "Channel {}: adjustment mapping file '{}' does not exist",
+                    channel.id,
+                    adjustment_mapping.display()
+                )));
+            }
+
+            info!("✓ Channel {} configuration files validated", channel.id);
+        }
+
+        info!("✓ All configuration files validated successfully");
+        Ok(())
+    }
+
     // Under the four-telemetry separated architecture, unified mapping method is no longer needed
 }
 

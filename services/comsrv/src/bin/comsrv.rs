@@ -122,11 +122,42 @@ async fn main() -> Result<()> {
         e
     })?;
 
-    // Asynchronously initialize CSV configuration
+    // Get config directory for validation and CSV loading
     let config_dir = std::path::Path::new(&args.config)
         .parent()
         .unwrap_or_else(|| std::path::Path::new("."));
-    info!("Config directory for CSV: {}", config_dir.display());
+    info!("Config directory: {}", config_dir.display());
+
+    // Validate configuration structure first
+    config_manager.validate().map_err(|e| {
+        error!("Configuration validation failed: {e}");
+        e
+    })?;
+
+    // Validate all configuration files exist
+    config_manager
+        .validate_files(config_dir)
+        .await
+        .map_err(|e| {
+            error!("Configuration file validation failed: {e}");
+            error!("Please ensure all CSV files exist in the correct directory structure");
+            error!("Expected structure:");
+            error!("  config/");
+            error!("    comsrv/");
+            error!("      comsrv.yaml");
+            error!("      channel_<id>/");
+            error!("        telemetry.csv");
+            error!("        signal.csv");
+            error!("        control.csv");
+            error!("        adjustment.csv");
+            error!("        telemetry_mapping.csv");
+            error!("        signal_mapping.csv");
+            error!("        control_mapping.csv");
+            error!("        adjustment_mapping.csv");
+            e
+        })?;
+
+    // Asynchronously initialize CSV configuration
     info!("About to call initialize_csv...");
     config_manager
         .initialize_csv(config_dir)
