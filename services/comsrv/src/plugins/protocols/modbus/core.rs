@@ -1048,7 +1048,6 @@ impl ComBase for ModbusProtocol {
         let channel_config = self.channel_config.clone();
         let _command_handle = self.command_handle.clone();
         let connection_manager = self.connection_manager.clone();
-        let points = self.points.clone();
 
         // Create a channel to forward commands for processing
         let (cmd_tx, mut cmd_rx) = tokio::sync::mpsc::channel::<(
@@ -1096,7 +1095,6 @@ impl ComBase for ModbusProtocol {
                         execute_modbus_write(
                             &connection_manager,
                             &frame_processor,
-                            &points,
                             &channel_config,
                             *point_id,
                             RedisValue::Float(*value),
@@ -1119,7 +1117,6 @@ impl ComBase for ModbusProtocol {
                         execute_modbus_write(
                             &connection_manager,
                             &frame_processor,
-                            &points,
                             &channel_config,
                             *point_id,
                             RedisValue::Float(*value),
@@ -1832,7 +1829,6 @@ fn convert_bytes_to_registers_with_order(bytes: &[u8], byte_order: Option<&str>)
 async fn execute_modbus_write(
     connection_manager: &Arc<ModbusConnectionManager>,
     frame_processor: &Arc<Mutex<ModbusFrameProcessor>>,
-    _points: &Arc<RwLock<Vec<ModbusPoint>>>,
     channel_config: &Option<ChannelConfig>,
     point_id: u32,
     value: RedisValue,
