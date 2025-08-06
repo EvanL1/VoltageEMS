@@ -528,14 +528,40 @@ impl ConfigManager {
                 ComSrvError::ConfigError(format!("Channel {} missing table_config", channel.id))
             })?;
 
+            // Validate that four_remote_route matches channel ID pattern (should be just the number)
+            // Expected format: "1001" or "channel_1001" but prefer just "1001"
+            let expected_dir = channel.id.to_string();
+            if table_config.four_remote_route != expected_dir
+                && table_config.four_remote_route != format!("channel_{}", channel.id)
+            {
+                warn!(
+                    "Channel {}: four_remote_route '{}' doesn't match expected format '{}' or 'channel_{}'",
+                    channel.id, table_config.four_remote_route, expected_dir, channel.id
+                );
+            }
+
             // Check four-telemetry files
             let four_remote_base = base_dir.join(&table_config.four_remote_route);
             if !four_remote_base.exists() {
-                return Err(ComSrvError::ConfigError(format!(
-                    "Channel {}: four_remote_route directory '{}' does not exist",
-                    channel.id,
-                    four_remote_base.display()
-                )));
+                // Try with just the channel ID number if the configured path doesn't exist
+                let alt_path = base_dir.join(&expected_dir);
+                if alt_path.exists() {
+                    return Err(ComSrvError::ConfigError(format!(
+                        "Channel {}: four_remote_route directory '{}' does not exist. Found directory '{}' - please update config to use '{}'",
+                        channel.id,
+                        four_remote_base.display(),
+                        alt_path.display(),
+                        expected_dir
+                    )));
+                } else {
+                    return Err(ComSrvError::ConfigError(format!(
+                        "Channel {}: four_remote_route directory '{}' does not exist. Expected directory structure: {}/{}",
+                        channel.id,
+                        four_remote_base.display(),
+                        base_dir.display(),
+                        expected_dir
+                    )));
+                }
             }
 
             // Check each telemetry file
