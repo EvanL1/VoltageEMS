@@ -4,7 +4,30 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-VoltageEMS is a high-performance industrial IoT energy management system built with Rust microservices architecture. It supports multiple industrial protocols and real-time data processing.
+VoltageEMS is a high-performance industrial IoT energy management system built with Rust microservices architecture. It supports multiple industrial protocols (Modbus TCP/RTU, Virtual, gRPC) and real-time data processing through a hybrid architecture combining Rust services with Redis Lua Functions for optimal performance.
+
+## Workspace Structure
+
+```
+VoltageEMS/
+├── Cargo.toml              # Workspace root
+├── libs/                   # Shared libraries (voltage_libs crate)
+├── services/               # Microservices
+│   ├── comsrv/            # Communication service (protocols)
+│   ├── modsrv/            # Model service (lightweight)
+│   ├── alarmsrv/          # Alarm service (lightweight)
+│   ├── rulesrv/           # Rule engine (lightweight)
+│   ├── hissrv/            # Historical data (lightweight)
+│   ├── apigateway/        # API gateway (minimal proxy)
+│   └── netsrv/            # Network service
+├── scripts/
+│   ├── redis-functions/   # Lua functions for Redis
+│   ├── quick-check.sh     # Run format, clippy, and compile checks
+│   ├── dev.sh            # Development environment setup
+│   └── validate-comsrv-config.sh  # Validate CSV configurations
+├── apps/                   # Frontend applications
+└── docker-compose.yml      # Container orchestration
+```
 
 ## Architecture
 
@@ -81,10 +104,21 @@ unset http_proxy https_proxy HTTP_PROXY HTTPS_PROXY ALL_PROXY all_proxy
 ## Key Design Patterns
 
 ### 1. Plugin Architecture (comsrv)
-- `ComBase` trait: Core interface for all communication protocols
-- `PluginStorage` trait: Abstraction for protocol-specific storage
-- Protocol plugins: Modbus, Virtual, gRPC (extensible)
-- Dynamic plugin loading and management
+
+The communication service uses a plugin-based architecture for protocol support:
+
+- **ComBase trait** (`services/comsrv/src/core/combase/core.rs`): Core interface all protocols must implement
+  - `init()`: Initialize the protocol
+  - `read_batch()`: Read multiple points efficiently
+  - `write_batch()`: Write multiple points
+  - `process_command()`: Handle control commands
+  
+- **PluginStorage trait**: Abstraction for protocol-specific storage backends
+- **Supported protocols**: 
+  - Modbus TCP/RTU (`plugins/protocols/modbus/`)
+  - Virtual protocol for testing (`plugins/protocols/virtual/`)
+  - gRPC (extensible)
+- **Factory pattern** (`core/combase/factory.rs`): Dynamic plugin instantiation based on protocol type
 
 ### 2. Redis Data Structure
 - Hash-based storage for O(1) access: `{service}:{channelID}:{type}`
@@ -108,7 +142,7 @@ unset http_proxy https_proxy HTTP_PROXY HTTPS_PROXY ALL_PROXY all_proxy
 
 ### Quick Checks
 ```bash
-# Run all checks (format, clippy, compilation)
+# Run all checks (format, clippy, compilation) - USE THIS BEFORE COMMITTING
 ./scripts/quick-check.sh
 
 # Development mode with auto-reload
@@ -118,10 +152,12 @@ unset http_proxy https_proxy HTTP_PROXY HTTPS_PROXY ALL_PROXY all_proxy
 ./scripts/build.sh
 
 # Run tests
-./scripts/test.sh
 cargo test --workspace
 cargo test -p {service_name}
 cargo test test_name -- --exact --nocapture
+
+# Run specific test with debug output
+RUST_LOG=debug cargo test test_name -- --nocapture
 ```
 
 ### Code Quality
@@ -188,6 +224,10 @@ docker-compose build {service_name}
 
 # View logs
 docker logs -f voltageems-{service_name}
+
+# Clean up Docker resources
+docker-compose down -v
+docker system prune -f
 ```
 
 ## Configuration System
@@ -203,35 +243,30 @@ Each service supports global and service-specific environment variables:
 - Global: `VOLTAGE_REDIS_URL`
 - Service-specific: `{SERVICE}_REDIS_URL` (e.g., `COMSRV_REDIS_URL`)
 
-### Comsrv Configuration Structure
+### Comsrv Configuration Structure (Simplified)
+
+Recent refactoring has simplified the configuration structure:
+
 ```yaml
 csv_base_path: "${CSV_BASE_PATH:-/app/config}"
 
 channels:
-  - id: 1
+  - id: 1001
     name: "modbus_tcp_channel_1"
-    protocol: "modbus"
+    protocol: "modbus_tcp"
     enabled: true
-    transport_config:
-      tcp:
-        address: "192.168.1.100:502"
+    parameters:
+      host: "192.168.1.100"
+      port: 502
+      slave_id: 1  # Default, can be overridden per point in CSV
     polling_config:
       interval_ms: 1000
       batch_size: 100
-    table_config:
-      four_telemetry_route: "comsrv"
-      four_telemetry_files:
-        telemetry_file: "telemetry.csv"
-        signal_file: "signal.csv"
-        control_file: "control.csv"
-        adjustment_file: "adjustment.csv"
-      protocol_mapping_route: "comsrv/protocol"
-      protocol_mapping_files:
-        telemetry_mapping: "telemetry_mapping.csv"
-        signal_mapping: "signal_mapping.csv"
-        control_mapping: "control_mapping.csv"
-        adjustment_mapping: "adjustment_mapping.csv"
 ```
+
+The CSV files are now auto-discovered based on channel ID:
+- Point definitions: `{csv_base_path}/channel_{id}/{type}.csv`
+- Protocol mappings: `{csv_base_path}/channel_{id}/protocol/{type}_mapping.csv`
 
 ### CSV Point Configuration
 All telemetry types use unified CSV format:
@@ -266,14 +301,20 @@ curl -X POST http://localhost:6002/alarms \
 
 ## Development Guidelines
 
-- Each service has exactly one Dockerfile
-- Use `cargo check` instead of `cargo build` during development
+### Critical Rules
+- **ALWAYS run `./scripts/quick-check.sh` before committing** - ensures format, clippy, and compilation
+- Each service has exactly one Dockerfile at `services/{service_name}/Dockerfile`
 - Point IDs start from 1 (sequential numbering)
 - All numeric values use 6 decimal precision
-- Prefer Hash operations over Keys scanning
+- Prefer Hash operations over Keys scanning in Redis
 - For bool types in CSV: scale=1.0, offset=0.0
-- When modifying Rust code, run lint and typecheck commands before committing
 - Redis Functions are loaded once and persist until Redis restart
+
+### Code Style
+- Use `cargo check` instead of `cargo build` during development for faster feedback
+- Follow Rust naming conventions: snake_case for functions/variables, CamelCase for types
+- Use the `?` operator for error propagation instead of unwrap() in production code
+- Prefer `tracing` over `println!` for logging
 
 ## Troubleshooting
 
@@ -342,4 +383,18 @@ channels:
 Most parameters have defaults:
 - `polling_config.interval_ms`: 1000ms
 - `enabled`: true
-- `table_config`: auto-configured
+- CSV file paths: auto-discovered based on channel ID
+
+## Recent Changes (Important)
+
+### Configuration Simplification (August 2025)
+- Removed complex `table_config` structure - now auto-discovered
+- CSV files organized by channel: `channel_{id}/` directory structure  
+- Simplified YAML configuration to focus on connection parameters
+- Protocol mappings now use consistent naming: `{type}_mapping.csv`
+
+### Current Focus Areas
+- Comsrv is the most actively developed service
+- Lightweight services (modsrv, alarmsrv, hissrv, rulesrv) delegate to Redis Lua functions
+- Test environment configurations have been removed (use Docker for testing)
+- Command trigger functionality for write operations via Redis pub/sub
