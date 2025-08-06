@@ -68,6 +68,16 @@ All service ports are hardcoded in the source code and not configurable:
 - **netsrv**: 6006
 - **Redis**: 6379
 
+## Environment Settings
+
+### Proxy Configuration for Local Testing
+When running curl commands or API tests locally, always disable proxy:
+```bash
+export NO_PROXY="*"
+export no_proxy="*"
+unset http_proxy https_proxy HTTP_PROXY HTTPS_PROXY ALL_PROXY all_proxy
+```
+
 ## Key Design Patterns
 
 ### 1. Plugin Architecture (comsrv)
@@ -282,3 +292,54 @@ curl -X POST http://localhost:6002/alarms \
 
 4. **Clippy failures on macOS**
    - Remove `-fuse-ld=lld` from `.cargo/config.toml` if present
+
+## Comsrv Configuration Rules
+
+When creating or modifying comsrv CSV configuration files, ALWAYS follow these rules:
+
+### CSV File Structure
+1. **Four Telemetry Files** (点表定义):
+   - `telemetry.csv`, `signal.csv`, `control.csv`, `adjustment.csv`
+   - Required columns: `point_id,signal_name,scale,offset,unit,reverse,data_type`
+
+2. **Protocol Mapping Files** (协议映射):
+   - `telemetry_mapping.csv`, `signal_mapping.csv`, `control_mapping.csv`, `adjustment_mapping.csv`
+   - Required columns: `point_id,slave_id,function_code,register_address,data_type,byte_order`
+   - For bool types: add `bit_position` column
+
+### Validation Rules
+1. **bit_position**: 
+   - Range: 0-15 (16-bit register)
+   - Required for bool types in signal/control mappings
+   - Default: 0 if not specified
+
+2. **slave_id**: 
+   - Defined in mapping CSV files, NOT in YAML
+   - Each point can have different slave_id
+
+3. **byte_order**:
+   - 16-bit: AB or BA
+   - 32-bit: ABCD, DCBA, BADC, CDAB
+   - 64-bit: ABCDEFGH, etc.
+
+### Auto-Validation
+After creating/modifying comsrv config files, run:
+```bash
+./scripts/validate-comsrv-config.sh
+```
+
+### Minimal YAML Configuration
+```yaml
+csv_base_path: "/app/config"
+channels:
+  - id: 1001
+    protocol: "modbus_tcp"
+    parameters:
+      host: "modbus-sim"
+      port: 5020
+```
+
+Most parameters have defaults:
+- `polling_config.interval_ms`: 1000ms
+- `enabled`: true
+- `table_config`: auto-configured

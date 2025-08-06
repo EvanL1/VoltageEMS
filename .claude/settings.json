@@ -1,0 +1,57 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "tools": ["Write", "Edit", "MultiEdit"],
+        "hooks": [
+          {
+            "name": "validate-comsrv-config",
+            "type": "command",
+            "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/validate-comsrv.sh",
+            "blocking": true
+          }
+        ]
+      },
+      {
+        "tools": ["Bash"],
+        "hooks": [
+          {
+            "name": "disable-proxy-for-curl",
+            "type": "command",
+            "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/disable-proxy.sh",
+            "blocking": false
+          }
+        ]
+      }
+    ]
+  },
+  "project": {
+    "name": "VoltageEMS",
+    "description": "Industrial IoT Energy Management System",
+    "settings": {
+      "comsrv": {
+        "validation": {
+          "bit_position_range": [0, 15],
+          "required_csv_files": [
+            "telemetry.csv",
+            "signal.csv", 
+            "control.csv",
+            "adjustment.csv",
+            "telemetry_mapping.csv",
+            "signal_mapping.csv",
+            "control_mapping.csv",
+            "adjustment_mapping.csv"
+          ],
+          "mapping_required_columns": [
+            "point_id",
+            "slave_id",
+            "function_code",
+            "register_address",
+            "data_type",
+            "byte_order"
+          ]
+        }
+      }
+    }
+  }
+}

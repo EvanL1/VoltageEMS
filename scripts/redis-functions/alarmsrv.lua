@@ -104,11 +104,9 @@ local function acknowledge_alarm(keys, args)
     
     -- 保存更新后的告警
     local updated_json = cjson.encode(alarm)
-    redis.call('HSET', key, 
-        'data', updated_json,
-        'status', 'Acknowledged',
-        'updated_at', timestamp
-    )
+    redis.call('HSET', key, 'data', updated_json)
+    redis.call('HSET', key, 'status', 'Acknowledged')
+    redis.call('HSET', key, 'updated_at', tostring(timestamp))
     
     -- Update status索引
     if old_status then
@@ -144,11 +142,9 @@ local function resolve_alarm(keys, args)
     
     -- 保存更新后的告警
     local updated_json = cjson.encode(alarm)
-    redis.call('HSET', key, 
-        'data', updated_json,
-        'status', 'Resolved',
-        'updated_at', timestamp
-    )
+    redis.call('HSET', key, 'data', updated_json)
+    redis.call('HSET', key, 'status', 'Resolved')
+    redis.call('HSET', key, 'updated_at', tostring(timestamp))
     
     -- Update status索引
     if old_status then

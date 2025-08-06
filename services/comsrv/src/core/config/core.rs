@@ -10,7 +10,6 @@ use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use tokio::fs;
 use tracing::{debug, info, warn};
-use voltage_libs::config::utils::{get_global_log_level, get_global_redis_url};
 use voltage_libs::config::ConfigLoader;
 
 // ============================================================================
@@ -149,7 +148,7 @@ impl ConfigManager {
                 info!("Successfully loaded configuration from config center");
                 // JSON configuration loaded from configuration center
                 serde_json::from_value::<AppConfig>(remote_config).map_err(|e| {
-                    ComSrvError::ConfigError(format!("Failed to parse remote config: {e}"))
+                    ComSrvError::ConfigError(format!("Failed to load config: JSONparseerror: {e}"))
                 })
             } else {
                 // Failed to load from configuration center, use local file
@@ -179,14 +178,11 @@ impl ConfigManager {
             .build()
             .map_err(|e| ComSrvError::ConfigError(format!("Failed to load config: {e}")))?;
 
-        // Apply global environment variables (already handled in ConfigLoader, but ensure again here)
-        // Only override if environment variables are actually set
-        if std::env::var("VOLTAGE_REDIS_URL").is_ok() || std::env::var("COMSRV_REDIS_URL").is_ok() {
-            config.service.redis.url = get_global_redis_url("COMSRV");
-        }
-        if std::env::var("VOLTAGE_LOG_LEVEL").is_ok() || std::env::var("COMSRV_LOG_LEVEL").is_ok() {
-            config.service.logging.level = get_global_log_level("COMSRV");
-        }
+        // ConfigLoader already handles the correct priority order:
+        // 1. Default values (lowest priority)
+        // 2. YAML file configuration
+        // 3. Environment variables (highest priority)
+        // No need to override again here
 
         // Force hardcoded port - not configurable
         config.service.api.port = 6000;

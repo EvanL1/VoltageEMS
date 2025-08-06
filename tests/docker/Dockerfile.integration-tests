@@ -1,0 +1,71 @@
+# Integration Tests Container
+FROM rust:1.88-bullseye
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    protobuf-compiler \
+    pkg-config \
+    libssl-dev \
+    ca-certificates \
+    netcat \
+    curl \
+    redis-tools \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Copy dependency files
+COPY Cargo.toml Cargo.lock ./
+COPY libs/Cargo.toml ./libs/
+COPY services/*/Cargo.toml ./services/*/
+
+# Copy source code
+COPY libs ./libs
+COPY services ./services
+COPY scripts ./scripts
+
+# Install test tools
+RUN cargo install cargo-nextest --locked
+
+# Create test results directory
+RUN mkdir -p /app/test-results
+
+# Integration test environment variables
+ENV RUST_TEST_THREADS=1
+ENV RUST_BACKTRACE=1
+ENV CARGO_TARGET_DIR=/app/target-tests
+
+# Wait script for dependencies
+RUN cat > /app/wait-for-services.sh << 'EOF'
+#!/bin/bash
+set -e
+
+echo "Waiting for Redis..."
+until redis-cli -h redis-test ping > /dev/null 2>&1; do
+  sleep 1
+done
+
+echo "Waiting for InfluxDB..."
+until curl -f http://influxdb-test:8086/ping > /dev/null 2>&1; do
+  sleep 1
+done
+
+echo "Waiting for Modbus simulators..."
+until nc -z modbus-simulator-1 5020; do
+  sleep 1
+done
+
+until nc -z modbus-simulator-2 5020; do
+  sleep 1
+done
+
+echo "All services ready!"
+EOF
+
+RUN chmod +x /app/wait-for-services.sh
+
+# Default command runs integration tests
+CMD ["/app/wait-for-services.sh", "&&", "cargo", "nextest", "run", \
+     "--test", "integration", "--no-fail-fast", \
+     "--message-format", "json", \
+     "--test-output", "/app/test-results/integration-test-output.json"]

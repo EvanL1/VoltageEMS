@@ -1,0 +1,43 @@
+# Multi-stage Dockerfile for Unit Tests
+FROM rust:1.88-bullseye AS base
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    protobuf-compiler \
+    pkg-config \
+    libssl-dev \
+    ca-certificates \
+    netcat \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Copy dependency files
+COPY Cargo.toml Cargo.lock ./
+COPY libs/Cargo.toml ./libs/
+COPY services/*/Cargo.toml ./services/*/
+
+# Copy source code
+COPY libs ./libs
+COPY services ./services
+COPY scripts ./scripts
+
+# Test stage
+FROM base AS test
+
+# Install test dependencies
+RUN cargo install cargo-nextest --locked
+
+# Set test environment variables
+ENV RUST_TEST_THREADS=1
+ENV RUST_BACKTRACE=1
+ENV CARGO_TARGET_DIR=/app/target-tests
+
+# Create test results directory
+RUN mkdir -p /app/test-results
+
+# Run tests with detailed output
+CMD ["cargo", "nextest", "run", "--workspace", "--no-fail-fast", \
+     "--message-format", "json", "--verbose", \
+     "--test-output", "/app/test-results/unit-test-output.json"]

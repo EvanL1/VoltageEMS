@@ -32,18 +32,32 @@ pub fn get_env_with_fallback(global_key: &str, service_key: &str, default: &str)
 
 /// Getglobal Redis URL
 pub fn get_global_redis_url(service_prefix: &str) -> String {
-    // Check if running in Docker/container environment
-    let default_url = if std::env::var("DOCKER_ENV").unwrap_or_default() == "true" {
-        "redis://redis:6379"
-    } else {
-        "redis://localhost:6379"
-    };
+    // First check for explicitly set REDIS_URL
+    if let Ok(url) = env::var("REDIS_URL") {
+        return url;
+    }
 
-    get_env_with_fallback(
-        "VOLTAGE_REDIS_URL",
-        &format!("{service_prefix}_REDIS_URL"),
-        default_url,
-    )
+    // Then check for service-specific URL
+    if let Ok(url) = env::var(format!("{service_prefix}_REDIS_URL")) {
+        return url;
+    }
+
+    // Then check for global Voltage URL
+    if let Ok(url) = env::var("VOLTAGE_REDIS_URL") {
+        return url;
+    }
+
+    // Auto-detect Docker environment by checking if REDIS_URL was set or container indicators
+    let in_docker = env::var("DOCKER_ENV").unwrap_or_default() == "true"
+        || std::path::Path::new("/.dockerenv").exists()
+        || env::var("HOSTNAME").unwrap_or_default().len() == 12; // Docker typically uses 12-char hostnames
+
+    // Return default based on environment
+    if in_docker {
+        "redis://redis:6379".to_string()
+    } else {
+        "redis://localhost:6379".to_string()
+    }
 }
 
 /// Getgloballogginglevel

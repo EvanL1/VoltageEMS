@@ -1,0 +1,23 @@
+#!/bin/bash
+
+# Pre-commit hook for comsrv configuration validation
+# 当提交包含comsrv配置文件时自动运行验证
+
+# 检查是否有comsrv配置文件被修改
+if git diff --cached --name-only | grep -q "services/comsrv/config/.*\.csv"; then
+    echo "检测到comsrv配置文件变更，运行验证..."
+    
+    # 运行验证脚本
+    ./scripts/validate-comsrv-config.sh
+    
+    if [ $? -ne 0 ]; then
+        echo ""
+        echo "❌ Comsrv配置验证失败！请修复错误后再提交。"
+        echo "提示：运行 ./scripts/validate-comsrv-config.sh 查看详细信息"
+        exit 1
+    fi
+    
+    echo "✅ Comsrv配置验证通过"
+fi
+
+exit 0

@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(find:*)",
+      "Bash(mkdir:*)",
+      "Bash(mv:*)",
+      "Bash(rm:*)",
+      "Bash(cargo:*)",
+      "Bash(chmod:*)",
+      "Bash(pkill:*)",
+      "Bash(./tests/test_integration.sh:*)"
+    ],
+    "deny": []
+  }
+}

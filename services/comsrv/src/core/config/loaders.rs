@@ -306,7 +306,7 @@ pub struct FourRemoteRecord {
     pub description: Option<String>,
 }
 
-/// Modbus mapping record - simplified version
+/// Modbus mapping record
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModbusMappingRecord {
     #[serde(deserialize_with = "deserialize_u32_from_str")]

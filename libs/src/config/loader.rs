@@ -88,31 +88,31 @@ where
         self
     }
 
-    /// Build最终configuring
+    /// Build最终配置
     pub fn build(self) -> Result<T> {
-        // 1. slavedefaultvaluestart
+        // 1. 从默认值开始（最低优先级）
         let mut config_json = serde_json::to_value(&self.defaults)?;
         debug!("Starting from default configuration");
 
-        // 2. 应用cycle境variable（mediumpriority）
-        if let Some(prefix) = &self.env_prefix {
-            if self.allow_env_override {
-                debug!("Applying environment variables, prefix: {}", prefix);
-                self.apply_env_vars(&mut config_json, prefix)?;
-            }
-        }
-
-        // 3. 应用YAMLfile（最highpriority）
+        // 2. 应用YAML文件（中等优先级）
         if let Some(yaml_path) = &self.yaml_path {
             if Path::new(yaml_path).exists() {
                 info!("Loading YAML config file: {}", yaml_path);
                 let yaml_content = std::fs::read_to_string(yaml_path)?;
                 let yaml_value: YamlValue = serde_yaml::from_str(&yaml_content)?;
 
-                // 将YAMLvaluemerge到configuringmedium
+                // 将YAML值合并到配置中
                 self.merge_yaml_into_json(&mut config_json, &yaml_value)?;
             } else {
                 debug!("YAML config file not found, skipping: {}", yaml_path);
+            }
+        }
+
+        // 3. 应用环境变量（最高优先级）
+        if let Some(prefix) = &self.env_prefix {
+            if self.allow_env_override {
+                debug!("Applying environment variables, prefix: {}", prefix);
+                self.apply_env_vars(&mut config_json, prefix)?;
             }
         }
 

@@ -1,0 +1,336 @@
+# E2E Tests Container
+FROM python:3.11-slim
+
+RUN apt-get update && apt-get install -y \
+    curl \
+    netcat \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Install Python dependencies
+RUN pip install --no-cache-dir \
+    pytest>=7.0.0 \
+    pytest-asyncio>=0.21.0 \
+    aiohttp>=3.8.0 \
+    requests>=2.28.0 \
+    websockets>=11.0 \
+    pydantic>=1.10.0
+
+# Create E2E test framework
+RUN cat > /app/e2e_test_base.py << 'EOF'
+#!/usr/bin/env python3
+"""
+Base E2E Test Framework for VoltageEMS
+"""
+
+import asyncio
+import aiohttp
+import json
+import time
+import logging
+from typing import Dict, List, Any, Optional
+from abc import ABC, abstractmethod
+
+logging.basicConfig(level=logging.INFO)
+
+class E2ETestBase(ABC):
+    """Base class for E2E test scenarios"""
+    
+    def __init__(self, base_url: str):
+        self.base_url = base_url.rstrip('/')
+        self.session = None
+        self.test_results = {
+            'scenario': self.__class__.__name__,
+            'start_time': None,
+            'end_time': None,
+            'duration': None,
+            'steps': [],
+            'passed': 0,
+            'failed': 0,
+            'total': 0
+        }
+
+    async def setup_session(self):
+        """Setup HTTP session"""
+        connector = aiohttp.TCPConnector(limit=100, ttl_dns_cache=300)
+        timeout = aiohttp.ClientTimeout(total=30)
+        self.session = aiohttp.ClientSession(
+            connector=connector,
+            timeout=timeout,
+            headers={'Content-Type': 'application/json'}
+        )
+
+    async def teardown_session(self):
+        """Cleanup HTTP session"""
+        if self.session:
+            await self.session.close()
+
+    async def wait_for_service(self, endpoint: str, max_retries: int = 30) -> bool:
+        """Wait for service to be available"""
+        for attempt in range(max_retries):
+            try:
+                async with self.session.get(f"{self.base_url}/{endpoint.lstrip('/')}") as response:
+                    if response.status < 400:
+                        return True
+            except:
+                pass
+            
+            await asyncio.sleep(2)
+        
+        return False
+
+    async def execute_step(self, step_name: str, step_function, *args, **kwargs):
+        """Execute a test step and record results"""
+        step_start = time.time()
+        step_result = {
+            'name': step_name,
+            'start_time': step_start,
+            'end_time': None,
+            'duration': None,
+            'status': 'unknown',
+            'error': None,
+            'data': {}
+        }
+        
+        try:
+            result = await step_function(*args, **kwargs)
+            step_result['status'] = 'passed'
+            step_result['data'] = result
+            self.test_results['passed'] += 1
+        except Exception as e:
+            step_result['status'] = 'failed'
+            step_result['error'] = str(e)
+            self.test_results['failed'] += 1
+            logging.error(f"Step '{step_name}' failed: {e}")
+        finally:
+            step_result['end_time'] = time.time()
+            step_result['duration'] = step_result['end_time'] - step_start
+            self.test_results['steps'].append(step_result)
+            self.test_results['total'] += 1
+
+    @abstractmethod
+    async def run_scenario(self):
+        """Implement the specific test scenario"""
+        pass
+
+    async def run(self):
+        """Run the complete E2E test scenario"""
+        self.test_results['start_time'] = time.time()
+        
+        try:
+            await self.setup_session()
+            await self.run_scenario()
+        except Exception as e:
+            logging.error(f"Scenario execution failed: {e}")
+            self.test_results['failed'] += 1
+        finally:
+            await self.teardown_session()
+            self.test_results['end_time'] = time.time()
+            self.test_results['duration'] = (
+                self.test_results['end_time'] - self.test_results['start_time']
+            )
+
+        # Save results
+        results_file = f"/app/results/{self.test_results['scenario']}_results.json"
+        with open(results_file, 'w') as f:
+            json.dump(self.test_results, f, indent=2)
+
+        # Print summary
+        success_rate = (self.test_results['passed'] / self.test_results['total'] * 100
+                       if self.test_results['total'] > 0 else 0)
+        
+        print(f"\n{'='*60}")
+        print(f"E2E Test Scenario: {self.test_results['scenario']}")
+        print(f"{'='*60}")
+        print(f"Duration: {self.test_results['duration']:.2f} seconds")
+        print(f"Total Steps: {self.test_results['total']}")
+        print(f"Passed: {self.test_results['passed']}")
+        print(f"Failed: {self.test_results['failed']}")
+        print(f"Success Rate: {success_rate:.1f}%")
+        
+        if self.test_results['failed'] > 0:
+            print("\nFailed Steps:")
+            for step in self.test_results['steps']:
+                if step['status'] == 'failed':
+                    print(f"  - {step['name']}: {step['error']}")
+
+        return self.test_results['failed'] == 0
+EOF
+
+# Create data flow test
+RUN cat > /app/test_data_flow.py << 'EOF'
+#!/usr/bin/env python3
+"""
+Data Flow E2E Test for VoltageEMS
+Tests complete data flow from Modbus simulation to InfluxDB storage
+"""
+
+import asyncio
+import json
+import logging
+from e2e_test_base import E2ETestBase
+
+class DataFlowE2ETest(E2ETestBase):
+    """Test complete data flow through the system"""
+
+    async def run_scenario(self):
+        """Run data flow test scenario"""
+        
+        # Step 1: Verify all services are healthy
+        await self.execute_step(
+            "Verify Services Health",
+            self.verify_services_health
+        )
+        
+        # Step 2: Check Modbus data ingestion
+        await self.execute_step(
+            "Check Modbus Data Ingestion",
+            self.check_modbus_ingestion
+        )
+        
+        # Step 3: Verify data in Redis
+        await self.execute_step(
+            "Verify Data in Redis",
+            self.verify_redis_data
+        )
+        
+        # Step 4: Check historical data storage
+        await self.execute_step(
+            "Check Historical Data Storage",
+            self.check_historical_storage
+        )
+        
+        # Step 5: Validate data consistency
+        await self.execute_step(
+            "Validate Data Consistency",
+            self.validate_data_consistency
+        )
+
+    async def verify_services_health(self):
+        """Verify all VoltageEMS services are healthy"""
+        services = [
+            'comsrv/health',
+            'modsrv/health',
+            'alarmsrv/health',
+            'rulesrv/health',
+            'hissrv/health',
+            'apigateway/health'
+        ]
+        
+        health_status = {}
+        for service in services:
+            try:
+                async with self.session.get(f"{self.base_url}/{service}") as response:
+                    if response.status == 200:
+                        data = await response.json()
+                        health_status[service] = {'status': 'healthy', 'data': data}
+                    else:
+                        health_status[service] = {'status': 'unhealthy', 'code': response.status}
+            except Exception as e:
+                health_status[service] = {'status': 'error', 'error': str(e)}
+        
+        unhealthy_services = [s for s, status in health_status.items() 
+                            if status['status'] != 'healthy']
+        
+        if unhealthy_services:
+            raise Exception(f"Unhealthy services: {unhealthy_services}")
+        
+        return health_status
+
+    async def check_modbus_ingestion(self):
+        """Check if Modbus data is being ingested"""
+        # Check channel status
+        async with self.session.get(f"{self.base_url}/comsrv/channels") as response:
+            if response.status != 200:
+                raise Exception("Failed to get channel status")
+            
+            channels = await response.json()
+            if not channels:
+                raise Exception("No channels configured")
+            
+            active_channels = [c for c in channels if c.get('status') == 'active']
+            if not active_channels:
+                raise Exception("No active channels found")
+        
+        return {'channels': len(channels), 'active': len(active_channels)}
+
+    async def verify_redis_data(self):
+        """Verify data is stored in Redis"""
+        # Get telemetry data through modsrv
+        async with self.session.get(f"{self.base_url}/modsrv/models") as response:
+            if response.status != 200:
+                raise Exception("Failed to get models from Redis")
+            
+            models = await response.json()
+            if not models:
+                raise Exception("No models found in Redis")
+        
+        # Check specific telemetry values
+        async with self.session.get(f"{self.base_url}/comsrv/telemetry/latest") as response:
+            if response.status != 200:
+                raise Exception("Failed to get latest telemetry")
+            
+            telemetry = await response.json()
+            if not telemetry:
+                raise Exception("No telemetry data found")
+        
+        return {'models': len(models), 'telemetry_points': len(telemetry)}
+
+    async def check_historical_storage(self):
+        """Check if data is being stored in InfluxDB via hissrv"""
+        async with self.session.get(f"{self.base_url}/hissrv/history/latest?limit=100") as response:
+            if response.status != 200:
+                raise Exception("Failed to get historical data")
+            
+            history = await response.json()
+            if not history:
+                raise Exception("No historical data found")
+        
+        # Check data freshness (should be recent)
+        recent_data = [h for h in history if 
+                      abs(time.time() - h.get('timestamp', 0)) < 300]  # Within 5 minutes
+        
+        if not recent_data:
+            raise Exception("No recent historical data found")
+        
+        return {'total_points': len(history), 'recent_points': len(recent_data)}
+
+    async def validate_data_consistency(self):
+        """Validate data consistency across services"""
+        # Get the same data from different services and compare
+        
+        # Get telemetry from comsrv
+        async with self.session.get(f"{self.base_url}/comsrv/telemetry/1001/T") as response:
+            comsrv_data = await response.json() if response.status == 200 else {}
+        
+        # Get models from modsrv  
+        async with self.session.get(f"{self.base_url}/modsrv/models/model_001") as response:
+            modsrv_data = await response.json() if response.status == 200 else {}
+        
+        # Basic consistency check
+        if not comsrv_data or not modsrv_data:
+            raise Exception("Incomplete data for consistency check")
+        
+        return {'comsrv_points': len(comsrv_data), 'modsrv_data': bool(modsrv_data)}
+
+async def main():
+    import os
+    base_url = os.getenv('NGINX_URL', 'http://nginx-integration:80')
+    
+    test = DataFlowE2ETest(base_url)
+    success = await test.run()
+    
+    exit(0 if success else 1)
+
+if __name__ == "__main__":
+    asyncio.run(main())
+EOF
+
+# Make scripts executable
+RUN chmod +x /app/e2e_test_base.py /app/test_data_flow.py
+
+# Create results directory
+RUN mkdir -p /app/results
+
+CMD ["python", "/app/test_data_flow.py"]

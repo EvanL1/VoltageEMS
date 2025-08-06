@@ -8,7 +8,7 @@ use dotenv::dotenv;
 use tokio::signal;
 use tokio::sync::RwLock;
 
-use tracing::{error, info, warn, Level};
+use tracing::{debug, error, info, warn, Level};
 use tracing_appender::rolling::{RollingFileAppender, Rotation};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, Layer};
 
@@ -18,7 +18,6 @@ use comsrv::core::config::ConfigManager;
 use comsrv::service::{shutdown_handler, start_cleanup_task, start_communication_service};
 use comsrv::{ComSrvError, Result};
 
-/// Print startup banner with COMSRV ASCII art
 fn print_startup_banner() {
     println!();
     println!("  ██████╗ ██████╗ ███╗   ███╗███████╗██████╗ ██╗   ██╗");
@@ -113,13 +112,13 @@ async fn main() -> Result<()> {
     comsrv::set_service_start_time(chrono::Utc::now());
 
     // Load configuration (with basic console output)
-    eprintln!("Loading configuration from: {}", args.config);
+    info!("Loading configuration from: {}", args.config);
     if let Ok(url) = std::env::var("CONFIG_CENTER_URL") {
-        eprintln!("Config center URL detected: {url}");
+        debug!("Config center URL detected: {url}");
     }
 
     let mut config_manager = ConfigManager::from_file(&args.config).map_err(|e| {
-        eprintln!("Failed to load configuration: {e}");
+        error!("Failed to load configuration: {e}");
         e
     })?;
 
@@ -127,16 +126,16 @@ async fn main() -> Result<()> {
     let config_dir = std::path::Path::new(&args.config)
         .parent()
         .unwrap_or_else(|| std::path::Path::new("."));
-    eprintln!("Config directory for CSV: {}", config_dir.display());
-    eprintln!("About to call initialize_csv...");
+    info!("Config directory for CSV: {}", config_dir.display());
+    info!("About to call initialize_csv...");
     config_manager
         .initialize_csv(config_dir)
         .await
         .map_err(|e| {
-            eprintln!("Failed to initialize CSV configurations: {e}");
+            error!("Failed to initialize CSV configurations: {e}");
             e
         })?;
-    eprintln!("CSV initialization completed");
+    info!("CSV initialization completed");
 
     let config_manager = Arc::new(config_manager);
 
@@ -358,7 +357,7 @@ fn initialize_logging(
 
         // Create log directory if it doesn't exist
         if let Err(e) = std::fs::create_dir_all(log_dir) {
-            eprintln!("Warning: Could not create log directory {log_dir:?}: {e}");
+            debug!("Warning: Could not create log directory {log_dir:?}: {e}");
         }
 
         // Create rolling file appender for main log
@@ -368,7 +367,7 @@ fn initialize_logging(
             .filename_suffix("log")
             .build(log_dir)
             .map_err(|e| {
-                eprintln!("Failed to create file appender: {e}");
+                debug!("Failed to create file appender: {e}");
                 ComSrvError::ConfigError(format!("Failed to create log file appender: {e}"))
             })?;
 
@@ -391,17 +390,17 @@ fn initialize_logging(
         // Initialize the subscriber first
         subscriber.init();
 
-        eprintln!("Logging configured:");
-        eprintln!("  - Console: enabled");
-        eprintln!("  - File: {}", log_file_path.display());
-        eprintln!("  - Level: {}", logging_config.level);
+        debug!("Logging configured:");
+        debug!("  - Console: enabled");
+        debug!("  - File: {}", log_file_path.display());
+        debug!("  - Level: {}", logging_config.level);
     } else if logging_config.console {
         // Console only
         let console_layer =
             tracing_subscriber::fmt::layer().event_format(ConditionalTargetFormatter);
 
         subscriber.with(env_filter).with(console_layer).init();
-        eprintln!(
+        debug!(
             "Logging configured: Console only, Level: {}",
             logging_config.level
         );
@@ -416,7 +415,7 @@ fn initialize_logging(
 
         // Create log directory if it doesn't exist
         if let Err(e) = std::fs::create_dir_all(log_dir) {
-            eprintln!("Warning: Could not create log directory {log_dir:?}: {e}");
+            debug!("Warning: Could not create log directory {log_dir:?}: {e}");
         }
 
         // Create rolling file appender
@@ -426,7 +425,7 @@ fn initialize_logging(
             .filename_suffix("log")
             .build(log_dir)
             .map_err(|e| {
-                eprintln!("Failed to create file appender: {e}");
+                debug!("Failed to create file appender: {e}");
                 ComSrvError::ConfigError(format!("Failed to create log file appender: {e}"))
             })?;
 
@@ -440,12 +439,12 @@ fn initialize_logging(
 
         subscriber.with(env_filter).with(file_layer).init();
 
-        eprintln!("Logging configured:");
-        eprintln!("  - Console: disabled");
-        eprintln!("  - File: {}", log_file_path.display());
-        eprintln!("  - Level: {}", logging_config.level);
+        debug!("Logging configured:");
+        debug!("  - Console: disabled");
+        debug!("  - File: {}", log_file_path.display());
+        debug!("  - Level: {}", logging_config.level);
     } else {
-        eprintln!("Warning: No logging outputs configured!");
+        debug!("Warning: No logging outputs configured!");
         return Ok(());
     }
 

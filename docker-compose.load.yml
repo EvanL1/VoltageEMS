@@ -1,0 +1,414 @@
+version: '3.8'
+
+# Load Testing Environment for VoltageEMS
+# Performance and stress testing with multiple load generators
+
+services:
+  # Production-like Infrastructure for Load Testing
+  redis-load:
+    build:
+      context: .
+      dockerfile: docker/redis/Dockerfile
+    container_name: voltageems-redis-load
+    ports:
+      - "6382:6379"
+    networks:
+      - load-network
+    # Redis optimization for high load
+    sysctls:
+      - net.core.somaxconn=1024
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+    command: >
+      sh -c "echo 'vm.overcommit_memory = 1' >> /etc/sysctl.conf &&
+             echo 'net.core.somaxconn = 1024' >> /etc/sysctl.conf &&
+             redis-server --maxmemory 2gb --maxmemory-policy allkeys-lru --tcp-backlog 511"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  influxdb-load:
+    image: influxdb:2.7-alpine
+    container_name: voltageems-influxdb-load
+    ports:
+      - "8089:8086"
+    environment:
+      - DOCKER_INFLUXDB_INIT_MODE=setup
+      - DOCKER_INFLUXDB_INIT_USERNAME=loadtest
+      - DOCKER_INFLUXDB_INIT_PASSWORD=loadtest123
+      - DOCKER_INFLUXDB_INIT_ORG=voltageems-load
+      - DOCKER_INFLUXDB_INIT_BUCKET=load_data
+      - DOCKER_INFLUXDB_INIT_ADMIN_TOKEN=load-token-123
+    volumes:
+      - influxdb-load-data:/var/lib/influxdb2
+    networks:
+      - load-network
+    # InfluxDB optimization for high throughput
+    environment:
+      - INFLUXDB_HTTP_MAX_BODY_SIZE=0
+      - INFLUXDB_DATA_MAX_SERIES_PER_DATABASE=0
+      - INFLUXDB_DATA_MAX_VALUES_PER_TAG=0
+
+  # Multiple Modbus Simulators for Load Testing
+  modbus-load-generator:
+    build:
+      context: ./tests/load
+      dockerfile: Dockerfile.modbus-load
+    container_name: voltageems-modbus-load-gen
+    deploy:
+      replicas: 5  # Multiple instances
+    ports:
+      - "5040-5044:5020"
+    networks:
+      - load-network
+    environment:
+      - MODBUS_DEVICES=10
+      - UPDATE_RATE=100  # 100ms updates
+      - POINT_COUNT=1000
+
+  # High-Performance VoltageEMS Services
+  comsrv-load:
+    build:
+      context: .
+      dockerfile: services/comsrv/Dockerfile
+    container_name: voltageems-comsrv-load
+    deploy:
+      replicas: 3
+    ports:
+      - "6200-6202:6000"
+      - "3200-3202:3000"
+    environment:
+      - RUST_LOG=info  # Reduced logging for performance
+      - REDIS_URL=redis://redis-load:6379
+      - CSV_BASE_PATH=/app/config
+      - TOKIO_WORKER_THREADS=8
+    depends_on:
+      redis-load:
+        condition: service_healthy
+    volumes:
+      - ./tests/load/config:/app/config:ro
+    networks:
+      - load-network
+    # Performance optimization
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+
+  modsrv-load:
+    build:
+      context: .
+      dockerfile: services/modsrv/Dockerfile
+    container_name: voltageems-modsrv-load
+    deploy:
+      replicas: 2
+    ports:
+      - "6210-6211:6001"
+    environment:
+      - RUST_LOG=info
+      - REDIS_URL=redis://redis-load:6379
+      - TOKIO_WORKER_THREADS=4
+    depends_on:
+      redis-load:
+        condition: service_healthy
+    volumes:
+      - ./tests/load/config/modsrv:/app/config:ro
+    networks:
+      - load-network
+
+  alarmsrv-load:
+    build:
+      context: .
+      dockerfile: services/alarmsrv/Dockerfile
+    container_name: voltageems-alarmsrv-load
+    deploy:
+      replicas: 2
+    ports:
+      - "6220-6221:6002"
+    environment:
+      - RUST_LOG=info
+      - REDIS_URL=redis://redis-load:6379
+      - TOKIO_WORKER_THREADS=4
+    depends_on:
+      redis-load:
+        condition: service_healthy
+    volumes:
+      - ./tests/load/config/alarmsrv:/app/config:ro
+    networks:
+      - load-network
+
+  rulesrv-load:
+    build:
+      context: .
+      dockerfile: services/rulesrv/Dockerfile
+    container_name: voltageems-rulesrv-load
+    deploy:
+      replicas: 2
+    ports:
+      - "6230-6231:6003"
+    environment:
+      - RUST_LOG=info
+      - REDIS_URL=redis://redis-load:6379
+      - TOKIO_WORKER_THREADS=4
+    depends_on:
+      redis-load:
+        condition: service_healthy
+    volumes:
+      - ./tests/load/config/rulesrv:/app/config:ro
+    networks:
+      - load-network
+
+  hissrv-load:
+    build:
+      context: .
+      dockerfile: services/hissrv/Dockerfile
+    container_name: voltageems-hissrv-load
+    deploy:
+      replicas: 2
+    ports:
+      - "6240-6241:6004"
+    environment:
+      - RUST_LOG=info
+      - REDIS_URL=redis://redis-load:6379
+      - INFLUXDB_URL=http://influxdb-load:8086
+      - INFLUXDB_TOKEN=load-token-123
+      - INFLUXDB_ORG=voltageems-load
+      - INFLUXDB_BUCKET=load_data
+      - TOKIO_WORKER_THREADS=4
+    depends_on:
+      redis-load:
+        condition: service_healthy
+      influxdb-load:
+        condition: service_started
+    volumes:
+      - ./tests/load/config/hissrv:/app/config:ro
+    networks:
+      - load-network
+
+  # Load Balancer for Load Testing
+  nginx-load:
+    image: nginx:alpine
+    container_name: voltageems-nginx-load
+    ports:
+      - "8081:80"
+    volumes:
+      - ./tests/load/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      - comsrv-load
+      - modsrv-load
+      - alarmsrv-load
+      - rulesrv-load
+      - hissrv-load
+    networks:
+      - load-network
+
+  # K6 Load Testing
+  k6-api-load:
+    image: grafana/k6:latest
+    container_name: voltageems-k6-api-load
+    depends_on:
+      - nginx-load
+    volumes:
+      - ./tests/load/k6:/scripts:ro
+      - load-test-results:/results
+    networks:
+      - load-network
+    environment:
+      - TARGET_URL=http://nginx-load:80
+      - VUS=100  # Virtual users
+      - DURATION=10m
+    command: >
+      run --vus 100 --duration 10m 
+      --out json=/results/api-load-results.json
+      /scripts/api-load-test.js
+
+  k6-modbus-load:
+    image: grafana/k6:latest
+    container_name: voltageems-k6-modbus-load
+    depends_on:
+      - comsrv-load
+    volumes:
+      - ./tests/load/k6:/scripts:ro
+      - load-test-results:/results
+    networks:
+      - load-network
+    environment:
+      - TARGET_HOST=comsrv-load
+      - TARGET_PORT=6000
+      - VUS=50
+      - DURATION=10m
+    command: >
+      run --vus 50 --duration 10m
+      --out json=/results/modbus-load-results.json
+      /scripts/modbus-load-test.js
+
+  k6-redis-load:
+    image: grafana/k6:latest
+    container_name: voltageems-k6-redis-load
+    depends_on:
+      - redis-load
+    volumes:
+      - ./tests/load/k6:/scripts:ro
+      - load-test-results:/results
+    networks:
+      - load-network
+    environment:
+      - REDIS_URL=redis://redis-load:6379
+      - VUS=200
+      - DURATION=10m
+    command: >
+      run --vus 200 --duration 10m
+      --out json=/results/redis-load-results.json
+      /scripts/redis-load-test.js
+
+  # Artillery.io for Additional Load Testing
+  artillery-mixed-load:
+    image: artilleryio/artillery:latest
+    container_name: voltageems-artillery-mixed
+    depends_on:
+      - nginx-load
+    volumes:
+      - ./tests/load/artillery:/scripts:ro
+      - load-test-results:/results
+    networks:
+      - load-network
+    environment:
+      - TARGET_URL=http://nginx-load:80
+    command: >
+      run --output /results/artillery-mixed-results.json
+      /scripts/mixed-load-test.yml
+
+  # JMeter Load Testing
+  jmeter-load:
+    image: justb4/jmeter:5.5
+    container_name: voltageems-jmeter-load
+    depends_on:
+      - nginx-load
+    volumes:
+      - ./tests/load/jmeter:/tests:ro
+      - load-test-results:/results
+    networks:
+      - load-network
+    environment:
+      - TARGET_HOST=nginx-load
+      - TARGET_PORT=80
+      - THREADS=100
+      - RAMP_UP=300
+      - DURATION=600
+    command: >
+      -n -t /tests/voltageems-load-test.jmx
+      -l /results/jmeter-results.jtl
+      -e -o /results/jmeter-report
+      -Jthreads=100 -Jramp_up=300 -Jduration=600
+
+  # System Monitoring During Load Tests
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: voltageems-prometheus-load
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./tests/load/monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    networks:
+      - load-network
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: voltageems-grafana-load
+    ports:
+      - "3001:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=loadtest123
+    volumes:
+      - ./tests/load/monitoring/grafana/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - ./tests/load/monitoring/grafana/datasources:/etc/grafana/provisioning/datasources:ro
+      - grafana-load-data:/var/lib/grafana
+    depends_on:
+      - prometheus
+    networks:
+      - load-network
+
+  # Redis Monitoring
+  redis-exporter:
+    image: oliver006/redis_exporter:latest
+    container_name: voltageems-redis-exporter-load
+    ports:
+      - "9121:9121"
+    environment:
+      - REDIS_ADDR=redis://redis-load:6379
+    depends_on:
+      - redis-load
+    networks:
+      - load-network
+
+  # Node Exporter for System Metrics
+  node-exporter:
+    image: prom/node-exporter:latest
+    container_name: voltageems-node-exporter-load
+    ports:
+      - "9100:9100"
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/rootfs:ro
+    command:
+      - '--path.procfs=/host/proc'
+      - '--path.rootfs=/rootfs'
+      - '--path.sysfs=/host/sys'
+      - '--collector.filesystem.ignored-mount-points=^/(sys|proc|dev|host|etc)($$|/)'
+    networks:
+      - load-network
+
+  # cAdvisor for Container Metrics
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:v0.47.0
+    container_name: voltageems-cadvisor-load
+    ports:
+      - "8082:8080"
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:rw
+      - /sys:/sys:ro
+      - /var/lib/docker:/var/lib/docker:ro
+    privileged: true
+    networks:
+      - load-network
+
+  # Load Test Results Analyzer
+  load-test-analyzer:
+    build:
+      context: ./tests/load
+      dockerfile: Dockerfile.analyzer
+    container_name: voltageems-load-analyzer
+    depends_on:
+      - k6-api-load
+      - k6-modbus-load
+      - k6-redis-load
+      - artillery-mixed-load
+      - jmeter-load
+    volumes:
+      - load-test-results:/app/results:ro
+      - ./tests/load/reports:/app/reports
+    networks:
+      - load-network
+    environment:
+      - ANALYSIS_TYPE=comprehensive
+      - REPORT_FORMAT=html,json,pdf
+    command: ["python", "analyze_load_results.py"]
+
+networks:
+  load-network:
+    driver: bridge
+    name: voltageems-load-network
+
+volumes:
+  influxdb-load-data:
+    name: voltageems-influxdb-load-data
+  grafana-load-data:
+    name: voltageems-grafana-load-data
+  load-test-results:
+    name: voltageems-load-test-results

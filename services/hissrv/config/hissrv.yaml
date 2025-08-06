@@ -1,0 +1,8 @@
+data_keys:
+  - "comsrv:1001:T"
+  - "comsrv:1002:T"
+  - "comsrv:1003:T"
+  - "comsrv:1004:T"
+
+collection_interval_seconds: 60
+batch_size: 100

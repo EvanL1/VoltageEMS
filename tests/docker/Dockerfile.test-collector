@@ -1,0 +1,283 @@
+# Test Results Collector
+FROM python:3.11-slim
+
+RUN apt-get update && apt-get install -y \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Install Python dependencies for test collection
+RUN pip install --no-cache-dir \
+    jinja2 \
+    pyyaml \
+    requests
+
+# Create results collector script
+RUN cat > /app/collect_results.py << 'EOF'
+#!/usr/bin/env python3
+"""
+Test Results Collector for VoltageEMS
+Aggregates test results from all test containers
+"""
+
+import json
+import os
+import glob
+import time
+from datetime import datetime
+from typing import Dict, List, Any
+import logging
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+class TestResultsCollector:
+    def __init__(self):
+        self.results_dir = "/app/test-results"
+        self.reports_dir = "/app/reports"
+        self.summary = {
+            'timestamp': datetime.now().isoformat(),
+            'total_tests': 0,
+            'passed_tests': 0,
+            'failed_tests': 0,
+            'error_tests': 0,
+            'test_suites': {},
+            'errors': [],
+            'performance_metrics': {}
+        }
+
+    def collect_unit_test_results(self):
+        """Collect unit test results"""
+        logger.info("Collecting unit test results...")
+        
+        unit_results_pattern = os.path.join(self.results_dir, "*unit*")
+        for result_file in glob.glob(unit_results_pattern):
+            try:
+                with open(result_file, 'r') as f:
+                    data = json.load(f)
+                
+                suite_name = os.path.basename(result_file).replace('.json', '')
+                self.summary['test_suites'][suite_name] = {
+                    'type': 'unit',
+                    'total': data.get('total', 0),
+                    'passed': data.get('passed', 0),
+                    'failed': data.get('failed', 0),
+                    'duration': data.get('duration', 0)
+                }
+                
+                self.summary['total_tests'] += data.get('total', 0)
+                self.summary['passed_tests'] += data.get('passed', 0)
+                self.summary['failed_tests'] += data.get('failed', 0)
+                
+            except Exception as e:
+                logger.error(f"Error processing {result_file}: {e}")
+                self.summary['errors'].append(f"Failed to process unit test results: {e}")
+
+    def collect_integration_test_results(self):
+        """Collect integration test results"""
+        logger.info("Collecting integration test results...")
+        
+        integration_results_pattern = os.path.join(self.results_dir, "*integration*")
+        for result_file in glob.glob(integration_results_pattern):
+            try:
+                with open(result_file, 'r') as f:
+                    data = json.load(f)
+                
+                suite_name = os.path.basename(result_file).replace('.json', '')
+                self.summary['test_suites'][suite_name] = {
+                    'type': 'integration',
+                    'total': data.get('total', 0),
+                    'passed': data.get('passed', 0),
+                    'failed': data.get('failed', 0),
+                    'errors': data.get('errors', [])
+                }
+                
+                self.summary['total_tests'] += data.get('total', 0)
+                self.summary['passed_tests'] += data.get('passed', 0)
+                self.summary['failed_tests'] += data.get('failed', 0)
+                
+                if data.get('errors'):
+                    self.summary['errors'].extend(data['errors'])
+                
+            except Exception as e:
+                logger.error(f"Error processing {result_file}: {e}")
+                self.summary['errors'].append(f"Failed to process integration test results: {e}")
+
+    def collect_service_test_results(self):
+        """Collect service-specific test results"""
+        logger.info("Collecting service-specific test results...")
+        
+        services = ['comsrv', 'modsrv', 'alarmsrv', 'rulesrv', 'hissrv']
+        for service in services:
+            service_pattern = os.path.join(self.results_dir, f"*{service}*")
+            for result_file in glob.glob(service_pattern):
+                try:
+                    with open(result_file, 'r') as f:
+                        data = json.load(f)
+                    
+                    suite_name = f"{service}_tests"
+                    self.summary['test_suites'][suite_name] = {
+                        'type': 'service',
+                        'service': service,
+                        'total': data.get('total', 0),
+                        'passed': data.get('passed', 0),
+                        'failed': data.get('failed', 0),
+                        'duration': data.get('duration', 0)
+                    }
+                    
+                    self.summary['total_tests'] += data.get('total', 0)
+                    self.summary['passed_tests'] += data.get('passed', 0)
+                    self.summary['failed_tests'] += data.get('failed', 0)
+                    
+                except Exception as e:
+                    logger.error(f"Error processing {result_file}: {e}")
+                    self.summary['errors'].append(f"Failed to process {service} test results: {e}")
+
+    def generate_html_report(self):
+        """Generate HTML test report"""
+        logger.info("Generating HTML report...")
+        
+        html_template = '''
+<!DOCTYPE html>
+<html>
+<head>
+    <title>VoltageEMS Test Results</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 40px; }
+        .header { background-color: #f0f0f0; padding: 20px; border-radius: 5px; }
+        .summary { margin: 20px 0; }
+        .test-suite { margin: 10px 0; padding: 10px; border: 1px solid #ddd; border-radius: 5px; }
+        .passed { color: green; }
+        .failed { color: red; }
+        .errors { color: orange; }
+        table { width: 100%; border-collapse: collapse; margin: 20px 0; }
+        th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+        th { background-color: #f2f2f2; }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>VoltageEMS Test Results</h1>
+        <p>Generated: {{ timestamp }}</p>
+        <div class="summary">
+            <h2>Summary</h2>
+            <p>Total Tests: {{ total_tests }}</p>
+            <p class="passed">Passed: {{ passed_tests }}</p>
+            <p class="failed">Failed: {{ failed_tests }}</p>
+            <p>Success Rate: {{ success_rate }}%</p>
+        </div>
+    </div>
+    
+    <h2>Test Suites</h2>
+    <table>
+        <tr>
+            <th>Suite Name</th>
+            <th>Type</th>
+            <th>Total</th>
+            <th>Passed</th>
+            <th>Failed</th>
+            <th>Duration (s)</th>
+        </tr>
+        {% for suite_name, suite_data in test_suites.items() %}
+        <tr>
+            <td>{{ suite_name }}</td>
+            <td>{{ suite_data.type }}</td>
+            <td>{{ suite_data.total }}</td>
+            <td class="passed">{{ suite_data.passed }}</td>
+            <td class="failed">{{ suite_data.failed }}</td>
+            <td>{{ suite_data.get('duration', 'N/A') }}</td>
+        </tr>
+        {% endfor %}
+    </table>
+    
+    {% if errors %}
+    <h2>Errors</h2>
+    <div class="errors">
+        <ul>
+        {% for error in errors %}
+            <li>{{ error }}</li>
+        {% endfor %}
+        </ul>
+    </div>
+    {% endif %}
+</body>
+</html>
+        '''
+        
+        try:
+            from jinja2 import Template
+            template = Template(html_template)
+            
+            success_rate = 0
+            if self.summary['total_tests'] > 0:
+                success_rate = (self.summary['passed_tests'] / self.summary['total_tests']) * 100
+            
+            html_content = template.render(
+                timestamp=self.summary['timestamp'],
+                total_tests=self.summary['total_tests'],
+                passed_tests=self.summary['passed_tests'],
+                failed_tests=self.summary['failed_tests'],
+                success_rate=f"{success_rate:.1f}",
+                test_suites=self.summary['test_suites'],
+                errors=self.summary['errors']
+            )
+            
+            os.makedirs(self.reports_dir, exist_ok=True)
+            with open(os.path.join(self.reports_dir, 'test_report.html'), 'w') as f:
+                f.write(html_content)
+                
+            logger.info("HTML report generated successfully")
+            
+        except Exception as e:
+            logger.error(f"Error generating HTML report: {e}")
+            self.summary['errors'].append(f"Failed to generate HTML report: {e}")
+
+    def save_json_summary(self):
+        """Save JSON summary"""
+        os.makedirs(self.reports_dir, exist_ok=True)
+        with open(os.path.join(self.reports_dir, 'test_summary.json'), 'w') as f:
+            json.dump(self.summary, f, indent=2)
+
+    def run(self):
+        """Run the collection process"""
+        logger.info("Starting test results collection...")
+        
+        # Ensure directories exist
+        os.makedirs(self.reports_dir, exist_ok=True)
+        
+        # Collect all test results
+        self.collect_unit_test_results()
+        self.collect_integration_test_results()
+        self.collect_service_test_results()
+        
+        # Generate reports
+        self.generate_html_report()
+        self.save_json_summary()
+        
+        # Print summary
+        logger.info(f"\n{'='*50}")
+        logger.info(f"Test Results Summary")
+        logger.info(f"{'='*50}")
+        logger.info(f"Total Tests: {self.summary['total_tests']}")
+        logger.info(f"Passed: {self.summary['passed_tests']}")
+        logger.info(f"Failed: {self.summary['failed_tests']}")
+        
+        success_rate = 0
+        if self.summary['total_tests'] > 0:
+            success_rate = (self.summary['passed_tests'] / self.summary['total_tests']) * 100
+        logger.info(f"Success Rate: {success_rate:.1f}%")
+        
+        if self.summary['errors']:
+            logger.warning(f"Errors: {len(self.summary['errors'])}")
+        
+        logger.info("Collection complete!")
+
+if __name__ == "__main__":
+    collector = TestResultsCollector()
+    collector.run()
+EOF
+
+RUN chmod +x /app/collect_results.py
+
+CMD ["python", "/app/collect_results.py"]

@@ -1,0 +1,266 @@
+# Integration Test Runner
+FROM python:3.11-slim
+
+RUN apt-get update && apt-get install -y \
+    curl \
+    netcat \
+    redis-tools \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Install Python dependencies
+COPY tests/integration/requirements.txt ./requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy integration test scripts
+COPY tests/integration/ ./tests/
+
+# Create results directory
+RUN mkdir -p /app/results
+
+# Integration test runner script
+RUN cat > /app/run_integration_tests.py << 'EOF'
+#!/usr/bin/env python3
+"""
+Integration Test Runner for VoltageEMS
+Orchestrates integration test scenarios across services
+"""
+
+import asyncio
+import aiohttp
+import json
+import time
+import sys
+from typing import Dict, List
+import logging
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+class IntegrationTestRunner:
+    def __init__(self):
+        self.services = {
+            'comsrv': 'http://comsrv-integration:6000',
+            'modsrv': 'http://modsrv-integration:6001',
+            'alarmsrv': 'http://alarmsrv-integration:6002',
+            'rulesrv': 'http://rulesrv-integration:6003',
+            'hissrv': 'http://hissrv-integration:6004',
+            'apigateway': 'http://apigateway-integration:6005',
+            'nginx': 'http://nginx-integration:80'
+        }
+        
+        self.test_results = {
+            'passed': 0,
+            'failed': 0,
+            'errors': [],
+            'details': {}
+        }
+
+    async def check_service_health(self, session: aiohttp.ClientSession, 
+                                 service: str, url: str) -> bool:
+        """Check if a service is healthy"""
+        try:
+            async with session.get(f"{url}/health", timeout=5) as response:
+                if response.status == 200:
+                    logger.info(f"✓ {service} is healthy")
+                    return True
+                else:
+                    logger.error(f"✗ {service} health check failed: {response.status}")
+                    return False
+        except Exception as e:
+            logger.error(f"✗ {service} health check error: {e}")
+            return False
+
+    async def test_data_flow_scenario(self, session: aiohttp.ClientSession) -> bool:
+        """Test complete data flow from Modbus to InfluxDB"""
+        logger.info("Testing data flow scenario...")
+        
+        try:
+            # 1. Check if comsrv is receiving Modbus data
+            async with session.get(f"{self.services['comsrv']}/channels/status") as response:
+                if response.status != 200:
+                    raise Exception("Failed to get channel status")
+                data = await response.json()
+                logger.info(f"Channel status: {data}")
+
+            # 2. Verify data in Redis via modsrv
+            async with session.get(f"{self.services['modsrv']}/models") as response:
+                if response.status != 200:
+                    raise Exception("Failed to get models")
+                models = await response.json()
+                logger.info(f"Models count: {len(models)}")
+
+            # 3. Check historical data in hissrv
+            async with session.get(f"{self.services['hissrv']}/history/latest") as response:
+                if response.status != 200:
+                    raise Exception("Failed to get historical data")
+                history = await response.json()
+                logger.info(f"Historical data points: {len(history)}")
+
+            self.test_results['passed'] += 1
+            logger.info("✓ Data flow scenario passed")
+            return True
+
+        except Exception as e:
+            self.test_results['failed'] += 1
+            self.test_results['errors'].append(f"Data flow scenario failed: {e}")
+            logger.error(f"✗ Data flow scenario failed: {e}")
+            return False
+
+    async def test_alarm_workflow_scenario(self, session: aiohttp.ClientSession) -> bool:
+        """Test alarm creation and notification workflow"""
+        logger.info("Testing alarm workflow scenario...")
+        
+        try:
+            # 1. Create a test alarm
+            alarm_data = {
+                "title": "Integration Test Alarm",
+                "description": "Test alarm for integration testing",
+                "level": "Warning",
+                "conditions": [
+                    {
+                        "point_id": 1,
+                        "operator": "greater_than",
+                        "value": 100.0
+                    }
+                ]
+            }
+            
+            async with session.post(f"{self.services['alarmsrv']}/alarms", 
+                                  json=alarm_data) as response:
+                if response.status != 201:
+                    raise Exception("Failed to create alarm")
+                alarm = await response.json()
+                alarm_id = alarm['id']
+                logger.info(f"Created alarm: {alarm_id}")
+
+            # 2. Verify alarm exists
+            async with session.get(f"{self.services['alarmsrv']}/alarms/{alarm_id}") as response:
+                if response.status != 200:
+                    raise Exception("Failed to retrieve created alarm")
+
+            # 3. Test alarm acknowledgment
+            async with session.post(f"{self.services['alarmsrv']}/alarms/{alarm_id}/acknowledge") as response:
+                if response.status != 200:
+                    raise Exception("Failed to acknowledge alarm")
+
+            self.test_results['passed'] += 1
+            logger.info("✓ Alarm workflow scenario passed")
+            return True
+
+        except Exception as e:
+            self.test_results['failed'] += 1
+            self.test_results['errors'].append(f"Alarm workflow scenario failed: {e}")
+            logger.error(f"✗ Alarm workflow scenario failed: {e}")
+            return False
+
+    async def test_rule_engine_scenario(self, session: aiohttp.ClientSession) -> bool:
+        """Test rule engine functionality"""
+        logger.info("Testing rule engine scenario...")
+        
+        try:
+            # 1. Create a test rule
+            rule_data = {
+                "name": "Integration Test Rule",
+                "description": "Test rule for integration testing",
+                "conditions": [
+                    {
+                        "point_id": 1,
+                        "operator": "greater_than",
+                        "value": 50.0
+                    }
+                ],
+                "actions": [
+                    {
+                        "type": "log",
+                        "message": "Test rule triggered"
+                    }
+                ]
+            }
+            
+            async with session.post(f"{self.services['rulesrv']}/rules", 
+                                  json=rule_data) as response:
+                if response.status != 201:
+                    raise Exception("Failed to create rule")
+                rule = await response.json()
+                rule_id = rule['id']
+                logger.info(f"Created rule: {rule_id}")
+
+            # 2. Verify rule exists
+            async with session.get(f"{self.services['rulesrv']}/rules/{rule_id}") as response:
+                if response.status != 200:
+                    raise Exception("Failed to retrieve created rule")
+
+            # 3. Test rule execution
+            async with session.post(f"{self.services['rulesrv']}/rules/{rule_id}/execute") as response:
+                if response.status != 200:
+                    raise Exception("Failed to execute rule")
+
+            self.test_results['passed'] += 1
+            logger.info("✓ Rule engine scenario passed")
+            return True
+
+        except Exception as e:
+            self.test_results['failed'] += 1
+            self.test_results['errors'].append(f"Rule engine scenario failed: {e}")
+            logger.error(f"✗ Rule engine scenario failed: {e}")
+            return False
+
+    async def run_all_tests(self):
+        """Run all integration test scenarios"""
+        logger.info("Starting integration tests...")
+        
+        async with aiohttp.ClientSession() as session:
+            # Health checks
+            healthy_services = 0
+            for service, url in self.services.items():
+                if await self.check_service_health(session, service, url):
+                    healthy_services += 1
+            
+            logger.info(f"Healthy services: {healthy_services}/{len(self.services)}")
+            
+            if healthy_services < len(self.services):
+                logger.warning("Some services are not healthy, continuing with available services...")
+
+            # Run test scenarios
+            await self.test_data_flow_scenario(session)
+            await self.test_alarm_workflow_scenario(session)
+            await self.test_rule_engine_scenario(session)
+
+        # Save results
+        self.test_results['details'] = {
+            'timestamp': time.time(),
+            'healthy_services': healthy_services,
+            'total_services': len(self.services)
+        }
+        
+        with open('/app/results/integration_test_results.json', 'w') as f:
+            json.dump(self.test_results, f, indent=2)
+
+        # Print summary
+        total_tests = self.test_results['passed'] + self.test_results['failed']
+        logger.info(f"\n{'='*50}")
+        logger.info(f"Integration Test Results")
+        logger.info(f"{'='*50}")
+        logger.info(f"Total Tests: {total_tests}")
+        logger.info(f"Passed: {self.test_results['passed']}")
+        logger.info(f"Failed: {self.test_results['failed']}")
+        logger.info(f"Success Rate: {(self.test_results['passed']/total_tests)*100:.1f}%")
+        
+        if self.test_results['errors']:
+            logger.error("\nErrors:")
+            for error in self.test_results['errors']:
+                logger.error(f"  - {error}")
+
+        return self.test_results['failed'] == 0
+
+if __name__ == "__main__":
+    runner = IntegrationTestRunner()
+    success = asyncio.run(runner.run_all_tests())
+    sys.exit(0 if success else 1)
+EOF
+
+RUN chmod +x /app/run_integration_tests.py
+
+CMD ["python", "/app/run_integration_tests.py"]
