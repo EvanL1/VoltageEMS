@@ -35,7 +35,6 @@ RUN cargo build --release -p comsrv
 # Second stage: Copy actual source code  
 # libs is already copied, only copy services
 COPY services ./services
-COPY scripts ./scripts
 
 # Touch binary to ensure rebuild
 RUN touch services/comsrv/src/bin/comsrv.rs

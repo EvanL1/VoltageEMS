@@ -59,7 +59,9 @@ services:
 
   # Modbus模拟器
   modbus-simulator:
-    image: oitc/modbus-server
+    build:
+      context: ./test-docker/modbus-simulator
+      dockerfile: Dockerfile
     container_name: voltageems-modbus-sim
     ports:
       - "5020:5020"  # 仅供开发调试
@@ -121,7 +123,7 @@ services:
       redis:
         condition: service_healthy
     volumes:
-      - ./services/modsrv/config:/app/config:ro
+      - ./config/modsrv:/app/config:ro
     networks:
       - voltageems
 

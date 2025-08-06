@@ -4,6 +4,7 @@
 
 use super::connection::ConnectionParams;
 use crate::core::config::types::ChannelConfig;
+use crate::plugins::protocols::modbus::pdu::ModbusPdu;
 use crate::utils::error::{ComSrvError, Result};
 use std::collections::HashMap;
 use tracing::{debug, error};
@@ -96,9 +97,9 @@ impl ModbusFrameProcessor {
     }
 
     /// Build complete Modbus frame
-    pub fn build_frame(&mut self, unit_id: u8, pdu: &[u8]) -> Vec<u8> {
+    pub fn build_frame(&mut self, unit_id: u8, pdu: &ModbusPdu) -> Vec<u8> {
         // Extract function code from PDU
-        let function_code = if !pdu.is_empty() { pdu[0] } else { 0 };
+        let function_code = pdu.function_code().unwrap_or(0);
 
         match self.mode {
             ModbusMode::Tcp => {
@@ -191,7 +192,7 @@ impl ModbusFrameProcessor {
     }
 
     /// Parse received frame
-    pub fn parse_frame(&mut self, data: &[u8]) -> Result<(u8, Vec<u8>)> {
+    pub fn parse_frame(&mut self, data: &[u8]) -> Result<(u8, ModbusPdu)> {
         match self.mode {
             ModbusMode::Tcp => self.parse_tcp_frame(data),
             ModbusMode::Rtu => self.parse_rtu_frame(data),
@@ -199,7 +200,12 @@ impl ModbusFrameProcessor {
     }
 
     /// Build TCP frame with specific transaction ID (MBAP + PDU)
-    fn build_tcp_frame_with_id(&self, unit_id: u8, pdu: &[u8], transaction_id: u16) -> Vec<u8> {
+    fn build_tcp_frame_with_id(
+        &self,
+        unit_id: u8,
+        pdu: &ModbusPdu,
+        transaction_id: u16,
+    ) -> Vec<u8> {
         let length = (pdu.len() + 1) as u16; // PDU length + unit_id
 
         let mut frame = Vec::with_capacity(7 + pdu.len());
@@ -211,13 +217,13 @@ impl ModbusFrameProcessor {
         frame.push(unit_id);
 
         // PDU
-        frame.extend_from_slice(pdu);
+        frame.extend_from_slice(pdu.as_slice());
 
         debug!(
             "Built TCP frame: transaction_id={:04X}, slave_id={}, function_code={:02X}, frame={:02X?}",
             transaction_id,
             unit_id,
-            pdu.first().unwrap_or(&0),
+            pdu.function_code().unwrap_or(0),
             frame
         );
 
@@ -225,14 +231,14 @@ impl ModbusFrameProcessor {
     }
 
     /// Build RTU frame (`unit_id` + PDU + CRC)
-    fn build_rtu_frame(&self, unit_id: u8, pdu: &[u8]) -> Vec<u8> {
+    fn build_rtu_frame(&self, unit_id: u8, pdu: &ModbusPdu) -> Vec<u8> {
         let mut frame = Vec::with_capacity(1 + pdu.len() + 2);
 
         // Unit ID
         frame.push(unit_id);
 
         // PDU
-        frame.extend_from_slice(pdu);
+        frame.extend_from_slice(pdu.as_slice());
 
         // CRC
         let crc = self.calculate_crc16(&frame);
@@ -242,7 +248,7 @@ impl ModbusFrameProcessor {
     }
 
     /// Parse TCP frame
-    fn parse_tcp_frame(&mut self, data: &[u8]) -> Result<(u8, Vec<u8>)> {
+    fn parse_tcp_frame(&mut self, data: &[u8]) -> Result<(u8, ModbusPdu)> {
         if data.len() < 8 {
             return Err(ComSrvError::ProtocolError(
                 "TCP frame too short".to_string(),
@@ -273,7 +279,7 @@ impl ModbusFrameProcessor {
         }
 
         // Extract PDU
-        let pdu = data[7..].to_vec();
+        let pdu = ModbusPdu::from_slice(&data[7..])?;
 
         // Find the request by transaction ID only (transaction ID is unique per channel)
         let matching_request = self
@@ -283,11 +289,9 @@ impl ModbusFrameProcessor {
 
         if let Some((key, _info)) = matching_request {
             // Found a matching request, validate it matches the response
-            let response_fc = if !pdu.is_empty() {
-                pdu[0] & 0x7F // Remove potential error bit
-            } else {
-                0
-            };
+            let response_fc = pdu.function_code()
+                .map(|fc| fc & 0x7F) // Remove potential error bit
+                .unwrap_or(0);
 
             // Check if the response matches our request
             if key.function_code == response_fc && key.slave_id == unit_id {
@@ -335,7 +339,7 @@ impl ModbusFrameProcessor {
     }
 
     /// Parse RTU frame
-    fn parse_rtu_frame(&mut self, data: &[u8]) -> Result<(u8, Vec<u8>)> {
+    fn parse_rtu_frame(&mut self, data: &[u8]) -> Result<(u8, ModbusPdu)> {
         if data.len() < 4 {
             return Err(ComSrvError::ProtocolError(
                 "RTU frame too short".to_string(),
@@ -344,7 +348,7 @@ impl ModbusFrameProcessor {
 
         let frame_len = data.len();
         let unit_id = data[0];
-        let pdu_data = &data[1..frame_len - 2];
+        let pdu_bytes = &data[1..frame_len - 2];
         let received_crc = u16::from_le_bytes([data[frame_len - 2], data[frame_len - 1]]);
 
         // Validate CRC
@@ -355,9 +359,14 @@ impl ModbusFrameProcessor {
             )));
         }
 
+        // Convert bytes to ModbusPdu
+        let pdu = ModbusPdu::from_slice(pdu_bytes)?;
+
         // For RTU, we need to validate against pending requests
-        if !pdu_data.is_empty() {
-            let response_fc = pdu_data[0] & 0x7F; // Remove potential error bit
+        if !pdu.is_empty() {
+            let response_fc = pdu.function_code()
+                .map(|fc| fc & 0x7F) // Remove potential error bit
+                .unwrap_or(0);
 
             // Find the most recent matching request by looking for matching slave_id and function_code
             let matching_keys: Vec<_> = self
@@ -416,7 +425,7 @@ impl ModbusFrameProcessor {
             }
         }
 
-        Ok((unit_id, pdu_data.to_vec()))
+        Ok((unit_id, pdu))
     }
 
     /// Calculate CRC16 checksum (Modbus RTU standard)
@@ -561,7 +570,8 @@ mod tests {
     #[test]
     fn test_tcp_frame_build_parse() {
         let mut processor = ModbusFrameProcessor::new(ModbusMode::Tcp);
-        let pdu = vec![0x03, 0x00, 0x01, 0x00, 0x02]; // Read holding registers
+        let pdu_bytes = vec![0x03, 0x00, 0x01, 0x00, 0x02]; // Read holding registers
+        let pdu = ModbusPdu::from_slice(&pdu_bytes).unwrap();
         let slave_id = 1;
 
         let frame = processor.build_frame(slave_id, &pdu);
@@ -574,13 +584,14 @@ mod tests {
             .parse_frame(&frame)
             .expect("TCP frame parsing should succeed");
         assert_eq!(unit_id, slave_id);
-        assert_eq!(parsed_pdu, pdu);
+        assert_eq!(parsed_pdu.as_slice(), pdu.as_slice());
     }
 
     #[test]
     fn test_rtu_frame_build_parse() {
         let mut processor = ModbusFrameProcessor::new(ModbusMode::Rtu);
-        let pdu = vec![0x03, 0x00, 0x01, 0x00, 0x02]; // Read holding registers
+        let pdu_bytes = vec![0x03, 0x00, 0x01, 0x00, 0x02]; // Read holding registers
+        let pdu = ModbusPdu::from_slice(&pdu_bytes).unwrap();
         let slave_id = 1;
 
         let frame = processor.build_frame(slave_id, &pdu);
@@ -593,7 +604,7 @@ mod tests {
             .parse_frame(&frame)
             .expect("RTU frame parsing should succeed");
         assert_eq!(unit_id, slave_id);
-        assert_eq!(parsed_pdu, pdu);
+        assert_eq!(parsed_pdu.as_slice(), pdu.as_slice());
     }
 
     #[test]
@@ -625,7 +636,8 @@ mod tests {
         let mut processor = ModbusFrameProcessor::new(ModbusMode::Tcp);
 
         // Build a request for slave 1, function code 3
-        let request_pdu = vec![0x03, 0x00, 0x01, 0x00, 0x02];
+        let request_pdu_bytes = vec![0x03, 0x00, 0x01, 0x00, 0x02];
+        let request_pdu = ModbusPdu::from_slice(&request_pdu_bytes).unwrap();
         let request_frame = processor.build_frame(1, &request_pdu);
 
         // Extract the transaction ID from the request
@@ -640,30 +652,35 @@ mod tests {
         assert!(result
             .unwrap_err()
             .to_string()
-            .contains("Unknown transaction ID"));
+            .contains("unknown transaction ID"));
 
-        // Test 2: Wrong slave ID with same transaction ID and function code
-        // This should succeed but with a warning, as it's a valid scenario
+        // Test 2: Wrong slave ID with same transaction ID
+        // This should fail because slave ID doesn't match the request
         let mut different_slave_frame = request_frame.clone();
         different_slave_frame[6] = 2; // Change slave ID from 1 to 2
         let result = processor.parse_frame(&different_slave_frame);
-        // Should succeed as we look up by composite key
-        assert!(result.is_ok());
+        // Should fail because slave ID doesn't match
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("FC/slave mismatch"));
 
         // Test 3: Same transaction ID but different function code
         // Build another request with same transaction ID but different FC
         processor.next_transaction_id = transaction_id; // Force same transaction ID
-        let request_pdu2 = vec![0x01, 0x00, 0x00, 0x00, 0x08]; // FC01
+        let request_pdu2_bytes = vec![0x01, 0x00, 0x00, 0x00, 0x08]; // FC01
+        let request_pdu2 = ModbusPdu::from_slice(&request_pdu2_bytes).unwrap();
         let request_frame2 = processor.build_frame(1, &request_pdu2);
 
         // Both requests should be trackable independently
         assert_eq!(processor.pending_requests.len(), 2);
 
-        // Response for FC03 should work
+        // Parsing the requests again should work (they are valid responses to themselves in this test)
         let result = processor.parse_frame(&request_frame);
         assert!(result.is_ok());
 
-        // Response for FC01 should also work
+        // Second request should also parse successfully
         let result = processor.parse_frame(&request_frame2);
         assert!(result.is_ok());
     }
@@ -673,13 +690,16 @@ mod tests {
         let mut processor = ModbusFrameProcessor::new(ModbusMode::Tcp);
 
         // Build multiple requests
-        let request1 = processor.build_frame(1, &[0x03, 0x00, 0x00, 0x00, 0x01]);
+        let pdu1 = ModbusPdu::from_slice(&[0x03, 0x00, 0x00, 0x00, 0x01]).unwrap();
+        let request1 = processor.build_frame(1, &pdu1);
         let tid1 = u16::from_be_bytes([request1[0], request1[1]]);
 
-        let request2 = processor.build_frame(2, &[0x01, 0x00, 0x00, 0x00, 0x08]);
+        let pdu2 = ModbusPdu::from_slice(&[0x01, 0x00, 0x00, 0x00, 0x08]).unwrap();
+        let request2 = processor.build_frame(2, &pdu2);
         let tid2 = u16::from_be_bytes([request2[0], request2[1]]);
 
-        let request3 = processor.build_frame(1, &[0x04, 0x00, 0x10, 0x00, 0x02]);
+        let pdu3 = ModbusPdu::from_slice(&[0x04, 0x00, 0x10, 0x00, 0x02]).unwrap();
+        let request3 = processor.build_frame(1, &pdu3);
         let tid3 = u16::from_be_bytes([request3[0], request3[1]]);
 
         // Verify all requests are tracked with composite keys
@@ -737,13 +757,16 @@ mod tests {
         processor.next_transaction_id = 100;
 
         // Request 1: Slave 1, FC03
-        let req1 = processor.build_frame(1, &[0x03, 0x00, 0x00, 0x00, 0x01]);
+        let pdu1 = ModbusPdu::from_slice(&[0x03, 0x00, 0x00, 0x00, 0x01]).unwrap();
+        let req1 = processor.build_frame(1, &pdu1);
 
         // Request 2: Slave 2, FC03 (same FC, different slave)
-        let req2 = processor.build_frame(2, &[0x03, 0x00, 0x00, 0x00, 0x01]);
+        let pdu2 = ModbusPdu::from_slice(&[0x03, 0x00, 0x00, 0x00, 0x01]).unwrap();
+        let req2 = processor.build_frame(2, &pdu2);
 
         // Request 3: Slave 1, FC04 (same slave, different FC)
-        let req3 = processor.build_frame(1, &[0x04, 0x00, 0x00, 0x00, 0x01]);
+        let pdu3 = ModbusPdu::from_slice(&[0x04, 0x00, 0x00, 0x00, 0x01]).unwrap();
+        let req3 = processor.build_frame(1, &pdu3);
 
         // All three should be tracked despite having same transaction ID
         assert_eq!(processor.pending_requests.len(), 3);

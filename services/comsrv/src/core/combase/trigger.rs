@@ -15,30 +15,44 @@ use crate::utils::error::Result;
 
 /// Control command type
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
 pub enum CommandType {
+    #[serde(rename = "control", alias = "C")]
     Control,
+    #[serde(rename = "adjustment", alias = "A")]
     Adjustment,
 }
 
 /// Control command message
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ControlCommand {
-    /// Command ID
+    /// Command ID (auto-generated if not provided)
+    #[serde(default = "generate_command_id")]
     pub command_id: String,
-    /// Channel ID
-    pub channel_id: u16,
-    /// Command type
+    /// Channel ID (will be inferred from topic if not provided)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub channel_id: Option<u16>,
+    /// Command type (required - use "C" for control, "A" for adjustment)
     pub command_type: CommandType,
     /// Point ID
     pub point_id: u32,
     /// Command value
     pub value: f64,
-    /// Timestamp
+    /// Timestamp (current time if not provided)
+    #[serde(default = "current_timestamp")]
     pub timestamp: i64,
     /// Optional metadata
     #[serde(default)]
     pub metadata: serde_json::Value,
+}
+
+/// Generate unique command ID
+fn generate_command_id() -> String {
+    format!("cmd_{}", chrono::Utc::now().timestamp_millis())
+}
+
+/// Get current timestamp
+fn current_timestamp() -> i64 {
+    chrono::Utc::now().timestamp()
 }
 
 /// Command status
@@ -230,15 +244,21 @@ impl CommandTrigger {
         );
 
         // Parse command
-        let command: ControlCommand = serde_json::from_str(&payload).map_err(|e| {
+        let mut command: ControlCommand = serde_json::from_str(&payload).map_err(|e| {
             crate::error::ComSrvError::ParsingError(format!("Failed to parse command: {e}"))
         })?;
 
+        // Infer channel_id if not provided (use the one from subscription)
+        if command.channel_id.is_none() {
+            command.channel_id = Some(channel_id);
+        }
+
         // Ensure command is sent to correct channel
-        if command.channel_id != channel_id {
+        let cmd_channel_id = command.channel_id.unwrap_or(channel_id);
+        if cmd_channel_id != channel_id {
             warn!(
                 "Received command for wrong channel: expected {}, got {}",
-                channel_id, command.channel_id
+                channel_id, cmd_channel_id
             );
             return Ok(());
         }
@@ -291,7 +311,7 @@ mod tests {
         let command: ControlCommand =
             serde_json::from_str(json).expect("test JSON should be valid");
         assert_eq!(command.command_id, "test-123");
-        assert_eq!(command.channel_id, 1);
+        assert_eq!(command.channel_id, Some(1));
         assert!(matches!(command.command_type, CommandType::Control));
         assert_eq!(command.point_id, 1001);
         assert!((command.value - 1.0).abs() < f64::EPSILON);

@@ -8,6 +8,7 @@
 
 pub mod connection;
 pub mod core;
+pub mod pdu;
 pub mod plugin;
 pub mod transport;
 pub mod types;

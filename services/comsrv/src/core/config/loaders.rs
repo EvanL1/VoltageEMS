@@ -101,10 +101,10 @@ where
 // CSV cache
 // ============================================================================
 
-/// CSV cache entry
+/// CSV cache entry (using Arc to avoid cloning data)
 #[derive(Debug, Clone)]
 struct CsvCacheEntry<T> {
-    data: Vec<T>,
+    data: Arc<Vec<T>>,
     modified_time: SystemTime,
 }
 
@@ -173,7 +173,7 @@ impl CachedCsvLoader {
                     self.stats.write().await.hits += 1;
                     trace!("CSV cache hit for: {}", path.display());
 
-                    // Deserialize from cached JSON values
+                    // Deserialize from cached JSON values (avoiding clone since we use Arc)
                     let result: Result<Vec<T>> = entry
                         .data
                         .iter()
@@ -197,22 +197,25 @@ impl CachedCsvLoader {
 
         let data = Self::load_csv_file(&path)?;
 
-        // Update cache
+        // Wrap data in Arc immediately to avoid any cloning
+        let arc_data = Arc::new(data);
+
+        // Update cache with Arc-wrapped data
         {
             let mut cache = self.cache.write().await;
             cache.insert(
                 path.clone(),
                 CsvCacheEntry {
-                    data: data.clone(),
+                    data: arc_data.clone(), // Arc clone is cheap (just increments ref count)
                     modified_time: current_modified,
                 },
             );
             self.stats.write().await.reloads += 1;
         }
 
-        // Deserialize to target type
-        let result: Result<Vec<T>> = data
-            .into_iter()
+        // Deserialize to target type using the Arc-wrapped data
+        let result: Result<Vec<T>> = arc_data
+            .iter()
             .enumerate()
             .map(|(i, v)| {
                 serde_json::from_value(v.clone()).map_err(|e| {
@@ -789,7 +792,7 @@ mod tests {
             params.get("byte_count").expect("byte_count should exist"),
             "4"
         );
-        assert_eq!(mapping.data_size(), 2);
+        assert_eq!(mapping.data_size(), 4); // data_size returns bytes, not registers
 
         // Test automatic inference
         let mapping_auto = ModbusMapping {

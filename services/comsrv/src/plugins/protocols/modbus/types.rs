@@ -23,6 +23,8 @@ pub struct ModbusPoint {
     pub register_count: u16,
     /// Byte order for multi-register values (e.g., "ABCD", "CDAB")
     pub byte_order: Option<String>,
+    /// Bit position for bool types (0-15 for all types)
+    pub bit_position: Option<u8>,
 }
 
 /// Modbus polling configuration

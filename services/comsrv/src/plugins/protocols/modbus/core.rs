@@ -17,6 +17,7 @@ use crate::core::config::types::{ChannelConfig, TelemetryType};
 use crate::utils::error::{ComSrvError, Result};
 
 use super::connection::{ConnectionParams, ModbusConnectionManager, ModbusMode as ConnectionMode};
+use super::pdu::{ModbusPdu, PduBuilder};
 use super::transport::{ModbusFrameProcessor, ModbusMode};
 use super::types::{ModbusPoint, ModbusPollingConfig};
 
@@ -244,6 +245,10 @@ impl ComBase for ModbusProtocol {
                                 .and_then(|v| v.parse::<u16>().ok())
                                 .unwrap_or(1),
                             byte_order: point.protocol_params.get("byte_order").cloned(),
+                            bit_position: point
+                                .protocol_params
+                                .get("bit_position")
+                                .and_then(|v| v.parse::<u8>().ok()),
                         };
 
                         modbus_points.push(modbus_point);
@@ -483,21 +488,21 @@ impl ComBase for ModbusProtocol {
                 5 => {
                     // FC05: Write Single Coil
                     let bool_value = register_values.first().map(|&v| v != 0).unwrap_or(false);
-                    build_write_fc05_single_coil_pdu(register_address, bool_value)
+                    build_write_fc05_single_coil_pdu(register_address, bool_value)?
                 },
                 6 => {
                     // FC06: Write Single Register
                     let reg_value = register_values.first().copied().unwrap_or(0);
-                    build_write_fc06_single_register_pdu(register_address, reg_value)
+                    build_write_fc06_single_register_pdu(register_address, reg_value)?
                 },
                 15 => {
                     // FC15: Write Multiple Coils
                     let bool_values: Vec<bool> = register_values.iter().map(|&v| v != 0).collect();
-                    build_write_fc15_multiple_coils_pdu(register_address, &bool_values)
+                    build_write_fc15_multiple_coils_pdu(register_address, &bool_values)?
                 },
                 16 => {
                     // FC16: Write Multiple Registers
-                    build_write_fc16_multiple_registers_pdu(register_address, &register_values)
+                    build_write_fc16_multiple_registers_pdu(register_address, &register_values)?
                 },
                 _ => {
                     error!("Unsupported function code {} for control", function_code);
@@ -693,11 +698,11 @@ impl ComBase for ModbusProtocol {
                 6 => {
                     // FC06: Write Single Register
                     let reg_value = register_values.first().copied().unwrap_or(0);
-                    build_write_fc06_single_register_pdu(register_address, reg_value)
+                    build_write_fc06_single_register_pdu(register_address, reg_value)?
                 },
                 16 => {
                     // FC16: Write Multiple Registers
-                    build_write_fc16_multiple_registers_pdu(register_address, &register_values)
+                    build_write_fc16_multiple_registers_pdu(register_address, &register_values)?
                 },
                 _ => {
                     error!("Unsupported function code {} for adjustment", function_code);
@@ -813,75 +818,43 @@ impl ComBase for ModbusProtocol {
 
                     debug!("Executing poll for channel {}", channel_id);
 
-                    // Read all configured points
-                    let points_to_read = points.read().await.clone();
-                    if points_to_read.is_empty() {
-                        debug!("No points configured for channel {}", channel_id);
-                        continue;
-                    }
+                    // Group points by slave ID and function code for batch reading
+                    // Points are already filtered during initialization (only telemetry and signal)
+                    let grouped_points = {
+                        let points_guard = points.read().await;
+                        if points_guard.is_empty() {
+                            debug!("No points configured for channel {}", channel_id);
+                            continue;
+                        }
+
+                        debug!("Processing {} points for polling", points_guard.len());
+
+                        // Group points by (slave_id, function_code, telemetry_type) for batch reading
+                        // Store indices instead of cloning points
+                        // This ensures different telemetry types with same point_id don't interfere
+                        let mut groups: HashMap<(u8, u8, String), Vec<usize>> = HashMap::new();
+                        for (idx, point) in points_guard.iter().enumerate() {
+                            // Determine telemetry type for grouping
+                            // Only telemetry and signal points enter polling (control/adjustment are filtered elsewhere)
+                            let point_id_u32 = point.point_id.parse::<u32>().unwrap_or(0);
+                            let telemetry_type = if let Some(ref config) = channel_config {
+                                if config.signal_points.contains_key(&point_id_u32) {
+                                    "signal".to_string()
+                                } else {
+                                    // Default to telemetry if not signal
+                                    "telemetry".to_string()
+                                }
+                            } else {
+                                "telemetry".to_string()
+                            };
+                            let key = (point.slave_id, point.function_code, telemetry_type);
+                            groups.entry(key).or_default().push(idx);
+                        }
+                        groups
+                    };
 
                     let mut success_count = 0;
                     let mut error_count = 0;
-
-                    // Filter points to only read Telemetry and Signal types
-                    // Control and Adjustment should only be written via command channels
-                    let points_count = points_to_read.len();
-                    let filtered_points: Vec<ModbusPoint> = if let Some(ref config) = channel_config
-                    {
-                        debug!(
-                            "Channel config available, control_points count: {}",
-                            config.control_points.len()
-                        );
-                        points_to_read
-                            .into_iter()
-                            .filter(|point| {
-                                if let Ok(point_id) = point.point_id.parse::<u32>() {
-                                    // checking点位yesno在 telemetry_points 或 signal_points medium
-                                    // 只allowing遥测和遥信type进row轮询
-                                    if config.telemetry_points.contains_key(&point_id)
-                                        || config.signal_points.contains_key(&point_id)
-                                    {
-                                        true
-                                    } else if config.control_points.contains_key(&point_id)
-                                        || config.adjustment_points.contains_key(&point_id)
-                                    {
-                                        // 遥控和遥调不allowing轮询read
-                                        debug!("Filtering out control/adjustment point {} from polling", point_id);
-                                        false
-                                    } else {
-                                        // If not found in any config, default to allow reading
-                                        debug!(
-                                            "Point {} not found in config, allowing read",
-                                            point_id
-                                        );
-                                        true
-                                    }
-                                } else {
-                                    debug!("Invalid point_id format: {}, skipping", point.point_id);
-                                    false
-                                }
-                            })
-                            .collect()
-                    } else {
-                        // If no config available, read all points (legacy behavior)
-                        debug!("No channel config available, reading all points");
-                        points_to_read
-                    };
-
-                    if filtered_points.len() != points_count {
-                        debug!(
-                            "Filtered polling points: {} → {} (skipped Control/Adjustment types)",
-                            points_count,
-                            filtered_points.len()
-                        );
-                    }
-
-                    // Group filtered points by slave ID and function code for batch reading
-                    let mut grouped_points: HashMap<(u8, u8), Vec<ModbusPoint>> = HashMap::new();
-                    for point in &filtered_points {
-                        let key = (point.slave_id, point.function_code);
-                        grouped_points.entry(key).or_default().push(point.clone());
-                    }
 
                     // Collect all telemetry and signal data for this poll cycle
                     let mut telemetry_batch = Vec::new();
@@ -889,7 +862,22 @@ impl ComBase for ModbusProtocol {
                     let timestamp = chrono::Utc::now().timestamp();
 
                     // Read each group
-                    for ((slave_id, function_code), group_points) in grouped_points {
+                    for ((slave_id, function_code, _telemetry_type), point_indices) in
+                        grouped_points
+                    {
+                        // Get the actual points for this group
+                        let group_points = {
+                            let points_guard = points.read().await;
+                            point_indices
+                                .iter()
+                                .filter_map(|&idx| points_guard.get(idx).cloned())
+                                .collect::<Vec<_>>()
+                        };
+
+                        if group_points.is_empty() {
+                            continue;
+                        }
+
                         // Lock the frame processor for this batch of reads
                         let mut frame_processor = frame_processor.lock().await;
 
@@ -1210,18 +1198,15 @@ async fn read_modbus_group_with_processor(
         {
             current_batch_indices.push(idx);
         } else {
-            // Read current batch
-            let current_batch: Vec<ModbusPoint> = current_batch_indices
-                .iter()
-                .map(|&i| points[i].clone())
-                .collect();
-            let batch_results = read_modbus_batch(
+            // Read current batch using zero-copy indexed version
+            let batch_results = read_modbus_batch_indexed(
                 connection_manager,
                 frame_processor,
                 slave_id,
                 function_code,
                 batch_start_address,
-                &current_batch,
+                points,
+                &current_batch_indices,
                 channel_config,
                 max_batch_size,
             )
@@ -1235,19 +1220,16 @@ async fn read_modbus_group_with_processor(
         }
     }
 
-    // Read final batch
+    // Read final batch using zero-copy indexed version
     if !current_batch_indices.is_empty() {
-        let current_batch: Vec<ModbusPoint> = current_batch_indices
-            .iter()
-            .map(|&i| points[i].clone())
-            .collect();
-        let batch_results = read_modbus_batch(
+        let batch_results = read_modbus_batch_indexed(
             connection_manager,
             frame_processor,
             slave_id,
             function_code,
             batch_start_address,
-            &current_batch,
+            points,
+            &current_batch_indices,
             channel_config,
             max_batch_size,
         )
@@ -1258,36 +1240,33 @@ async fn read_modbus_group_with_processor(
     Ok(results)
 }
 
-/// Read a batch of consecutive Modbus registers with automatic splitting for large batches
+/// Read a batch of consecutive Modbus registers with zero-copy design
 #[allow(clippy::too_many_arguments)]
-async fn read_modbus_batch(
+async fn read_modbus_batch_indexed(
     connection_manager: &Arc<ModbusConnectionManager>,
     frame_processor: &mut ModbusFrameProcessor,
     slave_id: u8,
     function_code: u8,
     start_address: u16,
-    points: &[ModbusPoint],
-    channel_config: Option<&ChannelConfig>,
+    all_points: &[ModbusPoint], // All points reference
+    indices: &[usize],          // Indices of points to read
+    _channel_config: Option<&ChannelConfig>,
     max_batch_size: u16,
 ) -> Result<Vec<(String, RedisValue)>> {
-    if points.is_empty() {
+    if indices.is_empty() {
         return Ok(Vec::new());
     }
 
-    // Calculate total registers/bits to read based on function code
-    let last_point = points
-        .last()
-        .expect("points should not be empty after is_empty check");
+    // Get the last point via index
+    let last_point = &all_points[indices[indices.len() - 1]];
 
-    // For FC01/02, addresses are bit addresses; for FC03/04, they are register addresses
+    // Calculate total registers/bits to read based on function code
     let (total_units, unit_name) = match function_code {
         1 | 2 => {
-            // For coils/discrete inputs, calculate total bits needed
             let total_bits = (last_point.register_address - start_address + 1) as usize;
             (total_bits, "bits")
         },
         _ => {
-            // For registers, calculate total registers needed
             let total_registers =
                 (last_point.register_address - start_address + last_point.register_count) as usize;
             (total_registers, "registers")
@@ -1302,14 +1281,12 @@ async fn read_modbus_batch(
     while current_offset < total_units {
         let (batch_size, batch_start) = match function_code {
             1 | 2 => {
-                // For FC01/02, we're dealing with bits
                 let remaining_bits = total_units - current_offset;
                 let batch_bits = std::cmp::min(max_batch_size as usize, remaining_bits);
                 let batch_start = start_address + current_offset as u16;
                 (batch_bits, batch_start)
             },
             _ => {
-                // For FC03/04, we're dealing with registers
                 let batch_size =
                     std::cmp::min(max_batch_size as usize, total_units - current_offset);
                 let batch_start = start_address + current_offset as u16;
@@ -1330,10 +1307,10 @@ async fn read_modbus_batch(
 
         // Build Modbus PDU for this batch
         let pdu = match function_code {
-            1 => build_read_fc01_coils_pdu(batch_start, batch_size as u16),
-            2 => build_read_fc02_discrete_inputs_pdu(batch_start, batch_size as u16),
-            3 => build_read_fc03_holding_registers_pdu(batch_start, batch_size as u16),
-            4 => build_read_fc04_input_registers_pdu(batch_start, batch_size as u16),
+            1 => build_read_fc01_coils_pdu(batch_start, batch_size as u16)?,
+            2 => build_read_fc02_discrete_inputs_pdu(batch_start, batch_size as u16)?,
+            3 => build_read_fc03_holding_registers_pdu(batch_start, batch_size as u16)?,
+            4 => build_read_fc04_input_registers_pdu(batch_start, batch_size as u16)?,
             _ => {
                 return Err(ComSrvError::ProtocolError(format!(
                     "Unsupported function code: {function_code}"
@@ -1348,24 +1325,21 @@ async fn read_modbus_batch(
         let mut retry_count = 0;
         const MAX_RETRIES: u32 = 3;
         let batch_register_values = loop {
-            let mut response = vec![0u8; 256]; // Maximum Modbus frame size
+            let mut response = vec![0u8; 256];
             let bytes_read = connection_manager
                 .send_and_receive(&request, &mut response, Duration::from_secs(5))
                 .await?;
             response.truncate(bytes_read);
 
-            // Try to parse response frame
             match frame_processor.parse_frame(&response) {
                 Ok((received_unit_id, pdu)) => {
-                    // Verify unit ID matches
                     if received_unit_id != slave_id {
                         return Err(ComSrvError::ProtocolError(format!(
                             "Unit ID mismatch: expected {slave_id}, got {received_unit_id}"
                         )));
                     }
 
-                    // Parse PDU to extract register values for this batch
-                    match parse_modbus_pdu(&pdu, function_code) {
+                    match parse_modbus_pdu(&pdu, function_code, batch_size as u16) {
                         Ok(values) => break values,
                         Err(e) => {
                             error!("Failed to parse Modbus PDU: {}", e);
@@ -1373,13 +1347,11 @@ async fn read_modbus_batch(
                             if retry_count >= MAX_RETRIES {
                                 return Err(e);
                             }
-                            // Continue to retry
                             tokio::time::sleep(Duration::from_millis(100)).await;
                         },
                     }
                 },
                 Err(e) => {
-                    // This could be a response for another channel/request - ignore and retry
                     debug!("Ignoring mismatched response: {}", e);
                     retry_count += 1;
                     if retry_count >= MAX_RETRIES {
@@ -1387,17 +1359,14 @@ async fn read_modbus_batch(
                             "Failed to get matching response after retries".to_string(),
                         ));
                     }
-                    // Continue waiting for the correct response
                     tokio::time::sleep(Duration::from_millis(100)).await;
                 },
             }
         };
 
-        // Verify we received the expected amount of data
+        // Verify received data size
         match function_code {
             1 | 2 => {
-                // For FC01/02, we receive bytes, not registers
-                // Expected bytes = ceil(bits / 8)
                 let expected_bytes = (batch_size + 7) / 8;
                 if batch_register_values.len() != expected_bytes {
                     warn!(
@@ -1410,7 +1379,6 @@ async fn read_modbus_batch(
                 }
             },
             _ => {
-                // For FC03/04, we receive registers
                 if batch_register_values.len() != batch_size {
                     warn!(
                         "Received {} registers, expected {} for batch at address {}",
@@ -1420,97 +1388,67 @@ async fn read_modbus_batch(
                     );
                 }
             },
-        }
+        };
 
-        // Append to our complete register collection
         all_register_values.extend(batch_register_values);
         current_offset += batch_size;
     }
 
-    // Extract values for each point from the complete register collection
+    // Extract values for each point from the complete register collection using indices
     let mut results = Vec::new();
-    for point in points {
+    for &idx in indices {
+        let point = &all_points[idx];
+
         // Handle different addressing for coils/discrete inputs vs registers
         let (registers, bit_position_override) = match function_code {
             1 | 2 => {
-                // For FC01/FC02, register_address is actually a bit address
                 let bit_address = point.register_address - start_address;
                 let byte_offset = (bit_address / 8) as usize;
                 let bit_offset = bit_address % 8;
 
-                // Check if byte is available
                 if byte_offset >= all_register_values.len() {
                     warn!(
-                        "Point {} with bit address {} is out of range (byte_offset={}, bytes_available={})",
-                        point.point_id,
-                        point.register_address,
-                        byte_offset,
-                        all_register_values.len()
+                        "Point {} with bit address {} is out of range",
+                        point.point_id, point.register_address
                     );
                     continue;
                 }
 
-                // For FC01/02, we pass the byte containing the bit
-                // and override the bit_position with the actual bit offset
-                (
-                    &all_register_values[byte_offset..byte_offset + 1],
-                    Some(bit_offset as u8),
-                )
+                let single_byte = vec![all_register_values[byte_offset]];
+                (single_byte, Some(bit_offset as u8))
             },
-            3 | 4 => {
-                // For FC03/FC04, register_address is a register address
+            _ => {
                 let offset = (point.register_address - start_address) as usize;
-                if offset + point.register_count as usize > all_register_values.len() {
+                let register_count = point.register_count as usize;
+
+                if offset + register_count > all_register_values.len() {
                     warn!(
-                        "Point {} at address {} is out of range (offset={}, registers_available={})",
-                        point.point_id,
-                        point.register_address,
-                        offset,
-                        all_register_values.len()
+                        "Point {} at register {} is out of range",
+                        point.point_id, point.register_address
                     );
                     continue;
                 }
-                (
-                    &all_register_values[offset..offset + point.register_count as usize],
-                    None,
-                )
+
+                let registers = all_register_values[offset..offset + register_count].to_vec();
+                // For bool types reading from holding registers, use the configured bit_position
+                let bit_position_override = if point.data_type == "bool" {
+                    point.bit_position
+                } else {
+                    None
+                };
+                (registers, bit_position_override)
             },
-            _ => continue,
         };
 
-        // Get bit_position from channel configuration if available (only for FC03/04)
-        let bit_position = if let Some(override_pos) = bit_position_override {
-            // For FC01/02, use the calculated bit position
-            Some(override_pos)
-        } else if let Some(config) = channel_config {
-            if let Ok(point_id) = point.point_id.parse::<u32>() {
-                // slave四个HashMapmedium查找点位configuring
-                let config_point = config
-                    .telemetry_points
-                    .get(&point_id)
-                    .or_else(|| config.signal_points.get(&point_id))
-                    .or_else(|| config.control_points.get(&point_id))
-                    .or_else(|| config.adjustment_points.get(&point_id));
-
-                config_point.and_then(|config_point| {
-                    config_point
-                        .protocol_params
-                        .get("bit_position")
-                        .and_then(|pos_str| pos_str.parse::<u8>().ok())
-                })
-            } else {
-                None
-            }
-        } else {
-            None
-        };
-
+        // Parse value based on data type
         let value = decode_register_value(
-            registers,
+            &registers,
             &point.data_type,
-            bit_position,
+            bit_position_override,
             point.byte_order.as_deref(),
+            Some(function_code),
         )?;
+
         results.push((point.point_id.clone(), value));
     }
 
@@ -1518,40 +1456,34 @@ async fn read_modbus_batch(
 }
 
 /// Build Modbus PDU for FC05: Write Single Coil (写单个线圈)
-fn build_write_fc05_single_coil_pdu(address: u16, value: bool) -> Vec<u8> {
-    vec![
-        0x05, // Function code 05: Write Single Coil
-        (address >> 8) as u8,
-        (address & 0xFF) as u8,
-        if value { 0xFF } else { 0x00 }, // 0xFF00 for ON, 0x0000 for OFF
-        0x00,
-    ]
+fn build_write_fc05_single_coil_pdu(address: u16, value: bool) -> Result<ModbusPdu> {
+    Ok(PduBuilder::new()
+        .function_code(0x05)?
+        .address(address)?
+        .byte(if value { 0xFF } else { 0x00 })?  // 0xFF00 for ON, 0x0000 for OFF
+        .byte(0x00)?
+        .build())
 }
 
 /// Build Modbus PDU for FC06: Write Single Register (写单个保持寄存器)
-fn build_write_fc06_single_register_pdu(address: u16, value: u16) -> Vec<u8> {
-    vec![
-        0x06, // Function code 06: Write Single Register
-        (address >> 8) as u8,
-        (address & 0xFF) as u8,
-        (value >> 8) as u8,
-        (value & 0xFF) as u8,
-    ]
+fn build_write_fc06_single_register_pdu(address: u16, value: u16) -> Result<ModbusPdu> {
+    Ok(PduBuilder::new()
+        .function_code(0x06)?
+        .address(address)?
+        .quantity(value)?
+        .build())
 }
 
 /// Build Modbus PDU for FC15: Write Multiple Coils (写多个线圈)
-fn build_write_fc15_multiple_coils_pdu(start_address: u16, values: &[bool]) -> Vec<u8> {
+fn build_write_fc15_multiple_coils_pdu(start_address: u16, values: &[bool]) -> Result<ModbusPdu> {
     let quantity = values.len() as u16;
     let byte_count = quantity.div_ceil(8) as u8;
 
-    let mut pdu = vec![
-        0x0F, // Function code 15: Write Multiple Coils
-        (start_address >> 8) as u8,
-        (start_address & 0xFF) as u8,
-        (quantity >> 8) as u8,
-        (quantity & 0xFF) as u8,
-        byte_count,
-    ];
+    let mut pdu = ModbusPdu::new();
+    pdu.push(0x0F)?; // Function code 15: Write Multiple Coils
+    pdu.push_u16(start_address)?;
+    pdu.push_u16(quantity)?;
+    pdu.push(byte_count)?;
 
     // Pack bool values into bytes
     let mut byte_value = 0u8;
@@ -1560,90 +1492,83 @@ fn build_write_fc15_multiple_coils_pdu(start_address: u16, values: &[bool]) -> V
             byte_value |= 1 << (i % 8);
         }
         if (i + 1) % 8 == 0 || i == values.len() - 1 {
-            pdu.push(byte_value);
+            pdu.push(byte_value)?;
             byte_value = 0;
         }
     }
 
-    pdu
+    Ok(pdu)
 }
 
 /// Build Modbus PDU for FC16: Write Multiple Registers (写多个保持寄存器)
-fn build_write_fc16_multiple_registers_pdu(start_address: u16, values: &[u16]) -> Vec<u8> {
+fn build_write_fc16_multiple_registers_pdu(
+    start_address: u16,
+    values: &[u16],
+) -> Result<ModbusPdu> {
     let quantity = values.len() as u16;
     let byte_count = (quantity * 2) as u8;
 
-    let mut pdu = vec![
-        0x10, // Function code 16: Write Multiple Registers
-        (start_address >> 8) as u8,
-        (start_address & 0xFF) as u8,
-        (quantity >> 8) as u8,
-        (quantity & 0xFF) as u8,
-        byte_count,
-    ];
+    let mut pdu = ModbusPdu::new();
+    pdu.push(0x10)?; // Function code 16: Write Multiple Registers
+    pdu.push_u16(start_address)?;
+    pdu.push_u16(quantity)?;
+    pdu.push(byte_count)?;
 
-    // Add register values
-    for value in values {
-        pdu.push((value >> 8) as u8);
-        pdu.push((value & 0xFF) as u8);
+    // Add register values (big-endian)
+    for &value in values {
+        pdu.push_u16(value)?;
     }
 
-    pdu
+    Ok(pdu)
 }
 
 /// Build Modbus PDU for FC01: Read Coils (读线圈state)
-fn build_read_fc01_coils_pdu(start_address: u16, quantity: u16) -> Vec<u8> {
-    vec![
-        0x01, // Function code 01: Read Coils
-        (start_address >> 8) as u8,
-        (start_address & 0xFF) as u8,
-        (quantity >> 8) as u8,
-        (quantity & 0xFF) as u8,
-    ]
+fn build_read_fc01_coils_pdu(start_address: u16, quantity: u16) -> Result<ModbusPdu> {
+    Ok(PduBuilder::new()
+        .function_code(0x01)?
+        .address(start_address)?
+        .quantity(quantity)?
+        .build())
 }
 
 /// Build Modbus PDU for FC02: Read Discrete Inputs (读discreteinputstate)
-fn build_read_fc02_discrete_inputs_pdu(start_address: u16, quantity: u16) -> Vec<u8> {
-    vec![
-        0x02, // Function code 02: Read Discrete Inputs
-        (start_address >> 8) as u8,
-        (start_address & 0xFF) as u8,
-        (quantity >> 8) as u8,
-        (quantity & 0xFF) as u8,
-    ]
+fn build_read_fc02_discrete_inputs_pdu(start_address: u16, quantity: u16) -> Result<ModbusPdu> {
+    Ok(PduBuilder::new()
+        .function_code(0x02)?
+        .address(start_address)?
+        .quantity(quantity)?
+        .build())
 }
 
 /// Build Modbus PDU for FC03: Read Holding Registers (读保持寄存器)
-fn build_read_fc03_holding_registers_pdu(start_address: u16, quantity: u16) -> Vec<u8> {
-    vec![
-        0x03, // Function code 03: Read Holding Registers
-        (start_address >> 8) as u8,
-        (start_address & 0xFF) as u8,
-        (quantity >> 8) as u8,
-        (quantity & 0xFF) as u8,
-    ]
+fn build_read_fc03_holding_registers_pdu(start_address: u16, quantity: u16) -> Result<ModbusPdu> {
+    Ok(PduBuilder::new()
+        .function_code(0x03)?
+        .address(start_address)?
+        .quantity(quantity)?
+        .build())
 }
 
 /// Build Modbus PDU for FC04: Read Input Registers (读input寄存器)
-fn build_read_fc04_input_registers_pdu(start_address: u16, quantity: u16) -> Vec<u8> {
-    vec![
-        0x04, // Function code 04: Read Input Registers
-        (start_address >> 8) as u8,
-        (start_address & 0xFF) as u8,
-        (quantity >> 8) as u8,
-        (quantity & 0xFF) as u8,
-    ]
+fn build_read_fc04_input_registers_pdu(start_address: u16, quantity: u16) -> Result<ModbusPdu> {
+    Ok(PduBuilder::new()
+        .function_code(0x04)?
+        .address(start_address)?
+        .quantity(quantity)?
+        .build())
 }
 
 /// Parse Modbus write response PDU
-fn parse_modbus_write_response(pdu: &[u8], expected_fc: u8) -> Result<bool> {
+fn parse_modbus_write_response(pdu: &ModbusPdu, expected_fc: u8) -> Result<bool> {
     if pdu.is_empty() {
         return Err(ComSrvError::ProtocolError("Empty PDU response".to_string()));
     }
 
-    // Check for exception response (function code + 0x80)
-    if pdu[0] == expected_fc + 0x80 {
-        let exception_code = if pdu.len() > 1 { pdu[1] } else { 0 };
+    let function_code = pdu.function_code().unwrap_or(0);
+
+    // Check for exception response
+    if pdu.is_exception() {
+        let exception_code = pdu.exception_code().unwrap_or(0);
         let error_msg = match exception_code {
             1 => "Illegal function",
             2 => "Illegal data address",
@@ -1658,10 +1583,10 @@ fn parse_modbus_write_response(pdu: &[u8], expected_fc: u8) -> Result<bool> {
     }
 
     // Check normal response
-    if pdu[0] != expected_fc {
+    if function_code != expected_fc {
         return Err(ComSrvError::ProtocolError(format!(
             "Function code mismatch: expected {}, got {}",
-            expected_fc, pdu[0]
+            expected_fc, function_code
         )));
     }
 
@@ -1904,7 +1829,7 @@ async fn execute_modbus_write(
                 RedisValue::Float(f) => f != 0.0,
                 _ => false,
             };
-            build_write_fc05_single_coil_pdu(register_address, bool_value)
+            build_write_fc05_single_coil_pdu(register_address, bool_value)?
         },
         6 => {
             // Write Single Register
@@ -1913,7 +1838,7 @@ async fn execute_modbus_write(
                     "No register value to write".to_string(),
                 ));
             }
-            build_write_fc06_single_register_pdu(register_address, registers[0])
+            build_write_fc06_single_register_pdu(register_address, registers[0])?
         },
         15 => {
             // Write Multiple Coils - for now just write single coil
@@ -1922,11 +1847,11 @@ async fn execute_modbus_write(
                 RedisValue::Float(f) => f != 0.0,
                 _ => false,
             };
-            build_write_fc15_multiple_coils_pdu(register_address, &[bool_value])
+            build_write_fc15_multiple_coils_pdu(register_address, &[bool_value])?
         },
         16 => {
             // Write Multiple Registers
-            build_write_fc16_multiple_registers_pdu(register_address, &registers)
+            build_write_fc16_multiple_registers_pdu(register_address, &registers)?
         },
         _ => {
             return Err(ComSrvError::ProtocolError(format!(
@@ -1972,41 +1897,63 @@ async fn execute_modbus_write(
 }
 
 /// Parse Modbus PDU and extract register values
-fn parse_modbus_pdu(pdu: &[u8], function_code: u8) -> Result<Vec<u16>> {
-    if pdu.len() < 3 {
+/// For FC 01/02: returns bytes as u16 values (one byte per u16)
+/// For FC 03/04: returns actual 16-bit register values
+fn parse_modbus_pdu(pdu: &ModbusPdu, function_code: u8, expected_count: u16) -> Result<Vec<u16>> {
+    let pdu_data = pdu.as_slice();
+
+    if pdu_data.len() < 3 {
         return Err(ComSrvError::ProtocolError("PDU too short".to_string()));
     }
 
-    if pdu[0] != function_code {
+    let actual_fc = pdu.function_code().unwrap_or(0);
+    if actual_fc != function_code {
         return Err(ComSrvError::ProtocolError(format!(
             "Function code mismatch: expected {}, got {}",
-            function_code, pdu[0]
+            function_code, actual_fc
         )));
     }
 
-    let byte_count = pdu[1] as usize;
-    if pdu.len() < 2 + byte_count {
+    let byte_count = pdu_data[1] as usize;
+    if pdu_data.len() < 2 + byte_count {
         return Err(ComSrvError::ProtocolError(
             "Incomplete PDU data".to_string(),
         ));
     }
 
+    // Validate byte count based on function code
     match function_code {
         1 | 2 => {
-            // Function codes 1 (Read Coils) and 2 (Read Discrete Inputs) return bit data
-            // Convert bit data to registers for uniform processing
+            // FC 01/02: byte_count should be ceil(coil_count / 8)
+            let expected_bytes = ((expected_count + 7) / 8) as usize;
+            if byte_count != expected_bytes {
+                return Err(ComSrvError::ProtocolError(format!(
+                    "Byte count mismatch for FC{:02}: expected {} bytes for {} coils, got {}",
+                    function_code, expected_bytes, expected_count, byte_count
+                )));
+            }
+
+            // Return bytes as-is (each byte stored in a u16 for uniform processing)
             let mut registers = Vec::new();
-            for &byte in &pdu[2..2 + byte_count] {
-                // Each byte contains 8 bits, store as individual "registers" for bit access
+            for &byte in &pdu_data[2..2 + byte_count] {
                 registers.push(u16::from(byte));
             }
             Ok(registers)
         },
         3 | 4 => {
-            // Function codes 3 and 4 return register data (16-bit values)
+            // FC 03/04: byte_count should be register_count * 2
+            let expected_bytes = (expected_count * 2) as usize;
+            if byte_count != expected_bytes {
+                return Err(ComSrvError::ProtocolError(format!(
+                    "Byte count mismatch for FC{:02}: expected {} bytes for {} registers, got {}",
+                    function_code, expected_bytes, expected_count, byte_count
+                )));
+            }
+
+            // Parse 16-bit registers
             let mut registers = Vec::new();
             for i in (2..2 + byte_count).step_by(2) {
-                let value = (u16::from(pdu[i]) << 8) | u16::from(pdu[i + 1]);
+                let value = (u16::from(pdu_data[i]) << 8) | u16::from(pdu_data[i + 1]);
                 registers.push(value);
             }
             Ok(registers)
@@ -2121,6 +2068,7 @@ fn decode_register_value(
     format: &str,
     bit_position: Option<u8>,
     byte_order: Option<&str>,
+    function_code: Option<u8>,
 ) -> Result<RedisValue> {
     match format {
         "bool" => {
@@ -2129,62 +2077,50 @@ fn decode_register_value(
                     "No registers for bool".to_string(),
                 ));
             }
-            let bit_pos = bit_position.unwrap_or(0);
 
-            // For function code 2 (discrete inputs), registers contain byte values (0-255)
-            // For function codes 3/4, registers contain 16-bit values
-            if registers[0] <= 255 {
-                // This is likely function code 2 data (byte values)
-                if bit_pos > 7 {
-                    return Err(ComSrvError::ProtocolError(format!(
-                        "Invalid bit position for discrete input: {bit_pos} (must be 0-7)"
-                    )));
-                }
+            // Use Modbus 1-based bit numbering
+            // Default to bit 1 (not 0) per Modbus convention
+            let bit_pos = bit_position.unwrap_or(1);
+
+            // Determine if this is from coils/discrete inputs (FC 01/02) or registers (FC 03/04)
+            let is_coil_response = matches!(function_code, Some(1) | Some(2));
+
+            // All use 1-8 bit numbering per byte (Modbus convention)
+            if !(1..=8).contains(&bit_pos) {
+                return Err(ComSrvError::ProtocolError(format!(
+                    "Invalid bit position: {} (must be 1-8)",
+                    bit_pos
+                )));
+            }
+
+            // Convert 1-based to 0-based for bit shifting
+            let actual_bit = bit_pos - 1;
+
+            if is_coil_response {
+                // FC 01/02: Single byte
                 let byte_value = registers[0] as u8;
-                let bit_value = (byte_value >> bit_pos) & 0x01;
+                let bit_value = (byte_value >> actual_bit) & 0x01;
+
                 debug!(
-                    "Discrete input bit extraction: byte=0x{:02X}, bit_pos={}, bit_value={}",
-                    byte_value, bit_pos, bit_value
+                    "Coil bit extraction: byte=0x{:02X}, bit_pos={} (0-based: {}), bit_value={}",
+                    byte_value, bit_pos, actual_bit, bit_value
                 );
+
                 Ok(RedisValue::Integer(i64::from(bit_value)))
             } else {
-                // This is function code 3/4 data (16-bit register values)
-                if bit_pos > 15 {
-                    return Err(ComSrvError::ProtocolError(format!(
-                        "Invalid bit position for register: {bit_pos} (must be 0-15)"
-                    )));
-                }
+                // FC 03/04: 16-bit register treated as bytes
+                // For a 16-bit register: Low byte = bits 1-8, High byte would need separate handling
                 let register_value = registers[0];
 
-                // Convert register to bytes considering byte order
-                let bytes = match byte_order {
-                    Some("BA") => {
-                        // Little endian: low byte first
-                        vec![(register_value & 0xFF) as u8, (register_value >> 8) as u8]
-                    },
-                    _ => {
-                        // Default to AB (big endian): high byte first
-                        vec![(register_value >> 8) as u8, (register_value & 0xFF) as u8]
-                    },
-                };
-
-                // Extract bit from the appropriate byte
-                let byte_index = bit_pos / 8;
-                let bit_index = bit_pos % 8;
-
-                if byte_index as usize >= bytes.len() {
-                    return Err(ComSrvError::ProtocolError(format!(
-                        "Bit position {} out of range for register",
-                        bit_pos
-                    )));
-                }
-
-                let bit_value = (bytes[byte_index as usize] >> bit_index) & 0x01;
+                // Extract from low byte (bits 1-8 of register)
+                let byte_value = (register_value & 0xFF) as u8;
+                let bit_value = (byte_value >> actual_bit) & 0x01;
 
                 debug!(
-                    "Register bit extraction: register=0x{:04X}, byte_order={:?}, bytes={:?}, bit_pos={}, byte[{}]=0x{:02X}, bit_value={}",
-                    register_value, byte_order, bytes, bit_pos, byte_index, bytes[byte_index as usize], bit_value
+                    "Register bit extraction: register=0x{:04X}, low_byte=0x{:02X}, bit_pos={} (0-based: {}), bit_value={}",
+                    register_value, byte_value, bit_pos, actual_bit, bit_value
                 );
+
                 Ok(RedisValue::Integer(i64::from(bit_value)))
             }
         },
@@ -2316,120 +2252,123 @@ mod tests {
 
     #[test]
     fn test_decode_register_value_bool_bitwise() {
-        // testing按位parsefunction
+        // Testing bit extraction with 1-based numbering (Modbus convention)
 
-        // testing案例1：寄存器value 0b1011 0101 (0xB5 = 181)
-        // 位0: 1, 位1: 0, 位2: 1, 位3: 0, 位4: 1, 位5: 1, 位6: 0, 位7: 1
-        let register_value = 0xB5; // 181 in decimal, 10110101 in binary
+        // Test case 1: Register value 0xB5 = 181 = 10110101 in binary
+        let register_value = 0xB5;
         let registers = vec![register_value];
 
-        // testing位0 (LSB)
-        let result = decode_register_value(&registers, "bool", Some(0), None)
-            .expect("decoding bit 0 should succeed");
-        assert_eq!(result, RedisValue::Integer(1)); // 位0 = 1
-
-        // testing位1
-        let result = decode_register_value(&registers, "bool", Some(1), None)
+        // For FC 03/04 (registers), use 1-16 bit numbering
+        // Bit 1 (LSB) = 1
+        let result = decode_register_value(&registers, "bool", Some(1), None, Some(3))
             .expect("decoding bit 1 should succeed");
-        assert_eq!(result, RedisValue::Integer(0)); // 位1 = 0
+        assert_eq!(result, RedisValue::Integer(1));
 
-        // testing位2
-        let result = decode_register_value(&registers, "bool", Some(2), None)
+        // Bit 2 = 0
+        let result = decode_register_value(&registers, "bool", Some(2), None, Some(3))
             .expect("decoding bit 2 should succeed");
-        assert_eq!(result, RedisValue::Integer(1)); // 位2 = 1
+        assert_eq!(result, RedisValue::Integer(0));
 
-        // testing位3
-        let result = decode_register_value(&registers, "bool", Some(3), None)
+        // Bit 3 = 1
+        let result = decode_register_value(&registers, "bool", Some(3), None, Some(3))
             .expect("decoding bit 3 should succeed");
-        assert_eq!(result, RedisValue::Integer(0)); // 位3 = 0
+        assert_eq!(result, RedisValue::Integer(1));
 
-        // testing位7 (MSB in byte)
-        let result = decode_register_value(&registers, "bool", Some(7), None)
-            .expect("decoding bit 7 should succeed");
-        assert_eq!(result, RedisValue::Integer(1)); // 位7 = 1
-
-        // testing16位寄存器的high位（value>255）
-        let high_bit_register = 0x8000; // 只有最high位yes1，value=32768 > 255
-        let high_registers = vec![high_bit_register];
-        let result = decode_register_value(&high_registers, "bool", Some(15), None)
-            .expect("decoding bit 15 should succeed");
-        assert_eq!(result, RedisValue::Integer(1)); // 位15 = 1
-
-        // pair于greater than255的value，可以testingall16位
-        let full_register = 0x0100; // 256 > 255，所以yes16位pattern
-        let full_registers = vec![full_register];
-        let result = decode_register_value(&full_registers, "bool", Some(8), None)
+        // Bit 8 = 1
+        let result = decode_register_value(&registers, "bool", Some(8), None, Some(3))
             .expect("decoding bit 8 should succeed");
-        assert_eq!(result, RedisValue::Integer(1)); // 位8 = 1
+        assert_eq!(result, RedisValue::Integer(1));
+
+        // Test that only bits 1-8 are valid for registers now
+        let high_bit_register = 0x0080; // Bit 8 of low byte set
+        let high_registers = vec![high_bit_register];
+        let result = decode_register_value(&high_registers, "bool", Some(8), None, Some(3))
+            .expect("decoding bit 8 should succeed");
+        assert_eq!(result, RedisValue::Integer(1));
+
+        // Test FC 01/02 (coils) - uses 1-8 bit numbering
+        let coil_byte = 0xB5; // Same value but treated as byte
+        let coil_registers = vec![coil_byte];
+
+        // Bit 1 (LSB) = 1
+        let result = decode_register_value(&coil_registers, "bool", Some(1), None, Some(1))
+            .expect("decoding coil bit 1 should succeed");
+        assert_eq!(result, RedisValue::Integer(1));
+
+        // Bit 8 (MSB of byte) = 1
+        let result = decode_register_value(&coil_registers, "bool", Some(8), None, Some(1))
+            .expect("decoding coil bit 8 should succeed");
+        assert_eq!(result, RedisValue::Integer(1));
     }
 
     #[test]
     fn test_decode_register_value_bool_edge_cases() {
         let registers = vec![0x0000]; // 全0寄存器
 
-        // testing8位pattern（value<=255）
-        for bit_pos in 0..8 {
-            let result = decode_register_value(&registers, "bool", Some(bit_pos), None)
-                .expect("decoding bool at bit position should succeed");
-            assert_eq!(
-                result,
-                RedisValue::Integer(0),
-                "Bit {} should be 0 in 8-bit mode",
-                bit_pos
-            );
+        // Testing FC 01/02 (coils) - 1-8 bit numbering
+        for bit_pos in 1..=8 {
+            let result = decode_register_value(&registers, "bool", Some(bit_pos), None, Some(1));
+            if let Ok(value) = result {
+                assert_eq!(value, RedisValue::Integer(0), "Bit {} should be 0", bit_pos);
+            } else {
+                panic!("Failed to decode bit {}", bit_pos);
+            }
         }
 
-        // testing16位pattern（value>255）
-        let registers_16bit = vec![0x0100]; // 256 > 255，trigger16位pattern
-        for bit_pos in 0..16 {
-            let result = decode_register_value(&registers_16bit, "bool", Some(bit_pos), None)
-                .expect("decoding 16-bit bool should succeed");
-            let expected = if bit_pos == 8 { 1 } else { 0 }; // 只有位8yes1
-            assert_eq!(
-                result,
-                RedisValue::Integer(expected),
-                "Bit {} should be {} in 16-bit mode",
-                bit_pos,
-                expected
-            );
+        // Testing FC 03/04 (registers) - 1-16 bit numbering
+        let registers_16bit = vec![0x0100]; // 256 > 255, trigger 16-bit pattern
+                                            // 0x0100 in binary: 0000 0001 0000 0000, only bit 9 is set
+        for bit_pos in 1..=8 {
+            let result =
+                decode_register_value(&registers_16bit, "bool", Some(bit_pos), None, Some(3));
+            let expected = if bit_pos == 9 { 1 } else { 0 }; // Only bit 9 is set
+            if let Ok(value) = result {
+                assert_eq!(
+                    value,
+                    RedisValue::Integer(expected),
+                    "Bit {} should be {}",
+                    bit_pos,
+                    expected
+                );
+            } else {
+                panic!("Failed to decode bit {}", bit_pos);
+            }
         }
 
-        let registers_all_ones = vec![0xFFFF]; // 全1寄存器（16位pattern）
-                                               // testing全1寄存器的all位都应该yes1
-        for bit_pos in 0..16 {
-            let result = decode_register_value(&registers_all_ones, "bool", Some(bit_pos), None)
-                .expect("decoding all ones register should succeed");
-            assert_eq!(
-                result,
-                RedisValue::Integer(1),
-                "Bit {} should be 1",
-                bit_pos
-            );
+        let registers_all_ones = vec![0xFFFF]; // All 1s register
+        for bit_pos in 1..=8 {
+            let result =
+                decode_register_value(&registers_all_ones, "bool", Some(bit_pos), None, Some(3));
+            if let Ok(value) = result {
+                assert_eq!(value, RedisValue::Integer(1), "Bit {} should be 1", bit_pos);
+            } else {
+                panic!("Failed to decode bit {}", bit_pos);
+            }
         }
 
-        // testingerror情况：8位pattern下bit_position超出range
-        let result = decode_register_value(&registers, "bool", Some(8), None);
+        // Testing error case: Bit 1 should be valid for registers (FC 03)
+        let result = decode_register_value(&registers, "bool", Some(1), None, Some(3));
         assert!(
-            result.is_err(),
-            "Bit position 8 should be invalid for 8-bit mode"
+            result.is_ok(),
+            "Bit position 1 should be valid for registers"
         );
 
-        // testingerror情况：16位pattern下bit_position超出range
+        // Testing error case: bit position out of range for 16-bit mode
         let registers_16bit = vec![0x0100];
-        let result = decode_register_value(&registers_16bit, "bool", Some(16), None);
+        let result = decode_register_value(&registers_16bit, "bool", Some(17), None, Some(3));
         assert!(
             result.is_err(),
             "Bit position 16 should be invalid for 16-bit mode"
         );
 
-        // testingerror情况：empty寄存器
+        // Testing error case: empty registers
         let empty_registers = vec![];
-        let result = decode_register_value(&empty_registers, "bool", Some(0), None);
+        let result = decode_register_value(&empty_registers, "bool", Some(1), None, Some(3));
         assert!(result.is_err());
 
-        // testingdefaultbit_position (应该yes0)
-        let registers = vec![0x0001]; // 只有位0yes1
-        let result = decode_register_value(&registers, "bool", None, None)
+        // Testing default bit_position (should be 1 now per Modbus convention)
+        let registers = vec![0x0001]; // Only bit 1 (LSB) is set
+        let result = decode_register_value(&registers, "bool", None, None, Some(3))
             .expect("decoding bool with default bit position should succeed");
         assert_eq!(result, RedisValue::Integer(1)); // default位0 = 1
     }
@@ -2439,19 +2378,19 @@ mod tests {
         // 确保otherdata格式仍然normalwork
         let registers = vec![0x1234];
 
-        // testinguint16
-        let result = decode_register_value(&registers, "uint16", None, None)
+        // Testing uint16
+        let result = decode_register_value(&registers, "uint16", None, None, None)
             .expect("decoding uint16 should succeed");
         assert_eq!(result, RedisValue::Integer(0x1234));
 
-        // testingint16
-        let result = decode_register_value(&registers, "int16", None, None)
+        // Testing int16
+        let result = decode_register_value(&registers, "int16", None, None, None)
             .expect("decoding int16 should succeed");
         assert_eq!(result, RedisValue::Integer(i64::from(0x1234_i16)));
 
-        // testingfloat32需要2个寄存器
+        // Testing float32 (needs 2 registers)
         let float_registers = vec![0x4000, 0x0000]; // 2.0 in IEEE 754
-        let result = decode_register_value(&float_registers, "float32", None, None)
+        let result = decode_register_value(&float_registers, "float32", None, None, None)
             .expect("decoding float32 should succeed");
         if let RedisValue::Float(f) = result {
             assert!((f - 2.0).abs() < 0.0001);

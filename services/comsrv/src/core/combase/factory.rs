@@ -758,8 +758,8 @@ impl ProtocolFactory {
             channel_config.id
         );
 
-        // Fixed directory structure - CSV files are always in config/{channel_id}/
-        let csv_base_path = PathBuf::from("config");
+        // Fixed directory structure - CSV files are always in config/comsrv/{channel_id}/
+        let csv_base_path = PathBuf::from("config/comsrv");
         let channel_dir = csv_base_path.join(channel_config.id.to_string());
 
         // Fixed file names for each telemetry type
