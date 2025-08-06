@@ -7,7 +7,7 @@ use super::types::{AppConfig, ChannelConfig, CombinedPoint, ServiceConfig, Table
 use crate::utils::error::{ComSrvError, Result};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use tokio::fs;
 use tracing::{debug, info, warn};
 use voltage_libs::config::ConfigLoader;
@@ -271,10 +271,8 @@ impl ConfigManager {
             table_config.protocol_mapping_route
         );
 
-        // Check environment variable override
-        let base_dir = std::env::var("COMSRV_CSV_BASE_PATH")
-            .map_or_else(|_| config_dir.to_path_buf(), PathBuf::from);
-
+        // CSV files are always in the same directory as the config file
+        let base_dir = config_dir.to_path_buf();
         debug!("Using CSV base directory: {}", base_dir.display());
         debug!("Base directory for CSV: {}", base_dir.display());
 
@@ -510,9 +508,8 @@ impl ConfigManager {
     pub async fn validate_files(&self, config_dir: &Path) -> Result<()> {
         info!("Validating configuration files...");
 
-        // Check environment variable override for base path
-        let base_dir = std::env::var("COMSRV_CSV_BASE_PATH")
-            .map_or_else(|_| config_dir.to_path_buf(), PathBuf::from);
+        // CSV files are always in the same directory as the config file
+        let base_dir = config_dir.to_path_buf();
 
         debug!(
             "Validating files with base directory: {}",
@@ -528,40 +525,31 @@ impl ConfigManager {
                 ComSrvError::ConfigError(format!("Channel {} missing table_config", channel.id))
             })?;
 
-            // Validate that four_remote_route matches channel ID pattern (should be just the number)
-            // Expected format: "1001" or "channel_1001" but prefer just "1001"
+            // Validate that four_remote_route matches channel ID (must be just the number)
             let expected_dir = channel.id.to_string();
-            if table_config.four_remote_route != expected_dir
-                && table_config.four_remote_route != format!("channel_{}", channel.id)
-            {
-                warn!(
-                    "Channel {}: four_remote_route '{}' doesn't match expected format '{}' or 'channel_{}'",
-                    channel.id, table_config.four_remote_route, expected_dir, channel.id
-                );
+            if table_config.four_remote_route != expected_dir {
+                return Err(ComSrvError::ConfigError(format!(
+                    "Channel {}: four_remote_route must be '{}', got '{}'",
+                    channel.id, expected_dir, table_config.four_remote_route
+                )));
             }
 
-            // Check four-telemetry files
+            // Validate protocol_mapping_route matches channel ID
+            if table_config.protocol_mapping_route != expected_dir {
+                return Err(ComSrvError::ConfigError(format!(
+                    "Channel {}: protocol_mapping_route must be '{}', got '{}'",
+                    channel.id, expected_dir, table_config.protocol_mapping_route
+                )));
+            }
+
+            // Check four-telemetry files directory
             let four_remote_base = base_dir.join(&table_config.four_remote_route);
             if !four_remote_base.exists() {
-                // Try with just the channel ID number if the configured path doesn't exist
-                let alt_path = base_dir.join(&expected_dir);
-                if alt_path.exists() {
-                    return Err(ComSrvError::ConfigError(format!(
-                        "Channel {}: four_remote_route directory '{}' does not exist. Found directory '{}' - please update config to use '{}'",
-                        channel.id,
-                        four_remote_base.display(),
-                        alt_path.display(),
-                        expected_dir
-                    )));
-                } else {
-                    return Err(ComSrvError::ConfigError(format!(
-                        "Channel {}: four_remote_route directory '{}' does not exist. Expected directory structure: {}/{}",
-                        channel.id,
-                        four_remote_base.display(),
-                        base_dir.display(),
-                        expected_dir
-                    )));
-                }
+                return Err(ComSrvError::ConfigError(format!(
+                    "Channel {}: directory '{}' does not exist",
+                    channel.id,
+                    four_remote_base.display()
+                )));
             }
 
             // Check each telemetry file
