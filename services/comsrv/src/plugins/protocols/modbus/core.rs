@@ -180,12 +180,11 @@ impl ComBase for ModbusProtocol {
         );
         let mut modbus_points = Vec::new();
 
-        // Merge all four telemetry types of points for processing
-        let all_points = vec![
+        // Only add telemetry and signal points to polling list
+        // Control and adjustment points are write-only, handled via command channel
+        let polling_points = vec![
             &channel_config.telemetry_points,
             &channel_config.signal_points,
-            &channel_config.control_points,
-            &channel_config.adjustment_points,
         ];
 
         let total_configured_points = channel_config.telemetry_points.len()
@@ -202,7 +201,7 @@ impl ComBase for ModbusProtocol {
             channel_config.adjustment_points.len()
         );
 
-        for point_map in all_points {
+        for point_map in polling_points {
             for point in point_map.values() {
                 // Read fields directly from protocol_params
                 if let (Some(slave_id_str), Some(function_code_str), Some(register_address_str)) = (
@@ -223,13 +222,14 @@ impl ComBase for ModbusProtocol {
                             .to_string();
 
                         debug!(
-                            "Loaded Modbus point: id={}, slave={}, func={}, addr={}, format={}, bit_pos={:?}",
+                            "Loaded Modbus point: id={}, slave={}, func={}, addr={}, format={}, bit_pos={:?}, type={}",
                             point.point_id,
                             slave_id,
                             function_code,
                             register_address,
                             &data_type,
-                            point.protocol_params.get("bit_position")
+                            point.protocol_params.get("bit_position"),
+                            &point.telemetry_type
                         );
 
                         let modbus_point = ModbusPoint {
@@ -278,7 +278,7 @@ impl ComBase for ModbusProtocol {
         self.status.write().await.points_count = points_count;
 
         info!(
-            "Channel {} - Step 3 completed: Successfully configured {} out of {} points for Modbus protocol",
+            "Channel {} - Step 3 completed: Successfully configured {} polling points (telemetry + signal) out of {} total points",
             channel_config.id,
             points_count,
             total_configured_points
@@ -786,6 +786,10 @@ impl ComBase for ModbusProtocol {
             let status = self.status.clone();
             let is_connected = self.is_connected.clone();
             let channel_config = self.channel_config.clone();
+            debug!(
+                "Cloning channel_config for polling task, is_some: {}",
+                channel_config.is_some()
+            );
             let polling_config = self.polling_config.clone();
             let data_channel = self.data_channel.clone();
             let frame_processor = self.frame_processor.clone();
@@ -824,6 +828,10 @@ impl ComBase for ModbusProtocol {
                     let points_count = points_to_read.len();
                     let filtered_points: Vec<ModbusPoint> = if let Some(ref config) = channel_config
                     {
+                        debug!(
+                            "Channel config available, control_points count: {}",
+                            config.control_points.len()
+                        );
                         points_to_read
                             .into_iter()
                             .filter(|point| {
@@ -838,6 +846,7 @@ impl ComBase for ModbusProtocol {
                                         || config.adjustment_points.contains_key(&point_id)
                                     {
                                         // 遥控和遥调不allowing轮询read
+                                        debug!("Filtering out control/adjustment point {} from polling", point_id);
                                         false
                                     } else {
                                         // If not found in any config, default to allow reading
@@ -1035,9 +1044,11 @@ impl ComBase for ModbusProtocol {
     fn set_command_receiver(&mut self, mut rx: tokio::sync::mpsc::Receiver<ChannelCommand>) {
         let channel_id = self.channel_id;
         let is_connected = self.is_connected.clone();
-        let _frame_processor = self.frame_processor.clone();
-        let _channel_config = self.channel_config.clone();
+        let frame_processor = self.frame_processor.clone();
+        let channel_config = self.channel_config.clone();
         let _command_handle = self.command_handle.clone();
+        let connection_manager = self.connection_manager.clone();
+        let points = self.points.clone();
 
         // Create a channel to forward commands for processing
         let (cmd_tx, mut cmd_rx) = tokio::sync::mpsc::channel::<(
@@ -1069,7 +1080,7 @@ impl ComBase for ModbusProtocol {
                 }
 
                 // Process command
-                match &command {
+                let result = match &command {
                     ChannelCommand::Control {
                         command_id,
                         point_id,
@@ -1080,6 +1091,18 @@ impl ComBase for ModbusProtocol {
                             "Processing control command {}: point {}, value {}",
                             command_id, point_id, value
                         );
+
+                        // Execute the control write
+                        execute_modbus_write(
+                            &connection_manager,
+                            &frame_processor,
+                            &points,
+                            &channel_config,
+                            *point_id,
+                            RedisValue::Float(*value),
+                            TelemetryType::Control,
+                        )
+                        .await
                     },
                     ChannelCommand::Adjustment {
                         command_id,
@@ -1091,13 +1114,22 @@ impl ComBase for ModbusProtocol {
                             "Processing adjustment command {}: point {}, value {}",
                             command_id, point_id, value
                         );
-                    },
-                }
 
-                // TODO: Implement actual command execution
-                // This requires restructuring to allow calling control/adjustment methods
-                // For now, just acknowledge receipt of the command
-                let _ = result_tx.send(Ok(()));
+                        // Execute the adjustment write
+                        execute_modbus_write(
+                            &connection_manager,
+                            &frame_processor,
+                            &points,
+                            &channel_config,
+                            *point_id,
+                            RedisValue::Float(*value),
+                            TelemetryType::Adjustment,
+                        )
+                        .await
+                    },
+                };
+
+                let _ = result_tx.send(result);
             }
             warn!("Command processor stopped for channel {}", channel_id);
         });
@@ -1794,6 +1826,153 @@ fn convert_bytes_to_registers_with_order(bytes: &[u8], byte_order: Option<&str>)
             ]
         },
     }
+}
+
+/// Execute Modbus write command for control or adjustment points
+async fn execute_modbus_write(
+    connection_manager: &Arc<ModbusConnectionManager>,
+    frame_processor: &Arc<Mutex<ModbusFrameProcessor>>,
+    _points: &Arc<RwLock<Vec<ModbusPoint>>>,
+    channel_config: &Option<ChannelConfig>,
+    point_id: u32,
+    value: RedisValue,
+    telemetry_type: TelemetryType,
+) -> Result<()> {
+    // Get the point configuration from channel config based on telemetry type
+    let point_config = if let Some(config) = channel_config {
+        match telemetry_type {
+            TelemetryType::Control => config.control_points.get(&point_id),
+            TelemetryType::Adjustment => config.adjustment_points.get(&point_id),
+            _ => None,
+        }
+    } else {
+        None
+    };
+
+    let point_config = match point_config {
+        Some(p) => p,
+        None => {
+            return Err(ComSrvError::InvalidData(format!(
+                "Point {} not found in {} configuration",
+                point_id,
+                match telemetry_type {
+                    TelemetryType::Control => "control",
+                    TelemetryType::Adjustment => "adjustment",
+                    _ => "unknown",
+                }
+            )));
+        },
+    };
+
+    // Extract Modbus parameters from protocol_params
+    let slave_id = point_config
+        .protocol_params
+        .get("slave_id")
+        .and_then(|s| s.parse::<u8>().ok())
+        .unwrap_or(1);
+
+    let function_code = point_config
+        .protocol_params
+        .get("function_code")
+        .and_then(|s| s.parse::<u8>().ok())
+        .unwrap_or(6); // Default to FC6 for single register write
+
+    let register_address = point_config
+        .protocol_params
+        .get("register_address")
+        .and_then(|s| s.parse::<u16>().ok())
+        .ok_or_else(|| ComSrvError::InvalidData("Missing register_address".to_string()))?;
+
+    let data_type = point_config
+        .protocol_params
+        .get("data_type")
+        .cloned()
+        .unwrap_or_else(|| "float32".to_string());
+
+    let byte_order = point_config.protocol_params.get("byte_order").cloned();
+
+    debug!(
+        "Writing to Modbus: slave={}, func={}, addr={}, type={}, value={:?}",
+        slave_id, function_code, register_address, data_type, value
+    );
+
+    // Convert value to register format
+    let registers = encode_value_for_modbus(&value, &data_type, byte_order.as_deref())?;
+
+    // Build the appropriate write PDU based on function code
+    let pdu = match function_code {
+        5 => {
+            // Write Single Coil
+            let bool_value = match value {
+                RedisValue::Integer(i) => i != 0,
+                RedisValue::Float(f) => f != 0.0,
+                _ => false,
+            };
+            build_write_fc05_single_coil_pdu(register_address, bool_value)
+        },
+        6 => {
+            // Write Single Register
+            if registers.is_empty() {
+                return Err(ComSrvError::InvalidData(
+                    "No register value to write".to_string(),
+                ));
+            }
+            build_write_fc06_single_register_pdu(register_address, registers[0])
+        },
+        15 => {
+            // Write Multiple Coils - for now just write single coil
+            let bool_value = match value {
+                RedisValue::Integer(i) => i != 0,
+                RedisValue::Float(f) => f != 0.0,
+                _ => false,
+            };
+            build_write_fc15_multiple_coils_pdu(register_address, &[bool_value])
+        },
+        16 => {
+            // Write Multiple Registers
+            build_write_fc16_multiple_registers_pdu(register_address, &registers)
+        },
+        _ => {
+            return Err(ComSrvError::ProtocolError(format!(
+                "Unsupported write function code: {}",
+                function_code
+            )));
+        },
+    };
+
+    // Get frame processor lock
+    let mut frame_processor_guard = frame_processor.lock().await;
+
+    // Build complete frame with proper header
+    let request = frame_processor_guard.build_frame(slave_id, &pdu);
+
+    // Send request and wait for response
+    let mut response = vec![0u8; 256];
+    let bytes_read = connection_manager
+        .send_and_receive(&request, &mut response, Duration::from_secs(5))
+        .await?;
+    response.truncate(bytes_read);
+
+    // Parse response frame
+    let (received_unit_id, response_pdu) = frame_processor_guard.parse_frame(&response)?;
+
+    // Verify unit ID matches
+    if received_unit_id != slave_id {
+        return Err(ComSrvError::ProtocolError(format!(
+            "Unit ID mismatch in write response: expected {}, got {}",
+            slave_id, received_unit_id
+        )));
+    }
+
+    // Parse write response
+    parse_modbus_write_response(&response_pdu, function_code)?;
+
+    info!(
+        "Successfully wrote value {:?} to point {} (addr={}, slave={})",
+        value, point_id, register_address, slave_id
+    );
+
+    Ok(())
 }
 
 /// Parse Modbus PDU and extract register values
