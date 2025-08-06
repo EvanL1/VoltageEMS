@@ -37,6 +37,9 @@ LUA_FILES=(
     "specific.lua"
     "domain.lua"
     "services.lua"
+    # Generic sync engine (new)
+    "sync_engine.lua"
+    "sync_config_init.lua"
     # Service functions
     "rulesrv.lua"
     "modsrv.lua"
@@ -86,5 +89,24 @@ echo ""
 echo "=== Function Statistics ==="
 TOTAL_FUNCTIONS=$($REDIS_CLI -h $REDIS_HOST -p $REDIS_PORT FUNCTION LIST | grep -c "name")
 echo "Total functions: $TOTAL_FUNCTIONS"
+
+# Initialize sync configurations if available
+INIT_SYNC=${INIT_SYNC:-true}
+if [ "$INIT_SYNC" = "true" ] && [ $FAIL_COUNT -eq 0 ]; then
+    echo ""
+    echo "=== Initializing Sync Configurations ==="
+    INIT_RESULT=$($REDIS_CLI -h $REDIS_HOST -p $REDIS_PORT FCALL init_sync_configs 0 2>&1 || echo "not available")
+    
+    if [[ "$INIT_RESULT" == *"success"* ]]; then
+        printf "${GREEN}Sync configurations initialized successfully${NC}\n"
+        # Show initialized rules
+        echo "Initialized sync rules:"
+        $REDIS_CLI -h $REDIS_HOST -p $REDIS_PORT SMEMBERS sync:rules 2>/dev/null | head -10
+    elif [[ "$INIT_RESULT" == *"not available"* ]]; then
+        printf "${YELLOW}Sync configuration not available (optional)${NC}\n"
+    else
+        printf "${YELLOW}Sync configuration initialization partial${NC}\n"
+    fi
+fi
 
 exit $FAIL_COUNT

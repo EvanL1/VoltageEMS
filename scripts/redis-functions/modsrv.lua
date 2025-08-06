@@ -182,7 +182,7 @@ local function model_get_value(keys, args)
     return cjson.encode(result)
 end
 
--- 设置模型值（带映射）
+-- 设置模型值（自动同步到comsrv）
 local function model_set_value(keys, args)
     local model_id = keys[1]
     local point_name = keys[2]
@@ -200,31 +200,33 @@ local function model_set_value(keys, args)
     
     local model = cjson.decode(model_json)
     local channel = model.mapping.channel
-    local point_id = model.mapping.action and model.mapping.action[point_name]
     
-    if not point_id then
-        -- 尝试在data映射中查找
-        point_id = model.mapping.data and model.mapping.data[point_name]
-        if not point_id then
-            return redis.error_reply("Point '" .. point_name .. "' not found in model")
-        end
+    -- 确定点位类型和ID
+    local point_id = nil
+    local point_type = nil
+    
+    -- 先检查action映射（控制点）
+    if model.mapping.action and model.mapping.action[point_name] then
+        point_id = model.mapping.action[point_name]
+        point_type = 'C'  -- 控制
+    -- 再检查data映射（调节点）
+    elseif model.mapping.data and model.mapping.data[point_name] then
+        point_id = model.mapping.data[point_name]
+        point_type = 'A'  -- 调节
+    else
+        return redis.error_reply("Point '" .. point_name .. "' not found in model")
     end
     
-    -- 设置值
-    local value_key = string.format("comsrv:%d:C", channel)  -- 控制通道
-    redis.call('HSET', value_key, tostring(point_id), value)
+    -- 直接同步到comsrv的内存数据
+    local comsrv_key = string.format("comsrv:%d:%s", channel, point_type)
+    redis.call('HSET', comsrv_key, tostring(point_id), value)
     
-    -- 发布变更通知
-    local notification = {
-        model_id = model_id,
-        point_name = point_name,
-        channel = channel,
-        point_id = point_id,
-        value = tonumber(value) or value,
-        timestamp = redis.call('TIME')[1]
-    }
+    -- 同时更新modsrv自己的存储
+    local modsrv_key = string.format("modsrv:model:%s:values", model_id)
+    redis.call('HSET', modsrv_key, point_name, value)
     
-    redis.call('PUBLISH', 'modsrv:value_changed', cjson.encode(notification))
+    -- 记录最后更新时间
+    redis.call('HSET', modsrv_key, '__updated', redis.call('TIME')[1])
     
     return redis.status_reply("OK")
 end
@@ -354,6 +356,9 @@ local function model_find_by_point(keys, args)
     return redis.nil_bulk_reply()
 end
 
+-- 同步函数已移至通用同步引擎 (sync_engine.lua)
+-- 使用 sync_comsrv_to_modsrv 函数进行同步
+
 -- 获取模型统计信息
 local function model_stats(keys, args)
     local total_models = redis.call('SCARD', 'modsrv:models')
@@ -390,3 +395,4 @@ redis.register_function('model_get_values_batch', model_get_values_batch)
 redis.register_function('model_create_from_template', model_create_from_template)
 redis.register_function('model_find_by_point', model_find_by_point)
 redis.register_function('model_stats', model_stats)
+-- sync_from_comsrv 和 batch_sync_from_comsrv 已移至 sync_engine.lua

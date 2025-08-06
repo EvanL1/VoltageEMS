@@ -96,7 +96,7 @@ impl LuaSyncManager {
         Ok(true)
     }
 
-    /// Synchronize telemetry data
+    /// Synchronize telemetry data using the generic sync engine
     pub async fn sync_telemetry(
         &self,
         channel_id: u16,
@@ -108,10 +108,11 @@ impl LuaSyncManager {
             return Ok(());
         }
 
-        // Use batch synchronization for single data point
+        // Use the generic sync engine
         let updates = vec![SyncUpdate { point_id, value }];
 
-        self.sync_channel_data(channel_id, telemetry_type, updates)
+        // Call the generic sync function
+        self.sync_with_engine("comsrv_to_modsrv", channel_id, telemetry_type, updates)
             .await
     }
 
@@ -159,7 +160,79 @@ impl LuaSyncManager {
         Ok(())
     }
 
-    /// Synchronize channel data (using Redis Functions)
+    /// Synchronize data using the generic sync engine
+    async fn sync_with_engine(
+        &self,
+        rule_id: &str,
+        channel_id: u16,
+        telemetry_type: &str,
+        updates: Vec<SyncUpdate>,
+    ) -> Result<()> {
+        if updates.is_empty() {
+            return Ok(());
+        }
+
+        // Call the generic sync engine
+        let function_name = "sync_comsrv_to_modsrv";
+        let updates_json = serde_json::to_string(&updates).map_err(|e| {
+            ComSrvError::SerializationError(format!("Failed to serialize updates: {}", e))
+        })?;
+
+        let keys = [channel_id.to_string(), telemetry_type.to_string()];
+        let key_refs: Vec<&str> = keys.iter().map(|s| s.as_str()).collect();
+        let args = vec![updates_json.as_str()];
+
+        // Try to execute with retry logic
+        let mut retry_count = 0;
+        loop {
+            let mut redis_client = self.redis_client.write().await;
+
+            match redis_client
+                .fcall::<String>(function_name, &key_refs, &args)
+                .await
+            {
+                Ok(result) => {
+                    // Parse sync results
+                    if let Ok(sync_result) = serde_json::from_str::<serde_json::Value>(&result) {
+                        let sync_count = sync_result["sync_count"].as_u64().unwrap_or(0);
+                        let no_mapping = updates.len() as u64 - sync_count;
+
+                        // Update statistics
+                        let mut stats = self.stats.lock().await;
+                        stats.total_synced += updates.len() as u64;
+                        stats.sync_success += sync_count;
+                        stats.no_mapping += no_mapping;
+
+                        if sync_count > 0 {
+                            debug!(
+                                "Synced {} points using rule {} from channel {} type {}",
+                                sync_count, rule_id, channel_id, telemetry_type
+                            );
+                        }
+                    }
+                    return Ok(());
+                },
+                Err(e) => {
+                    retry_count += 1;
+                    if retry_count >= self.config.retry_count {
+                        let mut stats = self.stats.lock().await;
+                        stats.sync_failed += updates.len() as u64;
+                        stats.last_sync_error = Some(e.to_string());
+
+                        return Err(ComSrvError::SyncError(format!(
+                            "Failed to sync after {} retries: {}",
+                            retry_count, e
+                        )));
+                    }
+
+                    // Wait before retry
+                    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+                },
+            }
+        }
+    }
+
+    /// Synchronize channel data (using both generic engine and legacy alarm processing)
     async fn sync_channel_data(
         &self,
         channel_id: u16,
@@ -179,13 +252,67 @@ impl LuaSyncManager {
             "false"
         };
 
-        // Use Redis Functions call
+        // Get Redis connection
+        let mut conn = self.redis_client.write().await;
+
+        // 1. Use the new generic sync engine for all configured sync rules
+        // Execute sync based on the telemetry type
+        let rule_suffix = match point_type {
+            "T" => "_T",
+            "S" => "_S",
+            "C" => "_C",
+            "A" => "_A",
+            _ => "",
+        };
+
+        if !rule_suffix.is_empty() {
+            // Build the rule ID based on the pattern
+            let rule_id = format!("comsrv_to_modsrv{}", rule_suffix);
+            let keys = [channel_id.to_string(), point_type.to_string()];
+            let key_refs: Vec<&str> = keys.iter().map(|s| s.as_str()).collect();
+            let args = vec![updates_json.as_str()];
+
+            // Call the generic sync engine
+            match conn
+                .fcall::<String>("sync_comsrv_to_modsrv", &key_refs, &args)
+                .await
+            {
+                Ok(result) => {
+                    debug!("Synced via rule {}: {}", rule_id, result);
+                },
+                Err(e) => {
+                    // Non-fatal error, just log it
+                    debug!("Sync for rule {} skipped: {}", rule_id, e);
+                },
+            }
+
+            // Also trigger other sync rules (e.g., to alarmsrv, hissrv)
+            // This allows multiple services to receive the same data
+            if point_type == "T" {
+                // Sync to alarmsrv for alarm checking
+                match conn
+                    .fcall::<String>("sync_pattern_execute", &["comsrv_to_alarmsrv"], &[])
+                    .await
+                {
+                    Ok(_) => debug!("Alarm sync triggered"),
+                    Err(e) => debug!("Alarm sync skipped: {}", e),
+                }
+            }
+
+            // Sync to hissrv for historical storage (all types)
+            match conn
+                .fcall::<String>("sync_pattern_execute", &["comsrv_to_hissrv"], &[])
+                .await
+            {
+                Ok(_) => debug!("History sync triggered"),
+                Err(e) => debug!("History sync skipped: {}", e),
+            }
+        }
+
+        // 2. Still call the original sync_channel_data for alarm processing
         let keys = [channel_id.to_string()];
         let key_refs: Vec<&str> = keys.iter().map(|s| s.as_str()).collect();
         let args = vec![point_type, &updates_json, trigger_alarms, &timestamp];
-
-        // Get Redis connection and call function
-        let mut conn = self.redis_client.write().await;
 
         let result: String = conn
             .fcall("sync_channel_data", &key_refs, &args)

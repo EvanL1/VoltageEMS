@@ -97,6 +97,10 @@ pub enum ComSrvError {
     #[error("Not implemented: {0}")]
     NotImplemented(String),
 
+    /// Synchronization error
+    #[error("Sync error: {0}")]
+    SyncError(String),
+
     /// Parsing errors
     #[error("Parsing error: {0}")]
     ParsingError(String),
