@@ -758,43 +758,20 @@ impl ProtocolFactory {
             channel_config.id
         );
 
-        // Load point table configuration - if not configured, return success directly
-        let table_config = match channel_config.table_config.as_ref() {
-            Some(config) => config,
-            None => {
-                info!(
-                    "No table_config found for channel {}, skipping CSV point initialization",
-                    channel_config.id
-                );
-                return Ok(());
-            },
-        };
+        // Fixed directory structure - CSV files are always in config/{channel_id}/
+        let csv_base_path = PathBuf::from("config");
+        let channel_dir = csv_base_path.join(channel_config.id.to_string());
 
-        // Get CSV base path, use environment variable or config directory
-        let csv_base_path = std::env::var("COMSRV_CSV_BASE_PATH")
-            .map(PathBuf::from)
-            .unwrap_or_else(|_| PathBuf::from("config"));
-
-        // Initialize four-telemetry type points
+        // Fixed file names for each telemetry type
         let telemetry_types = vec![
-            (
-                "telemetry",
-                &table_config.four_remote_files.telemetry_file,
-                "T",
-            ),
-            ("signal", &table_config.four_remote_files.signal_file, "S"),
-            ("control", &table_config.four_remote_files.control_file, "C"),
-            (
-                "adjustment",
-                &table_config.four_remote_files.adjustment_file,
-                "A",
-            ),
+            ("telemetry", "telemetry.csv", "T"),
+            ("signal", "signal.csv", "S"),
+            ("control", "control.csv", "C"),
+            ("adjustment", "adjustment.csv", "A"),
         ];
 
         for (telemetry_name, file_name, redis_type) in telemetry_types {
-            let file_path = csv_base_path
-                .join(&table_config.four_remote_route)
-                .join(file_name);
+            let file_path = channel_dir.join(file_name);
 
             if !file_path.exists() {
                 info!(
@@ -1241,7 +1218,6 @@ mod tests {
             parameters: std::collections::HashMap::new(),
             description: Some("Test channel".to_string()),
             logging: crate::core::config::ChannelLoggingConfig::default(),
-            table_config: None,
             telemetry_points: std::collections::HashMap::new(),
             signal_points: std::collections::HashMap::new(),
             control_points: std::collections::HashMap::new(),

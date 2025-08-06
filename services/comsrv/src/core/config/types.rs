@@ -161,9 +161,7 @@ pub struct ChannelConfig {
     #[serde(default)]
     pub logging: ChannelLoggingConfig,
 
-    /// Table configuration
-    pub table_config: Option<TableConfig>,
-
+    // Table configuration is no longer needed - paths are fixed based on channel ID
     // Under the four-telemetry separated architecture, unified points field is no longer needed
     /// Four-telemetry point mapping - stores four telemetry types separately
     #[serde(skip)]
@@ -658,7 +656,6 @@ mod tests {
             protocol: "modbus".to_string(),
             parameters: HashMap::new(),
             logging: ChannelLoggingConfig::default(),
-            table_config: None,
             telemetry_points: HashMap::new(),
             signal_points: HashMap::new(),
             control_points: HashMap::new(),

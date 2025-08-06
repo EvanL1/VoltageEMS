@@ -265,7 +265,6 @@ mod tests {
             protocol: "virtual".to_string(),
             parameters: HashMap::new(),
             logging: Default::default(),
-            table_config: None,
             telemetry_points: HashMap::new(),
             signal_points: HashMap::new(),
             control_points: HashMap::new(),

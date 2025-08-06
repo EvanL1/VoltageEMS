@@ -3,7 +3,7 @@
 //! Integrates configuration center, configuration manager and unified loader functionality
 
 use super::loaders::{CachedCsvLoader, FourRemoteRecord, ModbusMappingRecord, PointMapper};
-use super::types::{AppConfig, ChannelConfig, CombinedPoint, ServiceConfig, TableConfig};
+use super::types::{AppConfig, ChannelConfig, CombinedPoint, ServiceConfig};
 use crate::utils::error::{ComSrvError, Result};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -223,87 +223,72 @@ impl ConfigManager {
     ) -> Result<()> {
         for channel in &mut config.channels {
             debug!("Processing channel {}", channel.id);
-            if let Some(ref table_config) = channel.table_config {
-                debug!("Loading CSV for channel {}", channel.id);
-                debug!("Channel {} has table_config", channel.id);
-                match Self::load_channel_tables_v2(table_config, config_dir, csv_loader).await {
-                    Ok(points) => {
-                        info!(
-                            "Loaded {} four remote points for channel {}",
-                            points.len(),
-                            channel.id
-                        );
-                        // Add points to corresponding HashMap separately
-                        for point in points {
-                            let point_id = point.point_id;
-                            if let Err(e) = channel.add_point(point) {
-                                warn!("Failed to add point: {}", e);
-                                debug!("Failed to add point {point_id}: {e}");
-                            }
+            // Always load CSV for each channel - paths are based on channel ID
+            debug!("Loading CSV for channel {}", channel.id);
+            match Self::load_channel_tables(channel.id, config_dir, csv_loader).await {
+                Ok(points) => {
+                    info!(
+                        "Loaded {} four remote points for channel {}",
+                        points.len(),
+                        channel.id
+                    );
+                    // Add points to corresponding HashMap separately
+                    for point in points {
+                        let point_id = point.point_id;
+                        if let Err(e) = channel.add_point(point) {
+                            warn!("Failed to add point: {}", e);
+                            debug!("Failed to add point {point_id}: {e}");
                         }
-                    },
-                    Err(e) => {
-                        warn!("Failed to load CSV for channel {}: {}", channel.id, e);
-                        debug!("Failed to load CSV for channel {}: {}", channel.id, e);
-                    },
-                }
-            } else {
-                debug!("Channel {} has no table_config", channel.id);
+                    }
+                },
+                Err(e) => {
+                    warn!("Failed to load CSV for channel {}: {}", channel.id, e);
+                    debug!("Failed to load CSV for channel {}: {}", channel.id, e);
+                },
             }
         }
         Ok(())
     }
 
-    /// Load channel tables using new CSV loader
-    async fn load_channel_tables_v2(
-        table_config: &TableConfig,
+    /// Load channel tables from fixed directory structure
+    async fn load_channel_tables(
+        channel_id: u16,
         config_dir: &Path,
         csv_loader: &CachedCsvLoader,
     ) -> Result<Vec<CombinedPoint>> {
-        info!("Loading CSV tables for channel using new loader");
+        info!("Loading CSV tables for channel {}", channel_id);
         debug!(
-            "load_channel_tables_v2 called with config_dir: {}",
+            "load_channel_tables called with channel_id: {}, config_dir: {}",
+            channel_id,
             config_dir.display()
         );
-        debug!("four_remote_route: {}", table_config.four_remote_route);
-        debug!(
-            "protocol_mapping_route: {}",
-            table_config.protocol_mapping_route
-        );
 
-        // CSV files are always in the same directory as the config file
-        let base_dir = config_dir.to_path_buf();
-        debug!("Using CSV base directory: {}", base_dir.display());
-        debug!("Base directory for CSV: {}", base_dir.display());
+        // Fixed directory structure: config_dir/{channel_id}/ and config_dir/{channel_id}/mapping/
+        let channel_dir = config_dir.join(channel_id.to_string());
+        let mapping_dir = channel_dir.join("mapping");
+
+        debug!("Channel directory: {}", channel_dir.display());
+        debug!("Mapping directory: {}", mapping_dir.display());
 
         let mut combined = Vec::new();
 
-        // Four-telemetry file path
-        let four_remote_base = base_dir.join(&table_config.four_remote_route);
-        // Protocol mapping file path
-        let protocol_base = base_dir.join(&table_config.protocol_mapping_route);
+        // Fixed file names
+        let telemetry_file = channel_dir.join("telemetry.csv");
+        let telemetry_mapping = mapping_dir.join("telemetry_mapping.csv");
 
-        debug!("four_remote_base: {}", four_remote_base.display());
-        debug!("protocol_base: {}", protocol_base.display());
+        let signal_file = channel_dir.join("signal.csv");
+        let signal_mapping = mapping_dir.join("signal_mapping.csv");
 
-        // Debug: Print actual file paths to be loaded
-        debug!(
-            "Will load telemetry from: {}",
-            four_remote_base
-                .join(&table_config.four_remote_files.telemetry_file)
-                .display()
-        );
-        debug!(
-            "Will load telemetry mapping from: {}",
-            protocol_base
-                .join(&table_config.protocol_mapping_file.telemetry_mapping)
-                .display()
-        );
+        let control_file = channel_dir.join("control.csv");
+        let control_mapping = mapping_dir.join("control_mapping.csv");
+
+        let adjustment_file = channel_dir.join("adjustment.csv");
+        let adjustment_mapping = mapping_dir.join("adjustment_mapping.csv");
 
         // Load and merge telemetry points
         match Self::load_and_combine_telemetry(
-            &four_remote_base.join(&table_config.four_remote_files.telemetry_file),
-            &protocol_base.join(&table_config.protocol_mapping_file.telemetry_mapping),
+            &telemetry_file,
+            &telemetry_mapping,
             "Telemetry",
             csv_loader,
         )
@@ -319,13 +304,8 @@ impl ConfigManager {
         }
 
         // Load and merge signal points
-        match Self::load_and_combine_telemetry(
-            &four_remote_base.join(&table_config.four_remote_files.signal_file),
-            &protocol_base.join(&table_config.protocol_mapping_file.signal_mapping),
-            "Signal",
-            csv_loader,
-        )
-        .await
+        match Self::load_and_combine_telemetry(&signal_file, &signal_mapping, "Signal", csv_loader)
+            .await
         {
             Ok(points) => {
                 debug!("Successfully loaded {} signal points", points.len());
@@ -338,8 +318,8 @@ impl ConfigManager {
 
         // Load and merge control points
         match Self::load_and_combine_telemetry(
-            &four_remote_base.join(&table_config.four_remote_files.control_file),
-            &protocol_base.join(&table_config.protocol_mapping_file.control_mapping),
+            &control_file,
+            &control_mapping,
             "Control",
             csv_loader,
         )
@@ -356,8 +336,8 @@ impl ConfigManager {
 
         // Load and merge adjustment points
         match Self::load_and_combine_telemetry(
-            &four_remote_base.join(&table_config.four_remote_files.adjustment_file),
-            &protocol_base.join(&table_config.protocol_mapping_file.adjustment_mapping),
+            &adjustment_file,
+            &adjustment_mapping,
             "Adjustment",
             csv_loader,
         )
@@ -520,41 +500,30 @@ impl ConfigManager {
         for channel in &self.config.channels {
             info!("Validating files for channel {}", channel.id);
 
-            // Skip if no table config
-            let table_config = channel.table_config.as_ref().ok_or_else(|| {
-                ComSrvError::ConfigError(format!("Channel {} missing table_config", channel.id))
-            })?;
+            // Fixed directory structure: config_dir/{channel_id}/ and config_dir/{channel_id}/mapping/
+            let channel_dir = base_dir.join(channel.id.to_string());
+            let mapping_dir = channel_dir.join("mapping");
 
-            // Validate that four_remote_route matches channel ID (must be just the number)
-            let expected_dir = channel.id.to_string();
-            if table_config.four_remote_route != expected_dir {
-                return Err(ComSrvError::ConfigError(format!(
-                    "Channel {}: four_remote_route must be '{}', got '{}'",
-                    channel.id, expected_dir, table_config.four_remote_route
-                )));
-            }
-
-            // Validate protocol_mapping_route matches channel ID
-            if table_config.protocol_mapping_route != expected_dir {
-                return Err(ComSrvError::ConfigError(format!(
-                    "Channel {}: protocol_mapping_route must be '{}', got '{}'",
-                    channel.id, expected_dir, table_config.protocol_mapping_route
-                )));
-            }
-
-            // Check four-telemetry files directory
-            let four_remote_base = base_dir.join(&table_config.four_remote_route);
-            if !four_remote_base.exists() {
+            // Check channel directory exists
+            if !channel_dir.exists() {
                 return Err(ComSrvError::ConfigError(format!(
                     "Channel {}: directory '{}' does not exist",
                     channel.id,
-                    four_remote_base.display()
+                    channel_dir.display()
+                )));
+            }
+
+            // Check mapping directory exists
+            if !mapping_dir.exists() {
+                return Err(ComSrvError::ConfigError(format!(
+                    "Channel {}: mapping directory '{}' does not exist",
+                    channel.id,
+                    mapping_dir.display()
                 )));
             }
 
             // Check each telemetry file
-            let telemetry_file =
-                four_remote_base.join(&table_config.four_remote_files.telemetry_file);
+            let telemetry_file = channel_dir.join("telemetry.csv");
             if !telemetry_file.exists() {
                 return Err(ComSrvError::ConfigError(format!(
                     "Channel {}: telemetry file '{}' does not exist",
@@ -563,7 +532,7 @@ impl ConfigManager {
                 )));
             }
 
-            let signal_file = four_remote_base.join(&table_config.four_remote_files.signal_file);
+            let signal_file = channel_dir.join("signal.csv");
             if !signal_file.exists() {
                 return Err(ComSrvError::ConfigError(format!(
                     "Channel {}: signal file '{}' does not exist",
@@ -572,7 +541,7 @@ impl ConfigManager {
                 )));
             }
 
-            let control_file = four_remote_base.join(&table_config.four_remote_files.control_file);
+            let control_file = channel_dir.join("control.csv");
             if !control_file.exists() {
                 return Err(ComSrvError::ConfigError(format!(
                     "Channel {}: control file '{}' does not exist",
@@ -581,8 +550,7 @@ impl ConfigManager {
                 )));
             }
 
-            let adjustment_file =
-                four_remote_base.join(&table_config.four_remote_files.adjustment_file);
+            let adjustment_file = channel_dir.join("adjustment.csv");
             if !adjustment_file.exists() {
                 return Err(ComSrvError::ConfigError(format!(
                     "Channel {}: adjustment file '{}' does not exist",
@@ -592,17 +560,7 @@ impl ConfigManager {
             }
 
             // Check protocol mapping files
-            let protocol_base = base_dir.join(&table_config.protocol_mapping_route);
-            if !protocol_base.exists() {
-                return Err(ComSrvError::ConfigError(format!(
-                    "Channel {}: protocol_mapping_route directory '{}' does not exist",
-                    channel.id,
-                    protocol_base.display()
-                )));
-            }
-
-            let telemetry_mapping =
-                protocol_base.join(&table_config.protocol_mapping_file.telemetry_mapping);
+            let telemetry_mapping = mapping_dir.join("telemetry_mapping.csv");
             if !telemetry_mapping.exists() {
                 return Err(ComSrvError::ConfigError(format!(
                     "Channel {}: telemetry mapping file '{}' does not exist",
@@ -611,8 +569,7 @@ impl ConfigManager {
                 )));
             }
 
-            let signal_mapping =
-                protocol_base.join(&table_config.protocol_mapping_file.signal_mapping);
+            let signal_mapping = mapping_dir.join("signal_mapping.csv");
             if !signal_mapping.exists() {
                 return Err(ComSrvError::ConfigError(format!(
                     "Channel {}: signal mapping file '{}' does not exist",
@@ -621,8 +578,7 @@ impl ConfigManager {
                 )));
             }
 
-            let control_mapping =
-                protocol_base.join(&table_config.protocol_mapping_file.control_mapping);
+            let control_mapping = mapping_dir.join("control_mapping.csv");
             if !control_mapping.exists() {
                 return Err(ComSrvError::ConfigError(format!(
                     "Channel {}: control mapping file '{}' does not exist",
@@ -631,8 +587,7 @@ impl ConfigManager {
                 )));
             }
 
-            let adjustment_mapping =
-                protocol_base.join(&table_config.protocol_mapping_file.adjustment_mapping);
+            let adjustment_mapping = mapping_dir.join("adjustment_mapping.csv");
             if !adjustment_mapping.exists() {
                 return Err(ComSrvError::ConfigError(format!(
                     "Channel {}: adjustment mapping file '{}' does not exist",
