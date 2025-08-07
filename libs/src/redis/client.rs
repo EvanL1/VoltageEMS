@@ -99,6 +99,26 @@ impl RedisClient {
         Ok(self.conn.get(keys).await?)
     }
 
+    /// BLPOP operation - 阻塞式列表弹出
+    /// 返回 Some((key, value)) 或 None（超时）
+    pub async fn blpop(
+        &mut self,
+        keys: &[&str],
+        timeout: usize,
+    ) -> Result<Option<(String, String)>> {
+        let result: Option<(String, String)> = redis::cmd("BLPOP")
+            .arg(keys)
+            .arg(timeout)
+            .query_async(&mut self.conn)
+            .await?;
+        Ok(result)
+    }
+
+    /// RPUSH operation - 向列表尾部添加元素
+    pub async fn rpush(&mut self, key: &str, value: &str) -> Result<u32> {
+        Ok(self.conn.rpush(key, value).await?)
+    }
+
     /// batch SET
     pub async fn mset<T: redis::ToRedisArgs + Send + Sync>(
         &mut self,

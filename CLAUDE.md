@@ -397,4 +397,240 @@ Most parameters have defaults:
 - Comsrv is the most actively developed service
 - Lightweight services (modsrv, alarmsrv, hissrv, rulesrv) delegate to Redis Lua functions
 - Test environment configurations have been removed (use Docker for testing)
-- Command trigger functionality for write operations via Redis pub/sub
+- Write operations (control/adjustment) are executed synchronously via direct API calls
+
+## Build and Test Commands
+
+### Essential Pre-Commit Check
+```bash
+# ALWAYS run before committing - combines format, clippy, and compilation checks
+./scripts/quick-check.sh
+```
+
+### Cargo Aliases (Defined in .cargo/config.toml)
+```bash
+cargo check-all          # Check all targets and features
+cargo test-all           # Run all workspace tests
+cargo clippy-standard    # Standard clippy checks (daily use)
+cargo clippy-strict      # Strict clippy for code review
+cargo quality-check      # Full quality check (fmt, clippy, test)
+cargo fix-all           # Auto-fix clippy warnings
+cargo clean-build       # Clean and rebuild in release mode
+```
+
+### Testing Commands
+```bash
+# Run all tests with output
+cargo test --workspace -- --nocapture
+
+# Run specific service tests with debug logging
+RUST_LOG=debug cargo test -p comsrv -- --nocapture
+
+# Run single test by name
+cargo test test_modbus_read -- --exact --nocapture
+
+# Run tests with specific log level
+RUST_LOG=comsrv=trace cargo test test_name -- --nocapture
+
+# Test with backtrace for debugging
+RUST_BACKTRACE=1 cargo test failing_test -- --nocapture
+```
+
+### Service-Specific Development
+```bash
+# Run comsrv with trace logging
+cd services/comsrv
+RUST_LOG=debug,comsrv=trace cargo run
+
+# Run with custom config
+cargo run -- -c config/custom.yaml
+
+# Run with environment variable overrides
+COMSRV_REDIS_URL=redis://localhost:6380 cargo run
+
+# Run with CSV config path
+CSV_BASE_PATH=/path/to/config cargo run
+```
+
+## Docker Development Workflow
+
+### Building Images
+```bash
+# Build all services (from root)
+./scripts/build.sh release
+
+# Build single service
+docker build -t voltageems-comsrv:latest -f services/comsrv/Dockerfile .
+
+# Build with build args
+docker build --build-arg RUST_LOG=trace -t comsrv:debug -f services/comsrv/Dockerfile .
+```
+
+### Running Services in Docker
+```bash
+# Start full stack
+docker-compose up -d
+
+# Start with rebuild
+docker-compose up -d --build
+
+# Start specific services
+docker-compose up -d redis comsrv
+
+# View logs
+docker-compose logs -f comsrv
+docker logs -f voltageems-comsrv --tail=100
+
+# Execute commands in container
+docker exec -it voltageems-redis redis-cli
+docker exec -it voltageems-comsrv /bin/sh
+```
+
+### Docker Cleanup
+```bash
+# Stop and remove containers
+docker-compose down
+
+# Remove with volumes
+docker-compose down -v
+
+# Clean build cache
+docker system prune -f
+docker builder prune -f
+```
+
+## Redis Functions Management
+
+### Loading Functions (Required for lightweight services)
+```bash
+cd scripts/redis-functions
+
+# Load all functions (default localhost:6379)
+./load_functions.sh
+
+# Load with custom Redis
+REDIS_HOST=192.168.1.100 REDIS_PORT=6380 ./load_functions.sh
+
+# Load in Docker
+docker exec voltageems-redis /app/load_functions.sh
+
+# Verify functions loaded
+./verify_functions.sh
+redis-cli FUNCTION LIST | grep library_name
+```
+
+### Testing Redis Functions
+```bash
+# Call function directly
+redis-cli FCALL model_upsert 1 "model_001" '{"name":"Test Model"}'
+
+# Call sync engine
+redis-cli FCALL sync_execute 2 "comsrv:1001:T" "hissrv:1001:T"
+
+# Initialize sync configs
+redis-cli FCALL init_sync_configs 0
+```
+
+## Performance Profiling
+
+### CPU Profiling
+```bash
+# Build with profiling symbols
+cargo build --release --features profiling
+
+# Run with perf (Linux)
+perf record --call-graph=dwarf cargo run --release --bin comsrv
+perf report
+
+# Run with flamegraph
+cargo install flamegraph
+cargo flamegraph --bin comsrv
+```
+
+### Memory Profiling
+```bash
+# With valgrind (Linux)
+valgrind --leak-check=full --show-leak-kinds=all \
+  target/release/comsrv
+
+# With heaptrack
+heaptrack target/release/comsrv
+heaptrack_gui heaptrack.comsrv.*.gz
+```
+
+## Debugging Tips
+
+### Enable Detailed Logging
+```bash
+# Service-specific trace logging
+RUST_LOG=warn,comsrv=trace,comsrv::core=debug cargo run
+
+# Module-specific logging
+RUST_LOG=comsrv::plugins::modbus=trace cargo run
+
+# With timestamp and target
+RUST_LOG=debug RUST_LOG_STYLE=always cargo run
+```
+
+### Common Debug Scenarios
+```bash
+# Debug Modbus communication
+RUST_LOG=comsrv::plugins::modbus=trace cargo run
+
+# Debug Redis operations
+redis-cli monitor | grep comsrv
+
+# Debug plugin loading
+RUST_LOG=comsrv::core::combase::factory=debug cargo run
+
+# Debug CSV configuration loading
+RUST_LOG=comsrv::config=debug cargo run
+```
+
+## macOS-Specific Notes
+
+### Cargo Config
+The `.cargo/config.toml` has lld linker disabled for macOS:
+```toml
+# Apple Silicon - lld not available by default
+# [target.aarch64-apple-darwin]
+# rustflags = ["-C", "link-arg=-fuse-ld=lld"]
+```
+
+### Build Optimization
+macOS uses 11 parallel jobs by default (configured in .cargo/config.toml).
+
+## Workspace Dependencies
+
+Key dependencies managed at workspace level (Cargo.toml):
+- **Async Runtime**: tokio 1.35 with full features
+- **Web Framework**: axum 0.8.4 for most services, actix-web 4 for apigateway
+- **Redis**: redis 0.32 with tokio-comp and connection-manager
+- **Serialization**: serde, serde_json, serde_yaml
+- **Logging**: tracing with env-filter
+- **Error Handling**: anyhow, thiserror
+- **Industrial Protocols**: socketcan 3.3 for CAN bus support
+
+## CI/CD Integration
+
+### GitHub Actions Workflow (if needed)
+```yaml
+# Quick check before merge
+- run: ./scripts/quick-check.sh
+
+# Full test suite
+- run: cargo test-all
+
+# Build release
+- run: ./scripts/build.sh release
+```
+
+### Pre-commit Hook Setup
+```bash
+# Create git hook
+cat > .git/hooks/pre-commit << 'EOF'
+#!/bin/bash
+./scripts/quick-check.sh
+EOF
+chmod +x .git/hooks/pre-commit
+```

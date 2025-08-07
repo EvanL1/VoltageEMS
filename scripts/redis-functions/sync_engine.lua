@@ -252,6 +252,28 @@ local function sync_execute(keys, args)
                 redis.call('HSET', target_key, target_field, value)
                 sync_count = sync_count + 1
                 
+                -- 特殊处理：如果目标是comsrv的控制或调节点，推送到命令队列
+                if string.match(target_key, "^comsrv:%d+:[CA]$") then
+                    local channel_id = string.match(target_key, "^comsrv:(%d+):")
+                    local cmd_type = string.match(target_key, ":([CA])$")
+                    
+                    -- 构造命令数据
+                    local cmd_data = {
+                        point_id = tonumber(target_field),
+                        value = tonumber(value) or 0,
+                        source = "sync_engine",
+                        command_id = string.format("sync_%s_%s", redis.call('TIME')[1], math.random(1000, 9999)),
+                        timestamp = redis.call('TIME')[1]
+                    }
+                    
+                    -- 推送到对应的命令队列
+                    local queue_key = string.format("comsrv:trigger:%s:%s", channel_id, cmd_type)
+                    redis.call('RPUSH', queue_key, cjson.encode(cmd_data))
+                    
+                    -- 设置队列过期时间（30秒）
+                    redis.call('EXPIRE', queue_key, 30)
+                end
+                
                 -- 建立反向映射
                 if config.reverse_mapping and config.reverse_mapping.enabled then
                     local reverse_key = string.format("sync:reverse:%s:%s:%s", 

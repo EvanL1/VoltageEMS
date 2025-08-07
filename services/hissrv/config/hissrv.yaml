@@ -1,8 +1,27 @@
-data_keys:
-  - "comsrv:1001:T"
-  - "comsrv:1002:T"
-  - "comsrv:1003:T"
-  - "comsrv:1004:T"
+# History Service Configuration
+# 历史数据服务配置
 
-collection_interval_seconds: 60
-batch_size: 100
+service:
+  name: "hissrv"
+  port: 6004
+
+redis:
+  url: "${REDIS_URL:-redis://127.0.0.1:6379}"
+
+# InfluxDB配置（默认启用）
+# 正常情况下不需要配置，使用默认值即可
+influxdb:
+  # enabled: true                               # 默认true，设为false可关闭
+  # url: "${INFLUXDB_URL:-http://localhost:8086}" # 默认localhost:8086
+  # org: "${INFLUXDB_ORG:-voltage}"             # 默认voltage
+  # bucket: "${INFLUXDB_BUCKET:-voltage}"       # 默认voltage
+  # token: "${INFLUXDB_TOKEN}"                  # 可选，某些环境需要
+
+# 数据收集配置
+collection:
+  interval_seconds: 60         # 收集间隔
+  batch_size: 1000             # 批量大小
+  sources:                      # 要收集的数据源模式
+    - "comsrv:*:T"             # 所有通道的遥测数据
+    - "comsrv:*:S"             # 所有通道的遥信数据
+    # - "modsrv:model:*:measurement"  # 可选：模型测量数据

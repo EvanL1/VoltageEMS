@@ -1,0 +1,230 @@
+name: CI
+
+on:
+  push:
+    branches: [ main, develop, feature/* ]
+  pull_request:
+    branches: [ main, develop ]
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  # 代码质量检查
+  check:
+    name: Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      
+      - name: Cache dependencies
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+      
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+      
+      - name: Check compilation
+        run: cargo check --workspace
+      
+      - name: Run Clippy
+        run: |
+          cargo clippy --all-targets --all-features -- \
+            -D warnings \
+            -A clippy::new_without_default \
+            -A clippy::uninlined_format_args \
+            -A clippy::approx_constant \
+            -A clippy::derivable_impls
+
+  # 运行测试
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    needs: check
+    services:
+      redis:
+        image: redis:8-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+      
+      - name: Cache dependencies
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+      
+      - name: Load Redis Functions
+        run: |
+          # Install Redis CLI if not available
+          sudo apt-get update && sudo apt-get install -y redis-tools
+          
+          # Load Lua functions
+          cd scripts/redis-functions
+          for lua_file in *.lua; do
+            echo "Loading $lua_file..."
+            redis-cli -h localhost -p 6379 FUNCTION LOAD REPLACE "$(cat $lua_file)" || true
+          done
+      
+      - name: Run tests
+        env:
+          REDIS_URL: redis://localhost:6379
+          VOLTAGE_REDIS_URL: redis://localhost:6379
+        run: |
+          # Run workspace tests
+          cargo test --workspace -- --test-threads=1
+      
+      - name: Test individual services
+        env:
+          REDIS_URL: redis://localhost:6379
+        run: |
+          # Test each service separately to ensure they work
+          cargo test -p voltage-libs --lib
+          cargo test -p comsrv --lib
+          cargo test -p modsrv --lib  
+          cargo test -p alarmsrv --lib
+          cargo test -p rulesrv --lib
+          cargo test -p hissrv --lib
+          cargo test -p apigateway --lib
+          cargo test -p netsrv --lib
+
+  # 构建 Docker 镜像
+  docker:
+    name: Docker Build
+    runs-on: ubuntu-latest
+    needs: test
+    if: github.event_name == 'push'
+    strategy:
+      matrix:
+        service: [comsrv, modsrv, alarmsrv, rulesrv, hissrv, apigateway, netsrv]
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      
+      - name: Build ${{ matrix.service }}
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./services/${{ matrix.service }}/Dockerfile
+          push: false
+          tags: voltageems-${{ matrix.service }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          build-args: |
+            BUILD_DATE=${{ github.event.repository.updated_at }}
+            GIT_COMMIT=${{ github.sha }}
+
+  # 集成测试
+  integration:
+    name: Integration Test
+    runs-on: ubuntu-latest
+    needs: docker
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop')
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Start services with docker-compose
+        run: |
+          # Create minimal env file
+          cat > .env << EOF
+          RUST_LOG=info
+          REDIS_URL=redis://redis:6379
+          EOF
+          
+          # Start services
+          docker-compose up -d redis
+          sleep 5
+          
+          # Load Redis functions
+          docker-compose exec -T redis sh -c "cd /scripts && for f in *.lua; do redis-cli FUNCTION LOAD REPLACE \"\$(cat \$f)\"; done"
+          
+          # Start other services
+          docker-compose up -d
+          
+          # Wait for services to be ready
+          sleep 20
+      
+      - name: Check service health
+        run: |
+          # Check if services are running
+          docker-compose ps
+          
+          # Test health endpoints
+          services=(6000 6001 6002 6003 6004 6005)
+          for port in "${services[@]}"; do
+            echo "Testing service on port $port..."
+            curl -f http://localhost:$port/health || echo "Service on port $port not ready"
+          done
+      
+      - name: Run basic API tests
+        run: |
+          # Test comsrv
+          curl -X GET http://localhost:6000/api/channels || true
+          
+          # Test modsrv
+          curl -X GET http://localhost:6001/api/templates || true
+          
+          # Test alarmsrv
+          curl -X GET http://localhost:6002/api/alarms || true
+          
+          # Test rulesrv
+          curl -X GET http://localhost:6003/api/rules || true
+          
+          # Test hissrv
+          curl -X GET http://localhost:6004/health || true
+          
+          # Test apigateway
+          curl -X GET http://localhost:6005/health || true
+      
+      - name: Collect logs
+        if: always()
+        run: |
+          docker-compose logs > docker-compose-logs.txt
+      
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v3
+        with:
+          name: integration-logs
+          path: docker-compose-logs.txt
+      
+      - name: Stop services
+        if: always()
+        run: |
+          docker-compose down -v

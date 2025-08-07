@@ -23,6 +23,7 @@ services:
 
   # Redis with functions
   redis:
+    image: voltageems-redis:latest
     build:
       context: .
       dockerfile: docker/redis/Dockerfile
@@ -70,6 +71,7 @@ services:
 
   # API Gateway - 专注于数据聚合和业务逻辑
   apigateway:
+    image: voltageems-apigateway:latest
     build:
       context: .
       dockerfile: services/apigateway/Dockerfile
@@ -89,6 +91,7 @@ services:
 
   # 通信服务
   comsrv:
+    image: voltageems-comsrv:latest
     build:
       context: .
       dockerfile: services/comsrv/Dockerfile
@@ -112,6 +115,7 @@ services:
 
   # 模型服务
   modsrv:
+    image: voltageems-modsrv:latest
     build:
       context: .
       dockerfile: services/modsrv/Dockerfile
@@ -129,6 +133,7 @@ services:
 
   # 历史服务
   hissrv:
+    image: voltageems-hissrv:latest
     build:
       context: .
       dockerfile: services/hissrv/Dockerfile
@@ -152,6 +157,7 @@ services:
 
   # 告警服务
   alarmsrv:
+    image: voltageems-alarmsrv:latest
     build:
       context: .
       dockerfile: services/alarmsrv/Dockerfile
@@ -169,6 +175,7 @@ services:
 
   # 规则引擎服务
   rulesrv:
+    image: voltageems-rulesrv:latest
     build:
       context: .
       dockerfile: services/rulesrv/Dockerfile

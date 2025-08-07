@@ -325,6 +325,7 @@ impl ProtocolFactory {
         let config = CommandTriggerConfig {
             channel_id,
             redis_url: self.redis_url.clone(),
+            ..Default::default() // 使用默认的mode和timeout_seconds
         };
 
         let (tx, rx) = tokio::sync::mpsc::channel(100);

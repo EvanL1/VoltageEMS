@@ -1,610 +1,494 @@
-//! Lightweight AlarmSrv - Alarm Configuration Management Service
-//!
-//! This service manages alarm configurations and provides APIs for alarm management.
-//! The actual alarm processing is handled by Redis Lua Functions.
+//! Alarm Service (AlarmSrv)
+//! 告警服务 - 负责管理告警配置和触发
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use axum::{
     extract::{Path, Query, State},
-    http::StatusCode,
     response::Json,
     routing::{get, post},
     Router,
 };
-use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use std::{collections::HashMap, net::SocketAddr, path::PathBuf, sync::Arc};
-use tokio::{
-    fs,
-    sync::{mpsc, RwLock},
-};
+use std::{net::SocketAddr, sync::Arc};
 use tracing::{error, info};
-use uuid::Uuid;
+use voltage_libs::config::ConfigLoader;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-enum AlarmLevel {
-    Critical,
-    Major,
-    Minor,
-    Warning,
-    Info,
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+struct Config {
+    #[serde(default)]
+    service: ServiceConfig,
+    redis: RedisConfig,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-enum AlarmStatus {
-    New,
-    Acknowledged,
-    Resolved,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct AlarmConfig {
-    id: String,
-    title: String,
-    description: String,
-    level: AlarmLevel,
-    source: Option<String>,
-    tags: Vec<String>,
-    #[serde(default)]
-    auto_resolve: bool,
-    #[serde(default)]
-    auto_resolve_timeout: u64,
-    #[serde(default)]
-    notification_channels: Vec<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct AlarmTemplate {
-    id: String,
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+struct ServiceConfig {
+    #[serde(default = "default_service_name")]
     name: String,
-    description: Option<String>,
-    level: AlarmLevel,
-    title_template: String,
-    description_template: String,
-    #[serde(default)]
-    tags: Vec<String>,
+    #[serde(default = "default_port")]
+    port: u16,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct AlarmsFile {
-    #[serde(default)]
-    templates: Vec<AlarmTemplate>,
-    #[serde(default)]
-    alarm_rules: Vec<AlarmRule>,
-    #[serde(default)]
-    settings: Settings,
+#[derive(Debug, Clone, Deserialize, Serialize)]
+struct RedisConfig {
+    #[serde(default = "default_redis_url")]
+    url: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct AlarmRule {
-    id: String,
-    name: String,
-    description: Option<String>,
-    enabled: bool,
-    condition: String,
-    template_id: Option<String>,
-    level: AlarmLevel,
-    source: String,
+fn default_service_name() -> String {
+    "alarmsrv".to_string()
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct Settings {
-    #[serde(default = "default_retention_days")]
-    retention_days: u32,
-    #[serde(default = "default_cleanup_interval")]
-    cleanup_interval: u64,
-    #[serde(default = "default_max_active_alarms")]
-    max_active_alarms: usize,
+fn default_port() -> u16 {
+    6002
 }
 
-impl Default for Settings {
+fn default_redis_url() -> String {
+    "redis://127.0.0.1:6379".to_string()
+}
+
+impl Default for RedisConfig {
     fn default() -> Self {
         Self {
-            retention_days: default_retention_days(),
-            cleanup_interval: default_cleanup_interval(),
-            max_active_alarms: default_max_active_alarms(),
+            url: default_redis_url(),
         }
     }
 }
 
-fn default_retention_days() -> u32 {
-    30
-}
-fn default_cleanup_interval() -> u64 {
-    86400000 // 24 hours in milliseconds
-}
-fn default_max_active_alarms() -> usize {
-    10000
-}
-
 struct AppState {
     redis_client: redis::Client,
-    templates: Arc<RwLock<HashMap<String, AlarmTemplate>>>,
-    rules: Arc<RwLock<HashMap<String, AlarmRule>>>,
-    settings: Arc<RwLock<Settings>>,
-    config_path: PathBuf,
-    reload_tx: mpsc::Sender<()>,
 }
 
 #[derive(Debug, Deserialize)]
-struct CreateAlarmRequest {
-    title: String,
-    description: String,
-    level: AlarmLevel,
-    source: Option<String>,
-    tags: Option<Vec<String>>,
-}
-
-#[derive(Debug, Deserialize)]
-struct AlarmActionRequest {
-    user: String,
-}
-
-#[derive(Debug, Deserialize)]
-struct AlarmQueryParams {
+struct AlarmQuery {
     status: Option<String>,
     level: Option<String>,
-    source: Option<String>,
     limit: Option<usize>,
-    offset: Option<usize>,
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    // Initialize logging
-    let filter = tracing_subscriber::EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
-
+    // 初始化日志
     tracing_subscriber::fmt()
-        .with_env_filter(filter)
-        .with_target(false)
-        .with_thread_ids(true)
-        .with_level(true)
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
+        )
         .init();
 
-    info!("Starting Lightweight Alarm Service...");
+    info!("Starting Alarm Service...");
 
-    // Parse command line arguments
-    let args: Vec<String> = std::env::args().collect();
-    let config_path = if args.len() > 1 {
-        PathBuf::from(&args[1])
-    } else {
-        PathBuf::from("config/alarms.yaml")
-    };
+    // 加载配置
+    let config: Config = ConfigLoader::new()
+        .with_yaml_file("config/alarmsrv.yaml")
+        .with_env_prefix("ALARMSRV")
+        .build()?;
 
-    // Load initial configuration
-    let alarms_file = load_alarms_file(&config_path).await?;
-    let templates = Arc::new(RwLock::new(
-        alarms_file
-            .templates
-            .into_iter()
-            .map(|t| (t.id.clone(), t))
-            .collect(),
-    ));
-    let rules = Arc::new(RwLock::new(
-        alarms_file
-            .alarm_rules
-            .into_iter()
-            .map(|r| (r.id.clone(), r))
-            .collect(),
-    ));
-    let settings = Arc::new(RwLock::new(alarms_file.settings));
-
-    // Connect to Redis
-    let redis_url =
-        std::env::var("REDIS_URL").unwrap_or_else(|_| "redis://127.0.0.1:6379".to_string());
-    let redis_client = redis::Client::open(redis_url)?;
-
+    // 连接Redis
+    let redis_client = redis::Client::open(config.redis.url.clone())?;
     info!("Connected to Redis");
 
-    // Create reload channel
-    let (reload_tx, mut reload_rx) = mpsc::channel::<()>(10);
+    // 创建应用状态
+    let state = Arc::new(AppState { redis_client });
 
-    // Create app state
-    let state = Arc::new(AppState {
-        redis_client,
-        templates: templates.clone(),
-        rules: rules.clone(),
-        settings: settings.clone(),
-        config_path: config_path.clone(),
-        reload_tx,
-    });
+    // 创建API路由
+    let app = Router::new()
+        .route("/health", get(health_check))
+        // 告警管理
+        .route("/api/alarms", get(list_alarms).post(trigger_alarm))
+        .route("/api/alarms/:id", get(get_alarm).delete(clear_alarm))
+        .route("/api/alarms/:id/acknowledge", post(acknowledge_alarm))
+        // 告警配置
+        .route("/api/alarm-rules", get(list_rules).post(create_rule))
+        .route(
+            "/api/alarm-rules/:id",
+            get(get_rule)
+                .put(update_rule)
+                .delete(delete_rule),
+        )
+        // 统计信息
+        .route("/api/statistics", get(get_statistics))
+        .with_state(state);
 
-    // Start cleanup task
-    let cleanup_state = state.clone();
-    let cleanup_handle = tokio::spawn(async move {
-        let mut interval = tokio::time::interval(tokio::time::Duration::from_millis(
-            cleanup_state.settings.read().await.cleanup_interval,
-        ));
-
-        loop {
-            interval.tick().await;
-
-            // Run cleanup
-            match run_cleanup(&cleanup_state).await {
-                Ok(count) => {
-                    if count > 0 {
-                        info!("Cleaned up {} old alarms", count);
-                    }
-                },
-                Err(e) => error!("Error during cleanup: {}", e),
-            }
-        }
-    });
-
-    // Start configuration reload handler
-    let reload_state = state.clone();
-    let reload_handle = tokio::spawn(async move {
-        while reload_rx.recv().await.is_some() {
-            info!("Reloading configuration...");
-
-            match load_alarms_file(&reload_state.config_path).await {
-                Ok(alarms_file) => {
-                    // Update templates
-                    let mut templates_guard = reload_state.templates.write().await;
-                    templates_guard.clear();
-                    for template in alarms_file.templates {
-                        templates_guard.insert(template.id.clone(), template);
-                    }
-
-                    // Update rules
-                    let mut rules_guard = reload_state.rules.write().await;
-                    rules_guard.clear();
-                    for rule in alarms_file.alarm_rules {
-                        rules_guard.insert(rule.id.clone(), rule);
-                    }
-
-                    // Update settings
-                    *reload_state.settings.write().await = alarms_file.settings;
-
-                    info!("Configuration reloaded successfully");
-                },
-                Err(e) => error!("Failed to reload configuration: {}", e),
-            }
-        }
-    });
-
-    // Create API routes
-    let app = create_router(state);
-
-    // Start HTTP server
-    let addr = SocketAddr::from(([0, 0, 0, 0], 6002));
+    // 启动HTTP服务
+    let addr = SocketAddr::from(([0, 0, 0, 0], config.service.port));
     let listener = tokio::net::TcpListener::bind(addr).await?;
 
-    info!("Lightweight Alarm Service started successfully on {}", addr);
+    info!("Alarm Service started on {}", addr);
     info!("API endpoints:");
     info!("  GET /health - Health check");
-    info!("  POST /api/v1/alarms - Create new alarm");
-    info!("  GET /api/v1/alarms - List alarms");
-    info!("  GET /api/v1/alarms/:id - Get alarm by ID");
-    info!("  POST /api/v1/alarms/:id/acknowledge - Acknowledge alarm");
-    info!("  POST /api/v1/alarms/:id/resolve - Resolve alarm");
-    info!("  POST /api/v1/alarms/acknowledge - Batch acknowledge");
-    info!("  GET /api/v1/stats - Get statistics");
-    info!("  GET /api/v1/active-count - Get active alarm count");
-    info!("  POST /api/v1/reload - Reload configuration");
+    info!("  GET/POST /api/alarms - Alarm management");
+    info!("  GET/POST /api/alarm-rules - Alarm rule configuration");
+    info!("  GET /api/statistics - Alarm statistics");
 
     axum::serve(listener, app).await?;
-
-    // Cleanup
-    cleanup_handle.abort();
-    reload_handle.abort();
-
     Ok(())
 }
 
-async fn load_alarms_file(path: &PathBuf) -> Result<AlarmsFile> {
-    let content = fs::read_to_string(path)
-        .await
-        .context("Failed to read alarms file")?;
-
-    let alarms_file: AlarmsFile =
-        serde_yaml::from_str(&content).context("Failed to parse alarms file")?;
-
-    Ok(alarms_file)
-}
-
-async fn run_cleanup(state: &AppState) -> Result<usize> {
-    let settings = state.settings.read().await;
-    let retention_days = settings.retention_days;
-
-    let cutoff_time = Utc::now() - chrono::Duration::days(retention_days as i64);
-    let cutoff_timestamp = cutoff_time.to_rfc3339();
-
-    let mut conn = state
-        .redis_client
-        .get_multiplexed_async_connection()
-        .await?;
-
-    let count: String = redis::cmd("FCALL")
-        .arg("cleanup_old_alarms")
-        .arg(0)
-        .arg(retention_days.to_string())
-        .arg(&cutoff_timestamp)
-        .query_async(&mut conn)
-        .await?;
-
-    Ok(count.parse().unwrap_or(0))
-}
-
-fn create_router(state: Arc<AppState>) -> Router {
-    Router::new()
-        .route("/health", get(health_check))
-        .route("/api/v1/alarms", post(create_alarm).get(list_alarms))
-        .route("/api/v1/alarms/{id}", get(get_alarm))
-        .route("/api/v1/alarms/{id}/acknowledge", post(acknowledge_alarm))
-        .route("/api/v1/alarms/{id}/resolve", post(resolve_alarm))
-        .route("/api/v1/alarms/acknowledge", post(batch_acknowledge))
-        .route("/api/v1/stats", get(get_stats))
-        .route("/api/v1/active-count", get(get_active_count))
-        .route("/api/v1/reload", post(reload_config))
-        .with_state(state)
-}
-
-// API Handlers
+// === Health Check ===
 
 async fn health_check() -> Json<serde_json::Value> {
     Json(json!({
         "status": "healthy",
-        "service": "alarmsrv-lightweight",
+        "service": "alarmsrv",
         "timestamp": chrono::Utc::now().to_rfc3339()
     }))
 }
 
-async fn create_alarm(
-    State(state): State<Arc<AppState>>,
-    Json(req): Json<CreateAlarmRequest>,
-) -> Result<Json<serde_json::Value>, StatusCode> {
-    let alarm_id = Uuid::new_v4();
-    let now = Utc::now();
-
-    let priority = match req.level {
-        AlarmLevel::Critical => 90,
-        AlarmLevel::Major => 70,
-        AlarmLevel::Minor => 50,
-        AlarmLevel::Warning => 30,
-        AlarmLevel::Info => 10,
-    };
-
-    let alarm = json!({
-        "id": alarm_id,
-        "title": req.title,
-        "description": req.description,
-        "level": req.level,
-        "status": AlarmStatus::New,
-        "source": req.source,
-        "tags": req.tags.unwrap_or_default(),
-        "priority": priority,
-        "created_at": now.to_rfc3339(),
-        "updated_at": now.to_rfc3339(),
-    });
-
-    let mut conn = state
-        .redis_client
-        .get_multiplexed_async_connection()
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-
-    let _: String = redis::cmd("FCALL")
-        .arg("store_alarm")
-        .arg(1)
-        .arg(alarm_id.to_string())
-        .arg(serde_json::to_string(&alarm).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?)
-        .query_async(&mut conn)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-
-    Ok(Json(json!({
-        "id": alarm_id,
-        "message": "Alarm created successfully"
-    })))
-}
+// === Alarm Management ===
 
 async fn list_alarms(
     State(state): State<Arc<AppState>>,
-    Query(params): Query<AlarmQueryParams>,
-) -> Result<Json<serde_json::Value>, StatusCode> {
-    let query = json!({
-        "status": params.status,
-        "level": params.level,
-        "source": params.source,
-        "limit": params.limit.unwrap_or(100),
-        "offset": params.offset.unwrap_or(0),
+    Query(query): Query<AlarmQuery>,
+) -> Json<serde_json::Value> {
+    let mut conn = match state.redis_client.get_multiplexed_async_connection().await {
+        Ok(conn) => conn,
+        Err(e) => {
+            error!("Redis connection error: {}", e);
+            return Json(json!({ "error": "Database connection failed" }));
+        },
+    };
+
+    // 构建查询参数
+    let params = json!({
+        "status": query.status,
+        "level": query.level,
+        "limit": query.limit.unwrap_or(100)
     });
 
-    let mut conn = state
-        .redis_client
-        .get_multiplexed_async_connection()
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-
-    let result: String = redis::cmd("FCALL")
-        .arg("query_alarms")
-        .arg(0)
-        .arg(serde_json::to_string(&query).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?)
+    // 调用Lua函数查询告警
+    let result: String = match redis::cmd("FCALL")
+        .arg("alarmsrv_list_alarms")
+        .arg(1)
+        .arg("query")
+        .arg(params.to_string())
         .query_async(&mut conn)
         .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    {
+        Ok(r) => r,
+        Err(e) => {
+            error!("Failed to list alarms: {}", e);
+            return Json(json!({ "error": "Failed to list alarms" }));
+        },
+    };
 
-    let result_json: serde_json::Value =
-        serde_json::from_str(&result).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    match serde_json::from_str(&result) {
+        Ok(alarms) => Json(alarms),
+        Err(e) => {
+            error!("Failed to parse alarms: {}", e);
+            Json(json!({ "error": "Invalid alarm data" }))
+        },
+    }
+}
 
-    Ok(Json(result_json))
+async fn trigger_alarm(
+    State(state): State<Arc<AppState>>,
+    Json(alarm): Json<serde_json::Value>,
+) -> Json<serde_json::Value> {
+    let mut conn = match state.redis_client.get_multiplexed_async_connection().await {
+        Ok(conn) => conn,
+        Err(e) => {
+            error!("Redis connection error: {}", e);
+            return Json(json!({ "error": "Database connection failed" }));
+        },
+    };
+
+    // 生成告警ID
+    let alarm_id = alarm["id"]
+        .as_str()
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| format!("alarm_{}", uuid::Uuid::new_v4()));
+
+    // 调用Lua函数触发告警
+    let result: String = match redis::cmd("FCALL")
+        .arg("alarmsrv_trigger_alarm")
+        .arg(1)
+        .arg(&alarm_id)
+        .arg(alarm.to_string())
+        .query_async(&mut conn)
+        .await
+    {
+        Ok(r) => r,
+        Err(e) => {
+            error!("Failed to trigger alarm: {}", e);
+            return Json(json!({ "error": "Failed to trigger alarm" }));
+        },
+    };
+
+    info!("Triggered alarm: {}", alarm_id);
+    Json(json!({ "id": alarm_id, "status": result }))
 }
 
 async fn get_alarm(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
-) -> Result<Json<serde_json::Value>, StatusCode> {
-    let mut conn = state
-        .redis_client
-        .get_multiplexed_async_connection()
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+) -> Json<serde_json::Value> {
+    let mut conn = match state.redis_client.get_multiplexed_async_connection().await {
+        Ok(conn) => conn,
+        Err(e) => {
+            error!("Redis connection error: {}", e);
+            return Json(json!({ "error": "Database connection failed" }));
+        },
+    };
 
-    let result: Option<String> = redis::cmd("FCALL")
-        .arg("get_alarm")
+    // 调用Lua函数获取告警
+    let result: String = match redis::cmd("FCALL")
+        .arg("alarmsrv_get_alarm")
         .arg(1)
         .arg(&id)
         .query_async(&mut conn)
         .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-
-    match result {
-        Some(alarm_json) => {
-            let alarm: serde_json::Value =
-                serde_json::from_str(&alarm_json).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-            Ok(Json(alarm))
+    {
+        Ok(r) => r,
+        Err(e) => {
+            error!("Failed to get alarm: {}", e);
+            return Json(json!({ "error": "Alarm not found" }));
         },
-        None => Err(StatusCode::NOT_FOUND),
+    };
+
+    match serde_json::from_str(&result) {
+        Ok(alarm) => Json(alarm),
+        Err(_) => Json(json!({ "error": "Alarm not found" })),
     }
 }
 
 async fn acknowledge_alarm(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
-    Json(req): Json<AlarmActionRequest>,
-) -> Result<Json<serde_json::Value>, StatusCode> {
-    let mut conn = state
-        .redis_client
-        .get_multiplexed_async_connection()
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Json(ack_data): Json<serde_json::Value>,
+) -> Json<serde_json::Value> {
+    let mut conn = match state.redis_client.get_multiplexed_async_connection().await {
+        Ok(conn) => conn,
+        Err(e) => {
+            error!("Redis connection error: {}", e);
+            return Json(json!({ "error": "Database connection failed" }));
+        },
+    };
 
-    let result: String = redis::cmd("FCALL")
-        .arg("acknowledge_alarm")
+    // 调用Lua函数确认告警
+    let result: String = match redis::cmd("FCALL")
+        .arg("alarmsrv_acknowledge_alarm")
         .arg(1)
         .arg(&id)
-        .arg(&req.user)
-        .arg(Utc::now().to_rfc3339())
+        .arg(ack_data.to_string())
         .query_async(&mut conn)
         .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    {
+        Ok(r) => r,
+        Err(e) => {
+            error!("Failed to acknowledge alarm: {}", e);
+            return Json(json!({ "error": "Failed to acknowledge alarm" }));
+        },
+    };
 
-    let alarm: serde_json::Value =
-        serde_json::from_str(&result).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-
-    Ok(Json(alarm))
+    info!("Acknowledged alarm: {}", id);
+    Json(json!({ "id": id, "status": result }))
 }
 
-async fn resolve_alarm(
+async fn clear_alarm(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
-    Json(req): Json<AlarmActionRequest>,
-) -> Result<Json<serde_json::Value>, StatusCode> {
-    let mut conn = state
-        .redis_client
-        .get_multiplexed_async_connection()
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+) -> Json<serde_json::Value> {
+    let mut conn = match state.redis_client.get_multiplexed_async_connection().await {
+        Ok(conn) => conn,
+        Err(e) => {
+            error!("Redis connection error: {}", e);
+            return Json(json!({ "error": "Database connection failed" }));
+        },
+    };
 
-    let result: String = redis::cmd("FCALL")
-        .arg("resolve_alarm")
+    // 调用Lua函数清除告警
+    let result: String = match redis::cmd("FCALL")
+        .arg("alarmsrv_clear_alarm")
         .arg(1)
         .arg(&id)
-        .arg(&req.user)
-        .arg(Utc::now().to_rfc3339())
         .query_async(&mut conn)
         .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    {
+        Ok(r) => r,
+        Err(e) => {
+            error!("Failed to clear alarm: {}", e);
+            return Json(json!({ "error": "Failed to clear alarm" }));
+        },
+    };
 
-    let alarm: serde_json::Value =
-        serde_json::from_str(&result).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-
-    Ok(Json(alarm))
+    info!("Cleared alarm: {}", id);
+    Json(json!({ "id": id, "status": result }))
 }
 
-async fn batch_acknowledge(
-    State(state): State<Arc<AppState>>,
-    Json(body): Json<serde_json::Value>,
-) -> Result<Json<serde_json::Value>, StatusCode> {
-    let alarm_ids = body
-        .get("alarm_ids")
-        .and_then(|v| v.as_array())
-        .ok_or(StatusCode::BAD_REQUEST)?;
+// === Alarm Rule Management ===
 
-    let user = body
-        .get("user")
-        .and_then(|v| v.as_str())
-        .ok_or(StatusCode::BAD_REQUEST)?;
+async fn list_rules(State(state): State<Arc<AppState>>) -> Json<serde_json::Value> {
+    let mut conn = match state.redis_client.get_multiplexed_async_connection().await {
+        Ok(conn) => conn,
+        Err(e) => {
+            error!("Redis connection error: {}", e);
+            return Json(json!({ "error": "Database connection failed" }));
+        },
+    };
 
-    let mut conn = state
-        .redis_client
-        .get_multiplexed_async_connection()
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-
-    let result: String = redis::cmd("FCALL")
-        .arg("acknowledge_alarms_batch")
-        .arg(0)
-        .arg(serde_json::to_string(alarm_ids).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?)
-        .arg(user)
-        .arg(Utc::now().to_rfc3339())
-        .query_async(&mut conn)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-
-    let results: serde_json::Value =
-        serde_json::from_str(&result).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-
-    Ok(Json(results))
-}
-
-async fn get_stats(
-    State(state): State<Arc<AppState>>,
-) -> Result<Json<serde_json::Value>, StatusCode> {
-    let mut conn = state
-        .redis_client
-        .get_multiplexed_async_connection()
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-
-    let stats: String = redis::cmd("FCALL")
-        .arg("get_alarm_stats")
+    // 调用Lua函数列出所有规则
+    let result: String = match redis::cmd("FCALL")
+        .arg("alarmsrv_list_rules")
         .arg(0)
         .query_async(&mut conn)
         .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    {
+        Ok(r) => r,
+        Err(e) => {
+            error!("Failed to list rules: {}", e);
+            return Json(json!({ "error": "Failed to list rules" }));
+        },
+    };
 
-    let stats_json: serde_json::Value =
-        serde_json::from_str(&stats).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-
-    Ok(Json(stats_json))
+    match serde_json::from_str(&result) {
+        Ok(rules) => Json(rules),
+        Err(e) => {
+            error!("Failed to parse rules: {}", e);
+            Json(json!({ "error": "Invalid rule data" }))
+        },
+    }
 }
 
-async fn get_active_count(
+async fn create_rule(
     State(state): State<Arc<AppState>>,
-) -> Result<Json<serde_json::Value>, StatusCode> {
-    let mut conn = state
-        .redis_client
-        .get_multiplexed_async_connection()
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Json(rule): Json<serde_json::Value>,
+) -> Json<serde_json::Value> {
+    let mut conn = match state.redis_client.get_multiplexed_async_connection().await {
+        Ok(conn) => conn,
+        Err(e) => {
+            error!("Redis connection error: {}", e);
+            return Json(json!({ "error": "Database connection failed" }));
+        },
+    };
 
-    let count: String = redis::cmd("FCALL")
-        .arg("get_active_alarm_count")
+    let rule_id = rule["id"]
+        .as_str()
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| format!("rule_{}", uuid::Uuid::new_v4()));
+
+    // 调用Lua函数创建规则
+    let result: String = match redis::cmd("FCALL")
+        .arg("alarmsrv_upsert_rule")
+        .arg(1)
+        .arg(&rule_id)
+        .arg(rule.to_string())
+        .query_async(&mut conn)
+        .await
+    {
+        Ok(r) => r,
+        Err(e) => {
+            error!("Failed to create rule: {}", e);
+            return Json(json!({ "error": "Failed to create rule" }));
+        },
+    };
+
+    info!("Created rule: {}", rule_id);
+    Json(json!({ "id": rule_id, "status": result }))
+}
+
+async fn get_rule(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> Json<serde_json::Value> {
+    let mut conn = match state.redis_client.get_multiplexed_async_connection().await {
+        Ok(conn) => conn,
+        Err(e) => {
+            error!("Redis connection error: {}", e);
+            return Json(json!({ "error": "Database connection failed" }));
+        },
+    };
+
+    // 调用Lua函数获取规则
+    let result: String = match redis::cmd("FCALL")
+        .arg("alarmsrv_get_rule")
+        .arg(1)
+        .arg(&id)
+        .query_async(&mut conn)
+        .await
+    {
+        Ok(r) => r,
+        Err(e) => {
+            error!("Failed to get rule: {}", e);
+            return Json(json!({ "error": "Rule not found" }));
+        },
+    };
+
+    match serde_json::from_str(&result) {
+        Ok(rule) => Json(rule),
+        Err(_) => Json(json!({ "error": "Rule not found" })),
+    }
+}
+
+async fn update_rule(
+    State(state): State<Arc<AppState>>,
+    Path(_id): Path<String>,
+    Json(rule): Json<serde_json::Value>,
+) -> Json<serde_json::Value> {
+    create_rule(State(state), Json(rule)).await
+}
+
+async fn delete_rule(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> Json<serde_json::Value> {
+    let mut conn = match state.redis_client.get_multiplexed_async_connection().await {
+        Ok(conn) => conn,
+        Err(e) => {
+            error!("Redis connection error: {}", e);
+            return Json(json!({ "error": "Database connection failed" }));
+        },
+    };
+
+    // 调用Lua函数删除规则
+    let result: String = match redis::cmd("FCALL")
+        .arg("alarmsrv_delete_rule")
+        .arg(1)
+        .arg(&id)
+        .query_async(&mut conn)
+        .await
+    {
+        Ok(r) => r,
+        Err(e) => {
+            error!("Failed to delete rule: {}", e);
+            return Json(json!({ "error": "Failed to delete rule" }));
+        },
+    };
+
+    info!("Deleted rule: {}", id);
+    Json(json!({ "id": id, "status": result }))
+}
+
+// === Statistics ===
+
+async fn get_statistics(State(state): State<Arc<AppState>>) -> Json<serde_json::Value> {
+    let mut conn = match state.redis_client.get_multiplexed_async_connection().await {
+        Ok(conn) => conn,
+        Err(e) => {
+            error!("Redis connection error: {}", e);
+            return Json(json!({ "error": "Database connection failed" }));
+        },
+    };
+
+    // 调用Lua函数获取统计信息
+    let result: String = match redis::cmd("FCALL")
+        .arg("alarmsrv_get_statistics")
         .arg(0)
         .query_async(&mut conn)
         .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    {
+        Ok(r) => r,
+        Err(e) => {
+            error!("Failed to get statistics: {}", e);
+            return Json(json!({ "error": "Failed to get statistics" }));
+        },
+    };
 
-    let count_json: serde_json::Value =
-        serde_json::from_str(&count).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-
-    Ok(Json(count_json))
-}
-
-async fn reload_config(
-    State(state): State<Arc<AppState>>,
-) -> Result<Json<serde_json::Value>, StatusCode> {
-    state
-        .reload_tx
-        .send(())
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-
-    Ok(Json(json!({
-        "message": "Configuration reload initiated"
-    })))
+    match serde_json::from_str(&result) {
+        Ok(stats) => Json(stats),
+        Err(e) => {
+            error!("Failed to parse statistics: {}", e);
+            Json(json!({ "error": "Invalid statistics data" }))
+        },
+    }
 }

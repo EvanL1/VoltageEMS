@@ -231,58 +231,124 @@ pub async fn control_channel(
     Ok(Json(ApiResponse::success(result)))
 }
 
-/// Send control command (remote control)
+/// Send control command (writes to Redis and triggers list queue)
 pub async fn send_control(
-    State(state): State<AppState>,
+    State(_state): State<AppState>,
     Path(channel_id): Path<u16>,
     Json(cmd): Json<ControlCommand>,
 ) -> Result<Json<ApiResponse<bool>>, StatusCode> {
-    let factory = state.factory.read().await;
+    // Get Redis URL from environment or config
+    let redis_url =
+        std::env::var("REDIS_URL").unwrap_or_else(|_| "redis://127.0.0.1:6379".to_string());
 
-    if let Some(channel) = factory.get_channel(channel_id).await {
-        let mut channel_guard = channel.write().await;
-        let redis_value = crate::core::combase::RedisValue::Integer(i64::from(cmd.value));
+    // Connect to Redis
+    let mut redis_client = match voltage_libs::redis::RedisClient::new(&redis_url).await {
+        Ok(client) => client,
+        Err(e) => {
+            tracing::error!("Failed to connect to Redis: {}", e);
+            return Err(StatusCode::INTERNAL_SERVER_ERROR);
+        },
+    };
 
-        match channel_guard
-            .control(vec![(cmd.point_id, redis_value)])
-            .await
-        {
-            Ok(results) => {
-                let success = results.iter().any(|(_, s)| *s);
-                Ok(Json(ApiResponse::success(success)))
-            },
-            Err(_) => Err(StatusCode::INTERNAL_SERVER_ERROR),
-        }
-    } else {
-        Err(StatusCode::NOT_FOUND)
+    // 1. Write control value to Redis hash
+    let key = format!("comsrv:{}:C", channel_id);
+    let field = cmd.point_id.to_string();
+    let value = cmd.value.to_string();
+
+    if let Err(e) = redis_client.hset(&key, &field, value.clone()).await {
+        tracing::error!("Failed to write control value to Redis: {}", e);
+        return Err(StatusCode::INTERNAL_SERVER_ERROR);
     }
+
+    // 2. Push command to list queue for CommandTrigger
+    let queue_key = format!("comsrv:trigger:{}:C", channel_id);
+    let command_data = serde_json::json!({
+        "point_id": cmd.point_id,
+        "value": cmd.value,
+        "source": "api",
+        "command_id": format!("api_{}", chrono::Utc::now().timestamp_millis()),
+        "timestamp": chrono::Utc::now().timestamp()
+    });
+
+    if let Err(e) = redis_client
+        .rpush(&queue_key, &command_data.to_string())
+        .await
+    {
+        tracing::error!("Failed to push command to trigger queue: {}", e);
+        return Err(StatusCode::INTERNAL_SERVER_ERROR);
+    }
+
+    // Set expiry on queue (30 seconds)
+    let _ = redis_client.expire(&queue_key, 30).await;
+
+    tracing::info!(
+        "Control command sent: channel={}, point={}, value={} (via Redis)",
+        channel_id,
+        cmd.point_id,
+        cmd.value
+    );
+
+    Ok(Json(ApiResponse::success(true)))
 }
 
-/// Send adjustment command (remote adjustment)
+/// Send adjustment command (writes to Redis and triggers list queue)
 pub async fn send_adjustment(
-    State(state): State<AppState>,
+    State(_state): State<AppState>,
     Path(channel_id): Path<u16>,
     Json(cmd): Json<AdjustmentCommand>,
 ) -> Result<Json<ApiResponse<bool>>, StatusCode> {
-    let factory = state.factory.read().await;
+    // Get Redis URL from environment or config
+    let redis_url =
+        std::env::var("REDIS_URL").unwrap_or_else(|_| "redis://127.0.0.1:6379".to_string());
 
-    if let Some(channel) = factory.get_channel(channel_id).await {
-        let mut channel_guard = channel.write().await;
-        let redis_value = crate::core::combase::RedisValue::Float(cmd.value);
+    // Connect to Redis
+    let mut redis_client = match voltage_libs::redis::RedisClient::new(&redis_url).await {
+        Ok(client) => client,
+        Err(e) => {
+            tracing::error!("Failed to connect to Redis: {}", e);
+            return Err(StatusCode::INTERNAL_SERVER_ERROR);
+        },
+    };
 
-        match channel_guard
-            .adjustment(vec![(cmd.point_id, redis_value)])
-            .await
-        {
-            Ok(results) => {
-                let success = results.iter().any(|(_, s)| *s);
-                Ok(Json(ApiResponse::success(success)))
-            },
-            Err(_) => Err(StatusCode::INTERNAL_SERVER_ERROR),
-        }
-    } else {
-        Err(StatusCode::NOT_FOUND)
+    // 1. Write adjustment value to Redis hash
+    let key = format!("comsrv:{}:A", channel_id);
+    let field = cmd.point_id.to_string();
+    let value = cmd.value.to_string();
+
+    if let Err(e) = redis_client.hset(&key, &field, value.clone()).await {
+        tracing::error!("Failed to write adjustment value to Redis: {}", e);
+        return Err(StatusCode::INTERNAL_SERVER_ERROR);
     }
+
+    // 2. Push command to list queue for CommandTrigger
+    let queue_key = format!("comsrv:trigger:{}:A", channel_id);
+    let command_data = serde_json::json!({
+        "point_id": cmd.point_id,
+        "value": cmd.value,
+        "source": "api",
+        "command_id": format!("api_{}", chrono::Utc::now().timestamp_millis()),
+        "timestamp": chrono::Utc::now().timestamp()
+    });
+
+    if let Err(e) = redis_client
+        .rpush(&queue_key, &command_data.to_string())
+        .await
+    {
+        tracing::error!("Failed to push command to trigger queue: {}", e);
+        return Err(StatusCode::INTERNAL_SERVER_ERROR);
+    }
+
+    // Set expiry on queue (30 seconds)
+    let _ = redis_client.expire(&queue_key, 30).await;
+
+    tracing::info!(
+        "Adjustment command sent: channel={}, point={}, value={} (via Redis)",
+        channel_id,
+        cmd.point_id,
+        cmd.value
+    );
+
+    Ok(Json(ApiResponse::success(true)))
 }
 
 /// Create the API router with all routes

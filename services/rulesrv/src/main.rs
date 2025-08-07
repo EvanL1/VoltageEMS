@@ -1,540 +1,477 @@
-//! Lightweight RuleSrv - Configuration Management Service
-//!
-//! This service manages rule configurations and provides APIs for rule management.
-//! The actual rule execution is handled by Redis Lua Functions.
+//! Rule Service (RuleSrv)
+//! 规则服务 - 负责管理规则配置和执行
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use axum::{
     extract::{Path, State},
-    http::StatusCode,
     response::Json,
     routing::{get, post},
     Router,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use std::{collections::HashMap, net::SocketAddr, path::PathBuf, sync::Arc};
-use tokio::{
-    fs,
-    sync::{mpsc, RwLock},
-    time::{interval, Duration},
-};
+use std::{net::SocketAddr, sync::Arc};
+use tokio::time::{interval, Duration};
 use tracing::{error, info};
-use uuid::Uuid;
+use voltage_libs::config::ConfigLoader;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct RuleConfig {
-    id: String,
-    name: String,
-    description: Option<String>,
-    enabled: bool,
-    priority: u32,
-    cooldown: Option<u64>,
-    condition_logic: String,
-    condition_groups: Vec<ConditionGroup>,
-    actions: Vec<Action>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct ConditionGroup {
-    logic: String,
-    conditions: Vec<Condition>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct Condition {
-    source: String,
-    op: String,
-    value: serde_json::Value,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct Action {
-    action_type: String,
-    #[serde(flatten)]
-    params: HashMap<String, serde_json::Value>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct RulesFile {
-    rules: Vec<RuleConfig>,
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+struct Config {
     #[serde(default)]
-    rule_groups: Vec<RuleGroup>,
+    service: ServiceConfig,
+    redis: RedisConfig,
     #[serde(default)]
-    settings: Settings,
+    execution: ExecutionConfig,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct RuleGroup {
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+struct ServiceConfig {
+    #[serde(default = "default_service_name")]
     name: String,
-    description: Option<String>,
-    rule_ids: Vec<String>,
+    #[serde(default = "default_port")]
+    port: u16,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct Settings {
-    #[serde(default = "default_execution_interval")]
-    execution_interval: u64,
-    #[serde(default = "default_enable_logging")]
-    enable_logging: bool,
-    #[serde(default = "default_max_concurrent")]
-    max_concurrent_executions: usize,
-    #[serde(default = "default_cooldown")]
-    default_cooldown: u64,
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+struct ExecutionConfig {
+    #[serde(default = "default_interval")]
+    interval_seconds: u64,
+    #[serde(default = "default_batch_size")]
+    batch_size: usize,
 }
 
-impl Default for Settings {
+#[derive(Debug, Clone, Deserialize, Serialize)]
+struct RedisConfig {
+    #[serde(default = "default_redis_url")]
+    url: String,
+}
+
+fn default_service_name() -> String {
+    "rulesrv".to_string()
+}
+
+fn default_port() -> u16 {
+    6003
+}
+
+fn default_redis_url() -> String {
+    "redis://127.0.0.1:6379".to_string()
+}
+
+fn default_interval() -> u64 {
+    10 // 默认10秒执行一次规则
+}
+
+fn default_batch_size() -> usize {
+    100 // 默认批量处理100条规则
+}
+
+impl Default for RedisConfig {
     fn default() -> Self {
         Self {
-            execution_interval: default_execution_interval(),
-            enable_logging: default_enable_logging(),
-            max_concurrent_executions: default_max_concurrent(),
-            default_cooldown: default_cooldown(),
+            url: default_redis_url(),
         }
     }
-}
-
-fn default_execution_interval() -> u64 {
-    1000
-}
-fn default_enable_logging() -> bool {
-    true
-}
-fn default_max_concurrent() -> usize {
-    10
-}
-fn default_cooldown() -> u64 {
-    60
 }
 
 struct AppState {
     redis_client: redis::Client,
-    rules: Arc<RwLock<HashMap<String, RuleConfig>>>,
-    settings: Arc<RwLock<Settings>>,
-    config_path: PathBuf,
-    reload_tx: mpsc::Sender<()>,
+    config: Config,
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    // Initialize logging
-    let filter = tracing_subscriber::EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
-
+    // 初始化日志
     tracing_subscriber::fmt()
-        .with_env_filter(filter)
-        .with_target(false)
-        .with_thread_ids(true)
-        .with_level(true)
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
+        )
         .init();
 
-    info!("Starting Lightweight Rules Service...");
+    info!("Starting Rule Service...");
 
-    // Parse command line arguments
-    let args: Vec<String> = std::env::args().collect();
-    let config_path = if args.len() > 1 {
-        PathBuf::from(&args[1])
-    } else {
-        PathBuf::from("config/rules.yaml")
-    };
+    // 加载配置
+    let config: Config = ConfigLoader::new()
+        .with_yaml_file("config/rulesrv.yaml")
+        .with_env_prefix("RULESRV")
+        .build()?;
 
-    // Load initial configuration
-    let rules_file = load_rules_file(&config_path).await?;
-    let rules = Arc::new(RwLock::new(
-        rules_file
-            .rules
-            .into_iter()
-            .map(|r| (r.id.clone(), r))
-            .collect(),
-    ));
-    let settings = Arc::new(RwLock::new(rules_file.settings));
-
-    // Connect to Redis
-    let redis_url =
-        std::env::var("REDIS_URL").unwrap_or_else(|_| "redis://127.0.0.1:6379".to_string());
-    let redis_client = redis::Client::open(redis_url)?;
-
+    // 连接Redis
+    let redis_client = redis::Client::open(config.redis.url.clone())?;
     info!("Connected to Redis");
 
-    // Create reload channel
-    let (reload_tx, mut reload_rx) = mpsc::channel::<()>(10);
-
-    // Create app state
+    // 创建应用状态
     let state = Arc::new(AppState {
         redis_client,
-        rules: rules.clone(),
-        settings: settings.clone(),
-        config_path: config_path.clone(),
-        reload_tx,
+        config: config.clone(),
     });
 
-    // Sync rules to Redis on startup
-    sync_rules_to_redis(&state).await?;
-
-    // Start periodic rule execution
-    let execution_state = state.clone();
-    let execution_handle = tokio::spawn(async move {
-        let mut interval = interval(Duration::from_millis(
-            execution_state.settings.read().await.execution_interval,
+    // 启动规则执行任务
+    let exec_state = state.clone();
+    tokio::spawn(async move {
+        let mut interval = interval(Duration::from_secs(
+            exec_state.config.execution.interval_seconds,
         ));
+        let mut batch_id = 0u64;
 
         loop {
             interval.tick().await;
 
-            // Execute all active rules
-            match execute_all_rules(&execution_state).await {
-                Ok(results) => {
-                    if execution_state.settings.read().await.enable_logging {
-                        info!("Executed {} rules", results.len());
-                    }
-                },
-                Err(e) => error!("Error executing rules: {}", e),
+            if let Err(e) = execute_rules(&exec_state, batch_id).await {
+                error!("Rule execution error: {}", e);
             }
+
+            batch_id += 1;
         }
     });
 
-    // Start configuration reload handler
-    let reload_state = state.clone();
-    let reload_handle = tokio::spawn(async move {
-        while reload_rx.recv().await.is_some() {
-            info!("Reloading configuration...");
+    // 创建API路由
+    let app = Router::new()
+        .route("/health", get(health_check))
+        // 规则管理
+        .route("/api/rules", get(list_rules).post(create_rule))
+        .route(
+            "/api/rules/:id",
+            get(get_rule)
+                .put(update_rule)
+                .delete(delete_rule),
+        )
+        .route("/api/rules/:id/enable", post(enable_rule))
+        .route("/api/rules/:id/disable", post(disable_rule))
+        // 执行历史和统计
+        .route("/api/executions", get(list_executions))
+        .route("/api/statistics", get(get_statistics))
+        .with_state(state);
 
-            match load_rules_file(&reload_state.config_path).await {
-                Ok(rules_file) => {
-                    // Update rules
-                    let mut rules_guard = reload_state.rules.write().await;
-                    rules_guard.clear();
-                    for rule in rules_file.rules {
-                        rules_guard.insert(rule.id.clone(), rule);
-                    }
-
-                    // Update settings
-                    *reload_state.settings.write().await = rules_file.settings;
-
-                    // Sync to Redis
-                    if let Err(e) = sync_rules_to_redis(&reload_state).await {
-                        error!("Failed to sync rules to Redis: {}", e);
-                    } else {
-                        info!("Configuration reloaded successfully");
-                    }
-                },
-                Err(e) => error!("Failed to reload configuration: {}", e),
-            }
-        }
-    });
-
-    // Create API routes
-    let app = create_router(state);
-
-    // Start HTTP server
-    let addr = SocketAddr::from(([0, 0, 0, 0], 6003));
+    // 启动HTTP服务
+    let addr = SocketAddr::from(([0, 0, 0, 0], config.service.port));
     let listener = tokio::net::TcpListener::bind(addr).await?;
 
-    info!("Lightweight Rules Service started successfully on {}", addr);
+    info!("Rule Service started on {}", addr);
     info!("API endpoints:");
     info!("  GET /health - Health check");
-    info!("  GET /api/v1/rules - List all rules");
-    info!("  GET /api/v1/rules/:id - Get rule by ID");
-    info!("  POST /api/v1/rules - Create new rule");
-    info!("  PATCH /api/v1/rules/:id - Update rule");
-    info!("  DELETE /api/v1/rules/:id - Delete rule");
-    info!("  POST /api/v1/rules/:id/execute - Execute rule");
-    info!("  POST /api/v1/rules/execute - Execute all rules");
-    info!("  POST /api/v1/reload - Reload configuration");
-    info!("  GET /api/v1/stats - Get statistics");
+    info!("  GET/POST /api/rules - Rule management");
+    info!("  POST /api/rules/:id/enable - Enable rule");
+    info!("  POST /api/rules/:id/disable - Disable rule");
+    info!("  GET /api/executions - Execution history");
+    info!("  GET /api/statistics - Rule statistics");
 
     axum::serve(listener, app).await?;
-
-    // Cleanup
-    execution_handle.abort();
-    reload_handle.abort();
-
     Ok(())
 }
 
-async fn load_rules_file(path: &PathBuf) -> Result<RulesFile> {
-    let content = fs::read_to_string(path)
-        .await
-        .context("Failed to read rules file")?;
-
-    let rules_file: RulesFile =
-        serde_yaml::from_str(&content).context("Failed to parse rules file")?;
-
-    Ok(rules_file)
-}
-
-async fn sync_rules_to_redis(state: &AppState) -> Result<()> {
-    let mut conn = state
-        .redis_client
-        .get_multiplexed_async_connection()
-        .await?;
-
-    let rules = state.rules.read().await;
-
-    for (_id, rule) in rules.iter() {
-        let rule_json = serde_json::to_string(rule)?;
-
-        // Call Redis function to upsert rule
-        let _: String = redis::cmd("FCALL")
-            .arg("rule_upsert")
-            .arg(1)  // number of keys
-            .arg(&rule.id)  // key
-            .arg(&rule_json)  // args
-            .query_async(&mut conn)
-            .await?;
-    }
-
-    info!("Synced {} rules to Redis", rules.len());
-    Ok(())
-}
-
-async fn execute_all_rules(state: &AppState) -> Result<Vec<serde_json::Value>> {
-    let mut conn = state
-        .redis_client
-        .get_multiplexed_async_connection()
-        .await?;
-
-    // Call Redis function to execute all rules
-    let result: String = redis::cmd("FCALL")
-        .arg("rule_execute_batch")
-        .arg(0)  // no keys
-        .query_async(&mut conn)
-        .await?;
-
-    let results: serde_json::Value = serde_json::from_str(&result)?;
-
-    Ok(results["results"].as_array().cloned().unwrap_or_default())
-}
-
-fn create_router(state: Arc<AppState>) -> Router {
-    Router::new()
-        .route("/health", get(health_check))
-        .route("/api/v1/rules", get(list_rules).post(create_rule))
-        .route(
-            "/api/v1/rules/{id}",
-            get(get_rule).patch(update_rule).delete(delete_rule),
-        )
-        .route("/api/v1/rules/{id}/execute", post(execute_rule))
-        .route("/api/v1/rules/execute", post(execute_all_rules_handler))
-        .route("/api/v1/reload", post(reload_config))
-        .route("/api/v1/stats", get(get_stats))
-        .with_state(state)
-}
-
-// API Handlers
+// === Health Check ===
 
 async fn health_check() -> Json<serde_json::Value> {
     Json(json!({
         "status": "healthy",
-        "service": "rulesrv-lightweight",
+        "service": "rulesrv",
         "timestamp": chrono::Utc::now().to_rfc3339()
     }))
 }
 
-async fn list_rules(State(state): State<Arc<AppState>>) -> Json<Vec<RuleConfig>> {
-    let rules = state.rules.read().await;
-    Json(rules.values().cloned().collect())
+// === Rule Execution ===
+
+async fn execute_rules(state: &AppState, batch_id: u64) -> Result<()> {
+    let mut conn = state
+        .redis_client
+        .get_multiplexed_async_connection()
+        .await?;
+
+    // 调用Lua函数执行规则
+    let result: String = redis::cmd("FCALL")
+        .arg("rulesrv_execute_batch")
+        .arg(1)
+        .arg(format!("batch_{}", batch_id))
+        .arg(state.config.execution.batch_size.to_string())
+        .query_async(&mut conn)
+        .await?;
+
+    let exec_info: serde_json::Value = serde_json::from_str(&result)?;
+    let rules_executed = exec_info["rules_executed"].as_u64().unwrap_or(0);
+    let rules_triggered = exec_info["rules_triggered"].as_u64().unwrap_or(0);
+
+    if rules_executed > 0 {
+        info!(
+            "Executed {} rules, {} triggered (batch {})",
+            rules_executed, rules_triggered, batch_id
+        );
+    }
+
+    Ok(())
+}
+
+// === Rule Management ===
+
+async fn list_rules(State(state): State<Arc<AppState>>) -> Json<serde_json::Value> {
+    let mut conn = match state.redis_client.get_multiplexed_async_connection().await {
+        Ok(conn) => conn,
+        Err(e) => {
+            error!("Redis connection error: {}", e);
+            return Json(json!({ "error": "Database connection failed" }));
+        },
+    };
+
+    // 调用Lua函数列出所有规则
+    let result: String = match redis::cmd("FCALL")
+        .arg("rulesrv_list_rules")
+        .arg(0)
+        .query_async(&mut conn)
+        .await
+    {
+        Ok(r) => r,
+        Err(e) => {
+            error!("Failed to list rules: {}", e);
+            return Json(json!({ "error": "Failed to list rules" }));
+        },
+    };
+
+    match serde_json::from_str(&result) {
+        Ok(rules) => Json(rules),
+        Err(e) => {
+            error!("Failed to parse rules: {}", e);
+            Json(json!({ "error": "Invalid rule data" }))
+        },
+    }
+}
+
+async fn create_rule(
+    State(state): State<Arc<AppState>>,
+    Json(rule): Json<serde_json::Value>,
+) -> Json<serde_json::Value> {
+    let mut conn = match state.redis_client.get_multiplexed_async_connection().await {
+        Ok(conn) => conn,
+        Err(e) => {
+            error!("Redis connection error: {}", e);
+            return Json(json!({ "error": "Database connection failed" }));
+        },
+    };
+
+    let rule_id = rule["id"]
+        .as_str()
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| format!("rule_{}", uuid::Uuid::new_v4()));
+
+    // 调用Lua函数创建规则
+    let result: String = match redis::cmd("FCALL")
+        .arg("rulesrv_upsert_rule")
+        .arg(1)
+        .arg(&rule_id)
+        .arg(rule.to_string())
+        .query_async(&mut conn)
+        .await
+    {
+        Ok(r) => r,
+        Err(e) => {
+            error!("Failed to create rule: {}", e);
+            return Json(json!({ "error": "Failed to create rule" }));
+        },
+    };
+
+    info!("Created rule: {}", rule_id);
+    Json(json!({ "id": rule_id, "status": result }))
 }
 
 async fn get_rule(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
-) -> Result<Json<RuleConfig>, StatusCode> {
-    let rules = state.rules.read().await;
-    rules
-        .get(&id)
-        .cloned()
-        .map(Json)
-        .ok_or(StatusCode::NOT_FOUND)
-}
+) -> Json<serde_json::Value> {
+    let mut conn = match state.redis_client.get_multiplexed_async_connection().await {
+        Ok(conn) => conn,
+        Err(e) => {
+            error!("Redis connection error: {}", e);
+            return Json(json!({ "error": "Database connection failed" }));
+        },
+    };
 
-async fn create_rule(
-    State(state): State<Arc<AppState>>,
-    Json(mut rule): Json<RuleConfig>,
-) -> Result<Json<serde_json::Value>, StatusCode> {
-    // Generate ID if not provided
-    if rule.id.is_empty() {
-        rule.id = Uuid::new_v4().to_string();
-    }
-
-    // Add to local storage
-    state
-        .rules
-        .write()
-        .await
-        .insert(rule.id.clone(), rule.clone());
-
-    // Sync to Redis
-    let mut conn = state
-        .redis_client
-        .get_multiplexed_async_connection()
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-
-    let rule_json = serde_json::to_string(&rule).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-
-    let _: String = redis::cmd("FCALL")
-        .arg("rule_upsert")
+    // 调用Lua函数获取规则
+    let result: String = match redis::cmd("FCALL")
+        .arg("rulesrv_get_rule")
         .arg(1)
-        .arg(&rule.id)
-        .arg(&rule_json)
+        .arg(&id)
         .query_async(&mut conn)
         .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    {
+        Ok(r) => r,
+        Err(e) => {
+            error!("Failed to get rule: {}", e);
+            return Json(json!({ "error": "Rule not found" }));
+        },
+    };
 
-    Ok(Json(json!({
-        "id": rule.id,
-        "message": "Rule created successfully"
-    })))
+    match serde_json::from_str(&result) {
+        Ok(rule) => Json(rule),
+        Err(_) => Json(json!({ "error": "Rule not found" })),
+    }
 }
 
 async fn update_rule(
     State(state): State<Arc<AppState>>,
-    Path(id): Path<String>,
-    Json(updates): Json<serde_json::Value>,
-) -> Result<Json<serde_json::Value>, StatusCode> {
-    let mut rules = state.rules.write().await;
-
-    if let Some(rule) = rules.get_mut(&id) {
-        // Apply updates
-        if let Some(name) = updates.get("name").and_then(|v| v.as_str()) {
-            rule.name = name.to_string();
-        }
-        if let Some(enabled) = updates.get("enabled").and_then(|v| v.as_bool()) {
-            rule.enabled = enabled;
-        }
-        // ... apply other updates
-
-        // Sync to Redis
-        let mut conn = state
-            .redis_client
-            .get_multiplexed_async_connection()
-            .await
-            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-
-        let rule_json =
-            serde_json::to_string(&rule).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-
-        let _: String = redis::cmd("FCALL")
-            .arg("rule_upsert")
-            .arg(1)
-            .arg(&rule.id)
-            .arg(&rule_json)
-            .query_async(&mut conn)
-            .await
-            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-
-        Ok(Json(json!({
-            "id": id,
-            "message": "Rule updated successfully"
-        })))
-    } else {
-        Err(StatusCode::NOT_FOUND)
-    }
+    Path(_id): Path<String>,
+    Json(rule): Json<serde_json::Value>,
+) -> Json<serde_json::Value> {
+    create_rule(State(state), Json(rule)).await
 }
 
 async fn delete_rule(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
-) -> Result<Json<serde_json::Value>, StatusCode> {
-    // Remove from local storage
-    let removed = state.rules.write().await.remove(&id).is_some();
+) -> Json<serde_json::Value> {
+    let mut conn = match state.redis_client.get_multiplexed_async_connection().await {
+        Ok(conn) => conn,
+        Err(e) => {
+            error!("Redis connection error: {}", e);
+            return Json(json!({ "error": "Database connection failed" }));
+        },
+    };
 
-    if removed {
-        // Remove from Redis
-        let mut conn = state
-            .redis_client
-            .get_multiplexed_async_connection()
-            .await
-            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    // 调用Lua函数删除规则
+    let result: String = match redis::cmd("FCALL")
+        .arg("rulesrv_delete_rule")
+        .arg(1)
+        .arg(&id)
+        .query_async(&mut conn)
+        .await
+    {
+        Ok(r) => r,
+        Err(e) => {
+            error!("Failed to delete rule: {}", e);
+            return Json(json!({ "error": "Failed to delete rule" }));
+        },
+    };
 
-        let _: String = redis::cmd("FCALL")
-            .arg("rule_delete")
-            .arg(1)
-            .arg(&id)
-            .query_async(&mut conn)
-            .await
-            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    info!("Deleted rule: {}", id);
+    Json(json!({ "id": id, "status": result }))
+}
 
-        Ok(Json(json!({
-            "id": id,
-            "message": "Rule deleted successfully"
-        })))
-    } else {
-        Err(StatusCode::NOT_FOUND)
+async fn enable_rule(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> Json<serde_json::Value> {
+    let mut conn = match state.redis_client.get_multiplexed_async_connection().await {
+        Ok(conn) => conn,
+        Err(e) => {
+            error!("Redis connection error: {}", e);
+            return Json(json!({ "error": "Database connection failed" }));
+        },
+    };
+
+    // 调用Lua函数启用规则
+    let result: String = match redis::cmd("FCALL")
+        .arg("rulesrv_enable_rule")
+        .arg(1)
+        .arg(&id)
+        .query_async(&mut conn)
+        .await
+    {
+        Ok(r) => r,
+        Err(e) => {
+            error!("Failed to enable rule: {}", e);
+            return Json(json!({ "error": "Failed to enable rule" }));
+        },
+    };
+
+    info!("Enabled rule: {}", id);
+    Json(json!({ "id": id, "status": result }))
+}
+
+async fn disable_rule(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> Json<serde_json::Value> {
+    let mut conn = match state.redis_client.get_multiplexed_async_connection().await {
+        Ok(conn) => conn,
+        Err(e) => {
+            error!("Redis connection error: {}", e);
+            return Json(json!({ "error": "Database connection failed" }));
+        },
+    };
+
+    // 调用Lua函数禁用规则
+    let result: String = match redis::cmd("FCALL")
+        .arg("rulesrv_disable_rule")
+        .arg(1)
+        .arg(&id)
+        .query_async(&mut conn)
+        .await
+    {
+        Ok(r) => r,
+        Err(e) => {
+            error!("Failed to disable rule: {}", e);
+            return Json(json!({ "error": "Failed to disable rule" }));
+        },
+    };
+
+    info!("Disabled rule: {}", id);
+    Json(json!({ "id": id, "status": result }))
+}
+
+// === Execution History ===
+
+async fn list_executions(State(state): State<Arc<AppState>>) -> Json<serde_json::Value> {
+    let mut conn = match state.redis_client.get_multiplexed_async_connection().await {
+        Ok(conn) => conn,
+        Err(e) => {
+            error!("Redis connection error: {}", e);
+            return Json(json!({ "error": "Database connection failed" }));
+        },
+    };
+
+    // 调用Lua函数获取执行历史
+    let result: String = match redis::cmd("FCALL")
+        .arg("rulesrv_list_executions")
+        .arg(1)
+        .arg("10") // 最近10次执行
+        .query_async(&mut conn)
+        .await
+    {
+        Ok(r) => r,
+        Err(e) => {
+            error!("Failed to list executions: {}", e);
+            return Json(json!({ "error": "Failed to list executions" }));
+        },
+    };
+
+    match serde_json::from_str(&result) {
+        Ok(executions) => Json(executions),
+        Err(e) => {
+            error!("Failed to parse executions: {}", e);
+            Json(json!({ "error": "Invalid execution data" }))
+        },
     }
 }
 
-async fn execute_rule(
-    State(state): State<Arc<AppState>>,
-    Path(id): Path<String>,
-) -> Result<Json<serde_json::Value>, StatusCode> {
-    let mut conn = state
-        .redis_client
-        .get_multiplexed_async_connection()
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+// === Statistics ===
 
-    let result: String = redis::cmd("FCALL")
-        .arg("rule_execute")
-        .arg(1)
-        .arg(&id)
-        .arg("false")  // not forced
-        .query_async(&mut conn)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+async fn get_statistics(State(state): State<Arc<AppState>>) -> Json<serde_json::Value> {
+    let mut conn = match state.redis_client.get_multiplexed_async_connection().await {
+        Ok(conn) => conn,
+        Err(e) => {
+            error!("Redis connection error: {}", e);
+            return Json(json!({ "error": "Database connection failed" }));
+        },
+    };
 
-    let result_json: serde_json::Value =
-        serde_json::from_str(&result).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-
-    Ok(Json(result_json))
-}
-
-async fn execute_all_rules_handler(
-    State(state): State<Arc<AppState>>,
-) -> Result<Json<serde_json::Value>, StatusCode> {
-    let results = execute_all_rules(&state)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-
-    Ok(Json(json!({
-        "executed": results.len(),
-        "results": results
-    })))
-}
-
-async fn reload_config(
-    State(state): State<Arc<AppState>>,
-) -> Result<Json<serde_json::Value>, StatusCode> {
-    state
-        .reload_tx
-        .send(())
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-
-    Ok(Json(json!({
-        "message": "Configuration reload initiated"
-    })))
-}
-
-async fn get_stats(
-    State(state): State<Arc<AppState>>,
-) -> Result<Json<serde_json::Value>, StatusCode> {
-    let mut conn = state
-        .redis_client
-        .get_multiplexed_async_connection()
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-
-    let stats: String = redis::cmd("FCALL")
-        .arg("rule_stats")
+    // 调用Lua函数获取统计信息
+    let result: String = match redis::cmd("FCALL")
+        .arg("rulesrv_get_statistics")
         .arg(0)
         .query_async(&mut conn)
         .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    {
+        Ok(r) => r,
+        Err(e) => {
+            error!("Failed to get statistics: {}", e);
+            return Json(json!({ "error": "Failed to get statistics" }));
+        },
+    };
 
-    let stats_json: serde_json::Value =
-        serde_json::from_str(&stats).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-
-    Ok(Json(stats_json))
+    match serde_json::from_str(&result) {
+        Ok(stats) => Json(stats),
+        Err(e) => {
+            error!("Failed to parse statistics: {}", e);
+            Json(json!({ "error": "Invalid statistics data" }))
+        },
+    }
 }

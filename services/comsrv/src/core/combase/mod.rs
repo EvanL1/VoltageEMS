@@ -23,7 +23,9 @@ pub use factory::{
 };
 pub use manager::{OptimizedPointManager, PointManagerStats, PollingPoint};
 pub use storage::{create_combase_storage, ComBaseStorage, DefaultComBaseStorage, StorageStats};
-pub use trigger::{CommandStatus, CommandTrigger, CommandTriggerConfig, ControlCommand};
+pub use trigger::{
+    CommandStatus, CommandTrigger, CommandTriggerConfig, ControlCommand, TriggerMode,
+};
 
 /// Initialize combase module
 pub fn init_combase() {

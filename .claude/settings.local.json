@@ -236,7 +236,8 @@
       "Bash(./fix-docker-issues.sh:*)",
       "Bash(./docker-verify.sh:*)",
       "Bash(./test-nginx-architecture.sh:*)",
-      "Bash(./test_minimal.sh:*)"
+      "Bash(./test_minimal.sh:*)",
+      "WebFetch(domain:docs.anthropic.com)"
     ],
     "deny": []
   }

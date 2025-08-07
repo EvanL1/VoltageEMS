@@ -1,0 +1,91 @@
+name: Debug CI
+
+on:
+  workflow_dispatch:  # 允许手动触发
+  push:
+    branches: [ debug-ci ]
+
+jobs:
+  debug:
+    name: Debug Environment
+    runs-on: ubuntu-latest
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: System Info
+        run: |
+          echo "=== System Information ==="
+          uname -a
+          echo ""
+          echo "=== CPU Info ==="
+          lscpu | head -20
+          echo ""
+          echo "=== Memory Info ==="
+          free -h
+          echo ""
+          echo "=== Disk Space ==="
+          df -h
+      
+      - name: Check Rust Installation
+        run: |
+          echo "=== Installing Rust ==="
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+          source $HOME/.cargo/env
+          echo ""
+          echo "=== Rust Version ==="
+          rustc --version
+          cargo --version
+      
+      - name: Check Project Structure
+        run: |
+          echo "=== Project Root ==="
+          ls -la
+          echo ""
+          echo "=== Services ==="
+          ls -la services/
+          echo ""
+          echo "=== Cargo.toml ==="
+          head -50 Cargo.toml
+      
+      - name: Check Dependencies
+        run: |
+          echo "=== Checking workspace members ==="
+          grep -A 20 '\[workspace\]' Cargo.toml
+          echo ""
+          echo "=== Checking if packages exist ==="
+          for service in voltage-libs comsrv modsrv alarmsrv rulesrv hissrv apigateway netsrv; do
+            if [ -d "services/$service" ] || [ "$service" = "voltage-libs" ]; then
+              echo "✓ $service exists"
+            else
+              echo "✗ $service missing"
+            fi
+          done
+      
+      - name: Try Simple Compilation
+        run: |
+          echo "=== Attempting cargo check ==="
+          cargo check --workspace 2>&1 || true
+          echo ""
+          echo "=== Attempting to build one service ==="
+          cargo build -p comsrv 2>&1 || true
+      
+      - name: Check Redis
+        run: |
+          echo "=== Installing Redis CLI ==="
+          sudo apt-get update && sudo apt-get install -y redis-tools
+          echo ""
+          echo "=== Starting Redis ==="
+          docker run -d --name redis-test -p 6379:6379 redis:8-alpine
+          sleep 3
+          echo ""
+          echo "=== Testing Redis ==="
+          redis-cli ping
+      
+      - name: List Lua Functions
+        run: |
+          echo "=== Lua Functions ==="
+          ls -la scripts/redis-functions/
+          echo ""
+          echo "=== Try loading one function ==="
+          redis-cli FUNCTION LOAD REPLACE "$(cat scripts/redis-functions/core.lua)" || true
