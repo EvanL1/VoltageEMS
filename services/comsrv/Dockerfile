@@ -21,7 +21,7 @@ COPY services/netsrv/Cargo.toml ./services/netsrv/
 COPY libs ./libs
 
 # Create dummy source files for services only
-RUN mkdir -p services/comsrv/src/bin && echo "fn main() {}" > services/comsrv/src/bin/comsrv.rs && echo "" > services/comsrv/src/lib.rs && \
+RUN mkdir -p services/comsrv/src && echo "fn main() {}" > services/comsrv/src/main.rs && \
     mkdir -p services/alarmsrv/src && echo "fn main() {}" > services/alarmsrv/src/main.rs && \
     mkdir -p services/hissrv/src && echo "fn main() {}" > services/hissrv/src/main.rs && \
     mkdir -p services/rulesrv/src && echo "fn main() {}" > services/rulesrv/src/main.rs && \
@@ -36,8 +36,8 @@ RUN cargo build --release -p comsrv
 # libs is already copied, only copy services
 COPY services ./services
 
-# Touch binary to ensure rebuild
-RUN touch services/comsrv/src/bin/comsrv.rs
+# Touch main.rs to ensure rebuild
+RUN touch services/comsrv/src/main.rs
 
 # Build final binary
 RUN cargo build --release -p comsrv
