@@ -34,20 +34,21 @@
 //!
 //! # Usage
 //!
-//! ```rust,no_run
+//! ```rust,ignore
 //! use comsrv::api::routes::create_api_routes;
-//! use axum::Server;
+//! use comsrv::core::combase::factory::ProtocolFactory;
+//! use std::sync::Arc;
+//! use tokio::sync::RwLock;
 //! use std::net::SocketAddr;
 //!
 //! #[tokio::main]
 //! async fn main() {
-//!     let app = create_api_routes();
+//!     let factory = Arc::new(RwLock::new(ProtocolFactory::new()));
+//!     let app = create_api_routes(factory);
 //!     let addr = SocketAddr::from(([0, 0, 0, 0], 3000));
 //!     
-//!     Server::bind(&addr)
-//!         .serve(app.into_make_service())
-//!         .await
-//!         .unwrap();
+//!     let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
+//!     axum::serve(listener, app).await.unwrap();
 //! }
 //! ```
 //!

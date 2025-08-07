@@ -41,8 +41,9 @@
 //!
 //! # Quick Start
 //!
-//! ```rust,no_run
-//! use comsrv::{ConfigManager, ProtocolFactory};
+//! ```rust,ignore
+//! use comsrv::core::config::ConfigManager;
+//! use comsrv::core::combase::factory::ProtocolFactory;
 //! use comsrv::utils::Result;
 //! use std::sync::Arc;
 //! use tokio::sync::RwLock;
@@ -59,10 +60,11 @@
 //!     let factory = Arc::new(RwLock::new(ProtocolFactory::new()));
 //!     
 //!     // Initialize channels from configuration
-//!     let channels = config_manager.get_channels();
-//!     for channel_config in channels {
-//!         // Create and register channel
-//!         factory.write().await.create_channel(channel_config)?;
+//!     for channel_id in config_manager.get_channel_ids() {
+//!         if let Some(channel_config) = config_manager.get_channel(channel_id) {
+//!             // Create and register channel
+//!             factory.write().await.create_channel(channel_config.clone()).await?;
+//!         }
 //!     }
 //!     
 //!     tracing::info!("Communication service initialized");

@@ -11,7 +11,7 @@
 //!
 //! ## Architecture
 //!
-//! ```
+//! ```text
 //! ConfigManager
 //!   ├── Service Configuration
 //!   ├── Channel Configuration
