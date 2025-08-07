@@ -122,15 +122,15 @@ jobs:
         env:
           REDIS_URL: redis://localhost:6379
         run: |
-          # Test each service separately to ensure they work
+          # Test services
           cargo test -p voltage-libs --lib
-          cargo test -p comsrv --lib
-          cargo test -p modsrv --lib  
-          cargo test -p alarmsrv --lib
-          cargo test -p rulesrv --lib
-          cargo test -p hissrv --lib
-          cargo test -p apigateway --lib
-          cargo test -p netsrv --lib
+          cargo test -p comsrv
+          
+          # Skip unit tests for lightweight services (binary-only, no lib targets)
+          # These services are lightweight and delegate to Redis Lua functions
+          # Currently they have no unit tests - integration tests would be more appropriate
+          echo "Skipping unit tests for lightweight services (modsrv, alarmsrv, rulesrv, hissrv, apigateway, netsrv)"
+          echo "These services have no library targets and no unit tests currently"
 
   # 构建 Docker 镜像
   docker:

@@ -21,7 +21,6 @@
       "Bash(mv:*)",
       "Bash(find:*)",
       "Bash(sed:*)",
-      "Bash(cargo build:*)",
       "Bash(touch:*)",
       "Bash(python3:*)",
       "mcp__awslabs_aws-documentation-mcp-server__search_documentation",
@@ -239,6 +238,6 @@
       "Bash(./test_minimal.sh:*)",
       "WebFetch(domain:docs.anthropic.com)"
     ],
-    "deny": []
+    "deny": ["Bash(cargo build:*)"]
   }
 }

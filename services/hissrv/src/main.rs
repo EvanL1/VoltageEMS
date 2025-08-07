@@ -1,5 +1,5 @@
 //! History Service (HisSrv)
-//! 历史数据服务 - 负责收集数据并写入InfluxDB
+//! Collect the data and storage into InfluxDB
 
 use anyhow::Result;
 use axum::{extract::State, response::Json, routing::get, Router};
@@ -16,7 +16,7 @@ struct Config {
     service: ServiceConfig,
     redis: RedisConfig,
     #[serde(default)]
-    influxdb: InfluxDbConfig, // 默认启用，不再是Option
+    influxdb: InfluxDbConfig,
     #[serde(default)]
     collection: CollectionConfig,
 }
@@ -50,7 +50,7 @@ impl Default for RedisConfig {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 struct InfluxDbConfig {
     #[serde(default = "default_influxdb_enabled")]
-    enabled: bool, // 可选关闭
+    enabled: bool,
     #[serde(default = "default_influxdb_url")]
     url: String,
     #[serde(default = "default_influxdb_org")]
@@ -62,7 +62,7 @@ struct InfluxDbConfig {
 }
 
 fn default_influxdb_enabled() -> bool {
-    true // 默认启用
+    true
 }
 
 fn default_influxdb_url() -> String {
@@ -132,7 +132,7 @@ struct Stats {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    // 初始化日志
+    // init the logging system
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
@@ -142,17 +142,17 @@ async fn main() -> Result<()> {
 
     info!("Starting History Service...");
 
-    // 加载配置
+    // load the configure
     let config: Config = ConfigLoader::new()
         .with_yaml_file("config/hissrv.yaml")
         .with_env_prefix("HISSRV")
         .build()?;
 
-    // 连接Redis
+    // Connect to Redis
     let redis_client = redis::Client::open(config.redis.url.clone())?;
     info!("Connected to Redis");
 
-    // 连接InfluxDB（默认启用，可通过配置关闭）
+    // Connect to InfluxDB
     let influx_client = if config.influxdb.enabled {
         match InfluxClient::new(
             &config.influxdb.url,
@@ -181,7 +181,7 @@ async fn main() -> Result<()> {
         None
     };
 
-    // 初始化状态
+    // init the status
     let state = Arc::new(AppState {
         redis_client,
         influx_client,
@@ -189,7 +189,7 @@ async fn main() -> Result<()> {
         stats: Arc::new(tokio::sync::RwLock::new(Stats::default())),
     });
 
-    // 启动数据收集任务
+    // Start Collect
     let collection_state = state.clone();
     tokio::spawn(async move {
         let mut interval = interval(Duration::from_secs(
@@ -249,7 +249,7 @@ async fn collect_and_store(state: &AppState, batch_id: u64) -> Result<()> {
     let point_count = batch_info["point_count"].as_u64().unwrap_or(0);
 
     if point_count > 0 {
-        // 写入InfluxDB（如果启用）
+        // Write into InfluxDB
         if let Some(influx) = &state.influx_client {
             let lines = batch_info["lines"].as_str().unwrap_or("");
             match influx.write_line_protocol(lines).await {

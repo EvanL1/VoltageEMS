@@ -217,7 +217,9 @@ impl CommandTrigger {
         let channel_refs: Vec<&str> = channels.iter().map(std::string::String::as_str).collect();
         let mut redis_client = redis_client.lock().await;
         let mut pubsub = redis_client.subscribe(&channel_refs).await.map_err(|e| {
-            crate::error::ComSrvError::InternalError(format!("Failed to create subscription: {e}"))
+            crate::utils::error::ComSrvError::InternalError(format!(
+                "Failed to create subscription: {e}"
+            ))
         })?;
 
         info!(
@@ -380,7 +382,9 @@ impl CommandTrigger {
     ) -> Result<()> {
         // Get message content
         let payload: String = msg.get_payload().map_err(|e| {
-            crate::error::ComSrvError::InternalError(format!("Failed to get message payload: {e}"))
+            crate::utils::error::ComSrvError::InternalError(format!(
+                "Failed to get message payload: {e}"
+            ))
         })?;
 
         debug!(
@@ -390,7 +394,7 @@ impl CommandTrigger {
 
         // Parse command
         let mut command: ControlCommand = serde_json::from_str(&payload).map_err(|e| {
-            crate::error::ComSrvError::ParsingError(format!("Failed to parse command: {e}"))
+            crate::utils::error::ComSrvError::ParsingError(format!("Failed to parse command: {e}"))
         })?;
 
         // Infer channel_id if not provided (use the one from subscription)
@@ -427,7 +431,7 @@ impl CommandTrigger {
         // Send command to protocol processor
         if let Err(e) = command_tx.send(channel_command).await {
             error!("Failed to send command to protocol handler: {}", e);
-            return Err(crate::error::ComSrvError::InternalError(
+            return Err(crate::utils::error::ComSrvError::InternalError(
                 "Command channel closed".to_string(),
             ));
         }

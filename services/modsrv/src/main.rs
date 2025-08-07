@@ -1,5 +1,4 @@
 //! Model Service (ModSrv)
-//! 模型服务 - 负责管理设备模型模板和实例
 
 use anyhow::Result;
 use axum::{
@@ -61,7 +60,7 @@ struct AppState {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    // 初始化日志
+    // init the logging system
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
@@ -71,13 +70,13 @@ async fn main() -> Result<()> {
 
     info!("Starting Model Service...");
 
-    // 加载配置
+    // load the configure
     let config: Config = ConfigLoader::new()
         .with_yaml_file("config/modsrv.yaml")
         .with_env_prefix("MODSRV")
         .build()?;
 
-    // 连接Redis
+    // Connect to Redis
     let redis_client = redis::Client::open(config.redis.url.clone())?;
     info!("Connected to Redis");
 
