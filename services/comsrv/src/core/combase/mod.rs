@@ -22,7 +22,7 @@ pub use factory::{
     DynComClient, ProtocolClientFactory, ProtocolFactory,
 };
 pub use manager::{OptimizedPointManager, PointManagerStats, PollingPoint};
-pub use storage::{create_combase_storage, ComBaseStorage, DefaultComBaseStorage, StorageStats};
+pub use storage::{ComBaseStorage, StorageStats};
 pub use trigger::{
     CommandStatus, CommandTrigger, CommandTriggerConfig, ControlCommand, TriggerMode,
 };

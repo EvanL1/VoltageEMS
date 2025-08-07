@@ -8,10 +8,7 @@ pub mod protocols;
 pub mod traits;
 
 // slavecore重新export核心type
-pub use core::{
-    discovery, telemetry_type_to_redis, DefaultPluginStorage, PluginManager, PluginPointConfig,
-    PluginPointUpdate, PluginRegistry, PluginStatistics, PluginStorage,
-};
+pub use core::{telemetry_type_to_redis, PluginManager, PluginPointUpdate, PluginRegistry};
 
 // slavetraits重新exportinterfacedefinition
 pub use traits::{
@@ -29,18 +26,12 @@ pub fn init_plugin_system() -> crate::utils::Result<()> {
     tracing::info!("Initializing protocol plugin system");
 
     // loading内置plugin
-    discovery::load_all_plugins()?;
+    // Discovery removed in simplification
 
     // record已loading的plugin
-    let registry = PluginRegistry::global();
-    let registry = registry.read().unwrap();
-    let stats = registry.get_statistics();
+    // Statistics removed in simplification
 
-    tracing::info!(
-        "Plugin system initialized: {} plugins loaded ({} enabled)",
-        stats.total_plugins,
-        stats.enabled_plugins
-    );
+    tracing::info!("Plugin system initialized");
 
     Ok(())
 }

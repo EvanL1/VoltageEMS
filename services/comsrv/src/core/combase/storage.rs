@@ -1,44 +1,17 @@
-//! Framework storage module
+//! 简化的 ComBase 存储模块
 //!
-//! `Integrates ComBase storage interface and optimized batch synchronization functionality`
+//! 直接使用 Redis 操作，移除复杂的抽象层
 
-use super::core::RedisValue;
-use crate::core::sync::{DataSync, LuaSyncManager};
-use crate::plugins::core::{telemetry_type_to_redis, PluginPointUpdate, PluginStorage};
+use crate::core::sync::DataSync;
+use crate::plugins::core::{telemetry_type_to_redis, PluginPointUpdate};
+use crate::storage;
 use crate::utils::error::Result;
-use async_trait::async_trait;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tracing::{debug, warn};
+use voltage_libs::redis::RedisClient;
 
-// ============================================================================
-// ComBase unified storage interface
-// ============================================================================
-
-/// ComBase layer unified storage trait
-#[async_trait]
-pub trait ComBaseStorage: Send + Sync {
-    /// Batch update and publish data
-    async fn batch_update_and_publish(
-        &mut self,
-        channel_id: u16,
-        updates: Vec<PluginPointUpdate>,
-    ) -> Result<()>;
-
-    /// Single point update and publish
-    async fn update_and_publish(
-        &mut self,
-        channel_id: u16,
-        point_id: u32,
-        value: RedisValue,
-        telemetry_type: &str,
-    ) -> Result<()>;
-
-    /// Get storage statistics
-    async fn get_stats(&self) -> StorageStats;
-}
-
-/// Storage statistics
+/// 存储统计信息
 #[derive(Debug, Clone, Default)]
 pub struct StorageStats {
     pub total_updates: u64,
@@ -49,222 +22,155 @@ pub struct StorageStats {
     pub storage_errors: u64,
 }
 
-/// `Default ComBase storage implementation`
-pub struct DefaultComBaseStorage {
-    storage: Arc<Mutex<Box<dyn PluginStorage>>>,
-    stats: Mutex<StorageStats>,
-    sync_manager: Option<Arc<LuaSyncManager>>,
+/// ComBase 存储管理器
+pub struct ComBaseStorage {
+    redis_client: Arc<Mutex<RedisClient>>,
+    stats: Arc<Mutex<StorageStats>>,
+    data_sync: Option<Arc<dyn DataSync>>,
 }
 
-impl DefaultComBaseStorage {
-    /// Create new instance
-    pub fn new(storage: Box<dyn PluginStorage>) -> Self {
-        Self {
-            storage: Arc::new(Mutex::new(storage)),
-            stats: Mutex::new(StorageStats::default()),
-            sync_manager: None,
-        }
+impl ComBaseStorage {
+    /// 创建新的存储实例
+    pub async fn new(redis_url: &str) -> Result<Self> {
+        let client = storage::create_redis_client(redis_url).await?;
+
+        Ok(Self {
+            redis_client: Arc::new(Mutex::new(client)),
+            stats: Arc::new(Mutex::new(StorageStats::default())),
+            data_sync: None,
+        })
     }
 
-    /// Set synchronization manager
-    pub fn set_sync_manager(&mut self, sync_manager: Arc<LuaSyncManager>) {
-        self.sync_manager = Some(sync_manager);
+    /// 设置数据同步器
+    pub fn set_data_sync(&mut self, data_sync: Arc<dyn DataSync>) {
+        self.data_sync = Some(data_sync);
     }
 
-    /// Internal batch update method
-    async fn internal_batch_update(
+    /// 批量更新并发布数据
+    pub async fn batch_update_and_publish(
         &self,
         channel_id: u16,
         updates: Vec<PluginPointUpdate>,
     ) -> Result<()> {
-        let storage = self.storage.lock().await;
+        if updates.is_empty() {
+            return Ok(());
+        }
 
-        // Execute batch update
-        storage.write_points(updates.clone()).await?;
+        let mut stats = self.stats.lock().await;
+        stats.batch_updates += 1;
+        stats.total_updates += updates.len() as u64;
 
-        // If Lua synchronization is enabled, asynchronously synchronize data
-        if let Some(sync_manager) = &self.sync_manager {
-            let sync_updates: Vec<(u16, String, u32, f64)> = updates
-                .into_iter()
-                .map(|update| {
-                    (
-                        channel_id,
-                        telemetry_type_to_redis(&update.telemetry_type).to_string(),
-                        update.point_id,
-                        update.value,
-                    )
-                })
-                .collect();
+        // 转换为存储格式
+        let storage_updates: Vec<storage::PointUpdate> = updates
+            .iter()
+            .map(|u| storage::PointUpdate {
+                channel_id,
+                point_type: telemetry_type_to_redis(&u.telemetry_type).to_string(),
+                point_id: u.point_id,
+                value: u.value,
+            })
+            .collect();
 
-            // Asynchronous synchronization, non-blocking main flow
-            if !sync_updates.is_empty() {
-                let update_count = sync_updates.len();
-                match sync_manager.batch_sync(sync_updates).await {
-                    Ok(()) => debug!("Batch sync initiated for {} points", update_count),
-                    Err(e) => warn!("Batch sync failed (non-blocking): {}", e),
+        // 批量写入 Redis
+        let mut client = self.redis_client.lock().await;
+        if let Err(e) = storage::write_batch(&mut client, storage_updates).await {
+            warn!("Failed to batch write to Redis: {}", e);
+            stats.storage_errors += 1;
+            return Err(e);
+        }
+
+        // 发布更新
+        for update in &updates {
+            let point_type = telemetry_type_to_redis(&update.telemetry_type);
+            if let Err(e) = storage::publish_update(
+                &mut client,
+                channel_id,
+                point_type,
+                update.point_id,
+                update.value,
+            )
+            .await
+            {
+                warn!("Failed to publish update: {}", e);
+                stats.publish_failed += 1;
+            } else {
+                stats.publish_success += 1;
+            }
+        }
+
+        // 触发数据同步
+        if let Some(ref data_sync) = self.data_sync {
+            for update in &updates {
+                let point_type = telemetry_type_to_redis(&update.telemetry_type);
+
+                if let Err(e) = data_sync
+                    .sync_telemetry(channel_id, point_type, update.point_id, update.value)
+                    .await
+                {
+                    debug!("Sync failed: {}", e);
                 }
             }
         }
 
         Ok(())
     }
-}
 
-#[async_trait]
-impl ComBaseStorage for DefaultComBaseStorage {
-    async fn batch_update_and_publish(
-        &mut self,
-        channel_id: u16,
-        updates: Vec<PluginPointUpdate>,
-    ) -> Result<()> {
-        let update_count = updates.len();
-
-        match self.internal_batch_update(channel_id, updates).await {
-            Ok(()) => {
-                let mut stats = self.stats.lock().await;
-                stats.total_updates += update_count as u64;
-                stats.batch_updates += 1;
-                Ok(())
-            },
-            Err(e) => {
-                let mut stats = self.stats.lock().await;
-                stats.storage_errors += 1;
-                Err(e)
-            },
-        }
-    }
-
-    async fn update_and_publish(
-        &mut self,
+    /// 单点更新并发布
+    pub async fn update_and_publish(
+        &self,
         channel_id: u16,
         point_id: u32,
-        value: RedisValue,
+        value: f64,
         telemetry_type: &str,
     ) -> Result<()> {
-        let float_value = match value {
-            RedisValue::Float(f) => f,
-            #[allow(clippy::cast_precision_loss)]
-            RedisValue::Integer(i) => i as f64,
-            RedisValue::Bool(b) => {
-                if b {
-                    1.0
-                } else {
-                    0.0
-                }
-            },
-            RedisValue::String(s) => s.parse::<f64>().unwrap_or(0.0),
-            RedisValue::Null => 0.0,
-        };
+        let mut stats = self.stats.lock().await;
+        stats.single_updates += 1;
+        stats.total_updates += 1;
 
-        let update = PluginPointUpdate {
-            channel_id,
-            point_id,
-            value: float_value,
-            timestamp: i64::try_from(
-                std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .expect("system time should not be before UNIX epoch")
-                    .as_secs(),
-            )
-            .unwrap_or(i64::MAX),
-            telemetry_type: telemetry_type.parse().map_err(|_| {
-                crate::utils::error::ComSrvError::ParsingError(format!(
-                    "Invalid telemetry type: {}",
-                    telemetry_type
-                ))
-            })?, // Need to convert from string to enum
-            raw_value: None,
-        };
+        let mut client = self.redis_client.lock().await;
 
-        match self
-            .internal_batch_update(channel_id, vec![update.clone()])
-            .await
+        // 写入 Redis
+        if let Err(e) =
+            storage::write_point(&mut client, channel_id, telemetry_type, point_id, value).await
         {
-            Ok(()) => {
-                let mut stats = self.stats.lock().await;
-                stats.total_updates += 1;
-                stats.single_updates += 1;
-
-                // Single point synchronization (if enabled)
-                if let Some(sync_manager) = &self.sync_manager {
-                    match sync_manager
-                        .sync_telemetry(channel_id, telemetry_type, point_id, float_value)
-                        .await
-                    {
-                        Ok(()) => debug!("Single point sync initiated"),
-                        Err(e) => warn!("Single point sync failed (non-blocking): {}", e),
-                    }
-                }
-
-                Ok(())
-            },
-            Err(e) => {
-                let mut stats = self.stats.lock().await;
-                stats.storage_errors += 1;
-                Err(e)
-            },
+            warn!("Failed to write point: {}", e);
+            stats.storage_errors += 1;
+            return Err(e);
         }
+
+        // 发布更新
+        if let Err(e) =
+            storage::publish_update(&mut client, channel_id, telemetry_type, point_id, value).await
+        {
+            warn!("Failed to publish: {}", e);
+            stats.publish_failed += 1;
+        } else {
+            stats.publish_success += 1;
+        }
+
+        // 触发数据同步
+        if let Some(ref data_sync) = self.data_sync {
+            if let Err(e) = data_sync
+                .sync_telemetry(channel_id, telemetry_type, point_id, value)
+                .await
+            {
+                debug!("Sync failed: {}", e);
+            }
+        }
+
+        Ok(())
     }
 
-    async fn get_stats(&self) -> StorageStats {
+    /// 获取统计信息
+    pub async fn get_stats(&self) -> StorageStats {
         self.stats.lock().await.clone()
     }
 }
 
-impl std::fmt::Debug for DefaultComBaseStorage {
+impl std::fmt::Debug for ComBaseStorage {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("DefaultComBaseStorage")
-            .field("stats", &self.stats)
-            .finish_non_exhaustive()
-    }
-}
-
-// ============================================================================
-// Helper functions
-// ============================================================================
-
-/// Create ComBase storage instance with storage
-pub fn create_combase_storage(storage: Box<dyn PluginStorage>) -> Box<dyn ComBaseStorage> {
-    Box::new(DefaultComBaseStorage::new(storage))
-}
-
-// ============================================================================
-// Test module
-// ============================================================================
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::plugins::core::DefaultPluginStorage;
-
-    #[tokio::test]
-    async fn test_combase_storage() {
-        // Skip test if Redis is not available
-        if std::env::var("REDIS_URL").is_err() {
-            println!("Skipping test: REDIS_URL not set");
-            return;
-        }
-
-        // Use default storage for testing
-        match DefaultPluginStorage::from_env().await {
-            Ok(default_storage) => {
-                let plugin_storage = Box::new(default_storage) as Box<dyn PluginStorage>;
-                let mut storage = DefaultComBaseStorage::new(plugin_storage);
-
-                // Test single point update
-                let result = storage
-                    .update_and_publish(1, 100, RedisValue::Float(42.0), "T")
-                    .await;
-                assert!(result.is_ok(), "Failed to update: {:?}", result);
-
-                // Get statistics
-                let stats = storage.get_stats().await;
-                assert_eq!(stats.total_updates, 1);
-                assert_eq!(stats.single_updates, 1);
-            },
-            Err(e) => {
-                println!("Skipping test: Failed to connect to Redis: {}", e);
-            },
-        }
+        f.debug_struct("ComBaseStorage")
+            .field("has_data_sync", &self.data_sync.is_some())
+            .finish()
     }
 }

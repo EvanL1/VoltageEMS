@@ -20,7 +20,6 @@ use tracing::info;
 
 use crate::core::combase::{ChannelStatus, ComBase, PointData, PointDataMap, RedisValue};
 use crate::core::config::types::ChannelConfig;
-use crate::plugins::core::{DefaultPluginStorage, PluginStorage};
 use crate::utils::error::Result;
 
 /// Virtual protocol client for testing
@@ -31,8 +30,6 @@ pub struct VirtualProtocol {
     // Simulated data storage
     telemetry_data: Arc<RwLock<Vec<f64>>>,
     signal_data: Arc<RwLock<Vec<bool>>>,
-    // Plugin storage for data persistence
-    storage: Arc<tokio::sync::Mutex<Option<Arc<dyn PluginStorage>>>>,
 }
 
 impl VirtualProtocol {
@@ -43,7 +40,6 @@ impl VirtualProtocol {
             running: Arc::new(RwLock::new(false)),
             telemetry_data: Arc::new(RwLock::new(vec![0.0; 100])),
             signal_data: Arc::new(RwLock::new(vec![false; 100])),
-            storage: Arc::new(tokio::sync::Mutex::new(None)),
         })
     }
 
@@ -97,9 +93,7 @@ impl ComBase for VirtualProtocol {
     }
 
     async fn initialize(&mut self, _channel_config: &ChannelConfig) -> Result<()> {
-        // Initialize storage
-        let storage = DefaultPluginStorage::from_env().await?;
-        *self.storage.lock().await = Some(Arc::new(storage) as Arc<dyn PluginStorage>);
+        // Storage is now handled directly through Redis
         Ok(())
     }
 
@@ -111,8 +105,7 @@ impl ComBase for VirtualProtocol {
         let telemetry_data = self.telemetry_data.clone();
         let signal_data = self.signal_data.clone();
         let running = self.running.clone();
-        let channel_id = self.channel_id;
-        let storage = self.storage.clone();
+        let _channel_id = self.channel_id;
 
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(1));
@@ -141,20 +134,7 @@ impl ComBase for VirtualProtocol {
                     }
                 }
 
-                // Write to storage if available
-                if let Some(storage) = &*storage.lock().await {
-                    let data = telemetry_data.read().await;
-                    for (i, &value) in data.iter().enumerate().take(10) {
-                        let _ = storage
-                            .write_point(
-                                channel_id,
-                                &crate::core::config::TelemetryType::Telemetry,
-                                i as u32 + 1,
-                                value,
-                            )
-                            .await;
-                    }
-                }
+                // Storage writes are now handled at a higher level
             }
         });
 

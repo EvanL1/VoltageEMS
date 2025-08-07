@@ -523,14 +523,6 @@ impl ProtocolFactory {
         // Create the sync task
         let sync_task = tokio::spawn(async move {
             // Create storage instance for immediate writing
-            let plugin_storage =
-                match crate::plugins::core::DefaultPluginStorage::new(redis_url.clone()).await {
-                    Ok(storage) => storage,
-                    Err(e) => {
-                        error!("Failed to create plugin storage for sync task: {}", e);
-                        return;
-                    },
-                };
 
             // Create and configure LuaSyncManager
             let lua_sync_config = crate::core::sync::LuaSyncConfig {
@@ -560,11 +552,15 @@ impl ProtocolFactory {
 
             // Create storage with Lua sync manager
             let mut storage =
-                crate::core::combase::storage::DefaultComBaseStorage::new(Box::new(plugin_storage));
-            storage.set_sync_manager(lua_sync_manager);
-            let storage = Arc::new(Mutex::new(
-                Box::new(storage) as Box<dyn crate::core::combase::storage::ComBaseStorage>
-            ));
+                match crate::core::combase::storage::ComBaseStorage::new(&redis_url).await {
+                    Ok(s) => s,
+                    Err(e) => {
+                        error!("Failed to create storage: {}", e);
+                        return;
+                    },
+                };
+            storage.set_data_sync(lua_sync_manager);
+            let storage = Arc::new(Mutex::new(storage));
 
             // Event-driven processing: immediately write data upon receipt
             loop {
@@ -581,7 +577,7 @@ impl ProtocolFactory {
                         let mut updates = Vec::new();
 
                         // Process telemetry data
-                        for (point_id, raw_value, timestamp) in batch.telemetry {
+                        for (point_id, raw_value, _timestamp) in batch.telemetry {
                             let processed_value = if let Some(ref config) = channel_config {
                                 // Apply scaling from channel config
                                 if let Some(point_config) = config.telemetry_points.get(&point_id) {
@@ -598,18 +594,16 @@ impl ProtocolFactory {
                             };
 
                             let update = crate::plugins::core::PluginPointUpdate {
-                                channel_id: batch.channel_id,
                                 telemetry_type: crate::core::config::TelemetryType::Telemetry,
                                 point_id,
                                 value: processed_value,
-                                timestamp,
                                 raw_value: Some(raw_value),
                             };
                             updates.push(update);
                         }
 
                         // Process signal data
-                        for (point_id, raw_value, timestamp) in batch.signal {
+                        for (point_id, raw_value, _timestamp) in batch.signal {
                             let processed_value = if let Some(ref config) = channel_config {
                                 // Apply scaling/reverse from channel config
                                 if let Some(point_config) = config.signal_points.get(&point_id) {
@@ -640,11 +634,9 @@ impl ProtocolFactory {
                             };
 
                             let update = crate::plugins::core::PluginPointUpdate {
-                                channel_id: batch.channel_id,
                                 telemetry_type: crate::core::config::TelemetryType::Signal,
                                 point_id,
                                 value: processed_value,
-                                timestamp,
                                 raw_value: Some(raw_value),
                             };
                             updates.push(update);

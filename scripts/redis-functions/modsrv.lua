@@ -1,8 +1,8 @@
 #!lua name=modsrv_engine
 
 -- ========================================
--- ModSrv Lua引擎 (精简版)
--- 模型和模板管理的核心功能
+-- ModSrv Lua引擎 - 模型管理核心功能
+-- 支持 measurement/action 分离架构
 -- ========================================
 
 -- ==================== 模板管理 ====================
@@ -86,15 +86,29 @@ local function modsrv_upsert_model(keys, args)
         return redis.error_reply("Invalid JSON: " .. tostring(model))
     end
     
-    -- 存储模型
+    -- 验证必要字段
+    if not model.mappings then
+        return redis.error_reply("Model must have mappings")
+    end
+    
+    -- 存储模型定义
     local model_key = 'modsrv:model:' .. model_id
     redis.call('SET', model_key, model_json)
     redis.call('SADD', 'modsrv:models', model_id)
     
     -- 如果有模板，添加到模板索引
-    if model.template_id then
-        redis.call('SADD', 'modsrv:models:by_template:' .. model.template_id, model_id)
+    if model.template then
+        redis.call('SADD', 'modsrv:models:by_template:' .. model.template, model_id)
     end
+    
+    -- 初始化measurement和action存储
+    local measurement_key = 'modsrv:model:' .. model_id .. ':measurement'
+    local action_key = 'modsrv:model:' .. model_id .. ':action'
+    
+    -- 设置初始更新时间戳
+    local timestamp = redis.call('TIME')[1]
+    redis.call('HSET', measurement_key, '__updated', timestamp)
+    redis.call('HSET', action_key, '__updated', timestamp)
     
     return redis.status_reply("OK")
 end
@@ -121,17 +135,16 @@ local function modsrv_delete_model(keys, args)
     local model_json = redis.call('GET', model_key)
     if model_json then
         local ok, model = pcall(cjson.decode, model_json)
-        if ok and model.template_id then
-            redis.call('SREM', 'modsrv:models:by_template:' .. model.template_id, model_id)
+        if ok and model.template then
+            redis.call('SREM', 'modsrv:models:by_template:' .. model.template, model_id)
         end
     end
     
-    -- 删除模型
+    -- 删除模型及其数据
     redis.call('DEL', model_key)
+    redis.call('DEL', 'modsrv:model:' .. model_id .. ':measurement')
+    redis.call('DEL', 'modsrv:model:' .. model_id .. ':action')
     redis.call('SREM', 'modsrv:models', model_id)
-    
-    -- 删除模型数据
-    redis.call('DEL', 'modsrv:model:' .. model_id .. ':data')
     
     return redis.status_reply("OK")
 end
@@ -151,75 +164,202 @@ local function modsrv_list_models(keys, args)
     return cjson.encode(models)
 end
 
--- ==================== 模型数据操作 ====================
+-- ==================== 数据操作 ====================
 
--- 获取模型数据
-local function modsrv_get_model_data(keys, args)
+-- 同步测量数据（从通道到模型）
+local function modsrv_sync_measurement(keys, args)
     local model_id = keys[1]
     
+    -- 获取模型定义
+    local model_json = redis.call('GET', 'modsrv:model:' .. model_id)
+    if not model_json then
+        return redis.error_reply("Model not found")
+    end
+    
+    local model = cjson.decode(model_json)
+    if not model.mappings or not model.mappings.measurement then
+        return cjson.encode({synced = 0})
+    end
+    
+    local measurement_key = 'modsrv:model:' .. model_id .. ':measurement'
+    local synced_count = 0
+    
+    -- 遍历measurement映射
+    for name, mapping in pairs(model.mappings.measurement) do
+        if mapping.channel and mapping.point_id and mapping.type then
+            -- 构建源键
+            local source_key = 'comsrv:' .. mapping.channel .. ':' .. mapping.type
+            -- 获取值
+            local value = redis.call('HGET', source_key, tostring(mapping.point_id))
+            
+            if value then
+                -- 存储到模型measurement
+                redis.call('HSET', measurement_key, name, value)
+                synced_count = synced_count + 1
+            end
+        end
+    end
+    
+    -- 更新时间戳
+    if synced_count > 0 then
+        redis.call('HSET', measurement_key, '__updated', redis.call('TIME')[1])
+    end
+    
+    return cjson.encode({
+        model_id = model_id,
+        synced = synced_count,
+        timestamp = redis.call('TIME')[1]
+    })
+end
+
+-- 执行动作（从模型到通道）
+local function modsrv_execute_action(keys, args)
+    local model_id = keys[1]
+    local action_name = args[1]
+    local value = args[2]
+    
+    if not action_name or not value then
+        return redis.error_reply("Action name and value required")
+    end
+    
+    -- 获取模型定义
+    local model_json = redis.call('GET', 'modsrv:model:' .. model_id)
+    if not model_json then
+        return redis.error_reply("Model not found")
+    end
+    
+    local model = cjson.decode(model_json)
+    if not model.mappings or not model.mappings.action then
+        return redis.error_reply("Model has no action mappings")
+    end
+    
+    -- 查找动作映射
+    local mapping = model.mappings.action[action_name]
+    if not mapping then
+        return redis.error_reply("Action '" .. action_name .. "' not found")
+    end
+    
+    -- 存储动作值
+    local action_key = 'modsrv:model:' .. model_id .. ':action'
+    redis.call('HSET', action_key, action_name, value)
+    redis.call('HSET', action_key, '__updated', redis.call('TIME')[1])
+    
+    -- 写入目标通道
+    if mapping.channel and mapping.point_id and mapping.type then
+        local target_key = 'comsrv:' .. mapping.channel .. ':' .. mapping.type
+        redis.call('HSET', target_key, tostring(mapping.point_id), value)
+        
+        -- 发布命令事件
+        local event = cjson.encode({
+            model_id = model_id,
+            action = action_name,
+            value = value,
+            channel = mapping.channel,
+            point_id = mapping.point_id,
+            type = mapping.type,
+            timestamp = redis.call('TIME')[1]
+        })
+        redis.call('PUBLISH', 'modsrv:action:' .. model_id, event)
+        
+        return cjson.encode({
+            status = "OK",
+            action = action_name,
+            value = value,
+            channel = mapping.channel,
+            point_id = mapping.point_id
+        })
+    end
+    
+    return redis.error_reply("Invalid action mapping")
+end
+
+-- 获取模型数据（measurement和action）
+local function modsrv_get_model_data(keys, args)
+    local model_id = keys[1]
+    local data_type = args[1]  -- 'measurement', 'action', or nil for both
+    
     -- 检查模型是否存在
-    local model_key = 'modsrv:model:' .. model_id
-    local model_json = redis.call('GET', model_key)
+    local model_json = redis.call('GET', 'modsrv:model:' .. model_id)
     if not model_json then
         return cjson.encode({error = "Model not found"})
     end
     
     local model = cjson.decode(model_json)
+    local result = {
+        model_id = model_id,
+        model_name = model.name,
+        timestamp = redis.call('TIME')[1]
+    }
     
-    -- 获取模型数据
-    local data_key = 'modsrv:model:' .. model_id .. ':data'
-    local data_fields = redis.call('HGETALL', data_key)
-    
-    -- 转换为键值对
-    local data = {}
-    for i = 1, #data_fields, 2 do
-        data[data_fields[i]] = data_fields[i + 1]
+    -- 获取measurement数据
+    if not data_type or data_type == 'measurement' then
+        local measurement_key = 'modsrv:model:' .. model_id .. ':measurement'
+        local measurement_data = redis.call('HGETALL', measurement_key)
+        
+        local measurements = {}
+        for i = 1, #measurement_data, 2 do
+            measurements[measurement_data[i]] = measurement_data[i + 1]
+        end
+        result.measurement = measurements
     end
     
-    -- 如果有映射，获取实时数据
-    if model.channel_id then
-        local telemetry_key = 'comsrv:' .. model.channel_id .. ':T'
-        local signal_key = 'comsrv:' .. model.channel_id .. ':S'
+    -- 获取action数据
+    if not data_type or data_type == 'action' then
+        local action_key = 'modsrv:model:' .. model_id .. ':action'
+        local action_data = redis.call('HGETALL', action_key)
         
-        -- 获取遥测数据
-        if model.telemetry_points then
-            for _, point_id in ipairs(model.telemetry_points) do
-                local value = redis.call('HGET', telemetry_key, tostring(point_id))
-                if value then
-                    data['T' .. point_id] = value
-                end
-            end
+        local actions = {}
+        for i = 1, #action_data, 2 do
+            actions[action_data[i]] = action_data[i + 1]
         end
+        result.action = actions
+    end
+    
+    return cjson.encode(result)
+end
+
+-- 批量同步所有模型的测量数据
+local function modsrv_sync_all_measurements(keys, args)
+    local model_ids = redis.call('SMEMBERS', 'modsrv:models')
+    local results = {}
+    
+    for _, model_id in ipairs(model_ids) do
+        -- 调用单个模型同步
+        local sync_result = modsrv_sync_measurement({model_id}, {})
+        local ok, result = pcall(cjson.decode, sync_result)
         
-        -- 获取信号数据
-        if model.signal_points then
-            for _, point_id in ipairs(model.signal_points) do
-                local value = redis.call('HGET', signal_key, tostring(point_id))
-                if value then
-                    data['S' .. point_id] = value
-                end
-            end
+        if ok and not result.error then
+            table.insert(results, {
+                model_id = model_id,
+                synced = result.synced
+            })
         end
     end
     
     return cjson.encode({
-        model_id = model_id,
-        model_name = model.name,
-        data = data,
+        total_models = #model_ids,
+        synced_models = #results,
+        results = results,
         timestamp = redis.call('TIME')[1]
     })
 end
 
 -- ==================== 注册函数 ====================
 
+-- 模板管理
 redis.register_function('modsrv_upsert_template', modsrv_upsert_template)
 redis.register_function('modsrv_get_template', modsrv_get_template)
 redis.register_function('modsrv_delete_template', modsrv_delete_template)
 redis.register_function('modsrv_list_templates', modsrv_list_templates)
 
+-- 模型管理
 redis.register_function('modsrv_upsert_model', modsrv_upsert_model)
 redis.register_function('modsrv_get_model', modsrv_get_model)
 redis.register_function('modsrv_delete_model', modsrv_delete_model)
 redis.register_function('modsrv_list_models', modsrv_list_models)
 
+-- 数据操作
 redis.register_function('modsrv_get_model_data', modsrv_get_model_data)
+redis.register_function('modsrv_sync_measurement', modsrv_sync_measurement)
+redis.register_function('modsrv_execute_action', modsrv_execute_action)
+redis.register_function('modsrv_sync_all_measurements', modsrv_sync_all_measurements)

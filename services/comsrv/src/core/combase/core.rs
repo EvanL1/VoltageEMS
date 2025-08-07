@@ -3,13 +3,12 @@
 //! Integrates basic trait definitions, type definitions and default implementations
 
 use crate::core::config::{ChannelConfig, TelemetryType};
-use crate::plugins::core::PluginStorage;
 use crate::utils::error::{ComSrvError, Result};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::{Mutex, RwLock};
+use tokio::sync::RwLock;
 // ============================================================================
 // Redis value type definitions
 // ============================================================================
@@ -252,7 +251,6 @@ pub struct DefaultProtocol {
     is_connected: Arc<RwLock<bool>>,
     channel_config: Option<ChannelConfig>,
     // Under the four-telemetry separated architecture, unified point_mappings is no longer needed
-    storage: Option<Arc<Mutex<Box<dyn PluginStorage>>>>,
 }
 
 impl DefaultProtocol {
@@ -265,15 +263,7 @@ impl DefaultProtocol {
             is_connected: Arc::new(RwLock::new(false)),
             channel_config: None,
             // Under the four-telemetry separated architecture, unified point_mappings is no longer needed
-            storage: None,
         }
-    }
-
-    /// Set storage backend
-    #[must_use]
-    pub fn with_storage(mut self, storage: Box<dyn PluginStorage>) -> Self {
-        self.storage = Some(Arc::new(Mutex::new(storage)));
-        self
     }
 
     /// Update status information
