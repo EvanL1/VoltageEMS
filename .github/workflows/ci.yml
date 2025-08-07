@@ -23,6 +23,12 @@ jobs:
         with:
           components: rustfmt, clippy
       
+      - name: Install Protoc
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y protobuf-compiler
+          protoc --version
+      
       - name: Cache dependencies
         uses: actions/cache@v3
         with:
@@ -72,6 +78,12 @@ jobs:
       
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
+      
+      - name: Install Protoc
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y protobuf-compiler
+          protoc --version
       
       - name: Cache dependencies
         uses: actions/cache@v3
