@@ -639,7 +639,7 @@ mod tests {
         assert_eq!(api.port, 6000);
 
         let redis = RedisConfig::default();
-        assert_eq!(redis.url, "redis://127.0.0.1:6379");
+        assert_eq!(redis.url, "redis://localhost:6379");
         assert!(redis.enabled);
 
         let logging = LoggingConfig::default();

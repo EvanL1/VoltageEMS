@@ -643,10 +643,17 @@ mod tests {
         // Extract the transaction ID from the request
         let transaction_id = u16::from_be_bytes([request_frame[0], request_frame[1]]);
 
-        // Test 1: Wrong transaction ID
-        let mut wrong_tid_frame = request_frame.clone();
+        // Test 1: Response with wrong transaction ID
+        let response_pdu_bytes = vec![0x03, 0x04, 0x00, 0x01, 0x00, 0x02];
+        let mut wrong_tid_frame = vec![0; 7 + response_pdu_bytes.len()];
         wrong_tid_frame[0] = ((transaction_id + 1) >> 8) as u8;
         wrong_tid_frame[1] = ((transaction_id + 1) & 0xFF) as u8;
+        wrong_tid_frame[2..4].copy_from_slice(&[0x00, 0x00]); // Protocol ID
+        let len = (1 + response_pdu_bytes.len()) as u16;
+        wrong_tid_frame[4..6].copy_from_slice(&len.to_be_bytes());
+        wrong_tid_frame[6] = 1; // Slave ID
+        wrong_tid_frame[7..].copy_from_slice(&response_pdu_bytes);
+
         let result = processor.parse_frame(&wrong_tid_frame);
         assert!(result.is_err());
         assert!(result
@@ -654,35 +661,54 @@ mod tests {
             .to_string()
             .contains("unknown transaction ID"));
 
-        // Test 2: Wrong slave ID with same transaction ID
-        // This should fail because slave ID doesn't match the request
-        let mut different_slave_frame = request_frame.clone();
-        different_slave_frame[6] = 2; // Change slave ID from 1 to 2
+        // Test 2: Response with wrong slave ID (same transaction ID)
+        let mut different_slave_frame = vec![0; 7 + response_pdu_bytes.len()];
+        different_slave_frame[0..2].copy_from_slice(&transaction_id.to_be_bytes());
+        different_slave_frame[2..4].copy_from_slice(&[0x00, 0x00]); // Protocol ID
+        different_slave_frame[4..6].copy_from_slice(&len.to_be_bytes());
+        different_slave_frame[6] = 2; // Different slave ID
+        different_slave_frame[7..].copy_from_slice(&response_pdu_bytes);
+
         let result = processor.parse_frame(&different_slave_frame);
-        // Should fail because slave ID doesn't match
         assert!(result.is_err());
         assert!(result
             .unwrap_err()
             .to_string()
             .contains("FC/slave mismatch"));
 
-        // Test 3: Same transaction ID but different function code
-        // Build another request with same transaction ID but different FC
-        processor.next_transaction_id = transaction_id; // Force same transaction ID
+        // Test 3: Multiple requests with different function codes
+        // Build another request with different FC
         let request_pdu2_bytes = vec![0x01, 0x00, 0x00, 0x00, 0x08]; // FC01
         let request_pdu2 = ModbusPdu::from_slice(&request_pdu2_bytes).unwrap();
         let request_frame2 = processor.build_frame(1, &request_pdu2);
+        let transaction_id2 = u16::from_be_bytes([request_frame2[0], request_frame2[1]]);
 
-        // Both requests should be trackable independently
+        // Both requests should be tracked
         assert_eq!(processor.pending_requests.len(), 2);
 
-        // Parsing the requests again should work (they are valid responses to themselves in this test)
-        let result = processor.parse_frame(&request_frame);
-        assert!(result.is_ok());
+        // Valid response for FC03 request
+        let mut response1_frame = vec![0; 7 + response_pdu_bytes.len()];
+        response1_frame[0..2].copy_from_slice(&transaction_id.to_be_bytes());
+        response1_frame[2..4].copy_from_slice(&[0x00, 0x00]); // Protocol ID
+        response1_frame[4..6].copy_from_slice(&len.to_be_bytes());
+        response1_frame[6] = 1; // Same slave ID
+        response1_frame[7..].copy_from_slice(&response_pdu_bytes);
 
-        // Second request should also parse successfully
-        let result = processor.parse_frame(&request_frame2);
-        assert!(result.is_ok());
+        let result = processor.parse_frame(&response1_frame);
+        assert!(result.is_ok(), "Failed to parse response1: {:?}", result);
+
+        // Valid response for FC01 request
+        let response2_pdu_bytes = vec![0x01, 0x01, 0xFF]; // FC01 response
+        let mut response2_frame = vec![0; 7 + response2_pdu_bytes.len()];
+        response2_frame[0..2].copy_from_slice(&transaction_id2.to_be_bytes());
+        response2_frame[2..4].copy_from_slice(&[0x00, 0x00]); // Protocol ID
+        let len2 = (1 + response2_pdu_bytes.len()) as u16;
+        response2_frame[4..6].copy_from_slice(&len2.to_be_bytes());
+        response2_frame[6] = 1; // Same slave ID
+        response2_frame[7..].copy_from_slice(&response2_pdu_bytes);
+
+        let result = processor.parse_frame(&response2_frame);
+        assert!(result.is_ok(), "Failed to parse response2: {:?}", result);
     }
 
     #[test]

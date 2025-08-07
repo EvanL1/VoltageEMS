@@ -124,12 +124,13 @@ pub fn get_service_url(service_name: &str) -> String {
     if use_docker_urls {
         // Docker environment - use service names as hostnames
         match service_name {
-            "comsrv" => "http://comsrv:8081".to_string(),
-            "modsrv" => "http://modsrv:8092".to_string(),
-            "alarmsrv" => "http://alarmsrv:8080".to_string(),
-            "rulesrv" => "http://rulesrv:8080".to_string(),
-            "hissrv" => "http://hissrv:8082".to_string(),
-            "netsrv" => "http://netsrv:8087".to_string(),
+            "comsrv" => "http://comsrv:6000".to_string(),
+            "modsrv" => "http://modsrv:6001".to_string(),
+            "alarmsrv" => "http://alarmsrv:6002".to_string(),
+            "rulesrv" => "http://rulesrv:6003".to_string(),
+            "hissrv" => "http://hissrv:6004".to_string(),
+            "apigateway" => "http://apigateway:6005".to_string(),
+            "netsrv" => "http://netsrv:6006".to_string(),
             _ => format!("http://{service_name}:8080"),
         }
     } else {
@@ -140,8 +141,9 @@ pub fn get_service_url(service_name: &str) -> String {
             "alarmsrv" => "http://localhost:6002".to_string(),
             "rulesrv" => "http://localhost:6003".to_string(),
             "hissrv" => "http://localhost:6004".to_string(),
+            "apigateway" => "http://localhost:6005".to_string(),
             "netsrv" => "http://localhost:6006".to_string(),
-            _ => "http://localhost:6005".to_string(),
+            _ => "http://localhost:8080".to_string(),
         }
     }
 }
@@ -181,14 +183,14 @@ mod tests {
     #[test]
     fn test_service_discovery() {
         // Test development environment (default)
-        assert_eq!(get_service_url("comsrv"), "http://localhost:8081");
-        assert_eq!(get_service_url("modsrv"), "http://localhost:8092");
+        assert_eq!(get_service_url("comsrv"), "http://localhost:6000");
+        assert_eq!(get_service_url("modsrv"), "http://localhost:6001");
         assert_eq!(get_service_url("unknown"), "http://localhost:8080");
 
         // Test Docker environment
         env::set_var("DOCKER_ENV", "true");
-        assert_eq!(get_service_url("comsrv"), "http://comsrv:8081");
-        assert_eq!(get_service_url("modsrv"), "http://modsrv:8092");
+        assert_eq!(get_service_url("comsrv"), "http://comsrv:6000");
+        assert_eq!(get_service_url("modsrv"), "http://modsrv:6001");
         assert_eq!(get_service_url("unknown"), "http://unknown:8080");
 
         // Cleanup

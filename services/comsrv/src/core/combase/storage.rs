@@ -239,21 +239,32 @@ mod tests {
 
     #[tokio::test]
     async fn test_combase_storage() {
+        // Skip test if Redis is not available
+        if std::env::var("REDIS_URL").is_err() {
+            println!("Skipping test: REDIS_URL not set");
+            return;
+        }
+
         // Use default storage for testing
-        if let Ok(default_storage) = DefaultPluginStorage::from_env().await {
-            let plugin_storage = Box::new(default_storage) as Box<dyn PluginStorage>;
-            let mut storage = DefaultComBaseStorage::new(plugin_storage);
+        match DefaultPluginStorage::from_env().await {
+            Ok(default_storage) => {
+                let plugin_storage = Box::new(default_storage) as Box<dyn PluginStorage>;
+                let mut storage = DefaultComBaseStorage::new(plugin_storage);
 
-            // Test single point update
-            let result = storage
-                .update_and_publish(1, 100, RedisValue::Float(42.0), "m")
-                .await;
-            assert!(result.is_ok());
+                // Test single point update
+                let result = storage
+                    .update_and_publish(1, 100, RedisValue::Float(42.0), "T")
+                    .await;
+                assert!(result.is_ok(), "Failed to update: {:?}", result);
 
-            // Get statistics
-            let stats = storage.get_stats().await;
-            assert_eq!(stats.total_updates, 1);
-            assert_eq!(stats.single_updates, 1);
+                // Get statistics
+                let stats = storage.get_stats().await;
+                assert_eq!(stats.total_updates, 1);
+                assert_eq!(stats.single_updates, 1);
+            },
+            Err(e) => {
+                println!("Skipping test: Failed to connect to Redis: {}", e);
+            },
         }
     }
 }

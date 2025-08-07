@@ -590,9 +590,9 @@ mod tests {
 
     #[test]
     fn test_telemetry_type_conversion() {
-        assert_eq!(telemetry_type_to_redis(&TelemetryType::Telemetry), "m");
-        assert_eq!(telemetry_type_to_redis(&TelemetryType::Signal), "s");
-        assert_eq!(telemetry_type_to_redis(&TelemetryType::Control), "c");
-        assert_eq!(telemetry_type_to_redis(&TelemetryType::Adjustment), "a");
+        assert_eq!(telemetry_type_to_redis(&TelemetryType::Telemetry), "T");
+        assert_eq!(telemetry_type_to_redis(&TelemetryType::Signal), "S");
+        assert_eq!(telemetry_type_to_redis(&TelemetryType::Control), "C");
+        assert_eq!(telemetry_type_to_redis(&TelemetryType::Adjustment), "A");
     }
 }
