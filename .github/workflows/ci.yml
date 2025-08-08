@@ -160,6 +160,14 @@ jobs:
           build-args: |
             BUILD_DATE=${{ github.event.repository.updated_at }}
             GIT_COMMIT=${{ github.sha }}
+          outputs: type=docker,dest=/tmp/${{ matrix.service }}.tar
+      
+      - name: Upload Docker image
+        uses: actions/upload-artifact@v4
+        with:
+          name: docker-${{ matrix.service }}
+          path: /tmp/${{ matrix.service }}.tar
+          retention-days: 1
 
   # 集成测试
   integration:
@@ -171,72 +179,170 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       
-      - name: Start services with docker-compose
+      - name: Download Docker images
+        uses: actions/download-artifact@v4
+        with:
+          pattern: docker-*
+          path: /tmp/docker-images
+      
+      - name: Load Docker images
         run: |
-          # Create minimal env file
-          cat > .env << EOF
-          RUST_LOG=info
-          REDIS_URL=redis://redis:6379
-          EOF
+          for image in /tmp/docker-images/docker-*/*.tar; do
+            echo "Loading $image..."
+            docker load --input $image
+          done
+          docker images | grep voltageems
+      
+      - name: Start Redis and InfluxDB
+        run: |
+          # Start Redis
+          docker run -d --name redis-test \
+            -p 6379:6379 \
+            --health-cmd "redis-cli ping" \
+            --health-interval 5s \
+            --health-timeout 3s \
+            --health-retries 5 \
+            redis:8-alpine
           
-          # Start services
-          docker-compose up -d redis
-          sleep 5
+          # Wait for Redis to be healthy
+          timeout 30 sh -c 'until docker exec redis-test redis-cli ping; do sleep 1; done'
           
           # Load Redis functions
-          docker-compose exec -T redis sh -c "cd /scripts && for f in *.lua; do redis-cli FUNCTION LOAD REPLACE \"\$(cat \$f)\"; done"
+          for lua_file in scripts/redis-functions/*.lua; do
+            echo "Loading $(basename $lua_file)..."
+            docker exec -i redis-test redis-cli FUNCTION LOAD REPLACE "$(cat $lua_file)" || true
+          done
+      
+      - name: Start services
+        run: |
+          # Create network
+          docker network create voltageems-test || true
           
-          # Start other services
-          docker-compose up -d
+          # Connect Redis to network
+          docker network connect voltageems-test redis-test
+          
+          # Start comsrv
+          docker run -d --name comsrv-test \
+            --network voltageems-test \
+            -p 6000:8081 \
+            -e RUST_LOG=info \
+            -e REDIS_URL=redis://redis-test:6379 \
+            voltageems-comsrv:latest
+          
+          # Start modsrv
+          docker run -d --name modsrv-test \
+            --network voltageems-test \
+            -p 6001:6001 \
+            -e RUST_LOG=info \
+            -e REDIS_URL=redis://redis-test:6379 \
+            voltageems-modsrv:latest
+          
+          # Start alarmsrv
+          docker run -d --name alarmsrv-test \
+            --network voltageems-test \
+            -p 6002:6002 \
+            -e RUST_LOG=info \
+            -e REDIS_URL=redis://redis-test:6379 \
+            voltageems-alarmsrv:latest
+          
+          # Start rulesrv
+          docker run -d --name rulesrv-test \
+            --network voltageems-test \
+            -p 6003:6003 \
+            -e RUST_LOG=info \
+            -e REDIS_URL=redis://redis-test:6379 \
+            voltageems-rulesrv:latest
+          
+          # Start hissrv (without InfluxDB for now)
+          docker run -d --name hissrv-test \
+            --network voltageems-test \
+            -p 6004:6004 \
+            -e RUST_LOG=info \
+            -e REDIS_URL=redis://redis-test:6379 \
+            voltageems-hissrv:latest
+          
+          # Start apigateway
+          docker run -d --name apigateway-test \
+            --network voltageems-test \
+            -p 6005:8080 \
+            -e RUST_LOG=info \
+            -e REDIS_URL=redis://redis-test:6379 \
+            voltageems-apigateway:latest
           
           # Wait for services to be ready
-          sleep 20
+          sleep 15
       
       - name: Check service health
         run: |
-          # Check if services are running
-          docker-compose ps
+          # Show running containers
+          docker ps
+          
+          # Check individual service logs for errors
+          for service in comsrv modsrv alarmsrv rulesrv hissrv apigateway; do
+            echo "=== Checking $service-test logs ==="
+            docker logs --tail 20 $service-test || true
+          done
           
           # Test health endpoints
-          services=(6000 6001 6002 6003 6004 6005)
-          for port in "${services[@]}"; do
-            echo "Testing service on port $port..."
-            curl -f http://localhost:$port/health || echo "Service on port $port not ready"
-          done
+          echo "=== Testing health endpoints ==="
+          
+          # comsrv on port 6000 (mapped from 8081)
+          curl -f http://localhost:6000/health || echo "comsrv health check failed"
+          
+          # modsrv on port 6001
+          curl -f http://localhost:6001/health || echo "modsrv health check failed"
+          
+          # alarmsrv on port 6002
+          curl -f http://localhost:6002/health || echo "alarmsrv health check failed"
+          
+          # rulesrv on port 6003
+          curl -f http://localhost:6003/health || echo "rulesrv health check failed"
+          
+          # hissrv on port 6004
+          curl -f http://localhost:6004/health || echo "hissrv health check failed"
+          
+          # apigateway on port 6005 (mapped from 8080)
+          curl -f http://localhost:6005/health || echo "apigateway health check failed"
       
       - name: Run basic API tests
         run: |
-          # Test comsrv
+          echo "=== Running API tests ==="
+          
+          # Test comsrv channels API
+          echo "Testing comsrv /api/channels..."
           curl -X GET http://localhost:6000/api/channels || true
           
-          # Test modsrv
+          # Test modsrv templates API
+          echo "Testing modsrv /api/templates..."
           curl -X GET http://localhost:6001/api/templates || true
           
-          # Test alarmsrv
+          # Test alarmsrv alarms API
+          echo "Testing alarmsrv /api/alarms..."
           curl -X GET http://localhost:6002/api/alarms || true
           
-          # Test rulesrv
+          # Test rulesrv rules API
+          echo "Testing rulesrv /api/rules..."
           curl -X GET http://localhost:6003/api/rules || true
-          
-          # Test hissrv
-          curl -X GET http://localhost:6004/health || true
-          
-          # Test apigateway
-          curl -X GET http://localhost:6005/health || true
       
       - name: Collect logs
         if: always()
         run: |
-          docker-compose logs > docker-compose-logs.txt
+          mkdir -p logs
+          for service in redis comsrv modsrv alarmsrv rulesrv hissrv apigateway; do
+            docker logs $service-test > logs/$service.log 2>&1 || true
+          done
       
       - name: Upload logs
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: integration-logs
-          path: docker-compose-logs.txt
+          path: logs/
       
       - name: Stop services
         if: always()
         run: |
-          docker-compose down -v
+          # Stop all test containers
+          docker stop redis-test comsrv-test modsrv-test alarmsrv-test rulesrv-test hissrv-test apigateway-test || true
+          docker rm redis-test comsrv-test modsrv-test alarmsrv-test rulesrv-test hissrv-test apigateway-test || true
+          docker network rm voltageems-test || true
