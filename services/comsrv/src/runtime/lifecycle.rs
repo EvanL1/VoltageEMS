@@ -1,6 +1,7 @@
-//! Service lifecycle management
+//! Runtime lifecycle management
 //!
-//! Provides management functions for service startup, shutdown, and maintenance tasks
+//! Provides orchestration functions for service startup, shutdown, and maintenance tasks
+//! as part of the runtime orchestration layer
 
 use crate::core::combase::factory::ProtocolFactory;
 use crate::core::config::ConfigManager;
@@ -67,7 +68,7 @@ use tracing::{debug, error, info, warn};
 /// ```rust,no_run
 /// use std::sync::Arc;
 /// use tokio::sync::RwLock;
-/// use comsrv::service::start_communication_service;
+/// use comsrv::runtime::start_communication_service;
 /// use comsrv::{ConfigManager, ProtocolFactory};
 ///
 /// #[tokio::main]
@@ -97,41 +98,75 @@ pub async fn start_communication_service(
 
     info!("Creating {} channels...", configs.len());
 
-    // Create channels with improved error handling and metrics
+    // 并发创建所有channel以提高启动性能
+    use futures::future::join_all;
+
+    // 先并发创建所有channel实例（无锁操作）
+    let channel_futures: Vec<_> = configs
+        .iter()
+        .map(|channel_config| {
+            let factory = factory.clone();
+            async move {
+                let channel_id = channel_config.id;
+                let channel_name = channel_config.name.clone();
+
+                info!("Creating channel: {} - {}", channel_id, channel_name);
+
+                // Debug: Verify points are available before creating channel
+                debug!(
+                    "Channel {} points before creation: {} telemetry, {} signal, {} control, {} adjustment",
+                    channel_id,
+                    channel_config.telemetry_points.len(),
+                    channel_config.signal_points.len(),
+                    channel_config.control_points.len(),
+                    channel_config.adjustment_points.len()
+                );
+
+                // 短时间加锁插入channel
+                let factory_guard = factory.write().await;
+                let result = factory_guard.create_channel(channel_config).await;
+                drop(factory_guard); // 立即释放锁
+                match result {
+                    Ok(_) => {
+                        info!("Channel created successfully: {}", channel_id);
+                        Ok((channel_id, channel_name))
+                    },
+                    Err(e) => {
+                        error!("Failed to create channel {}: {}", channel_id, e);
+                        Err((channel_id, channel_name, e))
+                    },
+                }
+            }
+        })
+        .collect();
+
+    // 等待所有channel创建完成
+    let results = join_all(channel_futures).await;
+
+    // 统计成功和失败的channel
     let mut successful_channels = 0;
     let mut failed_channels = 0;
+    let mut failed_details = Vec::new();
 
-    for channel_config in configs {
-        info!(
-            "Creating channel: {} - {}",
-            channel_config.id, channel_config.name
-        );
-
-        // Debug: Verify points are available before creating channel
-        debug!(
-            "Channel {} points before creation: {} telemetry, {} signal, {} control, {} adjustment",
-            channel_config.id,
-            channel_config.telemetry_points.len(),
-            channel_config.signal_points.len(),
-            channel_config.control_points.len(),
-            channel_config.adjustment_points.len()
-        );
-
-        let factory_guard = factory.write().await;
-        match factory_guard.create_channel(channel_config).await {
-            Ok(_) => {
-                info!("Channel created successfully: {}", channel_config.id);
+    for result in results {
+        match result {
+            Ok((id, name)) => {
                 successful_channels += 1;
+                debug!("Channel {} ({}) added to successful list", id, name);
             },
-            Err(e) => {
-                error!("Failed to create channel {}: {e}", channel_config.id);
+            Err((id, name, err)) => {
                 failed_channels += 1;
-
-                // Continue with other channels instead of failing completely
-                continue;
+                failed_details.push(format!("Channel {} ({}): {}", id, name, err));
             },
         }
-        drop(factory_guard); // Release the lock for each iteration
+    }
+
+    // 如果有失败的channel，打印详细信息
+    if !failed_details.is_empty() {
+        error!("Failed channels details:");
+        for detail in &failed_details {
+            error!("  - {}", detail);
+        }
     }
 
     info!(
@@ -213,15 +248,16 @@ pub async fn start_communication_service(
 /// ```rust,no_run
 /// use std::sync::Arc;
 /// use tokio::sync::RwLock;
-/// use comsrv::service::shutdown_handler;
+/// use comsrv::runtime::shutdown_handler;
 /// use comsrv::ProtocolFactory;
 ///
 /// async fn main_loop(factory: Arc<RwLock<ProtocolFactory>>) {
 ///     // Setup signal handlers
 ///     let factory_clone = factory.clone();
 ///     tokio::spawn(async move {
-///         tokio::signal::ctrl_c().await.unwrap();
-///         shutdown_handler(factory_clone).await;
+///         if let Ok(_) = tokio::signal::ctrl_c().await {
+///             shutdown_handler(factory_clone).await;
+///         }
 ///     });
 ///
 ///     // Main service loop...
@@ -238,16 +274,59 @@ pub async fn shutdown_handler(factory: Arc<RwLock<ProtocolFactory>>) {
         factory_guard.get_channel_ids()
     };
 
-    // Remove all channels
-    for channel_id in channel_ids {
-        let factory_guard = factory.write().await;
-        if let Err(e) = factory_guard.remove_channel(channel_id).await {
-            error!("Error stopping channel {}: {}", channel_id, e);
-        }
-        drop(factory_guard);
+    let total_channels = channel_ids.len();
+    if total_channels == 0 {
+        info!("No channels to shutdown");
+        return;
     }
 
-    info!("All channels stopped");
+    info!("Stopping {} channels concurrently...", total_channels);
+
+    // 并发停止所有channel
+    use futures::future::join_all;
+
+    let shutdown_futures: Vec<_> = channel_ids
+        .into_iter()
+        .map(|channel_id| {
+            let factory = factory.clone();
+            async move {
+                // 每个channel独立加锁和停止
+                let factory_guard = factory.write().await;
+                let result = factory_guard.remove_channel(channel_id).await;
+                drop(factory_guard); // 立即释放锁
+
+                match result {
+                    Ok(_) => {
+                        debug!("Channel {} stopped successfully", channel_id);
+                        Ok(channel_id)
+                    },
+                    Err(e) => {
+                        error!("Error stopping channel {}: {}", channel_id, e);
+                        Err((channel_id, e))
+                    },
+                }
+            }
+        })
+        .collect();
+
+    // 等待所有channel停止完成
+    let results = join_all(shutdown_futures).await;
+
+    // 统计停止结果
+    let mut successful_stops = 0;
+    let mut failed_stops = 0;
+
+    for result in results {
+        match result {
+            Ok(_) => successful_stops += 1,
+            Err(_) => failed_stops += 1,
+        }
+    }
+
+    info!(
+        "Shutdown completed: {} channels stopped successfully, {} failed",
+        successful_stops, failed_stops
+    );
 }
 
 /// Start the periodic cleanup task for resource management
@@ -312,7 +391,7 @@ pub async fn shutdown_handler(factory: Arc<RwLock<ProtocolFactory>>) {
 /// ```rust,no_run
 /// use std::sync::Arc;
 /// use tokio::sync::RwLock;
-/// use comsrv::service::start_cleanup_task;
+/// use comsrv::runtime::start_cleanup_task;
 /// use comsrv::ProtocolFactory;
 ///
 /// async fn setup_maintenance(factory: Arc<RwLock<ProtocolFactory>>) {

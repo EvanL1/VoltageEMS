@@ -8,7 +8,7 @@ use std::sync::Arc;
 use tokio::sync::{Mutex, RwLock};
 use tracing::{debug, error, info, warn};
 
-use crate::core::combase::core::{ComBase, TelemetryBatch};
+use crate::core::combase::traits::{ComClient, TelemetryBatch};
 use crate::core::combase::trigger::{CommandTrigger, CommandTriggerConfig};
 use crate::core::config::{ChannelConfig, ProtocolType};
 use crate::utils::error::{ComSrvError, Result};
@@ -18,7 +18,7 @@ use std::str::FromStr;
 pub type ConfigValue = serde_json::Value;
 
 /// Dynamic communication client type
-pub type DynComClient = Arc<RwLock<Box<dyn ComBase>>>;
+pub type DynComClient = Arc<RwLock<Box<dyn ComClient>>>;
 
 // ============================================================================
 // Protocol client factory trait
@@ -35,7 +35,7 @@ pub trait ProtocolClientFactory: Send + Sync {
         &self,
         channel_config: &ChannelConfig,
         config_value: ConfigValue,
-    ) -> Result<Box<dyn ComBase>>;
+    ) -> Result<Box<dyn ComClient>>;
 
     /// Validate configuration
     fn validate_config(&self, config: &ConfigValue) -> Result<()>;
@@ -60,7 +60,7 @@ pub trait ProtocolClientFactory: Send + Sync {
 /// Channel metadata
 #[derive(Debug, Clone)]
 struct ChannelMetadata {
-    pub name: String,
+    pub name: Arc<str>, // Use Arc<str> instead of String
     pub protocol_type: ProtocolType,
     pub created_at: std::time::Instant,
     pub last_accessed: Arc<RwLock<std::time::Instant>>,
@@ -69,10 +69,10 @@ struct ChannelMetadata {
 /// Channel entry, combining channel and metadata
 #[derive(Clone)]
 struct ChannelEntry {
-    channel: Arc<RwLock<Box<dyn ComBase>>>,
+    channel: Arc<RwLock<Box<dyn ComClient>>>,
     metadata: ChannelMetadata,
     command_trigger: Option<Arc<RwLock<CommandTrigger>>>,
-    channel_config: ChannelConfig,
+    channel_config: Arc<ChannelConfig>, // Use Arc to avoid cloning
 }
 
 impl std::fmt::Debug for ChannelEntry {
@@ -94,7 +94,7 @@ pub struct ProtocolFactory {
     /// Protocol factory registry
     protocol_factories: DashMap<ProtocolType, Arc<dyn ProtocolClientFactory>, ahash::RandomState>,
     /// Global Redis URL for all channels
-    redis_url: String,
+    redis_url: Arc<str>, // Use Arc<str> to avoid cloning
     /// Telemetry sync task handle
     sync_task_handle: Arc<RwLock<Option<tokio::task::JoinHandle<()>>>>,
     /// Data receiver for batch processing
@@ -119,6 +119,7 @@ impl ProtocolFactory {
         // Get Redis URL from environment or use default
         let redis_url =
             std::env::var("REDIS_URL").unwrap_or_else(|_| "redis://localhost:6379".to_string());
+        let redis_url: Arc<str> = redis_url.into();
 
         // Create channel with larger buffer for batch processing
         let (tx, rx) = tokio::sync::mpsc::channel(1000);
@@ -132,17 +133,21 @@ impl ProtocolFactory {
             data_sender: tx,
         };
 
-        // Initialize plugin system
-        let _ = crate::plugins::core::get_plugin_registry();
+        // Initialize plugin system and register built-in protocols
+        if let Err(e) = crate::plugins::init_plugin_system() {
+            error!("Failed to initialize plugin system: {}", e);
+        }
 
-        // Register built-in protocol factories
-        factory.register_builtin_factories();
+        // Register protocols from the plugin registry
+        factory.register_from_plugin_registry();
 
         factory
     }
 
     /// Create new protocol factory with custom Redis URL
     pub fn with_redis_url(redis_url: String) -> Self {
+        let redis_url: Arc<str> = redis_url.into();
+
         // Create channel with larger buffer for batch processing
         let (tx, rx) = tokio::sync::mpsc::channel(1000);
 
@@ -155,18 +160,20 @@ impl ProtocolFactory {
             data_sender: tx,
         };
 
-        // Initialize plugin system
-        let _ = crate::plugins::core::get_plugin_registry();
+        // Initialize plugin system and register built-in protocols
+        if let Err(e) = crate::plugins::init_plugin_system() {
+            error!("Failed to initialize plugin system: {}", e);
+        }
 
-        // Register built-in protocol factories
-        factory.register_builtin_factories();
+        // Register protocols from the plugin registry
+        factory.register_from_plugin_registry();
 
         factory
     }
 
-    /// Register built-in protocol factories
-    fn register_builtin_factories(&self) {
-        use crate::plugins::core::get_plugin_registry;
+    /// Register protocol factories from plugin registry
+    fn register_from_plugin_registry(&self) {
+        use crate::plugins::registry::get_plugin_registry;
 
         // Get plugin registry
         let registry = get_plugin_registry();
@@ -174,36 +181,19 @@ impl ProtocolFactory {
             .read()
             .expect("plugin registry lock should not be poisoned");
 
-        // Modbus TCP
-        if reg.get_factory("modbus_tcp").is_some() {
-            self.register_protocol_factory(Arc::new(PluginAdapterFactory::new(
-                ProtocolType::ModbusTcp,
-                "modbus_tcp".to_string(),
-            )));
+        // Register all available plugins from the registry
+        for protocol_name in reg.list_protocol_factories() {
+            if reg.get_factory(&protocol_name).is_some() {
+                // Parse protocol type from name
+                if let Ok(protocol_type) = ProtocolType::from_str(&protocol_name) {
+                    self.register_protocol_factory(Arc::new(PluginAdapterFactory::new(
+                        protocol_type,
+                        protocol_name.clone(),
+                    )));
+                    info!("Registered protocol factory for: {}", protocol_name);
+                }
+            }
         }
-
-        // Modbus RTU
-        if reg.get_factory("modbus_rtu").is_some() {
-            self.register_protocol_factory(Arc::new(PluginAdapterFactory::new(
-                ProtocolType::ModbusRtu,
-                "modbus_rtu".to_string(),
-            )));
-        }
-
-        // Virtual
-        if reg.get_factory("virt").is_some() {
-            self.register_protocol_factory(Arc::new(PluginAdapterFactory::new(
-                ProtocolType::Virtual,
-                "virt".to_string(),
-            )));
-        }
-
-        // gRPC plugin factory
-        self.register_protocol_factory(Arc::new(GrpcPluginFactory::new(
-            ProtocolType::GrpcModbus,
-            "http://modbus-plugin:50051".to_string(),
-            "modbus_tcp".to_string(),
-        )));
 
         // Virtual protocol factory (for testing)
         #[cfg(any(test, feature = "test-utils"))]
@@ -264,18 +254,103 @@ impl ProtocolFactory {
     pub async fn create_channel(
         &self,
         channel_config: &ChannelConfig,
-    ) -> Result<Arc<RwLock<Box<dyn ComBase>>>> {
+    ) -> Result<Arc<RwLock<Box<dyn ComClient>>>> {
         let channel_id = channel_config.id;
 
-        // Check if channel already exists
+        // Step 1: Validate channel doesn't exist
+        self.validate_channel_not_exists(channel_id).map_err(|e| {
+            error!(
+                "Failed to validate channel {} availability: {}",
+                channel_id, e
+            );
+            e
+        })?;
+
+        // Step 2: Prepare protocol client
+        let (mut client, protocol_type) = self
+            .prepare_protocol_client(channel_config)
+            .await
+            .map_err(|e| {
+                error!(
+                    "Failed to prepare protocol client for channel {} ({}): {}",
+                    channel_id, channel_config.protocol, e
+                );
+                e
+            })?;
+
+        // Step 3: Initialize protocol
+        self.initialize_protocol(&mut client, channel_config)
+            .await
+            .map_err(|e| {
+                error!(
+                    "Failed to initialize protocol {:?} for channel {}: {}",
+                    protocol_type, channel_id, e
+                );
+                e
+            })?;
+
+        // Step 4: Setup Redis storage
+        self.setup_redis_storage(channel_config)
+            .await
+            .map_err(|e| {
+                error!(
+                    "Failed to setup Redis storage for channel {}: {}",
+                    channel_id, e
+                );
+                e
+            })?;
+
+        // Step 5: Setup command trigger
+        let (command_trigger, rx) = self.setup_command_trigger(channel_id).await.map_err(|e| {
+            error!(
+                "Failed to setup command trigger for channel {}: {}",
+                channel_id, e
+            );
+            e
+        })?;
+        client.set_command_receiver(rx);
+
+        // Step 6: Register channel entry
+        let channel_arc = Arc::new(RwLock::new(client));
+        self.register_channel_entry(
+            channel_id,
+            channel_arc.clone(),
+            channel_config,
+            protocol_type,
+            command_trigger,
+        );
+
+        info!(
+            "Created channel {} with protocol {:?}",
+            channel_id, protocol_type
+        );
+        Ok(channel_arc)
+    }
+
+    /// Validate that channel doesn't already exist
+    fn validate_channel_not_exists(&self, channel_id: u16) -> Result<()> {
         if self.channels.contains_key(&channel_id) {
             return Err(ComSrvError::InvalidOperation(format!(
                 "Channel {channel_id} already exists"
             )));
         }
+        Ok(())
+    }
+
+    /// Prepare protocol client: get factory, validate config, create client
+    async fn prepare_protocol_client(
+        &self,
+        channel_config: &ChannelConfig,
+    ) -> Result<(Box<dyn ComClient>, ProtocolType)> {
+        let channel_id = channel_config.id;
 
         // Get protocol type
-        let protocol_type = ProtocolType::from_str(&channel_config.protocol)?;
+        let protocol_type = ProtocolType::from_str(&channel_config.protocol).map_err(|e| {
+            ComSrvError::ConfigError(format!(
+                "Failed to parse protocol type '{}': {}",
+                channel_config.protocol, e
+            ))
+        })?;
 
         // Find protocol factory
         let factory = self.protocol_factories.get(&protocol_type).ok_or_else(|| {
@@ -289,24 +364,58 @@ impl ProtocolFactory {
             .map_err(|e| ComSrvError::ConfigError(format!("Failed to convert parameters: {e}")))?;
 
         // Validate configuration
-        factory.validate_config(&config_value)?;
+        factory.validate_config(&config_value).map_err(|e| {
+            ComSrvError::ConfigError(format!(
+                "Failed to validate {:?} configuration: {}",
+                protocol_type, e
+            ))
+        })?;
 
         // Create client instance
         info!("Creating client for protocol {:?}", protocol_type);
-        let mut client = factory.create_client(channel_config, config_value).await?;
+        let client = factory
+            .create_client(channel_config, config_value)
+            .await
+            .map_err(|e| {
+                ComSrvError::ConfigError(format!(
+                    "Failed to create {:?} client instance: {}",
+                    protocol_type, e
+                ))
+            })?;
         info!("Client created successfully for channel {}", channel_id);
 
-        // Initialize client
+        Ok((client, protocol_type))
+    }
+
+    /// Initialize protocol instance
+    async fn initialize_protocol(
+        &self,
+        client: &mut Box<dyn ComClient>,
+        channel_config: &ChannelConfig,
+    ) -> Result<()> {
+        let channel_id = channel_config.id;
+
         info!("Initializing client for channel {}", channel_id);
-        client.initialize(channel_config).await?;
+        client.initialize(Arc::new(channel_config.clone())).await?;
         info!("Client initialized successfully for channel {}", channel_id);
 
         // Set data channel for protocols that support it
         client.set_data_channel(self.data_sender.clone());
 
-        // Under four-telemetry separation architecture, point configuration is loaded directly from channel_config during initialize phase, no need for additional unified mapping
+        // Skip connection phase, only complete initialization
+        // Connections will be established uniformly after all channels are initialized
+        info!(
+            "Channel {} initialization completed, connection will be established later",
+            channel_id
+        );
 
-        // Initialize points in Redis at ComBase layer (initial value is 0)
+        Ok(())
+    }
+
+    /// Setup Redis storage and initialize channel points
+    async fn setup_redis_storage(&self, channel_config: &ChannelConfig) -> Result<()> {
+        let channel_id = channel_config.id;
+
         info!("Initializing Redis keys for channel {}", channel_id);
 
         // Create a Redis client once for all operations
@@ -320,24 +429,28 @@ impl ProtocolFactory {
             .await?;
         info!("Redis keys initialized for channel {}", channel_id);
 
-        // Create command trigger (always enabled)
+        Ok(())
+    }
+
+    /// Setup command trigger for the channel
+    async fn setup_command_trigger(
+        &self,
+        channel_id: u16,
+    ) -> Result<(
+        Option<Arc<RwLock<CommandTrigger>>>,
+        tokio::sync::mpsc::Receiver<super::traits::ChannelCommand>,
+    )> {
         info!("Creating CommandTrigger for channel {}", channel_id);
+
         let config = CommandTriggerConfig {
             channel_id,
-            redis_url: self.redis_url.clone(),
-            ..Default::default() // 使用默认的mode和timeout_seconds
+            redis_url: self.redis_url.to_string(), // Convert Arc<str> to String only when needed
+            ..Default::default()                   // Use default mode and timeout_seconds
         };
 
         let (tx, rx) = tokio::sync::mpsc::channel(100);
         let subscriber = CommandTrigger::new(config, tx).await?;
         let subscriber_arc = Arc::new(RwLock::new(subscriber));
-
-        // Set command receiver on the protocol instance before moving client
-        info!(
-            "Setting command receiver on protocol for channel {}",
-            channel_id
-        );
-        client.set_command_receiver(rx);
 
         // Start subscriber
         info!("Starting CommandTrigger for channel {}", channel_id);
@@ -345,53 +458,45 @@ impl ProtocolFactory {
         sub.start().await?;
         drop(sub);
 
-        let command_trigger = Some(subscriber_arc);
         info!(
             "CommandTrigger started successfully for channel {}",
             channel_id
         );
 
-        // Skip connection phase, only complete initialization
-        // Connections will be established uniformly after all channels are initialized
-        info!(
-            "Channel {} initialization completed, connection will be established later",
-            channel_id
-        );
+        Ok((Some(subscriber_arc), rx))
+    }
 
-        let channel_arc = Arc::new(RwLock::new(client));
-
-        // Create channel entry
+    /// Register channel entry in the channels map
+    fn register_channel_entry(
+        &self,
+        channel_id: u16,
+        channel_arc: Arc<RwLock<Box<dyn ComClient>>>,
+        channel_config: &ChannelConfig,
+        protocol_type: ProtocolType,
+        command_trigger: Option<Arc<RwLock<CommandTrigger>>>,
+    ) {
         let entry = ChannelEntry {
-            channel: channel_arc.clone(),
+            channel: channel_arc,
             metadata: ChannelMetadata {
-                name: channel_config.name.clone(),
+                name: channel_config.name.clone().into(), // Convert String to Arc<str>
                 protocol_type,
                 created_at: std::time::Instant::now(),
                 last_accessed: Arc::new(RwLock::new(std::time::Instant::now())),
             },
             command_trigger,
-            channel_config: channel_config.clone(),
+            channel_config: Arc::new(channel_config.clone()), // TODO: optimize to pass Arc
         };
 
-        // Insert channel
         self.channels.insert(channel_id, entry);
-
-        info!(
-            "Created channel {} with protocol {:?}",
-            channel_id, protocol_type
-        );
-        Ok(channel_arc)
     }
 
     /// Get channel
-    pub async fn get_channel(&self, channel_id: u16) -> Option<Arc<RwLock<Box<dyn ComBase>>>> {
+    pub async fn get_channel(&self, channel_id: u16) -> Option<Arc<RwLock<Box<dyn ComClient>>>> {
         self.channels.get(&channel_id).map(|entry| {
-            // Update last access time
-            let last_accessed = entry.metadata.last_accessed.clone();
-            tokio::spawn(async move {
-                let mut time = last_accessed.write().await;
+            // Update last access time (using try_write to avoid spawning)
+            if let Ok(mut time) = entry.metadata.last_accessed.try_write() {
                 *time = std::time::Instant::now();
-            });
+            }
             entry.channel.clone()
         })
     }
@@ -436,20 +541,49 @@ impl ProtocolFactory {
         Ok(())
     }
 
-    /// Remove channel
+    /// Remove channel with proper resource cleanup
     pub async fn remove_channel(&self, channel_id: u16) -> Result<()> {
         if let Some((_, entry)) = self.channels.remove(&channel_id) {
-            // Stop command trigger
+            let mut cleanup_errors = Vec::new();
+
+            // Stop command trigger (best effort)
             if let Some(trigger) = entry.command_trigger {
-                let mut sub = trigger.write().await;
-                sub.stop().await?;
+                if let Err(e) = async {
+                    let mut sub = trigger.write().await;
+                    sub.stop().await
+                }
+                .await
+                {
+                    error!(
+                        "Failed to stop command trigger for channel {}: {}",
+                        channel_id, e
+                    );
+                    cleanup_errors.push(format!("command trigger: {}", e));
+                }
             }
 
-            // Disconnect
-            let mut channel = entry.channel.write().await;
-            channel.disconnect().await?;
+            // Disconnect channel (best effort)
+            if let Err(e) = async {
+                let mut channel = entry.channel.write().await;
+                channel.disconnect().await
+            }
+            .await
+            {
+                error!("Failed to disconnect channel {}: {}", channel_id, e);
+                cleanup_errors.push(format!("disconnect: {}", e));
+            }
 
-            info!("Removed channel {}", channel_id);
+            // If there were cleanup errors, report them but still consider the removal successful
+            if !cleanup_errors.is_empty() {
+                warn!(
+                    "Channel {} removed with cleanup errors: {}",
+                    channel_id,
+                    cleanup_errors.join(", ")
+                );
+            } else {
+                info!("Channel {} removed successfully", channel_id);
+            }
+
             Ok(())
         } else {
             Err(ComSrvError::InvalidOperation(format!(
@@ -471,7 +605,7 @@ impl ProtocolFactory {
 
             Some(ChannelStats {
                 channel_id,
-                name: entry.metadata.name.clone(),
+                name: entry.metadata.name.to_string(), // Convert Arc<str> to String only for output
                 protocol_type: entry.metadata.protocol_type,
                 is_connected: status.is_connected,
                 created_at: entry.metadata.created_at,
@@ -517,7 +651,7 @@ impl ProtocolFactory {
 
         // Clone necessary references for the task
         let channels = self.channels.clone();
-        let redis_url = self.redis_url.clone();
+        let redis_url = Arc::clone(&self.redis_url); // More efficient Arc clone
         let sync_handle = self.sync_task_handle.clone();
 
         // Create the sync task
@@ -551,14 +685,13 @@ impl ProtocolFactory {
                 };
 
             // Create storage with Lua sync manager
-            let mut storage =
-                match crate::core::combase::storage::ComBaseStorage::new(&redis_url).await {
-                    Ok(s) => s,
-                    Err(e) => {
-                        error!("Failed to create storage: {}", e);
-                        return;
-                    },
-                };
+            let mut storage = match crate::storage::StorageManager::new(&redis_url).await {
+                Ok(s) => s,
+                Err(e) => {
+                    error!("Failed to create storage: {}", e);
+                    return;
+                },
+            };
             storage.set_data_sync(lua_sync_manager);
             let storage = Arc::new(Mutex::new(storage));
 
@@ -572,7 +705,7 @@ impl ProtocolFactory {
                         // Get channel config for scaling
                         let channel_config = channels
                             .get(&batch.channel_id)
-                            .map(|entry| entry.channel_config.clone());
+                            .map(|entry| Arc::clone(&entry.channel_config)); // Arc clone is more efficient
 
                         let mut updates = Vec::new();
 
@@ -593,7 +726,7 @@ impl ProtocolFactory {
                                 raw_value
                             };
 
-                            let update = crate::plugins::core::PluginPointUpdate {
+                            let update = crate::plugins::registry::PluginPointUpdate {
                                 telemetry_type: crate::core::config::TelemetryType::Telemetry,
                                 point_id,
                                 value: processed_value,
@@ -633,7 +766,7 @@ impl ProtocolFactory {
                                 raw_value
                             };
 
-                            let update = crate::plugins::core::PluginPointUpdate {
+                            let update = crate::plugins::registry::PluginPointUpdate {
                                 telemetry_type: crate::core::config::TelemetryType::Signal,
                                 point_id,
                                 value: processed_value,
@@ -690,23 +823,60 @@ impl ProtocolFactory {
         Ok(())
     }
 
-    /// Clean up all channels
+    /// Clean up all channels with graceful shutdown
     pub async fn cleanup(&self) -> Result<()> {
-        // Stop sync task first
+        info!("Starting factory cleanup...");
+        let mut cleanup_errors = Vec::new();
+
+        // Stop sync task first (gracefully if possible)
         if let Some(handle) = self.sync_task_handle.write().await.take() {
-            handle.abort();
-            info!("Telemetry sync task stopped");
-        }
+            // Give the task a chance to complete gracefully
+            let timeout = tokio::time::Duration::from_secs(5);
 
-        let channel_ids: Vec<u16> = self.get_channel_ids();
-
-        for channel_id in channel_ids {
-            if let Err(e) = self.remove_channel(channel_id).await {
-                error!("Failed to remove channel {}: {}", channel_id, e);
+            // Use select to race between the handle and timeout
+            tokio::select! {
+                result = handle => {
+                    match result {
+                        Ok(()) => info!("Telemetry sync task stopped gracefully"),
+                        Err(e) => {
+                            error!("Telemetry sync task failed: {:?}", e);
+                            cleanup_errors.push(format!("sync task: {:?}", e));
+                        }
+                    }
+                },
+                _ = tokio::time::sleep(timeout) => {
+                    warn!("Telemetry sync task did not stop within timeout");
+                    // Task handle has been consumed, but it will be dropped and canceled
+                }
             }
         }
 
-        Ok(())
+        // Get all channel IDs before starting cleanup
+        let channel_ids: Vec<u16> = self.get_channel_ids();
+        info!("Cleaning up {} channels", channel_ids.len());
+
+        // Remove all channels (best effort)
+        for channel_id in channel_ids {
+            if let Err(e) = self.remove_channel(channel_id).await {
+                error!("Failed to remove channel {}: {}", channel_id, e);
+                cleanup_errors.push(format!("channel {}: {}", channel_id, e));
+            }
+        }
+
+        // Report overall cleanup status
+        if cleanup_errors.is_empty() {
+            info!("Factory cleanup completed successfully");
+            Ok(())
+        } else {
+            let error_msg = format!(
+                "Factory cleanup completed with {} errors: {}",
+                cleanup_errors.len(),
+                cleanup_errors.join(", ")
+            );
+            warn!("{}", error_msg);
+            // Still return Ok as cleanup is best-effort
+            Ok(())
+        }
     }
 
     /// Get channel count
@@ -732,7 +902,7 @@ impl ProtocolFactory {
         self.channels.get(&channel_id).map(|entry| {
             let metadata = &entry.metadata;
             (
-                metadata.name.clone(),
+                metadata.name.to_string(), // Convert Arc<str> to String only for output
                 format!("{:?}", metadata.protocol_type),
             )
         })
@@ -938,8 +1108,8 @@ impl ProtocolClientFactory for PluginAdapterFactory {
         &self,
         channel_config: &ChannelConfig,
         _config_value: ConfigValue,
-    ) -> Result<Box<dyn ComBase>> {
-        use crate::plugins::core::get_plugin_registry;
+    ) -> Result<Box<dyn ComClient>> {
+        use crate::plugins::registry::get_plugin_registry;
 
         // Get plugin in a small scope
         let plugin = {
@@ -961,8 +1131,14 @@ impl ProtocolClientFactory for PluginAdapterFactory {
             "Using plugin {} to create protocol instance",
             self.plugin_id
         );
-        let instance = plugin.create_instance(channel_config.clone()).await?;
-        info!("Plugin {} created instance successfully", self.plugin_id);
+        // Use the new create_client method
+        let instance = plugin
+            .create_client(Arc::new(channel_config.clone()))
+            .await?;
+        info!(
+            "Plugin {} created client instance successfully",
+            self.plugin_id
+        );
         Ok(instance)
     }
 
@@ -1010,7 +1186,7 @@ impl ProtocolClientFactory for GrpcPluginFactory {
         &self,
         _channel_config: &ChannelConfig,
         _config_value: ConfigValue,
-    ) -> Result<Box<dyn ComBase>> {
+    ) -> Result<Box<dyn ComClient>> {
         use crate::plugins::grpc::adapter::GrpcPluginAdapter;
 
         info!(
@@ -1044,10 +1220,12 @@ impl ProtocolClientFactory for GrpcPluginFactory {
 #[cfg(any(test, feature = "test-utils"))]
 pub mod test_support {
     use super::{
-        Arc, ChannelConfig, ComBase, ConfigValue, ProtocolClientFactory, ProtocolType, Result,
+        Arc, ChannelConfig, ComClient, ConfigValue, ProtocolClientFactory, ProtocolType, Result,
         RwLock,
     };
-    use crate::core::combase::core::{ChannelStatus, PointData, RedisValue};
+    use crate::core::combase::traits::{ChannelStatus, PointData, RedisValue};
+    use crate::core::combase::ComBase;
+    use crate::core::config::types::TelemetryType;
     use async_trait::async_trait;
     use std::collections::HashMap;
     use std::sync::atomic::{AtomicBool, Ordering};
@@ -1085,16 +1263,26 @@ pub mod test_support {
             &self.protocol_type
         }
 
-        fn is_connected(&self) -> bool {
-            self.is_connected.load(Ordering::Relaxed)
-        }
-
         async fn get_status(&self) -> ChannelStatus {
             self.status.read().await.clone()
         }
 
-        async fn initialize(&mut self, _channel_config: &ChannelConfig) -> Result<()> {
+        async fn initialize(&mut self, _channel_config: Arc<ChannelConfig>) -> Result<()> {
             Ok(())
+        }
+
+        async fn read_four_telemetry(
+            &self,
+            _telemetry_type: TelemetryType,
+        ) -> Result<HashMap<u32, PointData>> {
+            Ok(HashMap::new())
+        }
+    }
+
+    #[async_trait]
+    impl ComClient for MockComBase {
+        fn is_connected(&self) -> bool {
+            self.is_connected.load(Ordering::Relaxed)
         }
 
         async fn connect(&mut self) -> Result<()> {
@@ -1109,13 +1297,6 @@ pub mod test_support {
             let mut status = self.status.write().await;
             status.is_connected = false;
             Ok(())
-        }
-
-        async fn read_four_telemetry(
-            &self,
-            _telemetry_type: &str,
-        ) -> Result<HashMap<u32, PointData>> {
-            Ok(HashMap::new())
         }
 
         async fn control(&mut self, commands: Vec<(u32, RedisValue)>) -> Result<Vec<(u32, bool)>> {
@@ -1145,7 +1326,7 @@ pub mod test_support {
             &self,
             channel_config: &ChannelConfig,
             _config_value: ConfigValue,
-        ) -> Result<Box<dyn ComBase>> {
+        ) -> Result<Box<dyn ComClient>> {
             Ok(Box::new(MockComBase::new(
                 &channel_config.name,
                 channel_config.id,
@@ -1177,10 +1358,10 @@ mod tests {
         assert_eq!(factory.get_channel_ids().len(), 0);
         // Factory initialization registers built-in protocols (like modbus_tcp, modbus_rtu, virtual)
         // So it shouldn't expect 0 here
-        assert!(
-            !factory.get_registered_protocols().is_empty()
-                || factory.get_registered_protocols().is_empty()
-        );
+        // Check that we can get registered protocols without error
+        let protocols = factory.get_registered_protocols();
+        // Factory should have some built-in protocols registered
+        assert!(!protocols.is_empty()); // Should have at least one protocol
     }
 
     #[tokio::test]

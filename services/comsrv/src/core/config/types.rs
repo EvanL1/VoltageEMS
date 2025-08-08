@@ -15,7 +15,7 @@ use voltage_libs::config::utils::{get_global_log_level, get_global_redis_url};
 // ============================================================================
 
 /// Application configuration root structure
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Serialize, Deserialize, Default)]
 pub struct AppConfig {
     /// Service configuration
     #[serde(default)]
@@ -26,7 +26,7 @@ pub struct AppConfig {
 }
 
 /// Service configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct ServiceConfig {
     /// Service name
     #[serde(default = "default_service_name")]
@@ -60,7 +60,7 @@ pub struct ServiceConfig {
 }
 
 /// API configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct ApiConfig {
     /// Listen address
     #[serde(default = "default_api_host")]
@@ -76,7 +76,7 @@ pub struct ApiConfig {
 }
 
 /// Redis configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct RedisConfig {
     /// Redis URL
     #[serde(default = "default_redis_url")]
@@ -96,7 +96,7 @@ pub struct RedisConfig {
 }
 
 /// Log configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct LoggingConfig {
     /// Log level
     #[serde(default = "default_log_level")]
@@ -119,7 +119,7 @@ pub struct LoggingConfig {
 }
 
 /// Log rotation configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct LogRotationConfig {
     /// Rotation strategy
     #[serde(default = "default_rotation_strategy")]
@@ -345,6 +345,18 @@ pub enum TelemetryType {
     Adjustment,
 }
 
+impl TelemetryType {
+    /// Convert to Redis key suffix
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            TelemetryType::Telemetry => "T",
+            TelemetryType::Signal => "S",
+            TelemetryType::Control => "C",
+            TelemetryType::Adjustment => "A",
+        }
+    }
+}
+
 impl std::str::FromStr for TelemetryType {
     type Err = String;
 
@@ -374,7 +386,7 @@ impl std::str::FromStr for ProtocolType {
     type Err = crate::utils::error::ComSrvError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        // usingnormalize_protocol_namefunction来implementsize写不敏感的match
+        // Use normalize_protocol_name function to implement case-insensitive matching
         let normalized = crate::utils::normalize_protocol_name(s);
         match normalized.as_str() {
             "modbus_tcp" => Ok(ProtocolType::ModbusTcp),

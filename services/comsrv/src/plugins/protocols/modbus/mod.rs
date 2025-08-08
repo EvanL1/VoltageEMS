@@ -1,30 +1,35 @@
 //! Modbus Protocol Implementation
 //!
-//! 精简的 Modbus protocolimplement，package含：
-//! - 核心protocolprocessing (TCP/RTU)
-//! - 集成轮询机制
-//! - batchreadoptimization
-//! - Plugin interface适配
+//! Streamlined Modbus protocol implementation, including:
+//! - Core protocol processing (TCP/RTU)
+//! - Integrated polling mechanism
+//! - Batch read optimization
+//! - Plugin interface adaptation
 
 pub mod connection;
-pub mod core;
 pub mod pdu;
 pub mod plugin;
+pub mod protocol;
+pub mod server;
 pub mod transport;
 pub mod types;
 
-// 重新exportmaster要type
+#[cfg(test)]
+pub mod simulator;
+
+// Re-export main types
 pub use connection::{
     ConnectionParams, ModbusConnection, ModbusConnectionManager, ModbusMode as ConnectionMode,
 };
-pub use core::{ModbusCore, ModbusProtocol};
 pub use plugin::{ModbusRtuPlugin, ModbusTcpPlugin};
+pub use protocol::{ModbusCore, ModbusProtocol};
+pub use server::ModbusServer;
 pub use transport::{ModbusFrameProcessor, ModbusMode};
 pub use types::{
     DeviceLimit, ModbusBatchConfig, ModbusPoint, ModbusPollingConfig, SlavePollingConfig,
 };
 
-// Plugin 工厂function
+// Plugin factory function
 pub fn create_plugin() -> Box<dyn crate::plugins::traits::ProtocolPlugin> {
     Box::new(ModbusTcpPlugin)
 }

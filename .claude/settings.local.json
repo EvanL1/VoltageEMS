@@ -236,8 +236,16 @@
       "Bash(./docker-verify.sh:*)",
       "Bash(./test-nginx-architecture.sh:*)",
       "Bash(./test_minimal.sh:*)",
-      "WebFetch(domain:docs.anthropic.com)"
+      "WebFetch(domain:docs.anthropic.com)",
+      "mcp__serena__replace_regex",
+      "mcp__serena__activate_project",
+      "mcp__serena__check_onboarding_performed",
+      "mcp__serena__think_about_collected_information",
+      "mcp__serena__find_referencing_symbols",
+      "mcp__serena__replace_symbol_body"
     ],
-    "deny": ["Bash(cargo build:*)"]
+    "deny": [
+      "Bash(cargo build:*)"
+    ]
   }
 }

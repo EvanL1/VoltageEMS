@@ -20,15 +20,15 @@
 
 #![allow(ambiguous_glob_reexports)]
 
-pub mod core;
 pub mod loaders;
+pub mod manager;
 pub mod parameters;
 pub mod point;
 pub mod types;
 
 // Re-export from new modules
-pub use core::*;
 pub use loaders::*;
+pub use manager::*;
 pub use parameters::*;
 pub use point::Point;
 pub use types::*;

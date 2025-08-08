@@ -18,13 +18,15 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::info;
 
-use crate::core::combase::{ChannelStatus, ComBase, PointData, PointDataMap, RedisValue};
-use crate::core::config::types::ChannelConfig;
+use crate::core::combase::{
+    ChannelStatus, ComBase, ComClient, PointData, PointDataMap, RedisValue,
+};
+use crate::core::config::types::{ChannelConfig, TelemetryType};
 use crate::utils::error::Result;
 
 /// Virtual protocol client for testing
 pub struct VirtualProtocol {
-    name: String,
+    name: Arc<str>,
     channel_id: u16,
     running: Arc<RwLock<bool>>,
     // Simulated data storage
@@ -35,7 +37,7 @@ pub struct VirtualProtocol {
 impl VirtualProtocol {
     pub fn new(channel_config: crate::core::config::types::ChannelConfig) -> Result<Self> {
         Ok(Self {
-            name: channel_config.name.clone(),
+            name: channel_config.name.clone().into(),
             channel_id: channel_config.id,
             running: Arc::new(RwLock::new(false)),
             telemetry_data: Arc::new(RwLock::new(vec![0.0; 100])),
@@ -74,15 +76,11 @@ impl ComBase for VirtualProtocol {
         "virtual"
     }
 
-    fn is_connected(&self) -> bool {
-        true // Virtual protocol always connected
-    }
-
     async fn get_status(&self) -> ChannelStatus {
         ChannelStatus {
             is_connected: true,
             last_error: None,
-            last_update: chrono::Utc::now().timestamp() as u64,
+            last_update: chrono::Utc::now().timestamp(),
             success_count: 100,
             error_count: 0,
             reconnect_count: 0,
@@ -92,9 +90,51 @@ impl ComBase for VirtualProtocol {
         }
     }
 
-    async fn initialize(&mut self, _channel_config: &ChannelConfig) -> Result<()> {
+    async fn initialize(&mut self, _channel_config: Arc<ChannelConfig>) -> Result<()> {
         // Storage is now handled directly through Redis
         Ok(())
+    }
+
+    async fn read_four_telemetry(&self, telemetry_type: TelemetryType) -> Result<PointDataMap> {
+        let mut result = std::collections::HashMap::new();
+        let timestamp = chrono::Utc::now().timestamp();
+
+        match telemetry_type {
+            TelemetryType::Telemetry => {
+                let data = self.telemetry_data.read().await;
+                for (i, value) in data.iter().enumerate() {
+                    result.insert(
+                        i as u32,
+                        PointData {
+                            value: RedisValue::Float(*value),
+                            timestamp,
+                        },
+                    );
+                }
+            },
+            TelemetryType::Signal => {
+                let data = self.signal_data.read().await;
+                for (i, value) in data.iter().enumerate() {
+                    result.insert(
+                        i as u32,
+                        PointData {
+                            value: RedisValue::Bool(*value),
+                            timestamp,
+                        },
+                    );
+                }
+            },
+            _ => {},
+        }
+
+        Ok(result)
+    }
+}
+
+#[async_trait]
+impl ComClient for VirtualProtocol {
+    fn is_connected(&self) -> bool {
+        true // Virtual protocol always connected
     }
 
     async fn connect(&mut self) -> Result<()> {
@@ -147,40 +187,6 @@ impl ComBase for VirtualProtocol {
         Ok(())
     }
 
-    async fn read_four_telemetry(&self, telemetry_type: &str) -> Result<PointDataMap> {
-        let mut data_map = PointDataMap::new();
-
-        match telemetry_type {
-            "m" | "telemetry" => {
-                let data = self.telemetry_data.read().await;
-                for (i, &value) in data.iter().enumerate() {
-                    data_map.insert(
-                        i as u32 + 1,
-                        PointData {
-                            value: RedisValue::Float(value),
-                            timestamp: chrono::Utc::now().timestamp() as u64,
-                        },
-                    );
-                }
-            },
-            "s" | "signal" => {
-                let signals = self.signal_data.read().await;
-                for (i, &signal) in signals.iter().enumerate() {
-                    data_map.insert(
-                        i as u32 + 1,
-                        PointData {
-                            value: RedisValue::Bool(signal),
-                            timestamp: chrono::Utc::now().timestamp() as u64,
-                        },
-                    );
-                }
-            },
-            _ => {},
-        }
-
-        Ok(data_map)
-    }
-
     async fn control(&mut self, commands: Vec<(u32, RedisValue)>) -> Result<Vec<(u32, bool)>> {
         let mut results = Vec::new();
         let mut signals = self.signal_data.write().await;
@@ -227,8 +233,6 @@ impl ComBase for VirtualProtocol {
 
         Ok(results)
     }
-
-    // 四遥detaching架构下，update_pointsmethod已移除
 }
 
 #[cfg(test)]
@@ -260,7 +264,7 @@ mod tests {
 
         // Test reading telemetry
         let telemetry = protocol
-            .read_four_telemetry("m")
+            .read_four_telemetry(crate::core::config::types::TelemetryType::Telemetry)
             .await
             .expect("telemetry read should succeed");
         assert_eq!(telemetry.len(), 100);

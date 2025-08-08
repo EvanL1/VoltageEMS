@@ -1,6 +1,6 @@
-//! reconnection机制implement
+//! Reconnection mechanism implementation
 //!
-//! 提供通用的reconnection助手，supporting指数退避和抖动
+//! Provides a generic reconnection helper with exponential backoff and jitter support
 
 use rand::Rng;
 use std::future::Future;
@@ -8,47 +8,47 @@ use std::time::{Duration, Instant};
 use thiserror::Error;
 use tracing::{debug, info, warn};
 
-/// reconnectionerror
+/// Reconnection error types
 #[derive(Error, Debug)]
 pub enum ReconnectError {
-    /// 达到maxretry次数
+    /// Maximum retry attempts exceeded
     #[error("Maximum reconnection attempts exceeded")]
     MaxAttemptsExceeded,
 
-    /// Connectfailed
+    /// Connection failed
     #[error("Connection failed: {0}")]
     ConnectionFailed(String),
 
-    /// reconnection被cancelled
+    /// Reconnection was cancelled
     #[error("Reconnection cancelled")]
     Cancelled,
 }
 
-/// Connectstate
+/// Connection state enumeration
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ConnectionState {
-    /// 已connection
+    /// Successfully connected
     Connected,
-    /// Disconnectconnection
+    /// Disconnected
     Disconnected,
-    /// 正在reconnection
+    /// Currently reconnecting
     Reconnecting,
-    /// reconnectionfailed（达到max次数）
+    /// Reconnection failed (max attempts reached)
     Failed,
 }
 
-/// reconnectionpolicyconfiguring
+/// Reconnection policy configuration
 #[derive(Debug, Clone)]
 pub struct ReconnectPolicy {
-    /// maxretry次数（0 table示none限）
+    /// Maximum retry attempts (0 means unlimited)
     pub max_attempts: u32,
-    /// 初始latency
+    /// Initial delay between attempts
     pub initial_delay: Duration,
-    /// maxlatency
+    /// Maximum delay between attempts
     pub max_delay: Duration,
-    /// 退避倍数
+    /// Backoff multiplier for exponential delay
     pub backoff_multiplier: f64,
-    /// yesno添加抖动
+    /// Whether to add jitter to delays
     pub jitter: bool,
 }
 
@@ -65,7 +65,7 @@ impl Default for ReconnectPolicy {
 }
 
 impl ReconnectPolicy {
-    /// slaveconfiguringvaluecreate
+    /// Create from configuration values
     pub fn from_config(
         max_attempts: u32,
         initial_delay_ms: u64,
@@ -82,20 +82,20 @@ impl ReconnectPolicy {
     }
 }
 
-/// reconnectionstate
+/// Reconnection context tracking current state and attempts
 #[derive(Debug, Clone)]
-pub struct ReconnectState {
-    /// 当前retry次数
+pub struct ReconnectContext {
+    /// Current retry attempt count
     pub current_attempt: u32,
-    /// 上次retrytime
+    /// Last retry attempt time
     pub last_attempt: Option<Instant>,
-    /// 下次retrytime
+    /// Next scheduled retry time
     pub next_attempt: Option<Instant>,
-    /// Connectstate
+    /// Connection state enumeration
     pub connection_state: ConnectionState,
 }
 
-impl Default for ReconnectState {
+impl Default for ReconnectContext {
     fn default() -> Self {
         Self {
             current_attempt: 0,
@@ -106,93 +106,93 @@ impl Default for ReconnectState {
     }
 }
 
-/// reconnectioncountinginfo
+/// Reconnection statistics tracking
 #[derive(Debug, Default, Clone)]
 pub struct ReconnectStats {
-    /// 总reconnection次数
+    /// Total reconnection attempts
     pub total_attempts: u64,
-    /// Successreconnection次数
+    /// Successful reconnection count
     pub successful_reconnects: u64,
-    /// Failedreconnection次数
+    /// Failed reconnection count
     pub failed_reconnects: u64,
-    /// 最后succeededconnectiontime
+    /// Last successful connection time
     pub last_connected: Option<Instant>,
-    /// Connectstarttime
+    /// Connection start time
     pub connection_start: Option<Instant>,
 }
 
-/// 通用reconnection助手
+/// Generic reconnection helper with backoff and statistics
 #[derive(Debug)]
 pub struct ReconnectHelper {
-    /// reconnectionpolicy
+    /// Reconnection policy configuration
     policy: ReconnectPolicy,
-    /// 当前state
-    state: ReconnectState,
-    /// countinginfo
+    /// Current reconnection context
+    context: ReconnectContext,
+    /// Connection statistics
     stats: ReconnectStats,
 }
 
 impl ReconnectHelper {
-    /// Create新的reconnection助手
+    /// Create a new reconnection helper
     pub fn new(policy: ReconnectPolicy) -> Self {
         Self {
             policy,
-            state: ReconnectState::default(),
+            context: ReconnectContext::default(),
             stats: ReconnectStats::default(),
         }
     }
 
-    /// Get当前connectionstate
+    /// Get the current connection state
     pub fn connection_state(&self) -> ConnectionState {
-        self.state.connection_state
+        self.context.connection_state
     }
 
-    /// Getcountinginfo
+    /// Get connection statistics
     pub fn stats(&self) -> &ReconnectStats {
         &self.stats
     }
 
-    /// Resetreconnectionstate
+    /// Reset the reconnection context
     pub fn reset(&mut self) {
-        self.state.current_attempt = 0;
-        self.state.last_attempt = None;
-        self.state.next_attempt = None;
-        if self.state.connection_state != ConnectionState::Connected {
-            self.state.connection_state = ConnectionState::Disconnected;
+        self.context.current_attempt = 0;
+        self.context.last_attempt = None;
+        self.context.next_attempt = None;
+        if self.context.connection_state != ConnectionState::Connected {
+            self.context.connection_state = ConnectionState::Disconnected;
         }
     }
 
-    /// markconnectionsucceeded
+    /// Mark the connection as successful
     pub fn mark_connected(&mut self) {
-        self.state.connection_state = ConnectionState::Connected;
-        self.state.current_attempt = 0;
+        self.context.connection_state = ConnectionState::Connected;
+        self.context.current_attempt = 0;
         self.stats.last_connected = Some(Instant::now());
         self.stats.connection_start = Some(Instant::now());
         debug!("Connection marked as successful");
     }
 
-    /// markconnectiondisconnected
+    /// Mark the connection as disconnected
     pub fn mark_disconnected(&mut self) {
-        self.state.connection_state = ConnectionState::Disconnected;
+        self.context.connection_state = ConnectionState::Disconnected;
         self.stats.connection_start = None;
         debug!("Connection marked as disconnected");
     }
 
-    /// computing下次retrylatency
+    /// Calculate the next retry delay with exponential backoff
     pub fn calculate_next_delay(&self) -> Duration {
-        let attempt = self.state.current_attempt.saturating_sub(1);
+        let attempt = self.context.current_attempt.saturating_sub(1);
         let base_delay = self.policy.initial_delay;
         let multiplier = self.policy.backoff_multiplier;
 
-        // 指数退避：delay = initial_delay * (multiplier ^ attempt)
+        // Exponential backoff: delay = initial_delay * (multiplier ^ attempt)
         let mut delay = base_delay.mul_f64(multiplier.powi(attempt as i32));
 
-        // limitingmaxlatency
+        // Cap at maximum delay
         if delay > self.policy.max_delay {
             delay = self.policy.max_delay;
         }
 
-        // 添加抖动（±25%）
+        // Add jitter (±25% of delay)
         if self.policy.jitter {
             let jitter_range = delay.as_millis() as f64 * 0.25;
             let jitter = rand::thread_rng().gen_range(-jitter_range..jitter_range);
@@ -203,7 +203,7 @@ impl ReconnectHelper {
         delay
     }
 
-    /// Executereconnection
+    /// Execute a reconnection attempt
     pub async fn execute_reconnect<F, Fut, E>(
         &mut self,
         mut connect_fn: F,
@@ -213,9 +213,10 @@ impl ReconnectHelper {
         Fut: Future<Output = Result<(), E>>,
         E: std::fmt::Display,
     {
-        // checkingyesno已达到maxretry次数
-        if self.policy.max_attempts > 0 && self.state.current_attempt >= self.policy.max_attempts {
-            self.state.connection_state = ConnectionState::Failed;
+        // Check if maximum retry attempts reached
+        if self.policy.max_attempts > 0 && self.context.current_attempt >= self.policy.max_attempts
+        {
+            self.context.connection_state = ConnectionState::Failed;
             warn!(
                 "Maximum reconnection attempts ({}) exceeded",
                 self.policy.max_attempts
@@ -223,14 +224,14 @@ impl ReconnectHelper {
             return Err(ReconnectError::MaxAttemptsExceeded);
         }
 
-        // updatestate
-        self.state.connection_state = ConnectionState::Reconnecting;
-        self.state.current_attempt += 1;
+        // Update connection state
+        self.context.connection_state = ConnectionState::Reconnecting;
+        self.context.current_attempt += 1;
         self.stats.total_attempts += 1;
 
         info!(
             "Starting reconnection attempt {}/{}",
-            self.state.current_attempt,
+            self.context.current_attempt,
             if self.policy.max_attempts == 0 {
                 "∞".to_string()
             } else {
@@ -238,25 +239,25 @@ impl ReconnectHelper {
             }
         );
 
-        // 如果不yes第一次尝试，computing并waitinglatency
-        if self.state.current_attempt > 1 {
+        // If not the first attempt, calculate and wait for delay
+        if self.context.current_attempt > 1 {
             let delay = self.calculate_next_delay();
             info!("Waiting {:?} before reconnection attempt", delay);
             tokio::time::sleep(delay).await;
         }
 
-        // record尝试time
+        // Record attempt time
         let start_time = Instant::now();
-        self.state.last_attempt = Some(start_time);
+        self.context.last_attempt = Some(start_time);
 
-        // 尝试connection
+        // Attempt connection
         match connect_fn().await {
             Ok(()) => {
-                // connectionsucceeded
+                // Connection successful
                 let reconnect_time = start_time.elapsed();
                 info!(
                     "Reconnection successful after {:?} (attempt {})",
-                    reconnect_time, self.state.current_attempt
+                    reconnect_time, self.context.current_attempt
                 );
 
                 self.mark_connected();
@@ -265,21 +266,21 @@ impl ReconnectHelper {
                 Ok(())
             },
             Err(e) => {
-                // connectionfailed
+                // Connection failed
                 warn!(
                     "Reconnection attempt {} failed: {}",
-                    self.state.current_attempt, e
+                    self.context.current_attempt, e
                 );
 
                 self.stats.failed_reconnects += 1;
 
-                // 如果还有retry机会，保持 Reconnecting state
+                // If more retry attempts available, maintain reconnecting state
                 if self.policy.max_attempts == 0
-                    || self.state.current_attempt < self.policy.max_attempts
+                    || self.context.current_attempt < self.policy.max_attempts
                 {
-                    self.state.connection_state = ConnectionState::Disconnected;
+                    self.context.connection_state = ConnectionState::Disconnected;
                 } else {
-                    self.state.connection_state = ConnectionState::Failed;
+                    self.context.connection_state = ConnectionState::Failed;
                 }
 
                 Err(ReconnectError::ConnectionFailed(e.to_string()))
@@ -287,13 +288,14 @@ impl ReconnectHelper {
         }
     }
 
-    /// Get下次retrylatency（用于显示）
+    /// Get the next retry delay (for display purposes)
     pub fn next_delay(&self) -> Option<Duration> {
-        if self.state.connection_state == ConnectionState::Failed {
+        if self.context.connection_state == ConnectionState::Failed {
             return None;
         }
 
-        if self.policy.max_attempts > 0 && self.state.current_attempt >= self.policy.max_attempts {
+        if self.policy.max_attempts > 0 && self.context.current_attempt >= self.policy.max_attempts
+        {
             return None;
         }
 
@@ -317,20 +319,20 @@ mod tests {
 
         let mut helper = ReconnectHelper::new(policy);
 
-        // 第一次尝试nonelatency
-        assert_eq!(helper.state.current_attempt, 0);
+        // First attempt has no delay
+        assert_eq!(helper.context.current_attempt, 0);
 
-        // setting当前尝试次数并validationlatency
-        helper.state.current_attempt = 1;
+        // Set current attempt count and validate delay
+        helper.context.current_attempt = 1;
         assert_eq!(helper.calculate_next_delay(), Duration::from_millis(100));
 
-        helper.state.current_attempt = 2;
+        helper.context.current_attempt = 2;
         assert_eq!(helper.calculate_next_delay(), Duration::from_millis(200));
 
-        helper.state.current_attempt = 3;
+        helper.context.current_attempt = 3;
         assert_eq!(helper.calculate_next_delay(), Duration::from_millis(400));
 
-        helper.state.current_attempt = 4;
+        helper.context.current_attempt = 4;
         assert_eq!(helper.calculate_next_delay(), Duration::from_millis(800));
     }
 
@@ -346,8 +348,8 @@ mod tests {
 
         let mut helper = ReconnectHelper::new(policy);
 
-        // testinglatency不超过maxvalue
-        helper.state.current_attempt = 10;
+        // Test that delay doesn't exceed maximum
+        helper.context.current_attempt = 10;
         let delay = helper.calculate_next_delay();
         assert!(delay <= Duration::from_secs(5));
     }
@@ -364,23 +366,23 @@ mod tests {
 
         let mut helper = ReconnectHelper::new(policy);
 
-        // 模拟failed的connectionfunction
+        // Simulate a failing connection function
         let connect_fn = || async { Err::<(), _>("Connection failed") };
 
-        // 第一次尝试
+        // First attempt
         let result = helper.execute_reconnect(connect_fn).await;
         assert!(result.is_err());
-        assert_eq!(helper.state.current_attempt, 1);
+        assert_eq!(helper.context.current_attempt, 1);
 
-        // 第二次尝试
+        // Second attempt
         let result = helper.execute_reconnect(connect_fn).await;
         assert!(result.is_err());
-        assert_eq!(helper.state.current_attempt, 2);
+        assert_eq!(helper.context.current_attempt, 2);
 
-        // 第三次尝试应该立即failed
+        // Third attempt should fail immediately
         let result = helper.execute_reconnect(connect_fn).await;
         assert!(matches!(result, Err(ReconnectError::MaxAttemptsExceeded)));
-        assert_eq!(helper.state.connection_state, ConnectionState::Failed);
+        assert_eq!(helper.context.connection_state, ConnectionState::Failed);
     }
 
     #[tokio::test]
@@ -388,13 +390,13 @@ mod tests {
         let policy = ReconnectPolicy::default();
         let mut helper = ReconnectHelper::new(policy);
 
-        // 模拟succeeded的connectionfunction
+        // Simulate a successful connection function
         let connect_fn = || async { Ok::<(), &str>(()) };
 
         let result = helper.execute_reconnect(connect_fn).await;
         assert!(result.is_ok());
-        assert_eq!(helper.state.connection_state, ConnectionState::Connected);
-        assert_eq!(helper.state.current_attempt, 0);
+        assert_eq!(helper.context.connection_state, ConnectionState::Connected);
+        assert_eq!(helper.context.current_attempt, 0);
         assert_eq!(helper.stats.successful_reconnects, 1);
     }
 }

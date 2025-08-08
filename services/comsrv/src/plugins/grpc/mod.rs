@@ -1,18 +1,18 @@
-//! gRPC pluginsupportingmodular
+//! gRPC Plugin Support Module
 //!
-//! 提供通过 gRPC 与exteriorprotocolplugincommunicate的capability
+//! Provides capability to communicate with external protocol plugins through gRPC
 
 pub mod adapter;
 pub mod client;
 pub mod manager;
 
-// 重新exportmaster要type
+// Re-export main types
 pub use adapter::GrpcPluginAdapter;
 pub use client::GrpcPluginClient;
 pub use manager::PluginManager;
 
-// protobuf 生成的代码
+// protobuf generated code
 #[allow(clippy::all)]
 pub mod proto {
-    include!("proto/comsrv.plugin.v1.rs");
+    include!("proto/comsrv.plugin.rs");
 }

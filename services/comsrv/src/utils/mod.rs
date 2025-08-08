@@ -26,18 +26,6 @@ pub fn normalize_protocol_name(name: &str) -> String {
     }
 }
 
-/// Convert protocol name to display format (PascalCase)
-pub fn protocol_display_name(normalized_name: &str) -> String {
-    match normalized_name {
-        "modbus_tcp" => "ModbusTcp".to_string(),
-        "modbus_rtu" => "ModbusRtu".to_string(),
-        "iec60870" => "IEC60870".to_string(),
-        "can" => "CAN".to_string(),
-        "virtual" => "Virtual".to_string(),
-        _ => normalized_name.to_string(),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -4,14 +4,13 @@
 
 use futures::StreamExt;
 use serde::{Deserialize, Serialize};
-use std::sync::Arc;
-use tokio::sync::{mpsc, Mutex, RwLock};
+use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 use tokio::time::Duration;
 use tracing::{debug, error, info, warn};
 use voltage_libs::redis::RedisClient;
 
-use super::core::ChannelCommand;
+use super::traits::ChannelCommand;
 use crate::utils::error::Result;
 
 /// Control command type
@@ -95,16 +94,15 @@ pub struct CommandTriggerConfig {
 }
 
 fn default_timeout() -> u64 {
-    1 // 默认1秒超时，便于检查停止信号
+    30 // 使用30秒超时，减少空转（有select!保证及时响应）
 }
 
 /// Command trigger - listenRedis命令并triggerprotocolexecuting
-#[derive(Debug)]
 pub struct CommandTrigger {
     config: CommandTriggerConfig,
-    redis_client: Arc<Mutex<RedisClient>>,
     command_tx: mpsc::Sender<ChannelCommand>,
-    is_running: Arc<RwLock<bool>>,
+    shutdown_tx: tokio::sync::watch::Sender<bool>, // false = running, true = shutdown
+    _shutdown_rx_keepalive: tokio::sync::watch::Receiver<bool>, // 保持接收端活跃
     task_handle: Option<JoinHandle<()>>,
 }
 
@@ -114,29 +112,27 @@ impl CommandTrigger {
         config: CommandTriggerConfig,
         command_tx: mpsc::Sender<ChannelCommand>,
     ) -> Result<Self> {
-        let redis_client = RedisClient::new(&config.redis_url).await?;
+        // 创建 watch channel，初始值 false = 未停止
+        let (tx, rx) = tokio::sync::watch::channel(false);
 
         Ok(Self {
             config,
-            redis_client: Arc::new(Mutex::new(redis_client)),
             command_tx,
-            is_running: Arc::new(RwLock::new(false)),
+            shutdown_tx: tx,
+            _shutdown_rx_keepalive: rx,
             task_handle: None,
         })
     }
 
     /// Start subscription
     pub async fn start(&mut self) -> Result<()> {
-        {
-            let mut running = self.is_running.write().await;
-            if *running {
-                warn!(
-                    "Command trigger already running for channel {}",
-                    self.config.channel_id
-                );
-                return Ok(());
-            }
-            *running = true;
+        // 使用 task_handle 判断是否已经在运行
+        if self.task_handle.is_some() {
+            warn!(
+                "Command trigger already running for channel {}",
+                self.config.channel_id
+            );
+            return Ok(());
         }
 
         let channel_id = self.config.channel_id;
@@ -148,13 +144,22 @@ impl CommandTrigger {
         );
 
         // Clone necessary objects for task
-        let redis_client = self.redis_client.clone();
         let command_tx = self.command_tx.clone();
-        let is_running = self.is_running.clone();
+        let shutdown_rx = self.shutdown_tx.subscribe();
         let config = self.config.clone();
+        let task_redis_url = config.redis_url.clone();
 
         // Start appropriate subscription task based on mode
         let task_handle = tokio::spawn(async move {
+            // 在任务内创建独立的 Redis 连接
+            let redis_client = match RedisClient::new(&task_redis_url).await {
+                Ok(client) => client,
+                Err(e) => {
+                    error!("Failed to create Redis client for trigger: {}", e);
+                    return;
+                },
+            };
+
             let result = match mode {
                 TriggerMode::PubSub => {
                     let control_channel = format!("cmd:{}:control", channel_id);
@@ -162,14 +167,14 @@ impl CommandTrigger {
                     Self::pubsub_loop(
                         redis_client,
                         command_tx,
-                        is_running,
+                        shutdown_rx,
                         channel_id,
                         vec![control_channel, adjustment_channel],
                     )
                     .await
                 },
                 TriggerMode::ListQueue => {
-                    Self::list_queue_loop(redis_client, command_tx, is_running, config).await
+                    Self::list_queue_loop(redis_client, command_tx, shutdown_rx, config).await
                 },
             };
 
@@ -184,10 +189,8 @@ impl CommandTrigger {
 
     /// Stop subscription
     pub async fn stop(&mut self) -> Result<()> {
-        {
-            let mut running = self.is_running.write().await;
-            *running = false;
-        }
+        // 发送停止信号 (true = shutdown)
+        let _ = self.shutdown_tx.send(true);
 
         // Wait for task to finish
         if let Some(handle) = self.task_handle.take() {
@@ -207,15 +210,14 @@ impl CommandTrigger {
 
     /// PubSub subscription loop (旧方式)
     async fn pubsub_loop(
-        redis_client: Arc<Mutex<RedisClient>>,
+        mut redis_client: RedisClient,
         command_tx: mpsc::Sender<ChannelCommand>,
-        is_running: Arc<RwLock<bool>>,
+        mut shutdown_rx: tokio::sync::watch::Receiver<bool>,
         channel_id: u16,
         channels: Vec<String>,
     ) -> Result<()> {
-        // Create subscription
+        // Create subscription - 使用独立连接，无需锁
         let channel_refs: Vec<&str> = channels.iter().map(std::string::String::as_str).collect();
-        let mut redis_client = redis_client.lock().await;
         let mut pubsub = redis_client.subscribe(&channel_refs).await.map_err(|e| {
             crate::utils::error::ComSrvError::InternalError(format!(
                 "Failed to create subscription: {e}"
@@ -227,49 +229,48 @@ impl CommandTrigger {
             channel_id
         );
 
-        loop {
-            // Check if should stop
-            if !*is_running.read().await {
-                info!("Stopping command subscription for channel {}", channel_id);
-                break;
-            }
+        let mut message_stream = pubsub.on_message();
 
-            // Receive message (with timeout)
-            match tokio::time::timeout(
-                std::time::Duration::from_secs(1),
-                pubsub.on_message().next(),
-            )
-            .await
-            {
-                Ok(Some(msg)) => {
-                    // Process message
-                    if let Err(e) = Self::process_message(&command_tx, channel_id, msg).await {
-                        error!("Failed to process command message: {}", e);
+        loop {
+            tokio::select! {
+                // 监听停止信号
+                _ = shutdown_rx.changed() => {
+                    if *shutdown_rx.borrow() {
+                        info!("Stopping command subscription for channel {}", channel_id);
+                        break;
                     }
-                },
-                Ok(None) => {
-                    warn!("Subscription closed for channel {}", channel_id);
-                    break;
-                },
-                Err(_) => {
-                    // Timeout, continue loop
-                    continue;
-                },
+                }
+                // 接收消息
+                msg = message_stream.next() => {
+                    match msg {
+                        Some(msg) => {
+                            // Process message
+                            if let Err(e) = Self::process_message(&command_tx, channel_id, msg).await {
+                                error!("Failed to process command message: {}", e);
+                            }
+                        },
+                        None => {
+                            warn!("Subscription closed for channel {}", channel_id);
+                            break;
+                        }
+                    }
+                }
             }
         }
 
         Ok(())
     }
 
-    /// List queue loop (新方式 - 使用BLPOP阻塞等待)
+    /// List queue loop (新方式 - 使用BLPOP阻塞等待) with reconnection
     async fn list_queue_loop(
-        redis_client: Arc<Mutex<RedisClient>>,
+        redis_client: RedisClient,
         command_tx: mpsc::Sender<ChannelCommand>,
-        is_running: Arc<RwLock<bool>>,
+        mut shutdown_rx: tokio::sync::watch::Receiver<bool>,
         config: CommandTriggerConfig,
     ) -> Result<()> {
         let channel_id = config.channel_id;
         let timeout = config.timeout_seconds;
+        let redis_url = config.redis_url.clone();
 
         // 定义要监听的队列
         let control_queue = format!("comsrv:trigger:{}:C", channel_id);
@@ -280,98 +281,163 @@ impl CommandTrigger {
             control_queue, adjustment_queue, timeout
         );
 
-        let mut redis_client = redis_client.lock().await;
+        // 重连循环
+        let mut redis_client = redis_client;
+        let mut reconnect_delay = Duration::from_secs(1);
+        let max_reconnect_delay = Duration::from_secs(30);
 
         loop {
-            // Check if should stop
-            if !*is_running.read().await {
+            // 检查停止信号
+            if *shutdown_rx.borrow() {
                 info!("Stopping command trigger for channel {}", channel_id);
                 break;
             }
 
             // 使用BLPOP阻塞等待命令
-            // 这会同时监听两个队列，返回第一个有数据的队列
             let queues = vec![control_queue.as_str(), adjustment_queue.as_str()];
 
-            // 使用BLPOP阻塞等待命令
-            match redis_client.blpop(&queues, timeout as usize).await {
-                Ok(Some((queue, data))) => {
-                    // 判断命令类型
-                    let is_control = queue.ends_with(":C");
-                    let command_type = if is_control { "Control" } else { "Adjustment" };
-
-                    // 解析命令数据
-                    match serde_json::from_str::<serde_json::Value>(&data) {
-                        Ok(cmd_data) => {
-                            let point_id = cmd_data["point_id"].as_u64().unwrap_or(0) as u32;
-                            let value = cmd_data["value"].as_f64().unwrap_or(0.0);
-                            let source = cmd_data["source"].as_str().unwrap_or("");
-                            let command_id = cmd_data["command_id"]
-                                .as_str()
-                                .map(|s| s.to_string())
-                                .unwrap_or_else(|| {
-                                    format!("auto_{}", chrono::Utc::now().timestamp_millis())
-                                });
-
-                            if source.is_empty() {
-                                info!(
-                                    "🎯 {} command received: channel={}, point={}, value={}, cmd_id={}",
-                                    command_type, channel_id, point_id, value, command_id
-                                );
-                            } else {
-                                info!(
-                                    "🎯 {} command received from {}: channel={}, point={}, value={}, cmd_id={}",
-                                    command_type, source, channel_id, point_id, value, command_id
-                                );
+            let inner_loop_result: Result<()> = async {
+                loop {
+                    tokio::select! {
+                        // 监听停止信号
+                        _ = shutdown_rx.changed() => {
+                            if *shutdown_rx.borrow() {
+                                return Ok(());
                             }
+                        }
+                        // BLPOP 等待命令
+                        result = redis_client.blpop(&queues, timeout as usize) => {
+                            match result {
+                                Ok(Some((queue, data))) => {
+                                    // 判断命令类型
+                                    let is_control = queue.ends_with(":C");
+                                    let command_type = if is_control { "Control" } else { "Adjustment" };
 
-                            // 创建ChannelCommand
-                            let channel_command = if is_control {
-                                ChannelCommand::Control {
-                                    command_id,
-                                    point_id,
-                                    value,
-                                    timestamp: chrono::Utc::now().timestamp(),
-                                }
-                            } else {
-                                ChannelCommand::Adjustment {
-                                    command_id,
-                                    point_id,
-                                    value,
-                                    timestamp: chrono::Utc::now().timestamp(),
-                                }
-                            };
+                                    // 统一反序列化为 ControlCommand，添加来源信息
+                                    match Self::parse_command_data(&data, Some(channel_id)) {
+                                        Ok(mut command) => {
+                                            // 添加来源到 metadata
+                                            if let serde_json::Value::Object(ref mut map) = command.metadata {
+                                                map.insert("trigger_source".to_string(), serde_json::Value::String("list_queue".to_string()));
+                                            }
+                                            let point_id = command.point_id;
+                                            let value = command.value;
+                                            let command_id = command.command_id.clone();
 
-                            // 发送到协议处理器
-                            if let Err(e) = command_tx.send(channel_command).await {
-                                error!("Failed to send command to protocol handler: {}", e);
-                                // 如果通道关闭，退出循环
-                                break;
-                            } else {
-                                info!(
-                                    "✅ {} command forwarded to protocol handler: point={}, value={}",
-                                    command_type, point_id, value
-                                );
+                                            info!(
+                                                "🎯 [ListQueue] {} command: channel={}, point={}, value={}, cmd_id={}",
+                                                command_type, channel_id, point_id, value, command_id
+                                            );
+
+                                            // 转换为 ChannelCommand
+                                            let channel_command = Self::to_channel_command(command);
+
+                                            // 发送到协议处理器
+                                            if let Err(e) = command_tx.send(channel_command).await {
+                                                error!("Failed to send command to protocol handler: {}", e);
+                                                // 如果通道关闭，完全退出
+                                                return Err(crate::utils::error::ComSrvError::InternalError(
+                                                    "Command channel closed".to_string()
+                                                ));
+                                            }
+                                        },
+                                        Err(e) => {
+                                            warn!("Failed to parse command data: {}, raw data: {}", e, data);
+                                        },
+                                    }
+                                },
+                                Ok(None) => {
+                                    // 超时，继续循环
+                                    continue;
+                                },
+                                Err(e) => {
+                                    // Redis 错误，触发重连
+                                    error!("BLPOP error, will reconnect: {}", e);
+                                    return Err(crate::utils::error::ComSrvError::InternalError(
+                                        format!("Redis error: {}", e)
+                                    ));
+                                },
                             }
-                        },
-                        Err(e) => {
-                            warn!("Failed to parse command data: {}, raw data: {}", e, data);
-                        },
+                        }
                     }
-                },
-                Ok(None) => {
-                    // 超时，继续循环（这让我们可以检查停止信号）
-                    continue;
+                }
+            }.await;
+
+            // 处理内层循环结果
+            match inner_loop_result {
+                Ok(()) => {
+                    // 正常退出（收到停止信号）
+                    break;
                 },
                 Err(e) => {
-                    error!("BLPOP error: {}", e);
-                    // 短暂休眠后重试
-                    tokio::time::sleep(Duration::from_secs(1)).await;
+                    // 错误，尝试重连
+                    warn!(
+                        "List queue loop error for channel {}: {}, attempting reconnect",
+                        channel_id, e
+                    );
+
+                    // 等待一段时间后重连
+                    tokio::select! {
+                        _ = tokio::time::sleep(reconnect_delay) => {
+                            // 尝试重新创建 Redis 连接
+                            match RedisClient::new(&redis_url).await {
+                                Ok(new_client) => {
+                                    redis_client = new_client;
+                                    info!("Reconnected to Redis for channel {}", channel_id);
+                                    // 重置延迟
+                                    reconnect_delay = Duration::from_secs(1);
+                                },
+                                Err(e) => {
+                                    error!("Failed to reconnect to Redis: {}", e);
+                                    // 指数退避
+                                    reconnect_delay = (reconnect_delay * 2).min(max_reconnect_delay);
+                                }
+                            }
+                        }
+                        _ = shutdown_rx.changed() => {
+                            if *shutdown_rx.borrow() {
+                                info!("Stopping during reconnect for channel {}", channel_id);
+                                break;
+                            }
+                        }
+                    }
                 },
             }
         }
 
         Ok(())
+    }
+
+    /// 解析命令数据（统一的反序列化逻辑）
+    fn parse_command_data(data: &str, channel_id: Option<u16>) -> Result<ControlCommand> {
+        let mut command: ControlCommand = serde_json::from_str(data).map_err(|e| {
+            crate::utils::error::ComSrvError::ParsingError(format!("Failed to parse command: {e}"))
+        })?;
+
+        // 如果没有提供 channel_id，使用传入的默认值
+        if command.channel_id.is_none() {
+            command.channel_id = channel_id;
+        }
+
+        Ok(command)
+    }
+
+    /// 转换为 ChannelCommand
+    fn to_channel_command(command: ControlCommand) -> ChannelCommand {
+        match command.command_type {
+            CommandType::Control => ChannelCommand::Control {
+                command_id: command.command_id,
+                point_id: command.point_id,
+                value: command.value,
+                timestamp: command.timestamp,
+            },
+            CommandType::Adjustment => ChannelCommand::Adjustment {
+                command_id: command.command_id,
+                point_id: command.point_id,
+                value: command.value,
+                timestamp: command.timestamp,
+            },
+        }
     }
 
     /// Process single message
@@ -388,18 +454,19 @@ impl CommandTrigger {
         })?;
 
         debug!(
-            "Received command message on channel {}: {}",
+            "[PubSub] Received command message on channel {}: {}",
             channel_id, payload
         );
 
-        // Parse command
-        let mut command: ControlCommand = serde_json::from_str(&payload).map_err(|e| {
-            crate::utils::error::ComSrvError::ParsingError(format!("Failed to parse command: {e}"))
-        })?;
+        // 使用统一的解析逻辑
+        let mut command = Self::parse_command_data(&payload, Some(channel_id))?;
 
-        // Infer channel_id if not provided (use the one from subscription)
-        if command.channel_id.is_none() {
-            command.channel_id = Some(channel_id);
+        // 添加来源到 metadata
+        if let serde_json::Value::Object(ref mut map) = command.metadata {
+            map.insert(
+                "trigger_source".to_string(),
+                serde_json::Value::String("pubsub".to_string()),
+            );
         }
 
         // Ensure command is sent to correct channel
@@ -412,21 +479,8 @@ impl CommandTrigger {
             return Ok(());
         }
 
-        // Convert to ChannelCommand and send
-        let channel_command = match command.command_type {
-            CommandType::Control => ChannelCommand::Control {
-                command_id: command.command_id,
-                point_id: command.point_id,
-                value: command.value,
-                timestamp: command.timestamp,
-            },
-            CommandType::Adjustment => ChannelCommand::Adjustment {
-                command_id: command.command_id,
-                point_id: command.point_id,
-                value: command.value,
-                timestamp: command.timestamp,
-            },
-        };
+        // 使用统一的转换逻辑
+        let channel_command = Self::to_channel_command(command);
 
         // Send command to protocol processor
         if let Err(e) = command_tx.send(channel_command).await {
@@ -438,6 +492,24 @@ impl CommandTrigger {
 
         debug!("Command forwarded to protocol handler");
         Ok(())
+    }
+}
+
+impl Drop for CommandTrigger {
+    fn drop(&mut self) {
+        // 发送停止信号
+        let _ = self.shutdown_tx.send(true);
+
+        // 如果任务还在运行，abort 它（兜底）
+        if let Some(handle) = self.task_handle.take() {
+            if !handle.is_finished() {
+                warn!(
+                    "CommandTrigger for channel {} dropped with running task, aborting",
+                    self.config.channel_id
+                );
+                handle.abort();
+            }
+        }
     }
 }
 

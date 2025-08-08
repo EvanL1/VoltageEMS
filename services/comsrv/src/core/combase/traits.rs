@@ -2,10 +2,12 @@
 //!
 //! Integrates basic trait definitions, type definitions and default implementations
 
-use crate::core::config::{ChannelConfig, TelemetryType};
+use crate::core::config::types::TelemetryType;
+use crate::core::config::ChannelConfig;
 use crate::utils::error::{ComSrvError, Result};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -16,11 +18,156 @@ use tokio::sync::RwLock;
 /// Redis value type
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum RedisValue {
-    String(String),
+    String(Cow<'static, str>),
     Integer(i64),
     Float(f64),
     Bool(bool),
     Null,
+}
+
+// Convenience From implementations
+impl From<f64> for RedisValue {
+    fn from(v: f64) -> Self {
+        Self::Float(v)
+    }
+}
+
+impl From<i64> for RedisValue {
+    fn from(v: i64) -> Self {
+        Self::Integer(v)
+    }
+}
+
+impl From<i32> for RedisValue {
+    fn from(v: i32) -> Self {
+        Self::Integer(v as i64)
+    }
+}
+
+impl From<&str> for RedisValue {
+    fn from(v: &str) -> Self {
+        Self::String(Cow::Owned(v.to_string()))
+    }
+}
+
+impl From<String> for RedisValue {
+    fn from(v: String) -> Self {
+        Self::String(Cow::Owned(v))
+    }
+}
+
+impl From<bool> for RedisValue {
+    fn from(v: bool) -> Self {
+        Self::Bool(v)
+    }
+}
+
+impl From<u16> for RedisValue {
+    fn from(v: u16) -> Self {
+        Self::Integer(v as i64)
+    }
+}
+
+impl From<u32> for RedisValue {
+    fn from(v: u32) -> Self {
+        Self::Integer(v as i64)
+    }
+}
+
+impl From<u8> for RedisValue {
+    fn from(v: u8) -> Self {
+        Self::Integer(v as i64)
+    }
+}
+
+// Unified numeric interface methods
+impl RedisValue {
+    /// Try to convert to f64
+    pub fn as_f64(&self) -> Option<f64> {
+        match self {
+            Self::Float(f) => Some(*f),
+            Self::Integer(i) => Some(*i as f64),
+            Self::Bool(b) => Some(if *b { 1.0 } else { 0.0 }),
+            Self::String(s) => s.parse().ok(),
+            Self::Null => None,
+        }
+    }
+
+    /// Try to convert to i64
+    pub fn as_i64(&self) -> Option<i64> {
+        match self {
+            Self::Integer(i) => Some(*i),
+            Self::Float(f) => Some(*f as i64),
+            Self::Bool(b) => Some(if *b { 1 } else { 0 }),
+            Self::String(s) => s.parse().ok(),
+            Self::Null => None,
+        }
+    }
+
+    /// Try to convert to bool
+    pub fn as_bool(&self) -> Option<bool> {
+        match self {
+            Self::Bool(b) => Some(*b),
+            Self::Integer(i) => Some(*i != 0),
+            Self::Float(f) => Some(*f != 0.0),
+            Self::String(s) => match s.to_lowercase().as_str() {
+                "true" | "1" | "yes" | "on" => Some(true),
+                "false" | "0" | "no" | "off" => Some(false),
+                _ => None,
+            },
+            Self::Null => None,
+        }
+    }
+
+    /// Try to convert to String
+    pub fn as_string(&self) -> String {
+        match self {
+            Self::String(s) => s.to_string(),
+            Self::Integer(i) => i.to_string(),
+            Self::Float(f) => f.to_string(),
+            Self::Bool(b) => b.to_string(),
+            Self::Null => String::new(),
+        }
+    }
+
+    /// Check if value is null
+    pub fn is_null(&self) -> bool {
+        matches!(self, Self::Null)
+    }
+
+    /// Convert to u16 with bounds checking
+    pub fn as_u16(&self) -> Option<u16> {
+        self.as_i64().and_then(|i| {
+            if i >= 0 && i <= u16::MAX as i64 {
+                Some(i as u16)
+            } else {
+                None
+            }
+        })
+    }
+
+    /// Convert to u32 with bounds checking
+    pub fn as_u32(&self) -> Option<u32> {
+        self.as_i64().and_then(|i| {
+            if i >= 0 && i <= u32::MAX as i64 {
+                Some(i as u32)
+            } else {
+                None
+            }
+        })
+    }
+
+    /// Get value or default
+    pub fn unwrap_or<T>(&self, default: T) -> T
+    where
+        T: From<RedisValue> + Clone,
+    {
+        if self.is_null() {
+            default
+        } else {
+            T::from(self.clone())
+        }
+    }
 }
 
 /// Channel command enumeration
@@ -59,7 +206,7 @@ pub struct TelemetryBatch {
 pub struct ChannelStatus {
     pub is_connected: bool,
     pub last_error: Option<String>,
-    pub last_update: u64,
+    pub last_update: i64, // Unix timestamp in seconds
     pub success_count: u64,
     pub error_count: u64,
     pub reconnect_count: u64,
@@ -72,7 +219,7 @@ pub struct ChannelStatus {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PointData {
     pub value: RedisValue,
-    pub timestamp: u64,
+    pub timestamp: i64, // Unix timestamp in seconds
 }
 
 /// Extended point data (for API and display)
@@ -122,9 +269,9 @@ impl Default for TestChannelParams {
 // Core trait definitions (from traits.rs)
 // ============================================================================
 
-/// Main communication service trait
+/// Base communication trait - defines common four-telemetry data model
 ///
-/// This trait defines the core interface that all communication protocol implementations must provide
+/// This trait defines the core data interface shared by both clients and servers
 #[async_trait]
 pub trait ComBase: Send + Sync {
     /// Get implementation name
@@ -133,14 +280,31 @@ pub trait ComBase: Send + Sync {
     /// Get protocol type
     fn protocol_type(&self) -> &str;
 
-    /// Check connection status
-    fn is_connected(&self) -> bool;
-
     /// Get channel status
     async fn get_status(&self) -> ChannelStatus;
 
-    /// Initialize channel
-    async fn initialize(&mut self, channel_config: &ChannelConfig) -> Result<()>;
+    /// Initialize channel (load point configuration)
+    async fn initialize(&mut self, channel_config: Arc<ChannelConfig>) -> Result<()>;
+
+    /// Read four-telemetry data (from cache or Redis)
+    async fn read_four_telemetry(&self, telemetry_type: TelemetryType) -> Result<PointDataMap>;
+
+    /// Get diagnostic information
+    async fn get_diagnostics(&self) -> Result<serde_json::Value> {
+        Ok(serde_json::json!({
+            "name": self.name(),
+            "protocol": self.protocol_type(),
+        }))
+    }
+}
+
+/// Client communication trait - for active data collection
+///
+/// This trait extends ComBase with client-specific functionality
+#[async_trait]
+pub trait ComClient: ComBase {
+    /// Check connection status
+    fn is_connected(&self) -> bool;
 
     /// Connect to target system
     async fn connect(&mut self) -> Result<()>;
@@ -148,19 +312,14 @@ pub trait ComBase: Send + Sync {
     /// Disconnect
     async fn disconnect(&mut self) -> Result<()>;
 
-    /// Read four-telemetry data
-    async fn read_four_telemetry(&self, telemetry_type: &str) -> Result<PointDataMap>;
-
-    /// Execute control command
+    /// Execute control command (actively send)
     async fn control(&mut self, commands: Vec<(u32, RedisValue)>) -> Result<Vec<(u32, bool)>>;
 
-    /// Execute adjustment command
+    /// Execute adjustment command (actively send)
     async fn adjustment(&mut self, adjustments: Vec<(u32, RedisValue)>)
         -> Result<Vec<(u32, bool)>>;
 
-    // Under the four-telemetry separated architecture, update_points method is no longer needed, point configuration is directly loaded during initialize phase
-
-    /// Start periodic tasks
+    /// Start periodic tasks (polling, etc.)
     async fn start_periodic_tasks(&self) -> Result<()> {
         Ok(())
     }
@@ -183,15 +342,57 @@ pub trait ComBase: Send + Sync {
         // Default implementation does nothing
         // Protocols that support command processing should override this
     }
+}
 
-    /// Get diagnostic information
-    async fn get_diagnostics(&self) -> Result<serde_json::Value> {
-        Ok(serde_json::json!({
-            "name": self.name(),
-            "protocol": self.protocol_type(),
-            "connected": self.is_connected()
-        }))
-    }
+/// Server communication trait - for passive response to requests
+///
+/// This trait extends ComBase with server-specific functionality
+#[async_trait]
+pub trait ComServer: ComBase {
+    /// Check if server is running
+    fn is_running(&self) -> bool;
+
+    /// Start listening
+    async fn start(&mut self) -> Result<()>;
+
+    /// Stop server
+    async fn stop(&mut self) -> Result<()>;
+
+    /// Verify if client is allowed to connect (e.g., IP whitelist)
+    fn verify_client(&self, client_addr: std::net::SocketAddr) -> bool;
+
+    /// Handle read request (passive response)
+    /// Read from own channel_id in Redis
+    async fn handle_read_request(
+        &self,
+        address: u16,
+        count: u16,
+        telemetry_type: TelemetryType,
+    ) -> Result<Vec<RedisValue>>;
+
+    /// Handle write request (passive receive)
+    /// Write to own channel_id in Redis
+    async fn handle_write_request(
+        &mut self,
+        address: u16,
+        value: RedisValue,
+        telemetry_type: TelemetryType,
+    ) -> Result<bool>;
+
+    /// Get connected client count
+    async fn client_count(&self) -> usize;
+
+    /// Get connected client information
+    async fn get_connected_clients(&self) -> Vec<ClientInfo>;
+}
+
+/// Client connection information
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ClientInfo {
+    pub addr: String,      // Stored as string for serialization
+    pub connected_at: i64, // Unix timestamp in seconds
+    pub last_request: i64, // Unix timestamp in seconds
+    pub request_count: u64,
 }
 
 /// Four-telemetry operations trait
@@ -249,7 +450,7 @@ pub struct DefaultProtocol {
     protocol_type: String,
     status: Arc<RwLock<ChannelStatus>>,
     is_connected: Arc<RwLock<bool>>,
-    channel_config: Option<ChannelConfig>,
+    channel_config: Option<Arc<ChannelConfig>>,
     // Under the four-telemetry separated architecture, unified point_mappings is no longer needed
 }
 
@@ -275,8 +476,8 @@ impl DefaultProtocol {
         updater(&mut status);
         status.last_update = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
+            .unwrap_or_else(|_| std::time::Duration::from_secs(0))
+            .as_secs() as i64;
     }
 
     // Under the four-telemetry separated architecture, get_mappings method is no longer needed
@@ -292,19 +493,11 @@ impl ComBase for DefaultProtocol {
         &self.protocol_type
     }
 
-    fn is_connected(&self) -> bool {
-        // Use try_read to avoid blocking in async environment
-        self.is_connected
-            .try_read()
-            .map(|guard| *guard)
-            .unwrap_or(false)
-    }
-
     async fn get_status(&self) -> ChannelStatus {
         self.status.read().await.clone()
     }
 
-    async fn initialize(&mut self, channel_config: &ChannelConfig) -> Result<()> {
+    async fn initialize(&mut self, channel_config: Arc<ChannelConfig>) -> Result<()> {
         self.channel_config = Some(channel_config.clone());
 
         let point_count = channel_config
@@ -321,6 +514,23 @@ impl ComBase for DefaultProtocol {
         .await;
 
         Ok(())
+    }
+
+    async fn read_four_telemetry(&self, _telemetry_type: TelemetryType) -> Result<PointDataMap> {
+        // Under the four-telemetry separated architecture, DefaultProtocol only provides basic implementation
+        // Actual protocols should override this method to provide real data
+        Ok(HashMap::new())
+    }
+}
+
+#[async_trait]
+impl ComClient for DefaultProtocol {
+    fn is_connected(&self) -> bool {
+        // Use try_read to avoid blocking in async environment
+        self.is_connected
+            .try_read()
+            .map(|guard| *guard)
+            .unwrap_or(false)
     }
 
     async fn connect(&mut self) -> Result<()> {
@@ -346,18 +556,8 @@ impl ComBase for DefaultProtocol {
         Ok(())
     }
 
-    async fn read_four_telemetry(&self, _telemetry_type: &str) -> Result<PointDataMap> {
-        if !<Self as ComBase>::is_connected(self) {
-            return Err(ComSrvError::NotConnected);
-        }
-
-        // Under the four-telemetry separated architecture, DefaultProtocol only provides basic implementation
-        // Actual protocols should override this method to provide real data
-        Ok(HashMap::new())
-    }
-
     async fn control(&mut self, commands: Vec<(u32, RedisValue)>) -> Result<Vec<(u32, bool)>> {
-        if !<Self as ComBase>::is_connected(self) {
+        if !ComClient::is_connected(self) {
             return Err(ComSrvError::NotConnected);
         }
 
@@ -374,7 +574,7 @@ impl ComBase for DefaultProtocol {
         &mut self,
         adjustments: Vec<(u32, RedisValue)>,
     ) -> Result<Vec<(u32, bool)>> {
-        if !<Self as ComBase>::is_connected(self) {
+        if !ComClient::is_connected(self) {
             return Err(ComSrvError::NotConnected);
         }
 
@@ -386,8 +586,6 @@ impl ComBase for DefaultProtocol {
 
         Ok(results)
     }
-
-    // Under the four-telemetry separated architecture, update_points method has been removed
 }
 
 impl std::fmt::Debug for DefaultProtocol {
@@ -404,33 +602,33 @@ impl std::fmt::Debug for DefaultProtocol {
 #[async_trait]
 impl FourTelemetryOperations for DefaultProtocol {
     async fn read_yc(&self) -> Result<PointDataMap> {
-        self.read_four_telemetry("m").await
+        self.read_four_telemetry(TelemetryType::Telemetry).await
     }
 
     async fn read_yx(&self) -> Result<PointDataMap> {
-        self.read_four_telemetry("s").await
+        self.read_four_telemetry(TelemetryType::Signal).await
     }
 
     async fn execute_yk(&mut self, commands: Vec<(u32, RedisValue)>) -> Result<Vec<(u32, bool)>> {
-        self.control(commands).await
+        <Self as ComClient>::control(self, commands).await
     }
 
     async fn execute_yt(
         &mut self,
         adjustments: Vec<(u32, RedisValue)>,
     ) -> Result<Vec<(u32, bool)>> {
-        self.adjustment(adjustments).await
+        <Self as ComClient>::adjustment(self, adjustments).await
     }
 }
 
 #[async_trait]
 impl ConnectionManager for DefaultProtocol {
     async fn connect(&mut self) -> Result<()> {
-        ComBase::connect(self).await
+        <Self as ComClient>::connect(self).await
     }
 
     async fn disconnect(&mut self) -> Result<()> {
-        ComBase::disconnect(self).await
+        <Self as ComClient>::disconnect(self).await
     }
 
     async fn reconnect(&mut self) -> Result<()> {
@@ -439,11 +637,11 @@ impl ConnectionManager for DefaultProtocol {
     }
 
     fn is_connected(&self) -> bool {
-        ComBase::is_connected(self)
+        <Self as ComClient>::is_connected(self)
     }
 
     async fn check_connection(&self) -> Result<bool> {
-        Ok(<Self as ComBase>::is_connected(self))
+        Ok(<Self as ComClient>::is_connected(self))
     }
 }
 
@@ -461,11 +659,11 @@ mod tests {
 
         assert_eq!(protocol.name(), "test");
         assert_eq!(protocol.protocol_type(), "default");
-        assert!(!ComBase::is_connected(&protocol));
+        assert!(!ComClient::is_connected(&protocol));
 
         // Test connection
-        ComBase::connect(&mut protocol).await.unwrap();
-        assert!(ComBase::is_connected(&protocol));
+        ComClient::connect(&mut protocol).await.unwrap();
+        assert!(ComClient::is_connected(&protocol));
 
         // Test status
         let status = protocol.get_status().await;

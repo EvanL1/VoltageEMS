@@ -83,7 +83,7 @@
 //!   {
 //!     "id": 1,
 //!     "name": "Modbus Device 1",
-//!     "protocol": "ModbusTcp",
+//!     "protocol": "modbus_tcp",
 //!     "connected": true,
 //!     "running": true,
 //!     "error_count": 0
@@ -172,7 +172,7 @@ mod tests {
         let status = ChannelStatus {
             id: 1,
             name: "Test Channel".to_string(),
-            protocol: "ModbusTcp".to_string(),
+            protocol: "modbus_tcp".to_string(),
             connected: true,
             running: true,
             last_update: now,
@@ -183,7 +183,7 @@ mod tests {
 
         assert_eq!(status.id, 1);
         assert_eq!(status.name, "Test Channel");
-        assert_eq!(status.protocol, "ModbusTcp");
+        assert_eq!(status.protocol, "modbus_tcp");
         assert!(status.connected);
         assert!(status.running);
         assert_eq!(status.error_count, 0);

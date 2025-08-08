@@ -1,9 +1,9 @@
-//! Redis clientmodular
+//! Redis 客户端模块
 //!
-//! 提供基础的 Redis operationfunction，package括：
-//! - asynchronousclient
-//! - basic的 get/set/pub/sub operation
-//! - edge端device专用的轻量级client
+//! 提供基础的 Redis 操作功能，包括：
+//! - 异步客户端
+//! - 基础的 get/set/pub/sub 操作
+//! - 边缘端设备专用的轻量级客户端
 
 mod client;
 mod edge_redis;

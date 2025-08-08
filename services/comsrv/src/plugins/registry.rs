@@ -114,6 +114,11 @@ impl PluginRegistry {
         self.factories.get(protocol_type)
     }
 
+    /// List all registered protocol factories
+    pub fn list_protocol_factories(&self) -> Vec<String> {
+        self.factories.keys().cloned().collect()
+    }
+
     /// List all registered plugins
     pub fn list_plugins(&self) -> Vec<String> {
         self.load_order.clone()
@@ -151,7 +156,9 @@ impl PluginManager {
         info!("Initializing plugin system");
 
         // Register built-in protocol factories
-        let _registry = PLUGIN_REGISTRY.write().unwrap();
+        let _registry = PLUGIN_REGISTRY
+            .write()
+            .map_err(|e| Error::InternalError(format!("Failed to acquire write lock: {}", e)))?;
 
         // Register Modbus factory - simplified placeholder
         // Real factories would be registered by the actual protocol modules
@@ -164,7 +171,9 @@ impl PluginManager {
         protocol_type: &str,
         _config: serde_json::Value,
     ) -> Result<Box<dyn ProtocolPlugin>> {
-        let registry = PLUGIN_REGISTRY.read().unwrap();
+        let registry = PLUGIN_REGISTRY
+            .read()
+            .map_err(|e| Error::InternalError(format!("Failed to acquire read lock: {}", e)))?;
 
         let factory = registry.get_factory(protocol_type).ok_or_else(|| {
             Error::InternalError(format!("No factory for protocol: {}", protocol_type))
@@ -175,19 +184,25 @@ impl PluginManager {
 
     /// List available plugins
     pub fn list_plugins() -> Vec<String> {
-        let registry = PLUGIN_REGISTRY.read().unwrap();
+        let registry = match PLUGIN_REGISTRY.read() {
+            Ok(r) => r,
+            Err(_) => return Vec::new(),
+        };
         registry.list_plugins()
     }
 
     /// Check if plugin is available
     pub fn is_plugin_available(id: &str) -> bool {
-        let registry = PLUGIN_REGISTRY.read().unwrap();
+        let registry = match PLUGIN_REGISTRY.read() {
+            Ok(r) => r,
+            Err(_) => return false,
+        };
         registry.is_registered(id)
     }
 
     /// Get plugin metadata
     pub fn get_plugin_metadata(id: &str) -> Option<ProtocolMetadata> {
-        let registry = PLUGIN_REGISTRY.read().unwrap();
+        let registry = PLUGIN_REGISTRY.read().ok()?;
         registry.get(id).map(|plugin| plugin.metadata())
     }
 }

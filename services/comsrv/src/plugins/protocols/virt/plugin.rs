@@ -7,12 +7,13 @@ use async_trait::async_trait;
 use serde_json::{json, Value};
 use std::collections::HashMap;
 
-use crate::core::combase::ComBase;
+use crate::core::combase::ComClient;
 use crate::core::config::types::ChannelConfig;
 use crate::plugins::traits::{
     CliCommand, ConfigTemplate, ProtocolMetadata, ProtocolPlugin, ValidationRule,
 };
 use crate::utils::Result;
+use std::sync::Arc;
 
 use super::VirtualProtocol;
 
@@ -97,10 +98,18 @@ impl ProtocolPlugin for VirtualPlugin {
         Ok(())
     }
 
-    async fn create_instance(&self, channel_config: ChannelConfig) -> Result<Box<dyn ComBase>> {
-        let protocol = VirtualProtocol::new(channel_config)?;
-        Ok(Box::new(protocol))
+    async fn create_client(
+        &self,
+        channel_config: Arc<ChannelConfig>,
+    ) -> Result<Box<dyn ComClient>> {
+        let protocol = VirtualProtocol::new((*channel_config).clone())?;
+        Ok(Box::new(protocol) as Box<dyn ComClient>)
     }
+
+    // Virtual protocol doesn't support server mode yet
+    // async fn create_server(&self, channel_config: ChannelConfig) -> Result<Box<dyn ComServer>> {
+    //     Err(ComSrvError::NotSupported("Virtual server not yet implemented".to_string()))
+    // }
 
     fn cli_commands(&self) -> Vec<CliCommand> {
         vec![CliCommand {

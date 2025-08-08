@@ -11,8 +11,10 @@ use tokio::sync::{Mutex, RwLock};
 use tokio::task::JoinHandle;
 use tracing::{debug, error, info, warn};
 
-use crate::core::combase::core::{ChannelCommand, TelemetryBatch};
-use crate::core::combase::{ChannelStatus, ComBase, PointData, PointDataMap, RedisValue};
+use crate::core::combase::traits::{ChannelCommand, TelemetryBatch};
+use crate::core::combase::{
+    ChannelStatus, ComBase, ComClient, PointData, PointDataMap, RedisValue,
+};
 use crate::core::config::types::{ChannelConfig, TelemetryType};
 use crate::utils::error::{ComSrvError, Result};
 
@@ -25,14 +27,14 @@ use super::types::{ModbusPoint, ModbusPollingConfig};
 #[derive(Debug)]
 pub struct ModbusCore {
     /// Polling configuration
-    _polling_config: ModbusPollingConfig,
+    _polling_config: Arc<ModbusPollingConfig>,
     /// Point mapping table
     _points: HashMap<String, ModbusPoint>,
 }
 
 impl ModbusCore {
     /// Create new Modbus core engine
-    pub fn new(_mode: ModbusMode, polling_config: ModbusPollingConfig) -> Self {
+    pub fn new(_mode: ModbusMode, polling_config: Arc<ModbusPollingConfig>) -> Self {
         Self {
             _polling_config: polling_config,
             _points: HashMap::new(),
@@ -58,11 +60,11 @@ impl ModbusCore {
 /// Modbus protocol implementation, implements `ComBase` trait
 pub struct ModbusProtocol {
     /// Protocol name
-    name: String,
+    name: Arc<str>,
     /// Channel ID
     channel_id: u16,
     /// Channel configuration
-    channel_config: Option<ChannelConfig>,
+    channel_config: Option<Arc<ChannelConfig>>, // Use Arc to avoid cloning
 
     /// Core components
     core: Arc<Mutex<ModbusCore>>,
@@ -79,7 +81,7 @@ pub struct ModbusProtocol {
     command_handle: Arc<RwLock<Option<JoinHandle<()>>>>,
 
     /// Polling configuration
-    polling_config: ModbusPollingConfig,
+    polling_config: Arc<ModbusPollingConfig>, // Use Arc to avoid cloning
     /// Point mapping
     points: Arc<RwLock<Vec<ModbusPoint>>>,
 
@@ -120,15 +122,16 @@ impl ModbusProtocol {
             ConnectionMode::Rtu
         };
 
-        let core = ModbusCore::new(mode.clone(), polling_config.clone());
+        let polling_config = Arc::new(polling_config); // Wrap in Arc once
+        let core = ModbusCore::new(mode.clone(), Arc::clone(&polling_config));
         let connection_manager =
             Arc::new(ModbusConnectionManager::new(conn_mode, connection_params));
         let frame_processor = Arc::new(Mutex::new(ModbusFrameProcessor::new(mode)));
 
         Ok(Self {
-            name: channel_config.name.clone(),
+            name: channel_config.name.clone().into(),
             channel_id: channel_config.id,
-            channel_config: Some(channel_config),
+            channel_config: Some(Arc::new(channel_config)), // Wrap in Arc
             core: Arc::new(Mutex::new(core)),
             connection_manager,
             frame_processor,
@@ -142,6 +145,52 @@ impl ModbusProtocol {
             command_rx: Arc::new(RwLock::new(None)),
         })
     }
+
+    /// Internal method to read data based on telemetry type
+    async fn read_data(&self, telemetry_type: TelemetryType) -> Result<PointDataMap> {
+        if !self.is_connected() {
+            return Err(ComSrvError::NotConnected);
+        }
+
+        let mut result = HashMap::new();
+
+        // Filter points based on telemetry type
+        let points = self.points.read().await;
+        let channel_config = self
+            .channel_config
+            .as_ref()
+            .ok_or_else(|| ComSrvError::config("Channel configuration not initialized"))?;
+
+        for point in points.iter() {
+            // Parse point_id and find in the appropriate HashMap
+            if let Ok(point_id) = point.point_id.parse::<u32>() {
+                // Select the correct HashMap based on telemetry_type
+                let config_point = match telemetry_type {
+                    TelemetryType::Telemetry => channel_config.telemetry_points.get(&point_id),
+                    TelemetryType::Signal => channel_config.signal_points.get(&point_id),
+                    TelemetryType::Control => channel_config.control_points.get(&point_id),
+                    TelemetryType::Adjustment => channel_config.adjustment_points.get(&point_id),
+                };
+
+                if let Some(config_point) = config_point {
+                    // TODO: Actual Modbus read logic
+                    // Temporarily return simulated data
+                    let value = RedisValue::Float(rand::random::<f64>() * 100.0);
+                    let point_data = PointData {
+                        value,
+                        timestamp: chrono::Utc::now().timestamp(),
+                    };
+                    result.insert(config_point.point_id, point_data);
+                }
+            }
+        }
+
+        // Update status
+        self.status.write().await.last_update = chrono::Utc::now().timestamp();
+        self.status.write().await.success_count += 1;
+
+        Ok(result)
+    }
 }
 
 #[async_trait]
@@ -154,25 +203,17 @@ impl ComBase for ModbusProtocol {
         "modbus"
     }
 
-    fn is_connected(&self) -> bool {
-        // Use try_read to avoid blocking in async context
-        self.is_connected
-            .try_read()
-            .map(|guard| *guard)
-            .unwrap_or(false)
-    }
-
     async fn get_status(&self) -> ChannelStatus {
         self.status.read().await.clone()
     }
 
-    async fn initialize(&mut self, channel_config: &ChannelConfig) -> Result<()> {
+    async fn initialize(&mut self, channel_config: Arc<ChannelConfig>) -> Result<()> {
         info!(
             "Initializing Modbus protocol for channel {} - Step 1: Starting initialization",
             channel_config.id
         );
 
-        self.channel_config = Some(channel_config.clone());
+        self.channel_config = Some(channel_config.clone()); // Already Arc
 
         // Step 2: Load and parse point configurations
         info!(
@@ -293,6 +334,22 @@ impl ComBase for ModbusProtocol {
         Ok(())
     }
 
+    async fn read_four_telemetry(&self, telemetry_type: TelemetryType) -> Result<PointDataMap> {
+        // Delegate to the actual read implementation
+        self.read_data(telemetry_type).await
+    }
+}
+
+#[async_trait]
+impl ComClient for ModbusProtocol {
+    fn is_connected(&self) -> bool {
+        // Use try_read to avoid blocking in async context
+        self.is_connected
+            .try_read()
+            .map(|guard| *guard)
+            .unwrap_or(false)
+    }
+
     async fn connect(&mut self) -> Result<()> {
         info!(
             "Channel {} - Connection Phase: Starting connection to Modbus device",
@@ -337,52 +394,6 @@ impl ComBase for ModbusProtocol {
         self.status.write().await.is_connected = false;
 
         Ok(())
-    }
-
-    async fn read_four_telemetry(&self, telemetry_type: &str) -> Result<PointDataMap> {
-        if !self.is_connected() {
-            return Err(ComSrvError::NotConnected);
-        }
-
-        let mut result = HashMap::new();
-
-        // 根据遥测typefiltering点位
-        let points = self.points.read().await;
-        let channel_config = self
-            .channel_config
-            .as_ref()
-            .ok_or_else(|| ComSrvError::config("Channel configuration not initialized"))?;
-
-        for point in points.iter() {
-            // 根据遥测typeslavepair应的HashMapmedium查找点位
-            if let Ok(point_id) = point.point_id.parse::<u32>() {
-                // 根据telemetry_typeselection正确的HashMap
-                let config_point = match telemetry_type {
-                    "Telemetry" => channel_config.telemetry_points.get(&point_id),
-                    "Signal" => channel_config.signal_points.get(&point_id),
-                    "Control" => channel_config.control_points.get(&point_id),
-                    "Adjustment" => channel_config.adjustment_points.get(&point_id),
-                    _ => None,
-                };
-
-                if let Some(config_point) = config_point {
-                    // TODO: 实际的 Modbus readlogic
-                    // 这里暂时return模拟data
-                    let value = RedisValue::Float(rand::random::<f64>() * 100.0);
-                    let point_data = PointData {
-                        value,
-                        timestamp: chrono::Utc::now().timestamp() as u64,
-                    };
-                    result.insert(config_point.point_id, point_data);
-                }
-            }
-        }
-
-        // updatestate
-        self.status.write().await.last_update = chrono::Utc::now().timestamp() as u64;
-        self.status.write().await.success_count += 1;
-
-        Ok(result)
     }
 
     async fn control(&mut self, mut commands: Vec<(u32, RedisValue)>) -> Result<Vec<(u32, bool)>> {
@@ -567,7 +578,7 @@ impl ComBase for ModbusProtocol {
             }
         }
 
-        self.status.write().await.last_update = chrono::Utc::now().timestamp() as u64;
+        self.status.write().await.last_update = chrono::Utc::now().timestamp();
         Ok(results)
     }
 
@@ -770,11 +781,12 @@ impl ComBase for ModbusProtocol {
             }
         }
 
-        self.status.write().await.last_update = chrono::Utc::now().timestamp() as u64;
+        self.status.write().await.last_update = chrono::Utc::now().timestamp();
         Ok(results)
     }
 
-    // 四遥detaching架构下，update_pointsmethod已移除，点位configuring在initializestage直接loading
+    // In the four-telemetry detached architecture, update_points method has been removed,
+    // point configuration is loaded directly during initialization stage
 
     async fn start_periodic_tasks(&self) -> Result<()> {
         info!(
@@ -782,7 +794,7 @@ impl ComBase for ModbusProtocol {
             self.channel_id
         );
 
-        // starting轮询task
+        // Start polling task
         if self.polling_config.enabled {
             let channel_id = self.channel_id;
             let polling_interval = self.polling_config.default_interval_ms;
@@ -890,7 +902,7 @@ impl ComBase for ModbusProtocol {
                             slave_id,
                             function_code,
                             &group_points,
-                            channel_config.as_ref(),
+                            channel_config.as_deref(),
                             max_batch_size,
                         )
                         .await
@@ -997,7 +1009,7 @@ impl ComBase for ModbusProtocol {
 
                     // Update status
                     let mut status_guard = status.write().await;
-                    status_guard.last_update = chrono::Utc::now().timestamp() as u64;
+                    status_guard.last_update = chrono::Utc::now().timestamp();
                     status_guard.success_count += success_count as u64;
                     status_guard.error_count += error_count as u64;
                 }
@@ -1015,7 +1027,7 @@ impl ComBase for ModbusProtocol {
             self.channel_id
         );
 
-        // stopping轮询task
+        // Stop polling task
         if let Some(handle) = self.polling_handle.write().await.take() {
             handle.abort();
             info!("Polling task stopped for channel {}", self.channel_id);
@@ -1127,18 +1139,6 @@ impl ComBase for ModbusProtocol {
         });
 
         debug!("Command receiver set for channel {}", self.channel_id);
-    }
-
-    async fn get_diagnostics(&self) -> Result<serde_json::Value> {
-        Ok(serde_json::json!({
-            "name": self.name(),
-            "protocol": self.protocol_type(),
-            "connected": self.is_connected(),
-            "channel_id": self.channel_id,
-            "points_count": self.points.read().await.len(),
-            "polling_enabled": self.polling_config.enabled,
-            "polling_interval_ms": self.polling_config.default_interval_ms,
-        }))
     }
 }
 
@@ -1455,7 +1455,7 @@ async fn read_modbus_batch_indexed(
     Ok(results)
 }
 
-/// Build Modbus PDU for FC05: Write Single Coil (写单个线圈)
+/// Build Modbus PDU for FC05: Write Single Coil
 fn build_write_fc05_single_coil_pdu(address: u16, value: bool) -> Result<ModbusPdu> {
     Ok(PduBuilder::new()
         .function_code(0x05)?
@@ -1465,7 +1465,7 @@ fn build_write_fc05_single_coil_pdu(address: u16, value: bool) -> Result<ModbusP
         .build())
 }
 
-/// Build Modbus PDU for FC06: Write Single Register (写单个保持寄存器)
+/// Build Modbus PDU for FC06: Write Single Register
 fn build_write_fc06_single_register_pdu(address: u16, value: u16) -> Result<ModbusPdu> {
     Ok(PduBuilder::new()
         .function_code(0x06)?
@@ -1474,7 +1474,7 @@ fn build_write_fc06_single_register_pdu(address: u16, value: u16) -> Result<Modb
         .build())
 }
 
-/// Build Modbus PDU for FC15: Write Multiple Coils (写多个线圈)
+/// Build Modbus PDU for FC15: Write Multiple Coils
 fn build_write_fc15_multiple_coils_pdu(start_address: u16, values: &[bool]) -> Result<ModbusPdu> {
     let quantity = values.len() as u16;
     let byte_count = quantity.div_ceil(8) as u8;
@@ -1500,7 +1500,7 @@ fn build_write_fc15_multiple_coils_pdu(start_address: u16, values: &[bool]) -> R
     Ok(pdu)
 }
 
-/// Build Modbus PDU for FC16: Write Multiple Registers (写多个保持寄存器)
+/// Build Modbus PDU for FC16: Write Multiple Registers
 fn build_write_fc16_multiple_registers_pdu(
     start_address: u16,
     values: &[u16],
@@ -1522,7 +1522,7 @@ fn build_write_fc16_multiple_registers_pdu(
     Ok(pdu)
 }
 
-/// Build Modbus PDU for FC01: Read Coils (读线圈state)
+/// Build Modbus PDU for FC01: Read Coils
 fn build_read_fc01_coils_pdu(start_address: u16, quantity: u16) -> Result<ModbusPdu> {
     Ok(PduBuilder::new()
         .function_code(0x01)?
@@ -1531,7 +1531,7 @@ fn build_read_fc01_coils_pdu(start_address: u16, quantity: u16) -> Result<Modbus
         .build())
 }
 
-/// Build Modbus PDU for FC02: Read Discrete Inputs (读discreteinputstate)
+/// Build Modbus PDU for FC02: Read Discrete Inputs
 fn build_read_fc02_discrete_inputs_pdu(start_address: u16, quantity: u16) -> Result<ModbusPdu> {
     Ok(PduBuilder::new()
         .function_code(0x02)?
@@ -1540,7 +1540,7 @@ fn build_read_fc02_discrete_inputs_pdu(start_address: u16, quantity: u16) -> Res
         .build())
 }
 
-/// Build Modbus PDU for FC03: Read Holding Registers (读保持寄存器)
+/// Build Modbus PDU for FC03: Read Holding Registers
 fn build_read_fc03_holding_registers_pdu(start_address: u16, quantity: u16) -> Result<ModbusPdu> {
     Ok(PduBuilder::new()
         .function_code(0x03)?
@@ -1549,7 +1549,7 @@ fn build_read_fc03_holding_registers_pdu(start_address: u16, quantity: u16) -> R
         .build())
 }
 
-/// Build Modbus PDU for FC04: Read Input Registers (读input寄存器)
+/// Build Modbus PDU for FC04: Read Input Registers
 fn build_read_fc04_input_registers_pdu(start_address: u16, quantity: u16) -> Result<ModbusPdu> {
     Ok(PduBuilder::new()
         .function_code(0x04)?
@@ -1754,7 +1754,7 @@ fn convert_bytes_to_registers_with_order(bytes: &[u8], byte_order: Option<&str>)
 async fn execute_modbus_write(
     connection_manager: &Arc<ModbusConnectionManager>,
     frame_processor: &Arc<Mutex<ModbusFrameProcessor>>,
-    channel_config: &Option<ChannelConfig>,
+    channel_config: &Option<Arc<ChannelConfig>>,
     point_id: u32,
     value: RedisValue,
     telemetry_type: TelemetryType,
@@ -2303,7 +2303,7 @@ mod tests {
 
     #[test]
     fn test_decode_register_value_bool_edge_cases() {
-        let registers = vec![0x0000]; // 全0寄存器
+        let registers = vec![0x0000]; // All-zero register
 
         // Testing FC 01/02 (coils) - 1-8 bit numbering
         for bit_pos in 1..=8 {
@@ -2370,12 +2370,12 @@ mod tests {
         let registers = vec![0x0001]; // Only bit 1 (LSB) is set
         let result = decode_register_value(&registers, "bool", None, None, Some(3))
             .expect("decoding bool with default bit position should succeed");
-        assert_eq!(result, RedisValue::Integer(1)); // default位0 = 1
+        assert_eq!(result, RedisValue::Integer(1)); // Default bit 0 = 1
     }
 
     #[test]
     fn test_decode_register_value_other_formats() {
-        // 确保otherdata格式仍然normalwork
+        // Ensure other data formats still work normally
         let registers = vec![0x1234];
 
         // Testing uint16
@@ -2401,8 +2401,8 @@ mod tests {
 
     #[test]
     fn test_reverse_logic_moved_to_data_processor() {
-        // testing reverse logic已经移到dataprocessingmodular
-        // 这个testingvalidationprotocol层不再直接processing reverse logic
+        // Testing reverse logic has been moved to data processing module
+        // This test validates that protocol layer no longer directly processes reverse logic
 
         use crate::core::config::types::{ScalingInfo, TelemetryType};
 
@@ -2458,7 +2458,7 @@ mod tests {
             scale: 0.1,
             offset: 2.0,
             unit: Some("°C".to_string()),
-            reverse: Some(true), // 应该被忽略
+            reverse: Some(true), // Should be ignored
         };
         let processed_value = data_processor::process_point_value(
             raw_value,

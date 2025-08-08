@@ -66,11 +66,8 @@ impl From<crate::core::combase::ChannelStatus> for ChannelStatus {
             protocol: "Unknown".to_string(), // Will be filled by handler
             connected: status.is_connected,
             running: status.is_connected, // Use is_connected as running status
-            last_update: DateTime::<Utc>::from_timestamp(
-                status.last_update.try_into().unwrap_or(0),
-                0,
-            )
-            .unwrap_or_else(Utc::now),
+            last_update: DateTime::<Utc>::from_timestamp(status.last_update, 0)
+                .unwrap_or_else(Utc::now),
             error_count: status.error_count.try_into().unwrap_or(u32::MAX),
             last_error: status.last_error,
             statistics: HashMap::new(), // Will be filled by handler
@@ -195,7 +192,7 @@ mod tests {
         let status = ChannelStatus {
             id: 1,
             name: "Test Channel".to_string(),
-            protocol: "ModbusTcp".to_string(),
+            protocol: "modbus_tcp".to_string(),
             connected: true,
             running: true,
             last_update: now,
@@ -206,7 +203,7 @@ mod tests {
 
         let serialized = serde_json::to_string(&status).unwrap();
         assert!(serialized.contains('1'));
-        assert!(serialized.contains("ModbusTcp"));
+        assert!(serialized.contains("modbus_tcp"));
         assert!(serialized.contains("true"));
     }
 
@@ -329,14 +326,14 @@ mod tests {
     #[test]
     fn test_protocol_factory_info_serialization() {
         let factory_info = ProtocolFactoryInfo {
-            protocol_type: "ModbusTcp".to_string(),
+            protocol_type: "modbus_tcp".to_string(),
             supported: true,
             default_config: Some(json!({"host": "127.0.0.1", "port": 502})),
             config_schema: Some(json!({"type": "object", "properties": {}})),
         };
 
         let serialized = serde_json::to_string(&factory_info).unwrap();
-        assert!(serialized.contains("ModbusTcp"));
+        assert!(serialized.contains("modbus_tcp"));
         assert!(serialized.contains("true"));
         assert!(serialized.contains("127.0.0.1"));
     }
@@ -344,19 +341,19 @@ mod tests {
     #[test]
     fn test_protocol_factory_status_serialization() {
         let mut distribution = HashMap::new();
-        distribution.insert("ModbusTcp".to_string(), 3);
-        distribution.insert("ModbusRtu".to_string(), 2);
+        distribution.insert("modbus_tcp".to_string(), 3);
+        distribution.insert("modbus_rtu".to_string(), 2);
 
         let factory_status = ProtocolFactoryStatus {
-            supported_protocols: vec!["ModbusTcp".to_string(), "ModbusRtu".to_string()],
+            supported_protocols: vec!["modbus_tcp".to_string(), "modbus_rtu".to_string()],
             total_channels: 5,
             active_channels: 4,
             channel_distribution: distribution,
         };
 
         let serialized = serde_json::to_string(&factory_status).unwrap();
-        assert!(serialized.contains("ModbusTcp"));
-        assert!(serialized.contains("ModbusRtu"));
+        assert!(serialized.contains("modbus_tcp"));
+        assert!(serialized.contains("modbus_rtu"));
         assert!(serialized.contains("\"total_channels\":5"));
         assert!(serialized.contains("\"active_channels\":4"));
     }

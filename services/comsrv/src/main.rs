@@ -21,7 +21,7 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, Layer};
 pub mod api;
 pub mod core;
 pub mod plugins;
-pub mod service;
+pub mod runtime;
 pub mod storage;
 pub mod utils;
 
@@ -32,7 +32,7 @@ pub use utils::error::{ComSrvError, Result};
 use crate::api::routes::create_api_routes;
 use crate::core::combase::factory::ProtocolFactory;
 use crate::core::config::ConfigManager;
-use crate::service::{shutdown_handler, start_cleanup_task, start_communication_service};
+use crate::runtime::{shutdown_handler, start_cleanup_task, start_communication_service};
 
 fn print_startup_banner() {
     println!();
@@ -129,7 +129,10 @@ fn initialize_logging(args: &Args) -> Result<()> {
         subscriber.with(console_layer).init();
     } else {
         // Configure file output
-        let file_path = args.log_file.as_ref().unwrap();
+        let file_path = args
+            .log_file
+            .as_ref()
+            .ok_or_else(|| ComSrvError::ConfigError("Log file path not provided".to_string()))?;
         let file_appender = RollingFileAppender::new(
             Rotation::DAILY,
             std::path::Path::new(file_path)

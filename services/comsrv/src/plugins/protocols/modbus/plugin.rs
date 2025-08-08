@@ -7,12 +7,13 @@ use serde_json::{json, Value};
 use std::collections::HashMap;
 use tracing::info;
 
-use crate::core::combase::ComBase;
+use crate::core::combase::{ComClient, ComServer};
 use crate::core::config::types::ChannelConfig;
 use crate::plugins::traits::{ConfigTemplate, ProtocolMetadata, ProtocolPlugin, ValidationRule};
 use crate::utils::error::Result;
+use std::sync::Arc;
 
-use super::core::ModbusProtocol;
+use super::protocol::ModbusProtocol;
 use super::transport::create_connection_params;
 use super::types::ModbusPollingConfig;
 
@@ -73,9 +74,12 @@ impl ProtocolPlugin for ModbusTcpPlugin {
         Ok(())
     }
 
-    async fn create_instance(&self, channel_config: ChannelConfig) -> Result<Box<dyn ComBase>> {
+    async fn create_client(
+        &self,
+        channel_config: Arc<ChannelConfig>,
+    ) -> Result<Box<dyn ComClient>> {
         info!(
-            "Creating Modbus TCP instance for channel {}",
+            "Creating Modbus TCP client for channel {}",
             channel_config.id
         );
 
@@ -86,9 +90,25 @@ impl ProtocolPlugin for ModbusTcpPlugin {
         let connection_params = create_connection_params(&channel_config)?;
 
         // Create Modbus protocol instance
-        let protocol = ModbusProtocol::new(channel_config, connection_params, polling_config)?;
+        let protocol =
+            ModbusProtocol::new((*channel_config).clone(), connection_params, polling_config)?;
 
-        Ok(Box::new(protocol))
+        Ok(Box::new(protocol) as Box<dyn ComClient>)
+    }
+
+    async fn create_server(
+        &self,
+        channel_config: Arc<ChannelConfig>,
+    ) -> Result<Box<dyn ComServer>> {
+        info!(
+            "Creating Modbus TCP server for channel {}",
+            channel_config.id
+        );
+
+        // Create Modbus server instance
+        let server = super::server::ModbusServer::new((*channel_config).clone())?;
+
+        Ok(Box::new(server) as Box<dyn ComServer>)
     }
 }
 
@@ -140,9 +160,12 @@ impl ProtocolPlugin for ModbusRtuPlugin {
         Ok(())
     }
 
-    async fn create_instance(&self, channel_config: ChannelConfig) -> Result<Box<dyn ComBase>> {
+    async fn create_client(
+        &self,
+        channel_config: Arc<ChannelConfig>,
+    ) -> Result<Box<dyn ComClient>> {
         info!(
-            "Creating Modbus RTU instance for channel {}",
+            "Creating Modbus RTU client for channel {}",
             channel_config.id
         );
 
@@ -153,9 +176,10 @@ impl ProtocolPlugin for ModbusRtuPlugin {
         let connection_params = create_connection_params(&channel_config)?;
 
         // Create Modbus protocol instance
-        let protocol = ModbusProtocol::new(channel_config, connection_params, polling_config)?;
+        let protocol =
+            ModbusProtocol::new((*channel_config).clone(), connection_params, polling_config)?;
 
-        Ok(Box::new(protocol))
+        Ok(Box::new(protocol) as Box<dyn ComClient>)
     }
 }
 

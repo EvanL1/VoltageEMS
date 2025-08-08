@@ -109,11 +109,8 @@ pub async fn get_all_channels(
                 name,
                 protocol,
                 connected: status.is_connected,
-                last_update: DateTime::<Utc>::from_timestamp(
-                    i64::try_from(status.last_update).unwrap_or(0),
-                    0,
-                )
-                .unwrap_or_else(Utc::now),
+                last_update: DateTime::<Utc>::from_timestamp(status.last_update, 0)
+                    .unwrap_or_else(Utc::now),
                 error_count: u32::try_from(status.error_count).unwrap_or(u32::MAX),
                 last_error: status.last_error,
             };
@@ -155,11 +152,8 @@ pub async fn get_channel_status(
             protocol,
             connected: channel_status.is_connected,
             running: is_running,
-            last_update: DateTime::<Utc>::from_timestamp(
-                i64::try_from(channel_status.last_update).unwrap_or(0),
-                0,
-            )
-            .unwrap_or_else(Utc::now),
+            last_update: DateTime::<Utc>::from_timestamp(channel_status.last_update, 0)
+                .unwrap_or_else(Utc::now),
             error_count: u32::try_from(channel_status.error_count).unwrap_or(u32::MAX),
             last_error: channel_status.last_error,
             statistics: diagnostics
