@@ -12,6 +12,14 @@ libs/Cargo.lock
 *.swp
 *.swo
 
+# Claude and dot files
+CLAUDE.md
+.*
+!.env
+!.gitignore
+!.github/
+!.luacheckrc
+
 # Logs
 *.log
 logs/
