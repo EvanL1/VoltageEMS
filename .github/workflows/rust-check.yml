@@ -15,6 +15,17 @@ jobs:
     name: Code Quality Check
     runs-on: ubuntu-latest
     
+    services:
+      redis:
+        image: redis:8-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    
     steps:
     - uses: actions/checkout@v4
     
@@ -54,6 +65,8 @@ jobs:
       run: cargo check --workspace
     
     - name: Run Tests
+      env:
+        REDIS_URL: redis://localhost:6379
       run: cargo test --workspace
     
     # Lua 检查 (语法 + 静态分析)
