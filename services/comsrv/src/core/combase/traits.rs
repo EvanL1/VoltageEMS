@@ -287,7 +287,14 @@ pub trait ComBase: Send + Sync {
     async fn initialize(&mut self, channel_config: Arc<ChannelConfig>) -> Result<()>;
 
     /// Read four-telemetry data (from cache or Redis)
+    /// Each telemetry type should be handled independently with its own configuration
     async fn read_four_telemetry(&self, telemetry_type: TelemetryType) -> Result<PointDataMap>;
+
+    /// Get configured points for a specific telemetry type
+    /// This helps ensure proper isolation of four-telemetry configurations
+    async fn get_configured_points(&self, _telemetry_type: TelemetryType) -> Vec<u32> {
+        Vec::new() // Default implementation returns empty
+    }
 
     /// Get diagnostic information
     async fn get_diagnostics(&self) -> Result<serde_json::Value> {

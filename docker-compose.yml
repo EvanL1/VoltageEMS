@@ -1,26 +1,6 @@
 version: '3.8'
 
 services:
-  # Nginx作为统一入口
-  nginx:
-    image: nginx:alpine
-    container_name: voltageems-nginx
-    ports:
-      - "80:80"      # HTTP入口
-      - "443:443"    # HTTPS入口（如需要）
-    volumes:
-      - ./docker/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
-      - ./docker/nginx/html:/usr/share/nginx/html:ro
-    depends_on:
-      - apigateway
-      - comsrv
-      - modsrv
-      - hissrv
-      - alarmsrv
-      - rulesrv
-    networks:
-      - voltageems
-
   # Redis with functions
   redis:
     image: voltageems-redis:latest
@@ -29,11 +9,12 @@ services:
       dockerfile: docker/redis/Dockerfile
     container_name: voltageems-redis
     ports:
-      - "6379:6379"  # 仅供开发调试，生产环境应该关闭
+      - "6379:6379"
+    environment:
+      - NO_PROXY="*"
+      - no_proxy="*"
     volumes:
       - redis-data:/data
-    networks:
-      - voltageems
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
@@ -45,7 +26,7 @@ services:
     image: influxdb:2.7-alpine
     container_name: voltageems-influxdb
     ports:
-      - "8086:8086"  # 仅供开发调试
+      - "8086:8086"
     environment:
       - DOCKER_INFLUXDB_INIT_MODE=setup
       - DOCKER_INFLUXDB_INIT_USERNAME=admin
@@ -53,21 +34,23 @@ services:
       - DOCKER_INFLUXDB_INIT_ORG=voltageems
       - DOCKER_INFLUXDB_INIT_BUCKET=ems_data
       - DOCKER_INFLUXDB_INIT_ADMIN_TOKEN=mytoken
+      - NO_PROXY="*"
+      - no_proxy="*"
     volumes:
       - influxdb-storage:/var/lib/influxdb2
-    networks:
-      - voltageems
 
   # Modbus模拟器
   modbus-simulator:
+    image: voltageems-modbus-sim:latest
     build:
-      context: ./test-docker/modbus-simulator
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: docker/modbus-sim/Dockerfile
     container_name: voltageems-modbus-sim
     ports:
-      - "5020:5020"  # 仅供开发调试
-    networks:
-      - voltageems
+      - "5020:502"
+    environment:
+      - NO_PROXY="*"
+      - no_proxy="*"
 
   # API Gateway - 专注于数据聚合和业务逻辑
   apigateway:
@@ -76,18 +59,19 @@ services:
       context: .
       dockerfile: services/apigateway/Dockerfile
     container_name: voltageems-apigateway
-    # 不再对外暴露端口，通过nginx访问
+    ports:
+      - "6005:6005"
     environment:
       - RUST_LOG=debug,apigateway=trace
       - REDIS_URL=redis://redis:6379
       - JWT_SECRET=your-secret-key-change-in-production
+      - NO_PROXY="*"
+      - no_proxy="*"
     depends_on:
-      redis:
-        condition: service_healthy
+      - redis
     volumes:
-      - ./services/apigateway/config:/app/config:ro
-    networks:
-      - voltageems
+      - ./config/apigateway:/app/config:ro
+      - ./logs/apigateway:/app/logs
 
   # 通信服务
   comsrv:
@@ -96,22 +80,20 @@ services:
       context: .
       dockerfile: services/comsrv/Dockerfile
     container_name: voltageems-comsrv
-    # 端口仅供调试，生产环境通过nginx访问
     ports:
-      - "3000:3000"   # gRPC调试
-      - "6000:6000"   # HTTP API调试
+      - "6000:6000"
     environment:
-      - RUST_LOG=info,comsrv=debug
+      - RUST_LOG=debug
       - REDIS_URL=redis://redis:6379
       - CSV_BASE_PATH=/app/config
+      - NO_PROXY="*"
+      - no_proxy="*"
     depends_on:
-      redis:
-        condition: service_healthy
+      - redis
     volumes:
-      - ./config:/app/config:ro
-    command: ["/app/comsrv", "-c", "/app/config/comsrv/comsrv.yaml"]
-    networks:
-      - voltageems
+      - ./config/comsrv:/app/config:ro
+      - ./logs/comsrv:/app/logs
+    command: ["/app/comsrv", "-c", "/app/config/comsrv.yaml"]
 
   # 模型服务
   modsrv:
@@ -120,16 +102,18 @@ services:
       context: .
       dockerfile: services/modsrv/Dockerfile
     container_name: voltageems-modsrv
+    ports:
+      - "6001:6001"
     environment:
       - RUST_LOG=info,modsrv=debug
       - REDIS_URL=redis://redis:6379
+      - NO_PROXY="*"
+      - no_proxy="*"
     depends_on:
-      redis:
-        condition: service_healthy
+      - redis
     volumes:
       - ./config/modsrv:/app/config:ro
-    networks:
-      - voltageems
+      - ./logs/modsrv:/app/logs
 
   # 历史服务
   hissrv:
@@ -138,6 +122,8 @@ services:
       context: .
       dockerfile: services/hissrv/Dockerfile
     container_name: voltageems-hissrv
+    ports:
+      - "6004:6004"
     environment:
       - RUST_LOG=info,hissrv=debug
       - REDIS_URL=redis://redis:6379
@@ -145,15 +131,14 @@ services:
       - INFLUXDB_TOKEN=mytoken
       - INFLUXDB_ORG=voltageems
       - INFLUXDB_BUCKET=ems_data
+      - NO_PROXY="*"
+      - no_proxy="*"
     depends_on:
-      redis:
-        condition: service_healthy
-      influxdb:
-        condition: service_started
+      - redis
+      - influxdb
     volumes:
-      - ./services/hissrv/config:/app/config:ro
-    networks:
-      - voltageems
+      - ./config/hissrv:/app/config:ro
+      - ./logs/hissrv:/app/logs
 
   # 告警服务
   alarmsrv:
@@ -162,16 +147,18 @@ services:
       context: .
       dockerfile: services/alarmsrv/Dockerfile
     container_name: voltageems-alarmsrv
+    ports:
+      - "6002:6002"
     environment:
       - RUST_LOG=info,alarmsrv=debug
       - REDIS_URL=redis://redis:6379
+      - NO_PROXY="*"
+      - no_proxy="*"
     depends_on:
-      redis:
-        condition: service_healthy
+      - redis
     volumes:
-      - ./services/alarmsrv/config:/app/config:ro
-    networks:
-      - voltageems
+      - ./config/alarmsrv:/app/config:ro
+      - ./logs/alarmsrv:/app/logs
 
   # 规则引擎服务
   rulesrv:
@@ -180,20 +167,18 @@ services:
       context: .
       dockerfile: services/rulesrv/Dockerfile
     container_name: voltageems-rulesrv
+    ports:
+      - "6003:6003"
     environment:
       - RUST_LOG=info,rulesrv=debug
       - REDIS_URL=redis://redis:6379
+      - NO_PROXY="*"
+      - no_proxy="*"
     depends_on:
-      redis:
-        condition: service_healthy
+      - redis
     volumes:
-      - ./services/rulesrv/config:/app/config:ro
-    networks:
-      - voltageems
-
-networks:
-  voltageems:
-    driver: bridge
+      - ./config/rulesrv:/app/config:ro
+      - ./logs/rulesrv:/app/logs
 
 volumes:
   redis-data:

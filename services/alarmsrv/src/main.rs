@@ -96,12 +96,12 @@ async fn main() -> Result<()> {
         .route("/health", get(health_check))
         // 告警管理
         .route("/api/alarms", get(list_alarms).post(trigger_alarm))
-        .route("/api/alarms/:id", get(get_alarm).delete(clear_alarm))
-        .route("/api/alarms/:id/acknowledge", post(acknowledge_alarm))
+        .route("/api/alarms/{id}", get(get_alarm).delete(clear_alarm))
+        .route("/api/alarms/{id}/acknowledge", post(acknowledge_alarm))
         // 告警配置
         .route("/api/alarm-rules", get(list_rules).post(create_rule))
         .route(
-            "/api/alarm-rules/:id",
+            "/api/alarm-rules/{id}",
             get(get_rule)
                 .put(update_rule)
                 .delete(delete_rule),

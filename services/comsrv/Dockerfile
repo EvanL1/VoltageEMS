@@ -1,45 +1,17 @@
-# Build stage
-FROM rust:1.88-bullseye AS builder
+# Build stage - 使用预编译的依赖
+FROM voltageems-dependencies:latest AS builder
 
 # Install protobuf-compiler
 RUN apt-get update && apt-get install -y protobuf-compiler && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
-# First stage: Copy dependency files only
+# 复制必要的配置文件
 COPY Cargo.toml Cargo.lock ./
-COPY libs/Cargo.toml ./libs/
-COPY services/comsrv/Cargo.toml ./services/comsrv/
-COPY services/alarmsrv/Cargo.toml ./services/alarmsrv/
-COPY services/hissrv/Cargo.toml ./services/hissrv/
-COPY services/rulesrv/Cargo.toml ./services/rulesrv/
-COPY services/modsrv/Cargo.toml ./services/modsrv/
-COPY services/apigateway/Cargo.toml ./services/apigateway/
-COPY services/netsrv/Cargo.toml ./services/netsrv/
-
-# Copy libs source first (it rarely changes)
 COPY libs ./libs
-
-# Create dummy source files for services only
-RUN mkdir -p services/comsrv/src && echo "fn main() {}" > services/comsrv/src/main.rs && \
-    mkdir -p services/alarmsrv/src && echo "fn main() {}" > services/alarmsrv/src/main.rs && \
-    mkdir -p services/hissrv/src && echo "fn main() {}" > services/hissrv/src/main.rs && \
-    mkdir -p services/rulesrv/src && echo "fn main() {}" > services/rulesrv/src/main.rs && \
-    mkdir -p services/modsrv/src && echo "fn main() {}" > services/modsrv/src/main.rs && \
-    mkdir -p services/apigateway/src && echo "fn main() {}" > services/apigateway/src/main.rs && \
-    mkdir -p services/netsrv/src && echo "fn main() {}" > services/netsrv/src/main.rs
-
-# Build dependencies - this layer will be cached
-RUN cargo build --release -p comsrv
-
-# Second stage: Copy actual source code  
-# libs is already copied, only copy services
 COPY services ./services
 
-# Touch main.rs to ensure rebuild
-RUN touch services/comsrv/src/main.rs
-
-# Build final binary
+# 直接构建最终二进制文件（依赖已经在基础镜像中编译好了）
 RUN cargo build --release -p comsrv
 
 # Runtime stage
@@ -54,10 +26,6 @@ WORKDIR /app
 
 # Copy binary
 COPY --from=builder /app/target/release/comsrv /app/comsrv
-
-# Copy config and plugins if exists
-# COPY --from=builder /app/services/comsrv/config ./config
-# COPY --from=builder /app/services/comsrv/plugins ./plugins
 
 # Create log and config directories
 RUN mkdir -p /app/logs /app/config

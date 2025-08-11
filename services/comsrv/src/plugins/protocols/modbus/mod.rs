@@ -22,7 +22,7 @@ pub use connection::{
     ConnectionParams, ModbusConnection, ModbusConnectionManager, ModbusMode as ConnectionMode,
 };
 pub use plugin::{ModbusRtuPlugin, ModbusTcpPlugin};
-pub use protocol::{ModbusCore, ModbusProtocol};
+pub use protocol::ModbusProtocol;
 pub use server::ModbusServer;
 pub use transport::{ModbusFrameProcessor, ModbusMode};
 pub use types::{

@@ -31,6 +31,8 @@ pub trait ProtocolClientFactory: Send + Sync {
     fn protocol_type(&self) -> ProtocolType;
 
     /// Create protocol client instance
+    /// The factory should ensure that the created client properly isolates
+    /// telemetry, signal, control, and adjustment point configurations
     async fn create_client(
         &self,
         channel_config: &ChannelConfig,
@@ -255,6 +257,8 @@ impl ProtocolFactory {
         &self,
         channel_config: &ChannelConfig,
     ) -> Result<Arc<RwLock<Box<dyn ComClient>>>> {
+        // Clone channel config to make it mutable for loading CSV configurations
+        let mut channel_config = channel_config.clone();
         let channel_id = channel_config.id;
 
         // Step 1: Validate channel doesn't exist
@@ -266,9 +270,20 @@ impl ProtocolFactory {
             e
         })?;
 
-        // Step 2: Prepare protocol client
+        // Step 2: Load CSV configurations FIRST (before creating protocol)
+        self.load_csv_configurations(&mut channel_config).await?;
+        info!(
+            "Loaded CSV configurations for channel {}: {} telemetry, {} signal, {} control, {} adjustment points",
+            channel_id,
+            channel_config.telemetry_points.len(),
+            channel_config.signal_points.len(),
+            channel_config.control_points.len(),
+            channel_config.adjustment_points.len()
+        );
+
+        // Step 3: Prepare protocol client (with loaded configurations)
         let (mut client, protocol_type) = self
-            .prepare_protocol_client(channel_config)
+            .prepare_protocol_client(&channel_config)
             .await
             .map_err(|e| {
                 error!(
@@ -278,19 +293,8 @@ impl ProtocolFactory {
                 e
             })?;
 
-        // Step 3: Initialize protocol
-        self.initialize_protocol(&mut client, channel_config)
-            .await
-            .map_err(|e| {
-                error!(
-                    "Failed to initialize protocol {:?} for channel {}: {}",
-                    protocol_type, channel_id, e
-                );
-                e
-            })?;
-
         // Step 4: Setup Redis storage
-        self.setup_redis_storage(channel_config)
+        self.setup_redis_storage(&channel_config)
             .await
             .map_err(|e| {
                 error!(
@@ -300,7 +304,18 @@ impl ProtocolFactory {
                 e
             })?;
 
-        // Step 5: Setup command trigger
+        // Step 5: Initialize protocol (with loaded configurations)
+        self.initialize_protocol(&mut client, &channel_config)
+            .await
+            .map_err(|e| {
+                error!(
+                    "Failed to initialize protocol {:?} for channel {}: {}",
+                    protocol_type, channel_id, e
+                );
+                e
+            })?;
+
+        // Step 6: Setup command trigger
         let (command_trigger, rx) = self.setup_command_trigger(channel_id).await.map_err(|e| {
             error!(
                 "Failed to setup command trigger for channel {}: {}",
@@ -310,12 +325,12 @@ impl ProtocolFactory {
         })?;
         client.set_command_receiver(rx);
 
-        // Step 6: Register channel entry
+        // Step 7: Register channel entry
         let channel_arc = Arc::new(RwLock::new(client));
         self.register_channel_entry(
             channel_id,
             channel_arc.clone(),
-            channel_config,
+            &channel_config,
             protocol_type,
             command_trigger,
         );
@@ -412,6 +427,183 @@ impl ProtocolFactory {
         Ok(())
     }
 
+    /// Load CSV configurations into channel config
+    async fn load_csv_configurations(&self, channel_config: &mut ChannelConfig) -> Result<()> {
+        use std::path::PathBuf;
+
+        let channel_id = channel_config.id;
+        info!("Loading CSV configurations for channel {}", channel_id);
+
+        // Get csv_base_path from environment or use default
+        let csv_base_path =
+            std::env::var("CSV_BASE_PATH").unwrap_or_else(|_| "/app/config".to_string());
+        let csv_base_path = PathBuf::from(csv_base_path);
+        let channel_dir = csv_base_path.join(channel_id.to_string());
+
+        // Fixed file names for each telemetry type
+        let telemetry_types = vec![
+            ("telemetry", "telemetry.csv", "T"),
+            ("signal", "signal.csv", "S"),
+            ("control", "control.csv", "C"),
+            ("adjustment", "adjustment.csv", "A"),
+        ];
+
+        for (telemetry_name, file_name, redis_type) in telemetry_types {
+            let file_path = channel_dir.join(file_name);
+            let mapping_file = channel_dir
+                .join("mapping")
+                .join(format!("{}_mapping.csv", telemetry_name));
+
+            if !file_path.exists() {
+                info!(
+                    "Skipping {} for channel {}: file not found at {:?}",
+                    telemetry_name, channel_id, file_path
+                );
+                continue;
+            }
+
+            // Read the mapping file first
+            let mapping_data = if mapping_file.exists() {
+                let mut mapping_reader = csv::Reader::from_path(&mapping_file).map_err(|e| {
+                    ComSrvError::ConfigError(format!(
+                        "Failed to read {} mapping file: {e}",
+                        telemetry_name
+                    ))
+                })?;
+                let mut mappings = std::collections::HashMap::new();
+                for result in mapping_reader.records() {
+                    let record = result.map_err(|e| {
+                        ComSrvError::ConfigError(format!("Error reading mapping CSV record: {e}"))
+                    })?;
+                    // Expecting: point_id, slave_id, function_code, register_address, data_type, byte_order
+                    if let (
+                        Some(point_id_str),
+                        Some(slave_id),
+                        Some(function_code),
+                        Some(register_address),
+                    ) = (record.get(0), record.get(1), record.get(2), record.get(3))
+                    {
+                        if let Ok(point_id) = point_id_str.parse::<u32>() {
+                            let mut params = std::collections::HashMap::new();
+                            params.insert("slave_id".to_string(), slave_id.to_string());
+                            params.insert("function_code".to_string(), function_code.to_string());
+                            params.insert(
+                                "register_address".to_string(),
+                                register_address.to_string(),
+                            );
+                            if let Some(data_type) = record.get(4) {
+                                params.insert("data_type".to_string(), data_type.to_string());
+                            }
+                            if let Some(byte_order) = record.get(5) {
+                                params.insert("byte_order".to_string(), byte_order.to_string());
+                            }
+                            mappings.insert(point_id, params);
+                        }
+                    }
+                }
+                Some(mappings)
+            } else {
+                info!(
+                    "No mapping file found for {} at {:?}",
+                    telemetry_name, mapping_file
+                );
+                None
+            };
+
+            // Read point definitions and combine with mapping
+            let mut reader = csv::Reader::from_path(&file_path).map_err(|e| {
+                ComSrvError::ConfigError(format!("Failed to read {telemetry_name} CSV file: {e}"))
+            })?;
+
+            for result in reader.records() {
+                let record = result.map_err(|e| {
+                    ComSrvError::ConfigError(format!("Error reading CSV record: {e}"))
+                })?;
+
+                // Get point_id (first column) and other fields
+                if let Some(point_id_str) = record.get(0) {
+                    if let Ok(point_id) = point_id_str.parse::<u32>() {
+                        // Create CombinedPoint if we have mapping data
+                        if let Some(ref mapping_data) = mapping_data {
+                            if let Some(protocol_params) = mapping_data.get(&point_id) {
+                                // Parse scaling info from CSV columns
+                                let scale = record.get(2).and_then(|s| s.parse::<f64>().ok());
+                                let offset = record.get(3).and_then(|s| s.parse::<f64>().ok());
+                                let unit = record
+                                    .get(4)
+                                    .filter(|s| !s.is_empty())
+                                    .map(|s| s.to_string());
+                                let reverse_str = record.get(5);
+                                let reverse = reverse_str.and_then(|s| s.parse::<bool>().ok());
+
+                                debug!(
+                                    "Parsing reverse for {} point {}: raw_str={:?}, parsed={:?}",
+                                    telemetry_name, point_id, reverse_str, reverse
+                                );
+
+                                let scaling =
+                                    if scale.is_some() || offset.is_some() || reverse.is_some() {
+                                        Some(crate::core::config::ScalingInfo {
+                                            scale: scale.unwrap_or(1.0),
+                                            offset: offset.unwrap_or(0.0),
+                                            unit,
+                                            reverse,
+                                        })
+                                    } else {
+                                        None
+                                    };
+
+                                info!(
+                                    "Loading {} point {}: scale={:?}, offset={:?}, reverse={:?}, scaling={:?}",
+                                    telemetry_name, point_id, scale, offset, reverse, scaling
+                                );
+
+                                let combined_point = crate::core::config::CombinedPoint {
+                                    point_id,
+                                    signal_name: record.get(1).unwrap_or("").to_string(),
+                                    telemetry_type: redis_type.to_string(),
+                                    data_type: protocol_params
+                                        .get("data_type")
+                                        .cloned()
+                                        .unwrap_or_else(|| "float32".to_string()),
+                                    protocol_params: protocol_params.clone(),
+                                    scaling,
+                                };
+
+                                // Add to appropriate HashMap in channel_config
+                                match telemetry_name {
+                                    "telemetry" => {
+                                        channel_config
+                                            .telemetry_points
+                                            .insert(point_id, combined_point);
+                                    },
+                                    "signal" => {
+                                        channel_config
+                                            .signal_points
+                                            .insert(point_id, combined_point);
+                                    },
+                                    "control" => {
+                                        channel_config
+                                            .control_points
+                                            .insert(point_id, combined_point);
+                                    },
+                                    "adjustment" => {
+                                        channel_config
+                                            .adjustment_points
+                                            .insert(point_id, combined_point);
+                                    },
+                                    _ => {},
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(())
+    }
+
     /// Setup Redis storage and initialize channel points
     async fn setup_redis_storage(&self, channel_config: &ChannelConfig) -> Result<()> {
         let channel_id = channel_config.id;
@@ -425,7 +617,7 @@ impl ProtocolFactory {
             .map_err(|e| ComSrvError::Storage(format!("Failed to connect to Redis: {e}")))?;
         info!("Redis client created successfully");
 
-        self.initialize_channel_points(channel_config, &mut redis_client)
+        self.initialize_channel_points_to_redis(channel_config, &mut redis_client)
             .await?;
         info!("Redis keys initialized for channel {}", channel_id);
 
@@ -714,15 +906,33 @@ impl ProtocolFactory {
                             let processed_value = if let Some(ref config) = channel_config {
                                 // Apply scaling from channel config
                                 if let Some(point_config) = config.telemetry_points.get(&point_id) {
-                                    crate::core::data_processor::process_point_value(
-                                        raw_value,
-                                        &crate::core::config::TelemetryType::Telemetry,
-                                        point_config.scaling.as_ref(),
-                                    )
+                                    debug!(
+                                        "Processing telemetry point {}: raw={}, scaling={:?}",
+                                        point_id, raw_value, point_config.scaling
+                                    );
+                                    let processed =
+                                        crate::core::data_processor::process_point_value(
+                                            raw_value,
+                                            &crate::core::config::TelemetryType::Telemetry,
+                                            point_config.scaling.as_ref(),
+                                        );
+                                    debug!(
+                                        "Telemetry point {} processed: raw={} -> processed={}",
+                                        point_id, raw_value, processed
+                                    );
+                                    processed
                                 } else {
+                                    warn!(
+                                        "Telemetry point {} not found in config, using raw value {}",
+                                        point_id, raw_value
+                                    );
                                     raw_value
                                 }
                             } else {
+                                warn!(
+                                    "No channel config for channel {}, using raw value {} for point {}",
+                                    batch.channel_id, raw_value, point_id
+                                );
                                 raw_value
                             };
 
@@ -741,8 +951,8 @@ impl ProtocolFactory {
                                 // Apply scaling/reverse from channel config
                                 if let Some(point_config) = config.signal_points.get(&point_id) {
                                     debug!(
-                                        "Processing signal point {}: raw={}, scaling={:?}",
-                                        point_id, raw_value, point_config.scaling
+                                        "Channel {} processing signal point {}: raw={}, scaling={:?}",
+                                        batch.channel_id, point_id, raw_value, point_config.scaling
                                     );
                                     let processed =
                                         crate::core::data_processor::process_point_value(
@@ -909,68 +1119,39 @@ impl ProtocolFactory {
     }
 
     /// Initialize all channel points to Redis using batch Lua function
-    async fn initialize_channel_points(
+    async fn initialize_channel_points_to_redis(
         &self,
         channel_config: &ChannelConfig,
         redis_client: &mut voltage_libs::redis::RedisClient,
     ) -> Result<()> {
-        use std::path::PathBuf;
-
         info!(
-            "Starting initialize_channel_points for channel {}",
-            channel_config.id
+            "Initializing channel {} points to Redis: {} telemetry, {} signal, {} control, {} adjustment",
+            channel_config.id,
+            channel_config.telemetry_points.len(),
+            channel_config.signal_points.len(),
+            channel_config.control_points.len(),
+            channel_config.adjustment_points.len()
         );
 
-        // Fixed directory structure - CSV files are always in config/comsrv/{channel_id}/
-        let csv_base_path = PathBuf::from("config/comsrv");
-        let channel_dir = csv_base_path.join(channel_config.id.to_string());
-
-        // Fixed file names for each telemetry type
+        // Initialize each telemetry type from channel_config
         let telemetry_types = vec![
-            ("telemetry", "telemetry.csv", "T"),
-            ("signal", "signal.csv", "S"),
-            ("control", "control.csv", "C"),
-            ("adjustment", "adjustment.csv", "A"),
+            ("telemetry", "T", &channel_config.telemetry_points),
+            ("signal", "S", &channel_config.signal_points),
+            ("control", "C", &channel_config.control_points),
+            ("adjustment", "A", &channel_config.adjustment_points),
         ];
 
-        for (telemetry_name, file_name, redis_type) in telemetry_types {
-            let file_path = channel_dir.join(file_name);
-
-            if !file_path.exists() {
-                info!(
-                    "Skipping {} initialization for channel {}: file not found at {:?}",
-                    telemetry_name, channel_config.id, file_path
-                );
-                continue;
-            }
-
-            // Read CSV file to get point ID list
-            let mut reader = csv::Reader::from_path(&file_path).map_err(|e| {
-                ComSrvError::ConfigError(format!("Failed to read {telemetry_name} CSV file: {e}"))
-            })?;
-
-            // Collect all point IDs from CSV
-            let mut point_ids = Vec::new();
-            for result in reader.records() {
-                let record = result.map_err(|e| {
-                    ComSrvError::ConfigError(format!("Error reading CSV record: {e}"))
-                })?;
-
-                // Get point_id (first column)
-                if let Some(point_id_str) = record.get(0) {
-                    if let Ok(point_id) = point_id_str.parse::<u32>() {
-                        point_ids.push(point_id);
-                    }
-                }
-            }
-
-            if point_ids.is_empty() {
-                info!(
-                    "No valid point IDs found in {} file for channel {}",
+        for (telemetry_name, redis_type, points) in telemetry_types {
+            if points.is_empty() {
+                debug!(
+                    "No {} points configured for channel {}",
                     telemetry_name, channel_config.id
                 );
                 continue;
             }
+
+            // Collect point IDs from the HashMap
+            let point_ids: Vec<u32> = points.keys().copied().collect();
 
             // Use Lua function for batch initialization
             let start_time = std::time::Instant::now();

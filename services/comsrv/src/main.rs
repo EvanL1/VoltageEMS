@@ -333,17 +333,18 @@ async fn main() -> Result<()> {
     // Start the server with graceful shutdown
     let server = serve(listener, app);
 
-    // Wait for shutdown signal
-    let shutdown_future = shutdown_handler(factory.clone());
+    // Setup shutdown signal handler
+    let shutdown_signal = async move {
+        tokio::signal::ctrl_c()
+            .await
+            .expect("Failed to install CTRL+C signal handler");
+        info!("Received shutdown signal");
+        shutdown_handler(factory.clone()).await;
+    };
 
     // Run server until shutdown signal
     let server_handle = tokio::spawn(async move {
-        if let Err(e) = server
-            .with_graceful_shutdown(async move {
-                shutdown_future.await;
-            })
-            .await
-        {
+        if let Err(e) = server.with_graceful_shutdown(shutdown_signal).await {
             error!("Server error: {}", e);
         }
     });

@@ -23,40 +23,6 @@ use super::pdu::{ModbusPdu, PduBuilder};
 use super::transport::{ModbusFrameProcessor, ModbusMode};
 use super::types::{ModbusPoint, ModbusPollingConfig};
 
-/// Modbus protocol core engine
-#[derive(Debug)]
-pub struct ModbusCore {
-    /// Polling configuration
-    _polling_config: Arc<ModbusPollingConfig>,
-    /// Point mapping table
-    _points: HashMap<String, ModbusPoint>,
-}
-
-impl ModbusCore {
-    /// Create new Modbus core engine
-    pub fn new(_mode: ModbusMode, polling_config: Arc<ModbusPollingConfig>) -> Self {
-        Self {
-            _polling_config: polling_config,
-            _points: HashMap::new(),
-        }
-    }
-
-    /// Set point mapping table
-    pub fn set_points(&mut self, points: Vec<ModbusPoint>) {
-        self._points.clear();
-        for point in points {
-            self._points.insert(point.point_id.clone(), point);
-        }
-        info!(
-            "Loaded {} Modbus points for protocol processing",
-            self._points.len()
-        );
-    }
-
-    // TODO: Implement complete polling and batch reading functionality
-    // Currently commenting out complex implementation to pass compilation
-}
-
 /// Modbus protocol implementation, implements `ComBase` trait
 pub struct ModbusProtocol {
     /// Protocol name
@@ -66,8 +32,7 @@ pub struct ModbusProtocol {
     /// Channel configuration
     channel_config: Option<Arc<ChannelConfig>>, // Use Arc to avoid cloning
 
-    /// Core components
-    core: Arc<Mutex<ModbusCore>>,
+    /// Connection manager
     connection_manager: Arc<ModbusConnectionManager>,
     /// Frame processor for request/response correlation
     frame_processor: Arc<Mutex<ModbusFrameProcessor>>,
@@ -82,8 +47,11 @@ pub struct ModbusProtocol {
 
     /// Polling configuration
     polling_config: Arc<ModbusPollingConfig>, // Use Arc to avoid cloning
-    /// Point mapping
-    points: Arc<RwLock<Vec<ModbusPoint>>>,
+    /// Point mapping - separated by telemetry type for proper isolation
+    telemetry_points: Arc<RwLock<Vec<ModbusPoint>>>,
+    signal_points: Arc<RwLock<Vec<ModbusPoint>>>,
+    control_points: Arc<RwLock<Vec<ModbusPoint>>>,
+    adjustment_points: Arc<RwLock<Vec<ModbusPoint>>>,
 
     /// Data channel for sending telemetry data
     data_channel: Option<tokio::sync::mpsc::Sender<TelemetryBatch>>,
@@ -123,7 +91,6 @@ impl ModbusProtocol {
         };
 
         let polling_config = Arc::new(polling_config); // Wrap in Arc once
-        let core = ModbusCore::new(mode.clone(), Arc::clone(&polling_config));
         let connection_manager =
             Arc::new(ModbusConnectionManager::new(conn_mode, connection_params));
         let frame_processor = Arc::new(Mutex::new(ModbusFrameProcessor::new(mode)));
@@ -132,7 +99,6 @@ impl ModbusProtocol {
             name: channel_config.name.clone().into(),
             channel_id: channel_config.id,
             channel_config: Some(Arc::new(channel_config)), // Wrap in Arc
-            core: Arc::new(Mutex::new(core)),
             connection_manager,
             frame_processor,
             is_connected: Arc::new(RwLock::new(false)),
@@ -140,7 +106,10 @@ impl ModbusProtocol {
             polling_handle: Arc::new(RwLock::new(None)),
             command_handle: Arc::new(RwLock::new(None)),
             polling_config,
-            points: Arc::new(RwLock::new(Vec::new())),
+            telemetry_points: Arc::new(RwLock::new(Vec::new())),
+            signal_points: Arc::new(RwLock::new(Vec::new())),
+            control_points: Arc::new(RwLock::new(Vec::new())),
+            adjustment_points: Arc::new(RwLock::new(Vec::new())),
             data_channel: None,
             command_rx: Arc::new(RwLock::new(None)),
         })
@@ -154,8 +123,14 @@ impl ModbusProtocol {
 
         let mut result = HashMap::new();
 
-        // Filter points based on telemetry type
-        let points = self.points.read().await;
+        // Select the correct point list based on telemetry type
+        let points = match telemetry_type {
+            TelemetryType::Telemetry => self.telemetry_points.read().await,
+            TelemetryType::Signal => self.signal_points.read().await,
+            TelemetryType::Control => self.control_points.read().await,
+            TelemetryType::Adjustment => self.adjustment_points.read().await,
+        };
+
         let channel_config = self
             .channel_config
             .as_ref()
@@ -220,14 +195,12 @@ impl ComBase for ModbusProtocol {
             "Channel {} - Step 2: Loading point configurations",
             channel_config.id
         );
-        let mut modbus_points = Vec::new();
 
-        // Only add telemetry and signal points to polling list
-        // Control and adjustment points are write-only, handled via command channel
-        let polling_points = vec![
-            &channel_config.telemetry_points,
-            &channel_config.signal_points,
-        ];
+        // Create separate collections for each telemetry type
+        let mut telemetry_modbus_points = Vec::new();
+        let mut signal_modbus_points = Vec::new();
+        let mut control_modbus_points = Vec::new();
+        let mut adjustment_modbus_points = Vec::new();
 
         let total_configured_points = channel_config.telemetry_points.len()
             + channel_config.signal_points.len()
@@ -243,91 +216,225 @@ impl ComBase for ModbusProtocol {
             channel_config.adjustment_points.len()
         );
 
-        for point_map in polling_points {
-            for point in point_map.values() {
-                // Read fields directly from protocol_params
-                if let (Some(slave_id_str), Some(function_code_str), Some(register_address_str)) = (
-                    point.protocol_params.get("slave_id"),
-                    point.protocol_params.get("function_code"),
-                    point.protocol_params.get("register_address"),
+        // Process telemetry points
+        for point in channel_config.telemetry_points.values() {
+            // Read fields directly from protocol_params
+            if let (Some(slave_id_str), Some(function_code_str), Some(register_address_str)) = (
+                point.protocol_params.get("slave_id"),
+                point.protocol_params.get("function_code"),
+                point.protocol_params.get("register_address"),
+            ) {
+                if let (Ok(slave_id), Ok(function_code), Ok(register_address)) = (
+                    slave_id_str.parse::<u8>(),
+                    function_code_str.parse::<u8>(),
+                    register_address_str.parse::<u16>(),
                 ) {
-                    if let (Ok(slave_id), Ok(function_code), Ok(register_address)) = (
-                        slave_id_str.parse::<u8>(),
-                        function_code_str.parse::<u8>(),
-                        register_address_str.parse::<u16>(),
-                    ) {
-                        // Get data type
-                        let data_type = point
+                    // Get data type
+                    let data_type = point
+                        .protocol_params
+                        .get("data_type")
+                        .unwrap_or(&"uint16".to_string())
+                        .to_string();
+
+                    // Auto-determine register count based on data type
+                    let register_count = point
+                        .protocol_params
+                        .get("register_count")
+                        .and_then(|v| v.parse::<u16>().ok())
+                        .unwrap_or(match data_type.as_str() {
+                            "float32" | "float32_be" | "float32_le" => 2,
+                            "uint32" | "int32" | "uint32_be" | "uint32_le" => 2,
+                            "float64" | "float64_be" | "float64_le" => 4,
+                            "uint64" | "int64" => 4,
+                            _ => 1, // Default for uint16, int16, bool, etc.
+                        });
+
+                    info!(
+                        "Loaded Modbus point: id={}, slave={}, func={}, addr={}, format={}, reg_count={}, bit_pos={:?}, type={}",
+                        point.point_id,
+                        slave_id,
+                        function_code,
+                        register_address,
+                        &data_type,
+                        register_count,
+                        point.protocol_params.get("bit_position"),
+                        &point.telemetry_type
+                    );
+
+                    let modbus_point = ModbusPoint {
+                        point_id: point.point_id.to_string(),
+                        slave_id,
+                        function_code,
+                        register_address,
+                        data_type,
+                        register_count,
+                        byte_order: point.protocol_params.get("byte_order").cloned(),
+                        bit_position: point
                             .protocol_params
-                            .get("data_type")
-                            .unwrap_or(&"uint16".to_string())
-                            .to_string();
+                            .get("bit_position")
+                            .and_then(|v| v.parse::<u8>().ok()),
+                    };
 
-                        debug!(
-                            "Loaded Modbus point: id={}, slave={}, func={}, addr={}, format={}, bit_pos={:?}, type={}",
-                            point.point_id,
-                            slave_id,
-                            function_code,
-                            register_address,
-                            &data_type,
-                            point.protocol_params.get("bit_position"),
-                            &point.telemetry_type
-                        );
-
-                        let modbus_point = ModbusPoint {
-                            point_id: point.point_id.to_string(),
-                            slave_id,
-                            function_code,
-                            register_address,
-                            data_type,
-                            register_count: point
-                                .protocol_params
-                                .get("register_count")
-                                .and_then(|v| v.parse::<u16>().ok())
-                                .unwrap_or(1),
-                            byte_order: point.protocol_params.get("byte_order").cloned(),
-                            bit_position: point
-                                .protocol_params
-                                .get("bit_position")
-                                .and_then(|v| v.parse::<u8>().ok()),
-                        };
-
-                        modbus_points.push(modbus_point);
-                    } else {
-                        warn!(
-                            "Failed to parse Modbus parameters for point {}: slave_id={}, function_code={}, register_address={}",
-                            point.point_id, slave_id_str, function_code_str, register_address_str
-                        );
-                    }
+                    telemetry_modbus_points.push(modbus_point);
                 } else {
                     warn!(
-                        "Missing Modbus parameters for point {}: {:?}",
-                        point.point_id, point.protocol_params
+                        "Failed to parse Modbus parameters for point {}: slave_id={}, function_code={}, register_address={}",
+                        point.point_id, slave_id_str, function_code_str, register_address_str
                     );
+                }
+            } else {
+                warn!(
+                    "Missing Modbus parameters for point {}: {:?}",
+                    point.point_id, point.protocol_params
+                );
+            }
+        }
+
+        // Process signal points
+        for point in channel_config.signal_points.values() {
+            if let (Some(slave_id_str), Some(function_code_str), Some(register_address_str)) = (
+                point.protocol_params.get("slave_id"),
+                point.protocol_params.get("function_code"),
+                point.protocol_params.get("register_address"),
+            ) {
+                if let (Ok(slave_id), Ok(function_code), Ok(register_address)) = (
+                    slave_id_str.parse::<u8>(),
+                    function_code_str.parse::<u8>(),
+                    register_address_str.parse::<u16>(),
+                ) {
+                    let data_type = point
+                        .protocol_params
+                        .get("data_type")
+                        .unwrap_or(&"uint16".to_string())
+                        .to_string();
+
+                    let register_count = point
+                        .protocol_params
+                        .get("register_count")
+                        .and_then(|v| v.parse::<u16>().ok())
+                        .unwrap_or(1);
+
+                    let modbus_point = ModbusPoint {
+                        point_id: point.point_id.to_string(),
+                        slave_id,
+                        function_code,
+                        register_address,
+                        data_type,
+                        register_count,
+                        byte_order: point.protocol_params.get("byte_order").cloned(),
+                        bit_position: point
+                            .protocol_params
+                            .get("bit_position")
+                            .and_then(|v| v.parse::<u8>().ok()),
+                    };
+                    signal_modbus_points.push(modbus_point);
+                }
+            }
+        }
+
+        // Process control points (for write operations)
+        for point in channel_config.control_points.values() {
+            if let (Some(slave_id_str), Some(function_code_str), Some(register_address_str)) = (
+                point.protocol_params.get("slave_id"),
+                point.protocol_params.get("function_code"),
+                point.protocol_params.get("register_address"),
+            ) {
+                if let (Ok(slave_id), Ok(function_code), Ok(register_address)) = (
+                    slave_id_str.parse::<u8>(),
+                    function_code_str.parse::<u8>(),
+                    register_address_str.parse::<u16>(),
+                ) {
+                    let data_type = point
+                        .protocol_params
+                        .get("data_type")
+                        .unwrap_or(&"uint16".to_string())
+                        .to_string();
+
+                    let register_count = 1;
+
+                    let modbus_point = ModbusPoint {
+                        point_id: point.point_id.to_string(),
+                        slave_id,
+                        function_code,
+                        register_address,
+                        data_type,
+                        register_count,
+                        byte_order: point.protocol_params.get("byte_order").cloned(),
+                        bit_position: point
+                            .protocol_params
+                            .get("bit_position")
+                            .and_then(|v| v.parse::<u8>().ok()),
+                    };
+                    control_modbus_points.push(modbus_point);
+                }
+            }
+        }
+
+        // Process adjustment points (for write operations)
+        for point in channel_config.adjustment_points.values() {
+            if let (Some(slave_id_str), Some(function_code_str), Some(register_address_str)) = (
+                point.protocol_params.get("slave_id"),
+                point.protocol_params.get("function_code"),
+                point.protocol_params.get("register_address"),
+            ) {
+                if let (Ok(slave_id), Ok(function_code), Ok(register_address)) = (
+                    slave_id_str.parse::<u8>(),
+                    function_code_str.parse::<u8>(),
+                    register_address_str.parse::<u16>(),
+                ) {
+                    let data_type = point
+                        .protocol_params
+                        .get("data_type")
+                        .unwrap_or(&"float32".to_string())
+                        .to_string();
+
+                    let register_count = match data_type.as_str() {
+                        "float32" | "float32_be" | "float32_le" => 2,
+                        "uint32" | "int32" => 2,
+                        _ => 1,
+                    };
+
+                    let modbus_point = ModbusPoint {
+                        point_id: point.point_id.to_string(),
+                        slave_id,
+                        function_code,
+                        register_address,
+                        data_type,
+                        register_count,
+                        byte_order: point.protocol_params.get("byte_order").cloned(),
+                        bit_position: None,
+                    };
+                    adjustment_modbus_points.push(modbus_point);
                 }
             }
         }
 
         // Step 3: Set points to core and local storage
+        let total_points = telemetry_modbus_points.len()
+            + signal_modbus_points.len()
+            + control_modbus_points.len()
+            + adjustment_modbus_points.len();
         info!(
-            "Channel {} - Step 3: Setting up {} points in storage",
+            "Channel {} - Step 3: Setting up {} points in storage (T:{}, S:{}, C:{}, A:{})",
             channel_config.id,
-            modbus_points.len()
+            total_points,
+            telemetry_modbus_points.len(),
+            signal_modbus_points.len(),
+            control_modbus_points.len(),
+            adjustment_modbus_points.len()
         );
-        {
-            let mut core = self.core.lock().await;
-            core.set_points(modbus_points.clone());
-        }
-        let points_count = modbus_points.len();
-        *self.points.write().await = modbus_points;
 
-        self.status.write().await.points_count = points_count;
+        // Store points by type
+        *self.telemetry_points.write().await = telemetry_modbus_points;
+        *self.signal_points.write().await = signal_modbus_points;
+        *self.control_points.write().await = control_modbus_points;
+        *self.adjustment_points.write().await = adjustment_modbus_points;
+
+        self.status.write().await.points_count = total_points;
 
         info!(
-            "Channel {} - Step 3 completed: Successfully configured {} polling points (telemetry + signal) out of {} total points",
-            channel_config.id,
-            points_count,
-            total_configured_points
+            "Channel {} - Step 3 completed: Successfully configured {} total points",
+            channel_config.id, total_points
         );
 
         info!("Channel {} - Initialization completed successfully (connection will be established later)", channel_config.id);
@@ -799,7 +906,8 @@ impl ComClient for ModbusProtocol {
             let channel_id = self.channel_id;
             let polling_interval = self.polling_config.default_interval_ms;
             let connection_manager = self.connection_manager.clone();
-            let points = self.points.clone();
+            let telemetry_points = self.telemetry_points.clone();
+            let signal_points = self.signal_points.clone();
             let status = self.status.clone();
             let is_connected = self.is_connected.clone();
             let channel_config = self.channel_config.clone();
@@ -831,37 +939,32 @@ impl ComClient for ModbusProtocol {
                     debug!("Executing poll for channel {}", channel_id);
 
                     // Group points by slave ID and function code for batch reading
-                    // Points are already filtered during initialization (only telemetry and signal)
+                    // Process telemetry and signal points separately to ensure isolation
                     let grouped_points = {
-                        let points_guard = points.read().await;
-                        if points_guard.is_empty() {
+                        let mut groups: HashMap<(u8, u8, String), Vec<ModbusPoint>> =
+                            HashMap::new();
+
+                        // Add telemetry points
+                        let telemetry_guard = telemetry_points.read().await;
+                        for point in telemetry_guard.iter() {
+                            let key =
+                                (point.slave_id, point.function_code, "telemetry".to_string());
+                            groups.entry(key).or_default().push(point.clone());
+                        }
+
+                        // Add signal points
+                        let signal_guard = signal_points.read().await;
+                        for point in signal_guard.iter() {
+                            let key = (point.slave_id, point.function_code, "signal".to_string());
+                            groups.entry(key).or_default().push(point.clone());
+                        }
+
+                        if groups.is_empty() {
                             debug!("No points configured for channel {}", channel_id);
                             continue;
                         }
 
-                        debug!("Processing {} points for polling", points_guard.len());
-
-                        // Group points by (slave_id, function_code, telemetry_type) for batch reading
-                        // Store indices instead of cloning points
-                        // This ensures different telemetry types with same point_id don't interfere
-                        let mut groups: HashMap<(u8, u8, String), Vec<usize>> = HashMap::new();
-                        for (idx, point) in points_guard.iter().enumerate() {
-                            // Determine telemetry type for grouping
-                            // Only telemetry and signal points enter polling (control/adjustment are filtered elsewhere)
-                            let point_id_u32 = point.point_id.parse::<u32>().unwrap_or(0);
-                            let telemetry_type = if let Some(ref config) = channel_config {
-                                if config.signal_points.contains_key(&point_id_u32) {
-                                    "signal".to_string()
-                                } else {
-                                    // Default to telemetry if not signal
-                                    "telemetry".to_string()
-                                }
-                            } else {
-                                "telemetry".to_string()
-                            };
-                            let key = (point.slave_id, point.function_code, telemetry_type);
-                            groups.entry(key).or_default().push(idx);
-                        }
+                        debug!("Processing {} groups for polling", groups.len());
                         groups
                     };
 
@@ -874,21 +977,20 @@ impl ComClient for ModbusProtocol {
                     let timestamp = chrono::Utc::now().timestamp();
 
                     // Read each group
-                    for ((slave_id, function_code, _telemetry_type), point_indices) in
+                    for ((slave_id, function_code, group_telemetry_type), group_points) in
                         grouped_points
                     {
-                        // Get the actual points for this group
-                        let group_points = {
-                            let points_guard = points.read().await;
-                            point_indices
-                                .iter()
-                                .filter_map(|&idx| points_guard.get(idx).cloned())
-                                .collect::<Vec<_>>()
-                        };
-
                         if group_points.is_empty() {
                             continue;
                         }
+
+                        debug!(
+                            "Reading {} {} points for slave {}, function {}",
+                            group_points.len(),
+                            group_telemetry_type,
+                            slave_id,
+                            function_code
+                        );
 
                         // Lock the frame processor for this batch of reads
                         let mut frame_processor = frame_processor.lock().await;
@@ -923,20 +1025,12 @@ impl ComClient for ModbusProtocol {
                                             _ => continue, // Skip non-numeric values
                                         };
 
-                                        // Determine telemetry type from channel config
-                                        let telemetry_type = if let Some(ref config) =
-                                            channel_config
-                                        {
-                                            if config.telemetry_points.contains_key(&point_id) {
-                                                TelemetryType::Telemetry
-                                            } else if config.signal_points.contains_key(&point_id) {
-                                                TelemetryType::Signal
-                                            } else {
-                                                // Default to telemetry if not found
-                                                TelemetryType::Telemetry
-                                            }
-                                        } else {
-                                            TelemetryType::Telemetry
+                                        // Use the telemetry type from the group
+                                        // This ensures proper four-telemetry isolation
+                                        let telemetry_type = match group_telemetry_type.as_str() {
+                                            "telemetry" => TelemetryType::Telemetry,
+                                            "signal" => TelemetryType::Signal,
+                                            _ => TelemetryType::Telemetry,
                                         };
 
                                         // Collect data for batch sending
@@ -1318,6 +1412,13 @@ async fn read_modbus_batch_indexed(
             },
         };
 
+        debug!(
+            "Built PDU for batch_start={}, batch_size={}, PDU bytes: {:02X?}",
+            batch_start,
+            batch_size,
+            pdu.as_slice()
+        );
+
         // Build complete frame with proper header (MBAP for TCP, CRC for RTU)
         let request = frame_processor.build_frame(slave_id, &pdu);
 
@@ -1339,8 +1440,21 @@ async fn read_modbus_batch_indexed(
                         )));
                     }
 
+                    debug!(
+                        "Received PDU for FC{}: bytes={:02X?}",
+                        function_code,
+                        pdu.as_slice()
+                    );
+
                     match parse_modbus_pdu(&pdu, function_code, batch_size as u16) {
-                        Ok(values) => break values,
+                        Ok(values) => {
+                            debug!(
+                                "Parsed {} register values from PDU: {:?}",
+                                values.len(),
+                                values
+                            );
+                            break values;
+                        },
                         Err(e) => {
                             error!("Failed to parse Modbus PDU: {}", e);
                             retry_count += 1;
@@ -1978,64 +2092,44 @@ fn convert_registers_with_byte_order(registers: &[u16], byte_order: Option<&str>
         Some("ABCD") | None => bytes, // Big endian (default)
         Some("DCBA") => {
             // Reverse all bytes for complete little endian
-            if bytes.len() >= 4 {
-                let mut result = Vec::new();
-                for chunk in bytes.chunks(4) {
-                    let mut reversed = chunk.to_vec();
-                    reversed.reverse();
-                    result.extend(reversed);
-                }
-                result
-            } else if bytes.len() >= 2 {
-                // For 16-bit data (AB -> BA)
-                let mut result = Vec::new();
-                for chunk in bytes.chunks(2) {
-                    let mut reversed = chunk.to_vec();
-                    reversed.reverse();
-                    result.extend(reversed);
-                }
-                result
-            } else {
-                bytes
-            }
+            // For float64 (8 bytes): reverse all 8 bytes
+            // For float32/uint32/int32 (4 bytes): reverse all 4 bytes
+            // For uint16/int16 (2 bytes): reverse the 2 bytes
+            let mut reversed = bytes.clone();
+            reversed.reverse();
+            reversed
         },
         Some("BADC") => {
             // Swap bytes within each register: ABCD -> BADC
-            if bytes.len() >= 4 {
-                let mut result = Vec::new();
-                for chunk in bytes.chunks(4) {
-                    if chunk.len() == 4 {
-                        result.push(chunk[1]); // B
-                        result.push(chunk[0]); // A
-                        result.push(chunk[3]); // D
-                        result.push(chunk[2]); // C
-                    } else {
-                        result.extend_from_slice(chunk);
-                    }
+            // For 8 bytes (float64): ABCDEFGH -> BADCFEHG
+            // For 4 bytes (float32/int32/uint32): ABCD -> BADC
+            let mut result = Vec::new();
+            for chunk in bytes.chunks(2) {
+                if chunk.len() == 2 {
+                    result.push(chunk[1]); // Second byte
+                    result.push(chunk[0]); // First byte
+                } else {
+                    result.extend_from_slice(chunk);
                 }
-                result
-            } else {
-                bytes
             }
+            result
         },
         Some("CDAB") => {
-            // Swap register order but keep bytes within registers: ABCD -> CDAB
-            if bytes.len() >= 4 {
-                let mut result = Vec::new();
-                for chunk in bytes.chunks(4) {
-                    if chunk.len() == 4 {
-                        result.push(chunk[2]); // C
-                        result.push(chunk[3]); // D
-                        result.push(chunk[0]); // A
-                        result.push(chunk[1]); // B
-                    } else {
-                        result.extend_from_slice(chunk);
-                    }
+            // Swap register order (16-bit words): ABCD -> CDAB
+            // For 8 bytes (float64): ABCDEFGH -> CDEFABGH
+            // For 4 bytes (float32/int32/uint32): ABCD -> CDAB
+            let mut result = Vec::new();
+            for chunk in bytes.chunks(4) {
+                if chunk.len() == 4 {
+                    result.push(chunk[2]); // C
+                    result.push(chunk[3]); // D
+                    result.push(chunk[0]); // A
+                    result.push(chunk[1]); // B
+                } else {
+                    result.extend_from_slice(chunk);
                 }
-                result
-            } else {
-                bytes
             }
+            result
         },
         Some("BA") => {
             // For int16: AB -> BA
@@ -2178,34 +2272,89 @@ fn decode_register_value(
                 Ok(RedisValue::Integer(i64::from(value)))
             }
         },
-        "float32" | "float32_be" => {
+        "float32" | "float32_be" | "float" => {
             if registers.len() < 2 {
                 return Err(ComSrvError::ProtocolError(
                     "Not enough registers for float32".to_string(),
                 ));
             }
-            let bytes = convert_registers_with_byte_order(registers, byte_order);
-            if bytes.len() >= 4 {
-                let value = f32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
-                debug!(
-                    "Float32 conversion: registers={:?}, byte_order={:?}, bytes={:02X?}, value={}",
-                    registers,
-                    byte_order,
-                    &bytes[0..4],
-                    value
-                );
-                Ok(RedisValue::Float(f64::from(value)))
+
+            // Special handling for DCBA - the simulator stores bytes in little-endian order directly
+            let (bytes, value) = if byte_order == Some("DCBA") {
+                // For DCBA, extract bytes directly from registers (they're already in little-endian order)
+                let mut bytes = Vec::new();
+                for &reg in &registers[0..2] {
+                    bytes.push((reg >> 8) as u8); // High byte of register
+                    bytes.push((reg & 0xFF) as u8); // Low byte of register
+                }
+                // Bytes are already in little-endian order, decode with from_le_bytes
+                let value = f32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
+                (bytes, value)
             } else {
-                // Fallback to old method if bytes conversion fails
-                let bytes = [
-                    (registers[0] >> 8) as u8,
-                    (registers[0] & 0xFF) as u8,
-                    (registers[1] >> 8) as u8,
-                    (registers[1] & 0xFF) as u8,
-                ];
-                let value = f32::from_be_bytes(bytes);
-                Ok(RedisValue::Float(f64::from(value)))
+                // For other byte orders, use the standard conversion
+                let bytes = convert_registers_with_byte_order(registers, byte_order);
+                if bytes.len() >= 4 {
+                    let value = f32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
+                    (bytes[0..4].to_vec(), value)
+                } else {
+                    // Fallback to direct conversion if not enough bytes
+                    let bytes = vec![
+                        (registers[0] >> 8) as u8,
+                        (registers[0] & 0xFF) as u8,
+                        (registers[1] >> 8) as u8,
+                        (registers[1] & 0xFF) as u8,
+                    ];
+                    let value = f32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
+                    (bytes, value)
+                }
+            };
+
+            info!(
+                "Float32 conversion: registers={:?}, byte_order={:?}, bytes={:02X?}, value={}",
+                registers,
+                byte_order,
+                &bytes[0..4],
+                value
+            );
+            Ok(RedisValue::Float(f64::from(value)))
+        },
+        "float64" | "float64_be" | "double" => {
+            if registers.len() < 4 {
+                return Err(ComSrvError::ProtocolError(
+                    "Not enough registers for float64".to_string(),
+                ));
             }
+
+            // Special handling for DCBA - the simulator stores bytes in little-endian order directly
+            let (bytes, value) = if byte_order == Some("DCBA") {
+                // For DCBA, extract bytes directly from registers (they're already in little-endian order)
+                let mut bytes = Vec::new();
+                for &reg in &registers[0..4] {
+                    bytes.push((reg >> 8) as u8); // High byte of register
+                    bytes.push((reg & 0xFF) as u8); // Low byte of register
+                }
+                // Bytes are already in little-endian order, decode with from_le_bytes
+                let value = f64::from_le_bytes([
+                    bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
+                ]);
+                (bytes, value)
+            } else {
+                // For other byte orders, use the standard conversion
+                let bytes = convert_registers_with_byte_order(registers, byte_order);
+                let value = f64::from_be_bytes([
+                    bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
+                ]);
+                (bytes, value)
+            };
+
+            info!(
+                "Float64 conversion: registers={:?}, byte_order={:?}, bytes={:02X?}, value={}",
+                registers,
+                byte_order,
+                &bytes[0..8],
+                value
+            );
+            Ok(RedisValue::Float(value))
         },
         _ => Err(ComSrvError::ProtocolError(format!(
             "Unsupported data format: {format}"

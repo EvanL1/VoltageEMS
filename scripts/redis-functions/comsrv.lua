@@ -6,6 +6,9 @@
 -- Patched version with critical fixes
 -- ========================================
 
+-- Redis provided modules
+local cjson = require("cjson")
+
 -- Safe JSON decode helper
 local function safe_decode(json_str, what)
     if not json_str then

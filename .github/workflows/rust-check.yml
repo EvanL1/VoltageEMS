@@ -1,0 +1,74 @@
+name: Code Check
+
+on:
+  push:
+    branches: [ main, develop, feature/* ]
+  pull_request:
+    branches: [ main, develop ]
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  check:
+    name: Code Quality Check
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    # Rust 检查
+    - name: Setup Rust
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        components: rustfmt, clippy
+    
+    - name: Cache Dependencies
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.cargo/bin/
+          ~/.cargo/registry/index/
+          ~/.cargo/registry/cache/
+          ~/.cargo/git/db/
+          target/
+        key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+        restore-keys: |
+          ${{ runner.os }}-cargo-
+    
+    - name: Check Rust Format
+      run: cargo fmt --all -- --check
+    
+    - name: Run Clippy
+      run: cargo clippy --all-targets --all-features -- -D warnings
+    
+    - name: Check Compilation
+      run: cargo check --workspace
+    
+    - name: Run Tests
+      run: cargo test --workspace
+    
+    # Lua 检查 (语法 + 静态分析)
+    - name: Setup Lua and Luacheck
+      run: |
+        sudo apt-get update -qq
+        sudo apt-get install -y lua5.4 luarocks
+        sudo luarocks install luacheck
+    
+    - name: Check Lua Syntax
+      run: |
+        echo "📝 Checking Lua syntax..."
+        for file in scripts/redis-functions/*.lua; do
+          if [ -f "$file" ]; then
+            echo "  Checking $(basename $file)"
+            luac5.4 -p "$file" || exit 1
+          fi
+        done
+        echo "✅ Syntax check passed"
+    
+    - name: Run Luacheck Static Analysis
+      run: |
+        echo "🔍 Running Lua static analysis..."
+        luacheck scripts/redis-functions/*.lua --config .luacheckrc
+        echo "✅ All Lua code quality checks passed"

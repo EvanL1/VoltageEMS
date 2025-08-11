@@ -2,8 +2,8 @@
 //!
 //! Provides unified configuration loading with priority:
 //! 1. Default values (lowest)
-//! 2. YAML file (medium)  
-//! 3. Environment variables (highest)
+//! 2. Environment variables (medium)  
+//! 3. YAML file (highest)
 
 use serde::{de::DeserializeOwned, Serialize};
 use serde_json::Value as JsonValue;
@@ -147,7 +147,15 @@ where
         let mut config_json = serde_json::to_value(&self.defaults)?;
         debug!("Starting from default configuration");
 
-        // 2. Apply YAML files in order (medium priority)
+        // 2. Apply environment variables (medium priority)
+        if let Some(prefix) = &self.env_prefix {
+            if self.allow_env_override {
+                debug!("Applying environment variables with prefix: {}", prefix);
+                self.apply_env_vars(&mut config_json, prefix)?;
+            }
+        }
+
+        // 3. Apply YAML files in order (highest priority)
         for yaml_path in &self.yaml_paths {
             if Path::new(yaml_path).exists() {
                 info!("Loading YAML config file: {}", yaml_path);
@@ -167,14 +175,6 @@ where
                 self.merge_json_values(&mut config_json, &yaml_as_json)?;
             } else {
                 debug!("YAML config file not found, skipping: {}", yaml_path);
-            }
-        }
-
-        // 3. Apply environment variables (highest priority)
-        if let Some(prefix) = &self.env_prefix {
-            if self.allow_env_override {
-                debug!("Applying environment variables with prefix: {}", prefix);
-                self.apply_env_vars(&mut config_json, prefix)?;
             }
         }
 

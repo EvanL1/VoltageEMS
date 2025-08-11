@@ -132,13 +132,13 @@ async fn main() -> Result<()> {
         // 规则管理
         .route("/api/rules", get(list_rules).post(create_rule))
         .route(
-            "/api/rules/:id",
+            "/api/rules/{id}",
             get(get_rule)
                 .put(update_rule)
                 .delete(delete_rule),
         )
-        .route("/api/rules/:id/enable", post(enable_rule))
-        .route("/api/rules/:id/disable", post(disable_rule))
+        .route("/api/rules/{id}/enable", post(enable_rule))
+        .route("/api/rules/{id}/disable", post(disable_rule))
         // 执行历史和统计
         .route("/api/executions", get(list_executions))
         .route("/api/statistics", get(get_statistics))

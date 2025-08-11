@@ -788,6 +788,11 @@ impl CsvLoader {
             let record = result
                 .map_err(|e| ComSrvError::IoError(format!("Failed to read CSV record: {}", e)))?;
 
+            let scale_str = record.get(2).unwrap_or("");
+            let scale = scale_str.parse().ok();
+            let offset_str = record.get(3).unwrap_or("");
+            let offset = offset_str.parse().ok();
+
             let point = FourRemotePoint {
                 point_id: record
                     .get(0)
@@ -796,12 +801,17 @@ impl CsvLoader {
                     .map_err(|_| ComSrvError::ConfigError("Invalid point_id".to_string()))?,
                 signal_name: record.get(1).unwrap_or("Unknown").to_string(),
                 telemetry_type: telemetry_type.to_string(),
-                scale: record.get(2).and_then(|s| s.parse().ok()),
-                offset: record.get(3).and_then(|s| s.parse().ok()),
+                scale,
+                offset,
                 unit: record.get(4).map(|s| s.to_string()),
                 reverse: record.get(5).and_then(|s| s.parse().ok()),
                 data_type: record.get(6).unwrap_or("float").to_string(),
             };
+
+            info!(
+                "Loaded {} point {}: name='{}', scale_str='{}', scale={:?}, offset_str='{}', offset={:?}",
+                telemetry_type, point.point_id, point.signal_name, scale_str, point.scale, offset_str, point.offset
+            );
 
             points.push(point);
         }
@@ -925,25 +935,32 @@ impl CsvLoader {
 
         for (point_id, telemetry_point) in telemetry_points {
             if let Some(protocol_params) = protocol_mappings.get(&point_id) {
+                let scaling_info = if telemetry_point.scale.is_some()
+                    || telemetry_point.offset.is_some()
+                    || telemetry_point.reverse.is_some()
+                {
+                    Some(super::types::ScalingInfo {
+                        scale: telemetry_point.scale.unwrap_or(1.0),
+                        offset: telemetry_point.offset.unwrap_or(0.0),
+                        unit: telemetry_point.unit.clone(),
+                        reverse: telemetry_point.reverse,
+                    })
+                } else {
+                    None
+                };
+
+                info!(
+                    "Creating CombinedPoint for {} point {}: scale={:?}, offset={:?}, scaling_info={:?}",
+                    telemetry_type, point_id, telemetry_point.scale, telemetry_point.offset, scaling_info
+                );
+
                 let point = CombinedPoint {
                     point_id,
                     signal_name: telemetry_point.signal_name,
                     telemetry_type: telemetry_point.telemetry_type,
                     data_type: telemetry_point.data_type,
                     protocol_params: protocol_params.clone(),
-                    scaling: if telemetry_point.scale.is_some()
-                        || telemetry_point.offset.is_some()
-                        || telemetry_point.reverse.is_some()
-                    {
-                        Some(super::types::ScalingInfo {
-                            scale: telemetry_point.scale.unwrap_or(1.0),
-                            offset: telemetry_point.offset.unwrap_or(0.0),
-                            unit: telemetry_point.unit,
-                            reverse: telemetry_point.reverse,
-                        })
-                    } else {
-                        None
-                    },
+                    scaling: scaling_info,
                 };
                 combined.push(point);
             } else {

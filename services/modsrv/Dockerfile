@@ -1,15 +1,14 @@
-# Build stage
-FROM rust:1.88-bullseye AS builder
+# Build stage - 使用预编译的依赖
+FROM voltageems-dependencies:latest AS builder
 
 WORKDIR /app
 
-# Copy workspace files
+# 复制必要的配置文件
 COPY Cargo.toml Cargo.lock ./
 COPY libs ./libs
 COPY services ./services
 
-# Build only modsrv
-WORKDIR /app
+# 直接构建最终二进制文件（依赖已经在基础镜像中编译好了）
 RUN cargo build --release -p modsrv
 
 # Runtime stage

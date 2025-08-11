@@ -92,7 +92,7 @@ async fn main() -> Result<()> {
         // 模板管理
         .route("/api/templates", get(list_templates).post(create_template))
         .route(
-            "/api/templates/:id",
+            "/api/templates/{id}",
             get(get_template)
                 .put(update_template)
                 .delete(delete_template),
@@ -100,15 +100,15 @@ async fn main() -> Result<()> {
         // 模型管理
         .route("/api/models", get(list_models).post(create_model))
         .route(
-            "/api/models/:id",
+            "/api/models/{id}",
             get(get_model)
                 .put(update_model)
                 .delete(delete_model),
         )
         // 数据操作
-        .route("/api/models/:id/data", get(get_model_data))
-        .route("/api/models/:id/sync", post(sync_measurement))
-        .route("/api/models/:id/action", post(execute_action))
+        .route("/api/models/{id}/data", get(get_model_data))
+        .route("/api/models/{id}/sync", post(sync_measurement))
+        .route("/api/models/{id}/action", post(execute_action))
         .route("/api/sync/all", post(sync_all_measurements))
         .with_state(state);
 

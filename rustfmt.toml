@@ -1,4 +1,4 @@
-# Rust 格式化配置 (Stable版本)
+# Rust 格式化配置 - 仅使用稳定特性
 edition = "2021"
 max_width = 100
 hard_tabs = false
@@ -12,5 +12,5 @@ merge_derives = true
 use_try_shorthand = true
 use_field_init_shorthand = true
 force_explicit_abi = true
-fn_params_layout = "Tall"
 match_block_trailing_comma = true
+fn_params_layout = "Tall"
