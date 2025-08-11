@@ -12,9 +12,7 @@ use tokio::task::JoinHandle;
 use tracing::{debug, error, info, warn};
 
 use crate::core::combase::traits::{ChannelCommand, TelemetryBatch};
-use crate::core::combase::{
-    ChannelStatus, ComBase, ComClient, PointData, PointDataMap, RedisValue,
-};
+use crate::core::combase::{ChannelStatus, ComBase, ComClient, PointDataMap, RedisValue};
 use crate::core::config::types::{ChannelConfig, TelemetryType};
 use crate::utils::error::{ComSrvError, Result};
 
@@ -113,58 +111,6 @@ impl ModbusProtocol {
             data_channel: None,
             command_rx: Arc::new(RwLock::new(None)),
         })
-    }
-
-    /// Internal method to read data based on telemetry type
-    async fn read_data(&self, telemetry_type: TelemetryType) -> Result<PointDataMap> {
-        if !self.is_connected() {
-            return Err(ComSrvError::NotConnected);
-        }
-
-        let mut result = HashMap::new();
-
-        // Select the correct point list based on telemetry type
-        let points = match telemetry_type {
-            TelemetryType::Telemetry => self.telemetry_points.read().await,
-            TelemetryType::Signal => self.signal_points.read().await,
-            TelemetryType::Control => self.control_points.read().await,
-            TelemetryType::Adjustment => self.adjustment_points.read().await,
-        };
-
-        let channel_config = self
-            .channel_config
-            .as_ref()
-            .ok_or_else(|| ComSrvError::config("Channel configuration not initialized"))?;
-
-        for point in points.iter() {
-            // Parse point_id and find in the appropriate HashMap
-            if let Ok(point_id) = point.point_id.parse::<u32>() {
-                // Select the correct HashMap based on telemetry_type
-                let config_point = match telemetry_type {
-                    TelemetryType::Telemetry => channel_config.telemetry_points.get(&point_id),
-                    TelemetryType::Signal => channel_config.signal_points.get(&point_id),
-                    TelemetryType::Control => channel_config.control_points.get(&point_id),
-                    TelemetryType::Adjustment => channel_config.adjustment_points.get(&point_id),
-                };
-
-                if let Some(config_point) = config_point {
-                    // TODO: Actual Modbus read logic
-                    // Temporarily return simulated data
-                    let value = RedisValue::Float(rand::random::<f64>() * 100.0);
-                    let point_data = PointData {
-                        value,
-                        timestamp: chrono::Utc::now().timestamp(),
-                    };
-                    result.insert(config_point.point_id, point_data);
-                }
-            }
-        }
-
-        // Update status
-        self.status.write().await.last_update = chrono::Utc::now().timestamp();
-        self.status.write().await.success_count += 1;
-
-        Ok(result)
     }
 }
 
@@ -441,9 +387,10 @@ impl ComBase for ModbusProtocol {
         Ok(())
     }
 
-    async fn read_four_telemetry(&self, telemetry_type: TelemetryType) -> Result<PointDataMap> {
-        // Delegate to the actual read implementation
-        self.read_data(telemetry_type).await
+    async fn read_four_telemetry(&self, _telemetry_type: TelemetryType) -> Result<PointDataMap> {
+        // Data is collected via polling mechanism, not direct reads
+        // Return empty map as polling handles data collection
+        Ok(HashMap::new())
     }
 }
 
