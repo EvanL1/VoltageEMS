@@ -132,13 +132,27 @@ struct Stats {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    // init the logging system
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
-        )
-        .init();
+    // Initialize unified logging system
+    let log_config = voltage_libs::logging::LogConfig {
+        service_name: "hissrv".to_string(),
+        log_dir: std::path::PathBuf::from("/app/logs"),
+        console_level: tracing::Level::INFO,
+        file_level: tracing::Level::DEBUG,
+        enable_json: false,
+        rotation: voltage_libs::logging::Rotation::DAILY,
+        max_log_files: 30,
+    };
+
+    if let Err(e) = voltage_libs::logging::init_with_config(log_config) {
+        eprintln!("Failed to initialize logging: {}", e);
+        // Fallback to basic logging
+        tracing_subscriber::fmt()
+            .with_env_filter(
+                tracing_subscriber::EnvFilter::try_from_default_env()
+                    .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
+            )
+            .init();
+    }
 
     info!("Starting History Service...");
 
@@ -237,13 +251,17 @@ async fn collect_and_store(state: &AppState, batch_id: u64) -> Result<()> {
 
     // 调用Lua函数收集数据
     let sources_json = serde_json::to_string(&state.config.collection.sources)?;
+    info!("📡 Collecting data from sources: {}", sources_json);
+
     let result: String = redis::cmd("FCALL")
         .arg("hissrv_collect_batch")
-        .arg(1)
+        .arg(0)
         .arg(format!("batch_{}", batch_id))
         .arg(sources_json)
         .query_async(&mut conn)
         .await?;
+
+    info!("📊 Collection result: {}", result);
 
     let batch_info: serde_json::Value = serde_json::from_str(&result)?;
     let point_count = batch_info["point_count"].as_u64().unwrap_or(0);

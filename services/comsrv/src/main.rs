@@ -14,8 +14,6 @@ use dotenv::dotenv;
 use tokio::sync::RwLock;
 
 use tracing::{error, info, warn, Level};
-use tracing_appender::rolling::{RollingFileAppender, Rotation};
-use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, Layer};
 
 // Module declarations
 pub mod api;
@@ -80,10 +78,6 @@ struct Args {
     #[arg(long)]
     no_color: bool,
 
-    /// Log to file instead of console
-    #[arg(long)]
-    log_file: Option<String>,
-
     /// Skip loading CSV point tables
     #[arg(long)]
     skip_csv: bool,
@@ -94,6 +88,9 @@ struct Args {
 }
 
 fn initialize_logging(args: &Args) -> Result<()> {
+    use tracing_appender::rolling::{RollingFileAppender, Rotation};
+    use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, Layer};
+
     // Load environment variables from .env file
     if let Err(e) = dotenv() {
         eprintln!("Warning: Failed to load .env file: {}", e);
@@ -109,60 +106,55 @@ fn initialize_logging(args: &Args) -> Result<()> {
             .unwrap_or(Level::INFO)
     };
 
-    // Build the subscriber
+    // Determine log directory based on environment
+    let log_dir = if std::path::Path::new("/app/logs").exists() {
+        std::path::PathBuf::from("/app/logs")
+    } else {
+        std::path::PathBuf::from("logs")
+    };
+
+    // Create log directory
+    std::fs::create_dir_all(&log_dir)?;
+
+    // Build the subscriber with both console and file output
     let subscriber = tracing_subscriber::registry();
 
-    // Configure console output
-    if args.log_file.is_none() {
-        let console_layer = tracing_subscriber::fmt::layer()
-            .with_ansi(!args.no_color)
-            .with_level(true)
-            .with_target(true)
-            .with_thread_ids(args.debug)
-            .with_thread_names(args.debug)
-            .with_file(args.debug)
-            .with_line_number(args.debug)
-            .with_filter(tracing_subscriber::filter::LevelFilter::from_level(
-                log_level,
-            ));
+    // Console layer - 控制台输出
+    let console_layer = tracing_subscriber::fmt::layer()
+        .with_ansi(!args.no_color)
+        .with_level(true)
+        .with_target(true)
+        .with_thread_ids(false)
+        .with_thread_names(false)
+        .with_filter(tracing_subscriber::filter::LevelFilter::from_level(
+            log_level,
+        ));
 
-        subscriber.with(console_layer).init();
-    } else {
-        // Configure file output
-        let file_path = args
-            .log_file
-            .as_ref()
-            .ok_or_else(|| ComSrvError::ConfigError("Log file path not provided".to_string()))?;
-        let file_appender = RollingFileAppender::new(
-            Rotation::DAILY,
-            std::path::Path::new(file_path)
-                .parent()
-                .unwrap_or(std::path::Path::new(".")),
-            std::path::Path::new(file_path)
-                .file_name()
-                .unwrap_or(std::ffi::OsStr::new("comsrv.log")),
-        );
+    // File layer - 文件输出（始终启用）
+    let file_appender = RollingFileAppender::new(Rotation::DAILY, &log_dir, "comsrv.log");
 
-        let file_layer = tracing_subscriber::fmt::layer()
-            .with_writer(file_appender)
-            .with_ansi(false)
-            .with_level(true)
-            .with_target(true)
-            .with_thread_ids(true)
-            .with_thread_names(true)
-            .with_file(true)
-            .with_line_number(true)
-            .with_filter(tracing_subscriber::filter::LevelFilter::from_level(
-                log_level,
-            ));
+    let file_layer = tracing_subscriber::fmt::layer()
+        .with_writer(file_appender)
+        .with_ansi(false)
+        .with_level(true)
+        .with_target(true)
+        .with_thread_ids(true)
+        .with_thread_names(true)
+        .with_file(true)
+        .with_line_number(true)
+        .with_filter(tracing_subscriber::filter::LevelFilter::from_level(
+            Level::DEBUG,
+        ));
 
-        subscriber.with(file_layer).init();
-    }
+    // 同时启用控制台和文件输出
+    subscriber.with(console_layer).with(file_layer).init();
 
     info!(
         "Logging initialized with level: {}",
         log_level.as_str().to_uppercase()
     );
+    info!("Log directory: {}", log_dir.display());
+
     Ok(())
 }
 
@@ -251,7 +243,7 @@ async fn main() -> Result<()> {
     initialize_logging(&args)?;
 
     // Print startup banner
-    if !args.no_color && args.log_file.is_none() {
+    if !args.no_color {
         print_startup_banner();
     }
 

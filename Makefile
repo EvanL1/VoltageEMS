@@ -65,6 +65,35 @@ integration-test:
 system-test:
 	uv run python tests/test_system_integration.py
 
+# Docker Integration Testing
+test-docker: test-docker-modsrv test-docker-hissrv test-docker-e2e
+	@echo "All Docker tests completed!"
+
+test-docker-modsrv:
+	@echo "Running modsrv Docker integration tests..."
+	@./scripts/test-modsrv-docker.sh
+
+test-docker-hissrv:
+	@echo "Running hissrv Docker integration tests..."
+	@./scripts/test-hissrv-docker.sh
+
+test-docker-e2e:
+	@echo "Running end-to-end Docker integration tests..."
+	@./scripts/test-e2e-docker.sh
+
+# Test with special configuration
+test-docker-quick:
+	@echo "Running quick Docker tests with faster intervals..."
+	docker-compose -f docker-compose.yml -f docker-compose.test.yml up -d
+	@sleep 5
+	@./scripts/test-e2e-docker.sh
+
+# Clean test environment
+test-clean:
+	docker-compose down -v
+	docker system prune -f
+	@echo "Test environment cleaned!"
+
 # Database operations
 redis-cli:
 	docker exec -it $$(docker-compose ps -q redis) redis-cli

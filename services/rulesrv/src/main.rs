@@ -81,13 +81,27 @@ struct AppState {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    // 初始化日志
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
-        )
-        .init();
+    // Initialize unified logging system
+    let log_config = voltage_libs::logging::LogConfig {
+        service_name: "rulesrv".to_string(),
+        log_dir: std::path::PathBuf::from("/app/logs"),
+        console_level: tracing::Level::INFO,
+        file_level: tracing::Level::DEBUG,
+        enable_json: false,
+        rotation: voltage_libs::logging::Rotation::DAILY,
+        max_log_files: 30,
+    };
+
+    if let Err(e) = voltage_libs::logging::init_with_config(log_config) {
+        eprintln!("Failed to initialize logging: {}", e);
+        // Fallback to basic logging
+        tracing_subscriber::fmt()
+            .with_env_filter(
+                tracing_subscriber::EnvFilter::try_from_default_env()
+                    .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
+            )
+            .init();
+    }
 
     info!("Starting Rule Service...");
 
@@ -182,7 +196,7 @@ async fn execute_rules(state: &AppState, batch_id: u64) -> Result<()> {
     // 调用Lua函数执行规则
     let result: String = redis::cmd("FCALL")
         .arg("rulesrv_execute_batch")
-        .arg(1)
+        .arg(0)
         .arg(format!("batch_{}", batch_id))
         .arg(state.config.execution.batch_size.to_string())
         .query_async(&mut conn)
@@ -256,7 +270,7 @@ async fn create_rule(
     // 调用Lua函数创建规则
     let result: String = match redis::cmd("FCALL")
         .arg("rulesrv_upsert_rule")
-        .arg(1)
+        .arg(0)
         .arg(&rule_id)
         .arg(rule.to_string())
         .query_async(&mut conn)
@@ -288,7 +302,7 @@ async fn get_rule(
     // 调用Lua函数获取规则
     let result: String = match redis::cmd("FCALL")
         .arg("rulesrv_get_rule")
-        .arg(1)
+        .arg(0)
         .arg(&id)
         .query_async(&mut conn)
         .await
@@ -329,7 +343,7 @@ async fn delete_rule(
     // 调用Lua函数删除规则
     let result: String = match redis::cmd("FCALL")
         .arg("rulesrv_delete_rule")
-        .arg(1)
+        .arg(0)
         .arg(&id)
         .query_async(&mut conn)
         .await
@@ -360,7 +374,7 @@ async fn enable_rule(
     // 调用Lua函数启用规则
     let result: String = match redis::cmd("FCALL")
         .arg("rulesrv_enable_rule")
-        .arg(1)
+        .arg(0)
         .arg(&id)
         .query_async(&mut conn)
         .await
@@ -391,7 +405,7 @@ async fn disable_rule(
     // 调用Lua函数禁用规则
     let result: String = match redis::cmd("FCALL")
         .arg("rulesrv_disable_rule")
-        .arg(1)
+        .arg(0)
         .arg(&id)
         .query_async(&mut conn)
         .await
@@ -421,7 +435,7 @@ async fn list_executions(State(state): State<Arc<AppState>>) -> Json<serde_json:
     // 调用Lua函数获取执行历史
     let result: String = match redis::cmd("FCALL")
         .arg("rulesrv_list_executions")
-        .arg(1)
+        .arg(0)
         .arg("10") // 最近10次执行
         .query_async(&mut conn)
         .await

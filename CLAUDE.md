@@ -6,40 +6,34 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 VoltageEMS is a high-performance industrial IoT energy management system built with Rust microservices architecture. It supports multiple industrial protocols (Modbus TCP/RTU, Virtual, gRPC) and real-time data processing through a hybrid architecture combining Rust services with Redis Lua Functions for optimal performance.
 
-## Workspace Structure
+## Architecture & Design Patterns
 
+### Core Architecture Decisions
+- **Hybrid Processing**: Rust services handle I/O and protocol communication, Redis Lua functions handle business logic for ultra-low latency
+- **Service Simplification**: Most services (modsrv, alarmsrv, rulesrv, hissrv) use single-file main.rs architecture - avoid over-engineering
+- **Plugin System**: Communication service (comsrv) uses plugin-based protocol architecture in `services/comsrv/src/plugins/`
+- **Unified Entry**: All external traffic goes through Nginx on port 80, which routes to individual services
+
+### Redis Data Storage Patterns
 ```
-VoltageEMS/
-├── Cargo.toml              # Workspace root
-├── libs/                   # Shared libraries (voltage_libs crate)
-├── services/               # Microservices
-│   ├── comsrv/            # Communication service (protocols)
-│   ├── modsrv/            # Model service (lightweight)
-│   ├── alarmsrv/          # Alarm service (lightweight)
-│   ├── rulesrv/           # Rule engine (lightweight)
-│   ├── hissrv/            # Historical data (lightweight)
-│   ├── apigateway/        # API gateway (minimal proxy)
-│   └── netsrv/            # Network service
-├── config/                 # Unified configuration directory (2025-08-11)
-│   ├── comsrv/            # comsrv configs and CSV files
-│   ├── modsrv/            # modsrv configs
-│   ├── alarmsrv/          # alarmsrv configs
-│   ├── rulesrv/           # rulesrv configs
-│   ├── hissrv/            # hissrv configs
-│   ├── apigateway/        # apigateway configs
-│   └── netsrv/            # netsrv configs
-├── logs/                   # Unified log directory (2025-08-11)
-│   ├── comsrv/            # comsrv logs
-│   ├── modsrv/            # modsrv logs
-│   └── ...                # other service logs
-├── scripts/
-│   ├── redis-functions/   # Lua functions for Redis
-│   ├── quick-check.sh     # Run format, clippy, and compile checks
-│   ├── dev.sh            # Development environment setup
-│   └── validate-comsrv-config.sh  # Validate CSV configurations
-├── apps/                   # Frontend applications
-└── docker-compose.yml      # Container orchestration
+comsrv:{channel_id}:T         # Telemetry data for channel
+comsrv:{channel_id}:S         # Signal data
+comsrv:{channel_id}:C         # Control data
+comsrv:{channel_id}:A         # Adjustment data
 ```
+
+### Service Port Allocation
+| Service | Port | Purpose |
+|---------|------|---------|
+| nginx | 80 | Unified entry point |
+| comsrv | 6000 | Communication protocols |
+| modsrv | 6001 | Model calculations |
+| alarmsrv | 6002 | Alarm monitoring |
+| rulesrv | 6003 | Rule engine |
+| hissrv | 6004 | Historical data |
+| apigateway | 6005 | API aggregation |
+| netsrv | 6006 | External comms |
+| redis | 6379 | Data storage |
 
 ## Development Commands
 
@@ -56,6 +50,9 @@ VoltageEMS/
 
 # Build all services
 cargo build --workspace
+
+# Build release mode
+cargo build --release --workspace
 
 # Run specific service with debug logging
 RUST_LOG=debug,comsrv=trace cargo run --bin comsrv
@@ -75,8 +72,14 @@ cargo test -p comsrv -- --nocapture
 # Run single test
 cargo test test_plugin_manager_initialization -- --nocapture
 
-# Docker integration tests
-./scripts/test-docker.sh test
+# Run tests with backtrace for debugging
+RUST_BACKTRACE=1 cargo test failing_test_name
+
+# Run ignored tests
+cargo test -- --ignored
+
+# Run both regular and ignored tests
+cargo test -- --include-ignored
 ```
 
 ### Code Quality
@@ -84,16 +87,22 @@ cargo test test_plugin_manager_initialization -- --nocapture
 # Format all code
 cargo fmt --all
 
+# Check format without modifying
+cargo fmt --all -- --check
+
 # Run clippy with strict checks
 cargo clippy --all-targets --all-features -- -D warnings
 
 # Check compilation
 cargo check --workspace
+
+# Check specific package
+cargo check -p comsrv
 ```
 
 ### Docker Operations
 
-#### Optimized Build Strategy (2025-08-11)
+#### Building Images
 ```bash
 # Build base dependency image first (caches all dependencies)
 docker build -f Dockerfile.base -t voltageems-dependencies:latest .
@@ -101,53 +110,54 @@ docker build -f Dockerfile.base -t voltageems-dependencies:latest .
 # Build all service images using cached dependencies
 docker-compose build --parallel
 
+# Build specific service
+docker-compose build comsrv
+```
+
+#### Running Services
+```bash
 # Start all services
 docker-compose up -d
 
-# View service logs
-docker logs -f voltageems-comsrv
+# Start specific services
+docker-compose up -d redis comsrv
+
+# View logs
+docker-compose logs -f comsrv
+
+# Stop all services
+docker-compose down
+
+# Stop and remove volumes
+docker-compose down -v
 ```
 
-#### Docker Image Optimization Results
-- Base dependency image: ~2.42GB (contains all pre-compiled dependencies)
-- Service images: 85-88MB each (very lean)
-- Build time: ~1 minute per service (vs several minutes before)
-- Strategy: Multi-stage builds with dependency layer caching
-
-### Redis Functions
+### Redis Lua Functions
 ```bash
 # Load all Lua functions to Redis
 cd scripts/redis-functions
 ./load_functions.sh
 
-# Validate comsrv CSV configurations
-./scripts/validate-comsrv-config.sh services/comsrv/config
+# Load functions to Docker Redis
+for lua in scripts/redis-functions/*.lua; do
+    cat "$lua" | docker exec -i voltageems-redis redis-cli -x FUNCTION LOAD REPLACE
+done
+
+# Test a function
+redis-cli FCALL function_name 0 arg1 arg2
+
+# List loaded functions
+redis-cli FUNCTION LIST
 ```
 
-## Architecture & Key Concepts
+## Configuration System
 
-### Service Architecture
-- **Hybrid Design**: Rust services handle I/O and protocol communication, Redis Lua functions handle business logic for ultra-low latency
-- **Simplified Services**: Most services (modsrv, alarmsrv, rulesrv, hissrv) use single-file main.rs architecture
-- **Nginx Entry Point**: All external traffic goes through Nginx on port 80, which routes to individual services
+### Configuration Priority (highest to lowest)
+1. YAML files in `config/{service}/`
+2. Environment variables
+3. Default values in code
 
-### Communication Service (comsrv)
-- Core service handling industrial protocols (Modbus TCP/RTU, Virtual, gRPC)
-- Plugin-based protocol architecture in `services/comsrv/src/plugins/`
-- CSV-based point table configuration for 四遥 (telemetry, signal, control, adjustment)
-- Redis storage pattern: `comsrv:{channel_id}:{type}` where type is T/S/C/A
-
-### Redis Data Patterns
-```
-comsrv:1001:T         # Telemetry data for channel 1001
-comsrv:1001:S         # Signal data
-comsrv:1001:C         # Control data
-comsrv:1001:A         # Adjustment data
-```
-
-### Configuration System
-
-#### Directory Structure (Unified since 2025-08-11)
+### Directory Structure
 ```
 config/
 ├── comsrv/
@@ -155,73 +165,82 @@ config/
 │   ├── telemetry.csv     # Point definitions
 │   ├── signal.csv        # Signal definitions
 │   └── mapping/          # Protocol mappings
-├── modsrv/
-│   └── modsrv.yaml       # Model service config
-├── alarmsrv/
-│   └── alarmsrv.yaml     # Alarm service config
-└── ...                   # Other services
+├── modsrv/modsrv.yaml
+├── alarmsrv/alarmsrv.yaml
+└── ...
 
-logs/
-├── comsrv/               # Service logs
-├── modsrv/               # Automatically created
-└── ...                   # When services run
+logs/                      # Auto-created by services
+├── comsrv/
+├── modsrv/
+└── ...
 ```
 
-#### Features
-- YAML configuration files for each service
-- Environment variable override support
-- CSV files for point tables and protocol mappings
-- Smart defaults to minimize configuration
-- Volume mapping in docker-compose.yml for easy management
-
-### Service Ports
-| Service | Port | Purpose |
-|---------|------|---------|
-| nginx | 80 | Unified entry point |
-| comsrv | 6000 | Communication protocols |
-| modsrv | 6001 | Model calculations |
-| alarmsrv | 6002 | Alarm monitoring |
-| rulesrv | 6003 | Rule engine |
-| hissrv | 6004 | Historical data |
-| apigateway | 6005 | API aggregation |
-| netsrv | 6006 | External comms |
-| redis | 6379 | Data storage |
-
-## Common Development Tasks
-
-### Configuration Best Practices
-1. **Infrastructure config** (ports, Redis URL) → Use environment variables
-2. **Business config** → Use YAML files in `config/` directory
-3. **Config files are optional** → Services work with defaults
-4. **Partial config is supported** → Only override what you need
-5. **Priority order**: Default values < Environment variables < YAML files (highest)
-
-### Adding a New Protocol
-1. Create plugin in `services/comsrv/src/plugins/`
-2. Implement `Protocol` trait from `core::combase`
-3. Register in `ProtocolFactory`
-4. Add configuration support
-5. Note: Slave IDs are in CSV mapping files, not channel config
-
-### Modifying Redis Lua Functions
-1. Edit functions in `scripts/redis-functions/`
-2. Run `./load_functions.sh` to reload
-3. Test with `redis-cli FCALL function_name`
-
 ### CSV Configuration for comsrv
-Point tables (`telemetry.csv`, `signal.csv`, etc.):
+
+Point tables define data points:
 ```csv
 point_id,signal_name,scale,offset,unit,reverse,data_type
 1,Temperature,0.1,0,°C,false,float32
 ```
 
-Mapping files (`telemetry_mapping.csv`, etc.):
+Mapping files define protocol-specific details:
 ```csv
 point_id,slave_id,function_code,register_address,data_type,byte_order
 1,1,3,100,float32,ABCD
 ```
 
-**Important**: Slave ID is defined in the CSV mapping files, NOT in the channel configuration. Each point can have its own slave_id in the mapping file.
+**Important**: Slave ID is in mapping files, NOT channel configuration.
+
+### Validate CSV Configuration
+```bash
+./scripts/validate-comsrv-config.sh config/comsrv
+```
+
+## Common Development Tasks
+
+### Adding a New Protocol Plugin
+1. Create plugin file in `services/comsrv/src/plugins/`
+2. Implement `Protocol` trait from `core::combase`
+3. Register in `ProtocolFactory::create()` method
+4. Add configuration support in channel config
+5. Add CSV mapping files if needed
+
+### Modifying Redis Lua Functions
+1. Edit function in `scripts/redis-functions/*.lua`
+2. Reload: `./scripts/redis-functions/load_functions.sh`
+3. Test: `redis-cli FCALL function_name 0 args`
+4. Check logs: `redis-cli MONITOR | grep function_name`
+
+### Debugging Service Issues
+```bash
+# Enable detailed logging
+RUST_LOG=debug,service_name=trace cargo run --bin service_name
+
+# Check port availability
+lsof -i :6000
+
+# Test Redis connection
+redis-cli ping
+
+# Monitor Redis operations
+redis-cli MONITOR
+
+# Check service health
+curl http://localhost:6000/health
+```
+
+### Performance Profiling
+```bash
+# Generate flamegraph
+cargo install flamegraph
+cargo flamegraph --bin comsrv
+
+# Run with release optimizations
+cargo run --release --bin comsrv
+
+# Benchmark specific code
+cargo bench
+```
 
 ## Testing Patterns
 
@@ -239,92 +258,106 @@ mod tests {
 }
 ```
 
-### Integration Test with Docker
-```bash
-# Start test environment
-docker-compose -f docker-compose.test.yml up -d
+### Integration Test Structure
+```rust
+// tests/integration_test.rs
+use voltage_libs::test_utils::setup_test_env;
 
-# Run integration tests
-cargo test --features integration
-
-# Cleanup
-docker-compose -f docker-compose.test.yml down
+#[tokio::test]
+async fn test_full_flow() {
+    let env = setup_test_env().await;
+    // Test implementation
+}
 ```
 
-## Performance Optimization
+## Project Structure
 
-### Recent Improvements
-- Lua functions reduced by ~40% for better performance
-- Service code simplified to single-file architecture where appropriate
-- Docker images optimized with multi-stage builds
-- Removed unnecessary abstractions and dependencies
-
-### Best Practices
-- Use Redis Lua functions for business logic (near-zero latency)
-- Batch Redis operations when possible
-- Use connection pooling for all external connections
-- Profile with `cargo flamegraph` for performance analysis
-
-## Data Flow Validation
-
-### Quick Data Flow Test
-```bash
-# 1. Start infrastructure services
-docker-compose up -d redis influxdb modbus-sim
-
-# 2. Load Redis Lua functions
-for lua in scripts/redis-functions/*.lua; do
-    cat "$lua" | docker exec -i voltageems-redis redis-cli -x FUNCTION LOAD REPLACE
-done
-
-# 3. Start comsrv (may need configuration adjustment)
-docker-compose up -d comsrv
-
-# 4. Check data in Redis
-docker exec voltageems-redis redis-cli KEYS "comsrv:*"
-docker exec voltageems-redis redis-cli HGETALL "comsrv:1001:T"
+```
+VoltageEMS/
+├── Cargo.toml              # Workspace root
+├── libs/                   # Shared library (voltage_libs crate)
+│   └── src/
+│       ├── redis/         # Redis client abstractions
+│       ├── config/        # Configuration utilities
+│       └── errors/        # Common error types
+├── services/              
+│   ├── comsrv/           # Complex service with plugins
+│   │   └── src/
+│   │       ├── main.rs
+│   │       ├── plugins/  # Protocol implementations
+│   │       ├── core/     # Core abstractions
+│   │       └── api/      # HTTP endpoints
+│   ├── modsrv/           # Single-file service
+│   │   └── src/main.rs
+│   └── ...               # Other lightweight services
+├── scripts/
+│   ├── redis-functions/  # Lua business logic
+│   ├── quick-check.sh    # Pre-commit checks
+│   ├── dev.sh           # Dev environment
+│   └── build-docker.sh  # Docker builds
+├── config/              # Service configurations
+├── docker/              # Docker files
+│   ├── redis/          # Redis with Lua
+│   └── modbus-sim/     # Test simulator
+└── docker-compose.yml   # Service orchestration
 ```
 
-### Known Issues
-- Some services have axum routing syntax issues (`:id` should be `{id}`)
-- Services need proper CSV configuration files in the expected paths
-- Redis Lua functions may need adjustment for proper data initialization
+## Key Dependencies (Cargo.toml)
 
-## Troubleshooting
+- **Async Runtime**: tokio with full features
+- **Web Framework**: axum 0.8.4 with tower middleware
+- **Serialization**: serde, serde_json, serde_yaml
+- **Database**: redis 0.32 with tokio support
+- **gRPC**: tonic 0.11, prost 0.12
+- **Error Handling**: anyhow, thiserror
+- **Logging**: tracing, tracing-subscriber
 
-### Common Issues
+## Known Issues & Solutions
 
-**Redis connection failed**
+### Redis Connection Failed
 ```bash
 # Check Redis is running
+docker-compose ps redis
 redis-cli ping
 
-# Check Redis URL in environment
+# Check environment variable
 echo $REDIS_URL
+# Should be: redis://localhost:6379 or redis://redis:6379 in Docker
 ```
 
-**CSV configuration not loading**
+### CSV Files Not Loading
 ```bash
-# Validate CSV files
+# Check CSV_BASE_PATH
+echo $CSV_BASE_PATH
+
+# Validate CSV format
 ./scripts/validate-comsrv-config.sh config/comsrv
 
-# Check CSV_BASE_PATH environment variable
-echo $CSV_BASE_PATH
+# Check file permissions
+ls -la config/comsrv/*.csv
 ```
 
-**Service not starting**
-```bash
-# Check with debug logging
-RUST_LOG=debug cargo run --bin service_name
+### Axum Route Syntax
+- Use `/{id}` not `/:id` for path parameters in axum 0.8+
+- Example: `/api/channels/{id}/status`
 
-# Check port availability
-lsof -i :6000  # Replace with service port
+### Port Already in Use
+```bash
+# Find process using port
+lsof -i :6000
+
+# Kill process
+kill -9 <PID>
+
+# Or use different port
+SERVICE_PORT=6100 cargo run --bin service_name
 ```
 
 ## Development Principles
 
-- When modifying code, do not consider compatibility, change directly.
-- Keep services lightweight and focused
-- Delegate business logic to Redis Lua functions
-- Use environment variables for configuration override
-- Maintain comprehensive logging for debugging
+- **Simplicity First**: Avoid over-engineering, use single-file services where possible
+- **Performance**: Delegate hot-path logic to Redis Lua functions
+- **Compatibility**: When modifying code, change directly without compatibility concerns
+- **Logging**: Maintain comprehensive logging for debugging
+- **Testing**: Write tests for critical paths and protocol implementations
+- **Configuration**: Use environment variables for infrastructure, YAML for business logic

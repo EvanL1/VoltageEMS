@@ -280,6 +280,9 @@ pub trait ComBase: Send + Sync {
     /// Get protocol type
     fn protocol_type(&self) -> &str;
 
+    /// Get channel ID
+    fn get_channel_id(&self) -> u16;
+
     /// Get channel status
     async fn get_status(&self) -> ChannelStatus;
 
@@ -325,6 +328,39 @@ pub trait ComClient: ComBase {
     /// Execute adjustment command (actively send)
     async fn adjustment(&mut self, adjustments: Vec<(u32, RedisValue)>)
         -> Result<Vec<(u32, bool)>>;
+
+    /// Log protocol message to channel-specific log
+    fn log_protocol_message(&self, direction: &str, data: &[u8], message: &str) {
+        let channel_id = self.get_channel_id();
+        voltage_libs::log_to_channel!(
+            channel_id,
+            tracing::Level::DEBUG,
+            "[{}] {} bytes: {:02X?} - {}",
+            direction,
+            data.len(),
+            data,
+            message
+        );
+    }
+
+    /// Log parsed data to channel-specific log
+    fn log_parsed_data(&self, point_id: &str, value: &str, raw_data: &[u8]) {
+        let channel_id = self.get_channel_id();
+        voltage_libs::log_to_channel!(
+            channel_id,
+            tracing::Level::INFO,
+            "Parsed point {}: value={}, raw={:02X?}",
+            point_id,
+            value,
+            raw_data
+        );
+    }
+
+    /// Log error to channel-specific log
+    fn log_channel_error(&self, error_msg: &str) {
+        let channel_id = self.get_channel_id();
+        voltage_libs::log_to_channel!(channel_id, tracing::Level::ERROR, "Error: {}", error_msg);
+    }
 
     /// Start periodic tasks (polling, etc.)
     async fn start_periodic_tasks(&self) -> Result<()> {
@@ -498,6 +534,14 @@ impl ComBase for DefaultProtocol {
 
     fn protocol_type(&self) -> &str {
         &self.protocol_type
+    }
+
+    fn get_channel_id(&self) -> u16 {
+        if let Some(config) = &self.channel_config {
+            config.id
+        } else {
+            0
+        }
     }
 
     async fn get_status(&self) -> ChannelStatus {

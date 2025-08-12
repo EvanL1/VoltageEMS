@@ -52,6 +52,23 @@ services:
       - NO_PROXY="*"
       - no_proxy="*"
 
+  # Optional: Log Management Service (runs cleanup daily)
+  log-manager:
+    image: python:3.11-slim
+    container_name: voltageems-log-manager
+    volumes:
+      - ./logs:/app/logs
+      - ./scripts:/app/scripts
+    working_dir: /app
+    command: >
+      sh -c "while true; do
+        if [ -f /app/scripts/manage-logs.py ]; then
+          python /app/scripts/manage-logs.py clean --days 30;
+        fi;
+        sleep 86400;
+      done"
+    restart: unless-stopped
+
   # API Gateway - 专注于数据聚合和业务逻辑
   apigateway:
     image: voltageems-apigateway:latest

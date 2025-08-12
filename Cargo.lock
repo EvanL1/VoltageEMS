@@ -4641,6 +4641,7 @@ dependencies = [
  "chrono",
  "hex",
  "influxdb2",
+ "lazy_static",
  "rand 0.8.5",
  "redis",
  "serde",
@@ -4651,6 +4652,7 @@ dependencies = [
  "tokio",
  "tokio-test",
  "tracing",
+ "tracing-appender",
  "tracing-subscriber",
 ]
 

@@ -68,13 +68,27 @@ struct AlarmQuery {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    // 初始化日志
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
-        )
-        .init();
+    // Initialize unified logging system
+    let log_config = voltage_libs::logging::LogConfig {
+        service_name: "alarmsrv".to_string(),
+        log_dir: std::path::PathBuf::from("/app/logs"),
+        console_level: tracing::Level::INFO,
+        file_level: tracing::Level::DEBUG,
+        enable_json: false,
+        rotation: voltage_libs::logging::Rotation::DAILY,
+        max_log_files: 30,
+    };
+
+    if let Err(e) = voltage_libs::logging::init_with_config(log_config) {
+        eprintln!("Failed to initialize logging: {}", e);
+        // Fallback to basic logging
+        tracing_subscriber::fmt()
+            .with_env_filter(
+                tracing_subscriber::EnvFilter::try_from_default_env()
+                    .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
+            )
+            .init();
+    }
 
     info!("Starting Alarm Service...");
 
@@ -159,7 +173,7 @@ async fn list_alarms(
     // 调用Lua函数查询告警
     let result: String = match redis::cmd("FCALL")
         .arg("alarmsrv_list_alarms")
-        .arg(1)
+        .arg(0)
         .arg("query")
         .arg(params.to_string())
         .query_async(&mut conn)
@@ -202,7 +216,7 @@ async fn trigger_alarm(
     // 调用Lua函数触发告警
     let result: String = match redis::cmd("FCALL")
         .arg("alarmsrv_trigger_alarm")
-        .arg(1)
+        .arg(0)
         .arg(&alarm_id)
         .arg(alarm.to_string())
         .query_async(&mut conn)
@@ -234,7 +248,7 @@ async fn get_alarm(
     // 调用Lua函数获取告警
     let result: String = match redis::cmd("FCALL")
         .arg("alarmsrv_get_alarm")
-        .arg(1)
+        .arg(0)
         .arg(&id)
         .query_async(&mut conn)
         .await
@@ -268,7 +282,7 @@ async fn acknowledge_alarm(
     // 调用Lua函数确认告警
     let result: String = match redis::cmd("FCALL")
         .arg("alarmsrv_acknowledge_alarm")
-        .arg(1)
+        .arg(0)
         .arg(&id)
         .arg(ack_data.to_string())
         .query_async(&mut conn)
@@ -300,7 +314,7 @@ async fn clear_alarm(
     // 调用Lua函数清除告警
     let result: String = match redis::cmd("FCALL")
         .arg("alarmsrv_clear_alarm")
-        .arg(1)
+        .arg(0)
         .arg(&id)
         .query_async(&mut conn)
         .await
@@ -370,7 +384,7 @@ async fn create_rule(
     // 调用Lua函数创建规则
     let result: String = match redis::cmd("FCALL")
         .arg("alarmsrv_upsert_rule")
-        .arg(1)
+        .arg(0)
         .arg(&rule_id)
         .arg(rule.to_string())
         .query_async(&mut conn)
@@ -402,7 +416,7 @@ async fn get_rule(
     // 调用Lua函数获取规则
     let result: String = match redis::cmd("FCALL")
         .arg("alarmsrv_get_rule")
-        .arg(1)
+        .arg(0)
         .arg(&id)
         .query_async(&mut conn)
         .await
@@ -443,7 +457,7 @@ async fn delete_rule(
     // 调用Lua函数删除规则
     let result: String = match redis::cmd("FCALL")
         .arg("alarmsrv_delete_rule")
-        .arg(1)
+        .arg(0)
         .arg(&id)
         .query_async(&mut conn)
         .await

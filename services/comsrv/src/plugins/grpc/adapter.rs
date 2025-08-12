@@ -113,6 +113,14 @@ impl ComBase for GrpcPluginAdapter {
         &self.protocol_type
     }
 
+    fn get_channel_id(&self) -> u16 {
+        if let Some(config) = &self.channel_config {
+            config.id
+        } else {
+            0
+        }
+    }
+
     async fn get_status(&self) -> ChannelStatus {
         let mut status = ChannelStatus {
             is_connected: self.connected,

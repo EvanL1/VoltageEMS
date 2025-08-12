@@ -62,13 +62,27 @@ struct AppState {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    // 初始化日志系统
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
-        )
-        .init();
+    // 初始化统一日志系统
+    let log_config = voltage_libs::logging::LogConfig {
+        service_name: "modsrv".to_string(),
+        log_dir: std::path::PathBuf::from("logs"),
+        console_level: tracing::Level::INFO,
+        file_level: tracing::Level::DEBUG,
+        enable_json: false,
+        rotation: voltage_libs::logging::Rotation::DAILY,
+        max_log_files: 30,
+    };
+
+    if let Err(e) = voltage_libs::logging::init_with_config(log_config) {
+        eprintln!("Failed to initialize logging: {}", e);
+        // Fallback to basic logging
+        tracing_subscriber::fmt()
+            .with_env_filter(
+                tracing_subscriber::EnvFilter::try_from_default_env()
+                    .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
+            )
+            .init();
+    }
 
     info!("Starting Model Service (ModSrv)...");
     info!("Architecture: measurement/action separation");
@@ -195,7 +209,7 @@ async fn create_template(
     // 调用Lua函数创建模板
     let result: String = match redis::cmd("FCALL")
         .arg("modsrv_upsert_template")
-        .arg(1)
+        .arg(0)
         .arg(&template_id)
         .arg(template.to_string())
         .query_async(&mut conn)
@@ -227,7 +241,7 @@ async fn get_template(
     // 调用Lua函数获取模板
     let result: String = match redis::cmd("FCALL")
         .arg("modsrv_get_template")
-        .arg(1)
+        .arg(0)
         .arg(&id)
         .query_async(&mut conn)
         .await
@@ -268,7 +282,7 @@ async fn delete_template(
     // 调用Lua函数删除模板
     let result: String = match redis::cmd("FCALL")
         .arg("modsrv_delete_template")
-        .arg(1)
+        .arg(0)
         .arg(&id)
         .query_async(&mut conn)
         .await
@@ -343,7 +357,7 @@ async fn create_model(
     // 调用Lua函数创建模型
     let result: String = match redis::cmd("FCALL")
         .arg("modsrv_upsert_model")
-        .arg(1)
+        .arg(0)
         .arg(&model_id)
         .arg(model.to_string())
         .query_async(&mut conn)
@@ -355,6 +369,13 @@ async fn create_model(
             return Json(json!({ "error": format!("Failed to create model: {}", e) }));
         },
     };
+
+    // Create model-specific logger
+    if let Err(e) =
+        voltage_libs::logging::create_model_logger(std::path::Path::new("/app/logs"), &model_id)
+    {
+        tracing::warn!("Failed to create model logger for {}: {}", model_id, e);
+    }
 
     info!(
         "Created model: {} with measurement/action mappings",
@@ -378,7 +399,7 @@ async fn get_model(
     // 调用Lua函数获取模型
     let result: String = match redis::cmd("FCALL")
         .arg("modsrv_get_model")
-        .arg(1)
+        .arg(0)
         .arg(&id)
         .query_async(&mut conn)
         .await
@@ -419,7 +440,7 @@ async fn delete_model(
     // 调用Lua函数删除模型
     let result: String = match redis::cmd("FCALL")
         .arg("modsrv_delete_model")
-        .arg(1)
+        .arg(0)
         .arg(&id)
         .query_async(&mut conn)
         .await
@@ -458,7 +479,7 @@ async fn get_model_data(
 
     // 构建命令参数
     let mut cmd = redis::cmd("FCALL");
-    cmd.arg("modsrv_get_model_data").arg(1).arg(&id);
+    cmd.arg("modsrv_get_model_data").arg(0).arg(&id);
 
     if let Some(dtype) = query.data_type {
         cmd.arg(dtype);
@@ -490,6 +511,12 @@ async fn sync_measurement(
         Ok(conn) => conn,
         Err(e) => {
             error!("Redis connection error: {}", e);
+            voltage_libs::log_to_model!(
+                id.clone(),
+                tracing::Level::ERROR,
+                "Redis connection error: {}",
+                e
+            );
             return Json(json!({ "error": "Database connection failed" }));
         },
     };
@@ -497,7 +524,7 @@ async fn sync_measurement(
     // 调用Lua函数同步测量数据
     let result: String = match redis::cmd("FCALL")
         .arg("modsrv_sync_measurement")
-        .arg(1)
+        .arg(0)
         .arg(&id)
         .query_async(&mut conn)
         .await
@@ -505,14 +532,29 @@ async fn sync_measurement(
         Ok(r) => r,
         Err(e) => {
             error!("Failed to sync measurement: {}", e);
+            voltage_libs::log_to_model!(
+                id.clone(),
+                tracing::Level::ERROR,
+                "Failed to sync measurement: {}",
+                e
+            );
             return Json(json!({ "error": format!("Failed to sync measurement: {}", e) }));
         },
     };
 
     info!("Synced measurement for model: {}", id);
+    voltage_libs::log_to_model!(id.clone(), tracing::Level::INFO, "Synced measurement data");
 
     match serde_json::from_str(&result) {
-        Ok(data) => Json(data),
+        Ok(data) => {
+            voltage_libs::log_to_model!(
+                id.clone(),
+                tracing::Level::DEBUG,
+                "Sync result: {}",
+                result
+            );
+            Json(data)
+        },
         Err(_) => Json(json!({ "status": "synced", "model_id": id })),
     }
 }
@@ -532,14 +574,29 @@ async fn execute_action(
         Ok(conn) => conn,
         Err(e) => {
             error!("Redis connection error: {}", e);
+            voltage_libs::log_to_model!(
+                id.clone(),
+                tracing::Level::ERROR,
+                "Redis connection error: {}",
+                e
+            );
             return Json(json!({ "error": "Database connection failed" }));
         },
     };
 
+    // Log action request
+    voltage_libs::log_to_model!(
+        &id,
+        tracing::Level::INFO,
+        "Executing action: {} with value: {}",
+        request.action,
+        request.value
+    );
+
     // 调用Lua函数执行动作
     let result: String = match redis::cmd("FCALL")
         .arg("modsrv_execute_action")
-        .arg(1)
+        .arg(0)
         .arg(&id)
         .arg(&request.action)
         .arg(request.value.to_string())
@@ -549,11 +606,25 @@ async fn execute_action(
         Ok(r) => r,
         Err(e) => {
             error!("Failed to execute action: {}", e);
+            voltage_libs::log_to_model!(
+                id.clone(),
+                tracing::Level::ERROR,
+                "Failed to execute action '{}': {}",
+                request.action,
+                e
+            );
             return Json(json!({ "error": format!("Failed to execute action: {}", e) }));
         },
     };
 
     info!("Executed action '{}' for model: {}", request.action, id);
+    voltage_libs::log_to_model!(
+        &id,
+        tracing::Level::INFO,
+        "Action '{}' executed successfully. Result: {}",
+        request.action,
+        result
+    );
 
     match serde_json::from_str(&result) {
         Ok(data) => Json(data),

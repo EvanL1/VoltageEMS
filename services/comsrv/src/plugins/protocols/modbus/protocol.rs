@@ -124,6 +124,10 @@ impl ComBase for ModbusProtocol {
         "modbus"
     }
 
+    fn get_channel_id(&self) -> u16 {
+        self.channel_id
+    }
+
     async fn get_status(&self) -> ChannelStatus {
         self.status.read().await.clone()
     }

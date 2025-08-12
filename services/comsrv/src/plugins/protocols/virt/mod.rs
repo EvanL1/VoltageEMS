@@ -76,6 +76,10 @@ impl ComBase for VirtualProtocol {
         "virtual"
     }
 
+    fn get_channel_id(&self) -> u16 {
+        self.channel_id
+    }
+
     async fn get_status(&self) -> ChannelStatus {
         ChannelStatus {
             is_connected: true,
@@ -161,6 +165,13 @@ impl ComClient for VirtualProtocol {
                         let t = chrono::Utc::now().timestamp() as f64;
                         *value = ((t + i as f64) * 0.1).sin() * 100.0;
                     }
+                    // Log telemetry generation
+                    voltage_libs::log_to_channel!(
+                        _channel_id,
+                        tracing::Level::DEBUG,
+                        "Generated {} telemetry points with sine wave data",
+                        data.len()
+                    );
                 }
 
                 // Update signal data
@@ -191,20 +202,30 @@ impl ComClient for VirtualProtocol {
         let mut results = Vec::new();
         let mut signals = self.signal_data.write().await;
 
-        for (point_id, value) in commands {
-            if point_id > 0 && point_id <= signals.len() as u32 {
-                let idx = (point_id - 1) as usize;
+        for (point_id, value) in &commands {
+            if *point_id > 0 && *point_id <= signals.len() as u32 {
+                let idx = (*point_id - 1) as usize;
                 signals[idx] = match value {
-                    RedisValue::Bool(b) => b,
-                    RedisValue::Integer(i) => i != 0,
-                    RedisValue::Float(f) => f != 0.0,
+                    RedisValue::Bool(b) => *b,
+                    RedisValue::Integer(i) => *i != 0,
+                    RedisValue::Float(f) => *f != 0.0,
                     _ => false,
                 };
-                results.push((point_id, true));
+                results.push((*point_id, true));
             } else {
-                results.push((point_id, false));
+                results.push((*point_id, false));
             }
         }
+
+        // Log control commands
+        self.log_protocol_message(
+            "CONTROL",
+            &[],
+            &format!(
+                "Executed {} control commands to virtual device",
+                commands.len()
+            ),
+        );
 
         Ok(results)
     }

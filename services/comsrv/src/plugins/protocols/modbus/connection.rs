@@ -337,4 +337,26 @@ impl ModbusConnectionManager {
         // Receive the response
         self.receive(response_buffer, timeout).await
     }
+
+    /// Send request and receive response with logging
+    pub async fn send_and_receive_with_log<C: crate::core::combase::traits::ComClient>(
+        &self,
+        request: &[u8],
+        response_buffer: &mut [u8],
+        timeout: Duration,
+        client: &C,
+    ) -> Result<usize> {
+        // Log outgoing request
+        client.log_protocol_message("TX", request, "Modbus request");
+
+        // Send and receive
+        let bytes_read = self
+            .send_and_receive(request, response_buffer, timeout)
+            .await?;
+
+        // Log incoming response
+        client.log_protocol_message("RX", &response_buffer[..bytes_read], "Modbus response");
+
+        Ok(bytes_read)
+    }
 }

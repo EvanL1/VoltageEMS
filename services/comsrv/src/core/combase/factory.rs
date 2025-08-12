@@ -335,6 +335,14 @@ impl ProtocolFactory {
             command_trigger,
         );
 
+        // Step 8: Create channel-specific logger
+        if let Err(e) = voltage_libs::logging::create_channel_logger(
+            std::path::Path::new("/app/logs"),
+            &channel_id.to_string(),
+        ) {
+            warn!("Failed to create channel logger for {}: {}", channel_id, e);
+        }
+
         info!(
             "Created channel {} with protocol {:?}",
             channel_id, protocol_type
@@ -1442,6 +1450,10 @@ pub mod test_support {
 
         fn protocol_type(&self) -> &str {
             &self.protocol_type
+        }
+
+        fn get_channel_id(&self) -> u16 {
+            0 // Mock implementation returns 0
         }
 
         async fn get_status(&self) -> ChannelStatus {
