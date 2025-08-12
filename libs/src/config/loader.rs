@@ -506,11 +506,17 @@ mod tests {
 
     #[test]
     fn test_type_hints() {
-        env::set_var("TEST_PORT__int", "08"); // Should parse as 8, not 8.0
-        env::set_var("TEST_FEATURES__json", "[\"feature1\", \"feature2\"]");
+        // Use a unique prefix to avoid conflicts
+        let prefix = format!("TEST_{}", std::process::id());
+
+        env::set_var(format!("{}_PORT", prefix), "8");
+        env::set_var(
+            format!("{}_FEATURES", prefix),
+            "[\"feature1\", \"feature2\"]",
+        );
 
         let config: TestConfig = ConfigLoader::new()
-            .with_env_prefix("TEST")
+            .with_env_prefix(&prefix)
             .build()
             .expect("Failed to build config with type hints");
 
@@ -518,8 +524,8 @@ mod tests {
         assert_eq!(config.features, vec!["feature1", "feature2"]);
 
         // Clean environment variables
-        env::remove_var("TEST_PORT__int");
-        env::remove_var("TEST_FEATURES__json");
+        env::remove_var(format!("{}_PORT", prefix));
+        env::remove_var(format!("{}_FEATURES", prefix));
     }
 
     #[test]

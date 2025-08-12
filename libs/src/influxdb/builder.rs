@@ -452,9 +452,12 @@ mod tests {
         let ms = TimestampPrecision::Milliseconds.convert_system_time(now);
         let s = TimestampPrecision::Seconds.convert_system_time(now);
 
-        assert!(ns > us * 1000);
-        assert!(us > ms * 1000);
-        assert!(ms > s * 1000);
+        // Nanoseconds should be approximately 1000x microseconds
+        assert!(ns / 1000 >= us - 1 && ns / 1000 <= us + 1);
+        // Microseconds should be approximately 1000x milliseconds
+        assert!(us / 1000 >= ms - 1 && us / 1000 <= ms + 1);
+        // Milliseconds should be approximately 1000x seconds
+        assert!(ms / 1000 >= s - 1 && ms / 1000 <= s + 1);
     }
 
     #[test]
