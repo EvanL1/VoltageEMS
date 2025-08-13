@@ -239,15 +239,25 @@ mod tests {
 
     #[tokio::test]
     async fn test_retry_with_backoff() {
-        let mut attempts = 0;
+        use std::sync::{Arc, Mutex};
+
+        let attempts = Arc::new(Mutex::new(0));
         let result = retry_with_backoff(
-            || {
-                attempts += 1;
-                async move {
-                    if attempts < 3 {
-                        Err("error")
-                    } else {
-                        Ok("success")
+            {
+                let attempts = attempts.clone();
+                move || {
+                    let attempts = attempts.clone();
+                    async move {
+                        let mut count = attempts.lock().unwrap();
+                        *count += 1;
+                        let current_count = *count;
+                        drop(count);
+
+                        if current_count < 3 {
+                            Err("error")
+                        } else {
+                            Ok("success")
+                        }
                     }
                 }
             },
@@ -257,6 +267,6 @@ mod tests {
         .await;
 
         assert_eq!(result, Ok("success"));
-        assert_eq!(attempts, 3);
+        assert_eq!(*attempts.lock().unwrap(), 3);
     }
 }

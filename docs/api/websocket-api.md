@@ -11,22 +11,22 @@ VoltageEMS WebSocket API 提供实时数据推送服务，支持双向通信，�
 #### 连接端点
 
 ```
-ws://localhost:6100/ws/v1/realtime
-wss://voltage-ems.com/ws/v1/realtime (生产环境)
+ws://localhost/api/ws
+ws://192.168.1.100/api/ws (生产环境局域网IP)
 ```
 
 #### 连接参数
 
 | 参数 | 类型 | 必需 | 描述 |
 |------|------|------|------|
-| token | string | 是 | JWT 访问令牌 |
+| token | string | 是 | JWT 访问令牌I（开发中） |
 | client_type | string | 否 | 客户端类型: web, mobile, screen |
 | heartbeat | integer | 否 | 心跳间隔（秒），默认30 |
 
 #### 连接示例
 
 ```javascript
-const wsUrl = 'ws://localhost:6100/ws/v1/realtime';
+const wsUrl = 'ws://localhost/api/ws';
 const token = 'your_jwt_token';
 const ws = new WebSocket(`${wsUrl}?token=${token}&client_type=web`);
 
@@ -101,16 +101,14 @@ WebSocket 连接状态码：
   "data": {
     "channels": [
       {
-        "channel_id": "1001",
+        "channel_id": 1001,
         "data_types": ["T", "S"],
-        "interval": 1000,
-        "mode": "value"
+        "interval": 1000
       },
       {
-        "channel_id": "1002",
+        "channel_id": 1002,
         "data_types": ["T"],
-        "interval": 500,
-        "mode": "delta"
+        "interval": 500
       }
     ]
   }
@@ -121,10 +119,9 @@ WebSocket 连接状态码：
 
 | 参数 | 类型 | 必需 | 描述 |
 |------|------|------|------|
-| channel_id | string | 是 | 通道ID |
+| channel_id | number | 是 | 通道ID |
 | data_types | array | 是 | 数据类型: T(遥测), S(遥信), C(遥控), A(遥调) |
 | interval | integer | 否 | 推送间隔(ms)，默认1000 |
-| mode | string | 否 | 推送模式: value(全量), delta(增量) |
 
 #### 响应消息
 
@@ -133,7 +130,7 @@ WebSocket 连接状态码：
   "type": "subscribe_ack",
   "id": "sub_001_ack",
   "data": {
-    "subscribed": ["1001", "1002"],
+    "subscribed": [1001, 1002],
     "failed": [],
     "total_subscriptions": 2
   }
@@ -151,7 +148,7 @@ WebSocket 连接状态码：
   "type": "unsubscribe",
   "id": "unsub_001",
   "data": {
-    "channels": ["1001", "1002"]
+    "channels": [1001, 1002]
   }
 }
 ```
@@ -163,7 +160,7 @@ WebSocket 连接状态码：
   "type": "unsubscribe_ack",
   "id": "unsub_001_ack",
   "data": {
-    "unsubscribed": ["1001", "1002"],
+    "unsubscribed": [1001, 1002],
     "remaining_subscriptions": 0
   }
 }
@@ -236,7 +233,7 @@ WebSocket 连接状态码：
   "type": "control",
   "id": "ctrl_001",
   "data": {
-    "channel_id": "2001",
+    "channel_id": 2001,
     "command_type": "set_value",
     "value": 100.5,
     "safety_check": true,
@@ -278,38 +275,17 @@ WebSocket 连接状态码：
   "id": "update_001",
   "timestamp": "2025-08-12T10:30:00Z",
   "data": {
-    "channel_id": "1001",
+    "channel_id": 1001,
     "data_type": "T",
-    "values": [
-      {
-        "point_id": 1,
-        "name": "温度",
-        "value": 25.6,
-        "unit": "°C",
-        "quality": "good",
-        "timestamp": "2025-08-12T10:30:00Z"
-      },
-      {
-        "point_id": 2,
-        "name": "压力",
-        "value": 101.3,
-        "unit": "kPa",
-        "quality": "good",
-        "timestamp": "2025-08-12T10:30:00Z"
-      }
-    ]
+    "values": {
+      "1": 25.6,
+      "2": 101.3,
+      "3": 7.2
+    }
   }
 }
 ```
 
-#### 数据质量标识
-
-| 质量 | 描述 |
-|------|------|
-| good | 数据正常 |
-| bad | 数据异常 |
-| uncertain | 数据不确定 |
-| offline | 设备离线 |
 
 ### 2. 批量数据推送 (data_batch)
 
@@ -325,18 +301,20 @@ WebSocket 连接状态码：
   "data": {
     "updates": [
       {
-        "channel_id": "1001",
+        "channel_id": 1001,
         "data_type": "T",
-        "values": [
-          {"point_id": 1, "value": 25.6, "quality": "good"}
-        ]
+        "values": {
+          "1": 25.6,
+          "2": 30.2
+        }
       },
       {
-        "channel_id": "1002",
+        "channel_id": 1002,
         "data_type": "S",
-        "values": [
-          {"point_id": 10, "value": 1, "quality": "good"}
-        ]
+        "values": {
+          "10": 1,
+          "11": 0
+        }
       }
     ],
     "total_points": 2,
@@ -357,7 +335,7 @@ WebSocket 连接状态码：
   "id": "delta_001",
   "timestamp": "2025-08-12T10:30:00Z",
   "data": {
-    "channel_id": "1001",
+    "channel_id": 1001,
     "changes": [
       {
         "point_id": 1,
@@ -386,7 +364,7 @@ WebSocket 连接状态码：
     "event_type": "triggered",
     "alarm": {
       "alarm_id": "ALM_12345",
-      "channel_id": "1001",
+      "channel_id": 1001,
       "point_id": 1,
       "severity": "high",
       "message": "温度超过上限",
@@ -423,7 +401,7 @@ WebSocket 连接状态码：
     "status": "online",
     "previous_status": "offline",
     "changed_at": "2025-08-12T10:30:00Z",
-    "channels": ["1001", "1002", "1003"]
+    "channels": [1001, 1002, 1003]
   }
 }
 ```
@@ -488,58 +466,58 @@ class WebSocketClient {
 
   connect() {
     this.ws = new WebSocket(`${this.url}?token=${this.token}`);
-    
+
     this.ws.onopen = () => {
       console.log('Connected');
       this.reconnectAttempts = 0;
       this.resubscribe();
     };
-    
+
     this.ws.onclose = (event) => {
       console.log('Disconnected:', event.code);
       if (event.code !== 1000) {
         this.reconnect();
       }
     };
-    
+
     this.ws.onerror = (error) => {
       console.error('Error:', error);
     };
-    
+
     this.ws.onmessage = (event) => {
       this.handleMessage(JSON.parse(event.data));
     };
   }
-  
+
   reconnect() {
     if (this.reconnectAttempts >= this.maxReconnectAttempts) {
       console.error('Max reconnection attempts reached');
       return;
     }
-    
+
     const delay = Math.min(
       this.reconnectDelay * Math.pow(this.reconnectDecay, this.reconnectAttempts),
       this.maxReconnectDelay
     );
-    
+
     this.reconnectAttempts++;
     console.log(`Reconnecting in ${delay}ms (attempt ${this.reconnectAttempts})`);
-    
+
     setTimeout(() => {
       this.connect();
     }, delay);
   }
-  
+
   resubscribe() {
     // 重新订阅之前的数据
     this.subscriptions.forEach((config, channelId) => {
       this.subscribe(channelId, config);
     });
   }
-  
+
   subscribe(channelId, config) {
     this.subscriptions.set(channelId, config);
-    
+
     if (this.ws.readyState === WebSocket.OPEN) {
       this.ws.send(JSON.stringify({
         type: 'subscribe',
@@ -552,7 +530,7 @@ class WebSocketClient {
       }));
     }
   }
-  
+
   handleMessage(message) {
     switch (message.type) {
       case 'data_update':
@@ -568,17 +546,17 @@ class WebSocketClient {
         console.log('Unknown message type:', message.type);
     }
   }
-  
+
   onDataUpdate(data) {
     // 处理数据更新
     console.log('Data update:', data);
   }
-  
+
   onAlarmEvent(data) {
     // 处理告警事件
     console.log('Alarm event:', data);
   }
-  
+
   onError(error) {
     // 处理错误
     console.error('Server error:', error);
@@ -586,9 +564,9 @@ class WebSocketClient {
 }
 
 // 使用示例
-const client = new WebSocketClient('ws://localhost:6100/ws/v1/realtime', 'your_token');
+const client = new WebSocketClient('ws://localhost/api/ws', 'your_token');
 client.connect();
-client.subscribe('1001', { data_types: ['T', 'S'], interval: 1000 });
+client.subscribe(1001, { data_types: ['T', 'S'], interval: 1000 });
 ```
 
 ## 性能优化
@@ -651,7 +629,7 @@ ws.send(JSON.stringify({
 ```javascript
 ws.onmessage = (event) => {
   const message = JSON.parse(event.data);
-  
+
   if (message.type === 'error') {
     switch (message.data.code) {
       case 'WS_AUTH_FAILED':
@@ -660,19 +638,19 @@ ws.onmessage = (event) => {
           reconnectWithNewToken(newToken);
         });
         break;
-        
+
       case 'WS_SUBSCRIPTION_LIMIT':
         // 清理不必要的订阅
         cleanupSubscriptions();
         break;
-        
+
       case 'WS_RATE_LIMIT':
         // 延迟重试
         setTimeout(() => {
           retryLastAction();
         }, message.data.retry_after * 1000);
         break;
-        
+
       default:
         console.error('Unhandled error:', message.data);
     }
@@ -682,7 +660,7 @@ ws.onmessage = (event) => {
 
 ## 安全注意事项
 
-1. **Token 安全**: 
+1. **Token 安全**:
    - 不要在日志中记录 token
    - 定期刷新 token
    - 使用 HTTPS/WSS 传输
@@ -720,7 +698,7 @@ class DebugWebSocketClient extends WebSocketClient {
     console.log('>>> Sending:', message);
     super.send(message);
   }
-  
+
   handleMessage(message) {
     console.log('<<< Received:', message);
     super.handleMessage(message);
@@ -737,8 +715,43 @@ class DebugWebSocketClient extends WebSocketClient {
 npm install -g wscat
 
 # 连接测试
-wscat -c "ws://localhost:6100/ws/v1/realtime?token=your_token"
+wscat -c "ws://localhost/api/ws?token=your_token"
 
 # 发送消息
-> {"type":"subscribe","data":{"channels":["1001"],"data_types":["T"]}}
+> {"type":"subscribe","data":{"channels":[1001],"data_types":["T"]}}
 ```
+
+## Redis Pub/Sub 机制
+
+VoltageEMS WebSocket 实现基于 Redis Pub/Sub 进行实时数据推送：
+
+### 数据流程
+
+1. **数据写入**: comsrv 将数据写入 Redis Hash (如 `comsrv:1001:T`)
+2. **发布通知**: comsrv 向 Redis 发布数据更新通知
+3. **订阅监听**: apigateway 订阅相关 Redis 频道
+4. **WebSocket 推送**: apigateway 通过 WebSocket 推送给客户端
+
+### Redis 频道命名
+
+```
+voltageems:data:1001:T     # 通道1001遥测数据更新
+voltageems:data:1001:S     # 通道1001遥信数据更新
+voltageems:data:1001:C     # 通道1001遥控数据更新
+voltageems:data:1001:A     # 通道1001遥调数据更新
+voltageems:alarm:*         # 告警事件通知
+voltageems:device:*        # 设备状态变化
+```
+
+### 数据同步
+
+- **实时性**: 基于 Redis Pub/Sub，延迟通常 < 10ms
+- **一致性**: 客户端订阅后立即获取 Redis 中的最新数据
+- **可靠性**: 连接断开重连后自动重新获取数据状态
+
+### 订阅管理
+
+apigateway 为每个 WebSocket 连接维护：
+- 活跃订阅列表
+- Redis 订阅频道映射
+- 客户端推送队列

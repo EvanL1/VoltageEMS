@@ -22,6 +22,8 @@ pub enum NetSrvError {
     Data(String),
     /// Network errors
     Network(String),
+    /// Runtime errors
+    Runtime(String),
 }
 
 impl fmt::Display for NetSrvError {
@@ -36,6 +38,7 @@ impl fmt::Display for NetSrvError {
             NetSrvError::Io(msg) => write!(f, "I/O error: {}", msg),
             NetSrvError::Data(msg) => write!(f, "Data error: {}", msg),
             NetSrvError::Network(msg) => write!(f, "Network error: {}", msg),
+            NetSrvError::Runtime(msg) => write!(f, "Runtime error: {}", msg),
         }
     }
 }

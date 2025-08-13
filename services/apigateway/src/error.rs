@@ -8,7 +8,8 @@ use std::fmt;
 use crate::response::ApiResponse;
 
 // Type aliases for backward compatibility
-pub type ApiResult<T> = Result<T, ApiGatewayError>;
+pub type Result<T> = std::result::Result<T, ApiGatewayError>;
+pub type ApiResult<T> = Result<T>;
 
 #[derive(Debug)]
 #[non_exhaustive]

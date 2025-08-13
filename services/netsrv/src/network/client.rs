@@ -36,17 +36,17 @@ pub fn create_network_client(
         NetworkConfig::LegacyMqtt(mqtt_config) => {
             let client = LegacyMqttClient::new(mqtt_config.clone(), formatter)?;
             Ok(Box::new(client))
-        }
+        },
 
         NetworkConfig::Http(http_config) => {
             let client = HttpClient::new(http_config.clone(), formatter)?;
             Ok(Box::new(client))
-        }
+        },
 
         NetworkConfig::CloudMqtt(cloud_config) => {
             let client = CloudMqttClient::new(cloud_config.clone(), formatter)?;
             Ok(Box::new(client))
-        }
+        },
     }
 }
 
@@ -91,11 +91,11 @@ impl NetworkClient for LegacyMqttClient {
         tokio::spawn(async move {
             loop {
                 match eventloop.poll().await {
-                    Ok(_) => {}
+                    Ok(_) => {},
                     Err(e) => {
                         error!("MQTT event loop error: {}", e);
                         break;
-                    }
+                    },
                 }
             }
         });
@@ -208,7 +208,7 @@ impl NetworkClient for HttpClient {
                     "Unsupported HTTP method: {}",
                     self.config.method
                 )))
-            }
+            },
         };
 
         // Add headers
@@ -221,15 +221,15 @@ impl NetworkClient for HttpClient {
             match auth {
                 crate::config_new::HttpAuth::Basic { username, password } => {
                     request = request.basic_auth(username, Some(password));
-                }
+                },
                 crate::config_new::HttpAuth::Bearer { token } => {
                     request = request.bearer_auth(token);
-                }
+                },
                 crate::config_new::HttpAuth::Custom { headers } => {
                     for (key, value) in headers {
                         request = request.header(key, value);
                     }
-                }
+                },
             }
         }
 
@@ -250,14 +250,14 @@ impl NetworkClient for HttpClient {
                 } else {
                     warn!("HTTP request failed with status: {}", resp.status());
                 }
-            }
+            },
             Err(e) => {
                 error!("HTTP request failed: {}", e);
                 return Err(crate::error::NetSrvError::Network(format!(
                     "HTTP request failed: {}",
                     e
                 )));
-            }
+            },
         }
 
         Ok(())
@@ -326,19 +326,19 @@ impl NetworkClient for CloudMqttClient {
         let endpoint = match &self.config.provider_config {
             crate::config_new::ProviderConfig::Aws { endpoint, port, .. } => {
                 (endpoint.clone(), *port)
-            }
+            },
             crate::config_new::ProviderConfig::Aliyun { endpoint, port, .. } => {
                 (endpoint.clone(), *port)
-            }
+            },
             crate::config_new::ProviderConfig::Azure { hostname, .. } => (hostname.clone(), 8883),
             crate::config_new::ProviderConfig::Custom { broker, port, .. } => {
                 (broker.clone(), *port)
-            }
+            },
             _ => {
                 return Err(crate::error::NetSrvError::Config(
                     "Unsupported provider configuration".to_string(),
                 ))
-            }
+            },
         };
 
         let mut mqttoptions = rumqttc::MqttOptions::new(&self.config.name, &endpoint.0, endpoint.1);
@@ -361,11 +361,11 @@ impl NetworkClient for CloudMqttClient {
         tokio::spawn(async move {
             loop {
                 match eventloop.poll().await {
-                    Ok(_) => {}
+                    Ok(_) => {},
                     Err(e) => {
                         error!("Cloud MQTT event loop error: {}", e);
                         break;
-                    }
+                    },
                 }
             }
         });

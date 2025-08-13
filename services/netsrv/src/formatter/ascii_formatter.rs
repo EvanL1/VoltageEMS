@@ -12,10 +12,19 @@ impl AsciiFormatter {
 }
 
 impl DataFormatter for AsciiFormatter {
-    fn format(&self, data: &Value) -> Result<String> {
-        let mut output = String::new();
-        format_value(data, &mut output, 0)?;
-        Ok(output)
+    fn format(&self, data: &str) -> Result<String> {
+        // Try to parse as JSON first
+        match serde_json::from_str::<Value>(data) {
+            Ok(parsed) => {
+                let mut output = String::new();
+                format_value(&parsed, &mut output, 0)?;
+                Ok(output)
+            },
+            Err(_) => {
+                // If not JSON, return the raw string
+                Ok(data.to_string())
+            },
+        }
     }
 }
 
@@ -33,16 +42,16 @@ fn format_value(value: &Value, output: &mut String, depth: usize) -> Result<()> 
                             NetSrvError::Format(format!("ASCII formatting error: {}", e))
                         })?;
                         format_value(val, output, depth + 1)?;
-                    }
+                    },
                     _ => {
                         let val_str = format_simple_value(val)?;
                         writeln!(output, "{}", val_str).map_err(|e| {
                             NetSrvError::Format(format!("ASCII formatting error: {}", e))
                         })?;
-                    }
+                    },
                 }
             }
-        }
+        },
         Value::Array(arr) => {
             for (i, val) in arr.iter().enumerate() {
                 let indent = " ".repeat(depth * 2);
@@ -55,21 +64,21 @@ fn format_value(value: &Value, output: &mut String, depth: usize) -> Result<()> 
                             NetSrvError::Format(format!("ASCII formatting error: {}", e))
                         })?;
                         format_value(val, output, depth + 1)?;
-                    }
+                    },
                     _ => {
                         let val_str = format_simple_value(val)?;
                         writeln!(output, "{}", val_str).map_err(|e| {
                             NetSrvError::Format(format!("ASCII formatting error: {}", e))
                         })?;
-                    }
+                    },
                 }
             }
-        }
+        },
         _ => {
             let val_str = format_simple_value(value)?;
             writeln!(output, "{}", val_str)
                 .map_err(|e| NetSrvError::Format(format!("ASCII formatting error: {}", e)))?;
-        }
+        },
     }
 
     Ok(())

@@ -52,7 +52,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .nest(
             "/api",
             Router::new()
-                // Future business logic endpoints will go here
+                // Channel management endpoints
+                .route("/channels", get(handlers::list_channels))
+                .route("/channels/{channel_id}/status", get(handlers::get_channel_status))
+                .route("/channels/{channel_id}/realtime", get(handlers::get_realtime_data))
+                .route("/channels/{channel_id}/history", get(handlers::get_historical_data))
         )
         .layer(
             CorsLayer::new()

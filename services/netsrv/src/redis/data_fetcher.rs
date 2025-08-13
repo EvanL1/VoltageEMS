@@ -1,8 +1,8 @@
+use crate::config::RedisConfig;
 use crate::error::{NetSrvError, Result};
 use serde_json::Value;
 use tracing::{debug, error};
 use voltage_libs::redis::RedisClient;
-use crate::config::RedisConfig;
 
 use std::time::{Duration, Instant};
 use tokio::time;
@@ -65,10 +65,10 @@ impl RedisDataFetcher {
             match self.fetch_key_data(&key).await {
                 Ok(value) => {
                     data_obj.insert(key, value);
-                }
+                },
                 Err(e) => {
                     error!("Failed to fetch data for key {}: {}", key, e);
-                }
+                },
             }
         }
 
@@ -88,7 +88,7 @@ impl RedisDataFetcher {
                 } else {
                     Ok(json!(value))
                 }
-            }
+            },
             Ok(None) => Ok(json!(null)),
             Err(_) => {
                 // If string get fails, try as hash
@@ -99,7 +99,7 @@ impl RedisDataFetcher {
                         key, e
                     ))),
                 }
-            }
+            },
         }
     }
 
@@ -123,7 +123,7 @@ impl RedisDataFetcher {
                         if let Err(e) = tx.send(data).await {
                             error!("Failed to send data to channel: {}", e);
                         }
-                    }
+                    },
                     Err(e) => {
                         error!("Failed to fetch data from Redis: {}", e);
                         // Try to reconnect
@@ -132,7 +132,7 @@ impl RedisDataFetcher {
                             // Wait before trying again
                             time::sleep(Duration::from_secs(5)).await;
                         }
-                    }
+                    },
                 }
             }
             self.wait_for_next_poll().await;
