@@ -77,6 +77,8 @@ Thumbs.db
 # Config
 services/comsrv/config/
 /config/
+# 但保留配置示例
+!config-examples/
 
 # examples
 examples/

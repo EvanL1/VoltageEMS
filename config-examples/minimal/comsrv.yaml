@@ -1,0 +1,6 @@
+# ComSrv 最简配置示例
+# 只包含必须配置的内容
+
+channels:
+  - id: 1001
+    protocol: "virt"    # 使用虚拟协议，无需外部设备
