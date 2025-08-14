@@ -100,26 +100,35 @@ RUST_LOG=debug cargo run --bin comsrv
 
 ### Docker Deployment
 
-1. Build all images (optimized):
+1. Build base dependencies image (first time or when dependencies change):
 ```bash
-# Use the new optimized build script
-./scripts/build-docker.sh build
+# Build the base image with all pre-compiled dependencies
+./scripts/build-docker-deps.sh
 
-# Or traditional build
-./scripts/build.sh release
+# This creates voltageems-dependencies:latest image
+# Only needs to be rebuilt when Cargo.toml dependencies change
 ```
 
-2. Start all services:
+2. Build service images (fast build using cached dependencies):
+```bash
+# Build all services in parallel
+docker-compose build --parallel
+
+# Or build specific service
+docker-compose build comsrv
+```
+
+3. Start all services:
 ```bash
 docker-compose up -d
 ```
 
-3. Check service status:
+4. Check service status:
 ```bash
 docker-compose ps
 ```
 
-4. Run comprehensive tests:
+5. Run comprehensive tests:
 ```bash
 # Test all services
 ./scripts/test-all-services.sh

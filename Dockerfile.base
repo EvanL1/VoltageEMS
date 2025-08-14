@@ -1,0 +1,74 @@
+# Dockerfile.base - 预编译所有依赖
+# 用法：docker build -f Dockerfile.base -t voltageems-dependencies:latest .
+
+FROM rust:1.79-bullseye AS dependencies
+
+# 安装系统依赖
+RUN apt-get update && apt-get install -y \
+    protobuf-compiler \
+    pkg-config \
+    libssl-dev \
+    cmake \
+    build-essential \
+    && rm -rf /var/lib/apt/lists/*
+
+# 设置工作目录
+WORKDIR /app
+
+# 设置 Cargo 缓存和构建目录
+ENV CARGO_HOME=/usr/local/cargo \
+    CARGO_TARGET_DIR=/app/target
+
+# 创建虚拟项目结构来缓存依赖
+COPY Cargo.toml Cargo.lock ./
+
+# 为每个服务创建虚拟的 src/main.rs
+RUN mkdir -p libs/src && echo "fn main() {}" > libs/src/lib.rs && \
+    mkdir -p services/comsrv/src && echo "fn main() {}" > services/comsrv/src/main.rs && \
+    mkdir -p services/modsrv/src && echo "fn main() {}" > services/modsrv/src/main.rs && \
+    mkdir -p services/alarmsrv/src && echo "fn main() {}" > services/alarmsrv/src/main.rs && \
+    mkdir -p services/rulesrv/src && echo "fn main() {}" > services/rulesrv/src/main.rs && \
+    mkdir -p services/hissrv/src && echo "fn main() {}" > services/hissrv/src/main.rs && \
+    mkdir -p services/apigateway/src && echo "fn main() {}" > services/apigateway/src/main.rs && \
+    mkdir -p services/netsrv/src && echo "fn main() {}" > services/netsrv/src/main.rs
+
+# 复制各服务的 Cargo.toml
+COPY libs/Cargo.toml ./libs/
+COPY services/comsrv/Cargo.toml ./services/comsrv/
+COPY services/modsrv/Cargo.toml ./services/modsrv/
+COPY services/alarmsrv/Cargo.toml ./services/alarmsrv/
+COPY services/rulesrv/Cargo.toml ./services/rulesrv/
+COPY services/hissrv/Cargo.toml ./services/hissrv/
+COPY services/apigateway/Cargo.toml ./services/apigateway/
+COPY services/netsrv/Cargo.toml ./services/netsrv/
+
+# 构建依赖（这会下载并编译所有依赖）
+RUN cargo build --release --workspace
+
+# 删除虚拟的源文件（保留编译好的依赖）
+RUN rm -rf services/*/src libs/src
+
+# 最终的基础镜像，包含所有预编译的依赖
+FROM rust:1.79-bullseye
+
+# 安装必要的系统依赖
+RUN apt-get update && apt-get install -y \
+    protobuf-compiler \
+    pkg-config \
+    libssl-dev \
+    cmake \
+    build-essential \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# 从依赖构建阶段复制所有内容
+COPY --from=dependencies /app/target /app/target
+COPY --from=dependencies /usr/local/cargo /usr/local/cargo
+
+# 设置环境变量
+ENV CARGO_HOME=/usr/local/cargo \
+    CARGO_TARGET_DIR=/app/target
+
+# 这个镜像现在包含了所有预编译的依赖
+# 各服务的 Dockerfile 可以直接使用：FROM voltageems-dependencies:latest AS builder

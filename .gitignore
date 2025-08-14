@@ -56,6 +56,14 @@ test-logs/
 # Dependencies
 **/node_modules/
 
+# Frontend build outputs
+apps/*/dist/
+apps/*/build/
+apps/*/.next/
+apps/*/.nuxt/
+apps/*/.output/
+apps/*/.cache/
+
 # Docker
 .docker/
 
