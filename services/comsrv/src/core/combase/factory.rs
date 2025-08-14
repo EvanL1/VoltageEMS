@@ -336,8 +336,9 @@ impl ProtocolFactory {
         );
 
         // Step 8: Create channel-specific logger
+        let log_dir = std::env::var("LOG_DIR").unwrap_or_else(|_| "logs".to_string());
         if let Err(e) = voltage_libs::logging::create_channel_logger(
-            std::path::Path::new("/app/logs"),
+            std::path::Path::new(&log_dir),
             &channel_id.to_string(),
         ) {
             warn!("Failed to create channel logger for {}: {}", channel_id, e);
@@ -523,10 +524,18 @@ impl ProtocolFactory {
                 ComSrvError::ConfigError(format!("Failed to read {telemetry_name} CSV file: {e}"))
             })?;
 
-            for result in reader.records() {
-                let record = result.map_err(|e| {
-                    ComSrvError::ConfigError(format!("Error reading CSV record: {e}"))
-                })?;
+            for (line_num, result) in reader.records().enumerate() {
+                let record = match result {
+                    Ok(record) => record,
+                    Err(e) => {
+                        warn!(
+                            "Skipping invalid CSV record at line {}: {}",
+                            line_num + 2,
+                            e
+                        );
+                        continue;
+                    },
+                };
 
                 // Get point_id (first column) and other fields
                 if let Some(point_id_str) = record.get(0) {
@@ -893,7 +902,7 @@ impl ProtocolFactory {
                 },
             };
             storage.set_data_sync(lua_sync_manager);
-            let storage = Arc::new(Mutex::new(storage));
+            let storage = Arc::new(storage);
 
             // Event-driven processing: immediately write data upon receipt
             loop {
@@ -902,129 +911,133 @@ impl ProtocolFactory {
                     Some(batch) => {
                         debug!("Received telemetry batch for channel {}", batch.channel_id);
 
-                        // Get channel config for scaling
-                        let channel_config = channels
-                            .get(&batch.channel_id)
-                            .map(|entry| Arc::clone(&entry.channel_config)); // Arc clone is more efficient
+                        // Immediately spawn async task to avoid blocking the receiver loop
+                        // This allows the loop to quickly consume channel buffer
+                        let channels_clone = channels.clone();
+                        let storage_clone = storage.clone();
 
-                        let mut updates = Vec::new();
+                        tokio::spawn(async move {
+                            let start = std::time::Instant::now();
 
-                        // Process telemetry data
-                        for (point_id, raw_value, _timestamp) in batch.telemetry {
-                            let processed_value = if let Some(ref config) = channel_config {
-                                // Apply scaling from channel config
-                                if let Some(point_config) = config.telemetry_points.get(&point_id) {
-                                    debug!(
-                                        "Processing telemetry point {}: raw={}, scaling={:?}",
-                                        point_id, raw_value, point_config.scaling
-                                    );
-                                    let processed =
-                                        crate::core::data_processor::process_point_value(
-                                            raw_value,
-                                            &crate::core::config::TelemetryType::Telemetry,
-                                            point_config.scaling.as_ref(),
+                            // Get channel config for scaling
+                            let channel_config = channels_clone
+                                .get(&batch.channel_id)
+                                .map(|entry| Arc::clone(&entry.channel_config));
+
+                            let mut updates = Vec::new();
+
+                            // Process telemetry data
+                            for (point_id, raw_value, _timestamp) in batch.telemetry {
+                                let processed_value = if let Some(ref config) = channel_config {
+                                    // Apply scaling from channel config
+                                    if let Some(point_config) =
+                                        config.telemetry_points.get(&point_id)
+                                    {
+                                        debug!(
+                                            "Processing telemetry point {}: raw={}, scaling={:?}",
+                                            point_id, raw_value, point_config.scaling
                                         );
-                                    debug!(
-                                        "Telemetry point {} processed: raw={} -> processed={}",
-                                        point_id, raw_value, processed
-                                    );
-                                    processed
+                                        let processed =
+                                            crate::core::data_processor::process_point_value(
+                                                raw_value,
+                                                &crate::core::config::TelemetryType::Telemetry,
+                                                point_config.scaling.as_ref(),
+                                            );
+                                        debug!(
+                                            "Telemetry point {} processed: raw={} -> processed={}",
+                                            point_id, raw_value, processed
+                                        );
+                                        processed
+                                    } else {
+                                        warn!(
+                                            "Telemetry point {} not found in config, using raw value {}",
+                                            point_id, raw_value
+                                        );
+                                        raw_value
+                                    }
                                 } else {
                                     warn!(
-                                        "Telemetry point {} not found in config, using raw value {}",
-                                        point_id, raw_value
+                                        "No channel config for channel {}, using raw value {} for point {}",
+                                        batch.channel_id, raw_value, point_id
                                     );
                                     raw_value
-                                }
-                            } else {
-                                warn!(
-                                    "No channel config for channel {}, using raw value {} for point {}",
-                                    batch.channel_id, raw_value, point_id
-                                );
-                                raw_value
-                            };
+                                };
 
-                            let update = crate::plugins::registry::PluginPointUpdate {
-                                telemetry_type: crate::core::config::TelemetryType::Telemetry,
-                                point_id,
-                                value: processed_value,
-                                raw_value: Some(raw_value),
-                            };
-                            updates.push(update);
-                        }
+                                let update = crate::plugins::registry::PluginPointUpdate {
+                                    telemetry_type: crate::core::config::TelemetryType::Telemetry,
+                                    point_id,
+                                    value: processed_value,
+                                    raw_value: Some(raw_value),
+                                };
+                                updates.push(update);
+                            }
 
-                        // Process signal data
-                        for (point_id, raw_value, _timestamp) in batch.signal {
-                            let processed_value = if let Some(ref config) = channel_config {
-                                // Apply scaling/reverse from channel config
-                                if let Some(point_config) = config.signal_points.get(&point_id) {
-                                    debug!(
-                                        "Channel {} processing signal point {}: raw={}, scaling={:?}",
-                                        batch.channel_id, point_id, raw_value, point_config.scaling
-                                    );
-                                    let processed =
-                                        crate::core::data_processor::process_point_value(
-                                            raw_value,
-                                            &crate::core::config::TelemetryType::Signal,
-                                            point_config.scaling.as_ref(),
+                            // Process signal data
+                            for (point_id, raw_value, _timestamp) in batch.signal {
+                                let processed_value = if let Some(ref config) = channel_config {
+                                    // Apply scaling/reverse from channel config
+                                    if let Some(point_config) = config.signal_points.get(&point_id)
+                                    {
+                                        debug!(
+                                            "Channel {} processing signal point {}: raw={}, scaling={:?}",
+                                            batch.channel_id, point_id, raw_value, point_config.scaling
                                         );
-                                    debug!(
-                                        "Signal point {} processed: raw={} -> processed={}",
-                                        point_id, raw_value, processed
-                                    );
-                                    processed
+                                        let processed =
+                                            crate::core::data_processor::process_point_value(
+                                                raw_value,
+                                                &crate::core::config::TelemetryType::Signal,
+                                                point_config.scaling.as_ref(),
+                                            );
+                                        debug!(
+                                            "Signal point {} processed: raw={} -> processed={}",
+                                            point_id, raw_value, processed
+                                        );
+                                        processed
+                                    } else {
+                                        debug!(
+                                            "Signal point {} not found in config, using raw value",
+                                            point_id
+                                        );
+                                        raw_value
+                                    }
                                 } else {
-                                    debug!(
-                                        "Signal point {} not found in config, using raw value",
-                                        point_id
-                                    );
                                     raw_value
-                                }
-                            } else {
-                                raw_value
-                            };
+                                };
 
-                            let update = crate::plugins::registry::PluginPointUpdate {
-                                telemetry_type: crate::core::config::TelemetryType::Signal,
-                                point_id,
-                                value: processed_value,
-                                raw_value: Some(raw_value),
-                            };
-                            updates.push(update);
-                        }
+                                let update = crate::plugins::registry::PluginPointUpdate {
+                                    telemetry_type: crate::core::config::TelemetryType::Signal,
+                                    point_id,
+                                    value: processed_value,
+                                    raw_value: Some(raw_value),
+                                };
+                                updates.push(update);
+                            }
 
-                        // Immediately write updates to Redis (event-driven, no delay)
-                        if !updates.is_empty() {
-                            debug!(
-                                "Immediately writing {} updates for channel {}",
-                                updates.len(),
-                                batch.channel_id
-                            );
+                            // Write updates to Redis
+                            if !updates.is_empty() {
+                                debug!(
+                                    "Writing {} updates for channel {}",
+                                    updates.len(),
+                                    batch.channel_id
+                                );
 
-                            // Use spawn to avoid blocking the receiver
-                            let storage_clone = storage.clone();
-                            let channel_id = batch.channel_id;
-                            tokio::spawn(async move {
-                                let start = std::time::Instant::now();
                                 if let Err(e) = storage_clone
-                                    .lock()
-                                    .await
-                                    .batch_update_and_publish(channel_id, updates)
+                                    .batch_update_and_publish(batch.channel_id, updates)
                                     .await
                                 {
                                     error!(
                                         "Failed to sync telemetry for channel {}: {}",
-                                        channel_id, e
+                                        batch.channel_id, e
                                     );
                                 } else {
                                     let elapsed = start.elapsed();
                                     debug!(
                                         "Successfully synced telemetry for channel {} in {:?}",
-                                        channel_id, elapsed
+                                        batch.channel_id, elapsed
                                     );
                                 }
-                            });
-                        }
+                            }
+                        });
                     },
                     None => {
                         warn!("Telemetry sync receiver closed, exiting sync task");

@@ -69,26 +69,31 @@ services:
       done"
     restart: unless-stopped
 
-  # API Gateway - 专注于数据聚合和业务逻辑
+  # API Gateway - Python版本
   apigateway:
-    image: voltageems-apigateway:latest
+    image: voltageems-apigateway-py:latest
     build:
-      context: .
-      dockerfile: services/apigateway/Dockerfile
+      context: ./services/apigateway-py
+      dockerfile: Dockerfile
     container_name: voltageems-apigateway
     ports:
       - "6005:6005"
     environment:
-      - RUST_LOG=debug,apigateway=trace
       - REDIS_URL=redis://redis:6379
-      - JWT_SECRET=your-secret-key-change-in-production
+      - SERVER_HOST=0.0.0.0
+      - SERVER_PORT=6005
       - NO_PROXY="*"
       - no_proxy="*"
     depends_on:
       - redis
     volumes:
-      - ./config/apigateway:/app/config:ro
+      - ./config/apigateway:/app/config/apigateway:ro
       - ./logs/apigateway:/app/logs
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:6005/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
 
   # 通信服务
   comsrv:
@@ -132,30 +137,36 @@ services:
       - ./config/modsrv:/app/config:ro
       - ./logs/modsrv:/app/logs
 
-  # 历史服务
+  # 历史服务 - Python版本
   hissrv:
-    image: voltageems-hissrv:latest
+    image: voltageems-hissrv-py:latest
     build:
-      context: .
-      dockerfile: services/hissrv/Dockerfile
+      context: ./services/hissrv-py
+      dockerfile: Dockerfile
     container_name: voltageems-hissrv
     ports:
       - "6004:6004"
     environment:
-      - RUST_LOG=info,hissrv=debug
       - REDIS_URL=redis://redis:6379
       - INFLUXDB_URL=http://influxdb:8086
       - INFLUXDB_TOKEN=mytoken
       - INFLUXDB_ORG=voltageems
       - INFLUXDB_BUCKET=ems_data
+      - SERVICE_PORT=6004
+      - COLLECTION_INTERVAL=60
       - NO_PROXY="*"
       - no_proxy="*"
     depends_on:
       - redis
       - influxdb
     volumes:
-      - ./config/hissrv:/app/config:ro
+      - ./config/hissrv:/app/config/hissrv:ro
       - ./logs/hissrv:/app/logs
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:6004/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
 
   # 告警服务
   alarmsrv:
@@ -197,24 +208,25 @@ services:
       - ./config/rulesrv:/app/config:ro
       - ./logs/rulesrv:/app/logs
 
-  # 网络服务 - 数据转发到外部网络
+  # 网络服务 - Python版本
   netsrv:
-    image: voltageems-netsrv:latest
+    image: voltageems-netsrv-py:latest
     build:
-      context: .
-      dockerfile: services/netsrv/Dockerfile
+      context: ./services/netsrv-py
+      dockerfile: Dockerfile
     container_name: voltageems-netsrv
     ports:
       - "6006:6006"
     environment:
-      - RUST_LOG=info,netsrv=debug
       - REDIS_URL=redis://redis:6379
+      - SERVICE_PORT=6006
+      - REDIS_POLL_INTERVAL=5
       - NO_PROXY="*"
       - no_proxy="*"
     depends_on:
       - redis
     volumes:
-      - ./config/netsrv:/app/config:ro
+      - ./config/netsrv:/app/config/netsrv:ro
       - ./logs/netsrv:/app/logs
 
   # Nginx 反向代理 - 统一入口

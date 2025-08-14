@@ -371,7 +371,9 @@ macro_rules! log_to_channel {
         }
 
         // Also write to channel-specific log file
-        let _ = $crate::logging::write_to_channel_log(&channel_id_val.to_string(), &message);
+        if let Err(e) = $crate::logging::write_to_channel_log(&channel_id_val.to_string(), &message) {
+            tracing::warn!("Failed to write to channel {} log: {}", channel_id_val, e);
+        }
     }};
 }
 
@@ -402,6 +404,8 @@ macro_rules! log_to_model {
         }
 
         // Also write to model-specific log file
-        let _ = $crate::logging::write_to_model_log(&model_id_val.to_string(), &message);
+        if let Err(e) = $crate::logging::write_to_model_log(&model_id_val.to_string(), &message) {
+            tracing::warn!("Failed to write to model {} log: {}", model_id_val, e);
+        }
     }};
 }

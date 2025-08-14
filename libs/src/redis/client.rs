@@ -149,6 +149,16 @@ impl RedisClient {
             .map_err(Into::into)
     }
 
+    /// Hash operation - batch setting multiple fields
+    pub async fn hmset(&mut self, key: &str, fields: &[(String, String)]) -> Result<()> {
+        let mut cmd = redis::cmd("HMSET");
+        cmd.arg(key);
+        for (field, value) in fields {
+            cmd.arg(field).arg(value);
+        }
+        cmd.query_async(&mut self.conn).await.map_err(Into::into)
+    }
+
     /// Hash operation - acquiringfield
     pub async fn hget(&mut self, key: &str, field: &str) -> Result<Option<String>> {
         redis::cmd("HGET")

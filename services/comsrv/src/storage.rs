@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use tracing::{debug, warn};
+use tracing::warn;
 use voltage_libs::redis::RedisClient;
 
 /// Point update data
@@ -119,38 +119,8 @@ impl StorageManager {
             return Err(e);
         }
 
-        // Publish updates
-        for update in &updates {
-            let point_type = telemetry_type_to_redis(&update.telemetry_type);
-            if let Err(e) = publish_update(
-                &mut client,
-                channel_id,
-                point_type,
-                update.point_id,
-                update.value,
-            )
-            .await
-            {
-                warn!("Failed to publish update: {}", e);
-                self.stats.increment_publish_failed();
-            } else {
-                self.stats.increment_publish_success();
-            }
-        }
-
-        // Trigger data sync
-        if let Some(ref data_sync) = self.data_sync {
-            for update in &updates {
-                let point_type = telemetry_type_to_redis(&update.telemetry_type);
-
-                if let Err(e) = data_sync
-                    .sync_telemetry(channel_id, point_type, update.point_id, update.value)
-                    .await
-                {
-                    debug!("Sync failed: {}", e);
-                }
-            }
-        }
+        // Note: Removed pub/sub publishing and individual sync calls for performance
+        // Synchronization will be handled by Redis Functions if configured
 
         Ok(())
     }
@@ -176,25 +146,8 @@ impl StorageManager {
             return Err(e);
         }
 
-        // Publish update
-        if let Err(e) =
-            publish_update(&mut client, channel_id, telemetry_type, point_id, value).await
-        {
-            warn!("Failed to publish: {}", e);
-            self.stats.increment_publish_failed();
-        } else {
-            self.stats.increment_publish_success();
-        }
-
-        // Trigger data sync
-        if let Some(ref data_sync) = self.data_sync {
-            if let Err(e) = data_sync
-                .sync_telemetry(channel_id, telemetry_type, point_id, value)
-                .await
-            {
-                debug!("Sync failed: {}", e);
-            }
-        }
+        // Note: Removed pub/sub publishing and sync calls for performance
+        // Synchronization will be handled by Redis Functions if configured
 
         Ok(())
     }
@@ -237,11 +190,11 @@ pub async fn write_batch(client: &mut RedisClient, updates: Vec<PointUpdate>) ->
         grouped.entry(hash_key).or_default().push((field, value));
     }
 
-    // Batch write to each hash
+    // Batch write to each hash using HMSET
     for (hash_key, fields) in grouped {
-        for (field, value) in fields {
+        if !fields.is_empty() {
             client
-                .hset(&hash_key, &field, value)
+                .hmset(&hash_key, &fields)
                 .await
                 .map_err(|e| ComSrvError::Storage(format!("Batch write failed: {e}")))?;
         }

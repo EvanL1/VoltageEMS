@@ -11,6 +11,68 @@ use std::borrow::Cow;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
+
+// ============================================================================
+// Channel Logger - Lightweight logging context for static functions
+// ============================================================================
+
+/// Lightweight logger for channel-specific logging in static contexts
+#[derive(Debug, Clone)]
+pub struct ChannelLogger {
+    pub channel_id: u32,
+}
+
+impl ChannelLogger {
+    /// Create new channel logger
+    pub fn new(channel_id: u32) -> Self {
+        Self { channel_id }
+    }
+
+    /// Log protocol message to channel-specific log
+    pub fn log_protocol_message(&self, direction: &str, data: &[u8], message: &str) {
+        voltage_libs::log_to_channel!(
+            self.channel_id,
+            tracing::Level::DEBUG,
+            "[{}] {} bytes: {:02X?} - {}",
+            direction,
+            data.len(),
+            data,
+            message
+        );
+    }
+
+    /// Log parsed data to channel-specific log
+    pub fn log_parsed_data(&self, point_id: &str, value: &str, raw_data: &[u8]) {
+        voltage_libs::log_to_channel!(
+            self.channel_id,
+            tracing::Level::INFO,
+            "Parsed point {}: value={}, raw={:02X?}",
+            point_id,
+            value,
+            raw_data
+        );
+    }
+
+    /// Log error to channel-specific log
+    pub fn log_channel_error(&self, error_msg: &str) {
+        voltage_libs::log_to_channel!(
+            self.channel_id,
+            tracing::Level::ERROR,
+            "Error: {}",
+            error_msg
+        );
+    }
+
+    /// Log batch operation info
+    pub fn log_batch_info(&self, message: &str) {
+        voltage_libs::log_to_channel!(self.channel_id, tracing::Level::INFO, "{}", message);
+    }
+
+    /// Log debug information
+    pub fn log_debug(&self, message: &str) {
+        voltage_libs::log_to_channel!(self.channel_id, tracing::Level::DEBUG, "{}", message);
+    }
+}
 // ============================================================================
 // Redis value type definitions
 // ============================================================================
@@ -384,6 +446,37 @@ pub trait ComClient: ComBase {
     fn set_command_receiver(&mut self, _rx: tokio::sync::mpsc::Receiver<ChannelCommand>) {
         // Default implementation does nothing
         // Protocols that support command processing should override this
+    }
+
+    /// Try to reconnect when connection is lost
+    /// Default implementation: disconnect and reconnect with delay
+    async fn try_reconnect(&mut self) -> Result<()> {
+        use tokio::time::{sleep, Duration};
+
+        // First try to disconnect cleanly
+        let _ = self.disconnect().await;
+
+        // Wait a bit before reconnecting
+        sleep(Duration::from_millis(1000)).await;
+
+        // Attempt to reconnect
+        self.connect().await
+    }
+
+    /// Check if the error indicates a connection problem that needs reconnection
+    fn needs_reconnect(&self, error: &ComSrvError) -> bool {
+        match error {
+            ComSrvError::IoError(msg) => {
+                msg.contains("Broken pipe")
+                    || msg.contains("Connection reset")
+                    || msg.contains("Connection refused")
+                    || msg.contains("Connection aborted")
+                    || msg.contains("Network is unreachable")
+            },
+            ComSrvError::ConnectionError(_) => true,
+            ComSrvError::NotConnected => true,
+            _ => false,
+        }
     }
 }
 

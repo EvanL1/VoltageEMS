@@ -2,204 +2,94 @@
 
 ## 概述
 
-VoltageEMS WebSocket API 提供实时数据推送服务，支持双向通信，适用于需要低延迟数据更新的场景。
+VoltageEMS 采用 WebSocket 和 HTTP 混合通信模式，根据数据特性选择最适合的协议。
 
-## 连接管理
+### 通信协议选择原则
 
-### 建立连接
+**WebSocket 用于：**
+- 实时数据推送 - 遥测、遥信等高频更新数据（1-10Hz）
+- 告警事件通知 - 需要立即推送的告警触发/恢复事件
+- 控制命令反馈 - 控制指令的实时执行状态
+- 心跳保活 - 维持长连接的心跳检测
 
-#### 连接端点
+特点：低延迟（<100ms）、双向通信、服务端主动推送
 
-```
-ws://localhost/api/ws
-ws://192.168.1.100/api/ws (生产环境局域网IP)
-```
+**HTTP REST API 用于：**
+- 配置管理 - 设备配置、点表定义、告警规则等低频数据
+- 历史查询 - 历史趋势、统计分析等非实时数据
+- 批量操作 - 设备管理、数据导出等批处理任务
+- 用户认证 - 登录、权限验证、token刷新
 
-#### 连接参数
+特点：请求-响应模式、无状态、适合CRUD操作
 
-| 参数 | 类型 | 必需 | 描述 |
-|------|------|------|------|
-| token | string | 是 | JWT 访问令牌I（开发中） |
-| client_type | string | 否 | 客户端类型: web, mobile, screen |
-| heartbeat | integer | 否 | 心跳间隔（秒），默认30 |
+### 数据传输优化策略
 
-#### 连接示例
+1. **静态配置分离** - 点位名称、单位等静态信息通过HTTP获取一次，WebSocket只传动态值
+2. **按需订阅** - 客户端只订阅需要的通道和数据类型
+3. **批量传输** - 相同时刻的多个数据点合并推送
+4. **精简格式** - 移除冗余字段，保留必要信息
 
-```javascript
-const wsUrl = 'ws://localhost/api/ws';
-const token = 'your_jwt_token';
-const ws = new WebSocket(`${wsUrl}?token=${token}&client_type=web`);
+## WebSocket 报文格式
 
-ws.onopen = (event) => {
-  console.log('WebSocket connected');
-};
+### 1. 通用报文结构
 
-ws.onerror = (error) => {
-  console.error('WebSocket error:', error);
-};
-
-ws.onclose = (event) => {
-  console.log('WebSocket closed:', event.code, event.reason);
-};
-```
-
-### 连接状态
-
-WebSocket 连接状态码：
-
-| 状态码 | 描述 | 处理建议 |
-|--------|------|----------|
-| 1000 | 正常关闭 | 无需处理 |
-| 1001 | 端点离开 | 尝试重连 |
-| 1006 | 异常关闭 | 检查网络，重连 |
-| 4001 | 认证失败 | 刷新token后重连 |
-| 4002 | 权限不足 | 检查用户权限 |
-| 4003 | 订阅限制 | 减少订阅数量 |
-| 4429 | 请求过多 | 延迟后重连 |
-
-## 消息格式
-
-### 基础消息结构
-
-所有 WebSocket 消息使用 JSON 格式：
+所有WebSocket报文采用JSON格式：
 
 ```json
 {
-  "type": "message_type",
-  "id": "unique_message_id",
-  "timestamp": "2025-08-12T10:30:00Z",
-  "data": {},
-  "meta": {
-    "version": "1.0",
-    "source": "service_name"
-  }
+  "type": "string",      // 报文类型
+  "id": "string",        // 唯一标识
+  "timestamp": "string", // ISO 8601时间戳
+  "data": {}            // 数据载荷
 }
 ```
 
-### 消息字段说明
+### 2. 客户端发送报文
 
-| 字段 | 类型 | 描述 |
-|------|------|------|
-| type | string | 消息类型标识 |
-| id | string | 消息唯一ID |
-| timestamp | string | ISO 8601 时间戳 |
-| data | object | 消息数据载荷 |
-| meta | object | 元数据信息 |
-
-## 客户端消息类型
-
-### 1. 订阅数据 (subscribe)
-
-订阅指定通道的实时数据推送。
-
-#### 请求消息
-
+#### 订阅数据
 ```json
 {
   "type": "subscribe",
   "id": "sub_001",
+  "timestamp": "2025-08-12T10:30:00Z",
   "data": {
-    "channels": [
-      {
-        "channel_id": 1001,
-        "data_types": ["T", "S"],
-        "interval": 1000
-      },
-      {
-        "channel_id": 1002,
-        "data_types": ["T"],
-        "interval": 500
-      }
-    ]
+    "channels": [1001, 1002],
+    "data_types": ["T", "S"],  // T=遥测, S=遥信, C=遥控, A=遥调
+    "interval": 1000           // 推送间隔(ms)
   }
 }
 ```
 
-#### 订阅参数说明
-
-| 参数 | 类型 | 必需 | 描述 |
-|------|------|------|------|
-| channel_id | number | 是 | 通道ID |
-| data_types | array | 是 | 数据类型: T(遥测), S(遥信), C(遥控), A(遥调) |
-| interval | integer | 否 | 推送间隔(ms)，默认1000 |
-
-#### 响应消息
-
-```json
-{
-  "type": "subscribe_ack",
-  "id": "sub_001_ack",
-  "data": {
-    "subscribed": [1001, 1002],
-    "failed": [],
-    "total_subscriptions": 2
-  }
-}
-```
-
-### 2. 取消订阅 (unsubscribe)
-
-取消已订阅的数据推送。
-
-#### 请求消息
-
+#### 取消订阅
 ```json
 {
   "type": "unsubscribe",
   "id": "unsub_001",
+  "timestamp": "2025-08-12T10:30:00Z",
   "data": {
-    "channels": [1001, 1002]
+    "channels": [1001]
   }
 }
 ```
 
-#### 响应消息
-
+#### 控制命令
 ```json
 {
-  "type": "unsubscribe_ack",
-  "id": "unsub_001_ack",
+  "type": "control",
+  "id": "ctrl_001",
+  "timestamp": "2025-08-12T10:30:00Z",
   "data": {
-    "unsubscribed": [1001, 1002],
-    "remaining_subscriptions": 0
+    "channel_id": 2001,
+    "point_id": 20,
+    "command_type": "set_value",
+    "value": 50.0,
+    "operator": "user_001",
+    "reason": "Production adjustment"
   }
 }
 ```
 
-### 3. 批量订阅 (subscribe_batch)
-
-批量订阅多个数据源。
-
-#### 请求消息
-
-```json
-{
-  "type": "subscribe_batch",
-  "id": "batch_001",
-  "data": {
-    "mode": "device",
-    "device_ids": ["PLC_001", "PLC_002"],
-    "data_types": ["T", "S"],
-    "interval": 1000
-  }
-}
-```
-
-#### 订阅模式
-
-| 模式 | 描述 | 参数 |
-|------|------|------|
-| channel | 按通道订阅 | channels, data_types |
-| device | 按设备订阅 | device_ids, data_types |
-| area | 按区域订阅 | area_ids, priority_levels |
-| alarm | 订阅告警 | severity_levels, areas |
-
-### 4. 心跳检测 (heartbeat)
-
-保持连接活跃。
-
-#### 请求消息
-
+#### 心跳
 ```json
 {
   "type": "ping",
@@ -208,67 +98,9 @@ WebSocket 连接状态码：
 }
 ```
 
-#### 响应消息
+### 3. 服务端推送报文
 
-```json
-{
-  "type": "pong",
-  "id": "pong_001",
-  "timestamp": "2025-08-12T10:30:00Z",
-  "data": {
-    "server_time": "2025-08-12T10:30:00Z",
-    "latency": 5
-  }
-}
-```
-
-### 5. 控制命令 (control)
-
-发送控制命令（需要相应权限）。
-
-#### 请求消息
-
-```json
-{
-  "type": "control",
-  "id": "ctrl_001",
-  "data": {
-    "channel_id": 2001,
-    "command_type": "set_value",
-    "value": 100.5,
-    "safety_check": true,
-    "operator": "user_001",
-    "reason": "生产调整"
-  }
-}
-```
-
-#### 响应消息
-
-```json
-{
-  "type": "control_ack",
-  "id": "ctrl_001_ack",
-  "data": {
-    "command_id": "cmd_12345",
-    "status": "executed",
-    "execution_time": "2025-08-12T10:30:01Z",
-    "result": {
-      "success": true,
-      "actual_value": 100.5
-    }
-  }
-}
-```
-
-## 服务端消息类型
-
-### 1. 实时数据推送 (data_update)
-
-推送订阅的实时数据。
-
-#### 消息格式
-
+#### 实时数据更新
 ```json
 {
   "type": "data_update",
@@ -286,17 +118,11 @@ WebSocket 连接状态码：
 }
 ```
 
-
-### 2. 批量数据推送 (data_batch)
-
-批量推送多个通道数据。
-
-#### 消息格式
-
+#### 批量数据更新
 ```json
 {
   "type": "data_batch",
-  "id": "batch_update_001",
+  "id": "batch_001",
   "timestamp": "2025-08-12T10:30:00Z",
   "data": {
     "updates": [
@@ -305,7 +131,7 @@ WebSocket 连接状态码：
         "data_type": "T",
         "values": {
           "1": 25.6,
-          "2": 30.2
+          "2": 26.3
         }
       },
       {
@@ -316,442 +142,376 @@ WebSocket 连接状态码：
           "11": 0
         }
       }
-    ],
-    "total_points": 2,
-    "compression": "none"
-  }
-}
-```
-
-### 3. 增量更新 (delta_update)
-
-仅推送变化的数据。
-
-#### 消息格式
-
-```json
-{
-  "type": "delta_update",
-  "id": "delta_001",
-  "timestamp": "2025-08-12T10:30:00Z",
-  "data": {
-    "channel_id": 1001,
-    "changes": [
-      {
-        "point_id": 1,
-        "field": "value",
-        "old_value": 25.5,
-        "new_value": 26.0,
-        "timestamp": "2025-08-12T10:30:00Z"
-      }
     ]
   }
 }
 ```
 
-### 4. 告警事件 (alarm_event)
-
-推送告警相关事件。
-
-#### 消息格式
-
+#### 告警事件
 ```json
 {
-  "type": "alarm_event",
+  "type": "alarm",
   "id": "alarm_001",
   "timestamp": "2025-08-12T10:30:00Z",
   "data": {
-    "event_type": "triggered",
-    "alarm": {
-      "alarm_id": "ALM_12345",
-      "channel_id": 1001,
-      "point_id": 1,
-      "severity": "high",
-      "message": "温度超过上限",
-      "value": 95.5,
-      "threshold": 90.0,
-      "triggered_at": "2025-08-12T10:30:00Z"
+    "alarm_id": "ALM_12345",
+    "channel_id": 1001,
+    "point_id": 1,
+    "status": 1,    // 0=恢复, 1=触发
+    "level": 2,     // 0=低, 1=中, 2=高, 3=紧急
+    "value": 95.5,
+    "message": "Temperature exceeds threshold"
+  }
+}
+```
+
+#### 订阅确认
+```json
+{
+  "type": "subscribe_ack",
+  "id": "sub_001_ack",
+  "timestamp": "2025-08-12T10:30:00Z",
+  "data": {
+    "request_id": "sub_001",
+    "subscribed": [1001, 1002],
+    "failed": [],
+    "total": 2
+  }
+}
+```
+
+#### 控制命令确认
+```json
+{
+  "type": "control_ack",
+  "id": "ctrl_001_ack",
+  "timestamp": "2025-08-12T10:30:00Z",
+  "data": {
+    "request_id": "ctrl_001",
+    "command_id": "CMD_12345",
+    "status": "executed",
+    "result": {
+      "success": true,
+      "actual_value": 50.0
     }
   }
 }
 ```
 
-#### 告警事件类型
-
-| 事件类型 | 描述 |
-|----------|------|
-| triggered | 告警触发 |
-| acknowledged | 告警确认 |
-| cleared | 告警清除 |
-| escalated | 告警升级 |
-
-### 5. 设备状态 (device_status)
-
-推送设备状态变化。
-
-#### 消息格式
-
-```json
-{
-  "type": "device_status",
-  "id": "status_001",
-  "timestamp": "2025-08-12T10:30:00Z",
-  "data": {
-    "device_id": "PLC_001",
-    "status": "online",
-    "previous_status": "offline",
-    "changed_at": "2025-08-12T10:30:00Z",
-    "channels": [1001, 1002, 1003]
-  }
-}
-```
-
-### 6. 系统通知 (system_notification)
-
-推送系统级通知。
-
-#### 消息格式
-
-```json
-{
-  "type": "system_notification",
-  "id": "notify_001",
-  "timestamp": "2025-08-12T10:30:00Z",
-  "data": {
-    "level": "warning",
-    "message": "系统将在10分钟后进行维护",
-    "details": "维护时间: 10:40-10:50",
-    "action_required": false
-  }
-}
-```
-
-### 7. 错误消息 (error)
-
-推送错误信息。
-
-#### 消息格式
-
+#### 错误消息
 ```json
 {
   "type": "error",
-  "id": "error_001",
+  "id": "err_001",
   "timestamp": "2025-08-12T10:30:00Z",
   "data": {
-    "code": "SUBSCRIPTION_FAILED",
-    "message": "订阅失败：通道不存在",
-    "details": "Channel ID '9999' not found",
-    "related_message_id": "sub_001"
+    "code": "CHANNEL_NOT_FOUND",
+    "message": "Channel not found",
+    "details": "Channel ID 9999 not found",
+    "request_id": "sub_001"
   }
 }
 ```
 
-## 重连策略
-
-### 自动重连实现
-
-```javascript
-class WebSocketClient {
-  constructor(url, token) {
-    this.url = url;
-    this.token = token;
-    this.ws = null;
-    this.reconnectAttempts = 0;
-    this.maxReconnectAttempts = 5;
-    this.reconnectDelay = 1000;
-    this.maxReconnectDelay = 30000;
-    this.reconnectDecay = 1.5;
-    this.subscriptions = new Map();
+#### 心跳响应
+```json
+{
+  "type": "pong",
+  "id": "pong_001",
+  "timestamp": "2025-08-12T10:30:00Z",
+  "data": {
+    "server_time": "2025-08-12T10:30:00Z",
+    "latency": 5
   }
+}
+```
 
-  connect() {
-    this.ws = new WebSocket(`${this.url}?token=${this.token}`);
+## HTTP REST API 报文格式
 
-    this.ws.onopen = () => {
-      console.log('Connected');
-      this.reconnectAttempts = 0;
-      this.resubscribe();
-    };
+### 基础端点
 
-    this.ws.onclose = (event) => {
-      console.log('Disconnected:', event.code);
-      if (event.code !== 1000) {
-        this.reconnect();
+- 开发环境: `http://localhost:6005/api`
+- 生产环境: `http://192.168.1.100/api`
+
+### 1. 通道管理
+
+#### 获取通道列表
+```http
+GET /api/channels
+```
+
+响应：
+```json
+{
+  "success": true,
+  "data": [
+    {
+      "channel_id": 1001,
+      "status": "active",
+      "last_update": 1736755800,
+      "active_points": 12
+    }
+  ],
+  "message": "Found 3 channels",
+  "timestamp": "2025-08-12T10:30:00Z"
+}
+```
+
+#### 获取通道状态
+```http
+GET /api/channels/{channel_id}/status
+```
+
+响应：
+```json
+{
+  "success": true,
+  "data": {
+    "channel_id": 1001,
+    "status": "active",
+    "last_update": 1736755800,
+    "active_points": 5
+  },
+  "timestamp": "2025-08-12T10:30:00Z"
+}
+```
+
+### 2. 实时数据查询
+
+#### 获取通道实时数据
+```http
+GET /api/channels/{channel_id}/realtime?data_type=T&point_id=1&limit=100
+```
+
+查询参数：
+- `data_type` - 数据类型(T/S/C/A)，可选
+- `point_id` - 特定点位ID，可选
+- `limit` - 最大返回数量(1-1000)，默认100
+
+响应：
+```json
+{
+  "success": true,
+  "data": [
+    {
+      "channel_id": 1001,
+      "data_type": "T",
+      "timestamp": 1736755800,
+      "values": {
+        "1": 25.6,
+        "2": 101.3
       }
-    };
-
-    this.ws.onerror = (error) => {
-      console.error('Error:', error);
-    };
-
-    this.ws.onmessage = (event) => {
-      this.handleMessage(JSON.parse(event.data));
-    };
-  }
-
-  reconnect() {
-    if (this.reconnectAttempts >= this.maxReconnectAttempts) {
-      console.error('Max reconnection attempts reached');
-      return;
     }
-
-    const delay = Math.min(
-      this.reconnectDelay * Math.pow(this.reconnectDecay, this.reconnectAttempts),
-      this.maxReconnectDelay
-    );
-
-    this.reconnectAttempts++;
-    console.log(`Reconnecting in ${delay}ms (attempt ${this.reconnectAttempts})`);
-
-    setTimeout(() => {
-      this.connect();
-    }, delay);
-  }
-
-  resubscribe() {
-    // 重新订阅之前的数据
-    this.subscriptions.forEach((config, channelId) => {
-      this.subscribe(channelId, config);
-    });
-  }
-
-  subscribe(channelId, config) {
-    this.subscriptions.set(channelId, config);
-
-    if (this.ws.readyState === WebSocket.OPEN) {
-      this.ws.send(JSON.stringify({
-        type: 'subscribe',
-        data: {
-          channels: [{
-            channel_id: channelId,
-            ...config
-          }]
-        }
-      }));
-    }
-  }
-
-  handleMessage(message) {
-    switch (message.type) {
-      case 'data_update':
-        this.onDataUpdate(message.data);
-        break;
-      case 'alarm_event':
-        this.onAlarmEvent(message.data);
-        break;
-      case 'error':
-        this.onError(message.data);
-        break;
-      default:
-        console.log('Unknown message type:', message.type);
-    }
-  }
-
-  onDataUpdate(data) {
-    // 处理数据更新
-    console.log('Data update:', data);
-  }
-
-  onAlarmEvent(data) {
-    // 处理告警事件
-    console.log('Alarm event:', data);
-  }
-
-  onError(error) {
-    // 处理错误
-    console.error('Server error:', error);
-  }
+  ],
+  "message": "Retrieved 1 data records",
+  "timestamp": "2025-08-12T10:30:00Z"
 }
-
-// 使用示例
-const client = new WebSocketClient('ws://localhost/api/ws', 'your_token');
-client.connect();
-client.subscribe(1001, { data_types: ['T', 'S'], interval: 1000 });
 ```
 
-## 性能优化
+### 3. 历史数据查询
 
-### 数据压缩
-
-WebSocket 支持 per-message deflate 压缩：
-
-```javascript
-// 客户端请求压缩
-const ws = new WebSocket(url, {
-  perMessageDeflate: {
-    zlibDeflateOptions: {
-      level: zlib.Z_BEST_COMPRESSION,
-    },
-    threshold: 1024, // 1KB以上的消息才压缩
-  }
-});
+#### 获取历史数据（需要InfluxDB集成）
+```http
+GET /api/channels/{channel_id}/history?start_time=1736755200&end_time=1736841600&data_type=T&point_id=1&limit=100
 ```
 
-### 批量处理
+查询参数：
+- `start_time` - 开始时间(Unix时间戳)
+- `end_time` - 结束时间(Unix时间戳)
+- `data_type` - 数据类型(T/S/C/A)，可选
+- `point_id` - 特定点位ID，可选
+- `limit` - 最大返回数量(1-1000)，默认100
 
-建议批量订阅和批量接收数据以提高性能：
+响应：
+```json
+{
+  "success": true,
+  "data": [],
+  "message": "Historical data endpoint - requires InfluxDB integration",
+  "timestamp": "2025-08-12T10:30:00Z"
+}
+```
+
+### 4. 健康检查
+
+#### 基础健康检查
+```http
+GET /health
+```
+
+响应：
+```json
+{
+  "success": true,
+  "data": {
+    "status": "healthy",
+    "service": "apigateway-py"
+  },
+  "timestamp": "2025-08-12T10:30:00Z"
+}
+```
+
+#### 详细健康检查
+```http
+GET /health/detailed
+```
+
+响应：
+```json
+{
+  "success": true,
+  "data": {
+    "status": "healthy",
+    "service": "apigateway-py",
+    "timestamp": "2025-08-12T10:30:00Z",
+    "dependencies": {
+      "redis": {
+        "status": "healthy",
+        "message": "Redis connection successful"
+      }
+    }
+  },
+  "timestamp": "2025-08-12T10:30:00Z"
+}
+```
+
+### 5. 错误响应格式
+
+```json
+{
+  "success": false,
+  "error": {
+    "code": "CHANNEL_NOT_FOUND",
+    "message": "Channel not found",
+    "details": "Channel 9999 not found"
+  },
+  "timestamp": "2025-08-12T10:30:00Z"
+}
+```
+
+错误码：
+- `400` - 请求参数错误
+- `404` - 资源未找到
+- `500` - 服务器内部错误
+
+## 完整通信示例
+
+### WebSocket 通信流程
 
 ```javascript
-// 批量订阅
+// 1. 建立连接
+const ws = new WebSocket('ws://localhost/api/ws');
+
+// 2. 订阅数据
 ws.send(JSON.stringify({
-  type: 'subscribe_batch',
-  data: {
-    channels: ['1001', '1002', '1003', '1004', '1005'],
-    data_types: ['T'],
-    interval: 1000
+  "type": "subscribe",
+  "id": "sub_001",
+  "timestamp": new Date().toISOString(),
+  "data": {
+    "channels": [1001, 1002],
+    "data_types": ["T"],
+    "interval": 1000
   }
 }));
-```
 
-### 订阅管理最佳实践
-
-1. **合理设置推送间隔**: 根据实际需求设置，避免过于频繁
-2. **使用增量模式**: 对于大量数据，使用 delta 模式减少传输量
-3. **及时取消订阅**: 不需要的数据及时取消订阅
-4. **批量操作**: 尽量使用批量订阅/取消订阅
-5. **连接复用**: 同一客户端使用单一连接
-
-## 错误处理
-
-### 常见错误码
-
-| 错误码 | 描述 | 处理建议 |
-|--------|------|----------|
-| WS_AUTH_FAILED | 认证失败 | 刷新token重连 |
-| WS_SUBSCRIPTION_LIMIT | 订阅数量超限 | 减少订阅数量 |
-| WS_INVALID_MESSAGE | 消息格式错误 | 检查消息格式 |
-| WS_CHANNEL_NOT_FOUND | 通道不存在 | 检查通道ID |
-| WS_PERMISSION_DENIED | 权限不足 | 检查用户权限 |
-| WS_RATE_LIMIT | 请求频率过高 | 降低请求频率 |
-
-### 错误处理示例
-
-```javascript
+// 3. 接收实时数据
 ws.onmessage = (event) => {
-  const message = JSON.parse(event.data);
-
-  if (message.type === 'error') {
-    switch (message.data.code) {
-      case 'WS_AUTH_FAILED':
-        // 刷新token
-        refreshToken().then(newToken => {
-          reconnectWithNewToken(newToken);
-        });
-        break;
-
-      case 'WS_SUBSCRIPTION_LIMIT':
-        // 清理不必要的订阅
-        cleanupSubscriptions();
-        break;
-
-      case 'WS_RATE_LIMIT':
-        // 延迟重试
-        setTimeout(() => {
-          retryLastAction();
-        }, message.data.retry_after * 1000);
-        break;
-
-      default:
-        console.error('Unhandled error:', message.data);
-    }
+  const msg = JSON.parse(event.data);
+  if (msg.type === 'data_update') {
+    console.log('Channel:', msg.data.channel_id);
+    console.log('Values:', msg.data.values);
   }
 };
+
+// 4. 心跳维持
+setInterval(() => {
+  ws.send(JSON.stringify({
+    "type": "ping",
+    "id": "ping_" + Date.now(),
+    "timestamp": new Date().toISOString()
+  }));
+}, 30000);
 ```
 
-## 安全注意事项
-
-1. **Token 安全**:
-   - 不要在日志中记录 token
-   - 定期刷新 token
-   - 使用 HTTPS/WSS 传输
-
-2. **输入验证**:
-   - 验证所有客户端消息
-   - 限制消息大小
-   - 防止注入攻击
-
-3. **连接管理**:
-   - 限制每用户连接数
-   - 实施连接超时
-   - 监控异常连接模式
-
-4. **数据权限**:
-   - 验证订阅权限
-   - 数据级别访问控制
-   - 审计关键操作
-
-## 调试技巧
-
-### Chrome DevTools
-
-1. 打开 Chrome DevTools
-2. 切换到 Network 标签
-3. 筛选 WS 类型
-4. 点击 WebSocket 连接查看消息
-
-### 日志记录
+### HTTP API 调用流程
 
 ```javascript
-// 详细日志记录
-class DebugWebSocketClient extends WebSocketClient {
-  send(message) {
-    console.log('>>> Sending:', message);
-    super.send(message);
-  }
+// 1. 获取通道列表
+const response = await fetch('http://localhost:6005/api/channels');
+const channels = await response.json();
 
-  handleMessage(message) {
-    console.log('<<< Received:', message);
-    super.handleMessage(message);
-  }
+// 2. 查询实时数据
+const realtimeData = await fetch('http://localhost:6005/api/channels/1001/realtime?data_type=T');
+const data = await realtimeData.json();
+
+// 3. 获取通道状态
+const statusResponse = await fetch('http://localhost:6005/api/channels/1001/status');
+const status = await statusResponse.json();
+```
+
+## Redis 数据同步机制
+
+### Redis Lua Functions
+
+VoltageEMS 使用 Redis Lua Functions 实现高性能数据处理：
+
+1. **数据写入**: comsrv/modsrv 通过 Lua Function 原子写入数据到 Redis Hash
+2. **业务逻辑**: 模型计算、告警判断、规则匹配等在 Redis 内执行
+3. **数据查询**: apigateway 定期轮询或通过 Lua Function 批量获取数据
+4. **推送客户端**: 通过 WebSocket 推送给订阅的客户端
+
+#### 主要 Lua Functions
+
+- `comsrv_write_data` - 写入通道数据并触发计算
+- `modsrv_calculate` - 执行模型计算
+- `alarmsrv_check` - 告警条件检查
+- `rulesrv_evaluate` - 规则引擎评估
+- `netsrv_collect_data` - 批量数据收集
+- `netsrv_forward_data` - 数据转发
+
+这种架构的优势：
+- **原子操作**: 数据写入和业务逻辑在 Redis 内原子执行
+- **极低延迟**: 避免网络往返，毫秒级响应
+- **高吞吐量**: 充分利用 Redis 单线程模型
+- **数据一致性**: 避免并发问题
+
+### 数据存储格式
+
+Redis中的数据存储格式：
+
+```
+# 遥测数据
+comsrv:1001:T = {
+  "1": "25.6",
+  "2": "101.3",
+  "_timestamp": "1736755800"
+}
+
+# 遥信数据
+comsrv:1001:S = {
+  "10": "1",
+  "11": "0",
+  "_timestamp": "1736755800"
 }
 ```
 
-### 测试工具
+## 性能优化建议
 
-推荐使用 wscat 进行命令行测试：
+1. **批量订阅**: 一次订阅多个通道，减少消息往返
+2. **合理设置推送间隔**: 根据实际需求设置，避免过度推送
+3. **使用数据过滤**: 只订阅需要的数据类型和点位
+4. **连接池管理**: 复用WebSocket连接，避免频繁建立/断开
+5. **缓存静态配置**: 点位定义等静态信息本地缓存
 
-```bash
-# 安装
-npm install -g wscat
+## 开发工具
 
-# 连接测试
-wscat -c "ws://localhost/api/ws?token=your_token"
+### FastAPI 自动文档
 
-# 发送消息
-> {"type":"subscribe","data":{"channels":[1001],"data_types":["T"]}}
-```
+访问 `http://localhost:6005/docs` 查看自动生成的 API 文档（Swagger UI）。
 
-## Redis Pub/Sub 机制
+### WebSocket 测试工具
 
-VoltageEMS WebSocket 实现基于 Redis Pub/Sub 进行实时数据推送：
-
-### 数据流程
-
-1. **数据写入**: comsrv 将数据写入 Redis Hash (如 `comsrv:1001:T`)
-2. **发布通知**: comsrv 向 Redis 发布数据更新通知
-3. **订阅监听**: apigateway 订阅相关 Redis 频道
-4. **WebSocket 推送**: apigateway 通过 WebSocket 推送给客户端
-
-### Redis 频道命名
-
-```
-voltageems:data:1001:T     # 通道1001遥测数据更新
-voltageems:data:1001:S     # 通道1001遥信数据更新
-voltageems:data:1001:C     # 通道1001遥控数据更新
-voltageems:data:1001:A     # 通道1001遥调数据更新
-voltageems:alarm:*         # 告警事件通知
-voltageems:device:*        # 设备状态变化
-```
-
-### 数据同步
-
-- **实时性**: 基于 Redis Pub/Sub，延迟通常 < 10ms
-- **一致性**: 客户端订阅后立即获取 Redis 中的最新数据
-- **可靠性**: 连接断开重连后自动重新获取数据状态
-
-### 订阅管理
-
-apigateway 为每个 WebSocket 连接维护：
-- 活跃订阅列表
-- Redis 订阅频道映射
-- 客户端推送队列
+推荐使用：
+- [wscat](https://github.com/websockets/wscat) - 命令行工具
+- [Postman](https://www.postman.com/) - 支持 WebSocket 测试
+- Chrome DevTools - 浏览器内置工具

@@ -3,11 +3,11 @@
 //! This module provides TCP and RTU connection management for Modbus protocol
 
 use crate::utils::error::{ComSrvError, Result};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::sync::Mutex;
-use tokio::time::timeout;
+use tokio::time::{sleep, timeout};
 use tokio_serial::{SerialPortBuilderExt, SerialStream};
 use tracing::{debug, error, info, warn};
 
@@ -200,6 +200,10 @@ pub struct ModbusConnectionManager {
     params: ConnectionParams,
     /// Request/response synchronization lock to prevent concurrent operations
     request_lock: Mutex<()>,
+    /// Reconnection attempt counter
+    reconnect_attempts: Mutex<u32>,
+    /// Last reconnection attempt time
+    last_reconnect: Mutex<Option<Instant>>,
 }
 
 /// Connection mode
@@ -235,6 +239,8 @@ impl ModbusConnectionManager {
             mode,
             params,
             request_lock: Mutex::new(()),
+            reconnect_attempts: Mutex::new(0),
+            last_reconnect: Mutex::new(None),
         }
     }
 
@@ -290,6 +296,63 @@ impl ModbusConnectionManager {
         *conn = None;
         info!("Disconnected from Modbus device");
         Ok(())
+    }
+
+    /// Connect with retry logic (returns true if connected, false if need cooldown)
+    pub async fn connect_with_retry(&self, max_consecutive: u32, cooldown_ms: u64) -> Result<bool> {
+        let mut attempts = 0;
+        let mut delay_ms = 1000u64;
+
+        // Check if we're in cooldown period
+        if let Some(last_attempt) = *self.last_reconnect.lock().await {
+            let elapsed = last_attempt.elapsed();
+            if elapsed < Duration::from_millis(cooldown_ms) {
+                let remaining = Duration::from_millis(cooldown_ms) - elapsed;
+                debug!(
+                    "Still in cooldown period, waiting {} more seconds",
+                    remaining.as_secs()
+                );
+                return Ok(false); // Still in cooldown
+            }
+        }
+
+        // Try to connect with exponential backoff
+        loop {
+            match self.connect().await {
+                Ok(()) => {
+                    *self.reconnect_attempts.lock().await = 0;
+                    *self.last_reconnect.lock().await = None; // Clear cooldown
+                    info!("Connected successfully after {} attempts", attempts + 1);
+                    return Ok(true);
+                },
+                Err(e) => {
+                    attempts += 1;
+                    *self.reconnect_attempts.lock().await = attempts;
+
+                    if attempts >= max_consecutive {
+                        // Hit max consecutive attempts, enter cooldown
+                        *self.last_reconnect.lock().await = Some(Instant::now());
+                        warn!(
+                            "Max consecutive reconnect attempts ({}) reached, entering {}s cooldown: {}",
+                            max_consecutive,
+                            cooldown_ms / 1000,
+                            e
+                        );
+                        return Ok(false); // Need cooldown
+                    }
+
+                    warn!(
+                        "Connection attempt {}/{} failed: {}, retrying in {}ms",
+                        attempts, max_consecutive, e, delay_ms
+                    );
+
+                    sleep(Duration::from_millis(delay_ms)).await;
+
+                    // Exponential backoff with max delay of 30 seconds
+                    delay_ms = (delay_ms * 2).min(30000);
+                },
+            }
+        }
     }
 
     /// Send data

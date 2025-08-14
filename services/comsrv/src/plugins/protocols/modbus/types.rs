@@ -46,6 +46,43 @@ pub struct ModbusPollingConfig {
     pub batch_config: ModbusBatchConfig,
     /// Slave-specific configuration
     pub slaves: HashMap<u8, SlavePollingConfig>,
+
+    // Reconnection configuration (normally not needed in config file)
+    /// Enable automatic reconnection (default: true)
+    #[serde(skip_serializing_if = "is_default_reconnect_enabled")]
+    #[serde(default = "default_reconnect_enabled")]
+    pub reconnect_enabled: bool,
+    /// Max consecutive reconnect attempts before waiting longer (default: 5)
+    /// After this many failures, wait reconnect_cooldown_ms before trying again
+    #[serde(skip_serializing_if = "is_default_reconnect_retries")]
+    #[serde(default = "default_reconnect_retries")]
+    pub reconnect_max_consecutive: u32,
+    /// Cooldown period after max consecutive failures (default: 60000ms = 1 minute)
+    #[serde(skip_serializing_if = "is_default_reconnect_cooldown")]
+    #[serde(default = "default_reconnect_cooldown_ms")]
+    pub reconnect_cooldown_ms: u64,
+}
+
+// Default value functions for serde
+fn default_reconnect_enabled() -> bool {
+    true
+}
+fn default_reconnect_retries() -> u32 {
+    5 // After 5 consecutive failures, wait 1 minute before trying again
+}
+fn default_reconnect_cooldown_ms() -> u64 {
+    60000 // 1 minute cooldown after max consecutive failures
+}
+
+// Helper functions for skip_serializing_if
+fn is_default_reconnect_enabled(v: &bool) -> bool {
+    *v == default_reconnect_enabled()
+}
+fn is_default_reconnect_retries(v: &u32) -> bool {
+    *v == default_reconnect_retries()
+}
+fn is_default_reconnect_cooldown(v: &u64) -> bool {
+    *v == default_reconnect_cooldown_ms()
 }
 
 /// Slave polling configuration
@@ -96,6 +133,9 @@ impl Default for ModbusPollingConfig {
             retry_interval_ms: 1000,
             batch_config: ModbusBatchConfig::default(),
             slaves: HashMap::new(),
+            reconnect_enabled: default_reconnect_enabled(),
+            reconnect_max_consecutive: default_reconnect_retries(),
+            reconnect_cooldown_ms: default_reconnect_cooldown_ms(),
         }
     }
 }

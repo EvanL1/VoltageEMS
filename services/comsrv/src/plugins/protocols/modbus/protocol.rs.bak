@@ -159,10 +159,8 @@ impl ComBase for ModbusProtocol {
             + channel_config.control_points.len()
             + channel_config.adjustment_points.len();
 
-        voltage_libs::log_to_channel!(
+        info!("Channel {} - Step 2: Processing {} configured points ({} telemetry, {} signal, {} control, {} adjustment)", 
             channel_config.id,
-            tracing::Level::INFO,
-            "Step 2: Processing {} configured points ({} telemetry, {} signal, {} control, {} adjustment)", 
             total_configured_points,
             channel_config.telemetry_points.len(),
             channel_config.signal_points.len(),
@@ -368,10 +366,9 @@ impl ComBase for ModbusProtocol {
             + signal_modbus_points.len()
             + control_modbus_points.len()
             + adjustment_modbus_points.len();
-        voltage_libs::log_to_channel!(
+        info!(
+            "Channel {} - Step 3: Setting up {} points in storage (T:{}, S:{}, C:{}, A:{})",
             channel_config.id,
-            tracing::Level::INFO,
-            "Step 3: Setting up {} points in storage (T:{}, S:{}, C:{}, A:{})",
             total_points,
             telemetry_modbus_points.len(),
             signal_modbus_points.len(),
@@ -387,18 +384,12 @@ impl ComBase for ModbusProtocol {
 
         self.status.write().await.points_count = total_points;
 
-        voltage_libs::log_to_channel!(
-            channel_config.id,
-            tracing::Level::INFO,
-            "Step 3 completed: Successfully configured {} total points",
-            total_points
+        info!(
+            "Channel {} - Step 3 completed: Successfully configured {} total points",
+            channel_config.id, total_points
         );
 
-        voltage_libs::log_to_channel!(
-            channel_config.id,
-            tracing::Level::INFO,
-            "Initialization completed successfully (connection will be established later)"
-        );
+        info!("Channel {} - Initialization completed successfully (connection will be established later)", channel_config.id);
         Ok(())
     }
 
@@ -420,39 +411,31 @@ impl ComClient for ModbusProtocol {
     }
 
     async fn connect(&mut self) -> Result<()> {
-        voltage_libs::log_to_channel!(
-            self.channel_id,
-            tracing::Level::INFO,
-            "Connection Phase: Starting connection to Modbus device"
+        info!(
+            "Channel {} - Connection Phase: Starting connection to Modbus device",
+            self.channel_id
         );
 
         // Establish connection
-        voltage_libs::log_to_channel!(
-            self.channel_id,
-            tracing::Level::INFO,
-            "Establishing Modbus connection..."
+        info!(
+            "Channel {} - Establishing Modbus connection...",
+            self.channel_id
         );
         self.connection_manager.connect().await?;
-        voltage_libs::log_to_channel!(
-            self.channel_id,
-            tracing::Level::INFO,
-            "Modbus connection established successfully"
+        info!(
+            "Channel {} - Modbus connection established successfully",
+            self.channel_id
         );
 
         *self.is_connected.write().await = true;
         self.status.write().await.is_connected = true;
 
         // Start periodic tasks (polling, etc.)
-        voltage_libs::log_to_channel!(
-            self.channel_id,
-            tracing::Level::INFO,
-            "Starting periodic tasks..."
-        );
+        info!("Channel {} - Starting periodic tasks...", self.channel_id);
         self.start_periodic_tasks().await?;
-        voltage_libs::log_to_channel!(
-            self.channel_id,
-            tracing::Level::INFO,
-            "Connection phase completed successfully"
+        info!(
+            "Channel {} - Connection phase completed successfully",
+            self.channel_id
         );
 
         Ok(())
