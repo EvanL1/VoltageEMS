@@ -1,0 +1,105 @@
+/* Element Plus 主题变量定义 */
+
+// 主色调
+$primary-color: rgba(255, 105, 0, 1);
+$primary-color-hover: #5a6fd8;
+$primary-color-active: #4f5fc6;
+
+// 功能色
+$success-color: #52c41a;
+$success-color-hover: #49aa15;
+$success-color-active: #409611;
+
+$warning-color: #faad14;
+$warning-color-hover: #e6a017;
+$warning-color-active: #d29213;
+
+$danger-color: #ff4d4f;
+$danger-color-hover: #e64447;
+$danger-color-active: #cc3b3f;
+
+$info-color: #8c8c8c;
+$info-color-hover: #7a7a7a;
+$info-color-active: #686868;
+
+// 中性色
+$text-color-primary: rgba(255, 255, 255, 1);
+$text-color-regular: #595959;
+$text-color-secondary: #8c8c8c;
+$text-color-placeholder: #bfbfbf;
+$text-color-disabled: #c0c4cc;
+
+// 背景色
+$bg-color-page: #f5f5f5;
+$bg-color-overlay: #ffffff;
+$bg-color-input: rgba(84, 98, 140, 0.2);
+//边框
+$border-color-base: rgba(148, 166, 197, 0.3);
+
+// 圆角
+$border-radius-base: 0px;
+$border-radius-small: 4px;
+$border-radius-round: 20px;
+$border-radius-circle: 50%;
+
+// 阴影
+$box-shadow-base:
+  0 2px 4px rgba(0, 0, 0, 0.12),
+  0 0 6px rgba(0, 0, 0, 0.04);
+
+// 字体大小
+$font-size-extra-large: 20px;
+$font-size-large: 18px;
+$font-size-medium: 16px;
+$font-size-base: 14px;
+$font-size-small: 13px;
+$font-size-extra-small: 12px;
+
+// 字体权重
+$font-weight-normal: 400;
+$font-weight-medium: 500;
+$font-weight-semibold: 600;
+$font-weight-bold: 700;
+
+// 行高
+$line-height-tight: 1.2;
+$line-height-normal: 1.4;
+$line-height-relaxed: 1.5;
+$line-height-loose: 1.6;
+
+// 间距
+$spacing-xs: 4px;
+$spacing-sm: 8px;
+$spacing-md: 16px;
+$spacing-lg: 24px;
+$spacing-xl: 32px;
+$spacing-xxl: 48px;
+
+// 过渡动画
+$transition-fast: 0.15s ease;
+$transition-base: 0.3s ease;
+$transition-slow: 0.5s ease;
+
+// 透明度
+$opacity-disabled: 0.6;
+$opacity-loading: 0.8;
+$opacity-hover: 0.9;
+
+// 按钮尺寸
+$button-height-small: 28px;
+$button-height-base: 32px;
+$button-height-large: 40px;
+
+$button-padding-small: 0 12px;
+$button-padding-base: 0 16px;
+$button-padding-large: 0 20px;
+
+// 按钮字体大小
+$button-font-size-small: 13px;
+$button-font-size-base: 14px;
+$button-font-size-large: 16px;
+
+// 按钮行高
+$button-line-height-small: 1.4;
+$button-line-height-base: 1.5;
+$button-line-height-large: 1.6;

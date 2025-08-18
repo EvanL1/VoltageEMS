@@ -20,6 +20,10 @@ CLAUDE.md
 !.gitignore
 !.github/
 !.luacheckrc
+!.env.production
+!.dockerignore
+!.gitattributes
+!.prettierrc.json
 
 # Logs
 *.log
@@ -32,12 +36,10 @@ fixlog*
 **/fixlog_*.md
 
 # Environment
-.env
 .env.local
 .env.development.local
 .env.test.local
 .env.production.local
-.env.production
 .env.staging
 .venv/
 

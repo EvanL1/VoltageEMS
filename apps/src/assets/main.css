@@ -1,0 +1,117 @@
+@import './styles/fonts/index.scss';
+@import './styles/element/index.scss';
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+  font-weight: normal;
+  /* 全局设置不可选择 */
+  -webkit-user-select: none;
+  -moz-user-select: none;
+  -ms-user-select: none;
+  user-select: none;
+}
+/* 为需要文本选择的元素设置例外 */
+input,
+textarea,
+select,
+[contenteditable='true'],
+.selectable {
+  -webkit-user-select: text;
+  -moz-user-select: text;
+  -ms-user-select: text;
+  user-select: text;
+}
+body {
+  height: 100vh;
+  margin: 0;
+  padding: 0;
+  color: #ffffff;
+
+  transition:
+    color 0.5s,
+    background-color 0.5s;
+  font-family: Arimo sans-serif;
+  font-size: 0.14rem; /* 14px = 0.14rem */
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  overflow: hidden;
+}
+h1 {
+  font-size: 0.32rem; /* 32px */
+  font-weight: 700;
+  margin-bottom: 0.24rem;
+}
+
+h2 {
+  font-size: 0.24rem; /* 24px */
+  font-weight: 600;
+  margin-bottom: 0.18rem;
+}
+
+h3 {
+  font-size: 0.18rem; /* 18px */
+  font-weight: 500;
+  margin-bottom: 0.12rem;
+}
+
+h4 {
+  font-size: 0.16rem; /* 16px */
+  font-weight: 500;
+  margin-bottom: 0.08rem;
+}
+
+h5 {
+  font-size: 0.14rem; /* 14px */
+  font-weight: 500;
+  margin-bottom: 0.06rem;
+}
+
+h6 {
+  font-size: 0.12rem; /* 12px */
+  font-weight: 500;
+  margin-bottom: 0.04rem;
+}
+
+p {
+  font-size: 0.14rem;
+  margin-bottom: 0.12rem;
+}
+
+ul,
+ol {
+  font-size: 0.14rem;
+  margin-bottom: 0.12rem;
+  padding-left: 0.24rem;
+}
+
+#app {
+  width: 100%;
+  height: 100vh;
+  margin: 0;
+  padding: 0;
+  font-weight: normal;
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+  background: transparent;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(88, 114, 148, 0.4);
+  min-height: 8px;
+  min-width: 8px;
+}
+::-webkit-scrollbar-button {
+  display: none;
+}
