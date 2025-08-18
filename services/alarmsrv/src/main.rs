@@ -1,5 +1,5 @@
 //! Alarm Service (AlarmSrv)
-//! 告警服务 - 负责管理告警配置和触发
+//! Alarm service - responsible for managing alarm configuration and triggering (告警服务 - 负责管理告警配置和触发)
 
 use anyhow::Result;
 use axum::{
@@ -92,27 +92,27 @@ async fn main() -> Result<()> {
 
     info!("Starting Alarm Service...");
 
-    // 加载配置
+    // Load configuration (加载配置)
     let config: Config = ConfigLoader::new()
         .with_yaml_file("config/alarmsrv.yaml")
         .with_env_prefix("ALARMSRV")
         .build()?;
 
-    // 连接Redis
+    // Connect to Redis (连接Redis)
     let redis_client = redis::Client::open(config.redis.url.clone())?;
     info!("Connected to Redis");
 
-    // 创建应用状态
+    // Create application state (创建应用状态)
     let state = Arc::new(AppState { redis_client });
 
-    // 创建API路由
+    // Create API routes (创建API路由)
     let app = Router::new()
         .route("/health", get(health_check))
-        // 告警管理
+        // Alarm management (告警管理)
         .route("/api/alarms", get(list_alarms).post(trigger_alarm))
         .route("/api/alarms/{id}", get(get_alarm).delete(clear_alarm))
         .route("/api/alarms/{id}/acknowledge", post(acknowledge_alarm))
-        // 告警配置
+        // Alarm configuration (告警配置)
         .route("/api/alarm-rules", get(list_rules).post(create_rule))
         .route(
             "/api/alarm-rules/{id}",
@@ -120,11 +120,11 @@ async fn main() -> Result<()> {
                 .put(update_rule)
                 .delete(delete_rule),
         )
-        // 统计信息
+        // Statistics (统计信息)
         .route("/api/statistics", get(get_statistics))
         .with_state(state);
 
-    // 启动HTTP服务
+    // Start HTTP service (启动HTTP服务)
     let addr = SocketAddr::from(([0, 0, 0, 0], config.service.port));
     let listener = tokio::net::TcpListener::bind(addr).await?;
 
@@ -163,14 +163,14 @@ async fn list_alarms(
         },
     };
 
-    // 构建查询参数
+    // Build query parameters (构建查询参数)
     let params = json!({
         "status": query.status,
         "level": query.level,
         "limit": query.limit.unwrap_or(100)
     });
 
-    // 调用Lua函数查询告警
+    // Call Lua function to query alarms (调用Lua函数查询告警)
     let result: String = match redis::cmd("FCALL")
         .arg("alarmsrv_list_alarms")
         .arg(0)
@@ -207,13 +207,13 @@ async fn trigger_alarm(
         },
     };
 
-    // 生成告警ID
+    // Generate alarm ID (生成告警ID)
     let alarm_id = alarm["id"]
         .as_str()
         .map(|s| s.to_string())
         .unwrap_or_else(|| format!("alarm_{}", uuid::Uuid::new_v4()));
 
-    // 调用Lua函数触发告警
+    // Call Lua function to trigger alarm (调用Lua函数触发告警)
     let result: String = match redis::cmd("FCALL")
         .arg("alarmsrv_trigger_alarm")
         .arg(0)
@@ -245,7 +245,7 @@ async fn get_alarm(
         },
     };
 
-    // 调用Lua函数获取告警
+    // Call Lua function to get alarm (调用Lua函数获取告警)
     let result: String = match redis::cmd("FCALL")
         .arg("alarmsrv_get_alarm")
         .arg(0)
@@ -279,7 +279,7 @@ async fn acknowledge_alarm(
         },
     };
 
-    // 调用Lua函数确认告警
+    // Call Lua function to acknowledge alarm (调用Lua函数确认告警)
     let result: String = match redis::cmd("FCALL")
         .arg("alarmsrv_acknowledge_alarm")
         .arg(0)
@@ -311,7 +311,7 @@ async fn clear_alarm(
         },
     };
 
-    // 调用Lua函数清除告警
+    // Call Lua function to clear alarm (调用Lua函数清除告警)
     let result: String = match redis::cmd("FCALL")
         .arg("alarmsrv_clear_alarm")
         .arg(0)
@@ -341,7 +341,7 @@ async fn list_rules(State(state): State<Arc<AppState>>) -> Json<serde_json::Valu
         },
     };
 
-    // 调用Lua函数列出所有规则
+    // Call Lua function to list all rules (调用Lua函数列出所有规则)
     let result: String = match redis::cmd("FCALL")
         .arg("alarmsrv_list_rules")
         .arg(0)
@@ -381,7 +381,7 @@ async fn create_rule(
         .map(|s| s.to_string())
         .unwrap_or_else(|| format!("rule_{}", uuid::Uuid::new_v4()));
 
-    // 调用Lua函数创建规则
+    // Call Lua function to create rule (调用Lua函数创建规则)
     let result: String = match redis::cmd("FCALL")
         .arg("alarmsrv_upsert_rule")
         .arg(0)
@@ -413,7 +413,7 @@ async fn get_rule(
         },
     };
 
-    // 调用Lua函数获取规则
+    // Call Lua function to get rule (调用Lua函数获取规则)
     let result: String = match redis::cmd("FCALL")
         .arg("alarmsrv_get_rule")
         .arg(0)
@@ -454,7 +454,7 @@ async fn delete_rule(
         },
     };
 
-    // 调用Lua函数删除规则
+    // Call Lua function to delete rule (调用Lua函数删除规则)
     let result: String = match redis::cmd("FCALL")
         .arg("alarmsrv_delete_rule")
         .arg(0)
@@ -484,7 +484,7 @@ async fn get_statistics(State(state): State<Arc<AppState>>) -> Json<serde_json::
         },
     };
 
-    // 调用Lua函数获取统计信息
+    // Call Lua function to get statistics (调用Lua函数获取统计信息)
     let result: String = match redis::cmd("FCALL")
         .arg("alarmsrv_get_statistics")
         .arg(0)

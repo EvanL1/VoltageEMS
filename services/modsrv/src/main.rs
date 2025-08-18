@@ -1,6 +1,6 @@
 //! Model Service (ModSrv)
 //!
-//! 支持 measurement/action 分离架构的模型管理服务
+//! Model management service supporting measurement/action separation architecture (支持 measurement/action 分离架构的模型管理服务)
 
 use anyhow::Result;
 use axum::{
@@ -62,7 +62,7 @@ struct AppState {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    // 初始化统一日志系统
+    // Initialize unified logging system (初始化统一日志系统)
     let log_config = voltage_libs::logging::LogConfig {
         service_name: "modsrv".to_string(),
         log_dir: std::path::PathBuf::from("logs"),
@@ -87,23 +87,23 @@ async fn main() -> Result<()> {
     info!("Starting Model Service (ModSrv)...");
     info!("Architecture: measurement/action separation");
 
-    // 加载配置
+    // Load configuration (加载配置)
     let config: Config = ConfigLoader::new()
         .with_yaml_file("config/modsrv.yaml")
         .with_env_prefix("MODSRV")
         .build()?;
 
-    // 连接到 Redis
+    // Connect to Redis (连接到 Redis)
     let redis_client = redis::Client::open(config.redis.url.clone())?;
     info!("Connected to Redis");
 
-    // 创建应用状态
+    // Create application state (创建应用状态)
     let state = Arc::new(AppState { redis_client });
 
-    // 创建API路由
+    // Create API routes (创建API路由)
     let app = Router::new()
         .route("/health", get(health_check))
-        // 模板管理
+        // Template management (模板管理)
         .route("/api/templates", get(list_templates).post(create_template))
         .route(
             "/api/templates/{id}",
@@ -111,7 +111,7 @@ async fn main() -> Result<()> {
                 .put(update_template)
                 .delete(delete_template),
         )
-        // 模型管理
+        // Model management (模型管理)
         .route("/api/models", get(list_models).post(create_model))
         .route(
             "/api/models/{id}",
@@ -119,14 +119,14 @@ async fn main() -> Result<()> {
                 .put(update_model)
                 .delete(delete_model),
         )
-        // 数据操作
+        // Data operations (数据操作)
         .route("/api/models/{id}/data", get(get_model_data))
         .route("/api/models/{id}/sync", post(sync_measurement))
         .route("/api/models/{id}/action", post(execute_action))
         .route("/api/sync/all", post(sync_all_measurements))
         .with_state(state);
 
-    // 启动HTTP服务
+    // Start HTTP service (启动HTTP服务)
     let addr = SocketAddr::from(([0, 0, 0, 0], config.service.port));
     let listener = tokio::net::TcpListener::bind(addr).await?;
 
@@ -166,7 +166,7 @@ async fn list_templates(State(state): State<Arc<AppState>>) -> Json<serde_json::
         },
     };
 
-    // 调用Lua函数列出所有模板
+    // Call Lua function to list all templates (调用Lua函数列出所有模板)
     let result: String = match redis::cmd("FCALL")
         .arg("modsrv_list_templates")
         .arg(0)
@@ -206,7 +206,7 @@ async fn create_template(
         .map(|s| s.to_string())
         .unwrap_or_else(|| format!("template_{}", uuid::Uuid::new_v4()));
 
-    // 调用Lua函数创建模板
+    // Call Lua function to create template (调用Lua函数创建模板)
     let result: String = match redis::cmd("FCALL")
         .arg("modsrv_upsert_template")
         .arg(0)
@@ -238,7 +238,7 @@ async fn get_template(
         },
     };
 
-    // 调用Lua函数获取模板
+    // Call Lua function to get template (调用Lua函数获取模板)
     let result: String = match redis::cmd("FCALL")
         .arg("modsrv_get_template")
         .arg(0)
@@ -279,7 +279,7 @@ async fn delete_template(
         },
     };
 
-    // 调用Lua函数删除模板
+    // Call Lua function to delete template (调用Lua函数删除模板)
     let result: String = match redis::cmd("FCALL")
         .arg("modsrv_delete_template")
         .arg(0)
@@ -309,7 +309,7 @@ async fn list_models(State(state): State<Arc<AppState>>) -> Json<serde_json::Val
         },
     };
 
-    // 调用Lua函数列出所有模型
+    // Call Lua function to list all models (调用Lua函数列出所有模型)
     let result: String = match redis::cmd("FCALL")
         .arg("modsrv_list_models")
         .arg(0)
@@ -344,7 +344,7 @@ async fn create_model(
         },
     };
 
-    // 验证模型必须有mappings
+    // Validate model must have mappings (验证模型必须有mappings)
     if model.get("mappings").is_none() {
         return Json(json!({ "error": "Model must have mappings (measurement and/or action)" }));
     }
@@ -354,7 +354,7 @@ async fn create_model(
         .map(|s| s.to_string())
         .unwrap_or_else(|| format!("model_{}", uuid::Uuid::new_v4()));
 
-    // 调用Lua函数创建模型
+    // Call Lua function to create model (调用Lua函数创建模型)
     let result: String = match redis::cmd("FCALL")
         .arg("modsrv_upsert_model")
         .arg(0)
@@ -396,7 +396,7 @@ async fn get_model(
         },
     };
 
-    // 调用Lua函数获取模型
+    // Call Lua function to get model (调用Lua函数获取模型)
     let result: String = match redis::cmd("FCALL")
         .arg("modsrv_get_model")
         .arg(0)
@@ -437,7 +437,7 @@ async fn delete_model(
         },
     };
 
-    // 调用Lua函数删除模型
+    // Call Lua function to delete model (调用Lua函数删除模型)
     let result: String = match redis::cmd("FCALL")
         .arg("modsrv_delete_model")
         .arg(0)
@@ -477,7 +477,7 @@ async fn get_model_data(
         },
     };
 
-    // 构建命令参数
+    // Build command parameters (构建命令参数)
     let mut cmd = redis::cmd("FCALL");
     cmd.arg("modsrv_get_model_data").arg(0).arg(&id);
 
@@ -485,7 +485,7 @@ async fn get_model_data(
         cmd.arg(dtype);
     }
 
-    // 调用Lua函数获取模型数据
+    // Call Lua function to get model data (调用Lua函数获取模型数据)
     let result: String = match cmd.query_async(&mut conn).await {
         Ok(r) => r,
         Err(e) => {
@@ -521,7 +521,7 @@ async fn sync_measurement(
         },
     };
 
-    // 调用Lua函数同步测量数据
+    // Call Lua function to sync measurement data (调用Lua函数同步测量数据)
     let result: String = match redis::cmd("FCALL")
         .arg("modsrv_sync_measurement")
         .arg(0)
@@ -593,7 +593,7 @@ async fn execute_action(
         request.value
     );
 
-    // 调用Lua函数执行动作
+    // Call Lua function to execute action (调用Lua函数执行动作)
     let result: String = match redis::cmd("FCALL")
         .arg("modsrv_execute_action")
         .arg(0)
@@ -641,7 +641,7 @@ async fn sync_all_measurements(State(state): State<Arc<AppState>>) -> Json<serde
         },
     };
 
-    // 调用Lua函数同步所有模型
+    // Call Lua function to sync all models (调用Lua函数同步所有模型)
     let result: String = match redis::cmd("FCALL")
         .arg("modsrv_sync_all_measurements")
         .arg(0)

@@ -224,13 +224,13 @@ async fn main() -> Result<()> {
         }
     });
 
-    // 创建API路由
+    // Create API routes (创建API路由)
     let app = Router::new()
         .route("/health", get(health_check))
         .route("/api/stats", get(get_stats))
         .with_state(state);
 
-    // 启动HTTP服务
+    // Start HTTP service (启动HTTP服务)
     let addr = SocketAddr::from(([0, 0, 0, 0], config.service.port));
     let listener = tokio::net::TcpListener::bind(addr).await?;
 
@@ -249,7 +249,7 @@ async fn collect_and_store(state: &AppState, batch_id: u64) -> Result<()> {
         .get_multiplexed_async_connection()
         .await?;
 
-    // 调用Lua函数收集数据
+    // Call Lua function to collect data (调用Lua函数收集数据)
     let sources_json = serde_json::to_string(&state.config.collection.sources)?;
     info!("📡 Collecting data from sources: {}", sources_json);
 
@@ -277,7 +277,7 @@ async fn collect_and_store(state: &AppState, batch_id: u64) -> Result<()> {
                         point_count, batch_id
                     );
 
-                    // 更新统计
+                    // Update statistics (更新统计)
                     let mut stats = state.stats.write().await;
                     stats.total_points_collected += point_count;
                     stats.total_batches_sent += 1;
@@ -285,7 +285,7 @@ async fn collect_and_store(state: &AppState, batch_id: u64) -> Result<()> {
                 },
                 Err(e) => {
                     error!("Failed to write to InfluxDB: {}", e);
-                    // 记录错误但不中断服务
+                    // Log error but don't interrupt service (记录错误但不中断服务)
                     let mut stats = state.stats.write().await;
                     stats.last_error = Some(format!("InfluxDB write error: {}", e));
                 },

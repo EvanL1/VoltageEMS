@@ -5,6 +5,7 @@
 
 use async_trait::async_trait;
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{Mutex, RwLock};
@@ -36,7 +37,7 @@ pub struct ModbusProtocol {
     frame_processor: Arc<Mutex<ModbusFrameProcessor>>,
 
     /// State management
-    is_connected: Arc<RwLock<bool>>,
+    is_connected: Arc<AtomicBool>,
     status: Arc<RwLock<ChannelStatus>>,
 
     /// Task management
@@ -99,7 +100,7 @@ impl ModbusProtocol {
             channel_config: Some(Arc::new(channel_config)), // Wrap in Arc
             connection_manager,
             frame_processor,
-            is_connected: Arc::new(RwLock::new(false)),
+            is_connected: Arc::new(AtomicBool::new(false)),
             status: Arc::new(RwLock::new(ChannelStatus::default())),
             polling_handle: Arc::new(RwLock::new(None)),
             command_handle: Arc::new(RwLock::new(None)),
@@ -412,11 +413,7 @@ impl ComBase for ModbusProtocol {
 #[async_trait]
 impl ComClient for ModbusProtocol {
     fn is_connected(&self) -> bool {
-        // Use try_read to avoid blocking in async context
-        self.is_connected
-            .try_read()
-            .map(|guard| *guard)
-            .unwrap_or(false)
+        self.is_connected.load(Ordering::Relaxed)
     }
 
     async fn connect(&mut self) -> Result<()> {
@@ -439,7 +436,7 @@ impl ComClient for ModbusProtocol {
             "Modbus connection established successfully"
         );
 
-        *self.is_connected.write().await = true;
+        self.is_connected.store(true, Ordering::Relaxed);
         self.status.write().await.is_connected = true;
 
         // Start periodic tasks (polling, etc.)
@@ -467,7 +464,7 @@ impl ComClient for ModbusProtocol {
         // disconnectedconnection
         self.connection_manager.disconnect().await?;
 
-        *self.is_connected.write().await = false;
+        self.is_connected.store(false, Ordering::Relaxed);
         self.status.write().await.is_connected = false;
 
         Ok(())
@@ -902,7 +899,7 @@ impl ComClient for ModbusProtocol {
                     interval.tick().await;
 
                     // Check connection and attempt reconnection if needed
-                    if !*is_connected.read().await {
+                    if !is_connected.load(Ordering::Relaxed) {
                         debug!(
                             "Channel {} not connected, attempting reconnection...",
                             channel_id
@@ -920,7 +917,7 @@ impl ComClient for ModbusProtocol {
                             {
                                 Ok(true) => {
                                     // Successfully connected
-                                    *is_connected.write().await = true;
+                                    is_connected.store(true, Ordering::Relaxed);
                                     info!("Channel {} reconnected successfully", channel_id);
                                     // Continue with polling after successful reconnection
                                 },
@@ -1090,7 +1087,7 @@ impl ComClient for ModbusProtocol {
                                     || error_str.contains("TCP receive error")
                                 {
                                     warn!("Connection lost during polling: {}", e);
-                                    *is_connected.write().await = false;
+                                    is_connected.store(false, Ordering::Relaxed);
                                     // Next iteration will trigger reconnection
                                     break; // Exit the group processing loop
                                 }
@@ -1193,7 +1190,7 @@ impl ComClient for ModbusProtocol {
         let handle = tokio::spawn(async move {
             info!("Starting command processor for channel {}", channel_id);
             while let Some((command, result_tx)) = cmd_rx.recv().await {
-                if !*is_connected.read().await {
+                if !is_connected.load(Ordering::Relaxed) {
                     warn!("Received command while disconnected, ignoring");
                     let _ = result_tx.send(Err(ComSrvError::NotConnected));
                     continue;

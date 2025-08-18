@@ -1,5 +1,5 @@
 //! Rule Service (RuleSrv)
-//! 规则服务 - 负责管理规则配置和执行
+//! Rule service - responsible for managing rule configuration and execution (规则服务 - 负责管理规则配置和执行)
 
 use anyhow::Result;
 use axum::{
@@ -59,11 +59,11 @@ fn default_redis_url() -> String {
 }
 
 fn default_interval() -> u64 {
-    10 // 默认10秒执行一次规则
+    10 // Execute rules every 10 seconds by default (默认10秒执行一次规则)
 }
 
 fn default_batch_size() -> usize {
-    100 // 默认批量处理100条规则
+    100 // Process 100 rules in batch by default (默认批量处理100条规则)
 }
 
 impl Default for RedisConfig {
@@ -105,23 +105,23 @@ async fn main() -> Result<()> {
 
     info!("Starting Rule Service...");
 
-    // 加载配置
+    // Load configuration (加载配置)
     let config: Config = ConfigLoader::new()
         .with_yaml_file("config/rulesrv.yaml")
         .with_env_prefix("RULESRV")
         .build()?;
 
-    // 连接Redis
+    // Connect to Redis (连接Redis)
     let redis_client = redis::Client::open(config.redis.url.clone())?;
     info!("Connected to Redis");
 
-    // 创建应用状态
+    // Create application state (创建应用状态)
     let state = Arc::new(AppState {
         redis_client,
         config: config.clone(),
     });
 
-    // 启动规则执行任务
+    // Start rule execution task (启动规则执行任务)
     let exec_state = state.clone();
     tokio::spawn(async move {
         let mut interval = interval(Duration::from_secs(
@@ -140,10 +140,10 @@ async fn main() -> Result<()> {
         }
     });
 
-    // 创建API路由
+    // Create API routes (创建API路由)
     let app = Router::new()
         .route("/health", get(health_check))
-        // 规则管理
+        // Rule management (规则管理)
         .route("/api/rules", get(list_rules).post(create_rule))
         .route(
             "/api/rules/{id}",
@@ -153,12 +153,12 @@ async fn main() -> Result<()> {
         )
         .route("/api/rules/{id}/enable", post(enable_rule))
         .route("/api/rules/{id}/disable", post(disable_rule))
-        // 执行历史和统计
+        // Execution history and statistics (执行历史和统计)
         .route("/api/executions", get(list_executions))
         .route("/api/statistics", get(get_statistics))
         .with_state(state);
 
-    // 启动HTTP服务
+    // Start HTTP service (启动HTTP服务)
     let addr = SocketAddr::from(([0, 0, 0, 0], config.service.port));
     let listener = tokio::net::TcpListener::bind(addr).await?;
 
@@ -193,7 +193,7 @@ async fn execute_rules(state: &AppState, batch_id: u64) -> Result<()> {
         .get_multiplexed_async_connection()
         .await?;
 
-    // 调用Lua函数执行规则
+    // Call Lua function to execute rules (调用Lua函数执行规则)
     let result: String = redis::cmd("FCALL")
         .arg("rulesrv_execute_batch")
         .arg(0)
@@ -227,7 +227,7 @@ async fn list_rules(State(state): State<Arc<AppState>>) -> Json<serde_json::Valu
         },
     };
 
-    // 调用Lua函数列出所有规则
+    // Call Lua function to list all rules (调用Lua函数列出所有规则)
     let result: String = match redis::cmd("FCALL")
         .arg("rulesrv_list_rules")
         .arg(0)
@@ -267,7 +267,7 @@ async fn create_rule(
         .map(|s| s.to_string())
         .unwrap_or_else(|| format!("rule_{}", uuid::Uuid::new_v4()));
 
-    // 调用Lua函数创建规则
+    // Call Lua function to create rule (调用Lua函数创建规则)
     let result: String = match redis::cmd("FCALL")
         .arg("rulesrv_upsert_rule")
         .arg(0)
@@ -299,7 +299,7 @@ async fn get_rule(
         },
     };
 
-    // 调用Lua函数获取规则
+    // Call Lua function to get rule (调用Lua函数获取规则)
     let result: String = match redis::cmd("FCALL")
         .arg("rulesrv_get_rule")
         .arg(0)
@@ -340,7 +340,7 @@ async fn delete_rule(
         },
     };
 
-    // 调用Lua函数删除规则
+    // Call Lua function to delete rule (调用Lua函数删除规则)
     let result: String = match redis::cmd("FCALL")
         .arg("rulesrv_delete_rule")
         .arg(0)
@@ -371,7 +371,7 @@ async fn enable_rule(
         },
     };
 
-    // 调用Lua函数启用规则
+    // Call Lua function to enable rule (调用Lua函数启用规则)
     let result: String = match redis::cmd("FCALL")
         .arg("rulesrv_enable_rule")
         .arg(0)
@@ -402,7 +402,7 @@ async fn disable_rule(
         },
     };
 
-    // 调用Lua函数禁用规则
+    // Call Lua function to disable rule (调用Lua函数禁用规则)
     let result: String = match redis::cmd("FCALL")
         .arg("rulesrv_disable_rule")
         .arg(0)
@@ -432,11 +432,11 @@ async fn list_executions(State(state): State<Arc<AppState>>) -> Json<serde_json:
         },
     };
 
-    // 调用Lua函数获取执行历史
+    // Call Lua function to get execution history (调用Lua函数获取执行历史)
     let result: String = match redis::cmd("FCALL")
         .arg("rulesrv_list_executions")
         .arg(0)
-        .arg("10") // 最近10次执行
+        .arg("10") // Last 10 executions (最近10次执行)
         .query_async(&mut conn)
         .await
     {
@@ -467,7 +467,7 @@ async fn get_statistics(State(state): State<Arc<AppState>>) -> Json<serde_json::
         },
     };
 
-    // 调用Lua函数获取统计信息
+    // Call Lua function to get statistics (调用Lua函数获取统计信息)
     let result: String = match redis::cmd("FCALL")
         .arg("rulesrv_get_statistics")
         .arg(0)
