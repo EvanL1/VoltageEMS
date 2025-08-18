@@ -1,9 +1,9 @@
-//! `VoltageEMS` 基础library
+//! `VoltageEMS` basic library (`VoltageEMS` 基础library)
 //!
-//! 提供allserving共享的基础function，package括：
+//! Provides basic functions shared by all services, including (提供allserving共享的基础function，package括):
 //! - Redis client
 //! - `InfluxDB` client
-//! - monitoring和健康checking
+//! - monitoring and health checking (monitoring和健康checking)
 //! - errorprocessing
 //! - loggingfunction
 
@@ -14,14 +14,14 @@ pub mod redis;
 #[cfg(feature = "influxdb")]
 pub mod influxdb;
 
-// 通用modular
+// Common modules (通用modular)
 pub mod config;
 pub mod error;
 pub mod logging;
 pub mod types;
 pub mod utils;
 
-// 预import常用type
+// Pre-import common types (预import常用type)
 pub mod prelude {
     pub use crate::error::{Error, Result};
 

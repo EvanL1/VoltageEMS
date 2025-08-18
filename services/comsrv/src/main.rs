@@ -119,7 +119,7 @@ fn initialize_logging(args: &Args) -> Result<()> {
     // Build the subscriber with both console and file output
     let subscriber = tracing_subscriber::registry();
 
-    // Console layer - 控制台输出
+    // Console layer - console output (控制台输出)
     let console_layer = tracing_subscriber::fmt::layer()
         .with_ansi(!args.no_color)
         .with_level(true)
@@ -130,7 +130,7 @@ fn initialize_logging(args: &Args) -> Result<()> {
             log_level,
         ));
 
-    // File layer - 文件输出（始终启用）
+    // File layer - file output (always enabled) (文件输出，始终启用)
     let file_appender = RollingFileAppender::new(Rotation::DAILY, &log_dir, "comsrv.log");
 
     let file_layer = tracing_subscriber::fmt::layer()
@@ -146,7 +146,7 @@ fn initialize_logging(args: &Args) -> Result<()> {
             Level::DEBUG,
         ));
 
-    // 同时启用控制台和文件输出
+    // Enable both console and file output (同时启用控制台和文件输出)
     subscriber.with(console_layer).with(file_layer).init();
 
     info!(
@@ -201,7 +201,7 @@ async fn validate_configuration(config_path: &str) -> Result<()> {
     info!("Validating configuration from: {}", config_path);
 
     // Load and validate configuration
-    let config_manager = ConfigManager::from_file(config_path)?;
+    let config_manager = ConfigManager::from_file(config_path).await?;
     info!("Configuration loaded successfully");
 
     // Validate service configuration
@@ -259,7 +259,7 @@ async fn main() -> Result<()> {
 
     // Load configuration
     info!("Loading configuration from: {}", args.config);
-    let config_manager = match ConfigManager::from_file(&args.config) {
+    let config_manager = match ConfigManager::from_file(&args.config).await {
         Ok(cm) => {
             info!("Configuration loaded successfully");
             Arc::new(cm)

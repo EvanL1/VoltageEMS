@@ -9,6 +9,7 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
@@ -585,7 +586,7 @@ pub struct DefaultProtocol {
     name: String,
     protocol_type: String,
     status: Arc<RwLock<ChannelStatus>>,
-    is_connected: Arc<RwLock<bool>>,
+    is_connected: Arc<AtomicBool>,
     channel_config: Option<Arc<ChannelConfig>>,
     // Under the four-telemetry separated architecture, unified point_mappings is no longer needed
 }
@@ -597,7 +598,7 @@ impl DefaultProtocol {
             name,
             protocol_type,
             status: Arc::new(RwLock::new(ChannelStatus::default())),
-            is_connected: Arc::new(RwLock::new(false)),
+            is_connected: Arc::new(AtomicBool::new(false)),
             channel_config: None,
             // Under the four-telemetry separated architecture, unified point_mappings is no longer needed
         }
@@ -670,15 +671,11 @@ impl ComBase for DefaultProtocol {
 #[async_trait]
 impl ComClient for DefaultProtocol {
     fn is_connected(&self) -> bool {
-        // Use try_read to avoid blocking in async environment
-        self.is_connected
-            .try_read()
-            .map(|guard| *guard)
-            .unwrap_or(false)
+        self.is_connected.load(Ordering::Relaxed)
     }
 
     async fn connect(&mut self) -> Result<()> {
-        *self.is_connected.write().await = true;
+        self.is_connected.store(true, Ordering::Relaxed);
 
         self.update_status(|status| {
             status.is_connected = true;
@@ -690,7 +687,7 @@ impl ComClient for DefaultProtocol {
     }
 
     async fn disconnect(&mut self) -> Result<()> {
-        *self.is_connected.write().await = false;
+        self.is_connected.store(false, Ordering::Relaxed);
 
         self.update_status(|status| {
             status.is_connected = false;

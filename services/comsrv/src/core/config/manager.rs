@@ -119,7 +119,7 @@ pub struct ConfigManager {
 
 impl ConfigManager {
     /// Load configuration from file
-    pub fn from_file<P: AsRef<Path>>(path: P) -> Result<Self> {
+    pub async fn from_file<P: AsRef<Path>>(path: P) -> Result<Self> {
         let path = path.as_ref();
         let service_name = "comsrv";
 
@@ -137,14 +137,7 @@ impl ConfigManager {
         // Load configuration
         let config = if let Some(ref cc_client) = config_center {
             // Try to load from configuration center
-            let runtime = tokio::runtime::Handle::try_current().unwrap_or_else(|_| {
-                tokio::runtime::Runtime::new()
-                    .expect("failed to create tokio runtime")
-                    .handle()
-                    .clone()
-            });
-
-            if let Ok(Some(remote_config)) = runtime.block_on(cc_client.get_config()) {
+            if let Ok(Some(remote_config)) = cc_client.get_config().await {
                 info!("Successfully loaded configuration from config center");
                 // JSON configuration loaded from configuration center
                 serde_json::from_value::<AppConfig>(remote_config).map_err(|e| {

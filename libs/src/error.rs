@@ -1,6 +1,6 @@
 use thiserror::Error;
 
-/// 基础libraryerrortype
+/// Basic library error type (基础library error type)
 #[derive(Debug, Error)]
 pub enum Error {
     /// Redis error
@@ -38,7 +38,7 @@ pub enum Error {
     #[error("Operation timeout: {0}")]
     Timeout(String),
 
-    /// 通用error
+    /// Generic error (通用error)
     #[error("{0}")]
     Generic(String),
 }

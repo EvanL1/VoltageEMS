@@ -1,11 +1,12 @@
 #!/bin/bash
 
-# Comsrv配置文件验证脚本
-# 用于检查四遥点表和映射文件的正确性
+# Comsrv configuration file validation script
+# Used to check the correctness of telemetry point tables and mapping files
+# (Comsrv配置文件验证脚本 - 用于检查四遥点表和映射文件的正确性)
 
 set -e
 
-# 颜色输出
+# Color output (颜色输出)
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
@@ -15,11 +16,11 @@ CONFIG_DIR="${1:-services/comsrv/config}"
 ERRORS=0
 WARNINGS=0
 
-echo "=== Comsrv配置文件验证 ==="
-echo "配置目录: $CONFIG_DIR"
+echo "=== Comsrv Configuration File Validation ==="
+echo "Configuration directory: $CONFIG_DIR"
 echo ""
 
-# 检查必需文件是否存在
+# Check if required files exist (检查必需文件是否存在)
 check_required_files() {
     local required_files=(
         "telemetry.csv"
@@ -32,10 +33,10 @@ check_required_files() {
         "adjustment_mapping.csv"
     )
     
-    echo "1. 检查必需文件..."
+    echo "1. Checking required files..."
     for file in "${required_files[@]}"; do
         if [ ! -f "$CONFIG_DIR/$file" ]; then
-            echo -e "${RED}✗ 缺少文件: $file${NC}"
+            echo -e "${RED}✗ Missing file: $file${NC}"
             ((ERRORS++))
         else
             echo -e "${GREEN}✓ $file${NC}"
@@ -44,78 +45,78 @@ check_required_files() {
     echo ""
 }
 
-# 验证CSV文件格式
+# Validate CSV file format (验证CSV文件格式)
 validate_csv_headers() {
-    echo "2. 验证CSV文件头..."
+    echo "2. Validating CSV headers..."
     
-    # 四遥点表必需的列
+    # Required columns for telemetry point tables (四遥点表必需的列)
     local point_headers="point_id,signal_name,scale,offset,unit,reverse,data_type"
     
-    # 映射文件必需的列（注意bit_position对bool类型是必需的）
+    # Required columns for mapping files (note: bit_position is required for bool types) (映射文件必需的列，注意bit_position对bool类型是必需的)
     local mapping_headers="point_id,slave_id,function_code,register_address,data_type,byte_order"
     
-    # 检查四遥点表
+    # Check telemetry point tables (检查四遥点表)
     for type in telemetry signal control adjustment; do
         if [ -f "$CONFIG_DIR/${type}.csv" ]; then
             header=$(head -1 "$CONFIG_DIR/${type}.csv")
             if [[ ! "$header" == *"point_id"* ]] || [[ ! "$header" == *"signal_name"* ]]; then
-                echo -e "${RED}✗ ${type}.csv 缺少必需的列${NC}"
+                echo -e "${RED}✗ ${type}.csv missing required columns${NC}"
                 ((ERRORS++))
             else
-                echo -e "${GREEN}✓ ${type}.csv 格式正确${NC}"
+                echo -e "${GREEN}✓ ${type}.csv format correct${NC}"
             fi
         fi
     done
     
-    # 检查映射文件
+    # Check mapping files (检查映射文件)
     for type in telemetry signal control adjustment; do
         if [ -f "$CONFIG_DIR/${type}_mapping.csv" ]; then
             header=$(head -1 "$CONFIG_DIR/${type}_mapping.csv")
             if [[ ! "$header" == *"point_id"* ]] || [[ ! "$header" == *"slave_id"* ]]; then
-                echo -e "${RED}✗ ${type}_mapping.csv 缺少必需的列${NC}"
+                echo -e "${RED}✗ ${type}_mapping.csv missing required columns${NC}"
                 ((ERRORS++))
             else
-                # 对于signal和control，检查是否有bit_position列
+                # For signal and control, check for bit_position column (对于signal咍control，检查是否有bit_position列)
                 if [[ "$type" == "signal" ]] || [[ "$type" == "control" ]]; then
                     if [[ ! "$header" == *"bit_position"* ]]; then
-                        echo -e "${YELLOW}⚠ ${type}_mapping.csv 建议添加bit_position列（对bool类型）${NC}"
+                        echo -e "${YELLOW}⚠ ${type}_mapping.csv should have bit_position column (for bool types)${NC}"
                         ((WARNINGS++))
                     fi
                 fi
-                echo -e "${GREEN}✓ ${type}_mapping.csv 格式正确${NC}"
+                echo -e "${GREEN}✓ ${type}_mapping.csv format correct${NC}"
             fi
         fi
     done
     echo ""
 }
 
-# 验证数据内容
+# Validate data content (验证数据内容)
 validate_data_content() {
-    echo "3. 验证数据内容..."
+    echo "3. Validating data content..."
     
-    # 检查signal_mapping中的bit_position范围
+    # Check bit_position range in signal_mapping (检查signal_mapping中的bit_position范围)
     if [ -f "$CONFIG_DIR/signal_mapping.csv" ]; then
         while IFS=, read -r point_id slave_id fc addr dtype order bit_pos; do
             if [ ! -z "$bit_pos" ] && [ "$bit_pos" != "bit_position" ]; then
                 if [ "$bit_pos" -lt 0 ] || [ "$bit_pos" -gt 15 ]; then
-                    echo -e "${RED}✗ signal_mapping.csv: point_id=$point_id 的bit_position=$bit_pos 超出范围(0-15)${NC}"
+                    echo -e "${RED}✗ signal_mapping.csv: point_id=$point_id bit_position=$bit_pos out of range(0-15)${NC}"
                     ((ERRORS++))
                 fi
             fi
         done < "$CONFIG_DIR/signal_mapping.csv"
     fi
     
-    # 检查function_code的合法性
+    # Check function_code validity (检查function_code的合法性)
     for mapping_file in "$CONFIG_DIR"/*_mapping.csv; do
         if [ -f "$mapping_file" ]; then
             while IFS=, read -r point_id slave_id fc rest; do
                 if [ "$fc" != "function_code" ] && [ ! -z "$fc" ]; then
                     case "$fc" in
                         1|2|3|4|5|6|15|16)
-                            # 合法的function_code
+                            # Valid function_code (合法的function_code)
                             ;;
                         *)
-                            echo -e "${YELLOW}⚠ $(basename $mapping_file): point_id=$point_id 使用了不常见的function_code=$fc${NC}"
+                            echo -e "${YELLOW}⚠ $(basename $mapping_file): point_id=$point_id uses uncommon function_code=$fc${NC}"
                             ((WARNINGS++))
                             ;;
                     esac
@@ -124,117 +125,117 @@ validate_data_content() {
         fi
     done
     
-    echo -e "${GREEN}✓ 数据内容验证完成${NC}"
+    echo -e "${GREEN}✓ Data content validation completed${NC}"
     echo ""
 }
 
-# 检查点ID一致性
+# Check point ID consistency (检查点ID一致性)
 check_point_id_consistency() {
-    echo "4. 检查点ID一致性..."
+    echo "4. Checking point ID consistency..."
     
     for type in telemetry signal control adjustment; do
         if [ -f "$CONFIG_DIR/${type}.csv" ] && [ -f "$CONFIG_DIR/${type}_mapping.csv" ]; then
-            # 获取点表中的point_id列表
+            # Get point_id list from point tables (获取点表中的point_id列表)
             point_ids=$(tail -n +2 "$CONFIG_DIR/${type}.csv" | cut -d',' -f1 | sort -u)
             mapping_ids=$(tail -n +2 "$CONFIG_DIR/${type}_mapping.csv" | cut -d',' -f1 | sort -u)
             
-            # 检查是否有映射文件中的ID在点表中不存在
+            # Check if any mapping file IDs don't exist in point tables (检查是否有映射文件中的ID在点表中不存在)
             for id in $mapping_ids; do
                 if ! echo "$point_ids" | grep -q "^$id$"; then
-                    echo -e "${RED}✗ ${type}_mapping.csv 中的point_id=$id 在${type}.csv中不存在${NC}"
+                    echo -e "${RED}✗ ${type}_mapping.csv point_id=$id not found in ${type}.csv${NC}"
                     ((ERRORS++))
                 fi
             done
             
-            # 检查是否有点表中的ID在映射文件中不存在
+            # Check if any point table IDs don't exist in mapping files (检查是否有点表中的ID在映射文件中不存在)
             for id in $point_ids; do
                 if ! echo "$mapping_ids" | grep -q "^$id$"; then
-                    echo -e "${YELLOW}⚠ ${type}.csv 中的point_id=$id 在${type}_mapping.csv中没有映射${NC}"
+                    echo -e "${YELLOW}⚠ ${type}.csv point_id=$id has no mapping in ${type}_mapping.csv${NC}"
                     ((WARNINGS++))
                 fi
             done
         fi
     done
     
-    echo -e "${GREEN}✓ 点ID一致性检查完成${NC}"
+    echo -e "${GREEN}✓ Point ID consistency check completed${NC}"
     echo ""
 }
 
-# 生成配置规范文档
+# Generate configuration specification document (生成配置规范文档)
 generate_spec() {
-    echo "5. 生成配置规范..."
+    echo "5. Generating configuration specification..."
     
     cat > "$CONFIG_DIR/CONFIG_SPEC.md" << 'EOF'
-# Comsrv配置文件规范
+# Comsrv Configuration File Specification
 
-## 文件结构
+## File Structure
 
-### 四遥点表文件
-- `telemetry.csv` - 遥测点定义
-- `signal.csv` - 遥信点定义
-- `control.csv` - 遥控点定义
-- `adjustment.csv` - 遥调点定义
+### Telemetry Point Table Files
+- `telemetry.csv` - Telemetry point definitions
+- `signal.csv` - Signal point definitions
+- `control.csv` - Control point definitions
+- `adjustment.csv` - Adjustment point definitions
 
-**必需列**: point_id,signal_name,scale,offset,unit,reverse,data_type
+**Required columns**: point_id,signal_name,scale,offset,unit,reverse,data_type
 
-### 协议映射文件
-- `telemetry_mapping.csv` - 遥测映射
-- `signal_mapping.csv` - 遥信映射
-- `control_mapping.csv` - 遥控映射
-- `adjustment_mapping.csv` - 遥调映射
+### Protocol Mapping Files
+- `telemetry_mapping.csv` - Telemetry mapping
+- `signal_mapping.csv` - Signal mapping
+- `control_mapping.csv` - Control mapping
+- `adjustment_mapping.csv` - Adjustment mapping
 
-**必需列**: point_id,slave_id,function_code,register_address,data_type,byte_order
-**bool类型额外列**: bit_position (范围0-15)
+**Required columns**: point_id,slave_id,function_code,register_address,data_type,byte_order
+**Additional column for bool types**: bit_position (range 0-15)
 
-## 数据规范
+## Data Specification
 
 ### bit_position
-- 统一按16位寄存器处理
-- 范围: 0-15
-- 默认值: 0
+- Uniformly handled as 16-bit registers
+- Range: 0-15
+- Default value: 0
 
 ### Function Code
-- 1: 读线圈
-- 2: 读离散输入
-- 3: 读保持寄存器
-- 4: 读输入寄存器
-- 5: 写单个线圈
-- 6: 写单个寄存器
+- 1: Read coils
+- 2: Read discrete inputs
+- 3: Read holding registers
+- 4: Read input registers
+- 5: Write single coil
+- 6: Write single register
 
-### 数据类型
-- bool: 1位
-- int16/uint16: 2字节
-- int32/uint32/float32: 4字节
-- int64/uint64/float64: 8字节
+### Data Types
+- bool: 1 bit
+- int16/uint16: 2 bytes
+- int32/uint32/float32: 4 bytes
+- int64/uint64/float64: 8 bytes
 
-### 字节序(byte_order)
-- 16位: AB, BA
-- 32位: ABCD, DCBA, BADC, CDAB
-- 64位: ABCDEFGH等
+### Byte Order
+- 16-bit: AB, BA
+- 32-bit: ABCD, DCBA, BADC, CDAB
+- 64-bit: ABCDEFGH, etc.
 EOF
     
-    echo -e "${GREEN}✓ 已生成CONFIG_SPEC.md${NC}"
+    echo -e "${GREEN}✓ CONFIG_SPEC.md generated${NC}"
     echo ""
 }
 
-# 执行所有检查
+# Execute all checks (执行所有检查)
 check_required_files
 validate_csv_headers
 validate_data_content
 check_point_id_consistency
 generate_spec
 
-# 总结
-echo "=== 验证总结 ==="
+# Summary (总结)
+echo "=== Validation Summary ==="
 if [ $ERRORS -eq 0 ]; then
-    echo -e "${GREEN}✓ 所有检查通过！${NC}"
+    echo -e "${GREEN}✓ All checks passed!${NC}"
 else
-    echo -e "${RED}✗ 发现 $ERRORS 个错误${NC}"
+    echo -e "${RED}✗ Found $ERRORS error(s)${NC}"
 fi
 
 if [ $WARNINGS -gt 0 ]; then
-    echo -e "${YELLOW}⚠ 发现 $WARNINGS 个警告${NC}"
+    echo -e "${YELLOW}⚠ Found $WARNINGS warning(s)${NC}"
 fi
 
-# 返回错误码
+# Return error code (返回错误码)
 exit $ERRORS
