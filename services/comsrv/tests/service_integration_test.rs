@@ -15,8 +15,9 @@ use tokio::time::sleep;
 /// Generate a random port for testing to avoid conflicts
 fn random_test_port() -> u16 {
     let mut rng = rand::thread_rng();
-    // Use range 20000-60000 to avoid common ports
-    20000 + rng.gen_range(0..40000)
+    // Use range 10000-60000 (50000 ports) to minimize collision probability
+    // Avoids well-known ports (<10000) and ephemeral ports (>60000)
+    10000 + rng.gen_range(0..50000)
 }
 
 /// Test environment for service integration testing
@@ -438,10 +439,52 @@ logging:
 
 impl Drop for ServiceTestEnvironment {
     fn drop(&mut self) {
-        // Ensure service is stopped
+        // Ensure service is stopped with more robust cleanup
         if let Some(mut process) = self.service_process.take() {
+            // First attempt: normal termination (SIGTERM on Unix)
             let _ = process.kill();
-            let _ = process.wait();
+
+            // Wait up to 3 seconds for graceful shutdown (using try_wait in a loop)
+            let max_wait = 30; // 30 * 100ms = 3 seconds
+            let mut waited = 0;
+            let mut exited = false;
+
+            while waited < max_wait {
+                match process.try_wait() {
+                    Ok(Some(_status)) => {
+                        // Process exited successfully
+                        exited = true;
+                        break;
+                    },
+                    Ok(None) => {
+                        // Still running, continue waiting
+                        std::thread::sleep(Duration::from_millis(100));
+                        waited += 1;
+                    },
+                    Err(_e) => {
+                        // Error checking status, assume dead
+                        break;
+                    },
+                }
+            }
+
+            if !exited {
+                // Process still running after timeout, force kill again
+                eprintln!(
+                    "⚠ Test service didn't stop gracefully (port {}), forcing termination",
+                    self.port
+                );
+                let _ = process.kill();
+
+                // Give it another 2 seconds
+                std::thread::sleep(Duration::from_secs(2));
+
+                // Final wait (blocking)
+                let _ = process.wait();
+            }
+
+            // Small delay to ensure port is released by the OS
+            std::thread::sleep(Duration::from_millis(200));
         }
     }
 }
