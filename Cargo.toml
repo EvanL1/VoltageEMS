@@ -10,7 +10,6 @@ members = [
     "services/rulesrv",
     # CLI tools
     "tools/monarch",
-    "apps/ems-console",
 ]
 
 # Clippy lints configuration

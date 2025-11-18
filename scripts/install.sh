@@ -229,36 +229,6 @@ else
     exit 1
 fi
 
-# Install EMS Console GUI (optional)
-if [[ -f "tools/ems-console" ]]; then
-    echo ""
-    echo -e "${YELLOW}Installing EMS Console GUI...${NC}"
-    $SUDO cp -v "tools/ems-console" "/usr/local/bin/ems-console"
-    $SUDO chmod +x "/usr/local/bin/ems-console"
-
-    # Install launcher script if available
-    if [[ -f "scripts/ems-console-launcher.sh" ]]; then
-        $SUDO cp -v "scripts/ems-console-launcher.sh" "/usr/local/bin/ems-console-launcher"
-        $SUDO chmod +x "/usr/local/bin/ems-console-launcher"
-        echo -e "${GREEN}✓ EMS Console launcher installed${NC}"
-    fi
-
-    echo -e "${GREEN}✓ EMS Console GUI installed${NC}"
-    echo ""
-    echo -e "${BLUE}EMS Console provides real-time monitoring:${NC}"
-    echo "  - Channel status and point values"
-    echo "  - Live data updates from Redis"
-    echo "  - Requires X11/GUI environment (use SSH -X for remote access)"
-    echo ""
-    echo -e "${YELLOW}Usage:${NC}"
-    echo "  Local: ems-console"
-    echo "  Remote (with checks): ems-console-launcher"
-    echo "  Remote SSH: ssh -X user@host ems-console-launcher"
-else
-    echo -e "${YELLOW}Note: EMS Console GUI not included in this package${NC}"
-    echo "      (Optional component - system will work without it)"
-fi
-
 echo -e "${GREEN}[DONE] CLI tools installed${NC}"
 
 # Step 2: Load Docker images (Smart Update Mode)

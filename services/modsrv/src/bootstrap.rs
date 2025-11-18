@@ -187,7 +187,7 @@ async fn setup_sqlite() -> Result<SqlitePool> {
 pub async fn load_products<R>(
     config: &ModsrvConfig,
     sqlite_pool: &SqlitePool,
-    rtdb: &Arc<R>,
+    _rtdb: &Arc<R>,
 ) -> Result<Arc<ProductLoader>>
 where
     R: voltage_rtdb::Rtdb + ?Sized,
@@ -229,20 +229,8 @@ where
 
     info!("Found {} products in SQLite database", product_count);
 
-    // Sync products to Redis for visibility
-    let products = product_loader.get_all_products().await?;
-    info!("Syncing {} products to Redis", products.len());
-
-    for product in &products {
-        if let Err(e) = redis_state::upsert_product(rtdb.as_ref(), product).await {
-            warn!(
-                "Failed to sync product {} to Redis: {}",
-                product.product_name, e
-            );
-        }
-    }
-
-    info!("Products synced to Redis");
+    // Products are managed only in SQLite (Redis = real-time data only)
+    info!("Product definitions loaded from SQLite (no Redis cache)");
     Ok(Arc::new(product_loader))
 }
 
@@ -313,10 +301,11 @@ pub async fn setup_instance_manager(
 
     info!("Found {} instances in SQLite database", instance_count);
 
-    // Sync instances (failures logged but don't block startup)
+    // Initialize real-time data structures in Redis (M/A Hash + name mappings)
+    // Note: This does NOT sync metadata - only creates empty Hash structures for real-time data
     if let Err(e) = instance_manager.sync_instances_to_redis().await {
-        error!("Instance sync failed: {}", e);
-        // Service continues anyway
+        error!("Failed to initialize Redis data structures: {}", e);
+        // Service continues anyway (structures will be created on-demand)
     }
 
     Ok(instance_manager)

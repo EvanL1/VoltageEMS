@@ -1,0 +1,46 @@
+# PCS Instance Configuration
+instance:
+  id: PCS_001
+  name: "Power Conversion System 001"
+  product_name: pcs
+  description: "Main PCS unit for battery energy storage"
+  enabled: true
+
+  # PCS specifications
+  properties:
+    rated_power: 500.0  # kW
+    rated_voltage: 380.0  # V AC
+    rated_current: 760.0  # A
+    rated_frequency: 50.0  # Hz
+    dc_voltage_min: 600.0  # V
+    dc_voltage_max: 900.0  # V
+    dc_voltage_nominal: 750.0  # V
+    efficiency: 98.5  # %
+    power_factor: 0.99
+    switching_frequency: 10.0  # kHz
+
+  # Operating limits
+  limits:
+    power:
+      charge_max: 500.0  # kW
+      discharge_max: 500.0  # kW
+    voltage:
+      ac_min: 342.0  # V (380V -10%)
+      ac_max: 418.0  # V (380V +10%)
+      dc_min: 600.0  # V
+      dc_max: 900.0  # V
+    current:
+      ac_max: 850.0  # A (110% of rated)
+      dc_max: 800.0  # A
+    temperature:
+      warning: 75.0  # °C
+      fault: 85.0  # °C
+    frequency:
+      min: 47.5  # Hz
+      max: 52.5  # Hz
+
+  # Communication settings
+  communication:
+    heartbeat_time: 1000  # ms
+    timeout: 5000  # ms
+    retry_count: 3

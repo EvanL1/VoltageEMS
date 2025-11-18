@@ -99,12 +99,6 @@ rm -rf "$BUILD_DIR"
 mkdir -p "$BUILD_DIR"/{tools,docker,config,scripts}
 mkdir -p "$OUTPUT_DIR"
 
-# Copy helper scripts early
-if [[ -f "$SCRIPT_DIR/ems-console-launcher.sh" ]]; then
-    cp "$SCRIPT_DIR/ems-console-launcher.sh" "$BUILD_DIR/scripts/"
-    chmod +x "$BUILD_DIR/scripts/ems-console-launcher.sh"
-fi
-
 # Step 1: Build Monarch CLI tool
 echo ""
 echo -e "${BLUE}[1/5] Preparing Monarch CLI for ARM64...${NC}"
@@ -144,37 +138,6 @@ fi
 chmod +x "$BUILD_DIR/tools/"* 2>/dev/null || true
 
 echo -e "${GREEN}[DONE] CLI tools built${NC}"
-
-# Step 1.5: Build EMS Console GUI application
-echo ""
-echo -e "${BLUE}[1.5/5] Building EMS Console GUI for ARM64...${NC}"
-
-# Check if Slint dependencies are available
-if ! cargo tree -p ems-console &>/dev/null; then
-    echo -e "${YELLOW}Warning: ems-console dependencies not installed${NC}"
-    echo "Run: cargo fetch --manifest-path apps/ems-console/Cargo.toml"
-fi
-
-# Build ems-console using zigbuild
-echo "Building ems-console for ARM64..."
-cd "$ROOT_DIR"
-
-# Ensure slint-build can find necessary resources
-if cargo zigbuild --release --target $TARGET -p ems-console; then
-    if [[ -f "$ROOT_DIR/target/$TARGET/release/ems-console" ]]; then
-        cp -v "$ROOT_DIR/target/$TARGET/release/ems-console" "$BUILD_DIR/tools/"
-        chmod +x "$BUILD_DIR/tools/ems-console"
-        echo -e "${GREEN}✓ EMS Console built successfully${NC}"
-    else
-        echo -e "${RED}Error: ems-console binary not found after build${NC}"
-        exit 1
-    fi
-else
-    echo -e "${YELLOW}Warning: Failed to build ems-console, skipping...${NC}"
-    echo "This is optional - installer will proceed without GUI tool"
-fi
-
-echo -e "${GREEN}[DONE] EMS Console built${NC}"
 
 # Step 2: Build Docker images
 echo ""
@@ -362,7 +325,6 @@ fi
 if [[ -d "$BUILD_DIR/tools" ]]; then
     mkdir -p "$TEMP_PKG_DIR/tools"
     cp "$BUILD_DIR/tools/monarch" "$TEMP_PKG_DIR/tools/" 2>/dev/null || true
-    cp "$BUILD_DIR/tools/ems-console" "$TEMP_PKG_DIR/tools/" 2>/dev/null || true
 fi
 
 # 4. Helper scripts

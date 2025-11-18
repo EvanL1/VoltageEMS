@@ -1,84 +1,69 @@
-# ============================================================================
-# ComSrv Service Configuration
-# 只包含服务特定配置，全局配置由 config/global.yaml 提供
-# ============================================================================
+name: "comsrv"
+version: "1.0.0"
+description: "工业协议通信服务"
 
-service:
-  name: "comsrv"
-  description: "Communication service - handles industrial protocol communication"
-
-# 服务端口（必须服务特定）
 api:
+  host: "0.0.0.0"
   port: 6001
 
-# 通道配置（服务特定）
+redis:
+  url: "redis://localhost:6379"
+  enabled: true
+
+logging:
+  level: "info"
+  dir: "logs"
+
+lua_sync:
+  enabled: false
+
+command_trigger:
+  enabled: false
+
 channels:
-  # Test Channel
   - id: 1
-    name: "test_channel"
+    name: "PCS#1"
+    description: "变流器 #1"
     protocol: "modbus_tcp"
+    enabled: true
     parameters:
-      host: "localhost"
+      host: "192.168.1.10"
       port: 502
-      timeout_secs: 5
-      polling_interval_ms: 1000
+      connect_timeout_ms: 3000
+      read_timeout_ms: 3000
+    logging:
+      enabled: true
+      level: "info"
 
-  # PV Inverter Channel
   - id: 2
-    name: "pv_inverter_channel"
+    name: "BAMS#1"
+    description: "电池管理系统 #1 (Ampace)"
     protocol: "modbus_tcp"
+    enabled: true
     parameters:
-      host: "voltageems-modbus-sim"
+      host: "192.168.1.100"
       port: 502
-      timeout_secs: 5
-      polling_interval_ms: 1000
+      connect_timeout_ms: 3000
+      read_timeout_ms: 3000
+    logging:
+      enabled: true
+      level: "info"
 
-  # PCS (Power Conversion System) Channel
   - id: 3
-    name: "pcs_channel"
-    protocol: "modbus_tcp"
-    parameters:
-      host: "voltageems-modbus-sim"
-      port: 503
-      timeout_secs: 5
-      polling_interval_ms: 1000
-
-  # Virtual Channel for Calculations
-  - id: 4
-    name: "virtual_channel"
-    protocol: "virt"
-    parameters:
-      polling_interval_ms: 1000
-
-  # BMS (Battery Management System) Channel - Modbus RTU
-  - id: 5
-    name: "bms_channel"
+    name: "GENSET#1"
+    description: "柴油发电机组 #1"
     protocol: "modbus_rtu"
+    enabled: true
     parameters:
-      device: "/dev/ttyUSB0"
+      port: "/dev/ttyS4"
       baud_rate: 9600
       data_bits: 8
-      parity: "None"
       stop_bits: 1
-      timeout_secs: 5
-      polling_interval_ms: 2000
-
-  # Diesel Generator Channel
-  - id: 6
-    name: "diesel_generator_channel"
-    protocol: "modbus_tcp"
-    parameters:
-      host: "voltageems-modbus-sim"
-      port: 504
-      timeout_secs: 5
-      polling_interval_ms: 5000
-
-  # Motor Controller Channel
-  - id: 7
-    name: "motor_controller_channel"
-    protocol: "modbus_tcp"
-    parameters:
-      host: "voltageems-modbus-sim"
-      port: 505
-      timeout_secs: 5
-      polling_interval_ms: 100 # Fast polling for motion control
+      parity: "N"
+      slave_id: 1
+      connect_timeout_ms: 3000
+      read_timeout_ms: 3000
+      retry_interval_ms: 2000
+    logging:
+      enabled: true
+      level: "info"

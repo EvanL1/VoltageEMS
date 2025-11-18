@@ -1122,151 +1122,127 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
         instance_name: &str,
         data_type: Option<&str>,
     ) -> Result<serde_json::Value> {
-        // Query instance_id for Redis key generation
-        let instance_id: u16 =
-            sqlx::query_scalar("SELECT instance_id FROM instances WHERE instance_name = ?")
-                .bind(instance_name)
-                .fetch_one(&self.pool)
-                .await?;
+        // ========================================================================
+        // SQLite = Single source of truth (Redis = real-time data only)
+        // Query point definitions directly from SQLite instead of Redis cache
+        // ========================================================================
+
+        // Get instance metadata (id, product_name, properties)
+        let instance_row: (u16, String, String) = sqlx::query_as(
+            "SELECT instance_id, product_name, properties FROM instances WHERE instance_name = ?",
+        )
+        .bind(instance_name)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|_| anyhow!("Instance '{}' not found", instance_name))?;
+
+        let (_instance_id, product_name, properties_json) = instance_row;
 
         match data_type {
             Some("measurement") => {
-                // Return measurement point definitions only
-                let m_key = RedisKeys::instance_measurement_points(instance_id);
-                let m_data_bytes = self.rtdb.hash_get_all(&m_key).await?;
-                let m_data: HashMap<String, String> = m_data_bytes
-                    .into_iter()
-                    .map(|(k, v)| (k, String::from_utf8_lossy(&v).to_string()))
-                    .collect();
-
-                let mut measurements = serde_json::Map::new();
-                for (point_id, point_json) in m_data.into_iter() {
-                    if let Ok(point_value) = serde_json::from_str::<serde_json::Value>(&point_json)
-                    {
-                        measurements.insert(point_id, point_value);
-                    }
-                }
-
-                Ok(serde_json::Value::Object(measurements))
-            },
-            Some("action") => {
-                // Return action point definitions only
-                let a_key = RedisKeys::instance_action_points(instance_id);
-                let a_data_bytes = self.rtdb.hash_get_all(&a_key).await?;
-                let a_data: HashMap<String, String> = a_data_bytes
-                    .into_iter()
-                    .map(|(k, v)| (k, String::from_utf8_lossy(&v).to_string()))
-                    .collect();
-
-                let mut actions = serde_json::Map::new();
-                for (point_id, point_json) in a_data.into_iter() {
-                    if let Ok(point_value) = serde_json::from_str::<serde_json::Value>(&point_json)
-                    {
-                        actions.insert(point_id, point_value);
-                    }
-                }
-
-                Ok(serde_json::Value::Object(actions))
-            },
-            Some("property") => {
-                // Return property definitions only (read from product template)
-                let info_key = RedisKeys::instance_info(instance_id);
-                let info_bytes = self.rtdb.hash_get_all(&info_key).await?;
-                let info: HashMap<String, String> = info_bytes
-                    .into_iter()
-                    .map(|(k, v)| (k, String::from_utf8_lossy(&v).to_string()))
-                    .collect();
-                let product_name = info
-                    .get("product_name")
-                    .ok_or_else(|| anyhow!("Instance {} not found", instance_name))?;
-
-                let p_key = RedisKeys::product_properties(product_name);
-                let p_data_bytes = self.rtdb.hash_get_all(&p_key).await?;
-                let p_data: HashMap<String, String> = p_data_bytes
-                    .into_iter()
-                    .map(|(k, v)| (k, String::from_utf8_lossy(&v).to_string()))
-                    .collect();
-
-                let mut properties = serde_json::Map::new();
-                for (prop_name, prop_json) in p_data.into_iter() {
-                    if let Ok(prop_value) = serde_json::from_str::<serde_json::Value>(&prop_json) {
-                        properties.insert(prop_name, prop_value);
-                    }
-                }
-
-                Ok(serde_json::Value::Object(properties))
-            },
-            None => {
-                // Return all three as structured data
-                let m_key = RedisKeys::instance_measurement_points(instance_id);
-                let a_key = RedisKeys::instance_action_points(instance_id);
-
-                // Fetch product_name to read properties
-                let info_key = RedisKeys::instance_info(instance_id);
-                let info_bytes = self.rtdb.hash_get_all(&info_key).await?;
-                let info: HashMap<String, String> = info_bytes
-                    .into_iter()
-                    .map(|(k, v)| (k, String::from_utf8_lossy(&v).to_string()))
-                    .collect();
-                let product_name = info
-                    .get("product_name")
-                    .ok_or_else(|| anyhow!("Instance {} not found", instance_name))?;
-
-                let p_key = RedisKeys::product_properties(product_name);
-
-                let m_data_bytes = self.rtdb.hash_get_all(&m_key).await?;
-                let m_data: HashMap<String, String> = m_data_bytes
-                    .into_iter()
-                    .map(|(k, v)| (k, String::from_utf8_lossy(&v).to_string()))
-                    .collect();
-
-                let a_data_bytes = self.rtdb.hash_get_all(&a_key).await?;
-                let a_data: HashMap<String, String> = a_data_bytes
-                    .into_iter()
-                    .map(|(k, v)| (k, String::from_utf8_lossy(&v).to_string()))
-                    .collect();
-
-                let p_data_bytes = self.rtdb.hash_get_all(&p_key).await?;
-                let p_data: HashMap<String, String> = p_data_bytes
-                    .into_iter()
-                    .map(|(k, v)| (k, String::from_utf8_lossy(&v).to_string()))
-                    .collect();
-
-                let mut measurements = serde_json::Map::new();
-                for (point_id, point_json) in m_data.into_iter() {
-                    if let Ok(point_value) = serde_json::from_str::<serde_json::Value>(&point_json)
-                    {
-                        measurements.insert(point_id, point_value);
-                    }
-                }
-
-                let mut actions = serde_json::Map::new();
-                for (point_id, point_json) in a_data.into_iter() {
-                    if let Ok(point_value) = serde_json::from_str::<serde_json::Value>(&point_json)
-                    {
-                        actions.insert(point_id, point_value);
-                    }
-                }
-
-                let mut properties = serde_json::Map::new();
-                for (prop_name, prop_json) in p_data.into_iter() {
-                    if let Ok(prop_value) = serde_json::from_str::<serde_json::Value>(&prop_json) {
-                        properties.insert(prop_name, prop_value);
-                    }
-                }
+                // Query measurement points from SQLite
+                let measurements: Vec<(String, String, f64, f64, String)> = sqlx::query_as(
+                    "SELECT signal_name, data_type, scale, offset, unit
+                     FROM measurement_points WHERE product_name = ?",
+                )
+                .bind(&product_name)
+                .fetch_all(&self.pool)
+                .await?;
 
                 let mut result = serde_json::Map::new();
-                result.insert(
-                    "measurements".to_string(),
-                    serde_json::Value::Object(measurements),
-                );
-                result.insert("actions".to_string(), serde_json::Value::Object(actions));
-                result.insert(
-                    "properties".to_string(),
-                    serde_json::Value::Object(properties),
-                );
+                for (signal_name, data_type, scale, offset, unit) in measurements {
+                    let point = serde_json::json!({
+                        "signal_name": signal_name,
+                        "data_type": data_type,
+                        "scale": scale,
+                        "offset": offset,
+                        "unit": unit
+                    });
+                    result.insert(signal_name.clone(), point);
+                }
 
                 Ok(serde_json::Value::Object(result))
+            },
+            Some("action") => {
+                // Query action points from SQLite
+                let actions: Vec<(String, String, f64, f64, String)> = sqlx::query_as(
+                    "SELECT signal_name, data_type, scale, offset, unit
+                     FROM action_points WHERE product_name = ?",
+                )
+                .bind(&product_name)
+                .fetch_all(&self.pool)
+                .await?;
+
+                let mut result = serde_json::Map::new();
+                for (signal_name, data_type, scale, offset, unit) in actions {
+                    let point = serde_json::json!({
+                        "signal_name": signal_name,
+                        "data_type": data_type,
+                        "scale": scale,
+                        "offset": offset,
+                        "unit": unit
+                    });
+                    result.insert(signal_name.clone(), point);
+                }
+
+                Ok(serde_json::Value::Object(result))
+            },
+            Some("property") => {
+                // Return instance properties (stored as JSON in instances table)
+                let properties: serde_json::Value =
+                    serde_json::from_str(&properties_json).unwrap_or(serde_json::json!({}));
+                Ok(properties)
+            },
+            None => {
+                // Return all three: measurements, actions, properties
+                let measurements: Vec<(String, String, f64, f64, String)> = sqlx::query_as(
+                    "SELECT signal_name, data_type, scale, offset, unit
+                     FROM measurement_points WHERE product_name = ?",
+                )
+                .bind(&product_name)
+                .fetch_all(&self.pool)
+                .await?;
+
+                let actions: Vec<(String, String, f64, f64, String)> = sqlx::query_as(
+                    "SELECT signal_name, data_type, scale, offset, unit
+                     FROM action_points WHERE product_name = ?",
+                )
+                .bind(&product_name)
+                .fetch_all(&self.pool)
+                .await?;
+
+                let mut m_map = serde_json::Map::new();
+                for (signal_name, data_type, scale, offset, unit) in measurements {
+                    let point = serde_json::json!({
+                        "signal_name": signal_name,
+                        "data_type": data_type,
+                        "scale": scale,
+                        "offset": offset,
+                        "unit": unit
+                    });
+                    m_map.insert(signal_name.clone(), point);
+                }
+
+                let mut a_map = serde_json::Map::new();
+                for (signal_name, data_type, scale, offset, unit) in actions {
+                    let point = serde_json::json!({
+                        "signal_name": signal_name,
+                        "data_type": data_type,
+                        "scale": scale,
+                        "offset": offset,
+                        "unit": unit
+                    });
+                    a_map.insert(signal_name.clone(), point);
+                }
+
+                let properties: serde_json::Value =
+                    serde_json::from_str(&properties_json).unwrap_or(serde_json::json!({}));
+
+                Ok(serde_json::json!({
+                    "measurements": m_map,
+                    "actions": a_map,
+                    "properties": properties
+                }))
             },
             Some(other) => Err(anyhow!(
                 "Unknown data type '{}'; use 'measurement', 'action', 'property', or omit for all",

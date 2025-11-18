@@ -366,96 +366,35 @@ pub async fn register_instance<R>(
     redis: &R,
     instance_id: u16,
     instance_name: &str,
-    product_name: &str,
-    properties: &HashMap<String, Value>,
-    measurement_mappings: &HashMap<u32, String>,
-    action_mappings: &HashMap<u32, String>,
+    _product_name: &str,
+    _properties: &HashMap<String, Value>,
+    _measurement_mappings: &HashMap<u32, String>,
+    _action_mappings: &HashMap<u32, String>,
     measurements: &[MeasurementPoint],
-    actions: &[ActionPoint],
-    parameters: Option<&HashMap<String, Value>>,
+    _actions: &[ActionPoint],
+    _parameters: Option<&HashMap<String, Value>>,
 ) -> Result<()>
 where
     R: Rtdb + ?Sized,
 {
-    let now_ms = redis.time_millis().await?;
+    // ========================================================================
+    // Redis = Real-time data only (SQLite = Single source of truth for config)
+    // ========================================================================
+    //
+    // M Hash: Pre-initialized with all measurement points set to "0"
+    // A Hash: Created on-demand (Redis doesn't support Null values)
+    // P (Properties): Cached in memory, not in Redis (config data, not real-time)
+    // ========================================================================
 
-    let info_key = format!("instance:{}:info", instance_name);
-    let mut info_fields = vec![
-        ("id".to_string(), instance_name.to_string()),
-        ("product_name".to_string(), product_name.to_string()),
-        ("properties".to_string(), serde_json::to_string(properties)?),
-        ("updated_at".to_string(), now_ms.to_string()),
-        ("created_at".to_string(), now_ms.to_string()),
-    ];
-
-    if !measurement_mappings.is_empty() {
-        info_fields.push((
-            "measurement_mappings".to_string(),
-            serde_json::to_string(measurement_mappings)?,
-        ));
+    // 1. Initialize inst:{id}:M Hash with all measurement points set to 0
+    let m_key = RedisKeys::measurement_hash(instance_id);
+    for point in measurements {
+        redis
+            .hash_set(&m_key, &point.measurement_id.to_string(), Bytes::from("0"))
+            .await?;
     }
 
-    if !action_mappings.is_empty() {
-        info_fields.push((
-            "action_mappings".to_string(),
-            serde_json::to_string(action_mappings)?,
-        ));
-    }
-
-    let info_fields_bytes: Vec<(String, Bytes)> = info_fields
-        .into_iter()
-        .map(|(k, v)| (k, Bytes::from(v)))
-        .collect();
-    redis.hash_mset(&info_key, info_fields_bytes).await?;
-
-    let status_key = RedisKeys::status(instance_id);
-    let status_fields = vec![
-        ("state".to_string(), Bytes::from("offline")),
-        ("last_update".to_string(), Bytes::from(now_ms.to_string())),
-    ];
-    redis.hash_mset(&status_key, status_fields).await?;
-
-    let config_key = RedisKeys::config(instance_id);
-    let config_fields: Vec<(String, Bytes)> = properties
-        .iter()
-        .map(|(k, v)| (k.clone(), Bytes::from(value_to_string(v))))
-        .collect();
-    if !config_fields.is_empty() {
-        redis.hash_mset(&config_key, config_fields).await?;
-    } else {
-        let _ = redis.del(&config_key).await?;
-    }
-
-    if let Some(params) = parameters {
-        let param_key = RedisKeys::instance_parameters(instance_id);
-        if params.is_empty() {
-            let _ = redis.del(&param_key).await?;
-        } else {
-            let fields: Vec<(String, Bytes)> = params
-                .iter()
-                .map(|(k, v)| (k.clone(), Bytes::from(value_to_string(v))))
-                .collect();
-            redis.hash_mset(&param_key, fields).await?;
-        }
-    }
-
-    write_point_definitions(
-        redis,
-        &RedisKeys::instance_measurement_points(instance_id),
-        measurements,
-    )
-    .await?;
-
-    write_action_definitions(
-        redis,
-        &RedisKeys::instance_action_points(instance_id),
-        actions,
-    )
-    .await?;
-
-    redis.sadd(RedisKeys::INSTANCE_INDEX, instance_name).await?;
-
-    // Add inst:{id}:name key for bidirectional lookup and aggregation queries
+    // 2. Set inst:{id}:name for bidirectional lookup and aggregation queries
     redis
         .set(
             &RedisKeys::instance_name(instance_id),
@@ -463,7 +402,7 @@ where
         )
         .await?;
 
-    // Add reverse index: inst:name:index Hash for O(1) name→ID lookup
+    // 3. Add reverse index: inst:name:index Hash for O(1) name→ID lookup
     redis
         .hash_set(
             "inst:name:index",
@@ -481,34 +420,28 @@ pub async fn unregister_instance<R>(redis: &R, instance_id: u16, instance_name: 
 where
     R: Rtdb + ?Sized,
 {
-    let mut keys_to_delete = vec![
-        RedisKeys::instance_info(instance_id),
-        RedisKeys::instance_attributes(instance_id),
-        RedisKeys::instance_parameters(instance_id),
-        RedisKeys::status(instance_id),
-        RedisKeys::config(instance_id),
-        RedisKeys::measurement_hash(instance_id),
-        RedisKeys::action_hash(instance_id),
-        RedisKeys::instance_measurement_points(instance_id),
-        RedisKeys::instance_action_points(instance_id),
-        RedisKeys::instance_name(instance_id),
+    // Delete real-time data keys (Redis = real-time data only)
+    let keys_to_delete = vec![
+        RedisKeys::measurement_hash(instance_id), // inst:{id}:M
+        RedisKeys::action_hash(instance_id),      // inst:{id}:A
+        RedisKeys::instance_name(instance_id),    // inst:{id}:name
     ];
 
-    let pattern = format!("inst:{}:*", instance_id);
-    let extra = redis.scan_match(&pattern).await?;
-    keys_to_delete.extend(extra);
-
-    if !keys_to_delete.is_empty() {
-        for key in &keys_to_delete {
-            redis.del(key).await?;
-        }
+    for key in &keys_to_delete {
+        redis.del(key).await?;
     }
 
-    redis.srem(RedisKeys::INSTANCE_INDEX, instance_name).await?;
+    // Safety: SCAN and delete any remaining inst:{id}:* keys (for cleanup)
+    let pattern = format!("inst:{}:*", instance_id);
+    let extra_keys = redis.scan_match(&pattern).await?;
+    for key in &extra_keys {
+        redis.del(key).await?;
+    }
 
-    // Remove from reverse index
+    // Remove from reverse index: inst:name:index
     redis.hash_del("inst:name:index", instance_name).await?;
 
+    // Clean up routing mappings (route:c2m and route:m2c)
     cleanup_routing(redis, instance_id, instance_name).await?;
 
     Ok(())
