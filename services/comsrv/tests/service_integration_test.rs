@@ -177,19 +177,19 @@ logging:
 
         let monarch_path = project_root.join("target/debug/monarch");
 
-        // Build Monarch if not already built
-        if !monarch_path.exists() {
-            let build = Command::new("cargo")
-                .args(["build", "--package", "monarch"])
-                .current_dir(project_root)
-                .output()?;
+        // Always rebuild Monarch to ensure schema consistency with current code
+        // This prevents schema mismatch issues when voltage-config is updated
+        println!("Building Monarch with latest schema...");
+        let build = Command::new("cargo")
+            .args(["build", "--package", "monarch"])
+            .current_dir(project_root)
+            .output()?;
 
-            if !build.status.success() {
-                return Err(anyhow::anyhow!(
-                    "Failed to build monarch: {}",
-                    String::from_utf8_lossy(&build.stderr)
-                ));
-            }
+        if !build.status.success() {
+            return Err(anyhow::anyhow!(
+                "Failed to build monarch: {}",
+                String::from_utf8_lossy(&build.stderr)
+            ));
         }
 
         // Create temporary config directory

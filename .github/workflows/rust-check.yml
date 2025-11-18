@@ -247,6 +247,12 @@ jobs:
           ${{ runner.os }}-cargo-integration-
           ${{ runner.os }}-cargo-
 
+    # Clean Monarch Binary Cache (prevent schema mismatch)
+    - name: Clean Monarch Binary Cache
+      run: |
+        echo "Cleaning cached Monarch binaries to prevent schema mismatch..."
+        rm -f target/debug/monarch target/release/monarch
+
     # Build & Start Redis
     - name: Build & Start Redis
       run: |
