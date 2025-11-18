@@ -286,14 +286,14 @@ mod tests {
             .await
             .unwrap();
 
-        // Insert service config
+        // Insert service config (with service_name column)
         sqlx::query(
-            "INSERT INTO service_config (key, value) VALUES
-                ('service_name', 'comsrv'),
-                ('port', '6001'),
-                ('redis_url', 'redis://localhost:6379'),
-                ('description', 'Test Service'),
-                ('version', '1.0.0')",
+            "INSERT INTO service_config (service_name, key, value) VALUES
+                ('comsrv', 'service_name', 'comsrv'),
+                ('comsrv', 'port', '6001'),
+                ('comsrv', 'redis_url', 'redis://localhost:6379'),
+                ('comsrv', 'description', 'Test Service'),
+                ('comsrv', 'version', '1.0.0')",
         )
         .execute(&pool)
         .await
@@ -552,10 +552,10 @@ mod tests {
             .unwrap();
 
         sqlx::query(
-            "INSERT INTO service_config (key, value) VALUES
-                ('service_name', 'comsrv'),
-                ('port', '6001'),
-                ('redis_url', 'redis://localhost:6379')",
+            "INSERT INTO service_config (service_name, key, value) VALUES
+                ('comsrv', 'service_name', 'comsrv'),
+                ('comsrv', 'port', '6001'),
+                ('comsrv', 'redis_url', 'redis://localhost:6379')",
         )
         .execute(&pool)
         .await
@@ -598,10 +598,10 @@ mod tests {
             .unwrap();
 
         sqlx::query(
-            "INSERT INTO service_config (key, value) VALUES
-                ('service_name', 'comsrv'),
-                ('port', '6001'),
-                ('redis_url', 'redis://localhost:6379')",
+            "INSERT INTO service_config (service_name, key, value) VALUES
+                ('comsrv', 'service_name', 'comsrv'),
+                ('comsrv', 'port', '6001'),
+                ('comsrv', 'redis_url', 'redis://localhost:6379')",
         )
         .execute(&pool)
         .await
@@ -633,10 +633,10 @@ mod tests {
             .unwrap();
 
         sqlx::query(
-            "INSERT INTO service_config (key, value) VALUES
-                ('service_name', 'comsrv'),
-                ('port', '6001'),
-                ('redis_url', 'redis://localhost:6379')",
+            "INSERT INTO service_config (service_name, key, value) VALUES
+                ('comsrv', 'service_name', 'comsrv'),
+                ('comsrv', 'port', '6001'),
+                ('comsrv', 'redis_url', 'redis://localhost:6379')",
         )
         .execute(&pool)
         .await

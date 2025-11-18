@@ -58,6 +58,11 @@ impl ConfigValidator {
     pub async fn validate_service(&self, service: &str) -> Result<ValidationResult> {
         info!("Validating configuration for service: {}", service);
 
+        // Special handling for global configuration (no subdirectory)
+        if service == "global" {
+            return self.validate_global().await;
+        }
+
         // Check if service configuration exists
         let service_config_path = self.config_path.join(service);
         if !service_config_path.exists() {
@@ -158,6 +163,44 @@ impl ConfigValidator {
         let result = validator.validate(self.validation_level)?;
 
         Ok(ValidationResult::from_voltage_result(result))
+    }
+
+    /// Validate global configuration
+    async fn validate_global(&self) -> Result<ValidationResult> {
+        let yaml_path = self.config_path.join("global.yaml");
+
+        // Check if file exists
+        if !yaml_path.exists() {
+            return Ok(ValidationResult {
+                valid: false,
+                errors: vec![format!(
+                    "Missing global configuration file: {:?}",
+                    yaml_path
+                )],
+                warnings: vec![],
+            });
+        }
+
+        // Load YAML and perform basic validation
+        let yaml_content = std::fs::read_to_string(&yaml_path)?;
+        match serde_yaml::from_str::<serde_yaml::Value>(&yaml_content) {
+            Ok(_) => {
+                // Global config is valid YAML
+                Ok(ValidationResult {
+                    valid: true,
+                    errors: vec![],
+                    warnings: vec![],
+                })
+            },
+            Err(e) => {
+                // YAML parsing failed
+                Ok(ValidationResult {
+                    valid: false,
+                    errors: vec![format!("Invalid YAML in {:?}: {}", yaml_path, e)],
+                    warnings: vec![],
+                })
+            },
+        }
     }
 }
 

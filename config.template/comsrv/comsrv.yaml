@@ -1,3 +1,17 @@
+# ============================================================================
+# ComSrv Service Configuration
+# 只包含服务特定配置，全局配置由 config/global.yaml 提供
+# ============================================================================
+
+service:
+  name: "comsrv"
+  description: "Communication service - handles industrial protocol communication"
+
+# 服务端口（必须服务特定）
+api:
+  port: 6001
+
+# 通道配置（服务特定）
 channels:
   # Test Channel
   - id: 1

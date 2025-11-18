@@ -53,15 +53,18 @@ impl ServiceConfigLoader {
 
     /// Initialize database schema for service configuration
     pub async fn init_schema(&self) -> Result<()> {
-        // Create service_config table
+        // Create service_config table with composite primary key
+        // Supports both global and service-specific configuration
         sqlx::query(
             r#"
             CREATE TABLE IF NOT EXISTS service_config (
-                key TEXT PRIMARY KEY,
+                service_name TEXT NOT NULL,
+                key TEXT NOT NULL,
                 value TEXT NOT NULL,
                 type TEXT DEFAULT 'string',
                 description TEXT,
-                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (service_name, key)
             )
             "#,
         )
@@ -76,11 +79,19 @@ impl ServiceConfigLoader {
     }
 
     /// Load service configuration from database
+    /// Merges global configuration with service-specific configuration
+    /// Priority: service-specific > global
     pub async fn load_config(&self) -> Result<ServiceConfig> {
-        // Load all config values
-        let rows = sqlx::query("SELECT key, value, type FROM service_config")
-            .fetch_all(&self.pool)
-            .await?;
+        // Load global config first, then service-specific config (UNION ALL for single query)
+        // Service-specific config will override global config with same key
+        let rows = sqlx::query(
+            "SELECT key, value, type FROM service_config WHERE service_name = 'global'
+             UNION ALL
+             SELECT key, value, type FROM service_config WHERE service_name = ?",
+        )
+        .bind(&self.service_name)
+        .fetch_all(&self.pool)
+        .await?;
 
         let mut config_map = HashMap::new();
 
@@ -150,31 +161,37 @@ impl ServiceConfigLoader {
     pub async fn set_config(&self, key: &str, value: &str, value_type: &str) -> Result<()> {
         sqlx::query(
             r#"
-            INSERT INTO service_config (key, value, type, updated_at)
-            VALUES (?, ?, ?, CURRENT_TIMESTAMP)
-            ON CONFLICT(key) DO UPDATE SET
+            INSERT INTO service_config (service_name, key, value, type, updated_at)
+            VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+            ON CONFLICT(service_name, key) DO UPDATE SET
                 value = excluded.value,
                 type = excluded.type,
                 updated_at = CURRENT_TIMESTAMP
             "#,
         )
+        .bind(&self.service_name)
         .bind(key)
         .bind(value)
         .bind(value_type)
         .execute(&self.pool)
         .await?;
 
-        debug!("Set config {}={} (type: {})", key, value, value_type);
+        debug!(
+            "Set config [{}] {}={} (type: {})",
+            self.service_name, key, value, value_type
+        );
         Ok(())
     }
 
     /// Get a specific configuration value
     pub async fn get_config(&self, key: &str) -> Result<Option<String>> {
-        let result =
-            sqlx::query_scalar::<_, String>("SELECT value FROM service_config WHERE key = ?")
-                .bind(key)
-                .fetch_optional(&self.pool)
-                .await?;
+        let result = sqlx::query_scalar::<_, String>(
+            "SELECT value FROM service_config WHERE service_name = ? AND key = ?",
+        )
+        .bind(&self.service_name)
+        .bind(key)
+        .fetch_optional(&self.pool)
+        .await?;
 
         Ok(result)
     }

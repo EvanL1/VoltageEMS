@@ -45,7 +45,20 @@ pub fn generate_create_table(table_args: &TableArgs) -> String {
     let mut columns = Vec::new();
     let mut primary_keys = Vec::new();
 
-    // Generate column definitions
+    // First pass: collect primary keys
+    for field in &fields {
+        if field.skip || field.flatten {
+            continue;
+        }
+        if field.primary_key {
+            let column_name = get_column_name(field);
+            primary_keys.push(column_name);
+        }
+    }
+
+    let has_composite_key = primary_keys.len() > 1;
+
+    // Second pass: generate column definitions
     for field in fields {
         // Skip fields marked with skip or flatten
         // Note: flatten fields are skipped because we don't have access to
@@ -55,14 +68,8 @@ pub fn generate_create_table(table_args: &TableArgs) -> String {
             continue;
         }
 
-        let column_def = generate_column_definition(field);
+        let column_def = generate_column_definition(field, has_composite_key);
         columns.push(column_def);
-
-        // Collect primary keys for composite primary key constraint
-        if field.primary_key {
-            let column_name = get_column_name(field);
-            primary_keys.push(column_name);
-        }
     }
 
     // Build CREATE TABLE statement
@@ -98,20 +105,26 @@ pub fn generate_create_table(table_args: &TableArgs) -> String {
 
 /// Generate SQL column definition
 ///
+/// # Arguments
+///
+/// * `field` - Field attributes
+/// * `has_composite_key` - True if table has a composite primary key
+///
 /// # Examples
 ///
-/// - `channel_id INTEGER PRIMARY KEY`
+/// - `channel_id INTEGER PRIMARY KEY` (single key)
+/// - `service_name TEXT NOT NULL` (composite key - no PRIMARY KEY in column)
 /// - `name TEXT NOT NULL UNIQUE`
 /// - `enabled BOOLEAN DEFAULT TRUE`
 /// - `instance_id INTEGER NOT NULL REFERENCES instances(instance_id) ON DELETE CASCADE`
-fn generate_column_definition(field: &FieldArgs) -> String {
+fn generate_column_definition(field: &FieldArgs, has_composite_key: bool) -> String {
     let column_name = get_column_name(field);
     let (sql_type, is_optional) = handle_optional_type(&field.ty);
 
     let mut parts = vec![column_name, sql_type.clone()];
 
-    // PRIMARY KEY
-    if field.primary_key {
+    // PRIMARY KEY (only add to column if NOT a composite key)
+    if field.primary_key && !has_composite_key {
         parts.push("PRIMARY KEY".to_string());
 
         if field.autoincrement {

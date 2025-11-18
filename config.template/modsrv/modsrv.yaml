@@ -1,4 +1,17 @@
+# ============================================================================
 # ModSrv Service Configuration
-# Override defaults only when needed
-# Priority: Config File > Environment Variables > Code Defaults
-# All values will use defaults - ConfigLoader now handles empty files gracefully
+# 只包含服务特定配置，全局配置由 config/global.yaml 提供
+# ============================================================================
+
+service:
+  name: "modsrv"
+  description: "Model calculation service"
+
+# 服务端口（必须服务特定）
+api:
+  port: 6002
+
+# ModSrv 特定配置
+products_path: "config/modsrv/products"
+instances_path: "config/modsrv/instances"
+auto_load_instances: true

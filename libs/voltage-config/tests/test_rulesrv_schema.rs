@@ -12,7 +12,9 @@ fn test_service_config_table_generation() {
     println!("{}\n", SERVICE_CONFIG_TABLE);
 
     assert!(SERVICE_CONFIG_TABLE.contains("CREATE TABLE IF NOT EXISTS service_config"));
-    assert!(SERVICE_CONFIG_TABLE.contains("key TEXT PRIMARY KEY"));
+    assert!(SERVICE_CONFIG_TABLE.contains("service_name TEXT NOT NULL"));
+    assert!(SERVICE_CONFIG_TABLE.contains("key TEXT NOT NULL"));
+    assert!(SERVICE_CONFIG_TABLE.contains("PRIMARY KEY (service_name, key)"));
     assert!(SERVICE_CONFIG_TABLE.contains("value TEXT NOT NULL"));
     assert!(SERVICE_CONFIG_TABLE.contains("type TEXT NOT NULL DEFAULT 'string'"));
     assert!(SERVICE_CONFIG_TABLE.contains("description TEXT"));

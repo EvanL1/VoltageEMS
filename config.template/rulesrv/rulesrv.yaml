@@ -1,13 +1,21 @@
+# ============================================================================
+# RuleSrv Service Configuration
+# 只包含服务特定配置，全局配置由 config/global.yaml 提供
+# ============================================================================
+
 service:
-  name: rulesrv
+  name: "rulesrv"
+  description: "Rule engine service"
+
+# 服务端口（必须服务特定）
+api:
   port: 6003
 
-redis:
-  url: unix:///run/redis/redis.sock
+# 日志级别覆盖（可选，覆盖 global 的 info）
+logging:
+  level: "debug"
 
+# RuleSrv 特定配置
 execution:
   interval_seconds: 5
   batch_size: 100
-
-logging:
-  level: debug

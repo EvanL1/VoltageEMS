@@ -51,11 +51,15 @@ pub struct ModsrvConfig {
 // ============================================================================
 
 /// Service configuration table record
+/// Supports both global and service-specific configuration with composite primary key
 #[allow(dead_code)]
 #[derive(Schema)]
 #[table(name = "service_config")]
 struct ServiceConfigRecord {
-    #[column(primary_key)]
+    #[column(not_null, primary_key)]
+    service_name: String,
+
+    #[column(not_null, primary_key)]
     key: String,
 
     #[column(not_null)]

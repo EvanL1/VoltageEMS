@@ -163,7 +163,7 @@ enum Commands {
     // === Configuration Management Commands ===
     /// Sync configuration to SQLite database
     Sync {
-        /// Service name: comsrv, modsrv, rulesrv, or all
+        /// Service name: global, comsrv, modsrv, rulesrv, or all
         service: String,
 
         /// Force sync without validation
@@ -177,7 +177,7 @@ enum Commands {
 
     /// Validate configuration without syncing
     Validate {
-        /// Service name: comsrv, modsrv, rulesrv, or all
+        /// Service name: global, comsrv, modsrv, rulesrv, or all
         service: String,
 
         /// Hide detailed validation output (default shows details)
@@ -194,13 +194,13 @@ enum Commands {
 
     /// Initialize database schemas
     Init {
-        /// Service name: comsrv, modsrv, rulesrv, or all
+        /// Service name: global, comsrv, modsrv, rulesrv, or all
         service: String,
     },
 
     /// Export configuration from SQLite to YAML/CSV
     Export {
-        /// Service name: comsrv, modsrv, rulesrv, or all
+        /// Service name: global, comsrv, modsrv, rulesrv, or all
         service: String,
 
         /// Output directory (default: config/{service})
@@ -214,7 +214,7 @@ enum Commands {
 
     /// Compare SQLite configuration with YAML/CSV files
     Diff {
-        /// Service name: comsrv, modsrv, rulesrv, or all
+        /// Service name: global, comsrv, modsrv, rulesrv, or all
         service: String,
 
         /// Show detailed differences
@@ -469,11 +469,14 @@ async fn sync_command(
 ) -> Result<()> {
     // Determine which services to sync
     let services = match service {
-        "all" => vec!["comsrv", "modsrv", "rulesrv"],
-        s if ["comsrv", "modsrv", "rulesrv"].contains(&s) => vec![s],
+        "all" => vec!["global", "comsrv", "modsrv", "rulesrv"],
+        s if ["comsrv", "modsrv", "rulesrv", "global"].contains(&s) => vec![s],
         _ => {
             eprintln!("{} Unknown service: {}", "ERROR".red(), service.red());
-            eprintln!("Valid services: {}", "comsrv, modsrv, rulesrv, all".green());
+            eprintln!(
+                "Valid services: {}",
+                "global, comsrv, modsrv, rulesrv, all".green()
+            );
             std::process::exit(1);
         },
     };
@@ -603,11 +606,14 @@ async fn sync_command(
 async fn validate_command(service: &str, detailed: bool, config_path: &Path) -> Result<()> {
     // Determine which services to validate
     let services = match service {
-        "all" => vec!["comsrv", "modsrv", "rulesrv"],
-        s if ["comsrv", "modsrv", "rulesrv"].contains(&s) => vec![s],
+        "all" => vec!["global", "comsrv", "modsrv", "rulesrv"],
+        s if ["comsrv", "modsrv", "rulesrv", "global"].contains(&s) => vec![s],
         _ => {
             eprintln!("{} Unknown service: {}", "ERROR".red(), service.red());
-            eprintln!("Valid services: {}", "comsrv, modsrv, rulesrv, all".green());
+            eprintln!(
+                "Valid services: {}",
+                "global, comsrv, modsrv, rulesrv, all".green()
+            );
             std::process::exit(1);
         },
     };
@@ -718,6 +724,14 @@ async fn init_command(service: &str, db_path: &Path) -> Result<()> {
                 db_path.join("voltage.db"),
             )
         },
+        "global" => {
+            // Global doesn't need schema initialization (uses service_config table)
+            println!(
+                "{} Global config doesn't require schema initialization",
+                "INFO".bright_cyan()
+            );
+            return Ok(());
+        },
         s if ["comsrv", "modsrv", "rulesrv"].contains(&s) => {
             // Single service mode (deprecated, kept for backward compatibility)
             println!(
@@ -728,7 +742,10 @@ async fn init_command(service: &str, db_path: &Path) -> Result<()> {
         },
         _ => {
             eprintln!("{} Unknown service: {}", "ERROR".red(), service.red());
-            eprintln!("Valid services: {}", "comsrv, modsrv, rulesrv, all".green());
+            eprintln!(
+                "Valid services: {}",
+                "global, comsrv, modsrv, rulesrv, all".green()
+            );
             std::process::exit(1);
         },
     };
@@ -790,11 +807,14 @@ async fn export_command(
 ) -> Result<()> {
     // Determine which services to export
     let services = match service {
-        "all" => vec!["comsrv", "modsrv", "rulesrv"],
-        s if ["comsrv", "modsrv", "rulesrv"].contains(&s) => vec![s],
+        "all" => vec!["global", "comsrv", "modsrv", "rulesrv"],
+        s if ["comsrv", "modsrv", "rulesrv", "global"].contains(&s) => vec![s],
         _ => {
             eprintln!("{} Unknown service: {}", "ERROR".red(), service.red());
-            eprintln!("Valid services: {}", "comsrv, modsrv, rulesrv, all".green());
+            eprintln!(
+                "Valid services: {}",
+                "global, comsrv, modsrv, rulesrv, all".green()
+            );
             std::process::exit(1);
         },
     };
@@ -858,11 +878,14 @@ async fn diff_command(
 ) -> Result<()> {
     // Determine which services to compare
     let services = match service {
-        "all" => vec!["comsrv", "modsrv", "rulesrv"],
-        s if ["comsrv", "modsrv", "rulesrv"].contains(&s) => vec![s],
+        "all" => vec!["global", "comsrv", "modsrv", "rulesrv"],
+        s if ["comsrv", "modsrv", "rulesrv", "global"].contains(&s) => vec![s],
         _ => {
             eprintln!("{} Unknown service: {}", "ERROR".red(), service.red());
-            eprintln!("Valid services: {}", "comsrv, modsrv, rulesrv, all".green());
+            eprintln!(
+                "Valid services: {}",
+                "global, comsrv, modsrv, rulesrv, all".green()
+            );
             std::process::exit(1);
         },
     };

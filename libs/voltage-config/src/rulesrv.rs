@@ -45,11 +45,15 @@ pub struct RulesrvConfig {
 
 /// Service configuration table record
 /// Maps to RulesrvConfig for service-level settings
+/// Supports both global and service-specific configuration with composite primary key
 #[cfg_attr(feature = "schema-macro", derive(Schema))]
 #[cfg_attr(feature = "schema-macro", table(name = "service_config"))]
 #[allow(dead_code)]
 struct ServiceConfigRecord {
-    #[cfg_attr(feature = "schema-macro", column(primary_key))]
+    #[cfg_attr(feature = "schema-macro", column(not_null, primary_key))]
+    service_name: String,
+
+    #[cfg_attr(feature = "schema-macro", column(not_null, primary_key))]
     key: String,
 
     #[cfg_attr(feature = "schema-macro", column(not_null))]
@@ -89,11 +93,13 @@ pub const SYNC_METADATA_TABLE: &str = SyncMetadataRecord::CREATE_TABLE_SQL;
 #[cfg(not(feature = "schema-macro"))]
 pub const SERVICE_CONFIG_TABLE: &str = r#"
     CREATE TABLE IF NOT EXISTS service_config (
-        key TEXT PRIMARY KEY,
+        service_name TEXT NOT NULL,
+        key TEXT NOT NULL,
         value TEXT NOT NULL,
         type TEXT DEFAULT 'string',
         description TEXT,
-        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (service_name, key)
     )
 "#;
 

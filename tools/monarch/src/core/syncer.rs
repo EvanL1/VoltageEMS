@@ -166,7 +166,7 @@ impl ConfigSyncer {
 
     /// Sync configuration for a specific service
     ///
-    /// @input service: &str - Service name ("comsrv", "modsrv", "rulesrv")
+    /// @input service: &str - Service name ("comsrv", "modsrv", "rulesrv", "global")
     /// @output Result<SyncResult> - Sync statistics (items synced, deleted, errors)
     /// @throws anyhow::Error - Unknown service, database errors, file I/O errors
     /// @side-effects Clears and repopulates service database from YAML/CSV files
@@ -177,8 +177,57 @@ impl ConfigSyncer {
             "comsrv" => self.sync_comsrv().await,
             "modsrv" => self.sync_modsrv().await,
             "rulesrv" => self.sync_rulesrv().await,
+            "global" => self.sync_global().await,
             _ => Err(anyhow::anyhow!("Unknown service: {}", service)),
         }
+    }
+
+    /// Sync global configuration (shared across all services)
+    ///
+    /// @input self - Syncer with config and db paths
+    /// @output Result<SyncResult> - Items synced count
+    /// @side-effects Database operations: DELETE global config, INSERT from config/global.yaml
+    /// @transaction Full transaction - all or nothing
+    pub async fn sync_global(&self) -> Result<SyncResult> {
+        let mut stats = SyncResult::default();
+        let global_yaml_path = self.config_path.join("global.yaml");
+
+        // If global.yaml doesn't exist, skip (optional configuration)
+        if !global_yaml_path.exists() {
+            info!("No global.yaml found, skipping global config sync");
+            return Ok(stats);
+        }
+
+        info!("Syncing global configuration from {:?}", global_yaml_path);
+
+        // Read and parse YAML
+        let yaml_content = std::fs::read_to_string(&global_yaml_path)
+            .with_context(|| format!("Failed to read {:?}", global_yaml_path))?;
+        let yaml_config: JsonValue =
+            serde_yaml::from_str(&yaml_content).context("Failed to parse global.yaml")?;
+
+        // Start transaction
+        let db_file = self.db_path.join("voltage.db");
+        let pool = SqlitePool::connect(&format!("sqlite:{}", db_file.display())).await?;
+        let mut tx = pool.begin().await?;
+
+        // Insert global configuration
+        let config_count = self
+            .insert_service_config(&mut tx, "global", &yaml_config)
+            .await?;
+        stats.items_synced += config_count;
+
+        debug!("Inserted {} global configuration items", config_count);
+
+        // Update sync timestamp
+        self.update_sync_timestamp(&mut tx, "global").await?;
+
+        // Commit transaction
+        tx.commit().await?;
+
+        info!("Global sync completed: {} items synced", stats.items_synced);
+
+        Ok(stats)
     }
 
     /// Sync comsrv configuration
@@ -272,7 +321,8 @@ impl ConfigSyncer {
             .execute(&mut *tx)
             .await?
             .rows_affected();
-        let deleted4 = sqlx::query("DELETE FROM service_config")
+        let deleted4 = sqlx::query("DELETE FROM service_config WHERE service_name = ?")
+            .bind("comsrv")
             .execute(&mut *tx)
             .await?
             .rows_affected();
@@ -280,7 +330,9 @@ impl ConfigSyncer {
         stats.items_deleted = (deleted_points + deleted3 + deleted4) as usize;
 
         // Insert service configuration
-        let config_count = self.insert_service_config(&mut tx, &yaml_config).await?;
+        let config_count = self
+            .insert_service_config(&mut tx, "comsrv", &yaml_config)
+            .await?;
         stats.items_synced += config_count;
 
         debug!("Inserted {} configuration items", config_count);
@@ -310,7 +362,7 @@ impl ConfigSyncer {
         debug!("Channel mappings embedded in point tables");
 
         // Update sync timestamp
-        self.update_sync_timestamp(&mut tx).await?;
+        self.update_sync_timestamp(&mut tx, "comsrv").await?;
 
         // Commit transaction
         tx.commit().await?;
@@ -365,7 +417,8 @@ impl ConfigSyncer {
         let mut tx = pool.begin().await?;
 
         // Clear existing configuration
-        sqlx::query("DELETE FROM service_config")
+        sqlx::query("DELETE FROM service_config WHERE service_name = ?")
+            .bind("modsrv")
             .execute(&mut *tx)
             .await?;
 
@@ -403,7 +456,9 @@ impl ConfigSyncer {
         stats.items_deleted = 8; // Cleared 8 tables
 
         // Insert service configuration
-        let config_count = self.insert_service_config(&mut tx, &yaml_config).await?;
+        let config_count = self
+            .insert_service_config(&mut tx, "modsrv", &yaml_config)
+            .await?;
         stats.items_synced += config_count;
 
         debug!("Inserted {} configuration items", config_count);
@@ -425,7 +480,7 @@ impl ConfigSyncer {
         }
 
         // Update sync timestamp
-        self.update_sync_timestamp(&mut tx).await?;
+        self.update_sync_timestamp(&mut tx, "modsrv").await?;
 
         // Commit transaction
         tx.commit().await?;
@@ -492,7 +547,8 @@ impl ConfigSyncer {
         let mut tx = pool.begin().await?;
 
         // Clear existing configuration
-        sqlx::query("DELETE FROM service_config")
+        sqlx::query("DELETE FROM service_config WHERE service_name = ?")
+            .bind("rulesrv")
             .execute(&mut *tx)
             .await?;
         sqlx::query("DELETE FROM rules").execute(&mut *tx).await?;
@@ -500,7 +556,9 @@ impl ConfigSyncer {
         stats.items_deleted = 2; // Cleared 2 tables
 
         // Insert service configuration
-        let config_count = self.insert_service_config(&mut tx, &yaml_config).await?;
+        let config_count = self
+            .insert_service_config(&mut tx, "rulesrv", &yaml_config)
+            .await?;
         stats.items_synced += config_count;
 
         debug!("Inserted {} configuration items", config_count);
@@ -514,7 +572,7 @@ impl ConfigSyncer {
         }
 
         // Update sync timestamp
-        self.update_sync_timestamp(&mut tx).await?;
+        self.update_sync_timestamp(&mut tx, "rulesrv").await?;
 
         // Commit transaction
         tx.commit().await?;
@@ -533,12 +591,24 @@ impl ConfigSyncer {
     async fn insert_service_config(
         &self,
         tx: &mut Transaction<'_, Sqlite>,
+        service_name: &str,
         config: &JsonValue,
     ) -> Result<usize> {
+        // Delete existing config for this service
+        sqlx::query("DELETE FROM service_config WHERE service_name = ?")
+            .bind(service_name)
+            .execute(&mut **tx)
+            .await?;
+
         let flattened = flatten_json(config, None);
         let mut count = 0;
 
         for (key, value) in flattened {
+            // Skip null values to prevent service-specific empty fields from overwriting global config
+            if value.is_null() {
+                continue;
+            }
+
             let value_str = match &value {
                 JsonValue::String(s) => s.clone(),
                 _ => serde_json::to_string(&value)?,
@@ -552,12 +622,15 @@ impl ConfigSyncer {
                 _ => "string",
             };
 
-            sqlx::query("INSERT INTO service_config (key, value, type) VALUES (?, ?, ?)")
-                .bind(&key)
-                .bind(&value_str)
-                .bind(value_type)
-                .execute(&mut **tx)
-                .await?;
+            sqlx::query(
+                "INSERT INTO service_config (service_name, key, value, type) VALUES (?, ?, ?, ?)",
+            )
+            .bind(service_name)
+            .bind(&key)
+            .bind(&value_str)
+            .bind(value_type)
+            .execute(&mut **tx)
+            .await?;
 
             count += 1;
         }
@@ -1536,15 +1609,21 @@ impl ConfigSyncer {
         Ok(count)
     }
 
-    /// Update sync timestamp
-    async fn update_sync_timestamp(&self, tx: &mut Transaction<'_, Sqlite>) -> Result<()> {
+    /// Update sync timestamp in sync_metadata table
+    async fn update_sync_timestamp(
+        &self,
+        tx: &mut Transaction<'_, Sqlite>,
+        service_name: &str,
+    ) -> Result<()> {
         let timestamp = sqlx::types::chrono::Utc::now()
             .format("%Y-%m-%d %H:%M:%S")
             .to_string();
 
         sqlx::query(
-            "INSERT OR REPLACE INTO service_config (key, value, type) VALUES ('_sync_timestamp', ?, 'string')"
+            "INSERT INTO sync_metadata (service, last_sync) VALUES (?, ?)
+             ON CONFLICT(service) DO UPDATE SET last_sync = excluded.last_sync",
         )
+        .bind(service_name)
         .bind(&timestamp)
         .execute(&mut **tx)
         .await?;

@@ -501,22 +501,24 @@ mod tests {
 
         let pool = SqlitePool::connect(&db_url).await.unwrap();
 
-        // Create service_config table
+        // Create service_config table (with service_name column and composite primary key)
         sqlx::query(
             "CREATE TABLE service_config (
-                key TEXT PRIMARY KEY,
+                service_name TEXT NOT NULL,
+                key TEXT NOT NULL,
                 value TEXT NOT NULL,
                 type TEXT DEFAULT 'string',
                 description TEXT,
-                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (service_name, key)
             )",
         )
         .execute(&pool)
         .await
         .unwrap();
 
-        // Insert basic service config
-        sqlx::query("INSERT INTO service_config (key, value) VALUES ('name', 'test_comsrv')")
+        // Insert basic service config (with service_name column)
+        sqlx::query("INSERT INTO service_config (service_name, key, value) VALUES ('comsrv', 'service_name', 'comsrv')")
             .execute(&pool)
             .await
             .unwrap();

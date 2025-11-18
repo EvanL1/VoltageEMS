@@ -362,7 +362,13 @@ pub fn init_with_config(config: LogConfig) -> Result<(), Box<dyn std::error::Err
             EnvFilter::new(env_str)
         } else {
             // api_access not in RUST_LOG, use config default
-            EnvFilter::new(format!("{},api_access={}", env_str, api_level))
+            // IMPORTANT: If RUST_LOG contains "debug" or "trace", upgrade api_access to debug for full visibility
+            let effective_api_level = if env_str.contains("debug") || env_str.contains("trace") {
+                "debug"
+            } else {
+                api_level
+            };
+            EnvFilter::new(format!("{},api_access={}", env_str, effective_api_level))
         }
     } else {
         // RUST_LOG not set - use default with api_access
@@ -1352,10 +1358,27 @@ pub async fn http_request_logger(
     let status = response.status();
     let is_error = status.is_client_error() || status.is_server_error();
 
-    // Decide whether to log based on current log level (performance optimization)
-    if tracing::level_enabled!(Level::DEBUG) {
-        // DEBUG mode: Log all requests to API log file
-        debug!(
+    // Log API requests with appropriate level
+    // The tracing subscriber's filter will decide which logs are actually written based on api_access target level
+
+    // Always try DEBUG level first (logs all requests if api_access is at DEBUG)
+    debug!(
+        target: "api_access",
+        method = %method,
+        path = %uri.path(),
+        status = %status.as_u16(),
+        duration_ms = %duration.as_millis(),
+        user_agent = %user_agent,
+        content_type = %content_type,
+        content_length = %content_length,
+        is_error = %is_error,
+        "HTTP request"
+    );
+
+    // Fallback to INFO level for POST/PUT (if api_access is at INFO but not DEBUG)
+    // This ensures POST/PUT are logged even when api_access target is set to INFO
+    if method == "POST" || method == "PUT" {
+        info!(
             target: "api_access",
             method = %method,
             path = %uri.path(),
@@ -1367,22 +1390,6 @@ pub async fn http_request_logger(
             is_error = %is_error,
             "HTTP request"
         );
-    } else if tracing::level_enabled!(Level::INFO) {
-        // INFO mode: Only log POST and PUT requests to API log file
-        if method == "POST" || method == "PUT" {
-            info!(
-                target: "api_access",
-                method = %method,
-                path = %uri.path(),
-                status = %status.as_u16(),
-                duration_ms = %duration.as_millis(),
-                user_agent = %user_agent,
-                content_type = %content_type,
-                content_length = %content_length,
-                is_error = %is_error,
-                "HTTP request"
-            );
-        }
     }
 
     response
