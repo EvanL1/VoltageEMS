@@ -171,7 +171,7 @@ impl ModbusCodec {
             "uint16" | "u16" | "word" => {
                 let val = match value {
                     RedisValue::Integer(i) => *i as u16,
-                    RedisValue::Float(f) => *f as u16,
+                    RedisValue::Float(f) => f.round() as u16, // 四舍五入，避免精度损失
                     RedisValue::String(s) => s.parse::<u16>().unwrap_or(0),
                     _ => 0,
                 };
@@ -180,7 +180,7 @@ impl ModbusCodec {
             "int16" | "i16" | "short" => {
                 let val = match value {
                     RedisValue::Integer(i) => *i as i16,
-                    RedisValue::Float(f) => *f as i16,
+                    RedisValue::Float(f) => f.round() as i16, // 四舍五入
                     RedisValue::String(s) => s.parse::<i16>().unwrap_or(0),
                     _ => 0,
                 };
@@ -189,7 +189,7 @@ impl ModbusCodec {
             "uint32" | "u32" | "dword" => {
                 let val = match value {
                     RedisValue::Integer(i) => *i as u32,
-                    RedisValue::Float(f) => *f as u32,
+                    RedisValue::Float(f) => f.round() as u32, // 四舍五入
                     RedisValue::String(s) => s.parse::<u32>().unwrap_or(0),
                     _ => 0,
                 };
@@ -199,7 +199,7 @@ impl ModbusCodec {
             "int32" | "i32" | "long" => {
                 let val = match value {
                     RedisValue::Integer(i) => *i as i32,
-                    RedisValue::Float(f) => *f as i32,
+                    RedisValue::Float(f) => f.round() as i32, // 四舍五入
                     RedisValue::String(s) => s.parse::<i32>().unwrap_or(0),
                     _ => 0,
                 };
@@ -229,7 +229,7 @@ impl ModbusCodec {
             "uint64" | "u64" | "qword" => {
                 let val = match value {
                     RedisValue::Integer(i) => *i as u64,
-                    RedisValue::Float(f) => *f as u64,
+                    RedisValue::Float(f) => f.round() as u64, // 四舍五入
                     RedisValue::String(s) => s.parse::<u64>().unwrap_or(0),
                     _ => 0,
                 };
@@ -239,7 +239,7 @@ impl ModbusCodec {
             "int64" | "i64" | "longlong" => {
                 let val = match value {
                     RedisValue::Integer(i) => *i,
-                    RedisValue::Float(f) => *f as i64,
+                    RedisValue::Float(f) => f.round() as i64, // 四舍五入
                     RedisValue::String(s) => s.parse::<i64>().unwrap_or(0),
                     _ => 0,
                 };
@@ -837,7 +837,7 @@ mod tests {
         // From Float
         let val = RedisValue::Float(123.7);
         let result = ModbusCodec::encode_value_for_modbus(&val, "u16", None).unwrap();
-        assert_eq!(result, vec![123]); // Truncated
+        assert_eq!(result, vec![124]); // Rounded (123.7 → 124)
 
         // From String
         let val = RedisValue::String(Cow::Borrowed("456"));
