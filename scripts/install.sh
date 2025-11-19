@@ -154,7 +154,7 @@ check_image_changed() {
 
     # Determine container name from image name
     case "$image_name" in
-        voltage-redis:*)
+        voltage-redis:* | redis:*)
             container_name="voltage-redis"
             ;;
         voltageems:*)
@@ -374,10 +374,10 @@ if command -v docker &> /dev/null; then
                 echo "  Impact: Brief service interruption (2-5 seconds)"
                 echo "  Data: Preserved (AOF + RDB persistence)"
                 echo ""
-                read -p "Update Redis now? (yes/NO): " redis_confirm
+                read -p "Update Redis now? (y/N): " redis_confirm
                 echo ""
 
-                if [[ "$redis_confirm" == "yes" ]]; then
+                if [[ "$redis_confirm" =~ ^[Yy]([Ee][Ss])?$ ]]; then
                     echo -e "${YELLOW}Updating VoltageRedis...${NC}"
 
                     # Stop and remove old Redis container
@@ -402,7 +402,7 @@ if command -v docker &> /dev/null; then
                 else
                     echo -e "${BLUE}Skipped Redis update (will use old image)${NC}"
                     # Restore old image tag
-                    BACKUP_REDIS=$(docker images | grep "redis.*backup" | head -1 | awk '{print $1":"$2}')
+                    BACKUP_REDIS=$(docker images | grep "redis.*backup" | head -1 | awk '{print $1":"$2}' || true)
                     if [[ -n "$BACKUP_REDIS" ]]; then
                         docker tag "$BACKUP_REDIS" "redis:8-alpine"
                         echo "  Restored previous redis:8-alpine"
