@@ -36,7 +36,7 @@ struct DailyRollingWriter {
 impl DailyRollingWriter {
     fn new(service_name: String, log_dir: PathBuf) -> std::io::Result<Self> {
         let current_date = chrono::Local::now().format("%Y%m%d").to_string();
-        let file_path = log_dir.join(format!("{}{}.log", service_name, current_date));
+        let file_path = log_dir.join(format!("{}_{}.log", current_date, service_name));
 
         // Create log directory if it doesn't exist
         fs::create_dir_all(&log_dir)?;
@@ -67,7 +67,7 @@ impl DailyRollingWriter {
             // Date changed, rotate to new file
             let new_file_path = self
                 .log_dir
-                .join(format!("{}{}.log", self.service_name, today));
+                .join(format!("{}_{}.log", today, self.service_name));
             let new_file = OpenOptions::new()
                 .create(true)
                 .append(true)
@@ -128,7 +128,7 @@ struct ApiDailyRollingWriter {
 impl ApiDailyRollingWriter {
     fn new(service_name: String, log_dir: PathBuf) -> std::io::Result<Self> {
         let current_date = chrono::Local::now().format("%Y%m%d").to_string();
-        let file_path = log_dir.join(format!("{}_api{}.log", service_name, current_date));
+        let file_path = log_dir.join(format!("{}_{}_api.log", current_date, service_name));
 
         // Create log directory if it doesn't exist
         fs::create_dir_all(&log_dir)?;
@@ -159,7 +159,7 @@ impl ApiDailyRollingWriter {
             // Date changed, rotate to new file
             let new_file_path = self
                 .log_dir
-                .join(format!("{}_api{}.log", self.service_name, today));
+                .join(format!("{}_{}_api.log", today, self.service_name));
             let new_file = OpenOptions::new()
                 .create(true)
                 .append(true)
@@ -563,9 +563,9 @@ pub fn reopen_logs_now() -> Result<(), Box<dyn std::error::Error>> {
 
     // Touch today's file to ensure it exists
     let log_file_path = runtime.log_dir.join(format!(
-        "{}.log.{}",
-        runtime.service_name,
-        chrono::Local::now().format("%Y-%m-%d")
+        "{}_{}.log",
+        chrono::Local::now().format("%Y%m%d"),
+        runtime.service_name
     ));
     if !log_file_path.exists() {
         let _ = fs::File::create(&log_file_path);
@@ -597,9 +597,9 @@ pub fn reopen_logs_now() -> Result<(), Box<dyn std::error::Error>> {
 
             // Touch today's API file to ensure it exists
             let api_log_file_path = api_runtime.log_dir.join(format!(
-                "{}_api{}.log",
-                api_runtime.service_name,
-                chrono::Local::now().format("%Y%m%d")
+                "{}_{}_api.log",
+                chrono::Local::now().format("%Y%m%d"),
+                api_runtime.service_name
             ));
             if !api_log_file_path.exists() {
                 let _ = fs::File::create(&api_log_file_path);
@@ -660,9 +660,9 @@ pub fn write_to_channel_log(
     let log_dir = PathBuf::from(format!("logs/comsrv/channels/{}", dir_name));
     fs::create_dir_all(&log_dir)?;
 
-    let timestamp = Local::now().format("%Y-%m-%d");
+    let timestamp = Local::now().format("%Y%m%d");
     // Include id in filename as well to avoid collisions if directory listing is flattened
-    let log_file = log_dir.join(format!("{}_{}.log.{}", channel_id, safe_name, timestamp));
+    let log_file = log_dir.join(format!("{}_{}_{}.log", timestamp, channel_id, safe_name));
 
     let mut file = fs::OpenOptions::new()
         .create(true)
@@ -688,8 +688,8 @@ pub fn write_to_model_log(model_id: &str, message: &str) -> Result<(), Box<dyn s
     let log_dir = PathBuf::from("logs/modsrv/models");
     fs::create_dir_all(&log_dir)?;
 
-    let timestamp = Local::now().format("%Y-%m-%d");
-    let log_file = log_dir.join(format!("model_{}.log.{}", model_id, timestamp));
+    let timestamp = Local::now().format("%Y%m%d");
+    let log_file = log_dir.join(format!("{}_model_{}.log", timestamp, model_id));
 
     let mut file = fs::OpenOptions::new()
         .create(true)
@@ -718,8 +718,8 @@ pub fn write_to_instance_log(
     let log_dir = PathBuf::from(format!("logs/modsrv/instances/{}", instance_name));
     fs::create_dir_all(&log_dir)?;
 
-    let timestamp = Local::now().format("%Y-%m-%d");
-    let log_file = log_dir.join(format!("{}.log.{}", instance_name, timestamp));
+    let timestamp = Local::now().format("%Y%m%d");
+    let log_file = log_dir.join(format!("{}_{}.log", timestamp, instance_name));
 
     let mut file = fs::OpenOptions::new()
         .create(true)
@@ -745,8 +745,8 @@ pub fn write_to_rule_log(rule_id: &str, message: &str) -> Result<(), Box<dyn std
     let log_dir = PathBuf::from(format!("logs/rulesrv/rules/{}", rule_id));
     fs::create_dir_all(&log_dir)?;
 
-    let timestamp = Local::now().format("%Y-%m-%d");
-    let log_file = log_dir.join(format!("{}.log.{}", rule_id, timestamp));
+    let timestamp = Local::now().format("%Y%m%d");
+    let log_file = log_dir.join(format!("{}_{}.log", timestamp, rule_id));
 
     let mut file = fs::OpenOptions::new()
         .create(true)
@@ -927,9 +927,10 @@ async fn compress_old_logs(
         };
 
         // Skip non-log files (check both regular and API log patterns)
-        let is_regular_log = file_name.starts_with(service_name) && file_name.contains(".log.");
-        let is_api_log =
-            file_name.starts_with(&format!("{}_api", service_name)) && file_name.ends_with(".log");
+        // New format: {YYYYMMDD}_{service}.log or {YYYYMMDD}_{service}_api.log
+        let is_regular_log =
+            file_name.contains(&format!("_{}.log", service_name)) && !file_name.contains("_api");
+        let is_api_log = file_name.contains(&format!("_{}_api.log", service_name));
 
         if !is_regular_log && !is_api_log && !file_name.ends_with(".log.gz") {
             continue;
@@ -1062,7 +1063,7 @@ async fn compress_channels_logs(
             };
 
             // Skip non-log files
-            if !file_name.contains(".log.") {
+            if !file_name.ends_with(".log") && !file_name.ends_with(".log.gz") {
                 continue;
             }
 
@@ -1138,7 +1139,7 @@ async fn compress_instances_logs(
             };
 
             // Skip non-log files
-            if !file_name.contains(".log.") {
+            if !file_name.ends_with(".log") && !file_name.ends_with(".log.gz") {
                 continue;
             }
 
@@ -1214,7 +1215,7 @@ async fn compress_rules_logs(
             };
 
             // Skip non-log files
-            if !file_name.contains(".log.") {
+            if !file_name.ends_with(".log") && !file_name.ends_with(".log.gz") {
                 continue;
             }
 
