@@ -312,7 +312,7 @@ impl RedisValue {
     pub fn as_i64(&self) -> Option<i64> {
         match self {
             Self::Integer(i) => Some(*i),
-            Self::Float(f) => Some(f.round() as i64), // 四舍五入，避免精度损失
+            Self::Float(f) => Some(f.round() as i64), // 四舍五入，避免精度损失 (round to nearest to avoid precision loss)
             Self::Bool(b) => Some(if *b { 1 } else { 0 }),
             Self::String(s) => s.parse().ok(),
             Self::Null => None,

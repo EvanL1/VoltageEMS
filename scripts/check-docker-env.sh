@@ -1,5 +1,5 @@
 #!/bin/bash
-# 验证Docker环境配置
+# 验证Docker环境配置 / Validate Docker environment configuration
 
 # Colors
 GREEN='\033[0;32m'
@@ -8,26 +8,26 @@ RED='\033[0;31m'
 BLUE='\033[0;34m'
 NC='\033[0m'
 
-echo -e "${BLUE}🔍 VoltageEMS Docker环境检查${NC}"
+echo -e "${BLUE}🔍 VoltageEMS Docker Environment Check${NC}"
 echo ""
 
-# 检查Docker Compose
-echo "1. Docker Compose 版本："
+# 检查Docker Compose / Check Docker Compose
+echo "1. Docker Compose version:"
 if docker compose version &>/dev/null 2>&1; then
     docker compose version | head -1
     COMPOSE_OK=true
 elif command -v docker-compose &>/dev/null; then
     docker-compose --version
-    echo -e "${YELLOW}  ⚠️  警告：使用V1（已废弃），建议升级到V2${NC}"
+    echo -e "${YELLOW}  ⚠️  Warning: using Docker Compose V1 (deprecated); please upgrade to V2${NC}"
     COMPOSE_OK=true
 else
-    echo -e "${RED}  ❌ 未安装Docker Compose${NC}"
+    echo -e "${RED}  ❌ Docker Compose is not installed${NC}"
     COMPOSE_OK=false
 fi
 echo ""
 
-# 检查.env文件
-echo "2. UID/GID 配置："
+# 检查.env文件 / Check .env file
+echo "2. UID/GID configuration:"
 if [ -f .env ]; then
     source .env
     echo "  HOST_UID=$HOST_UID"
@@ -37,37 +37,37 @@ if [ -f .env ]; then
     CURRENT_GID=$(id -g)
 
     if [ "$HOST_UID" != "$CURRENT_UID" ]; then
-        echo -e "${YELLOW}  ⚠️  警告：配置的UID ($HOST_UID) 与当前用户UID ($CURRENT_UID) 不一致${NC}"
-        echo -e "${YELLOW}  建议运行: ./scripts/install.sh 重新生成配置${NC}"
+        echo -e "${YELLOW}  ⚠️  Warning: configured UID ($HOST_UID) does not match current user UID ($CURRENT_UID)${NC}"
+        echo -e "${YELLOW}  Suggestion: run ./scripts/install.sh to regenerate configuration${NC}"
     else
-        echo -e "${GREEN}  ✅ UID匹配${NC}"
+        echo -e "${GREEN}  ✅ UID matches${NC}"
     fi
 
     if [ "$HOST_GID" != "$CURRENT_GID" ]; then
-        echo -e "${BLUE}  ℹ️  配置的GID ($HOST_GID) 与当前用户主组GID ($CURRENT_GID) 不同${NC}"
-        echo -e "${BLUE}     （这可能是正常的，如Linux上使用docker组）${NC}"
+        echo -e "${BLUE}  ℹ️  Configured GID ($HOST_GID) is different from current primary group GID ($CURRENT_GID)${NC}"
+        echo -e "${BLUE}     (This may be expected, e.g., when using the docker group on Linux)${NC}"
     else
-        echo -e "${GREEN}  ✅ GID匹配${NC}"
+        echo -e "${GREEN}  ✅ GID matches${NC}"
     fi
 else
-    echo -e "${RED}  ❌ .env文件不存在${NC}"
-    echo -e "${YELLOW}  运行: ./scripts/install.sh 自动生成${NC}"
+    echo -e "${RED}  ❌ .env file does not exist${NC}"
+    echo -e "${YELLOW}  Run ./scripts/install.sh to generate it automatically${NC}"
 fi
 echo ""
 
-# 检查Docker卷权限
-echo "3. Docker 卷状态："
+# 检查Docker卷权限 / Check Docker volume status
+echo "3. Docker volume status:"
 if docker volume inspect voltageems_data &>/dev/null; then
-    echo -e "${GREEN}  ✅ voltageems_data 卷存在${NC}"
+    echo -e "${GREEN}  ✅ Docker volume 'voltageems_data' exists${NC}"
 else
-    echo -e "${YELLOW}  ⚠️  voltageems_data 卷不存在（首次部署时会自动创建）${NC}"
+    echo -e "${YELLOW}  ⚠️  Docker volume 'voltageems_data' does not exist (it will be created automatically on first deploy)${NC}"
 fi
 
 echo ""
 if [ "$COMPOSE_OK" = true ] && [ -f .env ]; then
-    echo -e "${GREEN}✅ 环境检查通过${NC}"
+    echo -e "${GREEN}✅ Environment check passed${NC}"
     exit 0
 else
-    echo -e "${RED}❌ 环境检查失败，请修复上述问题${NC}"
+    echo -e "${RED}❌ Environment check failed, please fix the issues above${NC}"
     exit 1
 fi

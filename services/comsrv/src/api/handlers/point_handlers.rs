@@ -1165,7 +1165,7 @@ pub struct PointUpdateRequest {
     pub signal_name: Option<String>,
 
     /// Point description (all types)
-    #[schema(example = "直流母线电压")]
+    #[schema(example = "DC bus voltage")]
     pub description: Option<String>,
 
     /// Measurement unit (all types)
@@ -1245,7 +1245,7 @@ pub struct PointUpdateRequest {
                 description = "Common fields: signal_name, description, unit, scale, offset, data_type, reverse",
                 value = json!({
                     "signal_name": "DC_Voltage",
-                    "description": "直流母线电压",
+                    "description": "DC bus voltage",
                     "unit": "V",
                     "scale": 0.1,
                     "offset": 0.0,
@@ -1258,7 +1258,7 @@ pub struct PointUpdateRequest {
                 description = "Common fields: signal_name, description, reverse",
                 value = json!({
                     "signal_name": "Grid_Connected",
-                    "description": "电网连接状态",
+                    "description": "Grid connection status",
                     "reverse": false
                 })
             )),
@@ -1267,7 +1267,7 @@ pub struct PointUpdateRequest {
                 description = "Control fields: signal_name, description, reverse, control_type, on_value, off_value, pulse_duration_ms",
                 value = json!({
                     "signal_name": "Main_Breaker",
-                    "description": "主断路器控制",
+                    "description": "Main breaker control",
                     "control_type": "momentary",
                     "on_value": 1,
                     "off_value": 0,
@@ -1280,7 +1280,7 @@ pub struct PointUpdateRequest {
                 description = "Adjustment fields: signal_name, description, unit, scale, offset, data_type, reverse (same as Telemetry)",
                 value = json!({
                     "signal_name": "Target_Power",
-                    "description": "目标功率设定",
+                    "description": "Target power setpoint",
                     "unit": "kW",
                     "scale": 1.0,
                     "offset": 0.0,
@@ -2156,7 +2156,7 @@ pub async fn get_unmapped_points_handler(
                                 "unit": "V",
                                 "data_type": "float32",
                                 "reverse": false,
-                                "description": "直流母线电压"
+                                "description": "DC bus voltage"
                             }
                         },
                         {
@@ -2166,7 +2166,7 @@ pub async fn get_unmapped_points_handler(
                                 "signal_name": "Grid_Connected",
                                 "data_type": "bool",
                                 "reverse": false,
-                                "description": "电网连接状态"
+                                "description": "Grid connection status"
                             }
                         }
                     ],
@@ -2176,7 +2176,7 @@ pub async fn get_unmapped_points_handler(
                             "point_id": 102,
                             "signal_name": "DC_Current",
                             "scale": 0.01,
-                            "description": "更新后的直流电流"
+                            "description": "Updated DC current"
                             // Partial update: only these 3 fields updated, others unchanged
                         }
                     ],
@@ -2202,7 +2202,7 @@ pub async fn get_unmapped_points_handler(
                                 "offset": -40.0,
                                 "unit": "°C",
                                 "data_type": "int16",
-                                "description": "温度传感器 1"
+                                "description": "Temperature sensor 1"
                             }
                         },
                         {
@@ -2214,7 +2214,7 @@ pub async fn get_unmapped_points_handler(
                                 "offset": -40.0,
                                 "unit": "°C",
                                 "data_type": "int16",
-                                "description": "温度传感器 2"
+                                "description": "Temperature sensor 2"
                             }
                         }
                     ]
