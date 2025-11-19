@@ -591,8 +591,8 @@ impl ActionExecutor {
             let value_num = to_numeric_string(value)?;
             let value_f64: f64 = value_num.parse().context("Failed to parse value as f64")?;
 
-            // Call local routing executor
-            let outcome = crate::routing_executor::set_action_point(
+            // Call shared routing library
+            let outcome = voltage_routing::set_action_point(
                 self.rtdb.as_ref(),
                 &self.routing_cache,
                 instance_name,

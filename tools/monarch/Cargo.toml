@@ -6,6 +6,7 @@ edition = "2021"
 [dependencies]
 voltage-config = { path = "../../libs/voltage-config" }
 voltage-rtdb = { path = "../../libs/voltage-rtdb" }
+voltage-routing = { path = "../../libs/voltage-routing" }
 common = { path = "../../libs/common" }
 
 # Service libraries (lib mode)

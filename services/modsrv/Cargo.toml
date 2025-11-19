@@ -19,6 +19,7 @@ test = false
 common = { path = "../../libs/common", default-features = false, features = ["redis", "sqlite"] }
 voltage-config = { path = "../../libs/voltage-config", features = ["axum-support"] }
 voltage-rtdb = { path = "../../libs/voltage-rtdb" }
+voltage-routing = { path = "../../libs/voltage-routing" }
 
 # Core dependencies (use voltage-common where possible)
 tokio = { workspace = true }

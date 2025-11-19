@@ -4,9 +4,11 @@
 //! service management, and operational control for all VoltageEMS services.
 
 mod channels;
+mod config;
 mod context;
 mod core;
 mod models;
+mod rtdb;
 mod rules;
 mod services;
 mod utils;
@@ -244,6 +246,20 @@ enum Commands {
         command: rules::RuleCommands,
     },
 
+    /// Direct Redis RTDB operations
+    #[command(about = "Direct Redis RTDB operations for debugging and inspection")]
+    Rtdb {
+        #[command(subcommand)]
+        command: rtdb::RtdbCommands,
+    },
+
+    /// Configuration validation and inspection
+    #[command(about = "Configuration file validation and inspection utilities")]
+    Config {
+        #[command(subcommand)]
+        command: config::ConfigCommands,
+    },
+
     /// Manage Docker services
     #[command(about = "Start, stop, and manage VoltageEMS services")]
     Services {
@@ -346,12 +362,13 @@ async fn main() -> Result<()> {
             // Use the constructed service_config directly
             let mut ctx = ServiceContext::new(service_config.clone());
 
-            // Try to initialize all services
-            match ctx.init_all().await {
+            // Initialize only modsrv (on-demand initialization)
+            // SetAction command only needs modsrv, not comsrv or rulesrv
+            match ctx.init_modsrv().await {
                 Ok(_) => {
                     if cli.verbose {
                         println!(
-                            "{} Offline mode initialized successfully",
+                            "{} Offline mode initialized (modsrv only)",
                             "INFO".bright_green()
                         );
                     }
@@ -359,11 +376,7 @@ async fn main() -> Result<()> {
                 },
                 Err(e) => {
                     if cli.verbose {
-                        println!(
-                            "{} Failed to initialize offline mode: {}",
-                            "WARN".yellow(),
-                            e
-                        );
+                        println!("{} Failed to initialize modsrv: {}", "WARN".yellow(), e);
                         println!("{} Falling back to online mode", "INFO".bright_cyan());
                     }
                     None
@@ -452,8 +465,14 @@ async fn main() -> Result<()> {
                 .unwrap_or_else(|_| "http://localhost:6003".to_string());
             rules::handle_command(command, service_ctx.as_ref(), Some(&base_url)).await?;
         },
+        Commands::Rtdb { command } => {
+            rtdb::handle_command(command, service_ctx.as_ref()).await?;
+        },
+        Commands::Config { command } => {
+            config::handle_command(command, config_path).await?;
+        },
         Commands::Services { command } => {
-            services::handle_command(command).await?;
+            services::handle_command(command, service_ctx.as_ref()).await?;
         },
     }
 

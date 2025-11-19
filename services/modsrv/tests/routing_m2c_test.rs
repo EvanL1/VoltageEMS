@@ -6,10 +6,10 @@
 
 use anyhow::Result;
 use bytes::Bytes;
-use modsrv::routing_executor::set_action_point;
 use std::collections::HashMap;
 use std::sync::Arc;
 use voltage_config::RoutingCache;
+use voltage_routing::set_action_point;
 use voltage_rtdb::{MemoryRtdb, Rtdb};
 
 // ==================== 测试辅助函数 ====================

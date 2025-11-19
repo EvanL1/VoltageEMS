@@ -1,21 +1,20 @@
-//! Routing executor keeps Lua focused on atomic writes while Rust owns control flow.
+//! Voltage M2C Routing Library
 //!
-//! Lua still performs the single FCALL that writes both the TODO list and the
-//! state hash, but this module adds typed parsing and follow-up logic in Rust so
-//! higher-level orchestration can live outside of the script.
+//! Provides unified M2C (Model to Channel) routing functionality for modsrv and rulesrv.
+//! This library implements the Write-Triggers-Routing pattern, ensuring all action writes
+//! automatically trigger downstream channel updates and TODO queues.
 
-#![allow(clippy::disallowed_methods)] // json! macro used in multiple functions
+#![allow(clippy::disallowed_methods)] // Used in specific contexts
 
 use anyhow::{anyhow, Context, Result};
 use bytes::Bytes;
 use serde::Deserialize;
-use serde_json::json;
 use voltage_rtdb::Rtdb;
 
-/// Structured representation of the Lua response for an action routing request.
+/// Structured representation of an action routing outcome.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ActionRouteOutcome {
-    /// Status field returned by Lua (normally `"success"`).
+    /// Status field (normally `"success"`).
     pub status: String,
     /// Instance name associated with the action.
     pub instance_name: String,
@@ -104,11 +103,11 @@ impl TryFrom<RawRouteContext> for RouteContext {
 
 /// Execute action routing with application-layer cache
 ///
-/// This function implements:
+/// This function implements the unified M2C routing logic:
 /// 1. Resolves instance_name to instance_id
 /// 2. Looks up M2C routing in cache
 /// 3. Writes to instance Action Hash (state storage)
-/// 4. Writes to comsrv TODO queue (trigger)
+/// 4. Writes to channel Hash + triggers TODO queue (Write-Triggers-Routing pattern)
 ///
 /// # Arguments
 /// * `redis` - RTDB trait object
@@ -178,7 +177,7 @@ where
             .await
             .context("Failed to write instance action point")?;
 
-        // Step 4: Write to comsrv TODO queue (trigger) - Write-Triggers-Routing pattern
+        // Step 4: Write to channel Hash + auto-trigger TODO queue (Write-Triggers-Routing pattern)
         use voltage_config::protocols::PointType;
         let point_type_enum = PointType::from_str(point_type)
             .ok_or_else(|| anyhow!("Invalid point type: {}", point_type))?;
@@ -191,19 +190,24 @@ where
                 .as_millis() as i64
         });
 
+        let comsrv_point_id_u32 = comsrv_point_id
+            .parse::<u32>()
+            .context("Failed to parse comsrv point_id")?;
+
+        // Use unified helper: writes channel Hash (value/ts/raw) + triggers TODO queue
+        voltage_rtdb::helpers::set_channel_point_with_trigger(
+            redis,
+            &config,
+            channel_id,
+            point_type_enum,
+            comsrv_point_id_u32,
+            value,
+            timestamp_ms,
+        )
+        .await
+        .context("Failed to set channel point with trigger")?;
+
         let todo_key = config.todo_queue_key(channel_id, point_type_enum);
-
-        // Compact trigger message (core fields only: point_id, value, timestamp)
-        let trigger = json!({
-            "point_id": comsrv_point_id.parse::<u32>().unwrap_or(0),
-            "value": value,
-            "timestamp": timestamp_ms
-        });
-
-        redis
-            .list_rpush(&todo_key, Bytes::from(trigger.to_string()))
-            .await
-            .context("Failed to write TODO queue trigger")?;
 
         // Build route context
         let route_context = RouteContext {

@@ -525,11 +525,152 @@ use voltage_config::comsrv::TelemetryPoint;
 /// Point CRUD operation result
 #[derive(Debug, Clone, serde::Serialize, utoipa::ToSchema)]
 pub struct PointCrudResult {
+    #[schema(example = 1)]
     pub channel_id: u16,
-    pub point_type: String, // "T", "S", "C", "A"
+
+    /// Point type: T (Telemetry), S (Signal), C (Control), A (Adjustment)
+    #[schema(example = "T")]
+    pub point_type: String,
+
+    #[schema(example = 101)]
     pub point_id: u32,
+
+    #[schema(example = "DC_Voltage")]
     pub signal_name: String,
+
+    #[schema(example = "Point updated successfully")]
     pub message: String,
+}
+
+// ============================================================================
+// Batch Point CRUD Data Structures
+// ============================================================================
+
+/// Batch point operations request
+///
+/// Supports creating, updating, and deleting multiple points in a single request.
+/// All operations are optional - provide only the operations you need.
+#[derive(Debug, serde::Deserialize, utoipa::ToSchema)]
+pub struct PointBatchRequest {
+    /// Points to create
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub create: Vec<PointBatchCreateItem>,
+
+    /// Points to update
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub update: Vec<PointBatchUpdateItem>,
+
+    /// Points to delete
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub delete: Vec<PointBatchDeleteItem>,
+}
+
+/// Batch create operation item
+#[derive(Debug, serde::Deserialize, utoipa::ToSchema)]
+pub struct PointBatchCreateItem {
+    /// Point type: T (Telemetry), S (Signal), C (Control), A (Adjustment)
+    #[schema(example = "T")]
+    pub point_type: String,
+
+    /// Point identifier
+    #[schema(example = 101)]
+    pub point_id: u32,
+
+    /// Point configuration data (structure varies by point type)
+    pub data: serde_json::Value,
+}
+
+/// Batch update operation item
+#[derive(Debug, serde::Deserialize, utoipa::ToSchema)]
+pub struct PointBatchUpdateItem {
+    /// Point type: T (Telemetry), S (Signal), C (Control), A (Adjustment)
+    #[schema(example = "T")]
+    pub point_type: String,
+
+    /// Point identifier
+    #[schema(example = 101)]
+    pub point_id: u32,
+
+    /// Fields to update (only provide fields you want to update)
+    #[serde(flatten)]
+    pub update: PointUpdateRequest,
+}
+
+/// Batch delete operation item
+#[derive(Debug, serde::Deserialize, utoipa::ToSchema)]
+pub struct PointBatchDeleteItem {
+    /// Point type: T (Telemetry), S (Signal), C (Control), A (Adjustment)
+    #[schema(example = "T")]
+    pub point_type: String,
+
+    /// Point identifier
+    #[schema(example = 101)]
+    pub point_id: u32,
+}
+
+/// Batch operation result
+#[derive(Debug, serde::Serialize, utoipa::ToSchema)]
+pub struct PointBatchResult {
+    /// Total number of operations requested
+    #[schema(example = 10)]
+    pub total_operations: usize,
+
+    /// Number of successful operations
+    #[schema(example = 8)]
+    pub succeeded: usize,
+
+    /// Number of failed operations
+    #[schema(example = 2)]
+    pub failed: usize,
+
+    /// Statistics per operation type
+    pub operation_stats: OperationStats,
+
+    /// Details of failed operations
+    pub errors: Vec<PointBatchError>,
+
+    /// Processing duration in milliseconds
+    #[schema(example = 250)]
+    pub duration_ms: u64,
+}
+
+/// Operation statistics grouped by type
+#[derive(Debug, serde::Serialize, utoipa::ToSchema)]
+pub struct OperationStats {
+    pub create: OperationStat,
+    pub update: OperationStat,
+    pub delete: OperationStat,
+}
+
+/// Statistics for a single operation type
+#[derive(Debug, Default, serde::Serialize, utoipa::ToSchema)]
+pub struct OperationStat {
+    #[schema(example = 5)]
+    pub total: usize,
+    #[schema(example = 4)]
+    pub succeeded: usize,
+    #[schema(example = 1)]
+    pub failed: usize,
+}
+
+/// Error details for a failed batch operation
+#[derive(Debug, serde::Serialize, utoipa::ToSchema)]
+pub struct PointBatchError {
+    /// Operation type: create, update, or delete
+    #[schema(example = "create")]
+    pub operation: String,
+
+    /// Point type: T, S, C, or A
+    #[schema(example = "T")]
+    pub point_type: String,
+
+    /// Point identifier
+    #[schema(example = 101)]
+    pub point_id: u32,
+
+    /// Error message
+    #[schema(example = "Point 101 already exists")]
+    pub error: String,
 }
 
 // ----------------------------------------------------------------------------
@@ -1012,23 +1153,69 @@ async fn validate_point_uniqueness(
 // ----------------------------------------------------------------------------
 
 /// Update request for point fields (supports partial updates)
-#[derive(Debug, serde::Deserialize, utoipa::ToSchema)]
+///
+/// Only provide fields you want to update. Fields are type-specific:
+/// - **Common**: signal_name, description, unit, reverse
+/// - **T/A**: scale, offset, data_type (same fields for Telemetry and Adjustment)
+/// - **C only**: control_type, on_value, off_value, pulse_duration_ms
+#[derive(Debug, Clone, serde::Deserialize, utoipa::ToSchema)]
 pub struct PointUpdateRequest {
+    /// Point signal name (all types)
+    #[schema(example = "DC_Voltage")]
     pub signal_name: Option<String>,
+
+    /// Point description (all types)
+    #[schema(example = "直流母线电压")]
     pub description: Option<String>,
+
+    /// Measurement unit (all types)
+    #[schema(example = "V")]
     pub unit: Option<String>,
+
+    /// Scale factor for raw value conversion (T/A only)
+    #[schema(example = 0.1)]
     pub scale: Option<f64>,
+
+    /// Offset for raw value conversion (T/A only)
+    #[schema(example = 0.0)]
     pub offset: Option<f64>,
+
+    /// Data type: float32, int16, uint16, int32, uint32 (T/A only)
+    #[schema(example = "float32")]
     pub data_type: Option<String>,
+
+    /// Reverse logic (false=normal, true=inverted) (all types)
+    #[schema(example = false)]
     pub reverse: Option<bool>,
-    // Control-specific fields
+
+    // ========== Control-specific fields (C only) ==========
+    /// Control type: momentary or sustained (C only)
+    #[schema(example = "momentary")]
     pub control_type: Option<String>,
+
+    /// Value for ON state (C only)
+    #[schema(example = 1)]
     pub on_value: Option<u16>,
+
+    /// Value for OFF state (C only)
+    #[schema(example = 0)]
     pub off_value: Option<u16>,
+
+    /// Pulse duration in milliseconds for momentary control (C only)
+    #[schema(example = 500)]
     pub pulse_duration_ms: Option<u32>,
-    // Adjustment-specific fields
+
+    // ========== Legacy fields (not stored in database) ==========
+    /// Minimum allowed value (DEPRECATED - not stored in database)
+    #[schema(example = 0.0)]
     pub min_value: Option<f64>,
+
+    /// Maximum allowed value (DEPRECATED - not stored in database)
+    #[schema(example = 1000.0)]
     pub max_value: Option<f64>,
+
+    /// Adjustment step size (DEPRECATED - not stored in database)
+    #[schema(example = 0.5)]
     pub step: Option<f64>,
 }
 
@@ -1049,7 +1236,60 @@ pub struct PointUpdateRequest {
         ("type" = String, Path, description = "Point type: T, S, C, or A"),
         ("point_id" = u32, Path, description = "Point identifier")
     ),
-    request_body = PointUpdateRequest,
+    request_body(
+        content = PointUpdateRequest,
+        description = "Update request for point fields (supports partial updates). Only provide fields you want to update.",
+        examples(
+            ("Telemetry (T)" = (
+                summary = "Update telemetry point",
+                description = "Common fields: signal_name, description, unit, scale, offset, data_type, reverse",
+                value = json!({
+                    "signal_name": "DC_Voltage",
+                    "description": "直流母线电压",
+                    "unit": "V",
+                    "scale": 0.1,
+                    "offset": 0.0,
+                    "data_type": "float32",
+                    "reverse": false
+                })
+            )),
+            ("Signal (S)" = (
+                summary = "Update signal point",
+                description = "Common fields: signal_name, description, reverse",
+                value = json!({
+                    "signal_name": "Grid_Connected",
+                    "description": "电网连接状态",
+                    "reverse": false
+                })
+            )),
+            ("Control (C)" = (
+                summary = "Update control point",
+                description = "Control fields: signal_name, description, reverse, control_type, on_value, off_value, pulse_duration_ms",
+                value = json!({
+                    "signal_name": "Main_Breaker",
+                    "description": "主断路器控制",
+                    "control_type": "momentary",
+                    "on_value": 1,
+                    "off_value": 0,
+                    "pulse_duration_ms": 500,
+                    "reverse": false
+                })
+            )),
+            ("Adjustment (A)" = (
+                summary = "Update adjustment point",
+                description = "Adjustment fields: signal_name, description, unit, scale, offset, data_type, reverse (same as Telemetry)",
+                value = json!({
+                    "signal_name": "Target_Power",
+                    "description": "目标功率设定",
+                    "unit": "kW",
+                    "scale": 1.0,
+                    "offset": 0.0,
+                    "data_type": "float32",
+                    "reverse": false
+                })
+            ))
+        )
+    ),
     responses(
         (status = 200, description = "Point updated", body = PointCrudResult),
         (status = 400, description = "Invalid point type"),
@@ -1872,4 +2112,463 @@ pub async fn get_unmapped_points_handler(
     };
 
     Ok(Json(SuccessResponse::new(grouped)))
+}
+
+// ============================================================================
+// Batch Point CRUD Handler
+// ============================================================================
+
+/// Batch point operations (create, update, delete)
+///
+/// Process multiple point operations in a single request. Supports creating,
+/// updating, and deleting points of any type (T/S/C/A). Operations are processed
+/// independently - a single failure does not affect other operations.
+///
+/// @route POST /api/channels/{channel_id}/points/batch
+/// @input Path(channel_id): u16 - Channel identifier
+/// @input Json(request): PointBatchRequest - Batch operations request
+/// @output Json<SuccessResponse<PointBatchResult>> - Batch operation results
+/// @status 200 - Batch operation completed (may contain partial failures)
+/// @status 400 - Invalid request (empty operations)
+/// @status 404 - Channel not found
+#[utoipa::path(
+    post,
+    path = "/api/channels/{channel_id}/points/batch",
+    params(
+        ("channel_id" = u16, Path, description = "Channel identifier")
+    ),
+    request_body(
+        content = PointBatchRequest,
+        description = "Batch operations request. Provide create, update, and/or delete arrays.",
+        examples(
+            ("Mixed Operations" = (
+                summary = "Create, update, and delete in one request",
+                description = "Example showing all three operation types",
+                value = json!({
+                    "create": [
+                        {
+                            "point_type": "T",
+                            "point_id": 101,
+                            "data": {
+                                "signal_name": "DC_Voltage",
+                                "scale": 0.1,
+                                "offset": 0.0,
+                                "unit": "V",
+                                "data_type": "float32",
+                                "reverse": false,
+                                "description": "直流母线电压"
+                            }
+                        },
+                        {
+                            "point_type": "S",
+                            "point_id": 201,
+                            "data": {
+                                "signal_name": "Grid_Connected",
+                                "data_type": "bool",
+                                "reverse": false,
+                                "description": "电网连接状态"
+                            }
+                        }
+                    ],
+                    "update": [
+                        {
+                            "point_type": "T",
+                            "point_id": 102,
+                            "signal_name": "DC_Current",
+                            "scale": 0.01,
+                            "description": "更新后的直流电流"
+                            // Partial update: only these 3 fields updated, others unchanged
+                        }
+                    ],
+                    "delete": [
+                        {
+                            "point_type": "A",
+                            "point_id": 301
+                        }
+                    ]
+                })
+            )),
+            ("Batch Create Only" = (
+                summary = "Create multiple points",
+                description = "Batch create telemetry points",
+                value = json!({
+                    "create": [
+                        {
+                            "point_type": "T",
+                            "point_id": 103,
+                            "data": {
+                                "signal_name": "Temperature_1",
+                                "scale": 0.1,
+                                "offset": -40.0,
+                                "unit": "°C",
+                                "data_type": "int16",
+                                "description": "温度传感器 1"
+                            }
+                        },
+                        {
+                            "point_type": "T",
+                            "point_id": 104,
+                            "data": {
+                                "signal_name": "Temperature_2",
+                                "scale": 0.1,
+                                "offset": -40.0,
+                                "unit": "°C",
+                                "data_type": "int16",
+                                "description": "温度传感器 2"
+                            }
+                        }
+                    ]
+                })
+            )),
+            ("Batch Update Only" = (
+                summary = "Update multiple points (partial update supported)",
+                description = "Batch update point configurations. **Only provide fields you want to update** - other fields remain unchanged. This example shows updating only 2 fields for point 101, and only 1 field for point 102.",
+                value = json!({
+                    "update": [
+                        {
+                            "point_type": "T",
+                            "point_id": 101,
+                            "scale": 0.2,              // Only update scale
+                            "description": "Updated description"  // Only update description
+                            // Other fields (unit, offset, data_type, etc.) remain unchanged
+                        },
+                        {
+                            "point_type": "T",
+                            "point_id": 102,
+                            "unit": "kW"              // Only update unit, all other fields unchanged
+                        }
+                    ]
+                })
+            )),
+            ("Batch Delete Only" = (
+                summary = "Delete multiple points",
+                description = "Batch delete obsolete points",
+                value = json!({
+                    "delete": [
+                        {
+                            "point_type": "A",
+                            "point_id": 301
+                        },
+                        {
+                            "point_type": "A",
+                            "point_id": 302
+                        }
+                    ]
+                })
+            ))
+        )
+    ),
+    responses(
+        (status = 200, description = "Batch operation completed", body = PointBatchResult,
+            example = json!({
+                "success": true,
+                "data": {
+                    "total_operations": 4,
+                    "succeeded": 3,
+                    "failed": 1,
+                    "operation_stats": {
+                        "create": {
+                            "total": 2,
+                            "succeeded": 1,
+                            "failed": 1
+                        },
+                        "update": {
+                            "total": 1,
+                            "succeeded": 1,
+                            "failed": 0
+                        },
+                        "delete": {
+                            "total": 1,
+                            "succeeded": 1,
+                            "failed": 0
+                        }
+                    },
+                    "errors": [
+                        {
+                            "operation": "create",
+                            "point_type": "S",
+                            "point_id": 201,
+                            "error": "Point 201 already exists"
+                        }
+                    ],
+                    "duration_ms": 145
+                }
+            })
+        ),
+        (status = 400, description = "Invalid request (empty operations)"),
+        (status = 404, description = "Channel not found")
+    ),
+    tag = "comsrv"
+)]
+pub async fn batch_point_operations_handler(
+    Path(channel_id): Path<u16>,
+    State(state): State<AppState>,
+    Json(request): Json<PointBatchRequest>,
+) -> Result<Json<SuccessResponse<PointBatchResult>>, AppError> {
+    use std::time::Instant;
+    let start_time = Instant::now();
+
+    // Validate at least one operation is provided
+    if request.create.is_empty() && request.update.is_empty() && request.delete.is_empty() {
+        return Err(AppError::bad_request(
+            "At least one operation (create/update/delete) must be provided",
+        ));
+    }
+
+    // Validate channel exists (fail fast for invalid channel)
+    validate_channel_exists(&state.sqlite_pool, channel_id).await?;
+
+    // Initialize statistics
+    let mut create_stat = OperationStat::default();
+    let mut update_stat = OperationStat::default();
+    let mut delete_stat = OperationStat::default();
+    let mut errors = Vec::new();
+
+    // Process CREATE operations
+    create_stat.total = request.create.len();
+    for item in request.create {
+        match process_create_operation(channel_id, &item, &state).await {
+            Ok(_) => create_stat.succeeded += 1,
+            Err(e) => {
+                create_stat.failed += 1;
+                errors.push(PointBatchError {
+                    operation: "create".to_string(),
+                    point_type: item.point_type.to_uppercase(),
+                    point_id: item.point_id,
+                    error: e.to_string(),
+                });
+            },
+        }
+    }
+
+    // Process UPDATE operations
+    update_stat.total = request.update.len();
+    for item in request.update {
+        match process_update_operation(channel_id, &item, &state).await {
+            Ok(_) => update_stat.succeeded += 1,
+            Err(e) => {
+                update_stat.failed += 1;
+                errors.push(PointBatchError {
+                    operation: "update".to_string(),
+                    point_type: item.point_type.to_uppercase(),
+                    point_id: item.point_id,
+                    error: e.to_string(),
+                });
+            },
+        }
+    }
+
+    // Process DELETE operations
+    delete_stat.total = request.delete.len();
+    for item in request.delete {
+        match process_delete_operation(channel_id, &item, &state).await {
+            Ok(_) => delete_stat.succeeded += 1,
+            Err(e) => {
+                delete_stat.failed += 1;
+                errors.push(PointBatchError {
+                    operation: "delete".to_string(),
+                    point_type: item.point_type.to_uppercase(),
+                    point_id: item.point_id,
+                    error: e.to_string(),
+                });
+            },
+        }
+    }
+
+    let total_operations = create_stat.total + update_stat.total + delete_stat.total;
+    let succeeded = create_stat.succeeded + update_stat.succeeded + delete_stat.succeeded;
+    let failed = create_stat.failed + update_stat.failed + delete_stat.failed;
+
+    let duration_ms = start_time.elapsed().as_millis() as u64;
+
+    tracing::info!(
+        "Batch operation completed for channel {}: {} total, {} succeeded, {} failed, {}ms",
+        channel_id,
+        total_operations,
+        succeeded,
+        failed,
+        duration_ms
+    );
+
+    Ok(Json(SuccessResponse::new(PointBatchResult {
+        total_operations,
+        succeeded,
+        failed,
+        operation_stats: OperationStats {
+            create: create_stat,
+            update: update_stat,
+            delete: delete_stat,
+        },
+        errors,
+        duration_ms,
+    })))
+}
+
+// ----------------------------------------------------------------------------
+// Batch Operation Helpers
+// ----------------------------------------------------------------------------
+
+/// Process single create operation
+async fn process_create_operation(
+    channel_id: u16,
+    item: &PointBatchCreateItem,
+    state: &AppState,
+) -> Result<(), String> {
+    use voltage_config::comsrv::{AdjustmentPoint, ControlPoint, SignalPoint, TelemetryPoint};
+
+    let point_type_upper = item.point_type.to_ascii_uppercase();
+    let table = match point_type_upper.as_str() {
+        "T" => "telemetry_points",
+        "S" => "signal_points",
+        "C" => "control_points",
+        "A" => "adjustment_points",
+        _ => return Err(format!("Invalid point type '{}'", item.point_type)),
+    };
+
+    // Validate point uniqueness
+    let existing: Option<(i64,)> = sqlx::query_as(&format!(
+        "SELECT point_id FROM {} WHERE channel_id = ? AND point_id = ?",
+        table
+    ))
+    .bind(channel_id as i64)
+    .bind(item.point_id as i64)
+    .fetch_optional(&state.sqlite_pool)
+    .await
+    .map_err(|e| format!("Database error: {}", e))?;
+
+    if existing.is_some() {
+        return Err(format!("Point {} already exists", item.point_id));
+    }
+
+    // Deserialize and insert based on point type
+    match point_type_upper.as_str() {
+        "T" => {
+            let point: TelemetryPoint = serde_json::from_value(item.data.clone())
+                .map_err(|e| format!("Invalid telemetry point data: {}", e))?;
+
+            sqlx::query(
+                "INSERT INTO telemetry_points
+                 (channel_id, point_id, signal_name, scale, offset, unit, data_type, reverse, description, protocol_mappings)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)"
+            )
+            .bind(channel_id as i64)
+            .bind(item.point_id as i64)
+            .bind(&point.base.signal_name)
+            .bind(point.scale)
+            .bind(point.offset)
+            .bind(&point.base.unit)
+            .bind(&point.data_type)
+            .bind(point.reverse)
+            .bind(&point.base.description)
+            .execute(&state.sqlite_pool)
+            .await
+            .map_err(|e| format!("Failed to insert: {}", e))?;
+        },
+        "S" => {
+            let point: SignalPoint = serde_json::from_value(item.data.clone())
+                .map_err(|e| format!("Invalid signal point data: {}", e))?;
+
+            sqlx::query(
+                "INSERT INTO signal_points
+                 (channel_id, point_id, signal_name, unit, reverse, description, protocol_mappings)
+                 VALUES (?, ?, ?, ?, ?, ?, NULL)",
+            )
+            .bind(channel_id as i64)
+            .bind(item.point_id as i64)
+            .bind(&point.base.signal_name)
+            .bind(&point.base.unit)
+            .bind(point.reverse)
+            .bind(&point.base.description)
+            .execute(&state.sqlite_pool)
+            .await
+            .map_err(|e| format!("Failed to insert: {}", e))?;
+        },
+        "C" => {
+            let point: ControlPoint = serde_json::from_value(item.data.clone())
+                .map_err(|e| format!("Invalid control point data: {}", e))?;
+
+            sqlx::query(
+                "INSERT INTO control_points
+                 (channel_id, point_id, signal_name, unit, description, control_type, on_value, off_value, pulse_duration_ms, protocol_mappings)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)"
+            )
+            .bind(channel_id as i64)
+            .bind(item.point_id as i64)
+            .bind(&point.base.signal_name)
+            .bind(&point.base.unit)
+            .bind(&point.base.description)
+            .bind(&point.control_type)
+            .bind(point.on_value)
+            .bind(point.off_value)
+            .bind(point.pulse_duration_ms)
+            .execute(&state.sqlite_pool)
+            .await
+            .map_err(|e| format!("Failed to insert: {}", e))?;
+        },
+        "A" => {
+            let point: AdjustmentPoint = serde_json::from_value(item.data.clone())
+                .map_err(|e| format!("Invalid adjustment point data: {}", e))?;
+
+            // Extract reverse from JSON (not in AdjustmentPoint struct)
+            let reverse = item
+                .data
+                .get("reverse")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+
+            sqlx::query(
+                "INSERT INTO adjustment_points
+                 (channel_id, point_id, signal_name, scale, offset, unit, reverse, data_type, description, protocol_mappings)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)"
+            )
+            .bind(channel_id as i64)
+            .bind(item.point_id as i64)
+            .bind(&point.base.signal_name)
+            .bind(point.scale)
+            .bind(point.offset)
+            .bind(&point.base.unit)
+            .bind(reverse)
+            .bind(&point.data_type)
+            .bind(&point.base.description)
+            .execute(&state.sqlite_pool)
+            .await
+            .map_err(|e| format!("Failed to insert: {}", e))?;
+        },
+        _ => unreachable!(),
+    }
+
+    Ok(())
+}
+
+/// Process single update operation (reuse existing handler logic)
+async fn process_update_operation(
+    channel_id: u16,
+    item: &PointBatchUpdateItem,
+    state: &AppState,
+) -> Result<(), String> {
+    // Reuse the existing update_point_handler logic
+    update_point_handler(
+        Path((channel_id, item.point_type.clone(), item.point_id)),
+        State(state.clone()),
+        Json(item.update.clone()),
+    )
+    .await
+    .map(|_| ())
+    .map_err(|e| format!("{:?}", e))
+}
+
+/// Process single delete operation (reuse existing handler logic)
+async fn process_delete_operation(
+    channel_id: u16,
+    item: &PointBatchDeleteItem,
+    state: &AppState,
+) -> Result<(), String> {
+    // Reuse the existing delete_point_handler logic
+    delete_point_handler(
+        Path((channel_id, item.point_type.clone(), item.point_id)),
+        State(state.clone()),
+    )
+    .await
+    .map(|_| ())
+    .map_err(|e| format!("{:?}", e))
 }

@@ -12,6 +12,9 @@ pub mod csv_loader;
 #[cfg(feature = "lib-mode")]
 use crate::{context::ServiceContext, lib_api};
 
+#[cfg(feature = "lib-mode")]
+use voltage_rtdb::Rtdb;
+
 #[derive(Subcommand)]
 pub enum ModelCommands {
     /// Manage products (device type templates)
@@ -114,6 +117,16 @@ pub enum InstanceCommands {
         /// Force deletion without confirmation
         #[arg(short, long)]
         force: bool,
+    },
+
+    /// Get instance runtime data
+    #[command(about = "Get realtime measurement and action point data from RTDB")]
+    Data {
+        /// Instance name
+        name: String,
+        /// Point type filter (M for measurements, A for actions, both if not specified)
+        #[arg(short = 't', long)]
+        point_type: Option<String>,
     },
 }
 
@@ -439,6 +452,104 @@ async fn handle_instance_command(
                 let client = client::ModelClient::new(url)?;
                 client.delete_instance(&name).await?;
                 info!("Instance '{}' deleted", name);
+            }
+        },
+        InstanceCommands::Data { name, point_type } => {
+            if use_lib_api {
+                #[cfg(feature = "lib-mode")]
+                {
+                    use voltage_config::KeySpaceConfig;
+
+                    let ctx = service_ctx.expect("ServiceContext should be available in lib-mode");
+                    let modsrv = ctx.modsrv()?;
+
+                    // Query instance from SQLite to get instance_id
+                    let instance_row: Option<(u16, String)> = sqlx::query_as(
+                        "SELECT instance_id, instance_name FROM instances WHERE instance_name = ?",
+                    )
+                    .bind(&name)
+                    .fetch_optional(&modsrv.sqlite_pool)
+                    .await?;
+
+                    let (instance_id, instance_name) = instance_row
+                        .ok_or_else(|| anyhow::anyhow!("Instance '{}' not found", name))?;
+
+                    let keyspace = KeySpaceConfig::production();
+                    let rtdb = &modsrv.rtdb;
+
+                    // Determine which data to fetch based on point_type
+                    let point_type_upper = point_type.as_deref().map(|s| s.to_uppercase());
+                    let fetch_measurements = point_type_upper.as_deref() != Some("A");
+                    let fetch_actions = point_type_upper.as_deref() != Some("M");
+
+                    println!("=== Instance Runtime Data ===\n");
+                    println!("Instance: {} (ID: {})", instance_name, instance_id);
+                    println!();
+
+                    // Fetch measurement data
+                    if fetch_measurements {
+                        let m_key = keyspace.instance_measurement_key(instance_id as u32);
+                        let m_data = rtdb.hash_get_all(m_key.as_ref()).await?;
+
+                        // Filter out timestamp fields (ts:*)
+                        let m_points: std::collections::HashMap<u32, String> = m_data
+                            .into_iter()
+                            .filter(|(field, _)| !field.starts_with("ts:"))
+                            .filter_map(|(field, value_bytes)| {
+                                let point_id = field.parse::<u32>().ok()?;
+                                let value_str = String::from_utf8(value_bytes.to_vec()).ok()?;
+                                Some((point_id, value_str))
+                            })
+                            .collect();
+
+                        println!("--- Measurements (M) ---");
+                        if m_points.is_empty() {
+                            println!("  (No measurement data)");
+                        } else {
+                            println!("{:<12} {:<20}", "Point ID", "Value");
+                            println!("{}", "─".repeat(34));
+                            let mut sorted_points: Vec<_> = m_points.into_iter().collect();
+                            sorted_points.sort_by_key(|(id, _)| *id);
+                            for (point_id, value) in sorted_points {
+                                println!("{:<12} {:<20}", point_id, value);
+                            }
+                        }
+                        println!();
+                    }
+
+                    // Fetch action data
+                    if fetch_actions {
+                        let a_key = keyspace.instance_action_key(instance_id as u32);
+                        let a_data = rtdb.hash_get_all(a_key.as_ref()).await?;
+
+                        // Filter out timestamp fields (ts:*)
+                        let a_points: std::collections::HashMap<u32, String> = a_data
+                            .into_iter()
+                            .filter(|(field, _)| !field.starts_with("ts:"))
+                            .filter_map(|(field, value_bytes)| {
+                                let point_id = field.parse::<u32>().ok()?;
+                                let value_str = String::from_utf8(value_bytes.to_vec()).ok()?;
+                                Some((point_id, value_str))
+                            })
+                            .collect();
+
+                        println!("--- Actions (A) ---");
+                        if a_points.is_empty() {
+                            println!("  (No action data)");
+                        } else {
+                            println!("{:<12} {:<20}", "Point ID", "Value");
+                            println!("{}", "─".repeat(34));
+                            let mut sorted_points: Vec<_> = a_points.into_iter().collect();
+                            sorted_points.sort_by_key(|(id, _)| *id);
+                            for (point_id, value) in sorted_points {
+                                println!("{:<12} {:<20}", point_id, value);
+                            }
+                        }
+                    }
+                }
+            } else {
+                warn!("Instance data command only supported in offline mode (lib API)");
+                warn!("Please use --offline flag or run monarch in lib-mode");
             }
         },
     }

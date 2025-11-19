@@ -1880,6 +1880,7 @@ dependencies = [
  "utoipa-swagger-ui",
  "uuid",
  "voltage-config",
+ "voltage-routing",
  "voltage-rtdb",
 ]
 
@@ -1908,6 +1909,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "voltage-config",
+ "voltage-routing",
  "voltage-rtdb",
  "walkdir",
 ]
@@ -2608,6 +2610,7 @@ dependencies = [
  "utoipa-swagger-ui",
  "uuid",
  "voltage-config",
+ "voltage-routing",
  "voltage-rtdb",
 ]
 
@@ -4030,6 +4033,19 @@ dependencies = [
  "tracing",
  "utoipa",
  "voltage-schema-macro",
+]
+
+[[package]]
+name = "voltage-routing"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "bytes",
+ "serde",
+ "serde_json",
+ "tokio",
+ "voltage-config",
+ "voltage-rtdb",
 ]
 
 [[package]]

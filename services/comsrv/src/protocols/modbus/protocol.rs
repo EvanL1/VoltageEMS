@@ -28,6 +28,9 @@ use super::pdu::{ModbusPdu, PduBuilder};
 use super::transport::{ModbusFrameProcessor, ModbusMode};
 use super::types::{ModbusPoint, ModbusPollingConfig};
 
+/// Type alias for pre-grouped points map: (slave_id, function_code, type) -> points
+type GroupedPointsMap = HashMap<(u8, u8, String), Vec<ModbusPoint>>;
+
 /// Modbus protocol implementation, implements `ComBase` trait
 pub struct ModbusProtocol {
     /// Protocol name
@@ -59,6 +62,10 @@ pub struct ModbusProtocol {
     signal_points: Arc<RwLock<Vec<ModbusPoint>>>,
     control_points: Arc<RwLock<Vec<ModbusPoint>>>,
     adjustment_points: Arc<RwLock<Vec<ModbusPoint>>>,
+
+    /// Pre-grouped points for polling optimization (computed at startup)
+    /// Key: (slave_id, function_code, "telemetry"|"signal")
+    grouped_points: Arc<RwLock<GroupedPointsMap>>,
 
     /// Data channel for sending telemetry data
     data_channel: Option<tokio::sync::mpsc::Sender<TelemetryBatch>>,
@@ -133,6 +140,7 @@ impl ModbusProtocol {
             signal_points: Arc::new(RwLock::new(Vec::new())),
             control_points: Arc::new(RwLock::new(Vec::new())),
             adjustment_points: Arc::new(RwLock::new(Vec::new())),
+            grouped_points: Arc::new(RwLock::new(HashMap::new())),
             data_channel: None,
             command_rx: Arc::new(RwLock::new(None)),
             command_batcher: Arc::new(Mutex::new(CommandBatcher::new())),
@@ -1167,17 +1175,57 @@ impl ComClient for ModbusProtocol {
             let data_channel = self.data_channel.clone();
             let frame_processor = Arc::clone(&self.frame_processor);
 
+            // Pre-group points at startup for polling optimization
+            {
+                let mut groups: HashMap<(u8, u8, String), Vec<ModbusPoint>> = HashMap::new();
+
+                // Add telemetry points
+                let telemetry_guard = telemetry_points.read().await;
+                for point in telemetry_guard.iter() {
+                    let key = (point.slave_id, point.function_code, "telemetry".to_string());
+                    groups.entry(key).or_default().push(point.clone());
+                }
+
+                // Add signal points
+                let signal_guard = signal_points.read().await;
+                for point in signal_guard.iter() {
+                    let key = (point.slave_id, point.function_code, "signal".to_string());
+                    groups.entry(key).or_default().push(point.clone());
+                }
+
+                // Store pre-grouped points
+                let mut grouped_guard = self.grouped_points.write().await;
+                *grouped_guard = groups;
+
+                info!(
+                    "Pre-grouped {} point groups for channel {} polling optimization",
+                    grouped_guard.len(),
+                    channel_id
+                );
+            }
+
+            let grouped_points = Arc::clone(&self.grouped_points);
+
             let polling_task = tokio::spawn(async move {
                 let mut interval =
                     tokio::time::interval(std::time::Duration::from_millis(polling_interval));
+                interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
                 info!(
                     "Polling task started for channel {}, interval {}ms",
                     channel_id, polling_interval
                 );
 
+                // Create reusable buffers outside loop to avoid per-cycle allocation
+                let mut telemetry_batch = Vec::with_capacity(1024);
+                let mut signal_batch = Vec::with_capacity(1024);
+
                 loop {
                     interval.tick().await;
+
+                    // Clear buffers for reuse (no reallocation unless capacity exceeded)
+                    telemetry_batch.clear();
+                    signal_batch.clear();
 
                     // Check connection and attempt reconnection if needed
                     if !is_connected.load(Ordering::Relaxed) {
@@ -1222,49 +1270,23 @@ impl ComClient for ModbusProtocol {
                         }
                     }
 
-                    debug!("Executing poll for channel {}", channel_id);
-
-                    // Group points by slave ID and function code for batch reading
-                    // Process telemetry and signal points separately to ensure isolation
-                    let grouped_points = {
-                        let mut groups: HashMap<(u8, u8, String), Vec<ModbusPoint>> =
-                            HashMap::new();
-
-                        // Add telemetry points
-                        let telemetry_guard = telemetry_points.read().await;
-                        for point in telemetry_guard.iter() {
-                            let key =
-                                (point.slave_id, point.function_code, "telemetry".to_string());
-                            groups.entry(key).or_default().push(point.clone());
-                        }
-
-                        // Add signal points
-                        let signal_guard = signal_points.read().await;
-                        for point in signal_guard.iter() {
-                            let key = (point.slave_id, point.function_code, "signal".to_string());
-                            groups.entry(key).or_default().push(point.clone());
-                        }
-
-                        if groups.is_empty() {
-                            debug!("No points configured for channel {}", channel_id);
-                            continue;
-                        }
-
-                        debug!("Processing {} groups for polling", groups.len());
-                        groups
-                    };
+                    // Use pre-grouped points (computed at startup)
+                    let grouped_guard = grouped_points.read().await;
+                    if grouped_guard.is_empty() {
+                        debug!("No points configured for channel {}", channel_id);
+                        continue;
+                    }
 
                     let mut success_count = 0;
                     let mut error_count = 0;
 
                     // Collect all telemetry and signal data for this poll cycle
-                    let mut telemetry_batch = Vec::new();
-                    let mut signal_batch = Vec::new();
+                    // (buffers already created outside loop and cleared above)
                     let timestamp = chrono::Utc::now().timestamp();
 
                     // Read each group
                     for ((slave_id, function_code, group_telemetry_type), group_points) in
-                        grouped_points
+                        grouped_guard.iter()
                     {
                         if group_points.is_empty() {
                             continue;
@@ -1293,13 +1315,13 @@ impl ComClient for ModbusProtocol {
                         match read_modbus_group_with_processor(
                             &connection_manager,
                             &mut frame_processor,
-                            slave_id,
-                            function_code,
-                            &group_points,
+                            *slave_id,
+                            *function_code,
+                            group_points,
                             None,
                             max_batch_size,
                             &logger,
-                            &group_telemetry_type,
+                            group_telemetry_type,
                         )
                         .await
                         {
@@ -1316,7 +1338,6 @@ impl ComClient for ModbusProtocol {
                                 }
 
                                 // Process values
-                                debug!("Processing {} values from Modbus read", values.len());
 
                                 for (point_id_str, value) in values {
                                     // Convert point_id from string to u32
@@ -1341,17 +1362,11 @@ impl ComClient for ModbusProtocol {
                                             FourRemote::Telemetry => {
                                                 telemetry_batch
                                                     .push((point_id, raw_value, timestamp));
-                                                debug!(
-                                                    "Collected telemetry point {}: raw={:.6}",
-                                                    point_id, raw_value
-                                                );
+                                                // Removed per-point debug logging for performance
                                             },
                                             FourRemote::Signal => {
                                                 signal_batch.push((point_id, raw_value, timestamp));
-                                                debug!(
-                                                    "Collected signal point {}: raw={:.6}",
-                                                    point_id, raw_value
-                                                );
+                                                // Removed per-point debug logging for performance
                                             },
                                             FourRemote::Control | FourRemote::Adjustment => {
                                                 // Control and adjustment data are not polled
@@ -1395,15 +1410,11 @@ impl ComClient for ModbusProtocol {
                             let telemetry_count = telemetry_batch.len();
                             let signal_count = signal_batch.len();
 
-                            debug!(
-                                "Preparing telemetry batch: channel_id={}, telemetry_points={}, signal_points={}",
-                                channel_id, telemetry_count, signal_count
-                            );
-
+                            // Use mem::take to extract data while leaving empty buffers for reuse
                             let batch = TelemetryBatch {
                                 channel_id,
-                                telemetry: telemetry_batch,
-                                signal: signal_batch,
+                                telemetry: std::mem::take(&mut telemetry_batch),
+                                signal: std::mem::take(&mut signal_batch),
                             };
 
                             // Use send().await instead of try_send for guaranteed delivery
@@ -1425,7 +1436,7 @@ impl ComClient for ModbusProtocol {
                         }
                     }
 
-                    info!(
+                    debug!(
                         "Poll completed for channel {}: {} success, {} errors",
                         channel_id, success_count, error_count
                     );

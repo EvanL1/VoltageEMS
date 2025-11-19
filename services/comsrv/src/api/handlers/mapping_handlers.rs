@@ -486,21 +486,30 @@ pub async fn get_channel_mappings_handler(
                 })
             )),
             ("Merge Mode - Partial Update" = (
-                summary = "Merge mode to update specific fields only",
-                description = "Use merge mode to update only specified fields while preserving others",
+                summary = "Merge mode (default) - partial field update",
+                description = "**Merge mode (default)**: Updates only specified fields while preserving all others. Example: if point 101 has {slave_id:1, function_code:3, register_address:100, data_type:\"float32\", byte_order:\"ABCD\"}, this request only updates register_address to 150, all other fields remain unchanged. The merged result is validated before saving.",
                 value = json!({
                     "mappings": [
                         {
                             "point_id": 101,
                             "four_remote": "T",
                             "protocol_data": {
-                                "register_address": 150
+                                "register_address": 150,  // Only update this field
+                                "data_type": "uint16"      // Only update this field
+                                // Other fields (slave_id, function_code, byte_order) remain unchanged
+                            }
+                        },
+                        {
+                            "point_id": 102,
+                            "four_remote": "T",
+                            "protocol_data": {
+                                "byte_order": "DCBA"  // Only change byte order, keep everything else
                             }
                         }
                     ],
                     "validate_only": false,
                     "reload_channel": false,
-                    "mode": "merge"
+                    "mode": "merge"  // Default mode - can be omitted
                 })
             ))
         )

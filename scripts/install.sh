@@ -18,6 +18,30 @@ LOG_DIR="${LOG_DIR:-/extp/logs}"
 # Save the directory where installation was launched (for cleanup later)
 LAUNCH_DIR="${LAUNCH_DIR:-$(pwd)}"
 
+# Docker Compose V1/V2 compatibility functions
+detect_docker_compose_cmd() {
+    if docker compose version &>/dev/null 2>&1; then
+        echo "docker compose"
+    elif command -v docker-compose &>/dev/null; then
+        echo "docker-compose"
+    else
+        echo -e "${RED}ERROR: Neither 'docker compose' (V2) nor 'docker-compose' (V1) found${NC}" >&2
+        echo -e "${YELLOW}Please install Docker Compose: https://docs.docker.com/compose/install/${NC}" >&2
+        return 1
+    fi
+}
+
+run_docker_compose() {
+    local compose_cmd
+    compose_cmd=$(detect_docker_compose_cmd) || return 1
+
+    if [[ "$compose_cmd" == "docker compose" ]]; then
+        docker compose "$@"
+    else
+        docker-compose "$@"
+    fi
+}
+
 # Determine which host user should own installed files. This must be resolved
 # before we attempt any permission changes while running with `set -u`.
 determine_install_user() {
@@ -91,10 +115,30 @@ determine_install_user() {
     fi
 
     ACTUAL_USER="$resolved"
-    ACTUAL_UID=$(id -u "$ACTUAL_USER")
-    ACTUAL_GID=$(id -g "$ACTUAL_USER")
 
-    echo "Using installation user: $ACTUAL_USER (UID=$ACTUAL_UID)"
+    # Smart UID/GID detection (supports macOS and Linux)
+    ACTUAL_UID=$(id -u "$ACTUAL_USER")
+
+    # Detect OS for GID strategy
+    OS=$(uname -s)
+
+    if [[ "$OS" == "Darwin" ]]; then
+        # macOS: Use user's primary group GID (typically 20=staff)
+        ACTUAL_GID=$(id -g "$ACTUAL_USER")
+        echo "Detected macOS environment - UID=$ACTUAL_UID, Primary GID=$ACTUAL_GID"
+    else
+        # Linux: Prefer docker group GID, fallback to user's primary group
+        if getent group docker &>/dev/null; then
+            DOCKER_GID=$(getent group docker | cut -d: -f3)
+            ACTUAL_GID=$DOCKER_GID
+            echo "Detected Linux environment - UID=$ACTUAL_UID, Docker GID=$ACTUAL_GID"
+        else
+            ACTUAL_GID=$(id -g "$ACTUAL_USER")
+            echo "Detected Linux environment (no docker group) - UID=$ACTUAL_UID, Primary GID=$ACTUAL_GID"
+        fi
+    fi
+
+    echo "Using installation user: $ACTUAL_USER (UID=$ACTUAL_UID, GID=$ACTUAL_GID)"
 
     if [[ "$ACTUAL_USER" == "root" ]]; then
         echo -e "${YELLOW}Warning: Directories will be owned by root. Set INSTALL_USER=<username> to override.${NC}"
@@ -350,7 +394,7 @@ if command -v docker &> /dev/null; then
 
                     # Start new Redis container using docker-compose
                     if [[ -f "$INSTALL_DIR/docker-compose.yml" ]]; then
-                        docker compose -f "$INSTALL_DIR/docker-compose.yml" up -d voltage-redis
+                        run_docker_compose -f "$INSTALL_DIR/docker-compose.yml" up -d voltage-redis
                         echo -e "${GREEN}✓ VoltageRedis updated successfully${NC}"
                     else
                         echo -e "${YELLOW}Note: docker-compose.yml not found, start manually after installation${NC}"
@@ -392,7 +436,7 @@ if command -v docker &> /dev/null; then
 
                 # Restart services using docker-compose (if file exists)
                 if [[ -f "$INSTALL_DIR/docker-compose.yml" ]]; then
-                    docker compose -f "$INSTALL_DIR/docker-compose.yml" up -d comsrv modsrv rulesrv
+                    run_docker_compose -f "$INSTALL_DIR/docker-compose.yml" up -d comsrv modsrv rulesrv
                     echo -e "${GREEN}✓ VoltageEMS services updated successfully${NC}"
                 else
                     echo -e "${YELLOW}Note: docker-compose.yml not found, start manually after installation${NC}"

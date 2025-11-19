@@ -13,15 +13,14 @@ pub mod product_loader;
 pub mod redis_state;
 pub mod reload;
 pub mod routes;
-pub mod routing_executor;
 pub mod routing_loader;
 #[cfg(feature = "virtual-points")]
 pub mod time_series;
 #[cfg(feature = "virtual-points")]
 pub mod virtual_calc;
 
-// Re-export routing types from local module
-pub use routing_executor::{set_action_point, ActionRouteOutcome, RouteContext};
+// Re-export routing types from shared library
+pub use voltage_routing::{set_action_point, ActionRouteOutcome, RouteContext};
 
 // Re-export commonly used types
 pub use calculation_engine::CalculationEngine;

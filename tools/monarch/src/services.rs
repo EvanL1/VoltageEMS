@@ -87,9 +87,43 @@ pub enum ServiceCommands {
         #[arg(short, long)]
         smart: bool,
     },
+
+    /// Execute action with M2C routing (Unified Entry Point)
+    #[command(about = "Execute action point with automatic M2C routing")]
+    SetAction {
+        /// Instance name (e.g., pcs_01, battery_01)
+        instance_name: String,
+        /// Action point ID
+        point_id: String,
+        /// Value to set
+        value: f64,
+        /// Show detailed routing information
+        #[arg(short, long)]
+        detailed: bool,
+    },
+
+    /// Show routing table entries
+    #[command(about = "Display routing table (C2M, M2C, C2C) from cache")]
+    RoutingShow {
+        /// Routing type to display (c2m, m2c, c2c, or all)
+        #[arg(short = 't', long, default_value = "all")]
+        route_type: String,
+        /// Optional prefix filter (e.g., "2:T:", "23:A:")
+        #[arg(short, long)]
+        prefix: Option<String>,
+        /// Show detailed routing information
+        #[arg(short, long)]
+        detailed: bool,
+        /// Limit number of results (0 = no limit)
+        #[arg(short, long, default_value = "100")]
+        limit: usize,
+    },
 }
 
-pub async fn handle_command(cmd: ServiceCommands) -> Result<()> {
+pub async fn handle_command(
+    cmd: ServiceCommands,
+    service_ctx: Option<&crate::context::ServiceContext>,
+) -> Result<()> {
     match cmd {
         ServiceCommands::Start { services } => {
             // Use --no-recreate to avoid rebuilding containers that already exist
@@ -175,7 +209,7 @@ pub async fn handle_command(cmd: ServiceCommands) -> Result<()> {
                 match service {
                     "comsrv" => {
                         // Use HTTP client to reload comsrv configuration
-                        let client = reqwest::Client::new();
+                        let client = reqwest::Client::builder().no_proxy().build()?;
                         let response = client
                             .post("http://localhost:6001/api/channels/reload")
                             .send()
@@ -357,6 +391,171 @@ pub async fn handle_command(cmd: ServiceCommands) -> Result<()> {
                 }
 
                 println!("Services refreshed successfully");
+            }
+        },
+        ServiceCommands::SetAction {
+            instance_name,
+            point_id,
+            value,
+            detailed,
+        } => {
+            // Direct library call to execute action with M2C routing
+            println!("Executing action point with automatic M2C routing...");
+            println!("  Instance: {}", instance_name);
+            println!("  Point ID: {}", point_id);
+            println!("  Value: {}", value);
+
+            // Get ModsrvContext which has RoutingCache and Rtdb
+            let ctx = service_ctx
+                .ok_or_else(|| anyhow::anyhow!("Service context required for set-action command"))?
+                .modsrv()?;
+
+            // Execute action routing using shared library (direct call)
+            let outcome = voltage_routing::set_action_point(
+                ctx.rtdb.as_ref(),
+                ctx.instance_manager.routing_cache(),
+                &instance_name,
+                &point_id,
+                value,
+            )
+            .await?;
+
+            // Display results
+            if outcome.routed {
+                println!("\n✓ Action executed and routed successfully");
+                println!(
+                    "  Route result: {}",
+                    outcome.route_result.unwrap_or_else(|| "N/A".to_string())
+                );
+
+                if detailed {
+                    if let Some(ctx) = outcome.route_context {
+                        println!("\nRouting Context:");
+                        println!("  Channel ID: {}", ctx.channel_id);
+                        println!("  Point Type: {}", ctx.point_type);
+                        println!("  ComSrv Point ID: {}", ctx.comsrv_point_id);
+                        println!("  Queue Key: {}", ctx.queue_key);
+                    }
+                }
+            } else {
+                println!("\n⚠ Action executed but no routing found");
+                println!("  (This instance/point may not be mapped to any channel)");
+            }
+        },
+        ServiceCommands::RoutingShow {
+            route_type,
+            prefix,
+            detailed,
+            limit,
+        } => {
+            // Get ModsrvContext which has RoutingCache
+            let ctx = service_ctx
+                .ok_or_else(|| {
+                    anyhow::anyhow!("Service context required for routing-show command")
+                })?
+                .modsrv()?;
+
+            let routing_cache = ctx.instance_manager.routing_cache();
+            let stats = routing_cache.stats();
+
+            // Determine prefix filter (empty string means no filter)
+            let filter_prefix = prefix.as_deref().unwrap_or("");
+
+            // Collect routes based on type
+            let route_type_lower = route_type.to_lowercase();
+            let mut all_routes: Vec<(String, String, &str)> = Vec::new();
+
+            match route_type_lower.as_str() {
+                "c2m" => {
+                    let routes = routing_cache.get_c2m_by_prefix(filter_prefix);
+                    all_routes.extend(routes.into_iter().map(|(k, v)| (k, v, "C2M")));
+                },
+                "m2c" => {
+                    let routes = routing_cache.get_m2c_by_prefix(filter_prefix);
+                    all_routes.extend(routes.into_iter().map(|(k, v)| (k, v, "M2C")));
+                },
+                "c2c" => {
+                    let routes = routing_cache.get_c2c_by_prefix(filter_prefix);
+                    all_routes.extend(routes.into_iter().map(|(k, v)| (k, v, "C2C")));
+                },
+                "all" => {
+                    let c2m = routing_cache.get_c2m_by_prefix(filter_prefix);
+                    let m2c = routing_cache.get_m2c_by_prefix(filter_prefix);
+                    let c2c = routing_cache.get_c2c_by_prefix(filter_prefix);
+                    all_routes.extend(c2m.into_iter().map(|(k, v)| (k, v, "C2M")));
+                    all_routes.extend(m2c.into_iter().map(|(k, v)| (k, v, "M2C")));
+                    all_routes.extend(c2c.into_iter().map(|(k, v)| (k, v, "C2C")));
+                },
+                _ => {
+                    return Err(anyhow::anyhow!(
+                        "Invalid route type '{}'. Must be one of: c2m, m2c, c2c, all",
+                        route_type
+                    ));
+                },
+            }
+
+            // Apply limit
+            let total_count = all_routes.len();
+            let limited_routes: Vec<_> = if limit > 0 {
+                all_routes.into_iter().take(limit).collect()
+            } else {
+                all_routes
+            };
+
+            // Print summary
+            println!("=== Routing Cache Summary ===\n");
+            println!("C2M Routes (Channel → Model): {} entries", stats.c2m_count);
+            println!("M2C Routes (Model → Channel): {} entries", stats.m2c_count);
+            println!(
+                "C2C Routes (Channel → Channel): {} entries",
+                stats.c2c_count
+            );
+            let total_routes = stats.c2m_count + stats.m2c_count + stats.c2c_count;
+            println!("Total: {} routes\n", total_routes);
+
+            if prefix.is_some() {
+                println!("Filter: Prefix = '{}'\n", filter_prefix);
+            }
+
+            // Print detailed breakdown if requested
+            if detailed {
+                println!("--- Routing Cache Details ---");
+                println!("Total Capacity: {} entries", total_routes);
+                if total_count > limited_routes.len() {
+                    println!(
+                        "Showing: {} of {} matching routes (limited by --limit {})",
+                        limited_routes.len(),
+                        total_count,
+                        limit
+                    );
+                } else {
+                    println!("Showing: {} matching routes", limited_routes.len());
+                }
+                println!();
+            }
+
+            // Print routing table
+            if limited_routes.is_empty() {
+                println!("⚠ No routing entries found");
+                if prefix.is_some() {
+                    println!("  (Try removing the --prefix filter or using a different prefix)");
+                }
+            } else {
+                println!("=== Routing Table ===");
+                println!("{:<8} {:<30} → {:<30}", "Type", "Source", "Target");
+                println!("{}", "─".repeat(72));
+
+                for (source, target, route_type) in limited_routes {
+                    println!("{:<8} {:<30} → {:<30}", route_type, source, target);
+                }
+
+                if total_count > limit && limit > 0 {
+                    println!();
+                    println!(
+                        "... and {} more entries (use --limit 0 to show all)",
+                        total_count - limit
+                    );
+                }
             }
         },
     }

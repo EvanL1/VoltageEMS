@@ -104,6 +104,7 @@ impl AppState {
         crate::api::handlers::point_handlers::update_point_handler,
         crate::api::handlers::point_handlers::delete_point_handler,
         crate::api::handlers::point_handlers::get_point_config_handler,
+        crate::api::handlers::point_handlers::batch_point_operations_handler,
 
         // Channel management (CRUD)
         crate::api::handlers::channel_management_handlers::create_channel_handler,
@@ -152,7 +153,16 @@ impl AppState {
             crate::dto::ParameterChangeType,
             // Point CRUD DTOs
             crate::api::handlers::point_handlers::PointCrudResult,
-            crate::api::handlers::point_handlers::PointUpdateRequest
+            crate::api::handlers::point_handlers::PointUpdateRequest,
+            // Batch Point CRUD DTOs
+            crate::api::handlers::point_handlers::PointBatchRequest,
+            crate::api::handlers::point_handlers::PointBatchResult,
+            crate::api::handlers::point_handlers::PointBatchCreateItem,
+            crate::api::handlers::point_handlers::PointBatchUpdateItem,
+            crate::api::handlers::point_handlers::PointBatchDeleteItem,
+            crate::api::handlers::point_handlers::OperationStats,
+            crate::api::handlers::point_handlers::OperationStat,
+            crate::api::handlers::point_handlers::PointBatchError
         )
     ),
     tags(
@@ -207,6 +217,8 @@ pub fn create_api_routes(
                 .post(create_adjustment_point_handler)
                 .put(update_adjustment_point_handler)
                 .delete(delete_adjustment_point_handler))
+        // Batch point operations endpoint (create/update/delete in single request)
+        .route("/api/channels/{channel_id}/points/batch", post(batch_point_operations_handler))
         // Unified write endpoint for all point types (T/S/C/A)
         .route("/api/channels/{channel_id}/write", post(write_channel_point))
         .route(

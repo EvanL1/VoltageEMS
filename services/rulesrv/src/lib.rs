@@ -6,7 +6,6 @@
 pub mod action_executor;
 pub mod condition_evaluator;
 pub mod error;
-pub mod routing_executor;
 pub mod rule_engine;
 pub mod rule_logger; // Rule execution logger
 pub mod rules_repository;

@@ -4,6 +4,7 @@ members = [
     "libs/common",
     "libs/voltage-config",
     "libs/voltage-rtdb",
+    "libs/voltage-routing",
     "libs/voltage-schema-macro",
     "services/comsrv",
     "services/modsrv",

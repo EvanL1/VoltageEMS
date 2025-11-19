@@ -165,6 +165,7 @@ impl ServiceContext {
 
     /// Initialize all services
     #[cfg(feature = "lib-mode")]
+    #[allow(dead_code)]
     pub async fn init_all(&mut self) -> Result<()> {
         // Parallel initialization for faster startup
         let (comsrv_result, modsrv_result, rulesrv_result) = tokio::join!(
@@ -300,8 +301,13 @@ impl ModsrvContext {
         // Create routing loader
         let routing_loader = Arc::new(RoutingLoader::new(instances_dir, sqlite_pool.clone()));
 
-        // Create empty routing cache (Monarch doesn't use routing)
-        let routing_cache = Arc::new(voltage_config::RoutingCache::new());
+        // Load routing cache from SQLite (enables direct library calls)
+        let (c2m_map, m2c_map) = load_routing_maps_from_sqlite(&sqlite_pool).await?;
+        let routing_cache = Arc::new(voltage_config::RoutingCache::from_maps(
+            c2m_map,
+            m2c_map,
+            std::collections::HashMap::new(), // C2C routing not yet implemented
+        ));
 
         // Create instance manager
         let instance_manager = Arc::new(InstanceManager::new(
@@ -388,4 +394,95 @@ impl RulesrvContext {
 
         Ok(rules)
     }
+}
+
+/// Load routing maps from SQLite database
+///
+/// This function loads C2M (Channel to Model) and M2C (Model to Channel) routing maps
+/// from the SQLite database, enabling monarch to perform routing operations directly
+/// without requiring services to be running.
+///
+/// # Returns
+/// * `Ok((c2m_map, m2c_map))` - HashMaps containing routing mappings
+/// * `Err(anyhow::Error)` - Database query error
+async fn load_routing_maps_from_sqlite(
+    sqlite_pool: &SqlitePool,
+) -> Result<(
+    std::collections::HashMap<String, String>,
+    std::collections::HashMap<String, String>,
+)> {
+    use voltage_config::KeySpaceConfig;
+
+    tracing::info!("Loading routing maps from SQLite for monarch");
+
+    let keyspace = KeySpaceConfig::production();
+    let mut c2m_map = std::collections::HashMap::new();
+    let mut m2c_map = std::collections::HashMap::new();
+
+    // Fetch all enabled measurement routing (C2M - uplink)
+    let measurement_routing = sqlx::query_as::<_, (u16, String, i32, String, u32, u32)>(
+        r#"
+        SELECT
+            instance_id, instance_name, channel_id, channel_type, channel_point_id,
+            measurement_id
+        FROM measurement_routing
+        WHERE enabled = TRUE
+        "#,
+    )
+    .fetch_all(sqlite_pool)
+    .await?;
+
+    for (instance_id, _instance_name, channel_id, channel_type, channel_point_id, measurement_id) in
+        measurement_routing
+    {
+        // Parse channel type
+        let point_type = voltage_config::protocols::PointType::from_str(&channel_type)
+            .ok_or_else(|| anyhow::anyhow!("Invalid channel type: {}", channel_type))?;
+
+        // Build routing keys (no prefix for hash fields)
+        // From: channel_id:type:point_id → To: instance_id:M:point_id
+        let from_key =
+            keyspace.c2m_route_key(channel_id as u16, point_type, &channel_point_id.to_string());
+        // Note: Target uses "M" (Measurement role), not a PointType enum
+        let to_key = format!("{}:M:{}", instance_id, measurement_id);
+
+        c2m_map.insert(from_key.to_string(), to_key);
+    }
+
+    // Fetch all enabled action routing (M2C - downlink)
+    let action_routing = sqlx::query_as::<_, (u16, String, u32, i32, String, u32)>(
+        r#"
+        SELECT
+            instance_id, instance_name, action_id, channel_id, channel_type,
+            channel_point_id
+        FROM action_routing
+        WHERE enabled = TRUE
+        "#,
+    )
+    .fetch_all(sqlite_pool)
+    .await?;
+
+    for (instance_id, _instance_name, action_id, channel_id, channel_type, channel_point_id) in
+        action_routing
+    {
+        // Parse channel type (C or A)
+        let point_type = voltage_config::protocols::PointType::from_str(&channel_type)
+            .ok_or_else(|| anyhow::anyhow!("Invalid channel type: {}", channel_type))?;
+
+        // Build routing keys
+        // From: instance_id:A:point_id → To: channel_id:type:point_id
+        let from_key = format!("{}:A:{}", instance_id, action_id);
+        let to_key =
+            keyspace.m2c_route_key(channel_id as u32, point_type, &channel_point_id.to_string());
+
+        m2c_map.insert(from_key, to_key.to_string());
+    }
+
+    tracing::info!(
+        "Loaded routing cache for monarch: {} C2M routes, {} M2C routes",
+        c2m_map.len(),
+        m2c_map.len()
+    );
+
+    Ok((c2m_map, m2c_map))
 }

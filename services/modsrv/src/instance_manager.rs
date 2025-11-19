@@ -1278,7 +1278,7 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
         value: f64,
     ) -> Result<()> {
         // Use application-layer routing with cache
-        let outcome = crate::routing_executor::set_action_point(
+        let outcome = voltage_routing::set_action_point(
             self.rtdb.as_ref(),
             &self.routing_cache,
             instance_name,
