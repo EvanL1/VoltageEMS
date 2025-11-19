@@ -3,10 +3,13 @@
 # Stage 1: Build binaries
 # Stage 2: Minimal runtime image
 
+# Support multi-platform builds, default to Linux ARM64 (for ARM IPC target)
+ARG TARGETPLATFORM=linux/arm64
+
 # ============================================================================
 # Stage 1: Builder
 # ============================================================================
-FROM --platform=linux/arm64 rust:1.90-alpine AS builder
+FROM --platform=$TARGETPLATFORM rust:1.90-alpine AS builder
 
 # Accept build parallelism argument (defaults to 4 cores)
 ARG BUILD_JOBS=4
@@ -32,7 +35,7 @@ RUN cargo build --release -p comsrv -p modsrv -p rulesrv
 # ============================================================================
 # Stage 2: Runtime Image
 # ============================================================================
-FROM --platform=linux/arm64 alpine:3.19
+FROM --platform=$TARGETPLATFORM alpine:3.19
 
 # Install only essential runtime dependencies
 RUN apk add --no-cache \
