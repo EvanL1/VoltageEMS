@@ -290,7 +290,7 @@ impl ReloadableService for ChannelManager {
 
 impl ChannelManager {
     /// Load channel configuration from SQLite database
-    async fn load_channel_from_db(
+    pub async fn load_channel_from_db(
         pool: &sqlx::SqlitePool,
         channel_id: u16,
     ) -> anyhow::Result<ChannelConfig> {

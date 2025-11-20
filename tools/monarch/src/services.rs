@@ -591,20 +591,26 @@ fn execute_docker_compose(args: &[&str]) -> Result<()> {
         ));
     };
 
-    // Build full args with -f flag
-    let mut full_args = vec!["compose", "-f", compose_file];
-    full_args.extend(args);
+    // Detect which Docker Compose version is available
+    let use_v2 = Command::new("docker")
+        .args(["compose", "version"])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
 
-    // Try docker compose (v2) first, then fall back to docker-compose (v1)
-    let output = Command::new("docker")
-        .args(&full_args)
-        .output()
-        .or_else(|_| {
-            // For docker-compose v1, adjust args format
-            let mut v1_args = vec!["-f", compose_file];
-            v1_args.extend(args);
-            Command::new("docker-compose").args(&v1_args).output()
-        })?;
+    let output = if use_v2 {
+        // Use Docker Compose V2 (docker compose)
+        let mut full_args = vec!["compose", "-f", compose_file];
+        full_args.extend(args);
+        Command::new("docker").args(&full_args).output()?
+    } else {
+        // Fall back to Docker Compose V1 (docker-compose)
+        let mut v1_args = vec!["-f", compose_file];
+        v1_args.extend(args);
+        Command::new("docker-compose").args(&v1_args).output()?
+    };
 
     if !output.status.success() {
         return Err(anyhow::anyhow!(

@@ -171,6 +171,67 @@ pub async fn init_modsrv_schema(pool: &SqlitePool) -> Result<()> {
     .execute(pool)
     .await?;
 
+    // Create triggers for automatic routing cleanup on point deletion
+    // When a telemetry point is deleted, remove corresponding measurement_routing records
+    sqlx::query(
+        "CREATE TRIGGER IF NOT EXISTS cleanup_routing_on_telemetry_delete
+         AFTER DELETE ON telemetry_points
+         FOR EACH ROW
+         BEGIN
+             DELETE FROM measurement_routing
+             WHERE channel_id = OLD.channel_id
+               AND channel_type = 'T'
+               AND channel_point_id = OLD.point_id;
+         END",
+    )
+    .execute(pool)
+    .await?;
+
+    // When a signal point is deleted, remove corresponding measurement_routing records
+    sqlx::query(
+        "CREATE TRIGGER IF NOT EXISTS cleanup_routing_on_signal_delete
+         AFTER DELETE ON signal_points
+         FOR EACH ROW
+         BEGIN
+             DELETE FROM measurement_routing
+             WHERE channel_id = OLD.channel_id
+               AND channel_type = 'S'
+               AND channel_point_id = OLD.point_id;
+         END",
+    )
+    .execute(pool)
+    .await?;
+
+    // When a control point is deleted, remove corresponding action_routing records
+    sqlx::query(
+        "CREATE TRIGGER IF NOT EXISTS cleanup_routing_on_control_delete
+         AFTER DELETE ON control_points
+         FOR EACH ROW
+         BEGIN
+             DELETE FROM action_routing
+             WHERE channel_id = OLD.channel_id
+               AND channel_type = 'C'
+               AND channel_point_id = OLD.point_id;
+         END",
+    )
+    .execute(pool)
+    .await?;
+
+    // When an adjustment point is deleted, remove corresponding action_routing records
+    sqlx::query(
+        "CREATE TRIGGER IF NOT EXISTS cleanup_routing_on_adjustment_delete
+         AFTER DELETE ON adjustment_points
+         FOR EACH ROW
+         BEGIN
+             DELETE FROM action_routing
+             WHERE channel_id = OLD.channel_id
+               AND channel_type = 'A'
+               AND channel_point_id = OLD.point_id;
+         END",
+    )
+    .execute(pool)
+    .await?;
+
     Ok(())
 }
 

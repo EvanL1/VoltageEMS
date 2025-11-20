@@ -10,7 +10,7 @@
 use crate::api::routes::AppState;
 use crate::dto::{AppError, MappingBatchUpdateResult, MappingUpdateMode, SuccessResponse};
 use axum::{
-    extract::{Path, State},
+    extract::{Path, Query, State},
     response::Json,
 };
 use serde::Deserialize;
@@ -232,7 +232,8 @@ pub async fn get_channel_mappings_handler(
     put,
     path = "/api/channels/{id}/mappings",
     params(
-        ("id" = u16, Path, description = "Channel identifier")
+        ("id" = u16, Path, description = "Channel identifier"),
+        ("auto_reload" = bool, Query, description = "Auto-reload channel after mappings update (default: true)")
     ),
     request_body(
         content = crate::dto::MappingBatchUpdateRequest,
@@ -525,6 +526,7 @@ pub async fn get_channel_mappings_handler(
 pub async fn update_channel_mappings_handler(
     Path(channel_id): Path<u16>,
     State(state): State<AppState>,
+    Query(reload_query): Query<crate::dto::AutoReloadQuery>,
     Json(mut req): Json<crate::dto::MappingBatchUpdateRequest>,
 ) -> Result<Json<SuccessResponse<crate::dto::MappingBatchUpdateResult>>, AppError> {
     // 1. Verify channel exists and get protocol
@@ -697,18 +699,39 @@ pub async fn update_channel_mappings_handler(
         .await
         .map_err(|e| AppError::internal_error(format!("Commit failed: {}", e)))?;
 
-    Ok(Json(SuccessResponse::new(MappingBatchUpdateResult {
-        updated_count: updated,
-        channel_reloaded: false,
-        validation_errors: vec![],
-        message: format!(
-            "Updated {} mapping(s) in {} mode",
+    // Trigger auto-reload if enabled (after mappings are updated)
+    crate::api::handlers::point_handlers::trigger_channel_reload_if_needed(
+        channel_id,
+        &state,
+        reload_query.auto_reload,
+    )
+    .await;
+
+    let message = if reload_query.auto_reload {
+        format!(
+            "Updated {} mapping(s) in {} mode and triggered channel reload",
             updated,
             match req.mode {
                 MappingUpdateMode::Replace => "replace",
                 MappingUpdateMode::Merge => "merge",
             }
-        ),
+        )
+    } else {
+        format!(
+            "Updated {} mapping(s) in {} mode (reload disabled)",
+            updated,
+            match req.mode {
+                MappingUpdateMode::Replace => "replace",
+                MappingUpdateMode::Merge => "merge",
+            }
+        )
+    };
+
+    Ok(Json(SuccessResponse::new(MappingBatchUpdateResult {
+        updated_count: updated,
+        channel_reloaded: reload_query.auto_reload,
+        validation_errors: vec![],
+        message,
     })))
 
     // Original implementation commented out - requires redesign for JSON-based mappings

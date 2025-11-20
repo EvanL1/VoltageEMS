@@ -305,6 +305,15 @@ if command -v docker &> /dev/null; then
             echo ""
             echo -e "${BLUE}Phase 1: Loading new images...${NC}"
 
+            # Clean up old backup tags first (keep only last 2 for safety)
+            echo "Cleaning up old backup tags..."
+            BACKUP_COUNT=$(docker images | grep -c "backup-" || true)
+            if [[ $BACKUP_COUNT -gt 2 ]]; then
+                # Remove oldest backup tags, keep last 2
+                docker images | grep "backup-" | sort -k2 | head -n -2 | awk '{print $1":"$2}' | xargs -r docker rmi 2>/dev/null || true
+                echo "  Cleaned up $(($BACKUP_COUNT - 2)) old backup tags"
+            fi
+
             # Backup existing images by tagging them
             echo "Creating backup tags for current images..."
             for image in voltageems:latest redis:8-alpine; do
@@ -434,10 +443,10 @@ if command -v docker &> /dev/null; then
                     fi
                 done
 
-                # Restart services using docker-compose (if file exists)
+                # Restart services using docker-compose (force recreate to use new image)
                 if [[ -f "$INSTALL_DIR/docker-compose.yml" ]]; then
-                    run_docker_compose -f "$INSTALL_DIR/docker-compose.yml" up -d comsrv modsrv rulesrv
-                    echo -e "${GREEN}✓ VoltageEMS services updated successfully${NC}"
+                    run_docker_compose -f "$INSTALL_DIR/docker-compose.yml" up -d --force-recreate comsrv modsrv rulesrv
+                    echo -e "${GREEN}✓ VoltageEMS services updated successfully (containers recreated)${NC}"
                 else
                     echo -e "${YELLOW}Note: docker-compose.yml not found, start manually after installation${NC}"
                 fi
@@ -452,8 +461,20 @@ if command -v docker &> /dev/null; then
             # Remove backup tags (only if update was successful)
             BACKUP_IMAGES=$(docker images | grep "backup-" | awk '{print $1":"$2}')
             if [[ -n "$BACKUP_IMAGES" ]]; then
-                echo "$BACKUP_IMAGES" | xargs -r docker rmi 2>/dev/null || true
-                echo "  Removed backup images"
+                FAILED_REMOVALS=""
+                for img in $BACKUP_IMAGES; do
+                    if ! docker rmi "$img" 2>/dev/null; then
+                        FAILED_REMOVALS="$FAILED_REMOVALS $img"
+                    fi
+                done
+
+                if [[ -z "$FAILED_REMOVALS" ]]; then
+                    echo "  Removed all backup images"
+                else
+                    echo -e "${YELLOW}  ⚠ Some backup tags remain (in use by containers):${NC}"
+                    echo "    $FAILED_REMOVALS"
+                    echo "    Tip: Stop containers first, or they will be cleaned on next update"
+                fi
             fi
 
             # Clean up dangling images

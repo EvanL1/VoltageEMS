@@ -16,20 +16,42 @@ use schemars::JsonSchema;
 
 /// Custom deserializer for boolean fields that supports multiple input formats
 ///
-/// Supports: 1/0, true/false, yes/no (case-insensitive)
-/// This allows CSV files to use numeric 1/0 while maintaining bool type in code
+/// Supports native JSON booleans, integers, and string values:
+/// - JSON boolean: true, false
+/// - JSON integer: 0 (false), 1 (true)
+/// - CSV string: "1"/"0", "true"/"false", "yes"/"no" (case-insensitive)
 fn deserialize_bool_flexible<'de, D>(deserializer: D) -> Result<bool, D::Error>
 where
     D: Deserializer<'de>,
 {
-    let s = String::deserialize(deserializer)?;
-    match s.to_lowercase().trim() {
-        "1" | "true" | "yes" => Ok(true),
-        "0" | "false" | "no" | "" => Ok(false),
-        other => Err(de::Error::custom(format!(
-            "Invalid boolean value '{}', expected: 1/0, true/false, yes/no",
-            other
-        ))),
+    use serde::Deserialize;
+
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum BoolOrStringOrInt {
+        Bool(bool),
+        Int(i64),
+        String(String),
+    }
+
+    match BoolOrStringOrInt::deserialize(deserializer)? {
+        BoolOrStringOrInt::Bool(b) => Ok(b),
+        BoolOrStringOrInt::Int(i) => match i {
+            0 => Ok(false),
+            1 => Ok(true),
+            _ => Err(de::Error::custom(format!(
+                "Invalid integer value {}, expected 0 or 1",
+                i
+            ))),
+        },
+        BoolOrStringOrInt::String(s) => match s.to_lowercase().trim() {
+            "1" | "true" | "yes" => Ok(true),
+            "0" | "false" | "no" | "" => Ok(false),
+            other => Err(de::Error::custom(format!(
+                "Invalid boolean value '{}', expected: 1/0, true/false, yes/no, or boolean",
+                other
+            ))),
+        },
     }
 }
 

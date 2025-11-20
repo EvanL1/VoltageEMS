@@ -402,6 +402,123 @@ pub async fn load_routing_maps_from_sqlite(
     Ok((c2m_map, m2c_map))
 }
 
+/// Validate routing integrity and check for orphan records
+///
+/// This function validates that all routing table entries point to existing
+/// channel points. It's called during service startup to ensure data integrity.
+///
+/// # Arguments
+/// * `sqlite_pool` - SQLite connection pool
+///
+/// # Returns
+/// * `Ok(())` - Validation passed or orphans found but service can continue
+/// * `Err(ModSrvError)` - Critical validation failure
+///
+/// # Behavior
+/// - Reports orphan measurement_routing records (T/S points not found)
+/// - Reports orphan action_routing records (C/A points not found)
+/// - Logs warnings but allows service to start
+/// - Suggests running migration script if orphans found
+pub async fn validate_routing_integrity(sqlite_pool: &SqlitePool) -> Result<()> {
+    info!("Validating routing table integrity...");
+
+    // Check measurement_routing for orphan T/S points
+    let orphan_telemetry: i64 = sqlx::query_scalar(
+        r#"
+        SELECT COUNT(*)
+        FROM measurement_routing
+        WHERE channel_type = 'T'
+          AND NOT EXISTS (
+              SELECT 1 FROM telemetry_points
+              WHERE telemetry_points.channel_id = measurement_routing.channel_id
+                AND telemetry_points.point_id = measurement_routing.channel_point_id
+          )
+        "#,
+    )
+    .fetch_one(sqlite_pool)
+    .await
+    .unwrap_or(0);
+
+    let orphan_signal: i64 = sqlx::query_scalar(
+        r#"
+        SELECT COUNT(*)
+        FROM measurement_routing
+        WHERE channel_type = 'S'
+          AND NOT EXISTS (
+              SELECT 1 FROM signal_points
+              WHERE signal_points.channel_id = measurement_routing.channel_id
+                AND signal_points.point_id = measurement_routing.channel_point_id
+          )
+        "#,
+    )
+    .fetch_one(sqlite_pool)
+    .await
+    .unwrap_or(0);
+
+    // Check action_routing for orphan C/A points
+    let orphan_control: i64 = sqlx::query_scalar(
+        r#"
+        SELECT COUNT(*)
+        FROM action_routing
+        WHERE channel_type = 'C'
+          AND NOT EXISTS (
+              SELECT 1 FROM control_points
+              WHERE control_points.channel_id = action_routing.channel_id
+                AND control_points.point_id = action_routing.channel_point_id
+          )
+        "#,
+    )
+    .fetch_one(sqlite_pool)
+    .await
+    .unwrap_or(0);
+
+    let orphan_adjustment: i64 = sqlx::query_scalar(
+        r#"
+        SELECT COUNT(*)
+        FROM action_routing
+        WHERE channel_type = 'A'
+          AND NOT EXISTS (
+              SELECT 1 FROM adjustment_points
+              WHERE adjustment_points.channel_id = action_routing.channel_id
+                AND adjustment_points.point_id = action_routing.channel_point_id
+          )
+        "#,
+    )
+    .fetch_one(sqlite_pool)
+    .await
+    .unwrap_or(0);
+
+    let total_orphans = orphan_telemetry + orphan_signal + orphan_control + orphan_adjustment;
+
+    if total_orphans > 0 {
+        warn!("Found {} orphan routing records:", total_orphans);
+        if orphan_telemetry > 0 {
+            warn!(
+                "  - {} orphan telemetry (T) routing entries",
+                orphan_telemetry
+            );
+        }
+        if orphan_signal > 0 {
+            warn!("  - {} orphan signal (S) routing entries", orphan_signal);
+        }
+        if orphan_control > 0 {
+            warn!("  - {} orphan control (C) routing entries", orphan_control);
+        }
+        if orphan_adjustment > 0 {
+            warn!(
+                "  - {} orphan adjustment (A) routing entries",
+                orphan_adjustment
+            );
+        }
+        warn!("These orphan records will be skipped during routing operations.");
+        warn!("To clean them up, run: sqlite3 data/voltage.db < scripts/migrations/add_routing_cleanup_triggers.sql");
+    } else {
+        info!("Routing table integrity validation passed: no orphan records found");
+    }
+
+    Ok(())
+}
+
 /// Refresh routing cache from SQLite database
 ///
 /// This function reloads routing data from SQLite and updates the in-memory
@@ -514,6 +631,10 @@ pub async fn create_app_state(service_info: &ServiceInfo) -> Result<Arc<AppState
 
     // ============ Phase 1: Load routing configuration from unified database ============
     info!("Loading routing configuration from unified database...");
+
+    // Validate routing integrity before loading (check for orphan records)
+    validate_routing_integrity(&sqlite_pool).await?;
+
     let routing_cache = {
         // Load routing maps directly from the same SQLite pool
         let (c2m_map, m2c_map) = load_routing_maps_from_sqlite(&sqlite_pool).await?;

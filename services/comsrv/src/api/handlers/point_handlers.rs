@@ -576,6 +576,11 @@ pub struct PointBatchCreateItem {
     #[schema(example = 101)]
     pub point_id: u32,
 
+    /// Force create mode: if true, use INSERT OR REPLACE (upsert), if false, fail on duplicate (default: false)
+    #[serde(default)]
+    #[schema(example = false)]
+    pub force: bool,
+
     /// Point configuration data (structure varies by point type)
     pub data: serde_json::Value,
 }
@@ -592,8 +597,8 @@ pub struct PointBatchUpdateItem {
     pub point_id: u32,
 
     /// Fields to update (only provide fields you want to update)
-    #[serde(flatten)]
-    pub update: PointUpdateRequest,
+    /// Same structure as PointUpdateRequest, wrapped in "data" for consistency with CREATE
+    pub data: PointUpdateRequest,
 }
 
 /// Batch delete operation item
@@ -692,7 +697,8 @@ pub struct PointBatchError {
     path = "/api/channels/{channel_id}/T/points/{point_id}",
     params(
         ("channel_id" = u16, Path, description = "Channel identifier"),
-        ("point_id" = u32, Path, description = "Point identifier")
+        ("point_id" = u32, Path, description = "Point identifier"),
+        ("auto_reload" = bool, Query, description = "Auto-reload channel after creation (default: true)")
     ),
     responses(
         (status = 201, description = "Point created", body = PointCrudResult),
@@ -705,6 +711,7 @@ pub struct PointBatchError {
 pub async fn create_telemetry_point_handler(
     Path((channel_id, point_id)): Path<(u16, u32)>,
     State(state): State<AppState>,
+    Query(reload_query): Query<crate::dto::AutoReloadQuery>,
     Json(payload): Json<serde_json::Value>,
 ) -> Result<Json<SuccessResponse<PointCrudResult>>, AppError> {
     // Deserialize to TelemetryPoint
@@ -752,6 +759,9 @@ pub async fn create_telemetry_point_handler(
         channel_id
     );
 
+    // Trigger auto-reload if enabled
+    trigger_channel_reload_if_needed(channel_id, &state, reload_query.auto_reload).await;
+
     Ok(Json(SuccessResponse::new(PointCrudResult {
         channel_id,
         point_type: "T".to_string(),
@@ -769,7 +779,8 @@ pub async fn create_telemetry_point_handler(
     path = "/api/channels/{channel_id}/S/points/{point_id}",
     params(
         ("channel_id" = u16, Path, description = "Channel identifier"),
-        ("point_id" = u32, Path, description = "Point identifier")
+        ("point_id" = u32, Path, description = "Point identifier"),
+        ("auto_reload" = bool, Query, description = "Auto-reload channel after creation (default: true)")
     ),
     responses(
         (status = 201, description = "Point created", body = PointCrudResult),
@@ -782,6 +793,7 @@ pub async fn create_telemetry_point_handler(
 pub async fn create_signal_point_handler(
     Path((channel_id, point_id)): Path<(u16, u32)>,
     State(state): State<AppState>,
+    Query(reload_query): Query<crate::dto::AutoReloadQuery>,
     Json(payload): Json<serde_json::Value>,
 ) -> Result<Json<SuccessResponse<PointCrudResult>>, AppError> {
     // Extract standard fields from payload
@@ -863,6 +875,9 @@ pub async fn create_signal_point_handler(
         channel_id
     );
 
+    // Trigger auto-reload if enabled
+    trigger_channel_reload_if_needed(channel_id, &state, reload_query.auto_reload).await;
+
     Ok(Json(SuccessResponse::new(PointCrudResult {
         channel_id,
         point_type: "S".to_string(),
@@ -880,7 +895,8 @@ pub async fn create_signal_point_handler(
     path = "/api/channels/{channel_id}/C/points/{point_id}",
     params(
         ("channel_id" = u16, Path, description = "Channel identifier"),
-        ("point_id" = u32, Path, description = "Point identifier")
+        ("point_id" = u32, Path, description = "Point identifier"),
+        ("auto_reload" = bool, Query, description = "Auto-reload channel after creation (default: true)")
     ),
     responses(
         (status = 201, description = "Point created", body = PointCrudResult),
@@ -893,6 +909,7 @@ pub async fn create_signal_point_handler(
 pub async fn create_control_point_handler(
     Path((channel_id, point_id)): Path<(u16, u32)>,
     State(state): State<AppState>,
+    Query(reload_query): Query<crate::dto::AutoReloadQuery>,
     Json(payload): Json<serde_json::Value>,
 ) -> Result<Json<SuccessResponse<PointCrudResult>>, AppError> {
     // Extract standard fields from payload
@@ -969,6 +986,9 @@ pub async fn create_control_point_handler(
         channel_id
     );
 
+    // Trigger auto-reload if enabled
+    trigger_channel_reload_if_needed(channel_id, &state, reload_query.auto_reload).await;
+
     Ok(Json(SuccessResponse::new(PointCrudResult {
         channel_id,
         point_type: "C".to_string(),
@@ -986,7 +1006,8 @@ pub async fn create_control_point_handler(
     path = "/api/channels/{channel_id}/A/points/{point_id}",
     params(
         ("channel_id" = u16, Path, description = "Channel identifier"),
-        ("point_id" = u32, Path, description = "Point identifier")
+        ("point_id" = u32, Path, description = "Point identifier"),
+        ("auto_reload" = bool, Query, description = "Auto-reload channel after creation (default: true)")
     ),
     responses(
         (status = 201, description = "Point created", body = PointCrudResult),
@@ -999,6 +1020,7 @@ pub async fn create_control_point_handler(
 pub async fn create_adjustment_point_handler(
     Path((channel_id, point_id)): Path<(u16, u32)>,
     State(state): State<AppState>,
+    Query(reload_query): Query<crate::dto::AutoReloadQuery>,
     Json(payload): Json<serde_json::Value>,
 ) -> Result<Json<SuccessResponse<PointCrudResult>>, AppError> {
     // Extract standard fields from payload
@@ -1080,6 +1102,9 @@ pub async fn create_adjustment_point_handler(
         point_id,
         channel_id
     );
+
+    // Trigger auto-reload if enabled
+    trigger_channel_reload_if_needed(channel_id, &state, reload_query.auto_reload).await;
 
     Ok(Json(SuccessResponse::new(PointCrudResult {
         channel_id,
@@ -1234,7 +1259,8 @@ pub struct PointUpdateRequest {
     params(
         ("channel_id" = u16, Path, description = "Channel identifier"),
         ("type" = String, Path, description = "Point type: T, S, C, or A"),
-        ("point_id" = u32, Path, description = "Point identifier")
+        ("point_id" = u32, Path, description = "Point identifier"),
+        ("auto_reload" = bool, Query, description = "Auto-reload channel after update (default: true)")
     ),
     request_body(
         content = PointUpdateRequest,
@@ -1300,6 +1326,7 @@ pub struct PointUpdateRequest {
 pub async fn update_point_handler(
     Path((channel_id, point_type, point_id)): Path<(u16, String, u32)>,
     State(state): State<AppState>,
+    Query(reload_query): Query<crate::dto::AutoReloadQuery>,
     Json(update): Json<PointUpdateRequest>,
 ) -> Result<Json<SuccessResponse<PointCrudResult>>, AppError> {
     let point_type_upper = point_type.to_ascii_uppercase();
@@ -1425,6 +1452,9 @@ pub async fn update_point_handler(
         point_id,
         channel_id
     );
+
+    // Trigger auto-reload if enabled
+    trigger_channel_reload_if_needed(channel_id, &state, reload_query.auto_reload).await;
 
     Ok(Json(SuccessResponse::new(PointCrudResult {
         channel_id,
@@ -1637,7 +1667,8 @@ pub async fn get_adjustment_point_config_handler(
     params(
         ("channel_id" = u16, Path, description = "Channel identifier"),
         ("type" = String, Path, description = "Point type: T, S, C, or A"),
-        ("point_id" = u32, Path, description = "Point identifier")
+        ("point_id" = u32, Path, description = "Point identifier"),
+        ("auto_reload" = bool, Query, description = "Auto-reload channel after deletion (default: true)")
     ),
     responses(
         (status = 200, description = "Point deleted", body = PointCrudResult),
@@ -1649,6 +1680,7 @@ pub async fn get_adjustment_point_config_handler(
 pub async fn delete_point_handler(
     Path((channel_id, point_type, point_id)): Path<(u16, String, u32)>,
     State(state): State<AppState>,
+    Query(reload_query): Query<crate::dto::AutoReloadQuery>,
 ) -> Result<Json<SuccessResponse<PointCrudResult>>, AppError> {
     let point_type_upper = point_type.to_ascii_uppercase();
 
@@ -1715,6 +1747,50 @@ pub async fn delete_point_handler(
         channel_id
     );
 
+    // Clear Redis data for the deleted point
+    // Redis structure: comsrv:{channel_id}:{point_type} (Hash) with fields:
+    //   - {point_id} (value)
+    //   - {point_id}:ts (timestamp)
+    //   - {point_id}:raw (raw value)
+    let redis_key = format!("comsrv:{}:{}", channel_id, point_type_upper);
+    let fields_to_delete = vec![
+        point_id.to_string(),
+        format!("{}:ts", point_id),
+        format!("{}:raw", point_id),
+    ];
+
+    for field in &fields_to_delete {
+        match state.rtdb.hash_del(&redis_key, field).await {
+            Ok(deleted) => {
+                if deleted {
+                    tracing::debug!(
+                        "Cleared Redis field {} from {} for point {}",
+                        field,
+                        redis_key,
+                        point_id
+                    );
+                }
+            },
+            Err(e) => {
+                tracing::warn!(
+                    "Failed to clear Redis field {} for point {}: {} (will be cleaned on reload)",
+                    field,
+                    point_id,
+                    e
+                );
+            },
+        }
+    }
+
+    tracing::info!(
+        "Cleared Redis data for point {} in channel {}",
+        point_id,
+        channel_id
+    );
+
+    // Trigger auto-reload if enabled
+    trigger_channel_reload_if_needed(channel_id, &state, reload_query.auto_reload).await;
+
     Ok(Json(SuccessResponse::new(PointCrudResult {
         channel_id,
         point_type: point_type_upper,
@@ -1732,11 +1808,13 @@ pub async fn delete_point_handler(
 pub async fn update_telemetry_point_handler(
     Path((channel_id, point_id)): Path<(u16, u32)>,
     State(state): State<AppState>,
+    Query(reload_query): Query<crate::dto::AutoReloadQuery>,
     Json(update): Json<PointUpdateRequest>,
 ) -> Result<Json<SuccessResponse<PointCrudResult>>, AppError> {
     update_point_handler(
         Path((channel_id, "T".to_string(), point_id)),
         State(state),
+        Query(reload_query),
         Json(update),
     )
     .await
@@ -1746,11 +1824,13 @@ pub async fn update_telemetry_point_handler(
 pub async fn update_signal_point_handler(
     Path((channel_id, point_id)): Path<(u16, u32)>,
     State(state): State<AppState>,
+    Query(reload_query): Query<crate::dto::AutoReloadQuery>,
     Json(update): Json<PointUpdateRequest>,
 ) -> Result<Json<SuccessResponse<PointCrudResult>>, AppError> {
     update_point_handler(
         Path((channel_id, "S".to_string(), point_id)),
         State(state),
+        Query(reload_query),
         Json(update),
     )
     .await
@@ -1760,11 +1840,13 @@ pub async fn update_signal_point_handler(
 pub async fn update_control_point_handler(
     Path((channel_id, point_id)): Path<(u16, u32)>,
     State(state): State<AppState>,
+    Query(reload_query): Query<crate::dto::AutoReloadQuery>,
     Json(update): Json<PointUpdateRequest>,
 ) -> Result<Json<SuccessResponse<PointCrudResult>>, AppError> {
     update_point_handler(
         Path((channel_id, "C".to_string(), point_id)),
         State(state),
+        Query(reload_query),
         Json(update),
     )
     .await
@@ -1774,11 +1856,13 @@ pub async fn update_control_point_handler(
 pub async fn update_adjustment_point_handler(
     Path((channel_id, point_id)): Path<(u16, u32)>,
     State(state): State<AppState>,
+    Query(reload_query): Query<crate::dto::AutoReloadQuery>,
     Json(update): Json<PointUpdateRequest>,
 ) -> Result<Json<SuccessResponse<PointCrudResult>>, AppError> {
     update_point_handler(
         Path((channel_id, "A".to_string(), point_id)),
         State(state),
+        Query(reload_query),
         Json(update),
     )
     .await
@@ -1792,32 +1876,56 @@ pub async fn update_adjustment_point_handler(
 pub async fn delete_telemetry_point_handler(
     Path((channel_id, point_id)): Path<(u16, u32)>,
     State(state): State<AppState>,
+    Query(reload_query): Query<crate::dto::AutoReloadQuery>,
 ) -> Result<Json<SuccessResponse<PointCrudResult>>, AppError> {
-    delete_point_handler(Path((channel_id, "T".to_string(), point_id)), State(state)).await
+    delete_point_handler(
+        Path((channel_id, "T".to_string(), point_id)),
+        State(state),
+        Query(reload_query),
+    )
+    .await
 }
 
 /// Delete signal point (wrapper for literal /S/ route)
 pub async fn delete_signal_point_handler(
     Path((channel_id, point_id)): Path<(u16, u32)>,
     State(state): State<AppState>,
+    Query(reload_query): Query<crate::dto::AutoReloadQuery>,
 ) -> Result<Json<SuccessResponse<PointCrudResult>>, AppError> {
-    delete_point_handler(Path((channel_id, "S".to_string(), point_id)), State(state)).await
+    delete_point_handler(
+        Path((channel_id, "S".to_string(), point_id)),
+        State(state),
+        Query(reload_query),
+    )
+    .await
 }
 
 /// Delete control point (wrapper for literal /C/ route)
 pub async fn delete_control_point_handler(
     Path((channel_id, point_id)): Path<(u16, u32)>,
     State(state): State<AppState>,
+    Query(reload_query): Query<crate::dto::AutoReloadQuery>,
 ) -> Result<Json<SuccessResponse<PointCrudResult>>, AppError> {
-    delete_point_handler(Path((channel_id, "C".to_string(), point_id)), State(state)).await
+    delete_point_handler(
+        Path((channel_id, "C".to_string(), point_id)),
+        State(state),
+        Query(reload_query),
+    )
+    .await
 }
 
 /// Delete adjustment point (wrapper for literal /A/ route)
 pub async fn delete_adjustment_point_handler(
     Path((channel_id, point_id)): Path<(u16, u32)>,
     State(state): State<AppState>,
+    Query(reload_query): Query<crate::dto::AutoReloadQuery>,
 ) -> Result<Json<SuccessResponse<PointCrudResult>>, AppError> {
-    delete_point_handler(Path((channel_id, "A".to_string(), point_id)), State(state)).await
+    delete_point_handler(
+        Path((channel_id, "A".to_string(), point_id)),
+        State(state),
+        Query(reload_query),
+    )
+    .await
 }
 
 // ============================================================================
@@ -2135,7 +2243,8 @@ pub async fn get_unmapped_points_handler(
     post,
     path = "/api/channels/{channel_id}/points/batch",
     params(
-        ("channel_id" = u16, Path, description = "Channel identifier")
+        ("channel_id" = u16, Path, description = "Channel identifier"),
+        ("auto_reload" = bool, Query, description = "Auto-reload channel after batch operations (default: true)")
     ),
     request_body(
         content = PointBatchRequest,
@@ -2174,10 +2283,12 @@ pub async fn get_unmapped_points_handler(
                         {
                             "point_type": "T",
                             "point_id": 102,
-                            "signal_name": "DC_Current",
-                            "scale": 0.01,
-                            "description": "Updated DC current"
-                            // Partial update: only these 3 fields updated, others unchanged
+                            "data": {
+                                "signal_name": "DC_Current",
+                                "scale": 0.01,
+                                "description": "Updated DC current"
+                                // Partial update: only these 3 fields updated, others unchanged
+                            }
                         }
                     ],
                     "delete": [
@@ -2255,6 +2366,42 @@ pub async fn get_unmapped_points_handler(
                         }
                     ]
                 })
+            )),
+            ("Force Create (UPSERT)" = (
+                summary = "Force create with INSERT OR REPLACE behavior",
+                description = "Use force=true to enable UPSERT mode: if point exists, it will be replaced; if not, it will be created. This is useful for batch imports where you want to ensure the data matches exactly what you provide, regardless of existing state. **Default behavior (force=false)**: CREATE fails if point already exists.",
+                value = json!({
+                    "create": [
+                        {
+                            "point_type": "T",
+                            "point_id": 105,
+                            "force": false,  // Default mode: fail if point 105 exists
+                            "data": {
+                                "signal_name": "Voltage_L1",
+                                "scale": 0.1,
+                                "offset": 0.0,
+                                "unit": "V",
+                                "data_type": "float32",
+                                "reverse": false,
+                                "description": "Phase L1 voltage"
+                            }
+                        },
+                        {
+                            "point_type": "T",
+                            "point_id": 106,
+                            "force": true,   // UPSERT mode: replace if exists, create if not
+                            "data": {
+                                "signal_name": "Voltage_L2",
+                                "scale": 0.1,
+                                "offset": 0.0,
+                                "unit": "V",
+                                "data_type": "float32",
+                                "reverse": false,
+                                "description": "Phase L2 voltage (will replace existing config if any)"
+                            }
+                        }
+                    ]
+                })
             ))
         )
     ),
@@ -2303,6 +2450,7 @@ pub async fn get_unmapped_points_handler(
 pub async fn batch_point_operations_handler(
     Path(channel_id): Path<u16>,
     State(state): State<AppState>,
+    Query(reload_query): Query<crate::dto::AutoReloadQuery>,
     Json(request): Json<PointBatchRequest>,
 ) -> Result<Json<SuccessResponse<PointBatchResult>>, AppError> {
     use std::time::Instant;
@@ -2390,6 +2538,9 @@ pub async fn batch_point_operations_handler(
         duration_ms
     );
 
+    // Trigger auto-reload if enabled (unified reload after all batch operations)
+    trigger_channel_reload_if_needed(channel_id, &state, reload_query.auto_reload).await;
+
     Ok(Json(SuccessResponse::new(PointBatchResult {
         total_operations,
         succeeded,
@@ -2425,114 +2576,145 @@ async fn process_create_operation(
         _ => return Err(format!("Invalid point type '{}'", item.point_type)),
     };
 
-    // Validate point uniqueness
-    let existing: Option<(i64,)> = sqlx::query_as(&format!(
-        "SELECT point_id FROM {} WHERE channel_id = ? AND point_id = ?",
-        table
-    ))
-    .bind(channel_id as i64)
-    .bind(item.point_id as i64)
-    .fetch_optional(&state.sqlite_pool)
-    .await
-    .map_err(|e| format!("Database error: {}", e))?;
+    // Validate point uniqueness (skip if force=true for upsert behavior)
+    if !item.force {
+        let existing: Option<(i64,)> = sqlx::query_as(&format!(
+            "SELECT point_id FROM {} WHERE channel_id = ? AND point_id = ?",
+            table
+        ))
+        .bind(channel_id as i64)
+        .bind(item.point_id as i64)
+        .fetch_optional(&state.sqlite_pool)
+        .await
+        .map_err(|e| format!("Database error: {}", e))?;
 
-    if existing.is_some() {
-        return Err(format!("Point {} already exists", item.point_id));
+        if existing.is_some() {
+            return Err(format!("Point {} already exists", item.point_id));
+        }
+    }
+
+    // Inject point_id into data before deserialization (required by Point struct)
+    let mut data_with_id = item.data.clone();
+    if let Some(obj) = data_with_id.as_object_mut() {
+        obj.insert("point_id".to_string(), serde_json::json!(item.point_id));
     }
 
     // Deserialize and insert based on point type
     match point_type_upper.as_str() {
         "T" => {
-            let point: TelemetryPoint = serde_json::from_value(item.data.clone())
+            let point: TelemetryPoint = serde_json::from_value(data_with_id.clone())
                 .map_err(|e| format!("Invalid telemetry point data: {}", e))?;
 
-            sqlx::query(
+            let sql = if item.force {
+                "INSERT OR REPLACE INTO telemetry_points
+                 (channel_id, point_id, signal_name, scale, offset, unit, data_type, reverse, description, protocol_mappings)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)"
+            } else {
                 "INSERT INTO telemetry_points
                  (channel_id, point_id, signal_name, scale, offset, unit, data_type, reverse, description, protocol_mappings)
                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)"
-            )
-            .bind(channel_id as i64)
-            .bind(item.point_id as i64)
-            .bind(&point.base.signal_name)
-            .bind(point.scale)
-            .bind(point.offset)
-            .bind(&point.base.unit)
-            .bind(&point.data_type)
-            .bind(point.reverse)
-            .bind(&point.base.description)
-            .execute(&state.sqlite_pool)
-            .await
-            .map_err(|e| format!("Failed to insert: {}", e))?;
+            };
+
+            sqlx::query(sql)
+                .bind(channel_id as i64)
+                .bind(item.point_id as i64)
+                .bind(&point.base.signal_name)
+                .bind(point.scale)
+                .bind(point.offset)
+                .bind(&point.base.unit)
+                .bind(&point.data_type)
+                .bind(point.reverse)
+                .bind(&point.base.description)
+                .execute(&state.sqlite_pool)
+                .await
+                .map_err(|e| format!("Failed to insert: {}", e))?;
         },
         "S" => {
-            let point: SignalPoint = serde_json::from_value(item.data.clone())
+            let point: SignalPoint = serde_json::from_value(data_with_id.clone())
                 .map_err(|e| format!("Invalid signal point data: {}", e))?;
 
-            sqlx::query(
+            let sql = if item.force {
+                "INSERT OR REPLACE INTO signal_points
+                 (channel_id, point_id, signal_name, unit, reverse, description, protocol_mappings)
+                 VALUES (?, ?, ?, ?, ?, ?, NULL)"
+            } else {
                 "INSERT INTO signal_points
                  (channel_id, point_id, signal_name, unit, reverse, description, protocol_mappings)
-                 VALUES (?, ?, ?, ?, ?, ?, NULL)",
-            )
-            .bind(channel_id as i64)
-            .bind(item.point_id as i64)
-            .bind(&point.base.signal_name)
-            .bind(&point.base.unit)
-            .bind(point.reverse)
-            .bind(&point.base.description)
-            .execute(&state.sqlite_pool)
-            .await
-            .map_err(|e| format!("Failed to insert: {}", e))?;
+                 VALUES (?, ?, ?, ?, ?, ?, NULL)"
+            };
+
+            sqlx::query(sql)
+                .bind(channel_id as i64)
+                .bind(item.point_id as i64)
+                .bind(&point.base.signal_name)
+                .bind(&point.base.unit)
+                .bind(point.reverse)
+                .bind(&point.base.description)
+                .execute(&state.sqlite_pool)
+                .await
+                .map_err(|e| format!("Failed to insert: {}", e))?;
         },
         "C" => {
-            let point: ControlPoint = serde_json::from_value(item.data.clone())
+            let point: ControlPoint = serde_json::from_value(data_with_id.clone())
                 .map_err(|e| format!("Invalid control point data: {}", e))?;
 
-            sqlx::query(
+            let sql = if item.force {
+                "INSERT OR REPLACE INTO control_points
+                 (channel_id, point_id, signal_name, unit, description, control_type, on_value, off_value, pulse_duration_ms, protocol_mappings)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)"
+            } else {
                 "INSERT INTO control_points
                  (channel_id, point_id, signal_name, unit, description, control_type, on_value, off_value, pulse_duration_ms, protocol_mappings)
                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)"
-            )
-            .bind(channel_id as i64)
-            .bind(item.point_id as i64)
-            .bind(&point.base.signal_name)
-            .bind(&point.base.unit)
-            .bind(&point.base.description)
-            .bind(&point.control_type)
-            .bind(point.on_value)
-            .bind(point.off_value)
-            .bind(point.pulse_duration_ms)
-            .execute(&state.sqlite_pool)
-            .await
-            .map_err(|e| format!("Failed to insert: {}", e))?;
+            };
+
+            sqlx::query(sql)
+                .bind(channel_id as i64)
+                .bind(item.point_id as i64)
+                .bind(&point.base.signal_name)
+                .bind(&point.base.unit)
+                .bind(&point.base.description)
+                .bind(&point.control_type)
+                .bind(point.on_value)
+                .bind(point.off_value)
+                .bind(point.pulse_duration_ms)
+                .execute(&state.sqlite_pool)
+                .await
+                .map_err(|e| format!("Failed to insert: {}", e))?;
         },
         "A" => {
-            let point: AdjustmentPoint = serde_json::from_value(item.data.clone())
+            let point: AdjustmentPoint = serde_json::from_value(data_with_id.clone())
                 .map_err(|e| format!("Invalid adjustment point data: {}", e))?;
 
             // Extract reverse from JSON (not in AdjustmentPoint struct)
-            let reverse = item
-                .data
+            let reverse = data_with_id
                 .get("reverse")
                 .and_then(|v| v.as_bool())
                 .unwrap_or(false);
 
-            sqlx::query(
+            let sql = if item.force {
+                "INSERT OR REPLACE INTO adjustment_points
+                 (channel_id, point_id, signal_name, scale, offset, unit, reverse, data_type, description, protocol_mappings)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)"
+            } else {
                 "INSERT INTO adjustment_points
                  (channel_id, point_id, signal_name, scale, offset, unit, reverse, data_type, description, protocol_mappings)
                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)"
-            )
-            .bind(channel_id as i64)
-            .bind(item.point_id as i64)
-            .bind(&point.base.signal_name)
-            .bind(point.scale)
-            .bind(point.offset)
-            .bind(&point.base.unit)
-            .bind(reverse)
-            .bind(&point.data_type)
-            .bind(&point.base.description)
-            .execute(&state.sqlite_pool)
-            .await
-            .map_err(|e| format!("Failed to insert: {}", e))?;
+            };
+
+            sqlx::query(sql)
+                .bind(channel_id as i64)
+                .bind(item.point_id as i64)
+                .bind(&point.base.signal_name)
+                .bind(point.scale)
+                .bind(point.offset)
+                .bind(&point.base.unit)
+                .bind(reverse)
+                .bind(&point.data_type)
+                .bind(&point.base.description)
+                .execute(&state.sqlite_pool)
+                .await
+                .map_err(|e| format!("Failed to insert: {}", e))?;
         },
         _ => unreachable!(),
     }
@@ -2547,10 +2729,13 @@ async fn process_update_operation(
     state: &AppState,
 ) -> Result<(), String> {
     // Reuse the existing update_point_handler logic
+    // Note: Batch operations always trigger auto-reload at the end
+    let reload_query = crate::dto::AutoReloadQuery { auto_reload: false };
     update_point_handler(
         Path((channel_id, item.point_type.clone(), item.point_id)),
         State(state.clone()),
-        Json(item.update.clone()),
+        Query(reload_query),
+        Json(item.data.clone()),
     )
     .await
     .map(|_| ())
@@ -2564,11 +2749,107 @@ async fn process_delete_operation(
     state: &AppState,
 ) -> Result<(), String> {
     // Reuse the existing delete_point_handler logic
+    // Note: Batch operations always trigger auto-reload at the end
+    let reload_query = crate::dto::AutoReloadQuery { auto_reload: false };
     delete_point_handler(
         Path((channel_id, item.point_type.clone(), item.point_id)),
         State(state.clone()),
+        Query(reload_query),
     )
     .await
     .map(|_| ())
     .map_err(|e| format!("{:?}", e))
+}
+
+// ============================================================================
+// Auto-Reload Helper Functions
+// ============================================================================
+
+/// Trigger channel reload if auto_reload is enabled
+///
+/// This function is called after successful CRUD operations on points to ensure
+/// changes take effect immediately. It runs asynchronously to avoid blocking the API response.
+///
+/// ## Parameters
+/// - `channel_id`: The channel to reload
+/// - `state`: Application state
+/// - `auto_reload`: Whether to perform reload (from query parameter)
+///
+/// ## Behavior
+/// - If `auto_reload=true`: Loads config from SQLite and hot-reloads the channel in background
+/// - If `auto_reload=false`: No action (user must manually call `/api/channels/reload`)
+///
+/// ## Implementation
+/// Uses `tokio::spawn` for async execution to avoid blocking the API response.
+pub(crate) async fn trigger_channel_reload_if_needed(
+    channel_id: u16,
+    state: &AppState,
+    auto_reload: bool,
+) {
+    if !auto_reload {
+        tracing::debug!(
+            "Auto-reload disabled for channel {}, skipping hot reload",
+            channel_id
+        );
+        return;
+    }
+
+    tracing::info!(
+        "Auto-reload enabled for channel {}, triggering hot reload",
+        channel_id
+    );
+
+    let state_clone = state.clone();
+    tokio::spawn(async move {
+        if let Err(e) = perform_channel_reload(channel_id, &state_clone).await {
+            tracing::error!("Auto-reload failed for channel {}: {}", channel_id, e);
+        } else {
+            tracing::info!(
+                "Auto-reload completed successfully for channel {}",
+                channel_id
+            );
+        }
+    });
+}
+
+/// Perform channel reload (load config from SQLite and hot-reload)
+///
+/// This is an internal helper function that performs the actual reload logic.
+async fn perform_channel_reload(channel_id: u16, state: &AppState) -> anyhow::Result<()> {
+    use crate::core::combase::channel_manager::ChannelManager;
+
+    // 1. Load channel configuration from SQLite
+    let config = ChannelManager::load_channel_from_db(&state.sqlite_pool, channel_id)
+        .await
+        .map_err(|e| anyhow::anyhow!("Failed to load channel config: {}", e))?;
+
+    // 2. Remove old channel
+    let manager = state.channel_manager.write().await;
+    if let Err(e) = manager.remove_channel(channel_id).await {
+        tracing::warn!("Failed to remove old channel {}: {}", channel_id, e);
+    }
+    drop(manager);
+
+    // 3. Create new channel with updated config
+    let manager = state.channel_manager.write().await;
+    let channel_arc = manager
+        .create_channel(std::sync::Arc::new(config))
+        .await
+        .map_err(|e| anyhow::anyhow!("Failed to create channel: {}", e))?;
+    drop(manager);
+
+    // 4. Connect in background (non-blocking)
+    tokio::spawn(async move {
+        let mut channel = channel_arc.write().await;
+        match channel.connect().await {
+            Ok(_) => tracing::info!("Channel {} connected successfully after reload", channel_id),
+            Err(e) => tracing::warn!(
+                "Channel {} connection failed after reload (will retry): {}",
+                channel_id,
+                e
+            ),
+        }
+    });
+
+    Ok(())
 }

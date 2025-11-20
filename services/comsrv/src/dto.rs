@@ -607,6 +607,27 @@ fn default_page_size() -> usize {
     20
 }
 
+/// Auto-reload query parameter for CRUD operations
+///
+/// Controls whether the channel should be automatically reloaded after configuration changes.
+/// Default is `true` for immediate effect and better user experience.
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct AutoReloadQuery {
+    /// Whether to automatically reload channel after operation
+    ///
+    /// - `true` (default): Changes take effect immediately (channel is hot-reloaded)
+    /// - `false`: Changes are saved to database only, manual reload required via `/api/channels/reload`
+    ///
+    /// Use `false` for batch operations to avoid multiple reloads.
+    #[serde(default = "default_auto_reload")]
+    #[schema(example = true)]
+    pub auto_reload: bool,
+}
+
+fn default_auto_reload() -> bool {
+    true // Default: auto-reload enabled for immediate effect
+}
+
 /// Paginated response wrapper
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct PaginatedResponse<T> {
@@ -659,7 +680,7 @@ pub struct PointDefinition {
     /// Contains protocol parameters like CAN's start_bit/bit_length, Modbus's register_address, etc.
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schema(value_type = Object, example = json!({
-        "can_id": 419364069,
+        "can_id": 41234,
         "start_bit": 0,
         "bit_length": 16,
         "byte_order": "AB",
@@ -735,7 +756,6 @@ pub struct GroupedMappingsUpdateRequest {
     /// Mappings grouped by point type
     #[serde(flatten)]
     pub mappings: GroupedMappings,
-
     /// Validate only without writing to database
     #[serde(default)]
     #[schema(example = false)]
