@@ -134,31 +134,31 @@ pub fn create_routes(state: Arc<AppState>) -> Router {
         // Instance management API
         .route("/api/instances", get(list_instances).post(create_instance))
         .route(
-            "/api/instances/{instance_name}",
+            "/api/instances/{id}",
             get(get_instance)
                 .put(update_instance)
                 .delete(delete_instance),
         )
-        .route("/api/instances/{instance_name}/data", get(get_instance_data))
-        .route("/api/instances/{instance_name}/points", get(get_instance_points))
+        .route("/api/instances/{id}/data", get(get_instance_data))
+        .route("/api/instances/{id}/points", get(get_instance_points))
         .route(
-            "/api/instances/{instance_name}/sync",
+            "/api/instances/{id}/sync",
             post(sync_instance_measurement),
         )
-        .route("/api/instances/{instance_name}/action", post(execute_instance_action))
+        .route("/api/instances/{id}/action", post(execute_instance_action))
         .route("/api/instances/sync/all", post(sync_all_instances))
         .route("/api/instances/reload", post(reload_instances_from_db))
 
         // Instance-level routing endpoints (refactored for unified database)
         .route(
-            "/api/instances/{instance_name}/routing",
+            "/api/instances/{id}/routing",
             get(get_instance_routing_handler)
                 .post(create_instance_routing)
                 .put(update_instance_routing)
                 .delete(delete_instance_routing),
         )
         .route(
-            "/api/instances/{instance_name}/routing/validate",
+            "/api/instances/{id}/routing/validate",
             post(validate_instance_routing),
         )
         // Routing table query (Redis-based, different from global API)
@@ -168,21 +168,21 @@ pub fn create_routes(state: Arc<AppState>) -> Router {
         )
         // Single point routing endpoints
         .route(
-            "/api/instances/{instance_name}/measurements/{point_id}",
+            "/api/instances/{id}/measurements/{point_id}",
             get(get_measurement_point),
         )
         .route(
-            "/api/instances/{instance_name}/measurements/{point_id}/routing",
+            "/api/instances/{id}/measurements/{point_id}/routing",
             axum::routing::put(upsert_measurement_routing)
                 .delete(delete_measurement_routing)
                 .patch(toggle_measurement_routing),
         )
         .route(
-            "/api/instances/{instance_name}/actions/{point_id}",
+            "/api/instances/{id}/actions/{point_id}",
             get(get_action_point),
         )
         .route(
-            "/api/instances/{instance_name}/actions/{point_id}/routing",
+            "/api/instances/{id}/actions/{point_id}/routing",
             axum::routing::put(upsert_action_routing)
                 .delete(delete_action_routing)
                 .patch(toggle_action_routing),
@@ -191,7 +191,7 @@ pub fn create_routes(state: Arc<AppState>) -> Router {
         // Global routing management endpoints (new unified database APIs)
         .route("/api/routing", get(get_all_routing_handler).delete(delete_all_routing_handler))
         .route("/api/routing/by-channel/{channel_id}", get(get_routing_by_channel_handler))
-        .route("/api/routing/instances/{instance_name}", axum::routing::delete(global_delete_instance_routing))
+        .route("/api/routing/instances/{id}", axum::routing::delete(global_delete_instance_routing))
         .route("/api/routing/channels/{channel_id}", axum::routing::delete(delete_channel_routing_handler))
 
         // Product management endpoints

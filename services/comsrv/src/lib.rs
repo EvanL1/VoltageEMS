@@ -4,27 +4,68 @@
 
 // Module declarations
 pub mod api;
-pub mod cleanup_provider;
-pub mod common;
-pub mod core;
-pub mod dto;
-pub mod protocols;
-pub mod runtime;
-pub mod storage;
 pub mod utils;
 
-#[cfg(test)]
-#[allow(clippy::disallowed_methods)] // Test code - unwrap is acceptable
-pub mod test_utils;
+// Inline module declarations to avoid extra thin shell files
+pub mod core {
+    pub mod bootstrap;
+    pub mod combase;
+    pub mod config;
+    pub mod reload;
+}
+
+pub mod protocols {
+    #[cfg(feature = "modbus")]
+    pub mod modbus;
+
+    #[cfg(feature = "can")]
+    pub mod can_common;
+
+    #[cfg(feature = "can")]
+    pub mod can;
+
+    pub mod virt;
+}
+
+pub mod runtime {
+    //! Runtime Orchestration Layer
+    //!
+    //! Provides runtime lifecycle management, service orchestration, reconnection mechanisms,
+    //! maintenance tasks, and data storage utilities for the communication service.
+
+    pub mod cleanup_provider;
+    pub mod lifecycle;
+    pub mod reconnect;
+    pub mod storage;
+
+    #[cfg(test)]
+    pub mod test_utils;
+
+    // Re-export common types
+    pub use cleanup_provider::ComsrvCleanupProvider;
+    pub use lifecycle::{shutdown_handler, start_cleanup_task, start_communication_service};
+    pub use reconnect::{ReconnectContext, ReconnectError, ReconnectHelper, ReconnectPolicy};
+    pub use storage::{PluginPointUpdate, StorageManager};
+}
+
+// Re-export dto at crate root for compatibility
+pub use crate::api::dto;
 
 // Re-export commonly used types
-pub use common::{telemetry_type_to_redis, PluginPointUpdate};
+pub use runtime::storage::PluginPointUpdate;
 pub use utils::error::ComSrvError;
 
 // Re-export core functionality
 pub use core::bootstrap::ServiceArgs;
 pub use core::combase::ChannelManager;
 pub use core::config::ConfigManager;
+
+// Re-export runtime helpers for convenience
+pub use runtime::cleanup_provider;
+pub use runtime::storage;
+
+#[cfg(test)]
+pub use runtime::test_utils;
 
 use tokio_util::sync::CancellationToken;
 use tracing::error;

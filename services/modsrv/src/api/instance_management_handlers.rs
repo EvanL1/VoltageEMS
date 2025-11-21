@@ -118,11 +118,11 @@ pub async fn create_instance(
 /// Update instance properties
 ///
 /// Updates the properties of an existing instance.
-/// Note: instance_name is the unique identifier and cannot be changed.
+/// Note: instance_id is the unique identifier and cannot be changed.
 /// Only the properties field can be updated through this endpoint.
 ///
-/// @route PUT /api/instances/{instance_name}
-/// @input Path(instance_name): String - Instance name (unique identifier)
+/// @route PUT /api/instances/{id}
+/// @input Path(id): u16 - Instance ID
 /// @input Json(dto): UpdateInstanceDto - Properties to update
 /// @output Result<Json<SuccessResponse<serde_json::Value>>, AppError> - Updated instance
 /// @status 200 - Success with updated instance details
@@ -130,9 +130,9 @@ pub async fn create_instance(
 /// @status 500 - Database or Redis error
 #[utoipa::path(
     put,
-    path = "/api/instances/{instance_name}",
+    path = "/api/instances/{id}",
     params(
-        ("instance_name" = String, Path, description = "Instance name (unique identifier)")
+        ("id" = u16, Path, description = "Instance ID")
     ),
     request_body = UpdateInstanceDto,
     responses(
@@ -159,9 +159,19 @@ pub async fn create_instance(
 )]
 pub async fn update_instance(
     State(state): State<Arc<AppState>>,
-    Path(instance_name): Path<String>,
+    Path(id): Path<u16>,
     Json(dto): Json<UpdateInstanceDto>,
 ) -> Result<Json<SuccessResponse<serde_json::Value>>, ModSrvError> {
+    // Query instance_name for logging and Redis operations
+    let instance_name: String =
+        match sqlx::query_scalar("SELECT instance_name FROM instances WHERE instance_id = ?")
+            .bind(id as i32)
+            .fetch_one(&state.instance_manager.pool)
+            .await
+        {
+            Ok(name) => name,
+            Err(_) => return Err(ModSrvError::InstanceNotFound(id.to_string())),
+        };
     // Serialize properties for SQLite
     let properties_json = match serde_json::to_string(&dto.properties) {
         Ok(j) => j,
@@ -196,11 +206,11 @@ pub async fn update_instance(
         r#"
         UPDATE instances
         SET properties = ?, updated_at = CURRENT_TIMESTAMP
-        WHERE instance_name = ?
+        WHERE instance_id = ?
         "#,
     )
     .bind(&properties_json)
-    .bind(&instance_name)
+    .bind(id as i32)
     .execute(&mut *tx)
     .await;
 
@@ -209,14 +219,14 @@ pub async fn update_instance(
             if res.rows_affected() == 0 {
                 // Rollback transaction
                 let _ = tx.rollback().await;
-                return Err(ModSrvError::InstanceNotFound(instance_name.to_string()));
+                return Err(ModSrvError::InstanceNotFound(id.to_string()));
             }
 
             // Commit transaction first (ensure database persistence)
             if let Err(e) = tx.commit().await {
                 error!(
-                    "Failed to commit transaction for instance {}: {}",
-                    instance_name, e
+                    "Failed to commit transaction for instance {} ({}): {}",
+                    id, instance_name, e
                 );
                 return Err(ModSrvError::InternalError(format!(
                     "Database transaction commit failed: {}",
@@ -231,25 +241,29 @@ pub async fn update_instance(
                 .await
             {
                 warn!(
-                    "Instance {} updated in SQLite but Redis sync failed: {}. Will sync on next reload.",
-                    instance_name, e
+                    "Instance {} ({}) updated in SQLite but Redis sync failed: {}. Will sync on next reload.",
+                    id, instance_name, e
                 );
             } else {
                 info!(
-                    "Successfully synced instance {} to Redis after update",
-                    instance_name
+                    "Successfully synced instance {} ({}) to Redis after update",
+                    id, instance_name
                 );
             }
 
             // Query and return updated instance
-            match state.instance_manager.get_instance(&instance_name).await {
+            match state.instance_manager.get_instance(id).await {
                 Ok(instance) => Ok(Json(SuccessResponse::new(json!({
                     "instance": instance
                 })))),
                 Err(e) => {
-                    error!("Failed to query updated instance {}: {}", instance_name, e);
-                    // Update succeeded but query failed - return instance_name as fallback
+                    error!(
+                        "Failed to query updated instance {} ({}): {}",
+                        id, instance_name, e
+                    );
+                    // Update succeeded but query failed - return id as fallback
                     Ok(Json(SuccessResponse::new(json!({
+                        "instance_id": id,
                         "instance_name": instance_name,
                         "message": "Instance updated successfully but failed to retrieve details"
                     }))))
@@ -257,7 +271,10 @@ pub async fn update_instance(
             }
         },
         Err(e) => {
-            error!("Failed to update instance {}: {}", instance_name, e);
+            error!(
+                "Failed to update instance {} ({}): {}",
+                id, instance_name, e
+            );
             // Rollback transaction
             let _ = tx.rollback().await;
             Err(ModSrvError::InternalError(format!(
@@ -273,7 +290,7 @@ pub async fn update_instance(
 /// Removes an instance from both SQLite and Redis.
 ///
 /// @route DELETE /api/instances/{id}
-/// @input Path(id): String - Instance identifier
+/// @input Path(id): u16 - Instance ID
 /// @output Result<Json<SuccessResponse<serde_json::Value>>, AppError> - Deletion result
 /// @status 200 - Success with deletion confirmation
 /// @status 404 - Instance not found
@@ -282,12 +299,12 @@ pub async fn update_instance(
     delete,
     path = "/api/instances/{id}",
     params(
-        ("id" = String, Path, description = "Instance identifier")
+        ("id" = u16, Path, description = "Instance ID")
     ),
     responses(
         (status = 200, description = "Instance deleted", body = serde_json::Value,
             example = json!({
-                "message": "Instance pv_inverter_01 deleted"
+                "message": "Instance 1 deleted"
             })
         )
     ),
@@ -295,9 +312,9 @@ pub async fn update_instance(
 )]
 pub async fn delete_instance(
     State(state): State<Arc<AppState>>,
-    Path(id): Path<String>,
+    Path(id): Path<u16>,
 ) -> Result<Json<SuccessResponse<serde_json::Value>>, ModSrvError> {
-    match state.instance_manager.delete_instance(&id).await {
+    match state.instance_manager.delete_instance(id).await {
         Ok(_) => Ok(Json(SuccessResponse::new(json!({
             "message": format!("Instance {} deleted", id)
         })))),
@@ -320,7 +337,7 @@ pub async fn delete_instance(
 /// Updates measurement point values in Redis for the instance.
 ///
 /// @route POST /api/instances/{id}/sync
-/// @input Path(id): String - Instance identifier
+/// @input Path(id): u16 - Instance ID
 /// @input Json(data): HashMap - Measurement point values
 /// @output Result<Json<SuccessResponse<serde_json::Value>>, AppError> - Sync result
 /// @status 200 - Success confirmation
@@ -331,7 +348,7 @@ pub async fn delete_instance(
     post,
     path = "/api/instances/{id}/sync",
     params(
-        ("id" = String, Path, description = "Instance identifier")
+        ("id" = u16, Path, description = "Instance ID")
     ),
     request_body = std::collections::HashMap<String, serde_json::Value>,
     responses(
@@ -345,10 +362,10 @@ pub async fn delete_instance(
 )]
 pub async fn sync_instance_measurement(
     State(state): State<Arc<AppState>>,
-    Path(id): Path<String>,
+    Path(id): Path<u16>,
     Json(data): Json<HashMap<String, serde_json::Value>>,
 ) -> Result<Json<SuccessResponse<serde_json::Value>>, ModSrvError> {
-    match state.instance_manager.sync_measurement(&id, data).await {
+    match state.instance_manager.sync_measurement(id, data).await {
         Ok(_) => Ok(Json(SuccessResponse::new(json!({
             "message": "Measurement synced"
         })))),

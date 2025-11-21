@@ -24,9 +24,9 @@ use crate::error::ModSrvError;
 /// Get a single measurement point with routing configuration
 #[utoipa::path(
     get,
-    path = "/api/instances/{instance_name}/measurements/{point_id}",
+    path = "/api/instances/{id}/measurements/{point_id}",
     params(
-        ("instance_name" = String, Path, description = "Instance identifier"),
+        ("id" = u16, Path, description = "Instance ID"),
         ("point_id" = u32, Path, description = "Measurement point ID")
     ),
     responses(
@@ -38,11 +38,11 @@ use crate::error::ModSrvError;
 )]
 pub async fn get_measurement_point(
     State(state): State<Arc<AppState>>,
-    Path((instance_name, point_id)): Path<(String, u32)>,
+    Path((id, point_id)): Path<(u16, u32)>,
 ) -> Result<Json<SuccessResponse<crate::dto::InstanceMeasurementPoint>>, ModSrvError> {
     match state
         .instance_manager
-        .load_single_measurement_point(&instance_name, point_id)
+        .load_single_measurement_point(id, point_id)
         .await
     {
         Ok(point) => Ok(Json(SuccessResponse::new(point))),
@@ -56,9 +56,9 @@ pub async fn get_measurement_point(
 /// Create or update routing for a single measurement point
 #[utoipa::path(
     put,
-    path = "/api/instances/{instance_name}/measurements/{point_id}/routing",
+    path = "/api/instances/{id}/measurements/{point_id}/routing",
     params(
-        ("instance_name" = String, Path, description = "Instance identifier"),
+        ("id" = u16, Path, description = "Instance ID"),
         ("point_id" = u32, Path, description = "Measurement point ID")
     ),
     request_body = crate::dto::SinglePointRoutingRequest,
@@ -74,13 +74,13 @@ pub async fn get_measurement_point(
 )]
 pub async fn upsert_measurement_routing(
     State(state): State<Arc<AppState>>,
-    Path((instance_name, point_id)): Path<(String, u32)>,
+    Path((id, point_id)): Path<(u16, u32)>,
     Json(request): Json<SinglePointRoutingRequest>,
 ) -> Result<Json<SuccessResponse<serde_json::Value>>, ModSrvError> {
     // Upsert routing in database
     state
         .instance_manager
-        .upsert_measurement_routing(&instance_name, point_id, request)
+        .upsert_measurement_routing(id, point_id, request)
         .await
         .map_err(|e| ModSrvError::InvalidData(format!("Failed to upsert routing: {}", e)))?;
 
@@ -105,9 +105,9 @@ pub async fn upsert_measurement_routing(
 /// Delete routing for a single measurement point
 #[utoipa::path(
     delete,
-    path = "/api/instances/{instance_name}/measurements/{point_id}/routing",
+    path = "/api/instances/{id}/measurements/{point_id}/routing",
     params(
-        ("instance_name" = String, Path, description = "Instance identifier"),
+        ("id" = u16, Path, description = "Instance ID"),
         ("point_id" = u32, Path, description = "Measurement point ID")
     ),
     responses(
@@ -121,19 +121,19 @@ pub async fn upsert_measurement_routing(
 )]
 pub async fn delete_measurement_routing(
     State(state): State<Arc<AppState>>,
-    Path((instance_name, point_id)): Path<(String, u32)>,
+    Path((id, point_id)): Path<(u16, u32)>,
 ) -> Result<Json<SuccessResponse<serde_json::Value>>, ModSrvError> {
     // Delete routing from database
     let rows_affected = state
         .instance_manager
-        .delete_measurement_routing(&instance_name, point_id)
+        .delete_measurement_routing(id, point_id)
         .await
         .map_err(|e| ModSrvError::InternalError(format!("Failed to delete routing: {}", e)))?;
 
     if rows_affected == 0 {
         return Err(ModSrvError::InternalError(format!(
-            "No routing found for measurement point {} in instance '{}'",
-            point_id, instance_name
+            "No routing found for measurement point {} in instance {}",
+            point_id, id
         )));
     }
 
@@ -159,9 +159,9 @@ pub async fn delete_measurement_routing(
 /// Toggle enabled state for a single measurement point routing
 #[utoipa::path(
     patch,
-    path = "/api/instances/{instance_name}/measurements/{point_id}/routing",
+    path = "/api/instances/{id}/measurements/{point_id}/routing",
     params(
-        ("instance_name" = String, Path, description = "Instance identifier"),
+        ("id" = u16, Path, description = "Instance ID"),
         ("point_id" = u32, Path, description = "Measurement point ID")
     ),
     request_body = crate::dto::ToggleRoutingRequest,
@@ -176,20 +176,20 @@ pub async fn delete_measurement_routing(
 )]
 pub async fn toggle_measurement_routing(
     State(state): State<Arc<AppState>>,
-    Path((instance_name, point_id)): Path<(String, u32)>,
+    Path((id, point_id)): Path<(u16, u32)>,
     Json(request): Json<ToggleRoutingRequest>,
 ) -> Result<Json<SuccessResponse<serde_json::Value>>, ModSrvError> {
     // Toggle routing in database
     let rows_affected = state
         .instance_manager
-        .toggle_measurement_routing(&instance_name, point_id, request.enabled)
+        .toggle_measurement_routing(id, point_id, request.enabled)
         .await
         .map_err(|e| ModSrvError::InternalError(format!("Failed to toggle routing: {}", e)))?;
 
     if rows_affected == 0 {
         return Err(ModSrvError::InternalError(format!(
-            "No routing found for measurement point {} in instance '{}'",
-            point_id, instance_name
+            "No routing found for measurement point {} in instance {}",
+            point_id, id
         )));
     }
 
@@ -224,9 +224,9 @@ pub async fn toggle_measurement_routing(
 /// Get a single action point with routing configuration
 #[utoipa::path(
     get,
-    path = "/api/instances/{instance_name}/actions/{point_id}",
+    path = "/api/instances/{id}/actions/{point_id}",
     params(
-        ("instance_name" = String, Path, description = "Instance identifier"),
+        ("id" = u16, Path, description = "Instance ID"),
         ("point_id" = u32, Path, description = "Action point ID")
     ),
     responses(
@@ -238,11 +238,11 @@ pub async fn toggle_measurement_routing(
 )]
 pub async fn get_action_point(
     State(state): State<Arc<AppState>>,
-    Path((instance_name, point_id)): Path<(String, u32)>,
+    Path((id, point_id)): Path<(u16, u32)>,
 ) -> Result<Json<SuccessResponse<crate::dto::InstanceActionPoint>>, ModSrvError> {
     match state
         .instance_manager
-        .load_single_action_point(&instance_name, point_id)
+        .load_single_action_point(id, point_id)
         .await
     {
         Ok(point) => Ok(Json(SuccessResponse::new(point))),
@@ -256,9 +256,9 @@ pub async fn get_action_point(
 /// Create or update routing for a single action point
 #[utoipa::path(
     put,
-    path = "/api/instances/{instance_name}/actions/{point_id}/routing",
+    path = "/api/instances/{id}/actions/{point_id}/routing",
     params(
-        ("instance_name" = String, Path, description = "Instance identifier"),
+        ("id" = u16, Path, description = "Instance ID"),
         ("point_id" = u32, Path, description = "Action point ID")
     ),
     request_body = crate::dto::SinglePointRoutingRequest,
@@ -274,13 +274,13 @@ pub async fn get_action_point(
 )]
 pub async fn upsert_action_routing(
     State(state): State<Arc<AppState>>,
-    Path((instance_name, point_id)): Path<(String, u32)>,
+    Path((id, point_id)): Path<(u16, u32)>,
     Json(request): Json<SinglePointRoutingRequest>,
 ) -> Result<Json<SuccessResponse<serde_json::Value>>, ModSrvError> {
     // Upsert routing in database
     state
         .instance_manager
-        .upsert_action_routing(&instance_name, point_id, request)
+        .upsert_action_routing(id, point_id, request)
         .await
         .map_err(|e| ModSrvError::InvalidData(format!("Failed to upsert routing: {}", e)))?;
 
@@ -305,9 +305,9 @@ pub async fn upsert_action_routing(
 /// Delete routing for a single action point
 #[utoipa::path(
     delete,
-    path = "/api/instances/{instance_name}/actions/{point_id}/routing",
+    path = "/api/instances/{id}/actions/{point_id}/routing",
     params(
-        ("instance_name" = String, Path, description = "Instance identifier"),
+        ("id" = u16, Path, description = "Instance ID"),
         ("point_id" = u32, Path, description = "Action point ID")
     ),
     responses(
@@ -321,19 +321,19 @@ pub async fn upsert_action_routing(
 )]
 pub async fn delete_action_routing(
     State(state): State<Arc<AppState>>,
-    Path((instance_name, point_id)): Path<(String, u32)>,
+    Path((id, point_id)): Path<(u16, u32)>,
 ) -> Result<Json<SuccessResponse<serde_json::Value>>, ModSrvError> {
     // Delete routing from database
     let rows_affected = state
         .instance_manager
-        .delete_action_routing(&instance_name, point_id)
+        .delete_action_routing(id, point_id)
         .await
         .map_err(|e| ModSrvError::InternalError(format!("Failed to delete routing: {}", e)))?;
 
     if rows_affected == 0 {
         return Err(ModSrvError::InternalError(format!(
-            "No routing found for action point {} in instance '{}'",
-            point_id, instance_name
+            "No routing found for action point {} in instance {}",
+            point_id, id
         )));
     }
 
@@ -359,9 +359,9 @@ pub async fn delete_action_routing(
 /// Toggle enabled state for a single action point routing
 #[utoipa::path(
     patch,
-    path = "/api/instances/{instance_name}/actions/{point_id}/routing",
+    path = "/api/instances/{id}/actions/{point_id}/routing",
     params(
-        ("instance_name" = String, Path, description = "Instance identifier"),
+        ("id" = u16, Path, description = "Instance ID"),
         ("point_id" = u32, Path, description = "Action point ID")
     ),
     request_body = crate::dto::ToggleRoutingRequest,
@@ -376,20 +376,20 @@ pub async fn delete_action_routing(
 )]
 pub async fn toggle_action_routing(
     State(state): State<Arc<AppState>>,
-    Path((instance_name, point_id)): Path<(String, u32)>,
+    Path((id, point_id)): Path<(u16, u32)>,
     Json(request): Json<ToggleRoutingRequest>,
 ) -> Result<Json<SuccessResponse<serde_json::Value>>, ModSrvError> {
     // Toggle routing in database
     let rows_affected = state
         .instance_manager
-        .toggle_action_routing(&instance_name, point_id, request.enabled)
+        .toggle_action_routing(id, point_id, request.enabled)
         .await
         .map_err(|e| ModSrvError::InternalError(format!("Failed to toggle routing: {}", e)))?;
 
     if rows_affected == 0 {
         return Err(ModSrvError::InternalError(format!(
-            "No routing found for action point {} in instance '{}'",
-            point_id, instance_name
+            "No routing found for action point {} in instance {}",
+            point_id, id
         )));
     }
 

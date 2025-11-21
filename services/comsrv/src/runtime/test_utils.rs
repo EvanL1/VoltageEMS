@@ -156,6 +156,7 @@ pub async fn setup_c2c_routing(
 ///     assert_channel_value(&rtdb, 1001, "T", 1, 100.0).await;
 /// }
 /// ```
+#[allow(clippy::disallowed_methods)] // Test utility - unwrap is acceptable for test data conversion
 pub async fn assert_channel_value(
     rtdb: &dyn Rtdb,
     channel_id: u16,
@@ -203,6 +204,7 @@ pub async fn assert_channel_value(
 ///     assert_channel_timestamp_exists(&rtdb, 1001, "T", 1).await;
 /// }
 /// ```
+#[allow(clippy::disallowed_methods)] // Test utility - unwrap is acceptable for test data conversion
 pub async fn assert_channel_timestamp_exists(
     rtdb: &dyn Rtdb,
     channel_id: u16,
@@ -252,6 +254,7 @@ pub async fn assert_channel_timestamp_exists(
 ///     assert_instance_measurement(&rtdb, 23, 1, 100.0).await;
 /// }
 /// ```
+#[allow(clippy::disallowed_methods)] // Test utility - unwrap is acceptable for test data conversion
 pub async fn assert_instance_measurement(
     rtdb: &dyn Rtdb,
     instance_id: u32,

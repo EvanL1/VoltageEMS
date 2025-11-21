@@ -135,9 +135,9 @@ async fn test_get_instance_data() -> Result<()> {
     env.redis().hset(&m_key, "1", "100.5".to_string()).await?;
     env.redis().hset(&m_key, "2", "50.2".to_string()).await?;
 
-    // Get instance data
+    // Get instance data by ID
     let data = instance_manager
-        .get_instance_data("inverter_001", None)
+        .get_instance_data(instance.instance_id(), None)
         .await?;
 
     // Verify data (returned as JSON)

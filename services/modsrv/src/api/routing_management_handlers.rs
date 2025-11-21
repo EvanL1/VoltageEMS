@@ -24,8 +24,8 @@ use crate::routing_loader::{ActionRoutingRow, MeasurementRoutingRow};
 /// Creates a new channel-to-instance point routing. Validates that both
 /// the channel and instance points exist before creating.
 ///
-/// @route POST /api/instances/{instance_name}/routing
-/// @input Path(instance_name): String - Instance identifier
+/// @route POST /api/instances/{id}/routing
+/// @input Path(id): u16 - Instance ID
 /// @input Json(routing): RoutingRequest - Routing configuration
 /// @output Json<SuccessResponse<serde_json::Value>> - Creation result
 /// @status 200 - Success with routing details
@@ -35,16 +35,16 @@ use crate::routing_loader::{ActionRoutingRow, MeasurementRoutingRow};
 /// @side-effects Inserts into point_routing table and Redis route:c2m
 #[utoipa::path(
     post,
-    path = "/api/instances/{instance_name}/routing",
+    path = "/api/instances/{id}/routing",
     params(
-        ("instance_name" = String, Path, description = "Instance identifier")
+        ("id" = u16, Path, description = "Instance ID")
     ),
     request_body = crate::dto::RoutingRequest,
     responses(
         (status = 200, description = "Routing created", body = serde_json::Value,
             example = json!({
                 "routing": {
-                    "instance_name": "pv_inverter_01",
+                    "instance_id": 1,
                     "channel": {
                         "id": 1,
                         "four_remote": "T",
@@ -62,14 +62,14 @@ use crate::routing_loader::{ActionRoutingRow, MeasurementRoutingRow};
 )]
 pub async fn create_instance_routing(
     State(state): State<Arc<AppState>>,
-    Path(instance_name): Path<String>,
+    Path(id): Path<u16>,
     Json(routing): Json<RoutingRequest>,
 ) -> Result<Json<SuccessResponse<serde_json::Value>>, ModSrvError> {
     // Validate instance exists
     let instance_exists = match sqlx::query_scalar::<_, bool>(
-        "SELECT EXISTS(SELECT 1 FROM instances WHERE instance_name = ?)",
+        "SELECT EXISTS(SELECT 1 FROM instances WHERE instance_id = ?)",
     )
-    .bind(&instance_name)
+    .bind(id)
     .fetch_one(&state.instance_manager.pool)
     .await
     {
@@ -82,9 +82,17 @@ pub async fn create_instance_routing(
     if !instance_exists {
         return Err(ModSrvError::InternalError(format!(
             "Not found: Instance {} does not exist",
-            instance_name
+            id
         )));
     }
+
+    // Get instance name for validation
+    let instance = state
+        .instance_manager
+        .get_instance(id)
+        .await
+        .map_err(|e| ModSrvError::InternalError(format!("Failed to get instance: {}", e)))?;
+    let instance_name = &instance.core.instance_name;
 
     // Extract values before validation
     let channel_type = routing.four_remote;
@@ -100,7 +108,7 @@ pub async fn create_instance_routing(
         };
         state
             .instance_manager
-            .validate_measurement_routing(&routing_row, &instance_name)
+            .validate_measurement_routing(&routing_row, instance_name)
             .await
     } else if channel_type.is_output() {
         // Action routing (A → C/A)
@@ -112,7 +120,7 @@ pub async fn create_instance_routing(
         };
         state
             .instance_manager
-            .validate_action_routing(&routing_row, &instance_name)
+            .validate_action_routing(&routing_row, instance_name)
             .await
     } else {
         Err(anyhow::anyhow!("Invalid channel type: {}", channel_type))
@@ -143,11 +151,11 @@ pub async fn create_instance_routing(
             INSERT INTO measurement_routing
             (instance_id, instance_name, channel_id, channel_type, channel_point_id,
              measurement_id, enabled)
-            VALUES ((SELECT instance_id FROM instances WHERE instance_name = ?), ?, ?, ?, ?, ?, true)
+            VALUES (?, (SELECT instance_name FROM instances WHERE instance_id = ?), ?, ?, ?, ?, true)
             "#,
         )
-        .bind(&instance_name)
-        .bind(&instance_name)
+        .bind(id)
+        .bind(id)
         .bind(routing.channel_id)
         .bind(channel_type.as_str())
         .bind(routing.channel_point_id)
@@ -161,11 +169,11 @@ pub async fn create_instance_routing(
             INSERT INTO action_routing
             (instance_id, instance_name, action_id, channel_id, channel_type,
              channel_point_id, enabled)
-            VALUES ((SELECT instance_id FROM instances WHERE instance_name = ?), ?, ?, ?, ?, ?, true)
+            VALUES (?, (SELECT instance_name FROM instances WHERE instance_id = ?), ?, ?, ?, ?, true)
             "#,
         )
-        .bind(&instance_name)
-        .bind(&instance_name)
+        .bind(id)
+        .bind(id)
         .bind(routing.point_id)
         .bind(routing.channel_id)
         .bind(channel_type.as_str())
@@ -195,7 +203,7 @@ pub async fn create_instance_routing(
 
     Ok(Json(SuccessResponse::new(json!({
         "routing": {
-            "instance_name": instance_name,
+            "instance_id": id,
             "channel": {
                 "id": routing.channel_id,
                 "four_remote": channel_type,
@@ -211,8 +219,8 @@ pub async fn create_instance_routing(
 /// Replaces all existing routings with the provided new routings.
 /// Uses a transaction to ensure atomic operation.
 ///
-/// @route PUT /api/instances/{instance_name}/routing
-/// @input Path(instance_name): String - Instance identifier
+/// @route PUT /api/instances/{id}/routing
+/// @input Path(id): u16 - Instance ID
 /// @input Json(routings): Vec<RoutingRequest> - New routings to set
 /// @output Json<SuccessResponse<serde_json::Value>> - Update result
 /// @status 200 - Success with count
@@ -220,9 +228,9 @@ pub async fn create_instance_routing(
 /// @status 500 - Transaction error
 #[utoipa::path(
     put,
-    path = "/api/instances/{instance_name}/routing",
+    path = "/api/instances/{id}/routing",
     params(
-        ("instance_name" = String, Path, description = "Instance identifier")
+        ("id" = u16, Path, description = "Instance ID")
     ),
     request_body = [crate::dto::RoutingRequest],
     responses(
@@ -236,7 +244,7 @@ pub async fn create_instance_routing(
 )]
 pub async fn update_instance_routing(
     State(state): State<Arc<AppState>>,
-    Path(instance_name): Path<String>,
+    Path(id): Path<u16>,
     Json(routings): Json<Vec<RoutingRequest>>,
 ) -> Result<Json<SuccessResponse<serde_json::Value>>, ModSrvError> {
     // Begin transaction
@@ -251,8 +259,8 @@ pub async fn update_instance_routing(
     };
 
     // Delete existing routings from both tables
-    if let Err(e) = sqlx::query("DELETE FROM measurement_routing WHERE instance_id = (SELECT instance_id FROM instances WHERE instance_name = ?)")
-        .bind(&instance_name)
+    if let Err(e) = sqlx::query("DELETE FROM measurement_routing WHERE instance_id = ?")
+        .bind(id)
         .execute(&mut *tx)
         .await
     {
@@ -262,8 +270,8 @@ pub async fn update_instance_routing(
         )));
     }
 
-    if let Err(e) = sqlx::query("DELETE FROM action_routing WHERE instance_id = (SELECT instance_id FROM instances WHERE instance_name = ?)")
-        .bind(&instance_name)
+    if let Err(e) = sqlx::query("DELETE FROM action_routing WHERE instance_id = ?")
+        .bind(id)
         .execute(&mut *tx)
         .await
     {
@@ -272,6 +280,19 @@ pub async fn update_instance_routing(
             e
         )));
     }
+
+    // Get instance name for validation
+    let instance = match state.instance_manager.get_instance(id).await {
+        Ok(inst) => inst,
+        Err(e) => {
+            let _ = tx.rollback().await;
+            return Err(ModSrvError::InternalError(format!(
+                "Failed to get instance: {}",
+                e
+            )));
+        },
+    };
+    let instance_name = &instance.core.instance_name;
 
     // Insert new routings
     let mut success_count = 0;
@@ -289,7 +310,7 @@ pub async fn update_instance_routing(
             };
             state
                 .instance_manager
-                .validate_measurement_routing(&routing_row, &instance_name)
+                .validate_measurement_routing(&routing_row, instance_name)
                 .await
         } else if routing.four_remote.is_output() {
             // Action routing (A → C/A)
@@ -301,7 +322,7 @@ pub async fn update_instance_routing(
             };
             state
                 .instance_manager
-                .validate_action_routing(&routing_row, &instance_name)
+                .validate_action_routing(&routing_row, instance_name)
                 .await
         } else {
             Err(anyhow::anyhow!(
@@ -331,11 +352,11 @@ pub async fn update_instance_routing(
                 INSERT INTO measurement_routing
                 (instance_id, instance_name, channel_id, channel_type, channel_point_id,
                  measurement_id, enabled)
-                VALUES ((SELECT instance_id FROM instances WHERE instance_name = ?), ?, ?, ?, ?, ?, true)
+                VALUES (?, (SELECT instance_name FROM instances WHERE instance_id = ?), ?, ?, ?, ?, true)
                 "#,
             )
-            .bind(&instance_name)
-            .bind(&instance_name)
+            .bind(id)
+            .bind(id)
             .bind(routing.channel_id)
             .bind(routing.four_remote.as_str())
             .bind(routing.channel_point_id)
@@ -349,11 +370,11 @@ pub async fn update_instance_routing(
                 INSERT INTO action_routing
                 (instance_id, instance_name, action_id, channel_id, channel_type,
                  channel_point_id, enabled)
-                VALUES ((SELECT instance_id FROM instances WHERE instance_name = ?), ?, ?, ?, ?, ?, true)
+                VALUES (?, (SELECT instance_name FROM instances WHERE instance_id = ?), ?, ?, ?, ?, true)
                 "#,
             )
-            .bind(&instance_name)
-            .bind(&instance_name)
+            .bind(id)
+            .bind(id)
             .bind(routing.point_id)
             .bind(routing.channel_id)
             .bind(routing.four_remote.as_str())
@@ -401,8 +422,8 @@ pub async fn update_instance_routing(
 
 /// Delete all routings for an instance
 ///
-/// @route DELETE /api/instances/{instance_name}/routing
-/// @input instance_name: Path<String> - Instance identifier
+/// @route DELETE /api/instances/{id}/routing
+/// @input id: Path<u16> - Instance ID
 /// @output Json<SuccessResponse<serde_json::Value>> - Success status with deleted count
 /// @throws sqlx::Error - Database deletion error
 /// @redis-delete route:c2m - Removes all routings for instance
@@ -410,9 +431,9 @@ pub async fn update_instance_routing(
 /// @side-effects Removes all channel-to-instance routing
 #[utoipa::path(
     delete,
-    path = "/api/instances/{instance_name}/routing",
+    path = "/api/instances/{id}/routing",
     params(
-        ("instance_name" = String, Path, description = "Instance identifier")
+        ("id" = u16, Path, description = "Instance ID")
     ),
     responses(
         (status = 200, description = "Routings deleted", body = serde_json::Value,
@@ -424,13 +445,9 @@ pub async fn update_instance_routing(
 )]
 pub async fn delete_instance_routing(
     State(state): State<Arc<AppState>>,
-    Path(instance_name): Path<String>,
+    Path(id): Path<u16>,
 ) -> Result<Json<SuccessResponse<serde_json::Value>>, ModSrvError> {
-    match state
-        .instance_manager
-        .delete_all_routing(&instance_name)
-        .await
-    {
+    match state.instance_manager.delete_all_routing(id).await {
         Ok((measurement_count, action_count)) => {
             let total_count = measurement_count + action_count;
 
@@ -460,8 +477,8 @@ pub async fn delete_instance_routing(
 
 /// Validate routing for an instance
 ///
-/// @route POST /api/instances/{instance_name}/routing/validate
-/// @input instance_name: Path<String> - Instance identifier
+/// @route POST /api/instances/{id}/routing/validate
+/// @input id: Path<u16> - Instance ID
 /// @input routings: Json<Vec<RoutingRequest>> - Routings to validate
 /// @output Json<SuccessResponse<serde_json::Value>> - Validation results for each routing
 /// @throws None - Validation errors are returned in response
@@ -469,15 +486,15 @@ pub async fn delete_instance_routing(
 /// @side-effects None (validation only)
 #[utoipa::path(
     post,
-    path = "/api/instances/{instance_name}/routing/validate",
+    path = "/api/instances/{id}/routing/validate",
     params(
-        ("instance_name" = String, Path, description = "Instance identifier")
+        ("id" = u16, Path, description = "Instance ID")
     ),
     request_body = [crate::dto::RoutingRequest],
     responses(
         (status = 200, description = "Validation completed", body = serde_json::Value,
             example = json!({
-                "instance_name": "pv_inverter_01",
+                "instance_id": 1,
                 "validations": [
                     {"channel": "1:T:101", "valid": true, "errors": []},
                     {"channel": "1:T:102", "valid": false, "errors": ["Point not found"]}
@@ -489,9 +506,17 @@ pub async fn delete_instance_routing(
 )]
 pub async fn validate_instance_routing(
     State(state): State<Arc<AppState>>,
-    Path(instance_name): Path<String>,
+    Path(id): Path<u16>,
     Json(routings): Json<Vec<RoutingRequest>>,
 ) -> Result<Json<SuccessResponse<serde_json::Value>>, ModSrvError> {
+    // Get instance name for validation
+    let instance = state
+        .instance_manager
+        .get_instance(id)
+        .await
+        .map_err(|e| ModSrvError::InternalError(format!("Failed to get instance: {}", e)))?;
+    let instance_name = &instance.core.instance_name;
+
     let mut results = Vec::new();
 
     for routing in routings {
@@ -512,7 +537,7 @@ pub async fn validate_instance_routing(
             };
             state
                 .instance_manager
-                .validate_measurement_routing(&routing_row, &instance_name)
+                .validate_measurement_routing(&routing_row, instance_name)
                 .await
         } else if routing.four_remote.is_output() {
             // Action routing (A → C/A)
@@ -524,7 +549,7 @@ pub async fn validate_instance_routing(
             };
             state
                 .instance_manager
-                .validate_action_routing(&routing_row, &instance_name)
+                .validate_action_routing(&routing_row, instance_name)
                 .await
         } else {
             Err(anyhow::anyhow!(
@@ -552,7 +577,7 @@ pub async fn validate_instance_routing(
     }
 
     Ok(Json(SuccessResponse::new(json!({
-        "instance_name": instance_name,
+        "instance_id": id,
         "validations": results
     }))))
 }

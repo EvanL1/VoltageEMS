@@ -56,10 +56,20 @@ impl<'a> ModelsService<'a> {
     ///
     /// Returns detailed information about a specific instance.
     pub async fn get_instance(&self, name: &str) -> Result<Instance> {
-        // Use instance manager to get instance
+        // First, get instance ID from database
+        let instance: Option<(i64,)> =
+            sqlx::query_as("SELECT instance_id FROM instances WHERE instance_name = ?")
+                .bind(name)
+                .fetch_optional(&self.ctx.sqlite_pool)
+                .await?;
+
+        let (instance_id,) = instance
+            .ok_or_else(|| LibApiError::not_found(format!("Instance '{}' not found", name)))?;
+
+        // Use instance manager to get instance by ID
         self.ctx
             .instance_manager
-            .get_instance(name)
+            .get_instance(instance_id as u16)
             .await
             .map_err(|e| {
                 if e.to_string().contains("not found") {
@@ -81,7 +91,21 @@ impl<'a> ModelsService<'a> {
     ///
     /// Removes an instance and cleans up its data from Redis.
     pub async fn delete_instance(&self, name: &str) -> Result<()> {
-        self.ctx.instance_manager.delete_instance(name).await
+        // First, get instance ID from database
+        let instance: Option<(i64,)> =
+            sqlx::query_as("SELECT instance_id FROM instances WHERE instance_name = ?")
+                .bind(name)
+                .fetch_optional(&self.ctx.sqlite_pool)
+                .await?;
+
+        let (instance_id,) = instance
+            .ok_or_else(|| LibApiError::not_found(format!("Instance '{}' not found", name)))?;
+
+        // Delete instance by ID
+        self.ctx
+            .instance_manager
+            .delete_instance(instance_id as u16)
+            .await
     }
 
     /// List all product templates

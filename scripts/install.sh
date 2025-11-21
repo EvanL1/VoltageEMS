@@ -173,9 +173,9 @@ check_image_changed() {
         return 0
     fi
 
-    # Get the image ID currently used by the running container
+    # Get the image ID currently used by the running container (normalize to short ID format)
     local running_image_id
-    running_image_id=$(docker inspect "$container_name" --format='{{.Image}}' 2>/dev/null)
+    running_image_id=$(docker inspect "$container_name" --format='{{.Image}}' 2>/dev/null | sed 's/sha256://; s/^\(.\{12\}\).*/\1/')
 
     if [[ -z "$running_image_id" ]]; then
         # Container not found or not running
@@ -274,6 +274,17 @@ else
 fi
 
 echo -e "${GREEN}[DONE] CLI tools installed${NC}"
+
+# CRITICAL: Pre-install docker-compose.yml before image updates
+# This is needed because Step 2 may update Redis container and requires this file
+if [[ -f docker-compose.yml ]]; then
+    echo "Pre-installing docker-compose.yml for Smart Update Mode..."
+    $SUDO mkdir -p "$INSTALL_DIR"
+    $SUDO cp docker-compose.yml "$INSTALL_DIR/docker-compose.yml"
+    echo -e "${GREEN}✓ docker-compose.yml ready for container updates${NC}"
+else
+    echo -e "${YELLOW}Warning: docker-compose.yml not found (will be created later)${NC}"
+fi
 
 # Step 2: Load Docker images (Smart Update Mode)
 echo -e "${YELLOW}[2/3] Loading Docker images...${NC}"
@@ -406,7 +417,11 @@ if command -v docker &> /dev/null; then
                         run_docker_compose -f "$INSTALL_DIR/docker-compose.yml" up -d voltage-redis
                         echo -e "${GREEN}✓ VoltageRedis updated successfully${NC}"
                     else
-                        echo -e "${YELLOW}Note: docker-compose.yml not found, start manually after installation${NC}"
+                        echo -e "${RED}CRITICAL ERROR: docker-compose.yml not found at expected location${NC}"
+                        echo -e "${RED}Expected: $INSTALL_DIR/docker-compose.yml${NC}"
+                        echo -e "${RED}This is a bug in the installer. Please report to developers.${NC}"
+                        echo -e "${YELLOW}Workaround: Run 'sudo cp docker-compose.yml $INSTALL_DIR/' manually${NC}"
+                        exit 1
                     fi
                 else
                     echo -e "${BLUE}Skipped Redis update (will use old image)${NC}"

@@ -416,22 +416,22 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
         }
     }
 
-    /// Get instance by name
-    pub async fn get_instance(&self, instance_name: &str) -> Result<Instance> {
-        let row = sqlx::query_as::<_, (i32, String, Option<String>, String)>(
+    /// Get instance by ID
+    pub async fn get_instance(&self, instance_id: u16) -> Result<Instance> {
+        let row = sqlx::query_as::<_, (String, String, Option<String>, String)>(
             r#"
-            SELECT instance_id, product_name, properties, created_at
+            SELECT instance_name, product_name, properties, created_at
             FROM instances
-            WHERE instance_name = ?
+            WHERE instance_id = ?
             "#,
         )
-        .bind(instance_name)
+        .bind(instance_id as i32)
         .fetch_optional(&self.pool)
         .await?;
 
-        let row = row.ok_or_else(|| anyhow!("Instance not found: {}", instance_name))?;
+        let row = row.ok_or_else(|| anyhow!("Instance not found: {}", instance_id))?;
 
-        let (instance_id, product_name, properties_json, _created_at) = row;
+        let (instance_name, product_name, properties_json, _created_at) = row;
         let properties: HashMap<String, serde_json::Value> = if let Some(json) = properties_json {
             serde_json::from_str(&json).unwrap_or_default()
         } else {
@@ -450,12 +450,12 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
             WHERE instance_id = ?
             "#,
         )
-        .bind(instance_id)
+        .bind(instance_id as i32)
         .fetch_all(&self.pool)
         .await?;
 
         for (point_id,) in measurement_points {
-            let redis_key = RedisKeys::measurement(instance_id as u16, point_id as u32);
+            let redis_key = RedisKeys::measurement(instance_id, point_id as u32);
             measurement_point_routings.insert(point_id as u32, redis_key);
         }
 
@@ -467,28 +467,19 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
             WHERE instance_id = ?
             "#,
         )
-        .bind(instance_id)
+        .bind(instance_id as i32)
         .fetch_all(&self.pool)
         .await?;
 
         for (point_id,) in action_points {
-            let redis_key = RedisKeys::action(instance_id as u16, point_id as u32);
+            let redis_key = RedisKeys::action(instance_id, point_id as u32);
             action_point_routings.insert(point_id as u32, redis_key);
-        }
-
-        // Validate instance_id is within u16 range
-        if instance_id < 0 || instance_id > u16::MAX as i32 {
-            return Err(anyhow::anyhow!(
-                "Instance ID {} for {} is out of u16 range",
-                instance_id,
-                instance_name
-            ));
         }
 
         Ok(Instance {
             core: voltage_config::modsrv::InstanceCore {
-                instance_id: instance_id as u16,
-                instance_name: instance_name.to_string(),
+                instance_id,
+                instance_name,
                 product_name,
                 properties,
             },
@@ -498,31 +489,31 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
         })
     }
 
-    /// Delete an instance by name
-    pub async fn delete_instance(&self, instance_name: &str) -> Result<()> {
-        // 1. Query instance_id before deletion (needed for Redis cleanup)
-        let instance_id: u16 =
-            sqlx::query_scalar("SELECT instance_id FROM instances WHERE instance_name = ?")
-                .bind(instance_name)
+    /// Delete an instance by ID
+    pub async fn delete_instance(&self, instance_id: u16) -> Result<()> {
+        // 1. Query instance_name before deletion (needed for Redis cleanup and logging)
+        let instance_name: String =
+            sqlx::query_scalar("SELECT instance_name FROM instances WHERE instance_id = ?")
+                .bind(instance_id as i32)
                 .fetch_one(&self.pool)
                 .await
-                .map_err(|e| anyhow!("Instance {} not found: {}", instance_name, e))?;
+                .map_err(|e| anyhow!("Instance {} not found: {}", instance_id, e))?;
 
         // 2. Begin transaction for atomic deletion
         let mut tx = match self.pool.begin().await {
             Ok(tx) => tx,
             Err(e) => {
                 error!(
-                    "Failed to begin transaction for deleting instance {}: {}",
-                    instance_name, e
+                    "Failed to begin transaction for deleting instance {} ({}): {}",
+                    instance_id, instance_name, e
                 );
                 return Err(anyhow!("Database transaction failed: {}", e));
             },
         };
 
         // 3. Delete from SQLite within transaction (cascade will handle point routings)
-        let result = sqlx::query("DELETE FROM instances WHERE instance_name = ?")
-            .bind(instance_name)
+        let result = sqlx::query("DELETE FROM instances WHERE instance_id = ?")
+            .bind(instance_id as i32)
             .execute(&mut *tx)
             .await;
 
@@ -531,13 +522,13 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
                 if res.rows_affected() == 0 {
                     // Rollback transaction
                     let _ = tx.rollback().await;
-                    return Err(anyhow!("Instance not found: {}", instance_name));
+                    return Err(anyhow!("Instance not found: {}", instance_id));
                 }
             },
             Err(e) => {
                 error!(
-                    "Failed to delete instance {} from SQLite: {}",
-                    instance_name, e
+                    "Failed to delete instance {} ({}) from SQLite: {}",
+                    instance_id, instance_name, e
                 );
                 let _ = tx.rollback().await;
                 return Err(anyhow!("Failed to delete instance: {}", e));
@@ -547,29 +538,32 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
         // 4. Commit transaction first (ensure database persistence)
         if let Err(e) = tx.commit().await {
             error!(
-                "Failed to commit transaction for deleting instance {}: {}",
-                instance_name, e
+                "Failed to commit transaction for deleting instance {} ({}): {}",
+                instance_id, instance_name, e
             );
             return Err(anyhow!("Database transaction commit failed: {}", e));
         }
 
         // 5. Best effort remove from Redis (after commit, allow failure)
         if let Err(e) = self
-            .unregister_instance_from_redis(instance_id, instance_name)
+            .unregister_instance_from_redis(instance_id, &instance_name)
             .await
         {
             warn!(
-                "Instance {} deleted from SQLite but Redis cleanup failed: {}. Will be cleaned up on next reload.",
-                instance_name, e
+                "Instance {} ({}) deleted from SQLite but Redis cleanup failed: {}. Will be cleaned up on next reload.",
+                instance_id, instance_name, e
             );
         } else {
             info!(
-                "Successfully unregistered instance {} from Redis after deletion",
-                instance_name
+                "Successfully unregistered instance {} ({}) from Redis after deletion",
+                instance_id, instance_name
             );
         }
 
-        info!("Successfully deleted instance: {}", instance_name);
+        info!(
+            "Successfully deleted instance: {} ({})",
+            instance_id, instance_name
+        );
         Ok(())
     }
 
@@ -622,11 +616,12 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
             };
 
             // Get point routings for this instance
-            let full_instance = match self.get_instance(instance.instance_name()).await {
+            let full_instance = match self.get_instance(instance.instance_id()).await {
                 Ok(inst) => inst,
                 Err(e) => {
                     warn!(
-                        "Failed to get point routings for instance {}: {}",
+                        "Failed to get point routings for instance {} ({}): {}",
+                        instance.instance_id(),
                         instance.instance_name(),
                         e
                     );
@@ -710,7 +705,7 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
             .await?;
 
         // Get point routings for this instance
-        let full_instance = self.get_instance(instance.instance_name()).await?;
+        let full_instance = self.get_instance(instance.instance_id()).await?;
 
         let measurement_point_routings = full_instance.measurement_mappings.unwrap_or_default();
         let action_point_routings = full_instance.action_mappings.unwrap_or_default();
@@ -960,16 +955,9 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
     /// Get instance real-time data from Redis
     pub async fn get_instance_data(
         &self,
-        instance_name: &str,
+        instance_id: u16,
         data_type: Option<&str>,
     ) -> Result<serde_json::Value> {
-        // Query instance_id for Redis operations
-        let instance_id: u16 =
-            sqlx::query_scalar("SELECT instance_id FROM instances WHERE instance_name = ?")
-                .bind(instance_name)
-                .fetch_one(&self.pool)
-                .await?;
-
         let data =
             redis_state::get_instance_data(self.rtdb.as_ref(), instance_id, data_type).await?;
         Ok(data)
@@ -982,27 +970,27 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
     /// - Product point templates (from measurement_points/action_points tables)
     /// - Instance-specific routing (from measurement_routing/action_routing tables)
     ///
-    /// @input instance_name: &str - Instance identifier
+    /// @input instance_id: u16 - Instance identifier
     /// @output Result<(Vec<InstanceMeasurementPoint>, Vec<InstanceActionPoint>)> - Points with routing
     /// @throws anyhow::Error - Instance not found, database error
     /// @performance O(n) where n = number of points, single JOIN query per point type
     pub async fn load_instance_points(
         &self,
-        instance_name: &str,
+        instance_id: u16,
     ) -> Result<(
         Vec<crate::dto::InstanceMeasurementPoint>,
         Vec<crate::dto::InstanceActionPoint>,
     )> {
         use crate::dto::{InstanceActionPoint, InstanceMeasurementPoint, PointRouting};
 
-        // 1. Get instance_id and product_name
-        let (instance_id, product_name) = sqlx::query_as::<_, (u16, String)>(
-            "SELECT instance_id, product_name FROM instances WHERE instance_name = ?",
+        // 1. Get product_name from instance
+        let product_name = sqlx::query_scalar::<_, String>(
+            "SELECT product_name FROM instances WHERE instance_id = ?",
         )
-        .bind(instance_name)
+        .bind(instance_id as i32)
         .fetch_one(&self.pool)
         .await
-        .map_err(|e| anyhow!("Instance '{}' not found: {}", instance_name, e))?;
+        .map_err(|e| anyhow!("Instance {} not found: {}", instance_id, e))?;
 
         // 2. JOIN query for measurement points (Product template + Instance routing)
         let measurements = sqlx::query_as::<
@@ -1119,7 +1107,7 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
 
     pub async fn get_instance_points(
         &self,
-        instance_name: &str,
+        instance_id: u16,
         data_type: Option<&str>,
     ) -> Result<serde_json::Value> {
         // ========================================================================
@@ -1127,16 +1115,15 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
         // Query point definitions directly from SQLite instead of Redis cache
         // ========================================================================
 
-        // Get instance metadata (id, product_name, properties)
-        let instance_row: (u16, String, String) = sqlx::query_as(
-            "SELECT instance_id, product_name, properties FROM instances WHERE instance_name = ?",
-        )
-        .bind(instance_name)
-        .fetch_one(&self.pool)
-        .await
-        .map_err(|_| anyhow!("Instance '{}' not found", instance_name))?;
+        // Get instance metadata (product_name, properties)
+        let instance_row: (String, String) =
+            sqlx::query_as("SELECT product_name, properties FROM instances WHERE instance_id = ?")
+                .bind(instance_id as i32)
+                .fetch_one(&self.pool)
+                .await
+                .map_err(|_| anyhow!("Instance {} not found", instance_id))?;
 
-        let (_instance_id, product_name, properties_json) = instance_row;
+        let (product_name, properties_json) = instance_row;
 
         match data_type {
             Some("measurement") => {
@@ -1254,34 +1241,36 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
     /// Sync measurement data to instance
     pub async fn sync_measurement(
         &self,
-        instance_name: &str,
+        instance_id: u16,
         data: HashMap<String, serde_json::Value>,
     ) -> Result<()> {
-        // Query instance_id for Redis operations
-        let instance_id: u16 =
-            sqlx::query_scalar("SELECT instance_id FROM instances WHERE instance_name = ?")
-                .bind(instance_name)
-                .fetch_one(&self.pool)
-                .await?;
-
         redis_state::sync_measurement(self.rtdb.as_ref(), instance_id, &data).await?;
 
-        debug!("Synced measurement data for instance {}", instance_name);
+        debug!("Synced measurement data for instance {}", instance_id);
         Ok(())
     }
 
     /// Execute action on instance
     pub async fn execute_action(
         &self,
-        instance_name: &str,
+        instance_id: u16,
         action_id: &str,
         value: f64,
     ) -> Result<()> {
+        // Query instance_name for voltage-routing library compatibility
+        // voltage-routing uses instance_name for Redis Hash key lookups (inst:name:index)
+        let instance_name: String =
+            sqlx::query_scalar("SELECT instance_name FROM instances WHERE instance_id = ?")
+                .bind(instance_id as i32)
+                .fetch_one(&self.pool)
+                .await
+                .map_err(|e| anyhow!("Instance {} not found: {}", instance_id, e))?;
+
         // Use application-layer routing with cache
         let outcome = voltage_routing::set_action_point(
             self.rtdb.as_ref(),
             &self.routing_cache,
-            instance_name,
+            &instance_name,
             action_id,
             value,
         )
@@ -1289,18 +1278,20 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
 
         if outcome.routed {
             debug!(
-                "Action {} routed to channel {} for instance {}",
+                "Action {} routed to channel {} for instance {} ({})",
                 action_id,
                 outcome
                     .route_result
                     .as_deref()
                     .unwrap_or("<unknown_channel>"),
+                instance_id,
                 instance_name
             );
         } else {
             debug!(
-                "Action {} stored but not routed for instance {} ({})",
+                "Action {} stored but not routed for instance {} ({}) - {}",
                 action_id,
+                instance_id,
                 instance_name,
                 outcome
                     .route_result
@@ -1315,19 +1306,19 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
     /// Load a single measurement point with routing configuration
     pub async fn load_single_measurement_point(
         &self,
-        instance_name: &str,
+        instance_id: u16,
         point_id: u32,
     ) -> Result<crate::dto::InstanceMeasurementPoint> {
         use crate::dto::{InstanceMeasurementPoint, PointRouting};
 
-        // 1. Get instance_id and product_name
-        let (instance_id, product_name) = sqlx::query_as::<_, (u16, String)>(
-            "SELECT instance_id, product_name FROM instances WHERE instance_name = ?",
+        // 1. Get product_name
+        let product_name = sqlx::query_scalar::<_, String>(
+            "SELECT product_name FROM instances WHERE instance_id = ?",
         )
-        .bind(instance_name)
+        .bind(instance_id as i32)
         .fetch_one(&self.pool)
         .await
-        .map_err(|e| anyhow!("Instance '{}' not found: {}", instance_name, e))?;
+        .map_err(|e| anyhow!("Instance {} not found: {}", instance_id, e))?;
 
         // 2. JOIN query for the specific measurement point
         let point = sqlx::query_as::<
@@ -1366,9 +1357,9 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
         .await
         .map_err(|e| {
             anyhow!(
-                "Measurement point {} not found for instance '{}': {}",
+                "Measurement point {} not found for instance {}: {}",
                 point_id,
-                instance_name,
+                instance_id,
                 e
             )
         })?;
@@ -1395,19 +1386,19 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
     /// Load a single action point with routing configuration
     pub async fn load_single_action_point(
         &self,
-        instance_name: &str,
+        instance_id: u16,
         point_id: u32,
     ) -> Result<crate::dto::InstanceActionPoint> {
         use crate::dto::{InstanceActionPoint, PointRouting};
 
-        // 1. Get instance_id and product_name
-        let (instance_id, product_name) = sqlx::query_as::<_, (u16, String)>(
-            "SELECT instance_id, product_name FROM instances WHERE instance_name = ?",
+        // 1. Get product_name
+        let product_name = sqlx::query_scalar::<_, String>(
+            "SELECT product_name FROM instances WHERE instance_id = ?",
         )
-        .bind(instance_name)
+        .bind(instance_id as i32)
         .fetch_one(&self.pool)
         .await
-        .map_err(|e| anyhow!("Instance '{}' not found: {}", instance_name, e))?;
+        .map_err(|e| anyhow!("Instance {} not found: {}", instance_id, e))?;
 
         // 2. JOIN query for the specific action point
         let point = sqlx::query_as::<
@@ -1446,9 +1437,9 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
         .await
         .map_err(|e| {
             anyhow!(
-                "Action point {} not found for instance '{}': {}",
+                "Action point {} not found for instance {}: {}",
                 point_id,
-                instance_name,
+                instance_id,
                 e
             )
         })?;
@@ -1475,7 +1466,7 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
     /// Create or update routing for a single measurement point (UPSERT)
     pub async fn upsert_measurement_routing(
         &self,
-        instance_name: &str,
+        instance_id: u16,
         point_id: u32,
         request: crate::dto::SinglePointRoutingRequest,
     ) -> Result<()> {
@@ -1487,14 +1478,14 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
             ));
         }
 
-        // Get instance_id
-        let instance_id = sqlx::query_scalar::<_, u16>(
-            "SELECT instance_id FROM instances WHERE instance_name = ?",
+        // Get instance_name for routing table denormalization
+        let instance_name = sqlx::query_scalar::<_, String>(
+            "SELECT instance_name FROM instances WHERE instance_id = ?",
         )
-        .bind(instance_name)
+        .bind(instance_id as i32)
         .fetch_one(&self.pool)
         .await
-        .map_err(|e| anyhow!("Instance '{}' not found: {}", instance_name, e))?;
+        .map_err(|e| anyhow!("Instance {} not found: {}", instance_id, e))?;
 
         // UPSERT into measurement_routing
         sqlx::query(
@@ -1528,7 +1519,7 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
     /// Create or update routing for a single action point (UPSERT)
     pub async fn upsert_action_routing(
         &self,
-        instance_name: &str,
+        instance_id: u16,
         point_id: u32,
         request: crate::dto::SinglePointRoutingRequest,
     ) -> Result<()> {
@@ -1540,14 +1531,14 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
             ));
         }
 
-        // Get instance_id
-        let instance_id = sqlx::query_scalar::<_, u16>(
-            "SELECT instance_id FROM instances WHERE instance_name = ?",
+        // Get instance_name for routing table denormalization
+        let instance_name = sqlx::query_scalar::<_, String>(
+            "SELECT instance_name FROM instances WHERE instance_id = ?",
         )
-        .bind(instance_name)
+        .bind(instance_id as i32)
         .fetch_one(&self.pool)
         .await
-        .map_err(|e| anyhow!("Instance '{}' not found: {}", instance_name, e))?;
+        .map_err(|e| anyhow!("Instance {} not found: {}", instance_id, e))?;
 
         // UPSERT into action_routing
         sqlx::query(
@@ -1579,20 +1570,7 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
     }
 
     /// Delete routing for a single measurement point
-    pub async fn delete_measurement_routing(
-        &self,
-        instance_name: &str,
-        point_id: u32,
-    ) -> Result<u64> {
-        // Get instance_id
-        let instance_id = sqlx::query_scalar::<_, u16>(
-            "SELECT instance_id FROM instances WHERE instance_name = ?",
-        )
-        .bind(instance_name)
-        .fetch_one(&self.pool)
-        .await
-        .map_err(|e| anyhow!("Instance '{}' not found: {}", instance_name, e))?;
-
+    pub async fn delete_measurement_routing(&self, instance_id: u16, point_id: u32) -> Result<u64> {
         // Delete from measurement_routing
         let result = sqlx::query(
             "DELETE FROM measurement_routing WHERE instance_id = ? AND measurement_id = ?",
@@ -1606,16 +1584,7 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
     }
 
     /// Delete routing for a single action point
-    pub async fn delete_action_routing(&self, instance_name: &str, point_id: u32) -> Result<u64> {
-        // Get instance_id
-        let instance_id = sqlx::query_scalar::<_, u16>(
-            "SELECT instance_id FROM instances WHERE instance_name = ?",
-        )
-        .bind(instance_name)
-        .fetch_one(&self.pool)
-        .await
-        .map_err(|e| anyhow!("Instance '{}' not found: {}", instance_name, e))?;
-
+    pub async fn delete_action_routing(&self, instance_id: u16, point_id: u32) -> Result<u64> {
         // Delete from action_routing
         let result =
             sqlx::query("DELETE FROM action_routing WHERE instance_id = ? AND action_id = ?")
@@ -1630,19 +1599,10 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
     /// Toggle enabled state for a single measurement point routing
     pub async fn toggle_measurement_routing(
         &self,
-        instance_name: &str,
+        instance_id: u16,
         point_id: u32,
         enabled: bool,
     ) -> Result<u64> {
-        // Get instance_id
-        let instance_id = sqlx::query_scalar::<_, u16>(
-            "SELECT instance_id FROM instances WHERE instance_name = ?",
-        )
-        .bind(instance_name)
-        .fetch_one(&self.pool)
-        .await
-        .map_err(|e| anyhow!("Instance '{}' not found: {}", instance_name, e))?;
-
         // Update enabled field
         let result = sqlx::query(
             r#"
@@ -1663,19 +1623,10 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
     /// Toggle enabled state for a single action point routing
     pub async fn toggle_action_routing(
         &self,
-        instance_name: &str,
+        instance_id: u16,
         point_id: u32,
         enabled: bool,
     ) -> Result<u64> {
-        // Get instance_id
-        let instance_id = sqlx::query_scalar::<_, u16>(
-            "SELECT instance_id FROM instances WHERE instance_name = ?",
-        )
-        .bind(instance_name)
-        .fetch_one(&self.pool)
-        .await
-        .map_err(|e| anyhow!("Instance '{}' not found: {}", instance_name, e))?;
-
         // Update enabled field
         let result = sqlx::query(
             r#"
@@ -1697,21 +1648,21 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
     ///
     /// Retrieves all enabled measurement routing entries for the specified instance.
     ///
-    /// @input instance_name: &str - Instance name
+    /// @input instance_id: u16 - Instance ID
     /// @output Result<Vec<MeasurementRouting>> - List of measurement routing entries
     /// @throws anyhow::Error - Database query error
     pub async fn get_measurement_routing(
         &self,
-        instance_name: &str,
+        instance_id: u16,
     ) -> Result<Vec<MeasurementRouting>> {
         let routing = sqlx::query_as::<_, MeasurementRouting>(
             r#"
             SELECT * FROM measurement_routing
-            WHERE instance_name = ? AND enabled = TRUE
+            WHERE instance_id = ? AND enabled = TRUE
             ORDER BY channel_id, channel_type, channel_point_id
             "#,
         )
-        .bind(instance_name)
+        .bind(instance_id as i32)
         .fetch_all(&self.pool)
         .await?;
 
@@ -1722,18 +1673,18 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
     ///
     /// Retrieves all enabled action routing entries for the specified instance.
     ///
-    /// @input instance_name: &str - Instance name
+    /// @input instance_id: u16 - Instance ID
     /// @output Result<Vec<ActionRouting>> - List of action routing entries
     /// @throws anyhow::Error - Database query error
-    pub async fn get_action_routing(&self, instance_name: &str) -> Result<Vec<ActionRouting>> {
+    pub async fn get_action_routing(&self, instance_id: u16) -> Result<Vec<ActionRouting>> {
         let routing = sqlx::query_as::<_, ActionRouting>(
             r#"
             SELECT * FROM action_routing
-            WHERE instance_name = ? AND enabled = TRUE
+            WHERE instance_id = ? AND enabled = TRUE
             ORDER BY action_id
             "#,
         )
-        .bind(instance_name)
+        .bind(instance_id as i32)
         .fetch_all(&self.pool)
         .await?;
 
@@ -1878,18 +1829,18 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
     ///
     /// Removes all measurement and action routing entries for the specified instance.
     ///
-    /// @input instance_name: &str - Instance name
+    /// @input instance_id: u16 - Instance ID
     /// @output Result<(u64, u64)> - Tuple of (measurement_deleted, action_deleted) counts
     /// @throws anyhow::Error - Database query error
-    pub async fn delete_all_routing(&self, instance_name: &str) -> Result<(u64, u64)> {
+    pub async fn delete_all_routing(&self, instance_id: u16) -> Result<(u64, u64)> {
         let measurement_result =
-            sqlx::query("DELETE FROM measurement_routing WHERE instance_name = ?")
-                .bind(instance_name)
+            sqlx::query("DELETE FROM measurement_routing WHERE instance_id = ?")
+                .bind(instance_id as i32)
                 .execute(&self.pool)
                 .await?;
 
-        let action_result = sqlx::query("DELETE FROM action_routing WHERE instance_name = ?")
-            .bind(instance_name)
+        let action_result = sqlx::query("DELETE FROM action_routing WHERE instance_id = ?")
+            .bind(instance_id as i32)
             .execute(&self.pool)
             .await?;
 
@@ -2212,8 +2163,8 @@ mod tests {
             .await
             .unwrap();
 
-        // Get instance
-        let result = manager.get_instance("get_test_instance").await;
+        // Get instance by ID
+        let result = manager.get_instance(1001).await;
 
         assert!(
             result.is_ok(),
@@ -2234,7 +2185,7 @@ mod tests {
         let routing_cache = Arc::new(voltage_config::RoutingCache::new());
         let manager = InstanceManager::new(pool, rtdb, routing_cache, product_loader);
 
-        let result = manager.get_instance("nonexistent_instance").await;
+        let result = manager.get_instance(9999).await;
 
         assert!(result.is_err(), "Should fail when instance doesn't exist");
     }
@@ -2260,12 +2211,12 @@ mod tests {
             .await
             .unwrap();
 
-        // Delete instance
-        let result = manager.delete_instance("delete_test").await;
+        // Delete instance by ID
+        let result = manager.delete_instance(1001).await;
         assert!(result.is_ok());
 
         // Verify it's deleted
-        let get_result = manager.get_instance("delete_test").await;
+        let get_result = manager.get_instance(1001).await;
         assert!(get_result.is_err());
     }
 }

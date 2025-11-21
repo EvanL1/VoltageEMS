@@ -516,8 +516,10 @@ pub fn init_with_config(config: LogConfig) -> Result<(), Box<dyn std::error::Err
     );
 
     if config.enable_api_log {
+        let current_date = chrono::Local::now().format("%Y%m%d");
         tracing::info!(
-            "API logging enabled: {}_api{{YYYYMMDD}}.log",
+            "API logging enabled: {}_{}_api.log",
+            current_date,
             config.service_name
         );
     }
@@ -1271,42 +1273,126 @@ async fn compress_file(path: &Path) -> Result<(), Box<dyn std::error::Error>> {
 // HTTP API Request Logging Middleware
 // ============================================================================
 
+/// Redact sensitive fields in JSON string
+///
+/// Recursively searches for sensitive field names and replaces their values with "***REDACTED***".
+/// Handles nested objects and arrays.
+///
+/// # Sensitive Fields
+/// - password
+/// - token
+/// - api_key
+/// - secret
+/// - authorization
+///
+/// # Example
+/// ```rust,ignore
+/// let json = r#"{"username":"admin","password":"secret123"}"#;
+/// let redacted = redact_sensitive_fields(json);
+/// // Result: r#"{"username":"admin","password":"***REDACTED***"}"#
+/// ```
+#[allow(clippy::disallowed_methods)] // json! macro internally uses unwrap (compile-time safe, never panics)
+fn redact_sensitive_fields(json_str: &str) -> String {
+    use serde_json::{json, Value};
+
+    const SENSITIVE_KEYS: &[&str] = &["password", "token", "api_key", "secret", "authorization"];
+
+    // Try to parse as JSON
+    let Ok(mut value) = serde_json::from_str::<Value>(json_str) else {
+        // If not valid JSON, return as-is
+        return json_str.to_string();
+    };
+
+    // Recursive redaction function
+    fn redact_recursive(value: &mut Value) {
+        match value {
+            Value::Object(map) => {
+                for (key, val) in map.iter_mut() {
+                    let key_lower = key.to_lowercase();
+                    if SENSITIVE_KEYS.iter().any(|&k| key_lower.contains(k)) {
+                        // Replace sensitive value with redacted marker
+                        *val = json!("***REDACTED***");
+                    } else {
+                        // Recursively process nested objects/arrays
+                        redact_recursive(val);
+                    }
+                }
+            },
+            Value::Array(arr) => {
+                for item in arr.iter_mut() {
+                    redact_recursive(item);
+                }
+            },
+            _ => {},
+        }
+    }
+
+    redact_recursive(&mut value);
+
+    // Serialize back to string (compact format)
+    serde_json::to_string(&value).unwrap_or_else(|_| json_str.to_string())
+}
+
+/// Truncate body string to maximum length
+///
+/// If the body exceeds max_length, it will be truncated and a suffix will be added
+/// indicating how many bytes were truncated.
+///
+/// # Example
+/// ```rust,ignore
+/// let long_body = "a".repeat(1000);
+/// let truncated = truncate_body(&long_body, 500);
+/// // Result: "aaa...aaa[truncated 500 bytes]"
+/// ```
+fn truncate_body(body: &str, max_length: usize) -> String {
+    if body.len() <= max_length {
+        body.to_string()
+    } else {
+        let truncated_bytes = body.len() - max_length;
+        format!(
+            "{}[truncated {} bytes]",
+            &body[..max_length],
+            truncated_bytes
+        )
+    }
+}
+
 /// HTTP API request logger middleware
 ///
-/// Provides selective HTTP request logging based on the current tracing log level:
-/// - **INFO level**: Logs only POST and PUT requests
-/// - **DEBUG level**: Logs all HTTP requests
+/// Provides selective HTTP request logging with request body recording:
+/// - **INFO level**: Logs only POST/PUT/PATCH/DELETE requests (no body)
+/// - **DEBUG level**: Logs all requests with body content (truncated & redacted)
 ///
 /// Logs are routed to dedicated API log files via the "api_access" target.
 ///
 /// # Design Decisions
 ///
-/// - **Active Level Checking**: Uses `tracing::level_enabled!()` to avoid unnecessary
-///   parameter extraction when logging is disabled (performance optimization)
-/// - **Dedicated Target**: All logs use `target: "api_access"` for file routing separation
-/// - **Selective Logging**: INFO level filters to only POST/PUT to reduce noise
+/// - **Body Recording at DEBUG**: Request body is only read and logged at DEBUG level
+/// - **Sensitive Field Redaction**: password, token, api_key, secret, authorization are filtered
+/// - **Body Truncation**: Body limited to 500 characters to prevent log bloat
+/// - **Simplified Fields**: Removed redundant headers (user_agent, content_type, content_length, is_error)
+/// - **No Duplicate Logging**: INFO and DEBUG levels are mutually exclusive
 ///
 /// # Logged Information
-/// - HTTP method (POST, GET, PUT, DELETE)
+/// - HTTP method (POST, GET, PUT, DELETE, PATCH)
 /// - Request path (e.g., `/api/channels`, `/api/instances`)
 /// - HTTP status code (e.g., 200, 404, 500)
 /// - Response duration in milliseconds
-/// - Request headers (User-Agent, Content-Type, Content-Length)
-/// - Error status (is_error: true/false)
+/// - Request body (DEBUG only, truncated to 500 chars, sensitive fields redacted)
 ///
 /// # Example Log Output
 ///
-/// INFO level (written to `{service}_api{YYYYMMDD}.log`):
+/// INFO level (production, written to `{service}_api{YYYYMMDD}.log`):
 /// ```text
-/// INFO  HTTP request method=POST path=/api/channels status=201 duration_ms=45 user_agent="curl/8.1.0" content_type="application/json"
+/// INFO  HTTP request method=POST path=/api/instances status=200 duration_ms=15
 /// INFO  HTTP request method=PUT path=/api/channels/1 status=200 duration_ms=23
 /// ```
 ///
-/// DEBUG level (written to `{service}_api{YYYYMMDD}.log`):
+/// DEBUG level (development, written to `{service}_api{YYYYMMDD}.log`):
 /// ```text
-/// DEBUG HTTP request method=GET path=/health status=200 duration_ms=5
-/// DEBUG HTTP request method=POST path=/api/channels status=201 duration_ms=45 user_agent="curl/8.1.0"
-/// DEBUG HTTP request method=DELETE path=/api/channels/999 status=404 duration_ms=8
+/// DEBUG HTTP request method=POST path=/api/instances status=200 duration_ms=15 request_body={"instance_name":"test","properties":{...}}[truncated 234 bytes]
+/// DEBUG HTTP request method=GET path=/health status=200 duration_ms=5 request_body=-
+/// DEBUG HTTP request method=POST path=/api/auth/login status=200 duration_ms=50 request_body={"username":"admin","password":"***REDACTED***"}
 /// ```
 ///
 /// # Usage
@@ -1325,70 +1411,83 @@ pub async fn http_request_logger(
     req: axum::extract::Request,
     next: axum::middleware::Next,
 ) -> axum::response::Response {
+    use axum::body::Body;
     use std::time::Instant;
-    use tracing::{debug, info};
+    use tracing::{debug, info, level_enabled, Level};
+
+    const MAX_BODY_LENGTH: usize = 500;
 
     let method = req.method().clone();
     let uri = req.uri().clone();
-    let start = Instant::now();
-
-    // Extract request headers (must clone before moving req)
-    let user_agent = req
-        .headers()
-        .get("user-agent")
-        .and_then(|v| v.to_str().ok())
-        .map(|s| s.to_string())
-        .unwrap_or_else(|| "-".to_string());
     let content_type = req
         .headers()
         .get("content-type")
         .and_then(|v| v.to_str().ok())
-        .map(|s| s.to_string())
-        .unwrap_or_else(|| "-".to_string());
-    let content_length = req
-        .headers()
-        .get("content-length")
-        .and_then(|v| v.to_str().ok())
-        .map(|s| s.to_string())
-        .unwrap_or_else(|| "-".to_string());
+        .unwrap_or("");
+    let start = Instant::now();
+
+    // Only read body at DEBUG level and for modifying methods (POST/PUT/PATCH/DELETE)
+    let should_read_body = level_enabled!(Level::DEBUG)
+        && matches!(method.as_str(), "POST" | "PUT" | "PATCH" | "DELETE")
+        && content_type.contains("application/json");
+
+    let (req, body_str) = if should_read_body {
+        // Read body bytes
+        let (parts, body) = req.into_parts();
+        let bytes = match axum::body::to_bytes(body, usize::MAX).await {
+            Ok(b) => b,
+            Err(e) => {
+                tracing::warn!("Failed to read request body: {}", e);
+                // Reconstruct request with empty body and continue
+                let new_req = axum::extract::Request::from_parts(parts, Body::empty());
+                return next.run(new_req).await;
+            },
+        };
+
+        // Convert to string
+        let body_str = match std::str::from_utf8(&bytes) {
+            Ok(s) => {
+                // Apply redaction and truncation
+                let redacted = redact_sensitive_fields(s);
+                truncate_body(&redacted, MAX_BODY_LENGTH)
+            },
+            Err(_) => "<binary data>".to_string(),
+        };
+
+        // Reconstruct request with original bytes
+        let new_req = axum::extract::Request::from_parts(parts, Body::from(bytes));
+        (new_req, body_str)
+    } else {
+        // Don't read body, use placeholder
+        (req, "-".to_string())
+    };
 
     // Execute the request
     let response = next.run(req).await;
 
     let duration = start.elapsed();
     let status = response.status();
-    let is_error = status.is_client_error() || status.is_server_error();
 
-    // Log API requests with appropriate level
-    // The tracing subscriber's filter will decide which logs are actually written based on api_access target level
-
-    // Always try DEBUG level first (logs all requests if api_access is at DEBUG)
-    debug!(
-        target: "api_access",
-        method = %method,
-        path = %uri.path(),
-        status = %status.as_u16(),
-        duration_ms = %duration.as_millis(),
-        user_agent = %user_agent,
-        content_type = %content_type,
-        content_length = %content_length,
-        is_error = %is_error,
-        "HTTP request"
-    );
-
-    // Fallback to INFO level for POST/PUT (if api_access is at INFO but not DEBUG)
-    // This ensures POST/PUT are logged even when api_access target is set to INFO
-    if method == "POST" || method == "PUT" {
+    // Log based on level
+    if level_enabled!(Level::DEBUG) {
+        // DEBUG: Log all requests with body
+        debug!(
+            target: "api_access",
+            method = %method,
+            path = %uri.path(),
+            status = %status.as_u16(),
+            duration_ms = %duration.as_millis(),
+            request_body = %body_str,
+            "HTTP request"
+        );
+    } else if matches!(method.as_str(), "POST" | "PUT" | "PATCH" | "DELETE") {
+        // INFO: Log only modifying methods, no body
         info!(
             target: "api_access",
             method = %method,
             path = %uri.path(),
             status = %status.as_u16(),
             duration_ms = %duration.as_millis(),
-            user_agent = %user_agent,
-            content_type = %content_type,
-            content_length = %content_length,
-            is_error = %is_error,
             "HTTP request"
         );
     }

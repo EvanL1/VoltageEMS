@@ -44,21 +44,21 @@ fn parse_direction(direction: Option<String>) -> Result<RoutingDirection, String
 ///
 /// Returns measurement and action routing configuration categorized by type.
 ///
-/// @route GET /api/instances/{instance_name}/routing
-/// @input Path(instance_name): String - Instance identifier
+/// @route GET /api/instances/{id}/routing
+/// @input Path(id): u16 - Instance ID
 /// @output Json<SuccessResponse<serde_json::Value>> - Categorized routing entries
 /// @status 200 - Success with categorized routing lists
 /// @status 500 - Database error
 #[utoipa::path(
     get,
-    path = "/api/instances/{instance_name}/routing",
+    path = "/api/instances/{id}/routing",
     params(
-        ("instance_name" = String, Path, description = "Instance identifier")
+        ("id" = u16, Path, description = "Instance ID")
     ),
     responses(
         (status = 200, description = "Instance routing categorized by type", body = serde_json::Value,
             example = json!({
-                "instance_name": "pv_inverter_01",
+                "instance_id": 1,
                 "measurement": [
                     {"channel": {"id": 1, "four_remote": "T", "point_id": 101}, "point_id": 101, "enabled": true},
                     {"channel": {"id": 1, "four_remote": "T", "point_id": 102}, "point_id": 102, "enabled": true}
@@ -74,18 +74,12 @@ fn parse_direction(direction: Option<String>) -> Result<RoutingDirection, String
 )]
 pub async fn get_instance_routing_handler(
     State(state): State<Arc<AppState>>,
-    Path(instance_name): Path<String>,
+    Path(id): Path<u16>,
 ) -> Result<Json<SuccessResponse<serde_json::Value>>, ModSrvError> {
     // Get both measurement and action routing
-    let measurement_result = state
-        .instance_manager
-        .get_measurement_routing(&instance_name)
-        .await;
+    let measurement_result = state.instance_manager.get_measurement_routing(id).await;
 
-    let action_result = state
-        .instance_manager
-        .get_action_routing(&instance_name)
-        .await;
+    let action_result = state.instance_manager.get_action_routing(id).await;
 
     // Check for database errors - fail fast instead of returning empty list
     let measurements = match measurement_result {
@@ -137,7 +131,7 @@ pub async fn get_instance_routing_handler(
     }
 
     Ok(Json(SuccessResponse::new(json!({
-        "instance_name": instance_name,
+        "instance_id": id,
         "measurement": measurement_entries,
         "action": action_entries
     }))))

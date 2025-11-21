@@ -111,7 +111,7 @@ pub async fn list_instances(
 /// Get a specific instance by ID
 ///
 /// @route GET /api/instances/{id}
-/// @input Path(id): String - Instance identifier
+/// @input Path(id): u16 - Instance ID
 /// @output Result<Json<SuccessResponse<serde_json::Value>>, AppError> - Instance details
 /// @status 200 - Success with instance data
 /// @status 404 - Instance not found
@@ -119,7 +119,7 @@ pub async fn list_instances(
     get,
     path = "/api/instances/{id}",
     params(
-        ("id" = String, Path, description = "Instance identifier")
+        ("id" = u16, Path, description = "Instance ID")
     ),
     responses(
         (status = 200, description = "Instance details", body = serde_json::Value,
@@ -144,9 +144,9 @@ pub async fn list_instances(
 )]
 pub async fn get_instance(
     State(state): State<Arc<AppState>>,
-    Path(id): Path<String>,
+    Path(id): Path<u16>,
 ) -> Result<Json<SuccessResponse<serde_json::Value>>, ModSrvError> {
-    match state.instance_manager.get_instance(&id).await {
+    match state.instance_manager.get_instance(id).await {
         Ok(instance) => Ok(Json(SuccessResponse::new(json!({
             "instance": instance
         })))),
@@ -168,7 +168,7 @@ pub async fn get_instance(
 /// Returns current measurement, action, and property values from Redis.
 ///
 /// @route GET /api/instances/{id}/data?data_type={optional}
-/// @input Path(id): String - Instance identifier
+/// @input Path(id): u16 - Instance ID
 /// @input Query(query): DataTypeQuery - Optional data type filter (M/A/P)
 /// @output Result<Json<SuccessResponse<serde_json::Value>>, AppError> - Instance data points
 /// @status 200 - Success with data points
@@ -178,7 +178,7 @@ pub async fn get_instance(
     get,
     path = "/api/instances/{id}/data",
     params(
-        ("id" = String, Path, description = "Instance identifier"),
+        ("id" = u16, Path, description = "Instance ID"),
         ("type" = Option<String>, Query, description = "Optional data type filter (measurement/action)")
     ),
     responses(
@@ -203,12 +203,12 @@ pub async fn get_instance(
 )]
 pub async fn get_instance_data(
     State(state): State<Arc<AppState>>,
-    Path(id): Path<String>,
+    Path(id): Path<u16>,
     Query(query): Query<DataTypeQuery>,
 ) -> Result<Json<SuccessResponse<serde_json::Value>>, ModSrvError> {
     match state
         .instance_manager
-        .get_instance_data(&id, query.data_type.as_deref())
+        .get_instance_data(id, query.data_type.as_deref())
         .await
     {
         Ok(data) => Ok(Json(SuccessResponse::new(data))),
@@ -233,7 +233,7 @@ pub async fn get_instance_data(
 /// routing configuration (if configured).
 ///
 /// @route GET /api/instances/{id}/points
-/// @input Path(id): String - Instance name
+/// @input Path(id): u16 - Instance ID
 /// @output Result<Json<SuccessResponse<InstancePointsResponse>>, AppError> - Points with routing
 /// @status 200 - Success with point definitions
 /// @status 404 - Instance not found
@@ -242,10 +242,10 @@ pub async fn get_instance_data(
     get,
     path = "/api/instances/{id}/points",
     params(
-        ("id" = String, Path, description = "Instance name")
+        ("id" = u16, Path, description = "Instance ID")
     ),
     responses(
-        (status = 200, description = "Instance points with routing configurations", 
+        (status = 200, description = "Instance points with routing configurations",
             body = InstancePointsResponse,
             example = json!({
                 "instance_name": "pv_inverter_01",
@@ -292,12 +292,21 @@ pub async fn get_instance_data(
 )]
 pub async fn get_instance_points(
     State(state): State<Arc<AppState>>,
-    Path(id): Path<String>,
+    Path(id): Path<u16>,
 ) -> Result<Json<SuccessResponse<InstancePointsResponse>>, ModSrvError> {
-    match state.instance_manager.load_instance_points(&id).await {
+    // Query instance_name for response (InstancePointsResponse still needs it for now)
+    let instance = state.instance_manager.get_instance(id).await.map_err(|e| {
+        if e.to_string().contains("not found") {
+            ModSrvError::InstanceNotFound(id.to_string())
+        } else {
+            ModSrvError::InternalError(format!("Failed to get instance: {}", e))
+        }
+    })?;
+
+    match state.instance_manager.load_instance_points(id).await {
         Ok((measurements, actions)) => {
             let response = InstancePointsResponse {
-                instance_name: id.clone(),
+                instance_name: instance.instance_name().to_string(),
                 measurements,
                 actions,
             };
@@ -306,7 +315,7 @@ pub async fn get_instance_points(
         Err(e) => {
             let error_msg = e.to_string();
             if error_msg.contains("not found") {
-                Err(ModSrvError::InstanceNotFound(id))
+                Err(ModSrvError::InstanceNotFound(id.to_string()))
             } else {
                 Err(ModSrvError::InternalError(format!(
                     "Failed to get instance points: {}",

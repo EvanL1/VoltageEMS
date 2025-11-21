@@ -4,14 +4,30 @@
 
 #![allow(clippy::disallowed_methods)] // json! macro used in multiple functions
 
-use crate::common::{telemetry_type_to_redis, PluginPointUpdate};
 use crate::utils::error::{ComSrvError, Result};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use tracing::{debug, warn};
 use voltage_config::comsrv::RedisKeys;
+use voltage_config::FourRemote;
 use voltage_rtdb::Rtdb;
+
+/// Plugin point update for batch operations
+///
+/// Represents a single point update that will be written to Redis.
+/// Used by storage manager for batch updates.
+#[derive(Debug, Clone)]
+pub struct PluginPointUpdate {
+    /// Type of telemetry point (T/S/C/A)
+    pub telemetry_type: FourRemote,
+    /// Point identifier
+    pub point_id: u32,
+    /// Transformed value (after scale/offset/reverse)
+    pub value: f64,
+    /// Original raw value before transformation (optional)
+    pub raw_value: Option<f64>,
+}
 
 /// Point update data
 #[derive(Debug, Clone)]
@@ -113,7 +129,7 @@ impl StorageManager {
             .iter()
             .map(|u| PointUpdate {
                 channel_id,
-                point_type: telemetry_type_to_redis(&u.telemetry_type).to_string(),
+                point_type: u.telemetry_type.as_str().to_string(),
                 point_id: u.point_id,
                 value: u.value,
                 raw_value: u.raw_value,

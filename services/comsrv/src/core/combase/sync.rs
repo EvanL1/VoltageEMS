@@ -10,6 +10,7 @@ use tracing::{debug, error, info};
 use super::point_config::RuntimeConfigProvider;
 use super::point_transformer::TransformDirection;
 use crate::core::combase::traits::TelemetryBatch;
+use crate::storage::PluginPointUpdate;
 use crate::utils::error::{ComSrvError, Result};
 use voltage_config::common::FourRemote;
 
@@ -19,7 +20,7 @@ use voltage_config::common::FourRemote;
 fn transform_telemetry_batch(
     config_provider: &Arc<RuntimeConfigProvider>,
     telemetry_batch: TelemetryBatch,
-) -> Vec<crate::common::PluginPointUpdate> {
+) -> Vec<PluginPointUpdate> {
     let channel_id = telemetry_batch.channel_id;
     let mut updates = Vec::new();
 
@@ -36,7 +37,7 @@ fn transform_telemetry_batch(
             point_id, raw_value, processed_value
         );
 
-        let update = crate::common::PluginPointUpdate {
+        let update = PluginPointUpdate {
             telemetry_type: crate::core::config::FourRemote::Telemetry,
             point_id,
             value: processed_value,
@@ -58,7 +59,7 @@ fn transform_telemetry_batch(
             point_id, raw_value, processed_value
         );
 
-        let update = crate::common::PluginPointUpdate {
+        let update = PluginPointUpdate {
             telemetry_type: crate::core::config::FourRemote::Signal,
             point_id,
             value: processed_value,
@@ -114,10 +115,7 @@ impl TelemetrySync {
     ///
     /// This method applies configured transformations (scale/offset/reverse) to raw data.
     /// Extracted for reusability and testing.
-    pub fn transform_batch(
-        &self,
-        telemetry_batch: TelemetryBatch,
-    ) -> Vec<crate::common::PluginPointUpdate> {
+    pub fn transform_batch(&self, telemetry_batch: TelemetryBatch) -> Vec<PluginPointUpdate> {
         transform_telemetry_batch(&self.config_provider, telemetry_batch)
     }
 

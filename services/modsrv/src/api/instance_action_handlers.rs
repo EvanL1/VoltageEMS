@@ -21,7 +21,7 @@ use crate::error::ModSrvError;
 /// Triggers an action point with the specified value.
 ///
 /// @route POST /api/instances/{id}/action
-/// @input Path(id): String - Instance identifier
+/// @input Path(id): u16 - Instance ID
 /// @input Json(req): ActionRequest - Action details
 /// @output Result<Json<SuccessResponse<serde_json::Value>>, AppError> - Execution result
 /// @status 200 - Success confirmation
@@ -32,7 +32,7 @@ use crate::error::ModSrvError;
     post,
     path = "/api/instances/{id}/action",
     params(
-        ("id" = String, Path, description = "Instance identifier")
+        ("id" = u16, Path, description = "Instance ID")
     ),
     request_body = crate::dto::ActionRequest,
     responses(
@@ -46,17 +46,17 @@ use crate::error::ModSrvError;
 )]
 pub async fn execute_instance_action(
     State(state): State<Arc<AppState>>,
-    Path(id): Path<String>,
+    Path(id): Path<u16>,
     Json(req): Json<ActionRequest>,
 ) -> Result<Json<SuccessResponse<serde_json::Value>>, ModSrvError> {
     match state
         .instance_manager
-        .execute_action(&id, &req.point_id, req.value)
+        .execute_action(id, &req.point_id, req.value)
         .await
     {
         Ok(_) => Ok(Json(SuccessResponse::new(json!({
             "message": "Action executed",
-            "instance_name": id,
+            "instance_id": id,
             "point_id": req.point_id,
             "value": req.value
         })))),
@@ -64,7 +64,7 @@ pub async fn execute_instance_action(
             let error_msg = e.to_string();
             if error_msg.contains("not found") {
                 Err(ModSrvError::InternalError(format!(
-                    "Not found: Instance '{}' or action point '{}' not found",
+                    "Not found: Instance {} or action point '{}' not found",
                     id, req.point_id
                 )))
             } else {

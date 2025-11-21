@@ -106,6 +106,9 @@ pub mod routes;
 // Handler modules
 pub mod health_handlers;
 
+// DTO definitions
+pub mod dto;
+
 // Handler modules in subdirectory
 pub mod handlers {
     pub mod channel_handlers;
