@@ -188,3 +188,276 @@ impl Default for DeviceLimit {
         }
     }
 }
+
+#[cfg(test)]
+#[allow(clippy::disallowed_methods)] // Test code - unwrap is acceptable
+mod tests {
+    use super::*;
+    use voltage_config::common::timeouts;
+
+    // ========== ModbusPollingConfig Default tests ==========
+
+    #[test]
+    fn test_modbus_polling_config_default_values() {
+        let config = ModbusPollingConfig::default();
+
+        assert!(config.enabled);
+        assert_eq!(config.default_interval_ms, 1000);
+        assert_eq!(
+            config.connection_timeout_ms,
+            timeouts::DEFAULT_CONNECT_TIMEOUT_MS
+        );
+        assert_eq!(config.read_timeout_ms, timeouts::DEFAULT_READ_TIMEOUT_MS);
+        assert_eq!(config.max_retries, 3);
+        assert_eq!(config.retry_interval_ms, 1000);
+        assert!(config.slaves.is_empty());
+
+        // Reconnection defaults
+        assert!(config.reconnect_enabled);
+        assert_eq!(config.reconnect_max_consecutive, 5);
+        assert_eq!(
+            config.reconnect_cooldown_ms,
+            timeouts::RECONNECT_COOLDOWN_MS
+        );
+    }
+
+    #[test]
+    fn test_modbus_polling_config_batch_config_included() {
+        let config = ModbusPollingConfig::default();
+
+        // Should have default batch config
+        assert!(config.batch_config.enabled);
+        assert_eq!(config.batch_config.max_batch_size, 100);
+    }
+
+    // ========== ModbusBatchConfig Default tests ==========
+
+    #[test]
+    fn test_modbus_batch_config_default_values() {
+        let config = ModbusBatchConfig::default();
+
+        assert!(config.enabled);
+        assert_eq!(config.max_batch_size, 100);
+        assert_eq!(config.max_gap, 5);
+        assert!(config.device_limits.is_empty());
+    }
+
+    // ========== SlavePollingConfig Default tests ==========
+
+    #[test]
+    fn test_slave_polling_config_default_values() {
+        let config = SlavePollingConfig::default();
+
+        assert_eq!(config.slave_id, 1);
+        assert_eq!(config.interval_ms, 1000);
+        assert!(config.enabled);
+        assert!(config.timeout_ms.is_none());
+        assert!(config.description.is_none());
+    }
+
+    // ========== DeviceLimit Default tests ==========
+
+    #[test]
+    fn test_device_limit_default_values() {
+        let limit = DeviceLimit::default();
+
+        assert_eq!(limit.max_registers_per_read, 100);
+        assert!(limit.description.is_none());
+    }
+
+    // ========== ModbusPoint serialization tests ==========
+
+    #[test]
+    fn test_modbus_point_deserialization_minimal() {
+        let json = r#"{
+            "point_id": "T001",
+            "slave_id": 1,
+            "function_code": 3,
+            "register_address": 100,
+            "data_type": "float32",
+            "register_count": 2
+        }"#;
+
+        let point: ModbusPoint = serde_json::from_str(json).unwrap();
+
+        assert_eq!(point.point_id, "T001");
+        assert_eq!(point.slave_id, 1);
+        assert_eq!(point.function_code, 3);
+        assert_eq!(point.register_address, 100);
+        assert_eq!(point.data_type, "float32");
+        assert_eq!(point.register_count, 2);
+
+        // Check defaults
+        assert!(point.byte_order.is_none());
+        assert_eq!(point.bit_position, 0);
+        assert_eq!(point.scale, 1.0);
+        assert_eq!(point.offset, 0.0);
+        assert!(!point.reverse);
+    }
+
+    #[test]
+    fn test_modbus_point_deserialization_full() {
+        let json = r#"{
+            "point_id": "T002",
+            "slave_id": 2,
+            "function_code": 4,
+            "register_address": 200,
+            "data_type": "uint16",
+            "register_count": 1,
+            "byte_order": "ABCD",
+            "bit_position": 5,
+            "scale": 0.1,
+            "offset": -10.0,
+            "reverse": true
+        }"#;
+
+        let point: ModbusPoint = serde_json::from_str(json).unwrap();
+
+        assert_eq!(point.point_id, "T002");
+        assert_eq!(point.byte_order, Some("ABCD".to_string()));
+        assert_eq!(point.bit_position, 5);
+        assert_eq!(point.scale, 0.1);
+        assert_eq!(point.offset, -10.0);
+        assert!(point.reverse);
+    }
+
+    #[test]
+    fn test_modbus_point_serialization_roundtrip() {
+        let original = ModbusPoint {
+            point_id: "T003".to_string(),
+            slave_id: 3,
+            function_code: 3,
+            register_address: 300,
+            data_type: "int32".to_string(),
+            register_count: 2,
+            byte_order: Some("CDAB".to_string()),
+            bit_position: 0,
+            scale: 2.5,
+            offset: 100.0,
+            reverse: false,
+        };
+
+        let json = serde_json::to_string(&original).unwrap();
+        let restored: ModbusPoint = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(restored.point_id, original.point_id);
+        assert_eq!(restored.slave_id, original.slave_id);
+        assert_eq!(restored.scale, original.scale);
+        assert_eq!(restored.byte_order, original.byte_order);
+    }
+
+    // ========== ModbusPollingConfig serialization tests ==========
+
+    #[test]
+    fn test_polling_config_skip_serializing_defaults() {
+        let config = ModbusPollingConfig::default();
+        let json = serde_json::to_string(&config).unwrap();
+
+        // Default reconnect values should be skipped (not in JSON)
+        assert!(!json.contains("reconnect_enabled"));
+        assert!(!json.contains("reconnect_max_consecutive"));
+        assert!(!json.contains("reconnect_cooldown_ms"));
+    }
+
+    #[test]
+    fn test_polling_config_serializes_non_default_reconnect() {
+        let config = ModbusPollingConfig {
+            reconnect_enabled: false,
+            reconnect_max_consecutive: 10,
+            reconnect_cooldown_ms: 120000,
+            ..Default::default()
+        };
+
+        let json = serde_json::to_string(&config).unwrap();
+
+        // Non-default values should be serialized
+        assert!(json.contains("reconnect_enabled"));
+        assert!(json.contains("reconnect_max_consecutive"));
+        assert!(json.contains("reconnect_cooldown_ms"));
+    }
+
+    // ========== SlavePollingConfig tests ==========
+
+    #[test]
+    fn test_slave_config_with_optional_fields() {
+        let json = r#"{
+            "slave_id": 5,
+            "interval_ms": 500,
+            "enabled": true,
+            "timeout_ms": 2000,
+            "description": "Main controller"
+        }"#;
+
+        let config: SlavePollingConfig = serde_json::from_str(json).unwrap();
+
+        assert_eq!(config.slave_id, 5);
+        assert_eq!(config.interval_ms, 500);
+        assert!(config.enabled);
+        assert_eq!(config.timeout_ms, Some(2000));
+        assert_eq!(config.description, Some("Main controller".to_string()));
+    }
+
+    // ========== DeviceLimit tests ==========
+
+    #[test]
+    fn test_device_limit_with_description() {
+        let limit = DeviceLimit {
+            max_registers_per_read: 50,
+            description: Some("Legacy device".to_string()),
+        };
+
+        assert_eq!(limit.max_registers_per_read, 50);
+        assert_eq!(limit.description, Some("Legacy device".to_string()));
+    }
+
+    // ========== Edge cases ==========
+
+    #[test]
+    fn test_modbus_point_bool_data_type() {
+        let json = r#"{
+            "point_id": "S001",
+            "slave_id": 1,
+            "function_code": 1,
+            "register_address": 0,
+            "data_type": "bool",
+            "register_count": 1,
+            "bit_position": 7,
+            "reverse": true
+        }"#;
+
+        let point: ModbusPoint = serde_json::from_str(json).unwrap();
+
+        assert_eq!(point.data_type, "bool");
+        assert_eq!(point.bit_position, 7);
+        assert!(point.reverse);
+    }
+
+    #[test]
+    fn test_batch_config_with_device_limits() {
+        let mut config = ModbusBatchConfig::default();
+        config.device_limits.insert(
+            1,
+            DeviceLimit {
+                max_registers_per_read: 25,
+                description: Some("Small PLC".to_string()),
+            },
+        );
+        config.device_limits.insert(
+            2,
+            DeviceLimit {
+                max_registers_per_read: 125,
+                description: None,
+            },
+        );
+
+        assert_eq!(config.device_limits.len(), 2);
+        assert_eq!(
+            config.device_limits.get(&1).unwrap().max_registers_per_read,
+            25
+        );
+        assert_eq!(
+            config.device_limits.get(&2).unwrap().max_registers_per_read,
+            125
+        );
+    }
+}

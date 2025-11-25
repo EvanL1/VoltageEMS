@@ -948,4 +948,406 @@ mod tests {
         assert_eq!(frame, expected, "FC16 frame does not match");
         println!("[PASS] FC16 Write Multiple Registers test passed");
     }
+
+    // ========================================================================
+    // Additional CRC Calculation Tests
+    // ========================================================================
+
+    #[test]
+    fn test_crc16_empty_data() {
+        let processor = ModbusFrameProcessor::new(ModbusMode::Rtu);
+        let crc = processor.calculate_crc16(&[]);
+        assert_eq!(crc, 0xFFFF); // Initial CRC value when no data processed
+    }
+
+    #[test]
+    fn test_crc16_single_byte() {
+        let processor = ModbusFrameProcessor::new(ModbusMode::Rtu);
+        let crc = processor.calculate_crc16(&[0x01]);
+        // Verify it produces a consistent result
+        assert_ne!(crc, 0xFFFF);
+    }
+
+    #[test]
+    fn test_crc16_consistency() {
+        let processor = ModbusFrameProcessor::new(ModbusMode::Rtu);
+        let data = vec![0x01, 0x03, 0x00, 0x00, 0x00, 0x01];
+
+        // Same data should produce same CRC
+        let crc1 = processor.calculate_crc16(&data);
+        let crc2 = processor.calculate_crc16(&data);
+        assert_eq!(crc1, crc2);
+    }
+
+    #[test]
+    fn test_crc16_different_data_different_crc() {
+        let processor = ModbusFrameProcessor::new(ModbusMode::Rtu);
+        let data1 = vec![0x01, 0x03, 0x00, 0x00, 0x00, 0x01];
+        let data2 = vec![0x01, 0x03, 0x00, 0x00, 0x00, 0x02];
+
+        let crc1 = processor.calculate_crc16(&data1);
+        let crc2 = processor.calculate_crc16(&data2);
+        assert_ne!(crc1, crc2);
+    }
+
+    // ========================================================================
+    // MBAP Header Tests
+    // ========================================================================
+
+    #[test]
+    fn test_mbap_header_structure() {
+        let header = MbapHeader {
+            transaction_id: 0x1234,
+            protocol_id: 0,
+            length: 6,
+            unit_id: 1,
+        };
+
+        assert_eq!(header.transaction_id, 0x1234);
+        assert_eq!(header.protocol_id, 0);
+        assert_eq!(header.length, 6);
+        assert_eq!(header.unit_id, 1);
+    }
+
+    #[test]
+    fn test_mbap_header_clone() {
+        let header1 = MbapHeader {
+            transaction_id: 100,
+            protocol_id: 0,
+            length: 10,
+            unit_id: 5,
+        };
+        let header2 = header1.clone();
+
+        assert_eq!(header1.transaction_id, header2.transaction_id);
+        assert_eq!(header1.unit_id, header2.unit_id);
+    }
+
+    #[test]
+    fn test_tcp_frame_mbap_header_format() {
+        let mut processor = ModbusFrameProcessor::new(ModbusMode::Tcp);
+        let pdu = ModbusPdu::from_slice(&[0x03, 0x00, 0x00, 0x00, 0x01]).unwrap();
+
+        let frame = processor.build_frame(1, &pdu);
+
+        // Verify MBAP header structure
+        // Bytes 0-1: Transaction ID
+        // Bytes 2-3: Protocol ID (should be 0)
+        // Bytes 4-5: Length (PDU length + 1)
+        // Byte 6: Unit ID
+
+        assert_eq!(u16::from_be_bytes([frame[2], frame[3]]), 0); // Protocol ID = 0
+        assert_eq!(frame[6], 1); // Unit ID = 1
+    }
+
+    #[test]
+    fn test_tcp_parse_invalid_protocol_id() {
+        let mut processor = ModbusFrameProcessor::new(ModbusMode::Tcp);
+
+        // Build a request first
+        let pdu = ModbusPdu::from_slice(&[0x03, 0x00, 0x00, 0x00, 0x01]).unwrap();
+        let _ = processor.build_frame(1, &pdu);
+
+        // Construct frame with invalid protocol ID
+        let invalid_frame = vec![
+            0x00, 0x01, 0x00, 0x01, 0x00, 0x03, 0x01, 0x03, 0x02, 0x00, 0x01,
+        ];
+        // Protocol ID at bytes 2-3 is 0x0001 instead of 0x0000
+
+        let result = processor.parse_frame(&invalid_frame);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("protocol ID"));
+    }
+
+    #[test]
+    fn test_tcp_parse_length_mismatch() {
+        let mut processor = ModbusFrameProcessor::new(ModbusMode::Tcp);
+
+        // Build a request first
+        let pdu = ModbusPdu::from_slice(&[0x03, 0x00, 0x00, 0x00, 0x01]).unwrap();
+        let _ = processor.build_frame(1, &pdu);
+
+        // Construct frame where length field doesn't match actual data
+        // MBAP header says length=10 but actual data is shorter
+        let invalid_frame = vec![0x00, 0x01, 0x00, 0x00, 0x00, 0x0A, 0x01, 0x03, 0x02];
+
+        let result = processor.parse_frame(&invalid_frame);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("length"));
+    }
+
+    // ========================================================================
+    // Exception Response Tests
+    // ========================================================================
+
+    #[test]
+    fn test_is_exception_response_with_error_bit() {
+        // Function code with error bit set (0x80 | 0x03 = 0x83)
+        let exception_pdu = vec![0x83, 0x02];
+        assert!(ModbusFrameProcessor::is_exception_response(&exception_pdu));
+    }
+
+    #[test]
+    fn test_is_exception_response_normal() {
+        // Normal response (no error bit)
+        let normal_pdu = vec![0x03, 0x02, 0x00, 0x01];
+        assert!(!ModbusFrameProcessor::is_exception_response(&normal_pdu));
+    }
+
+    #[test]
+    fn test_is_exception_response_empty() {
+        let empty_pdu: Vec<u8> = vec![];
+        assert!(!ModbusFrameProcessor::is_exception_response(&empty_pdu));
+    }
+
+    #[test]
+    fn test_parse_exception_all_codes() {
+        // Test all standard Modbus exception codes
+        let exception_codes = vec![
+            (0x01, "Illegal Function"),
+            (0x02, "Illegal Data Address"),
+            (0x03, "Illegal Data Value"),
+            (0x04, "Slave Device Failure"),
+            (0x05, "Acknowledge"),
+            (0x06, "Slave Device Busy"),
+            (0x07, "Negative Acknowledge"),
+            (0x08, "Memory Parity Error"),
+            (0x0A, "Gateway Path Unavailable"),
+            (0x0B, "Gateway Target Device Failed to Respond"),
+        ];
+
+        for (code, expected_desc) in exception_codes {
+            let pdu = vec![0x83, code]; // FC03 with exception
+            let (fc, exc_code) = ModbusFrameProcessor::parse_exception(&pdu).unwrap();
+            assert_eq!(fc, 0x03);
+            assert_eq!(exc_code, code);
+            assert_eq!(
+                ModbusFrameProcessor::exception_description(code),
+                expected_desc
+            );
+        }
+    }
+
+    #[test]
+    fn test_parse_exception_unknown_code() {
+        let desc = ModbusFrameProcessor::exception_description(0xFF);
+        assert_eq!(desc, "Unknown Exception");
+    }
+
+    #[test]
+    fn test_parse_exception_too_short() {
+        let result = ModbusFrameProcessor::parse_exception(&[0x83]);
+        assert!(result.is_err());
+    }
+
+    // ========================================================================
+    // Frame Parse Error Tests
+    // ========================================================================
+
+    #[test]
+    fn test_tcp_parse_frame_too_short() {
+        let mut processor = ModbusFrameProcessor::new(ModbusMode::Tcp);
+
+        // Less than minimum TCP frame size
+        let short_frame = vec![0x00, 0x01, 0x00, 0x00];
+        let result = processor.parse_frame(&short_frame);
+
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("too short"));
+    }
+
+    #[test]
+    fn test_rtu_parse_frame_too_short() {
+        let mut processor = ModbusFrameProcessor::new(ModbusMode::Rtu);
+
+        // Less than minimum RTU frame size (4 bytes: unit_id + fc + crc)
+        let short_frame = vec![0x01, 0x03, 0xAB];
+        let result = processor.parse_frame(&short_frame);
+
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("too short"));
+    }
+
+    #[test]
+    fn test_rtu_parse_invalid_crc() {
+        let mut processor = ModbusFrameProcessor::new(ModbusMode::Rtu);
+
+        // Build a request first to populate pending_requests
+        let pdu = ModbusPdu::from_slice(&[0x03, 0x00, 0x00, 0x00, 0x01]).unwrap();
+        processor.build_frame(1, &pdu);
+
+        // Frame with invalid CRC
+        let invalid_crc_frame = vec![0x01, 0x03, 0x00, 0x00, 0x00, 0x01, 0xFF, 0xFF];
+
+        let result = processor.parse_frame(&invalid_crc_frame);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("CRC"));
+    }
+
+    // ========================================================================
+    // Transaction ID Tests
+    // ========================================================================
+
+    #[test]
+    fn test_transaction_id_increment() {
+        let mut processor = ModbusFrameProcessor::new(ModbusMode::Tcp);
+
+        let id1 = processor.next_transaction_id();
+        let id2 = processor.next_transaction_id();
+        let id3 = processor.next_transaction_id();
+
+        assert_eq!(id2, id1 + 1);
+        assert_eq!(id3, id2 + 1);
+    }
+
+    #[test]
+    fn test_transaction_id_wrap_around() {
+        let mut processor = ModbusFrameProcessor::new(ModbusMode::Tcp);
+        processor.next_transaction_id = 0xFFFF;
+
+        let id1 = processor.next_transaction_id();
+        let id2 = processor.next_transaction_id();
+
+        assert_eq!(id1, 0xFFFF);
+        assert_eq!(id2, 0x0000); // Wraps to 0
+    }
+
+    #[test]
+    fn test_rtu_request_id_increment() {
+        let mut processor = ModbusFrameProcessor::new(ModbusMode::Rtu);
+
+        let id1 = processor.next_rtu_request_id();
+        let id2 = processor.next_rtu_request_id();
+
+        assert_eq!(id2, id1 + 1);
+    }
+
+    #[test]
+    fn test_rtu_request_id_skip_zero() {
+        let mut processor = ModbusFrameProcessor::new(ModbusMode::Rtu);
+        processor.next_rtu_request_id = 0xFFFF;
+
+        let id1 = processor.next_rtu_request_id();
+        let id2 = processor.next_rtu_request_id();
+
+        assert_eq!(id1, 0xFFFF);
+        assert_eq!(id2, 1); // Skips 0, goes to 1
+    }
+
+    // ========================================================================
+    // ModbusMode Tests
+    // ========================================================================
+
+    #[test]
+    fn test_modbus_mode_equality() {
+        assert_eq!(ModbusMode::Tcp, ModbusMode::Tcp);
+        assert_eq!(ModbusMode::Rtu, ModbusMode::Rtu);
+        assert_ne!(ModbusMode::Tcp, ModbusMode::Rtu);
+    }
+
+    #[test]
+    fn test_modbus_mode_clone() {
+        let mode1 = ModbusMode::Tcp;
+        let mode2 = mode1.clone();
+        assert_eq!(mode1, mode2);
+    }
+
+    // ========================================================================
+    // Clear Request Info Tests
+    // ========================================================================
+
+    #[test]
+    fn test_clear_request_info() {
+        let mut processor = ModbusFrameProcessor::new(ModbusMode::Tcp);
+
+        // Add some requests
+        let pdu = ModbusPdu::from_slice(&[0x03, 0x00, 0x00, 0x00, 0x01]).unwrap();
+        processor.build_frame(1, &pdu);
+        processor.build_frame(2, &pdu);
+
+        assert_eq!(processor.pending_requests.len(), 2);
+
+        processor.clear_request_info();
+        assert_eq!(processor.pending_requests.len(), 0);
+    }
+
+    // ========================================================================
+    // Connection Params Creation Tests
+    // ========================================================================
+
+    fn create_test_channel_config(
+        protocol: &str,
+        params: HashMap<String, serde_json::Value>,
+    ) -> ChannelConfig {
+        use voltage_config::comsrv::{ChannelCore, ChannelLoggingConfig};
+
+        ChannelConfig {
+            core: ChannelCore {
+                id: 1,
+                name: "test".to_string(),
+                description: None,
+                protocol: protocol.to_string(),
+                enabled: true,
+            },
+            parameters: params,
+            logging: ChannelLoggingConfig::default(),
+        }
+    }
+
+    #[test]
+    fn test_create_connection_params_unsupported_protocol() {
+        let config = create_test_channel_config("unsupported_protocol", HashMap::new());
+
+        let result = create_connection_params(&config);
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Unsupported protocol"));
+    }
+
+    #[test]
+    fn test_create_connection_params_tcp() {
+        let mut params = HashMap::new();
+        params.insert(
+            "host".to_string(),
+            serde_json::Value::String("192.168.1.100".to_string()),
+        );
+        params.insert("port".to_string(), serde_json::Value::Number(502.into()));
+
+        let config = create_test_channel_config("modbus_tcp", params);
+
+        let conn_params = create_connection_params(&config).unwrap();
+        assert_eq!(conn_params.host, Some("192.168.1.100".to_string()));
+        assert_eq!(conn_params.port, Some(502));
+        assert!(conn_params.device.is_none());
+    }
+
+    #[test]
+    fn test_create_connection_params_rtu() {
+        let mut params = HashMap::new();
+        params.insert(
+            "device".to_string(),
+            serde_json::Value::String("/dev/ttyUSB0".to_string()),
+        );
+        params.insert(
+            "baud_rate".to_string(),
+            serde_json::Value::Number(9600.into()),
+        );
+        params.insert("data_bits".to_string(), serde_json::Value::Number(8.into()));
+        params.insert("stop_bits".to_string(), serde_json::Value::Number(1.into()));
+        params.insert(
+            "parity".to_string(),
+            serde_json::Value::String("None".to_string()),
+        );
+
+        let config = create_test_channel_config("modbus_rtu", params);
+
+        let conn_params = create_connection_params(&config).unwrap();
+        assert!(conn_params.host.is_none());
+        assert_eq!(conn_params.device, Some("/dev/ttyUSB0".to_string()));
+        assert_eq!(conn_params.baud_rate, Some(9600));
+        assert_eq!(conn_params.data_bits, Some(8));
+        assert_eq!(conn_params.parity, Some("None".to_string()));
+    }
 }

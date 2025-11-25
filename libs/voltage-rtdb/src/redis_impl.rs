@@ -172,6 +172,13 @@ impl Rtdb for RedisRtdb {
             .map_err(|e| anyhow::anyhow!(e))
     }
 
+    async fn hash_del_many(&self, key: &str, fields: &[String]) -> Result<usize> {
+        self.client
+            .hdel_many(key, fields)
+            .await
+            .map_err(|e| anyhow::anyhow!(e))
+    }
+
     async fn list_lpush(&self, key: &str, value: Bytes) -> Result<()> {
         let s = String::from_utf8(value.to_vec()).context("UTF-8 conversion failed")?;
         self.client
@@ -289,6 +296,35 @@ impl Rtdb for RedisRtdb {
     async fn time_millis(&self) -> Result<i64> {
         self.client
             .time_millis()
+            .await
+            .map_err(|e| anyhow::anyhow!(e))
+    }
+
+    async fn pipeline_hash_mset(
+        &self,
+        operations: Vec<(String, Vec<(String, Bytes)>)>,
+    ) -> Result<()> {
+        if operations.is_empty() {
+            return Ok(());
+        }
+
+        // Convert Bytes to String for the client
+        let string_operations: Result<Vec<(String, Vec<(String, String)>)>> = operations
+            .into_iter()
+            .map(|(key, fields)| {
+                let string_fields: Result<Vec<(String, String)>> = fields
+                    .into_iter()
+                    .map(|(f, v)| {
+                        let s = String::from_utf8(v.to_vec()).context("UTF-8 conversion failed")?;
+                        Ok((f, s))
+                    })
+                    .collect();
+                Ok((key, string_fields?))
+            })
+            .collect();
+
+        self.client
+            .pipeline_hmset(&string_operations?)
             .await
             .map_err(|e| anyhow::anyhow!(e))
     }

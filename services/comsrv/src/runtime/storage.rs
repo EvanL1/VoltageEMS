@@ -424,12 +424,22 @@ pub async fn write_batch(
                 ComSrvError::Storage(format!("Failed to write channel raw values: {e}"))
             })?;
 
-        // Write instance data (C2M routing results)
-        for (instance_id, values) in instance_writes {
-            let instance_key = config.instance_measurement_key(instance_id.into());
-            rtdb.hash_mset(&instance_key, values).await.map_err(|e| {
-                ComSrvError::Storage(format!("Failed to write instance values: {e}"))
-            })?;
+        // Write instance data (C2M routing results) - parallelized for better performance
+        // Each instance write is independent, so we can run them concurrently
+        if !instance_writes.is_empty() {
+            let futures: Vec<_> = instance_writes
+                .into_iter()
+                .map(|(instance_id, values)| {
+                    let instance_key = config.instance_measurement_key(instance_id.into());
+                    async move {
+                        rtdb.hash_mset(&instance_key, values).await.map_err(|e| {
+                            ComSrvError::Storage(format!("Failed to write instance values: {e}"))
+                        })
+                    }
+                })
+                .collect();
+
+            futures::future::try_join_all(futures).await?;
         }
 
         // Process C2C forwards (recursive call with incremented cascade depth)

@@ -267,35 +267,6 @@ impl PduBuilder {
     }
 }
 
-/// Pre-allocated PDU pool (optional optimization)
-pub struct PduPool {
-    pool: Vec<ModbusPdu>,
-    max_size: usize,
-}
-
-impl PduPool {
-    /// Create PDU pool
-    pub fn new(max_size: usize) -> Self {
-        Self {
-            pool: Vec::with_capacity(max_size),
-            max_size,
-        }
-    }
-
-    /// Get a PDU (from pool or new)
-    pub fn get(&mut self) -> ModbusPdu {
-        self.pool.pop().unwrap_or_default()
-    }
-
-    /// Return PDU to pool
-    pub fn put(&mut self, mut pdu: ModbusPdu) {
-        if self.pool.len() < self.max_size {
-            pdu.clear();
-            self.pool.push(pdu);
-        }
-    }
-}
-
 #[cfg(test)]
 #[allow(clippy::disallowed_methods)] // Test code - unwrap is acceptable
 mod tests {
@@ -352,23 +323,6 @@ mod tests {
 
         let result = pdu.extend(&large_data);
         assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_pdu_pool() {
-        let mut pool = PduPool::new(5);
-
-        // Get PDU
-        let mut pdu = pool.get();
-        pdu.push(0x03).unwrap();
-        assert_eq!(pdu.len(), 1);
-
-        // Return PDU
-        pool.put(pdu);
-
-        // Getting again should return a cleared PDU
-        let pdu2 = pool.get();
-        assert!(pdu2.is_empty());
     }
 
     #[test]
@@ -669,79 +623,6 @@ mod tests {
     fn test_pdu_builder_default() {
         let builder = PduBuilder::default();
         let pdu = builder.build();
-        assert!(pdu.is_empty());
-    }
-
-    #[test]
-    fn test_pdu_pool_multiple_get_put() {
-        let mut pool = PduPool::new(3);
-
-        // Get multiple PDUs
-        let mut pdu1 = pool.get();
-        let mut pdu2 = pool.get();
-        let mut pdu3 = pool.get();
-
-        pdu1.push(0x01).unwrap();
-        pdu2.push(0x02).unwrap();
-        pdu3.push(0x03).unwrap();
-
-        // Return to pool
-        pool.put(pdu1);
-        pool.put(pdu2);
-        pool.put(pdu3);
-
-        // Get again - should be cleared
-        let pdu_new = pool.get();
-        assert!(pdu_new.is_empty());
-    }
-
-    #[test]
-    fn test_pdu_pool_max_size_limit() {
-        let mut pool = PduPool::new(2);
-
-        let pdu1 = pool.get();
-        let pdu2 = pool.get();
-        let pdu3 = pool.get();
-
-        // Return 3 PDUs to pool with max_size=2
-        pool.put(pdu1);
-        pool.put(pdu2);
-        pool.put(pdu3); // This should be discarded
-
-        // Only 2 should be in pool
-        let retrieved1 = pool.get();
-        let retrieved2 = pool.get();
-        let retrieved3 = pool.get(); // This creates a new one
-
-        assert!(retrieved1.is_empty());
-        assert!(retrieved2.is_empty());
-        assert!(retrieved3.is_empty());
-    }
-
-    #[test]
-    fn test_pdu_pool_concurrent_usage() {
-        use std::sync::{Arc, Mutex};
-        use std::thread;
-
-        let pool = Arc::new(Mutex::new(PduPool::new(10)));
-        let handles: Vec<_> = (0..5)
-            .map(|i| {
-                let pool_clone = Arc::clone(&pool);
-                thread::spawn(move || {
-                    let mut pdu = pool_clone.lock().unwrap().get();
-                    pdu.push(i as u8).unwrap();
-                    assert_eq!(pdu.len(), 1);
-                    pool_clone.lock().unwrap().put(pdu);
-                })
-            })
-            .collect();
-
-        for handle in handles {
-            handle.join().unwrap();
-        }
-
-        // All PDUs should be returned and cleared
-        let pdu = pool.lock().unwrap().get();
         assert!(pdu.is_empty());
     }
 }

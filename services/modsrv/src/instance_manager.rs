@@ -2219,4 +2219,269 @@ mod tests {
         let get_result = manager.get_instance(1001).await;
         assert!(get_result.is_err());
     }
+
+    // ==================== Phase 2: M2C Routing Tests (execute_action) ====================
+
+    /// Helper: Setup instance name index in RTDB (required for voltage-routing)
+    async fn setup_instance_name_index(
+        rtdb: &voltage_rtdb::MemoryRtdb,
+        instance_id: u16,
+        instance_name: &str,
+    ) {
+        use bytes::Bytes;
+        use voltage_rtdb::Rtdb;
+        rtdb.hash_set(
+            "inst:name:index",
+            instance_name,
+            Bytes::from(instance_id.to_string()),
+        )
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_execute_action_instance_not_found() {
+        let (_temp_dir, pool) = create_test_database().await;
+        create_test_product(&pool, "test_product").await;
+
+        let product_loader = create_test_product_loader(pool.clone());
+        let rtdb = create_test_rtdb();
+        let routing_cache = Arc::new(voltage_config::RoutingCache::new());
+        let manager = InstanceManager::new(pool, rtdb, routing_cache, product_loader);
+
+        // Try to execute action on non-existent instance
+        let result = manager.execute_action(9999, "1", 100.0).await;
+
+        assert!(
+            result.is_err(),
+            "execute_action should fail for non-existent instance"
+        );
+        assert!(result.unwrap_err().to_string().contains("not found"));
+    }
+
+    #[tokio::test]
+    async fn test_execute_action_no_route_stores_locally() {
+        let (_temp_dir, pool) = create_test_database().await;
+        create_test_product(&pool, "test_product").await;
+
+        let product_loader = create_test_product_loader(pool.clone());
+        let rtdb = create_test_rtdb();
+        let routing_cache = Arc::new(voltage_config::RoutingCache::new());
+        let manager =
+            InstanceManager::new(pool.clone(), rtdb.clone(), routing_cache, product_loader);
+
+        // Create instance
+        manager
+            .create_instance(CreateInstanceRequest {
+                instance_id: 1001,
+                instance_name: "action_test_instance".to_string(),
+                product_name: "test_product".to_string(),
+                properties: HashMap::new(),
+            })
+            .await
+            .unwrap();
+
+        // Setup instance name index
+        setup_instance_name_index(&rtdb, 1001, "action_test_instance").await;
+
+        // Execute action (no M2C route configured, should store locally)
+        let result = manager.execute_action(1001, "1", 50.0).await;
+
+        assert!(
+            result.is_ok(),
+            "execute_action should succeed even without route: {:?}",
+            result.as_ref().err()
+        );
+
+        // Verify value was stored in instance action key
+        use voltage_rtdb::Rtdb;
+        let config = voltage_config::KeySpaceConfig::production();
+        let action_key = config.instance_action_key(1001);
+        let stored = rtdb.hash_get(&action_key, "1").await.unwrap();
+        assert!(stored.is_some(), "Action value should be stored");
+        assert_eq!(stored.unwrap().as_ref(), b"50");
+    }
+
+    #[tokio::test]
+    async fn test_execute_action_with_route_triggers_downstream() {
+        let (_temp_dir, pool) = create_test_database().await;
+        create_test_product(&pool, "test_product").await;
+
+        let product_loader = create_test_product_loader(pool.clone());
+        let rtdb = create_test_rtdb();
+
+        // Configure M2C route: instance 1001, action point "1" -> channel 2, A, point 5
+        let mut m2c_data = HashMap::new();
+        m2c_data.insert("1001:A:1".to_string(), "2:A:5".to_string());
+        let routing_cache = Arc::new(voltage_config::RoutingCache::from_maps(
+            HashMap::new(),
+            m2c_data,
+            HashMap::new(),
+        ));
+
+        let manager =
+            InstanceManager::new(pool.clone(), rtdb.clone(), routing_cache, product_loader);
+
+        // Create instance
+        manager
+            .create_instance(CreateInstanceRequest {
+                instance_id: 1001,
+                instance_name: "routed_action_instance".to_string(),
+                product_name: "test_product".to_string(),
+                properties: HashMap::new(),
+            })
+            .await
+            .unwrap();
+
+        // Setup instance name index
+        setup_instance_name_index(&rtdb, 1001, "routed_action_instance").await;
+
+        // Execute action (M2C route configured)
+        let result = manager.execute_action(1001, "1", 75.0).await;
+
+        assert!(
+            result.is_ok(),
+            "execute_action should succeed with route: {:?}",
+            result.as_ref().err()
+        );
+
+        // Verify instance action hash was updated
+        use voltage_rtdb::Rtdb;
+        let config = voltage_config::KeySpaceConfig::production();
+        let action_key = config.instance_action_key(1001);
+        let stored = rtdb.hash_get(&action_key, "1").await.unwrap();
+        assert!(stored.is_some(), "Instance action should be stored");
+        assert_eq!(stored.unwrap().as_ref(), b"75");
+
+        // Verify channel hash was updated
+        use voltage_config::protocols::PointType;
+        let channel_key = config.channel_key(2, PointType::Adjustment);
+        let channel_value = rtdb.hash_get(&channel_key, "5").await.unwrap();
+        assert!(channel_value.is_some(), "Channel point should be updated");
+
+        // Verify TODO queue was triggered (check if there are any entries)
+        let todo_key = config.todo_queue_key(2, PointType::Adjustment);
+        let queue_entries = rtdb.list_range(&todo_key, 0, -1).await.unwrap();
+        assert!(!queue_entries.is_empty(), "TODO queue should have entry");
+    }
+
+    #[tokio::test]
+    async fn test_execute_action_multiple_points() {
+        let (_temp_dir, pool) = create_test_database().await;
+        create_test_product(&pool, "test_product").await;
+
+        let product_loader = create_test_product_loader(pool.clone());
+        let rtdb = create_test_rtdb();
+
+        // Configure multiple routes
+        let mut m2c_data = HashMap::new();
+        m2c_data.insert("1001:A:1".to_string(), "10:A:1".to_string());
+        m2c_data.insert("1001:A:2".to_string(), "10:A:2".to_string());
+        let routing_cache = Arc::new(voltage_config::RoutingCache::from_maps(
+            HashMap::new(),
+            m2c_data,
+            HashMap::new(),
+        ));
+
+        let manager =
+            InstanceManager::new(pool.clone(), rtdb.clone(), routing_cache, product_loader);
+
+        manager
+            .create_instance(CreateInstanceRequest {
+                instance_id: 1001,
+                instance_name: "multi_action_instance".to_string(),
+                product_name: "test_product".to_string(),
+                properties: HashMap::new(),
+            })
+            .await
+            .unwrap();
+
+        setup_instance_name_index(&rtdb, 1001, "multi_action_instance").await;
+
+        // Execute multiple actions
+        let result1 = manager.execute_action(1001, "1", 10.0).await;
+        let result2 = manager.execute_action(1001, "2", 20.0).await;
+
+        assert!(result1.is_ok());
+        assert!(result2.is_ok());
+
+        // Verify both actions were stored
+        use voltage_rtdb::Rtdb;
+        let config = voltage_config::KeySpaceConfig::production();
+        let action_key = config.instance_action_key(1001);
+        let v1 = rtdb.hash_get(&action_key, "1").await.unwrap().unwrap();
+        let v2 = rtdb.hash_get(&action_key, "2").await.unwrap().unwrap();
+        assert_eq!(v1.as_ref(), b"10");
+        assert_eq!(v2.as_ref(), b"20");
+    }
+
+    #[tokio::test]
+    async fn test_execute_action_value_overwrite() {
+        let (_temp_dir, pool) = create_test_database().await;
+        create_test_product(&pool, "test_product").await;
+
+        let product_loader = create_test_product_loader(pool.clone());
+        let rtdb = create_test_rtdb();
+        let routing_cache = Arc::new(voltage_config::RoutingCache::new());
+        let manager =
+            InstanceManager::new(pool.clone(), rtdb.clone(), routing_cache, product_loader);
+
+        manager
+            .create_instance(CreateInstanceRequest {
+                instance_id: 1001,
+                instance_name: "overwrite_test".to_string(),
+                product_name: "test_product".to_string(),
+                properties: HashMap::new(),
+            })
+            .await
+            .unwrap();
+
+        setup_instance_name_index(&rtdb, 1001, "overwrite_test").await;
+
+        // Execute action twice with different values
+        manager.execute_action(1001, "1", 100.0).await.unwrap();
+        manager.execute_action(1001, "1", 200.0).await.unwrap();
+
+        // Verify latest value wins
+        use voltage_rtdb::Rtdb;
+        let config = voltage_config::KeySpaceConfig::production();
+        let action_key = config.instance_action_key(1001);
+        let stored = rtdb.hash_get(&action_key, "1").await.unwrap().unwrap();
+        assert_eq!(stored.as_ref(), b"200", "Latest value should overwrite");
+    }
+
+    #[tokio::test]
+    async fn test_execute_action_negative_values() {
+        let (_temp_dir, pool) = create_test_database().await;
+        create_test_product(&pool, "test_product").await;
+
+        let product_loader = create_test_product_loader(pool.clone());
+        let rtdb = create_test_rtdb();
+        let routing_cache = Arc::new(voltage_config::RoutingCache::new());
+        let manager =
+            InstanceManager::new(pool.clone(), rtdb.clone(), routing_cache, product_loader);
+
+        manager
+            .create_instance(CreateInstanceRequest {
+                instance_id: 1001,
+                instance_name: "negative_test".to_string(),
+                product_name: "test_product".to_string(),
+                properties: HashMap::new(),
+            })
+            .await
+            .unwrap();
+
+        setup_instance_name_index(&rtdb, 1001, "negative_test").await;
+
+        // Execute action with negative value
+        let result = manager.execute_action(1001, "1", -50.5).await;
+        assert!(result.is_ok());
+
+        // Verify negative value was stored correctly
+        use voltage_rtdb::Rtdb;
+        let config = voltage_config::KeySpaceConfig::production();
+        let action_key = config.instance_action_key(1001);
+        let stored = rtdb.hash_get(&action_key, "1").await.unwrap().unwrap();
+        assert_eq!(stored.as_ref(), b"-50.5");
+    }
 }

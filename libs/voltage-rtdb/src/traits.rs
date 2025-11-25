@@ -70,6 +70,14 @@ pub trait Rtdb: Send + Sync + 'static {
     /// Delete hash field
     async fn hash_del(&self, key: &str, field: &str) -> Result<bool>;
 
+    /// Delete multiple hash fields at once (Redis HDEL with multiple fields)
+    ///
+    /// This is more efficient than multiple individual hash_del calls as it uses
+    /// a single Redis command to delete all specified fields.
+    ///
+    /// Returns the number of fields that were removed.
+    async fn hash_del_many(&self, key: &str, fields: &[String]) -> Result<usize>;
+
     /// Increment hash field by value (Redis HINCRBY)
     ///
     /// Returns the new value after incrementing.
@@ -164,6 +172,24 @@ pub trait Rtdb: Send + Sync + 'static {
     /// Returns Unix timestamp in milliseconds.
     /// In test implementations (MemoryRtdb), this returns system time.
     async fn time_millis(&self) -> Result<i64>;
+
+    // ========== Pipeline Operations ==========
+
+    /// Execute multiple HMSET operations in a single pipeline (pure Redis, no Lua)
+    ///
+    /// This batches multiple hash write operations into a single network round-trip,
+    /// significantly reducing latency for bulk writes.
+    ///
+    /// # Arguments
+    /// * `operations` - Vector of (key, fields) tuples, where fields is Vec<(field, value)>
+    ///
+    /// # Returns
+    /// * `Ok(())` on success
+    /// * `Err` if any operation fails
+    async fn pipeline_hash_mset(
+        &self,
+        operations: Vec<(String, Vec<(String, Bytes)>)>,
+    ) -> Result<()>;
 
     // ========== Domain-Specific Operations (with default implementations) ==========
 

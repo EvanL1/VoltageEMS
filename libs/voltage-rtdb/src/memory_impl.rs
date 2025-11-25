@@ -186,6 +186,20 @@ impl Rtdb for MemoryRtdb {
         }
     }
 
+    async fn hash_del_many(&self, key: &str, fields: &[String]) -> Result<usize> {
+        if let Some(hash) = self.hash_store.get(key) {
+            let mut removed = 0;
+            for field in fields {
+                if hash.remove(field).is_some() {
+                    removed += 1;
+                }
+            }
+            Ok(removed)
+        } else {
+            Ok(0)
+        }
+    }
+
     async fn list_lpush(&self, key: &str, value: Bytes) -> Result<()> {
         self.list_store
             .entry(key.to_string())
@@ -414,6 +428,23 @@ impl Rtdb for MemoryRtdb {
             .duration_since(UNIX_EPOCH)
             .map_err(|e| anyhow::anyhow!("System time error: {}", e))?;
         Ok(duration.as_millis() as i64)
+    }
+
+    async fn pipeline_hash_mset(
+        &self,
+        operations: Vec<(String, Vec<(String, Bytes)>)>,
+    ) -> Result<()> {
+        // For in-memory implementation, just execute each HSET sequentially
+        // This is efficient since it's all in-memory with no network overhead
+        for (key, fields) in operations {
+            if !fields.is_empty() {
+                let hash = self.hash_store.entry(key).or_default();
+                for (field, value) in fields {
+                    hash.insert(field, value);
+                }
+            }
+        }
+        Ok(())
     }
 
     // ========== Override Domain-Specific Methods with Routing Logic ==========

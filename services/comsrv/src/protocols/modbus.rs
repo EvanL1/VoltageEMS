@@ -11,9 +11,6 @@ pub mod protocol;
 pub mod transport;
 pub mod types;
 
-#[cfg(test)]
-pub mod simulator;
-
 // Re-export commonly used types
 pub use protocol::ModbusProtocol;
 pub use transport::{ModbusFrameProcessor, ModbusMode};

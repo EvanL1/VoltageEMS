@@ -111,105 +111,115 @@ where
 }
 
 /// Clear routing entries associated with an instance.
+///
+/// Optimized with batch deletion using `hash_del_many` to reduce Redis round-trips.
 pub async fn clear_routing_for_instance<R>(redis: &R, instance_name: &str) -> Result<usize>
 where
     R: Rtdb + ?Sized,
 {
-    // 1. Query instance_id by name
-    let name_pattern = "inst:*:name";
-    let name_keys = redis.scan_match(name_pattern).await?;
+    // 1. Query instance_id by name using O(1) reverse index (inst:name:index Hash)
+    let instance_id = match redis.hash_get("inst:name:index", instance_name).await? {
+        Some(id_bytes) => {
+            let id_str = String::from_utf8_lossy(&id_bytes);
+            id_str
+                .parse::<u32>()
+                .map_err(|_| anyhow!("Invalid instance_id format in index: {}", id_str))?
+        },
+        None => return Err(anyhow!("Instance not found: {}", instance_name)),
+    };
 
-    let mut instance_id: Option<u32> = None;
-    for key in name_keys {
-        let stored_name_bytes = redis.get(&key).await?;
-        if let Some(name_bytes) = stored_name_bytes {
-            let stored_name = String::from_utf8_lossy(&name_bytes);
-            if stored_name == instance_name {
-                // Extract ID from "inst:123:name"
-                let parts: Vec<&str> = key.split(':').collect();
-                if parts.len() == 3 && parts[0] == "inst" && parts[2] == "name" {
-                    instance_id = parts[1].parse().ok();
-                    break;
-                }
-            }
-        }
-    }
-
-    let instance_id =
-        instance_id.ok_or_else(|| anyhow::anyhow!("Instance not found: {}", instance_name))?;
-
-    let mut removed = 0usize;
-
-    // 2. Clear M2C routing (using instance_id format)
+    // 2. Collect fields to delete from M2C routing (using instance_id format)
     let prefix_m2c = format!("{}:A:", instance_id);
     let m2c_mappings_bytes = redis
         .hash_get_all(RedisRoutingKeys::MODEL_TO_CHANNEL)
         .await?;
-    let m2c_mappings: HashMap<String, String> = m2c_mappings_bytes
-        .into_iter()
-        .map(|(k, v)| (k, String::from_utf8_lossy(&v).to_string()))
-        .collect();
 
-    for (mods_key, com_key) in m2c_mappings {
+    let mut m2c_fields_to_del: Vec<String> = Vec::new();
+    let mut c2m_fields_from_m2c: Vec<String> = Vec::new();
+
+    for (mods_key, value_bytes) in m2c_mappings_bytes {
         if mods_key.starts_with(&prefix_m2c) {
-            redis
-                .hash_del(RedisRoutingKeys::MODEL_TO_CHANNEL, &mods_key)
-                .await?;
-            redis
-                .hash_del(RedisRoutingKeys::CHANNEL_TO_MODEL, &com_key)
-                .await?;
-            removed += 1;
+            m2c_fields_to_del.push(mods_key);
+            c2m_fields_from_m2c.push(String::from_utf8_lossy(&value_bytes).to_string());
         }
     }
 
-    // 3. Clear C2M routing (value contains instance_id)
+    // 3. Collect fields to delete from C2M routing (value contains instance_id)
     let prefix_c2m_value = format!("{}:M:", instance_id);
     let c2m_mappings_bytes = redis
         .hash_get_all(RedisRoutingKeys::CHANNEL_TO_MODEL)
         .await?;
-    let c2m_mappings: HashMap<String, String> = c2m_mappings_bytes
-        .into_iter()
-        .map(|(k, v)| (k, String::from_utf8_lossy(&v).to_string()))
-        .collect();
 
-    for (com_key, mods_key) in c2m_mappings {
+    let mut c2m_fields_to_del: Vec<String> = Vec::new();
+
+    for (com_key, value_bytes) in c2m_mappings_bytes {
+        let mods_key = String::from_utf8_lossy(&value_bytes);
         if mods_key.starts_with(&prefix_c2m_value) {
-            redis
-                .hash_del(RedisRoutingKeys::CHANNEL_TO_MODEL, &com_key)
-                .await?;
-            removed += 1;
+            c2m_fields_to_del.push(com_key);
         }
+    }
+
+    // 4. Batch delete using hash_del_many (reduces N Redis calls to 2-3 calls)
+    let removed = m2c_fields_to_del.len() + c2m_fields_to_del.len();
+
+    if !m2c_fields_to_del.is_empty() {
+        redis
+            .hash_del_many(RedisRoutingKeys::MODEL_TO_CHANNEL, &m2c_fields_to_del)
+            .await?;
+    }
+
+    // Merge c2m_fields_from_m2c into c2m_fields_to_del for batch deletion
+    c2m_fields_to_del.extend(c2m_fields_from_m2c);
+    c2m_fields_to_del.sort();
+    c2m_fields_to_del.dedup();
+
+    if !c2m_fields_to_del.is_empty() {
+        redis
+            .hash_del_many(RedisRoutingKeys::CHANNEL_TO_MODEL, &c2m_fields_to_del)
+            .await?;
     }
 
     Ok(removed)
 }
 
 /// Clear routing entries associated with a channel.
+///
+/// Optimized with batch deletion using `hash_del_many` to reduce Redis round-trips.
 pub async fn clear_routing_for_channel<R>(redis: &R, channel_id: &str) -> Result<usize>
 where
     R: Rtdb + ?Sized,
 {
     // New format: route keys start with channel_id directly (no "comsrv:" prefix)
     let prefix = format!("{}:", channel_id);
-    let mut removed = 0usize;
 
     let mappings_bytes = redis
         .hash_get_all(RedisRoutingKeys::CHANNEL_TO_MODEL)
         .await?;
-    let mappings: HashMap<String, String> = mappings_bytes
-        .into_iter()
-        .map(|(k, v)| (k, String::from_utf8_lossy(&v).to_string()))
-        .collect();
-    for (com_key, mods_key) in mappings {
+
+    // Collect fields to delete in batch
+    let mut c2m_fields_to_del: Vec<String> = Vec::new();
+    let mut m2c_fields_to_del: Vec<String> = Vec::new();
+
+    for (com_key, value_bytes) in mappings_bytes {
         if com_key.starts_with(&prefix) {
-            let _ = redis
-                .hash_del(RedisRoutingKeys::CHANNEL_TO_MODEL, &com_key)
-                .await?;
-            let _ = redis
-                .hash_del(RedisRoutingKeys::MODEL_TO_CHANNEL, &mods_key)
-                .await?;
-            removed += 1;
+            c2m_fields_to_del.push(com_key);
+            m2c_fields_to_del.push(String::from_utf8_lossy(&value_bytes).to_string());
         }
+    }
+
+    let removed = c2m_fields_to_del.len();
+
+    // Batch delete using hash_del_many (reduces 2N Redis calls to 2 calls)
+    if !c2m_fields_to_del.is_empty() {
+        redis
+            .hash_del_many(RedisRoutingKeys::CHANNEL_TO_MODEL, &c2m_fields_to_del)
+            .await?;
+    }
+
+    if !m2c_fields_to_del.is_empty() {
+        redis
+            .hash_del_many(RedisRoutingKeys::MODEL_TO_CHANNEL, &m2c_fields_to_del)
+            .await?;
     }
 
     Ok(removed)
@@ -447,6 +457,9 @@ where
     Ok(())
 }
 
+/// Clean up routing mappings for an instance.
+///
+/// Optimized with batch deletion using `hash_del_many` to reduce Redis round-trips.
 async fn cleanup_routing<R>(redis: &R, instance_id: u16, _instance_name: &str) -> Result<()>
 where
     R: Rtdb + ?Sized,
@@ -456,27 +469,31 @@ where
     let m2c_bytes = redis
         .hash_get_all(RedisRoutingKeys::MODEL_TO_CHANNEL)
         .await?;
-    let mut m2c: HashMap<String, String> = m2c_bytes
-        .into_iter()
-        .map(|(k, v)| (k, String::from_utf8_lossy(&v).to_string()))
-        .collect();
-    let mut remove_c2m: Vec<String> = Vec::new();
 
-    for (field, value) in m2c.clone() {
+    // Collect fields to delete in batch
+    let mut m2c_fields_to_del: Vec<String> = Vec::new();
+    let mut c2m_fields_to_del: Vec<String> = Vec::new();
+
+    for (field, value_bytes) in m2c_bytes {
         if field.starts_with(&prefix) {
-            redis
-                .hash_del(RedisRoutingKeys::MODEL_TO_CHANNEL, &field)
-                .await?;
+            m2c_fields_to_del.push(field);
+            let value = String::from_utf8_lossy(&value_bytes).to_string();
             if !value.is_empty() {
-                remove_c2m.push(value);
+                c2m_fields_to_del.push(value);
             }
-            m2c.remove(&field);
         }
     }
 
-    for comsrv_key in remove_c2m {
+    // Batch delete using hash_del_many (reduces 2N Redis calls to 2 calls)
+    if !m2c_fields_to_del.is_empty() {
         redis
-            .hash_del(RedisRoutingKeys::CHANNEL_TO_MODEL, &comsrv_key)
+            .hash_del_many(RedisRoutingKeys::MODEL_TO_CHANNEL, &m2c_fields_to_del)
+            .await?;
+    }
+
+    if !c2m_fields_to_del.is_empty() {
+        redis
+            .hash_del_many(RedisRoutingKeys::CHANNEL_TO_MODEL, &c2m_fields_to_del)
             .await?;
     }
 
@@ -618,5 +635,180 @@ mod tests {
             .await
             .expect("get routing");
         assert_eq!(all.len(), 1);
+    }
+
+    // ========== clear_routing tests ==========
+
+    /// Test that clear_routing invokes delete on both routing keys.
+    ///
+    /// Note: MemoryRtdb.del() only clears kv_store, not hash_store.
+    /// This is a known limitation of the test mock - in production Redis,
+    /// DEL command removes any key type including hashes.
+    /// This test verifies the function completes without error.
+    #[tokio::test]
+    async fn test_clear_routing_completes_without_error() {
+        let rtdb = create_test_rtdb();
+
+        // Store entries first
+        let entries = vec![
+            RoutingEntry {
+                comsrv_key: "1001:T:1".to_string(),
+                modsrv_key: "1:M:1".to_string(),
+                is_action: false,
+            },
+            RoutingEntry {
+                comsrv_key: "1001:A:2".to_string(),
+                modsrv_key: "1:A:2".to_string(),
+                is_action: true,
+            },
+        ];
+        store_routing(&rtdb, &entries).await.unwrap();
+
+        // Clear routing should complete without error
+        let result = clear_routing(&rtdb).await;
+        assert!(result.is_ok());
+    }
+
+    // ========== get_routing pattern filter tests ==========
+
+    #[tokio::test]
+    async fn test_get_routing_with_pattern_filter() {
+        let rtdb = create_test_rtdb();
+
+        // Store entries with different channel IDs
+        let entries = vec![
+            RoutingEntry {
+                comsrv_key: "1001:T:1".to_string(),
+                modsrv_key: "1:M:1".to_string(),
+                is_action: false,
+            },
+            RoutingEntry {
+                comsrv_key: "1001:T:2".to_string(),
+                modsrv_key: "1:M:2".to_string(),
+                is_action: false,
+            },
+            RoutingEntry {
+                comsrv_key: "2002:T:1".to_string(),
+                modsrv_key: "2:M:1".to_string(),
+                is_action: false,
+            },
+        ];
+        store_routing(&rtdb, &entries).await.unwrap();
+
+        // Get all entries
+        let all = get_routing(&rtdb, RoutingDirection::ChannelToModel, None)
+            .await
+            .unwrap();
+        assert_eq!(all.len(), 3);
+
+        // Filter by channel 1001 prefix
+        let filtered = get_routing(&rtdb, RoutingDirection::ChannelToModel, Some("1001:"))
+            .await
+            .unwrap();
+        assert_eq!(filtered.len(), 2);
+        assert!(filtered.contains_key("1001:T:1"));
+        assert!(filtered.contains_key("1001:T:2"));
+
+        // Filter by channel 2002 prefix
+        let filtered_2002 = get_routing(&rtdb, RoutingDirection::ChannelToModel, Some("2002:"))
+            .await
+            .unwrap();
+        assert_eq!(filtered_2002.len(), 1);
+        assert!(filtered_2002.contains_key("2002:T:1"));
+    }
+
+    // ========== clear_routing_for_instance tests ==========
+
+    /// Helper to setup instance name index for tests
+    async fn setup_test_instance_index(rtdb: &MemoryRtdb, instance_id: u32, instance_name: &str) {
+        use bytes::Bytes;
+        rtdb.hash_set(
+            "inst:name:index",
+            instance_name,
+            Bytes::from(instance_id.to_string()),
+        )
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_clear_routing_for_instance_not_found() {
+        let rtdb = create_test_rtdb();
+
+        // Instance does not exist in index
+        let result = clear_routing_for_instance(&rtdb, "nonexistent").await;
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Instance not found"));
+    }
+
+    #[tokio::test]
+    async fn test_clear_routing_for_instance_removes_correct_entries() {
+        let rtdb = create_test_rtdb();
+
+        // Setup two instances
+        setup_test_instance_index(&rtdb, 1, "instance_1").await;
+        setup_test_instance_index(&rtdb, 2, "instance_2").await;
+
+        // Store routing entries for both instances
+        // Note: store_routing writes ALL entries to C2M (forward),
+        // and only is_action=true entries to M2C (reverse)
+        let entries = vec![
+            // Instance 1 measurement routing (goes to C2M only)
+            RoutingEntry {
+                comsrv_key: "1001:T:1".to_string(),
+                modsrv_key: "1:M:1".to_string(),
+                is_action: false,
+            },
+            // Instance 1 action routing (goes to both C2M and M2C)
+            RoutingEntry {
+                comsrv_key: "1001:A:1".to_string(),
+                modsrv_key: "1:A:1".to_string(),
+                is_action: true,
+            },
+            // Instance 2 measurement routing (goes to C2M only)
+            RoutingEntry {
+                comsrv_key: "2002:T:1".to_string(),
+                modsrv_key: "2:M:1".to_string(),
+                is_action: false,
+            },
+        ];
+        store_routing(&rtdb, &entries).await.unwrap();
+
+        // Verify initial state
+        // C2M contains ALL entries (3 total)
+        let c2m_before = get_routing(&rtdb, RoutingDirection::ChannelToModel, None)
+            .await
+            .unwrap();
+        assert_eq!(c2m_before.len(), 3); // All 3 entries in C2M
+
+        // M2C only contains action entries (1 total)
+        let m2c_before = get_routing(&rtdb, RoutingDirection::ModelToChannel, None)
+            .await
+            .unwrap();
+        assert_eq!(m2c_before.len(), 1); // Only instance_1's action entry
+
+        // Clear routing for instance_1
+        // This should remove: 1 M2C entry + associated C2M entries
+        let removed = clear_routing_for_instance(&rtdb, "instance_1")
+            .await
+            .unwrap();
+        // clear_routing_for_instance only counts m2c_fields_to_del + c2m_fields_to_del (based on value match)
+        // It removes M2C entries by key prefix (1:A:), then finds C2M entries by value prefix (1:M:)
+        assert!(removed >= 1); // At least 1 M2C entry removed
+
+        // Verify instance_2 entry remains in C2M
+        let c2m_after = get_routing(&rtdb, RoutingDirection::ChannelToModel, None)
+            .await
+            .unwrap();
+        assert!(c2m_after.contains_key("2002:T:1"));
+
+        // M2C should be empty (only instance_1 had action routing)
+        let m2c_after = get_routing(&rtdb, RoutingDirection::ModelToChannel, None)
+            .await
+            .unwrap();
+        assert!(m2c_after.is_empty());
     }
 }

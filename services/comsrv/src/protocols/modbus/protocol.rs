@@ -3420,4 +3420,492 @@ mod tests {
         assert_eq!(adjustments[1].0, 2u32);
         assert_eq!(adjustments[2].0, 3u32);
     }
+
+    // ================== Phase 3: PDU Builder Tests ==================
+
+    #[test]
+    fn test_build_fc01_coils_pdu_basic() {
+        let pdu = build_read_fc01_coils_pdu(0x0000, 10).expect("FC01 PDU build should succeed");
+
+        assert_eq!(pdu.function_code(), Some(0x01));
+        let data = pdu.as_slice();
+        assert_eq!(data.len(), 5); // FC(1) + Addr(2) + Qty(2)
+        assert_eq!(data[0], 0x01); // Function code
+        assert_eq!(data[1], 0x00); // Start address high byte
+        assert_eq!(data[2], 0x00); // Start address low byte
+        assert_eq!(data[3], 0x00); // Quantity high byte
+        assert_eq!(data[4], 0x0A); // Quantity low byte (10)
+    }
+
+    #[test]
+    fn test_build_fc01_coils_pdu_max_quantity() {
+        // Max coils per request is 2000 (0x07D0)
+        let pdu =
+            build_read_fc01_coils_pdu(0x0000, 2000).expect("FC01 max quantity should succeed");
+
+        let data = pdu.as_slice();
+        assert_eq!(data[3], 0x07); // Quantity high byte
+        assert_eq!(data[4], 0xD0); // Quantity low byte
+    }
+
+    #[test]
+    fn test_build_fc02_discrete_inputs_pdu_basic() {
+        let pdu =
+            build_read_fc02_discrete_inputs_pdu(0x0100, 16).expect("FC02 PDU build should succeed");
+
+        assert_eq!(pdu.function_code(), Some(0x02));
+        let data = pdu.as_slice();
+        assert_eq!(data[0], 0x02); // Function code
+        assert_eq!(data[1], 0x01); // Start address high byte
+        assert_eq!(data[2], 0x00); // Start address low byte
+        assert_eq!(data[3], 0x00); // Quantity high byte
+        assert_eq!(data[4], 0x10); // Quantity low byte (16)
+    }
+
+    #[test]
+    fn test_build_fc03_holding_registers_pdu_basic() {
+        let pdu = build_read_fc03_holding_registers_pdu(0x006B, 3)
+            .expect("FC03 PDU build should succeed");
+
+        assert_eq!(pdu.function_code(), Some(0x03));
+        let data = pdu.as_slice();
+        assert_eq!(data[0], 0x03); // Function code
+        assert_eq!(data[1], 0x00); // Start address high byte
+        assert_eq!(data[2], 0x6B); // Start address low byte (107)
+        assert_eq!(data[3], 0x00); // Quantity high byte
+        assert_eq!(data[4], 0x03); // Quantity low byte (3)
+    }
+
+    #[test]
+    fn test_build_fc03_holding_registers_pdu_max_quantity() {
+        // Max registers per request is 125 (0x7D)
+        let pdu = build_read_fc03_holding_registers_pdu(0x0000, 125)
+            .expect("FC03 max quantity should succeed");
+
+        let data = pdu.as_slice();
+        assert_eq!(data[3], 0x00); // Quantity high byte
+        assert_eq!(data[4], 0x7D); // Quantity low byte (125)
+    }
+
+    #[test]
+    fn test_build_fc04_input_registers_pdu_basic() {
+        let pdu =
+            build_read_fc04_input_registers_pdu(0x0008, 1).expect("FC04 PDU build should succeed");
+
+        assert_eq!(pdu.function_code(), Some(0x04));
+        let data = pdu.as_slice();
+        assert_eq!(data[0], 0x04); // Function code
+        assert_eq!(data[1], 0x00); // Start address high byte
+        assert_eq!(data[2], 0x08); // Start address low byte (8)
+        assert_eq!(data[3], 0x00); // Quantity high byte
+        assert_eq!(data[4], 0x01); // Quantity low byte (1)
+    }
+
+    #[test]
+    fn test_build_fc04_input_registers_pdu_high_address() {
+        let pdu = build_read_fc04_input_registers_pdu(0xFFFF, 1)
+            .expect("FC04 high address should succeed");
+
+        let data = pdu.as_slice();
+        assert_eq!(data[1], 0xFF); // Start address high byte
+        assert_eq!(data[2], 0xFF); // Start address low byte
+    }
+
+    // ================== Phase 4: PDU Parsing Tests ==================
+
+    #[test]
+    fn test_parse_modbus_pdu_fc03_basic() {
+        // FC03 response: Function code + Byte count + Data
+        // Reading 2 registers: returns 4 bytes of data
+        let response_data = vec![
+            0x03, // Function code
+            0x04, // Byte count (2 registers * 2 bytes)
+            0x00, 0x0A, // Register 0: 10
+            0x01, 0x02, // Register 1: 258
+        ];
+        let pdu = ModbusPdu::from_slice(&response_data).expect("PDU creation should succeed");
+
+        let registers = parse_modbus_pdu(&pdu, 0x03, 2).expect("FC03 parsing should succeed");
+
+        assert_eq!(registers.len(), 2);
+        assert_eq!(registers[0], 0x000A); // 10
+        assert_eq!(registers[1], 0x0102); // 258
+    }
+
+    #[test]
+    fn test_parse_modbus_pdu_fc04_basic() {
+        // FC04 response similar to FC03
+        let response_data = vec![
+            0x04, // Function code
+            0x02, // Byte count (1 register)
+            0x12, 0x34, // Register 0: 0x1234
+        ];
+        let pdu = ModbusPdu::from_slice(&response_data).expect("PDU creation should succeed");
+
+        let registers = parse_modbus_pdu(&pdu, 0x04, 1).expect("FC04 parsing should succeed");
+
+        assert_eq!(registers.len(), 1);
+        assert_eq!(registers[0], 0x1234);
+    }
+
+    #[test]
+    fn test_parse_modbus_pdu_fc01_coils() {
+        // FC01 response: coil status bytes
+        // Reading 10 coils: returns ceil(10/8) = 2 bytes
+        let response_data = vec![
+            0x01, // Function code
+            0x02, // Byte count
+            0xCD, // Coils 0-7: 11001101
+            0x01, // Coils 8-9: 00000001 (only bits 0-1 valid)
+        ];
+        let pdu = ModbusPdu::from_slice(&response_data).expect("PDU creation should succeed");
+
+        let registers = parse_modbus_pdu(&pdu, 0x01, 10).expect("FC01 parsing should succeed");
+
+        // FC01 returns bytes as u16 values for uniform processing
+        assert_eq!(registers.len(), 2);
+        assert_eq!(registers[0], 0xCD); // First byte
+        assert_eq!(registers[1], 0x01); // Second byte
+    }
+
+    #[test]
+    fn test_parse_modbus_pdu_fc02_discrete_inputs() {
+        // FC02 response similar to FC01
+        let response_data = vec![
+            0x02, // Function code
+            0x01, // Byte count
+            0xAC, // Inputs 0-7: 10101100
+        ];
+        let pdu = ModbusPdu::from_slice(&response_data).expect("PDU creation should succeed");
+
+        let registers = parse_modbus_pdu(&pdu, 0x02, 8).expect("FC02 parsing should succeed");
+
+        assert_eq!(registers.len(), 1);
+        assert_eq!(registers[0], 0xAC);
+    }
+
+    #[test]
+    fn test_parse_modbus_pdu_function_code_mismatch() {
+        let response_data = vec![0x03, 0x02, 0x00, 0x0A];
+        let pdu = ModbusPdu::from_slice(&response_data).expect("PDU creation should succeed");
+
+        // Request was for FC04 but response is FC03
+        let result = parse_modbus_pdu(&pdu, 0x04, 1);
+
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("mismatch"));
+    }
+
+    #[test]
+    fn test_parse_modbus_pdu_unsupported_function_code() {
+        let response_data = vec![0x10, 0x00, 0x01, 0x00, 0x02]; // FC16 Write Multiple Registers response
+        let pdu = ModbusPdu::from_slice(&response_data).expect("PDU creation should succeed");
+
+        let result = parse_modbus_pdu(&pdu, 0x10, 2);
+
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("Unsupported"));
+    }
+
+    #[test]
+    fn test_parse_modbus_pdu_empty_returns_empty_vec() {
+        // Very short PDU - graceful degradation
+        let response_data = vec![0x03]; // Only function code, no byte count
+        let pdu = ModbusPdu::from_slice(&response_data).expect("PDU creation should succeed");
+
+        let registers = parse_modbus_pdu(&pdu, 0x03, 1).expect("Should degrade gracefully");
+
+        // Empty result due to insufficient data
+        assert!(registers.is_empty());
+    }
+
+    #[test]
+    fn test_parse_modbus_pdu_fc03_partial_data() {
+        // FC03 response with incomplete register data (graceful degradation)
+        let response_data = vec![
+            0x03, // Function code
+            0x04, // Byte count says 4 bytes (2 registers)
+            0x00, 0x0A, // Only 1 complete register
+            0x01, // Incomplete second register (only 1 byte)
+        ];
+        let pdu = ModbusPdu::from_slice(&response_data).expect("PDU creation should succeed");
+
+        let registers = parse_modbus_pdu(&pdu, 0x03, 2).expect("Should parse partial data");
+
+        // Should return only complete registers
+        assert_eq!(registers.len(), 1);
+        assert_eq!(registers[0], 0x000A);
+    }
+
+    #[test]
+    fn test_parse_modbus_pdu_fc03_multiple_registers() {
+        // FC03 response with 5 registers
+        let response_data = vec![
+            0x03, // Function code
+            0x0A, // Byte count (5 registers * 2 bytes = 10)
+            0x00, 0x01, // Register 0: 1
+            0x00, 0x02, // Register 1: 2
+            0x00, 0x03, // Register 2: 3
+            0x00, 0x04, // Register 3: 4
+            0x00, 0x05, // Register 4: 5
+        ];
+        let pdu = ModbusPdu::from_slice(&response_data).expect("PDU creation should succeed");
+
+        let registers =
+            parse_modbus_pdu(&pdu, 0x03, 5).expect("FC03 multi-register should succeed");
+
+        assert_eq!(registers.len(), 5);
+        for (i, reg) in registers.iter().enumerate() {
+            assert_eq!(*reg, (i + 1) as u16);
+        }
+    }
+
+    // ================== Phase 5: ComBase Trait Method Tests ==================
+
+    #[test]
+    fn test_combase_name() {
+        use crate::core::combase::traits::ComBase;
+
+        let protocol = create_test_protocol();
+        assert_eq!(ComBase::name(&protocol), "ControlTestChannel");
+    }
+
+    #[test]
+    fn test_combase_protocol_type() {
+        use crate::core::combase::traits::ComBase;
+
+        let protocol = create_test_protocol();
+        // protocol_type() returns generic "modbus" (not specific TCP/RTU variant)
+        assert_eq!(ComBase::protocol_type(&protocol), "modbus");
+    }
+
+    #[test]
+    fn test_combase_get_channel_id() {
+        use crate::core::combase::traits::ComBase;
+
+        let protocol = create_test_protocol();
+        assert_eq!(ComBase::get_channel_id(&protocol), 2001);
+    }
+
+    #[test]
+    fn test_combase_get_channel_name() {
+        use crate::core::combase::traits::ComBase;
+
+        let protocol = create_test_protocol();
+        assert_eq!(ComBase::get_channel_name(&protocol), "ControlTestChannel");
+    }
+
+    #[tokio::test]
+    async fn test_combase_get_status() {
+        use crate::core::combase::traits::ComBase;
+
+        let protocol = create_test_protocol();
+        let status = ComBase::get_status(&protocol).await;
+
+        // Initial status should indicate not connected
+        assert!(!status.is_connected);
+        assert_eq!(status.success_count, 0);
+        assert_eq!(status.error_count, 0);
+    }
+
+    // ================== Phase 6: ComClient Trait Method Tests ==================
+
+    #[test]
+    fn test_comclient_is_connected_initial_state() {
+        use crate::core::combase::traits::ComClient;
+
+        let protocol = create_test_protocol();
+        // Initial state should be disconnected
+        assert!(!ComClient::is_connected(&protocol));
+    }
+
+    #[tokio::test]
+    async fn test_comclient_disconnect_when_not_connected() {
+        use crate::core::combase::traits::ComClient;
+
+        let mut protocol = create_test_protocol();
+
+        // Disconnecting when not connected should succeed (no-op)
+        let result = ComClient::disconnect(&mut protocol).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_comclient_stop_periodic_tasks_when_not_started() {
+        use crate::core::combase::traits::ComClient;
+
+        let protocol = create_test_protocol();
+
+        // Stopping tasks when none are running should succeed
+        let result = ComClient::stop_periodic_tasks(&protocol).await;
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_comclient_set_data_channel() {
+        use crate::core::combase::traits::ComClient;
+        use tokio::sync::mpsc;
+
+        let mut protocol = create_test_protocol();
+        let (tx, _rx) = mpsc::channel(10);
+
+        // Should accept data channel without error
+        ComClient::set_data_channel(&mut protocol, tx);
+        // No panic means success
+    }
+
+    // ================== Phase 7: Point Mapping Tests ==================
+
+    #[tokio::test]
+    async fn test_get_point_mapping_telemetry_empty() {
+        let protocol = create_test_protocol();
+
+        // Without initialization, mappings should be empty
+        let mapping = protocol.get_point_mapping(FourRemote::Telemetry, 1).await;
+        assert!(mapping.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_get_point_mapping_control_empty() {
+        let protocol = create_test_protocol();
+
+        // Control points should also be empty without initialization
+        let mapping = protocol.get_point_mapping(FourRemote::Control, 1).await;
+        assert!(mapping.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_get_point_mapping_invalid_point() {
+        let protocol = create_test_protocol();
+
+        // Non-existent point should return None for all types
+        let mapping = protocol
+            .get_point_mapping(FourRemote::Telemetry, 99999)
+            .await;
+        assert!(mapping.is_none());
+
+        let mapping = protocol.get_point_mapping(FourRemote::Signal, 99999).await;
+        assert!(mapping.is_none());
+
+        let mapping = protocol.get_point_mapping(FourRemote::Control, 99999).await;
+        assert!(mapping.is_none());
+
+        let mapping = protocol
+            .get_point_mapping(FourRemote::Adjustment, 99999)
+            .await;
+        assert!(mapping.is_none());
+    }
+
+    // ================== Phase 8: Queue Drain Tests ==================
+
+    #[test]
+    fn test_drain_control_queue_empty() {
+        let protocol = create_test_protocol();
+
+        let commands = protocol.drain_control_queue();
+        assert!(commands.is_empty());
+    }
+
+    #[test]
+    fn test_drain_adjustment_queue_empty() {
+        let protocol = create_test_protocol();
+
+        let commands = protocol.drain_adjustment_queue();
+        assert!(commands.is_empty());
+    }
+
+    // ================== Phase 9: Decode Register Value Additional Tests ==================
+
+    #[test]
+    fn test_decode_register_value_int32_abcd() {
+        // Test int32 with ABCD byte order (big-endian)
+        let value: i32 = -12345678;
+        let bytes = value.to_be_bytes();
+        let registers = vec![
+            u16::from_be_bytes([bytes[0], bytes[1]]),
+            u16::from_be_bytes([bytes[2], bytes[3]]),
+        ];
+
+        let result = decode_register_value(&registers, "int32", 0, Some("ABCD"), None)
+            .expect("int32 ABCD decode should succeed");
+
+        match result {
+            RedisValue::Integer(i) => assert_eq!(i, value as i64),
+            _ => panic!("Expected integer value"),
+        }
+    }
+
+    #[test]
+    fn test_decode_register_value_int32_cdab() {
+        // Test int32 with CDAB byte order (word-swapped big-endian)
+        let value: i32 = 987654321;
+        let bytes = value.to_be_bytes();
+        // CDAB: swap word order
+        let registers = vec![
+            u16::from_be_bytes([bytes[2], bytes[3]]),
+            u16::from_be_bytes([bytes[0], bytes[1]]),
+        ];
+
+        let result = decode_register_value(&registers, "int32", 0, Some("CDAB"), None)
+            .expect("int32 CDAB decode should succeed");
+
+        match result {
+            RedisValue::Integer(i) => assert_eq!(i, value as i64),
+            _ => panic!("Expected integer value"),
+        }
+    }
+
+    #[test]
+    fn test_decode_register_value_uint32() {
+        let value: u32 = 0xDEADBEEF;
+        let registers = vec![(value >> 16) as u16, (value & 0xFFFF) as u16];
+
+        let result = decode_register_value(&registers, "uint32", 0, Some("ABCD"), None)
+            .expect("uint32 decode should succeed");
+
+        match result {
+            RedisValue::Integer(i) => assert_eq!(i as u32, value),
+            _ => panic!("Expected integer value"),
+        }
+    }
+
+    #[test]
+    fn test_decode_register_value_float32_cdab() {
+        // Test float32 with CDAB byte order
+        let value: f32 = std::f32::consts::PI;
+        let bytes = value.to_be_bytes();
+        // CDAB: swap word order
+        let registers = vec![
+            u16::from_be_bytes([bytes[2], bytes[3]]),
+            u16::from_be_bytes([bytes[0], bytes[1]]),
+        ];
+
+        let result = decode_register_value(&registers, "float32", 0, Some("CDAB"), None)
+            .expect("float32 CDAB decode should succeed");
+
+        match result {
+            RedisValue::Float(f) => assert!((f as f32 - value).abs() < 0.0001),
+            _ => panic!("Expected float value"),
+        }
+    }
+
+    #[test]
+    fn test_decode_register_value_insufficient_registers() {
+        // float32 needs 2 registers but only 1 provided
+        let registers = vec![0x1234];
+
+        let result = decode_register_value(&registers, "float32", 0, None, None);
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_decode_register_value_unknown_type() {
+        let registers = vec![0x1234];
+
+        let result = decode_register_value(&registers, "unknown_type", 0, None, None);
+
+        // Unknown types should return error
+        assert!(result.is_err());
+    }
 }

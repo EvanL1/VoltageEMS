@@ -514,6 +514,70 @@ impl RedisClient {
         Ok(result > 0)
     }
 
+    /// Delete multiple hash fields at once (Redis HDEL with multiple fields)
+    ///
+    /// This is more efficient than multiple individual hdel calls as it uses
+    /// a single Redis command to delete all specified fields.
+    ///
+    /// Returns the number of fields that were removed.
+    pub async fn hdel_many(&self, key: &str, fields: &[String]) -> Result<usize> {
+        if fields.is_empty() {
+            return Ok(0);
+        }
+
+        let mut conn = self.get_connection().await?;
+        let mut cmd = redis::cmd("HDEL");
+        cmd.arg(key);
+        for field in fields {
+            cmd.arg(field);
+        }
+        let result: i32 = cmd
+            .query_async(&mut *conn)
+            .await
+            .with_context(|| format!("Failed to HDEL multiple fields from key: {}", key))?;
+        Ok(result as usize)
+    }
+
+    /// Execute multiple HMSET operations in a single pipeline (pure Redis, no Lua)
+    ///
+    /// This batches multiple hash write operations into a single network round-trip,
+    /// significantly reducing latency for bulk writes.
+    ///
+    /// # Arguments
+    /// * `operations` - Vector of (key, fields) tuples, where fields is Vec<(field, value)>
+    ///
+    /// # Returns
+    /// * `Ok(())` on success
+    /// * `Err` if any operation fails
+    pub async fn pipeline_hmset(
+        &self,
+        operations: &[(String, Vec<(String, String)>)],
+    ) -> Result<()> {
+        if operations.is_empty() {
+            return Ok(());
+        }
+
+        let mut conn = self.get_connection().await?;
+        let mut pipe = redis::pipe();
+
+        for (key, fields) in operations {
+            if !fields.is_empty() {
+                let mut cmd = redis::cmd("HSET");
+                cmd.arg(key.as_str());
+                for (field, value) in fields {
+                    cmd.arg(field.as_str()).arg(value.as_str());
+                }
+                pipe.add_command(cmd);
+            }
+        }
+
+        pipe.query_async::<()>(&mut *conn)
+            .await
+            .with_context(|| "Failed to execute pipeline HMSET")?;
+
+        Ok(())
+    }
+
     /// Get pool statistics
     pub fn pool_state(&self) -> bb8::State {
         self.pool.state()

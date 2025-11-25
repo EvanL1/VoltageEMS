@@ -15,7 +15,6 @@ pub mod sqlite;
 // Common modules
 pub mod config_loader;
 pub mod error;
-pub mod hex;
 pub mod logging;
 pub mod service_bootstrap;
 pub mod warning_monitor;

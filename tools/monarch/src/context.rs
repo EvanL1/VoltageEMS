@@ -12,8 +12,7 @@ use tokio::sync::RwLock;
 use {
     common::redis::RedisClient,
     comsrv::core::combase::ChannelManager,
-    modsrv::{InstanceManager, ProductLoader, RoutingLoader},
-    rulesrv::rule_engine::Rule,
+    modsrv::{InstanceManager, ProductLoader},
     sqlx::SqlitePool,
     voltage_rtdb::{RedisRtdb, Rtdb},
 };
@@ -32,35 +31,11 @@ pub struct ServiceConfig {
 }
 
 impl ServiceConfig {
-    /// Create configuration from paths (public API)
-    #[allow(dead_code)]
-    pub fn new(
-        db_path: impl AsRef<Path>,
-        config_path: impl AsRef<Path>,
-        redis_url: String,
-    ) -> Self {
-        Self {
-            db_path: db_path.as_ref().to_path_buf(),
-            config_path: config_path.as_ref().to_path_buf(),
-            redis_url,
-        }
-    }
-
     /// Get unified database path (voltage.db)
     ///
     /// All services now use a single unified database for configuration
     pub fn unified_db_path(&self) -> PathBuf {
         self.db_path.join("voltage.db")
-    }
-
-    /// Get database path for a specific service (DEPRECATED)
-    ///
-    /// This method is kept for backward compatibility but all services
-    /// should migrate to use `unified_db_path()` instead.
-    #[deprecated(note = "Use unified_db_path() instead - all services now share voltage.db")]
-    #[allow(dead_code)]
-    pub fn service_db_path(&self, service: &str) -> PathBuf {
-        self.db_path.join(format!("{}.db", service))
     }
 
     /// Get configuration path for a specific service
@@ -262,12 +237,7 @@ impl ComsrvContext {
 pub struct ModsrvContext {
     pub instance_manager: Arc<InstanceManager<RedisRtdb>>,
     pub product_loader: Arc<ProductLoader>,
-    /// Routing loader (used for routing operations)
-    #[allow(dead_code)]
-    pub routing_loader: Arc<RoutingLoader>,
     pub sqlite_pool: SqlitePool,
-    /// RTDB (used by lib_api data methods)
-    #[allow(dead_code)]
     pub rtdb: Arc<RedisRtdb>,
 }
 
@@ -295,12 +265,6 @@ impl ModsrvContext {
         // Create product loader
         let product_loader = Arc::new(ProductLoader::new(products_dir, sqlite_pool.clone()));
 
-        // Get instances directory from config
-        let instances_dir = config.service_config_path("modsrv").join("instances");
-
-        // Create routing loader
-        let routing_loader = Arc::new(RoutingLoader::new(instances_dir, sqlite_pool.clone()));
-
         // Load routing cache from SQLite (enables direct library calls)
         let (c2m_map, m2c_map) = load_routing_maps_from_sqlite(&sqlite_pool).await?;
         let routing_cache = Arc::new(voltage_config::RoutingCache::from_maps(
@@ -320,7 +284,6 @@ impl ModsrvContext {
         Ok(Self {
             instance_manager,
             product_loader,
-            routing_loader,
             sqlite_pool,
             rtdb,
         })
@@ -331,12 +294,6 @@ impl ModsrvContext {
 /// Rulesrv service context
 pub struct RulesrvContext {
     pub sqlite_pool: SqlitePool,
-    /// RTDB (used for rule execution)
-    #[allow(dead_code)]
-    pub rtdb: Arc<dyn Rtdb>,
-    /// Pre-loaded rules cache for performance
-    #[allow(dead_code)]
-    pub rules_cache: Arc<RwLock<Vec<Rule>>>,
 }
 
 #[cfg(feature = "lib-mode")]
@@ -348,51 +305,7 @@ impl RulesrvContext {
             .await
             .with_context(|| format!("Failed to connect to rulesrv database at {:?}", db_path))?;
 
-        // Initialize Redis connection
-        let redis_client = Arc::new(
-            RedisClient::new(&config.redis_url)
-                .await
-                .with_context(|| format!("Failed to connect to Redis at {}", config.redis_url))?,
-        );
-
-        let rtdb: Arc<dyn Rtdb> = Arc::new(RedisRtdb::from_client(redis_client.clone()));
-
-        // Load rules from database
-        let rules = Self::load_rules_from_db(&sqlite_pool)
-            .await
-            .context("Failed to load rules from database")?;
-
-        Ok(Self {
-            sqlite_pool,
-            rtdb,
-            rules_cache: Arc::new(RwLock::new(rules)),
-        })
-    }
-
-    /// Load all rules from SQLite database
-    async fn load_rules_from_db(pool: &SqlitePool) -> Result<Vec<Rule>> {
-        let db_rules: Vec<(String, String, Option<String>)> =
-            sqlx::query_as("SELECT id, name, flow_json FROM rules ORDER BY priority DESC, id")
-                .fetch_all(pool)
-                .await
-                .context("Failed to query rules from database")?;
-
-        let mut rules = Vec::new();
-        for (id, name, flow_json_opt) in db_rules {
-            let flow_json = flow_json_opt.unwrap_or_else(|| "{}".to_string());
-
-            // Parse flow_json as complete Rule object
-            let mut rule: Rule = serde_json::from_str(&flow_json)
-                .with_context(|| format!("Failed to parse rule for rule '{}'", id))?;
-
-            // Override id and name from database columns (they take precedence)
-            rule.id = id;
-            rule.name = name;
-
-            rules.push(rule);
-        }
-
-        Ok(rules)
+        Ok(Self { sqlite_pool })
     }
 }
 

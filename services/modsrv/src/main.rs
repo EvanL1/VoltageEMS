@@ -14,11 +14,6 @@ use utoipa_swagger_ui::SwaggerUi;
 // Import from modsrv library instead of declaring modules
 use modsrv::{bootstrap, routes};
 
-// Private modules not exported from lib
-mod instance_logger;
-mod time_series;
-mod virtual_calc;
-
 #[tokio::main]
 async fn main() -> Result<()> {
     // Create service info
@@ -30,61 +25,6 @@ async fn main() -> Result<()> {
 
     // Create application state with all initialized components
     let state = bootstrap::create_app_state(&service_info).await?;
-
-    // Start real-time virtual point calculation if enabled
-    let _virtual_calc_handle = if std::env::var("ENABLE_REALTIME_VIRTUAL_CALC")
-        .unwrap_or_else(|_| "true".to_string())
-        == "true"
-    {
-        let polling_interval = std::env::var("VIRTUAL_CALC_INTERVAL_MS")
-            .unwrap_or_else(|_| "1000".to_string())
-            .parse::<u64>()
-            .unwrap_or(1000);
-
-        info!(
-            "Starting real-time virtual point calculation with {}ms interval",
-            polling_interval
-        );
-
-        // Create dedicated connections for virtual calculation task
-        let redis_url = state.config.redis.url.clone();
-        // Try to build Redis client; if it fails, disable the task but keep service running.
-        let redis_client = match common::redis::RedisClient::new(&redis_url).await {
-            Ok(client) => Some(Arc::new(client)),
-            Err(e) => {
-                error!(
-                    "Failed to create Redis client for virtual calculation: {}",
-                    e
-                );
-                info!("Disabling real-time virtual point calculation task due to Redis error");
-                None
-            },
-        };
-
-        if let Some(redis_client) = redis_client {
-            let rtdb = Arc::new(voltage_rtdb::RedisRtdb::from_client(redis_client));
-
-            let db_path =
-                std::env::var("VOLTAGE_DB_PATH").unwrap_or_else(|_| "data/voltage.db".to_string());
-            match sqlx::SqlitePool::connect(&format!("sqlite:{}", db_path)).await {
-                Ok(pool) => Some(virtual_calc::start_realtime_virtual_calculation(
-                    rtdb,
-                    pool,
-                    polling_interval,
-                )),
-                Err(e) => {
-                    error!("Failed to connect to SQLite for virtual calculation: {}", e);
-                    info!("Disabling real-time virtual point calculation task due to SQLite error");
-                    None
-                },
-            }
-        } else {
-            None
-        }
-    } else {
-        info!("Virtual point calculation is disabled (ENABLE_REALTIME_VIRTUAL_CALC=false)");
-        None
-    };
 
     // Create API routes using the routes module
     let app = routes::create_routes(Arc::clone(&state));

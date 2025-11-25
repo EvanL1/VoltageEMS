@@ -61,5 +61,4 @@ http-body-util = "0.1"
 default = ["redis", "sqlite", "swagger-ui"]
 redis = []
 sqlite = []
-virtual-points = []
 swagger-ui = ["utoipa-swagger-ui", "voltage-config/openapi"]  # Swagger UI documentation (enabled by default for development)

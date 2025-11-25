@@ -453,6 +453,17 @@ mod tests {
         ) -> Result<Option<(String, bytes::Bytes)>> {
             unimplemented!()
         }
+
+        async fn hash_del_many(&self, _key: &str, _fields: &[String]) -> Result<usize> {
+            unimplemented!()
+        }
+
+        async fn pipeline_hash_mset(
+            &self,
+            _operations: Vec<(String, Vec<(String, bytes::Bytes)>)>,
+        ) -> Result<()> {
+            unimplemented!()
+        }
     }
 
     #[tokio::test]

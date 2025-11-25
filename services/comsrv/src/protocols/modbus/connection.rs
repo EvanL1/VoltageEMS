@@ -896,4 +896,346 @@ mod tests {
         assert!(debug_str.contains("ConnectionParams"));
         assert!(debug_str.contains("test.local"));
     }
+
+    // ========================================================================
+    // Frame Info Extraction Tests
+    // ========================================================================
+
+    #[test]
+    fn test_extract_frame_info_tcp_valid() {
+        let params = ConnectionParams {
+            host: Some("localhost".to_string()),
+            port: Some(502),
+            device: None,
+            baud_rate: None,
+            data_bits: None,
+            stop_bits: None,
+            parity: None,
+            timeout: Duration::from_secs(5),
+        };
+
+        let logger = crate::core::combase::traits::ChannelLogger::new(1, "test".to_string());
+        let manager = ModbusConnectionManager::new(ModbusMode::Tcp, params, logger);
+
+        // TCP frame: [TID(2)][Proto(2)][Len(2)][Unit(1)][FC(1)]
+        // TID=0x0001, Proto=0x0000, Len=0x0006, Unit=1, FC=3
+        let frame = [0x00, 0x01, 0x00, 0x00, 0x00, 0x06, 0x01, 0x03];
+        let (tid, slave, fc) = manager.extract_frame_info(&frame);
+
+        assert_eq!(tid, Some(1));
+        assert_eq!(slave, 1);
+        assert_eq!(fc, 3);
+    }
+
+    #[test]
+    fn test_extract_frame_info_tcp_high_transaction_id() {
+        let params = ConnectionParams {
+            host: Some("localhost".to_string()),
+            port: Some(502),
+            device: None,
+            baud_rate: None,
+            data_bits: None,
+            stop_bits: None,
+            parity: None,
+            timeout: Duration::from_secs(5),
+        };
+
+        let logger = crate::core::combase::traits::ChannelLogger::new(1, "test".to_string());
+        let manager = ModbusConnectionManager::new(ModbusMode::Tcp, params, logger);
+
+        // TCP frame with high TID: 0x1234
+        let frame = [0x12, 0x34, 0x00, 0x00, 0x00, 0x06, 0x05, 0x06];
+        let (tid, slave, fc) = manager.extract_frame_info(&frame);
+
+        assert_eq!(tid, Some(0x1234));
+        assert_eq!(slave, 5);
+        assert_eq!(fc, 6);
+    }
+
+    #[test]
+    fn test_extract_frame_info_tcp_short_frame() {
+        let params = ConnectionParams {
+            host: Some("localhost".to_string()),
+            port: Some(502),
+            device: None,
+            baud_rate: None,
+            data_bits: None,
+            stop_bits: None,
+            parity: None,
+            timeout: Duration::from_secs(5),
+        };
+
+        let logger = crate::core::combase::traits::ChannelLogger::new(1, "test".to_string());
+        let manager = ModbusConnectionManager::new(ModbusMode::Tcp, params, logger);
+
+        // Frame too short (only 6 bytes, need 8)
+        let frame = [0x00, 0x01, 0x00, 0x00, 0x00, 0x06];
+        let (tid, slave, fc) = manager.extract_frame_info(&frame);
+
+        assert_eq!(tid, None);
+        assert_eq!(slave, 0);
+        assert_eq!(fc, 0);
+    }
+
+    #[test]
+    fn test_extract_frame_info_rtu_valid() {
+        let params = ConnectionParams {
+            host: None,
+            port: None,
+            device: Some("/dev/ttyUSB0".to_string()),
+            baud_rate: Some(9600),
+            data_bits: Some(8),
+            stop_bits: Some(1),
+            parity: Some("None".to_string()),
+            timeout: Duration::from_millis(500),
+        };
+
+        let logger = crate::core::combase::traits::ChannelLogger::new(1, "test".to_string());
+        let manager = ModbusConnectionManager::new(ModbusMode::Rtu, params, logger);
+
+        // RTU frame: [Unit(1)][FC(1)][Data...][CRC(2)]
+        let frame = [0x01, 0x03, 0x00, 0x00, 0x00, 0x0A, 0xC5, 0xCD];
+        let (tid, slave, fc) = manager.extract_frame_info(&frame);
+
+        assert_eq!(tid, None); // RTU has no transaction ID
+        assert_eq!(slave, 1);
+        assert_eq!(fc, 3);
+    }
+
+    #[test]
+    fn test_extract_frame_info_rtu_short_frame() {
+        let params = ConnectionParams {
+            host: None,
+            port: None,
+            device: Some("/dev/ttyUSB0".to_string()),
+            baud_rate: Some(9600),
+            data_bits: Some(8),
+            stop_bits: Some(1),
+            parity: Some("None".to_string()),
+            timeout: Duration::from_millis(500),
+        };
+
+        let logger = crate::core::combase::traits::ChannelLogger::new(1, "test".to_string());
+        let manager = ModbusConnectionManager::new(ModbusMode::Rtu, params, logger);
+
+        // Frame too short (only 1 byte)
+        let frame = [0x01];
+        let (tid, slave, fc) = manager.extract_frame_info(&frame);
+
+        assert_eq!(tid, None);
+        assert_eq!(slave, 0);
+        assert_eq!(fc, 0);
+    }
+
+    #[test]
+    fn test_extract_frame_info_empty_frame() {
+        let params = ConnectionParams {
+            host: Some("localhost".to_string()),
+            port: Some(502),
+            device: None,
+            baud_rate: None,
+            data_bits: None,
+            stop_bits: None,
+            parity: None,
+            timeout: Duration::from_secs(5),
+        };
+
+        let logger = crate::core::combase::traits::ChannelLogger::new(1, "test".to_string());
+        let manager = ModbusConnectionManager::new(ModbusMode::Tcp, params, logger);
+
+        let frame: [u8; 0] = [];
+        let (tid, slave, fc) = manager.extract_frame_info(&frame);
+
+        assert_eq!(tid, None);
+        assert_eq!(slave, 0);
+        assert_eq!(fc, 0);
+    }
+
+    // ========================================================================
+    // Connection Error Tests (without actual connections)
+    // ========================================================================
+
+    #[tokio::test]
+    async fn test_send_without_connection_returns_error() {
+        let params = ConnectionParams {
+            host: Some("localhost".to_string()),
+            port: Some(502),
+            device: None,
+            baud_rate: None,
+            data_bits: None,
+            stop_bits: None,
+            parity: None,
+            timeout: Duration::from_secs(5),
+        };
+
+        let logger = crate::core::combase::traits::ChannelLogger::new(1, "test".to_string());
+        let manager = ModbusConnectionManager::new(ModbusMode::Tcp, params, logger);
+
+        let result = manager.send(&[0x01, 0x03, 0x00, 0x00]).await;
+        assert!(result.is_err());
+
+        if let Err(ComSrvError::ConnectionError(msg)) = result {
+            assert!(msg.contains("Not connected"));
+        } else {
+            panic!("Expected ConnectionError");
+        }
+    }
+
+    #[tokio::test]
+    async fn test_receive_without_connection_returns_error() {
+        let params = ConnectionParams {
+            host: Some("localhost".to_string()),
+            port: Some(502),
+            device: None,
+            baud_rate: None,
+            data_bits: None,
+            stop_bits: None,
+            parity: None,
+            timeout: Duration::from_secs(5),
+        };
+
+        let logger = crate::core::combase::traits::ChannelLogger::new(1, "test".to_string());
+        let manager = ModbusConnectionManager::new(ModbusMode::Tcp, params, logger);
+
+        let mut buffer = [0u8; 256];
+        let result = manager.receive(&mut buffer, Duration::from_secs(1)).await;
+        assert!(result.is_err());
+
+        if let Err(ComSrvError::ConnectionError(msg)) = result {
+            assert!(msg.contains("Not connected"));
+        } else {
+            panic!("Expected ConnectionError");
+        }
+    }
+
+    #[tokio::test]
+    async fn test_disconnect_when_not_connected() {
+        let params = ConnectionParams {
+            host: Some("localhost".to_string()),
+            port: Some(502),
+            device: None,
+            baud_rate: None,
+            data_bits: None,
+            stop_bits: None,
+            parity: None,
+            timeout: Duration::from_secs(5),
+        };
+
+        let logger = crate::core::combase::traits::ChannelLogger::new(1, "test".to_string());
+        let manager = ModbusConnectionManager::new(ModbusMode::Tcp, params, logger);
+
+        // Disconnect should succeed even when not connected
+        let result = manager.disconnect().await;
+        assert!(result.is_ok());
+        assert!(!manager.is_connected().await);
+    }
+
+    // ========================================================================
+    // Configuration Validation Tests
+    // ========================================================================
+
+    #[tokio::test]
+    async fn test_connect_tcp_missing_host() {
+        let params = ConnectionParams {
+            host: None, // Missing host
+            port: Some(502),
+            device: None,
+            baud_rate: None,
+            data_bits: None,
+            stop_bits: None,
+            parity: None,
+            timeout: Duration::from_secs(5),
+        };
+
+        let logger = crate::core::combase::traits::ChannelLogger::new(1, "test".to_string());
+        let manager = ModbusConnectionManager::new(ModbusMode::Tcp, params, logger);
+
+        let result = manager.connect().await;
+        assert!(result.is_err());
+
+        if let Err(ComSrvError::ConfigError(msg)) = result {
+            assert!(msg.contains("host"));
+        } else {
+            panic!("Expected ConfigError for missing host");
+        }
+    }
+
+    #[tokio::test]
+    async fn test_connect_tcp_missing_port() {
+        let params = ConnectionParams {
+            host: Some("localhost".to_string()),
+            port: None, // Missing port
+            device: None,
+            baud_rate: None,
+            data_bits: None,
+            stop_bits: None,
+            parity: None,
+            timeout: Duration::from_secs(5),
+        };
+
+        let logger = crate::core::combase::traits::ChannelLogger::new(1, "test".to_string());
+        let manager = ModbusConnectionManager::new(ModbusMode::Tcp, params, logger);
+
+        let result = manager.connect().await;
+        assert!(result.is_err());
+
+        if let Err(ComSrvError::ConfigError(msg)) = result {
+            assert!(msg.contains("port"));
+        } else {
+            panic!("Expected ConfigError for missing port");
+        }
+    }
+
+    #[tokio::test]
+    async fn test_connect_rtu_missing_device() {
+        let params = ConnectionParams {
+            host: None,
+            port: None,
+            device: None, // Missing device
+            baud_rate: Some(9600),
+            data_bits: Some(8),
+            stop_bits: Some(1),
+            parity: Some("None".to_string()),
+            timeout: Duration::from_millis(500),
+        };
+
+        let logger = crate::core::combase::traits::ChannelLogger::new(1, "test".to_string());
+        let manager = ModbusConnectionManager::new(ModbusMode::Rtu, params, logger);
+
+        let result = manager.connect().await;
+        assert!(result.is_err());
+
+        if let Err(ComSrvError::ConfigError(msg)) = result {
+            assert!(msg.contains("device"));
+        } else {
+            panic!("Expected ConfigError for missing device");
+        }
+    }
+
+    // ========================================================================
+    // ModbusMode Equality and Copy Tests
+    // ========================================================================
+
+    #[test]
+    fn test_modbus_mode_equality() {
+        assert_eq!(ModbusMode::Tcp, ModbusMode::Tcp);
+        assert_eq!(ModbusMode::Rtu, ModbusMode::Rtu);
+        assert_ne!(ModbusMode::Tcp, ModbusMode::Rtu);
+    }
+
+    #[test]
+    fn test_modbus_mode_copy() {
+        let mode1 = ModbusMode::Tcp;
+        let mode2 = mode1; // Copy
+        assert_eq!(mode1, mode2);
+    }
+
+    #[test]
+    fn test_modbus_mode_debug_format() {
+        let tcp_debug = format!("{:?}", ModbusMode::Tcp);
+        let rtu_debug = format!("{:?}", ModbusMode::Rtu);
+
+        assert!(tcp_debug.contains("Tcp"));
+        assert!(rtu_debug.contains("Rtu"));
+    }
 }
