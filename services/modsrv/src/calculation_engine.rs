@@ -1956,4 +1956,242 @@ mod tests {
         assert_eq!(result[1], -20.0);
         assert_eq!(result[2], -20.0);
     }
+
+    // ========================================================================
+    // SQLite Persistence Tests (load_from_sqlite)
+    // ========================================================================
+
+    /// Helper: Create in-memory SQLite pool and initialize calculations table
+    async fn create_test_sqlite_pool() -> sqlx::SqlitePool {
+        let pool = sqlx::SqlitePool::connect("sqlite::memory:")
+            .await
+            .expect("Failed to create in-memory SQLite pool");
+
+        // Initialize calculations table
+        sqlx::query(voltage_config::modsrv::CALCULATIONS_TABLE)
+            .execute(&pool)
+            .await
+            .expect("Failed to create calculations table");
+
+        pool
+    }
+
+    #[tokio::test]
+    async fn test_load_from_sqlite_empty_db() {
+        let pool = create_test_sqlite_pool().await;
+        let engine = CalculationEngine::with_config(None, CalculationEngineConfig::default());
+
+        let count = engine.load_from_sqlite(&pool).await.unwrap();
+        assert_eq!(count, 0, "Empty database should load 0 calculations");
+    }
+
+    #[tokio::test]
+    async fn test_load_from_sqlite_with_data() {
+        let pool = create_test_sqlite_pool().await;
+
+        // Insert a valid calculation
+        let calc_type_json = serde_json::json!({
+            "type": "expression",
+            "formula": "a + b",
+            "variables": {
+                "a": "inst:1:M:1",
+                "b": "inst:1:M:2"
+            }
+        });
+
+        sqlx::query(
+            "INSERT INTO calculations (calculation_name, description, calculation_type, output_inst, output_type, output_id, enabled)
+             VALUES (?, ?, ?, ?, ?, ?, ?)"
+        )
+        .bind("test_expr_calc")
+        .bind("Test expression calculation")
+        .bind(calc_type_json.to_string())
+        .bind(100_i64)
+        .bind("M")
+        .bind(1_i64)
+        .bind(true)
+        .execute(&pool)
+        .await
+        .expect("Failed to insert test calculation");
+
+        let engine = CalculationEngine::with_config(None, CalculationEngineConfig::default());
+        let count = engine.load_from_sqlite(&pool).await.unwrap();
+
+        assert_eq!(count, 1, "Should load 1 calculation");
+
+        // Verify calculation was registered
+        let calculations = engine.calculations.read().await;
+        assert!(
+            calculations.contains_key("test_expr_calc"),
+            "Calculation should be registered"
+        );
+
+        let calc = calculations.get("test_expr_calc").unwrap();
+        assert_eq!(calc.output_key, "inst:100:M:1");
+    }
+
+    #[tokio::test]
+    async fn test_load_from_sqlite_disabled_ignored() {
+        let pool = create_test_sqlite_pool().await;
+
+        // Insert a disabled calculation
+        let calc_type_json = serde_json::json!({
+            "type": "constant",
+            "value": 42
+        });
+
+        sqlx::query(
+            "INSERT INTO calculations (calculation_name, calculation_type, output_inst, output_type, output_id, enabled)
+             VALUES (?, ?, ?, ?, ?, ?)"
+        )
+        .bind("disabled_calc")
+        .bind(calc_type_json.to_string())
+        .bind(100_i64)
+        .bind("M")
+        .bind(1_i64)
+        .bind(false) // disabled
+        .execute(&pool)
+        .await
+        .expect("Failed to insert disabled calculation");
+
+        let engine = CalculationEngine::with_config(None, CalculationEngineConfig::default());
+        let count = engine.load_from_sqlite(&pool).await.unwrap();
+
+        assert_eq!(count, 0, "Disabled calculations should not be loaded");
+    }
+
+    #[tokio::test]
+    async fn test_load_from_sqlite_multiple_calculations() {
+        let pool = create_test_sqlite_pool().await;
+
+        // Insert multiple calculations
+        let types = [
+            (
+                "calc_expr",
+                r#"{"type":"expression","formula":"x * 2","variables":{"x":"inst:1:M:1"}}"#,
+            ),
+            ("calc_const", r#"{"type":"constant","value":100}"#),
+            (
+                "calc_agg",
+                r#"{"type":"aggregation","operation":"sum","source_keys":["inst:1:M:1","inst:2:M:1"]}"#,
+            ),
+        ];
+
+        for (name, type_json) in types {
+            sqlx::query(
+                "INSERT INTO calculations (calculation_name, calculation_type, output_inst, output_type, output_id, enabled)
+                 VALUES (?, ?, ?, ?, ?, TRUE)"
+            )
+            .bind(name)
+            .bind(type_json)
+            .bind(100_i64)
+            .bind("M")
+            .bind(name.len() as i64) // Use different point IDs
+            .execute(&pool)
+            .await
+            .expect("Failed to insert calculation");
+        }
+
+        let engine = CalculationEngine::with_config(None, CalculationEngineConfig::default());
+        let count = engine.load_from_sqlite(&pool).await.unwrap();
+
+        assert_eq!(count, 3, "Should load 3 calculations");
+
+        let calculations = engine.calculations.read().await;
+        assert!(calculations.contains_key("calc_expr"));
+        assert!(calculations.contains_key("calc_const"));
+        assert!(calculations.contains_key("calc_agg"));
+    }
+
+    #[tokio::test]
+    async fn test_load_from_sqlite_invalid_json_skipped() {
+        let pool = create_test_sqlite_pool().await;
+
+        // Insert a calculation with invalid JSON
+        sqlx::query(
+            "INSERT INTO calculations (calculation_name, calculation_type, output_inst, output_type, output_id, enabled)
+             VALUES (?, ?, ?, ?, ?, TRUE)"
+        )
+        .bind("invalid_calc")
+        .bind("not valid json {{{")
+        .bind(100_i64)
+        .bind("M")
+        .bind(1_i64)
+        .execute(&pool)
+        .await
+        .expect("Failed to insert invalid calculation");
+
+        // Also insert a valid one
+        let valid_json = r#"{"type":"constant","value":42}"#;
+        sqlx::query(
+            "INSERT INTO calculations (calculation_name, calculation_type, output_inst, output_type, output_id, enabled)
+             VALUES (?, ?, ?, ?, ?, TRUE)"
+        )
+        .bind("valid_calc")
+        .bind(valid_json)
+        .bind(100_i64)
+        .bind("M")
+        .bind(2_i64)
+        .execute(&pool)
+        .await
+        .expect("Failed to insert valid calculation");
+
+        let engine = CalculationEngine::with_config(None, CalculationEngineConfig::default());
+        let count = engine.load_from_sqlite(&pool).await.unwrap();
+
+        // Invalid JSON should be skipped, valid one should be loaded
+        assert_eq!(count, 1, "Should load only valid calculation");
+
+        let calculations = engine.calculations.read().await;
+        assert!(calculations.contains_key("valid_calc"));
+        assert!(!calculations.contains_key("invalid_calc"));
+    }
+
+    #[tokio::test]
+    async fn test_load_from_sqlite_output_key_format() {
+        let pool = create_test_sqlite_pool().await;
+
+        // Test both M (measurement) and A (action) output types
+        let calc_json = r#"{"type":"constant","value":1}"#;
+
+        sqlx::query(
+            "INSERT INTO calculations (calculation_name, calculation_type, output_inst, output_type, output_id, enabled)
+             VALUES (?, ?, ?, ?, ?, TRUE)"
+        )
+        .bind("measurement_output")
+        .bind(calc_json)
+        .bind(5_i64)
+        .bind("M")
+        .bind(10_i64)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        sqlx::query(
+            "INSERT INTO calculations (calculation_name, calculation_type, output_inst, output_type, output_id, enabled)
+             VALUES (?, ?, ?, ?, ?, TRUE)"
+        )
+        .bind("action_output")
+        .bind(calc_json)
+        .bind(6_i64)
+        .bind("A")
+        .bind(20_i64)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let engine = CalculationEngine::with_config(None, CalculationEngineConfig::default());
+        engine.load_from_sqlite(&pool).await.unwrap();
+
+        let calculations = engine.calculations.read().await;
+
+        let m_calc = calculations.get("measurement_output").unwrap();
+        assert_eq!(
+            m_calc.output_key, "inst:5:M:10",
+            "Measurement output key format"
+        );
+
+        let a_calc = calculations.get("action_output").unwrap();
+        assert_eq!(a_calc.output_key, "inst:6:A:20", "Action output key format");
+    }
 }

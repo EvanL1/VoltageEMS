@@ -673,4 +673,196 @@ mod tests {
         assert_eq!(def.id, "calc1");
         assert!(def.enabled);
     }
+
+    // ========================================================================
+    // ModelPointType, PointRef, CalculationConfig serialization tests
+    // ========================================================================
+
+    #[test]
+    fn test_model_point_type_json_serde() {
+        // Test JSON serialization/deserialization
+        assert_eq!(serde_json::to_string(&ModelPointType::M).unwrap(), "\"M\"");
+        assert_eq!(serde_json::to_string(&ModelPointType::A).unwrap(), "\"A\"");
+
+        // Test deserialization
+        assert_eq!(
+            serde_json::from_str::<ModelPointType>("\"M\"").unwrap(),
+            ModelPointType::M
+        );
+        assert_eq!(
+            serde_json::from_str::<ModelPointType>("\"A\"").unwrap(),
+            ModelPointType::A
+        );
+    }
+
+    #[test]
+    fn test_model_point_type_from_str() {
+        assert_eq!("M".parse::<ModelPointType>().unwrap(), ModelPointType::M);
+        assert_eq!("A".parse::<ModelPointType>().unwrap(), ModelPointType::A);
+        assert!("X".parse::<ModelPointType>().is_err());
+    }
+
+    #[test]
+    fn test_model_point_type_display() {
+        assert_eq!(ModelPointType::M.to_string(), "M");
+        assert_eq!(ModelPointType::A.to_string(), "A");
+        assert_eq!(ModelPointType::M.as_str(), "M");
+    }
+
+    #[test]
+    fn test_point_ref_yaml_roundtrip() {
+        // Test YAML format: { inst: 1, type: M, id: 10 }
+        let yaml = r#"{ inst: 1, type: M, id: 10 }"#;
+        let point: PointRef = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(point.inst, 1);
+        assert_eq!(point.type_, ModelPointType::M);
+        assert_eq!(point.id, 10);
+
+        // Test action point
+        let yaml_a = r#"{ inst: 5, type: A, id: 20 }"#;
+        let point_a: PointRef = serde_yaml::from_str(yaml_a).unwrap();
+        assert_eq!(point_a.type_, ModelPointType::A);
+    }
+
+    #[test]
+    fn test_point_ref_constructors() {
+        let m = PointRef::measurement(1, 10);
+        assert_eq!(m.type_, ModelPointType::M);
+
+        let a = PointRef::action(2, 20);
+        assert_eq!(a.type_, ModelPointType::A);
+    }
+
+    #[test]
+    fn test_point_ref_to_redis_key() {
+        let m = PointRef::measurement(1, 10);
+        assert_eq!(m.to_redis_key(), "inst:1:M:10");
+
+        let a = PointRef::action(2, 20);
+        assert_eq!(a.to_redis_key(), "inst:2:A:20");
+    }
+
+    #[test]
+    fn test_calculation_config_yaml_roundtrip() {
+        let yaml = r#"
+name: test_calc
+description: "Test calculation"
+type:
+  type: expression
+  formula: "a + b"
+  variables:
+    a: "inst:1:M:1"
+    b: "inst:1:M:2"
+output: { inst: 100, type: M, id: 1 }
+enabled: true
+"#;
+        let config: CalculationConfig = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(config.name, "test_calc");
+        assert_eq!(config.description, Some("Test calculation".to_string()));
+        assert!(config.enabled);
+        assert_eq!(config.output.inst, 100);
+        assert_eq!(config.output.type_, ModelPointType::M);
+        assert_eq!(config.output.id, 1);
+
+        // Verify calculation type
+        if let CalculationType::Expression { formula, variables } = &config.calculation_type {
+            assert_eq!(formula, "a + b");
+            assert_eq!(variables.get("a"), Some(&"inst:1:M:1".to_string()));
+        } else {
+            panic!("Expected Expression type");
+        }
+    }
+
+    #[test]
+    fn test_calculation_config_default_enabled() {
+        // enabled defaults to true when not specified
+        let yaml = r#"
+name: minimal_calc
+type:
+  type: constant
+  value: 42
+output: { inst: 1, type: M, id: 1 }
+"#;
+        let config: CalculationConfig = serde_yaml::from_str(yaml).unwrap();
+        assert!(config.enabled);
+        assert!(config.description.is_none());
+    }
+
+    #[test]
+    fn test_calculations_file_yaml_roundtrip() {
+        let yaml = r#"
+calculations:
+  - name: calc1
+    type:
+      type: constant
+      value: 1
+    output: { inst: 1, type: M, id: 1 }
+  - name: calc2
+    type:
+      type: constant
+      value: 2
+    output: { inst: 1, type: M, id: 2 }
+    enabled: false
+"#;
+        let file: CalculationsFile = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(file.calculations.len(), 2);
+        assert_eq!(file.calculations[0].name, "calc1");
+        assert!(file.calculations[0].enabled);
+        assert_eq!(file.calculations[1].name, "calc2");
+        assert!(!file.calculations[1].enabled);
+    }
+
+    #[test]
+    fn test_calculation_config_aggregation_type() {
+        let yaml = r#"
+name: avg_calc
+type:
+  type: aggregation
+  operation: average
+  source_keys:
+    - "inst:1:M:1"
+    - "inst:2:M:1"
+output: { inst: 100, type: M, id: 10 }
+"#;
+        let config: CalculationConfig = serde_yaml::from_str(yaml).unwrap();
+        if let CalculationType::Aggregation {
+            operation,
+            source_keys,
+            ..
+        } = &config.calculation_type
+        {
+            assert!(matches!(operation, AggregationType::Average));
+            assert_eq!(source_keys.len(), 2);
+        } else {
+            panic!("Expected Aggregation type");
+        }
+    }
+
+    #[test]
+    fn test_calculation_config_energy_type() {
+        let yaml = r#"
+name: energy_calc
+type:
+  type: energy
+  operation: power_balance
+  inputs:
+    pv_power: "inst:1:M:1"
+    battery_power: "inst:1:M:2"
+    load_power: "inst:1:M:3"
+  parameters:
+    interval_seconds: 1.0
+output: { inst: 100, type: M, id: 20 }
+"#;
+        let config: CalculationConfig = serde_yaml::from_str(yaml).unwrap();
+        if let CalculationType::Energy {
+            inputs, parameters, ..
+        } = &config.calculation_type
+        {
+            assert!(inputs.contains_key("pv_power"));
+            assert!(inputs.contains_key("battery_power"));
+            assert_eq!(parameters.get("interval_seconds"), Some(&1.0));
+        } else {
+            panic!("Expected Energy type");
+        }
+    }
 }

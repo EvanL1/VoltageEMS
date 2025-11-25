@@ -1585,7 +1585,7 @@ impl ConfigSyncer {
             };
 
             sqlx::query(
-                r#"INSERT INTO calculations
+                r#"INSERT OR REPLACE INTO calculations
                    (calculation_name, description, calculation_type,
                     output_inst, output_type, output_id, enabled)
                    VALUES (?, ?, ?, ?, ?, ?, ?)"#,
@@ -1599,7 +1599,7 @@ impl ConfigSyncer {
             .bind(calc.enabled)
             .execute(&mut **tx)
             .await
-            .with_context(|| format!("Failed to insert calculation '{}'", calc.name))?;
+            .with_context(|| format!("Failed to upsert calculation '{}'", calc.name))?;
 
             count += 1;
         }
@@ -1695,5 +1695,266 @@ impl ConfigSyncer {
         .await?;
 
         Ok(())
+    }
+}
+
+// ============================================================================
+// Tests for sync_calculations
+// ============================================================================
+
+#[cfg(test)]
+#[allow(clippy::disallowed_methods)] // Test code - unwrap is acceptable
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    /// Create test environment with in-memory SQLite and temp directory
+    async fn setup_test_env() -> (SqlitePool, TempDir, PathBuf) {
+        let temp_dir = tempfile::tempdir().expect("Failed to create temp dir");
+        let db_path = temp_dir.path().join("test.db");
+
+        let pool = SqlitePool::connect(&format!("sqlite:{}?mode=rwc", db_path.display()))
+            .await
+            .expect("Failed to create SQLite pool");
+
+        // Initialize modsrv schema (includes calculations table)
+        common::test_utils::schema::init_modsrv_schema(&pool)
+            .await
+            .expect("Failed to init schema");
+
+        let config_dir = temp_dir.path().join("config");
+        std::fs::create_dir_all(&config_dir).expect("Failed to create config dir");
+
+        (pool, temp_dir, config_dir)
+    }
+
+    #[tokio::test]
+    async fn test_sync_calculations_from_yaml() {
+        let (pool, temp_dir, config_dir) = setup_test_env().await;
+
+        // Create calculations.yaml
+        let yaml_content = r#"
+calculations:
+  - name: test_power_sum
+    description: "Sum of power measurements"
+    type:
+      type: expression
+      formula: "p1 + p2"
+      variables:
+        p1: "inst:1:M:1"
+        p2: "inst:2:M:1"
+    output: { inst: 100, type: M, id: 1 }
+    enabled: true
+"#;
+        let modsrv_dir = config_dir.join("modsrv");
+        std::fs::create_dir_all(&modsrv_dir).expect("Failed to create modsrv dir");
+        let yaml_path = modsrv_dir.join("calculations.yaml");
+        std::fs::write(&yaml_path, yaml_content).expect("Failed to write yaml");
+
+        // Create syncer and sync calculations
+        let syncer = ConfigSyncer::new(&config_dir, temp_dir.path());
+        let mut tx = pool.begin().await.expect("Failed to begin transaction");
+
+        let count = syncer
+            .sync_calculations(&mut tx, &yaml_path)
+            .await
+            .expect("Failed to sync calculations");
+
+        tx.commit().await.expect("Failed to commit transaction");
+
+        assert_eq!(count, 1, "Should sync 1 calculation");
+
+        // Verify database record
+        let row: (String, String, i64, String, i64, bool) = sqlx::query_as(
+            "SELECT calculation_name, calculation_type, output_inst, output_type, output_id, enabled
+             FROM calculations WHERE calculation_name = ?"
+        )
+        .bind("test_power_sum")
+        .fetch_one(&pool)
+        .await
+        .expect("Failed to fetch calculation");
+
+        assert_eq!(row.0, "test_power_sum");
+        assert!(row.1.contains("expression")); // JSON contains "expression"
+        assert_eq!(row.2, 100); // output_inst
+        assert_eq!(row.3, "M"); // output_type
+        assert_eq!(row.4, 1); // output_id
+        assert!(row.5); // enabled
+    }
+
+    #[tokio::test]
+    async fn test_sync_calculations_multiple() {
+        let (pool, temp_dir, config_dir) = setup_test_env().await;
+
+        let yaml_content = r#"
+calculations:
+  - name: calc_expr
+    type:
+      type: expression
+      formula: "x * 2"
+      variables:
+        x: "inst:1:M:1"
+    output: { inst: 100, type: M, id: 1 }
+  - name: calc_const
+    type:
+      type: constant
+      value: 42
+    output: { inst: 100, type: M, id: 2 }
+  - name: calc_agg
+    type:
+      type: aggregation
+      operation: sum
+      source_keys:
+        - "inst:1:M:1"
+        - "inst:2:M:1"
+    output: { inst: 100, type: A, id: 3 }
+"#;
+        let modsrv_dir = config_dir.join("modsrv");
+        std::fs::create_dir_all(&modsrv_dir).unwrap();
+        let yaml_path = modsrv_dir.join("calculations.yaml");
+        std::fs::write(&yaml_path, yaml_content).unwrap();
+
+        let syncer = ConfigSyncer::new(&config_dir, temp_dir.path());
+        let mut tx = pool.begin().await.unwrap();
+
+        let count = syncer.sync_calculations(&mut tx, &yaml_path).await.unwrap();
+        tx.commit().await.unwrap();
+
+        assert_eq!(count, 3, "Should sync 3 calculations");
+
+        // Verify all records exist
+        let total: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM calculations")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(total.0, 3);
+    }
+
+    #[tokio::test]
+    async fn test_sync_calculations_update_existing() {
+        let (pool, temp_dir, config_dir) = setup_test_env().await;
+
+        let modsrv_dir = config_dir.join("modsrv");
+        std::fs::create_dir_all(&modsrv_dir).unwrap();
+        let yaml_path = modsrv_dir.join("calculations.yaml");
+
+        // First sync
+        let yaml_v1 = r#"
+calculations:
+  - name: updatable_calc
+    description: "Version 1"
+    type:
+      type: constant
+      value: 1
+    output: { inst: 100, type: M, id: 1 }
+"#;
+        std::fs::write(&yaml_path, yaml_v1).unwrap();
+
+        let syncer = ConfigSyncer::new(&config_dir, temp_dir.path());
+        let mut tx = pool.begin().await.unwrap();
+        syncer.sync_calculations(&mut tx, &yaml_path).await.unwrap();
+        tx.commit().await.unwrap();
+
+        // Second sync with updated value
+        let yaml_v2 = r#"
+calculations:
+  - name: updatable_calc
+    description: "Version 2"
+    type:
+      type: constant
+      value: 999
+    output: { inst: 200, type: A, id: 50 }
+"#;
+        std::fs::write(&yaml_path, yaml_v2).unwrap();
+
+        let mut tx = pool.begin().await.unwrap();
+        syncer.sync_calculations(&mut tx, &yaml_path).await.unwrap();
+        tx.commit().await.unwrap();
+
+        // Should only have 1 record (updated, not duplicated)
+        let total: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM calculations")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(total.0, 1, "Should have 1 record after update");
+
+        // Verify updated values
+        let row: (Option<String>, i64, String) = sqlx::query_as(
+            "SELECT description, output_inst, output_type FROM calculations WHERE calculation_name = ?",
+        )
+        .bind("updatable_calc")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+        assert_eq!(row.0, Some("Version 2".to_string()));
+        assert_eq!(row.1, 200); // Updated output_inst
+        assert_eq!(row.2, "A"); // Updated output_type
+    }
+
+    #[tokio::test]
+    async fn test_sync_calculations_disabled() {
+        let (pool, temp_dir, config_dir) = setup_test_env().await;
+
+        let yaml_content = r#"
+calculations:
+  - name: disabled_calc
+    type:
+      type: constant
+      value: 0
+    output: { inst: 100, type: M, id: 1 }
+    enabled: false
+"#;
+        let modsrv_dir = config_dir.join("modsrv");
+        std::fs::create_dir_all(&modsrv_dir).unwrap();
+        let yaml_path = modsrv_dir.join("calculations.yaml");
+        std::fs::write(&yaml_path, yaml_content).unwrap();
+
+        let syncer = ConfigSyncer::new(&config_dir, temp_dir.path());
+        let mut tx = pool.begin().await.unwrap();
+        let count = syncer.sync_calculations(&mut tx, &yaml_path).await.unwrap();
+        tx.commit().await.unwrap();
+
+        assert_eq!(count, 1, "Should sync 1 calculation (even if disabled)");
+
+        // Verify enabled=false is persisted
+        let row: (bool,) =
+            sqlx::query_as("SELECT enabled FROM calculations WHERE calculation_name = ?")
+                .bind("disabled_calc")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+
+        assert!(!row.0, "Calculation should be disabled");
+    }
+
+    #[tokio::test]
+    async fn test_sync_calculations_invalid_yaml_error() {
+        let (pool, temp_dir, config_dir) = setup_test_env().await;
+
+        let yaml_content = "not: valid: yaml: {{{{";
+        let modsrv_dir = config_dir.join("modsrv");
+        std::fs::create_dir_all(&modsrv_dir).unwrap();
+        let yaml_path = modsrv_dir.join("calculations.yaml");
+        std::fs::write(&yaml_path, yaml_content).unwrap();
+
+        let syncer = ConfigSyncer::new(&config_dir, temp_dir.path());
+        let mut tx = pool.begin().await.unwrap();
+
+        let result = syncer.sync_calculations(&mut tx, &yaml_path).await;
+        assert!(result.is_err(), "Invalid YAML should return error");
+    }
+
+    #[tokio::test]
+    async fn test_sync_calculations_missing_file_error() {
+        let (pool, temp_dir, config_dir) = setup_test_env().await;
+
+        let nonexistent_path = config_dir.join("modsrv/nonexistent.yaml");
+
+        let syncer = ConfigSyncer::new(&config_dir, temp_dir.path());
+        let mut tx = pool.begin().await.unwrap();
+
+        let result = syncer.sync_calculations(&mut tx, &nonexistent_path).await;
+        assert!(result.is_err(), "Missing file should return error");
     }
 }
