@@ -2,6 +2,7 @@
 name = "voltage-config"
 version = "0.0.1"
 edition = "2021"
+license.workspace = true
 description = "Shared configuration structures for VoltageEMS services"
 
 [dependencies]

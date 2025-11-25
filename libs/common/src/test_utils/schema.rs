@@ -117,6 +117,11 @@ pub async fn init_modsrv_schema(pool: &SqlitePool) -> Result<()> {
         .execute(pool)
         .await?;
 
+    // Calculations table for virtual/computed points
+    sqlx::query(modsrv::CALCULATIONS_TABLE)
+        .execute(pool)
+        .await?;
+
     Ok(())
 }
 

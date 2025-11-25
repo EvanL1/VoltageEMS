@@ -48,7 +48,8 @@ pub use comsrv::{
 
 pub use modsrv::{
     ACTION_POINTS_TABLE as MODSRV_ACTION_POINTS_TABLE,
-    ACTION_ROUTING_TABLE as MODSRV_ACTION_ROUTING_TABLE, INSTANCES_TABLE as MODSRV_INSTANCES_TABLE,
+    ACTION_ROUTING_TABLE as MODSRV_ACTION_ROUTING_TABLE,
+    CALCULATIONS_TABLE as MODSRV_CALCULATIONS_TABLE, INSTANCES_TABLE as MODSRV_INSTANCES_TABLE,
     MEASUREMENT_POINTS_TABLE as MODSRV_MEASUREMENT_POINTS_TABLE,
     MEASUREMENT_ROUTING_TABLE as MODSRV_MEASUREMENT_ROUTING_TABLE,
     PRODUCTS_TABLE as MODSRV_PRODUCTS_TABLE,
@@ -92,8 +93,9 @@ pub use protocols::{
 
 // Re-export calculation types
 pub use calculations::{
-    AggregationType, CalculationDefinition, CalculationResult, CalculationStatus,
-    CalculationTrigger, CalculationType, EnergyCalculation, TimeSeriesOperation, TimeWindow,
+    AggregationType, CalculationConfig, CalculationDefinition, CalculationResult,
+    CalculationStatus, CalculationTrigger, CalculationType, CalculationsFile, EnergyCalculation,
+    ModelPointType, PointRef, TimeSeriesOperation, TimeWindow,
 };
 
 // Re-export API types

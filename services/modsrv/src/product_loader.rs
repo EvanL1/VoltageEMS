@@ -194,6 +194,34 @@ impl ProductLoader {
         .execute(&self.pool)
         .await?;
 
+        // Calculations table for virtual/computed points
+        // Stores calculation definitions loaded from YAML via Monarch
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS calculations (
+                calculation_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                calculation_name TEXT NOT NULL UNIQUE,
+                description TEXT,
+                calculation_type TEXT NOT NULL,  -- JSON serialized CalculationType
+                output_inst INTEGER NOT NULL,    -- Output instance ID
+                output_type TEXT NOT NULL CHECK(output_type IN ('M', 'A')),  -- M=Measurement, A=Action
+                output_id INTEGER NOT NULL,      -- Output point ID
+                enabled BOOLEAN DEFAULT TRUE,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+            "#,
+        )
+        .execute(&self.pool)
+        .await?;
+
+        // Index for efficient lookup by output point
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_calc_output ON calculations(output_inst, output_type, output_id)",
+        )
+        .execute(&self.pool)
+        .await?;
+
         info!("Product tables initialized");
         Ok(())
     }

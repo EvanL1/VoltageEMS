@@ -13,6 +13,9 @@ members = [
     "tools/monarch",
 ]
 
+[workspace.package]
+license = "MIT OR Apache-2.0"
+
 # Clippy lints configuration
 # Run with: cargo clippy --workspace -- -W clippy::unwrap_used -W clippy::expect_used
 

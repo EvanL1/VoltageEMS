@@ -151,6 +151,11 @@ pub async fn init_modsrv_schema(pool: &SqlitePool) -> Result<()> {
         .execute(pool)
         .await?;
 
+    // Calculations table for virtual/computed points
+    sqlx::query(modsrv::CALCULATIONS_TABLE)
+        .execute(pool)
+        .await?;
+
     // Create indexes (using modsrv's actual table names)
     sqlx::query("CREATE INDEX IF NOT EXISTS idx_measurement_points_product ON measurement_points(product_name)")
         .execute(pool)

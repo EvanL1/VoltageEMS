@@ -453,7 +453,12 @@ impl ConfigSyncer {
             .execute(&mut *tx)
             .await?;
 
-        stats.items_deleted = 8; // Cleared 8 tables
+        // Delete calculations (standalone, no foreign key dependencies)
+        sqlx::query("DELETE FROM calculations")
+            .execute(&mut *tx)
+            .await?;
+
+        stats.items_deleted = 9; // Cleared 9 tables
 
         // Insert service configuration
         let config_count = self
@@ -477,6 +482,14 @@ impl ConfigSyncer {
                 .await?;
             stats.items_synced += instances_count;
             debug!("Synced {} instance items", instances_count);
+        }
+
+        // Load and sync calculations
+        let calculations_path = config_dir.join("calculations.yaml");
+        if calculations_path.exists() {
+            let calculations_count = self.sync_calculations(&mut tx, &calculations_path).await?;
+            stats.items_synced += calculations_count;
+            debug!("Synced {} calculation definitions", calculations_count);
         }
 
         // Update sync timestamp
@@ -1540,6 +1553,59 @@ impl ConfigSyncer {
         }
 
         Ok(success_count)
+    }
+
+    /// Sync calculation definitions from YAML file
+    ///
+    /// Reads calculations.yaml and inserts into the calculations table.
+    /// Each calculation has a unique name and defines how virtual points are computed.
+    async fn sync_calculations(
+        &self,
+        tx: &mut Transaction<'_, Sqlite>,
+        calculations_path: &Path,
+    ) -> Result<usize> {
+        use voltage_config::CalculationsFile;
+
+        let yaml_content = std::fs::read_to_string(calculations_path)
+            .with_context(|| format!("Failed to read {:?}", calculations_path))?;
+
+        let calc_file: CalculationsFile = serde_yaml::from_str(&yaml_content)
+            .with_context(|| format!("Failed to parse {:?}", calculations_path))?;
+
+        let mut count = 0;
+        for calc in calc_file.calculations {
+            // Serialize calculation_type to JSON for storage
+            let calc_type_json = serde_json::to_string(&calc.calculation_type)
+                .context("Failed to serialize calculation_type")?;
+
+            // Convert ModelPointType to string for database
+            let output_type = match calc.output.type_ {
+                voltage_config::ModelPointType::M => "M",
+                voltage_config::ModelPointType::A => "A",
+            };
+
+            sqlx::query(
+                r#"INSERT INTO calculations
+                   (calculation_name, description, calculation_type,
+                    output_inst, output_type, output_id, enabled)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)"#,
+            )
+            .bind(&calc.name)
+            .bind(&calc.description)
+            .bind(&calc_type_json)
+            .bind(calc.output.inst as i64)
+            .bind(output_type)
+            .bind(calc.output.id as i64)
+            .bind(calc.enabled)
+            .execute(&mut **tx)
+            .await
+            .with_context(|| format!("Failed to insert calculation '{}'", calc.name))?;
+
+            count += 1;
+        }
+
+        info!("Synced {} calculations from {:?}", count, calculations_path);
+        Ok(count)
     }
 
     /// Sync rules from JSON/YAML files (vue-flow/node-red compatible)

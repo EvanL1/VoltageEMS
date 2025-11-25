@@ -2,6 +2,7 @@
 name = "modsrv"
 version = "0.0.1"
 edition = "2021"
+license.workspace = true
 authors = ["Your Name <your.email@voltageenergy.com>"]
 description = "Real-time model execution service"
 

@@ -10,7 +10,7 @@ use common::service_bootstrap::{get_service_port, ServiceInfo};
 use common::sqlite::{ServiceConfigLoader, SqliteClient};
 use sqlx::SqlitePool;
 use std::sync::Arc;
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 use voltage_config::{
     common::{ApiConfig, BaseServiceConfig, RedisConfig, DEFAULT_API_HOST, DEFAULT_REDIS_URL},
     modsrv::{ModsrvConfig, ModsrvQueries},
@@ -702,6 +702,20 @@ pub async fn create_app_state(service_info: &ServiceInfo) -> Result<Arc<AppState
 
     // Create calculation engine
     let calculation_engine = Arc::new(CalculationEngine::new(Arc::clone(&redis_client)));
+
+    // Load calculation definitions from SQLite (populated by Monarch from YAML)
+    match calculation_engine.load_from_sqlite(&sqlite_pool).await {
+        Ok(count) => {
+            if count > 0 {
+                info!("Loaded {} calculation definitions from SQLite", count);
+            } else {
+                debug!("No calculation definitions found in SQLite");
+            }
+        },
+        Err(e) => {
+            warn!("Failed to load calculation definitions: {}", e);
+        },
+    }
 
     // Create application state
     Ok(Arc::new(AppState::new(

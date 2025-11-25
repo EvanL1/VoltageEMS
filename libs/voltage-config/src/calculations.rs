@@ -4,11 +4,139 @@
 //! used primarily by modsrv but available to all services.
 
 use crate::common::ComparisonOperator;
+use crate::modsrv::RedisKeys;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 #[cfg(feature = "schema")]
 use schemars::JsonSchema;
+
+// ============================================================================
+// Model Point Reference Types (for calculation configuration)
+// ============================================================================
+
+/// Model point type (M = Measurement, A = Action)
+///
+/// This enum is used in calculation configurations to distinguish between
+/// measurement points (M) and action points (A) at the model layer.
+/// It's different from protocol-level PointType (T/S/C/A).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
+pub enum ModelPointType {
+    /// Measurement point (测量点)
+    M,
+    /// Action point (动作点)
+    A,
+}
+
+impl ModelPointType {
+    /// Convert to string representation
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::M => "M",
+            Self::A => "A",
+        }
+    }
+}
+
+impl std::fmt::Display for ModelPointType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.as_str())
+    }
+}
+
+impl std::str::FromStr for ModelPointType {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "M" => Ok(Self::M),
+            "A" => Ok(Self::A),
+            _ => Err(format!(
+                "Invalid model point type: '{}', expected 'M' or 'A'",
+                s
+            )),
+        }
+    }
+}
+
+/// Unified point reference with short field names (inst, type, id)
+///
+/// Used in YAML configuration and database for calculation sources and outputs.
+/// Example: `{ inst: 1, type: M, id: 10 }` → Redis key: `inst:1:M:10`
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
+pub struct PointRef {
+    /// Instance ID
+    pub inst: u16,
+    /// Point type (M = Measurement, A = Action)
+    #[serde(rename = "type")]
+    pub type_: ModelPointType,
+    /// Point ID
+    pub id: u32,
+}
+
+impl PointRef {
+    /// Create a new measurement point reference
+    pub fn measurement(inst: u16, id: u32) -> Self {
+        Self {
+            inst,
+            type_: ModelPointType::M,
+            id,
+        }
+    }
+
+    /// Create a new action point reference
+    pub fn action(inst: u16, id: u32) -> Self {
+        Self {
+            inst,
+            type_: ModelPointType::A,
+            id,
+        }
+    }
+
+    /// Convert to Redis key: inst:{inst}:{type}:{id}
+    pub fn to_redis_key(&self) -> String {
+        match self.type_ {
+            ModelPointType::M => RedisKeys::measurement(self.inst, self.id),
+            ModelPointType::A => RedisKeys::action(self.inst, self.id),
+        }
+    }
+}
+
+// ============================================================================
+// Calculation Configuration Types (for YAML and SQLite persistence)
+// ============================================================================
+
+/// Calculation definition for YAML configuration
+///
+/// This is the user-facing configuration format with short field names.
+/// It gets stored in SQLite and loaded at service startup.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
+pub struct CalculationConfig {
+    /// Unique calculation name
+    pub name: String,
+    /// Optional description
+    #[serde(default)]
+    pub description: Option<String>,
+    /// Calculation type and parameters
+    #[serde(rename = "type")]
+    pub calculation_type: CalculationType,
+    /// Output point reference
+    pub output: PointRef,
+    /// Whether calculation is enabled
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+}
+
+/// YAML file root structure for calculations
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
+pub struct CalculationsFile {
+    /// List of calculation definitions
+    pub calculations: Vec<CalculationConfig>,
+}
 
 // ============================================================================
 // Calculation Types

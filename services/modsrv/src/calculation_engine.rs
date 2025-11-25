@@ -8,6 +8,7 @@
 use anyhow::{anyhow, Context, Result};
 use common::redis::RedisClient;
 use evalexpr::ContextWithMutableVariables; // For expression evaluation
+use sqlx::SqlitePool;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -15,8 +16,8 @@ use tracing::{error, info, warn};
 
 // Import shared calculation types from voltage-config
 use voltage_config::calculations::{
-    AggregationType, CalculationDefinition, CalculationResult, CalculationStatus, CalculationType,
-    EnergyCalculation, TimeSeriesOperation, TimeWindow,
+    AggregationType, CalculationDefinition, CalculationResult, CalculationStatus,
+    CalculationTrigger, CalculationType, EnergyCalculation, TimeSeriesOperation, TimeWindow,
 };
 use voltage_config::protocols::QualityCode;
 
@@ -385,6 +386,72 @@ impl CalculationEngine {
         inputs: &std::collections::HashMap<String, f64>,
     ) -> Result<serde_json::Value> {
         self.energy_calculator.calculate(operation, inputs)
+    }
+
+    /// Load all enabled calculation definitions from SQLite database
+    ///
+    /// This method reads from the `calculations` table (populated by Monarch from YAML)
+    /// and registers each calculation with the engine.
+    ///
+    /// # Table Schema
+    /// ```sql
+    /// calculations(calculation_name, calculation_type, output_inst, output_type, output_id, enabled)
+    /// ```
+    ///
+    /// # Returns
+    /// Number of calculations loaded successfully
+    pub async fn load_from_sqlite(&self, pool: &SqlitePool) -> Result<usize> {
+        let rows = sqlx::query_as::<_, (String, Option<String>, String, i64, String, i64)>(
+            r#"
+            SELECT calculation_name, description, calculation_type,
+                   output_inst, output_type, output_id
+            FROM calculations
+            WHERE enabled = TRUE
+            "#,
+        )
+        .fetch_all(pool)
+        .await
+        .context("Failed to load calculations from SQLite")?;
+
+        let mut count = 0;
+        for (name, description, type_json, inst, type_, id) in rows {
+            // Parse the JSON-serialized CalculationType
+            let calc_type: CalculationType = match serde_json::from_str(&type_json) {
+                Ok(ct) => ct,
+                Err(e) => {
+                    error!("Failed to parse calculation_type for '{}': {}", name, e);
+                    continue;
+                },
+            };
+
+            // Generate Redis key: inst:{inst}:{type}:{id}
+            let output_key = format!("inst:{}:{}:{}", inst, type_, id);
+
+            // Create calculation definition
+            let calc = CalculationDef {
+                id: name.clone(),
+                name: name.clone(),
+                description,
+                calculation_type: calc_type,
+                output_key,
+                trigger: CalculationTrigger::Manual, // API trigger only (no scheduled execution)
+                enabled: true,
+                priority: None,
+                tags: Vec::new(),
+                metadata: HashMap::new(),
+            };
+
+            // Register with the engine
+            if let Err(e) = self.register_calculation(calc).await {
+                warn!("Failed to register calculation '{}': {}", name, e);
+                continue;
+            }
+
+            count += 1;
+        }
+
+        info!("Loaded {} calculation definitions from SQLite", count);
+        Ok(count)
     }
 }
 
