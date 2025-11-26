@@ -85,9 +85,11 @@ pub async fn handle_command(
         #[cfg(feature = "lib-mode")]
         {
             // Offline mode: use lib API
+            // Note: rulesrv has been merged into modsrv, but we use modsrv context for rules
             let ctx = service_ctx.expect("ServiceContext should be available in lib-mode");
-            let rulesrv = ctx.rulesrv()?;
-            let service = lib_api::rules::RulesService::new(rulesrv);
+            #[allow(deprecated)]
+            let modsrv = ctx.rulesrv()?; // rulesrv() now returns modsrv context
+            let service = lib_api::rules::RulesService::new(modsrv);
 
             match cmd {
                 RuleCommands::List { enabled } => {
@@ -122,12 +124,15 @@ pub async fn handle_command(
                     warn!("Rule test not yet implemented in offline mode");
                     println!("Rule ID: {}", rule_id);
                 },
-                RuleCommands::Execute { rule_id, force } => {
-                    let result = service.execute(&rule_id).await?;
-                    if force {
-                        warn!("Note: Force flag ignored in offline mode");
-                    }
-                    println!("Execution result for rule '{}': {}", rule_id, result);
+                RuleCommands::Execute { rule_id, force: _ } => {
+                    // Rule execution requires RTDB + routing_cache which monarch doesn't have
+                    // Use modsrv HTTP API (port 6003) for rule execution
+                    warn!(
+                        "Rule execution not available in offline mode. \
+                         Use online mode (--offline false) or call modsrv rule API directly: \
+                         POST http://localhost:6003/api/rules/{}/execute",
+                        rule_id
+                    );
                 },
                 RuleCommands::Executions { rule_id, limit } => {
                     warn!("Execution history not available in offline mode");

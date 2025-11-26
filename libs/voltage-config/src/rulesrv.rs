@@ -463,24 +463,24 @@ impl ConfigValidator for RulesrvValidator {
 }
 
 // ============================================================================
-// Vue Flow Rule Chain Structures (Parsed/Flattened)
+// Vue Flow Rule Structures (Parsed/Flattened)
 // ============================================================================
 
-/// Rule chain - parsed and flattened structure for execution
+/// Rule - parsed and flattened structure for execution
 /// This is the internal representation used by the execution engine
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(JsonSchema))]
-pub struct RuleChain {
+pub struct Rule {
     /// Unique identifier
     pub id: String,
 
-    /// Rule chain name
+    /// Rule name
     pub name: String,
 
     /// Optional description
     pub description: Option<String>,
 
-    /// Whether the rule chain is enabled
+    /// Whether the rule is enabled
     #[serde(default = "default_true")]
     pub enabled: bool,
 

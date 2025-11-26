@@ -212,6 +212,29 @@ impl From<figment::Error> for ComSrvError {
     }
 }
 
+// Conversion from voltage_comlink::ComLinkError
+impl From<voltage_comlink::ComLinkError> for ComSrvError {
+    fn from(err: voltage_comlink::ComLinkError) -> Self {
+        use voltage_comlink::ComLinkError;
+        match err {
+            ComLinkError::Protocol(msg) => ComSrvError::ProtocolError(msg),
+            ComLinkError::Connection(msg) => ComSrvError::ConnectionError(msg),
+            ComLinkError::NotConnected => ComSrvError::NotConnected,
+            ComLinkError::Io(msg) => ComSrvError::IoError(msg),
+            ComLinkError::Timeout(msg) => ComSrvError::TimeoutError(msg),
+            ComLinkError::InvalidData(msg) => ComSrvError::InvalidData(msg),
+            ComLinkError::DataConversion(msg) => ComSrvError::DataConversionError(msg),
+            ComLinkError::Config(msg) => ComSrvError::ConfigError(msg),
+            ComLinkError::ChannelNotFound(id) => ComSrvError::ChannelNotFound(id.to_string()),
+            ComLinkError::PointNotFound(msg) => ComSrvError::PointNotFound(msg),
+            ComLinkError::NotSupported(msg) => ComSrvError::NotSupported(msg),
+            ComLinkError::Internal(msg) => ComSrvError::InternalError(msg),
+            ComLinkError::Modbus(msg) => ComSrvError::ModbusError(msg),
+            ComLinkError::Can(msg) => ComSrvError::ProtocolError(format!("CAN: {}", msg)),
+        }
+    }
+}
+
 // Conversion from anyhow::Error
 impl From<anyhow::Error> for ComSrvError {
     fn from(err: anyhow::Error) -> Self {

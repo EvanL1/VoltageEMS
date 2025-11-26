@@ -1,40 +1,32 @@
 //! Vue Flow JSON Parser
 //!
-//! Parses frontend Vue Flow rule chain JSON into the flattened RuleChain structure
+//! Parses frontend Vue Flow rule JSON into the flattened Rule structure
 //! for execution by the rule engine.
 
 use serde_json::Value;
 use voltage_config::rulesrv::{
     ArithmeticOp, ChannelPointType, CompareOp, FlowNode, FormulaToken, InstancePointType, LogicOp,
-    RuleChain, RuleCondition, SwitchRule, ValueChange, Variable,
+    Rule, RuleCondition, SwitchRule, ValueChange, Variable,
 };
 
-use crate::error::{Result, RuleSrvError};
+use crate::error::{Result, RuleError};
 
-/// Parse Vue Flow JSON into RuleChain
-pub fn parse_flow_json(flow_json: &Value) -> Result<RuleChain> {
-    let id = flow_json
-        .get("id")
-        .and_then(|v| v.as_str())
-        .ok_or_else(|| RuleSrvError::ParseError("Missing 'id' field".to_string()))?
-        .to_string();
+/// Parsed flow result with extracted metadata
+pub struct ParsedFlow {
+    /// Parsed variables
+    pub variables: Vec<Variable>,
+    /// Parsed nodes
+    pub nodes: Vec<FlowNode>,
+    /// Start node ID
+    pub start_node_id: String,
+}
 
-    let name = flow_json
-        .get("name")
-        .and_then(|v| v.as_str())
-        .unwrap_or("Unnamed Rule Chain")
-        .to_string();
-
-    let description = flow_json
-        .get("description")
-        .and_then(|v| v.as_str())
-        .filter(|s| !s.is_empty())
-        .map(|s| s.to_string());
-
+/// Parse Vue Flow JSON into Rule
+pub fn parse_flow_json(flow_json: &Value) -> Result<ParsedFlow> {
     let nodes_array = flow_json
         .get("nodes")
         .and_then(|v| v.as_array())
-        .ok_or_else(|| RuleSrvError::ParseError("Missing 'nodes' array".to_string()))?;
+        .ok_or_else(|| RuleError::ParseError("Missing 'nodes' array".to_string()))?;
 
     // Parse nodes and collect variables
     let mut flow_nodes = Vec::new();
@@ -50,7 +42,7 @@ pub fn parse_flow_json(flow_json: &Value) -> Result<RuleChain> {
         let node_id = node
             .get("id")
             .and_then(|v| v.as_str())
-            .ok_or_else(|| RuleSrvError::ParseError("Node missing 'id'".to_string()))?
+            .ok_or_else(|| RuleError::ParseError("Node missing 'id'".to_string()))?
             .to_string();
 
         let data = node.get("data");
@@ -120,21 +112,51 @@ pub fn parse_flow_json(flow_json: &Value) -> Result<RuleChain> {
     }
 
     if start_node_id.is_empty() {
-        return Err(RuleSrvError::ParseError(
+        return Err(RuleError::ParseError(
             "No start node found in flow".to_string(),
         ));
     }
 
-    Ok(RuleChain {
+    Ok(ParsedFlow {
+        variables,
+        nodes: flow_nodes,
+        start_node_id,
+    })
+}
+
+/// Parse Vue Flow JSON into complete Rule structure
+#[allow(dead_code)] // Reserved for future Vue Flow integration
+pub fn parse_flow_to_rule(flow_json: &Value) -> Result<Rule> {
+    let id = flow_json
+        .get("id")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| RuleError::ParseError("Missing 'id' field".to_string()))?
+        .to_string();
+
+    let name = flow_json
+        .get("name")
+        .and_then(|v| v.as_str())
+        .unwrap_or("Unnamed Rule")
+        .to_string();
+
+    let description = flow_json
+        .get("description")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string());
+
+    let parsed = parse_flow_json(flow_json)?;
+
+    Ok(Rule {
         id,
         name,
         description,
         enabled: true,
         priority: 0,
         cooldown_ms: 0,
-        variables,
-        nodes: flow_nodes,
-        start_node_id,
+        variables: parsed.variables,
+        nodes: parsed.nodes,
+        start_node_id: parsed.start_node_id,
         flow_json: Some(flow_json.clone()),
     })
 }
@@ -150,7 +172,7 @@ fn get_wire_target(config: Option<&Value>, wire_name: &str) -> Result<String> {
         .and_then(|arr| arr.first())
         .and_then(|v| v.as_str())
         .map(|s| s.to_string())
-        .ok_or_else(|| RuleSrvError::ParseError(format!("Missing wire target for '{}'", wire_name)))
+        .ok_or_else(|| RuleError::ParseError(format!("Missing wire target for '{}'", wire_name)))
 }
 
 /// Get variable name from any Variable variant
@@ -167,7 +189,7 @@ fn parse_instance_point_type(s: &str) -> Result<InstancePointType> {
     match s.to_uppercase().as_str() {
         "M" | "MEASUREMENT" => Ok(InstancePointType::Measurement),
         "A" | "ACTION" => Ok(InstancePointType::Action),
-        _ => Err(RuleSrvError::ParseError(format!(
+        _ => Err(RuleError::ParseError(format!(
             "Invalid instance point type: '{}'. Expected 'M' or 'A'",
             s
         ))),
@@ -181,7 +203,7 @@ fn parse_channel_point_type(s: &str) -> Result<ChannelPointType> {
         "S" | "SIGNAL" => Ok(ChannelPointType::Signal),
         "C" | "CONTROL" => Ok(ChannelPointType::Control),
         "A" | "ADJUSTMENT" => Ok(ChannelPointType::Adjustment),
-        _ => Err(RuleSrvError::ParseError(format!(
+        _ => Err(RuleError::ParseError(format!(
             "Invalid channel point type: '{}'. Expected T/S/C/A",
             s
         ))),
@@ -198,7 +220,7 @@ fn parse_variable(var: &Value) -> Result<Variable> {
     let name = var
         .get("name")
         .and_then(|v| v.as_str())
-        .ok_or_else(|| RuleSrvError::ParseError("Variable missing 'name'".to_string()))?
+        .ok_or_else(|| RuleError::ParseError("Variable missing 'name'".to_string()))?
         .to_string();
 
     let var_type = var
@@ -212,7 +234,7 @@ fn parse_variable(var: &Value) -> Result<Variable> {
                 .get("instance_id")
                 .and_then(|v| v.as_u64())
                 .ok_or_else(|| {
-                    RuleSrvError::ParseError("Instance variable missing 'instance_id'".to_string())
+                    RuleError::ParseError("Instance variable missing 'instance_id'".to_string())
                 })? as u16;
 
             let point_type_str = var
@@ -225,7 +247,7 @@ fn parse_variable(var: &Value) -> Result<Variable> {
                 .get("point_id")
                 .and_then(|v| v.as_str())
                 .ok_or_else(|| {
-                    RuleSrvError::ParseError("Instance variable missing 'point_id'".to_string())
+                    RuleError::ParseError("Instance variable missing 'point_id'".to_string())
                 })?
                 .to_string();
 
@@ -241,7 +263,7 @@ fn parse_variable(var: &Value) -> Result<Variable> {
                 .get("channel_id")
                 .and_then(|v| v.as_u64())
                 .ok_or_else(|| {
-                    RuleSrvError::ParseError("Channel variable missing 'channel_id'".to_string())
+                    RuleError::ParseError("Channel variable missing 'channel_id'".to_string())
                 })? as u16;
 
             let point_type_str = var
@@ -254,7 +276,7 @@ fn parse_variable(var: &Value) -> Result<Variable> {
                 .get("point_id")
                 .and_then(|v| v.as_str())
                 .ok_or_else(|| {
-                    RuleSrvError::ParseError("Channel variable missing 'point_id'".to_string())
+                    RuleError::ParseError("Channel variable missing 'point_id'".to_string())
                 })?
                 .to_string();
 
@@ -270,13 +292,13 @@ fn parse_variable(var: &Value) -> Result<Variable> {
                 .get("formula")
                 .and_then(|v| v.as_array())
                 .ok_or_else(|| {
-                    RuleSrvError::ParseError("Combined variable missing 'formula'".to_string())
+                    RuleError::ParseError("Combined variable missing 'formula'".to_string())
                 })?;
 
             let formula = parse_formula(formula_arr)?;
             Ok(Variable::Combined { name, formula })
         },
-        _ => Err(RuleSrvError::ParseError(format!(
+        _ => Err(RuleError::ParseError(format!(
             "Unknown variable type: '{}'. Expected instance/channel/combined",
             var_type
         ))),
@@ -329,7 +351,7 @@ fn parse_switch_rules(config: &Value) -> Result<Vec<SwitchRule>> {
     let rules_arr = config
         .get("rules")
         .and_then(|v| v.as_array())
-        .ok_or_else(|| RuleSrvError::ParseError("Switch missing 'rules' array".to_string()))?;
+        .ok_or_else(|| RuleError::ParseError("Switch missing 'rules' array".to_string()))?;
 
     let wires = config.get("wires");
 
@@ -339,7 +361,7 @@ fn parse_switch_rules(config: &Value) -> Result<Vec<SwitchRule>> {
         let name = rule
             .get("name")
             .and_then(|v| v.as_str())
-            .ok_or_else(|| RuleSrvError::ParseError("Rule missing 'name'".to_string()))?
+            .ok_or_else(|| RuleError::ParseError("Rule missing 'name'".to_string()))?
             .to_string();
 
         // Get next node from wires
@@ -369,7 +391,7 @@ fn parse_rule_conditions(rule: &Value) -> Result<Vec<RuleCondition>> {
     let rule_arr = rule
         .get("rule")
         .and_then(|v| v.as_array())
-        .ok_or_else(|| RuleSrvError::ParseError("Rule missing 'rule' array".to_string()))?;
+        .ok_or_else(|| RuleError::ParseError("Rule missing 'rule' array".to_string()))?;
 
     let mut conditions: Vec<RuleCondition> = Vec::new();
     let mut pending_relation: Option<LogicOp> = None;
@@ -383,7 +405,7 @@ fn parse_rule_conditions(rule: &Value) -> Result<Vec<RuleCondition>> {
                     .get("variables")
                     .and_then(|v| v.as_str())
                     .ok_or_else(|| {
-                        RuleSrvError::ParseError("Condition missing 'variables'".to_string())
+                        RuleError::ParseError("Condition missing 'variables'".to_string())
                     })?
                     .to_string();
 
@@ -442,7 +464,7 @@ fn parse_compare_op(s: &str) -> Result<CompareOp> {
         "<" | "lt" => Ok(CompareOp::Lt),
         ">=" | "gte" => Ok(CompareOp::Gte),
         "<=" | "lte" => Ok(CompareOp::Lte),
-        _ => Err(RuleSrvError::ParseError(format!(
+        _ => Err(RuleError::ParseError(format!(
             "Unknown comparison operator: {}",
             s
         ))),
@@ -454,7 +476,7 @@ fn parse_logic_op(s: &str) -> Result<LogicOp> {
     match s {
         "&&" | "and" | "AND" => Ok(LogicOp::And),
         "||" | "or" | "OR" => Ok(LogicOp::Or),
-        _ => Err(RuleSrvError::ParseError(format!(
+        _ => Err(RuleError::ParseError(format!(
             "Unknown logical operator: {}",
             s
         ))),
@@ -466,7 +488,7 @@ fn parse_logic_op(s: &str) -> Result<LogicOp> {
 /// Supports two target types:
 /// - instance: Write to modsrv instance action point (uses M2C routing)
 /// - channel: Write directly to comsrv channel point (bypasses routing)
-fn parse_value_changes(config: &Value) -> Result<Vec<ValueChange>> {
+pub fn parse_value_changes(config: &Value) -> Result<Vec<ValueChange>> {
     let empty_vec = vec![];
     let rules_arr = config
         .get("rules")
@@ -502,7 +524,7 @@ fn parse_value_changes(config: &Value) -> Result<Vec<ValueChange>> {
                     .get("instance_id")
                     .and_then(|v| v.as_u64())
                     .ok_or_else(|| {
-                        RuleSrvError::ParseError(
+                        RuleError::ParseError(
                             "ValueChange instance missing 'instance_id'".to_string(),
                         )
                     })? as u16;
@@ -511,9 +533,7 @@ fn parse_value_changes(config: &Value) -> Result<Vec<ValueChange>> {
                     .get("point_id")
                     .and_then(|v| v.as_str())
                     .ok_or_else(|| {
-                        RuleSrvError::ParseError(
-                            "ValueChange instance missing 'point_id'".to_string(),
-                        )
+                        RuleError::ParseError("ValueChange instance missing 'point_id'".to_string())
                     })?
                     .to_string();
 
@@ -528,7 +548,7 @@ fn parse_value_changes(config: &Value) -> Result<Vec<ValueChange>> {
                     rule.get("channel_id")
                         .and_then(|v| v.as_u64())
                         .ok_or_else(|| {
-                            RuleSrvError::ParseError(
+                            RuleError::ParseError(
                                 "ValueChange channel missing 'channel_id'".to_string(),
                             )
                         })? as u16;
@@ -543,9 +563,7 @@ fn parse_value_changes(config: &Value) -> Result<Vec<ValueChange>> {
                     .get("point_id")
                     .and_then(|v| v.as_str())
                     .ok_or_else(|| {
-                        RuleSrvError::ParseError(
-                            "ValueChange channel missing 'point_id'".to_string(),
-                        )
+                        RuleError::ParseError("ValueChange channel missing 'point_id'".to_string())
                     })?
                     .to_string();
 
@@ -557,7 +575,7 @@ fn parse_value_changes(config: &Value) -> Result<Vec<ValueChange>> {
                 });
             },
             _ => {
-                return Err(RuleSrvError::ParseError(format!(
+                return Err(RuleError::ParseError(format!(
                     "Unknown ValueChange target: '{}'. Expected instance/channel",
                     target
                 )));
@@ -633,17 +651,14 @@ mod tests {
             ]
         });
 
-        let chain = parse_flow_json(&flow).unwrap();
+        let parsed = parse_flow_json(&flow).unwrap();
 
-        assert_eq!(chain.id, "test-chain-1");
-        assert_eq!(chain.name, "Test Rule Chain");
-        assert_eq!(chain.description, Some("A test rule chain".to_string()));
-        assert_eq!(chain.start_node_id, "start");
-        assert_eq!(chain.variables.len(), 1);
-        assert_eq!(chain.nodes.len(), 3);
+        assert_eq!(parsed.start_node_id, "start");
+        assert_eq!(parsed.variables.len(), 1);
+        assert_eq!(parsed.nodes.len(), 3);
 
         // Verify variable is correctly parsed as Instance type
-        match &chain.variables[0] {
+        match &parsed.variables[0] {
             Variable::Instance {
                 name,
                 instance_id,

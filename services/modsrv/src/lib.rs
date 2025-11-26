@@ -42,6 +42,19 @@ pub mod reload;
 pub mod routes;
 pub mod routing_loader;
 
+// Rule Engine - using voltage-rules library
+pub mod rule_routes;
+
+// Re-export rule engine types from voltage-rules library
+pub use voltage_rules::{
+    delete_rule, get_rule, get_rule_for_execution, list_rules, load_all_rules, load_enabled_rules,
+    set_rule_enabled, upsert_rule,
+};
+pub use voltage_rules::{
+    parse_flow_json, ActionResult, ParsedFlow, RuleError, RuleExecutionResult, RuleExecutor,
+    RuleScheduler, SchedulerStatus, TriggerConfig,
+};
+
 // Re-export routing types from shared library
 pub use voltage_routing::{set_action_point, ActionRouteOutcome, RouteContext};
 

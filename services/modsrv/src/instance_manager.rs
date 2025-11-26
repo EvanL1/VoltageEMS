@@ -9,6 +9,7 @@ use voltage_config::{
     common::{ValidationLevel, ValidationResult},
     modsrv::{ModsrvQueries, RedisKeys},
 };
+use voltage_model::validate_instance_name;
 use voltage_rtdb::Rtdb;
 
 use crate::product_loader::{CreateInstanceRequest, Instance, ProductLoader};
@@ -16,50 +17,6 @@ use crate::redis_state;
 use crate::routing_loader::{
     ActionRouting, ActionRoutingRow, MeasurementRouting, MeasurementRoutingRow,
 };
-
-/// Validate instance name format
-///
-/// Rules:
-/// - Length: 1-64 characters
-/// - Characters: alphanumeric, underscore (_), hyphen (-)
-/// - Cannot start with a number
-/// - Cannot contain spaces or special characters
-///
-/// @input name: &str - Instance name to validate
-/// @output Result<()> - Success or validation error
-/// @example "pv_inverter_01" → Ok, "123_invalid" → Err, "bad name!" → Err
-fn validate_instance_name(name: &str) -> Result<()> {
-    // Length check
-    if name.is_empty() {
-        return Err(anyhow!("Instance name cannot be empty"));
-    }
-    if name.len() > 64 {
-        return Err(anyhow!(
-            "Instance name too long ({} characters). Maximum length is 64 characters.",
-            name.len()
-        ));
-    }
-
-    // Character validation: only alphanumeric, underscore, and hyphen allowed
-    if !name
-        .chars()
-        .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
-    {
-        return Err(anyhow!(
-            "Instance name can only contain letters (a-z, A-Z), numbers (0-9), underscores (_), and hyphens (-). Invalid name: '{}'",
-            name
-        ));
-    }
-
-    // Cannot start with a number (helps distinguish from IDs)
-    if name.chars().next().unwrap().is_numeric() {
-        return Err(anyhow!(
-            "Instance name cannot start with a number. Please start with a letter or underscore."
-        ));
-    }
-
-    Ok(())
-}
 
 /// Instance Manager handles runtime instance lifecycle
 pub struct InstanceManager<R: Rtdb> {

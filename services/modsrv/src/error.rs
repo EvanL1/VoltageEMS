@@ -101,6 +101,36 @@ pub enum ModSrvError {
     ComputationError(String),
 
     // ============================================================================
+    // Rule Engine Errors
+    // ============================================================================
+    #[error("Rule not found: {0}")]
+    RuleNotFound(String),
+
+    #[error("Rule already exists: {0}")]
+    RuleExists(String),
+
+    #[error("Rule error: {0}")]
+    RuleError(String),
+
+    #[error("Invalid rule: {0}")]
+    InvalidRule(String),
+
+    #[error("Rule disabled: {0}")]
+    RuleDisabled(String),
+
+    #[error("Parse error: {0}")]
+    ParseError(String),
+
+    #[error("Execution error: {0}")]
+    ExecutionError(String),
+
+    #[error("Evaluation error: {0}")]
+    EvaluationError(String),
+
+    #[error("Scheduler error: {0}")]
+    SchedulerError(String),
+
+    // ============================================================================
     // Point Operation Errors
     // ============================================================================
     #[error("Point not found: {0}")]
@@ -186,6 +216,17 @@ impl voltage_config::error::VoltageErrorTrait for ModSrvError {
             Self::InvalidCalculation(_) => "MODSRV_INVALID_CALCULATION",
             Self::ComputationError(_) => "MODSRV_COMPUTATION_ERROR",
 
+            // Rule Engine
+            Self::RuleNotFound(_) => "MODSRV_RULE_NOT_FOUND",
+            Self::RuleExists(_) => "MODSRV_RULE_EXISTS",
+            Self::RuleError(_) => "MODSRV_RULE_ERROR",
+            Self::InvalidRule(_) => "MODSRV_INVALID_RULE",
+            Self::RuleDisabled(_) => "MODSRV_RULE_DISABLED",
+            Self::ParseError(_) => "MODSRV_PARSE_ERROR",
+            Self::ExecutionError(_) => "MODSRV_EXECUTION_ERROR",
+            Self::EvaluationError(_) => "MODSRV_EVALUATION_ERROR",
+            Self::SchedulerError(_) => "MODSRV_SCHEDULER_ERROR",
+
             // Point
             Self::PointNotFound(_) => "MODSRV_POINT_NOT_FOUND",
             Self::PointError(_) => "MODSRV_POINT_ERROR",
@@ -225,22 +266,34 @@ impl voltage_config::error::VoltageErrorTrait for ModSrvError {
             | Self::ProductNotFound(_)
             | Self::RoutingNotFound(_)
             | Self::CalculationNotFound(_)
-            | Self::PointNotFound(_) => ErrorCategory::NotFound,
+            | Self::PointNotFound(_)
+            | Self::RuleNotFound(_) => ErrorCategory::NotFound,
 
             // Instance Exists → Conflict
-            Self::InstanceExists(_) | Self::RoutingConflict(_) => ErrorCategory::Conflict,
+            Self::InstanceExists(_) | Self::RoutingConflict(_) | Self::RuleExists(_) => {
+                ErrorCategory::Conflict
+            },
 
             // Instance/Product/Routing/Calculation validation → Validation
             Self::InvalidInstance(_)
             | Self::InvalidProduct(_)
             | Self::InvalidRouting(_)
             | Self::InvalidCalculation(_)
-            | Self::InvalidData(_) => ErrorCategory::Validation,
+            | Self::InvalidData(_)
+            | Self::InvalidRule(_)
+            | Self::ParseError(_) => ErrorCategory::Validation,
 
             // Calculation → Calculation
-            Self::CalculationError(_) | Self::ExpressionError(_) | Self::ComputationError(_) => {
-                ErrorCategory::Calculation
-            },
+            Self::CalculationError(_)
+            | Self::ExpressionError(_)
+            | Self::ComputationError(_)
+            | Self::EvaluationError(_) => ErrorCategory::Calculation,
+
+            // Rule Engine → Internal (execution/scheduling errors)
+            Self::RuleError(_)
+            | Self::RuleDisabled(_)
+            | Self::ExecutionError(_)
+            | Self::SchedulerError(_) => ErrorCategory::Internal,
 
             // Timeout → Timeout
             Self::TimeoutError(_) => ErrorCategory::Timeout,
@@ -369,5 +422,26 @@ impl From<serde_json::Error> for ModSrvError {
 impl From<anyhow::Error> for ModSrvError {
     fn from(err: anyhow::Error) -> Self {
         Self::InternalError(err.to_string())
+    }
+}
+
+/// Convert from voltage_rules::RuleError
+impl From<voltage_rules::RuleError> for ModSrvError {
+    fn from(err: voltage_rules::RuleError) -> Self {
+        use voltage_rules::RuleError as RE;
+        match err {
+            RE::NotFound(id) => Self::RuleNotFound(id),
+            RE::AlreadyExists(id) => Self::RuleExists(id),
+            RE::InvalidFormat(msg) => Self::InvalidRule(msg),
+            RE::ParseError(msg) => Self::ParseError(msg),
+            RE::ExecutionError(msg) => Self::ExecutionError(msg),
+            RE::ConditionError(msg) => Self::EvaluationError(msg),
+            RE::ActionError(msg) => Self::ExecutionError(format!("Action: {}", msg)),
+            RE::DatabaseError(msg) => Self::DatabaseError(msg),
+            RE::SerializationError(msg) => Self::SerializationError(msg),
+            RE::SchedulerError(msg) => Self::SchedulerError(msg),
+            RE::RtdbError(msg) => Self::RedisError(msg),
+            RE::RoutingError(msg) => Self::RoutingError(msg),
+        }
     }
 }

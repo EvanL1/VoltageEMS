@@ -49,11 +49,7 @@ pub mod lib_api {
         #[cfg(feature = "lib-mode")]
         #[error("Modsrv error: {0}")]
         Modsrv(#[from] modsrv::ModSrvError),
-
-        #[cfg(feature = "lib-mode")]
-        #[error("Rulesrv error: {0}")]
-        Rulesrv(#[from] rulesrv::RuleSrvError),
-
+        // rulesrv errors are now handled by modsrv::ModSrvError
         #[error("Database error: {0}")]
         Database(#[from] sqlx::Error),
 

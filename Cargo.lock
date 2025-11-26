@@ -556,6 +556,7 @@ dependencies = [
  "tracing-test",
  "utoipa",
  "utoipa-swagger-ui",
+ "voltage-comlink",
  "voltage-config",
  "voltage-rtdb",
 ]
@@ -1880,8 +1881,10 @@ dependencies = [
  "utoipa-swagger-ui",
  "uuid",
  "voltage-config",
+ "voltage-model",
  "voltage-routing",
  "voltage-rtdb",
+ "voltage-rules",
 ]
 
 [[package]]
@@ -1898,7 +1901,6 @@ dependencies = [
  "modsrv",
  "path-clean",
  "reqwest",
- "rulesrv",
  "serde",
  "serde_json",
  "serde_yaml",
@@ -2580,38 +2582,6 @@ dependencies = [
  "spki",
  "subtle",
  "zeroize",
-]
-
-[[package]]
-name = "rulesrv"
-version = "0.0.1"
-dependencies = [
- "anyhow",
- "async-trait",
- "axum",
- "bytes",
- "chrono",
- "clap",
- "common",
- "http-body-util",
- "regex",
- "reqwest",
- "serde",
- "serde_json",
- "sqlx",
- "tempfile",
- "thiserror 1.0.69",
- "tokio",
- "tokio-util",
- "tower",
- "tracing",
- "tracing-subscriber",
- "utoipa",
- "utoipa-swagger-ui",
- "uuid",
- "voltage-config",
- "voltage-routing",
- "voltage-rtdb",
 ]
 
 [[package]]
@@ -4012,6 +3982,31 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 
 [[package]]
+name = "voltage-comlink"
+version = "0.0.1"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "bytes",
+ "can-dbc",
+ "chrono",
+ "common",
+ "dashmap",
+ "futures",
+ "rand 0.8.5",
+ "serde",
+ "serde_json",
+ "socketcan",
+ "thiserror 1.0.69",
+ "tokio",
+ "tokio-serial",
+ "tokio-util",
+ "tracing",
+ "voltage-config",
+ "voltage-rtdb",
+]
+
+[[package]]
 name = "voltage-config"
 version = "0.0.1"
 dependencies = [
@@ -4033,6 +4028,27 @@ dependencies = [
  "tracing",
  "utoipa",
  "voltage-schema-macro",
+]
+
+[[package]]
+name = "voltage-model"
+version = "0.0.1"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "chrono",
+ "csv",
+ "evalexpr",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "sha2",
+ "sqlx",
+ "thiserror 1.0.69",
+ "tokio",
+ "tracing",
+ "voltage-config",
+ "voltage-rtdb",
 ]
 
 [[package]]
@@ -4069,6 +4085,24 @@ dependencies = [
  "tracing",
  "uuid",
  "voltage-config",
+]
+
+[[package]]
+name = "voltage-rules"
+version = "0.0.1"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "dashmap",
+ "serde",
+ "serde_json",
+ "sqlx",
+ "thiserror 1.0.69",
+ "tokio",
+ "tracing",
+ "voltage-config",
+ "voltage-routing",
+ "voltage-rtdb",
 ]
 
 [[package]]

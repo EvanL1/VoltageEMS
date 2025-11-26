@@ -1,35 +1,35 @@
-//! Rule Chain Executor - Execute Vue Flow rule chains
+//! Rule Executor - Execute Vue Flow rules
 //!
-//! Executes parsed rule chains by:
+//! Executes parsed rules by:
 //! 1. Reading all variable values from RTDB
 //! 2. Calculating combined (formula) variables
 //! 3. Traversing nodes from start to end
 //! 4. Evaluating switch conditions and executing actions
 
-use crate::error::{Result, RuleSrvError};
+use crate::error::{Result, RuleError};
 use std::collections::HashMap;
 use std::sync::Arc;
 use voltage_config::rulesrv::{
     ArithmeticOp, ChannelPointType, CompareOp, FlowNode, FormulaToken, InstancePointType, LogicOp,
-    RuleChain, RuleCondition, SwitchRule, ValueChange, Variable,
+    Rule, RuleCondition, SwitchRule, ValueChange, Variable,
 };
 use voltage_config::{KeySpaceConfig, RoutingCache};
 use voltage_routing::set_action_point;
 use voltage_rtdb::traits::Rtdb;
 
-/// Result of executing a rule chain
+/// Result of executing a rule
 #[derive(Debug, Clone)]
-pub struct ChainExecutionResult {
-    pub chain_id: String,
+pub struct RuleExecutionResult {
+    pub rule_id: String,
     pub success: bool,
-    pub actions_executed: Vec<ActionExecuted>,
+    pub actions_executed: Vec<ActionResult>,
     pub error: Option<String>,
     pub execution_path: Vec<String>, // Node IDs visited
 }
 
 /// Record of an executed action
 #[derive(Debug, Clone)]
-pub struct ActionExecuted {
+pub struct ActionResult {
     /// Target type: "instance" or "channel"
     pub target_type: String,
     /// Target ID (instance_id or channel_id)
@@ -44,13 +44,13 @@ pub struct ActionExecuted {
     pub success: bool,
 }
 
-/// Rule chain executor
-pub struct ChainExecutor<R: Rtdb + ?Sized> {
+/// Rule executor
+pub struct RuleExecutor<R: Rtdb + ?Sized> {
     rtdb: Arc<R>,
     routing_cache: Arc<RoutingCache>,
 }
 
-impl<R: Rtdb + ?Sized> ChainExecutor<R> {
+impl<R: Rtdb + ?Sized> RuleExecutor<R> {
     pub fn new(rtdb: Arc<R>, routing_cache: Arc<RoutingCache>) -> Self {
         Self {
             rtdb,
@@ -58,10 +58,10 @@ impl<R: Rtdb + ?Sized> ChainExecutor<R> {
         }
     }
 
-    /// Execute a rule chain
-    pub async fn execute(&self, chain: &RuleChain) -> Result<ChainExecutionResult> {
-        let mut result = ChainExecutionResult {
-            chain_id: chain.id.clone(),
+    /// Execute a rule
+    pub async fn execute(&self, rule: &Rule) -> Result<RuleExecutionResult> {
+        let mut result = RuleExecutionResult {
+            rule_id: rule.id.clone(),
             success: false,
             actions_executed: vec![],
             error: None,
@@ -69,7 +69,7 @@ impl<R: Rtdb + ?Sized> ChainExecutor<R> {
         };
 
         // 1. Read all variable values
-        let mut values = match self.read_variables(&chain.variables).await {
+        let mut values = match self.read_variables(&rule.variables).await {
             Ok(v) => v,
             Err(e) => {
                 result.error = Some(format!("Failed to read variables: {}", e));
@@ -78,17 +78,17 @@ impl<R: Rtdb + ?Sized> ChainExecutor<R> {
         };
 
         // 2. Calculate combined variables
-        if let Err(e) = self.calculate_combined_variables(&chain.variables, &mut values) {
+        if let Err(e) = self.calculate_combined_variables(&rule.variables, &mut values) {
             result.error = Some(format!("Failed to calculate variables: {}", e));
             return Ok(result);
         }
 
         // 3. Build node lookup map
         let node_map: HashMap<&str, &FlowNode> =
-            chain.nodes.iter().map(|n| (node_id(n), n)).collect();
+            rule.nodes.iter().map(|n| (node_id(n), n)).collect();
 
         // 4. Execute from start node
-        let mut current_id = chain.start_node_id.as_str();
+        let mut current_id = rule.start_node_id.as_str();
         let max_iterations = 100; // Prevent infinite loops
         let mut iterations = 0;
 
@@ -256,9 +256,7 @@ impl<R: Rtdb + ?Sized> ChainExecutor<R> {
                     if value != 0.0 {
                         result /= value;
                     } else {
-                        return Err(RuleSrvError::EvaluationError(
-                            "Division by zero".to_string(),
-                        ));
+                        return Err(RuleError::ConditionError("Division by zero".to_string()));
                     }
                 },
             }
@@ -351,7 +349,7 @@ impl<R: Rtdb + ?Sized> ChainExecutor<R> {
         &self,
         change: &ValueChange,
         values: &HashMap<String, f64>,
-    ) -> ActionExecuted {
+    ) -> ActionResult {
         match change {
             ValueChange::Instance {
                 instance_id,
@@ -378,7 +376,7 @@ impl<R: Rtdb + ?Sized> ChainExecutor<R> {
                 )
                 .await;
 
-                ActionExecuted {
+                ActionResult {
                     target_type: "instance".to_string(),
                     target_id: *instance_id,
                     point_type: "A".to_string(),
@@ -415,7 +413,7 @@ impl<R: Rtdb + ?Sized> ChainExecutor<R> {
                     ChannelPointType::Adjustment => "A",
                 };
 
-                ActionExecuted {
+                ActionResult {
                     target_type: "channel".to_string(),
                     target_id: *channel_id,
                     point_type: point_type_str.to_string(),
@@ -448,7 +446,7 @@ mod tests {
     async fn test_evaluate_formula() {
         let rtdb = Arc::new(MemoryRtdb::new());
         let routing_cache = Arc::new(RoutingCache::default());
-        let executor = ChainExecutor::new(rtdb, routing_cache);
+        let executor = RuleExecutor::new(rtdb, routing_cache);
 
         let mut values = HashMap::new();
         values.insert("X1".to_string(), 10.0);
@@ -487,7 +485,7 @@ mod tests {
     async fn test_evaluate_conditions() {
         let rtdb = Arc::new(MemoryRtdb::new());
         let routing_cache = Arc::new(RoutingCache::default());
-        let executor = ChainExecutor::new(rtdb, routing_cache);
+        let executor = RuleExecutor::new(rtdb, routing_cache);
 
         let mut values = HashMap::new();
         values.insert("X1".to_string(), 100.0);

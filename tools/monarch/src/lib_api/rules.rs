@@ -1,11 +1,12 @@
 //! Rules API - Library Mode
 //!
-//! Direct library calls to rulesrv for rule chain management and execution
+//! Direct library calls for rule management and execution
+//! Note: rulesrv has been merged into modsrv (port 6003)
 
-use crate::context::RulesrvContext;
+use crate::context::ModsrvContext;
 use crate::lib_api::{LibApiError, Result};
 use serde::{Deserialize, Serialize};
-use voltage_config::rulesrv::RuleChain;
+use voltage_config::rulesrv::Rule;
 
 /// Rule summary for list operations
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -16,9 +17,9 @@ pub struct RuleSummary {
     pub priority: u32,
 }
 
-/// Type alias for rule chain database row to avoid clippy::type_complexity warning
+/// Type alias for rule database row to avoid clippy::type_complexity warning
 /// Fields: (id, name, description, enabled, priority, cooldown_ms, variables_json, nodes_json, start_node_id, flow_json)
-type RuleChainDbRow = (
+type RuleDbRow = (
     String,
     String,
     Option<String>,
@@ -31,22 +32,24 @@ type RuleChainDbRow = (
     Option<String>,
 );
 
-/// Rules service - provides rule chain management and execution operations
+/// Rules service - provides rule management and execution operations
+/// Uses ModsrvContext since rulesrv has been merged into modsrv
 pub struct RulesService<'a> {
-    ctx: &'a RulesrvContext,
+    ctx: &'a ModsrvContext,
 }
 
 impl<'a> RulesService<'a> {
-    /// Create a new rules service from context
-    pub fn new(ctx: &'a RulesrvContext) -> Self {
+    /// Create a new rules service from modsrv context
+    /// (rulesrv has been merged into modsrv)
+    pub fn new(ctx: &'a ModsrvContext) -> Self {
         Self { ctx }
     }
 
-    /// List all rule chains
+    /// List all rules
     ///
-    /// Returns a list of all configured rule chains.
+    /// Returns a list of all configured rules.
     pub async fn list(&self) -> Result<Vec<RuleSummary>> {
-        // Query database for rule chains
+        // Query database for rules
         let db_rules: Vec<(String, String, i64, i64)> = sqlx::query_as(
             "SELECT id, name, enabled, priority FROM rules ORDER BY priority DESC, id",
         )
@@ -66,14 +69,14 @@ impl<'a> RulesService<'a> {
         Ok(summaries)
     }
 
-    /// Get rule chain by ID
+    /// Get rule by ID
     ///
-    /// Returns detailed information about a specific rule chain.
-    pub async fn get(&self, rule_id: &str) -> Result<RuleChain> {
+    /// Returns detailed information about a specific rule.
+    pub async fn get(&self, rule_id: &str) -> Result<Rule> {
         use voltage_config::rulesrv::{FlowNode, Variable};
 
-        // Query database for rule chain
-        let row: Option<RuleChainDbRow> = sqlx::query_as(
+        // Query database for rule
+        let row: Option<RuleDbRow> = sqlx::query_as(
             "SELECT id, name, description, enabled, priority, cooldown_ms,
                     variables_json, nodes_json, start_node_id, flow_json
              FROM rules WHERE id = ?",
@@ -93,8 +96,7 @@ impl<'a> RulesService<'a> {
             nodes_json,
             start_node_id,
             flow_json_opt,
-        ) = row
-            .ok_or_else(|| LibApiError::not_found(format!("Rule chain '{}' not found", rule_id)))?;
+        ) = row.ok_or_else(|| LibApiError::not_found(format!("Rule '{}' not found", rule_id)))?;
 
         // Deserialize parsed structures
         let variables: Vec<Variable> = serde_json::from_str(&variables_json)
@@ -104,7 +106,7 @@ impl<'a> RulesService<'a> {
 
         let flow_json = flow_json_opt.and_then(|s| serde_json::from_str(&s).ok());
 
-        Ok(RuleChain {
+        Ok(Rule {
             id,
             name,
             description,
@@ -118,17 +120,17 @@ impl<'a> RulesService<'a> {
         })
     }
 
-    /// Create a new rule chain
+    /// Create a new rule
     ///
-    /// Creates a new rule chain in the database.
+    /// Creates a new rule in the database.
     /// Public API - use monarch sync for CLI operations.
     #[allow(dead_code)]
-    pub async fn create(&self, chain: RuleChain) -> Result<()> {
-        let variables_json = serde_json::to_string(&chain.variables)
+    pub async fn create(&self, rule: Rule) -> Result<()> {
+        let variables_json = serde_json::to_string(&rule.variables)
             .map_err(|e| LibApiError::config(format!("Failed to serialize variables: {}", e)))?;
-        let nodes_json = serde_json::to_string(&chain.nodes)
+        let nodes_json = serde_json::to_string(&rule.nodes)
             .map_err(|e| LibApiError::config(format!("Failed to serialize nodes: {}", e)))?;
-        let flow_json = chain
+        let flow_json = rule
             .flow_json
             .map(|v| serde_json::to_string(&v))
             .transpose()
@@ -140,15 +142,15 @@ impl<'a> RulesService<'a> {
                                       variables_json, nodes_json, start_node_id, flow_json)
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
-        .bind(&chain.id)
-        .bind(&chain.name)
-        .bind(&chain.description)
-        .bind(chain.enabled)
-        .bind(chain.priority as i64)
-        .bind(chain.cooldown_ms as i64)
+        .bind(&rule.id)
+        .bind(&rule.name)
+        .bind(&rule.description)
+        .bind(rule.enabled)
+        .bind(rule.priority as i64)
+        .bind(rule.cooldown_ms as i64)
         .bind(&variables_json)
         .bind(&nodes_json)
-        .bind(&chain.start_node_id)
+        .bind(&rule.start_node_id)
         .bind(flow_json)
         .execute(&self.ctx.sqlite_pool)
         .await?;
@@ -156,17 +158,17 @@ impl<'a> RulesService<'a> {
         Ok(())
     }
 
-    /// Update an existing rule chain
+    /// Update an existing rule
     ///
-    /// Updates a rule chain's configuration in the database.
+    /// Updates a rule's configuration in the database.
     /// Public API - use monarch sync for CLI operations.
     #[allow(dead_code)]
-    pub async fn update(&self, rule_id: &str, chain: RuleChain) -> Result<()> {
-        let variables_json = serde_json::to_string(&chain.variables)
+    pub async fn update(&self, rule_id: &str, rule: Rule) -> Result<()> {
+        let variables_json = serde_json::to_string(&rule.variables)
             .map_err(|e| LibApiError::config(format!("Failed to serialize variables: {}", e)))?;
-        let nodes_json = serde_json::to_string(&chain.nodes)
+        let nodes_json = serde_json::to_string(&rule.nodes)
             .map_err(|e| LibApiError::config(format!("Failed to serialize nodes: {}", e)))?;
-        let flow_json = chain
+        let flow_json = rule
             .flow_json
             .map(|v| serde_json::to_string(&v))
             .transpose()
@@ -178,31 +180,29 @@ impl<'a> RulesService<'a> {
                     flow_json = ?, updated_at = CURRENT_TIMESTAMP
              WHERE id = ?",
         )
-        .bind(&chain.name)
-        .bind(&chain.description)
-        .bind(chain.enabled)
-        .bind(chain.priority as i64)
-        .bind(chain.cooldown_ms as i64)
+        .bind(&rule.name)
+        .bind(&rule.description)
+        .bind(rule.enabled)
+        .bind(rule.priority as i64)
+        .bind(rule.cooldown_ms as i64)
         .bind(&variables_json)
         .bind(&nodes_json)
-        .bind(&chain.start_node_id)
+        .bind(&rule.start_node_id)
         .bind(flow_json)
         .bind(rule_id)
         .execute(&self.ctx.sqlite_pool)
         .await?;
 
         if result.rows_affected() == 0 {
-            return Err(
-                LibApiError::not_found(format!("Rule chain '{}' not found", rule_id)).into(),
-            );
+            return Err(LibApiError::not_found(format!("Rule '{}' not found", rule_id)).into());
         }
 
         Ok(())
     }
 
-    /// Delete a rule chain
+    /// Delete a rule
     ///
-    /// Removes a rule chain from the database.
+    /// Removes a rule from the database.
     /// Public API - use monarch sync for CLI operations.
     #[allow(dead_code)]
     pub async fn delete(&self, rule_id: &str) -> Result<()> {
@@ -212,17 +212,15 @@ impl<'a> RulesService<'a> {
             .await?;
 
         if result.rows_affected() == 0 {
-            return Err(
-                LibApiError::not_found(format!("Rule chain '{}' not found", rule_id)).into(),
-            );
+            return Err(LibApiError::not_found(format!("Rule '{}' not found", rule_id)).into());
         }
 
         Ok(())
     }
 
-    /// Enable a rule chain
+    /// Enable a rule
     ///
-    /// Sets a rule chain's enabled flag to true.
+    /// Sets a rule's enabled flag to true.
     pub async fn enable(&self, rule_id: &str) -> Result<()> {
         let result = sqlx::query(
             "UPDATE rules SET enabled = 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
@@ -232,17 +230,15 @@ impl<'a> RulesService<'a> {
         .await?;
 
         if result.rows_affected() == 0 {
-            return Err(
-                LibApiError::not_found(format!("Rule chain '{}' not found", rule_id)).into(),
-            );
+            return Err(LibApiError::not_found(format!("Rule '{}' not found", rule_id)).into());
         }
 
         Ok(())
     }
 
-    /// Disable a rule chain
+    /// Disable a rule
     ///
-    /// Sets a rule chain's enabled flag to false.
+    /// Sets a rule's enabled flag to false.
     pub async fn disable(&self, rule_id: &str) -> Result<()> {
         let result = sqlx::query(
             "UPDATE rules SET enabled = 0, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
@@ -252,27 +248,10 @@ impl<'a> RulesService<'a> {
         .await?;
 
         if result.rows_affected() == 0 {
-            return Err(
-                LibApiError::not_found(format!("Rule chain '{}' not found", rule_id)).into(),
-            );
+            return Err(LibApiError::not_found(format!("Rule '{}' not found", rule_id)).into());
         }
 
         Ok(())
-    }
-
-    /// Execute a rule chain manually
-    ///
-    /// Triggers immediate execution of a rule chain (even if disabled).
-    pub async fn execute(&self, rule_id: &str) -> Result<String> {
-        // Get rule chain from database
-        let chain = self.get(rule_id).await?;
-
-        // TODO: Execute rule chain using ChainExecutor
-        // For now, return a placeholder message
-        Ok(format!(
-            "Rule chain '{}' execution triggered (not yet implemented in lib mode)",
-            chain.name
-        ))
     }
 }
 

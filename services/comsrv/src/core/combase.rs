@@ -12,16 +12,23 @@ pub mod sync; // Telemetry synchronization
 pub mod traits; // Core traits and type definitions
 pub mod trigger; // Command trigger for storage and synchronization
 
-// Re-export common types
+// Re-export data types from voltage_comlink (primary source for data types)
+// Note: ComBase and ComClient traits are still from local traits.rs because they use ComSrvError
+pub use voltage_comlink::{
+    ChannelCommand, ChannelLogger, ChannelStatus, ConnectionState, ExtendedPointData, PointData,
+    PointDataMap, ProtocolValue, RedisValue, TelemetryBatch, TestChannelParams,
+};
+
+// Re-export traits from local module (uses ComSrvError)
+pub use traits::{ComBase, ComClient};
+
+// Re-export other types from local modules
 pub use crate::core::config::types::FourRemote;
 pub use channel::{ChannelEntry, ChannelMetadata, ChannelStats};
 pub use channel_manager::{ChannelManager, DynComClient};
 pub use point_config::RuntimeConfigProvider;
 pub use point_transformer::{PointTransformer, TransformDirection};
-pub use traits::{
-    ChannelCommand, ChannelStatus, ComBase, ComClient, ExtendedPointData, PointData, PointDataMap,
-    RedisValue, TestChannelParams,
-};
+
 // Storage now in unified module at crate::storage
 pub use trigger::{CommandStatus, CommandTrigger, CommandTriggerConfig, ControlCommand};
 

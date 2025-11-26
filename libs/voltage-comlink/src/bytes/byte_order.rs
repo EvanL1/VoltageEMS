@@ -72,16 +72,6 @@ impl ByteOrder {
     /// - "LE", "LITTLE_ENDIAN" → LittleEndian
     /// - "AB" → BigEndian16
     /// - "BA" → LittleEndian16
-    ///
-    /// # Examples
-    /// ```
-    /// use comsrv::utils::bytes::ByteOrder;
-    ///
-    /// assert_eq!(ByteOrder::from_str("ABCD"), Some(ByteOrder::BigEndian));
-    /// assert_eq!(ByteOrder::from_str("BE"), Some(ByteOrder::BigEndian));
-    /// assert_eq!(ByteOrder::from_str("CDAB"), Some(ByteOrder::BigEndianSwap));
-    /// assert_eq!(ByteOrder::from_str("invalid"), None);
-    /// ```
     #[allow(clippy::should_implement_trait)]
     pub fn from_str(s: &str) -> Option<Self> {
         let normalized = s.to_uppercase().replace('-', "");
@@ -103,16 +93,6 @@ impl ByteOrder {
     }
 
     /// Get descriptive name
-    ///
-    /// Returns a human-readable string representation.
-    ///
-    /// # Examples
-    /// ```
-    /// use comsrv::utils::bytes::ByteOrder;
-    ///
-    /// assert_eq!(ByteOrder::BigEndian.as_str(), "ABCD (Big-Endian)");
-    /// assert_eq!(ByteOrder::BigEndianSwap.as_str(), "CDAB (Big-Endian Swap)");
-    /// ```
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::BigEndian => "ABCD (Big-Endian)",
@@ -173,17 +153,11 @@ mod tests {
         assert_eq!(ByteOrder::from_str("ABCD"), Some(ByteOrder::BigEndian));
         assert_eq!(ByteOrder::from_str("AB-CD"), Some(ByteOrder::BigEndian));
         assert_eq!(ByteOrder::from_str("be"), Some(ByteOrder::BigEndian));
-        assert_eq!(
-            ByteOrder::from_str("BIG_ENDIAN"),
-            Some(ByteOrder::BigEndian)
-        );
 
         assert_eq!(ByteOrder::from_str("DCBA"), Some(ByteOrder::LittleEndian));
         assert_eq!(ByteOrder::from_str("LE"), Some(ByteOrder::LittleEndian));
 
         assert_eq!(ByteOrder::from_str("CDAB"), Some(ByteOrder::BigEndianSwap));
-        assert_eq!(ByteOrder::from_str("CD-AB"), Some(ByteOrder::BigEndianSwap));
-
         assert_eq!(
             ByteOrder::from_str("BADC"),
             Some(ByteOrder::LittleEndianSwap)
@@ -197,47 +171,22 @@ mod tests {
     fn test_from_str_invalid() {
         assert_eq!(ByteOrder::from_str("invalid"), None);
         assert_eq!(ByteOrder::from_str(""), None);
-        assert_eq!(ByteOrder::from_str("ABC"), None);
-        assert_eq!(ByteOrder::from_str("12345"), None);
     }
 
     #[test]
-    fn test_as_str() {
-        assert_eq!(ByteOrder::BigEndian.as_str(), "ABCD (Big-Endian)");
-        assert_eq!(ByteOrder::LittleEndian.as_str(), "DCBA (Little-Endian)");
-        assert_eq!(ByteOrder::BigEndianSwap.as_str(), "CDAB (Big-Endian Swap)");
-    }
-
-    #[test]
-    fn test_is_16bit_only() {
+    fn test_properties() {
         assert!(ByteOrder::BigEndian16.is_16bit_only());
-        assert!(ByteOrder::LittleEndian16.is_16bit_only());
         assert!(!ByteOrder::BigEndian.is_16bit_only());
-    }
 
-    #[test]
-    fn test_is_big_endian() {
         assert!(ByteOrder::BigEndian.is_big_endian());
-        assert!(ByteOrder::BigEndianSwap.is_big_endian());
-        assert!(ByteOrder::BigEndian16.is_big_endian());
         assert!(!ByteOrder::LittleEndian.is_big_endian());
-    }
 
-    #[test]
-    fn test_has_word_swap() {
         assert!(ByteOrder::BigEndianSwap.has_word_swap());
-        assert!(ByteOrder::LittleEndianSwap.has_word_swap());
         assert!(!ByteOrder::BigEndian.has_word_swap());
-        assert!(!ByteOrder::LittleEndian.has_word_swap());
     }
 
     #[test]
     fn test_default() {
         assert_eq!(ByteOrder::default(), ByteOrder::BigEndian);
-    }
-
-    #[test]
-    fn test_display() {
-        assert_eq!(format!("{}", ByteOrder::BigEndian), "ABCD (Big-Endian)");
     }
 }

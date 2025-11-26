@@ -1,0 +1,37 @@
+[package]
+name = "voltage-rules"
+version = "0.0.1"
+edition = "2021"
+license.workspace = true
+description = "Rule engine library for VoltageEMS - Vue Flow based rule parsing, execution and scheduling"
+
+[dependencies]
+voltage-config = { path = "../voltage-config" }
+voltage-rtdb = { path = "../voltage-rtdb" }
+voltage-routing = { path = "../voltage-routing" }
+
+# Async runtime
+tokio = { workspace = true }
+
+# Database
+sqlx = { workspace = true }
+
+# Serialization
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+# Error handling
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+
+# Logging
+tracing = { workspace = true }
+
+# Time
+chrono = { workspace = true }
+
+# Utilities
+dashmap = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }

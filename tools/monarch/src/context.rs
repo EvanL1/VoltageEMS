@@ -80,9 +80,7 @@ pub struct ServiceContext {
 
     #[cfg(feature = "lib-mode")]
     modsrv: Option<ModsrvContext>,
-
-    #[cfg(feature = "lib-mode")]
-    rulesrv: Option<RulesrvContext>,
+    // rulesrv has been merged into modsrv - rules functionality via ModsrvContext
 }
 
 impl ServiceContext {
@@ -94,8 +92,6 @@ impl ServiceContext {
             comsrv: None,
             #[cfg(feature = "lib-mode")]
             modsrv: None,
-            #[cfg(feature = "lib-mode")]
-            rulesrv: None,
         }
     }
 
@@ -125,17 +121,14 @@ impl ServiceContext {
         Ok(())
     }
 
-    /// Initialize rulesrv context (public API for lib-mode users)
+    /// Initialize rulesrv context (deprecated - now uses modsrv)
+    /// Rules functionality has been merged into modsrv (port 6003)
     #[cfg(feature = "lib-mode")]
     #[allow(dead_code)]
+    #[deprecated(note = "rulesrv merged into modsrv. Use init_modsrv() instead.")]
     pub async fn init_rulesrv(&mut self) -> Result<()> {
-        if self.rulesrv.is_some() {
-            return Ok(()); // Already initialized
-        }
-
-        let rulesrv = RulesrvContext::new(&self.config).await?;
-        self.rulesrv = Some(rulesrv);
-        Ok(())
+        // Rules are now part of modsrv, so just initialize modsrv
+        self.init_modsrv().await
     }
 
     /// Initialize all services
@@ -143,15 +136,14 @@ impl ServiceContext {
     #[allow(dead_code)]
     pub async fn init_all(&mut self) -> Result<()> {
         // Parallel initialization for faster startup
-        let (comsrv_result, modsrv_result, rulesrv_result) = tokio::join!(
+        // Note: rulesrv has been merged into modsrv
+        let (comsrv_result, modsrv_result) = tokio::join!(
             ComsrvContext::new(&self.config),
             ModsrvContext::new(&self.config),
-            RulesrvContext::new(&self.config),
         );
 
         self.comsrv = Some(comsrv_result?);
         self.modsrv = Some(modsrv_result?);
-        self.rulesrv = Some(rulesrv_result?);
 
         Ok(())
     }
@@ -172,12 +164,14 @@ impl ServiceContext {
             .context("Modsrv not initialized. Call init_modsrv() first.")
     }
 
-    /// Get rulesrv context
+    /// Get rulesrv context (deprecated - now returns modsrv context)
+    /// Rules functionality has been merged into modsrv
     #[cfg(feature = "lib-mode")]
-    pub fn rulesrv(&self) -> Result<&RulesrvContext> {
-        self.rulesrv
-            .as_ref()
-            .context("Rulesrv not initialized. Call init_rulesrv() first.")
+    #[deprecated(note = "rulesrv merged into modsrv. Use modsrv() instead.")]
+    pub fn rulesrv(&self) -> Result<&ModsrvContext> {
+        self.modsrv.as_ref().context(
+            "Modsrv not initialized. Call init_modsrv() first. (rulesrv merged into modsrv)",
+        )
     }
 
     /// Get configuration (public API)
@@ -290,24 +284,8 @@ impl ModsrvContext {
     }
 }
 
-#[cfg(feature = "lib-mode")]
-/// Rulesrv service context
-pub struct RulesrvContext {
-    pub sqlite_pool: SqlitePool,
-}
-
-#[cfg(feature = "lib-mode")]
-impl RulesrvContext {
-    async fn new(config: &ServiceConfig) -> Result<Self> {
-        // Initialize SQLite connection (unified database)
-        let db_path = config.unified_db_path();
-        let sqlite_pool = SqlitePool::connect(&format!("sqlite:{}", db_path.display()))
-            .await
-            .with_context(|| format!("Failed to connect to rulesrv database at {:?}", db_path))?;
-
-        Ok(Self { sqlite_pool })
-    }
-}
+// RulesrvContext has been removed - rules functionality is now in modsrv
+// Use ModsrvContext for rule operations (same sqlite_pool can be used)
 
 /// Load routing maps from SQLite database
 ///

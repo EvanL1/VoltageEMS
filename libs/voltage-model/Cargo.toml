@@ -1,0 +1,48 @@
+[package]
+name = "voltage-model"
+version = "0.0.1"
+edition = "2021"
+license.workspace = true
+description = "Model layer library for VoltageEMS - calculations, products, and instance management"
+
+[dependencies]
+# Local dependencies
+voltage-config = { path = "../voltage-config" }
+voltage-rtdb = { path = "../voltage-rtdb" }
+
+# Calculation
+evalexpr = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+# Async
+tokio = { workspace = true }
+async-trait = { workspace = true }
+
+# Error handling
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+
+# Parsing
+csv = { workspace = true }
+serde_yaml = { workspace = true }
+
+# Database
+sqlx = { workspace = true }
+
+# Logging
+tracing = { workspace = true }
+
+# Time
+chrono = { workspace = true }
+
+# Security
+sha2 = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
+
+[lints.clippy]
+cast-possible-truncation = "allow"
+cast-possible-wrap = "allow"
+cast-sign-loss = "allow"
