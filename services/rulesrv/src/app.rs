@@ -5,7 +5,6 @@
 //! - YAML files are source of truth for version control only
 //! - No runtime YAML loading to maintain architectural consistency
 
-use crate::rule_engine::{ExecutionResult, Rule, RuleConfig};
 use common::service_bootstrap::ServiceInfo;
 use common::sqlite::{ServiceConfigLoader, SqliteClient};
 use std::sync::Arc;
@@ -14,7 +13,7 @@ use tracing::{debug, error, info, warn};
 use voltage_config::{
     common::{ApiConfig, BaseServiceConfig, RedisConfig, DEFAULT_API_HOST, DEFAULT_REDIS_URL},
     error::{VoltageError, VoltageResult},
-    rulesrv::{ExecutionConfig, RulesrvConfig, DEFAULT_PORT},
+    rulesrv::{ExecutionConfig, RuleChain, RulesrvConfig, DEFAULT_PORT},
 };
 
 // Type alias for compatibility with existing code
@@ -28,9 +27,8 @@ pub struct AppState {
     pub routing_cache: Arc<voltage_config::RoutingCache>,
     pub config: Arc<Config>,
     pub sqlite_client: Option<Arc<SqliteClient>>,
-    pub rules_cache: Arc<RwLock<Arc<Vec<Rule>>>>,
-    pub rule_config: Arc<RwLock<Option<RuleConfig>>>,
-    pub execution_history: Arc<RwLock<Vec<ExecutionResult>>>,
+    /// Cached rule chains (Vue Flow format) - used by ChainExecutor
+    pub chains_cache: Arc<RwLock<Vec<RuleChain>>>,
 }
 
 /// Create application state from service info
@@ -66,7 +64,6 @@ pub async fn create_app_state(_service_info: &ServiceInfo) -> VoltageResult<Arc<
         api: ApiConfig {
             host: DEFAULT_API_HOST.to_string(),
             port: service_config.port,
-            workers: None,
         },
         redis: RedisConfig {
             url: service_config.redis_url,
@@ -162,10 +159,8 @@ pub async fn create_app_state(_service_info: &ServiceInfo) -> VoltageResult<Arc<
     let routing_cache = load_routing_cache(&rtdb).await?;
     info!("Routing cache loaded successfully");
 
-    // Initialize rule caches (rules loaded from SQLite via API)
-    let rules_cache = Arc::new(RwLock::new(Arc::new(Vec::new())));
-    let rule_config = Arc::new(RwLock::new(None));
-    let execution_history = Arc::new(RwLock::new(Vec::new()));
+    // Initialize rule chains cache
+    let chains_cache = Arc::new(RwLock::new(Vec::new()));
 
     // Create application state
     Ok(Arc::new(AppState {
@@ -173,9 +168,7 @@ pub async fn create_app_state(_service_info: &ServiceInfo) -> VoltageResult<Arc<
         routing_cache,
         config: Arc::new(config),
         sqlite_client,
-        rules_cache,
-        rule_config,
-        execution_history,
+        chains_cache,
     }))
 }
 

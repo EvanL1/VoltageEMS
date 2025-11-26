@@ -1149,34 +1149,3 @@ fn validate_modbus_function_code_match(
 
     None // Validation passed
 }
-
-/// Helper function to get signal name for a point
-#[allow(dead_code)]
-async fn get_point_signal_name(pool: &sqlx::SqlitePool, point_id: u32) -> Result<String, AppError> {
-    // Try all point tables
-    let tables = [
-        "telemetry_points",
-        "signal_points",
-        "control_points",
-        "adjustment_points",
-    ];
-
-    for table in &tables {
-        let query = format!("SELECT signal_name FROM {} WHERE point_id = ?", table);
-        let result: Option<(String,)> = sqlx::query_as(&query)
-            .bind(point_id as i64)
-            .fetch_optional(pool)
-            .await
-            .map_err(|e| {
-                tracing::error!("Error querying {}: {}", table, e);
-                AppError::internal_error("Database operation failed")
-            })?;
-
-        if let Some((signal_name,)) = result {
-            return Ok(signal_name);
-        }
-    }
-
-    // Point not found in any table, return point_id as fallback
-    Ok(format!("point_{}", point_id))
-}

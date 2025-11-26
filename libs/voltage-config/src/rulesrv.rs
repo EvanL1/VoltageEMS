@@ -1,4 +1,9 @@
 //! Rulesrv service configuration structures
+//!
+//! This module defines:
+//! - Service configuration (RulesrvConfig)
+//! - Rule chain structures for Vue Flow execution (RuleChain, FlowNode, etc.)
+//! - SQLite table schemas
 
 use crate::common::{ApiConfig, BaseServiceConfig, RedisConfig};
 use serde::{Deserialize, Serialize};
@@ -14,7 +19,6 @@ fn default_rulesrv_api() -> ApiConfig {
     ApiConfig {
         host: "0.0.0.0".to_string(),
         port: 6003,
-        workers: None,
     }
 }
 
@@ -115,18 +119,10 @@ pub const SYNC_METADATA_TABLE: &str = r#"
 /// Default port for rulesrv service
 pub const DEFAULT_PORT: u16 = 6003;
 
-/// Rule execution configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// Rule execution configuration (reserved for future use)
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[cfg_attr(feature = "schema", derive(JsonSchema))]
-pub struct ExecutionConfig {
-    /// Rule execution interval in seconds
-    #[serde(default = "default_interval")]
-    pub interval_seconds: u64,
-
-    /// Number of rules to process in batch
-    #[serde(default = "default_batch_size")]
-    pub batch_size: usize,
-}
+pub struct ExecutionConfig {}
 
 /// Rule core fields (shared between Config and API responses)
 /// These fields represent the essential rule identity and state
@@ -270,26 +266,8 @@ pub const RULE_HISTORY_TABLE: &str = r#"
 "#;
 
 // Default value functions
-fn default_interval() -> u64 {
-    10 // Execute rules every 10 seconds by default
-}
-
-fn default_batch_size() -> usize {
-    100 // Process 100 rules in batch by default
-}
-
 fn default_true() -> bool {
     true
-}
-
-// Default implementations
-impl Default for ExecutionConfig {
-    fn default() -> Self {
-        Self {
-            interval_seconds: default_interval(),
-            batch_size: default_batch_size(),
-        }
-    }
 }
 
 impl Default for RulesrvConfig {
@@ -302,7 +280,6 @@ impl Default for RulesrvConfig {
         let api = ApiConfig {
             host: "0.0.0.0".to_string(),
             port: 6003, // rulesrv default port
-            workers: None,
         };
 
         Self {
@@ -334,29 +311,11 @@ impl ConfigValidator for RulesrvConfig {
         self.api.validate(&mut result);
         self.redis.validate(&mut result);
 
-        // Validate execution config
-        self.execution.validate(&mut result);
-
         Ok(result)
     }
 
     fn validate_business(&self) -> Result<ValidationResult> {
-        let mut result = ValidationResult::new(ValidationLevel::Business);
-
-        // Validate execution intervals
-        if self.execution.interval_seconds > 3600 {
-            result.add_warning(
-                "Execution interval is greater than 1 hour, rules may not run frequently enough"
-                    .to_string(),
-            );
-        } else if self.execution.interval_seconds < 1 {
-            result.add_error("Execution interval must be at least 1 second".to_string());
-        }
-
-        if self.execution.batch_size > 1000 {
-            result.add_warning("Large batch size may impact performance".to_string());
-        }
-
+        let result = ValidationResult::new(ValidationLevel::Business);
         Ok(result)
     }
 
@@ -367,19 +326,6 @@ impl ConfigValidator for RulesrvConfig {
         self.api.validate_runtime(&mut result);
 
         Ok(result)
-    }
-}
-
-impl ExecutionConfig {
-    /// Validate execution configuration
-    pub fn validate(&self, result: &mut ValidationResult) {
-        if self.interval_seconds == 0 {
-            result.add_error("Execution interval cannot be 0".to_string());
-        }
-
-        if self.batch_size == 0 {
-            result.add_error("Batch size cannot be 0".to_string());
-        }
     }
 }
 
@@ -515,3 +461,329 @@ impl ConfigValidator for RulesrvValidator {
         }
     }
 }
+
+// ============================================================================
+// Vue Flow Rule Chain Structures (Parsed/Flattened)
+// ============================================================================
+
+/// Rule chain - parsed and flattened structure for execution
+/// This is the internal representation used by the execution engine
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
+pub struct RuleChain {
+    /// Unique identifier
+    pub id: String,
+
+    /// Rule chain name
+    pub name: String,
+
+    /// Optional description
+    pub description: Option<String>,
+
+    /// Whether the rule chain is enabled
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+
+    /// Execution priority (higher = earlier)
+    #[serde(default)]
+    pub priority: u32,
+
+    /// Cooldown period in milliseconds
+    #[serde(default)]
+    pub cooldown_ms: u64,
+
+    /// Variable definitions (data sources)
+    pub variables: Vec<Variable>,
+
+    /// Parsed flow nodes
+    pub nodes: Vec<FlowNode>,
+
+    /// Node ID to start execution from
+    pub start_node_id: String,
+
+    /// Original flow_json for frontend editing
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub flow_json: Option<serde_json::Value>,
+}
+
+/// Instance point type (M/A)
+/// Used for reading from modsrv instances
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
+pub enum InstancePointType {
+    /// M - Measurement (测量点) - Read from inst:{id}:M
+    #[serde(rename = "M")]
+    Measurement,
+    /// A - Action (动作点) - Read from inst:{id}:A
+    #[serde(rename = "A")]
+    Action,
+}
+
+/// Re-export PointType as ChannelPointType for clarity
+/// T = Telemetry, S = Signal, C = Control, A = Adjustment
+pub use crate::protocols::PointType as ChannelPointType;
+
+/// Variable definition for data acquisition
+///
+/// Variables define where to read data from:
+/// - Instance: Read from modsrv instance points (inst:{id}:M or inst:{id}:A)
+/// - Channel: Read directly from comsrv channel points (comsrv:{id}:T/S/C/A)
+/// - Combined: Calculate from other variables using a formula
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum Variable {
+    /// Instance point - read from modsrv instance (recommended)
+    /// Redis key: inst:{instance_id}:M or inst:{instance_id}:A
+    Instance {
+        /// Variable name (e.g., "pv_voltage")
+        name: String,
+        /// Instance ID (numeric)
+        instance_id: u16,
+        /// Point type: M (Measurement) or A (Action)
+        point_type: InstancePointType,
+        /// Point ID (hash field in Redis)
+        point_id: String,
+    },
+    /// Channel point - read directly from comsrv channel
+    /// Redis key: comsrv:{channel_id}:T/S/C/A
+    Channel {
+        /// Variable name (e.g., "raw_temp")
+        name: String,
+        /// Channel ID
+        channel_id: u16,
+        /// Point type: T/S/C/A
+        point_type: ChannelPointType,
+        /// Point ID (hash field in Redis)
+        point_id: String,
+    },
+    /// Combined value calculated from formula
+    Combined {
+        /// Variable name (e.g., "power_sum")
+        name: String,
+        /// Formula tokens for calculation
+        formula: Vec<FormulaToken>,
+    },
+}
+
+/// Formula token for expression evaluation
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum FormulaToken {
+    /// Variable reference
+    Var { name: String },
+    /// Numeric constant
+    Num { value: f64 },
+    /// Arithmetic operator
+    Op { op: ArithmeticOp },
+}
+
+/// Arithmetic operators
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
+pub enum ArithmeticOp {
+    #[serde(rename = "+")]
+    Add,
+    #[serde(rename = "-")]
+    Sub,
+    #[serde(rename = "*")]
+    Mul,
+    #[serde(rename = "/")]
+    Div,
+}
+
+/// Flow node types (parsed from Vue Flow nodes)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum FlowNode {
+    /// Start node - entry point
+    Start { id: String, next: String },
+    /// End node - termination point
+    End { id: String },
+    /// Switch node - conditional branching
+    Switch { id: String, rules: Vec<SwitchRule> },
+    /// Change value action
+    ChangeValue {
+        id: String,
+        changes: Vec<ValueChange>,
+        next: String,
+    },
+}
+
+impl FlowNode {
+    /// Get node ID
+    pub fn id(&self) -> &str {
+        match self {
+            FlowNode::Start { id, .. } => id,
+            FlowNode::End { id } => id,
+            FlowNode::Switch { id, .. } => id,
+            FlowNode::ChangeValue { id, .. } => id,
+        }
+    }
+}
+
+/// Switch rule - one branch in a switch node
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
+pub struct SwitchRule {
+    /// Output port name (e.g., "out001")
+    pub name: String,
+
+    /// Conditions to evaluate
+    pub conditions: Vec<RuleCondition>,
+
+    /// Next node ID if conditions match
+    pub next_node: String,
+}
+
+/// Single condition in a rule
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
+pub struct RuleCondition {
+    /// Left operand (variable name or literal)
+    pub left: String,
+
+    /// Comparison operator
+    pub operator: CompareOp,
+
+    /// Right operand (variable name or literal)
+    pub right: String,
+
+    /// Logical relation to next condition (AND/OR)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub relation: Option<LogicOp>,
+}
+
+/// Comparison operators
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
+pub enum CompareOp {
+    #[serde(rename = "==")]
+    Eq,
+    #[serde(rename = "!=")]
+    Ne,
+    #[serde(rename = ">")]
+    Gt,
+    #[serde(rename = "<")]
+    Lt,
+    #[serde(rename = ">=")]
+    Gte,
+    #[serde(rename = "<=")]
+    Lte,
+}
+
+/// Logical operators
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
+pub enum LogicOp {
+    #[serde(rename = "&&")]
+    And,
+    #[serde(rename = "||")]
+    Or,
+}
+
+/// Value change action - defines where to write data
+///
+/// Supports two target types:
+/// - Instance: Write to modsrv instance action point (triggers M2C routing)
+/// - Channel: Write directly to comsrv channel point (bypasses routing, use with caution)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
+#[serde(tag = "target", rename_all = "snake_case")]
+pub enum ValueChange {
+    /// Write to instance action point (recommended)
+    /// Uses M2C routing: inst:{id}:A → route:m2c → comsrv:{ch}:A:TODO
+    Instance {
+        /// Instance ID
+        instance_id: u16,
+        /// Action point ID
+        point_id: String,
+        /// New value (can reference variable names like "X1")
+        value: String,
+    },
+    /// Write directly to channel point (bypasses routing, use with caution)
+    /// Typically used for C (Control) or A (Adjustment) point types
+    Channel {
+        /// Channel ID
+        channel_id: u16,
+        /// Point type (usually C or A)
+        point_type: ChannelPointType,
+        /// Point ID
+        point_id: String,
+        /// New value (can reference variable names)
+        value: String,
+    },
+}
+
+// ============================================================================
+// SQLite Table for Rule Chains
+// ============================================================================
+
+/// Rule chains table record
+/// Stores parsed rule chains with both flattened structure and original JSON
+#[cfg_attr(feature = "schema-macro", derive(Schema))]
+#[cfg_attr(feature = "schema-macro", table(name = "rules"))]
+#[allow(dead_code)]
+struct RuleChainRecord {
+    #[cfg_attr(feature = "schema-macro", column(primary_key))]
+    id: String,
+
+    #[cfg_attr(feature = "schema-macro", column(not_null))]
+    name: String,
+
+    description: Option<String>,
+
+    #[cfg_attr(feature = "schema-macro", column(default = "true"))]
+    enabled: bool,
+
+    #[cfg_attr(feature = "schema-macro", column(default = "0"))]
+    priority: i32,
+
+    #[cfg_attr(feature = "schema-macro", column(default = "0"))]
+    cooldown_ms: i64,
+
+    /// Parsed variables as JSON
+    #[cfg_attr(feature = "schema-macro", column(not_null))]
+    variables_json: String,
+
+    /// Parsed nodes as JSON
+    #[cfg_attr(feature = "schema-macro", column(not_null))]
+    nodes_json: String,
+
+    /// Start node ID
+    #[cfg_attr(feature = "schema-macro", column(not_null))]
+    start_node_id: String,
+
+    /// Original flow_json for frontend editing
+    #[cfg_attr(feature = "schema-macro", column(not_null))]
+    flow_json: String,
+
+    #[cfg_attr(feature = "schema-macro", column(default = "CURRENT_TIMESTAMP"))]
+    created_at: String,
+
+    #[cfg_attr(feature = "schema-macro", column(default = "CURRENT_TIMESTAMP"))]
+    updated_at: String,
+}
+
+#[cfg(feature = "schema-macro")]
+pub const RULE_CHAINS_TABLE: &str = RuleChainRecord::CREATE_TABLE_SQL;
+
+#[cfg(not(feature = "schema-macro"))]
+pub const RULE_CHAINS_TABLE: &str = r#"
+    CREATE TABLE IF NOT EXISTS rules (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        description TEXT,
+        enabled BOOLEAN DEFAULT TRUE,
+        priority INTEGER DEFAULT 0,
+        cooldown_ms INTEGER DEFAULT 0,
+        variables_json TEXT NOT NULL,
+        nodes_json TEXT NOT NULL,
+        start_node_id TEXT NOT NULL,
+        flow_json TEXT NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+"#;

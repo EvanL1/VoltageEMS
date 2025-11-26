@@ -10,6 +10,7 @@
 use comsrv::storage::{write_batch, PointUpdate};
 use std::collections::HashMap;
 use std::sync::Arc;
+use voltage_config::FourRemote;
 use voltage_config::{KeySpaceConfig, RoutingCache};
 use voltage_rtdb::Rtdb;
 
@@ -154,7 +155,7 @@ async fn test_c2m_basic_routing() {
     // When: 写入通道点位
     let updates = vec![PointUpdate {
         channel_id: 1001,
-        point_type: "T".to_string(),
+        point_type: FourRemote::Telemetry,
         point_id: 1,
         value: 230.5,
         raw_value: None,
@@ -181,7 +182,7 @@ async fn test_c2m_three_layer_architecture() {
     // When: 写入通道点位（包含原始值）
     let updates = vec![PointUpdate {
         channel_id: 1001,
-        point_type: "T".to_string(),
+        point_type: FourRemote::Telemetry,
         point_id: 1,
         value: 230.5,            // 工程值
         raw_value: Some(2305.0), // 原始值
@@ -220,7 +221,7 @@ async fn test_c2m_routing_to_multiple_instances() {
     let updates = vec![
         PointUpdate {
             channel_id: 1001,
-            point_type: "T".to_string(),
+            point_type: FourRemote::Telemetry,
             point_id: 1,
             value: 100.0,
             raw_value: None,
@@ -228,7 +229,7 @@ async fn test_c2m_routing_to_multiple_instances() {
         },
         PointUpdate {
             channel_id: 1001,
-            point_type: "T".to_string(),
+            point_type: FourRemote::Telemetry,
             point_id: 2,
             value: 200.0,
             raw_value: None,
@@ -236,7 +237,7 @@ async fn test_c2m_routing_to_multiple_instances() {
         },
         PointUpdate {
             channel_id: 1001,
-            point_type: "T".to_string(),
+            point_type: FourRemote::Telemetry,
             point_id: 3,
             value: 300.0,
             raw_value: None,
@@ -268,7 +269,7 @@ async fn test_c2m_no_routing() {
     // When: 写入通道点位
     let updates = vec![PointUpdate {
         channel_id: 1001,
-        point_type: "T".to_string(),
+        point_type: FourRemote::Telemetry,
         point_id: 1,
         value: 100.0,
         raw_value: None,
@@ -302,7 +303,7 @@ async fn test_c2m_batch_updates() {
     let updates = vec![
         PointUpdate {
             channel_id: 1001,
-            point_type: "T".to_string(),
+            point_type: FourRemote::Telemetry,
             point_id: 1,
             value: 10.0,
             raw_value: None,
@@ -310,7 +311,7 @@ async fn test_c2m_batch_updates() {
         },
         PointUpdate {
             channel_id: 1001,
-            point_type: "T".to_string(),
+            point_type: FourRemote::Telemetry,
             point_id: 2,
             value: 20.0,
             raw_value: None,
@@ -318,7 +319,7 @@ async fn test_c2m_batch_updates() {
         },
         PointUpdate {
             channel_id: 1001,
-            point_type: "T".to_string(),
+            point_type: FourRemote::Telemetry,
             point_id: 3,
             value: 30.0,
             raw_value: None,
@@ -326,7 +327,7 @@ async fn test_c2m_batch_updates() {
         },
         PointUpdate {
             channel_id: 1001,
-            point_type: "T".to_string(),
+            point_type: FourRemote::Telemetry,
             point_id: 4,
             value: 40.0,
             raw_value: None,
@@ -334,7 +335,7 @@ async fn test_c2m_batch_updates() {
         },
         PointUpdate {
             channel_id: 1001,
-            point_type: "T".to_string(),
+            point_type: FourRemote::Telemetry,
             point_id: 5,
             value: 50.0,
             raw_value: None,
@@ -375,7 +376,7 @@ async fn test_c2m_different_point_types() {
     let updates = vec![
         PointUpdate {
             channel_id: 1001,
-            point_type: "T".to_string(), // 遥测
+            point_type: FourRemote::Telemetry, // 遥测
             point_id: 1,
             value: 230.5,
             raw_value: None,
@@ -383,7 +384,7 @@ async fn test_c2m_different_point_types() {
         },
         PointUpdate {
             channel_id: 1001,
-            point_type: "S".to_string(), // 遥信
+            point_type: FourRemote::Signal, // 遥信
             point_id: 2,
             value: 1.0,
             raw_value: None,
@@ -391,7 +392,7 @@ async fn test_c2m_different_point_types() {
         },
         PointUpdate {
             channel_id: 1001,
-            point_type: "C".to_string(), // 遥控
+            point_type: FourRemote::Control, // 遥控
             point_id: 3,
             value: 0.0,
             raw_value: None,
@@ -399,7 +400,7 @@ async fn test_c2m_different_point_types() {
         },
         PointUpdate {
             channel_id: 1001,
-            point_type: "A".to_string(), // 遥调
+            point_type: FourRemote::Adjustment, // 遥调
             point_id: 4,
             value: 50.0,
             raw_value: None,
@@ -442,7 +443,7 @@ async fn test_c2m_routing_with_different_point_ids() {
     let updates = vec![
         PointUpdate {
             channel_id: 1001,
-            point_type: "T".to_string(),
+            point_type: FourRemote::Telemetry,
             point_id: 10,
             value: 100.0,
             raw_value: None,
@@ -450,7 +451,7 @@ async fn test_c2m_routing_with_different_point_ids() {
         },
         PointUpdate {
             channel_id: 1001,
-            point_type: "T".to_string(),
+            point_type: FourRemote::Telemetry,
             point_id: 20,
             value: 200.0,
             raw_value: None,
@@ -484,7 +485,7 @@ async fn test_c2m_routing_with_multiple_channels() {
     let updates = vec![
         PointUpdate {
             channel_id: 1001,
-            point_type: "T".to_string(),
+            point_type: FourRemote::Telemetry,
             point_id: 1,
             value: 100.0,
             raw_value: None,
@@ -492,7 +493,7 @@ async fn test_c2m_routing_with_multiple_channels() {
         },
         PointUpdate {
             channel_id: 1002,
-            point_type: "T".to_string(),
+            point_type: FourRemote::Telemetry,
             point_id: 1,
             value: 200.0,
             raw_value: None,
@@ -500,7 +501,7 @@ async fn test_c2m_routing_with_multiple_channels() {
         },
         PointUpdate {
             channel_id: 1003,
-            point_type: "T".to_string(),
+            point_type: FourRemote::Telemetry,
             point_id: 1,
             value: 300.0,
             raw_value: None,

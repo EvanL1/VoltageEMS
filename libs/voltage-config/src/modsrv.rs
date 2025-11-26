@@ -13,7 +13,6 @@ fn default_modsrv_api() -> ApiConfig {
     ApiConfig {
         host: "0.0.0.0".to_string(),
         port: 6002,
-        workers: None,
     }
 }
 
@@ -525,7 +524,6 @@ impl Default for ModsrvConfig {
         let api = ApiConfig {
             host: "0.0.0.0".to_string(),
             port: 6002, // modsrv default port
-            workers: None,
         };
 
         Self {

@@ -5,7 +5,6 @@
 #![allow(clippy::disallowed_methods)] // json! macro used in multiple functions
 
 use crate::core::config::types::{FourRemote, RuntimeChannelConfig};
-use crate::core::config::ChannelConfig;
 use crate::utils::error::{ComSrvError, Result};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -416,18 +415,13 @@ pub struct TelemetryBatch {
 // Basic type definitions (from types.rs)
 // ============================================================================
 
-/// Channel operation status and health information
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+/// Channel operation status - minimal and essential fields only
+///
+/// All fields are Copy types, making clone() essentially free (memcpy).
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
 pub struct ChannelStatus {
     pub is_connected: bool,
-    pub last_error: Option<String>,
     pub last_update: i64, // Unix timestamp in seconds
-    pub success_count: u64,
-    pub error_count: u64,
-    pub reconnect_count: u64,
-    pub points_count: usize,
-    pub last_read_duration_ms: Option<u64>,
-    pub average_read_duration_ms: Option<f64>,
 }
 
 /// Point data structure - using combase wrapper type
@@ -497,14 +491,8 @@ pub trait ComBase: Send + Sync {
     /// Get implementation name
     fn name(&self) -> &str;
 
-    /// Get protocol type
-    fn protocol_type(&self) -> &str;
-
     /// Get channel ID
     fn get_channel_id(&self) -> u16;
-
-    /// Get channel name
-    fn get_channel_name(&self) -> &str;
 
     /// Get channel status
     async fn get_status(&self) -> ChannelStatus;
@@ -530,7 +518,6 @@ pub trait ComBase: Send + Sync {
     async fn get_diagnostics(&self) -> Result<serde_json::Value> {
         Ok(serde_json::json!({
             "name": self.name(),
-            "protocol": self.protocol_type(),
         }))
     }
 }
@@ -576,12 +563,6 @@ pub trait ComClient: ComBase {
     /// @redis-write comsrv:{channel}:A - Adjustment status
     async fn adjustment(&mut self, adjustments: Vec<(u32, RedisValue)>)
         -> Result<Vec<(u32, bool)>>;
-
-    /// Update configuration at runtime (optional implementation)
-    async fn update_configuration(&mut self, _config: ChannelConfig) -> Result<()> {
-        // Default implementation - subclasses can override if they support hot reload
-        Ok(())
-    }
 
     /// Start periodic tasks (polling, etc.)
     async fn start_periodic_tasks(&self) -> Result<()> {

@@ -1,61 +1,47 @@
 //! Hot reload implementation for rulesrv
 //!
 //! This module implements the unified `ReloadableService` trait for rulesrv,
-//! enabling zero-downtime rule updates from SQLite database.
+//! enabling zero-downtime rule chain updates from SQLite database.
 
 use std::collections::HashSet;
-use std::sync::Arc;
-use tracing::{error, info};
+use tracing::info;
+use voltage_config::rulesrv::RuleChain;
 use voltage_config::{ReloadableService, RuleReloadResult};
 
 use crate::app::AppState;
-use crate::rule_engine::Rule;
 use crate::rules_repository;
 
-/// Rule change severity classification
+/// Rule chain change severity classification
 ///
 /// For rulesrv, all changes are treated as configuration updates since
-/// rules are stateless configuration objects.
+/// rule chains are stateless configuration objects.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum RuleChangeType {
-    /// Configuration update (condition, action, priority, enabled)
+    /// Configuration update (nodes, variables, enabled state)
     ConfigUpdate = 0,
 }
 
 impl ReloadableService for AppState {
     type ChangeType = RuleChangeType;
-    type Config = Rule;
+    type Config = RuleChain;
     type ReloadResult = RuleReloadResult;
 
-    /// Reload rules from SQLite database with incremental sync
+    /// Reload rule chains from SQLite database with incremental sync
     async fn reload_from_database(
         &self,
         _pool: &sqlx::SqlitePool,
     ) -> anyhow::Result<Self::ReloadResult> {
         let start_time = std::time::Instant::now();
-        info!("Starting incremental rule reload from SQLite");
+        info!("Starting incremental rule chain reload from SQLite");
 
-        // 1. Load all rules from SQLite via rules_repository
-        let db_rules_json = rules_repository::list_rules(self).await?;
+        // 1. Load all rule chains from SQLite via rules_repository
+        let db_chains = rules_repository::load_all_chains(self).await?;
+        let db_ids: HashSet<String> = db_chains.iter().map(|c| c.id.clone()).collect();
 
-        // Convert JSON rules to Rule structs
-        let mut db_rules = Vec::new();
-        for rule_json in db_rules_json {
-            match serde_json::from_value::<Rule>(rule_json) {
-                Ok(rule) => db_rules.push(rule),
-                Err(e) => {
-                    error!("Failed to deserialize rule from SQLite: {}", e);
-                    continue;
-                },
-            }
-        }
-
-        let db_ids: HashSet<String> = db_rules.iter().map(|r| r.id.clone()).collect();
-
-        // 2. Get current cached rule IDs
-        let cached_rules = self.rules_cache.read().await;
-        let cached_ids: HashSet<String> = cached_rules.iter().map(|r| r.id.clone()).collect();
-        drop(cached_rules); // Release read lock
+        // 2. Get current cached chain IDs
+        let cached_chains = self.chains_cache.read().await;
+        let cached_ids: HashSet<String> = cached_chains.iter().map(|c| c.id.clone()).collect();
+        drop(cached_chains); // Release read lock
 
         // 3. Determine changes
         let to_add: Vec<String> = db_ids.difference(&cached_ids).cloned().collect();
@@ -67,43 +53,43 @@ impl ReloadableService for AppState {
         let mut removed = Vec::new();
         let errors = Vec::new();
 
-        // 4. Build new rules cache with all changes applied
-        let mut new_rules = Vec::new();
+        // 4. Build new chains cache with all changes applied
+        let mut new_chains = Vec::new();
 
-        // Add new rules
+        // Add new chains
         for id in &to_add {
-            if let Some(rule) = db_rules.iter().find(|r| &r.id == id) {
-                new_rules.push(rule.clone());
+            if let Some(chain) = db_chains.iter().find(|c| &c.id == id) {
+                new_chains.push(chain.clone());
                 added.push(id.clone());
-                info!("Added rule {} ({})", rule.name, id);
+                info!("Added rule chain {} ({})", chain.name, id);
             }
         }
 
-        // Update existing rules
+        // Update existing chains
         for id in &to_update {
-            if let Some(rule) = db_rules.iter().find(|r| &r.id == id) {
-                new_rules.push(rule.clone());
+            if let Some(chain) = db_chains.iter().find(|c| &c.id == id) {
+                new_chains.push(chain.clone());
                 updated.push(id.clone());
-                info!("Updated rule {} ({})", rule.name, id);
+                info!("Updated rule chain {} ({})", chain.name, id);
             }
         }
 
-        // Note: Removed rules are automatically excluded from new_rules
+        // Note: Removed chains are automatically excluded from new_chains
         for id in &to_remove {
             removed.push(id.clone());
-            info!("Removed rule {}", id);
+            info!("Removed rule chain {}", id);
         }
 
-        // 5. Update rules cache atomically
-        let mut cache = self.rules_cache.write().await;
-        *cache = Arc::new(new_rules);
+        // 5. Update chains cache atomically
+        let mut cache = self.chains_cache.write().await;
+        *cache = new_chains;
         drop(cache);
 
         let duration_ms = start_time.elapsed().as_millis() as u64;
-        let total_count = db_rules.len();
+        let total_count = db_chains.len();
 
         info!(
-            "Rule reload completed: {} added, {} updated, {} removed, {} errors ({}ms)",
+            "Rule chain reload completed: {} added, {} updated, {} removed, {} errors ({}ms)",
             added.len(),
             updated.len(),
             removed.len(),
@@ -131,25 +117,25 @@ impl ReloadableService for AppState {
         RuleChangeType::ConfigUpdate
     }
 
-    /// Perform hot reload of a rule (update cache)
+    /// Perform hot reload of a rule chain (update cache)
     async fn perform_hot_reload(&self, config: Self::Config) -> anyhow::Result<String> {
         info!(
-            "Performing hot reload for rule {} ({})",
+            "Performing hot reload for rule chain {} ({})",
             config.name, config.id
         );
 
-        // Update single rule in cache
-        let mut cache = self.rules_cache.write().await;
-        let mut new_rules = (**cache).clone();
+        // Update single chain in cache
+        let mut cache = self.chains_cache.write().await;
+        let mut new_chains = cache.clone();
 
         // Find and replace or add
-        if let Some(index) = new_rules.iter().position(|r| r.id == config.id) {
-            new_rules[index] = config;
+        if let Some(index) = new_chains.iter().position(|c| c.id == config.id) {
+            new_chains[index] = config;
         } else {
-            new_rules.push(config);
+            new_chains.push(config);
         }
 
-        *cache = Arc::new(new_rules);
+        *cache = new_chains;
         drop(cache);
 
         Ok("cached".to_string())
@@ -158,7 +144,7 @@ impl ReloadableService for AppState {
     /// Rollback to previous configuration
     async fn rollback(&self, previous_config: Self::Config) -> anyhow::Result<String> {
         info!(
-            "Rolling back rule {} ({}) to previous configuration",
+            "Rolling back rule chain {} ({}) to previous configuration",
             previous_config.name, previous_config.id
         );
 
@@ -183,30 +169,25 @@ mod tests {
     }
 
     #[test]
-    fn test_rule_creation() {
-        // Test rule creation works correctly
-        let rule = create_test_rule("rule_001", "Test Rule");
-        assert_eq!(rule.id, "rule_001");
-        assert_eq!(rule.name, "Test Rule");
+    fn test_rule_chain_creation() {
+        // Test rule chain creation works correctly
+        let chain = create_test_chain("chain_001", "Test Chain");
+        assert_eq!(chain.id, "chain_001");
+        assert_eq!(chain.name, "Test Chain");
     }
 
-    fn create_test_rule(id: &str, name: &str) -> Rule {
-        use crate::rule_engine::{ConditionGroup, LogicalOperator, RuleMetadata};
-
-        Rule {
+    fn create_test_chain(id: &str, name: &str) -> RuleChain {
+        RuleChain {
             id: id.to_string(),
             name: name.to_string(),
-            category: "test".to_string(),
             description: None,
-            priority: 100,
             enabled: true,
-            triggers: vec![],
-            conditions: ConditionGroup::Group {
-                logic: LogicalOperator::And,
-                rules: vec![],
-            },
-            actions: vec![],
-            metadata: RuleMetadata::default(),
+            priority: 100,
+            cooldown_ms: 0,
+            variables: vec![],
+            nodes: vec![],
+            start_node_id: "start".to_string(),
+            flow_json: None,
         }
     }
 }

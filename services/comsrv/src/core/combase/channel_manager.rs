@@ -418,14 +418,22 @@ impl ChannelManager {
             .map(|p| p.base.point_id)
             .collect();
 
-        let telemetry_types: Vec<(&str, &str, Vec<u32>)> = vec![
-            ("telemetry", "T", telemetry_ids),
-            ("signal", "S", signal_ids),
-            ("control", "C", control_ids),
-            ("adjustment", "A", adjustment_ids),
+        let telemetry_types: Vec<(&str, voltage_config::FourRemote, Vec<u32>)> = vec![
+            (
+                "telemetry",
+                voltage_config::FourRemote::Telemetry,
+                telemetry_ids,
+            ),
+            ("signal", voltage_config::FourRemote::Signal, signal_ids),
+            ("control", voltage_config::FourRemote::Control, control_ids),
+            (
+                "adjustment",
+                voltage_config::FourRemote::Adjustment,
+                adjustment_ids,
+            ),
         ];
 
-        for (telemetry_name, redis_type, point_ids) in telemetry_types {
+        for (telemetry_name, four_remote, point_ids) in telemetry_types {
             if point_ids.is_empty() {
                 debug!(
                     "No {} points configured for channel {}",
@@ -443,13 +451,9 @@ impl ChannelManager {
 
             // Get existing point IDs from Redis
             let config = voltage_config::KeySpaceConfig::production();
-            let point_type = match redis_type {
-                "T" => voltage_config::protocols::PointType::Telemetry,
-                "S" => voltage_config::protocols::PointType::Signal,
-                "C" => voltage_config::protocols::PointType::Control,
-                "A" => voltage_config::protocols::PointType::Adjustment,
-                _ => unreachable!(),
-            };
+            // Convert FourRemote to PointType via string (both have same T/S/C/A representation)
+            let point_type = voltage_config::protocols::PointType::from_str(four_remote.as_str())
+                .expect("FourRemote and PointType have matching string representations");
             let channel_key = config.channel_key(channel_id, point_type);
 
             // Check if Redis key exists (defensive verification)
@@ -549,7 +553,7 @@ impl ChannelManager {
                 .iter()
                 .map(|point_id| crate::storage::PointUpdate {
                     channel_id,
-                    point_type: redis_type.to_string(),
+                    point_type: four_remote,
                     point_id: *point_id,
                     value: 0.0,           // Initialize with 0
                     raw_value: Some(0.0), // Initialize with 0

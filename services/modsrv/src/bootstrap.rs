@@ -100,13 +100,10 @@ pub async fn load_configuration(service_info: &ServiceInfo) -> Result<ModsrvConf
         api: ApiConfig {
             host: DEFAULT_API_HOST.to_string(),
             port: service_config.port,
-            workers: None,
         },
         redis: RedisConfig {
             url: service_config.redis_url,
             enabled: true,
-            pool_size: None,
-            timeout_ms: None,
         },
         products_path: service_config
             .extra_config

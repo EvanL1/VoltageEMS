@@ -21,7 +21,6 @@ use voltage_rtdb::RedisRtdb as TestRtdb;
 /// Application state containing shared resources
 pub struct AppState {
     /// Configuration loaded from database
-    #[allow(dead_code)]
     pub config: Arc<ModsrvConfig>,
 
     /// SQLite client for configuration storage

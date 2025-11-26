@@ -43,7 +43,7 @@ pub struct ModbusProtocol {
     /// Frame processor for request/response correlation
     frame_processor: Arc<Mutex<ModbusFrameProcessor>>,
 
-    /// State management
+    /// State management - AtomicBool for sync access, status for API metadata
     is_connected: Arc<AtomicBool>,
     status: Arc<RwLock<ChannelStatus>>,
     connection_state: Arc<RwLock<ConnectionState>>,
@@ -82,7 +82,7 @@ impl std::fmt::Debug for ModbusProtocol {
         f.debug_struct("ModbusProtocol")
             .field("name", &self.name)
             .field("channel_id", &self.channel_id)
-            .field("is_connected", &self.is_connected)
+            .field("is_connected", &self.is_connected.load(Ordering::Relaxed))
             .field("polling_config", &self.polling_config)
             .finish()
     }
@@ -519,20 +519,16 @@ impl ComBase for ModbusProtocol {
         &self.name
     }
 
-    fn protocol_type(&self) -> &'static str {
-        "modbus"
-    }
-
     fn get_channel_id(&self) -> u16 {
         self.channel_id
     }
 
-    fn get_channel_name(&self) -> &str {
-        &self.name
-    }
-
     async fn get_status(&self) -> ChannelStatus {
-        self.status.read().await.clone()
+        // Build status from is_connected (authoritative) + last_update from status
+        ChannelStatus {
+            is_connected: self.is_connected.load(Ordering::Relaxed),
+            last_update: self.status.read().await.last_update,
+        }
     }
 
     async fn initialize(&mut self, runtime_config: Arc<RuntimeChannelConfig>) -> Result<()> {
@@ -830,8 +826,6 @@ impl ComBase for ModbusProtocol {
         *self.control_points.write().await = control_modbus_points;
         *self.adjustment_points.write().await = adjustment_modbus_points;
 
-        self.status.write().await.points_count = total_points;
-
         self.logger.log_init(
             protocol_type,
             &format!("Successfully configured {} total points", total_points),
@@ -953,7 +947,6 @@ impl ComClient for ModbusProtocol {
                 }
 
                 self.is_connected.store(true, Ordering::Relaxed);
-                self.status.write().await.is_connected = true;
 
                 // Update connection state to connected
                 {
@@ -1034,7 +1027,6 @@ impl ComClient for ModbusProtocol {
         self.connection_manager.disconnect().await?;
 
         self.is_connected.store(false, Ordering::Relaxed);
-        self.status.write().await.is_connected = false;
 
         self.logger.log_init(
             protocol_type,
@@ -1441,11 +1433,8 @@ impl ComClient for ModbusProtocol {
                         channel_id, success_count, error_count
                     );
 
-                    // Update status
-                    let mut status_guard = status.write().await;
-                    status_guard.last_update = chrono::Utc::now().timestamp();
-                    status_guard.success_count += success_count as u64;
-                    status_guard.error_count += error_count as u64;
+                    // Update status - only last_update is maintained
+                    status.write().await.last_update = chrono::Utc::now().timestamp();
                 }
             });
 
@@ -3671,28 +3660,11 @@ mod tests {
     }
 
     #[test]
-    fn test_combase_protocol_type() {
-        use crate::core::combase::traits::ComBase;
-
-        let protocol = create_test_protocol();
-        // protocol_type() returns generic "modbus" (not specific TCP/RTU variant)
-        assert_eq!(ComBase::protocol_type(&protocol), "modbus");
-    }
-
-    #[test]
     fn test_combase_get_channel_id() {
         use crate::core::combase::traits::ComBase;
 
         let protocol = create_test_protocol();
         assert_eq!(ComBase::get_channel_id(&protocol), 2001);
-    }
-
-    #[test]
-    fn test_combase_get_channel_name() {
-        use crate::core::combase::traits::ComBase;
-
-        let protocol = create_test_protocol();
-        assert_eq!(ComBase::get_channel_name(&protocol), "ControlTestChannel");
     }
 
     #[tokio::test]
@@ -3704,8 +3676,6 @@ mod tests {
 
         // Initial status should indicate not connected
         assert!(!status.is_connected);
-        assert_eq!(status.success_count, 0);
-        assert_eq!(status.error_count, 0);
     }
 
     // ================== Phase 6: ComClient Trait Method Tests ==================

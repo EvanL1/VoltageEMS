@@ -9,7 +9,7 @@ use utoipa::ToSchema;
 
 // Import shared API types from voltage-config
 pub use voltage_config::api::{
-    AppError, ComponentHealth, ErrorInfo, ErrorResponse, HealthStatus,
+    AppError, ComponentHealth, ErrorInfo, ErrorResponse, HealthStatus, PaginatedResponse,
     ServiceStatus as SharedServiceStatus, SuccessResponse,
 };
 // Import Core types for zero-duplication architecture
@@ -21,7 +21,7 @@ pub use voltage_config::comsrv::{ChannelConfig, ChannelCore};
 
 /// Control command (remote control)
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-pub struct ControlCommand {
+pub struct ControlRequest {
     #[schema(example = 101)]
     pub point_id: u32,
     #[schema(example = 1)]
@@ -30,7 +30,7 @@ pub struct ControlCommand {
 
 /// Adjustment command (setpoint)
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-pub struct AdjustmentCommand {
+pub struct AdjustmentRequest {
     #[schema(example = 201)]
     pub point_id: u32,
     #[schema(example = 5000.0)]
@@ -39,16 +39,16 @@ pub struct AdjustmentCommand {
 
 /// Batch control commands
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-pub struct BatchControlCommand {
+pub struct BatchControlRequest {
     #[schema(example = json!([{"point_id": 101, "value": 1}, {"point_id": 102, "value": 0}]))]
-    pub commands: Vec<ControlCommand>,
+    pub commands: Vec<ControlRequest>,
 }
 
 /// Batch adjustment commands
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-pub struct BatchAdjustmentCommand {
+pub struct BatchAdjustmentRequest {
     #[schema(example = json!([{"point_id": 201, "value": 5000.0}, {"point_id": 202, "value": 380.0}]))]
-    pub commands: Vec<AdjustmentCommand>,
+    pub commands: Vec<AdjustmentRequest>,
 }
 
 /// Batch command execution result
@@ -231,8 +231,6 @@ pub struct ChannelStatusResponse {
     pub connected: bool,
     #[schema(value_type = String, format = "date-time")]
     pub last_update: DateTime<Utc>,
-    pub error_count: u32,
-    pub last_error: Option<String>,
 }
 
 /// channel status response - Enhanced version combining API and `ComBase` requirements
@@ -245,8 +243,6 @@ pub struct ChannelStatus {
     pub running: bool,
     #[schema(value_type = String, format = "date-time")]
     pub last_update: DateTime<Utc>,
-    pub error_count: u32,
-    pub last_error: Option<String>,
     pub statistics: HashMap<String, serde_json::Value>,
 }
 
@@ -261,8 +257,6 @@ impl From<crate::core::combase::ChannelStatus> for ChannelStatus {
             running: status.is_connected, // Use is_connected as running status
             last_update: DateTime::<Utc>::from_timestamp(status.last_update, 0)
                 .unwrap_or_else(Utc::now),
-            error_count: status.error_count.try_into().unwrap_or(u32::MAX),
-            last_error: status.last_error,
             statistics: HashMap::new(), // Will be filled by handler
         }
     }
@@ -564,8 +558,6 @@ pub struct ChannelRuntimeStatus {
     pub running: bool,
     #[schema(value_type = String, format = "date-time")]
     pub last_update: DateTime<Utc>,
-    pub error_count: u32,
-    pub last_error: Option<String>,
     pub statistics: HashMap<String, serde_json::Value>,
 }
 
@@ -626,15 +618,6 @@ pub struct AutoReloadQuery {
 
 fn default_auto_reload() -> bool {
     true // Default: auto-reload enabled for immediate effect
-}
-
-/// Paginated response wrapper
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-pub struct PaginatedResponse<T> {
-    pub total: usize,
-    pub page: usize,
-    pub page_size: usize,
-    pub list: Vec<T>,
 }
 
 // ============================================================================
@@ -926,8 +909,6 @@ mod tests {
             connected: true,
             running: true,
             last_update: now,
-            error_count: 0,
-            last_error: None,
             statistics: parameters,
         };
 
@@ -1023,29 +1004,19 @@ mod tests {
             connected: false,
             running: false,
             last_update: now,
-            error_count: 0,
-            last_error: Some("Connection timeout".to_string()),
             statistics: HashMap::new(),
         };
 
         let serialized = serde_json::to_string(&status).unwrap();
         assert!(serialized.contains('1'));
         assert!(serialized.contains("false"));
-        assert!(serialized.contains("Connection timeout"));
     }
 
     #[test]
     fn test_combase_channel_status_conversion() {
         let combase_status = crate::core::combase::ChannelStatus {
             is_connected: true,
-            last_error: Some("Test error".to_string()),
             last_update: 1_234_567_890,
-            success_count: 100,
-            error_count: 5,
-            reconnect_count: 2,
-            points_count: 50,
-            last_read_duration_ms: Some(100),
-            average_read_duration_ms: Some(95.5),
         };
         let api_status = ChannelStatus::from(combase_status);
 
@@ -1053,8 +1024,6 @@ mod tests {
         assert_eq!(api_status.name, "Unknown");
         assert_eq!(api_status.protocol, "Unknown");
         assert!(api_status.connected);
-        assert_eq!(api_status.error_count, 5);
-        assert_eq!(api_status.last_error, Some("Test error".to_string()));
         assert!(api_status.statistics.is_empty());
     }
 

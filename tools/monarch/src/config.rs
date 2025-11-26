@@ -97,7 +97,7 @@ async fn handle_validate(service: &str, detailed: bool, config_path: &Path) -> R
 
         match core.validate(svc).await {
             Ok(result) => {
-                if result.is_valid() {
+                if result.is_valid {
                     println!("{} Valid", "OK".green());
                     if detailed && !result.warnings.is_empty() {
                         for warning in &result.warnings {

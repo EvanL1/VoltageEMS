@@ -262,17 +262,6 @@ pub fn flatten_json(value: &JsonValue, prefix: Option<String>) -> HashMap<String
 
     result
 }
-
-/// Database status information
-#[allow(dead_code)]
-pub struct DatabaseStatus {
-    pub exists: bool,
-    pub initialized: bool,
-    pub last_sync: Option<String>,
-    pub item_count: Option<usize>,
-    pub schema_version: Option<String>,
-}
-
 /// Create parent directories for a path if they don't exist
 #[allow(dead_code)]
 pub fn ensure_parent_dir<P: AsRef<Path>>(path: P) -> Result<()> {

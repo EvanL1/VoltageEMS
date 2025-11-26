@@ -166,10 +166,6 @@ pub struct ApiConfig {
 
     /// Listen port (no default - set by service-specific config)
     pub port: u16,
-
-    /// Number of worker threads
-    #[serde(default)]
-    pub workers: Option<usize>,
 }
 
 // ============================================================================
@@ -183,14 +179,6 @@ pub struct RedisConfig {
     /// Redis connection URL
     #[serde(default = "default_redis_url")]
     pub url: String,
-
-    /// Connection pool size
-    #[serde(default)]
-    pub pool_size: Option<u32>,
-
-    /// Connection timeout in milliseconds
-    #[serde(default)]
-    pub timeout_ms: Option<u64>,
 
     /// Whether Redis is enabled
     #[serde(default = "default_true")]
@@ -287,7 +275,6 @@ impl Default for ApiConfig {
         Self {
             host: default_api_host(),
             port: 0, // Placeholder - services should provide their own default port
-            workers: None,
         }
     }
 }
@@ -296,8 +283,6 @@ impl Default for RedisConfig {
     fn default() -> Self {
         Self {
             url: default_redis_url(),
-            pool_size: None,
-            timeout_ms: None,
             enabled: true,
         }
     }
@@ -773,14 +758,6 @@ impl RedisConfig {
             result.add_error("Redis URL cannot be empty".to_string());
         } else if !self.url.starts_with("redis://") && !self.url.starts_with("rediss://") {
             result.add_warning("Redis URL should start with redis:// or rediss://".to_string());
-        }
-
-        if let Some(pool_size) = self.pool_size {
-            if pool_size == 0 {
-                result.add_error("Redis pool size cannot be 0".to_string());
-            } else if pool_size > 100 {
-                result.add_warning(format!("Redis pool size {} might be too large", pool_size));
-            }
         }
     }
 

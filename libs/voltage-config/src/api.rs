@@ -221,6 +221,7 @@ impl From<anyhow::Error> for AppError {
 /// Paginated response wrapper
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(JsonSchema))]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct PaginatedResponse<T> {
     /// List of items
     pub items: Vec<T>,
@@ -248,7 +249,7 @@ impl<T> PaginatedResponse<T> {
             page,
             page_size,
             total_pages,
-            has_next: page < total_pages - 1,
+            has_next: page + 1 < total_pages,
             has_previous: page > 0,
         }
     }
@@ -468,43 +469,6 @@ pub enum ControlAction {
 }
 
 // ============================================================================
-// Validation Helpers
-// ============================================================================
-
-/// Validation result for API inputs
-#[derive(Debug, Default)]
-pub struct ValidationResult {
-    errors: HashMap<String, Vec<String>>,
-}
-
-impl ValidationResult {
-    /// Create a new validation result
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Check if validation passed
-    pub fn is_valid(&self) -> bool {
-        self.errors.is_empty()
-    }
-
-    /// Add a validation error
-    pub fn add_error(&mut self, field: impl Into<String>, message: impl Into<String>) {
-        self.errors
-            .entry(field.into())
-            .or_default()
-            .push(message.into());
-    }
-
-    /// Convert to ErrorInfo
-    pub fn to_error_info(&self) -> ErrorInfo {
-        let mut error = ErrorInfo::new("Validation failed").with_code(400);
-        error.field_errors = self.errors.clone();
-        error
-    }
-}
-
-// ============================================================================
 // Tests
 // ============================================================================
 
@@ -559,19 +523,6 @@ mod tests {
         assert_eq!(paginated.total_pages, 20);
         assert!(paginated.has_next);
         assert!(!paginated.has_previous);
-    }
-
-    #[test]
-    fn test_validation() {
-        let mut validation = ValidationResult::new();
-        assert!(validation.is_valid());
-
-        validation.add_error("email", "Invalid email format");
-        assert!(!validation.is_valid());
-
-        let error = validation.to_error_info();
-        assert_eq!(error.code, 400);
-        assert!(error.field_errors.contains_key("email"));
     }
 
     #[test]

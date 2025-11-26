@@ -694,16 +694,8 @@ impl ConfigExporter {
                     config.api.port = value.parse().unwrap_or(6003)
                 },
                 "redis.url" | "redis_url" => config.redis.url = value,
-                "execution_interval" => {
-                    if let Ok(interval) = value.parse() {
-                        config.execution.interval_seconds = interval;
-                    }
-                },
-                "batch_size" => {
-                    if let Ok(size) = value.parse() {
-                        config.execution.batch_size = size;
-                    }
-                },
+                // execution_interval and batch_size are deprecated
+                "execution_interval" | "batch_size" => {},
                 _ => {},
             }
         }

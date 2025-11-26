@@ -33,7 +33,8 @@ pub struct PluginPointUpdate {
 #[derive(Debug, Clone)]
 pub struct PointUpdate {
     pub channel_id: u16,
-    pub point_type: String,
+    /// Point type (T/S/C/A) - using FourRemote enum to avoid string clones
+    pub point_type: FourRemote,
     pub point_id: u32,
     pub value: f64,
     pub raw_value: Option<f64>,
@@ -124,12 +125,12 @@ impl StorageManager {
         self.stats.increment_batch();
         self.stats.increment_total(updates.len() as u64);
 
-        // Convert to storage format
+        // Convert to storage format (no string allocation needed - FourRemote is Copy)
         let storage_updates: Vec<PointUpdate> = updates
             .iter()
             .map(|u| PointUpdate {
                 channel_id,
-                point_type: u.telemetry_type.as_str().to_string(),
+                point_type: u.telemetry_type,
                 point_id: u.point_id,
                 value: u.value,
                 raw_value: u.raw_value,
@@ -306,10 +307,11 @@ pub async fn write_batch(
     }
 
     // Group updates by channel_id and point_type for efficient batch processing
-    let mut grouped: HashMap<(u16, String), Vec<PointUpdate>> = HashMap::new();
+    // Using FourRemote enum (Copy) as key avoids string clones
+    let mut grouped: HashMap<(u16, FourRemote), Vec<PointUpdate>> = HashMap::new();
 
     for update in updates {
-        let key = (update.channel_id, update.point_type.clone());
+        let key = (update.channel_id, update.point_type);
         grouped.entry(key).or_default().push(update);
     }
 
@@ -321,11 +323,12 @@ pub async fn write_batch(
 
     let config = voltage_config::KeySpaceConfig::production();
 
-    for ((channel_id, point_type), updates) in grouped {
-        // Parse point type
+    for ((channel_id, four_remote), updates) in grouped {
+        // Convert FourRemote to PointType via string (both have same T/S/C/A representation)
         use voltage_config::protocols::PointType;
-        let point_type_enum = PointType::from_str(&point_type)
-            .ok_or_else(|| ComSrvError::Storage(format!("Invalid point type: {}", point_type)))?;
+        let point_type_str = four_remote.as_str();
+        let point_type_enum = PointType::from_str(point_type_str)
+            .expect("FourRemote and PointType have matching string representations");
 
         // Prepare data for channel Hash writes (3-layer architecture)
         let mut channel_values = Vec::new(); // Layer 1: Engineering values
@@ -338,30 +341,29 @@ pub async fn write_batch(
         // Prepare data for C2C forwarding (grouped by target channel)
         let mut c2c_forwards: Vec<PointUpdate> = Vec::new();
 
+        // Pre-convert timestamp to Bytes once (Bytes::clone is just ref count increment)
+        let timestamp_bytes = bytes::Bytes::from(timestamp_ms.to_string());
+
         for update in updates {
+            // Convert point_id to string once, then move to first use (no clone needed)
             let point_id_str = update.point_id.to_string();
-
-            // Layer 1: Engineering values
-            channel_values.push((
-                point_id_str.clone(),
-                bytes::Bytes::from(update.value.to_string()),
-            ));
-
-            // Layer 2: Timestamps
-            channel_ts.push((
-                point_id_str.clone(),
-                bytes::Bytes::from(timestamp_ms.to_string()),
-            ));
-
-            // Layer 3: Raw values
+            let value_str = update.value.to_string();
             let raw_value = update.raw_value.unwrap_or(update.value);
-            channel_raw.push((
-                point_id_str.clone(),
-                bytes::Bytes::from(raw_value.to_string()),
-            ));
+            let raw_value_str = raw_value.to_string();
+
+            // Layer 1: Engineering values (move point_id_str, clone for layers 2&3)
+            // Note: We need to clone here since point_id_str is used in multiple places
+            // Using Arc<str> would add overhead for short strings like "123"
+            channel_values.push((point_id_str.clone(), bytes::Bytes::from(value_str)));
+
+            // Layer 2: Timestamps (Bytes::clone is O(1) - just reference count increment)
+            channel_ts.push((point_id_str.clone(), timestamp_bytes.clone()));
+
+            // Layer 3: Raw values (can consume point_id_str here - last use)
+            channel_raw.push((point_id_str, bytes::Bytes::from(raw_value_str)));
 
             // Check for C2M routing (Channel to Model)
-            let route_key = format!("{}:{}:{}", channel_id, point_type, update.point_id);
+            let route_key = format!("{}:{}:{}", channel_id, point_type_str, update.point_id);
             if let Some(target) = routing_cache.lookup_c2m(&route_key) {
                 // Parse target: "23:M:1" -> instance_id=23, point_id=1
                 let parts: Vec<&str> = target.split(':').collect();
@@ -385,18 +387,22 @@ pub async fn write_batch(
                     // Parse target: "1002:T:5" -> channel_id=1002, type=T, point_id=5
                     let parts: Vec<&str> = target.split(':').collect();
                     if parts.len() == 3 {
-                        if let (Ok(target_channel_id), Ok(target_point_id)) =
-                            (parts[0].parse::<u16>(), parts[2].parse::<u32>())
-                        {
-                            // Create a forwarded update with incremented cascade depth
-                            c2c_forwards.push(PointUpdate {
-                                channel_id: target_channel_id,
-                                point_type: parts[1].to_string(),
-                                point_id: target_point_id,
-                                value: update.value,
-                                raw_value: update.raw_value,
-                                cascade_depth: update.cascade_depth + 1,
-                            });
+                        // Parse target point type using FromStr trait
+                        use std::str::FromStr;
+                        if let Ok(target_point_type) = FourRemote::from_str(parts[1]) {
+                            if let (Ok(target_channel_id), Ok(target_point_id)) =
+                                (parts[0].parse::<u16>(), parts[2].parse::<u32>())
+                            {
+                                // Create a forwarded update with incremented cascade depth
+                                c2c_forwards.push(PointUpdate {
+                                    channel_id: target_channel_id,
+                                    point_type: target_point_type,
+                                    point_id: target_point_id,
+                                    value: update.value,
+                                    raw_value: update.raw_value,
+                                    cascade_depth: update.cascade_depth + 1,
+                                });
+                            }
                         }
                     }
                 }
@@ -606,7 +612,7 @@ mod tests {
     fn test_point_update_structure() {
         let update = PointUpdate {
             channel_id: 1001,
-            point_type: "T".to_string(),
+            point_type: FourRemote::Telemetry,
             point_id: 1,
             value: 123.45,
             raw_value: Some(100.0),
@@ -614,7 +620,7 @@ mod tests {
         };
 
         assert_eq!(update.channel_id, 1001);
-        assert_eq!(update.point_type, "T");
+        assert_eq!(update.point_type, FourRemote::Telemetry);
         assert_eq!(update.point_id, 1);
         assert_eq!(update.value, 123.45);
         assert_eq!(update.raw_value, Some(100.0));
@@ -651,7 +657,7 @@ mod tests {
     fn test_point_update_clone() {
         let update1 = PointUpdate {
             channel_id: 1001,
-            point_type: "T".to_string(),
+            point_type: FourRemote::Telemetry,
             point_id: 1,
             value: 123.45,
             raw_value: Some(100.0),
@@ -673,7 +679,7 @@ mod tests {
         let updates = vec![
             PointUpdate {
                 channel_id: 1001,
-                point_type: "T".to_string(),
+                point_type: FourRemote::Telemetry,
                 point_id: 1,
                 value: 10.0,
                 raw_value: None,
@@ -681,7 +687,7 @@ mod tests {
             },
             PointUpdate {
                 channel_id: 1001,
-                point_type: "T".to_string(),
+                point_type: FourRemote::Telemetry,
                 point_id: 2,
                 value: 20.0,
                 raw_value: None,
@@ -689,7 +695,7 @@ mod tests {
             },
             PointUpdate {
                 channel_id: 1002,
-                point_type: "S".to_string(),
+                point_type: FourRemote::Signal,
                 point_id: 1,
                 value: 1.0,
                 raw_value: None,
@@ -697,21 +703,24 @@ mod tests {
             },
         ];
 
-        // Group updates by channel_id and point_type
-        let mut grouped: HashMap<(u16, String), Vec<PointUpdate>> = HashMap::new();
+        // Group updates by channel_id and point_type (using FourRemote enum - Copy, no clone needed)
+        let mut grouped: HashMap<(u16, FourRemote), Vec<PointUpdate>> = HashMap::new();
         for update in updates {
-            let key = (update.channel_id, update.point_type.clone());
+            let key = (update.channel_id, update.point_type);
             grouped.entry(key).or_default().push(update);
         }
 
-        // Should have 2 groups: (1001, "T") and (1002, "S")
+        // Should have 2 groups: (1001, Telemetry) and (1002, Signal)
         assert_eq!(grouped.len(), 2);
-        assert!(grouped.contains_key(&(1001, "T".to_string())));
-        assert!(grouped.contains_key(&(1002, "S".to_string())));
+        assert!(grouped.contains_key(&(1001, FourRemote::Telemetry)));
+        assert!(grouped.contains_key(&(1002, FourRemote::Signal)));
 
         // First group should have 2 updates
-        assert_eq!(grouped.get(&(1001, "T".to_string())).unwrap().len(), 2);
+        assert_eq!(
+            grouped.get(&(1001, FourRemote::Telemetry)).unwrap().len(),
+            2
+        );
         // Second group should have 1 update
-        assert_eq!(grouped.get(&(1002, "S".to_string())).unwrap().len(), 1);
+        assert_eq!(grouped.get(&(1002, FourRemote::Signal)).unwrap().len(), 1);
     }
 }

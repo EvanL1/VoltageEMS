@@ -61,6 +61,9 @@ pub enum RuleSrvError {
     // ============================================================================
     // Execution Engine Errors
     // ============================================================================
+    #[error("Parse error: {0}")]
+    ParseError(String),
+
     #[error("Execution error: {0}")]
     ExecutionError(String),
 
@@ -143,6 +146,7 @@ impl voltage_config::error::VoltageErrorTrait for RuleSrvError {
             Self::RuleConflict(_) => "RULESRV_RULE_CONFLICT",
 
             // Execution Engine
+            Self::ParseError(_) => "RULESRV_PARSE_ERROR",
             Self::ExecutionError(_) => "RULESRV_EXECUTION_ERROR",
             Self::EvaluationError(_) => "RULESRV_EVALUATION_ERROR",
             Self::ConditionError(_) => "RULESRV_CONDITION_ERROR",
@@ -194,8 +198,9 @@ impl voltage_config::error::VoltageErrorTrait for RuleSrvError {
             // Timeout → Timeout
             Self::TimeoutError(_) => ErrorCategory::Timeout,
 
-            // Execution/Evaluation/Condition/Action/Expression → RuleEngine
-            Self::ExecutionError(_)
+            // Execution/Evaluation/Condition/Action/Expression/Parse → RuleEngine
+            Self::ParseError(_)
+            | Self::ExecutionError(_)
             | Self::EvaluationError(_)
             | Self::ConditionError(_)
             | Self::ActionError(_)

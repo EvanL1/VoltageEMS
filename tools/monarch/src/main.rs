@@ -524,7 +524,7 @@ async fn sync_command(
             print!("  {} Validating configuration... ", "-".bright_cyan());
             match core.validate(svc).await {
                 Ok(result) => {
-                    if result.is_valid() {
+                    if result.is_valid {
                         println!("{}", "OK".green());
                     } else {
                         println!("{}", "FAIL".red());
@@ -651,7 +651,7 @@ async fn validate_command(service: &str, detailed: bool, config_path: &Path) -> 
 
         match core.validate(svc).await {
             Ok(result) => {
-                if result.is_valid() {
+                if result.is_valid {
                     println!("{} Valid", "OK".green());
                     if detailed && !result.warnings.is_empty() {
                         for warning in &result.warnings {

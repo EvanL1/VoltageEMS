@@ -77,7 +77,6 @@ fn default_comsrv_api() -> ApiConfig {
     ApiConfig {
         host: "0.0.0.0".to_string(),
         port: 6001,
-        workers: None,
     }
 }
 
@@ -262,10 +261,6 @@ pub struct ChannelLoggingConfig {
 
     /// Log file for this channel
     pub file: Option<String>,
-
-    /// Whether to include protocol details in logs
-    #[serde(default)]
-    pub protocol_details: bool,
 }
 
 /// Base point configuration
@@ -895,7 +890,6 @@ impl Default for ComsrvConfig {
         let api = ApiConfig {
             host: "0.0.0.0".to_string(),
             port: 6001, // comsrv default port
-            workers: None,
         };
 
         Self {
@@ -1608,7 +1602,6 @@ channels:
         assert_eq!(config.service.name, "unnamed_service");
         assert_eq!(config.api.host, "0.0.0.0");
         assert_eq!(config.api.port, 6001);
-        assert_eq!(config.api.workers, None);
         // Redis URL can be localhost or 127.0.0.1 depending on environment
         assert!(
             config.redis.url == "redis://127.0.0.1:6379"

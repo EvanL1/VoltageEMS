@@ -15,7 +15,7 @@ path = "src/main.rs"
 [dependencies]
 # Local dependencies
 common = { path = "../../libs/common", default-features = false, features = ["redis", "sqlite"] }
-voltage-config = { path = "../../libs/voltage-config", features = ["axum-support"] }
+voltage-config = { path = "../../libs/voltage-config", features = ["axum-support", "openapi"] }
 voltage-rtdb = { path = "../../libs/voltage-rtdb" }
 
 # Core async runtime

@@ -253,8 +253,10 @@ pub async fn init_rulesrv_schema(pool: &SqlitePool) -> Result<()> {
         .execute(pool)
         .await?;
 
-    // Rules table
-    sqlx::query(rulesrv::RULES_TABLE).execute(pool).await?;
+    // Rule chains table (Vue Flow format)
+    sqlx::query(rulesrv::RULE_CHAINS_TABLE)
+        .execute(pool)
+        .await?;
 
     // Rule history table
     sqlx::query(rulesrv::RULE_HISTORY_TABLE)

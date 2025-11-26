@@ -192,8 +192,6 @@ mod tests {
             connected: true,
             running: true,
             last_update: now,
-            error_count: 0,
-            last_error: None,
             statistics,
         };
 
@@ -202,7 +200,6 @@ mod tests {
         assert_eq!(status.protocol, "modbus_tcp");
         assert!(status.connected);
         assert!(status.running);
-        assert_eq!(status.error_count, 0);
         assert_eq!(status.statistics.len(), 2);
     }
 

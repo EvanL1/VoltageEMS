@@ -1,11 +1,11 @@
 //! Rules API - Library Mode
 //!
-//! Direct library calls to rulesrv for rule management and execution
+//! Direct library calls to rulesrv for rule chain management and execution
 
 use crate::context::RulesrvContext;
 use crate::lib_api::{LibApiError, Result};
-use rulesrv::rule_engine::Rule;
 use serde::{Deserialize, Serialize};
+use voltage_config::rulesrv::RuleChain;
 
 /// Rule summary for list operations
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -13,10 +13,25 @@ pub struct RuleSummary {
     pub id: String,
     pub name: String,
     pub enabled: bool,
-    pub priority: i32,
+    pub priority: u32,
 }
 
-/// Rules service - provides rule management and execution operations
+/// Type alias for rule chain database row to avoid clippy::type_complexity warning
+/// Fields: (id, name, description, enabled, priority, cooldown_ms, variables_json, nodes_json, start_node_id, flow_json)
+type RuleChainDbRow = (
+    String,
+    String,
+    Option<String>,
+    i64,
+    i64,
+    i64,
+    String,
+    String,
+    String,
+    Option<String>,
+);
+
+/// Rules service - provides rule chain management and execution operations
 pub struct RulesService<'a> {
     ctx: &'a RulesrvContext,
 }
@@ -27,12 +42,12 @@ impl<'a> RulesService<'a> {
         Self { ctx }
     }
 
-    /// List all rules
+    /// List all rule chains
     ///
-    /// Returns a list of all configured rules.
+    /// Returns a list of all configured rule chains.
     pub async fn list(&self) -> Result<Vec<RuleSummary>> {
-        // Query database for rules
-        let db_rules: Vec<(String, String, bool, i32)> = sqlx::query_as(
+        // Query database for rule chains
+        let db_rules: Vec<(String, String, i64, i64)> = sqlx::query_as(
             "SELECT id, name, enabled, priority FROM rules ORDER BY priority DESC, id",
         )
         .fetch_all(&self.ctx.sqlite_pool)
@@ -43,107 +58,151 @@ impl<'a> RulesService<'a> {
             .map(|(id, name, enabled, priority)| RuleSummary {
                 id,
                 name,
-                enabled,
-                priority,
+                enabled: enabled != 0,
+                priority: priority as u32,
             })
             .collect();
 
         Ok(summaries)
     }
 
-    /// Get rule by ID
+    /// Get rule chain by ID
     ///
-    /// Returns detailed information about a specific rule.
-    pub async fn get(&self, rule_id: &str) -> Result<Rule> {
-        // Query database for rule
-        let rule_row: Option<(String, String, Option<String>)> =
-            sqlx::query_as("SELECT id, name, flow_json FROM rules WHERE id = ?")
-                .bind(rule_id)
-                .fetch_optional(&self.ctx.sqlite_pool)
-                .await?;
+    /// Returns detailed information about a specific rule chain.
+    pub async fn get(&self, rule_id: &str) -> Result<RuleChain> {
+        use voltage_config::rulesrv::{FlowNode, Variable};
 
-        let (id, name, flow_json_opt) = rule_row
-            .ok_or_else(|| LibApiError::not_found(format!("Rule '{}' not found", rule_id)))?;
+        // Query database for rule chain
+        let row: Option<RuleChainDbRow> = sqlx::query_as(
+            "SELECT id, name, description, enabled, priority, cooldown_ms,
+                    variables_json, nodes_json, start_node_id, flow_json
+             FROM rules WHERE id = ?",
+        )
+        .bind(rule_id)
+        .fetch_optional(&self.ctx.sqlite_pool)
+        .await?;
 
-        let flow_json = flow_json_opt.unwrap_or_else(|| "{}".to_string());
+        let (
+            id,
+            name,
+            description,
+            enabled,
+            priority,
+            cooldown_ms,
+            variables_json,
+            nodes_json,
+            start_node_id,
+            flow_json_opt,
+        ) = row
+            .ok_or_else(|| LibApiError::not_found(format!("Rule chain '{}' not found", rule_id)))?;
 
-        // Parse flow_json as complete Rule object
-        let mut rule: Rule = serde_json::from_str(&flow_json)
-            .map_err(|e| LibApiError::config(format!("Invalid rule configuration: {}", e)))?;
+        // Deserialize parsed structures
+        let variables: Vec<Variable> = serde_json::from_str(&variables_json)
+            .map_err(|e| LibApiError::config(format!("Invalid variables JSON: {}", e)))?;
+        let nodes: Vec<FlowNode> = serde_json::from_str(&nodes_json)
+            .map_err(|e| LibApiError::config(format!("Invalid nodes JSON: {}", e)))?;
 
-        // Override id and name from database columns
-        rule.id = id;
-        rule.name = name;
+        let flow_json = flow_json_opt.and_then(|s| serde_json::from_str(&s).ok());
 
-        Ok(rule)
+        Ok(RuleChain {
+            id,
+            name,
+            description,
+            enabled: enabled != 0,
+            priority: priority as u32,
+            cooldown_ms: cooldown_ms as u64,
+            variables,
+            nodes,
+            start_node_id,
+            flow_json,
+        })
     }
 
-    /// Create a new rule
+    /// Create a new rule chain
     ///
-    /// Creates a new rule in the database and rule cache.
+    /// Creates a new rule chain in the database.
     /// Public API - use monarch sync for CLI operations.
     #[allow(dead_code)]
-    pub async fn create(&self, rule: Rule) -> Result<()> {
-        // Serialize entire Rule object to JSON
-        let flow_json = serde_json::to_string(&rule)
-            .map_err(|e| LibApiError::config(format!("Failed to serialize rule: {}", e)))?;
+    pub async fn create(&self, chain: RuleChain) -> Result<()> {
+        let variables_json = serde_json::to_string(&chain.variables)
+            .map_err(|e| LibApiError::config(format!("Failed to serialize variables: {}", e)))?;
+        let nodes_json = serde_json::to_string(&chain.nodes)
+            .map_err(|e| LibApiError::config(format!("Failed to serialize nodes: {}", e)))?;
+        let flow_json = chain
+            .flow_json
+            .map(|v| serde_json::to_string(&v))
+            .transpose()
+            .map_err(|e| LibApiError::config(format!("Failed to serialize flow_json: {}", e)))?;
 
         // Insert into database
         sqlx::query(
-            "INSERT INTO rules (id, name, flow_json, enabled, priority, description, created_at)
-             VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)",
+            "INSERT INTO rules (id, name, description, enabled, priority, cooldown_ms,
+                                      variables_json, nodes_json, start_node_id, flow_json)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
-        .bind(&rule.id)
-        .bind(&rule.name)
-        .bind(&flow_json)
-        .bind(rule.enabled)
-        .bind(rule.priority)
-        .bind(&rule.description)
+        .bind(&chain.id)
+        .bind(&chain.name)
+        .bind(&chain.description)
+        .bind(chain.enabled)
+        .bind(chain.priority as i64)
+        .bind(chain.cooldown_ms as i64)
+        .bind(&variables_json)
+        .bind(&nodes_json)
+        .bind(&chain.start_node_id)
+        .bind(flow_json)
         .execute(&self.ctx.sqlite_pool)
         .await?;
-
-        // TODO: Trigger reload to update cache
-        // For now, the cache will be updated on next service restart
 
         Ok(())
     }
 
-    /// Update an existing rule
+    /// Update an existing rule chain
     ///
-    /// Updates a rule's configuration in the database.
+    /// Updates a rule chain's configuration in the database.
     /// Public API - use monarch sync for CLI operations.
     #[allow(dead_code)]
-    pub async fn update(&self, rule_id: &str, rule: Rule) -> Result<()> {
-        // Serialize entire Rule object to JSON
-        let flow_json = serde_json::to_string(&rule)
-            .map_err(|e| LibApiError::config(format!("Failed to serialize rule: {}", e)))?;
+    pub async fn update(&self, rule_id: &str, chain: RuleChain) -> Result<()> {
+        let variables_json = serde_json::to_string(&chain.variables)
+            .map_err(|e| LibApiError::config(format!("Failed to serialize variables: {}", e)))?;
+        let nodes_json = serde_json::to_string(&chain.nodes)
+            .map_err(|e| LibApiError::config(format!("Failed to serialize nodes: {}", e)))?;
+        let flow_json = chain
+            .flow_json
+            .map(|v| serde_json::to_string(&v))
+            .transpose()
+            .map_err(|e| LibApiError::config(format!("Failed to serialize flow_json: {}", e)))?;
 
-        // Update database
         let result = sqlx::query(
-            "UPDATE rules SET name = ?, flow_json = ?, enabled = ?, priority = ?, description = ?
+            "UPDATE rules SET name = ?, description = ?, enabled = ?, priority = ?,
+                    cooldown_ms = ?, variables_json = ?, nodes_json = ?, start_node_id = ?,
+                    flow_json = ?, updated_at = CURRENT_TIMESTAMP
              WHERE id = ?",
         )
-        .bind(&rule.name)
-        .bind(&flow_json)
-        .bind(rule.enabled)
-        .bind(rule.priority)
-        .bind(&rule.description)
+        .bind(&chain.name)
+        .bind(&chain.description)
+        .bind(chain.enabled)
+        .bind(chain.priority as i64)
+        .bind(chain.cooldown_ms as i64)
+        .bind(&variables_json)
+        .bind(&nodes_json)
+        .bind(&chain.start_node_id)
+        .bind(flow_json)
         .bind(rule_id)
         .execute(&self.ctx.sqlite_pool)
         .await?;
 
         if result.rows_affected() == 0 {
-            return Err(LibApiError::not_found(format!("Rule '{}' not found", rule_id)).into());
+            return Err(
+                LibApiError::not_found(format!("Rule chain '{}' not found", rule_id)).into(),
+            );
         }
-
-        // TODO: Trigger reload to update cache
 
         Ok(())
     }
 
-    /// Delete a rule
+    /// Delete a rule chain
     ///
-    /// Removes a rule from the database and cache.
+    /// Removes a rule chain from the database.
     /// Public API - use monarch sync for CLI operations.
     #[allow(dead_code)]
     pub async fn delete(&self, rule_id: &str) -> Result<()> {
@@ -153,62 +212,66 @@ impl<'a> RulesService<'a> {
             .await?;
 
         if result.rows_affected() == 0 {
-            return Err(LibApiError::not_found(format!("Rule '{}' not found", rule_id)).into());
+            return Err(
+                LibApiError::not_found(format!("Rule chain '{}' not found", rule_id)).into(),
+            );
         }
-
-        // TODO: Trigger reload to update cache
 
         Ok(())
     }
 
-    /// Enable a rule
+    /// Enable a rule chain
     ///
-    /// Sets a rule's enabled flag to true.
+    /// Sets a rule chain's enabled flag to true.
     pub async fn enable(&self, rule_id: &str) -> Result<()> {
-        let result = sqlx::query("UPDATE rules SET enabled = 1 WHERE id = ?")
-            .bind(rule_id)
-            .execute(&self.ctx.sqlite_pool)
-            .await?;
+        let result = sqlx::query(
+            "UPDATE rules SET enabled = 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+        )
+        .bind(rule_id)
+        .execute(&self.ctx.sqlite_pool)
+        .await?;
 
         if result.rows_affected() == 0 {
-            return Err(LibApiError::not_found(format!("Rule '{}' not found", rule_id)).into());
+            return Err(
+                LibApiError::not_found(format!("Rule chain '{}' not found", rule_id)).into(),
+            );
         }
-
-        // TODO: Trigger reload to update cache
 
         Ok(())
     }
 
-    /// Disable a rule
+    /// Disable a rule chain
     ///
-    /// Sets a rule's enabled flag to false.
+    /// Sets a rule chain's enabled flag to false.
     pub async fn disable(&self, rule_id: &str) -> Result<()> {
-        let result = sqlx::query("UPDATE rules SET enabled = 0 WHERE id = ?")
-            .bind(rule_id)
-            .execute(&self.ctx.sqlite_pool)
-            .await?;
+        let result = sqlx::query(
+            "UPDATE rules SET enabled = 0, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+        )
+        .bind(rule_id)
+        .execute(&self.ctx.sqlite_pool)
+        .await?;
 
         if result.rows_affected() == 0 {
-            return Err(LibApiError::not_found(format!("Rule '{}' not found", rule_id)).into());
+            return Err(
+                LibApiError::not_found(format!("Rule chain '{}' not found", rule_id)).into(),
+            );
         }
-
-        // TODO: Trigger reload to update cache
 
         Ok(())
     }
 
-    /// Execute a rule manually
+    /// Execute a rule chain manually
     ///
-    /// Triggers immediate execution of a rule (even if disabled).
+    /// Triggers immediate execution of a rule chain (even if disabled).
     pub async fn execute(&self, rule_id: &str) -> Result<String> {
-        // Get rule from database
-        let rule = self.get(rule_id).await?;
+        // Get rule chain from database
+        let chain = self.get(rule_id).await?;
 
-        // TODO: Execute rule using rule engine
+        // TODO: Execute rule chain using ChainExecutor
         // For now, return a placeholder message
         Ok(format!(
-            "Rule '{}' execution triggered (not yet implemented in lib mode)",
-            rule.name
+            "Rule chain '{}' execution triggered (not yet implemented in lib mode)",
+            chain.name
         ))
     }
 }

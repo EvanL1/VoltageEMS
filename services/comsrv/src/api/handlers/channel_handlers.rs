@@ -38,9 +38,7 @@ use crate::dto::{
                         "description": "Primary PV inverter communication",
                         "enabled": true,
                         "connected": true,
-                        "last_update": "2025-10-15T10:30:00Z",
-                        "error_count": 0,
-                        "last_error": null
+                        "last_update": "2025-10-15T10:30:00Z"
                     },
                     {
                         "id": 2,
@@ -49,9 +47,7 @@ use crate::dto::{
                         "description": "Battery management system",
                         "enabled": true,
                         "connected": false,
-                        "last_update": "2025-10-15T10:28:15Z",
-                        "error_count": 3,
-                        "last_error": "Connection timeout"
+                        "last_update": "2025-10-15T10:28:15Z"
                     },
                     {
                         "id": 4,
@@ -60,9 +56,7 @@ use crate::dto::{
                         "description": "Virtual channel for testing",
                         "enabled": true,
                         "connected": true,
-                        "last_update": "2025-10-15T10:30:05Z",
-                        "error_count": 0,
-                        "last_error": null
+                        "last_update": "2025-10-15T10:30:05Z"
                     }
                 ],
                 "page": 1,
@@ -103,19 +97,16 @@ pub async fn get_all_channels(
             });
 
         // Get runtime status if channel is running
-        let (connected, last_update, error_count, last_error) =
-            if let Some(channel) = manager.get_channel(channel_id) {
-                let channel_guard = channel.read().await;
-                let status = channel_guard.get_status().await;
-                (
-                    status.is_connected,
-                    DateTime::<Utc>::from_timestamp(status.last_update, 0).unwrap_or_else(Utc::now),
-                    u32::try_from(status.error_count).unwrap_or(u32::MAX),
-                    status.last_error,
-                )
-            } else {
-                (false, Utc::now(), 0, None)
-            };
+        let (connected, last_update) = if let Some(channel) = manager.get_channel(channel_id) {
+            let channel_guard = channel.read().await;
+            let status = channel_guard.get_status().await;
+            (
+                status.is_connected,
+                DateTime::<Utc>::from_timestamp(status.last_update, 0).unwrap_or_else(Utc::now),
+            )
+        } else {
+            (false, Utc::now())
+        };
 
         let channel_response = ChannelStatusResponse {
             id: channel_id,
@@ -125,8 +116,6 @@ pub async fn get_all_channels(
             enabled,
             connected,
             last_update,
-            error_count,
-            last_error,
         };
 
         // Apply filters
@@ -170,12 +159,7 @@ pub async fn get_all_channels(
         Vec::new()
     };
 
-    let paginated_response = PaginatedResponse {
-        total,
-        page,
-        page_size,
-        list,
-    };
+    let paginated_response = PaginatedResponse::new(list, total, page, page_size);
 
     Ok(Json(SuccessResponse::new(paginated_response)))
 }
@@ -198,8 +182,6 @@ pub async fn get_all_channels(
                     "connected": true,
                     "running": true,
                     "last_update": "2025-10-15T10:30:15Z",
-                    "error_count": 0,
-                    "last_error": null,
                     "statistics": {
                         "total_reads": 15234,
                         "successful_reads": 15230,
@@ -246,8 +228,6 @@ pub async fn get_channel_status(
             running: is_running,
             last_update: DateTime::<Utc>::from_timestamp(channel_status.last_update, 0)
                 .unwrap_or_else(Utc::now),
-            error_count: u32::try_from(channel_status.error_count).unwrap_or(u32::MAX),
-            last_error: channel_status.last_error,
             statistics: diagnostics
                 .as_object()
                 .map(|obj| obj.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
@@ -287,8 +267,6 @@ pub async fn get_channel_status(
                         "connected": true,
                         "running": true,
                         "last_update": "2025-10-15T10:30:15Z",
-                        "error_count": 0,
-                        "last_error": null,
                         "statistics": {
                             "total_reads": 15234,
                             "successful_reads": 15230,
@@ -358,26 +336,23 @@ pub async fn get_channel_detail_handler(
     };
 
     let manager = state.channel_manager.read().await;
-    let (connected, last_update, error_count, last_error, statistics) =
-        if let Some(ch) = manager.get_channel(id_u16) {
-            let guard = ch.read().await;
-            let status = guard.get_status().await;
-            let diag = guard
-                .get_diagnostics()
-                .await
-                .unwrap_or_else(|_| serde_json::json!({}));
-            (
-                status.is_connected,
-                DateTime::<Utc>::from_timestamp(status.last_update, 0).unwrap_or_else(Utc::now),
-                u32::try_from(status.error_count).unwrap_or(u32::MAX),
-                status.last_error,
-                diag.as_object()
-                    .map(|obj| obj.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
-                    .unwrap_or_default(),
-            )
-        } else {
-            (false, Utc::now(), 0, None, std::collections::HashMap::new())
-        };
+    let (connected, last_update, statistics) = if let Some(ch) = manager.get_channel(id_u16) {
+        let guard = ch.read().await;
+        let status = guard.get_status().await;
+        let diag = guard
+            .get_diagnostics()
+            .await
+            .unwrap_or_else(|_| serde_json::json!({}));
+        (
+            status.is_connected,
+            DateTime::<Utc>::from_timestamp(status.last_update, 0).unwrap_or_else(Utc::now),
+            diag.as_object()
+                .map(|obj| obj.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
+                .unwrap_or_default(),
+        )
+    } else {
+        (false, Utc::now(), std::collections::HashMap::new())
+    };
 
     let config = ChannelConfig {
         core: voltage_config::comsrv::ChannelCore {
@@ -426,8 +401,6 @@ pub async fn get_channel_detail_handler(
             connected,
             running: connected,
             last_update,
-            error_count,
-            last_error,
             statistics,
         },
         point_counts: PointCounts {

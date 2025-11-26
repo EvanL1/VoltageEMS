@@ -131,7 +131,7 @@ pub async fn init_modsrv_schema(pool: &SqlitePool) -> Result<()> {
 /// This includes:
 /// - service_config
 /// - sync_metadata
-/// - rules
+/// - rules (Vue Flow rule chains)
 /// - rule_history
 pub async fn init_rulesrv_schema(pool: &SqlitePool) -> Result<()> {
     // Service metadata tables
@@ -143,8 +143,10 @@ pub async fn init_rulesrv_schema(pool: &SqlitePool) -> Result<()> {
         .execute(pool)
         .await?;
 
-    // Rules tables
-    sqlx::query(rulesrv::RULES_TABLE).execute(pool).await?;
+    // Rule chains table (Vue Flow format)
+    sqlx::query(rulesrv::RULE_CHAINS_TABLE)
+        .execute(pool)
+        .await?;
 
     sqlx::query(rulesrv::RULE_HISTORY_TABLE)
         .execute(pool)

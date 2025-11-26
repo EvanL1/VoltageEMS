@@ -147,7 +147,6 @@ fn create_test_config() -> Result<ModsrvConfig> {
         api: ApiConfig {
             host: "0.0.0.0".to_string(),
             port: 6001,
-            workers: None,
         },
         redis: RedisConfig {
             url: std::env::var("REDIS_URL")

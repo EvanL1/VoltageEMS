@@ -65,16 +65,6 @@ impl VirtualProtocol {
         let channel_config = (*runtime_config.base).clone();
         Self::new(channel_config)
     }
-
-    /// Simulate data changes
-    #[allow(dead_code)]
-    async fn simulate_data(&self) {
-        let mut data = self.telemetry_data.write().await;
-        for (i, value) in data.iter_mut().enumerate() {
-            // Generate sine wave data
-            *value = (i as f64 * 0.1).sin() * 100.0;
-        }
-    }
 }
 
 impl std::fmt::Debug for VirtualProtocol {
@@ -93,29 +83,14 @@ impl ComBase for VirtualProtocol {
         &self.name
     }
 
-    fn protocol_type(&self) -> &'static str {
-        "virtual"
-    }
-
     fn get_channel_id(&self) -> u16 {
         self.channel_id
-    }
-
-    fn get_channel_name(&self) -> &str {
-        &self.name
     }
 
     async fn get_status(&self) -> ChannelStatus {
         ChannelStatus {
             is_connected: true,
-            last_error: None,
             last_update: chrono::Utc::now().timestamp(),
-            success_count: 100,
-            error_count: 0,
-            reconnect_count: 0,
-            points_count: 200, // 100 telemetry + 100 signal
-            last_read_duration_ms: Some(1),
-            average_read_duration_ms: Some(1.0),
         }
     }
 
@@ -340,7 +315,6 @@ mod tests {
         assert!(protocol.is_ok());
         let protocol = protocol.unwrap();
         assert_eq!(protocol.name(), "Test Channel 1");
-        assert_eq!(protocol.protocol_type(), "virtual");
         assert_eq!(protocol.get_channel_id(), 1);
     }
 
@@ -509,13 +483,7 @@ mod tests {
         let status = protocol.get_status().await;
 
         assert!(status.is_connected);
-        assert!(status.last_error.is_none());
-        assert_eq!(status.success_count, 100);
-        assert_eq!(status.error_count, 0);
-        assert_eq!(status.reconnect_count, 0);
-        assert_eq!(status.points_count, 200); // 100 telemetry + 100 signal
-        assert_eq!(status.last_read_duration_ms, Some(1));
-        assert_eq!(status.average_read_duration_ms, Some(1.0));
+        assert!(status.last_update > 0);
     }
 
     #[tokio::test]

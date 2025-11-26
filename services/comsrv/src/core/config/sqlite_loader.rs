@@ -102,14 +102,11 @@ impl ComsrvSqliteLoader {
         let api = crate::core::config::types::ApiConfig {
             host: DEFAULT_API_HOST.to_string(),
             port: service_config.port,
-            workers: Some(4),
         };
 
         // Create Redis configuration
         let redis = crate::core::config::types::RedisConfig {
             url: service_config.redis_url.clone(),
-            pool_size: Some(10),
-            timeout_ms: Some(5000),
             enabled: true,
         };
 

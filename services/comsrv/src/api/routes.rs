@@ -129,12 +129,12 @@ impl AppState {
             crate::dto::ChannelListQuery,
             crate::dto::PaginatedResponse<crate::dto::ChannelStatusResponse>,
             crate::dto::ChannelOperation,
-            crate::dto::ControlCommand,
-            crate::dto::AdjustmentCommand,
+            crate::dto::ControlRequest,
+            crate::dto::AdjustmentRequest,
             crate::dto::ControlValueRequest,
             crate::dto::AdjustmentValueRequest,
-            crate::dto::BatchControlCommand,
-            crate::dto::BatchAdjustmentCommand,
+            crate::dto::BatchControlRequest,
+            crate::dto::BatchAdjustmentRequest,
             crate::dto::BatchCommandResult,
             crate::dto::BatchCommandError,
             crate::dto::ChannelCreateRequest,
@@ -234,7 +234,7 @@ pub fn create_api_routes(
 #[allow(clippy::disallowed_methods)] // Test code - unwrap is acceptable
 mod tests {
     use super::*;
-    use crate::dto::{AdjustmentCommand, ChannelOperation, ControlCommand};
+    use crate::dto::{AdjustmentRequest, ChannelOperation, ControlRequest};
     use axum::{
         body::Body,
         http::{Request, Response, StatusCode},
@@ -243,7 +243,6 @@ mod tests {
     use sqlx::SqlitePool;
     use std::collections::HashMap;
     use std::sync::Arc;
-    use tempfile::TempDir;
     use tokio::sync::RwLock;
     use tower::util::ServiceExt; // for `oneshot` and `ready`
     use voltage_rtdb::{MemoryRtdb, Rtdb};
@@ -372,20 +371,6 @@ mod tests {
             .with_state(state)
     }
 
-    /// Helper: Build Router and return MemoryRtdb handle for assertions
-    #[allow(dead_code)]
-    async fn create_test_api_with_pool_and_rtdb(
-        channel_manager: Arc<RwLock<ChannelManager>>,
-        sqlite_pool: SqlitePool,
-    ) -> (Router, Arc<voltage_rtdb::MemoryRtdb>) {
-        create_test_api_with_pool_rtdb_and_instance(
-            channel_manager,
-            sqlite_pool,
-            Arc::new(voltage_rtdb::MemoryRtdb::new()),
-        )
-        .await
-    }
-
     async fn create_test_api_with_pool_rtdb_and_instance(
         channel_manager: Arc<RwLock<ChannelManager>>,
         sqlite_pool: SqlitePool,
@@ -424,97 +409,6 @@ mod tests {
             )
             .with_state(state);
         (router, rtdb)
-    }
-
-    /// Helper: Create test database with channels
-    #[allow(dead_code)]
-    async fn create_test_database_for_api() -> (TempDir, String) {
-        let temp_dir = TempDir::new().unwrap();
-        let db_path = temp_dir.path().join("test_api.db");
-        let db_url = format!("sqlite://{}?mode=rwc", db_path.display());
-
-        let pool = SqlitePool::connect(&db_url).await.unwrap();
-
-        // Create service_config table
-        sqlx::query(
-            "CREATE TABLE service_config (
-                key TEXT PRIMARY KEY,
-                value TEXT NOT NULL,
-                type TEXT DEFAULT 'string',
-                description TEXT,
-                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )",
-        )
-        .execute(&pool)
-        .await
-        .unwrap();
-
-        sqlx::query("INSERT INTO service_config (key, value) VALUES ('name', 'test_comsrv')")
-            .execute(&pool)
-            .await
-            .unwrap();
-
-        // Create channels table
-        sqlx::query(
-            "CREATE TABLE channels (
-                channel_id INTEGER PRIMARY KEY,
-                name TEXT NOT NULL,
-                protocol TEXT NOT NULL,
-                enabled BOOLEAN DEFAULT TRUE,
-                config TEXT DEFAULT '{}'
-            )",
-        )
-        .execute(&pool)
-        .await
-        .unwrap();
-
-        // Add test channel
-        sqlx::query("INSERT INTO channels (channel_id, name, protocol, enabled) VALUES (3001, 'Test API Channel', 'virtual', true)")
-            .execute(&pool)
-            .await
-            .unwrap();
-
-        // Create point tables
-        for table_name in &[
-            "telemetry_points",
-            "signal_points",
-            "control_points",
-            "adjustment_points",
-        ] {
-            sqlx::query(&format!(
-                "CREATE TABLE {} (
-                    point_id INTEGER PRIMARY KEY,
-                    signal_name TEXT NOT NULL,
-                    scale REAL DEFAULT 1.0,
-                    offset REAL DEFAULT 0.0,
-                    unit TEXT DEFAULT '',
-                    reverse BOOLEAN DEFAULT FALSE,
-                    data_type TEXT DEFAULT 'float32',
-                    description TEXT DEFAULT ''
-                )",
-                table_name
-            ))
-            .execute(&pool)
-            .await
-            .unwrap();
-        }
-
-        pool.close().await;
-        (temp_dir, db_path.to_string_lossy().to_string())
-    }
-
-    /// Helper: Create mock Redis client
-    #[allow(dead_code)]
-    async fn create_mock_redis_client() -> Arc<common::redis::RedisClient> {
-        // Use a non-existent Redis URL - tests won't actually connect
-        Arc::new(
-            common::redis::RedisClient::new("redis://localhost:16379")
-                .await
-                .unwrap_or_else(|_| {
-                    // Fallback: create with default URL for structure testing
-                    panic!("Redis client creation should be mocked")
-                }),
-        )
     }
 
     // ========================================================================
@@ -1571,7 +1465,7 @@ mod tests {
 
     #[test]
     fn test_control_command_structure() {
-        let cmd = ControlCommand {
+        let cmd = ControlRequest {
             point_id: 1,
             value: 1, // u8: 0 or 1
         };
@@ -1582,7 +1476,7 @@ mod tests {
 
     #[test]
     fn test_adjustment_command_structure() {
-        let cmd = AdjustmentCommand {
+        let cmd = AdjustmentRequest {
             point_id: 2,
             value: 50.0, // f64
         };

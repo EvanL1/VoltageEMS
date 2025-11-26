@@ -8,34 +8,19 @@ use std::path::{Path, PathBuf};
 use tracing::{debug, info, warn};
 use voltage_config::{
     ComsrvValidator, ConfigValidator as VoltageConfigValidator, ModsrvValidator, RulesrvValidator,
-    ValidationLevel, ValidationResult as VoltageResult,
+    ValidationLevel, ValidationResult,
 };
 
-/// Result of a validation operation (compatibility wrapper)
-#[derive(Debug, Default)]
-pub struct ValidationResult {
-    /// Whether the configuration is valid
-    pub valid: bool,
-    /// List of validation errors
-    pub errors: Vec<String>,
-    /// List of validation warnings
-    pub warnings: Vec<String>,
+/// Create a failed validation result with error message
+fn validation_error(error: impl Into<String>) -> ValidationResult {
+    let mut result = ValidationResult::new(ValidationLevel::Schema);
+    result.add_error(error.into());
+    result
 }
 
-impl ValidationResult {
-    /// Check if validation passed (no errors)
-    pub fn is_valid(&self) -> bool {
-        self.valid && self.errors.is_empty()
-    }
-
-    /// Convert from voltage-config ValidationResult
-    fn from_voltage_result(result: VoltageResult) -> Self {
-        Self {
-            valid: result.is_valid,
-            errors: result.errors,
-            warnings: result.warnings,
-        }
-    }
+/// Create a successful validation result
+fn validation_ok() -> ValidationResult {
+    ValidationResult::new(ValidationLevel::Schema)
 }
 
 /// Configuration validator using shared validation framework
@@ -66,14 +51,10 @@ impl ConfigValidator {
         // Check if service configuration exists
         let service_config_path = self.config_path.join(service);
         if !service_config_path.exists() {
-            return Ok(ValidationResult {
-                valid: false,
-                errors: vec![format!(
-                    "Service configuration directory not found: {:?}",
-                    service_config_path
-                )],
-                warnings: vec![],
-            });
+            return Ok(validation_error(format!(
+                "Service configuration directory not found: {:?}",
+                service_config_path
+            )));
         }
 
         // Use shared validation framework
@@ -81,16 +62,10 @@ impl ConfigValidator {
             "comsrv" => self.validate_comsrv().await?,
             "modsrv" => self.validate_modsrv().await?,
             "rulesrv" => self.validate_rulesrv().await?,
-            _ => {
-                return Ok(ValidationResult {
-                    valid: false,
-                    errors: vec![format!("Unknown service: {}", service)],
-                    warnings: vec![],
-                })
-            },
+            _ => return Ok(validation_error(format!("Unknown service: {}", service))),
         };
 
-        if result.valid {
+        if result.is_valid {
             debug!("Validation passed for service: {}", service);
         } else {
             warn!("Validation failed for service: {}", service);
@@ -108,19 +83,16 @@ impl ConfigValidator {
 
         // Check if file exists
         if !yaml_path.exists() {
-            return Ok(ValidationResult {
-                valid: false,
-                errors: vec![format!("Missing required file: {:?}", yaml_path)],
-                warnings: vec![],
-            });
+            return Ok(validation_error(format!(
+                "Missing required file: {:?}",
+                yaml_path
+            )));
         }
 
         // Load and validate using shared framework
         // Note: Errors from from_file already include file path + line number + reason
         let validator = ComsrvValidator::from_file(&yaml_path)?;
-        let result = validator.validate(self.validation_level)?;
-
-        Ok(ValidationResult::from_voltage_result(result))
+        validator.validate(self.validation_level)
     }
 
     /// Validate modsrv configuration
@@ -129,19 +101,16 @@ impl ConfigValidator {
 
         // Check if file exists
         if !yaml_path.exists() {
-            return Ok(ValidationResult {
-                valid: false,
-                errors: vec![format!("Missing required file: {:?}", yaml_path)],
-                warnings: vec![],
-            });
+            return Ok(validation_error(format!(
+                "Missing required file: {:?}",
+                yaml_path
+            )));
         }
 
         // Load and validate using shared framework
         // Note: Errors from from_file already include file path + line number + reason
         let validator = ModsrvValidator::from_file(&yaml_path)?;
-        let result = validator.validate(self.validation_level)?;
-
-        Ok(ValidationResult::from_voltage_result(result))
+        validator.validate(self.validation_level)
     }
 
     /// Validate rulesrv configuration
@@ -150,19 +119,16 @@ impl ConfigValidator {
 
         // Check if file exists
         if !yaml_path.exists() {
-            return Ok(ValidationResult {
-                valid: false,
-                errors: vec![format!("Missing required file: {:?}", yaml_path)],
-                warnings: vec![],
-            });
+            return Ok(validation_error(format!(
+                "Missing required file: {:?}",
+                yaml_path
+            )));
         }
 
         // Load and validate using shared framework
         // Note: Errors from from_file already include file path + line number + reason
         let validator = RulesrvValidator::from_file(&yaml_path)?;
-        let result = validator.validate(self.validation_level)?;
-
-        Ok(ValidationResult::from_voltage_result(result))
+        validator.validate(self.validation_level)
     }
 
     /// Validate global configuration
@@ -171,14 +137,10 @@ impl ConfigValidator {
 
         // Check if file exists
         if !yaml_path.exists() {
-            return Ok(ValidationResult {
-                valid: false,
-                errors: vec![format!(
-                    "Missing global configuration file: {:?}",
-                    yaml_path
-                )],
-                warnings: vec![],
-            });
+            return Ok(validation_error(format!(
+                "Missing global configuration file: {:?}",
+                yaml_path
+            )));
         }
 
         // Load YAML and perform basic validation
@@ -186,19 +148,14 @@ impl ConfigValidator {
         match serde_yaml::from_str::<serde_yaml::Value>(&yaml_content) {
             Ok(_) => {
                 // Global config is valid YAML
-                Ok(ValidationResult {
-                    valid: true,
-                    errors: vec![],
-                    warnings: vec![],
-                })
+                Ok(validation_ok())
             },
             Err(e) => {
                 // YAML parsing failed
-                Ok(ValidationResult {
-                    valid: false,
-                    errors: vec![format!("Invalid YAML in {:?}: {}", yaml_path, e)],
-                    warnings: vec![],
-                })
+                Ok(validation_error(format!(
+                    "Invalid YAML in {:?}: {}",
+                    yaml_path, e
+                )))
             },
         }
     }
@@ -233,7 +190,7 @@ channels: []
         let result = validator.validate_service("comsrv").await.unwrap();
 
         // Should have error about no channels
-        assert!(!result.is_valid());
+        assert!(!result.is_valid);
         assert!(result
             .errors
             .iter()

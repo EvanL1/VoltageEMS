@@ -13,6 +13,7 @@
 use comsrv::storage::{write_batch, PointUpdate};
 use std::collections::HashMap;
 use std::sync::Arc;
+use voltage_config::FourRemote;
 use voltage_config::{KeySpaceConfig, RoutingCache};
 use voltage_rtdb::Rtdb;
 
@@ -161,7 +162,7 @@ async fn test_c2c_basic_routing() {
     // 写入源通道
     let updates = vec![PointUpdate {
         channel_id: 1001,
-        point_type: "T".to_string(),
+        point_type: FourRemote::Telemetry,
         point_id: 1,
         value: 100.0,
         raw_value: None,
@@ -192,7 +193,7 @@ async fn test_c2c_cascade_two_levels() {
     // 写入源通道（第一级，cascade_depth = 0）
     let updates = vec![PointUpdate {
         channel_id: 1001,
-        point_type: "T".to_string(),
+        point_type: FourRemote::Telemetry,
         point_id: 1,
         value: 50.0,
         raw_value: None,
@@ -231,7 +232,7 @@ async fn test_c2c_cascade_max_depth() {
     // 写入源通道
     let updates = vec![PointUpdate {
         channel_id: 1001,
-        point_type: "T".to_string(),
+        point_type: FourRemote::Telemetry,
         point_id: 1,
         value: 200.0,
         raw_value: None,
@@ -273,7 +274,7 @@ async fn test_c2c_infinite_loop_prevention() {
     // 写入源通道
     let updates = vec![PointUpdate {
         channel_id: 1001,
-        point_type: "T".to_string(),
+        point_type: FourRemote::Telemetry,
         point_id: 1,
         value: 75.0,
         raw_value: None,
@@ -305,7 +306,7 @@ async fn test_c2c_preserve_raw_values() {
     // 写入源通道（带原始值）
     let updates = vec![PointUpdate {
         channel_id: 1001,
-        point_type: "T".to_string(),
+        point_type: FourRemote::Telemetry,
         point_id: 1,
         value: 100.0,
         raw_value: Some(1000.0),
@@ -343,7 +344,7 @@ async fn test_c2c_different_point_types() {
     let updates = vec![
         PointUpdate {
             channel_id: 1001,
-            point_type: "T".to_string(),
+            point_type: FourRemote::Telemetry,
             point_id: 1,
             value: 10.0,
             raw_value: None,
@@ -351,7 +352,7 @@ async fn test_c2c_different_point_types() {
         },
         PointUpdate {
             channel_id: 1001,
-            point_type: "S".to_string(),
+            point_type: FourRemote::Signal,
             point_id: 2,
             value: 1.0,
             raw_value: None,
@@ -359,7 +360,7 @@ async fn test_c2c_different_point_types() {
         },
         PointUpdate {
             channel_id: 1001,
-            point_type: "C".to_string(),
+            point_type: FourRemote::Control,
             point_id: 3,
             value: 0.0,
             raw_value: None,
@@ -367,7 +368,7 @@ async fn test_c2c_different_point_types() {
         },
         PointUpdate {
             channel_id: 1001,
-            point_type: "A".to_string(),
+            point_type: FourRemote::Adjustment,
             point_id: 4,
             value: 50.5,
             raw_value: None,
@@ -417,7 +418,7 @@ async fn test_c2c_one_to_many() {
     let updates = vec![
         PointUpdate {
             channel_id: 1001,
-            point_type: "T".to_string(),
+            point_type: FourRemote::Telemetry,
             point_id: 1,
             value: 123.0,
             raw_value: None,
@@ -425,7 +426,7 @@ async fn test_c2c_one_to_many() {
         },
         PointUpdate {
             channel_id: 1001,
-            point_type: "T".to_string(),
+            point_type: FourRemote::Telemetry,
             point_id: 2,
             value: 123.0,
             raw_value: None,
@@ -458,7 +459,7 @@ async fn test_c2c_no_routing() {
     // 写入源通道
     let updates = vec![PointUpdate {
         channel_id: 1001,
-        point_type: "T".to_string(),
+        point_type: FourRemote::Telemetry,
         point_id: 1,
         value: 99.0,
         raw_value: None,
@@ -488,7 +489,7 @@ async fn test_c2c_cross_type_routing() {
     // 写入遥测点位
     let updates = vec![PointUpdate {
         channel_id: 1001,
-        point_type: "T".to_string(),
+        point_type: FourRemote::Telemetry,
         point_id: 1,
         value: 88.0,
         raw_value: None,
@@ -526,7 +527,7 @@ async fn test_c2c_timestamp_propagation() {
     // 写入源通道
     let updates = vec![PointUpdate {
         channel_id: 1001,
-        point_type: "T".to_string(),
+        point_type: FourRemote::Telemetry,
         point_id: 1,
         value: 66.6,
         raw_value: None,

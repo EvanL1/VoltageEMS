@@ -5,7 +5,6 @@ use common::service_bootstrap::ServiceInfo;
 use rulesrv::Result;
 use rulesrv::{create_app_state, create_routes};
 use std::net::SocketAddr;
-use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info};
 #[cfg(feature = "swagger-ui")]
 use utoipa::OpenApi;
@@ -40,13 +39,6 @@ async fn main() -> Result<()> {
     // Create application state
     let state = create_app_state(&service_info).await?;
 
-    // Create cancellation token for graceful shutdown
-    let token = CancellationToken::new();
-
-    // Start the rule execution task
-    let task_token = token.clone();
-    let rule_task = rulesrv::routes::start_rule_execution_task(state.clone(), task_token);
-
     // Get the port before moving state
     let service_port = state.config.api.port;
 
@@ -56,7 +48,7 @@ async fn main() -> Result<()> {
     #[cfg(feature = "swagger-ui")]
     let app = {
         info!("Swagger UI feature ENABLED - initializing at /docs");
-        let openapi = rulesrv::routes::RulesrvApiDoc::openapi();
+        let openapi = rulesrv::routes::ApiDoc::openapi();
         let merged = app.merge(SwaggerUi::new("/docs").url("/openapi.json", openapi));
         info!("Swagger UI configured successfully");
         merged
@@ -82,18 +74,15 @@ async fn main() -> Result<()> {
     debug!("  GET/POST /api/rules - Rule management");
     debug!("  POST /api/rules/:id/enable - Enable rule");
     debug!("  POST /api/rules/:id/disable - Disable rule");
-    debug!("  GET /api/executions - Execution history");
-    debug!("  GET /api/statistics - Rule statistics");
+    debug!("  POST /api/rules/:id/execute - Execute rule immediately");
 
     // Setup graceful shutdown
-    let shutdown_token = token.clone();
     let shutdown_signal = async move {
         if let Err(e) = tokio::signal::ctrl_c().await {
             error!("Failed to install CTRL+C signal handler: {}", e);
             return;
         }
         info!("Shutdown signal received, stopping rule service...");
-        shutdown_token.cancel();
     };
 
     // Start server with graceful shutdown
@@ -101,8 +90,6 @@ async fn main() -> Result<()> {
         .with_graceful_shutdown(shutdown_signal)
         .await?;
 
-    // Wait for background task to complete
-    rule_task.abort();
     info!("Rule Service shutdown complete");
 
     Ok(())

@@ -153,20 +153,12 @@ impl ComBase for CanProtocol {
         "CAN Protocol"
     }
 
-    fn protocol_type(&self) -> &str {
-        "can"
-    }
-
     fn get_channel_id(&self) -> u16 {
         self.channel_config.id()
     }
 
-    fn get_channel_name(&self) -> &str {
-        self.channel_config.name()
-    }
-
     async fn get_status(&self) -> ChannelStatus {
-        self.status.read().await.clone()
+        *self.status.read().await
     }
 
     async fn initialize(&mut self, runtime_config: Arc<RuntimeChannelConfig>) -> Result<()> {
@@ -516,7 +508,6 @@ mod tests {
         match CanProtocol::new(channel_config.clone(), can_config) {
             Ok(protocol) => {
                 assert_eq!(protocol.name(), "CAN Protocol");
-                assert_eq!(protocol.protocol_type(), "can");
                 assert_eq!(protocol.get_channel_id(), 1);
                 assert!(!protocol.is_connected());
             },

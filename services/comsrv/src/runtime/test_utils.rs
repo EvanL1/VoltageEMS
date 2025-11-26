@@ -45,19 +45,6 @@ pub async fn create_test_redis_client() -> Arc<common::redis::RedisClient> {
     )
 }
 
-/// Create a mock Redis client synchronously (for non-async test setup)
-///
-/// Note: This is a workaround for tests that need Arc<RedisClient> in non-async context.
-/// The returned client is not actually connected and should not be used for real operations.
-/// For actual Redis operations in tests, use `create_test_redis_client()` in async tests.
-#[cfg(test)]
-#[allow(clippy::disallowed_methods)] // Test code - unwrap is acceptable
-pub fn create_mock_redis_client_sync() -> Arc<common::redis::RedisClient> {
-    // This is a placeholder that will panic if actually used
-    // It's only for satisfying type requirements in test setup
-    panic!("Mock Redis client should not be used for actual operations. Use create_test_redis_client() in async tests instead.")
-}
-
 // ==================== Routing Test Setup Functions ====================
 
 /// Create test environment with C2M routing configuration
@@ -93,43 +80,6 @@ pub async fn setup_c2m_routing(
         c2m_map,
         HashMap::new(),
         HashMap::new(),
-    ));
-    (rtdb, routing_cache)
-}
-
-/// Create test environment with C2C routing configuration
-///
-/// # Arguments
-/// * `c2c_routes` - C2C routing mappings: [("1001:T:1", "1002:T:2"), ...]
-///
-/// # Returns
-/// * `(Arc<dyn Rtdb>, Arc<RoutingCache>)` - RTDB and routing cache instances
-///
-/// # Example
-/// ```no_run
-/// use comsrv::test_utils::*;
-///
-/// #[tokio::test]
-/// async fn test_c2c() {
-///     let (rtdb, routing_cache) = setup_c2c_routing(vec![
-///         ("1001:T:1", "1002:T:2"),
-///         ("1002:T:2", "1003:T:3"),
-///     ]).await;
-///     // Use rtdb and routing_cache in tests
-/// }
-/// ```
-pub async fn setup_c2c_routing(
-    c2c_routes: Vec<(&str, &str)>,
-) -> (Arc<dyn Rtdb>, Arc<RoutingCache>) {
-    let rtdb = create_test_rtdb();
-    let mut c2c_map = HashMap::new();
-    for (source, target) in c2c_routes {
-        c2c_map.insert(source.to_string(), target.to_string());
-    }
-    let routing_cache = Arc::new(RoutingCache::from_maps(
-        HashMap::new(),
-        HashMap::new(),
-        c2c_map,
     ));
     (rtdb, routing_cache)
 }
@@ -182,56 +132,6 @@ pub async fn assert_channel_value(
         actual_value, expected_value,
         "Channel {}:{}:{} value mismatch",
         channel_id, point_type, point_id
-    );
-}
-
-/// Verify channel point timestamp exists
-///
-/// # Arguments
-/// * `rtdb` - RTDB instance
-/// * `channel_id` - Channel ID
-/// * `point_type` - Point type (T/S/C/A)
-/// * `point_id` - Point ID
-///
-/// # Example
-/// ```no_run
-/// use comsrv::test_utils::*;
-///
-/// #[tokio::test]
-/// async fn test_timestamp() {
-///     let rtdb = create_test_rtdb();
-///     // ... write data ...
-///     assert_channel_timestamp_exists(&rtdb, 1001, "T", 1).await;
-/// }
-/// ```
-#[allow(clippy::disallowed_methods)] // Test utility - unwrap is acceptable for test data conversion
-pub async fn assert_channel_timestamp_exists(
-    rtdb: &dyn Rtdb,
-    channel_id: u16,
-    point_type: &str,
-    point_id: u32,
-) {
-    use voltage_config::protocols::PointType;
-
-    let config = KeySpaceConfig::production();
-    let point_type_enum = PointType::from_str(point_type).unwrap();
-    let ts_key = config.channel_ts_key(channel_id, point_type_enum);
-
-    let ts_value = rtdb
-        .hash_get(&ts_key, &point_id.to_string())
-        .await
-        .expect("Failed to read timestamp")
-        .expect("Timestamp should exist");
-
-    let ts_str = String::from_utf8(ts_value.to_vec()).unwrap();
-    let timestamp: u64 = ts_str.parse().expect("Timestamp should be valid u64");
-
-    assert!(
-        timestamp > 0,
-        "Timestamp for channel {}:{}:{} should be > 0",
-        channel_id,
-        point_type,
-        point_id
     );
 }
 

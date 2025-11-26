@@ -552,7 +552,7 @@ async fn test_service_api_endpoints() -> Result<()> {
     // ApiResponse wraps the data, now with pagination
     assert_eq!(channels_response["success"], true);
     assert!(channels_response["data"].is_object());
-    assert!(channels_response["data"]["list"].is_array());
+    assert!(channels_response["data"]["items"].is_array());
     assert!(channels_response["data"]["total"].is_number());
     assert!(channels_response["data"]["page"].is_number());
     assert!(channels_response["data"]["page_size"].is_number());
