@@ -40,8 +40,8 @@ pub const DEFAULT_COMSRV_URL: &str = "http://localhost:6001";
 /// Default modsrv service URL (localhost)
 pub const DEFAULT_MODSRV_URL: &str = "http://localhost:6002";
 
-/// Default rulesrv service URL (localhost)
-pub const DEFAULT_RULESRV_URL: &str = "http://localhost:6003";
+/// Default rulesrv service URL (localhost, merged into modsrv)
+pub const DEFAULT_RULESRV_URL: &str = "http://localhost:6002";
 
 /// Environment variable name for comsrv URL
 pub const ENV_COMSRV_URL: &str = "COMSRV_URL";

@@ -30,7 +30,7 @@ mod scheduler;
 // Re-export public API
 pub use error::{Result, RuleError};
 pub use executor::{ActionResult, RuleExecutionResult, RuleExecutor};
-pub use parser::{parse_flow_json, ParsedFlow};
+pub use parser::extract_rule_flow;
 pub use repository::{
     delete_rule, get_rule, get_rule_for_execution, list_rules, load_all_rules, load_enabled_rules,
     set_rule_enabled, upsert_rule,

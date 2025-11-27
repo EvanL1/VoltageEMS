@@ -115,18 +115,19 @@ pub async fn create_instance(
     }
 }
 
-/// Update instance properties
+/// Update instance name and/or properties
 ///
-/// Updates the properties of an existing instance.
-/// Note: instance_id is the unique identifier and cannot be changed.
-/// Only the properties field can be updated through this endpoint.
+/// Updates the instance_name and/or properties of an existing instance.
+/// At least one field (instance_name or properties) must be provided.
 ///
 /// @route PUT /api/instances/{id}
 /// @input Path(id): u16 - Instance ID
-/// @input Json(dto): UpdateInstanceDto - Properties to update
+/// @input Json(dto): UpdateInstanceDto - Fields to update
 /// @output Result<Json<SuccessResponse<serde_json::Value>>, AppError> - Updated instance
 /// @status 200 - Success with updated instance details
+/// @status 400 - No fields to update or invalid request
 /// @status 404 - Instance not found
+/// @status 409 - Instance name already exists (conflict)
 /// @status 500 - Database or Redis error
 #[utoipa::path(
     put,
@@ -140,7 +141,7 @@ pub async fn create_instance(
             example = json!({
                 "instance": {
                     "instance_id": 1,
-                    "instance_name": "pv_inverter_01",
+                    "instance_name": "pv_inverter_renamed",
                     "product_name": "pv_inverter",
                     "properties": {
                         "rated_power": 5000.0,
@@ -152,7 +153,9 @@ pub async fn create_instance(
                 }
             })
         ),
+        (status = 400, description = "No fields to update"),
         (status = 404, description = "Instance not found"),
+        (status = 409, description = "Instance name already exists"),
         (status = 500, description = "Database or Redis error")
     ),
     tag = "modsrv"
@@ -162,8 +165,15 @@ pub async fn update_instance(
     Path(id): Path<u16>,
     Json(dto): Json<UpdateInstanceDto>,
 ) -> Result<Json<SuccessResponse<serde_json::Value>>, ModSrvError> {
-    // Query instance_name for logging and Redis operations
-    let instance_name: String =
+    // Validate: at least one field must be provided
+    if dto.instance_name.is_none() && dto.properties.is_none() {
+        return Err(ModSrvError::InvalidData(
+            "At least one field (instance_name or properties) must be provided".to_string(),
+        ));
+    }
+
+    // Query current instance_name for logging and Redis operations
+    let old_instance_name: String =
         match sqlx::query_scalar("SELECT instance_name FROM instances WHERE instance_id = ?")
             .bind(id as i32)
             .fetch_one(&state.instance_manager.pool)
@@ -172,115 +182,110 @@ pub async fn update_instance(
             Ok(name) => name,
             Err(_) => return Err(ModSrvError::InstanceNotFound(id.to_string())),
         };
-    // Serialize properties for SQLite
-    let properties_json = match serde_json::to_string(&dto.properties) {
-        Ok(j) => j,
-        Err(e) => {
-            return Err(ModSrvError::InternalError(format!(
-                "Failed to serialize properties: {}",
-                e
-            )));
-        },
-    };
 
-    // Get the pool from instance_manager
-    let pool = &state.instance_manager.pool;
+    // Determine the final instance name
+    let new_instance_name = dto.instance_name.as_deref().unwrap_or(&old_instance_name);
+    let is_renaming = dto.instance_name.is_some() && new_instance_name != old_instance_name;
 
-    // Begin transaction for atomic update
-    let mut tx = match pool.begin().await {
-        Ok(tx) => tx,
-        Err(e) => {
-            error!(
-                "Failed to begin transaction for instance {}: {}",
-                instance_name, e
-            );
-            return Err(ModSrvError::InternalError(format!(
-                "Database transaction failed: {}",
-                e
-            )));
-        },
-    };
-
-    // Update in SQLite within transaction
-    let result = sqlx::query(
-        r#"
-        UPDATE instances
-        SET properties = ?, updated_at = CURRENT_TIMESTAMP
-        WHERE instance_id = ?
-        "#,
-    )
-    .bind(&properties_json)
-    .bind(id as i32)
-    .execute(&mut *tx)
-    .await;
-
-    match result {
-        Ok(res) => {
-            if res.rows_affected() == 0 {
-                // Rollback transaction
-                let _ = tx.rollback().await;
-                return Err(ModSrvError::InstanceNotFound(id.to_string()));
-            }
-
-            // Commit transaction first (ensure database persistence)
-            if let Err(e) = tx.commit().await {
-                error!(
-                    "Failed to commit transaction for instance {} ({}): {}",
-                    id, instance_name, e
-                );
-                return Err(ModSrvError::InternalError(format!(
-                    "Database transaction commit failed: {}",
-                    e
+    // Handle renaming
+    if is_renaming {
+        // Rename in SQLite (includes transaction)
+        if let Err(e) = state
+            .instance_manager
+            .rename_instance(id, new_instance_name)
+            .await
+        {
+            let error_msg = e.to_string();
+            if error_msg.contains("already exists") {
+                return Err(ModSrvError::InstanceExists(format!(
+                    "Instance name '{}' already exists",
+                    new_instance_name
                 )));
             }
+            return Err(ModSrvError::InternalError(format!(
+                "Failed to rename instance: {}",
+                e
+            )));
+        }
 
-            // Best effort sync to Redis (after commit, allow failure)
-            if let Err(e) = state
-                .instance_manager
-                .sync_instance_to_redis_internal(&instance_name, &dto.properties)
-                .await
-            {
-                warn!(
-                    "Instance {} ({}) updated in SQLite but Redis sync failed: {}. Will sync on next reload.",
-                    id, instance_name, e
-                );
-            } else {
-                info!(
-                    "Successfully synced instance {} ({}) to Redis after update",
-                    id, instance_name
-                );
-            }
-
-            // Query and return updated instance
-            match state.instance_manager.get_instance(id).await {
-                Ok(instance) => Ok(Json(SuccessResponse::new(json!({
-                    "instance": instance
-                })))),
-                Err(e) => {
-                    error!(
-                        "Failed to query updated instance {} ({}): {}",
-                        id, instance_name, e
-                    );
-                    // Update succeeded but query failed - return id as fallback
-                    Ok(Json(SuccessResponse::new(json!({
-                        "instance_id": id,
-                        "instance_name": instance_name,
-                        "message": "Instance updated successfully but failed to retrieve details"
-                    }))))
-                },
-            }
-        },
-        Err(e) => {
-            error!(
-                "Failed to update instance {} ({}): {}",
-                id, instance_name, e
+        // Rename in Redis (best effort)
+        if let Err(e) = crate::redis_state::rename_instance_in_redis(
+            state.instance_manager.rtdb.as_ref(),
+            id,
+            &old_instance_name,
+            new_instance_name,
+        )
+        .await
+        {
+            warn!(
+                "Instance {} renamed in SQLite but Redis sync failed: {}. Will sync on next reload.",
+                id, e
             );
-            // Rollback transaction
-            let _ = tx.rollback().await;
-            Err(ModSrvError::InternalError(format!(
+        }
+    }
+
+    // Handle properties update
+    if let Some(ref properties) = dto.properties {
+        let properties_json = match serde_json::to_string(properties) {
+            Ok(j) => j,
+            Err(e) => {
+                return Err(ModSrvError::InternalError(format!(
+                    "Failed to serialize properties: {}",
+                    e
+                )));
+            },
+        };
+
+        // Update properties in SQLite
+        let result = sqlx::query(
+            r#"UPDATE instances SET properties = ?, updated_at = CURRENT_TIMESTAMP WHERE instance_id = ?"#,
+        )
+        .bind(&properties_json)
+        .bind(id as i32)
+        .execute(&state.instance_manager.pool)
+        .await;
+
+        if let Err(e) = result {
+            error!("Failed to update properties for instance {}: {}", id, e);
+            return Err(ModSrvError::InternalError(format!(
                 "Database update failed: {}",
                 e
-            )))
+            )));
+        }
+
+        // Sync properties to Redis (best effort)
+        if let Err(e) = state
+            .instance_manager
+            .sync_instance_to_redis_internal(new_instance_name, properties)
+            .await
+        {
+            warn!(
+                "Instance {} properties updated in SQLite but Redis sync failed: {}. Will sync on next reload.",
+                id, e
+            );
+        }
+    }
+
+    info!(
+        "Instance {} updated successfully (renamed: {}, properties: {})",
+        id,
+        is_renaming,
+        dto.properties.is_some()
+    );
+
+    // Query and return updated instance
+    match state.instance_manager.get_instance(id).await {
+        Ok(instance) => Ok(Json(SuccessResponse::new(json!({
+            "instance": instance
+        })))),
+        Err(e) => {
+            error!("Failed to query updated instance {}: {}", id, e);
+            // Update succeeded but query failed - return id as fallback
+            Ok(Json(SuccessResponse::new(json!({
+                "instance_id": id,
+                "instance_name": new_instance_name,
+                "message": "Instance updated successfully but failed to retrieve details"
+            }))))
         },
     }
 }

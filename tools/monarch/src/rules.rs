@@ -126,11 +126,11 @@ pub async fn handle_command(
                 },
                 RuleCommands::Execute { rule_id, force: _ } => {
                     // Rule execution requires RTDB + routing_cache which monarch doesn't have
-                    // Use modsrv HTTP API (port 6003) for rule execution
+                    // Use modsrv HTTP API (port 6002) for rule execution
                     warn!(
                         "Rule execution not available in offline mode. \
                          Use online mode (--offline false) or call modsrv rule API directly: \
-                         POST http://localhost:6003/api/rules/{}/execute",
+                         POST http://localhost:6002/api/rules/{}/execute",
                         rule_id
                     );
                 },

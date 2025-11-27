@@ -47,8 +47,8 @@ pub mod rule_routes;
 
 // Re-export Rule Engine types from voltage-rules library
 pub use voltage_rules::{
-    delete_rule, get_rule, get_rule_for_execution, list_rules, load_all_rules, load_enabled_rules,
-    parse_flow_json, set_rule_enabled, upsert_rule, ActionResult, ParsedFlow, Result as RuleResult,
+    delete_rule, extract_rule_flow, get_rule, get_rule_for_execution, list_rules, load_all_rules,
+    load_enabled_rules, set_rule_enabled, upsert_rule, ActionResult, Result as RuleResult,
     RuleError, RuleExecutionResult, RuleExecutor, RuleScheduler, SchedulerStatus, TriggerConfig,
 };
 

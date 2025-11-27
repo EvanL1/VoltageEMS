@@ -1,7 +1,7 @@
 //! Model Service (ModSrv)
 //!
-//! Model management service supporting measurement/action separation architecture
-//! Now includes integrated Rule Engine on port 6003.
+//! Model management service supporting measurement/action separation architecture.
+//! Rule Engine API is integrated on the same port (6002).
 
 use std::{net::SocketAddr, sync::Arc};
 
@@ -47,9 +47,8 @@ async fn main() -> Result<()> {
     info!("Swagger UI feature DISABLED");
 
     // ============================================================================
-    // Initialize Rule Engine (port 6003)
+    // Initialize Rule Engine (integrated on port 6002)
     // ============================================================================
-    let rule_engine_port = 6003u16;
     let sqlite_pool = state.instance_manager.pool.clone();
     let rtdb = state.instance_manager.rtdb.clone();
     let routing_cache = state.instance_manager.routing_cache().clone();
@@ -65,28 +64,21 @@ async fn main() -> Result<()> {
 
     // Create rule engine state and routes
     let rule_state = Arc::new(RuleEngineState::new(sqlite_pool, Arc::clone(&scheduler)));
-    let rule_app = create_rule_routes(rule_state);
+    let rule_routes = create_rule_routes(rule_state);
 
-    // Start HTTP service (model API - port 6002)
+    // Merge rule routes into the main app (both on port 6002)
+    let app = app.merge(rule_routes);
+
+    // Start HTTP service (model API + rule engine - port 6002)
     let addr = SocketAddr::from(([0, 0, 0, 0], state.config.api.port));
 
-    // Rule engine address (port 6003)
-    let rule_addr = SocketAddr::from(([0, 0, 0, 0], rule_engine_port));
-
-    // Create socket for model API (port 6002)
+    // Create socket for unified API (port 6002)
     let socket = tokio::net::TcpSocket::new_v4()?;
     socket.set_reuseaddr(true)?;
     socket.bind(addr)?;
     let listener = socket.listen(1024)?;
 
-    // Create socket for rule engine API (port 6003)
-    let rule_socket = tokio::net::TcpSocket::new_v4()?;
-    rule_socket.set_reuseaddr(true)?;
-    rule_socket.bind(rule_addr)?;
-    let rule_listener = rule_socket.listen(1024)?;
-
-    info!("Model Service started on {}", addr);
-    info!("Rule Engine started on {}", rule_addr);
+    info!("Model Service (with Rule Engine) started on {}", addr);
     info!("");
     info!("Model API endpoints (port {}):", state.config.api.port);
     info!("  GET /health - Health check");
@@ -97,45 +89,30 @@ async fn main() -> Result<()> {
     info!("  POST /api/instances/:id/action - Execute action");
     info!("  POST /api/instances/sync/all - Sync all instances");
     info!("");
-    info!("Rule Engine API endpoints (port {}):", rule_engine_port);
-    info!("  GET /health - Rule engine health check");
+    info!(
+        "Rule Engine API endpoints (port {}):",
+        state.config.api.port
+    );
     info!("  GET/POST /api/rules - Rule management");
     info!("  GET/PUT/DELETE /api/rules/:id - Single rule operations");
     info!("  POST /api/rules/:id/execute - Execute rule manually");
     info!("  GET /api/scheduler/status - Scheduler status");
     info!("  POST /api/scheduler/reload - Reload rules");
 
-    // Prepare graceful shutdown for model server
-    let model_cancel_token = shutdown_token.clone();
-    let model_shutdown_signal = async move {
-        model_cancel_token.cancelled().await;
-        info!("Shutdown signal received, stopping model service...");
+    // Prepare graceful shutdown
+    let cancel_token = shutdown_token.clone();
+    let shutdown_signal = async move {
+        cancel_token.cancelled().await;
+        info!("Shutdown signal received, stopping service...");
     };
 
-    // Prepare graceful shutdown for rule server
-    let rule_cancel_token = shutdown_token.clone();
-    let rule_shutdown_signal = async move {
-        rule_cancel_token.cancelled().await;
-        info!("Shutdown signal received, stopping rule engine...");
-    };
-
-    // Spawn model server task
-    let model_server_task = async move {
+    // Spawn server task
+    let server_task = async move {
         if let Err(e) = axum::serve(listener, app)
-            .with_graceful_shutdown(model_shutdown_signal)
+            .with_graceful_shutdown(shutdown_signal)
             .await
         {
-            error!("Model server error: {}", e);
-        }
-    };
-
-    // Spawn rule server task
-    let rule_server_task = async move {
-        if let Err(e) = axum::serve(rule_listener, rule_app)
-            .with_graceful_shutdown(rule_shutdown_signal)
-            .await
-        {
-            error!("Rule server error: {}", e);
+            error!("Server error: {}", e);
         }
     };
 
@@ -151,11 +128,9 @@ async fn main() -> Result<()> {
     });
     info!("Warning monitor started");
 
-    // Spawn server tasks
-    let model_server_handle = tokio::spawn(model_server_task);
-    let rule_server_handle = tokio::spawn(rule_server_task);
-    info!("Model server started (port {})", state.config.api.port);
-    info!("Rule server started (port {})", rule_engine_port);
+    // Spawn server task
+    let server_handle = tokio::spawn(server_task);
+    info!("Server started (port {})", state.config.api.port);
 
     // Start rule scheduler in background
     let scheduler_handle = {
@@ -179,21 +154,12 @@ async fn main() -> Result<()> {
     // Wait for tasks to complete with timeout
     let shutdown_timeout = tokio::time::Duration::from_secs(30);
 
-    // Wait for model server task
-    match tokio::time::timeout(shutdown_timeout, model_server_handle).await {
-        Ok(Ok(())) => info!("Model server shut down gracefully"),
-        Ok(Err(e)) => error!("Model server task failed: {}", e),
+    // Wait for server task
+    match tokio::time::timeout(shutdown_timeout, server_handle).await {
+        Ok(Ok(())) => info!("Server shut down gracefully"),
+        Ok(Err(e)) => error!("Server task failed: {}", e),
         Err(_) => {
-            error!("Model server shutdown timed out");
-        },
-    }
-
-    // Wait for rule server task
-    match tokio::time::timeout(shutdown_timeout, rule_server_handle).await {
-        Ok(Ok(())) => info!("Rule server shut down gracefully"),
-        Ok(Err(e)) => error!("Rule server task failed: {}", e),
-        Err(_) => {
-            error!("Rule server shutdown timed out");
+            error!("Server shutdown timed out");
         },
     }
 

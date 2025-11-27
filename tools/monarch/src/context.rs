@@ -122,7 +122,7 @@ impl ServiceContext {
     }
 
     /// Initialize rulesrv context (deprecated - now uses modsrv)
-    /// Rules functionality has been merged into modsrv (port 6003)
+    /// Rules functionality has been merged into modsrv (port 6002)
     #[cfg(feature = "lib-mode")]
     #[allow(dead_code)]
     #[deprecated(note = "rulesrv merged into modsrv. Use init_modsrv() instead.")]

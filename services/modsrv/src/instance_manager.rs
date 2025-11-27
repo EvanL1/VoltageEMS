@@ -352,6 +352,176 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
         Ok((total as u32, instances))
     }
 
+    /// Search instances by name with fuzzy matching
+    ///
+    /// Performs a LIKE query on instance_name with optional product filter.
+    ///
+    /// @input keyword: &str - Search keyword for fuzzy matching
+    /// @input product_name: Option<&str> - Optional filter by product type
+    /// @input page: u32 - Page number (1-indexed)
+    /// @input page_size: u32 - Items per page
+    /// @output Result<(u32, Vec<Instance>)> - (Total count, instances for current page)
+    /// @throws anyhow::Error - Database query error
+    pub async fn search_instances(
+        &self,
+        keyword: &str,
+        product_name: Option<&str>,
+        page: u32,
+        page_size: u32,
+    ) -> Result<(u32, Vec<Instance>)> {
+        let offset = (page - 1) * page_size;
+        let like_pattern = format!("%{}%", keyword);
+
+        // Get total count
+        let (total,): (i64,) = if let Some(pname) = product_name {
+            sqlx::query_as(
+                r#"
+                SELECT COUNT(*) FROM instances
+                WHERE instance_name LIKE ? AND product_name = ?
+                "#,
+            )
+            .bind(&like_pattern)
+            .bind(pname)
+            .fetch_one(&self.pool)
+            .await?
+        } else {
+            sqlx::query_as(
+                r#"
+                SELECT COUNT(*) FROM instances
+                WHERE instance_name LIKE ?
+                "#,
+            )
+            .bind(&like_pattern)
+            .fetch_one(&self.pool)
+            .await?
+        };
+
+        // Get paginated data
+        let rows: Vec<(i32, String, String, Option<String>, String)> =
+            if let Some(pname) = product_name {
+                sqlx::query_as(
+                    r#"
+                SELECT instance_id, instance_name, product_name, properties, created_at
+                FROM instances
+                WHERE instance_name LIKE ? AND product_name = ?
+                ORDER BY instance_id ASC
+                LIMIT ? OFFSET ?
+                "#,
+                )
+                .bind(&like_pattern)
+                .bind(pname)
+                .bind(page_size as i64)
+                .bind(offset as i64)
+                .fetch_all(&self.pool)
+                .await?
+            } else {
+                sqlx::query_as(
+                    r#"
+                SELECT instance_id, instance_name, product_name, properties, created_at
+                FROM instances
+                WHERE instance_name LIKE ?
+                ORDER BY instance_id ASC
+                LIMIT ? OFFSET ?
+                "#,
+                )
+                .bind(&like_pattern)
+                .bind(page_size as i64)
+                .bind(offset as i64)
+                .fetch_all(&self.pool)
+                .await?
+            };
+
+        let mut instances = Vec::new();
+        for (instance_id, instance_name, product_name, properties_json, _created_at) in rows {
+            let properties: HashMap<String, serde_json::Value> = if let Some(json) = properties_json
+            {
+                serde_json::from_str(&json).unwrap_or_default()
+            } else {
+                HashMap::new()
+            };
+
+            if instance_id < 0 || instance_id > u16::MAX as i32 {
+                warn!(
+                    "Instance ID {} is out of u16 range, skipping instance {}",
+                    instance_id, instance_name
+                );
+                continue;
+            }
+
+            instances.push(Instance {
+                core: voltage_config::modsrv::InstanceCore {
+                    instance_id: instance_id as u16,
+                    instance_name,
+                    product_name,
+                    properties,
+                },
+                measurement_mappings: None,
+                action_mappings: None,
+                created_at: None,
+            });
+        }
+
+        Ok((total as u32, instances))
+    }
+
+    /// Rename an instance
+    ///
+    /// Updates instance_name in SQLite (instances, measurement_routing, action_routing tables).
+    /// Caller is responsible for updating Redis after this method succeeds.
+    ///
+    /// @input instance_id: u16 - Instance ID to rename
+    /// @input new_name: &str - New instance name (must be unique)
+    /// @output Result<()> - Success or error
+    /// @throws anyhow::Error - Database error or name conflict
+    pub async fn rename_instance(&self, instance_id: u16, new_name: &str) -> Result<()> {
+        // Check if new name already exists
+        let (count,): (i64,) = sqlx::query_as(
+            r#"SELECT COUNT(*) FROM instances WHERE instance_name = ? AND instance_id != ?"#,
+        )
+        .bind(new_name)
+        .bind(instance_id as i32)
+        .fetch_one(&self.pool)
+        .await?;
+
+        if count > 0 {
+            anyhow::bail!("Instance name '{}' already exists, cannot rename", new_name);
+        }
+
+        // Start transaction
+        let mut tx = self.pool.begin().await?;
+
+        // Update instances table
+        sqlx::query(
+            r#"UPDATE instances SET instance_name = ?, updated_at = CURRENT_TIMESTAMP WHERE instance_id = ?"#,
+        )
+        .bind(new_name)
+        .bind(instance_id as i32)
+        .execute(&mut *tx)
+        .await?;
+
+        // Update measurement_routing table (redundant field)
+        sqlx::query(r#"UPDATE measurement_routing SET instance_name = ? WHERE instance_id = ?"#)
+            .bind(new_name)
+            .bind(instance_id as i32)
+            .execute(&mut *tx)
+            .await?;
+
+        // Update action_routing table (redundant field)
+        sqlx::query(r#"UPDATE action_routing SET instance_name = ? WHERE instance_id = ?"#)
+            .bind(new_name)
+            .bind(instance_id as i32)
+            .execute(&mut *tx)
+            .await?;
+
+        tx.commit().await?;
+
+        info!(
+            "Instance {} renamed to '{}' in SQLite",
+            instance_id, new_name
+        );
+        Ok(())
+    }
+
     /// Get next available instance ID
     ///
     /// Queries the database for the maximum existing instance_id and returns the next sequential ID.

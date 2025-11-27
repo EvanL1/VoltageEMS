@@ -126,7 +126,6 @@ impl ServiceConfigLoader {
             "comsrv" => 6001,
             "modsrv" => 6002,
             "alarmsrv" => 6006,
-            "rulesrv" => 6003,
             "hissrv" => 6004,
             "apigateway" => 6005,
             "netsrv" => 6007,

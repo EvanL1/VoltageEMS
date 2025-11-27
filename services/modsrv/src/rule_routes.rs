@@ -1,7 +1,7 @@
 //! Rule Engine API Routes
 //!
 //! Provides Vue Flow-based rule management and execution endpoints.
-//! These routes are served on port 6003 (separate from modsrv's main port 6002).
+//! These routes are integrated into modsrv and served on port 6002.
 
 #![allow(clippy::disallowed_methods)] // json! macro used in multiple functions
 
@@ -40,7 +40,6 @@ pub fn create_rule_routes<R: Rtdb + ?Sized + Send + Sync + 'static>(
     state: Arc<RuleEngineState<R>>,
 ) -> Router {
     Router::new()
-        .route("/health", get(health_check::<R>))
         // Rule management (Vue Flow-based)
         .route("/api/rules", get(list_rules::<R>).post(create_rule::<R>))
         .route(
@@ -77,25 +76,6 @@ pub struct RuleApiDoc;
 // Handlers
 // ============================================================================
 
-/// Health check endpoint for rule engine
-async fn health_check<R: Rtdb + ?Sized + Send + Sync + 'static>(
-    State(state): State<Arc<RuleEngineState<R>>>,
-) -> Result<Json<SuccessResponse<serde_json::Value>>, ModSrvError> {
-    let status = state.scheduler.status().await;
-
-    Ok(Json(SuccessResponse::new(json!({
-        "status": "healthy",
-        "service": "modsrv-rules",
-        "scheduler": {
-            "running": status.running,
-            "total_rules": status.total_rules,
-            "enabled_rules": status.enabled_rules,
-            "tick_interval_ms": status.tick_interval_ms
-        },
-        "timestamp": chrono::Utc::now().to_rfc3339()
-    }))))
-}
-
 /// List all rules
 #[utoipa::path(
     get,
@@ -120,12 +100,69 @@ pub async fn list_rules<R: Rtdb + ?Sized + Send + Sync + 'static>(
 }
 
 /// Create a new rule
+///
+/// 创建或更新规则。规则使用 Vue Flow 格式描述执行拓扑。
+///
+/// ## 字段说明
+///
+/// - `format`: 格式标注，目前支持 "vue-flow"（默认）
+/// - `flow_json`: 完整的 Vue Flow JSON（包含 nodes、edges、positions 等 UI 信息），供前端回显编辑
+///
+/// 后端会自动从 `flow_json` 提取执行拓扑并存储。
+///
+/// 参见 `docs/examples/soc-strategy-rule.json` 获取完整示例。
 #[utoipa::path(
     post,
     path = "/api/rules",
-    request_body = serde_json::Value,
+    request_body(
+        content = serde_json::Value,
+        description = "Vue Flow 规则 JSON。format 字段标注格式类型，flow_json 包含完整 Vue Flow 结构。",
+        example = json!({
+            "id": "soc-strategy-001",
+            "name": "SOC 电池管理策略",
+            "description": "根据电池 SOC 值自动调节光伏和柴油发电机功率",
+            "format": "vue-flow",
+            "enabled": true,
+            "priority": 100,
+            "cooldown_ms": 5000,
+            "flow_json": {
+                "nodes": [
+                    { "id": "start", "type": "start", "position": { "x": 100, "y": 100 }, "data": { "config": { "wires": { "default": ["switch-soc"] } } } },
+                    { "id": "switch-soc", "type": "custom", "position": { "x": 300, "y": 100 }, "data": {
+                        "type": "function-switch",
+                        "label": "SOC 判断",
+                        "config": {
+                            "variables": [{ "name": "X1", "type": "single", "instance": "battery_01", "pointType": "measurement", "point": 3 }],
+                            "rule": [
+                                { "name": "out001", "type": "default", "rule": [{ "type": "variable", "variables": "X1", "operator": ">=", "value": 99 }] },
+                                { "name": "out002", "type": "default", "rule": [{ "type": "variable", "variables": "X1", "operator": ">=", "value": 49 }] },
+                                { "name": "out003", "type": "default", "rule": [{ "type": "variable", "variables": "X1", "operator": "<=", "value": 5 }] }
+                            ],
+                            "wires": { "out001": ["action-high"], "out002": ["action-mid"], "out003": ["action-low"] }
+                        }
+                    }},
+                    { "id": "action-high", "type": "custom", "position": { "x": 600, "y": 50 }, "data": {
+                        "type": "action-changeValue",
+                        "label": "高电量动作",
+                        "config": {
+                            "variables": [{ "name": "Y1", "type": "single", "instance": "pv_01", "pointType": "action", "point": 5 }],
+                            "rule": [{ "Variables": "Y1", "value": 78 }],
+                            "wires": { "default": ["end"] }
+                        }
+                    }},
+                    { "id": "end", "type": "end", "position": { "x": 900, "y": 100 } }
+                ],
+                "edges": [
+                    { "id": "e1", "source": "start", "target": "switch-soc" },
+                    { "id": "e2", "source": "switch-soc", "sourceHandle": "out001", "target": "action-high" },
+                    { "id": "e3", "source": "action-high", "target": "end" }
+                ]
+            }
+        })
+    ),
     responses(
-        (status = 200, description = "Rule created", body = serde_json::Value)
+        (status = 200, description = "规则创建成功", body = serde_json::Value,
+         example = json!({ "success": true, "data": { "id": "soc-strategy-001", "status": "OK" } }))
     ),
     tag = "rules"
 )]
@@ -180,13 +217,19 @@ pub async fn get_rule<R: Rtdb + ?Sized + Send + Sync + 'static>(
 }
 
 /// Update rule
+///
+/// 更新已存在的规则。请求体格式与创建规则相同。
 #[utoipa::path(
     put,
     path = "/api/rules/{id}",
-    params(("id" = String, Path, description = "Rule identifier")),
-    request_body = serde_json::Value,
+    params(("id" = String, Path, description = "规则标识符")),
+    request_body(
+        content = serde_json::Value,
+        description = "Vue Flow 规则 JSON，格式同创建规则"
+    ),
     responses(
-        (status = 200, description = "Rule updated", body = serde_json::Value)
+        (status = 200, description = "规则更新成功", body = serde_json::Value,
+         example = json!({ "success": true, "data": { "id": "soc-strategy-001", "status": "OK" } }))
     ),
     tag = "rules"
 )]
@@ -314,12 +357,28 @@ pub async fn disable_rule<R: Rtdb + ?Sized + Send + Sync + 'static>(
 }
 
 /// Execute rule immediately (manual trigger)
+///
+/// 手动触发规则执行，返回执行结果和已执行的动作列表。
 #[utoipa::path(
     post,
     path = "/api/rules/{id}/execute",
-    params(("id" = String, Path, description = "Rule identifier")),
+    params(("id" = String, Path, description = "规则标识符")),
     responses(
-        (status = 200, description = "Rule execution result", body = serde_json::Value)
+        (status = 200, description = "规则执行结果", body = serde_json::Value,
+         example = json!({
+             "success": true,
+             "data": {
+                 "result": "executed",
+                 "rule_id": "soc-strategy-001",
+                 "execution_id": "manual-a1b2c3d4",
+                 "success": true,
+                 "actions_executed": [
+                     { "target_type": "instance", "target_id": "pv_01", "point_type": "action", "point_id": 5, "value": 78.0, "success": true }
+                 ],
+                 "execution_path": ["start", "switch-soc", "action-high", "end"],
+                 "timestamp": "2024-01-01T12:00:00Z"
+             }
+         }))
     ),
     tag = "rules"
 )]

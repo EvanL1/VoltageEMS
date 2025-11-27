@@ -457,6 +457,54 @@ where
     Ok(())
 }
 
+/// Rename an instance in Redis
+///
+/// Updates the reverse index (inst:name:index) and the name key (inst:{id}:name).
+/// Routing keys (route:c2m, route:m2c) use instance_id, so they don't need updates.
+///
+/// @input redis: &R - Redis client
+/// @input instance_id: u16 - Instance ID
+/// @input old_name: &str - Old instance name
+/// @input new_name: &str - New instance name
+/// @output Result<()> - Success or error
+pub async fn rename_instance_in_redis<R>(
+    redis: &R,
+    instance_id: u16,
+    old_name: &str,
+    new_name: &str,
+) -> Result<()>
+where
+    R: Rtdb + ?Sized,
+{
+    // 1. Remove old name from reverse index
+    redis.hash_del("inst:name:index", old_name).await?;
+
+    // 2. Add new name to reverse index
+    redis
+        .hash_set(
+            "inst:name:index",
+            new_name,
+            Bytes::from(instance_id.to_string()),
+        )
+        .await?;
+
+    // 3. Update inst:{id}:name
+    redis
+        .set(
+            &RedisKeys::instance_name(instance_id),
+            Bytes::from(new_name.to_string()),
+        )
+        .await?;
+
+    tracing::info!(
+        "Instance {} renamed from '{}' to '{}' in Redis",
+        instance_id,
+        old_name,
+        new_name
+    );
+    Ok(())
+}
+
 /// Clean up routing mappings for an instance.
 ///
 /// Optimized with batch deletion using `hash_del_many` to reduce Redis round-trips.

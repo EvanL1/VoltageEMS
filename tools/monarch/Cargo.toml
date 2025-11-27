@@ -13,7 +13,7 @@ common = { path = "../../libs/common" }
 # Service libraries (lib mode)
 comsrv = { path = "../../services/comsrv", default-features = false, optional = true }
 modsrv = { path = "../../services/modsrv", default-features = false, optional = true }
-# rulesrv has been merged into modsrv (rule engine on port 6003)
+# rulesrv has been merged into modsrv (port 6002)
 
 # CLI
 clap = { workspace = true }

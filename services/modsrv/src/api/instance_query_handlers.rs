@@ -17,9 +17,12 @@ use crate::app_state::AppState;
 use crate::dto::{DataTypeQuery, InstancePointsResponse};
 use crate::error::ModSrvError;
 
-/// Pagination query parameters
+/// Pagination and search query parameters
 #[derive(Debug, Deserialize)]
 pub struct PaginationQuery {
+    /// Search keyword for instance_name fuzzy matching (optional)
+    pub q: Option<String>,
+    /// Optional product filter
     pub product_name: Option<String>,
     #[serde(default = "default_page")]
     pub page: u32,
@@ -35,11 +38,11 @@ fn default_page_size() -> u32 {
     20
 }
 
-/// List instances with optional product filter and pagination
+/// List instances with optional search, product filter and pagination
 ///
-/// @route GET /api/instances?product_name={optional}&page={optional}&page_size={optional}
+/// @route GET /api/instances?q={optional}&product_name={optional}&page={optional}&page_size={optional}
 /// @input State(state): Arc<AppState> - Application state
-/// @input Query(query): PaginationQuery - Pagination and filter parameters
+/// @input Query(query): PaginationQuery - Search, pagination and filter parameters
 /// @output Result<Json<SuccessResponse<serde_json::Value>>, AppError> - Paginated instances
 /// @status 200 - Success with total, list, page, page_size
 /// @status 500 - Database error
@@ -47,6 +50,7 @@ fn default_page_size() -> u32 {
     get,
     path = "/api/instances",
     params(
+        ("q" = Option<String>, Query, description = "Search keyword for instance_name fuzzy matching"),
         ("product_name" = Option<String>, Query, description = "Optional product filter"),
         ("page" = Option<u32>, Query, description = "Page number (default: 1)"),
         ("page_size" = Option<u32>, Query, description = "Items per page (default: 20, max: 100)")
@@ -90,11 +94,29 @@ pub async fn list_instances(
     let page = query.page.max(1); // Ensure page is at least 1
     let page_size = query.page_size.clamp(1, 100); // Limit to reasonable range
 
-    match state
-        .instance_manager
-        .list_instances_paginated(product_name, page, page_size)
-        .await
-    {
+    // If search keyword is provided, use search method; otherwise list all
+    let result = if let Some(ref keyword) = query.q {
+        let keyword = keyword.trim();
+        if keyword.is_empty() {
+            // Empty keyword = list all
+            state
+                .instance_manager
+                .list_instances_paginated(product_name, page, page_size)
+                .await
+        } else {
+            state
+                .instance_manager
+                .search_instances(keyword, product_name, page, page_size)
+                .await
+        }
+    } else {
+        state
+            .instance_manager
+            .list_instances_paginated(product_name, page, page_size)
+            .await
+    };
+
+    match result {
         Ok((total, instances)) => Ok(Json(SuccessResponse::new(json!({
             "total": total,
             "page": page,

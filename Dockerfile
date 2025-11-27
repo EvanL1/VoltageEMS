@@ -30,6 +30,7 @@ ENV CARGO_BUILD_JOBS=${BUILD_JOBS}
 COPY . .
 
 # Build release binaries (only services, no apps or tools)
+# Note: rulesrv has been merged into modsrv
 RUN cargo build --release -p comsrv -p modsrv
 
 # ============================================================================

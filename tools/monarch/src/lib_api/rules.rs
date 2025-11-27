@@ -1,12 +1,12 @@
 //! Rules API - Library Mode
 //!
 //! Direct library calls for rule management and execution
-//! Note: rulesrv has been merged into modsrv (port 6003)
+//! Note: rulesrv has been merged into modsrv (port 6002)
 
 use crate::context::ModsrvContext;
 use crate::lib_api::{LibApiError, Result};
 use serde::{Deserialize, Serialize};
-use voltage_config::rulesrv::Rule;
+use voltage_config::rulesrv::{Rule, RuleFlow};
 
 /// Rule summary for list operations
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -18,19 +18,8 @@ pub struct RuleSummary {
 }
 
 /// Type alias for rule database row to avoid clippy::type_complexity warning
-/// Fields: (id, name, description, enabled, priority, cooldown_ms, variables_json, nodes_json, start_node_id, flow_json)
-type RuleDbRow = (
-    String,
-    String,
-    Option<String>,
-    i64,
-    i64,
-    i64,
-    String,
-    String,
-    String,
-    Option<String>,
-);
+/// Fields: (id, name, description, enabled, priority, cooldown_ms, nodes_json)
+type RuleDbRow = (String, String, Option<String>, i64, i64, i64, String);
 
 /// Rules service - provides rule management and execution operations
 /// Uses ModsrvContext since rulesrv has been merged into modsrv
@@ -73,38 +62,21 @@ impl<'a> RulesService<'a> {
     ///
     /// Returns detailed information about a specific rule.
     pub async fn get(&self, rule_id: &str) -> Result<Rule> {
-        use voltage_config::rulesrv::{FlowNode, Variable};
-
         // Query database for rule
         let row: Option<RuleDbRow> = sqlx::query_as(
-            "SELECT id, name, description, enabled, priority, cooldown_ms,
-                    variables_json, nodes_json, start_node_id, flow_json
+            "SELECT id, name, description, enabled, priority, cooldown_ms, nodes_json
              FROM rules WHERE id = ?",
         )
         .bind(rule_id)
         .fetch_optional(&self.ctx.sqlite_pool)
         .await?;
 
-        let (
-            id,
-            name,
-            description,
-            enabled,
-            priority,
-            cooldown_ms,
-            variables_json,
-            nodes_json,
-            start_node_id,
-            flow_json_opt,
-        ) = row.ok_or_else(|| LibApiError::not_found(format!("Rule '{}' not found", rule_id)))?;
+        let (id, name, description, enabled, priority, cooldown_ms, nodes_json) =
+            row.ok_or_else(|| LibApiError::not_found(format!("Rule '{}' not found", rule_id)))?;
 
-        // Deserialize parsed structures
-        let variables: Vec<Variable> = serde_json::from_str(&variables_json)
-            .map_err(|e| LibApiError::config(format!("Invalid variables JSON: {}", e)))?;
-        let nodes: Vec<FlowNode> = serde_json::from_str(&nodes_json)
-            .map_err(|e| LibApiError::config(format!("Invalid nodes JSON: {}", e)))?;
-
-        let flow_json = flow_json_opt.and_then(|s| serde_json::from_str(&s).ok());
+        // Deserialize compact flow
+        let flow: RuleFlow = serde_json::from_str(&nodes_json)
+            .map_err(|e| LibApiError::config(format!("Invalid nodes_json: {}", e)))?;
 
         Ok(Rule {
             id,
@@ -113,10 +85,7 @@ impl<'a> RulesService<'a> {
             enabled: enabled != 0,
             priority: priority as u32,
             cooldown_ms: cooldown_ms as u64,
-            variables,
-            nodes,
-            start_node_id,
-            flow_json,
+            flow,
         })
     }
 
@@ -126,21 +95,13 @@ impl<'a> RulesService<'a> {
     /// Public API - use monarch sync for CLI operations.
     #[allow(dead_code)]
     pub async fn create(&self, rule: Rule) -> Result<()> {
-        let variables_json = serde_json::to_string(&rule.variables)
-            .map_err(|e| LibApiError::config(format!("Failed to serialize variables: {}", e)))?;
-        let nodes_json = serde_json::to_string(&rule.nodes)
-            .map_err(|e| LibApiError::config(format!("Failed to serialize nodes: {}", e)))?;
-        let flow_json = rule
-            .flow_json
-            .map(|v| serde_json::to_string(&v))
-            .transpose()
-            .map_err(|e| LibApiError::config(format!("Failed to serialize flow_json: {}", e)))?;
+        let nodes_json = serde_json::to_string(&rule.flow)
+            .map_err(|e| LibApiError::config(format!("Failed to serialize flow: {}", e)))?;
 
         // Insert into database
         sqlx::query(
-            "INSERT INTO rules (id, name, description, enabled, priority, cooldown_ms,
-                                      variables_json, nodes_json, start_node_id, flow_json)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO rules (id, name, description, enabled, priority, cooldown_ms, nodes_json)
+             VALUES (?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&rule.id)
         .bind(&rule.name)
@@ -148,10 +109,7 @@ impl<'a> RulesService<'a> {
         .bind(rule.enabled)
         .bind(rule.priority as i64)
         .bind(rule.cooldown_ms as i64)
-        .bind(&variables_json)
         .bind(&nodes_json)
-        .bind(&rule.start_node_id)
-        .bind(flow_json)
         .execute(&self.ctx.sqlite_pool)
         .await?;
 
@@ -164,20 +122,12 @@ impl<'a> RulesService<'a> {
     /// Public API - use monarch sync for CLI operations.
     #[allow(dead_code)]
     pub async fn update(&self, rule_id: &str, rule: Rule) -> Result<()> {
-        let variables_json = serde_json::to_string(&rule.variables)
-            .map_err(|e| LibApiError::config(format!("Failed to serialize variables: {}", e)))?;
-        let nodes_json = serde_json::to_string(&rule.nodes)
-            .map_err(|e| LibApiError::config(format!("Failed to serialize nodes: {}", e)))?;
-        let flow_json = rule
-            .flow_json
-            .map(|v| serde_json::to_string(&v))
-            .transpose()
-            .map_err(|e| LibApiError::config(format!("Failed to serialize flow_json: {}", e)))?;
+        let nodes_json = serde_json::to_string(&rule.flow)
+            .map_err(|e| LibApiError::config(format!("Failed to serialize flow: {}", e)))?;
 
         let result = sqlx::query(
             "UPDATE rules SET name = ?, description = ?, enabled = ?, priority = ?,
-                    cooldown_ms = ?, variables_json = ?, nodes_json = ?, start_node_id = ?,
-                    flow_json = ?, updated_at = CURRENT_TIMESTAMP
+                    cooldown_ms = ?, nodes_json = ?, updated_at = CURRENT_TIMESTAMP
              WHERE id = ?",
         )
         .bind(&rule.name)
@@ -185,10 +135,7 @@ impl<'a> RulesService<'a> {
         .bind(rule.enabled)
         .bind(rule.priority as i64)
         .bind(rule.cooldown_ms as i64)
-        .bind(&variables_json)
         .bind(&nodes_json)
-        .bind(&rule.start_node_id)
-        .bind(flow_json)
         .bind(rule_id)
         .execute(&self.ctx.sqlite_pool)
         .await?;

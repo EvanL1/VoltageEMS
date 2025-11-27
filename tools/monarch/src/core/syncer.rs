@@ -9,7 +9,7 @@ use sqlx::{Sqlite, SqlitePool, Transaction};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use tracing::{debug, info, warn};
-use voltage_config::{comsrv::ComsrvConfig, modsrv::ModsrvConfig, rulesrv::RulesrvConfig};
+use voltage_config::{comsrv::ComsrvConfig, modsrv::ModsrvConfig};
 
 use super::file_utils::{flatten_json, load_csv, load_csv_typed};
 use super::schema;
@@ -143,8 +143,6 @@ pub struct SyncResult {
     pub items_synced: usize,
     /// Number of items deleted
     pub items_deleted: usize,
-    /// Number of warnings
-    pub warnings: usize,
     /// Errors encountered during sync
     pub errors: Vec<SyncError>,
 }
@@ -176,7 +174,6 @@ impl ConfigSyncer {
         match service {
             "comsrv" => self.sync_comsrv().await,
             "modsrv" => self.sync_modsrv().await,
-            "rulesrv" => self.sync_rulesrv().await,
             "global" => self.sync_global().await,
             _ => Err(anyhow::anyhow!("Unknown service: {}", service)),
         }
@@ -285,13 +282,13 @@ impl ConfigSyncer {
 
         // Note: Global CSV files don't exist. All point definitions are channel-specific
 
+        // Initialize schema if needed (creates database file if not exists)
+        schema::init_database(&db_file).await?;
+
         // Connect to database
         let pool = SqlitePool::connect(&format!("sqlite://{}?mode=rwc", db_file.display()))
             .await
             .context("Failed to connect to comsrv database")?;
-
-        // Initialize schema if needed
-        schema::init_comsrv_schema(&pool).await?;
 
         // Start transaction
         let mut tx = pool.begin().await?;
@@ -405,13 +402,13 @@ impl ConfigSyncer {
         let yaml_config = serde_yaml::from_str::<JsonValue>(&yaml_content)
             .context("Failed to parse modsrv.yaml as JSON")?;
 
+        // Initialize schema if needed (creates database file if not exists)
+        schema::init_database(&db_file).await?;
+
         // Connect to database
         let pool = SqlitePool::connect(&format!("sqlite://{}?mode=rwc", db_file.display()))
             .await
             .context("Failed to connect to modsrv database")?;
-
-        // Initialize schema if needed
-        schema::init_modsrv_schema(&pool).await?;
 
         // Start transaction
         let mut tx = pool.begin().await?;
@@ -492,6 +489,16 @@ impl ConfigSyncer {
             debug!("Synced {} calculation definitions", calculations_count);
         }
 
+        // Load and sync rules (merged from rulesrv)
+        let rules_dir = config_dir.join("rules");
+        if rules_dir.exists() {
+            // Clear existing rules
+            sqlx::query("DELETE FROM rules").execute(&mut *tx).await?;
+            let rules_count = self.sync_rules(&mut tx, &rules_dir).await?;
+            stats.items_synced += rules_count;
+            debug!("Synced {} rules", rules_count);
+        }
+
         // Update sync timestamp
         self.update_sync_timestamp(&mut tx, "modsrv").await?;
 
@@ -520,79 +527,6 @@ impl ConfigSyncer {
             stats.items_synced,
             stats.items_deleted,
             stats.errors.len()
-        );
-
-        Ok(stats)
-    }
-
-    /// Sync rulesrv configuration
-    async fn sync_rulesrv(&self) -> Result<SyncResult> {
-        let mut stats = SyncResult::default();
-        let db_file = self.db_path.join("voltage.db");
-        let config_dir = self.config_path.join("rulesrv");
-
-        debug!("Syncing rulesrv from {:?} to {:?}", config_dir, db_file);
-
-        // Ensure database directory exists
-        if let Some(parent) = db_file.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-
-        // Load and parse YAML
-        let yaml_path = config_dir.join("rulesrv.yaml");
-        let yaml_content = std::fs::read_to_string(&yaml_path)
-            .with_context(|| format!("Failed to read {:?}", yaml_path))?;
-        let _rulesrv_config: RulesrvConfig =
-            serde_yaml::from_str(&yaml_content).context("Failed to parse rulesrv.yaml")?;
-
-        let yaml_config = serde_yaml::from_str::<JsonValue>(&yaml_content)
-            .context("Failed to parse rulesrv.yaml as JSON")?;
-
-        // Connect to database
-        let pool = SqlitePool::connect(&format!("sqlite://{}?mode=rwc", db_file.display()))
-            .await
-            .context("Failed to connect to rulesrv database")?;
-
-        // Initialize schema if needed
-        schema::init_rulesrv_schema(&pool).await?;
-
-        // Start transaction
-        let mut tx = pool.begin().await?;
-
-        // Clear existing configuration
-        sqlx::query("DELETE FROM service_config WHERE service_name = ?")
-            .bind("rulesrv")
-            .execute(&mut *tx)
-            .await?;
-        sqlx::query("DELETE FROM rules").execute(&mut *tx).await?;
-
-        stats.items_deleted = 2; // Cleared 2 tables
-
-        // Insert service configuration
-        let config_count = self
-            .insert_service_config(&mut tx, "rulesrv", &yaml_config)
-            .await?;
-        stats.items_synced += config_count;
-
-        debug!("Inserted {} configuration items", config_count);
-
-        // Load and sync rules
-        let rules_dir = config_dir.join("rules");
-        if rules_dir.exists() {
-            let rules_count = self.sync_rules(&mut tx, &rules_dir).await?;
-            stats.items_synced += rules_count;
-            debug!("Synced {} rules", rules_count);
-        }
-
-        // Update sync timestamp
-        self.update_sync_timestamp(&mut tx, "rulesrv").await?;
-
-        // Commit transaction
-        tx.commit().await?;
-
-        info!(
-            "Rulesrv sync completed: {} items synced, {} deleted",
-            stats.items_synced, stats.items_deleted
         );
 
         Ok(stats)
@@ -1656,14 +1590,21 @@ impl ConfigSyncer {
                 .map(|v| serde_json::to_string(v).unwrap_or_default())
                 .unwrap_or_else(|| serde_json::to_string(&rule_data).unwrap_or_default());
 
+            // nodes_json is required - extract from rule_data or use empty array
+            let nodes_json = rule_data
+                .get("nodes")
+                .map(|v| serde_json::to_string(v).unwrap_or_default())
+                .unwrap_or_else(|| "[]".to_string());
+
             sqlx::query(
-                "INSERT INTO rules (id, name, description, flow_json, enabled, priority)
-                VALUES (?, ?, ?, ?, ?, ?)",
+                "INSERT INTO rules (id, name, description, flow_json, nodes_json, enabled, priority)
+                VALUES (?, ?, ?, ?, ?, ?, ?)",
             )
             .bind(id)
             .bind(name)
             .bind(description)
             .bind(&flow_json)
+            .bind(&nodes_json)
             .bind(enabled)
             .bind(priority)
             .execute(&mut **tx)

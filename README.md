@@ -13,12 +13,12 @@ VoltageEMS is a high-performance industrial IoT energy management system built w
 - **High Performance**: Built with Rust for optimal performance and memory safety
 - **Centralized Configuration**: All configuration constants and queries managed in `voltage-config` library
 - **Web Dashboard**: Vue.js frontend with real-time data visualization
-- **Hybrid Architecture**: Rust services for I/O, Redis Lua functions for business logic
+- **Microservices Architecture**: Rust services with Redis for real-time data
 - **Real-time Data Flow**: Automatic data routing from devices to models via Redis mappings
 - **Multi-Protocol Support**: Modbus TCP/RTU, Virtual, gRPC, CAN bus with plugin system
 - **Hardware Access**: Support for serial ports and CAN bus for industrial control
 - **Model-based System**: Instance-based data modeling with hierarchical products
-- **Zero-polling Design**: Event-driven data flow using Redis Lua functions
+- **Event-driven Design**: Real-time data flow via Redis routing
 - **RESTful APIs**: Standard HTTP/JSON interfaces for all services
 - **Docker Ready**: Fully containerized deployment with hardware access support
 - **CLI Tools**: Comprehensive command-line tools including Monarch for configuration management
@@ -28,37 +28,33 @@ VoltageEMS is a high-performance industrial IoT energy management system built w
 ### System Architecture
 ```
                 ┌─────────────┐
-                │   Devices   │ (Modbus, Virtual, gRPC, CAN, GPIO)
-                └──────┬──────┘
-                       │
-                ┌──────▼──────┐
-                │   Frontend  │ (Vue.js Web Application)
+                │   Devices   │ (Modbus, Virtual, gRPC, CAN)
                 └──────┬──────┘
                        │
        ┌───────────────┴───────────────────────────┐
-       │                                           │
        ▼                                           ▼
-                                          ┌──────────────────┐
-                                          │   Microservices  │
-                                          │                  │
-                                          │ comsrv(:6001)    │
-                                          │ modsrv(:6002)    │
-                                          │ rulesrv(:6003)   │
-                                          └──────────────────┘
-                                                 │
-                                                 ▼
-                                    ┌───────────────────────────────┐
-                                    │ Redis(:6379)                  │
-                                    └───────────────────────────────┘
+┌──────────────────┐                      ┌──────────────────┐
+│   Microservices  │                      │   Frontend       │
+│                  │                      │   (Vue.js)       │
+│ comsrv(:6001)    │                      └──────────────────┘
+│ modsrv(:6002)    │ ← includes rule engine
+└──────────────────┘
+         │
+         ▼
+┌───────────────────────────────┐
+│ Redis(:6379)                  │
+└───────────────────────────────┘
 ```
 
 ### Data Flow Architecture
 ```
-Device → comsrv → Redis Hash → Lua Function → modsrv instance
-        (Plugin)  (comsrv:ch:T) (Auto Route)  (Real-time)
-                                 ↓
-                           route:c2m mapping
-                           (Channel→Instance)
+Upstream (Device → Model):
+  Device → comsrv → Redis Hash → route:c2m → inst:{id}:M
+
+Downstream (Control → Device):
+  1. Lookup route:m2c for target channel
+  2. Write inst:{id}:A Hash (state)
+  3. Push to comsrv TODO queue (trigger)
 ```
 
 ## 📦 Services
@@ -66,11 +62,10 @@ Device → comsrv → Redis Hash → Lua Function → modsrv instance
 | Service | Port | Description |
 |---------|------|-------------|
 | **comsrv** | 6001 | Communication service - handles industrial protocols |
-| **modsrv** | 6002 | Model service - manages data models and calculations |
-| **rulesrv** | 6003 | Rule engine - executes business rules |
-| **redis** | 6379 | In-memory data store & Lua functions |
+| **modsrv** | 6002 | Model service - manages data models, calculations, and rule engine |
+| **redis** | 6379 | In-memory data store |
 
-Note: The provided docker-compose runs comsrv/modsrv/rulesrv plus Redis by default.
+Note: The provided docker-compose runs comsrv/modsrv plus Redis by default. Rule engine is integrated in modsrv (port 6002).
 
 ## 🛠️ Technology Stack
 
@@ -102,9 +97,10 @@ cd VoltageEMS
 ./scripts/dev.sh
 ```
 
-3. Load Redis Lua functions (Critical for data flow):
+3. Initialize configuration:
 ```bash
-cd scripts/redis-functions && ./load_functions.sh
+cargo build --release -p monarch
+./target/release/monarch init all && ./target/release/monarch sync all
 ```
 
 4. Run a specific service:
@@ -126,16 +122,17 @@ docker compose up -d
 docker compose ps
 ```
 
-2. Verify data flow:
+2. Verify services:
 ```bash
 # Check logs
 docker compose logs -f comsrv modsrv
 
-# Test data flow
-docker exec voltageems-redis redis-cli FCALL comsrv_batch_update 0 "1001" "T" '{"1":100}'
+# Check service health
+curl http://localhost:6001/health  # comsrv
+curl http://localhost:6002/health  # modsrv (includes rule engine)
 
-# Check mapped data (runtime storage uses hash)
-docker exec voltageems-redis redis-cli HGET "modsrv:pv_inverter_01:M" "1"
+# Check instance data
+docker exec voltageems-redis redis-cli HGETALL "inst:1:M"
 ```
 
 ### Frontend Application
@@ -271,25 +268,20 @@ Note:
 
 ```
 VoltageEMS/
-├── services/           # Microservices
-│   ├── comsrv/        # Communication service (plugin architecture)
-│   ├── modsrv/        # Model service (single-file architecture)
-│   └── rulesrv/       # Rule engine (single-file architecture)
-├── tools/             # CLI tools
-│   └── monarch/       # Configuration management (YAML/CSV ↔ SQLite)
-├── libs/              # Shared libraries
-│   ├── common/        # Common utilities
-│   └── voltage-config/ # Centralized configuration (SQL, Redis keys, tables)
-├── scripts/           # Utility scripts
-│   ├── redis-functions/  # Redis Lua functions
-│   ├── dev.sh            # Development environment setup
-│   └── quick-check.sh    # Pre-commit checks
-├── config/            # Configuration files
-│   ├── comsrv/        # Communication service configs
-│   └── modsrv/        # Model service configs
-│       └── instances/ # Instance mapping configs
-├── docker/            # Docker related files
-└── docker-compose.yml # Service orchestration
+├── libs/
+│   ├── voltage-config/      # Data structures (authoritative source)
+│   ├── voltage-routing/     # M2C routing shared library
+│   ├── voltage-rtdb/        # Redis abstraction layer
+│   ├── voltage-rules/       # Rule engine library
+│   └── common/              # Common utilities
+├── services/
+│   ├── comsrv/              # Communication service
+│   └── modsrv/              # Model service + Rule engine
+├── tools/monarch/           # Configuration CLI (YAML/CSV → SQLite)
+├── apps/                    # Vue.js frontend
+├── config/                  # YAML/CSV configuration source
+├── scripts/                 # Operations scripts
+└── docker-compose.yml
 ```
 
 ### Building
@@ -327,9 +319,7 @@ cargo test -p comsrv
 cargo test -- --nocapture
 
 # Integration testing
-./scripts/test-all-services.sh      # Test all services
-./scripts/test-docker.sh test        # Docker integration test
-./scripts/test-lua-functions.sh      # Test Redis Lua functions
+./scripts/run-integration-tests.sh   # Run integration tests
 ```
 
 ### Offline Build (ARM64)
@@ -343,18 +333,6 @@ cargo test -- --nocapture
   - Requirements: Docker buildx and binfmt
   - Build: `VERSION=arm64-v1 scripts/offline/build_images_arm64.sh`
   - Output: `offline-bundle/docker/images/*.tar`
-
-### Maintenance Scripts
-
-```bash
-# Clean up deprecated Redis meta structures
-# Use after migrating to point-level timestamps and raw values
-./scripts/cleanup-meta-structure.sh
-
-# This removes old comsrv:{channel}:meta keys that were replaced by:
-# - comsrv:{channel}:{type}:ts for point-level timestamps
-# - comsrv:{channel}:{type}:raw for raw values
-```
 
 ### Data Structures (ComSrv)
 - Keys and Types
@@ -370,14 +348,13 @@ cargo test -- --nocapture
     - Item JSON includes: `command_id`, `channel_id`, `command_type` (C/A), `point_id`, `value`, `timestamp`, `source` (optional `priority`)
 
 - Data Flow
-  - Ingestion: `comsrv_batch_update(channel, T|S, updates_json, [raw_values_json])`
+  - Ingestion: Rust batch update via `RoutingCache`
     - Batch HSET `comsrv:{channel}:{T|S}` → engineering values
     - Batch HSET `comsrv:{channel}:{T|S}:ts` → timestamps
-    - Batch HSET `comsrv:{channel}:{T|S}:raw` → raw values (if provided)
-    - Route to ModSrv via `route:c2m` mapping
+    - Route to ModSrv via `route:c2m` mapping (application-level routing)
   - Query: `GET /api/channels/{channel}/{type}/{point_id}`
-    - Returns JSON with value, timestamp, and raw value (REST endpoint backed by Rust)
-  - Commands: HTTP `POST /api/channels/{channel_id}/points/{point_id}/{control|adjustment}` or internal producers
+    - Returns JSON with value, timestamp (REST endpoint)
+  - Commands: HTTP `POST /api/channels/{channel_id}/points/{point_id}/{control|adjustment}`
     - HSET `comsrv:{channel}:{C|A}` (latest state) → RPUSH `comsrv:{channel}:{C|A}:TODO`
     - Protocol layer consumes via BLPOP to execute on device
 
@@ -413,16 +390,16 @@ cargo test -- --nocapture
   - Stats: `modsrv:stats:routed` (Hash): routed counts by `channel_id` (diagnostic)
 
 - Actions (instance → device command)
-  - Entry: ModSrv API (`modsrv_execute_action`) or RuleSrv instance action
-  - Path: write `modsrv:{instance_name}:A` → lookup `route:m2c` → `RPUSH comsrv:{channel}:{C|A}:TODO`
+  - Entry: ModSrv API or Rule engine action
+  - Path: write `inst:{id}:A` → lookup `route:m2c` → `RPUSH comsrv:{channel}:{C|A}:TODO`
 
 - Example
-  - `FCALL modsrv_execute_action 0 "pv_inv_01" '{"action_id":"7","value":1}'`
+  - `POST /api/instances/1/action {"action_id": 7, "value": 1}`
 
-### Data Structures (RuleSrv)
+### Data Structures (Rules - integrated in modsrv)
 - Rule definitions persist in SQLite `rules` table (`id`, `name`, `description`, `flow_json`, `enabled`, `priority`, timestamps).
-- Rule management uses REST endpoints (`/api/rules/*`) for list/create/update/delete/enable/disable; direct FCALLs are no longer available.
-- Runtime field references still follow ModSrv syntax: `{instance}.{M|A}.{point}` with aggregates `SUM/AVG/MAX/MIN/COUNT(...)`.
+- Rule management uses REST endpoints on port 6002 (`/api/rules/*`) for list/create/update/delete/enable/disable.
+- Runtime field references follow ModSrv syntax: `{instance}.{M|A}.{point}` with aggregates `SUM/AVG/MAX/MIN/COUNT(...)`.
 
 
 ## 📊 API Documentation
@@ -455,17 +432,17 @@ POST /api/models/apply
 
 ## 🎯 Key Features & Improvements
 
-### Real-time Data Flow (2025-09)
-- **Automatic Data Routing**: comsrv_batch_update Lua function auto-routes data to modsrv
-- **Instance-based Modeling**: Meaningful instance names loaded from instances.yaml
-- **Zero-polling Architecture**: Event-driven data flow via Redis mappings
-- **Channel-to-Instance Mapping**: CSV-based configuration for flexible data routing
+### Real-time Data Flow
+- **Application-level Routing**: Rust `RoutingCache` for C2M/M2C routing
+- **Instance-based Modeling**: Meaningful instance names loaded from SQLite
+- **Event-driven Architecture**: Real-time data flow via Redis mappings
+- **Channel-to-Instance Mapping**: CSV-based configuration synced via Monarch
 
 ### Performance Optimizations
-- **Hybrid Processing**: Rust for I/O, Redis Lua for business logic (µs latency)
-- **Single-file Services**: Simplified architecture for modsrv, rulesrv
-- **Direct Redis Operations**: Eliminated unnecessary abstractions
-- **Optimized Docker Build**: Unified image with all services (~20% smaller)
+- **Pure Rust Processing**: All routing in Rust for consistent performance
+- **Consolidated Services**: modsrv includes rule engine (single deployment)
+- **DashMap Routing Cache**: In-memory routing with Redis as source of truth
+- **Optimized Docker Build**: Unified image with all services
 
 ## 🔍 Monitoring
 

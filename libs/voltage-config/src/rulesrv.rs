@@ -14,11 +14,11 @@ use schemars::JsonSchema;
 #[cfg(feature = "schema-macro")]
 use voltage_schema_macro::Schema;
 
-/// Default API configuration for rulesrv (port 6003)
+/// Default API configuration for rulesrv (port 6002, merged into modsrv)
 fn default_rulesrv_api() -> ApiConfig {
     ApiConfig {
         host: "0.0.0.0".to_string(),
-        port: 6003,
+        port: 6002,
     }
 }
 
@@ -116,8 +116,8 @@ pub const SYNC_METADATA_TABLE: &str = r#"
     )
 "#;
 
-/// Default port for rulesrv service
-pub const DEFAULT_PORT: u16 = 6003;
+/// Default port for rulesrv service (merged into modsrv)
+pub const DEFAULT_PORT: u16 = 6002;
 
 /// Rule execution configuration (reserved for future use)
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -182,8 +182,8 @@ impl RuleConfig {
 }
 
 /// Rules table record
-/// Stores rule definitions as JSON for vue-flow/node-red
-/// Each rule is a complete flow graph (nodes, edges, viewport, etc.)
+/// Stores rule definitions as compact flow JSON (only execution-necessary data)
+/// Variables are stored per-node, not globally
 #[cfg_attr(feature = "schema-macro", derive(Schema))]
 #[cfg_attr(feature = "schema-macro", table(name = "rules"))]
 #[allow(dead_code)]
@@ -197,13 +197,16 @@ struct RuleRecord {
     description: Option<String>,
 
     #[cfg_attr(feature = "schema-macro", column(not_null))]
-    flow_json: String, // JSON stored as TEXT
+    nodes_json: String, // CompactFlow JSON stored as TEXT
 
     #[cfg_attr(feature = "schema-macro", column(default = "true"))]
     enabled: bool,
 
     #[cfg_attr(feature = "schema-macro", column(default = "0"))]
     priority: i32,
+
+    #[cfg_attr(feature = "schema-macro", column(default = "0"))]
+    cooldown_ms: i64,
 
     #[cfg_attr(feature = "schema-macro", column(default = "CURRENT_TIMESTAMP"))]
     created_at: String, // TIMESTAMP
@@ -245,9 +248,10 @@ pub const RULES_TABLE: &str = r#"
         id TEXT PRIMARY KEY,
         name TEXT NOT NULL,
         description TEXT,
-        flow_json TEXT NOT NULL,
+        nodes_json TEXT NOT NULL,
         enabled BOOLEAN DEFAULT TRUE,
         priority INTEGER DEFAULT 0,
+        cooldown_ms INTEGER DEFAULT 0,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )
@@ -279,7 +283,7 @@ impl Default for RulesrvConfig {
 
         let api = ApiConfig {
             host: "0.0.0.0".to_string(),
-            port: 6003, // rulesrv default port
+            port: 6002, // merged into modsrv
         };
 
         Self {
@@ -466,7 +470,7 @@ impl ConfigValidator for RulesrvValidator {
 // Vue Flow Rule Structures (Parsed/Flattened)
 // ============================================================================
 
-/// Rule - parsed and flattened structure for execution
+/// Rule - execution structure with compact flow topology
 /// This is the internal representation used by the execution engine
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(JsonSchema))]
@@ -492,229 +496,8 @@ pub struct Rule {
     #[serde(default)]
     pub cooldown_ms: u64,
 
-    /// Variable definitions (data sources)
-    pub variables: Vec<Variable>,
-
-    /// Parsed flow nodes
-    pub nodes: Vec<FlowNode>,
-
-    /// Node ID to start execution from
-    pub start_node_id: String,
-
-    /// Original flow_json for frontend editing
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub flow_json: Option<serde_json::Value>,
-}
-
-/// Instance point type (M/A)
-/// Used for reading from modsrv instances
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(JsonSchema))]
-pub enum InstancePointType {
-    /// M - Measurement (测量点) - Read from inst:{id}:M
-    #[serde(rename = "M")]
-    Measurement,
-    /// A - Action (动作点) - Read from inst:{id}:A
-    #[serde(rename = "A")]
-    Action,
-}
-
-/// Re-export PointType as ChannelPointType for clarity
-/// T = Telemetry, S = Signal, C = Control, A = Adjustment
-pub use crate::protocols::PointType as ChannelPointType;
-
-/// Variable definition for data acquisition
-///
-/// Variables define where to read data from:
-/// - Instance: Read from modsrv instance points (inst:{id}:M or inst:{id}:A)
-/// - Channel: Read directly from comsrv channel points (comsrv:{id}:T/S/C/A)
-/// - Combined: Calculate from other variables using a formula
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(JsonSchema))]
-#[serde(tag = "type", rename_all = "snake_case")]
-pub enum Variable {
-    /// Instance point - read from modsrv instance (recommended)
-    /// Redis key: inst:{instance_id}:M or inst:{instance_id}:A
-    Instance {
-        /// Variable name (e.g., "pv_voltage")
-        name: String,
-        /// Instance ID (numeric)
-        instance_id: u16,
-        /// Point type: M (Measurement) or A (Action)
-        point_type: InstancePointType,
-        /// Point ID (hash field in Redis)
-        point_id: String,
-    },
-    /// Channel point - read directly from comsrv channel
-    /// Redis key: comsrv:{channel_id}:T/S/C/A
-    Channel {
-        /// Variable name (e.g., "raw_temp")
-        name: String,
-        /// Channel ID
-        channel_id: u16,
-        /// Point type: T/S/C/A
-        point_type: ChannelPointType,
-        /// Point ID (hash field in Redis)
-        point_id: String,
-    },
-    /// Combined value calculated from formula
-    Combined {
-        /// Variable name (e.g., "power_sum")
-        name: String,
-        /// Formula tokens for calculation
-        formula: Vec<FormulaToken>,
-    },
-}
-
-/// Formula token for expression evaluation
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(JsonSchema))]
-#[serde(tag = "type", rename_all = "snake_case")]
-pub enum FormulaToken {
-    /// Variable reference
-    Var { name: String },
-    /// Numeric constant
-    Num { value: f64 },
-    /// Arithmetic operator
-    Op { op: ArithmeticOp },
-}
-
-/// Arithmetic operators
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(JsonSchema))]
-pub enum ArithmeticOp {
-    #[serde(rename = "+")]
-    Add,
-    #[serde(rename = "-")]
-    Sub,
-    #[serde(rename = "*")]
-    Mul,
-    #[serde(rename = "/")]
-    Div,
-}
-
-/// Flow node types (parsed from Vue Flow nodes)
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(JsonSchema))]
-#[serde(tag = "type", rename_all = "snake_case")]
-pub enum FlowNode {
-    /// Start node - entry point
-    Start { id: String, next: String },
-    /// End node - termination point
-    End { id: String },
-    /// Switch node - conditional branching
-    Switch { id: String, rules: Vec<SwitchRule> },
-    /// Change value action
-    ChangeValue {
-        id: String,
-        changes: Vec<ValueChange>,
-        next: String,
-    },
-}
-
-impl FlowNode {
-    /// Get node ID
-    pub fn id(&self) -> &str {
-        match self {
-            FlowNode::Start { id, .. } => id,
-            FlowNode::End { id } => id,
-            FlowNode::Switch { id, .. } => id,
-            FlowNode::ChangeValue { id, .. } => id,
-        }
-    }
-}
-
-/// Switch rule - one branch in a switch node
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(JsonSchema))]
-pub struct SwitchRule {
-    /// Output port name (e.g., "out001")
-    pub name: String,
-
-    /// Conditions to evaluate
-    pub conditions: Vec<RuleCondition>,
-
-    /// Next node ID if conditions match
-    pub next_node: String,
-}
-
-/// Single condition in a rule
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(JsonSchema))]
-pub struct RuleCondition {
-    /// Left operand (variable name or literal)
-    pub left: String,
-
-    /// Comparison operator
-    pub operator: CompareOp,
-
-    /// Right operand (variable name or literal)
-    pub right: String,
-
-    /// Logical relation to next condition (AND/OR)
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub relation: Option<LogicOp>,
-}
-
-/// Comparison operators
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(JsonSchema))]
-pub enum CompareOp {
-    #[serde(rename = "==")]
-    Eq,
-    #[serde(rename = "!=")]
-    Ne,
-    #[serde(rename = ">")]
-    Gt,
-    #[serde(rename = "<")]
-    Lt,
-    #[serde(rename = ">=")]
-    Gte,
-    #[serde(rename = "<=")]
-    Lte,
-}
-
-/// Logical operators
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(JsonSchema))]
-pub enum LogicOp {
-    #[serde(rename = "&&")]
-    And,
-    #[serde(rename = "||")]
-    Or,
-}
-
-/// Value change action - defines where to write data
-///
-/// Supports two target types:
-/// - Instance: Write to modsrv instance action point (triggers M2C routing)
-/// - Channel: Write directly to comsrv channel point (bypasses routing, use with caution)
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(JsonSchema))]
-#[serde(tag = "target", rename_all = "snake_case")]
-pub enum ValueChange {
-    /// Write to instance action point (recommended)
-    /// Uses M2C routing: inst:{id}:A → route:m2c → comsrv:{ch}:A:TODO
-    Instance {
-        /// Instance ID
-        instance_id: u16,
-        /// Action point ID
-        point_id: String,
-        /// New value (can reference variable names like "X1")
-        value: String,
-    },
-    /// Write directly to channel point (bypasses routing, use with caution)
-    /// Typically used for C (Control) or A (Adjustment) point types
-    Channel {
-        /// Channel ID
-        channel_id: u16,
-        /// Point type (usually C or A)
-        point_type: ChannelPointType,
-        /// Point ID
-        point_id: String,
-        /// New value (can reference variable names)
-        value: String,
-    },
+    /// Rule flow topology (nodes with local variables)
+    pub flow: RuleFlow,
 }
 
 // ============================================================================
@@ -744,21 +527,16 @@ struct RuleChainRecord {
     #[cfg_attr(feature = "schema-macro", column(default = "0"))]
     cooldown_ms: i64,
 
-    /// Parsed variables as JSON
-    #[cfg_attr(feature = "schema-macro", column(not_null))]
-    variables_json: String,
-
-    /// Parsed nodes as JSON
+    /// Parsed compact flow as JSON (for execution)
     #[cfg_attr(feature = "schema-macro", column(not_null))]
     nodes_json: String,
 
-    /// Start node ID
-    #[cfg_attr(feature = "schema-macro", column(not_null))]
-    start_node_id: String,
+    /// Original Vue Flow JSON (for frontend editing)
+    flow_json: Option<String>,
 
-    /// Original flow_json for frontend editing
-    #[cfg_attr(feature = "schema-macro", column(not_null))]
-    flow_json: String,
+    /// Format type: "vue-flow" (default)
+    #[cfg_attr(feature = "schema-macro", column(default = "'vue-flow'"))]
+    format: String,
 
     #[cfg_attr(feature = "schema-macro", column(default = "CURRENT_TIMESTAMP"))]
     created_at: String,
@@ -779,11 +557,152 @@ pub const RULE_CHAINS_TABLE: &str = r#"
         enabled BOOLEAN DEFAULT TRUE,
         priority INTEGER DEFAULT 0,
         cooldown_ms INTEGER DEFAULT 0,
-        variables_json TEXT NOT NULL,
         nodes_json TEXT NOT NULL,
-        start_node_id TEXT NOT NULL,
-        flow_json TEXT NOT NULL,
+        flow_json TEXT,
+        format TEXT DEFAULT 'vue-flow',
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )
 "#;
+
+// ============================================================================
+// Compact Flow Structures (Vue Flow → Simplified Topology)
+// ============================================================================
+
+use std::collections::HashMap;
+
+/// Rule flow topology - simplified structure for execution
+/// Extracted from full Vue Flow JSON, discarding UI-only information
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
+pub struct RuleFlow {
+    /// ID of the start node
+    pub start_node: String,
+
+    /// Nodes indexed by ID for O(1) lookup
+    pub nodes: HashMap<String, RuleNode>,
+}
+
+/// Rule node - execution-only node structure
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
+#[serde(tag = "type")]
+pub enum RuleNode {
+    /// Start node - entry point
+    #[serde(rename = "start")]
+    Start {
+        /// Output wires
+        wires: RuleWires,
+    },
+
+    /// End node - termination point
+    #[serde(rename = "end")]
+    End,
+
+    /// Switch node - conditional branching (function-switch)
+    #[serde(rename = "function-switch")]
+    Switch {
+        /// Node-local variable definitions
+        variables: Vec<RuleVariable>,
+        /// Condition rules
+        rule: Vec<RuleSwitchBranch>,
+        /// Output wires (keyed by output name, e.g., "out001")
+        wires: HashMap<String, Vec<String>>,
+    },
+
+    /// Change value action node
+    #[serde(rename = "action-changeValue")]
+    ChangeValue {
+        /// Node-local variable definitions (target points)
+        variables: Vec<RuleVariable>,
+        /// Value assignments
+        rule: Vec<RuleValueAssignment>,
+        /// Output wires
+        wires: RuleWires,
+    },
+}
+
+/// Rule wires - output connections
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
+pub struct RuleWires {
+    /// Default output connections
+    #[serde(default)]
+    pub default: Vec<String>,
+}
+
+/// Rule variable definition (matches Vue Flow format)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
+pub struct RuleVariable {
+    /// Variable name (e.g., "X1")
+    pub name: String,
+
+    /// Variable type: "single" or "combined"
+    #[serde(rename = "type")]
+    pub var_type: String,
+
+    /// Instance name (for single type)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub instance: Option<String>,
+
+    /// Point type: "measurement" or "action"
+    #[serde(rename = "pointType", skip_serializing_if = "Option::is_none")]
+    pub point_type: Option<String>,
+
+    /// Point ID (numeric)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub point: Option<u16>,
+
+    /// Formula tokens (for combined type)
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub formula: Vec<serde_json::Value>,
+}
+
+/// Rule switch branch (condition branch)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
+pub struct RuleSwitchBranch {
+    /// Output port name (e.g., "out001")
+    pub name: String,
+
+    /// Rule type (currently only "default")
+    #[serde(rename = "type")]
+    pub rule_type: String,
+
+    /// Conditions
+    pub rule: Vec<FlowCondition>,
+}
+
+/// Flow condition (used in RuleFlow)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
+pub struct FlowCondition {
+    /// Condition type: "variable" or "relation"
+    #[serde(rename = "type")]
+    pub cond_type: String,
+
+    /// Variable name (for variable type)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub variables: Option<String>,
+
+    /// Comparison operator: "<=", ">=", "==", "!=", "<", ">"
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub operator: Option<String>,
+
+    /// Comparison value (number or variable name)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub value: Option<serde_json::Value>,
+}
+
+/// Rule value assignment
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
+pub struct RuleValueAssignment {
+    /// Target variable name
+    #[serde(rename = "Variables")]
+    pub variables: String,
+
+    /// Value to assign (number or variable name)
+    pub value: serde_json::Value,
+}

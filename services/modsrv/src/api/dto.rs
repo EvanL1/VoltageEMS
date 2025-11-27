@@ -115,13 +115,19 @@ pub struct CreateInstanceDto {
     pub properties: Option<HashMap<String, serde_json::Value>>,
 }
 
-/// Request to update an existing instance's properties
+/// Request to update an existing instance
 ///
-/// Note: Only properties can be updated. Instance name and product cannot be changed.
+/// Supports updating instance_name and/or properties.
+/// At least one field must be provided.
 #[derive(Debug, Clone, Deserialize, Serialize, ToSchema)]
 pub struct UpdateInstanceDto {
-    #[schema(value_type = Object, example = json!({"rated_power": 5000.0, "manufacturer": "Huawei", "model": "SUN2000-5KTL-L1"}))]
-    pub properties: HashMap<String, serde_json::Value>,
+    /// New instance name (optional, must be unique if provided)
+    #[schema(example = "pv_inverter_renamed")]
+    pub instance_name: Option<String>,
+
+    /// Updated properties (optional)
+    #[schema(value_type = Option<Object>, example = json!({"rated_power": 5000.0, "manufacturer": "Huawei", "model": "SUN2000-5KTL-L1"}))]
+    pub properties: Option<HashMap<String, serde_json::Value>>,
 }
 
 /// Request to execute an action on an instance

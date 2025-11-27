@@ -691,7 +691,7 @@ impl ConfigExporter {
                 "service_name" => config.service.name = value,
                 "api_host" => config.api.host = value,
                 "service.port" | "api_port" | "port" => {
-                    config.api.port = value.parse().unwrap_or(6003)
+                    config.api.port = value.parse().unwrap_or(6002)
                 },
                 "redis.url" | "redis_url" => config.redis.url = value,
                 // execution_interval and batch_size are deprecated

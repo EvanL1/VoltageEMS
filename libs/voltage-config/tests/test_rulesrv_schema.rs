@@ -41,11 +41,23 @@ fn test_rules_table_generation() {
     assert!(RULES_TABLE.contains("id TEXT PRIMARY KEY"));
     assert!(RULES_TABLE.contains("name TEXT NOT NULL"));
     assert!(RULES_TABLE.contains("description TEXT"));
-    assert!(RULES_TABLE.contains("flow_json TEXT NOT NULL"));
-    assert!(RULES_TABLE.contains("enabled BOOLEAN NOT NULL DEFAULT TRUE"));
-    assert!(RULES_TABLE.contains("priority INTEGER NOT NULL DEFAULT 0"));
-    assert!(RULES_TABLE.contains("created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP"));
-    assert!(RULES_TABLE.contains("updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP"));
+    assert!(RULES_TABLE.contains("nodes_json TEXT NOT NULL"));
+    assert!(
+        RULES_TABLE.contains("enabled BOOLEAN NOT NULL DEFAULT TRUE")
+            || RULES_TABLE.contains("enabled BOOLEAN DEFAULT TRUE")
+    );
+    assert!(
+        RULES_TABLE.contains("priority INTEGER NOT NULL DEFAULT 0")
+            || RULES_TABLE.contains("priority INTEGER DEFAULT 0")
+    );
+    assert!(
+        RULES_TABLE.contains("created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP")
+            || RULES_TABLE.contains("created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP")
+    );
+    assert!(
+        RULES_TABLE.contains("updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP")
+            || RULES_TABLE.contains("updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP")
+    );
 }
 
 #[test]

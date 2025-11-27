@@ -1,362 +1,233 @@
 //! Vue Flow JSON Parser
 //!
-//! Parses frontend Vue Flow rule JSON into the flattened Rule structure
+//! Parses frontend Vue Flow rule JSON into the simplified RuleFlow structure
 //! for execution by the rule engine.
+//!
+//! The parser extracts only execution-necessary information from Vue Flow JSON,
+//! discarding UI-only data like positions, labels, and edge styling.
 
 use serde_json::Value;
+use std::collections::HashMap;
 use voltage_config::rulesrv::{
-    ArithmeticOp, ChannelPointType, CompareOp, FlowNode, FormulaToken, InstancePointType, LogicOp,
-    Rule, RuleCondition, SwitchRule, ValueChange, Variable,
+    FlowCondition, RuleFlow, RuleNode, RuleSwitchBranch, RuleValueAssignment, RuleVariable,
+    RuleWires,
 };
 
 use crate::error::{Result, RuleError};
 
-/// Parsed flow result with extracted metadata
-pub struct ParsedFlow {
-    /// Parsed variables
-    pub variables: Vec<Variable>,
-    /// Parsed nodes
-    pub nodes: Vec<FlowNode>,
-    /// Start node ID
-    pub start_node_id: String,
-}
+// =============================================================================
+// Rule Flow Extraction (Vue Flow JSON → RuleFlow)
+// =============================================================================
 
-/// Parse Vue Flow JSON into Rule
-pub fn parse_flow_json(flow_json: &Value) -> Result<ParsedFlow> {
-    let nodes_array = flow_json
+/// Extract rule flow topology from Vue Flow JSON
+///
+/// This function converts the full Vue Flow JSON (with UI information like positions,
+/// labels, edges) into a minimal RuleFlow structure containing only execution-necessary
+/// information.
+///
+/// # Arguments
+/// * `full_json` - The complete Vue Flow JSON from frontend
+///
+/// # Returns
+/// * `Ok(RuleFlow)` - Simplified topology with HashMap-based node lookup
+/// * `Err(RuleError)` - If parsing fails or required fields are missing
+///
+/// # Example
+/// ```ignore
+/// let flow = extract_rule_flow(&vue_flow_json)?;
+/// // flow.nodes is HashMap<String, RuleNode> for O(1) lookup
+/// ```
+pub fn extract_rule_flow(full_json: &Value) -> Result<RuleFlow> {
+    let nodes_array = full_json
         .get("nodes")
         .and_then(|v| v.as_array())
         .ok_or_else(|| RuleError::ParseError("Missing 'nodes' array".to_string()))?;
 
-    // Parse nodes and collect variables
-    let mut flow_nodes = Vec::new();
-    let mut variables = Vec::new();
-    let mut start_node_id = String::new();
+    let mut nodes = HashMap::new();
+    let mut start_node = String::new();
 
     for node in nodes_array {
-        let node_type = node
-            .get("type")
-            .and_then(|v| v.as_str())
-            .unwrap_or("custom");
-
         let node_id = node
             .get("id")
             .and_then(|v| v.as_str())
             .ok_or_else(|| RuleError::ParseError("Node missing 'id'".to_string()))?
             .to_string();
 
+        let node_type = node
+            .get("type")
+            .and_then(|v| v.as_str())
+            .unwrap_or("custom");
+
         let data = node.get("data");
 
-        match node_type {
+        let compact_node = match node_type {
             "start" => {
-                start_node_id = node_id.clone();
-                let next = get_wire_target(data, "default")?;
-                flow_nodes.push(FlowNode::Start { id: node_id, next });
+                start_node = node_id.clone();
+                let wires = extract_rule_wires_default(data)?;
+                RuleNode::Start { wires }
             },
-            "end" => {
-                flow_nodes.push(FlowNode::End { id: node_id });
-            },
+            "end" => RuleNode::End,
             "custom" => {
-                if let Some(data) = data {
-                    let inner_type = data.get("type").and_then(|v| v.as_str()).unwrap_or("");
+                let inner_type = data
+                    .and_then(|d| d.get("type"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
 
-                    match inner_type {
-                        "function-switch" => {
-                            // Extract variables from this switch node
-                            if let Some(config) = data.get("config") {
-                                if let Some(vars) =
-                                    config.get("variables").and_then(|v| v.as_array())
-                                {
-                                    for var in vars {
-                                        if let Ok(v) = parse_variable(var) {
-                                            // Avoid duplicates by variable name
-                                            let new_name = get_variable_name(&v);
-                                            if !variables.iter().any(|existing| {
-                                                get_variable_name(existing) == new_name
-                                            }) {
-                                                variables.push(v);
-                                            }
-                                        }
-                                    }
-                                }
-
-                                // Parse switch rules
-                                let rules = parse_switch_rules(config)?;
-                                flow_nodes.push(FlowNode::Switch { id: node_id, rules });
-                            }
-                        },
-                        "action-changeValue" => {
-                            let changes = if let Some(config) = data.get("config") {
-                                parse_value_changes(config)?
-                            } else {
-                                vec![]
-                            };
-                            let next = get_wire_target(data.get("config"), "default")?;
-                            flow_nodes.push(FlowNode::ChangeValue {
-                                id: node_id,
-                                changes,
-                                next,
-                            });
-                        },
-                        _ => {
-                            // Unknown node type, skip
-                            tracing::warn!("Unknown node type: {}", inner_type);
-                        },
-                    }
+                match inner_type {
+                    "function-switch" => extract_switch_rule_node(data)?,
+                    "action-changeValue" => extract_change_value_rule_node(data)?,
+                    _ => {
+                        tracing::warn!("Unknown custom node type: {}, skipping", inner_type);
+                        continue;
+                    },
                 }
             },
             _ => {
-                tracing::warn!("Unknown top-level node type: {}", node_type);
+                tracing::warn!("Unknown top-level node type: {}, skipping", node_type);
+                continue;
             },
-        }
+        };
+
+        nodes.insert(node_id, compact_node);
     }
 
-    if start_node_id.is_empty() {
+    if start_node.is_empty() {
         return Err(RuleError::ParseError(
             "No start node found in flow".to_string(),
         ));
     }
 
-    Ok(ParsedFlow {
-        variables,
-        nodes: flow_nodes,
-        start_node_id,
-    })
+    Ok(RuleFlow { start_node, nodes })
 }
 
-/// Parse Vue Flow JSON into complete Rule structure
-#[allow(dead_code)] // Reserved for future Vue Flow integration
-pub fn parse_flow_to_rule(flow_json: &Value) -> Result<Rule> {
-    let id = flow_json
-        .get("id")
-        .and_then(|v| v.as_str())
-        .ok_or_else(|| RuleError::ParseError("Missing 'id' field".to_string()))?
-        .to_string();
-
-    let name = flow_json
-        .get("name")
-        .and_then(|v| v.as_str())
-        .unwrap_or("Unnamed Rule")
-        .to_string();
-
-    let description = flow_json
-        .get("description")
-        .and_then(|v| v.as_str())
-        .filter(|s| !s.is_empty())
-        .map(|s| s.to_string());
-
-    let parsed = parse_flow_json(flow_json)?;
-
-    Ok(Rule {
-        id,
-        name,
-        description,
-        enabled: true,
-        priority: 0,
-        cooldown_ms: 0,
-        variables: parsed.variables,
-        nodes: parsed.nodes,
-        start_node_id: parsed.start_node_id,
-        flow_json: Some(flow_json.clone()),
-    })
-}
-
-/// Get wire target node ID from config
-fn get_wire_target(config: Option<&Value>, wire_name: &str) -> Result<String> {
-    config
-        .and_then(|c| c.get("config"))
-        .or(config)
+/// Extract RuleWires from node data (for default wire)
+fn extract_rule_wires_default(data: Option<&Value>) -> Result<RuleWires> {
+    let default_targets = data
+        .and_then(|d| d.get("config"))
+        .or(data)
         .and_then(|c| c.get("wires"))
-        .and_then(|w| w.get(wire_name))
+        .and_then(|w| w.get("default"))
         .and_then(|v| v.as_array())
-        .and_then(|arr| arr.first())
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string())
-        .ok_or_else(|| RuleError::ParseError(format!("Missing wire target for '{}'", wire_name)))
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                .collect()
+        })
+        .unwrap_or_default();
+
+    Ok(RuleWires {
+        default: default_targets,
+    })
 }
 
-/// Get variable name from any Variable variant
-fn get_variable_name(var: &Variable) -> &str {
-    match var {
-        Variable::Instance { name, .. } => name,
-        Variable::Channel { name, .. } => name,
-        Variable::Combined { name, .. } => name,
-    }
+/// Extract function-switch node as RuleNode::Switch
+fn extract_switch_rule_node(data: Option<&Value>) -> Result<RuleNode> {
+    let config = data
+        .and_then(|d| d.get("config"))
+        .ok_or_else(|| RuleError::ParseError("Switch node missing 'config'".to_string()))?;
+
+    // Extract variables
+    let variables = extract_rule_variables(config)?;
+
+    // Extract rules
+    let rule = extract_rule_switch_branches(config)?;
+
+    // Extract wires (HashMap for multiple outputs)
+    let wires = extract_rule_wires_map(config)?;
+
+    Ok(RuleNode::Switch {
+        variables,
+        rule,
+        wires,
+    })
 }
 
-/// Parse instance point type (M/A)
-fn parse_instance_point_type(s: &str) -> Result<InstancePointType> {
-    match s.to_uppercase().as_str() {
-        "M" | "MEASUREMENT" => Ok(InstancePointType::Measurement),
-        "A" | "ACTION" => Ok(InstancePointType::Action),
-        _ => Err(RuleError::ParseError(format!(
-            "Invalid instance point type: '{}'. Expected 'M' or 'A'",
-            s
-        ))),
-    }
+/// Extract action-changeValue node as RuleNode::ChangeValue
+fn extract_change_value_rule_node(data: Option<&Value>) -> Result<RuleNode> {
+    let config = data.and_then(|d| d.get("config"));
+
+    // Extract variables (target points)
+    let variables = config
+        .map(extract_rule_variables)
+        .transpose()?
+        .unwrap_or_default();
+
+    // Extract value assignments
+    let rule = config
+        .map(extract_rule_value_assignments)
+        .transpose()?
+        .unwrap_or_default();
+
+    // Extract wires (default output)
+    let wires = extract_rule_wires_default(config)?;
+
+    Ok(RuleNode::ChangeValue {
+        variables,
+        rule,
+        wires,
+    })
 }
 
-/// Parse channel point type (T/S/C/A)
-fn parse_channel_point_type(s: &str) -> Result<ChannelPointType> {
-    match s.to_uppercase().as_str() {
-        "T" | "TELEMETRY" => Ok(ChannelPointType::Telemetry),
-        "S" | "SIGNAL" => Ok(ChannelPointType::Signal),
-        "C" | "CONTROL" => Ok(ChannelPointType::Control),
-        "A" | "ADJUSTMENT" => Ok(ChannelPointType::Adjustment),
-        _ => Err(RuleError::ParseError(format!(
-            "Invalid channel point type: '{}'. Expected T/S/C/A",
-            s
-        ))),
-    }
-}
+/// Extract compact variables from config
+fn extract_rule_variables(config: &Value) -> Result<Vec<RuleVariable>> {
+    let vars_arr = match config.get("variables").and_then(|v| v.as_array()) {
+        Some(arr) => arr,
+        None => return Ok(vec![]),
+    };
 
-/// Parse a variable definition
-///
-/// Supports three types:
-/// - instance: Read from modsrv instance (inst:{id}:M or inst:{id}:A)
-/// - channel: Read from comsrv channel (comsrv:{id}:T/S/C/A)
-/// - combined: Calculate from other variables
-fn parse_variable(var: &Value) -> Result<Variable> {
-    let name = var
-        .get("name")
-        .and_then(|v| v.as_str())
-        .ok_or_else(|| RuleError::ParseError("Variable missing 'name'".to_string()))?
-        .to_string();
+    let mut variables = Vec::new();
+    for var in vars_arr {
+        let name = var
+            .get("name")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| RuleError::ParseError("Variable missing 'name'".to_string()))?
+            .to_string();
 
-    let var_type = var
-        .get("type")
-        .and_then(|v| v.as_str())
-        .unwrap_or("instance");
+        let var_type = var
+            .get("type")
+            .and_then(|v| v.as_str())
+            .unwrap_or("single")
+            .to_string();
 
-    match var_type {
-        "instance" => {
-            let instance_id = var
-                .get("instance_id")
-                .and_then(|v| v.as_u64())
-                .ok_or_else(|| {
-                    RuleError::ParseError("Instance variable missing 'instance_id'".to_string())
-                })? as u16;
+        let instance = var
+            .get("instance")
+            .and_then(|v| v.as_str())
+            .map(String::from);
 
-            let point_type_str = var
-                .get("point_type")
-                .and_then(|v| v.as_str())
-                .unwrap_or("M");
-            let point_type = parse_instance_point_type(point_type_str)?;
+        let point_type = var
+            .get("pointType")
+            .and_then(|v| v.as_str())
+            .map(String::from);
 
-            let point_id = var
-                .get("point_id")
-                .and_then(|v| v.as_str())
-                .ok_or_else(|| {
-                    RuleError::ParseError("Instance variable missing 'point_id'".to_string())
-                })?
-                .to_string();
+        let point = var.get("point").and_then(|v| v.as_u64()).map(|n| n as u16);
 
-            Ok(Variable::Instance {
-                name,
-                instance_id,
-                point_type,
-                point_id,
-            })
-        },
-        "channel" => {
-            let channel_id = var
-                .get("channel_id")
-                .and_then(|v| v.as_u64())
-                .ok_or_else(|| {
-                    RuleError::ParseError("Channel variable missing 'channel_id'".to_string())
-                })? as u16;
+        let formula = var
+            .get("formula")
+            .and_then(|v| v.as_array())
+            .cloned()
+            .unwrap_or_default();
 
-            let point_type_str = var
-                .get("point_type")
-                .and_then(|v| v.as_str())
-                .unwrap_or("T");
-            let point_type = parse_channel_point_type(point_type_str)?;
-
-            let point_id = var
-                .get("point_id")
-                .and_then(|v| v.as_str())
-                .ok_or_else(|| {
-                    RuleError::ParseError("Channel variable missing 'point_id'".to_string())
-                })?
-                .to_string();
-
-            Ok(Variable::Channel {
-                name,
-                channel_id,
-                point_type,
-                point_id,
-            })
-        },
-        "combined" => {
-            let formula_arr = var
-                .get("formula")
-                .and_then(|v| v.as_array())
-                .ok_or_else(|| {
-                    RuleError::ParseError("Combined variable missing 'formula'".to_string())
-                })?;
-
-            let formula = parse_formula(formula_arr)?;
-            Ok(Variable::Combined { name, formula })
-        },
-        _ => Err(RuleError::ParseError(format!(
-            "Unknown variable type: '{}'. Expected instance/channel/combined",
-            var_type
-        ))),
-    }
-}
-
-/// Parse formula tokens from array
-fn parse_formula(arr: &[Value]) -> Result<Vec<FormulaToken>> {
-    let mut tokens = Vec::new();
-
-    for item in arr {
-        if let Some(s) = item.as_str() {
-            // Check if it's an operator
-            match s {
-                "+" => tokens.push(FormulaToken::Op {
-                    op: ArithmeticOp::Add,
-                }),
-                "-" => tokens.push(FormulaToken::Op {
-                    op: ArithmeticOp::Sub,
-                }),
-                "*" => tokens.push(FormulaToken::Op {
-                    op: ArithmeticOp::Mul,
-                }),
-                "/" => tokens.push(FormulaToken::Op {
-                    op: ArithmeticOp::Div,
-                }),
-                _ => {
-                    // Try to parse as number, otherwise treat as variable
-                    if let Ok(num) = s.parse::<f64>() {
-                        tokens.push(FormulaToken::Num { value: num });
-                    } else {
-                        tokens.push(FormulaToken::Var {
-                            name: s.to_string(),
-                        });
-                    }
-                },
-            }
-        } else if let Some(num) = item.as_f64() {
-            tokens.push(FormulaToken::Num { value: num });
-        } else if let Some(num) = item.as_i64() {
-            tokens.push(FormulaToken::Num { value: num as f64 });
-        }
+        variables.push(RuleVariable {
+            name,
+            var_type,
+            instance,
+            point_type,
+            point,
+            formula,
+        });
     }
 
-    Ok(tokens)
+    Ok(variables)
 }
 
-/// Parse switch rules from config
-fn parse_switch_rules(config: &Value) -> Result<Vec<SwitchRule>> {
-    let rules_arr = config
-        .get("rules")
-        .and_then(|v| v.as_array())
-        .ok_or_else(|| RuleError::ParseError("Switch missing 'rules' array".to_string()))?;
+/// Extract compact switch rules from config
+fn extract_rule_switch_branches(config: &Value) -> Result<Vec<RuleSwitchBranch>> {
+    let rules_arr = match config.get("rule").and_then(|v| v.as_array()) {
+        Some(arr) => arr,
+        None => return Ok(vec![]),
+    };
 
-    let wires = config.get("wires");
-
-    let mut switch_rules = Vec::new();
-
+    let mut rules = Vec::new();
     for rule in rules_arr {
         let name = rule
             .get("name")
@@ -364,226 +235,107 @@ fn parse_switch_rules(config: &Value) -> Result<Vec<SwitchRule>> {
             .ok_or_else(|| RuleError::ParseError("Rule missing 'name'".to_string()))?
             .to_string();
 
-        // Get next node from wires
-        let next_node = wires
-            .and_then(|w| w.get(&name))
-            .and_then(|v| v.as_array())
-            .and_then(|arr| arr.first())
+        let rule_type = rule
+            .get("type")
             .and_then(|v| v.as_str())
-            .map(|s| s.to_string())
-            .unwrap_or_else(|| "end".to_string());
+            .unwrap_or("default")
+            .to_string();
 
-        // Parse conditions
-        let conditions = parse_rule_conditions(rule)?;
+        let conditions = extract_flow_conditions(rule)?;
 
-        switch_rules.push(SwitchRule {
+        rules.push(RuleSwitchBranch {
             name,
-            conditions,
-            next_node,
+            rule_type,
+            rule: conditions,
         });
     }
 
-    Ok(switch_rules)
+    Ok(rules)
 }
 
-/// Parse conditions from a rule
-fn parse_rule_conditions(rule: &Value) -> Result<Vec<RuleCondition>> {
-    let rule_arr = rule
-        .get("rule")
-        .and_then(|v| v.as_array())
-        .ok_or_else(|| RuleError::ParseError("Rule missing 'rule' array".to_string()))?;
+/// Extract compact conditions from a rule
+fn extract_flow_conditions(rule: &Value) -> Result<Vec<FlowCondition>> {
+    let rule_arr = match rule.get("rule").and_then(|v| v.as_array()) {
+        Some(arr) => arr,
+        None => return Ok(vec![]),
+    };
 
-    let mut conditions: Vec<RuleCondition> = Vec::new();
-    let mut pending_relation: Option<LogicOp> = None;
-
+    let mut conditions = Vec::new();
     for item in rule_arr {
-        let item_type = item.get("type").and_then(|v| v.as_str()).unwrap_or("");
+        let cond_type = item
+            .get("type")
+            .and_then(|v| v.as_str())
+            .unwrap_or("variable")
+            .to_string();
 
-        match item_type {
-            "variable" => {
-                let left = item
-                    .get("variables")
-                    .and_then(|v| v.as_str())
-                    .ok_or_else(|| {
-                        RuleError::ParseError("Condition missing 'variables'".to_string())
-                    })?
-                    .to_string();
+        let variables = item
+            .get("variables")
+            .and_then(|v| v.as_str())
+            .map(String::from);
+        let operator = item
+            .get("operator")
+            .and_then(|v| v.as_str())
+            .map(String::from);
+        let value = item.get("value").cloned();
 
-                let operator_str = item
-                    .get("operator")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("==");
-                let operator = parse_compare_op(operator_str)?;
-
-                let right = item
-                    .get("value")
-                    .map(|v| {
-                        if let Some(s) = v.as_str() {
-                            s.to_string()
-                        } else if let Some(n) = v.as_f64() {
-                            n.to_string()
-                        } else if let Some(n) = v.as_i64() {
-                            n.to_string()
-                        } else {
-                            v.to_string()
-                        }
-                    })
-                    .unwrap_or_default();
-
-                // Attach pending relation to previous condition if exists
-                if let Some(rel) = pending_relation.take() {
-                    if let Some(last) = conditions.last_mut() {
-                        last.relation = Some(rel);
-                    }
-                }
-
-                conditions.push(RuleCondition {
-                    left,
-                    operator,
-                    right,
-                    relation: None,
-                });
-            },
-            "relation" => {
-                let rel_str = item.get("value").and_then(|v| v.as_str()).unwrap_or("&&");
-                pending_relation = Some(parse_logic_op(rel_str)?);
-            },
-            _ => {},
-        }
+        conditions.push(FlowCondition {
+            cond_type,
+            variables,
+            operator,
+            value,
+        });
     }
 
     Ok(conditions)
 }
 
-/// Parse comparison operator
-fn parse_compare_op(s: &str) -> Result<CompareOp> {
-    match s {
-        "==" | "eq" => Ok(CompareOp::Eq),
-        "!=" | "ne" => Ok(CompareOp::Ne),
-        ">" | "gt" => Ok(CompareOp::Gt),
-        "<" | "lt" => Ok(CompareOp::Lt),
-        ">=" | "gte" => Ok(CompareOp::Gte),
-        "<=" | "lte" => Ok(CompareOp::Lte),
-        _ => Err(RuleError::ParseError(format!(
-            "Unknown comparison operator: {}",
-            s
-        ))),
-    }
-}
+/// Extract compact value assignments from config
+fn extract_rule_value_assignments(config: &Value) -> Result<Vec<RuleValueAssignment>> {
+    let rules_arr = match config.get("rule").and_then(|v| v.as_array()) {
+        Some(arr) => arr,
+        None => return Ok(vec![]),
+    };
 
-/// Parse logical operator
-fn parse_logic_op(s: &str) -> Result<LogicOp> {
-    match s {
-        "&&" | "and" | "AND" => Ok(LogicOp::And),
-        "||" | "or" | "OR" => Ok(LogicOp::Or),
-        _ => Err(RuleError::ParseError(format!(
-            "Unknown logical operator: {}",
-            s
-        ))),
-    }
-}
-
-/// Parse value changes from action config
-///
-/// Supports two target types:
-/// - instance: Write to modsrv instance action point (uses M2C routing)
-/// - channel: Write directly to comsrv channel point (bypasses routing)
-pub fn parse_value_changes(config: &Value) -> Result<Vec<ValueChange>> {
-    let empty_vec = vec![];
-    let rules_arr = config
-        .get("rules")
-        .and_then(|v| v.as_array())
-        .unwrap_or(&empty_vec);
-
-    let mut changes = Vec::new();
-
+    let mut assignments = Vec::new();
     for rule in rules_arr {
-        let target = rule
-            .get("target")
+        let variables = rule
+            .get("Variables")
             .and_then(|v| v.as_str())
-            .unwrap_or("instance");
+            .ok_or_else(|| RuleError::ParseError("Assignment missing 'Variables'".to_string()))?
+            .to_string();
 
         let value = rule
             .get("value")
-            .map(|v| {
-                if let Some(s) = v.as_str() {
-                    s.to_string()
-                } else if let Some(n) = v.as_f64() {
-                    n.to_string()
-                } else if let Some(n) = v.as_i64() {
-                    n.to_string()
-                } else {
-                    v.to_string()
-                }
-            })
-            .unwrap_or_default();
+            .cloned()
+            .ok_or_else(|| RuleError::ParseError("Assignment missing 'value'".to_string()))?;
 
-        match target {
-            "instance" => {
-                let instance_id = rule
-                    .get("instance_id")
-                    .and_then(|v| v.as_u64())
-                    .ok_or_else(|| {
-                        RuleError::ParseError(
-                            "ValueChange instance missing 'instance_id'".to_string(),
-                        )
-                    })? as u16;
-
-                let point_id = rule
-                    .get("point_id")
-                    .and_then(|v| v.as_str())
-                    .ok_or_else(|| {
-                        RuleError::ParseError("ValueChange instance missing 'point_id'".to_string())
-                    })?
-                    .to_string();
-
-                changes.push(ValueChange::Instance {
-                    instance_id,
-                    point_id,
-                    value,
-                });
-            },
-            "channel" => {
-                let channel_id =
-                    rule.get("channel_id")
-                        .and_then(|v| v.as_u64())
-                        .ok_or_else(|| {
-                            RuleError::ParseError(
-                                "ValueChange channel missing 'channel_id'".to_string(),
-                            )
-                        })? as u16;
-
-                let point_type_str = rule
-                    .get("point_type")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("A");
-                let point_type = parse_channel_point_type(point_type_str)?;
-
-                let point_id = rule
-                    .get("point_id")
-                    .and_then(|v| v.as_str())
-                    .ok_or_else(|| {
-                        RuleError::ParseError("ValueChange channel missing 'point_id'".to_string())
-                    })?
-                    .to_string();
-
-                changes.push(ValueChange::Channel {
-                    channel_id,
-                    point_type,
-                    point_id,
-                    value,
-                });
-            },
-            _ => {
-                return Err(RuleError::ParseError(format!(
-                    "Unknown ValueChange target: '{}'. Expected instance/channel",
-                    target
-                )));
-            },
-        }
+        assignments.push(RuleValueAssignment { variables, value });
     }
 
-    Ok(changes)
+    Ok(assignments)
+}
+
+/// Extract wires as HashMap for multiple outputs (used by switch nodes)
+fn extract_rule_wires_map(config: &Value) -> Result<HashMap<String, Vec<String>>> {
+    let wires_obj = match config.get("wires").and_then(|v| v.as_object()) {
+        Some(obj) => obj,
+        None => return Ok(HashMap::new()),
+    };
+
+    let mut wires_map = HashMap::new();
+    for (key, value) in wires_obj {
+        let targets: Vec<String> = value
+            .as_array()
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(String::from))
+                    .collect()
+            })
+            .unwrap_or_default();
+        wires_map.insert(key.clone(), targets);
+    }
+
+    Ok(wires_map)
 }
 
 #[cfg(test)]
@@ -593,54 +345,167 @@ mod tests {
     use serde_json::json;
 
     #[test]
-    fn test_parse_simple_flow_with_instance_variable() {
+    fn test_extract_rule_flow() {
+        // Test Vue Flow JSON similar to user's example
         let flow = json!({
-            "id": "test-chain-1",
-            "name": "Test Rule Chain",
-            "description": "A test rule chain",
+            "id": "rule-001",
+            "name": "Test Rule",
             "nodes": [
                 {
                     "id": "start",
                     "type": "start",
+                    "position": { "x": 0, "y": 0 },
                     "data": {
                         "config": {
-                            "wires": {
-                                "default": ["node-1"]
-                            }
+                            "wires": { "default": ["node-1"] }
                         }
                     }
                 },
                 {
                     "id": "node-1",
                     "type": "custom",
+                    "position": { "x": 100, "y": 100 },
                     "data": {
                         "type": "function-switch",
+                        "label": "Check Value",
                         "config": {
                             "variables": [
                                 {
-                                    "name": "Voltage",
-                                    "type": "instance",
-                                    "instance_id": 5,
-                                    "point_type": "M",
-                                    "point_id": "10"
+                                    "name": "X1",
+                                    "type": "single",
+                                    "instance": "battery_01",
+                                    "pointType": "measurement",
+                                    "point": 3
                                 }
                             ],
-                            "rules": [
+                            "rule": [
                                 {
                                     "name": "out001",
+                                    "type": "default",
                                     "rule": [
                                         {
                                             "type": "variable",
-                                            "variables": "Voltage",
-                                            "operator": ">",
-                                            "value": "750"
+                                            "variables": "X1",
+                                            "operator": "<=",
+                                            "value": 5
                                         }
                                     ]
                                 }
                             ],
                             "wires": {
-                                "out001": ["end"]
+                                "out001": ["node-2"],
+                                "out002": ["end"]
                             }
+                        }
+                    }
+                },
+                {
+                    "id": "node-2",
+                    "type": "custom",
+                    "position": { "x": 200, "y": 200 },
+                    "data": {
+                        "type": "action-changeValue",
+                        "config": {
+                            "variables": [
+                                {
+                                    "name": "Y1",
+                                    "type": "single",
+                                    "instance": "pv_01",
+                                    "pointType": "action",
+                                    "point": 5
+                                }
+                            ],
+                            "rule": [
+                                { "Variables": "Y1", "value": 999 }
+                            ],
+                            "wires": { "default": ["end"] }
+                        }
+                    }
+                },
+                {
+                    "id": "end",
+                    "type": "end",
+                    "position": { "x": 300, "y": 300 }
+                }
+            ],
+            "edges": [
+                { "id": "e1", "source": "start", "target": "node-1" }
+            ],
+            "metadata": { "exportedAt": "2024-01-01" }
+        });
+
+        let compact = extract_rule_flow(&flow).unwrap();
+
+        // Verify start node
+        assert_eq!(compact.start_node, "start");
+        assert_eq!(compact.nodes.len(), 4);
+
+        // Verify start node structure
+        match compact.nodes.get("start").unwrap() {
+            RuleNode::Start { wires } => {
+                assert_eq!(wires.default, vec!["node-1"]);
+            },
+            _ => panic!("Expected Start node"),
+        }
+
+        // Verify switch node structure
+        match compact.nodes.get("node-1").unwrap() {
+            RuleNode::Switch {
+                variables,
+                rule,
+                wires,
+            } => {
+                assert_eq!(variables.len(), 1);
+                assert_eq!(variables[0].name, "X1");
+                assert_eq!(variables[0].var_type, "single");
+                assert_eq!(variables[0].instance, Some("battery_01".to_string()));
+                assert_eq!(variables[0].point_type, Some("measurement".to_string()));
+                assert_eq!(variables[0].point, Some(3));
+
+                assert_eq!(rule.len(), 1);
+                assert_eq!(rule[0].name, "out001");
+
+                assert_eq!(wires.get("out001").unwrap(), &vec!["node-2"]);
+                assert_eq!(wires.get("out002").unwrap(), &vec!["end"]);
+            },
+            _ => panic!("Expected Switch node"),
+        }
+
+        // Verify changeValue node structure
+        match compact.nodes.get("node-2").unwrap() {
+            RuleNode::ChangeValue {
+                variables,
+                rule,
+                wires,
+            } => {
+                assert_eq!(variables.len(), 1);
+                assert_eq!(variables[0].name, "Y1");
+                assert_eq!(variables[0].point_type, Some("action".to_string()));
+
+                assert_eq!(rule.len(), 1);
+                assert_eq!(rule[0].variables, "Y1");
+                assert_eq!(rule[0].value, json!(999));
+
+                assert_eq!(wires.default, vec!["end"]);
+            },
+            _ => panic!("Expected ChangeValue node"),
+        }
+
+        // Verify end node
+        assert!(matches!(compact.nodes.get("end").unwrap(), RuleNode::End));
+    }
+
+    #[test]
+    fn test_compact_flow_serialization() {
+        // Test that RuleFlow can be serialized to the expected JSON format
+        let flow = json!({
+            "nodes": [
+                {
+                    "id": "start",
+                    "type": "start",
+                    "data": {
+                        "config": {
+                            "wires": { "default": ["end"] }
                         }
                     }
                 },
@@ -651,117 +516,11 @@ mod tests {
             ]
         });
 
-        let parsed = parse_flow_json(&flow).unwrap();
+        let compact = extract_rule_flow(&flow).unwrap();
+        let serialized = serde_json::to_string(&compact).unwrap();
+        let deserialized: RuleFlow = serde_json::from_str(&serialized).unwrap();
 
-        assert_eq!(parsed.start_node_id, "start");
-        assert_eq!(parsed.variables.len(), 1);
-        assert_eq!(parsed.nodes.len(), 3);
-
-        // Verify variable is correctly parsed as Instance type
-        match &parsed.variables[0] {
-            Variable::Instance {
-                name,
-                instance_id,
-                point_type,
-                point_id,
-            } => {
-                assert_eq!(name, "Voltage");
-                assert_eq!(*instance_id, 5);
-                assert_eq!(*point_type, InstancePointType::Measurement);
-                assert_eq!(point_id, "10");
-            },
-            _ => panic!("Expected Instance variable"),
-        }
-    }
-
-    #[test]
-    fn test_parse_channel_variable() {
-        let var = json!({
-            "name": "RawTemp",
-            "type": "channel",
-            "channel_id": 1001,
-            "point_type": "T",
-            "point_id": "sensor_001"
-        });
-
-        let parsed = parse_variable(&var).unwrap();
-        match parsed {
-            Variable::Channel {
-                name,
-                channel_id,
-                point_type,
-                point_id,
-            } => {
-                assert_eq!(name, "RawTemp");
-                assert_eq!(channel_id, 1001);
-                assert_eq!(point_type, ChannelPointType::Telemetry);
-                assert_eq!(point_id, "sensor_001");
-            },
-            _ => panic!("Expected Channel variable"),
-        }
-    }
-
-    #[test]
-    fn test_parse_formula() {
-        let formula_arr = vec![
-            json!("X1"),
-            json!("+"),
-            json!("X2"),
-            json!("-"),
-            json!("12"),
-        ];
-
-        let tokens = parse_formula(&formula_arr).unwrap();
-
-        assert_eq!(tokens.len(), 5);
-        match &tokens[0] {
-            FormulaToken::Var { name } => assert_eq!(name, "X1"),
-            _ => panic!("Expected Var"),
-        }
-        match &tokens[1] {
-            FormulaToken::Op { op } => assert_eq!(*op, ArithmeticOp::Add),
-            _ => panic!("Expected Op"),
-        }
-        match &tokens[4] {
-            FormulaToken::Num { value } => assert_eq!(*value, 12.0),
-            _ => panic!("Expected Num"),
-        }
-    }
-
-    #[test]
-    fn test_parse_conditions() {
-        let rule = json!({
-            "name": "out001",
-            "rule": [
-                {
-                    "type": "variable",
-                    "variables": "X1",
-                    "operator": "==",
-                    "value": "X2"
-                },
-                {
-                    "type": "relation",
-                    "value": "&&"
-                },
-                {
-                    "type": "variable",
-                    "variables": "X1",
-                    "operator": "<",
-                    "value": "100"
-                }
-            ]
-        });
-
-        let conditions = parse_rule_conditions(&rule).unwrap();
-
-        assert_eq!(conditions.len(), 2);
-        assert_eq!(conditions[0].left, "X1");
-        assert_eq!(conditions[0].operator, CompareOp::Eq);
-        assert_eq!(conditions[0].right, "X2");
-        assert_eq!(conditions[0].relation, Some(LogicOp::And));
-        assert_eq!(conditions[1].left, "X1");
-        assert_eq!(conditions[1].operator, CompareOp::Lt);
-        assert_eq!(conditions[1].right, "100");
-        assert_eq!(conditions[1].relation, None);
+        assert_eq!(deserialized.start_node, "start");
+        assert_eq!(deserialized.nodes.len(), 2);
     }
 }
