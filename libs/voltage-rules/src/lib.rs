@@ -35,4 +35,4 @@ pub use repository::{
     delete_rule, get_rule, get_rule_for_execution, list_rules, load_all_rules, load_enabled_rules,
     set_rule_enabled, upsert_rule,
 };
-pub use scheduler::{RuleScheduler, SchedulerStatus, TriggerConfig};
+pub use scheduler::{RuleScheduler, SchedulerStatus, TriggerConfig, DEFAULT_TICK_MS};

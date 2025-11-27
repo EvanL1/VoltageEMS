@@ -50,6 +50,7 @@ pub use voltage_rules::{
     delete_rule, extract_rule_flow, get_rule, get_rule_for_execution, list_rules, load_all_rules,
     load_enabled_rules, set_rule_enabled, upsert_rule, ActionResult, Result as RuleResult,
     RuleError, RuleExecutionResult, RuleExecutor, RuleScheduler, SchedulerStatus, TriggerConfig,
+    DEFAULT_TICK_MS,
 };
 
 // Re-export routing types from shared library

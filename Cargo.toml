@@ -23,6 +23,9 @@ license = "MIT OR Apache-2.0"
 # Run with: cargo clippy --workspace -- -W clippy::unwrap_used -W clippy::expect_used
 
 [workspace.dependencies]
+# Modbus protocol library (independent)
+voltage_modbus = { path = "../voltage-modbus" }
+
 # Async runtime
 tokio = { version = "1.35", features = ["full"] }
 tokio-util = { version = "0.7", features = ["codec"] }

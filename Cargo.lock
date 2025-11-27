@@ -560,6 +560,7 @@ dependencies = [
  "voltage-config",
  "voltage-protocols",
  "voltage-rtdb",
+ "voltage_modbus",
 ]
 
 [[package]]
@@ -4005,6 +4006,7 @@ dependencies = [
  "tracing",
  "voltage-config",
  "voltage-rtdb",
+ "voltage_modbus",
 ]
 
 [[package]]
@@ -4067,6 +4069,7 @@ dependencies = [
  "tracing",
  "voltage-comlink",
  "voltage-config",
+ "voltage_modbus",
 ]
 
 [[package]]
@@ -4136,6 +4139,18 @@ dependencies = [
  "serde_json",
  "syn 2.0.108",
  "trybuild",
+]
+
+[[package]]
+name = "voltage_modbus"
+version = "0.4.0"
+dependencies = [
+ "async-trait",
+ "bytes",
+ "crc",
+ "thiserror 1.0.69",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]

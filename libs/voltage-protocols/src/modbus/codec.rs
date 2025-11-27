@@ -3,11 +3,11 @@
 //! Handles encoding and decoding of Modbus data types and values
 
 use super::constants;
-use super::pdu::{ModbusPdu, PduBuilder};
 use tracing::{trace, warn};
 use voltage_comlink::bytes::{regs_to_bytes_4, regs_to_bytes_8, ByteOrder};
 use voltage_comlink::error::{ComLinkError, Result};
 use voltage_comlink::ProtocolValue;
+use voltage_modbus::{ModbusPdu, PduBuilder};
 
 /// Modbus codec for data encoding/decoding
 pub struct ModbusCodec;

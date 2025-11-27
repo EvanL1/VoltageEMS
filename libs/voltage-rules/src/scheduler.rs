@@ -20,7 +20,7 @@ use voltage_config::RoutingCache;
 use voltage_rtdb::traits::Rtdb;
 
 /// Default scheduler tick interval (100ms)
-const DEFAULT_TICK_MS: u64 = 100;
+pub const DEFAULT_TICK_MS: u64 = 100;
 
 /// Rule trigger configuration
 #[derive(Debug, Clone)]
@@ -68,17 +68,25 @@ pub struct RuleScheduler<R: Rtdb + ?Sized> {
     shutdown: Arc<tokio::sync::Notify>,
     /// Running state
     running: Arc<std::sync::atomic::AtomicBool>,
+    /// Scheduler tick interval in milliseconds
+    tick_ms: u64,
 }
 
 impl<R: Rtdb + ?Sized + 'static> RuleScheduler<R> {
-    /// Create a new rule scheduler
-    pub fn new(rtdb: Arc<R>, routing_cache: Arc<RoutingCache>, pool: SqlitePool) -> Self {
+    /// Create a new rule scheduler with configurable tick interval
+    pub fn new(
+        rtdb: Arc<R>,
+        routing_cache: Arc<RoutingCache>,
+        pool: SqlitePool,
+        tick_ms: u64,
+    ) -> Self {
         Self {
             executor: Arc::new(RuleExecutor::new(rtdb, routing_cache)),
             pool,
             rules: Arc::new(RwLock::new(Vec::new())),
             shutdown: Arc::new(tokio::sync::Notify::new()),
             running: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            tick_ms,
         }
     }
 
@@ -130,9 +138,9 @@ impl<R: Rtdb + ?Sized + 'static> RuleScheduler<R> {
         }
 
         self.running.store(true, Ordering::Relaxed);
-        info!("Starting rule scheduler with {}ms tick", DEFAULT_TICK_MS);
+        info!("Starting rule scheduler with {}ms tick", self.tick_ms);
 
-        let mut tick_interval = interval(Duration::from_millis(DEFAULT_TICK_MS));
+        let mut tick_interval = interval(Duration::from_millis(self.tick_ms));
 
         loop {
             tokio::select! {

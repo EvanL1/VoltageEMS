@@ -53,9 +53,10 @@ impl ConfigManager {
 
         if !Path::new(&db_path).exists() {
             error!("Configuration database not found at: {}", db_path);
-            error!("Please run: monarch init all && monarch sync all");
+            error!("Please run: monarch init && monarch sync");
             return Err(ComSrvError::ConfigError(
-                "Configuration database not found. Please run: monarch init all && monarch sync all".to_string(),
+                "Configuration database not found. Please run: monarch init && monarch sync"
+                    .to_string(),
             ));
         }
 

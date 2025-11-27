@@ -79,6 +79,12 @@ impl From<serde_json::Error> for ComLinkError {
     }
 }
 
+impl From<voltage_modbus::ModbusError> for ComLinkError {
+    fn from(err: voltage_modbus::ModbusError) -> Self {
+        ComLinkError::Modbus(err.to_string())
+    }
+}
+
 // Helper methods for creating errors
 impl ComLinkError {
     pub fn protocol(msg: impl Into<String>) -> Self {

@@ -20,6 +20,9 @@ voltage-config = { path = "../../libs/voltage-config", features = ["axum-support
 voltage-protocols = { path = "../../libs/voltage-protocols", features = ["modbus", "modbus-rtu"] }
 voltage-rtdb = { path = "../../libs/voltage-rtdb" }
 
+# Modbus library (for error conversion)
+voltage_modbus = { workspace = true }
+
 # Core async runtime
 tokio = { workspace = true }
 tokio-util = { workspace = true }

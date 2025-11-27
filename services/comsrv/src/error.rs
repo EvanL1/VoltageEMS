@@ -242,6 +242,13 @@ impl From<anyhow::Error> for ComSrvError {
     }
 }
 
+// Conversion from voltage_modbus::ModbusError
+impl From<voltage_modbus::ModbusError> for ComSrvError {
+    fn from(err: voltage_modbus::ModbusError) -> Self {
+        ComSrvError::ModbusError(err.to_string())
+    }
+}
+
 // Helper methods for creating errors
 impl ComSrvError {
     pub fn config(msg: impl Into<String>) -> Self {

@@ -11,6 +11,9 @@ voltage-config = { path = "../voltage-config" }
 voltage-rtdb = { path = "../voltage-rtdb" }
 common = { path = "../common", default-features = false }
 
+# Modbus library (for error conversion)
+voltage_modbus = { workspace = true }
+
 # Async runtime
 tokio = { workspace = true }
 tokio-util = { workspace = true }

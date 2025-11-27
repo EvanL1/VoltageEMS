@@ -3,10 +3,10 @@
 //! Supports frame processing for both TCP and RTU transport modes
 
 use super::constants;
-use super::pdu::ModbusPdu;
 use std::collections::HashMap;
 use tracing::{debug, error};
 use voltage_comlink::error::{ComLinkError, Result};
+use voltage_modbus::ModbusPdu;
 
 /// Modbus transport mode
 #[derive(Debug, Clone, PartialEq)]

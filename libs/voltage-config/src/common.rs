@@ -186,6 +186,34 @@ pub struct RedisConfig {
 }
 
 // ============================================================================
+// Rules configuration
+// ============================================================================
+
+/// Default rule scheduler tick interval (100ms)
+pub const DEFAULT_RULES_TICK_MS: u64 = 100;
+
+/// Rule engine configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
+pub struct RulesConfig {
+    /// Scheduler tick interval in milliseconds
+    #[serde(default = "default_rules_tick_ms")]
+    pub tick_ms: u64,
+}
+
+impl Default for RulesConfig {
+    fn default() -> Self {
+        Self {
+            tick_ms: DEFAULT_RULES_TICK_MS,
+        }
+    }
+}
+
+fn default_rules_tick_ms() -> u64 {
+    DEFAULT_RULES_TICK_MS
+}
+
+// ============================================================================
 // Logging configuration
 // ============================================================================
 

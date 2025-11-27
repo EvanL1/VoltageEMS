@@ -16,7 +16,7 @@ use utoipa_swagger_ui::SwaggerUi;
 use modsrv::{
     bootstrap, routes,
     rule_routes::{create_rule_routes, RuleEngineState},
-    Result, RuleScheduler,
+    Result, RuleScheduler, DEFAULT_TICK_MS,
 };
 
 #[tokio::main]
@@ -53,8 +53,26 @@ async fn main() -> Result<()> {
     let rtdb = state.instance_manager.rtdb.clone();
     let routing_cache = state.instance_manager.routing_cache().clone();
 
+    // Load tick_ms from global config (SQLite key-value table)
+    let tick_ms: u64 = sqlx::query_scalar::<_, String>(
+        "SELECT value FROM service_config WHERE service_name = 'global' AND key = 'rules.tick_ms'",
+    )
+    .fetch_optional(&sqlite_pool)
+    .await
+    .ok()
+    .flatten()
+    .and_then(|s| s.parse().ok())
+    .unwrap_or(DEFAULT_TICK_MS);
+
+    debug!("Rule scheduler tick_ms: {}", tick_ms);
+
     // Create rule scheduler
-    let scheduler = Arc::new(RuleScheduler::new(rtdb, routing_cache, sqlite_pool.clone()));
+    let scheduler = Arc::new(RuleScheduler::new(
+        rtdb,
+        routing_cache,
+        sqlite_pool.clone(),
+        tick_ms,
+    ));
 
     // Load rules into scheduler
     match scheduler.load_rules().await {

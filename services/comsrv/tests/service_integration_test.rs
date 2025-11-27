@@ -109,7 +109,7 @@ logging:
         let signal_csv = "point_id,signal_name,scale,offset,unit,reverse,normal_state,data_type,description\n1,TestStatus,1.0,0.0,,false,0,uint16,Test status signal\n";
         std::fs::write(format!("{}/comsrv/signal.csv", config_dir), signal_csv)?;
 
-        // Create minimal modsrv configuration (required for monarch sync all)
+        // Create minimal modsrv configuration (required for monarch sync)
         std::fs::create_dir_all(format!("{}/modsrv", config_dir))?;
         let modsrv_yaml = r#"service:
   name: modsrv-test
@@ -131,7 +131,7 @@ logging:
   format: json"#;
         std::fs::write(format!("{}/modsrv/modsrv.yaml", config_dir), modsrv_yaml)?;
 
-        // Create minimal rulesrv configuration (required for monarch sync all)
+        // Create minimal rulesrv configuration (required for monarch sync)
         std::fs::create_dir_all(format!("{}/rulesrv", config_dir))?;
         let rulesrv_yaml = r#"service:
   name: rulesrv-test
@@ -202,14 +202,7 @@ logging:
         println!("Config dir: {}", config_dir);
 
         let init_output = Command::new(&monarch_path)
-            .args([
-                "init",
-                "--config-path",
-                &config_dir,
-                "--db-path",
-                db_dir,
-                "all",
-            ])
+            .args(["init", "--config-path", &config_dir, "--db-path", db_dir])
             .current_dir(project_root)
             .output()?;
 
@@ -248,7 +241,6 @@ logging:
                 &config_dir,
                 "--db-path",
                 db_dir,
-                "all",
             ])
             .current_dir(project_root)
             .output()?;
