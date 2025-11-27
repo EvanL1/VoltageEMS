@@ -13,7 +13,7 @@ use voltage_config::comsrv::RedisKeys;
 use voltage_rtdb::Rtdb;
 
 use super::traits::ChannelCommand;
-use crate::utils::error::Result;
+use crate::error::Result;
 
 /// Control command type
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -244,7 +244,7 @@ impl CommandTrigger {
                             match result {
                                 Ok(Some((queue, data_bytes))) => {
                                     let data = String::from_utf8(data_bytes.to_vec()).map_err(|e| {
-                                        crate::utils::error::ComSrvError::ParsingError(
+                                        crate::error::ComSrvError::ParsingError(
                                             format!("Failed to parse UTF-8: {}", e)
                                         )
                                     })?;
@@ -290,7 +290,7 @@ impl CommandTrigger {
                                             let current_ts: i64 = match rtdb.hash_get(&channel_key, &ts_field).await {
                                                 Ok(Some(ts_bytes)) => {
                                                     let ts_str = String::from_utf8(ts_bytes.to_vec()).map_err(|e| {
-                                                        crate::utils::error::ComSrvError::ParsingError(
+                                                        crate::error::ComSrvError::ParsingError(
                                                             format!("Failed to parse UTF-8 timestamp: {}", e)
                                                         )
                                                     })?;
@@ -319,7 +319,7 @@ impl CommandTrigger {
                                             let value: f64 = match rtdb.hash_get(&channel_key, &point_id.to_string()).await {
                                                 Ok(Some(value_bytes)) => {
                                                     let value_str = String::from_utf8(value_bytes.to_vec()).map_err(|e| {
-                                                        crate::utils::error::ComSrvError::ParsingError(
+                                                        crate::error::ComSrvError::ParsingError(
                                                             format!("Failed to parse UTF-8 value: {}", e)
                                                         )
                                                     })?;
@@ -390,7 +390,7 @@ impl CommandTrigger {
                                     let channel_command = Self::to_channel_command(command);
                                     if let Err(e) = command_tx.send(channel_command).await {
                                         error!("Failed to send command to protocol handler: {}", e);
-                                        return Err(crate::utils::error::ComSrvError::InternalError(
+                                        return Err(crate::error::ComSrvError::InternalError(
                                             "Command channel closed".to_string()
                                         ));
                                     }
@@ -404,7 +404,7 @@ impl CommandTrigger {
                                     let error_type = classify_redis_error(&e);
                                     error!("BLPOP error on queues [{}] for channel {}: {} (type: {:?})",
                                           queues.join(", "), channel_id, e, error_type);
-                                    return Err(crate::utils::error::ComSrvError::InternalError(
+                                    return Err(crate::error::ComSrvError::InternalError(
                                         format!("Redis {} error on channel {} queues [{}]: {}",
                                                 error_type, channel_id, queues.join(", "), e)
                                     ));
@@ -474,9 +474,7 @@ impl CommandTrigger {
 
         // Fallback: attempt to augment JSON with missing fields
         let mut value: serde_json::Value = serde_json::from_str(data).map_err(|e| {
-            crate::utils::error::ComSrvError::ParsingError(format!(
-                "Failed to parse command JSON: {e}"
-            ))
+            crate::error::ComSrvError::ParsingError(format!("Failed to parse command JSON: {e}"))
         })?;
 
         if let serde_json::Value::Object(ref mut map) = value {
@@ -503,7 +501,7 @@ impl CommandTrigger {
 
             // Try final deserialization
             let mut command: ControlCommand = serde_json::from_value(value).map_err(|e| {
-                crate::utils::error::ComSrvError::ParsingError(format!(
+                crate::error::ComSrvError::ParsingError(format!(
                     "Failed to parse command after fallback: {e}"
                 ))
             })?;
@@ -514,7 +512,7 @@ impl CommandTrigger {
             return Ok(command);
         }
 
-        Err(crate::utils::error::ComSrvError::ParsingError(
+        Err(crate::error::ComSrvError::ParsingError(
             "Command JSON is not an object".to_string(),
         ))
     }

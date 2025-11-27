@@ -7,8 +7,8 @@ use std::sync::Arc;
 use tracing::{error, info, warn};
 use voltage_config::{ChannelReloadResult, ReloadableService};
 
-use crate::core::combase::channel_manager::ChannelManager;
-use crate::core::config::types::ChannelConfig;
+use crate::core::channels::channel_manager::ChannelManager;
+use crate::core::config::ChannelConfig;
 
 /// Channel change severity classification
 ///

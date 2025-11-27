@@ -23,9 +23,22 @@
 
 pub mod manager;
 pub mod sqlite_loader;
-pub mod types;
 
-// Re-export from new modules
+// Re-export from modules
 pub use manager::*;
 pub use sqlite_loader::ComsrvSqliteLoader;
-pub use types::*;
+
+// Re-export comsrv configuration types from voltage-config
+pub use voltage_config::comsrv::{
+    AdjustmentPoint, CanMapping, ChannelConfig, ChannelLoggingConfig, ComsrvConfig, ControlPoint,
+    ModbusMapping, Point, RuntimeChannelConfig, SignalPoint, TelemetryPoint, VirtualMapping,
+};
+
+// Re-export common configuration types
+pub use voltage_config::common::{
+    ApiConfig, BaseServiceConfig, FourRemote, LoggingConfig, RedisConfig,
+};
+
+// Legacy aliases for backward compatibility
+pub type AppConfig = ComsrvConfig;
+pub type ServiceConfig = BaseServiceConfig;

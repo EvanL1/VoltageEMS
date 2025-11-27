@@ -1,19 +1,18 @@
 //! Virtual Protocol Implementation
 //!
 //! Provides a virtual protocol for testing purposes without requiring actual hardware.
+//! This protocol simulates telemetry and signal data for development and testing.
 
 use async_trait::async_trait;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
-use crate::core::combase::traits::{ChannelLogger, ConnectionState};
-use crate::core::combase::{
-    ChannelStatus, ComBase, ComClient, PointData, PointDataMap, RedisValue,
+use voltage_comlink::{
+    ChannelLogger, ChannelStatus, ComBase, ComClient, ConnectionState, PointData, PointDataMap,
+    ProtocolValue, Result,
 };
-#[cfg(test)]
-use crate::core::config::types::ChannelConfig;
-use crate::core::config::types::{FourRemote, RuntimeChannelConfig};
-use crate::utils::error::Result;
+use voltage_config::comsrv::{ChannelConfig, RuntimeChannelConfig};
+use voltage_config::FourRemote;
 
 /// Virtual protocol client for testing
 pub struct VirtualProtocol {
@@ -31,7 +30,8 @@ pub struct VirtualProtocol {
 }
 
 impl VirtualProtocol {
-    pub fn new(channel_config: crate::core::config::types::ChannelConfig) -> Result<Self> {
+    /// Create a new VirtualProtocol from ChannelConfig
+    pub fn new(channel_config: ChannelConfig) -> Result<Self> {
         let logger = ChannelLogger::new(
             channel_config.id() as u32,
             channel_config.name().to_string(),
@@ -56,10 +56,8 @@ impl VirtualProtocol {
         })
     }
 
-    /// Create from RuntimeChannelConfig
-    pub fn from_runtime_config(
-        runtime_config: &crate::core::config::RuntimeChannelConfig,
-    ) -> Result<Self> {
+    /// Create from RuntimeChannelConfig (standard factory method)
+    pub fn from_runtime_config(runtime_config: &RuntimeChannelConfig) -> Result<Self> {
         // VirtualProtocol doesn't need protocol-specific parameters
         // Just extract the base config and use existing new() method
         let channel_config = (*runtime_config.base).clone();
@@ -131,7 +129,7 @@ impl ComBase for VirtualProtocol {
                     result.insert(
                         i as u32,
                         PointData {
-                            value: RedisValue::Float(*value),
+                            value: ProtocolValue::Float(*value),
                             timestamp,
                         },
                     );
@@ -143,7 +141,7 @@ impl ComBase for VirtualProtocol {
                     result.insert(
                         i as u32,
                         PointData {
-                            value: RedisValue::Bool(*value),
+                            value: ProtocolValue::Bool(*value),
                             timestamp,
                         },
                     );
@@ -228,7 +226,7 @@ impl ComClient for VirtualProtocol {
         Ok(())
     }
 
-    async fn control(&mut self, commands: Vec<(u32, RedisValue)>) -> Result<Vec<(u32, bool)>> {
+    async fn control(&mut self, commands: Vec<(u32, ProtocolValue)>) -> Result<Vec<(u32, bool)>> {
         let mut results = Vec::new();
         let mut signals = self.signal_data.write().await;
 
@@ -236,9 +234,9 @@ impl ComClient for VirtualProtocol {
             if *point_id > 0 && *point_id <= signals.len() as u32 {
                 let idx = (*point_id - 1) as usize;
                 signals[idx] = match value {
-                    RedisValue::Bool(b) => *b,
-                    RedisValue::Integer(i) => *i != 0,
-                    RedisValue::Float(f) => *f != 0.0,
+                    ProtocolValue::Bool(b) => *b,
+                    ProtocolValue::Integer(i) => *i != 0,
+                    ProtocolValue::Float(f) => *f != 0.0,
                     _ => false,
                 };
                 results.push((*point_id, true));
@@ -262,7 +260,7 @@ impl ComClient for VirtualProtocol {
 
     async fn adjustment(
         &mut self,
-        adjustments: Vec<(u32, RedisValue)>,
+        adjustments: Vec<(u32, ProtocolValue)>,
     ) -> Result<Vec<(u32, bool)>> {
         let mut results = Vec::new();
         let mut data = self.telemetry_data.write().await;
@@ -271,9 +269,9 @@ impl ComClient for VirtualProtocol {
             if point_id > 0 && point_id <= data.len() as u32 {
                 let idx = (point_id - 1) as usize;
                 data[idx] = match value {
-                    RedisValue::Float(f) => f,
-                    RedisValue::Integer(i) => i as f64,
-                    RedisValue::String(s) => s.parse().unwrap_or(0.0),
+                    ProtocolValue::Float(f) => f,
+                    ProtocolValue::Integer(i) => i as f64,
+                    ProtocolValue::String(s) => s.parse().unwrap_or(0.0),
                     _ => 0.0,
                 };
                 results.push((point_id, true));
@@ -335,7 +333,7 @@ mod tests {
         assert_eq!(telemetry.len(), 100);
 
         // Test control
-        let commands = vec![(1, RedisValue::Bool(true))];
+        let commands = vec![(1, ProtocolValue::Bool(true))];
         let results = protocol.control(commands).await.unwrap();
         assert_eq!(results.len(), 1);
         assert!(results[0].1);
@@ -361,7 +359,7 @@ mod tests {
         // Verify all signals are initially false
         for (_point_id, point_data) in signals.iter() {
             match point_data.value {
-                RedisValue::Bool(b) => assert!(!b),
+                ProtocolValue::Bool(b) => assert!(!b),
                 _ => panic!("Expected bool value"),
             }
         }
@@ -375,9 +373,9 @@ mod tests {
 
         // Test adjustment with float value
         let adjustments = vec![
-            (1, RedisValue::Float(123.45)),
-            (2, RedisValue::Integer(100)),
-            (3, RedisValue::String(Cow::Borrowed("99.99"))),
+            (1, ProtocolValue::Float(123.45)),
+            (2, ProtocolValue::Integer(100)),
+            (3, ProtocolValue::String(Cow::Borrowed("99.99"))),
         ];
 
         let results = protocol.adjustment(adjustments).await.unwrap();
@@ -391,17 +389,17 @@ mod tests {
             .unwrap();
         match telemetry.get(&0).unwrap().value {
             // point_id 1 → key 0
-            RedisValue::Float(f) => assert!((f - 123.45).abs() < 0.001),
+            ProtocolValue::Float(f) => assert!((f - 123.45).abs() < 0.001),
             _ => panic!("Expected float value"),
         }
         match telemetry.get(&1).unwrap().value {
             // point_id 2 → key 1
-            RedisValue::Float(f) => assert!((f - 100.0).abs() < 0.001),
+            ProtocolValue::Float(f) => assert!((f - 100.0).abs() < 0.001),
             _ => panic!("Expected float value"),
         }
         match telemetry.get(&2).unwrap().value {
             // point_id 3 → key 2
-            RedisValue::Float(f) => assert!((f - 99.99).abs() < 0.001),
+            ProtocolValue::Float(f) => assert!((f - 99.99).abs() < 0.001),
             _ => panic!("Expected float value"),
         }
     }
@@ -412,12 +410,12 @@ mod tests {
         let mut protocol = VirtualProtocol::new(config).unwrap();
         protocol.connect().await.unwrap();
 
-        // Test control with different RedisValue types
+        // Test control with different ProtocolValue types
         let commands = vec![
-            (1, RedisValue::Bool(true)),
-            (2, RedisValue::Integer(1)),
-            (3, RedisValue::Float(1.5)),
-            (4, RedisValue::Integer(0)),
+            (1, ProtocolValue::Bool(true)),
+            (2, ProtocolValue::Integer(1)),
+            (3, ProtocolValue::Float(1.5)),
+            (4, ProtocolValue::Integer(0)),
         ];
 
         let results = protocol.control(commands).await.unwrap();
@@ -431,19 +429,19 @@ mod tests {
             .unwrap();
         assert!(matches!(
             signals.get(&0).unwrap().value, // point_id 1 → key 0
-            RedisValue::Bool(true)
+            ProtocolValue::Bool(true)
         ));
         assert!(matches!(
             signals.get(&1).unwrap().value, // point_id 2 → key 1
-            RedisValue::Bool(true)
+            ProtocolValue::Bool(true)
         ));
         assert!(matches!(
             signals.get(&2).unwrap().value, // point_id 3 → key 2
-            RedisValue::Bool(true)
+            ProtocolValue::Bool(true)
         ));
         assert!(matches!(
             signals.get(&3).unwrap().value, // point_id 4 → key 3
-            RedisValue::Bool(false)
+            ProtocolValue::Bool(false)
         ));
     }
 
@@ -455,9 +453,9 @@ mod tests {
 
         // Test control with invalid point IDs
         let commands = vec![
-            (0, RedisValue::Bool(true)),    // point_id 0 (invalid)
-            (101, RedisValue::Bool(true)),  // point_id > 100 (out of range)
-            (1000, RedisValue::Bool(true)), // way out of range
+            (0, ProtocolValue::Bool(true)),    // point_id 0 (invalid)
+            (101, ProtocolValue::Bool(true)),  // point_id > 100 (out of range)
+            (1000, ProtocolValue::Bool(true)), // way out of range
         ];
 
         let results = protocol.control(commands).await.unwrap();
@@ -466,8 +464,8 @@ mod tests {
 
         // Test adjustment with invalid point IDs
         let adjustments = vec![
-            (0, RedisValue::Float(100.0)),
-            (101, RedisValue::Float(200.0)),
+            (0, ProtocolValue::Float(100.0)),
+            (101, ProtocolValue::Float(200.0)),
         ];
 
         let results = protocol.adjustment(adjustments).await.unwrap();
@@ -552,7 +550,7 @@ mod tests {
         protocol.connect().await.unwrap();
 
         // Test adjustment with invalid string
-        let adjustments = vec![(1, RedisValue::String(Cow::Borrowed("not_a_number")))];
+        let adjustments = vec![(1, ProtocolValue::String(Cow::Borrowed("not_a_number")))];
 
         let results = protocol.adjustment(adjustments).await.unwrap();
         assert!(results[0].1); // Should succeed but value becomes 0.0
@@ -564,7 +562,7 @@ mod tests {
             .unwrap();
         match telemetry.get(&0).unwrap().value {
             // point_id 1 → key 0
-            RedisValue::Float(f) => assert_eq!(f, 0.0),
+            ProtocolValue::Float(f) => assert_eq!(f, 0.0),
             _ => panic!("Expected float value"),
         }
     }

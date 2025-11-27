@@ -246,10 +246,6 @@ impl Default for PointData {
 /// Point data mapping
 pub type PointDataMap = HashMap<u32, PointData>;
 
-/// Type alias for backward compatibility with comsrv
-/// comsrv uses "RedisValue" while voltage-comlink uses "ProtocolValue"
-pub type RedisValue = ProtocolValue;
-
 /// Channel command enumeration
 #[derive(Debug, Clone)]
 pub enum ChannelCommand {

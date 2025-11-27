@@ -89,28 +89,6 @@ pub const MODBUS_MAX_READ_COILS: usize = 2000;
 /// - Spec defines: N ≤ 1968 (0x7B0, conservative practical limit)
 pub const MODBUS_MAX_WRITE_COILS: usize = 1968;
 
-// ============================================================================
-// Helper Functions
-// ============================================================================
-
-/// Calculate total Modbus TCP frame size (MBAP header + PDU)
-///
-/// # Parameters
-/// - `pdu_len`: Length of the PDU in bytes
-///
-/// # Returns
-/// Total frame size in bytes
-///
-/// # Example
-/// ```
-/// use comsrv::plugins::protocols::modbus::constants::mbap_frame_size;
-/// assert_eq!(mbap_frame_size(5), 11); // 6-byte MBAP + 5-byte PDU
-/// ```
-#[inline]
-pub const fn mbap_frame_size(pdu_len: usize) -> usize {
-    MBAP_HEADER_LEN + pdu_len
-}
-
 #[cfg(test)]
 #[allow(clippy::disallowed_methods)] // Test code - unwrap is acceptable
 mod tests {
@@ -150,12 +128,5 @@ mod tests {
         let write_coil_pdu = 1 + 2 + 2 + 1 + write_coil_bytes;
         assert!(write_coil_pdu <= MAX_PDU_SIZE);
         assert_eq!(MODBUS_MAX_WRITE_COILS, 1968);
-    }
-
-    #[test]
-    fn test_mbap_frame_size_helper() {
-        assert_eq!(mbap_frame_size(0), 6);
-        assert_eq!(mbap_frame_size(5), 11);
-        assert_eq!(mbap_frame_size(MAX_PDU_SIZE), 6 + 253);
     }
 }

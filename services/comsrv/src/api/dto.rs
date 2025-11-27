@@ -246,9 +246,9 @@ pub struct ChannelStatus {
     pub statistics: HashMap<String, serde_json::Value>,
 }
 
-impl From<crate::core::combase::ChannelStatus> for ChannelStatus {
+impl From<crate::core::channels::ChannelStatus> for ChannelStatus {
     /// Convert from `ComBase` `ChannelStatus` to API `ChannelStatus`
-    fn from(status: crate::core::combase::ChannelStatus) -> Self {
+    fn from(status: crate::core::channels::ChannelStatus) -> Self {
         Self {
             id: 0,                           // Will be filled by handler
             name: "Unknown".to_string(),     // Will be filled by handler
@@ -1014,7 +1014,7 @@ mod tests {
 
     #[test]
     fn test_combase_channel_status_conversion() {
-        let combase_status = crate::core::combase::ChannelStatus {
+        let combase_status = crate::core::channels::ChannelStatus {
             is_connected: true,
             last_update: 1_234_567_890,
         };

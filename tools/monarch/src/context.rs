@@ -11,7 +11,7 @@ use tokio::sync::RwLock;
 #[cfg(feature = "lib-mode")]
 use {
     common::redis::RedisClient,
-    comsrv::core::combase::ChannelManager,
+    comsrv::core::channels::ChannelManager,
     modsrv::{InstanceManager, ProductLoader},
     sqlx::SqlitePool,
     voltage_rtdb::{RedisRtdb, Rtdb},

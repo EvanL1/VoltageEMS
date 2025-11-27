@@ -439,10 +439,10 @@ if command -v docker &> /dev/null; then
             # Handle VoltageEMS services update (automatic if changed)
             if [ "$VOLTAGEEMS_CHANGED" = true ]; then
                 echo ""
-                echo -e "${YELLOW}Updating VoltageEMS services (comsrv, modsrv, rulesrv)...${NC}"
+                echo -e "${YELLOW}Updating VoltageEMS services (comsrv, modsrv)...${NC}"
 
                 # Get list of running VoltageEMS containers
-                RUNNING_SERVICES=$(docker ps --filter "ancestor=voltageems:latest" --format "{{.Names}}" | grep -E "comsrv|modsrv|rulesrv" || true)
+                RUNNING_SERVICES=$(docker ps --filter "ancestor=voltageems:latest" --format "{{.Names}}" | grep -E "comsrv|modsrv" || true)
 
                 if [[ -n "$RUNNING_SERVICES" ]]; then
                     echo "  Stopping old containers: $(echo "$RUNNING_SERVICES" | tr '\n' ' ')"
@@ -460,7 +460,7 @@ if command -v docker &> /dev/null; then
 
                 # Restart services using docker-compose (force recreate to use new image)
                 if [[ -f "$INSTALL_DIR/docker-compose.yml" ]]; then
-                    run_docker_compose -f "$INSTALL_DIR/docker-compose.yml" up -d --force-recreate comsrv modsrv rulesrv
+                    run_docker_compose -f "$INSTALL_DIR/docker-compose.yml" up -d --force-recreate comsrv modsrv
                     echo -e "${GREEN}✓ VoltageEMS services updated successfully (containers recreated)${NC}"
                 else
                     echo -e "${YELLOW}Note: docker-compose.yml not found, start manually after installation${NC}"
@@ -587,7 +587,7 @@ $SUDO mkdir -p "$INSTALL_DIR"/data
 # Create log directories (permissions will be set after user detection)
 echo "Creating log directories..."
 $SUDO mkdir -p "$LOG_DIR"
-for service in comsrv modsrv alarmsrv rulesrv hissrv; do
+for service in comsrv modsrv; do
     $SUDO mkdir -p "$LOG_DIR/$service"
 done
 
@@ -714,7 +714,7 @@ if [[ -d "$LOG_DIR" ]]; then
         chmod 775 "$LOG_DIR" || echo "Warning: Could not set permissions for $LOG_DIR"
 
         # Fix each service subdirectory explicitly
-        for service in comsrv modsrv alarmsrv rulesrv hissrv; do
+        for service in comsrv modsrv; do
             if [[ -d "$LOG_DIR/$service" ]]; then
                 chown -R ${ACTUAL_UID}:${ACTUAL_GID} "$LOG_DIR/$service" || echo "Warning: Could not set ownership for $LOG_DIR/$service"
                 chmod 775 "$LOG_DIR/$service" || echo "Warning: Could not set permissions for $LOG_DIR/$service"
@@ -729,7 +729,7 @@ if [[ -d "$LOG_DIR" ]]; then
         $SUDO chmod 775 "$LOG_DIR" || echo "Warning: Could not set permissions for $LOG_DIR"
 
         # Fix each service subdirectory explicitly
-        for service in comsrv modsrv alarmsrv rulesrv hissrv; do
+        for service in comsrv modsrv; do
             if [[ -d "$LOG_DIR/$service" ]]; then
                 $SUDO chown -R ${ACTUAL_UID}:${ACTUAL_GID} "$LOG_DIR/$service" || echo "Warning: Could not set ownership for $LOG_DIR/$service"
                 $SUDO chmod 775 "$LOG_DIR/$service" || echo "Warning: Could not set permissions for $LOG_DIR/$service"
@@ -935,7 +935,7 @@ if [[ "$LOG_DIR" != "$INSTALL_DIR/logs" ]] && [[ -d "$LOG_DIR" ]]; then
     ls -ld "$LOG_DIR" 2>/dev/null | awk '{printf "%-25s %s %s:%s\n", $9":", $1, $3, $4}'
 
     # Show service subdirectories
-    for service in comsrv modsrv alarmsrv rulesrv hissrv; do
+    for service in comsrv modsrv; do
         if [[ -d "$LOG_DIR/$service" ]]; then
             ls -ld "$LOG_DIR/$service" 2>/dev/null | awk -v svc="├── $service:" '{printf "%-25s %s %s:%s\n", svc, $1, $3, $4}'
         fi
@@ -964,10 +964,7 @@ echo -e "${YELLOW}  • Using host network mode for optimal performance${NC}"
 echo "  • Services available on localhost:"
 echo "    - Redis: 6379"
 echo "    - ComSrv: 6001"
-echo "    - ModSrv: 6002"
-echo "    - AlarmSrv: 6006"
-echo "    - RuleSrv: 6003"
-echo "    - HisSrv: 6004"
+echo "    - ModSrv: 6002 (also serves rules on 6003)"
 echo ""
 echo -e "${YELLOW}Important: Configuration Setup Required${NC}"
 echo "  Before starting services, you must:"

@@ -1,6 +1,7 @@
-//! Telemetry synchronization module
+//! Telemetry synchronization and data transformation module
 //!
-//! Handles background synchronization of telemetry data to Redis
+//! Handles background synchronization of telemetry data to Redis,
+//! and provides unified data transformation interface for all four-telemetry types.
 
 use std::sync::Arc;
 use tokio::sync::{mpsc, Mutex, RwLock};
@@ -8,11 +9,121 @@ use tokio::task::JoinHandle;
 use tracing::{debug, error, info};
 
 use super::point_config::RuntimeConfigProvider;
-use super::point_transformer::TransformDirection;
-use crate::core::combase::traits::TelemetryBatch;
+use crate::core::channels::traits::TelemetryBatch;
+use crate::error::{ComSrvError, Result};
 use crate::storage::PluginPointUpdate;
-use crate::utils::error::{ComSrvError, Result};
 use voltage_config::common::FourRemote;
+
+// ============================================================================
+// Point Transformation (merged from point_transformer.rs)
+// ============================================================================
+
+/// Data transformation direction
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TransformDirection {
+    /// Device → System (raw value → processed value)
+    /// Used for uplink data (Telemetry, Signal)
+    DeviceToSystem,
+    /// System → Device (processed value → raw value)
+    /// Used for downlink commands (Control, Adjustment)
+    SystemToDevice,
+}
+
+/// Point data transformer
+///
+/// Provides unified interface for transforming point values in both directions.
+/// Uses enum for static dispatch (better performance than trait objects).
+#[derive(Debug, Clone)]
+pub enum PointTransformer {
+    /// Linear transformation: processed = raw * scale + offset
+    ///
+    /// Supports bidirectional transformation:
+    /// - DeviceToSystem: processed = raw * scale + offset
+    /// - SystemToDevice: raw = (processed - offset) / scale
+    Linear {
+        /// Scale factor
+        scale: f64,
+        /// Offset value
+        offset: f64,
+    },
+    /// Boolean transformation with optional reversal
+    ///
+    /// Supports bidirectional transformation (symmetric):
+    /// - If reverse=true: output = !input (0→1, 1→0)
+    /// - If reverse=false: output = input (passthrough)
+    Boolean {
+        /// Whether to reverse the boolean value
+        reverse: bool,
+    },
+    /// Passthrough transformer - returns input value unchanged
+    ///
+    /// Used for points without configured transformation
+    Passthrough,
+}
+
+impl PointTransformer {
+    /// Create a new linear transformer
+    pub fn linear(scale: f64, offset: f64) -> Self {
+        Self::Linear { scale, offset }
+    }
+
+    /// Create a new boolean transformer
+    pub fn boolean(reverse: bool) -> Self {
+        Self::Boolean { reverse }
+    }
+
+    /// Create a new passthrough transformer
+    pub fn passthrough() -> Self {
+        Self::Passthrough
+    }
+
+    /// Transform a point value
+    ///
+    /// # Arguments
+    /// * `value` - Input value (raw or processed depending on direction)
+    /// * `direction` - Transformation direction
+    ///
+    /// # Returns
+    /// Transformed value
+    pub fn transform(&self, value: f64, direction: TransformDirection) -> f64 {
+        match (self, direction) {
+            // Linear uplink: raw * scale + offset
+            (Self::Linear { scale, offset }, TransformDirection::DeviceToSystem) => {
+                value * scale + offset
+            },
+            // Linear downlink: (processed - offset) / scale
+            (Self::Linear { scale, offset }, TransformDirection::SystemToDevice) => {
+                if *scale != 0.0 {
+                    (value - offset) / scale
+                } else {
+                    // Avoid division by zero
+                    tracing::warn!(
+                        "PointTransformer::Linear: scale is zero, returning original value"
+                    );
+                    value
+                }
+            },
+            // Boolean transformation (symmetric in both directions)
+            (Self::Boolean { reverse }, _) => {
+                if *reverse {
+                    if value == 0.0 {
+                        1.0
+                    } else {
+                        0.0
+                    }
+                } else {
+                    value
+                }
+            },
+            // Passthrough (no transformation)
+            (Self::Passthrough, _) => value,
+        }
+    }
+}
+
+// ============================================================================
+// Telemetry Synchronization
+// ============================================================================
 
 /// Transform telemetry batch using provided config provider
 ///
@@ -190,9 +301,9 @@ impl TelemetrySync {
 #[allow(clippy::disallowed_methods)] // Test code - unwrap is acceptable
 mod tests {
     use super::*;
-    use crate::core::combase::point_config::RuntimeConfigProvider;
-    use crate::core::config::types::{Point, SignalPoint, TelemetryPoint};
+    use crate::core::channels::point_config::RuntimeConfigProvider;
     use crate::core::config::RuntimeChannelConfig;
+    use crate::core::config::{Point, SignalPoint, TelemetryPoint};
     use std::collections::HashMap;
     use voltage_config::comsrv::ChannelConfig;
 

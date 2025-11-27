@@ -2,7 +2,7 @@
 //!
 //! Provides configuration lookup for point transformers
 
-use super::point_transformer::PointTransformer;
+use super::sync::PointTransformer;
 use crate::core::config::RuntimeChannelConfig;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -201,7 +201,7 @@ impl RuntimeConfigProvider {
 #[allow(clippy::disallowed_methods)] // Test code - unwrap is acceptable
 mod tests {
     use super::*;
-    use crate::core::config::types::{AdjustmentPoint, Point, SignalPoint, TelemetryPoint};
+    use crate::core::config::{AdjustmentPoint, Point, SignalPoint, TelemetryPoint};
     use voltage_config::comsrv::ChannelConfig;
 
     fn create_test_runtime_config() -> RuntimeChannelConfig {
@@ -286,7 +286,7 @@ mod tests {
         let transformer = provider.get_transformer(1001, &FourRemote::Telemetry, 1);
 
         // Test transformation
-        use super::super::point_transformer::TransformDirection;
+        use super::super::sync::TransformDirection;
         let result = transformer.transform(6693.0, TransformDirection::DeviceToSystem);
         assert!((result - 669.3).abs() < 0.0001); // Use approximate comparison for floating point
     }
@@ -300,7 +300,7 @@ mod tests {
         let transformer = provider.get_transformer(1001, &FourRemote::Signal, 2);
 
         // Test boolean reversal
-        use super::super::point_transformer::TransformDirection;
+        use super::super::sync::TransformDirection;
         assert_eq!(
             transformer.transform(0.0, TransformDirection::DeviceToSystem),
             1.0
@@ -318,7 +318,7 @@ mod tests {
         // Should return passthrough transformer
         let transformer = provider.get_transformer(999, &FourRemote::Telemetry, 999);
 
-        use super::super::point_transformer::TransformDirection;
+        use super::super::sync::TransformDirection;
         let result = transformer.transform(123.45, TransformDirection::DeviceToSystem);
         assert_eq!(result, 123.45); // Passthrough
     }

@@ -2,11 +2,11 @@
 //!
 //! Loads channel configurations, point tables, and mappings from SQLite database
 
-use crate::core::config::types::{
+use crate::core::config::{
     AdjustmentPoint, AppConfig, ChannelConfig, ControlPoint, RuntimeChannelConfig, ServiceConfig,
     SignalPoint, TelemetryPoint,
 };
-use crate::utils::error::{ComSrvError, Result};
+use crate::error::{ComSrvError, Result};
 use common::sqlite::ServiceConfigLoader;
 use sqlx::{Row, SqlitePool};
 use std::collections::HashMap;
@@ -99,13 +99,13 @@ impl ComsrvSqliteLoader {
         };
 
         // Create API configuration
-        let api = crate::core::config::types::ApiConfig {
+        let api = crate::core::config::ApiConfig {
             host: DEFAULT_API_HOST.to_string(),
             port: service_config.port,
         };
 
         // Create Redis configuration
-        let redis = crate::core::config::types::RedisConfig {
+        let redis = crate::core::config::RedisConfig {
             url: service_config.redis_url.clone(),
             enabled: true,
         };
@@ -117,7 +117,7 @@ impl ComsrvSqliteLoader {
             service,
             api,
             redis,
-            logging: crate::core::config::types::LoggingConfig::default(),
+            logging: crate::core::config::LoggingConfig::default(),
             channels,
         })
     }
@@ -175,7 +175,7 @@ impl ComsrvSqliteLoader {
                     enabled,
                 },
                 parameters,
-                logging: crate::core::config::types::ChannelLoggingConfig::default(),
+                logging: crate::core::config::ChannelLoggingConfig::default(),
             };
 
             // Note: Points will be loaded at runtime when creating RuntimeChannelConfig

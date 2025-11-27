@@ -167,7 +167,7 @@ COPY . .
 # Build for ARM64
 ENV CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc
 RUN cargo build --release --target aarch64-unknown-linux-gnu \
-    -p comsrv -p modsrv -p rulesrv
+    -p comsrv -p modsrv
 
 # Runtime stage
 FROM debian:bookworm-slim
@@ -179,7 +179,6 @@ RUN apt-get update && apt-get install -y \
 # Copy binaries from builder
 COPY --from=builder /usr/src/app/target/aarch64-unknown-linux-gnu/release/comsrv /usr/local/bin/
 COPY --from=builder /usr/src/app/target/aarch64-unknown-linux-gnu/release/modsrv /usr/local/bin/
-COPY --from=builder /usr/src/app/target/aarch64-unknown-linux-gnu/release/rulesrv /usr/local/bin/
 
 RUN chmod +x /usr/local/bin/*
 

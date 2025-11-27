@@ -180,7 +180,7 @@ fn analyze_parameter_changes(
 async fn perform_hot_reload(
     id: u16,
     state: &AppState,
-    new_config: crate::core::config::types::ChannelConfig,
+    new_config: crate::core::config::ChannelConfig,
 ) -> Result<String, String> {
     let manager = state.channel_manager.write().await;
 
@@ -324,7 +324,7 @@ pub async fn create_channel_handler(
     State(state): State<AppState>,
     Json(req): Json<crate::dto::ChannelCreateRequest>,
 ) -> Result<Json<SuccessResponse<crate::dto::ChannelCrudResult>>, AppError> {
-    use crate::core::config::types::ChannelConfig;
+    use crate::core::config::ChannelConfig;
 
     // 1. Check if channel name already exists (enforced uniqueness)
     let existing_name: Option<i64> =
@@ -682,7 +682,7 @@ pub async fn update_channel_handler(
                 })?;
 
                 // Build new config
-                let new_config = crate::core::config::types::ChannelConfig {
+                let new_config = crate::core::config::ChannelConfig {
                     core: voltage_config::comsrv::ChannelCore {
                         id,
                         name: name.clone(),
@@ -717,7 +717,7 @@ pub async fn update_channel_handler(
                 })?;
 
                 // Build new config
-                let new_config = crate::core::config::types::ChannelConfig {
+                let new_config = crate::core::config::ChannelConfig {
                     core: voltage_config::comsrv::ChannelCore {
                         id,
                         name: name.clone(),
@@ -796,7 +796,7 @@ pub async fn set_channel_enabled_handler(
     State(state): State<AppState>,
     Json(req): Json<crate::dto::ChannelEnabledRequest>,
 ) -> Result<Json<SuccessResponse<crate::dto::ChannelCrudResult>>, AppError> {
-    use crate::core::config::types::ChannelConfig;
+    use crate::core::config::ChannelConfig;
 
     tracing::info!("Setting channel {} enabled state to {}", id, req.enabled);
 
@@ -1077,7 +1077,7 @@ pub async fn delete_channel_handler(
 pub async fn reload_configuration_handler(
     State(state): State<AppState>,
 ) -> Result<Json<SuccessResponse<crate::dto::ReloadConfigResult>>, AppError> {
-    use crate::core::config::types::ChannelConfig;
+    use crate::core::config::ChannelConfig;
 
     tracing::info!("Reloading configuration from SQLite");
 
@@ -1292,7 +1292,7 @@ pub async fn reload_configuration_handler(
 pub async fn reload_routing_handler(
     State(state): State<AppState>,
 ) -> Result<Json<SuccessResponse<crate::dto::RoutingReloadResult>>, AppError> {
-    use crate::core::combase::ChannelManager;
+    use crate::core::channels::ChannelManager;
 
     tracing::info!("Reloading routing cache from SQLite");
 

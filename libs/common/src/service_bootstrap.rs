@@ -4,7 +4,6 @@
 //! including startup banners, logging initialization, and environment setup.
 
 use crate::logging::{self, LogConfig};
-use std::path::PathBuf;
 use tracing::{info, Level};
 
 /// Service metadata for startup
@@ -88,20 +87,31 @@ pub fn print_startup_banner(service: &ServiceInfo) {
 }
 
 /// Initialize logging for a service with standard configuration
-pub fn init_logging(service: &ServiceInfo) -> anyhow::Result<()> {
+///
+/// # Arguments
+/// * `service` - Service metadata
+/// * `logging_config` - Optional logging configuration from SQLite config
+///
+/// Log root directory priority:
+/// 1. VOLTAGE_LOG_DIR environment variable
+/// 2. logging_config.dir from SQLite config
+/// 3. Default "logs"
+pub fn init_logging(
+    service: &ServiceInfo,
+    logging_config: Option<&voltage_config::common::LoggingConfig>,
+) -> anyhow::Result<()> {
+    // Initialize log root directory from config or environment
+    let config_dir = logging_config.map(|c| c.dir.as_str());
+    crate::logging::init_log_root(config_dir);
+
     // Check RUST_LOG environment variable for log level
     let console_level = std::env::var("RUST_LOG")
         .ok()
         .and_then(|s| s.parse::<Level>().ok())
         .unwrap_or(Level::INFO);
 
-    // Check LOG_DIR environment variable for custom log directory
-    // Format: /path/to/logs (without service subdirectory)
-    // Defaults to "logs/{service_name}" if not set
-    let log_dir = std::env::var("LOG_DIR")
-        .ok()
-        .map(|base| PathBuf::from(base).join(&service.name))
-        .unwrap_or_else(|| PathBuf::from(format!("logs/{}", service.name)));
+    // Get log directory with service name subdirectory
+    let log_dir = crate::logging::get_log_root().join(&service.name);
 
     let log_config = LogConfig {
         service_name: service.name.clone(),
@@ -175,8 +185,8 @@ pub async fn bootstrap_service(service: ServiceInfo) -> anyhow::Result<String> {
     // Load development environment
     load_development_env();
 
-    // Initialize logging
-    init_logging(&service)?;
+    // Initialize logging (config not loaded yet, use env/default)
+    init_logging(&service, None)?;
 
     // Print startup banner
     print_startup_banner(&service);

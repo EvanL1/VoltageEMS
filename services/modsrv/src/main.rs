@@ -3,8 +3,8 @@
 //! Model management service supporting measurement/action separation architecture
 //! Now includes integrated Rule Engine on port 6003.
 
-use modsrv::Result;
 use std::{net::SocketAddr, sync::Arc};
+
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
 #[cfg(feature = "swagger-ui")]
@@ -12,10 +12,12 @@ use utoipa::OpenApi;
 #[cfg(feature = "swagger-ui")]
 use utoipa_swagger_ui::SwaggerUi;
 
-// Import from modsrv library instead of declaring modules
-use modsrv::rule_routes::{create_rule_routes, RuleEngineState};
-use modsrv::RuleScheduler;
-use modsrv::{bootstrap, routes};
+// modsrv imports
+use modsrv::{
+    bootstrap, routes,
+    rule_routes::{create_rule_routes, RuleEngineState},
+    Result, RuleScheduler,
+};
 
 #[tokio::main]
 async fn main() -> Result<()> {

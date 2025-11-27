@@ -2816,7 +2816,7 @@ pub(crate) async fn trigger_channel_reload_if_needed(
 ///
 /// This is an internal helper function that performs the actual reload logic.
 async fn perform_channel_reload(channel_id: u16, state: &AppState) -> anyhow::Result<()> {
-    use crate::core::combase::channel_manager::ChannelManager;
+    use crate::core::channels::channel_manager::ChannelManager;
 
     // 1. Load channel configuration from SQLite
     let config = ChannelManager::load_channel_from_db(&state.sqlite_pool, channel_id)

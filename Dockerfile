@@ -30,7 +30,7 @@ ENV CARGO_BUILD_JOBS=${BUILD_JOBS}
 COPY . .
 
 # Build release binaries (only services, no apps or tools)
-RUN cargo build --release -p comsrv -p modsrv -p rulesrv
+RUN cargo build --release -p comsrv -p modsrv
 
 # ============================================================================
 # Stage 2: Runtime Image
@@ -48,7 +48,6 @@ WORKDIR /app
 # Copy binaries from builder stage
 COPY --from=builder /build/target/release/comsrv /usr/local/bin/comsrv
 COPY --from=builder /build/target/release/modsrv /usr/local/bin/modsrv
-COPY --from=builder /build/target/release/rulesrv /usr/local/bin/rulesrv
 
 # Make binaries executable
 RUN chmod +x /usr/local/bin/*
@@ -60,7 +59,7 @@ COPY config.template/ /app/config/
 # Create all necessary directories with proper permissions
 RUN mkdir -p data logs && \
     mkdir -p logs/channels logs/models && \
-    mkdir -p logs/comsrv logs/modsrv logs/rulesrv && \
+    mkdir -p logs/comsrv logs/modsrv && \
     chmod -R 775 config data logs
 
 # Default environment variables
@@ -69,7 +68,7 @@ ENV REDIS_URL=redis://localhost:6379
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-    CMD ["/bin/sh", "-c", "pgrep -x comsrv || pgrep -x modsrv || pgrep -x rulesrv || exit 1"]
+    CMD ["/bin/sh", "-c", "pgrep -x comsrv || pgrep -x modsrv || exit 1"]
 
 # Default to comsrv, but can be overridden in docker-compose
 CMD ["comsrv"]

@@ -14,8 +14,8 @@
 //! - CSV files define channel mappings and point definitions
 //! - Monarch handles synchronization: YAML/CSV → SQLite
 
-use super::types::{AppConfig, ChannelConfig, ServiceConfig};
-use crate::utils::error::{ComSrvError, Result};
+use super::{AppConfig, ChannelConfig, ServiceConfig};
+use crate::error::{ComSrvError, Result};
 use std::path::Path;
 use tracing::{debug, error, info};
 #[cfg(test)]

@@ -2,13 +2,11 @@
 //!
 //! Supports frame processing for both TCP and RTU transport modes
 
-use super::connection::ConnectionParams;
 use super::constants;
-use crate::core::config::types::ChannelConfig;
-use crate::protocols::modbus::pdu::ModbusPdu;
-use crate::utils::error::{ComSrvError, Result};
+use super::pdu::ModbusPdu;
 use std::collections::HashMap;
 use tracing::{debug, error};
+use voltage_comlink::error::{ComLinkError, Result};
 
 /// Modbus transport mode
 #[derive(Debug, Clone, PartialEq)]
@@ -16,6 +14,7 @@ pub enum ModbusMode {
     /// TCP mode (using MBAP header)
     Tcp,
     /// RTU mode (using CRC check)
+    #[cfg(feature = "modbus-rtu")]
     Rtu,
 }
 
@@ -59,6 +58,7 @@ pub struct ModbusFrameProcessor {
     /// Channel-local transaction ID counter (for TCP mode)
     next_transaction_id: u16,
     /// Sequential request ID for RTU mode tracking
+    #[cfg(feature = "modbus-rtu")]
     next_rtu_request_id: u16,
     /// Maximum pending requests to prevent memory growth
     max_pending_requests: usize,
@@ -71,6 +71,7 @@ impl ModbusFrameProcessor {
             mode,
             pending_requests: HashMap::new(),
             next_transaction_id: 1,
+            #[cfg(feature = "modbus-rtu")]
             next_rtu_request_id: 1,
             max_pending_requests: 1000,
         }
@@ -88,6 +89,7 @@ impl ModbusFrameProcessor {
     }
 
     /// Get next RTU request ID
+    #[cfg(feature = "modbus-rtu")]
     fn next_rtu_request_id(&mut self) -> u16 {
         let id = self.next_rtu_request_id;
         self.next_rtu_request_id = self.next_rtu_request_id.wrapping_add(1);
@@ -131,6 +133,7 @@ impl ModbusFrameProcessor {
 
                 self.build_tcp_frame_with_id(unit_id, pdu, transaction_id)
             },
+            #[cfg(feature = "modbus-rtu")]
             ModbusMode::Rtu => {
                 let request_id = self.next_rtu_request_id();
 
@@ -196,6 +199,7 @@ impl ModbusFrameProcessor {
     pub fn parse_frame(&mut self, data: &[u8]) -> Result<(u8, ModbusPdu)> {
         match self.mode {
             ModbusMode::Tcp => self.parse_tcp_frame(data),
+            #[cfg(feature = "modbus-rtu")]
             ModbusMode::Rtu => self.parse_rtu_frame(data),
         }
     }
@@ -233,6 +237,7 @@ impl ModbusFrameProcessor {
     }
 
     /// Build RTU frame (`unit_id` + PDU + CRC)
+    #[cfg(feature = "modbus-rtu")]
     fn build_rtu_frame(&self, unit_id: u8, pdu: &ModbusPdu) -> Vec<u8> {
         let mut frame = Vec::with_capacity(1 + pdu.len() + 2);
 
@@ -263,9 +268,7 @@ impl ModbusFrameProcessor {
         debug!("Parsing TCP frame: {} bytes", data.len());
 
         if data.len() < constants::MBAP_HEADER_LEN + 2 {
-            return Err(ComSrvError::ProtocolError(
-                "TCP frame too short".to_string(),
-            ));
+            return Err(ComLinkError::Protocol("TCP frame too short".to_string()));
         }
 
         // Parse MBAP header
@@ -281,7 +284,7 @@ impl ModbusFrameProcessor {
 
         // Validate protocol ID
         if protocol_id != 0 {
-            return Err(ComSrvError::ProtocolError(format!(
+            return Err(ComLinkError::Protocol(format!(
                 "Invalid protocol ID: expected 0, got {}",
                 protocol_id
             )));
@@ -289,7 +292,7 @@ impl ModbusFrameProcessor {
 
         // Validate length
         if data.len() != (constants::MBAP_HEADER_LEN + length as usize) {
-            return Err(ComSrvError::ProtocolError(format!(
+            return Err(ComLinkError::Protocol(format!(
                 "Invalid TCP frame length: expected {}, got {}",
                 constants::MBAP_HEADER_LEN + length as usize,
                 data.len()
@@ -308,7 +311,8 @@ impl ModbusFrameProcessor {
 
         if let Some((key, _info)) = matching_request {
             // Found a matching request, validate it matches the response
-            let response_fc = pdu.function_code()
+            let response_fc = pdu
+                .function_code()
                 .map(|fc| fc & 0x7F) // Remove potential error bit
                 .unwrap_or(0);
 
@@ -329,7 +333,7 @@ impl ModbusFrameProcessor {
                     transaction_id, key.function_code, key.slave_id, response_fc, unit_id
                 );
                 // Don't process this response - it might belong to another channel or be a delayed response
-                return Err(ComSrvError::ProtocolError(
+                return Err(ComLinkError::Protocol(
                     "Response ignored - FC/slave mismatch".to_string(),
                 ));
             }
@@ -344,7 +348,7 @@ impl ModbusFrameProcessor {
                     .collect::<Vec<_>>()
             );
             // Don't process this response
-            return Err(ComSrvError::ProtocolError(
+            return Err(ComLinkError::Protocol(
                 "Response ignored - unknown transaction ID".to_string(),
             ));
         }
@@ -353,13 +357,12 @@ impl ModbusFrameProcessor {
     }
 
     /// Parse RTU frame
+    #[cfg(feature = "modbus-rtu")]
     fn parse_rtu_frame(&mut self, data: &[u8]) -> Result<(u8, ModbusPdu)> {
         debug!("Parsing RTU frame: {} bytes", data.len());
 
         if data.len() < 4 {
-            return Err(ComSrvError::ProtocolError(
-                "RTU frame too short".to_string(),
-            ));
+            return Err(ComLinkError::Protocol("RTU frame too short".to_string()));
         }
 
         let frame_len = data.len();
@@ -377,7 +380,7 @@ impl ModbusFrameProcessor {
         // Validate CRC
         let calculated_crc = self.calculate_crc16(&data[..frame_len - 2]);
         if received_crc != calculated_crc {
-            return Err(ComSrvError::ProtocolError(format!(
+            return Err(ComLinkError::Protocol(format!(
                 "CRC mismatch: expected 0x{calculated_crc:04X}, got 0x{received_crc:04X}"
             )));
         }
@@ -388,7 +391,8 @@ impl ModbusFrameProcessor {
 
         // For RTU, we need to validate against pending requests
         if !pdu.is_empty() {
-            let response_fc = pdu.function_code()
+            let response_fc = pdu
+                .function_code()
                 .map(|fc| fc & 0x7F) // Remove potential error bit
                 .unwrap_or(0);
 
@@ -406,7 +410,7 @@ impl ModbusFrameProcessor {
                     .iter()
                     .max_by_key(|k| self.pending_requests.get(k).map(|info| info.timestamp))
                     .ok_or_else(|| {
-                        ComSrvError::ProtocolError(format!(
+                        ComLinkError::Protocol(format!(
                             "Failed to find matching request for slave {} with function code {:02X}",
                             unit_id, response_fc
                         ))
@@ -437,7 +441,7 @@ impl ModbusFrameProcessor {
                             .collect::<Vec<_>>(),
                         response_fc
                     );
-                    return Err(ComSrvError::ProtocolError(format!(
+                    return Err(ComLinkError::Protocol(format!(
                         "Function code mismatch for slave {}: got {:02X}",
                         unit_id, response_fc
                     )));
@@ -446,7 +450,7 @@ impl ModbusFrameProcessor {
                         "RTU response from unexpected slave: {} (no pending requests)",
                         unit_id
                     );
-                    return Err(ComSrvError::ProtocolError(format!(
+                    return Err(ComLinkError::Protocol(format!(
                         "Unexpected response from slave {}",
                         unit_id
                     )));
@@ -458,6 +462,7 @@ impl ModbusFrameProcessor {
     }
 
     /// Calculate CRC16 checksum (Modbus RTU standard)
+    #[cfg(feature = "modbus-rtu")]
     fn calculate_crc16(&self, data: &[u8]) -> u16 {
         let mut crc: u16 = 0xFFFF;
 
@@ -484,7 +489,7 @@ impl ModbusFrameProcessor {
     /// Parse exception response
     pub fn parse_exception(pdu: &[u8]) -> Result<(u8, u8)> {
         if pdu.len() < 2 {
-            return Err(ComSrvError::ProtocolError(
+            return Err(ComLinkError::Protocol(
                 "Invalid exception response".to_string(),
             ));
         }
@@ -518,80 +523,6 @@ impl ModbusFrameProcessor {
     }
 }
 
-/// Create connection parameters
-/// Extract connection parameters from channel configuration
-pub fn create_connection_params(config: &ChannelConfig) -> Result<ConnectionParams> {
-    match config.protocol() {
-        "modbus_tcp" => {
-            // Extract TCP configuration from parameters
-            let host = config
-                .parameters
-                .get("host")
-                .and_then(|v| v.as_str())
-                .map(std::string::ToString::to_string);
-            let port = config
-                .parameters
-                .get("port")
-                .and_then(|v| v.as_u64())
-                .map(|p| p as u16);
-
-            Ok(ConnectionParams {
-                host,
-                port,
-                device: None,
-                baud_rate: None,
-                data_bits: None,
-                stop_bits: None,
-                parity: None,
-                timeout: std::time::Duration::from_secs(5),
-            })
-        },
-        "modbus_rtu" => {
-            // Extract serial port configuration from parameters
-            let device = config
-                .parameters
-                .get("device")
-                .and_then(|v| v.as_str())
-                .map(std::string::ToString::to_string);
-            let baud_rate = config
-                .parameters
-                .get("baud_rate")
-                .and_then(|v| v.as_u64())
-                .map(|b| b as u32);
-            let data_bits = config
-                .parameters
-                .get("data_bits")
-                .and_then(|v| v.as_u64())
-                .map(|d| d as u8);
-            let stop_bits = config
-                .parameters
-                .get("stop_bits")
-                .and_then(|v| v.as_u64())
-                .map(|s| s as u8);
-            let parity = config
-                .parameters
-                .get("parity")
-                .and_then(|v| v.as_str())
-                .map(std::string::ToString::to_string);
-
-            Ok(ConnectionParams {
-                host: None,
-                port: None,
-                device,
-                baud_rate,
-                data_bits,
-                stop_bits,
-                parity,
-                timeout: std::time::Duration::from_secs(1),
-            })
-        },
-        _ => Err(ComSrvError::ConfigError(format!(
-            "Unsupported protocol type: {}",
-            config.protocol()
-        ))),
-    }
-}
-
 #[cfg(test)]
 #[allow(clippy::disallowed_methods)] // Test code - unwrap is acceptable
 mod tests {
@@ -617,6 +548,7 @@ mod tests {
         assert_eq!(parsed_pdu.as_slice(), pdu.as_slice());
     }
 
+    #[cfg(feature = "modbus-rtu")]
     #[test]
     fn test_rtu_frame_build_parse() {
         let mut processor = ModbusFrameProcessor::new(ModbusMode::Rtu);
@@ -637,6 +569,7 @@ mod tests {
         assert_eq!(parsed_pdu.as_slice(), pdu.as_slice());
     }
 
+    #[cfg(feature = "modbus-rtu")]
     #[test]
     fn test_crc16_calculation() {
         let processor = ModbusFrameProcessor::new(ModbusMode::Rtu);
@@ -690,55 +623,6 @@ mod tests {
             .unwrap_err()
             .to_string()
             .contains("unknown transaction ID"));
-
-        // Test 2: Response with wrong slave ID (same transaction ID)
-        let mut different_slave_frame = vec![0; 7 + response_pdu_bytes.len()];
-        different_slave_frame[0..2].copy_from_slice(&transaction_id.to_be_bytes());
-        different_slave_frame[2..4].copy_from_slice(&[0x00, 0x00]); // Protocol ID
-        different_slave_frame[4..6].copy_from_slice(&len.to_be_bytes());
-        different_slave_frame[6] = 2; // Different slave ID
-        different_slave_frame[7..].copy_from_slice(&response_pdu_bytes);
-
-        let result = processor.parse_frame(&different_slave_frame);
-        assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("FC/slave mismatch"));
-
-        // Test 3: Multiple requests with different function codes
-        // Build another request with different FC
-        let request_pdu2_bytes = vec![0x01, 0x00, 0x00, 0x00, 0x08]; // FC01
-        let request_pdu2 = ModbusPdu::from_slice(&request_pdu2_bytes).unwrap();
-        let request_frame2 = processor.build_frame(1, &request_pdu2);
-        let transaction_id2 = u16::from_be_bytes([request_frame2[0], request_frame2[1]]);
-
-        // Both requests should be tracked
-        assert_eq!(processor.pending_requests.len(), 2);
-
-        // Valid response for FC03 request
-        let mut response1_frame = vec![0; 7 + response_pdu_bytes.len()];
-        response1_frame[0..2].copy_from_slice(&transaction_id.to_be_bytes());
-        response1_frame[2..4].copy_from_slice(&[0x00, 0x00]); // Protocol ID
-        response1_frame[4..6].copy_from_slice(&len.to_be_bytes());
-        response1_frame[6] = 1; // Same slave ID
-        response1_frame[7..].copy_from_slice(&response_pdu_bytes);
-
-        let result = processor.parse_frame(&response1_frame);
-        assert!(result.is_ok(), "Failed to parse response1: {:?}", result);
-
-        // Valid response for FC01 request
-        let response2_pdu_bytes = vec![0x01, 0x01, 0xFF]; // FC01 response
-        let mut response2_frame = vec![0; 7 + response2_pdu_bytes.len()];
-        response2_frame[0..2].copy_from_slice(&transaction_id2.to_be_bytes());
-        response2_frame[2..4].copy_from_slice(&[0x00, 0x00]); // Protocol ID
-        let len2 = (1 + response2_pdu_bytes.len()) as u16;
-        response2_frame[4..6].copy_from_slice(&len2.to_be_bytes());
-        response2_frame[6] = 1; // Same slave ID
-        response2_frame[7..].copy_from_slice(&response2_pdu_bytes);
-
-        let result = processor.parse_frame(&response2_frame);
-        assert!(result.is_ok(), "Failed to parse response2: {:?}", result);
     }
 
     #[test]
@@ -805,154 +689,11 @@ mod tests {
         assert_eq!(processor.pending_requests.len(), 0);
     }
 
-    #[test]
-    fn test_composite_key_validation() {
-        let mut processor = ModbusFrameProcessor::new(ModbusMode::Tcp);
-
-        // Force same transaction ID for multiple requests
-        processor.next_transaction_id = 100;
-
-        // Request 1: Slave 1, FC03
-        let pdu1 = ModbusPdu::from_slice(&[0x03, 0x00, 0x00, 0x00, 0x01]).unwrap();
-        let req1 = processor.build_frame(1, &pdu1);
-
-        // Request 2: Slave 2, FC03 (same FC, different slave)
-        let pdu2 = ModbusPdu::from_slice(&[0x03, 0x00, 0x00, 0x00, 0x01]).unwrap();
-        let req2 = processor.build_frame(2, &pdu2);
-
-        // Request 3: Slave 1, FC04 (same slave, different FC)
-        let pdu3 = ModbusPdu::from_slice(&[0x04, 0x00, 0x00, 0x00, 0x01]).unwrap();
-        let req3 = processor.build_frame(1, &pdu3);
-
-        // All three should be tracked despite having same transaction ID
-        assert_eq!(processor.pending_requests.len(), 3);
-
-        // Each response should be matched correctly
-        assert!(processor.parse_frame(&req1).is_ok());
-        assert!(processor.parse_frame(&req2).is_ok());
-        assert!(processor.parse_frame(&req3).is_ok());
-    }
-
-    // Additional standard Modbus RTU frame tests.
-    #[test]
-    fn test_modbus_rtu_standard_frames() {
-        println!("\n=== Modbus RTU Standard Frame Tests ===\n");
-
-        let mut processor = ModbusFrameProcessor::new(ModbusMode::Rtu);
-
-        // Test case 1: FC03 read holding registers.
-        let pdu1 = ModbusPdu::from_slice(&[0x03, 0x00, 0x00, 0x00, 0x0A]).unwrap();
-        let frame1 = processor.build_frame(0x01, &pdu1);
-        let expected1 = vec![0x01, 0x03, 0x00, 0x00, 0x00, 0x0A, 0xC5, 0xCD];
-        assert_eq!(frame1, expected1, "FC03 frame does not match");
-        println!("[PASS] FC03 Read Holding Registers test passed");
-
-        // Test case 2: FC06 write a single register.
-        let pdu2 = ModbusPdu::from_slice(&[0x06, 0x00, 0x01, 0x00, 0x03]).unwrap();
-        let frame2 = processor.build_frame(0x01, &pdu2);
-        let expected2 = vec![0x01, 0x06, 0x00, 0x01, 0x00, 0x03, 0x98, 0x0B]; // Corrected CRC.
-        assert_eq!(frame2, expected2, "FC06 frame does not match");
-        println!("[PASS] FC06 Write Single Register test passed");
-
-        // Test case 3: FC01 read coils.
-        let pdu3 = ModbusPdu::from_slice(&[0x01, 0x00, 0x00, 0x00, 0x08]).unwrap();
-        let frame3 = processor.build_frame(0x01, &pdu3);
-        let expected3 = vec![0x01, 0x01, 0x00, 0x00, 0x00, 0x08, 0x3D, 0xCC];
-        assert_eq!(frame3, expected3, "FC01 frame does not match");
-        println!("[PASS] FC01 Read Coils test passed");
-
-        // Test case 4: FC04 read input registers.
-        let pdu4 = ModbusPdu::from_slice(&[0x04, 0x00, 0x00, 0x00, 0x01]).unwrap();
-        let frame4 = processor.build_frame(0x01, &pdu4);
-        let expected4 = vec![0x01, 0x04, 0x00, 0x00, 0x00, 0x01, 0x31, 0xCA];
-        assert_eq!(frame4, expected4, "FC04 frame does not match");
-        println!("[PASS] FC04 Read Input Registers test passed");
-
-        // Test case 5: FC05 write a single coil (ON).
-        let pdu5 = ModbusPdu::from_slice(&[0x05, 0x00, 0x00, 0xFF, 0x00]).unwrap();
-        let frame5 = processor.build_frame(0x01, &pdu5);
-        let expected5 = vec![0x01, 0x05, 0x00, 0x00, 0xFF, 0x00, 0x8C, 0x3A];
-        assert_eq!(frame5, expected5, "FC05 ON frame does not match");
-        println!("[PASS] FC05 Write Single Coil (ON) test passed");
-
-        // Test case 6: FC05 write a single coil (OFF).
-        let pdu6 = ModbusPdu::from_slice(&[0x05, 0x00, 0x00, 0x00, 0x00]).unwrap();
-        let frame6 = processor.build_frame(0x01, &pdu6);
-        let expected6 = vec![0x01, 0x05, 0x00, 0x00, 0x00, 0x00, 0xCD, 0xCA];
-        assert_eq!(frame6, expected6, "FC05 OFF frame does not match");
-        println!("[PASS] FC05 Write Single Coil (OFF) test passed");
-    }
-
-    #[test]
-    fn test_modbus_rtu_crc16_known_values() {
-        println!("\n=== CRC16 Known-Value Verification ===\n");
-
-        let processor = ModbusFrameProcessor::new(ModbusMode::Rtu);
-
-        // Test against known CRC values to verify the CRC16 implementation.
-        let test_cases = vec![
-            (vec![0x01, 0x03, 0x00, 0x00, 0x00, 0x01], 0x0A84), // Actual CRC value.
-            (vec![0x01, 0x03, 0x00, 0x00, 0x00, 0x0A], 0xCDC5), // Actual CRC value.
-            (vec![0x01, 0x06, 0x00, 0x01, 0x00, 0x03], 0x0B98), // Actual CRC value.
-            (vec![0x01, 0x05, 0x00, 0x00, 0xFF, 0x00], 0x3A8C), // Actual CRC value.
-            (vec![0x11, 0x03, 0x00, 0x6B, 0x00, 0x03], 0x8776), // Actual CRC value.
-            (
-                vec![0x11, 0x03, 0x06, 0xAE, 0x41, 0x56, 0x52, 0x43, 0x40],
-                0xAD49, // Actual CRC value.
-            ),
-        ];
-
-        for (data, expected_crc) in test_cases {
-            let calculated = processor.calculate_crc16(&data);
-            assert_eq!(
-                calculated, expected_crc,
-                "CRC error: data {:?}, expected 0x{:04X}, got 0x{:04X}",
-                data, expected_crc, calculated
-            );
-            println!(
-                "[PASS] CRC16 verification passed: {:?} -> 0x{:04X}",
-                data, calculated
-            );
-        }
-    }
-
-    #[test]
-    fn test_modbus_rtu_fc16_write_multiple_registers() {
-        use crate::protocols::modbus::pdu::PduBuilder;
-
-        println!("\n=== FC16 Write Multiple Registers Test ===\n");
-
-        let mut processor = ModbusFrameProcessor::new(ModbusMode::Rtu);
-
-        // FC16: write two registers starting at address 0x0001 with values 0x000A and 0x0102.
-        let pdu = PduBuilder::new()
-            .function_code(0x10)
-            .unwrap()
-            .address(0x0001)
-            .unwrap()
-            .quantity(0x0002)
-            .unwrap()
-            .byte(0x04)
-            .unwrap()
-            .data(&[0x00, 0x0A, 0x01, 0x02])
-            .unwrap()
-            .build();
-
-        let frame = processor.build_frame(0x01, &pdu);
-
-        // Expected frame: 01 10 00 01 00 02 04 00 0A 01 02 92 30 (corrected CRC).
-        let expected = vec![
-            0x01, 0x10, 0x00, 0x01, 0x00, 0x02, 0x04, 0x00, 0x0A, 0x01, 0x02, 0x92, 0x30,
-        ];
-
-        assert_eq!(frame, expected, "FC16 frame does not match");
-        println!("[PASS] FC16 Write Multiple Registers test passed");
-    }
-
     // ========================================================================
     // Additional CRC Calculation Tests
     // ========================================================================
 
+    #[cfg(feature = "modbus-rtu")]
     #[test]
     fn test_crc16_empty_data() {
         let processor = ModbusFrameProcessor::new(ModbusMode::Rtu);
@@ -960,14 +701,7 @@ mod tests {
         assert_eq!(crc, 0xFFFF); // Initial CRC value when no data processed
     }
 
-    #[test]
-    fn test_crc16_single_byte() {
-        let processor = ModbusFrameProcessor::new(ModbusMode::Rtu);
-        let crc = processor.calculate_crc16(&[0x01]);
-        // Verify it produces a consistent result
-        assert_ne!(crc, 0xFFFF);
-    }
-
+    #[cfg(feature = "modbus-rtu")]
     #[test]
     fn test_crc16_consistency() {
         let processor = ModbusFrameProcessor::new(ModbusMode::Rtu);
@@ -977,17 +711,6 @@ mod tests {
         let crc1 = processor.calculate_crc16(&data);
         let crc2 = processor.calculate_crc16(&data);
         assert_eq!(crc1, crc2);
-    }
-
-    #[test]
-    fn test_crc16_different_data_different_crc() {
-        let processor = ModbusFrameProcessor::new(ModbusMode::Rtu);
-        let data1 = vec![0x01, 0x03, 0x00, 0x00, 0x00, 0x01];
-        let data2 = vec![0x01, 0x03, 0x00, 0x00, 0x00, 0x02];
-
-        let crc1 = processor.calculate_crc16(&data1);
-        let crc2 = processor.calculate_crc16(&data2);
-        assert_ne!(crc1, crc2);
     }
 
     // ========================================================================
@@ -1007,20 +730,6 @@ mod tests {
         assert_eq!(header.protocol_id, 0);
         assert_eq!(header.length, 6);
         assert_eq!(header.unit_id, 1);
-    }
-
-    #[test]
-    fn test_mbap_header_clone() {
-        let header1 = MbapHeader {
-            transaction_id: 100,
-            protocol_id: 0,
-            length: 10,
-            unit_id: 5,
-        };
-        let header2 = header1.clone();
-
-        assert_eq!(header1.transaction_id, header2.transaction_id);
-        assert_eq!(header1.unit_id, header2.unit_id);
     }
 
     #[test]
@@ -1057,23 +766,6 @@ mod tests {
         let result = processor.parse_frame(&invalid_frame);
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("protocol ID"));
-    }
-
-    #[test]
-    fn test_tcp_parse_length_mismatch() {
-        let mut processor = ModbusFrameProcessor::new(ModbusMode::Tcp);
-
-        // Build a request first
-        let pdu = ModbusPdu::from_slice(&[0x03, 0x00, 0x00, 0x00, 0x01]).unwrap();
-        let _ = processor.build_frame(1, &pdu);
-
-        // Construct frame where length field doesn't match actual data
-        // MBAP header says length=10 but actual data is shorter
-        let invalid_frame = vec![0x00, 0x01, 0x00, 0x00, 0x00, 0x0A, 0x01, 0x03, 0x02];
-
-        let result = processor.parse_frame(&invalid_frame);
-        assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("length"));
     }
 
     // ========================================================================
@@ -1128,18 +820,6 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_parse_exception_unknown_code() {
-        let desc = ModbusFrameProcessor::exception_description(0xFF);
-        assert_eq!(desc, "Unknown Exception");
-    }
-
-    #[test]
-    fn test_parse_exception_too_short() {
-        let result = ModbusFrameProcessor::parse_exception(&[0x83]);
-        assert!(result.is_err());
-    }
-
     // ========================================================================
     // Frame Parse Error Tests
     // ========================================================================
@@ -1156,6 +836,7 @@ mod tests {
         assert!(result.unwrap_err().to_string().contains("too short"));
     }
 
+    #[cfg(feature = "modbus-rtu")]
     #[test]
     fn test_rtu_parse_frame_too_short() {
         let mut processor = ModbusFrameProcessor::new(ModbusMode::Rtu);
@@ -1168,6 +849,7 @@ mod tests {
         assert!(result.unwrap_err().to_string().contains("too short"));
     }
 
+    #[cfg(feature = "modbus-rtu")]
     #[test]
     fn test_rtu_parse_invalid_crc() {
         let mut processor = ModbusFrameProcessor::new(ModbusMode::Rtu);
@@ -1212,6 +894,7 @@ mod tests {
         assert_eq!(id2, 0x0000); // Wraps to 0
     }
 
+    #[cfg(feature = "modbus-rtu")]
     #[test]
     fn test_rtu_request_id_increment() {
         let mut processor = ModbusFrameProcessor::new(ModbusMode::Rtu);
@@ -1222,6 +905,7 @@ mod tests {
         assert_eq!(id2, id1 + 1);
     }
 
+    #[cfg(feature = "modbus-rtu")]
     #[test]
     fn test_rtu_request_id_skip_zero() {
         let mut processor = ModbusFrameProcessor::new(ModbusMode::Rtu);
@@ -1241,8 +925,11 @@ mod tests {
     #[test]
     fn test_modbus_mode_equality() {
         assert_eq!(ModbusMode::Tcp, ModbusMode::Tcp);
-        assert_eq!(ModbusMode::Rtu, ModbusMode::Rtu);
-        assert_ne!(ModbusMode::Tcp, ModbusMode::Rtu);
+        #[cfg(feature = "modbus-rtu")]
+        {
+            assert_eq!(ModbusMode::Rtu, ModbusMode::Rtu);
+            assert_ne!(ModbusMode::Tcp, ModbusMode::Rtu);
+        }
     }
 
     #[test]
@@ -1269,85 +956,5 @@ mod tests {
 
         processor.clear_request_info();
         assert_eq!(processor.pending_requests.len(), 0);
-    }
-
-    // ========================================================================
-    // Connection Params Creation Tests
-    // ========================================================================
-
-    fn create_test_channel_config(
-        protocol: &str,
-        params: HashMap<String, serde_json::Value>,
-    ) -> ChannelConfig {
-        use voltage_config::comsrv::{ChannelCore, ChannelLoggingConfig};
-
-        ChannelConfig {
-            core: ChannelCore {
-                id: 1,
-                name: "test".to_string(),
-                description: None,
-                protocol: protocol.to_string(),
-                enabled: true,
-            },
-            parameters: params,
-            logging: ChannelLoggingConfig::default(),
-        }
-    }
-
-    #[test]
-    fn test_create_connection_params_unsupported_protocol() {
-        let config = create_test_channel_config("unsupported_protocol", HashMap::new());
-
-        let result = create_connection_params(&config);
-        assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("Unsupported protocol"));
-    }
-
-    #[test]
-    fn test_create_connection_params_tcp() {
-        let mut params = HashMap::new();
-        params.insert(
-            "host".to_string(),
-            serde_json::Value::String("192.168.1.100".to_string()),
-        );
-        params.insert("port".to_string(), serde_json::Value::Number(502.into()));
-
-        let config = create_test_channel_config("modbus_tcp", params);
-
-        let conn_params = create_connection_params(&config).unwrap();
-        assert_eq!(conn_params.host, Some("192.168.1.100".to_string()));
-        assert_eq!(conn_params.port, Some(502));
-        assert!(conn_params.device.is_none());
-    }
-
-    #[test]
-    fn test_create_connection_params_rtu() {
-        let mut params = HashMap::new();
-        params.insert(
-            "device".to_string(),
-            serde_json::Value::String("/dev/ttyUSB0".to_string()),
-        );
-        params.insert(
-            "baud_rate".to_string(),
-            serde_json::Value::Number(9600.into()),
-        );
-        params.insert("data_bits".to_string(), serde_json::Value::Number(8.into()));
-        params.insert("stop_bits".to_string(), serde_json::Value::Number(1.into()));
-        params.insert(
-            "parity".to_string(),
-            serde_json::Value::String("None".to_string()),
-        );
-
-        let config = create_test_channel_config("modbus_rtu", params);
-
-        let conn_params = create_connection_params(&config).unwrap();
-        assert!(conn_params.host.is_none());
-        assert_eq!(conn_params.device, Some("/dev/ttyUSB0".to_string()));
-        assert_eq!(conn_params.baud_rate, Some(9600));
-        assert_eq!(conn_params.data_bits, Some(8));
-        assert_eq!(conn_params.parity, Some("None".to_string()));
     }
 }

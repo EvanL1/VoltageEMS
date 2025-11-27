@@ -170,10 +170,9 @@ fi
 ENABLE_SWAGGER_UI="${ENABLE_SWAGGER_UI:-0}"
 
 # Determine build features based on environment variable
-# Note: Features are combined for all services (comsrv, modsrv, rulesrv)
+# Note: Features are combined for all services (comsrv, modsrv)
 # - comsrv needs: modbus, can, [swagger-ui]
 # - modsrv needs: redis, sqlite, [swagger-ui]
-# - rulesrv needs: [swagger-ui]
 if [[ "$ENABLE_SWAGGER_UI" == "1" ]]; then
     CARGO_FEATURES="modbus,can,redis,sqlite,swagger-ui"
     echo -e "${GREEN}Building with Swagger UI ENABLED (set ENABLE_SWAGGER_UI=0 to disable)${NC}"
@@ -188,10 +187,10 @@ cd "$ROOT_DIR"
 CARGO_BUILD_JOBS=$CPU_CORES cargo zigbuild --release --target $TARGET \
     --no-default-features \
     --features "$CARGO_FEATURES" \
-    -p comsrv -p modsrv -p rulesrv
+    -p comsrv -p modsrv
 
 # Check if binaries were built
-SERVICES="comsrv modsrv rulesrv"
+SERVICES="comsrv modsrv"
 for service in $SERVICES; do
     if [[ ! -f "$ROOT_DIR/target/$TARGET/release/$service" ]]; then
         echo -e "${RED}Error: Failed to build $service${NC}"

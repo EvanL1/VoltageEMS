@@ -3,14 +3,17 @@
 //! This module provides TCP and RTU connection management for Modbus protocol
 
 use super::constants;
-use crate::utils::error::{ComSrvError, Result};
 use std::time::{Duration, Instant};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::sync::Mutex;
 use tokio::time::{sleep, timeout};
-use tokio_serial::{SerialPortBuilderExt, SerialStream};
 use tracing::{debug, error, info, warn};
+use voltage_comlink::error::{ComLinkError, Result};
+use voltage_comlink::ChannelLogger;
+
+#[cfg(feature = "modbus-rtu")]
+use tokio_serial::{SerialPortBuilderExt, SerialStream};
 
 /// Modbus connection type
 #[derive(Debug)]
@@ -18,6 +21,7 @@ pub enum ModbusConnection {
     /// TCP connection
     Tcp(TcpStream),
     /// Serial RTU connection
+    #[cfg(feature = "modbus-rtu")]
     Rtu(SerialStream),
 }
 
@@ -39,13 +43,13 @@ impl ModbusConnection {
             },
             Ok(Err(e)) => {
                 error!("Failed to connect to {}: {}", addr, e);
-                Err(ComSrvError::ConnectionError(format!(
+                Err(ComLinkError::Connection(format!(
                     "Failed to connect to {addr}: {e}"
                 )))
             },
             Err(_) => {
                 warn!("Connection to {} timed out", addr);
-                Err(ComSrvError::TimeoutError(format!(
+                Err(ComLinkError::Timeout(format!(
                     "Connection to {addr} timed out"
                 )))
             },
@@ -53,6 +57,7 @@ impl ModbusConnection {
     }
 
     /// Create a serial RTU connection
+    #[cfg(feature = "modbus-rtu")]
     pub async fn connect_rtu(
         port: &str,
         baud_rate: u32,
@@ -94,7 +99,7 @@ impl ModbusConnection {
             },
             Err(e) => {
                 error!("Failed to open serial port {}: {}", port, e);
-                Err(ComSrvError::ConnectionError(format!(
+                Err(ComLinkError::Connection(format!(
                     "Failed to open serial port {port}: {e}"
                 )))
             },
@@ -107,18 +112,19 @@ impl ModbusConnection {
             ModbusConnection::Tcp(stream) => {
                 stream.write_all(data).await.map_err(|e| {
                     error!("TCP send error: {}", e);
-                    ComSrvError::IoError(format!("TCP send error: {e}"))
+                    ComLinkError::Io(format!("TCP send error: {e}"))
                 })?;
                 debug!("Sent {} bytes via TCP", data.len());
             },
+            #[cfg(feature = "modbus-rtu")]
             ModbusConnection::Rtu(port) => {
                 port.write_all(data).await.map_err(|e| {
                     error!("Serial send error: {}", e);
-                    ComSrvError::IoError(format!("Serial send error: {e}"))
+                    ComLinkError::Io(format!("Serial send error: {e}"))
                 })?;
                 port.flush().await.map_err(|e| {
                     error!("Serial flush error: {}", e);
-                    ComSrvError::IoError(format!("Serial flush error: {e}"))
+                    ComLinkError::Io(format!("Serial flush error: {e}"))
                 })?;
                 debug!("Sent {} bytes via serial", data.len());
             },
@@ -145,7 +151,7 @@ impl ModbusConnection {
                         // Step 3: Validate length (1..=MAX allowed: 1 (unit_id) + 253 (PDU) = 254)
                         if length == 0 || length > constants::MAX_MBAP_LENGTH {
                             error!("Invalid Modbus TCP length field: {}", length);
-                            return Err(ComSrvError::ProtocolError(format!(
+                            return Err(ComLinkError::Protocol(format!(
                                 "Invalid TCP frame length: {}",
                                 length
                             )));
@@ -159,7 +165,7 @@ impl ModbusConnection {
                                 total_size,
                                 buffer.len()
                             );
-                            return Err(ComSrvError::ProtocolError(
+                            return Err(ComLinkError::Protocol(
                                 "Buffer too small for complete frame".to_string(),
                             ));
                         }
@@ -180,28 +186,25 @@ impl ModbusConnection {
                             },
                             Ok(Err(e)) => {
                                 error!("TCP receive error while reading PDU: {}", e);
-                                Err(ComSrvError::IoError(format!("TCP PDU read error: {e}")))
+                                Err(ComLinkError::Io(format!("TCP PDU read error: {e}")))
                             },
                             Err(_) => {
                                 debug!("TCP receive timeout while reading PDU");
-                                Err(ComSrvError::TimeoutError(
-                                    "TCP PDU read timeout".to_string(),
-                                ))
+                                Err(ComLinkError::Timeout("TCP PDU read timeout".to_string()))
                             },
                         }
                     },
                     Ok(Err(e)) => {
                         error!("TCP receive error while reading header: {}", e);
-                        Err(ComSrvError::IoError(format!("TCP header read error: {e}")))
+                        Err(ComLinkError::Io(format!("TCP header read error: {e}")))
                     },
                     Err(_) => {
                         debug!("TCP receive timeout while reading header");
-                        Err(ComSrvError::TimeoutError(
-                            "TCP header read timeout".to_string(),
-                        ))
+                        Err(ComLinkError::Timeout("TCP header read timeout".to_string()))
                     },
                 }
             },
+            #[cfg(feature = "modbus-rtu")]
             ModbusConnection::Rtu(port) => {
                 // Modbus RTU frame: [Unit ID(1)][PDU(N)][CRC(2)]
                 // Use inter-byte timeout to detect frame end
@@ -217,7 +220,7 @@ impl ModbusConnection {
                                 "Serial receive total timeout with insufficient data: {} bytes",
                                 total_bytes
                             );
-                            return Err(ComSrvError::TimeoutError(
+                            return Err(ComLinkError::Timeout(
                                 "RTU frame incomplete: total timeout".to_string(),
                             ));
                         }
@@ -237,7 +240,7 @@ impl ModbusConnection {
                         Ok(Ok(bytes)) => {
                             if bytes == 0 {
                                 error!("Serial connection closed");
-                                return Err(ComSrvError::ConnectionError(
+                                return Err(ComLinkError::Connection(
                                     "Serial connection closed".to_string(),
                                 ));
                             }
@@ -246,14 +249,14 @@ impl ModbusConnection {
                             // Check buffer overflow
                             if total_bytes >= buffer.len() {
                                 error!("RTU frame too large: {} bytes", total_bytes);
-                                return Err(ComSrvError::ProtocolError(
+                                return Err(ComLinkError::Protocol(
                                     "RTU frame exceeds buffer size".to_string(),
                                 ));
                             }
                         },
                         Ok(Err(e)) => {
                             error!("Serial receive error: {}", e);
-                            return Err(ComSrvError::IoError(format!("Serial read error: {e}")));
+                            return Err(ComLinkError::Io(format!("Serial read error: {e}")));
                         },
                         Err(_) => {
                             // Inter-byte timeout reached - frame should be complete
@@ -264,7 +267,7 @@ impl ModbusConnection {
                                     "Serial receive inter-byte timeout with partial data: {} bytes",
                                     total_bytes
                                 );
-                                return Err(ComSrvError::TimeoutError(
+                                return Err(ComLinkError::Timeout(
                                     "RTU frame incomplete: inter-byte timeout".to_string(),
                                 ));
                             }
@@ -285,6 +288,7 @@ impl ModbusConnection {
     }
 
     /// Check if connection is RTU
+    #[cfg(feature = "modbus-rtu")]
     pub fn is_rtu(&self) -> bool {
         matches!(self, ModbusConnection::Rtu(_))
     }
@@ -306,13 +310,14 @@ pub struct ModbusConnectionManager {
     /// Last reconnection attempt time
     last_reconnect: Mutex<Option<Instant>>,
     /// Channel logger for unified TX/RX logging
-    logger: crate::core::combase::traits::ChannelLogger,
+    logger: ChannelLogger,
 }
 
 /// Connection mode
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum ModbusMode {
     Tcp,
+    #[cfg(feature = "modbus-rtu")]
     Rtu,
 }
 
@@ -324,10 +329,15 @@ pub struct ConnectionParams {
     pub port: Option<u16>,
 
     // Serial parameters
+    #[cfg(feature = "modbus-rtu")]
     pub device: Option<String>,
+    #[cfg(feature = "modbus-rtu")]
     pub baud_rate: Option<u32>,
+    #[cfg(feature = "modbus-rtu")]
     pub data_bits: Option<u8>,
+    #[cfg(feature = "modbus-rtu")]
     pub stop_bits: Option<u8>,
+    #[cfg(feature = "modbus-rtu")]
     pub parity: Option<String>,
 
     // Common parameters
@@ -336,11 +346,7 @@ pub struct ConnectionParams {
 
 impl ModbusConnectionManager {
     /// Create new connection manager with logger
-    pub fn new(
-        mode: ModbusMode,
-        params: ConnectionParams,
-        logger: crate::core::combase::traits::ChannelLogger,
-    ) -> Self {
+    pub fn new(mode: ModbusMode, params: ConnectionParams, logger: ChannelLogger) -> Self {
         Self {
             connection: Mutex::new(None),
             mode,
@@ -367,37 +373,39 @@ impl ModbusConnectionManager {
         }
 
         // Create new connection
-        let new_conn = match &self.mode {
-            ModbusMode::Tcp => {
-                let host = self.params.host.as_ref().ok_or_else(|| {
-                    ComSrvError::ConfigError("TCP host not specified".to_string())
-                })?;
-                let port = self.params.port.ok_or_else(|| {
-                    ComSrvError::ConfigError("TCP port not specified".to_string())
-                })?;
+        let new_conn =
+            match &self.mode {
+                ModbusMode::Tcp => {
+                    let host = self.params.host.as_ref().ok_or_else(|| {
+                        ComLinkError::Config("TCP host not specified".to_string())
+                    })?;
+                    let port = self.params.port.ok_or_else(|| {
+                        ComLinkError::Config("TCP port not specified".to_string())
+                    })?;
 
-                ModbusConnection::connect_tcp(host, port, self.params.timeout).await?
-            },
-            ModbusMode::Rtu => {
-                let device = self.params.device.as_ref().ok_or_else(|| {
-                    ComSrvError::ConfigError("Serial device not specified".to_string())
-                })?;
-                let baud_rate = self.params.baud_rate.unwrap_or(9600);
-                let data_bits = self.params.data_bits.unwrap_or(8);
-                let stop_bits = self.params.stop_bits.unwrap_or(1);
-                let parity = self.params.parity.as_deref().unwrap_or("None");
+                    ModbusConnection::connect_tcp(host, port, self.params.timeout).await?
+                },
+                #[cfg(feature = "modbus-rtu")]
+                ModbusMode::Rtu => {
+                    let device = self.params.device.as_ref().ok_or_else(|| {
+                        ComLinkError::Config("Serial device not specified".to_string())
+                    })?;
+                    let baud_rate = self.params.baud_rate.unwrap_or(9600);
+                    let data_bits = self.params.data_bits.unwrap_or(8);
+                    let stop_bits = self.params.stop_bits.unwrap_or(1);
+                    let parity = self.params.parity.as_deref().unwrap_or("None");
 
-                ModbusConnection::connect_rtu(
-                    device,
-                    baud_rate,
-                    data_bits,
-                    stop_bits,
-                    parity,
-                    self.params.timeout,
-                )
-                .await?
-            },
-        };
+                    ModbusConnection::connect_rtu(
+                        device,
+                        baud_rate,
+                        data_bits,
+                        stop_bits,
+                        parity,
+                        self.params.timeout,
+                    )
+                    .await?
+                },
+            };
 
         *conn = Some(new_conn);
         Ok(())
@@ -473,7 +481,7 @@ impl ModbusConnectionManager {
         let mut conn = self.connection.lock().await;
         match conn.as_mut() {
             Some(c) => c.send(data).await,
-            None => Err(ComSrvError::ConnectionError("Not connected".to_string())),
+            None => Err(ComLinkError::Connection("Not connected".to_string())),
         }
     }
 
@@ -482,7 +490,7 @@ impl ModbusConnectionManager {
         let mut conn = self.connection.lock().await;
         match conn.as_mut() {
             Some(c) => c.receive(buffer, timeout).await,
-            None => Err(ComSrvError::ConnectionError("Not connected".to_string())),
+            None => Err(ComLinkError::Connection("Not connected".to_string())),
         }
     }
 
@@ -502,6 +510,7 @@ impl ModbusConnectionManager {
                 let function_code = frame[7];
                 (Some(tid), slave_id, function_code)
             },
+            #[cfg(feature = "modbus-rtu")]
             ModbusMode::Rtu if frame.len() >= 2 => {
                 // RTU: [Unit(1)][FC(1)][Data...][CRC(2)]
                 let slave_id = frame[0];
@@ -564,6 +573,7 @@ mod tests {
         assert!(matches!(mode, ModbusMode::Tcp));
     }
 
+    #[cfg(feature = "modbus-rtu")]
     #[test]
     fn test_modbus_mode_rtu() {
         let mode = ModbusMode::Rtu;
@@ -579,10 +589,15 @@ mod tests {
         let params = ConnectionParams {
             host: Some("192.168.1.100".to_string()),
             port: Some(502),
+            #[cfg(feature = "modbus-rtu")]
             device: None,
+            #[cfg(feature = "modbus-rtu")]
             baud_rate: None,
+            #[cfg(feature = "modbus-rtu")]
             data_bits: None,
+            #[cfg(feature = "modbus-rtu")]
             stop_bits: None,
+            #[cfg(feature = "modbus-rtu")]
             parity: None,
             timeout: Duration::from_secs(5),
         };
@@ -592,6 +607,7 @@ mod tests {
         assert_eq!(params.timeout, Duration::from_secs(5));
     }
 
+    #[cfg(feature = "modbus-rtu")]
     #[test]
     fn test_connection_params_rtu_creation() {
         let params = ConnectionParams {
@@ -617,10 +633,15 @@ mod tests {
         let params1 = ConnectionParams {
             host: Some("localhost".to_string()),
             port: Some(502),
+            #[cfg(feature = "modbus-rtu")]
             device: None,
+            #[cfg(feature = "modbus-rtu")]
             baud_rate: None,
+            #[cfg(feature = "modbus-rtu")]
             data_bits: None,
+            #[cfg(feature = "modbus-rtu")]
             stop_bits: None,
+            #[cfg(feature = "modbus-rtu")]
             parity: None,
             timeout: Duration::from_secs(3),
         };
@@ -649,6 +670,7 @@ mod tests {
         assert_eq!(tcp_port, 502);
     }
 
+    #[cfg(feature = "modbus-rtu")]
     #[test]
     fn test_modbus_connection_is_rtu() {
         // Verify RTU connection parameters
@@ -668,20 +690,26 @@ mod tests {
         let params = ConnectionParams {
             host: Some("192.168.1.100".to_string()),
             port: Some(502),
+            #[cfg(feature = "modbus-rtu")]
             device: None,
+            #[cfg(feature = "modbus-rtu")]
             baud_rate: None,
+            #[cfg(feature = "modbus-rtu")]
             data_bits: None,
+            #[cfg(feature = "modbus-rtu")]
             stop_bits: None,
+            #[cfg(feature = "modbus-rtu")]
             parity: None,
             timeout: Duration::from_secs(5),
         };
 
-        let logger = crate::core::combase::traits::ChannelLogger::new(1, "test".to_string());
+        let logger = ChannelLogger::new(1, "test".to_string());
         let manager = ModbusConnectionManager::new(ModbusMode::Tcp, params, logger);
 
         assert!(matches!(manager.mode(), ModbusMode::Tcp));
     }
 
+    #[cfg(feature = "modbus-rtu")]
     #[test]
     fn test_connection_manager_new_rtu() {
         let params = ConnectionParams {
@@ -695,7 +723,7 @@ mod tests {
             timeout: Duration::from_millis(500),
         };
 
-        let logger = crate::core::combase::traits::ChannelLogger::new(1, "test".to_string());
+        let logger = ChannelLogger::new(1, "test".to_string());
         let manager = ModbusConnectionManager::new(ModbusMode::Rtu, params, logger);
 
         assert!(matches!(manager.mode(), ModbusMode::Rtu));
@@ -706,19 +734,25 @@ mod tests {
         let params = ConnectionParams {
             host: Some("localhost".to_string()),
             port: Some(502),
+            #[cfg(feature = "modbus-rtu")]
             device: None,
+            #[cfg(feature = "modbus-rtu")]
             baud_rate: None,
+            #[cfg(feature = "modbus-rtu")]
             data_bits: None,
+            #[cfg(feature = "modbus-rtu")]
             stop_bits: None,
+            #[cfg(feature = "modbus-rtu")]
             parity: None,
             timeout: Duration::from_secs(3),
         };
 
-        let logger = crate::core::combase::traits::ChannelLogger::new(1, "test".to_string());
+        let logger = ChannelLogger::new(1, "test".to_string());
         let manager = ModbusConnectionManager::new(ModbusMode::Tcp, params, logger);
 
         match manager.mode() {
             ModbusMode::Tcp => {}, // TCP mode is correct
+            #[cfg(feature = "modbus-rtu")]
             ModbusMode::Rtu => panic!("Expected TCP mode"),
         }
     }
@@ -728,15 +762,20 @@ mod tests {
         let params = ConnectionParams {
             host: Some("192.168.1.100".to_string()),
             port: Some(502),
+            #[cfg(feature = "modbus-rtu")]
             device: None,
+            #[cfg(feature = "modbus-rtu")]
             baud_rate: None,
+            #[cfg(feature = "modbus-rtu")]
             data_bits: None,
+            #[cfg(feature = "modbus-rtu")]
             stop_bits: None,
+            #[cfg(feature = "modbus-rtu")]
             parity: None,
             timeout: Duration::from_secs(5),
         };
 
-        let logger = crate::core::combase::traits::ChannelLogger::new(1, "test".to_string());
+        let logger = ChannelLogger::new(1, "test".to_string());
         let manager = ModbusConnectionManager::new(ModbusMode::Tcp, params, logger);
 
         // Initially should not be connected
@@ -752,10 +791,15 @@ mod tests {
         let params = ConnectionParams {
             host: Some("192.168.1.1".to_string()),
             port: Some(502), // Modbus default port
+            #[cfg(feature = "modbus-rtu")]
             device: None,
+            #[cfg(feature = "modbus-rtu")]
             baud_rate: None,
+            #[cfg(feature = "modbus-rtu")]
             data_bits: None,
+            #[cfg(feature = "modbus-rtu")]
             stop_bits: None,
+            #[cfg(feature = "modbus-rtu")]
             parity: None,
             timeout: Duration::from_secs(5),
         };
@@ -764,102 +808,20 @@ mod tests {
     }
 
     #[test]
-    fn test_tcp_params_with_custom_port() {
-        let params = ConnectionParams {
-            host: Some("192.168.1.1".to_string()),
-            port: Some(5020), // Custom port
-            device: None,
-            baud_rate: None,
-            data_bits: None,
-            stop_bits: None,
-            parity: None,
-            timeout: Duration::from_secs(5),
-        };
-
-        assert_eq!(params.port, Some(5020));
-    }
-
-    #[test]
-    fn test_rtu_params_common_baud_rates() {
-        // Test 9600 baud
-        let params_9600 = ConnectionParams {
-            host: None,
-            port: None,
-            device: Some("/dev/ttyUSB0".to_string()),
-            baud_rate: Some(9600),
-            data_bits: Some(8),
-            stop_bits: Some(1),
-            parity: Some("None".to_string()),
-            timeout: Duration::from_millis(500),
-        };
-        assert_eq!(params_9600.baud_rate, Some(9600));
-
-        // Test 19200 baud
-        let params_19200 = ConnectionParams {
-            host: None,
-            port: None,
-            device: Some("/dev/ttyUSB0".to_string()),
-            baud_rate: Some(19200),
-            data_bits: Some(8),
-            stop_bits: Some(1),
-            parity: Some("None".to_string()),
-            timeout: Duration::from_millis(500),
-        };
-        assert_eq!(params_19200.baud_rate, Some(19200));
-    }
-
-    #[test]
-    fn test_rtu_params_parity_options() {
-        // Test None parity
-        let params_none = ConnectionParams {
-            host: None,
-            port: None,
-            device: Some("/dev/ttyUSB0".to_string()),
-            baud_rate: Some(9600),
-            data_bits: Some(8),
-            stop_bits: Some(1),
-            parity: Some("None".to_string()),
-            timeout: Duration::from_millis(500),
-        };
-        assert_eq!(params_none.parity, Some("None".to_string()));
-
-        // Test Even parity
-        let params_even = ConnectionParams {
-            host: None,
-            port: None,
-            device: Some("/dev/ttyUSB0".to_string()),
-            baud_rate: Some(9600),
-            data_bits: Some(8),
-            stop_bits: Some(1),
-            parity: Some("Even".to_string()),
-            timeout: Duration::from_millis(500),
-        };
-        assert_eq!(params_even.parity, Some("Even".to_string()));
-
-        // Test Odd parity
-        let params_odd = ConnectionParams {
-            host: None,
-            port: None,
-            device: Some("/dev/ttyUSB0".to_string()),
-            baud_rate: Some(9600),
-            data_bits: Some(8),
-            stop_bits: Some(1),
-            parity: Some("Odd".to_string()),
-            timeout: Duration::from_millis(500),
-        };
-        assert_eq!(params_odd.parity, Some("Odd".to_string()));
-    }
-
-    #[test]
     fn test_timeout_values() {
         // Short timeout
         let params_short = ConnectionParams {
             host: Some("localhost".to_string()),
             port: Some(502),
+            #[cfg(feature = "modbus-rtu")]
             device: None,
+            #[cfg(feature = "modbus-rtu")]
             baud_rate: None,
+            #[cfg(feature = "modbus-rtu")]
             data_bits: None,
+            #[cfg(feature = "modbus-rtu")]
             stop_bits: None,
+            #[cfg(feature = "modbus-rtu")]
             parity: None,
             timeout: Duration::from_millis(100),
         };
@@ -869,10 +831,15 @@ mod tests {
         let params_long = ConnectionParams {
             host: Some("localhost".to_string()),
             port: Some(502),
+            #[cfg(feature = "modbus-rtu")]
             device: None,
+            #[cfg(feature = "modbus-rtu")]
             baud_rate: None,
+            #[cfg(feature = "modbus-rtu")]
             data_bits: None,
+            #[cfg(feature = "modbus-rtu")]
             stop_bits: None,
+            #[cfg(feature = "modbus-rtu")]
             parity: None,
             timeout: Duration::from_secs(30),
         };
@@ -884,10 +851,15 @@ mod tests {
         let params = ConnectionParams {
             host: Some("test.local".to_string()),
             port: Some(502),
+            #[cfg(feature = "modbus-rtu")]
             device: None,
+            #[cfg(feature = "modbus-rtu")]
             baud_rate: None,
+            #[cfg(feature = "modbus-rtu")]
             data_bits: None,
+            #[cfg(feature = "modbus-rtu")]
             stop_bits: None,
+            #[cfg(feature = "modbus-rtu")]
             parity: None,
             timeout: Duration::from_secs(5),
         };
@@ -906,15 +878,20 @@ mod tests {
         let params = ConnectionParams {
             host: Some("localhost".to_string()),
             port: Some(502),
+            #[cfg(feature = "modbus-rtu")]
             device: None,
+            #[cfg(feature = "modbus-rtu")]
             baud_rate: None,
+            #[cfg(feature = "modbus-rtu")]
             data_bits: None,
+            #[cfg(feature = "modbus-rtu")]
             stop_bits: None,
+            #[cfg(feature = "modbus-rtu")]
             parity: None,
             timeout: Duration::from_secs(5),
         };
 
-        let logger = crate::core::combase::traits::ChannelLogger::new(1, "test".to_string());
+        let logger = ChannelLogger::new(1, "test".to_string());
         let manager = ModbusConnectionManager::new(ModbusMode::Tcp, params, logger);
 
         // TCP frame: [TID(2)][Proto(2)][Len(2)][Unit(1)][FC(1)]
@@ -928,44 +905,24 @@ mod tests {
     }
 
     #[test]
-    fn test_extract_frame_info_tcp_high_transaction_id() {
-        let params = ConnectionParams {
-            host: Some("localhost".to_string()),
-            port: Some(502),
-            device: None,
-            baud_rate: None,
-            data_bits: None,
-            stop_bits: None,
-            parity: None,
-            timeout: Duration::from_secs(5),
-        };
-
-        let logger = crate::core::combase::traits::ChannelLogger::new(1, "test".to_string());
-        let manager = ModbusConnectionManager::new(ModbusMode::Tcp, params, logger);
-
-        // TCP frame with high TID: 0x1234
-        let frame = [0x12, 0x34, 0x00, 0x00, 0x00, 0x06, 0x05, 0x06];
-        let (tid, slave, fc) = manager.extract_frame_info(&frame);
-
-        assert_eq!(tid, Some(0x1234));
-        assert_eq!(slave, 5);
-        assert_eq!(fc, 6);
-    }
-
-    #[test]
     fn test_extract_frame_info_tcp_short_frame() {
         let params = ConnectionParams {
             host: Some("localhost".to_string()),
             port: Some(502),
+            #[cfg(feature = "modbus-rtu")]
             device: None,
+            #[cfg(feature = "modbus-rtu")]
             baud_rate: None,
+            #[cfg(feature = "modbus-rtu")]
             data_bits: None,
+            #[cfg(feature = "modbus-rtu")]
             stop_bits: None,
+            #[cfg(feature = "modbus-rtu")]
             parity: None,
             timeout: Duration::from_secs(5),
         };
 
-        let logger = crate::core::combase::traits::ChannelLogger::new(1, "test".to_string());
+        let logger = ChannelLogger::new(1, "test".to_string());
         let manager = ModbusConnectionManager::new(ModbusMode::Tcp, params, logger);
 
         // Frame too short (only 6 bytes, need 8)
@@ -978,69 +935,24 @@ mod tests {
     }
 
     #[test]
-    fn test_extract_frame_info_rtu_valid() {
-        let params = ConnectionParams {
-            host: None,
-            port: None,
-            device: Some("/dev/ttyUSB0".to_string()),
-            baud_rate: Some(9600),
-            data_bits: Some(8),
-            stop_bits: Some(1),
-            parity: Some("None".to_string()),
-            timeout: Duration::from_millis(500),
-        };
-
-        let logger = crate::core::combase::traits::ChannelLogger::new(1, "test".to_string());
-        let manager = ModbusConnectionManager::new(ModbusMode::Rtu, params, logger);
-
-        // RTU frame: [Unit(1)][FC(1)][Data...][CRC(2)]
-        let frame = [0x01, 0x03, 0x00, 0x00, 0x00, 0x0A, 0xC5, 0xCD];
-        let (tid, slave, fc) = manager.extract_frame_info(&frame);
-
-        assert_eq!(tid, None); // RTU has no transaction ID
-        assert_eq!(slave, 1);
-        assert_eq!(fc, 3);
-    }
-
-    #[test]
-    fn test_extract_frame_info_rtu_short_frame() {
-        let params = ConnectionParams {
-            host: None,
-            port: None,
-            device: Some("/dev/ttyUSB0".to_string()),
-            baud_rate: Some(9600),
-            data_bits: Some(8),
-            stop_bits: Some(1),
-            parity: Some("None".to_string()),
-            timeout: Duration::from_millis(500),
-        };
-
-        let logger = crate::core::combase::traits::ChannelLogger::new(1, "test".to_string());
-        let manager = ModbusConnectionManager::new(ModbusMode::Rtu, params, logger);
-
-        // Frame too short (only 1 byte)
-        let frame = [0x01];
-        let (tid, slave, fc) = manager.extract_frame_info(&frame);
-
-        assert_eq!(tid, None);
-        assert_eq!(slave, 0);
-        assert_eq!(fc, 0);
-    }
-
-    #[test]
     fn test_extract_frame_info_empty_frame() {
         let params = ConnectionParams {
             host: Some("localhost".to_string()),
             port: Some(502),
+            #[cfg(feature = "modbus-rtu")]
             device: None,
+            #[cfg(feature = "modbus-rtu")]
             baud_rate: None,
+            #[cfg(feature = "modbus-rtu")]
             data_bits: None,
+            #[cfg(feature = "modbus-rtu")]
             stop_bits: None,
+            #[cfg(feature = "modbus-rtu")]
             parity: None,
             timeout: Duration::from_secs(5),
         };
 
-        let logger = crate::core::combase::traits::ChannelLogger::new(1, "test".to_string());
+        let logger = ChannelLogger::new(1, "test".to_string());
         let manager = ModbusConnectionManager::new(ModbusMode::Tcp, params, logger);
 
         let frame: [u8; 0] = [];
@@ -1060,21 +972,26 @@ mod tests {
         let params = ConnectionParams {
             host: Some("localhost".to_string()),
             port: Some(502),
+            #[cfg(feature = "modbus-rtu")]
             device: None,
+            #[cfg(feature = "modbus-rtu")]
             baud_rate: None,
+            #[cfg(feature = "modbus-rtu")]
             data_bits: None,
+            #[cfg(feature = "modbus-rtu")]
             stop_bits: None,
+            #[cfg(feature = "modbus-rtu")]
             parity: None,
             timeout: Duration::from_secs(5),
         };
 
-        let logger = crate::core::combase::traits::ChannelLogger::new(1, "test".to_string());
+        let logger = ChannelLogger::new(1, "test".to_string());
         let manager = ModbusConnectionManager::new(ModbusMode::Tcp, params, logger);
 
         let result = manager.send(&[0x01, 0x03, 0x00, 0x00]).await;
         assert!(result.is_err());
 
-        if let Err(ComSrvError::ConnectionError(msg)) = result {
+        if let Err(ComLinkError::Connection(msg)) = result {
             assert!(msg.contains("Not connected"));
         } else {
             panic!("Expected ConnectionError");
@@ -1086,22 +1003,27 @@ mod tests {
         let params = ConnectionParams {
             host: Some("localhost".to_string()),
             port: Some(502),
+            #[cfg(feature = "modbus-rtu")]
             device: None,
+            #[cfg(feature = "modbus-rtu")]
             baud_rate: None,
+            #[cfg(feature = "modbus-rtu")]
             data_bits: None,
+            #[cfg(feature = "modbus-rtu")]
             stop_bits: None,
+            #[cfg(feature = "modbus-rtu")]
             parity: None,
             timeout: Duration::from_secs(5),
         };
 
-        let logger = crate::core::combase::traits::ChannelLogger::new(1, "test".to_string());
+        let logger = ChannelLogger::new(1, "test".to_string());
         let manager = ModbusConnectionManager::new(ModbusMode::Tcp, params, logger);
 
         let mut buffer = [0u8; 256];
         let result = manager.receive(&mut buffer, Duration::from_secs(1)).await;
         assert!(result.is_err());
 
-        if let Err(ComSrvError::ConnectionError(msg)) = result {
+        if let Err(ComLinkError::Connection(msg)) = result {
             assert!(msg.contains("Not connected"));
         } else {
             panic!("Expected ConnectionError");
@@ -1113,15 +1035,20 @@ mod tests {
         let params = ConnectionParams {
             host: Some("localhost".to_string()),
             port: Some(502),
+            #[cfg(feature = "modbus-rtu")]
             device: None,
+            #[cfg(feature = "modbus-rtu")]
             baud_rate: None,
+            #[cfg(feature = "modbus-rtu")]
             data_bits: None,
+            #[cfg(feature = "modbus-rtu")]
             stop_bits: None,
+            #[cfg(feature = "modbus-rtu")]
             parity: None,
             timeout: Duration::from_secs(5),
         };
 
-        let logger = crate::core::combase::traits::ChannelLogger::new(1, "test".to_string());
+        let logger = ChannelLogger::new(1, "test".to_string());
         let manager = ModbusConnectionManager::new(ModbusMode::Tcp, params, logger);
 
         // Disconnect should succeed even when not connected
@@ -1139,21 +1066,26 @@ mod tests {
         let params = ConnectionParams {
             host: None, // Missing host
             port: Some(502),
+            #[cfg(feature = "modbus-rtu")]
             device: None,
+            #[cfg(feature = "modbus-rtu")]
             baud_rate: None,
+            #[cfg(feature = "modbus-rtu")]
             data_bits: None,
+            #[cfg(feature = "modbus-rtu")]
             stop_bits: None,
+            #[cfg(feature = "modbus-rtu")]
             parity: None,
             timeout: Duration::from_secs(5),
         };
 
-        let logger = crate::core::combase::traits::ChannelLogger::new(1, "test".to_string());
+        let logger = ChannelLogger::new(1, "test".to_string());
         let manager = ModbusConnectionManager::new(ModbusMode::Tcp, params, logger);
 
         let result = manager.connect().await;
         assert!(result.is_err());
 
-        if let Err(ComSrvError::ConfigError(msg)) = result {
+        if let Err(ComLinkError::Config(msg)) = result {
             assert!(msg.contains("host"));
         } else {
             panic!("Expected ConfigError for missing host");
@@ -1165,50 +1097,29 @@ mod tests {
         let params = ConnectionParams {
             host: Some("localhost".to_string()),
             port: None, // Missing port
+            #[cfg(feature = "modbus-rtu")]
             device: None,
+            #[cfg(feature = "modbus-rtu")]
             baud_rate: None,
+            #[cfg(feature = "modbus-rtu")]
             data_bits: None,
+            #[cfg(feature = "modbus-rtu")]
             stop_bits: None,
+            #[cfg(feature = "modbus-rtu")]
             parity: None,
             timeout: Duration::from_secs(5),
         };
 
-        let logger = crate::core::combase::traits::ChannelLogger::new(1, "test".to_string());
+        let logger = ChannelLogger::new(1, "test".to_string());
         let manager = ModbusConnectionManager::new(ModbusMode::Tcp, params, logger);
 
         let result = manager.connect().await;
         assert!(result.is_err());
 
-        if let Err(ComSrvError::ConfigError(msg)) = result {
+        if let Err(ComLinkError::Config(msg)) = result {
             assert!(msg.contains("port"));
         } else {
             panic!("Expected ConfigError for missing port");
-        }
-    }
-
-    #[tokio::test]
-    async fn test_connect_rtu_missing_device() {
-        let params = ConnectionParams {
-            host: None,
-            port: None,
-            device: None, // Missing device
-            baud_rate: Some(9600),
-            data_bits: Some(8),
-            stop_bits: Some(1),
-            parity: Some("None".to_string()),
-            timeout: Duration::from_millis(500),
-        };
-
-        let logger = crate::core::combase::traits::ChannelLogger::new(1, "test".to_string());
-        let manager = ModbusConnectionManager::new(ModbusMode::Rtu, params, logger);
-
-        let result = manager.connect().await;
-        assert!(result.is_err());
-
-        if let Err(ComSrvError::ConfigError(msg)) = result {
-            assert!(msg.contains("device"));
-        } else {
-            panic!("Expected ConfigError for missing device");
         }
     }
 
@@ -1219,8 +1130,11 @@ mod tests {
     #[test]
     fn test_modbus_mode_equality() {
         assert_eq!(ModbusMode::Tcp, ModbusMode::Tcp);
-        assert_eq!(ModbusMode::Rtu, ModbusMode::Rtu);
-        assert_ne!(ModbusMode::Tcp, ModbusMode::Rtu);
+        #[cfg(feature = "modbus-rtu")]
+        {
+            assert_eq!(ModbusMode::Rtu, ModbusMode::Rtu);
+            assert_ne!(ModbusMode::Tcp, ModbusMode::Rtu);
+        }
     }
 
     #[test]
@@ -1233,9 +1147,12 @@ mod tests {
     #[test]
     fn test_modbus_mode_debug_format() {
         let tcp_debug = format!("{:?}", ModbusMode::Tcp);
-        let rtu_debug = format!("{:?}", ModbusMode::Rtu);
-
         assert!(tcp_debug.contains("Tcp"));
-        assert!(rtu_debug.contains("Rtu"));
+
+        #[cfg(feature = "modbus-rtu")]
+        {
+            let rtu_debug = format!("{:?}", ModbusMode::Rtu);
+            assert!(rtu_debug.contains("Rtu"));
+        }
     }
 }

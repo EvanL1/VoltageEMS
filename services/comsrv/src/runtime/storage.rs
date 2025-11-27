@@ -4,7 +4,7 @@
 
 #![allow(clippy::disallowed_methods)] // json! macro used in multiple functions
 
-use crate::utils::error::{ComSrvError, Result};
+use crate::error::{ComSrvError, Result};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;

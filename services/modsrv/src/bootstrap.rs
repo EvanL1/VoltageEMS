@@ -39,8 +39,8 @@ pub fn init_environment(service_info: &ServiceInfo) -> Result<()> {
     // Load environment variables from .env file
     common::service_bootstrap::load_development_env();
 
-    // Initialize logging using service_bootstrap (API logging enabled by default)
-    common::service_bootstrap::init_logging(service_info)
+    // Initialize logging using service_bootstrap (config not loaded yet, use env/default)
+    common::service_bootstrap::init_logging(service_info, None)
         .map_err(|e| ModSrvError::ConfigError(format!("Failed to initialize logging: {}", e)))?;
 
     // Print startup banner using service_bootstrap

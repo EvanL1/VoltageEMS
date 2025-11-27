@@ -558,6 +558,7 @@ dependencies = [
  "utoipa-swagger-ui",
  "voltage-comlink",
  "voltage-config",
+ "voltage-protocols",
  "voltage-rtdb",
 ]
 
@@ -4049,6 +4050,23 @@ dependencies = [
  "tracing",
  "voltage-config",
  "voltage-rtdb",
+]
+
+[[package]]
+name = "voltage-protocols"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "bytes",
+ "chrono",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tokio-serial",
+ "tokio-util",
+ "tracing",
+ "voltage-comlink",
+ "voltage-config",
 ]
 
 [[package]]

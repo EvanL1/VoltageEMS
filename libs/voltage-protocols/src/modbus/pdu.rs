@@ -2,16 +2,13 @@
 //!
 //! Use a fixed-size stack array to avoid heap allocation and improve performance.
 
-use crate::utils::error::{ComSrvError, Result};
 use tracing::debug;
+use voltage_comlink::error::{ComLinkError, Result};
 
 use super::constants;
 
 /// Maximum PDU size (re-exported from constants for backward compatibility)
 pub use constants::MAX_PDU_SIZE;
-
-/// Maximum MBAP length field value (re-exported from constants for backward compatibility)
-pub use constants::MAX_MBAP_LENGTH;
 
 /// High-performance PDU with stack-allocated fixed array
 #[derive(Debug, Clone)]
@@ -38,7 +35,7 @@ impl ModbusPdu {
         debug!("Parsing PDU from slice: {} bytes", data.len());
 
         if data.len() > MAX_PDU_SIZE {
-            return Err(ComSrvError::ProtocolError(format!(
+            return Err(ComLinkError::Protocol(format!(
                 "PDU too large: {} bytes (max {})",
                 data.len(),
                 MAX_PDU_SIZE
@@ -77,7 +74,7 @@ impl ModbusPdu {
     #[inline]
     pub fn push(&mut self, byte: u8) -> Result<()> {
         if self.len >= MAX_PDU_SIZE {
-            return Err(ComSrvError::ProtocolError("PDU buffer full".to_string()));
+            return Err(ComLinkError::Protocol("PDU buffer full".to_string()));
         }
         self.data[self.len] = byte;
         self.len += 1;
@@ -96,7 +93,7 @@ impl ModbusPdu {
     #[inline]
     pub fn extend(&mut self, data: &[u8]) -> Result<()> {
         if self.len + data.len() > MAX_PDU_SIZE {
-            return Err(ComSrvError::ProtocolError(format!(
+            return Err(ComLinkError::Protocol(format!(
                 "PDU would exceed max size: {} + {} > {}",
                 self.len,
                 data.len(),
@@ -264,6 +261,34 @@ impl PduBuilder {
         }
 
         self.pdu
+    }
+
+    /// Build a read request PDU for FC01-04
+    ///
+    /// This is a convenience method that combines function_code, address, and quantity
+    /// into a single call for common read operations.
+    ///
+    /// # Arguments
+    /// * `fc` - Function code (1, 2, 3, or 4)
+    /// * `start_address` - Starting address for the read operation
+    /// * `quantity` - Number of coils (FC01/02) or registers (FC03/04) to read
+    ///
+    /// # Example
+    /// ```ignore
+    /// let pdu = PduBuilder::build_read_request(0x03, 0x0000, 10)?;
+    /// ```
+    pub fn build_read_request(fc: u8, start_address: u16, quantity: u16) -> Result<ModbusPdu> {
+        if !matches!(fc, 0x01..=0x04) {
+            return Err(ComLinkError::Protocol(format!(
+                "build_read_request only supports FC01-04, got FC{:02X}",
+                fc
+            )));
+        }
+        Ok(PduBuilder::new()
+            .function_code(fc)?
+            .address(start_address)?
+            .quantity(quantity)?
+            .build())
     }
 }
 
@@ -624,5 +649,108 @@ mod tests {
         let builder = PduBuilder::default();
         let pdu = builder.build();
         assert!(pdu.is_empty());
+    }
+
+    // ================== build_read_request Tests ==================
+    // Migrated from comsrv/protocols/modbus/protocol.rs
+
+    #[test]
+    fn test_build_read_request_fc01_basic() {
+        let pdu = PduBuilder::build_read_request(0x01, 0x0000, 10)
+            .expect("FC01 PDU build should succeed");
+
+        assert_eq!(pdu.function_code(), Some(0x01));
+        let data = pdu.as_slice();
+        assert_eq!(data.len(), 5); // FC(1) + Addr(2) + Qty(2)
+        assert_eq!(data[0], 0x01); // Function code
+        assert_eq!(data[1], 0x00); // Start address high byte
+        assert_eq!(data[2], 0x00); // Start address low byte
+        assert_eq!(data[3], 0x00); // Quantity high byte
+        assert_eq!(data[4], 0x0A); // Quantity low byte (10)
+    }
+
+    #[test]
+    fn test_build_read_request_fc01_max_quantity() {
+        // Max coils per request is 2000 (0x07D0)
+        let pdu = PduBuilder::build_read_request(0x01, 0x0000, 2000)
+            .expect("FC01 max quantity should succeed");
+
+        let data = pdu.as_slice();
+        assert_eq!(data[3], 0x07); // Quantity high byte
+        assert_eq!(data[4], 0xD0); // Quantity low byte
+    }
+
+    #[test]
+    fn test_build_read_request_fc02_basic() {
+        let pdu = PduBuilder::build_read_request(0x02, 0x0100, 16)
+            .expect("FC02 PDU build should succeed");
+
+        assert_eq!(pdu.function_code(), Some(0x02));
+        let data = pdu.as_slice();
+        assert_eq!(data[0], 0x02); // Function code
+        assert_eq!(data[1], 0x01); // Start address high byte
+        assert_eq!(data[2], 0x00); // Start address low byte
+        assert_eq!(data[3], 0x00); // Quantity high byte
+        assert_eq!(data[4], 0x10); // Quantity low byte (16)
+    }
+
+    #[test]
+    fn test_build_read_request_fc03_basic() {
+        let pdu =
+            PduBuilder::build_read_request(0x03, 0x006B, 3).expect("FC03 PDU build should succeed");
+
+        assert_eq!(pdu.function_code(), Some(0x03));
+        let data = pdu.as_slice();
+        assert_eq!(data[0], 0x03); // Function code
+        assert_eq!(data[1], 0x00); // Start address high byte
+        assert_eq!(data[2], 0x6B); // Start address low byte (107)
+        assert_eq!(data[3], 0x00); // Quantity high byte
+        assert_eq!(data[4], 0x03); // Quantity low byte (3)
+    }
+
+    #[test]
+    fn test_build_read_request_fc03_max_quantity() {
+        // Max registers per request is 125 (0x7D)
+        let pdu = PduBuilder::build_read_request(0x03, 0x0000, 125)
+            .expect("FC03 max quantity should succeed");
+
+        let data = pdu.as_slice();
+        assert_eq!(data[3], 0x00); // Quantity high byte
+        assert_eq!(data[4], 0x7D); // Quantity low byte (125)
+    }
+
+    #[test]
+    fn test_build_read_request_fc04_basic() {
+        let pdu =
+            PduBuilder::build_read_request(0x04, 0x0008, 1).expect("FC04 PDU build should succeed");
+
+        assert_eq!(pdu.function_code(), Some(0x04));
+        let data = pdu.as_slice();
+        assert_eq!(data[0], 0x04); // Function code
+        assert_eq!(data[1], 0x00); // Start address high byte
+        assert_eq!(data[2], 0x08); // Start address low byte (8)
+        assert_eq!(data[3], 0x00); // Quantity high byte
+        assert_eq!(data[4], 0x01); // Quantity low byte (1)
+    }
+
+    #[test]
+    fn test_build_read_request_fc04_high_address() {
+        let pdu = PduBuilder::build_read_request(0x04, 0xFFFF, 1)
+            .expect("FC04 high address should succeed");
+
+        let data = pdu.as_slice();
+        assert_eq!(data[1], 0xFF); // Start address high byte
+        assert_eq!(data[2], 0xFF); // Start address low byte
+    }
+
+    #[test]
+    fn test_build_read_request_invalid_fc() {
+        // FC05 is write, not read
+        let result = PduBuilder::build_read_request(0x05, 0x0000, 1);
+        assert!(result.is_err());
+
+        // FC10 is write multiple, not read
+        let result = PduBuilder::build_read_request(0x10, 0x0000, 1);
+        assert!(result.is_err());
     }
 }

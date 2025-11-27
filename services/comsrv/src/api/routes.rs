@@ -12,15 +12,15 @@ use std::sync::{Arc, OnceLock};
 use tokio::sync::RwLock;
 use utoipa::OpenApi;
 
-use crate::core::combase::ChannelManager;
+use crate::core::channels::ChannelManager;
 
 // Import handler modules
 use crate::api::{
+    handlers::health::*,
     handlers::{
         channel_handlers::*, channel_management_handlers::*, control_handlers::*,
         mapping_handlers::*, point_handlers::*,
     },
-    health_handlers::*,
 };
 
 /// Global service start time storage
@@ -78,8 +78,8 @@ impl AppState {
 #[openapi(
     paths(
         // Health and service status
-        crate::api::health_handlers::get_service_status,
-        crate::api::health_handlers::health_check,
+        crate::api::handlers::health::get_service_status,
+        crate::api::handlers::health::health_check,
 
         // Channel queries and status
         crate::api::handlers::channel_handlers::get_all_channels,

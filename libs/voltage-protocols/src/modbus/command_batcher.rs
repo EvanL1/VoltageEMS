@@ -3,8 +3,8 @@
 //! This module provides batching functionality to group multiple Modbus commands
 //! for more efficient communication with devices.
 
-use crate::core::combase::RedisValue;
 use std::collections::HashMap;
+use voltage_comlink::ProtocolValue;
 
 // Batch processing constants
 pub const BATCH_WINDOW_MS: u64 = 20; // 20ms batch window
@@ -15,7 +15,7 @@ pub const MAX_BATCH_SIZE: usize = 100; // Maximum batch size
 
 pub struct BatchCommand {
     pub point_id: u32,
-    pub value: RedisValue,
+    pub value: ProtocolValue,
     pub slave_id: u8,
     pub function_code: u8,
     pub register_address: u16,
@@ -127,7 +127,7 @@ mod tests {
     ) -> BatchCommand {
         BatchCommand {
             point_id,
-            value: RedisValue::Float(100.0),
+            value: ProtocolValue::Float(100.0),
             slave_id,
             function_code,
             register_address,
@@ -271,7 +271,7 @@ mod tests {
 
         let cmd = BatchCommand {
             point_id: 42,
-            value: RedisValue::Float(123.456),
+            value: ProtocolValue::Float(123.456),
             slave_id: 5,
             function_code: 16,
             register_address: 999,

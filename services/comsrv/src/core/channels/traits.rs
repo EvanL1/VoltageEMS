@@ -1,19 +1,19 @@
 //! Framework core module
 //!
 //! This module contains ComBase and ComClient trait definitions that use ComSrvError.
-//! Data types (ConnectionState, RedisValue, PointData, etc.) are imported from voltage_comlink.
+//! Data types (ConnectionState, ProtocolValue, PointData, etc.) are imported from voltage_comlink.
 
 #![allow(clippy::disallowed_methods)] // json! macro used in multiple functions
 
-use crate::core::config::types::RuntimeChannelConfig;
-use crate::utils::error::{ComSrvError, Result};
+use crate::core::config::RuntimeChannelConfig;
+use crate::error::{ComSrvError, Result};
 use async_trait::async_trait;
 use std::sync::Arc;
 
 // Re-export data types from voltage_comlink for backward compatibility
 pub use voltage_comlink::{
     ChannelCommand, ChannelLogger, ChannelStatus, ConnectionState, ExtendedPointData, PointData,
-    PointDataMap, ProtocolValue, RedisValue, TelemetryBatch, TestChannelParams,
+    PointDataMap, ProtocolValue, TelemetryBatch, TestChannelParams,
 };
 
 // Import FourRemote from voltage_config (via local config module)
@@ -94,20 +94,22 @@ pub trait ComClient: ComBase {
 
     /// Execute control command (actively send)
     ///
-    /// @input commands: Vec<(u32, RedisValue)> - Point ID and value pairs
+    /// @input commands: Vec<(u32, ProtocolValue)> - Point ID and value pairs
     /// @output Result<Vec<(u32, bool)>> - Execution results per point
     /// @protocol-write Send YK control commands to device
     /// @redis-write comsrv:{channel}:C - Control status
-    async fn control(&mut self, commands: Vec<(u32, RedisValue)>) -> Result<Vec<(u32, bool)>>;
+    async fn control(&mut self, commands: Vec<(u32, ProtocolValue)>) -> Result<Vec<(u32, bool)>>;
 
     /// Execute adjustment command (actively send)
     ///
-    /// @input adjustments: Vec<(u32, RedisValue)> - Point ID and value pairs
+    /// @input adjustments: Vec<(u32, ProtocolValue)> - Point ID and value pairs
     /// @output Result<Vec<(u32, bool)>> - Execution results per point
     /// @protocol-write Send YT adjustment commands to device
     /// @redis-write comsrv:{channel}:A - Adjustment status
-    async fn adjustment(&mut self, adjustments: Vec<(u32, RedisValue)>)
-        -> Result<Vec<(u32, bool)>>;
+    async fn adjustment(
+        &mut self,
+        adjustments: Vec<(u32, ProtocolValue)>,
+    ) -> Result<Vec<(u32, bool)>>;
 
     /// Start periodic tasks (polling, etc.)
     async fn start_periodic_tasks(&self) -> Result<()> {
@@ -183,7 +185,7 @@ mod tests {
         let point = PointData::default();
         assert_eq!(point.timestamp, 0);
         match point.value {
-            RedisValue::Float(v) => assert!(v.abs() < f64::EPSILON),
+            ProtocolValue::Float(v) => assert!(v.abs() < f64::EPSILON),
             _ => panic!("Expected float value"),
         }
     }

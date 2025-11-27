@@ -24,6 +24,5 @@ pub use bytes::ByteOrder;
 pub use error::{ComLinkError, Result};
 pub use traits::{
     ChannelCommand, ChannelLogger, ChannelStatus, ComBase, ComClient, ConnectionState,
-    ExtendedPointData, PointData, PointDataMap, ProtocolValue, RedisValue, TelemetryBatch,
-    TestChannelParams,
+    ExtendedPointData, PointData, PointDataMap, ProtocolValue, TelemetryBatch, TestChannelParams,
 };

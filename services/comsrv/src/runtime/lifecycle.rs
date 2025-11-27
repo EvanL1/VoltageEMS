@@ -3,9 +3,9 @@
 //! Provides orchestration functions for service startup, shutdown, and maintenance tasks
 //! as part of the runtime orchestration layer
 
-use crate::core::combase::ChannelManager;
+use crate::core::channels::ChannelManager;
 use crate::core::config::ConfigManager;
-use crate::utils::Result;
+use crate::error::Result;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
@@ -481,6 +481,79 @@ pub fn start_cleanup_task(
     });
 
     (handle, token)
+}
+
+/// Wait for shutdown signal (Ctrl+C or SIGTERM on Unix)
+pub async fn wait_for_shutdown() {
+    #[cfg(unix)]
+    {
+        use tokio::signal::unix::{signal, SignalKind};
+
+        let term_signal = match signal(SignalKind::terminate()) {
+            Ok(sig) => Some(sig),
+            Err(e) => {
+                error!(
+                    "Failed to install SIGTERM handler: {}. Service will only respond to Ctrl+C",
+                    e
+                );
+                None
+            },
+        };
+
+        tokio::select! {
+            _ = tokio::signal::ctrl_c() => {},
+            _ = async {
+                if let Some(mut sig) = term_signal {
+                    sig.recv().await;
+                } else {
+                    // If SIGTERM handler failed, wait forever (only Ctrl+C will work)
+                    std::future::pending::<()>().await
+                }
+            } => {},
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = tokio::signal::ctrl_c().await;
+    }
+}
+
+/// Perform graceful shutdown of all services
+pub async fn shutdown_services(
+    channel_manager: Arc<RwLock<ChannelManager>>,
+    shutdown_token: CancellationToken,
+    cleanup_token: CancellationToken,
+    cleanup_handle: tokio::task::JoinHandle<()>,
+    server_handle: tokio::task::JoinHandle<()>,
+    warning_handle: tokio::task::JoinHandle<()>,
+) {
+    info!("Received shutdown signal, starting graceful shutdown...");
+
+    // First shutdown the communication channels
+    shutdown_handler(channel_manager).await;
+
+    // Signal all tasks to shutdown
+    shutdown_token.cancel();
+
+    // Cancel cleanup task
+    cleanup_token.cancel();
+    cleanup_handle.abort();
+
+    // Wait for tasks with timeout
+    let shutdown_timeout = tokio::time::Duration::from_secs(30);
+
+    // Wait for server task
+    match tokio::time::timeout(shutdown_timeout, server_handle).await {
+        Ok(Ok(())) => info!("Server shut down gracefully"),
+        Ok(Err(e)) => error!("Server task failed: {}", e),
+        Err(_) => error!("Server shutdown timed out"),
+    }
+
+    // Abort warning monitor if still running
+    warning_handle.abort();
+    let _ = warning_handle.await; // Ignore abort error
+
+    info!("Service shutdown complete");
 }
 
 #[cfg(test)]

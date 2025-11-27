@@ -19,10 +19,19 @@ use common::service_bootstrap::ServiceInfo;
 use voltage_config::comsrv::DEFAULT_PORT;
 use voltage_config::error::VoltageResult;
 
-use comsrv::core::bootstrap::{self, Args};
-use comsrv::core::combase::ChannelManager;
-use comsrv::core::config::ConfigManager;
-use comsrv::ComSrvError;
+// comsrv imports
+use comsrv::{
+    api::routes::{create_api_routes, set_service_start_time, ComsrvApiDoc},
+    cleanup_provider::ComsrvCleanupProvider,
+    core::{
+        bootstrap::{self, load_routing_maps_from_sqlite, Args},
+        channels::ChannelManager,
+        config::ConfigManager,
+    },
+    error::ComSrvError,
+    runtime::{start_cleanup_task, start_communication_service},
+    shutdown_services, wait_for_shutdown,
+};
 
 #[tokio::main]
 async fn main() -> VoltageResult<()> {
@@ -37,7 +46,8 @@ async fn main() -> VoltageResult<()> {
     );
 
     // Bootstrap: logging (API logging enabled by default), banner, system checks
-    bootstrap::initialize_logging(&service_args, &service_info)?;
+    // Note: Config not loaded yet, use VOLTAGE_LOG_DIR env or default
+    bootstrap::initialize_logging(&service_args, &service_info, None)?;
     // Enable SIGHUP-triggered log reopen
     common::logging::enable_sighup_log_reopen();
     if !args.no_color {
@@ -90,8 +100,7 @@ async fn main() -> VoltageResult<()> {
 
     // Perform Redis cleanup first (before loading routing)
     info!("Performing Redis cleanup based on database configuration...");
-    let cleanup_provider =
-        comsrv::cleanup_provider::ComsrvCleanupProvider::new(sqlite_pool.clone());
+    let cleanup_provider = ComsrvCleanupProvider::new(sqlite_pool.clone());
     match voltage_rtdb::cleanup_invalid_keys(&cleanup_provider, &redis_rtdb).await {
         Ok(deleted) => {
             if deleted > 0 {
@@ -109,10 +118,9 @@ async fn main() -> VoltageResult<()> {
     info!("Loading routing cache from unified database...");
     let routing_cache = {
         // Load routing maps directly from the same SQLite pool
-        let (c2m_data, m2c_data, c2c_data) =
-            comsrv::core::bootstrap::load_routing_maps_from_sqlite(&sqlite_pool)
-                .await
-                .map_err(|e| ComSrvError::ConfigError(format!("Failed to load routing: {}", e)))?;
+        let (c2m_data, m2c_data, c2c_data) = load_routing_maps_from_sqlite(&sqlite_pool)
+            .await
+            .map_err(|e| ComSrvError::ConfigError(format!("Failed to load routing: {}", e)))?;
 
         let c2m_len = c2m_data.len();
         let m2c_len = m2c_data.len();
@@ -161,13 +169,10 @@ async fn main() -> VoltageResult<()> {
     }
 
     // Start communication channels
-    let configured_count = comsrv::runtime::start_communication_service(
-        config_manager.clone(),
-        Arc::clone(&channel_manager),
-    )
-    .await?;
+    let configured_count =
+        start_communication_service(config_manager.clone(), Arc::clone(&channel_manager)).await?;
     let (cleanup_handle, cleanup_token) =
-        comsrv::runtime::start_cleanup_task(Arc::clone(&channel_manager), configured_count);
+        start_cleanup_task(Arc::clone(&channel_manager), configured_count);
     let warning_token = shutdown_token.clone();
     let warning_handle = tokio::spawn(async move {
         if let Err(e) =
@@ -178,17 +183,13 @@ async fn main() -> VoltageResult<()> {
     });
 
     // Start API server
-    comsrv::api::routes::set_service_start_time(chrono::Utc::now());
-    let app = comsrv::api::routes::create_api_routes(
-        Arc::clone(&channel_manager),
-        redis_client,
-        sqlite_pool,
-    );
+    set_service_start_time(chrono::Utc::now());
+    let app = create_api_routes(Arc::clone(&channel_manager), redis_client, sqlite_pool);
 
     #[cfg(feature = "swagger-ui")]
     let app = {
         info!("Swagger UI feature ENABLED - initializing at /docs");
-        let openapi = comsrv::api::routes::ComsrvApiDoc::openapi();
+        let openapi = ComsrvApiDoc::openapi();
         let merged = app.merge(SwaggerUi::new("/docs").url("/openapi.json", openapi));
         info!("Swagger UI configured successfully");
         merged
@@ -224,8 +225,8 @@ async fn main() -> VoltageResult<()> {
     });
 
     // Wait for shutdown and cleanup
-    comsrv::wait_for_shutdown().await;
-    comsrv::shutdown_services(
+    wait_for_shutdown().await;
+    shutdown_services(
         channel_manager,
         shutdown_token,
         cleanup_token,

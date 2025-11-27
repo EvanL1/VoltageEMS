@@ -14,7 +14,7 @@ pub mod api {
     //! - single point APIs
     pub mod calculation_management_handlers;
     pub mod computation_handlers;
-    pub mod global_routing_handlers; // unified database routing APIs
+    pub mod global_routing_handlers;
     pub mod health_handlers;
     pub mod instance_action_handlers;
     pub mod instance_management_handlers;
@@ -42,17 +42,14 @@ pub mod reload;
 pub mod routes;
 pub mod routing_loader;
 
-// Rule Engine - using voltage-rules library
+// Rule Engine - local routes module
 pub mod rule_routes;
 
-// Re-export rule engine types from voltage-rules library
+// Re-export Rule Engine types from voltage-rules library
 pub use voltage_rules::{
     delete_rule, get_rule, get_rule_for_execution, list_rules, load_all_rules, load_enabled_rules,
-    set_rule_enabled, upsert_rule,
-};
-pub use voltage_rules::{
-    parse_flow_json, ActionResult, ParsedFlow, RuleError, RuleExecutionResult, RuleExecutor,
-    RuleScheduler, SchedulerStatus, TriggerConfig,
+    parse_flow_json, set_rule_enabled, upsert_rule, ActionResult, ParsedFlow, Result as RuleResult,
+    RuleError, RuleExecutionResult, RuleExecutor, RuleScheduler, SchedulerStatus, TriggerConfig,
 };
 
 // Re-export routing types from shared library

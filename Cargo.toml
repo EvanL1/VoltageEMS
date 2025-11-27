@@ -5,13 +5,13 @@ members = [
     "libs/voltage-comlink",
     "libs/voltage-config",
     "libs/voltage-model",
+    "libs/voltage-protocols",
     "libs/voltage-rtdb",
     "libs/voltage-routing",
     "libs/voltage-rules",
     "libs/voltage-schema-macro",
     "services/comsrv",
     "services/modsrv",
-    # rulesrv has been merged into modsrv (port 6003)
     # CLI tools
     "tools/monarch",
 ]

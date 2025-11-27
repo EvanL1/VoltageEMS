@@ -68,21 +68,29 @@ impl From<Args> for ServiceArgs {
 }
 
 /// Initialize logging system with command-line arguments
-/// Wraps common functionality with service-specific configuration
-pub fn initialize_logging(args: &ServiceArgs, service_info: &ServiceInfo) -> VoltageResult<()> {
+///
+/// Wraps common functionality with service-specific configuration.
+/// Log root directory priority:
+/// 1. VOLTAGE_LOG_DIR environment variable
+/// 2. logging_config.dir from SQLite config
+/// 3. Default "logs"
+pub fn initialize_logging(
+    args: &ServiceArgs,
+    service_info: &ServiceInfo,
+    logging_config: Option<&voltage_config::common::LoggingConfig>,
+) -> VoltageResult<()> {
     // Load environment variables from .env file in development mode
     common::service_bootstrap::load_development_env();
+
+    // Initialize log root directory from config or environment
+    let config_dir = logging_config.map(|c| c.dir.as_str());
+    common::logging::init_log_root(config_dir);
 
     // Use common arg parsing
     let console_level = args.parse_log_level();
 
-    // Check LOG_DIR environment variable for custom log directory
-    // Format: /path/to/logs (without service subdirectory)
-    // Defaults to "logs/{service_name}" if not set
-    let log_dir = std::env::var("LOG_DIR")
-        .ok()
-        .map(|base| std::path::PathBuf::from(base).join(&service_info.name))
-        .unwrap_or_else(|| std::path::PathBuf::from(format!("logs/{}", service_info.name)));
+    // Get log directory with service name subdirectory
+    let log_dir = common::logging::get_log_root().join(&service_info.name);
 
     let log_config = common::logging::LogConfig {
         service_name: service_info.name.clone(),

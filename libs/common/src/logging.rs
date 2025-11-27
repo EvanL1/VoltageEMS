@@ -25,6 +25,77 @@ static GUARDS: OnceLock<Arc<Mutex<Vec<WorkerGuard>>>> = OnceLock::new();
 // API logger guard - separate to allow independent lifecycle
 static API_GUARD: OnceLock<Arc<Mutex<Option<WorkerGuard>>>> = OnceLock::new();
 
+// ============================================================================
+// Log Root Directory Configuration
+// ============================================================================
+
+/// Global log root directory (initialized once from config or env)
+/// Priority: VOLTAGE_LOG_DIR env > config_dir > default "logs"
+static LOG_ROOT: OnceLock<PathBuf> = OnceLock::new();
+
+/// Initialize log root directory from config or environment
+///
+/// This should be called early during service bootstrap, before any logging
+/// functions that write to files are invoked.
+///
+/// Priority:
+/// 1. `VOLTAGE_LOG_DIR` environment variable (highest)
+/// 2. `config_dir` parameter (from SQLite config)
+/// 3. Default value "logs" (lowest)
+pub fn init_log_root(config_dir: Option<&str>) {
+    LOG_ROOT.get_or_init(|| {
+        std::env::var("VOLTAGE_LOG_DIR")
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| {
+                config_dir
+                    .map(PathBuf::from)
+                    .unwrap_or_else(|| PathBuf::from("logs"))
+            })
+    });
+}
+
+/// Get log root directory
+///
+/// Returns the configured log root directory. If `init_log_root` was not called,
+/// falls back to checking environment variable or default "logs".
+///
+/// When running under `cargo test` (detected via CARGO_TARGET_TMPDIR or test binary path),
+/// defaults to system temp directory to avoid polluting the project directory.
+pub fn get_log_root() -> PathBuf {
+    LOG_ROOT.get().cloned().unwrap_or_else(|| {
+        std::env::var("VOLTAGE_LOG_DIR")
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| {
+                // Detect test environment: cargo sets CARGO_TARGET_TMPDIR during tests
+                // or we can check if running from target/debug/deps (test binaries)
+                if is_test_environment() {
+                    std::env::temp_dir().join("voltage-test-logs")
+                } else {
+                    PathBuf::from("logs")
+                }
+            })
+    })
+}
+
+/// Detect if we're running in a test environment
+fn is_test_environment() -> bool {
+    // Method 1: Check CARGO_TARGET_TMPDIR (set by cargo during test runs)
+    if std::env::var("CARGO_TARGET_TMPDIR").is_ok() {
+        return true;
+    }
+
+    // Method 2: Check if executable is in target/debug/deps (test binary location)
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(path_str) = exe.to_str() {
+            if path_str.contains("target/debug/deps") || path_str.contains("target/release/deps") {
+                return true;
+            }
+        }
+    }
+
+    false
+}
+
 // Custom daily rolling file writer with naming format: {service}{YYYYMMDD}.log
 struct DailyRollingWriter {
     service_name: String,
@@ -314,7 +385,7 @@ impl Default for LogConfig {
     fn default() -> Self {
         Self {
             service_name: "unknown".to_string(),
-            log_dir: PathBuf::from("logs"),
+            log_dir: get_log_root(),
             console_level: Level::INFO,
             file_level: Level::DEBUG,
             enable_json: false,
@@ -659,7 +730,7 @@ pub fn write_to_channel_log(
 
     // Create channel-specific subdirectory. Include id to keep uniqueness
     let dir_name = format!("{}_{}", channel_id, safe_name);
-    let log_dir = PathBuf::from(format!("logs/comsrv/channels/{}", dir_name));
+    let log_dir = get_log_root().join("comsrv/channels").join(&dir_name);
     fs::create_dir_all(&log_dir)?;
 
     let timestamp = Local::now().format("%Y%m%d");
@@ -686,8 +757,8 @@ pub fn write_to_model_log(model_id: &str, message: &str) -> Result<(), Box<dyn s
     use chrono::Local;
     use std::io::Write;
 
-    // Use logs directory (relative to working directory)
-    let log_dir = PathBuf::from("logs/modsrv/models");
+    // Use configurable log root directory
+    let log_dir = get_log_root().join("modsrv/models");
     fs::create_dir_all(&log_dir)?;
 
     let timestamp = Local::now().format("%Y%m%d");
@@ -716,8 +787,8 @@ pub fn write_to_instance_log(
     use chrono::Local;
     use std::io::Write;
 
-    // Use logs directory (relative to working directory)
-    let log_dir = PathBuf::from(format!("logs/modsrv/instances/{}", instance_name));
+    // Use configurable log root directory
+    let log_dir = get_log_root().join("modsrv/instances").join(instance_name);
     fs::create_dir_all(&log_dir)?;
 
     let timestamp = Local::now().format("%Y%m%d");
@@ -743,8 +814,8 @@ pub fn write_to_rule_log(rule_id: &str, message: &str) -> Result<(), Box<dyn std
     use chrono::Local;
     use std::io::Write;
 
-    // Use logs directory (relative to working directory)
-    let log_dir = PathBuf::from(format!("logs/rulesrv/rules/{}", rule_id));
+    // Use configurable log root directory
+    let log_dir = get_log_root().join("rulesrv/rules").join(rule_id);
     fs::create_dir_all(&log_dir)?;
 
     let timestamp = Local::now().format("%Y%m%d");
