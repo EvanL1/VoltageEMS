@@ -159,7 +159,7 @@ jobs:
     - name: Validate Configuration
       run: |
         echo "Validating configuration files..."
-        monarch validate all --detailed --config-path $TEST_CONFIG_DIR || {
+        monarch validate --detailed --config-path $TEST_CONFIG_DIR || {
           echo "::warning::Configuration validation failed, but continuing"
         }
 
@@ -167,7 +167,7 @@ jobs:
     - name: Initialize Database Schemas
       run: |
         echo "Initializing database schemas..."
-        monarch init all --config-path $TEST_CONFIG_DIR --db-path $TEST_DB_DIR
+        monarch init --config-path $TEST_CONFIG_DIR --db-path $TEST_DB_DIR
 
         # Verify databases were created
         echo "Checking created databases:"
@@ -177,7 +177,7 @@ jobs:
     - name: Test Configuration Sync
       run: |
         echo "Testing configuration sync process..."
-        monarch sync all --detailed --config-path $TEST_CONFIG_DIR --db-path $TEST_DB_DIR || {
+        monarch sync --detailed --config-path $TEST_CONFIG_DIR --db-path $TEST_DB_DIR || {
           echo "::warning::Configuration sync had issues"
           exit 0  # Don't fail CI for now, just warn
         }
