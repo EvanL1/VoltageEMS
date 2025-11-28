@@ -27,6 +27,44 @@ pub async fn list_rules(pool: &SqlitePool) -> Result<Vec<Value>> {
     Ok(rules)
 }
 
+/// List rules with pagination, returning rules and total count
+pub async fn list_rules_paginated(
+    pool: &SqlitePool,
+    page: usize,
+    page_size: usize,
+) -> Result<(Vec<Value>, usize)> {
+    // Clamp inputs to reasonable bounds
+    let page = page.max(1);
+    let page_size = page_size.clamp(1, 100);
+    let offset = (page - 1) * page_size;
+
+    // Total count
+    let total: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM rules")
+        .fetch_one(pool)
+        .await?;
+
+    // Paged rows
+    let rows = sqlx::query(
+        r#"
+        SELECT id, name, description, nodes_json, flow_json, format, enabled, priority, cooldown_ms
+        FROM rules
+        ORDER BY priority DESC, id ASC
+        LIMIT ? OFFSET ?
+        "#,
+    )
+    .bind(page_size as i64)
+    .bind(offset as i64)
+    .fetch_all(pool)
+    .await?;
+
+    let mut rules = Vec::with_capacity(rows.len());
+    for row in rows {
+        rules.push(hydrate_rule_json(row)?);
+    }
+
+    Ok((rules, total as usize))
+}
+
 /// Get a single rule by ID (returns metadata and flow_json for frontend editing)
 pub async fn get_rule(pool: &SqlitePool, id: &str) -> Result<Value> {
     let row = sqlx::query(
@@ -223,7 +261,6 @@ fn hydrate_rule_json(row: SqliteRow) -> Result<Value> {
     let flow_json_str: Option<String> = row.try_get("flow_json")?;
     let format: Option<String> = row.try_get("format")?;
     let enabled: i64 = row.try_get("enabled")?;
-    let priority: i64 = row.try_get("priority")?;
     let cooldown_ms: i64 = row.try_get("cooldown_ms")?;
 
     // Parse compact flow (for execution info)
@@ -243,7 +280,6 @@ fn hydrate_rule_json(row: SqliteRow) -> Result<Value> {
         "description": description,
         "format": format.unwrap_or_else(|| "vue-flow".to_string()),
         "enabled": enabled != 0,
-        "priority": priority,
         "cooldown_ms": cooldown_ms,
         "flow": flow,
         "flow_json": flow_json

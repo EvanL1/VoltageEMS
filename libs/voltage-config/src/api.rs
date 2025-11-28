@@ -224,6 +224,7 @@ impl From<anyhow::Error> for AppError {
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct PaginatedResponse<T> {
     /// List of items
+    #[serde(rename = "list", alias = "items")]
     pub items: Vec<T>,
     /// Total number of items
     pub total: usize,

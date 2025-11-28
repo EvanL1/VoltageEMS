@@ -7,7 +7,7 @@
 
 use crate::error::ModSrvError;
 use axum::{
-    extract::{Path, State},
+    extract::{Path, Query, State},
     response::Json,
     routing::{get, post},
     Router,
@@ -17,7 +17,7 @@ use sqlx::SqlitePool;
 use std::sync::Arc;
 use tracing::{debug, error, info, warn};
 use utoipa::OpenApi;
-use voltage_config::api::SuccessResponse;
+use voltage_config::api::{PaginatedResponse, SuccessResponse};
 use voltage_rtdb::traits::Rtdb;
 use voltage_rules::{self as rule_repository, RuleScheduler};
 
@@ -76,20 +76,78 @@ pub struct RuleApiDoc;
 // Handlers
 // ============================================================================
 
+/// Rule list query parameters (pagination)
+#[derive(Debug, serde::Deserialize, utoipa::ToSchema)]
+pub struct RuleListQuery {
+    /// Page number (starting from 1)
+    #[serde(default = "default_page")]
+    pub page: usize,
+    /// Items per page
+    #[serde(default = "default_page_size")]
+    pub page_size: usize,
+}
+
+fn default_page() -> usize {
+    1
+}
+
+fn default_page_size() -> usize {
+    20
+}
+
 /// List all rules
 #[utoipa::path(
     get,
     path = "/api/rules",
+    params(
+        ("page" = Option<usize>, Query, description = "Page number (default: 1)"),
+        ("page_size" = Option<usize>, Query, description = "Items per page (default: 20, max: 100)")
+    ),
     responses(
-        (status = 200, description = "List rules", body = serde_json::Value)
+        (status = 200, description = "List rules (paginated)", body = voltage_config::api::PaginatedResponse<serde_json::Value>,
+            example = json!({
+                "success": true,
+                "data": {
+                    "list": [
+                        { "id": "rule-001", "name": "Test Rule", "enabled": true, "description": "demo rule" }
+                    ],
+                    "total": 1,
+                    "page": 1,
+                    "page_size": 20,
+                    "total_pages": 1,
+                    "has_next": false,
+                    "has_previous": false
+                }
+            })
+        )
     ),
     tag = "rules"
 )]
 pub async fn list_rules<R: Rtdb + ?Sized + Send + Sync + 'static>(
     State(state): State<Arc<RuleEngineState<R>>>,
-) -> Result<Json<SuccessResponse<serde_json::Value>>, ModSrvError> {
-    match rule_repository::list_rules(&state.pool).await {
-        Ok(rules) => Ok(Json(SuccessResponse::new(json!(rules)))),
+    Query(query): Query<RuleListQuery>,
+) -> Result<Json<SuccessResponse<PaginatedResponse<serde_json::Value>>>, ModSrvError> {
+    let page = query.page.max(1);
+    let page_size = query.page_size.clamp(1, 100);
+
+    match rule_repository::list_rules_paginated(&state.pool, page, page_size).await {
+        Ok((rules, total)) => {
+            // Only expose summary fields for list view
+            let summaries: Vec<serde_json::Value> = rules
+                .into_iter()
+                .map(|rule| {
+                    json!({
+                        "id": rule.get("id").cloned().unwrap_or_else(|| json!(null)),
+                        "name": rule.get("name").cloned().unwrap_or_else(|| json!(null)),
+                        "enabled": rule.get("enabled").and_then(|v| v.as_bool()).unwrap_or(false),
+                        "description": rule.get("description").cloned().unwrap_or_else(|| json!(null)),
+                    })
+                })
+                .collect();
+
+            let paginated = PaginatedResponse::new(summaries, total, page, page_size);
+            Ok(Json(SuccessResponse::new(paginated)))
+        },
         Err(e) => {
             error!("Failed to list rules: {}", e);
             Err(ModSrvError::InternalError(

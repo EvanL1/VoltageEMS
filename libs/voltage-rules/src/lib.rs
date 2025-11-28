@@ -32,7 +32,7 @@ pub use error::{Result, RuleError};
 pub use executor::{ActionResult, RuleExecutionResult, RuleExecutor};
 pub use parser::extract_rule_flow;
 pub use repository::{
-    delete_rule, get_rule, get_rule_for_execution, list_rules, load_all_rules, load_enabled_rules,
-    set_rule_enabled, upsert_rule,
+    delete_rule, get_rule, get_rule_for_execution, list_rules, list_rules_paginated,
+    load_all_rules, load_enabled_rules, set_rule_enabled, upsert_rule,
 };
 pub use scheduler::{RuleScheduler, SchedulerStatus, TriggerConfig, DEFAULT_TICK_MS};
