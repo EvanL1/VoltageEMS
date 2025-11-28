@@ -1,25 +1,3 @@
-name: "comsrv"
-version: "1.0.0"
-description: "工业协议通信服务"
-
-api:
-  host: "0.0.0.0"
-  port: 6001
-
-redis:
-  url: "redis://localhost:6379"
-  enabled: true
-
-logging:
-  level: "info"
-  dir: "logs"
-
-lua_sync:
-  enabled: false
-
-command_trigger:
-  enabled: false
-
 channels:
   - id: 1
     name: "PCS#1"
@@ -55,15 +33,15 @@ channels:
     protocol: "modbus_rtu"
     enabled: true
     parameters:
-      port: "/dev/ttyS4"
+      device: "/dev/ttyS4"
       baud_rate: 9600
       data_bits: 8
       stop_bits: 1
       parity: "N"
-      slave_id: 1
       connect_timeout_ms: 3000
       read_timeout_ms: 3000
       retry_interval_ms: 2000
     logging:
       enabled: true
       level: "info"
+

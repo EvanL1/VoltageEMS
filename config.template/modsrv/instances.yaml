@@ -1,477 +1,55 @@
 # Model Instances Configuration for VoltageEMS
 # All instances are based on product definitions in config/modsrv/products/
-# Parent relationships represent logical hierarchy, NOT attribute inheritance
 
 instances:
   # ============================================
-  # Station Level
+  # 真实设备实例配置
   # ============================================
-  
-  main_station:
-    product_name: station
-    name: "Microgrid Demonstration Station"
-    properties:
-      total_capacity: 2720.0    # MW
-      pv_capacity: 1.0          # MW
-      storage_capacity: 1.72     # MWh
-      storage_power: 1.0         # MW
-      grid_connection_capacity: 3.0  # MW
-      location: "Industrial Park Zone A"
-      commissioning_date: "2024-03-01"
-      altitude: 500.0            # m
-      operating_voltage: 10.0    # kV
 
-  # ============================================
-  # Gateway Device (Data Collection & Control Center)
-  # ============================================
-  
-  gateway_01:
-    product_name: gateway
-    name: "VoltageEMS Gateway #01"
-    properties:
-      model: "VEMS-GW-1000"
-      firmware_version: "2.0.1"
-      mac_address: "00:1B:44:11:3A:B7"
-      ip_address: "192.168.1.100"
-      protocol_support: "Modbus TCP/RTU, IEC 60870-5-104, MQTT, OPC UA"
-      max_devices: 1000.0
-      storage_capacity: 256.0    # GB
-      cpu_type: "ARM Cortex-A72 Quad-Core"
-      memory_size: 8.0           # GB
-      installation_date: "2024-01-01"
-      serial_number: "VEMS2024010001"
-      network_interfaces: 4.0
-      operating_system: "Linux Embedded 5.10"
-
-  # ============================================
-  # PV System Components (Independent products)
-  # ============================================
-  
-  # PV Strings
-  pv_string_01:
-    product_name: pv_string
-    name: "PV String #01-A"
-    properties:
-      peak_power: 25.0          # kWp
-      module_count: 50          # modules
-      module_type: "Mono-Si 500W"
-      module_power: 500.0       # Wp
-      string_voltage: 1000.0    # V
-      short_circuit_current: 13.5  # A
-      open_circuit_voltage: 1200.0  # V
-      installation_date: "2024-01-15"
-      manufacturer: "Jinko Solar"
-
-  pv_string_02:
-    product_name: pv_string
-    name: "PV String #01-B"
-    properties:
-      peak_power: 25.0
-      module_count: 50
-      module_type: "Mono-Si 500W"
-      module_power: 500.0
-      string_voltage: 1000.0
-      short_circuit_current: 13.5
-      open_circuit_voltage: 1200.0
-      installation_date: "2024-01-15"
-      manufacturer: "Jinko Solar"
-
-  # PV Combiners
-  pv_combiner_01:
-    product_name: pv_combiner
-    name: "PV Combiner Box #01"
-    properties:
-      input_channels: 16        # channels
-      rated_current: 250.0      # A
-      max_voltage: 1500.0       # V
-      protection_level: "IP65"
-      spd_type: "Type 2"
-      monitoring_type: "Smart"
-      communication_protocol: "Modbus RTU"
-
-  # DC/DC Converters (Independent)
-  dc_converter_01:
-    product_name: dc_dc_converter
-    name: "DC/DC Converter #1"
-    properties:
-      rated_power: 1000.0       # kW
-      input_voltage_range: "800-1200"  # V
-      output_voltage: 750.0     # V
-      conversion_efficiency: 98.8  # %
-      mppt_channels: 10
-      cooling_type: "Air-cooled"
-
-  # PV Inverters (Generic type, can be string or central)
-  pv_inverter_01:
-    product_name: pv_inverter
-    name: "PV Inverter #1 - String Type"
-    properties:
-      type: "string"            # Type: string or central
-      rated_power: 100.0        # kW
-      max_dc_voltage: 1100.0    # V
-      mppt_channels: 4
-      mppt_range: "550-850"     # V
-      ac_output_voltage: 400.0  # V
-      frequency: 50.0           # Hz
-      max_efficiency: 98.5      # %
-      thd: 3.0                  # %
-      power_factor_range: "0.8-1.0"
-      cooling_type: "Air-cooled"
-      manufacturer: "Sungrow"
-      model: "SG100CX"
-
-  pv_inverter_02:
-    product_name: pv_inverter
-    name: "PV Inverter #2 - Central Type"
-    properties:
-      type: "central"           # Type: string or central
-      rated_power: 500.0        # kW
-      max_dc_voltage: 1500.0    # V
-      mppt_channels: 1
-      mppt_range: "850-1200"    # V
-      ac_output_voltage: 400.0  # V
-      frequency: 50.0           # Hz
-      max_efficiency: 98.8      # %
-      thd: 2.5                  # %
-      power_factor_range: "0.9-1.0"
-      cooling_type: "Liquid-cooled"
-      manufacturer: "Sungrow"
-      model: "SG500MX"
-
-  # ============================================
-  # Battery System (Hierarchical but no inheritance)
-  # ============================================
-  
-  # Battery Cells
-  battery_cell_001:
-    product_name: battery_cell
-    name: "Battery Cell #001"
-    properties:
-      nominal_capacity: 280.0    # Ah
-      nominal_voltage: 3.2       # V
-      chemistry_type: "LiFePO4"
-      max_charge_current: 140.0  # A (0.5C)
-      max_discharge_current: 280.0  # A (1C)
-      operating_temperature: "-20~60"  # °C
-      cycle_life: 6000
-      manufacturing_date: "2023-12-01"
-
-  # Battery Modules (contains cells)
-  battery_module_01:
-    product_name: battery_module
-    name: "Battery Module #01"
-    properties:
-      module_capacity: 17.92     # kWh
-      cell_count: 16            # cells
-      series_count: 16          # series
-      parallel_count: 1         # parallel
-      nominal_voltage: 51.2     # V
-      bms_type: "Active"
-      balancing_current: 5.0    # A
-      module_weight: 180.0      # kg
-
-  # Battery Clusters (contains modules)
-  battery_cluster_01:
-    product_name: battery_cluster
-    name: "Battery Cluster #1"
-    properties:
-      total_capacity: 215.0     # kWh
-      module_count: 12         # modules
-      bms_type: "Distributed"
-      cooling_system: "Liquid"
-      protection_level: "IP54"
-
-  battery_cluster_02:
-    product_name: battery_cluster
-    name: "Battery Cluster #2"
-    properties:
-      total_capacity: 215.0     # kWh
-      module_count: 12
-      bms_type: "Distributed"
-      cooling_system: "Liquid"
-      protection_level: "IP54"
-
-  # Battery Stacks (contains clusters)
-  battery_stack_01:
-    product_name: battery_stack
-    name: "Battery Stack #1 - LFP"
-    properties:
-      capacity: 430.0           # kWh
-      nominal_voltage: 768.0    # V
-      max_charge_current: 300.0 # A
-      max_discharge_current: 300.0  # A
-      cluster_count: 2
-      chemistry: "LiFePO4"
-      c_rate: 1.0
-      cycles: 6000
-      dod: 90.0                 # %
-      manufacturer: "CATL"
-
-  battery_stack_02:
-    product_name: battery_stack
-    name: "Battery Stack #2 - LFP"
-    properties:
-      capacity: 430.0
-      nominal_voltage: 768.0
-      max_charge_current: 300.0
-      max_discharge_current: 300.0
-      cluster_count: 2
-      chemistry: "LiFePO4"
-      c_rate: 1.0
-      cycles: 6000
-      dod: 90.0
-      manufacturer: "CATL"
-
-  # Battery Packs (contains stacks) - NAME UNCHANGED
-  battery_pack_01:
-    product_name: battery_pack
-    name: "Battery Pack #1 - Container A"
-    properties:
-      total_capacity: 860.0     # kWh
-      stack_count: 2
-      container_type: "20ft"
-      fire_suppression: "Aerosol"
-      hvac_capacity: 15.0       # kW
-      ambient_temp_range: "-20~50"  # °C
-
-  battery_pack_02:
-    product_name: battery_pack
-    name: "Battery Pack #2 - Container B"
-    properties:
-      total_capacity: 860.0
-      stack_count: 2
-      container_type: "20ft"
-      fire_suppression: "Aerosol"
-      hvac_capacity: 15.0
-      ambient_temp_range: "-20~50"
-
-  # ============================================
-  # Standalone Equipment (No inheritance)
-  # ============================================
-  
-  # Power Conversion Systems (PCS)
+  # PCS #1 - 变流器（Channel 1 AC侧）
   pcs_01:
     product_name: pcs
-    name: "PCS #1 - Grid-tied"
+    name: "PCS #1"
     properties:
       rated_power: 500.0        # kW
-      rated_capacity: 500.0     # kVA
-      dc_voltage_range: "600-900"  # V
-      ac_voltage: 400.0         # V
-      frequency: 50.0           # Hz
-      efficiency: 98.2          # %
-      response_time: 20         # ms
-      grid_support: "LVRT,HVRT,FRT"
-      operation_mode: "Grid-following"
+      rated_voltage: 380.0      # V
+      rated_frequency: 50.0     # Hz
       manufacturer: "Sungrow"
       model: "SC500HV"
+      installation_date: "2024-01-01"
 
-  pcs_02:
-    product_name: pcs
-    name: "PCS #2 - Grid-forming"
+  # PV系统 - 光伏/直流侧（Channel 1 DC侧）
+  pv_01:
+    product_name: pv_inverter
+    name: "PV System #1"
     properties:
       rated_power: 500.0        # kW
-      rated_capacity: 500.0     # kVA
-      dc_voltage_range: "600-900"  # V
-      ac_voltage: 400.0         # V
-      frequency: 50.0           # Hz
-      efficiency: 98.2          # %
-      response_time: 20         # ms
-      grid_support: "Black-start,Island"
-      operation_mode: "Grid-forming"
+      max_dc_voltage: 1000.0    # V
+      mppt_channels: 4
       manufacturer: "Sungrow"
-      model: "SC500HV-GF"
+      model: "PV-500"
+      installation_date: "2024-01-01"
 
-  # Diesel Generator
+  # 电池系统（Channel 2）
+  battery_01:
+    product_name: battery_pack
+    name: "Battery Pack #1"
+    properties:
+      total_capacity: 860.0     # kWh
+      nominal_voltage: 768.0    # V
+      chemistry: "LiFePO4"
+      manufacturer: "Ampace"
+      model: "BAMS-860"
+      installation_date: "2024-01-01"
+
+  # 柴油发电机（Channel 3）
   diesel_gen_01:
     product_name: diesel_generator
-    name: "Diesel Generator #1 - Backup"
-    properties:
-      rated_power: 1000.0       # kW
-      rated_capacity: 1250.0    # kVA
-      power_factor: 0.8
-      voltage: 400.0            # V
-      frequency: 50.0           # Hz
-      fuel_type: "Diesel"
-      fuel_consumption: 250.0   # L/h at full load
-      tank_capacity: 5000.0     # L
-      start_time: 10            # seconds
-      runtime_at_full: 20.0    # hours
-      manufacturer: "Cummins"
-      model: "C1000D5"
-      emission_standard: "Tier 3"
-
-  # Loads (Generic load product)
-  load_critical_01:
-    product_name: load
-    name: "Critical Load - Data Center"
-    properties:
-      rated_power: 200.0        # kW
-      rated_voltage: 400.0      # V
-      load_type: "Critical"
-      priority_level: 1         # Highest priority
-      power_factor: 0.95
-      connection_type: "3-Phase"
-      control_mode: "Auto"
-      location: "Building A"
-      backup_power: "UPS"
-
-  load_normal_01:
-    product_name: load
-    name: "Normal Load - Office Building"
-    properties:
-      rated_power: 300.0        # kW
-      rated_voltage: 400.0      # V
-      load_type: "Normal"
-      priority_level: 3         # Lower priority
-      power_factor: 0.90
-      connection_type: "3-Phase"
-      control_mode: "Scheduled"
-      location: "Building B"
-      schedule: "07:00-19:00"
-
-  # Additional test load instances
-  load_industrial_01:
-    product_name: load
-    name: "Industrial Load - Factory"
+    name: "Diesel Generator #1"
     properties:
       rated_power: 500.0        # kW
       rated_voltage: 400.0      # V
-      load_type: "Industrial"
-      priority_level: 2
-      power_factor: 0.85
-      connection_type: "3-Phase"
-      control_mode: "Manual"
-      location: "Factory Area"
-      operating_hours: "24/7"
-
-  # Motor Controller
-  motor_01:
-    product_name: motor
-    name: "Main Drive Motor"
-    properties:
-      rated_power: 15.0         # kW
-      rated_speed: 1500         # rpm
-      rated_voltage: 400         # V
-      rated_current: 32.0        # A
-      rated_torque: 95.5         # Nm
-      rated_frequency: 50        # Hz
-      pole_pairs: 2
-      encoder_resolution: 4096   # pulses per revolution
-      max_speed: 3000            # rpm
-      max_current: 48.0          # A
-      max_torque: 143.0          # Nm
-      inertia: 0.05              # kg.m²
-      motor_type: "AC Induction"
-      cooling_method: "Fan Cooled"
-      insulation_class: "F"
-      protection_class: "IP55"
-      mounting_type: "B3 Foot Mounted"
-      brake_type: "Electromagnetic"
-      brake_torque: 100.0        # Nm
-      brake_voltage: 24          # V
-
-  # Additional PV string for testing
-  pv_string_03:
-    product_name: pv_string
-    name: "PV String #02-A"
-    properties:
-      peak_power: 30.0          # kWp
-      module_count: 60
-      module_type: "Mono-Si 500W"
-      module_power: 500.0
-      string_voltage: 1200.0
-      short_circuit_current: 15.0
-      open_circuit_voltage: 1400.0
-      installation_date: "2024-02-01"
-      manufacturer: "LONGi Solar"
-
-  # Additional PV inverter for channel 1001 testing
-  pv_inverter_03:
-    product_name: pv_inverter
-    name: "PV Inverter #3 - Test Unit"
-    properties:
-      type: "string"
-      rated_power: 125.0        # kW
-      max_dc_voltage: 1200.0
-      mppt_channels: 6
-      mppt_range: "600-900"
-      ac_output_voltage: 400.0
-      frequency: 50.0
-      max_efficiency: 98.7
-      thd: 2.8
-      power_factor_range: "0.85-1.0"
-      cooling_type: "Air-cooled"
-      manufacturer: "Huawei"
-      model: "SUN2000-125KTL"
-
-  # Additional battery modules for testing
-  battery_module_02:
-    product_name: battery_module
-    name: "Battery Module #02"
-    properties:
-      module_capacity: 17.92
-      cell_count: 16
-      series_count: 16
-      parallel_count: 1
-      nominal_voltage: 51.2
-      bms_type: "Active"
-      balancing_current: 5.0
-      module_weight: 180.0
-
-  battery_module_03:
-    product_name: battery_module
-    name: "Battery Module #03"
-    properties:
-      module_capacity: 17.92
-      cell_count: 16
-      series_count: 16
-      parallel_count: 1
-      nominal_voltage: 51.2
-      bms_type: "Active"
-      balancing_current: 5.0
-      module_weight: 180.0
-
-# Virtual Points Configuration
-# Virtual points calculate derived values from physical measurements
-virtual_points:
-  # Total PV generation
-  total_pv_power:
-    expression: "pv_inverter_01.total_ac_power + pv_inverter_02.total_ac_power"
-    unit: "kW"
-    description: "Total PV generation power"
-
-  # Total battery capacity
-  total_battery_soc:
-    expression: "(battery_pack_01.soc + battery_pack_02.soc) / 2"
-    unit: "%"
-    description: "Average battery state of charge"
-
-  # Net grid exchange
-  grid_exchange:
-    expression: "pcs_01.ac_power + pcs_02.ac_power"
-    unit: "kW"
-    description: "Net power exchange with grid (positive = export)"
-
-  # System efficiency
-  system_efficiency:
-    expression: "(pv_inverter_01.efficiency + pv_inverter_02.efficiency + pcs_01.efficiency + pcs_02.efficiency) / 4"
-    unit: "%"
-    description: "Average system conversion efficiency"
-
-  # Renewable ratio
-  renewable_ratio:
-    expression: "total_pv_power / (total_pv_power + diesel_gen_01.active_power) * 100"
-    unit: "%"
-    description: "Percentage of renewable generation"
-
-# Instance Metadata
-metadata:
-  site_name: "Microgrid Demonstration Site"
-  location: "Industrial Park Zone A"
-  commissioning_date: "2024-03-01"
-  integrator: "VoltageEMS Technologies"
-  total_pv_capacity: 1000.0  # kWp
-  total_battery_capacity: 1720.0  # kWh
-  total_pcs_capacity: 1000.0  # kW
-  backup_gen_capacity: 1000.0  # kW
+      rated_frequency: 50.0     # Hz
+      manufacturer: "Cummins"
+      model: "C500D5"
+      installation_date: "2024-01-01"

@@ -4143,7 +4143,9 @@ dependencies = [
 
 [[package]]
 name = "voltage_modbus"
-version = "0.4.0"
+version = "0.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cad02fce22fca96fcc8d9433fde6d82d8721fd93d0ccf5c128e590b5f0f06828"
 dependencies = [
  "async-trait",
  "bytes",
