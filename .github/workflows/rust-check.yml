@@ -257,11 +257,11 @@ jobs:
     - name: Build & Start Redis
       run: |
         echo "Starting Redis container..."
-        docker compose -f docker/docker-compose-ci.yml up -d voltage-redis
+        docker compose up -d voltage-redis
 
         echo "Waiting for Redis to be ready..."
         for i in {1..30}; do
-          if docker compose -f docker/docker-compose-ci.yml exec -T voltage-redis redis-cli ping >/dev/null 2>&1; then
+          if docker compose exec -T voltage-redis redis-cli ping >/dev/null 2>&1; then
             echo "✓ Redis is ready and responding to ping"
             exit 0
           fi
@@ -270,7 +270,7 @@ jobs:
         done
 
         echo "Redis failed to start in time" >&2
-        docker compose -f docker/docker-compose-ci.yml logs voltage-redis
+        docker compose logs voltage-redis
         exit 1
 
     # Run integration tests (cleans state, sequential execution)
@@ -284,4 +284,4 @@ jobs:
     # Cleanup Docker resources
     - name: Stop Redis
       if: always()
-      run: docker compose -f docker/docker-compose-ci.yml down -v
+      run: docker compose down -v
