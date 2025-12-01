@@ -13,7 +13,7 @@ echo -e "${YELLOW}=== Running VoltageEMS Integration Tests ===${NC}"
 PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
 # Prefer using the containerized redis-cli in CI, but keep host fallback for developers
-DC="docker compose -f ${PROJECT_ROOT}/docker/docker-compose-ci.yml"
+DC="docker compose"
 RC="$DC exec -T voltage-redis redis-cli"
 
 USE_CONTAINER=0
@@ -26,7 +26,7 @@ elif command -v redis-cli >/dev/null 2>&1 && redis-cli ping >/dev/null 2>&1; the
 else
     echo -e "${RED}Error: Redis is not running${NC}"
     echo "Please start Redis first (choose one):"
-    echo "  docker compose -f docker/docker-compose-ci.yml up -d voltage-redis"
+    echo "  docker compose up -d voltage-redis"
     echo "  # or"
     echo "  redis-server"
     exit 1

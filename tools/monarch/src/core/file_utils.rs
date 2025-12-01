@@ -6,7 +6,7 @@ use serde::de::DeserializeOwned;
 use serde_json::Value as JsonValue;
 use std::collections::HashMap;
 use std::path::Path;
-use tracing::debug;
+use tracing::{debug, warn};
 use voltage_config::validation::{CsvFields, CsvHeaderValidator};
 
 /// Error that occurred while parsing a specific CSV row
@@ -302,6 +302,9 @@ pub fn parse_optional_float(s: Option<&str>) -> Option<f64> {
 /// Set database file permissions for Docker compatibility
 /// Sets permissions to 664 (rw-rw-r--) to allow owner and group access
 /// while preventing world write access for security
+///
+/// Note: This is a best-effort operation. If the current user is not the file owner,
+/// the permission change will be skipped with a warning (not an error).
 pub fn set_database_permissions<P: AsRef<Path>>(path: P) -> Result<()> {
     #[cfg(unix)]
     {
@@ -311,9 +314,15 @@ pub fn set_database_permissions<P: AsRef<Path>>(path: P) -> Result<()> {
             let mut perms = std::fs::metadata(path)?.permissions();
             // Set permissions to 664 (rw-rw-r--) - owner and group can read/write, others read-only
             perms.set_mode(0o664);
-            std::fs::set_permissions(path, perms)
-                .with_context(|| format!("Failed to set permissions for {:?}", path))?;
-            debug!("Set permissions to 664 for {:?}", path);
+            if let Err(e) = std::fs::set_permissions(path, perms) {
+                // Permission denied is common when not file owner - warn instead of fail
+                warn!(
+                    "Could not set permissions for {:?}: {} (this is usually safe to ignore)",
+                    path, e
+                );
+            } else {
+                debug!("Set permissions to 664 for {:?}", path);
+            }
         }
     }
     Ok(())
