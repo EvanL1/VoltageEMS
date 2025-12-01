@@ -164,7 +164,7 @@ impl ConfigSyncer {
 
     /// Sync configuration for a specific service
     ///
-    /// @input service: &str - Service name ("comsrv", "modsrv", "rulesrv", "global")
+    /// @input service: &str - Service name ("comsrv", "modsrv", "global")
     /// @output Result<SyncResult> - Sync statistics (items synced, deleted, errors)
     /// @throws anyhow::Error - Unknown service, database errors, file I/O errors
     /// @side-effects Clears and repopulates service database from YAML/CSV files
@@ -489,7 +489,7 @@ impl ConfigSyncer {
             debug!("Synced {} calculation definitions", calculations_count);
         }
 
-        // Load and sync rules (merged from rulesrv)
+        // Load and sync rules (part of modsrv)
         let rules_dir = config_dir.join("rules");
         if rules_dir.exists() {
             // Clear existing rules

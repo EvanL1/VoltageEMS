@@ -23,7 +23,7 @@ use anyhow::Result;
 use sqlx::SqlitePool;
 use voltage_config::comsrv;
 use voltage_config::modsrv;
-use voltage_config::rulesrv;
+use voltage_config::rules;
 
 /// Initialize comsrv standard schema for testing
 ///
@@ -125,32 +125,28 @@ pub async fn init_modsrv_schema(pool: &SqlitePool) -> Result<()> {
     Ok(())
 }
 
-/// Initialize rulesrv standard schema for testing
+/// Initialize rules standard schema for testing
 ///
-/// Creates all rulesrv-related tables using schema definitions from voltage-config.
+/// Creates all rules-related tables using schema definitions from voltage-config.
 /// This includes:
 /// - service_config
 /// - sync_metadata
 /// - rules (Vue Flow rule chains)
 /// - rule_history
-pub async fn init_rulesrv_schema(pool: &SqlitePool) -> Result<()> {
+pub async fn init_rules_schema(pool: &SqlitePool) -> Result<()> {
     // Service metadata tables
-    sqlx::query(rulesrv::SERVICE_CONFIG_TABLE)
+    sqlx::query(rules::SERVICE_CONFIG_TABLE)
         .execute(pool)
         .await?;
 
-    sqlx::query(rulesrv::SYNC_METADATA_TABLE)
+    sqlx::query(rules::SYNC_METADATA_TABLE)
         .execute(pool)
         .await?;
 
     // Rule chains table (Vue Flow format)
-    sqlx::query(rulesrv::RULE_CHAINS_TABLE)
-        .execute(pool)
-        .await?;
+    sqlx::query(rules::RULE_CHAINS_TABLE).execute(pool).await?;
 
-    sqlx::query(rulesrv::RULE_HISTORY_TABLE)
-        .execute(pool)
-        .await?;
+    sqlx::query(rules::RULE_HISTORY_TABLE).execute(pool).await?;
 
     Ok(())
 }
@@ -202,9 +198,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_init_rulesrv_schema() {
+    async fn test_init_rules_schema() {
         let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
-        init_rulesrv_schema(&pool).await.unwrap();
+        init_rules_schema(&pool).await.unwrap();
 
         // Verify tables exist
         let result: (i64,) =

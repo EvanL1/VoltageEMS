@@ -8,7 +8,7 @@
 use crate::error::Result;
 use std::collections::HashMap;
 use std::sync::Arc;
-use voltage_config::rulesrv::{
+use voltage_config::rules::{
     FlowCondition, Rule, RuleNode, RuleSwitchBranch, RuleValueAssignment, RuleVariable,
 };
 use voltage_config::RoutingCache;
@@ -400,7 +400,7 @@ impl<R: Rtdb + ?Sized> RuleExecutor<R> {
 mod tests {
     use super::*;
     use serde_json::json;
-    use voltage_config::rulesrv::Rule;
+    use voltage_config::rules::Rule;
     use voltage_rtdb::{Bytes, MemoryRtdb};
 
     use crate::parser::extract_rule_flow;

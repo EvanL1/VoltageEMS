@@ -181,7 +181,7 @@ docker exec voltageems-redis redis-cli HGETALL "inst:1:M"
   - API：`/api/rules/*` 用于规则管理
 
 > **已弃用的环境变量**（不再使用）：
-> - `COMSRV_DB_PATH`, `MODSRV_DB_PATH`, `RULESRV_DB_PATH` - 已被统一的 `VOLTAGE_DB_PATH` 替代
+> - `COMSRV_DB_PATH`, `MODSRV_DB_PATH`, `RULES_DB_PATH` - 已被统一的 `VOLTAGE_DB_PATH` 替代
 
 ### 服务配置 (YAML)
 ```yaml

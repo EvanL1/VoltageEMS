@@ -1,27 +1,4 @@
 services:
-  # Nginx - Unified API gateway on port 80
-  nginx:
-    image: nginx:latest
-    container_name: voltageems-nginx
-    network_mode: host
-    user: "${HOST_UID:-1000}:${HOST_GID:-1000}" # Run as host user
-    environment:
-      - NO_PROXY="*"
-      - no_proxy="*"
-    depends_on:
-      - comsrv
-      - modsrv
-      # rulesrv merged into modsrv (port 6002)
-    volumes:
-      - ./docker/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
-      - nginx-logs:/var/log/nginx
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost/health"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
-
   # Redis - High-performance data store (official Redis 8)
   voltage-redis:
     image: redis:8-alpine
@@ -75,7 +52,7 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
-  # Model service
+  # Model service (includes rules engine on port 6002)
   modsrv:
     image: voltageems:latest
     container_name: voltageems-modsrv
@@ -101,9 +78,6 @@ services:
       - redis-socket:/run/redis:ro # Read-only access to Unix socket
     restart: unless-stopped
 
-  # NOTE: rulesrv has been merged into modsrv (port 6002)
-
 volumes:
   redis-data:
   redis-socket: # Shared Unix socket volume for better performance
-  nginx-logs: # Nginx access and error logs

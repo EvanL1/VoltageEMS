@@ -40,8 +40,8 @@ pub const DEFAULT_COMSRV_URL: &str = "http://localhost:6001";
 /// Default modsrv service URL (localhost)
 pub const DEFAULT_MODSRV_URL: &str = "http://localhost:6002";
 
-/// Default rulesrv service URL (localhost, merged into modsrv)
-pub const DEFAULT_RULESRV_URL: &str = "http://localhost:6002";
+/// Default rules service URL (localhost, merged into modsrv)
+pub const DEFAULT_RULES_URL: &str = "http://localhost:6002";
 
 /// Environment variable name for comsrv URL
 pub const ENV_COMSRV_URL: &str = "COMSRV_URL";
@@ -49,8 +49,8 @@ pub const ENV_COMSRV_URL: &str = "COMSRV_URL";
 /// Environment variable name for modsrv URL
 pub const ENV_MODSRV_URL: &str = "MODSRV_URL";
 
-/// Environment variable name for rulesrv URL
-pub const ENV_RULESRV_URL: &str = "RULESRV_URL";
+/// Environment variable name for rules URL
+pub const ENV_RULES_URL: &str = "RULES_URL";
 
 // ============================================================================
 // Timeout configuration constants
@@ -450,7 +450,7 @@ pub trait ConfigValidator: Send + Sync {
 /// Generic reload result for all services
 ///
 /// Provides unified response format for hot reload operations across
-/// comsrv, modsrv, and rulesrv services.
+/// comsrv, modsrv, and rules services.
 ///
 /// # Type Parameters
 /// - `I`: Item identifier type (e.g., `u16` for channel/instance ID, `String` for rule ID)
@@ -528,7 +528,7 @@ pub type ChannelReloadResult = ReloadResult<u16>;
 /// Type alias for instance reload result (modsrv)
 pub type InstanceReloadResult = ReloadResult<u16>;
 
-/// Type alias for rule reload result (rulesrv)
+/// Type alias for rule reload result (rules)
 pub type RuleReloadResult = ReloadResult<String>;
 
 /// Unified hot reload interface for all services

@@ -1120,17 +1120,20 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
         .map_err(|e| anyhow!("Instance {} not found: {}", instance_id, e))?;
 
         // 2. JOIN query for measurement points (Product template + Instance routing)
+        // Also JOIN channels and point tables to get display names
         let measurements = sqlx::query_as::<
             _,
             (
                 u32,
                 String,
                 Option<String>,
-                Option<String>, // Point fields
+                Option<String>, // Point fields: measurement_id, name, unit, description
                 Option<i32>,
                 Option<String>,
                 Option<u32>,
-                Option<bool>, // Routing fields
+                Option<bool>, // Routing fields: channel_id, channel_type, channel_point_id, enabled
+                Option<String>, // channel_name (from channels table)
+                Option<String>, // channel_point_name (from telemetry_points/signal_points)
             ),
         >(
             r#"
@@ -1142,10 +1145,21 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
                 mr.channel_id,
                 mr.channel_type,
                 mr.channel_point_id,
-                mr.enabled
+                mr.enabled,
+                c.name AS channel_name,
+                COALESCE(tp.signal_name, sp.signal_name) AS channel_point_name
             FROM measurement_points mp
             LEFT JOIN measurement_routing mr
                 ON mr.instance_id = ? AND mr.measurement_id = mp.measurement_id
+            LEFT JOIN channels c ON c.channel_id = mr.channel_id
+            LEFT JOIN telemetry_points tp
+                ON tp.channel_id = mr.channel_id
+                AND tp.point_id = mr.channel_point_id
+                AND mr.channel_type = 'T'
+            LEFT JOIN signal_points sp
+                ON sp.channel_id = mr.channel_id
+                AND sp.point_id = mr.channel_point_id
+                AND mr.channel_type = 'S'
             WHERE mp.product_name = ?
             ORDER BY mp.measurement_id
             "#,
@@ -1156,36 +1170,43 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
         .await?
         .into_iter()
         .map(
-            |(idx, name, unit, desc, cid, ctype, cpid, enabled)| InstanceMeasurementPoint {
-                measurement_id: idx,
-                name,
-                unit,
-                description: desc,
-                routing: match (cid, ctype, cpid, enabled) {
-                    (Some(c), Some(t), Some(p), Some(e)) => Some(PointRouting {
-                        channel_id: c,
-                        channel_type: t,
-                        channel_point_id: p,
-                        enabled: e,
-                    }),
-                    _ => None,
-                },
+            |(idx, name, unit, desc, cid, ctype, cpid, enabled, cname, cpname)| {
+                InstanceMeasurementPoint {
+                    measurement_id: idx,
+                    name,
+                    unit,
+                    description: desc,
+                    routing: match (cid, ctype, cpid, enabled) {
+                        (Some(c), Some(t), Some(p), Some(e)) => Some(PointRouting {
+                            channel_id: c,
+                            channel_type: t,
+                            channel_point_id: p,
+                            enabled: e,
+                            channel_name: cname,
+                            channel_point_name: cpname,
+                        }),
+                        _ => None,
+                    },
+                }
             },
         )
         .collect();
 
         // 3. JOIN query for action points (Product template + Instance routing)
+        // Also JOIN channels and point tables to get display names
         let actions = sqlx::query_as::<
             _,
             (
                 u32,
                 String,
                 Option<String>,
-                Option<String>, // Point fields
+                Option<String>, // Point fields: action_id, name, unit, description
                 Option<i32>,
                 Option<String>,
                 Option<u32>,
-                Option<bool>, // Routing fields
+                Option<bool>, // Routing fields: channel_id, channel_type, channel_point_id, enabled
+                Option<String>, // channel_name (from channels table)
+                Option<String>, // channel_point_name (from control_points/adjustment_points)
             ),
         >(
             r#"
@@ -1197,10 +1218,21 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
                 ar.channel_id,
                 ar.channel_type,
                 ar.channel_point_id,
-                ar.enabled
+                ar.enabled,
+                c.name AS channel_name,
+                COALESCE(cp.signal_name, ajp.signal_name) AS channel_point_name
             FROM action_points ap
             LEFT JOIN action_routing ar
                 ON ar.instance_id = ? AND ar.action_id = ap.action_id
+            LEFT JOIN channels c ON c.channel_id = ar.channel_id
+            LEFT JOIN control_points cp
+                ON cp.channel_id = ar.channel_id
+                AND cp.point_id = ar.channel_point_id
+                AND ar.channel_type = 'C'
+            LEFT JOIN adjustment_points ajp
+                ON ajp.channel_id = ar.channel_id
+                AND ajp.point_id = ar.channel_point_id
+                AND ar.channel_type = 'A'
             WHERE ap.product_name = ?
             ORDER BY ap.action_id
             "#,
@@ -1211,20 +1243,24 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
         .await?
         .into_iter()
         .map(
-            |(idx, name, unit, desc, cid, ctype, cpid, enabled)| InstanceActionPoint {
-                action_id: idx,
-                name,
-                unit,
-                description: desc,
-                routing: match (cid, ctype, cpid, enabled) {
-                    (Some(c), Some(t), Some(p), Some(e)) => Some(PointRouting {
-                        channel_id: c,
-                        channel_type: t,
-                        channel_point_id: p,
-                        enabled: e,
-                    }),
-                    _ => None,
-                },
+            |(idx, name, unit, desc, cid, ctype, cpid, enabled, cname, cpname)| {
+                InstanceActionPoint {
+                    action_id: idx,
+                    name,
+                    unit,
+                    description: desc,
+                    routing: match (cid, ctype, cpid, enabled) {
+                        (Some(c), Some(t), Some(p), Some(e)) => Some(PointRouting {
+                            channel_id: c,
+                            channel_type: t,
+                            channel_point_id: p,
+                            enabled: e,
+                            channel_name: cname,
+                            channel_point_name: cpname,
+                        }),
+                        _ => None,
+                    },
+                }
             },
         )
         .collect();
@@ -1447,7 +1483,7 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
         .await
         .map_err(|e| anyhow!("Instance {} not found: {}", instance_id, e))?;
 
-        // 2. JOIN query for the specific measurement point
+        // 2. JOIN query for the specific measurement point (with channel and point names)
         let point = sqlx::query_as::<
             _,
             (
@@ -1458,7 +1494,9 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
                 Option<i32>,
                 Option<String>,
                 Option<u32>,
-                Option<bool>, // Routing fields
+                Option<bool>,   // Routing fields
+                Option<String>, // channel_name
+                Option<String>, // channel_point_name
             ),
         >(
             r#"
@@ -1470,10 +1508,21 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
                 mr.channel_id,
                 mr.channel_type,
                 mr.channel_point_id,
-                mr.enabled
+                mr.enabled,
+                c.name AS channel_name,
+                COALESCE(tp.signal_name, sp.signal_name) AS channel_point_name
             FROM measurement_points mp
             LEFT JOIN measurement_routing mr
                 ON mr.instance_id = ? AND mr.measurement_id = mp.measurement_id
+            LEFT JOIN channels c ON c.channel_id = mr.channel_id
+            LEFT JOIN telemetry_points tp
+                ON tp.channel_id = mr.channel_id
+                AND tp.point_id = mr.channel_point_id
+                AND mr.channel_type = 'T'
+            LEFT JOIN signal_points sp
+                ON sp.channel_id = mr.channel_id
+                AND sp.point_id = mr.channel_point_id
+                AND mr.channel_type = 'S'
             WHERE mp.product_name = ? AND mp.measurement_id = ?
             "#,
         )
@@ -1491,7 +1540,7 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
             )
         })?;
 
-        let (idx, name, unit, desc, cid, ctype, cpid, enabled) = point;
+        let (idx, name, unit, desc, cid, ctype, cpid, enabled, cname, cpname) = point;
 
         Ok(InstanceMeasurementPoint {
             measurement_id: idx,
@@ -1504,6 +1553,8 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
                     channel_type: t,
                     channel_point_id: p,
                     enabled: e,
+                    channel_name: cname,
+                    channel_point_name: cpname,
                 }),
                 _ => None,
             },
@@ -1527,7 +1578,7 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
         .await
         .map_err(|e| anyhow!("Instance {} not found: {}", instance_id, e))?;
 
-        // 2. JOIN query for the specific action point
+        // 2. JOIN query for the specific action point (with channel and point names)
         let point = sqlx::query_as::<
             _,
             (
@@ -1538,7 +1589,9 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
                 Option<i32>,
                 Option<String>,
                 Option<u32>,
-                Option<bool>, // Routing fields
+                Option<bool>,   // Routing fields
+                Option<String>, // channel_name
+                Option<String>, // channel_point_name
             ),
         >(
             r#"
@@ -1550,10 +1603,21 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
                 ar.channel_id,
                 ar.channel_type,
                 ar.channel_point_id,
-                ar.enabled
+                ar.enabled,
+                c.name AS channel_name,
+                COALESCE(cp.signal_name, ajp.signal_name) AS channel_point_name
             FROM action_points ap
             LEFT JOIN action_routing ar
                 ON ar.instance_id = ? AND ar.action_id = ap.action_id
+            LEFT JOIN channels c ON c.channel_id = ar.channel_id
+            LEFT JOIN control_points cp
+                ON cp.channel_id = ar.channel_id
+                AND cp.point_id = ar.channel_point_id
+                AND ar.channel_type = 'C'
+            LEFT JOIN adjustment_points ajp
+                ON ajp.channel_id = ar.channel_id
+                AND ajp.point_id = ar.channel_point_id
+                AND ar.channel_type = 'A'
             WHERE ap.product_name = ? AND ap.action_id = ?
             "#,
         )
@@ -1571,7 +1635,7 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
             )
         })?;
 
-        let (idx, name, unit, desc, cid, ctype, cpid, enabled) = point;
+        let (idx, name, unit, desc, cid, ctype, cpid, enabled, cname, cpname) = point;
 
         Ok(InstanceActionPoint {
             action_id: idx,
@@ -1584,6 +1648,8 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
                     channel_type: t,
                     channel_point_id: p,
                     enabled: e,
+                    channel_name: cname,
+                    channel_point_name: cpname,
                 }),
                 _ => None,
             },

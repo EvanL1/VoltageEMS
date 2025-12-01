@@ -12,7 +12,7 @@ use tracing::{debug, info};
 use voltage_config::{
     comsrv::{ChannelConfig, ComsrvConfig},
     modsrv::ModsrvConfig,
-    rulesrv::{RuleConfig, RulesrvConfig},
+    rules::{RuleConfig, RulesConfig},
 };
 
 /// Result type for export operations
@@ -51,7 +51,7 @@ impl ConfigExporter {
         let result = match service {
             "comsrv" => self.export_comsrv(output_dir).await?,
             "modsrv" => self.export_modsrv(output_dir).await?,
-            "rulesrv" => self.export_rulesrv(output_dir).await?,
+            "rules" => self.export_rules(output_dir).await?,
             _ => {
                 return Err(anyhow::anyhow!("Unknown service: {}", service));
             },
@@ -187,25 +187,25 @@ impl ConfigExporter {
         Ok(result)
     }
 
-    async fn export_rulesrv(&self, output_dir: &Path) -> Result<ExportResult> {
+    async fn export_rules(&self, output_dir: &Path) -> Result<ExportResult> {
         let mut result = ExportResult::default();
 
         // Export service configuration
-        let service_config = self.export_rulesrv_config().await?;
-        let yaml_path = output_dir.join("rulesrv.yaml");
+        let service_config = self.export_rules_config().await?;
+        let yaml_path = output_dir.join("rules.yaml");
         let yaml_content = serde_yaml::to_string(&service_config)?;
         std::fs::write(&yaml_path, yaml_content)?;
-        result.files_exported.push("rulesrv.yaml".to_string());
+        result.files_exported.push("rules.yaml".to_string());
 
-        // Export rules
-        let rules = self.export_rules().await?;
-        if !rules.is_empty() {
-            let rules_yaml = output_dir.join("rules.yaml");
+        // Export rules list
+        let rules_list = self.export_rules_list().await?;
+        if !rules_list.is_empty() {
+            let rules_yaml = output_dir.join("rules_list.yaml");
             let rules_map: BTreeMap<String, Vec<RuleConfig>> =
-                BTreeMap::from_iter([("rules".to_string(), rules.clone())]);
+                BTreeMap::from_iter([("rules".to_string(), rules_list.clone())]);
             std::fs::write(&rules_yaml, serde_yaml::to_string(&rules_map)?)?;
-            result.files_exported.push("rules.yaml".to_string());
-            result.records_exported += rules.len();
+            result.files_exported.push("rules_list.yaml".to_string());
+            result.records_exported += rules_list.len();
         }
 
         Ok(result)
@@ -675,9 +675,9 @@ impl ConfigExporter {
         Ok(mappings)
     }
 
-    // Helper methods for rulesrv export
-    async fn export_rulesrv_config(&self) -> Result<RulesrvConfig> {
-        let mut config = RulesrvConfig::default();
+    // Helper methods for rules export
+    async fn export_rules_config(&self) -> Result<RulesConfig> {
+        let mut config = RulesConfig::default();
 
         let rows = sqlx::query("SELECT key, value FROM service_config")
             .fetch_all(&self.pool)
@@ -703,8 +703,8 @@ impl ConfigExporter {
         Ok(config)
     }
 
-    async fn export_rules(&self) -> Result<Vec<RuleConfig>> {
-        let mut rules = Vec::new();
+    async fn export_rules_list(&self) -> Result<Vec<RuleConfig>> {
+        let mut rules_list = Vec::new();
 
         let rows =
             sqlx::query("SELECT id, name, description, flow_json, enabled, priority FROM rules")
@@ -723,7 +723,7 @@ impl ConfigExporter {
             let flow_json = serde_json::from_str(&flow_json_str).unwrap_or(serde_json::Value::Null);
 
             let rule = RuleConfig {
-                core: voltage_config::rulesrv::RuleCore {
+                core: voltage_config::rules::RuleCore {
                     id,
                     name,
                     description,
@@ -733,10 +733,10 @@ impl ConfigExporter {
                 flow_json,
             };
 
-            rules.push(rule);
+            rules_list.push(rule);
         }
 
-        Ok(rules)
+        Ok(rules_list)
     }
 
     // CSV writing helpers

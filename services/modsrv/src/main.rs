@@ -13,6 +13,8 @@ use utoipa::OpenApi;
 use utoipa_swagger_ui::SwaggerUi;
 
 // modsrv imports
+#[cfg(feature = "swagger-ui")]
+use modsrv::rule_routes::RuleApiDoc;
 use modsrv::{
     bootstrap, routes,
     rule_routes::{create_rule_routes, RuleEngineState},
@@ -37,9 +39,10 @@ async fn main() -> Result<()> {
     #[cfg(feature = "swagger-ui")]
     let app = {
         info!("Swagger UI feature ENABLED - initializing at /docs");
-        let openapi = routes::ModsrvApiDoc::openapi();
+        // Merge ModsrvApiDoc with RuleApiDoc for complete OpenAPI documentation
+        let openapi = routes::ModsrvApiDoc::openapi().nest("", RuleApiDoc::openapi());
         let merged = app.merge(SwaggerUi::new("/docs").url("/openapi.json", openapi));
-        info!("Swagger UI configured successfully");
+        info!("Swagger UI configured successfully (including Rule Engine API)");
         merged
     };
 

@@ -8,10 +8,14 @@ use axum::{
     extract::{Path, Query, State},
     response::Json,
 };
-use serde::Deserialize;
+use bytes::Bytes;
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::sync::Arc;
+use tracing::info;
+use utoipa::ToSchema;
 use voltage_config::api::SuccessResponse;
+use voltage_rtdb::Rtdb;
 
 use crate::app_state::AppState;
 use crate::dto::{DataTypeQuery, InstancePointsResponse};
@@ -346,4 +350,80 @@ pub async fn get_instance_points(
             }
         },
     }
+}
+
+// ============================================================================
+// Test Helper: Set Measurement Value
+// ============================================================================
+
+/// Request DTO for setting measurement value (testing purpose)
+#[derive(Debug, Clone, Deserialize, Serialize, ToSchema)]
+pub struct SetMeasurementRequest {
+    /// Point ID (numeric or semantic name)
+    #[serde(alias = "id", alias = "measurement_id")]
+    #[schema(example = "101")]
+    pub point_id: String,
+
+    /// Value to set
+    #[schema(example = 650.5)]
+    pub value: f64,
+}
+
+/// Set instance measurement value (for testing)
+///
+/// Directly writes a measurement value to Redis, bypassing the normal
+/// data flow (channel → routing → instance). Useful for testing rules
+/// and calculations without actual device data.
+///
+/// @route POST /api/instances/{id}/measurement
+/// @input Path(id): u16 - Instance ID
+/// @input Json(req): SetMeasurementRequest - Point ID and value
+/// @output Result<Json<SuccessResponse<serde_json::Value>>, ModSrvError>
+/// @status 200 - Measurement set successfully
+/// @status 500 - Redis error
+#[utoipa::path(
+    post,
+    path = "/api/instances/{id}/measurement",
+    params(("id" = u16, Path, description = "Instance ID")),
+    request_body(content = SetMeasurementRequest, description = "Measurement point and value to set"),
+    responses(
+        (status = 200, description = "Measurement set successfully", body = serde_json::Value,
+            example = json!({
+                "instance_id": 1,
+                "point_id": "101",
+                "value": 650.5,
+                "status": "set"
+            })
+        ),
+        (status = 500, description = "Redis error")
+    ),
+    tag = "modsrv"
+)]
+pub async fn set_instance_measurement(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<u16>,
+    Json(req): Json<SetMeasurementRequest>,
+) -> Result<Json<SuccessResponse<serde_json::Value>>, ModSrvError> {
+    // Get RTDB reference from instance manager
+    let rtdb = &state.instance_manager.rtdb;
+
+    // Build M value Hash key: inst:{id}:M
+    let key = voltage_config::modsrv::RedisKeys::measurement_hash(id);
+
+    // Write to Redis Hash
+    rtdb.hash_set(&key, &req.point_id, Bytes::from(req.value.to_string()))
+        .await
+        .map_err(|e| ModSrvError::RedisError(e.to_string()))?;
+
+    info!(
+        "Set measurement inst:{}:M[{}] = {}",
+        id, req.point_id, req.value
+    );
+
+    Ok(Json(SuccessResponse::new(json!({
+        "instance_id": id,
+        "point_id": req.point_id,
+        "value": req.value,
+        "status": "set"
+    }))))
 }

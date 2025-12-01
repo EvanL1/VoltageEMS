@@ -581,7 +581,7 @@ pub enum ErrorCategory {
     // Calculation layer (modsrv-specific)
     Calculation,
 
-    // Rule engine layer (rulesrv-specific)
+    // Rule engine layer (rules-specific)
     RuleEngine,
 
     // System level

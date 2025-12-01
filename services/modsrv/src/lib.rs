@@ -13,10 +13,8 @@ pub mod api {
     //! - health
     //! - single point APIs
     pub mod calculation_management_handlers;
-    pub mod computation_handlers;
     pub mod global_routing_handlers;
     pub mod health_handlers;
-    pub mod instance_action_handlers;
     pub mod instance_management_handlers;
     pub mod instance_query_handlers;
     pub mod product_handlers;

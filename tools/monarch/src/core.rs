@@ -125,7 +125,7 @@ impl MonarchCore {
 /// Normalise an input path into a database directory and concrete database file path.
 ///
 /// NEW BEHAVIOR (Unified Database Architecture):
-/// - All services (comsrv, modsrv, rulesrv, global) use the unified `voltage.db`
+/// - All services (comsrv, modsrv, rules, global) use the unified `voltage.db`
 /// - Only when an explicit database file is provided (not a directory), use that file
 /// - This supports both the new unified architecture and legacy single-service mode
 fn normalise_db_path(input: &Path, _service: &str) -> (PathBuf, PathBuf, bool) {

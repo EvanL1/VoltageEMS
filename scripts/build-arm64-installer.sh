@@ -267,7 +267,7 @@ elif [[ -d "$ROOT_DIR/config" ]]; then
     echo -e "${GREEN}✓ Created config.template from config/${NC}"
 else
     echo -e "${YELLOW}Warning: No configuration templates found, creating minimal structure...${NC}"
-    mkdir -p "$BUILD_DIR/config.template"/{comsrv,modsrv,rulesrv,alarmsrv,hissrv}
+    mkdir -p "$BUILD_DIR/config.template"/{comsrv,modsrv}
 fi
 
 # Copy docker-compose.yml

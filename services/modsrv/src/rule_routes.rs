@@ -15,7 +15,8 @@ use axum::{
 use serde_json::json;
 use sqlx::SqlitePool;
 use std::sync::Arc;
-use tracing::{debug, error, info, warn};
+use tracing::{error, info, warn};
+#[cfg(feature = "swagger-ui")]
 use utoipa::OpenApi;
 use voltage_config::api::{PaginatedResponse, SuccessResponse};
 use voltage_rtdb::traits::Rtdb;
@@ -63,9 +64,17 @@ pub fn create_rule_routes<R: Rtdb + ?Sized + Send + Sync + 'static>(
 // OpenAPI Documentation
 // ============================================================================
 
+#[cfg(feature = "swagger-ui")]
 #[derive(OpenApi)]
 #[openapi(
     paths(list_rules, create_rule, get_rule, update_rule, delete_rule, enable_rule, disable_rule, execute_rule_now, scheduler_status, scheduler_reload),
+    components(
+        schemas(
+            CreateRuleRequest,
+            UpdateRuleRequest,
+            RuleListQuery
+        )
+    ),
     tags(
         (name = "rules", description = "Rule management and execution")
     )
@@ -77,7 +86,8 @@ pub struct RuleApiDoc;
 // ============================================================================
 
 /// Rule list query parameters (pagination)
-#[derive(Debug, serde::Deserialize, utoipa::ToSchema)]
+#[derive(Debug, serde::Deserialize)]
+#[cfg_attr(feature = "swagger-ui", derive(utoipa::ToSchema))]
 pub struct RuleListQuery {
     /// Page number (starting from 1)
     #[serde(default = "default_page")]
@@ -95,8 +105,53 @@ fn default_page_size() -> usize {
     20
 }
 
+/// Request DTO for creating a new rule (empty shell, ID auto-generated)
+#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
+#[cfg_attr(feature = "swagger-ui", derive(utoipa::ToSchema))]
+pub struct CreateRuleRequest {
+    /// Rule name (required)
+    #[cfg_attr(feature = "swagger-ui", schema(example = "Battery SOC Protection"))]
+    pub name: String,
+
+    /// Rule description (optional)
+    #[cfg_attr(
+        feature = "swagger-ui",
+        schema(example = "Protect battery when SOC is too low")
+    )]
+    pub description: Option<String>,
+}
+
+/// Request DTO for updating an existing rule (all fields optional, partial update)
+#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
+#[cfg_attr(feature = "swagger-ui", derive(utoipa::ToSchema))]
+pub struct UpdateRuleRequest {
+    /// Rule name (optional)
+    #[cfg_attr(feature = "swagger-ui", schema(example = "Battery SOC Protection v2"))]
+    pub name: Option<String>,
+
+    /// Rule description (optional)
+    #[cfg_attr(feature = "swagger-ui", schema(example = "Updated protection logic"))]
+    pub description: Option<String>,
+
+    /// Whether the rule is enabled (optional)
+    #[cfg_attr(feature = "swagger-ui", schema(example = true))]
+    pub enabled: Option<bool>,
+
+    /// Execution priority (optional)
+    #[cfg_attr(feature = "swagger-ui", schema(example = 20))]
+    pub priority: Option<u32>,
+
+    /// Cooldown period in milliseconds (optional)
+    #[cfg_attr(feature = "swagger-ui", schema(example = 10000))]
+    pub cooldown_ms: Option<u64>,
+
+    /// Vue Flow complete data (nodes, edges, viewport)
+    #[cfg_attr(feature = "swagger-ui", schema(value_type = Option<Object>))]
+    pub flow_json: Option<serde_json::Value>,
+}
+
 /// List all rules
-#[utoipa::path(
+#[cfg_attr(feature = "swagger-ui", utoipa::path(
     get,
     path = "/api/rules",
     params(
@@ -122,7 +177,7 @@ fn default_page_size() -> usize {
         )
     ),
     tag = "rules"
-)]
+))]
 pub async fn list_rules<R: Rtdb + ?Sized + Send + Sync + 'static>(
     State(state): State<Arc<RuleEngineState<R>>>,
     Query(query): Query<RuleListQuery>,
@@ -137,10 +192,10 @@ pub async fn list_rules<R: Rtdb + ?Sized + Send + Sync + 'static>(
                 .into_iter()
                 .map(|rule| {
                     json!({
-                        "id": rule.get("id").cloned().unwrap_or_else(|| json!(null)),
-                        "name": rule.get("name").cloned().unwrap_or_else(|| json!(null)),
+                        "id": rule.get("id").cloned().unwrap_or(serde_json::Value::Null),
+                        "name": rule.get("name").cloned().unwrap_or(serde_json::Value::Null),
                         "enabled": rule.get("enabled").and_then(|v| v.as_bool()).unwrap_or(false),
-                        "description": rule.get("description").cloned().unwrap_or_else(|| json!(null)),
+                        "description": rule.get("description").cloned().unwrap_or(serde_json::Value::Null),
                     })
                 })
                 .collect();
@@ -157,83 +212,48 @@ pub async fn list_rules<R: Rtdb + ?Sized + Send + Sync + 'static>(
     }
 }
 
-/// Create a new rule
+/// Create a new rule (metadata only)
 ///
-/// 创建或更新规则。规则使用 Vue Flow 格式描述执行拓扑。
-///
-/// ## 字段说明
-///
-/// - `format`: 格式标注，目前支持 "vue-flow"（默认）
-/// - `flow_json`: 完整的 Vue Flow JSON（包含 nodes、edges、positions 等 UI 信息），供前端回显编辑
-///
-/// 后端会自动从 `flow_json` 提取执行拓扑并存储。
-///
-/// 参见 `docs/examples/soc-strategy-rule.json` 获取完整示例。
-#[utoipa::path(
+/// 创建规则元数据。ID 由后端自动生成（顺序递增：1, 2, 3...）。
+/// 规则的执行拓扑（flow_json）后续通过 PUT 接口更新。
+#[cfg_attr(feature = "swagger-ui", utoipa::path(
     post,
     path = "/api/rules",
     request_body(
-        content = serde_json::Value,
-        description = "Vue Flow 规则 JSON。format 字段标注格式类型，flow_json 包含完整 Vue Flow 结构。",
-        example = json!({
-            "id": "soc-strategy-001",
-            "name": "SOC 电池管理策略",
-            "description": "根据电池 SOC 值自动调节光伏和柴油发电机功率",
-            "format": "vue-flow",
-            "enabled": true,
-            "priority": 100,
-            "cooldown_ms": 5000,
-            "flow_json": {
-                "nodes": [
-                    { "id": "start", "type": "start", "position": { "x": 100, "y": 100 }, "data": { "config": { "wires": { "default": ["switch-soc"] } } } },
-                    { "id": "switch-soc", "type": "custom", "position": { "x": 300, "y": 100 }, "data": {
-                        "type": "function-switch",
-                        "label": "SOC 判断",
-                        "config": {
-                            "variables": [{ "name": "X1", "type": "single", "instance": "battery_01", "pointType": "measurement", "point": 3 }],
-                            "rule": [
-                                { "name": "out001", "type": "default", "rule": [{ "type": "variable", "variables": "X1", "operator": ">=", "value": 99 }] },
-                                { "name": "out002", "type": "default", "rule": [{ "type": "variable", "variables": "X1", "operator": ">=", "value": 49 }] },
-                                { "name": "out003", "type": "default", "rule": [{ "type": "variable", "variables": "X1", "operator": "<=", "value": 5 }] }
-                            ],
-                            "wires": { "out001": ["action-high"], "out002": ["action-mid"], "out003": ["action-low"] }
-                        }
-                    }},
-                    { "id": "action-high", "type": "custom", "position": { "x": 600, "y": 50 }, "data": {
-                        "type": "action-changeValue",
-                        "label": "高电量动作",
-                        "config": {
-                            "variables": [{ "name": "Y1", "type": "single", "instance": "pv_01", "pointType": "action", "point": 5 }],
-                            "rule": [{ "Variables": "Y1", "value": 78 }],
-                            "wires": { "default": ["end"] }
-                        }
-                    }},
-                    { "id": "end", "type": "end", "position": { "x": 900, "y": 100 } }
-                ],
-                "edges": [
-                    { "id": "e1", "source": "start", "target": "switch-soc" },
-                    { "id": "e2", "source": "switch-soc", "sourceHandle": "out001", "target": "action-high" },
-                    { "id": "e3", "source": "action-high", "target": "end" }
-                ]
-            }
-        })
+        content = CreateRuleRequest,
+        description = "规则元数据（ID 自动生成）"
     ),
     responses(
         (status = 200, description = "规则创建成功", body = serde_json::Value,
-         example = json!({ "success": true, "data": { "id": "soc-strategy-001", "status": "OK" } }))
+         example = json!({ "success": true, "data": { "id": "1", "name": "Battery Protection", "status": "created" } }))
     ),
     tag = "rules"
-)]
+))]
 pub async fn create_rule<R: Rtdb + ?Sized + Send + Sync + 'static>(
     State(state): State<Arc<RuleEngineState<R>>>,
-    Json(rule): Json<serde_json::Value>,
+    Json(req): Json<CreateRuleRequest>,
 ) -> Result<Json<SuccessResponse<serde_json::Value>>, ModSrvError> {
-    let rule_id = rule["id"]
-        .as_str()
-        .map(|s| s.to_string())
-        .unwrap_or_else(|| format!("rule_{}", uuid::Uuid::new_v4()));
+    // Get next sequential ID
+    let next_id: i64 =
+        sqlx::query_scalar("SELECT COALESCE(MAX(CAST(id AS INTEGER)), 0) + 1 FROM rules")
+            .fetch_one(&state.pool)
+            .await
+            .unwrap_or(1);
+    let rule_id = next_id.to_string();
 
-    if let Err(e) = rule_repository::upsert_rule(&state.pool, &rule_id, &rule).await {
+    // Insert empty rule record (metadata only, no flow)
+    if let Err(e) = sqlx::query(
+        r#"
+        INSERT INTO rules (id, name, description, nodes_json, flow_json, format, enabled, priority, cooldown_ms)
+        VALUES (?, ?, ?, '{}', NULL, 'vue-flow', FALSE, 0, 0)
+        "#,
+    )
+    .bind(&rule_id)
+    .bind(&req.name)
+    .bind(&req.description)
+    .execute(&state.pool)
+    .await
+    {
         error!("Failed to create rule {}: {}", rule_id, e);
         return Err(ModSrvError::InternalError(
             "Failed to create rule".to_string(),
@@ -245,14 +265,16 @@ pub async fn create_rule<R: Rtdb + ?Sized + Send + Sync + 'static>(
         warn!("Failed to reload scheduler after rule create: {}", e);
     }
 
-    debug!("Created rule: {}", rule_id);
-    Ok(Json(SuccessResponse::new(
-        json!({ "id": rule_id, "status": "OK" }),
-    )))
+    info!("Created rule: {} ({})", req.name, rule_id);
+    Ok(Json(SuccessResponse::new(json!({
+        "id": rule_id,
+        "name": req.name,
+        "status": "created"
+    }))))
 }
 
 /// Get rule by ID
-#[utoipa::path(
+#[cfg_attr(feature = "swagger-ui", utoipa::path(
     get,
     path = "/api/rules/{id}",
     params(("id" = String, Path, description = "Rule identifier")),
@@ -260,7 +282,7 @@ pub async fn create_rule<R: Rtdb + ?Sized + Send + Sync + 'static>(
         (status = 200, description = "Rule details", body = serde_json::Value)
     ),
     tag = "rules"
-)]
+))]
 pub async fn get_rule<R: Rtdb + ?Sized + Send + Sync + 'static>(
     State(state): State<Arc<RuleEngineState<R>>>,
     Path(id): Path<String>,
@@ -274,32 +296,102 @@ pub async fn get_rule<R: Rtdb + ?Sized + Send + Sync + 'static>(
     }
 }
 
-/// Update rule
+/// Update rule metadata
 ///
-/// 更新已存在的规则。请求体格式与创建规则相同。
-#[utoipa::path(
+/// 更新规则元数据。只有提供的字段会被更新（部分更新）。
+#[cfg_attr(feature = "swagger-ui", utoipa::path(
     put,
     path = "/api/rules/{id}",
-    params(("id" = String, Path, description = "规则标识符")),
+    params(("id" = String, Path, description = "规则 ID")),
     request_body(
-        content = serde_json::Value,
-        description = "Vue Flow 规则 JSON，格式同创建规则"
+        content = UpdateRuleRequest,
+        description = "要更新的字段（只有提供的字段会被更新）"
     ),
     responses(
         (status = 200, description = "规则更新成功", body = serde_json::Value,
-         example = json!({ "success": true, "data": { "id": "soc-strategy-001", "status": "OK" } }))
+         example = json!({ "success": true, "data": { "id": "1", "status": "updated" } })),
+        (status = 404, description = "规则不存在")
     ),
     tag = "rules"
-)]
+))]
 pub async fn update_rule<R: Rtdb + ?Sized + Send + Sync + 'static>(
     State(state): State<Arc<RuleEngineState<R>>>,
     Path(id): Path<String>,
-    Json(mut rule): Json<serde_json::Value>,
+    Json(req): Json<UpdateRuleRequest>,
 ) -> Result<Json<SuccessResponse<serde_json::Value>>, ModSrvError> {
-    // Ensure the rule ID in JSON matches the path parameter
-    rule["id"] = serde_json::json!(id.clone());
+    // Check rule exists
+    let exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM rules WHERE id = ?)")
+        .bind(&id)
+        .fetch_one(&state.pool)
+        .await
+        .unwrap_or(false);
 
-    if let Err(e) = rule_repository::upsert_rule(&state.pool, &id, &rule).await {
+    if !exists {
+        return Err(ModSrvError::RuleNotFound(id.clone()));
+    }
+
+    // Build dynamic UPDATE query for provided fields only (partial update)
+    let mut updates = Vec::new();
+
+    if req.name.is_some() {
+        updates.push("name = ?");
+    }
+    if req.description.is_some() {
+        updates.push("description = ?");
+    }
+    if req.enabled.is_some() {
+        updates.push("enabled = ?");
+    }
+    if req.priority.is_some() {
+        updates.push("priority = ?");
+    }
+    if req.cooldown_ms.is_some() {
+        updates.push("cooldown_ms = ?");
+    }
+    if req.flow_json.is_some() {
+        updates.push("flow_json = ?");
+        updates.push("nodes_json = ?"); // Also update compact format for execution
+    }
+
+    if updates.is_empty() {
+        return Err(ModSrvError::InvalidRule("No fields to update".to_string()));
+    }
+
+    let sql = format!("UPDATE rules SET {} WHERE id = ?", updates.join(", "));
+    let mut query = sqlx::query(&sql);
+
+    // Bind values in order
+    if let Some(name) = &req.name {
+        query = query.bind(name);
+    }
+    if let Some(desc) = &req.description {
+        query = query.bind(desc);
+    }
+    if let Some(enabled) = req.enabled {
+        query = query.bind(enabled);
+    }
+    if let Some(priority) = req.priority {
+        query = query.bind(priority as i64);
+    }
+    if let Some(cooldown) = req.cooldown_ms {
+        query = query.bind(cooldown as i64);
+    }
+    if let Some(flow) = &req.flow_json {
+        // Bind flow_json (original Vue Flow data for editor)
+        let flow_str = serde_json::to_string(flow)
+            .map_err(|e| ModSrvError::SerializationError(e.to_string()))?;
+        query = query.bind(flow_str);
+
+        // Extract and bind nodes_json (compact format for execution)
+        let compact_flow = voltage_rules::extract_rule_flow(flow)
+            .map_err(|e| ModSrvError::ParseError(e.to_string()))?;
+        let nodes_str = serde_json::to_string(&compact_flow)
+            .map_err(|e| ModSrvError::SerializationError(e.to_string()))?;
+        query = query.bind(nodes_str);
+    }
+    query = query.bind(&id);
+
+    if let Err(e) = query.execute(&state.pool).await {
         error!("Failed to update rule {} in SQLite: {}", id, e);
         return Err(ModSrvError::InternalError(format!(
             "Failed to update rule in database: {}",
@@ -313,13 +405,14 @@ pub async fn update_rule<R: Rtdb + ?Sized + Send + Sync + 'static>(
     }
 
     info!("Rule {} updated successfully", id);
-    Ok(Json(SuccessResponse::new(
-        json!({ "id": id, "status": "OK" }),
-    )))
+    Ok(Json(SuccessResponse::new(json!({
+        "id": id,
+        "status": "updated"
+    }))))
 }
 
 /// Delete rule
-#[utoipa::path(
+#[cfg_attr(feature = "swagger-ui", utoipa::path(
     delete,
     path = "/api/rules/{id}",
     params(("id" = String, Path, description = "Rule identifier")),
@@ -327,7 +420,7 @@ pub async fn update_rule<R: Rtdb + ?Sized + Send + Sync + 'static>(
         (status = 200, description = "Rule deleted", body = serde_json::Value)
     ),
     tag = "rules"
-)]
+))]
 pub async fn delete_rule<R: Rtdb + ?Sized + Send + Sync + 'static>(
     State(state): State<Arc<RuleEngineState<R>>>,
     Path(id): Path<String>,
@@ -351,7 +444,7 @@ pub async fn delete_rule<R: Rtdb + ?Sized + Send + Sync + 'static>(
 }
 
 /// Enable rule
-#[utoipa::path(
+#[cfg_attr(feature = "swagger-ui", utoipa::path(
     post,
     path = "/api/rules/{id}/enable",
     params(("id" = String, Path, description = "Rule identifier")),
@@ -359,7 +452,7 @@ pub async fn delete_rule<R: Rtdb + ?Sized + Send + Sync + 'static>(
         (status = 200, description = "Rule enabled", body = serde_json::Value)
     ),
     tag = "rules"
-)]
+))]
 pub async fn enable_rule<R: Rtdb + ?Sized + Send + Sync + 'static>(
     State(state): State<Arc<RuleEngineState<R>>>,
     Path(id): Path<String>,
@@ -383,7 +476,7 @@ pub async fn enable_rule<R: Rtdb + ?Sized + Send + Sync + 'static>(
 }
 
 /// Disable rule
-#[utoipa::path(
+#[cfg_attr(feature = "swagger-ui", utoipa::path(
     post,
     path = "/api/rules/{id}/disable",
     params(("id" = String, Path, description = "Rule identifier")),
@@ -391,7 +484,7 @@ pub async fn enable_rule<R: Rtdb + ?Sized + Send + Sync + 'static>(
         (status = 200, description = "Rule disabled", body = serde_json::Value)
     ),
     tag = "rules"
-)]
+))]
 pub async fn disable_rule<R: Rtdb + ?Sized + Send + Sync + 'static>(
     State(state): State<Arc<RuleEngineState<R>>>,
     Path(id): Path<String>,
@@ -417,7 +510,7 @@ pub async fn disable_rule<R: Rtdb + ?Sized + Send + Sync + 'static>(
 /// Execute rule immediately (manual trigger)
 ///
 /// 手动触发规则执行，返回执行结果和已执行的动作列表。
-#[utoipa::path(
+#[cfg_attr(feature = "swagger-ui", utoipa::path(
     post,
     path = "/api/rules/{id}/execute",
     params(("id" = String, Path, description = "规则标识符")),
@@ -439,7 +532,7 @@ pub async fn disable_rule<R: Rtdb + ?Sized + Send + Sync + 'static>(
          }))
     ),
     tag = "rules"
-)]
+))]
 pub async fn execute_rule_now<R: Rtdb + ?Sized + Send + Sync + 'static>(
     Path(id): Path<String>,
     State(state): State<Arc<RuleEngineState<R>>>,
@@ -492,14 +585,14 @@ pub async fn execute_rule_now<R: Rtdb + ?Sized + Send + Sync + 'static>(
 }
 
 /// Get scheduler status
-#[utoipa::path(
+#[cfg_attr(feature = "swagger-ui", utoipa::path(
     get,
     path = "/api/scheduler/status",
     responses(
         (status = 200, description = "Scheduler status", body = serde_json::Value)
     ),
     tag = "rules"
-)]
+))]
 pub async fn scheduler_status<R: Rtdb + ?Sized + Send + Sync + 'static>(
     State(state): State<Arc<RuleEngineState<R>>>,
 ) -> Result<Json<SuccessResponse<serde_json::Value>>, ModSrvError> {
@@ -514,14 +607,14 @@ pub async fn scheduler_status<R: Rtdb + ?Sized + Send + Sync + 'static>(
 }
 
 /// Reload scheduler rules from database
-#[utoipa::path(
+#[cfg_attr(feature = "swagger-ui", utoipa::path(
     post,
     path = "/api/scheduler/reload",
     responses(
         (status = 200, description = "Rules reloaded", body = serde_json::Value)
     ),
     tag = "rules"
-)]
+))]
 pub async fn scheduler_reload<R: Rtdb + ?Sized + Send + Sync + 'static>(
     State(state): State<Arc<RuleEngineState<R>>>,
 ) -> Result<Json<SuccessResponse<serde_json::Value>>, ModSrvError> {

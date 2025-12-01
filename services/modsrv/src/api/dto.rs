@@ -249,6 +249,14 @@ pub struct PointRouting {
     /// Whether routing is enabled
     #[schema(example = true)]
     pub enabled: bool,
+
+    /// Channel name (for display purposes)
+    #[schema(example = "PV Inverter #1")]
+    pub channel_name: Option<String>,
+
+    /// Channel point name (signal_name from the point table)
+    #[schema(example = "DC_Voltage")]
+    pub channel_point_name: Option<String>,
 }
 
 /// Runtime measurement point (Product template + Instance routing)

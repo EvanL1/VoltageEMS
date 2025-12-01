@@ -272,10 +272,9 @@ pub async fn handle_command(
 
                 // Check if voltageems services have changed
                 let voltageems_changed = if target_services.is_empty() {
-                    // Check any voltageems container
+                    // Check any voltageems container (rules merged into modsrv)
                     check_container_image_changed("voltageems-comsrv")?
                         || check_container_image_changed("voltageems-modsrv")?
-                        || check_container_image_changed("voltageems-rulesrv")?
                 } else {
                     // Check only specified services
                     target_services.iter().any(|svc| {
@@ -322,7 +321,6 @@ pub async fn handle_command(
                             "--force-recreate",
                             "comsrv",
                             "modsrv",
-                            "rulesrv",
                         ])?;
                     } else {
                         let mut up_args = vec![

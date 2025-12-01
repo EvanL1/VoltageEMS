@@ -16,7 +16,7 @@ pub enum ConfigCommands {
     /// Validate configuration files
     #[command(about = "Validate configuration files without syncing")]
     Validate {
-        /// Service name: global, comsrv, modsrv, rulesrv, or all
+        /// Service name: global, comsrv, modsrv, rules, or all
         service: String,
         /// Show detailed validation output
         #[arg(short, long)]
@@ -71,13 +71,13 @@ pub async fn handle_command(cmd: ConfigCommands, config_path: &Path) -> Result<(
 async fn handle_validate(service: &str, detailed: bool, config_path: &Path) -> Result<()> {
     // Determine which services to validate
     let services = match service {
-        "all" => vec!["global", "comsrv", "modsrv", "rulesrv"],
-        s if ["comsrv", "modsrv", "rulesrv", "global"].contains(&s) => vec![s],
+        "all" => vec!["global", "comsrv", "modsrv", "rules"],
+        s if ["comsrv", "modsrv", "rules", "global"].contains(&s) => vec![s],
         _ => {
             eprintln!("{} Unknown service: {}", "ERROR".red(), service.red());
             eprintln!(
                 "Valid services: {}",
-                "global, comsrv, modsrv, rulesrv, all".green()
+                "global, comsrv, modsrv, rules, all".green()
             );
             std::process::exit(1);
         },
@@ -179,7 +179,7 @@ async fn check_duplicates(service: &str) -> Result<()> {
             has_duplicates |= check_instance_duplicates(&pool).await?;
             has_duplicates |= check_point_duplicates(&pool, "modsrv").await?;
         },
-        "rulesrv" => {
+        "rules" => {
             has_duplicates |= check_rule_duplicates(&pool).await?;
         },
         "all" => {

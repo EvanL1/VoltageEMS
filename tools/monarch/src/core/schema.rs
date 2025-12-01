@@ -7,7 +7,7 @@ use anyhow::{Context, Result};
 use sqlx::SqlitePool;
 use std::path::Path;
 use tracing::info;
-use voltage_config::{comsrv, modsrv, rulesrv};
+use voltage_config::{comsrv, modsrv, rules};
 
 use super::file_utils;
 
@@ -81,11 +81,9 @@ pub async fn init_database(db_path: impl AsRef<Path>) -> Result<()> {
         .execute(&pool)
         .await?;
 
-    // === Rule tables (rulesrv) ===
-    sqlx::query(rulesrv::RULE_CHAINS_TABLE)
-        .execute(&pool)
-        .await?;
-    sqlx::query(rulesrv::RULE_HISTORY_TABLE)
+    // === Rule tables (rules engine) ===
+    sqlx::query(rules::RULE_CHAINS_TABLE).execute(&pool).await?;
+    sqlx::query(rules::RULE_HISTORY_TABLE)
         .execute(&pool)
         .await?;
 

@@ -17,13 +17,12 @@ use crate::app_state::AppState;
 use crate::api::health_handlers::health_check;
 use crate::api::product_handlers::{create_product, get_product_points, list_products};
 
-use crate::api::instance_action_handlers::execute_instance_action;
 use crate::api::instance_management_handlers::{
-    create_instance, delete_instance, reload_instances_from_db, sync_all_instances,
-    sync_instance_measurement, update_instance,
+    create_instance, delete_instance, execute_instance_action, reload_instances_from_db,
+    sync_all_instances, sync_instance_measurement, update_instance,
 };
 use crate::api::instance_query_handlers::{
-    get_instance, get_instance_data, get_instance_points, list_instances,
+    get_instance, get_instance_data, get_instance_points, list_instances, set_instance_measurement,
 };
 
 // New global routing handlers (work with unified database)
@@ -46,11 +45,9 @@ use crate::api::single_point_handlers::{
 };
 
 use crate::api::calculation_management_handlers::{
+    compute_aggregation, compute_energy, compute_expression, compute_timeseries,
     create_calculation, delete_calculation, execute_batch_calculations, execute_calculation,
     get_calculation, list_calculations, update_calculation,
-};
-use crate::api::computation_handlers::{
-    compute_aggregation, compute_energy, compute_expression, compute_timeseries,
 };
 
 // OpenAPI documentation - only compiled when swagger-ui feature is enabled
@@ -66,7 +63,8 @@ use crate::api::computation_handlers::{
         crate::api::instance_query_handlers::get_instance_data,
         crate::api::instance_query_handlers::get_instance_points,
         crate::api::instance_management_handlers::sync_instance_measurement,
-        crate::api::instance_action_handlers::execute_instance_action,
+        crate::api::instance_management_handlers::execute_instance_action,
+        crate::api::instance_query_handlers::set_instance_measurement,
         // Instance-level routing handlers (refactored for unified database)
         crate::api::routing_query_handlers::get_instance_routing_handler,
         crate::api::routing_management_handlers::create_instance_routing,
@@ -113,6 +111,7 @@ use crate::api::computation_handlers::{
             crate::dto::AggregationRequest,
             crate::dto::EnergyRequest,
             crate::dto::TimeSeriesRequest,
+            crate::api::instance_query_handlers::SetMeasurementRequest,
             voltage_config::modsrv::Product,
             voltage_config::modsrv::MeasurementPoint,
             voltage_config::modsrv::ActionPoint,
@@ -146,6 +145,7 @@ pub fn create_routes(state: Arc<AppState>) -> Router {
             post(sync_instance_measurement),
         )
         .route("/api/instances/{id}/action", post(execute_instance_action))
+        .route("/api/instances/{id}/measurement", post(set_instance_measurement))
         .route("/api/instances/sync/all", post(sync_all_instances))
         .route("/api/instances/reload", post(reload_instances_from_db))
 

@@ -82,7 +82,7 @@ pub async fn load_configuration(service_info: &ServiceInfo) -> Result<ModsrvConf
         .await
         .map_err(|e| ModSrvError::ConfigError(format!("Failed to load configuration: {}", e)))?;
 
-    // Convert ServiceConfig to ModsrvConfig (following RuleSrv pattern)
+    // Convert ServiceConfig to ModsrvConfig (following Rules pattern)
     let mut config = ModsrvConfig {
         service: BaseServiceConfig {
             name: service_config.service_name,

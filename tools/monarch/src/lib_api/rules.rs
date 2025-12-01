@@ -1,12 +1,12 @@
 //! Rules API - Library Mode
 //!
 //! Direct library calls for rule management and execution
-//! Note: rulesrv has been merged into modsrv (port 6002)
+//! Note: rules have been merged into modsrv (port 6002)
 
 use crate::context::ModsrvContext;
 use crate::lib_api::{LibApiError, Result};
 use serde::{Deserialize, Serialize};
-use voltage_config::rulesrv::{Rule, RuleFlow};
+use voltage_config::rules::{Rule, RuleFlow};
 
 /// Rule summary for list operations
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -22,14 +22,14 @@ pub struct RuleSummary {
 type RuleDbRow = (String, String, Option<String>, i64, i64, i64, String);
 
 /// Rules service - provides rule management and execution operations
-/// Uses ModsrvContext since rulesrv has been merged into modsrv
+/// Uses ModsrvContext since rules have been merged into modsrv
 pub struct RulesService<'a> {
     ctx: &'a ModsrvContext,
 }
 
 impl<'a> RulesService<'a> {
     /// Create a new rules service from modsrv context
-    /// (rulesrv has been merged into modsrv)
+    /// (rules have been merged into modsrv)
     pub fn new(ctx: &'a ModsrvContext) -> Self {
         Self { ctx }
     }

@@ -1,6 +1,6 @@
 //! Voltage M2C Routing Library
 //!
-//! Provides unified M2C (Model to Channel) routing functionality for modsrv and rulesrv.
+//! Provides unified M2C (Model to Channel) routing functionality for modsrv and rules engine.
 //! This library implements the Write-Triggers-Routing pattern, ensuring all action writes
 //! automatically trigger downstream channel updates and TODO queues.
 

@@ -176,7 +176,7 @@ npm run build
   - `VOLTAGE_DB_PATH` (default `data/voltage.db`) - Unified database for all services
 
 - **Deprecated environment variables** (no longer used):
-  - `COMSRV_DB_PATH`, `MODSRV_DB_PATH`, `RULESRV_DB_PATH` - Replaced by `VOLTAGE_DB_PATH`
+  - `COMSRV_DB_PATH`, `MODSRV_DB_PATH`, `RULES_DB_PATH` - Replaced by `VOLTAGE_DB_PATH`
   
 - **Note**: Environment variables only override when configuration uses default values. For example:
   - If SQLite has `port=6001` (default), ENV can override

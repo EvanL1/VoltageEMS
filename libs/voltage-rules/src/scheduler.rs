@@ -15,7 +15,7 @@ use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
 use tokio::time::interval;
 use tracing::{debug, error, info, warn};
-use voltage_config::rulesrv::Rule;
+use voltage_config::rules::Rule;
 use voltage_config::RoutingCache;
 use voltage_rtdb::traits::Rtdb;
 

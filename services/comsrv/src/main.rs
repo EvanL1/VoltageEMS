@@ -7,6 +7,8 @@ use std::sync::Arc;
 
 use axum::serve;
 use clap::Parser;
+#[cfg(feature = "swagger-ui")]
+use comsrv::api::routes::ComsrvApiDoc;
 use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info};
@@ -21,7 +23,7 @@ use voltage_config::error::VoltageResult;
 
 // comsrv imports
 use comsrv::{
-    api::routes::{create_api_routes, set_service_start_time, ComsrvApiDoc},
+    api::routes::{create_api_routes, set_service_start_time},
     cleanup_provider::ComsrvCleanupProvider,
     core::{
         bootstrap::{self, load_routing_maps_from_sqlite, Args},

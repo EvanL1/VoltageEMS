@@ -8,7 +8,7 @@
 
 use serde_json::Value;
 use std::collections::HashMap;
-use voltage_config::rulesrv::{
+use voltage_config::rules::{
     FlowCondition, RuleFlow, RuleNode, RuleSwitchBranch, RuleValueAssignment, RuleVariable,
     RuleWires,
 };

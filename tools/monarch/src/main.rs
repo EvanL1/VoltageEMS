@@ -49,7 +49,7 @@ pub mod lib_api {
         #[cfg(feature = "lib-mode")]
         #[error("Modsrv error: {0}")]
         Modsrv(#[from] modsrv::ModSrvError),
-        // rulesrv errors are now handled by modsrv::ModSrvError
+        // rules errors are now handled by modsrv::ModSrvError
         #[error("Database error: {0}")]
         Database(#[from] sqlx::Error),
 
@@ -340,7 +340,7 @@ async fn main() -> Result<()> {
             let mut ctx = ServiceContext::new(service_config.clone());
 
             // Initialize only modsrv (on-demand initialization)
-            // SetAction command only needs modsrv, not comsrv or rulesrv
+            // SetAction command only needs modsrv, not comsrv
             match ctx.init_modsrv().await {
                 Ok(_) => {
                     if cli.verbose {
@@ -408,9 +408,9 @@ async fn main() -> Result<()> {
             models::handle_command(command, service_ctx.as_ref(), Some(&base_url)).await?;
         },
         Commands::Rules { command } => {
-            // rulesrv merged into modsrv (port 6002)
-            let base_url = std::env::var("RULESRV_URL")
-                .unwrap_or_else(|_| "http://localhost:6002".to_string());
+            // rules merged into modsrv (port 6002)
+            let base_url =
+                std::env::var("RULES_URL").unwrap_or_else(|_| "http://localhost:6002".to_string());
             rules::handle_command(command, service_ctx.as_ref(), Some(&base_url)).await?;
         },
         Commands::Rtdb { command } => {

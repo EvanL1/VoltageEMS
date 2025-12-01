@@ -815,7 +815,7 @@ pub fn write_to_rule_log(rule_id: &str, message: &str) -> Result<(), Box<dyn std
     use std::io::Write;
 
     // Use configurable log root directory
-    let log_dir = get_log_root().join("rulesrv/rules").join(rule_id);
+    let log_dir = get_log_root().join("rules").join(rule_id);
     fs::create_dir_all(&log_dir)?;
 
     let timestamp = Local::now().format("%Y%m%d");
@@ -1037,8 +1037,7 @@ async fn compress_old_logs(
     if service_name == "modsrv" {
         compress_subdirectory_logs(log_dir, "models", 7, 365).await?;
         compress_instances_logs(log_dir, 7, 365).await?;
-    }
-    if service_name == "rulesrv" {
+        // Rules are now part of modsrv
         compress_rules_logs(log_dir, 7, 365).await?;
     }
 
@@ -1248,7 +1247,7 @@ async fn compress_instances_logs(
     Ok(())
 }
 
-/// Compress log files in rules subdirectories (nested structure for rulesrv)
+/// Compress log files in rules subdirectories (nested structure for rules engine)
 async fn compress_rules_logs(
     log_dir: &Path,
     compress_after_days: u64,

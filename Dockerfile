@@ -14,6 +14,9 @@ FROM --platform=$TARGETPLATFORM rust:1.90-alpine AS builder
 # Accept build parallelism argument (defaults to 4 cores)
 ARG BUILD_JOBS=4
 
+# Swagger UI flag (disabled by default for production)
+ARG ENABLE_SWAGGER_UI=0
+
 # Install build dependencies
 RUN apk add --no-cache \
     musl-dev \
@@ -30,8 +33,21 @@ ENV CARGO_BUILD_JOBS=${BUILD_JOBS}
 COPY . .
 
 # Build release binaries (only services, no apps or tools)
-# Note: rulesrv has been merged into modsrv
-RUN cargo build --release -p comsrv -p modsrv
+# Note: rules service has been merged into modsrv
+# Features:
+#   - comsrv: modbus, can
+#   - modsrv: redis, sqlite, [swagger-ui optional]
+RUN if [ "$ENABLE_SWAGGER_UI" = "1" ]; then \
+        echo "Building with Swagger UI enabled"; \
+        cargo build --release -p comsrv -p modsrv \
+            --no-default-features \
+            --features "modbus,can,redis,sqlite,swagger-ui"; \
+    else \
+        echo "Building without Swagger UI (production)"; \
+        cargo build --release -p comsrv -p modsrv \
+            --no-default-features \
+            --features "modbus,can,redis,sqlite"; \
+    fi
 
 # ============================================================================
 # Stage 2: Runtime Image

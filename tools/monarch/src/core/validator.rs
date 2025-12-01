@@ -7,7 +7,7 @@ use anyhow::Result;
 use std::path::{Path, PathBuf};
 use tracing::{debug, info, warn};
 use voltage_config::{
-    ComsrvValidator, ConfigValidator as VoltageConfigValidator, ModsrvValidator, RulesrvValidator,
+    ComsrvValidator, ConfigValidator as VoltageConfigValidator, ModsrvValidator, RulesValidator,
     ValidationLevel, ValidationResult,
 };
 
@@ -61,7 +61,7 @@ impl ConfigValidator {
         let result = match service {
             "comsrv" => self.validate_comsrv().await?,
             "modsrv" => self.validate_modsrv().await?,
-            "rulesrv" => self.validate_rulesrv().await?,
+            "rules" => self.validate_rules().await?,
             _ => return Ok(validation_error(format!("Unknown service: {}", service))),
         };
 
@@ -113,9 +113,9 @@ impl ConfigValidator {
         validator.validate(self.validation_level)
     }
 
-    /// Validate rulesrv configuration
-    async fn validate_rulesrv(&self) -> Result<ValidationResult> {
-        let yaml_path = self.config_path.join("rulesrv").join("rulesrv.yaml");
+    /// Validate rules configuration
+    async fn validate_rules(&self) -> Result<ValidationResult> {
+        let yaml_path = self.config_path.join("rules").join("rules.yaml");
 
         // Check if file exists
         if !yaml_path.exists() {
@@ -127,7 +127,7 @@ impl ConfigValidator {
 
         // Load and validate using shared framework
         // Note: Errors from from_file already include file path + line number + reason
-        let validator = RulesrvValidator::from_file(&yaml_path)?;
+        let validator = RulesValidator::from_file(&yaml_path)?;
         validator.validate(self.validation_level)
     }
 

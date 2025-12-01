@@ -124,25 +124,9 @@ fi
 echo ""
 echo -e "${BLUE}[2/3] Building VoltageEMS services...${NC}"
 
-# First, check if we need to build the services
+# Use the main Dockerfile
 if [[ -f "$ROOT_DIR/Dockerfile" ]]; then
     DOCKERFILE="$ROOT_DIR/Dockerfile"
-elif [[ -f "$ROOT_DIR/Dockerfile.alpine" ]]; then
-    DOCKERFILE="$ROOT_DIR/Dockerfile.alpine"
-
-    # For Alpine dockerfile, we need to build binaries first
-    echo -e "${YELLOW}Using Alpine Dockerfile, checking for pre-built binaries...${NC}"
-
-    if [[ ! -f "$ROOT_DIR/offline-bundle/services/linux-aarch64/bin/comsrv" ]]; then
-        echo "Building service binaries first..."
-        if [[ -f "$ROOT_DIR/scripts/offline/build_services_arm64.sh" ]]; then
-            "$ROOT_DIR/scripts/offline/build_services_arm64.sh"
-        else
-            echo -e "${RED}Service binaries not found and build script missing${NC}"
-            echo "Please run: ./scripts/offline/build_services_arm64.sh"
-            exit 1
-        fi
-    fi
 else
     # Create a simple Dockerfile if none exists
     echo -e "${YELLOW}No Dockerfile found, creating minimal Dockerfile...${NC}"
@@ -164,9 +148,11 @@ RUN rustup target add aarch64-unknown-linux-gnu
 # Copy source code
 COPY . .
 
-# Build for ARM64
+# Build for ARM64 (without swagger-ui for production)
 ENV CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc
 RUN cargo build --release --target aarch64-unknown-linux-gnu \
+    --no-default-features \
+    --features "modbus,can,redis,sqlite" \
     -p comsrv -p modsrv
 
 # Runtime stage
@@ -197,15 +183,15 @@ build_and_save \
     "voltageems:latest" \
     "$OUTPUT_DIR/voltageems.tar.gz"
 
-# Copy docker-compose.arm64.yml
+# Copy docker-compose.yml
 echo ""
-echo -e "${BLUE}[3/3] Copying docker-compose.arm64.yml...${NC}"
+echo -e "${BLUE}[3/3] Copying docker-compose.yml...${NC}"
 
-if [[ -f "$ROOT_DIR/docker-compose.arm64.yml" ]]; then
-    cp "$ROOT_DIR/docker-compose.arm64.yml" "$OUTPUT_DIR/"
-    echo -e "${GREEN}[DONE] Copied docker-compose.arm64.yml${NC}"
+if [[ -f "$ROOT_DIR/docker-compose.yml" ]]; then
+    cp "$ROOT_DIR/docker-compose.yml" "$OUTPUT_DIR/"
+    echo -e "${GREEN}[DONE] Copied docker-compose.yml${NC}"
 else
-    echo -e "${YELLOW}Warning: docker-compose.arm64.yml not found${NC}"
+    echo -e "${YELLOW}Warning: docker-compose.yml not found${NC}"
 fi
 
 # Summary
@@ -224,4 +210,4 @@ echo "  docker load < voltage-redis.tar.gz"
 echo "  docker load < voltageems.tar.gz"
 echo ""
 echo "To start services:"
-echo "  docker-compose -f docker-compose.arm64.yml up -d"
+echo "  docker-compose up -d"

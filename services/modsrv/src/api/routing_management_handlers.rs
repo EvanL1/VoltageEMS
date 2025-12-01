@@ -214,14 +214,17 @@ pub async fn create_instance_routing(
     }))))
 }
 
-/// Update all routings for an instance (replace)
+/// Update routings for an instance (UPSERT)
 ///
-/// Replaces all existing routings with the provided new routings.
+/// Updates or creates routings for the specified points. Uses UPSERT semantics:
+/// - Points in the request: created if not exists, updated if exists
+/// - Points NOT in the request: remain unchanged (not deleted)
+///
 /// Uses a transaction to ensure atomic operation.
 ///
 /// @route PUT /api/instances/{id}/routing
 /// @input Path(id): u16 - Instance ID
-/// @input Json(routings): Vec<RoutingRequest> - New routings to set
+/// @input Json(routings): Vec<RoutingRequest> - Routings to upsert
 /// @output Json<SuccessResponse<serde_json::Value>> - Update result
 /// @status 200 - Success with count
 /// @status 400 - Validation errors
@@ -257,29 +260,6 @@ pub async fn update_instance_routing(
             )));
         },
     };
-
-    // Delete existing routings from both tables
-    if let Err(e) = sqlx::query("DELETE FROM measurement_routing WHERE instance_id = ?")
-        .bind(id)
-        .execute(&mut *tx)
-        .await
-    {
-        return Err(ModSrvError::InternalError(format!(
-            "Failed to delete measurement routings: {}",
-            e
-        )));
-    }
-
-    if let Err(e) = sqlx::query("DELETE FROM action_routing WHERE instance_id = ?")
-        .bind(id)
-        .execute(&mut *tx)
-        .await
-    {
-        return Err(ModSrvError::InternalError(format!(
-            "Failed to delete existing routings: {}",
-            e
-        )));
-    }
 
     // Get instance name for validation
     let instance = match state.instance_manager.get_instance(id).await {
@@ -344,15 +324,21 @@ pub async fn update_instance_routing(
             },
         }
 
-        // Insert into appropriate table based on channel type
+        // UPSERT into appropriate table based on channel type
         let result = if routing.four_remote.is_input() {
-            // Insert into measurement_routing
+            // UPSERT into measurement_routing (ON CONFLICT updates existing routing)
             sqlx::query(
                 r#"
                 INSERT INTO measurement_routing
                 (instance_id, instance_name, channel_id, channel_type, channel_point_id,
                  measurement_id, enabled)
                 VALUES (?, (SELECT instance_name FROM instances WHERE instance_id = ?), ?, ?, ?, ?, true)
+                ON CONFLICT(instance_id, measurement_id) DO UPDATE SET
+                    channel_id = excluded.channel_id,
+                    channel_type = excluded.channel_type,
+                    channel_point_id = excluded.channel_point_id,
+                    instance_name = excluded.instance_name,
+                    enabled = true
                 "#,
             )
             .bind(id)
@@ -364,13 +350,19 @@ pub async fn update_instance_routing(
             .execute(&mut *tx)
             .await
         } else {
-            // Insert into action_routing
+            // UPSERT into action_routing (ON CONFLICT updates existing routing)
             sqlx::query(
                 r#"
                 INSERT INTO action_routing
                 (instance_id, instance_name, action_id, channel_id, channel_type,
                  channel_point_id, enabled)
                 VALUES (?, (SELECT instance_name FROM instances WHERE instance_id = ?), ?, ?, ?, ?, true)
+                ON CONFLICT(instance_id, action_id) DO UPDATE SET
+                    channel_id = excluded.channel_id,
+                    channel_type = excluded.channel_type,
+                    channel_point_id = excluded.channel_point_id,
+                    instance_name = excluded.instance_name,
+                    enabled = true
                 "#,
             )
             .bind(id)

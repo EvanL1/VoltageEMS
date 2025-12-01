@@ -80,7 +80,7 @@ pub struct ServiceContext {
 
     #[cfg(feature = "lib-mode")]
     modsrv: Option<ModsrvContext>,
-    // rulesrv has been merged into modsrv - rules functionality via ModsrvContext
+    // rules have been merged into modsrv - rules functionality via ModsrvContext
 }
 
 impl ServiceContext {
@@ -121,12 +121,12 @@ impl ServiceContext {
         Ok(())
     }
 
-    /// Initialize rulesrv context (deprecated - now uses modsrv)
+    /// Initialize rules context (deprecated - now uses modsrv)
     /// Rules functionality has been merged into modsrv (port 6002)
     #[cfg(feature = "lib-mode")]
     #[allow(dead_code)]
-    #[deprecated(note = "rulesrv merged into modsrv. Use init_modsrv() instead.")]
-    pub async fn init_rulesrv(&mut self) -> Result<()> {
+    #[deprecated(note = "rules merged into modsrv. Use init_modsrv() instead.")]
+    pub async fn init_rules(&mut self) -> Result<()> {
         // Rules are now part of modsrv, so just initialize modsrv
         self.init_modsrv().await
     }
@@ -136,7 +136,7 @@ impl ServiceContext {
     #[allow(dead_code)]
     pub async fn init_all(&mut self) -> Result<()> {
         // Parallel initialization for faster startup
-        // Note: rulesrv has been merged into modsrv
+        // Note: rules have been merged into modsrv
         let (comsrv_result, modsrv_result) = tokio::join!(
             ComsrvContext::new(&self.config),
             ModsrvContext::new(&self.config),
@@ -164,14 +164,14 @@ impl ServiceContext {
             .context("Modsrv not initialized. Call init_modsrv() first.")
     }
 
-    /// Get rulesrv context (deprecated - now returns modsrv context)
+    /// Get rules context (deprecated - now returns modsrv context)
     /// Rules functionality has been merged into modsrv
     #[cfg(feature = "lib-mode")]
-    #[deprecated(note = "rulesrv merged into modsrv. Use modsrv() instead.")]
-    pub fn rulesrv(&self) -> Result<&ModsrvContext> {
-        self.modsrv.as_ref().context(
-            "Modsrv not initialized. Call init_modsrv() first. (rulesrv merged into modsrv)",
-        )
+    #[deprecated(note = "rules merged into modsrv. Use modsrv() instead.")]
+    pub fn rules(&self) -> Result<&ModsrvContext> {
+        self.modsrv
+            .as_ref()
+            .context("Modsrv not initialized. Call init_modsrv() first. (rules merged into modsrv)")
     }
 
     /// Get configuration (public API)
@@ -284,7 +284,7 @@ impl ModsrvContext {
     }
 }
 
-// RulesrvContext has been removed - rules functionality is now in modsrv
+// RulesContext has been removed - rules functionality is now in modsrv
 // Use ModsrvContext for rule operations (same sqlite_pool can be used)
 
 /// Load routing maps from SQLite database

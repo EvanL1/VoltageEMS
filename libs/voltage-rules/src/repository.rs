@@ -6,7 +6,7 @@ use crate::error::{Result, RuleError};
 use crate::parser::extract_rule_flow;
 use serde_json::Value;
 use sqlx::{sqlite::SqliteRow, Row, SqlitePool};
-use voltage_config::rulesrv::{Rule, RuleFlow};
+use voltage_config::rules::{Rule, RuleFlow};
 
 /// List all rules (returns metadata and flow_json for frontend editing)
 pub async fn list_rules(pool: &SqlitePool) -> Result<Vec<Value>> {
@@ -261,6 +261,7 @@ fn hydrate_rule_json(row: SqliteRow) -> Result<Value> {
     let flow_json_str: Option<String> = row.try_get("flow_json")?;
     let format: Option<String> = row.try_get("format")?;
     let enabled: i64 = row.try_get("enabled")?;
+    let priority: i64 = row.try_get("priority")?;
     let cooldown_ms: i64 = row.try_get("cooldown_ms")?;
 
     // Parse compact flow (for execution info)
@@ -280,6 +281,7 @@ fn hydrate_rule_json(row: SqliteRow) -> Result<Value> {
         "description": description,
         "format": format.unwrap_or_else(|| "vue-flow".to_string()),
         "enabled": enabled != 0,
+        "priority": priority,
         "cooldown_ms": cooldown_ms,
         "flow": flow,
         "flow_json": flow_json

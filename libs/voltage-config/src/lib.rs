@@ -6,7 +6,7 @@
 pub mod common;
 pub mod comsrv;
 pub mod modsrv;
-pub mod rulesrv;
+pub mod rules;
 
 // New shared type modules
 pub mod api;
@@ -20,8 +20,8 @@ pub mod validation;
 // Re-export commonly used types
 pub use common::{
     parse_four_remote, ApiConfig, BaseServiceConfig, FourRemote, LoggingConfig, RedisConfig,
-    DEFAULT_COMSRV_URL, DEFAULT_MODSRV_URL, DEFAULT_RULESRV_URL, ENV_COMSRV_URL, ENV_MODSRV_URL,
-    ENV_RULESRV_URL,
+    DEFAULT_COMSRV_URL, DEFAULT_MODSRV_URL, DEFAULT_RULES_URL, ENV_COMSRV_URL, ENV_MODSRV_URL,
+    ENV_RULES_URL,
 };
 
 // Re-export hot reload infrastructure
@@ -34,7 +34,7 @@ pub use modsrv::{
     Product, ProductHierarchy, PropertyTemplate, SqlInsertableProduct,
 };
 // Note: modsrv::PointType (alias for PointRole) is kept internal to avoid confusion with protocols::PointType
-pub use rulesrv::{RulesrvConfig, RulesrvValidator};
+pub use rules::{RulesConfig, RulesValidator};
 
 // Re-export database schema definitions from each module
 pub use comsrv::{
@@ -58,10 +58,9 @@ pub use modsrv::{
     SYNC_METADATA_TABLE as MODSRV_SYNC_METADATA_TABLE,
 };
 
-pub use rulesrv::{
-    RULES_TABLE as RULESRV_RULES_TABLE, RULE_HISTORY_TABLE as RULESRV_RULE_HISTORY_TABLE,
-    SERVICE_CONFIG_TABLE as RULESRV_SERVICE_CONFIG_TABLE,
-    SYNC_METADATA_TABLE as RULESRV_SYNC_METADATA_TABLE,
+pub use rules::{
+    RULES_TABLE, RULE_HISTORY_TABLE, SERVICE_CONFIG_TABLE as RULES_SERVICE_CONFIG_TABLE,
+    SYNC_METADATA_TABLE as RULES_SYNC_METADATA_TABLE,
 };
 
 // Re-export validation framework from common

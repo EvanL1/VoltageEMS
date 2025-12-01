@@ -1,4 +1,4 @@
-//! Rule management module (formerly rulesrv-cli)
+//! Rule management module
 //!
 //! Provides functionality to manage business rules
 
@@ -85,10 +85,10 @@ pub async fn handle_command(
         #[cfg(feature = "lib-mode")]
         {
             // Offline mode: use lib API
-            // Note: rulesrv has been merged into modsrv, but we use modsrv context for rules
+            // Note: rules have been merged into modsrv, but we use modsrv context for rules
             let ctx = service_ctx.expect("ServiceContext should be available in lib-mode");
             #[allow(deprecated)]
-            let modsrv = ctx.rulesrv()?; // rulesrv() now returns modsrv context
+            let modsrv = ctx.rules()?; // rules() now returns modsrv context
             let service = lib_api::rules::RulesService::new(modsrv);
 
             match cmd {
@@ -147,7 +147,7 @@ pub async fn handle_command(
         // Online mode: use HTTP API
         let url = base_url.ok_or_else(|| {
             anyhow::anyhow!(
-                "Base URL required for online mode. Please set RULESRV_URL or use --offline"
+                "Base URL required for online mode. Please set RULES_URL or use --offline"
             )
         })?;
         let client = RuleClient::new(url)?;
