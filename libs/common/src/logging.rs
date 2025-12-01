@@ -6,6 +6,7 @@ use std::fs::{self, File, OpenOptions};
 #[allow(unused_imports)] // Used in Write trait impl for DailyRollingWriter
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 
 use flate2::write::GzEncoder;
@@ -96,34 +97,90 @@ fn is_test_environment() -> bool {
     false
 }
 
+/// Default max file size: 100MB
+const DEFAULT_MAX_FILE_SIZE: u64 = 100 * 1024 * 1024;
+
 // Custom daily rolling file writer with naming format: {service}{YYYYMMDD}.log
+// Also supports size-based rotation within a day
 struct DailyRollingWriter {
     service_name: String,
     log_dir: PathBuf,
     current_date: Arc<Mutex<String>>,
     current_file: Arc<Mutex<Option<File>>>,
+    /// Current file size in bytes (tracked for size-based rotation)
+    current_size: Arc<AtomicU64>,
+    /// Max file size before rotation (default 100MB)
+    max_file_size: u64,
+    /// Rotation counter within the same day (e.g., .1, .2, .3)
+    rotation_count: Arc<AtomicU32>,
 }
 
 impl DailyRollingWriter {
     fn new(service_name: String, log_dir: PathBuf) -> std::io::Result<Self> {
+        Self::with_max_size(service_name, log_dir, DEFAULT_MAX_FILE_SIZE)
+    }
+
+    fn with_max_size(
+        service_name: String,
+        log_dir: PathBuf,
+        max_file_size: u64,
+    ) -> std::io::Result<Self> {
         let current_date = chrono::Local::now().format("%Y%m%d").to_string();
         let file_path = log_dir.join(format!("{}_{}.log", current_date, service_name));
 
         // Create log directory if it doesn't exist
         fs::create_dir_all(&log_dir)?;
 
-        // Open or create the log file
+        // Open or create the log file and get its current size
         let file = OpenOptions::new()
             .create(true)
             .append(true)
             .open(&file_path)?;
+        let initial_size = file.metadata().map(|m| m.len()).unwrap_or(0);
 
         Ok(Self {
             service_name,
             log_dir,
             current_date: Arc::new(Mutex::new(current_date)),
             current_file: Arc::new(Mutex::new(Some(file))),
+            current_size: Arc::new(AtomicU64::new(initial_size)),
+            max_file_size,
+            rotation_count: Arc::new(AtomicU32::new(0)),
         })
+    }
+
+    /// Rotate the log file due to size limit
+    fn rotate_by_size(&self) -> std::io::Result<()> {
+        let current_date = self
+            .current_date
+            .lock()
+            .map_err(|e| std::io::Error::other(format!("Mutex poisoned: {}", e)))?;
+
+        // Increment rotation counter
+        let count = self.rotation_count.fetch_add(1, Ordering::SeqCst) + 1;
+
+        // New file path: YYYYMMDD_service.N.log
+        let new_file_path = self.log_dir.join(format!(
+            "{}_{}.{}.log",
+            *current_date, self.service_name, count
+        ));
+
+        let new_file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&new_file_path)?;
+
+        // Reset size counter
+        self.current_size.store(0, Ordering::SeqCst);
+
+        // Update current file
+        let mut current_file = self
+            .current_file
+            .lock()
+            .map_err(|e| std::io::Error::other(format!("Mutex poisoned: {}", e)))?;
+        *current_file = Some(new_file);
+
+        Ok(())
     }
 
     fn get_writer(&self) -> std::io::Result<std::sync::MutexGuard<'_, Option<File>>> {
@@ -135,7 +192,7 @@ impl DailyRollingWriter {
             .map_err(|e| std::io::Error::other(format!("Mutex poisoned: {}", e)))?;
 
         if *current_date != today {
-            // Date changed, rotate to new file
+            // Date changed, rotate to new file and reset rotation counter
             let new_file_path = self
                 .log_dir
                 .join(format!("{}_{}.log", today, self.service_name));
@@ -143,9 +200,13 @@ impl DailyRollingWriter {
                 .create(true)
                 .append(true)
                 .open(&new_file_path)?;
+            let initial_size = new_file.metadata().map(|m| m.len()).unwrap_or(0);
 
-            // Update current date and file
+            // Update current date, file, and reset counters
             *current_date = today;
+            self.current_size.store(initial_size, Ordering::SeqCst);
+            self.rotation_count.store(0, Ordering::SeqCst);
+
             let mut current_file = self
                 .current_file
                 .lock()
@@ -161,8 +222,18 @@ impl DailyRollingWriter {
 
 impl std::io::Write for DailyRollingWriter {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        // Check if we need to rotate due to size limit
+        let current_size = self.current_size.load(Ordering::Relaxed);
+        if current_size + buf.len() as u64 > self.max_file_size {
+            self.rotate_by_size()?;
+        }
+
         if let Some(ref mut file) = *self.get_writer()? {
-            file.write(buf)
+            let written = file.write(buf)?;
+            // Update size counter
+            self.current_size
+                .fetch_add(written as u64, Ordering::Relaxed);
+            Ok(written)
         } else {
             Ok(0)
         }
@@ -184,6 +255,9 @@ impl Clone for DailyRollingWriter {
             log_dir: self.log_dir.clone(),
             current_date: Arc::clone(&self.current_date),
             current_file: Arc::clone(&self.current_file),
+            current_size: Arc::clone(&self.current_size),
+            max_file_size: self.max_file_size,
+            rotation_count: Arc::clone(&self.rotation_count),
         }
     }
 }
@@ -506,12 +580,13 @@ pub fn init_with_config(config: LogConfig) -> Result<(), Box<dyn std::error::Err
             )
             .boxed()
     } else {
+        // Simplified format: no module paths, no thread IDs (saves ~40 chars/line)
         fmt::layer()
             .with_writer(writer_handle)
             .with_ansi(false)
             .with_level(true)
-            .with_target(true)
-            .with_thread_ids(true)
+            .with_target(false)     // Remove module paths like "comsrv::protocols::modbus"
+            .with_thread_ids(false) // Remove "ThreadId(01)"
             .with_span_events(FmtSpan::NONE)
             .with_filter(
                 filter::filter_fn(|metadata| metadata.target() != "api_access").and(

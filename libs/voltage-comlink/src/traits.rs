@@ -549,7 +549,65 @@ impl ChannelLogger {
             )
         };
 
-        self.log_channel_only(tracing::Level::INFO, message);
+        // TRACE level for raw frames (hex dump)
+        self.log_channel_only(tracing::Level::TRACE, message);
+    }
+
+    /// Log raw frame in hex format (TRACE level)
+    pub fn log_raw_frame(&self, direction: &str, data: &[u8]) {
+        let hex_str = data
+            .iter()
+            .map(|b| format!("{:02X}", b))
+            .collect::<Vec<_>>()
+            .join(" ");
+        self.log_channel_only(
+            tracing::Level::TRACE,
+            format!("[{}] {}", direction, hex_str),
+        );
+    }
+
+    /// Log polling activity (channel only, no main log)
+    pub fn log_poll(&self, slave_id: u8, func: u8, point_type: &str, count: usize) {
+        self.log_channel_only(
+            tracing::Level::DEBUG,
+            format!("[poll] s{}f{} {} x{}", slave_id, func, point_type, count),
+        );
+    }
+
+    /// Log poll result (channel only for success, dual for failures)
+    pub fn log_poll_result(&self, slave_id: u8, func: u8, ok: usize, err: usize) {
+        if err > 0 {
+            // Errors go to main log as well
+            self.log_dual(
+                tracing::Level::WARN,
+                format!("[poll] s{}f{} ok={} err={}", slave_id, func, ok, err),
+            );
+        } else {
+            // Success only to channel log
+            self.log_channel_only(
+                tracing::Level::DEBUG,
+                format!("[poll] s{}f{} ok={}", slave_id, func, ok),
+            );
+        }
+    }
+
+    /// Log point configuration (channel only)
+    pub fn log_point_config(
+        &self,
+        point_type: &str,
+        point_id: u32,
+        slave: u8,
+        func: u8,
+        addr: u16,
+        data_type: &str,
+    ) {
+        self.log_channel_only(
+            tracing::Level::DEBUG,
+            format!(
+                "[{}] #{} s{}f{}a{} {}",
+                point_type, point_id, slave, func, addr, data_type
+            ),
+        );
     }
 }
 

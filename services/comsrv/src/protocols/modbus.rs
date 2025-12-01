@@ -605,16 +605,14 @@ impl ComBase for ModbusProtocol {
                     _ => 1, // Default for uint16, int16, bool, etc.
                 };
 
-                debug!(
-                    "Loaded Modbus point: id={}, slave={}, func={}, addr={}, format={}, reg_count={}, bit_pos={:?}, type={}",
+                // Log to channel only (startup config)
+                self.logger.log_point_config(
+                    "T",
                     point.base.point_id,
                     slave_id,
                     function_code,
                     register_address,
                     &data_type,
-                    register_count,
-                    mapping.bit_position,
-                    "T"  // This is a telemetry point
                 );
 
                 let modbus_point = ModbusPoint {
@@ -656,16 +654,14 @@ impl ComBase for ModbusProtocol {
                 let data_type = mapping.data_type.clone();
                 let register_count = 1; // Signals are typically single bit/register
 
-                debug!(
-                    "Loaded Modbus signal point: id={}, slave={}, func={}, addr={}, format={}, reg_count={}, bit_pos={:?}, type={}",
+                // Log to channel only (startup config)
+                self.logger.log_point_config(
+                    "S",
                     point.base.point_id,
                     slave_id,
                     function_code,
                     register_address,
                     &data_type,
-                    register_count,
-                    mapping.bit_position,
-                    "S"
                 );
 
                 let modbus_point = ModbusPoint {
@@ -712,15 +708,14 @@ impl ComBase for ModbusProtocol {
                     _ => 1,
                 };
 
-                debug!(
-                    "Loaded Modbus control point: id={}, slave={}, func={}, addr={}, format={}, reg_count={}, type={}",
+                // Log to channel only (startup config)
+                self.logger.log_point_config(
+                    "C",
                     point.base.point_id,
                     slave_id,
                     function_code,
                     register_address,
                     &data_type,
-                    register_count,
-                    "C"
                 );
 
                 let modbus_point = ModbusPoint {
@@ -767,15 +762,14 @@ impl ComBase for ModbusProtocol {
                     _ => 1,
                 };
 
-                debug!(
-                    "Loaded Modbus adjustment point: id={}, slave={}, func={}, addr={}, format={}, reg_count={}, type={}",
+                // Log to channel only (startup config)
+                self.logger.log_point_config(
+                    "A",
                     point.base.point_id,
                     slave_id,
                     function_code,
                     register_address,
                     &data_type,
-                    register_count,
-                    "A"
                 );
 
                 let modbus_point = ModbusPoint {
@@ -1287,12 +1281,18 @@ impl ComClient for ModbusProtocol {
                             continue;
                         }
 
-                        debug!(
-                            "Reading {} {} points for slave {}, function {}",
-                            group_points.len(),
+                        // Create channel logger for protocol messages
+                        let logger = crate::core::channels::traits::ChannelLogger::new(
+                            channel_id.into(),
+                            channel_name.to_string(),
+                        );
+
+                        // Log to channel only (not main log)
+                        logger.log_poll(
+                            *slave_id,
+                            *function_code,
                             group_telemetry_type,
-                            slave_id,
-                            function_code
+                            group_points.len(),
                         );
 
                         // Lock the frame processor for this batch of reads
@@ -1300,12 +1300,6 @@ impl ComClient for ModbusProtocol {
 
                         // Get max_batch_size from polling config, default to 100
                         let max_batch_size = polling_config.batch_config.max_batch_size;
-
-                        // Create channel logger for protocol messages
-                        let logger = crate::core::channels::traits::ChannelLogger::new(
-                            channel_id.into(),
-                            channel_name.to_string(),
-                        );
 
                         match read_modbus_group_with_processor(
                             &connection_manager,
@@ -1324,13 +1318,14 @@ impl ComClient for ModbusProtocol {
                                 success_count += values.len();
                                 // ✅ 统计实际失败的点位数（总数 - 成功数）/ Count actual failed points (total - success)
                                 let failed_in_group = group_points.len() - values.len();
-                                if failed_in_group > 0 {
-                                    error_count += failed_in_group;
-                                    warn!(
-                                        "Group (slave={}, func={}) completed with {} successes, {} failures",
-                                        slave_id, function_code, values.len(), failed_in_group
-                                    );
-                                }
+                                error_count += failed_in_group;
+                                // Log result: errors go to main log, success only to channel log
+                                logger.log_poll_result(
+                                    *slave_id,
+                                    *function_code,
+                                    values.len(),
+                                    failed_in_group,
+                                );
 
                                 // Process values
 
