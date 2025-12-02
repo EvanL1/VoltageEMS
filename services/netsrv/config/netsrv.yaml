@@ -1,0 +1,203 @@
+# 网络服务配置文件
+# 此文件会被挂载到Docker容器的 /extp/config 目录
+
+# 服务基本信息
+service:
+  name: "网络服务"
+  version: "1.0.0"
+  description: "云端数据转发服务"
+
+# 设备标识配置
+device_identity:
+  # 产品序列号 - 在配置文件中设置
+  product_sn: "MonarchHub"
+  
+  # 设备序列号 - 自动从 /proc/device-tree/serial-number 读取
+  # 开发环境如果文件不存在，使用固定值
+  device_sn: "auto"  # auto表示自动读取，或设置固定值如 "dev_001"
+  
+  # 设备类型
+  device_type: "gateway"
+  
+  # 网关标识（如果此设备是网关）
+  is_gateway: true
+
+# MQTT连接配置
+mqtt_connection:
+  # MQTT代理配置
+  broker:
+    host: "192.168.40.39"  # 替换为您的AWS IoT端点
+    port: 1883  # AWS IoT默认端口
+    username: ""  # AWS IoT通常不需要用户名
+    password: ""  # AWS IoT通常不需要密码
+    client_id: "auto"  # auto表示使用设备序列号，或设置固定值
+    keepalive: 120  # AWS IoT建议使用较长的keepalive
+    
+    # SSL配置
+    ssl:
+      enabled: false  # AWS IoT必须启用SSL
+      ca_cert: "aws_cert/AmazonRootCA1.pem"           # AWS根证书
+      client_cert: "aws_cert/certificate.pem.crt"     # 设备证书
+      client_key: "aws_cert/private.pem.key"          # 私钥文件
+    
+    # 连接重试设置
+    reconnect:
+      enabled: true
+      max_attempts: 50
+      delay: 10  # 秒
+      
+    # 在线离线消息设置
+    status:
+      # 遗嘱消息设置（网络意外断开时自动发送）
+      will_message_enabled: true
+      # 连接成功后自动发送在线消息
+      auto_online_message: true
+
+# MQTT主题配置（按照文档格式）
+mqtt_topics:
+  # 设备状态主题
+  status: "status/{productSN}/{deviceSN}"
+  
+  # 点位数据上报主题
+  property: "property/{productSN}/{deviceSN}"
+  
+  # 单点读取主题
+  read: "read/{productSN}/{deviceSN}"
+  
+  # 单点读取回复主题
+  read_reply: "read-reply/{productSN}/{deviceSN}"
+  
+  # 单点写入主题
+  write: "write/{productSN}/{deviceSN}"
+  
+  # 单点写入回复主题
+  write_reply: "write-reply/{productSN}/{deviceSN}"
+  
+  # 指令下发主题
+  func: "func/{productSN}/{deviceSN}"
+  
+  # 指令回复主题
+  func_reply: "func-reply/{productSN}/{deviceSN}"
+  
+  # 设备数据总招主题
+  call_data: "call-data/{productSN}/{deviceSN}"
+
+  # 设备数据总招回复主题
+  call_data_reply: "call-data-reply/{productSN}/{deviceSN}"
+  
+  # 告警广播主题
+  alarm: "alarm/{productSN}/{deviceSN}"
+
+  # 告警数据总招主题
+  call_alarm: "call-alarm/{productSN}/{deviceSN}"
+
+  # 告警数据总招回复主题
+  call_alarm_reply: "call-alarm-reply/{productSN}/{deviceSN}"
+
+# Redis数据源配置
+redis_source:
+  # 数据订阅模式，支持通配符
+  subscribe_patterns:
+    - "comsrv:*"      # 通信服务数据
+    - "modsrv:*"      # 物模型服务数据
+    - "inst:*:M"      
+    - "inst:*:A"  
+  
+  # 数据过滤规则
+  filters:
+    enabled: true
+    exclude_patterns:
+      - "comsrv:debug:*"      # 排除调试数据
+      - "modsrv:debug:*"      # 排除调试数据
+      - "*:products:*"
+      - "*:product:*"
+
+# 数据上报配置
+data_report:
+  # 上报频率
+  interval: 50  # 秒
+  
+  # 批量上报数量
+  batch_size: 50
+
+# 系统监控配置
+system_monitor:
+  # 是否启用系统监控数据收集
+  enabled: true
+  
+  # 监控数据收集间隔（秒）
+  collect_interval: 10
+  
+  # 监控项配置
+  metrics:
+    cpu_enabled: true           # CPU使用率
+    memory_enabled: true        # 内存使用率
+    disk_enabled: true          # 磁盘使用率
+    network_enabled: true       # 网络流量统计
+    temperature_enabled: true   # 温度监控（如果可用）
+    load_enabled: true          # 系统负载（Linux）
+  
+  # 数据格式配置
+  format:
+    source: "gateway"           # 固定值
+    data_type: "T"             # 固定值
+  
+  # MQTT报文格式说明
+  # 新格式使用 source 和 device 字段替代原来的 point 字段
+  # source: 服务名 (comsrv, modsrv)
+  # device: 通道ID，支持空格，如 "Diesel Generator1"
+  # data_type: 数据类型，支持自定义类型，不限制为 T/S/C/A
+  # 示例:
+  # comsrv:1:T -> source: "comsrv", device: "1", data_type: "T"
+  # modsrv:Diesel Generator1:M -> source: "modsrv", device: "Diesel_Generator1", data_type: "M"
+
+# 设备上线/下线配置
+device_status:
+  # 自动上线
+  auto_online: true
+  
+  # 上线消息
+  online_message:
+    type: "online"
+    gateway: ""  # 如果此设备是网关，留空
+  
+  # 下线消息（遗嘱消息）
+  offline_message:
+    type: "offline"
+    gateway: ""
+  
+  # 心跳间隔
+  heartbeat_interval: 30  # 秒
+
+# 监控配置
+monitoring:
+  # 服务监控
+  service_monitor:
+    enabled: true
+    health_check_interval: 30  # 秒
+  
+  # 数据上报监控
+  report_monitor:
+    enabled: true
+    success_rate_threshold: 95  # 成功率阈值(%)
+    latency_threshold: 1000     # 延迟阈值(毫秒)
+  
+  # 连接状态监控
+  connection_monitor:
+    enabled: true
+    check_interval: 10  # 秒
+
+# 日志配置
+logging:
+  level: "INFO"
+  file_rotation: "100 MB"
+  file_retention: "30 days"
+  console_output: true
+  file_output: true
+  
+  # 特定模块日志级别
+  module_levels:
+    mqtt: "DEBUG"
+    redis: "INFO"
+    forwarder: "DEBUG"  # 改为DEBUG，屏蔽数据上传的详细日志
+    device_identity: "DEBUG"
