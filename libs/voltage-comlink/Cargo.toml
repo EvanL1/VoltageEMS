@@ -3,7 +3,7 @@ name = "voltage-comlink"
 version = "0.0.1"
 edition = "2021"
 license.workspace = true
-description = "Communication link library for VoltageEMS - protocol abstractions, Modbus, CAN, and virtual protocols"
+description = "Communication link library for VoltageEMS - protocol abstractions, Modbus, and virtual protocols"
 
 [dependencies]
 # Local dependencies
@@ -42,21 +42,12 @@ bytes = { workspace = true }
 chrono = { workspace = true }
 rand = { workspace = true }
 
-# CAN bus support (DBC parsing is platform-independent)
-can-dbc = { version = "4.0", optional = true }
-
-# Platform-specific dependencies
-[target.'cfg(target_os = "linux")'.dependencies]
-socketcan = { version = "3.3", optional = true }
-
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
 
 [features]
-default = ["modbus", "can"]
+default = ["modbus"]
 modbus = []
-can = ["can-dbc"]
-can-linux = ["can", "socketcan"]
 
 [lints.clippy]
 cast-possible-truncation = "allow"

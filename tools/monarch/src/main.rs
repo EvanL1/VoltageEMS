@@ -4,7 +4,6 @@
 //! service management, and operational control for all VoltageEMS services.
 
 mod channels;
-mod config;
 mod context;
 mod core;
 mod models;
@@ -93,7 +92,7 @@ pub mod lib_api {
 
 use crate::context::{ServiceConfig, ServiceContext};
 use crate::core::{schema, MonarchCore};
-use anyhow::Result;
+use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use colored::*;
 use std::path::{Path, PathBuf};
@@ -104,12 +103,10 @@ use std::path::{Path, PathBuf};
 #[command(long_about = "👑 Monarch - VoltageEMS Unified Management Tool
 
 Configuration Management:
-  sync        Sync configuration to SQLite database
-  validate    Validate configuration without syncing
+  sync        Sync configuration to SQLite database (use --dry-run to validate only)
   status      Show current configuration status
   init        Initialize database schemas
   export      Export configuration from SQLite to YAML/CSV
-  diff        Compare SQLite configuration with YAML/CSV files
 
 Service Operations:
   channels    Manage communication channels and protocols
@@ -118,7 +115,8 @@ Service Operations:
   services    Start, stop, and manage VoltageEMS services
 
 Examples:
-  monarch sync all                      # Sync all configurations
+  monarch sync                          # Sync all configurations
+  monarch sync --dry-run                # Validate without syncing
   monarch channels list                 # List all channels
   monarch models products list          # List products
   monarch rules enable R001             # Enable a rule
@@ -160,20 +158,21 @@ enum Commands {
     // === Configuration Management Commands ===
     /// Sync all configuration to SQLite database
     Sync {
-        /// Force sync without validation
+        /// Validate only, don't write to database (dry run)
+        #[arg(short = 'n', long)]
+        dry_run: bool,
+
+        /// Force sync without validation (ignored if --dry-run)
         #[arg(short, long)]
         force: bool,
 
         /// Show detailed progress for each item
         #[arg(short, long)]
         detailed: bool,
-    },
 
-    /// Validate all configuration without syncing
-    Validate {
-        /// Hide detailed validation output (default shows details)
-        #[arg(short = 'b', long = "brief")]
-        brief: bool,
+        /// Check database consistency (duplicates, references)
+        #[arg(long)]
+        check: bool,
     },
 
     /// Show current configuration status
@@ -193,7 +192,7 @@ enum Commands {
     /// Export configuration from SQLite to YAML/CSV
     Export {
         /// Output directory (default: config/)
-        #[arg(short, long)]
+        #[arg(short = 'O', long)]
         output: Option<String>,
 
         /// Show detailed export progress
@@ -228,13 +227,6 @@ enum Commands {
     Rtdb {
         #[command(subcommand)]
         command: rtdb::RtdbCommands,
-    },
-
-    /// Configuration validation and inspection
-    #[command(about = "Configuration file validation and inspection utilities")]
-    Config {
-        #[command(subcommand)]
-        command: config::ConfigCommands,
     },
 
     /// Manage Docker services
@@ -372,13 +364,22 @@ async fn main() -> Result<()> {
 
     match cli.command {
         // Configuration management commands
-        Commands::Sync { force, detailed } => {
-            println!("{}", "Syncing all configuration...".bright_cyan());
-            sync_command(force, detailed, config_path, db_path).await?;
-        },
-        Commands::Validate { brief } => {
-            println!("{}", "Validating all configuration...".bright_cyan());
-            validate_command(!brief, config_path).await?;
+        Commands::Sync {
+            dry_run,
+            force,
+            detailed,
+            check,
+        } => {
+            if dry_run {
+                println!(
+                    "{}",
+                    "Validating all configuration (dry run)...".bright_cyan()
+                );
+                validate_command(detailed, config_path, db_path, check).await?;
+            } else {
+                println!("{}", "Syncing all configuration...".bright_cyan());
+                sync_command(force, detailed, config_path, db_path, check).await?;
+            }
         },
         Commands::Status { detailed } => {
             println!("{}", "Configuration Status".bright_cyan());
@@ -416,9 +417,6 @@ async fn main() -> Result<()> {
         Commands::Rtdb { command } => {
             rtdb::handle_command(command, service_ctx.as_ref()).await?;
         },
-        Commands::Config { command } => {
-            config::handle_command(command, config_path).await?;
-        },
         Commands::Services { command } => {
             services::handle_command(command, service_ctx.as_ref()).await?;
         },
@@ -432,6 +430,7 @@ async fn sync_command(
     detailed: bool,
     config_path: &Path,
     db_path: &Path,
+    check: bool,
 ) -> Result<()> {
     // Sync order: global config → channels/points → products/instances/calculations/rules
     let configs = ["global", "comsrv", "modsrv"];
@@ -496,11 +495,22 @@ async fn sync_command(
         }
     }
 
+    // Run database consistency checks if requested
+    if check {
+        println!();
+        run_db_checks(db_path).await?;
+    }
+
     println!("\n{} Configuration synced successfully!", "DONE".green());
     Ok(())
 }
 
-async fn validate_command(detailed: bool, config_path: &Path) -> Result<()> {
+async fn validate_command(
+    detailed: bool,
+    config_path: &Path,
+    db_path: &Path,
+    check: bool,
+) -> Result<()> {
     let configs = ["global", "comsrv", "modsrv"];
     let mut all_valid = true;
 
@@ -537,6 +547,15 @@ async fn validate_command(detailed: bool, config_path: &Path) -> Result<()> {
                 eprintln!("   {} {}", "ERROR".red(), e);
                 all_valid = false;
             },
+        }
+    }
+
+    // Run database consistency checks if requested
+    if check {
+        println!();
+        let check_failed = run_db_checks(db_path).await?;
+        if check_failed {
+            all_valid = false;
         }
     }
 
@@ -704,4 +723,100 @@ async fn export_command(
         output_base.display()
     );
     Ok(())
+}
+
+/// Run database consistency checks (duplicates, references)
+/// Returns true if any errors were found
+async fn run_db_checks(db_path: &Path) -> Result<bool> {
+    use sqlx::SqlitePool;
+
+    println!("{}", "Checking database consistency...".bright_cyan());
+
+    let db_file = db_path.join("voltage.db");
+    let pool = SqlitePool::connect(&format!("sqlite:{}", db_file.display()))
+        .await
+        .context("Failed to connect to database")?;
+
+    let mut has_errors = false;
+
+    // Check for duplicate IDs
+    print!("  Checking channel IDs... ");
+    has_errors |= check_duplicates(&pool, "channels", "channel_id").await?;
+
+    print!("  Checking instance IDs... ");
+    has_errors |= check_duplicates(&pool, "instances", "instance_id").await?;
+
+    print!("  Checking rule IDs... ");
+    has_errors |= check_duplicates(&pool, "rules", "id").await?;
+
+    // Check point tables
+    for table in [
+        "telemetry_points",
+        "signal_points",
+        "control_points",
+        "adjustment_points",
+    ] {
+        print!("  Checking {} table... ", table.replace("_", " "));
+        has_errors |= check_point_duplicates(&pool, table).await?;
+    }
+
+    if has_errors {
+        println!("\n{} Database consistency issues found", "ERROR".red());
+    } else {
+        println!("\n{} Database consistency OK", "OK".green());
+    }
+
+    Ok(has_errors)
+}
+
+async fn check_duplicates(pool: &sqlx::SqlitePool, table: &str, id_column: &str) -> Result<bool> {
+    let query = format!(
+        "SELECT {}, COUNT(*) as count FROM {} GROUP BY {} HAVING count > 1",
+        id_column, table, id_column
+    );
+
+    let rows: Vec<(String, i64)> = sqlx::query_as(&query).fetch_all(pool).await?;
+
+    if rows.is_empty() {
+        println!("{}", "OK".green());
+        Ok(false)
+    } else {
+        println!("{}", "FAIL".red());
+        for (id, count) in rows {
+            eprintln!(
+                "    {} {} '{}' appears {} times",
+                "ERROR".red(),
+                id_column,
+                id,
+                count
+            );
+        }
+        Ok(true)
+    }
+}
+
+async fn check_point_duplicates(pool: &sqlx::SqlitePool, table: &str) -> Result<bool> {
+    let query = format!(
+        "SELECT channel_id, point_id, COUNT(*) as count FROM {} GROUP BY channel_id, point_id HAVING count > 1",
+        table
+    );
+
+    let rows: Vec<(i32, i64, i64)> = sqlx::query_as(&query).fetch_all(pool).await?;
+
+    if rows.is_empty() {
+        println!("{}", "OK".green());
+        Ok(false)
+    } else {
+        println!("{}", "FAIL".red());
+        for (channel_id, point_id, count) in rows {
+            eprintln!(
+                "    {} (channel_id={}, point_id={}) appears {} times",
+                "ERROR".red(),
+                channel_id,
+                point_id,
+                count
+            );
+        }
+        Ok(true)
+    }
 }

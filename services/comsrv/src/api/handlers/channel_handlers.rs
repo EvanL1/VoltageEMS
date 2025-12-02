@@ -5,7 +5,7 @@
 #![allow(clippy::disallowed_methods)] // json! macro used in multiple functions
 
 use axum::{
-    extract::{Path, Query, State},
+    extract::{Path, Query, RawQuery, State},
     response::Json,
 };
 use chrono::{DateTime, Utc};
@@ -33,35 +33,44 @@ use crate::dto::{
                 "list": [
                     {
                         "id": 1,
-                        "name": "PV Inverter 01",
+                        "name": "PCS#1",
                         "protocol": "modbus_tcp",
-                        "description": "Primary PV inverter communication",
+                        "description": "变流器 #1",
                         "enabled": true,
                         "connected": true,
                         "last_update": "2025-10-15T10:30:00Z"
                     },
                     {
                         "id": 2,
-                        "name": "Battery Pack RTU",
-                        "protocol": "modbus_rtu",
-                        "description": "Battery management system",
+                        "name": "BAMS#1",
+                        "protocol": "modbus_tcp",
+                        "description": "电池管理系统 #1",
                         "enabled": true,
-                        "connected": false,
+                        "connected": true,
                         "last_update": "2025-10-15T10:28:15Z"
                     },
                     {
-                        "id": 4,
-                        "name": "Virtual Test Channel",
-                        "protocol": "virtual",
-                        "description": "Virtual channel for testing",
+                        "id": 3,
+                        "name": "GENSET#1",
+                        "protocol": "modbus_rtu",
+                        "description": "柴油发电机组 #1",
                         "enabled": true,
-                        "connected": true,
+                        "connected": false,
+                        "last_update": "2025-10-15T10:25:00Z"
+                    },
+                    {
+                        "id": 4,
+                        "name": "ECU1170_GPIO",
+                        "protocol": "di_do",
+                        "description": "ECU-1170 本机 DI/DO",
+                        "enabled": false,
+                        "connected": false,
                         "last_update": "2025-10-15T10:30:05Z"
                     }
                 ],
                 "page": 1,
                 "page_size": 20,
-                "total": 7
+                "total": 4
             })
         )
     ),
@@ -177,7 +186,7 @@ pub async fn get_all_channels(
                 "success": true,
                 "data": {
                     "id": 1,
-                    "name": "PV Inverter 01",
+                    "name": "PCS#1",
                     "protocol": "modbus_tcp",
                     "connected": true,
                     "running": true,
@@ -252,16 +261,15 @@ pub async fn get_channel_status(
                 "success": true,
                 "data": {
                     "id": 1,
-                    "name": "PV Inverter 01",
-                    "description": "Primary PV inverter communication channel",
+                    "name": "PCS#1",
+                    "description": "变流器 #1",
                     "protocol": "modbus_tcp",
                     "enabled": true,
                     "parameters": {
-                        "host": "192.168.1.100",
+                        "host": "192.168.1.10",
                         "port": 502,
-                        "timeout_ms": 1000,
-                        "retry_count": 3,
-                        "poll_interval_ms": 500
+                        "connect_timeout_ms": 3000,
+                        "read_timeout_ms": 3000
                     },
                     "runtime_status": {
                         "connected": true,
@@ -412,4 +420,102 @@ pub async fn get_channel_detail_handler(
     };
 
     Ok(Json(SuccessResponse::new(detail)))
+}
+
+/// Search channels by name with fuzzy matching (no pagination)
+///
+/// Returns all channels matching the search keyword. Use this for autocomplete
+/// or quick lookup scenarios where you need all matches without pagination.
+///
+/// URL format: `/api/channels/search?{keyword}`
+/// - The keyword is passed directly as the raw query string (no parameter name needed)
+/// - Empty keyword returns all channels
+///
+/// @route GET /api/channels/search?{keyword}
+#[utoipa::path(
+    get,
+    path = "/api/channels/search",
+    responses(
+        (status = 200, description = "Matching channels", body = serde_json::Value,
+            example = json!({
+                "list": [
+                    {
+                        "id": 1,
+                        "name": "PCS#1",
+                        "description": "变流器 #1",
+                        "protocol": "modbus_tcp",
+                        "enabled": true,
+                        "connected": true
+                    }
+                ]
+            })
+        )
+    ),
+    tag = "comsrv"
+)]
+pub async fn search_channels(
+    State(state): State<AppState>,
+    RawQuery(raw_query): RawQuery,
+) -> Result<Json<SuccessResponse<serde_json::Value>>, AppError> {
+    // raw_query is Option<String>:
+    // /search?modbus => Some("modbus")
+    // /search?       => Some("")
+    // /search        => None
+    let keyword = raw_query.unwrap_or_default();
+    let like_pattern = format!("%{}%", keyword);
+
+    // Query from SQLite
+    let channels: Vec<(i64, String, String, bool, Option<String>)> = sqlx::query_as(
+        r#"SELECT channel_id, name, protocol, enabled, config
+           FROM channels
+           WHERE name LIKE ?
+           ORDER BY channel_id ASC"#,
+    )
+    .bind(&like_pattern)
+    .fetch_all(&state.sqlite_pool)
+    .await
+    .map_err(|e| {
+        tracing::error!("Failed to search channels: {}", e);
+        AppError::internal_error(format!("Failed to search channels: {}", e))
+    })?;
+
+    // Get runtime status for connected info
+    let manager = state.channel_manager.read().await;
+
+    // Build response
+    let list: Vec<serde_json::Value> = channels
+        .iter()
+        .map(|(id, name, protocol, enabled, config_str)| {
+            let channel_id = *id as u16;
+
+            // Extract description from config JSON
+            let description = config_str
+                .as_ref()
+                .and_then(|s| serde_json::from_str::<serde_json::Value>(s).ok())
+                .and_then(|v| {
+                    v.get("description")
+                        .and_then(|d| d.as_str())
+                        .map(String::from)
+                });
+
+            // Get runtime connected status
+            let connected = manager
+                .get_channel(channel_id)
+                .map(|_| true) // Channel exists in runtime = running
+                .unwrap_or(false);
+
+            serde_json::json!({
+                "id": id,
+                "name": name,
+                "description": description,
+                "protocol": protocol,
+                "enabled": enabled,
+                "connected": connected
+            })
+        })
+        .collect();
+
+    Ok(Json(SuccessResponse::new(
+        serde_json::json!({ "list": list }),
+    )))
 }

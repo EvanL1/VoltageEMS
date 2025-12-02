@@ -595,15 +595,10 @@ pub fn init_with_config(config: LogConfig) -> Result<(), Box<dyn std::error::Err
             ))
             .boxed()
     } else {
-        // Debug mode: full details for developers
+        // Debug mode: full details for developers (still use bracketed format)
         fmt::layer()
             .with_ansi(true)
-            .with_level(true)
-            .with_target(true)
-            .with_thread_ids(true)
-            .with_file(true)
-            .with_line_number(true)
-            .with_span_events(FmtSpan::NONE)
+            .event_format(BracketedLevelFormat) // Use [INFO] format
             .with_filter(tracing_subscriber::filter::LevelFilter::from_level(
                 config.console_level,
             ))
@@ -642,10 +637,7 @@ pub fn init_with_config(config: LogConfig) -> Result<(), Box<dyn std::error::Err
         fmt::layer()
             .with_writer(writer_handle)
             .with_ansi(false)
-            .with_level(true)
-            .with_target(false)     // Remove module paths like "comsrv::protocols::modbus"
-            .with_thread_ids(false) // Remove "ThreadId(01)"
-            .with_span_events(FmtSpan::NONE)
+            .event_format(BracketedLevelFormat) // Use [INFO] format like console
             .with_filter(
                 filter::filter_fn(|metadata| metadata.target() != "api_access").and(
                     tracing_subscriber::filter::LevelFilter::from_level(config.file_level),
@@ -682,10 +674,7 @@ pub fn init_with_config(config: LogConfig) -> Result<(), Box<dyn std::error::Err
             fmt::layer()
                 .with_writer(api_writer_handle)
                 .with_ansi(false)
-                .with_level(true)
-                .with_target(false) // Don't show target (we know it's api_access)
-                .with_thread_ids(false)
-                .with_span_events(FmtSpan::NONE)
+                .event_format(BracketedLevelFormat) // Use [INFO] format like console
                 .with_filter(filter::filter_fn(|metadata| metadata.target() == "api_access"))
                 .boxed(),
         )
@@ -694,13 +683,14 @@ pub fn init_with_config(config: LogConfig) -> Result<(), Box<dyn std::error::Err
     };
 
     // Register all layers
-    let registry_with_layers = registry.with(console_layer).with(business_file_layer);
-
-    if let Some(api_layer) = api_file_layer {
-        registry_with_layers.with(api_layer).init();
-    } else {
-        registry_with_layers.init();
-    }
+    // Note: Using .with(Option<Layer>) which acts as identity when None
+    // Console layer handles both business and API logs (api_access target)
+    // API file layer only handles api_access target for separate API log file
+    registry
+        .with(console_layer)
+        .with(business_file_layer)
+        .with(api_file_layer)
+        .init();
 
     let runtime = LogRuntime {
         service_name: config.service_name.clone(),
@@ -1671,9 +1661,27 @@ pub async fn http_request_logger(
     let duration = start.elapsed();
     let status = response.status();
 
-    // Log based on level
-    if level_enabled!(Level::DEBUG) {
-        // DEBUG: Log all requests with body
+    // Log based on level and method
+    // INFO level: Log only modifying methods (POST/PUT/PATCH/DELETE) without body
+    // DEBUG level: Log ALL requests with body content
+    //
+    // Note: We use separate info! and debug! calls because they have different fields.
+    // The tracing subscriber will filter based on the configured level for api_access target.
+
+    if matches!(method.as_str(), "POST" | "PUT" | "PATCH" | "DELETE") {
+        // Always log modifying methods at INFO level (no body)
+        info!(
+            target: "api_access",
+            method = %method,
+            path = %uri.path(),
+            status = %status.as_u16(),
+            duration_ms = %duration.as_millis(),
+            "HTTP request"
+        );
+    }
+
+    // Additionally, log all requests at DEBUG level with body (if body was read)
+    if body_str != "-" {
         debug!(
             target: "api_access",
             method = %method,
@@ -1681,11 +1689,11 @@ pub async fn http_request_logger(
             status = %status.as_u16(),
             duration_ms = %duration.as_millis(),
             request_body = %body_str,
-            "HTTP request"
+            "HTTP request (detailed)"
         );
-    } else if matches!(method.as_str(), "POST" | "PUT" | "PATCH" | "DELETE") {
-        // INFO: Log only modifying methods, no body
-        info!(
+    } else if !matches!(method.as_str(), "POST" | "PUT" | "PATCH" | "DELETE") {
+        // For GET requests, only log at DEBUG level
+        debug!(
             target: "api_access",
             method = %method,
             path = %uri.path(),

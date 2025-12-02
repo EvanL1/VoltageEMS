@@ -195,7 +195,7 @@ impl ComsrvSqliteLoader {
         &self,
         runtime_config: &mut RuntimeChannelConfig,
     ) -> Result<()> {
-        use voltage_config::comsrv::{ModbusMapping, VirtualMapping};
+        use voltage_config::comsrv::{GpioMapping, ModbusMapping, VirtualMapping};
 
         // Clear existing points and mappings
         runtime_config.telemetry_points.clear();
@@ -335,6 +335,23 @@ impl ComsrvSqliteLoader {
                                     .and_then(|v| v.as_f64()),
                             };
                             runtime_config.virtual_mappings.push(mapping);
+                        }
+                    },
+                    "di_do" | "gpio" | "dido" => {
+                        if let Ok(mapping_data) =
+                            serde_json::from_str::<serde_json::Value>(&json_str)
+                        {
+                            let mapping = GpioMapping {
+                                channel_id,
+                                point_id,
+                                telemetry_type: telemetry_type.to_string(),
+                                gpio_number: mapping_data
+                                    .get("gpio_number")
+                                    .and_then(|v| v.as_u64())
+                                    .unwrap_or(0)
+                                    as u32,
+                            };
+                            runtime_config.gpio_mappings.push(mapping);
                         }
                     },
                     _ => {

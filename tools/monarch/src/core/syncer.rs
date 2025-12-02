@@ -103,6 +103,19 @@ fn normalize_protocol_mapping(
                 .entry("offset".to_string())
                 .or_insert(JsonValue::Number(Number::from_f64(0.0).unwrap()));
         },
+        "di_do" | "gpio" | "dido" => {
+            let numeric_fields = ["gpio_number"];
+            for (key, value) in mapping {
+                if numeric_fields.contains(&key.as_str()) {
+                    normalized.insert(
+                        key.clone(),
+                        to_number(&value).unwrap_or(JsonValue::String(value)),
+                    );
+                } else {
+                    normalized.insert(key, JsonValue::String(value));
+                }
+            }
+        },
         _ => {
             // Unknown protocol: keep all as strings
             for (key, value) in mapping {

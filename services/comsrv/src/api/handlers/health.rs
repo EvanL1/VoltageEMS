@@ -6,7 +6,7 @@ use axum::{extract::State, response::Json};
 use chrono::Utc;
 
 use crate::api::routes::{get_service_start_time, AppState};
-use crate::dto::{create_health_status, AppError, HealthStatus, ServiceStatus, SuccessResponse};
+use crate::dto::{AppError, HealthStatus, ServiceStatus, SuccessResponse};
 
 /// Get service status endpoint
 ///
@@ -64,12 +64,20 @@ pub async fn get_service_status(
     tag = "comsrv"
 )]
 pub async fn health_check() -> Result<Json<SuccessResponse<HealthStatus>>, AppError> {
-    let health = create_health_status(
-        "healthy",
-        3600,              // uptime in seconds
-        1024 * 1024 * 100, // 100MB
-        15.5,              // CPU usage percentage
-    );
+    // Get actual uptime from service start time
+    let start_time = get_service_start_time();
+    let uptime_duration = Utc::now() - start_time;
+    let uptime_seconds: u64 = uptime_duration.num_seconds().max(0).try_into().unwrap_or(0);
+
+    // Simple health check without fake CPU/memory metrics
+    let health = HealthStatus {
+        status: voltage_config::api::ServiceStatus::Healthy,
+        service: "comsrv".to_string(),
+        version: env!("CARGO_PKG_VERSION").to_string(),
+        uptime_seconds,
+        timestamp: Utc::now(),
+        checks: std::collections::HashMap::new(), // No fake checks
+    };
 
     Ok(Json(SuccessResponse::new(health)))
 }

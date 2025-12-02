@@ -329,10 +329,6 @@ pub enum ProtocolType {
     ModbusTcp,
     ModbusRtu,
     ModbusAscii,
-    // CAN variants
-    CanOpen,
-    CanJ1939,
-    CanRaw,
     // IEC protocols
     Iec60870_5_104,
     Iec61850,
@@ -352,9 +348,6 @@ impl ProtocolType {
             "modbus_tcp" => Some(Self::ModbusTcp),
             "modbus_rtu" => Some(Self::ModbusRtu),
             "modbus_ascii" => Some(Self::ModbusAscii),
-            "canopen" => Some(Self::CanOpen),
-            "can_j1939" | "j1939" => Some(Self::CanJ1939),
-            "can_raw" | "can" => Some(Self::CanRaw),
             "iec60870_5_104" | "iec104" => Some(Self::Iec60870_5_104),
             "iec61850" => Some(Self::Iec61850),
             "mqtt" => Some(Self::Mqtt),
@@ -370,11 +363,6 @@ impl ProtocolType {
     /// Check if this is a Modbus protocol
     pub fn is_modbus(&self) -> bool {
         matches!(self, Self::ModbusTcp | Self::ModbusRtu | Self::ModbusAscii)
-    }
-
-    /// Check if this is a CAN protocol
-    pub fn is_can(&self) -> bool {
-        matches!(self, Self::CanOpen | Self::CanJ1939 | Self::CanRaw)
     }
 
     /// Check if this is an IEC protocol
@@ -402,9 +390,6 @@ impl fmt::Display for ProtocolType {
             Self::ModbusTcp => "modbus_tcp",
             Self::ModbusRtu => "modbus_rtu",
             Self::ModbusAscii => "modbus_ascii",
-            Self::CanOpen => "canopen",
-            Self::CanJ1939 => "can_j1939",
-            Self::CanRaw => "can_raw",
             Self::Iec60870_5_104 => "iec60870_5_104",
             Self::Iec61850 => "iec61850",
             Self::Mqtt => "mqtt",
@@ -650,7 +635,6 @@ mod tests {
     #[test]
     fn test_protocol_type_categorization() {
         assert!(ProtocolType::ModbusTcp.is_modbus());
-        assert!(ProtocolType::CanJ1939.is_can());
         assert!(ProtocolType::Iec61850.is_iec());
         assert!(ProtocolType::ModbusTcp.supports_server());
     }

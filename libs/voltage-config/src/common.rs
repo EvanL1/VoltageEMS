@@ -853,8 +853,6 @@ pub enum ProtocolType {
     ModbusTcp,
     /// Modbus RTU protocol
     ModbusRtu,
-    /// CAN bus protocol
-    Can,
     /// Virtual/simulated protocol
     Virtual,
 }
@@ -865,7 +863,6 @@ impl ProtocolType {
         match self {
             Self::ModbusTcp => "modbus_tcp",
             Self::ModbusRtu => "modbus_rtu",
-            Self::Can => "can",
             Self::Virtual => "virtual",
         }
     }
@@ -883,7 +880,6 @@ impl FromStr for ProtocolType {
         match s.to_lowercase().as_str() {
             "modbus_tcp" | "modbus-tcp" | "modbustcp" => Ok(Self::ModbusTcp),
             "modbus_rtu" | "modbus-rtu" | "modbusrtu" => Ok(Self::ModbusRtu),
-            "can" => Ok(Self::Can),
             "virtual" | "virt" => Ok(Self::Virtual),
             _ => Err(format!("Unknown protocol type: {}", s)),
         }
@@ -1313,10 +1309,6 @@ mod tests {
 
         // Test all variants
         assert_eq!(
-            serde_json::to_string(&ProtocolType::Can).unwrap(),
-            "\"can\""
-        );
-        assert_eq!(
             serde_json::to_string(&ProtocolType::Virtual).unwrap(),
             "\"virtual\""
         );
@@ -1333,11 +1325,13 @@ mod tests {
             ProtocolType::from_str("modbus_rtu").unwrap(),
             ProtocolType::ModbusRtu
         );
-        assert_eq!(ProtocolType::from_str("can").unwrap(), ProtocolType::Can);
         assert_eq!(
             ProtocolType::from_str("virtual").unwrap(),
             ProtocolType::Virtual
         );
+
+        // Test invalid (including removed CAN protocol)
+        assert!(ProtocolType::from_str("can").is_err());
 
         // Test variations
         assert_eq!(
@@ -1359,8 +1353,8 @@ mod tests {
         assert_eq!(modbus_tcp.as_str(), "modbus_tcp");
         assert!(modbus_tcp.is_modbus());
 
-        let can = ProtocolType::Can;
-        assert!(!can.is_modbus());
+        let virtual_proto = ProtocolType::Virtual;
+        assert!(!virtual_proto.is_modbus());
 
         // Test Display
         assert_eq!(modbus_tcp.to_string(), "modbus_tcp");

@@ -5,7 +5,7 @@
 #![allow(clippy::disallowed_methods)] // json! macro used in multiple functions
 
 use axum::{
-    extract::{Path, Query, State},
+    extract::{Path, Query, RawQuery, State},
     response::Json,
 };
 use bytes::Bytes;
@@ -21,11 +21,9 @@ use crate::app_state::AppState;
 use crate::dto::{DataTypeQuery, InstancePointsResponse};
 use crate::error::ModSrvError;
 
-/// Pagination and search query parameters
+/// Pagination query parameters for listing instances
 #[derive(Debug, Deserialize)]
 pub struct PaginationQuery {
-    /// Search keyword for instance_name fuzzy matching (optional)
-    pub q: Option<String>,
     /// Optional product filter
     pub product_name: Option<String>,
     #[serde(default = "default_page")]
@@ -42,11 +40,11 @@ fn default_page_size() -> u32 {
     20
 }
 
-/// List instances with optional search, product filter and pagination
+/// List instances with optional product filter and pagination
 ///
-/// @route GET /api/instances?q={optional}&product_name={optional}&page={optional}&page_size={optional}
+/// @route GET /api/instances?product_name={optional}&page={optional}&page_size={optional}
 /// @input State(state): Arc<AppState> - Application state
-/// @input Query(query): PaginationQuery - Search, pagination and filter parameters
+/// @input Query(query): PaginationQuery - Pagination and filter parameters
 /// @output Result<Json<SuccessResponse<serde_json::Value>>, AppError> - Paginated instances
 /// @status 200 - Success with total, list, page, page_size
 /// @status 500 - Database error
@@ -54,7 +52,6 @@ fn default_page_size() -> u32 {
     get,
     path = "/api/instances",
     params(
-        ("q" = Option<String>, Query, description = "Search keyword for instance_name fuzzy matching"),
         ("product_name" = Option<String>, Query, description = "Optional product filter"),
         ("page" = Option<u32>, Query, description = "Page number (default: 1)"),
         ("page_size" = Option<u32>, Query, description = "Items per page (default: 20, max: 100)")
@@ -98,27 +95,10 @@ pub async fn list_instances(
     let page = query.page.max(1); // Ensure page is at least 1
     let page_size = query.page_size.clamp(1, 100); // Limit to reasonable range
 
-    // If search keyword is provided, use search method; otherwise list all
-    let result = if let Some(ref keyword) = query.q {
-        let keyword = keyword.trim();
-        if keyword.is_empty() {
-            // Empty keyword = list all
-            state
-                .instance_manager
-                .list_instances_paginated(product_name, page, page_size)
-                .await
-        } else {
-            state
-                .instance_manager
-                .search_instances(keyword, product_name, page, page_size)
-                .await
-        }
-    } else {
-        state
-            .instance_manager
-            .list_instances_paginated(product_name, page, page_size)
-            .await
-    };
+    let result = state
+        .instance_manager
+        .list_instances_paginated(product_name, page, page_size)
+        .await;
 
     match result {
         Ok((total, instances)) => Ok(Json(SuccessResponse::new(json!({
@@ -129,6 +109,74 @@ pub async fn list_instances(
         })))),
         Err(e) => Err(ModSrvError::InternalError(format!(
             "Failed to list instances: {}",
+            e
+        ))),
+    }
+}
+
+/// Search instances by name with fuzzy matching (no pagination)
+///
+/// Returns all instances matching the search keyword. Use this for autocomplete
+/// or quick lookup scenarios where you need all matches without pagination.
+///
+/// URL format: `/api/instances/search?{keyword}`
+/// - The keyword is passed directly as the raw query string (no parameter name needed)
+/// - Empty keyword returns all instances
+///
+/// @route GET /api/instances/search?{keyword}
+/// @input State(state): Arc<AppState> - Application state
+/// @input RawQuery(raw_query): Option<String> - Raw query string as keyword
+/// @output Result<Json<SuccessResponse<serde_json::Value>>, ModSrvError> - Matching instances
+/// @status 200 - Success with list of matching instances
+/// @status 500 - Database error
+#[utoipa::path(
+    get,
+    path = "/api/instances/search",
+    responses(
+        (status = 200, description = "Matching instances", body = serde_json::Value,
+            example = json!({
+                "list": [
+                    {
+                        "instance_id": 1,
+                        "instance_name": "pcs_01",
+                        "product_name": "pcs",
+                        "properties": {}
+                    },
+                    {
+                        "instance_id": 2,
+                        "instance_name": "pcs_02",
+                        "product_name": "pcs",
+                        "properties": {}
+                    }
+                ]
+            })
+        )
+    ),
+    tag = "modsrv"
+)]
+pub async fn search_instances(
+    State(state): State<Arc<AppState>>,
+    RawQuery(raw_query): RawQuery,
+) -> Result<Json<SuccessResponse<serde_json::Value>>, ModSrvError> {
+    // raw_query is Option<String>:
+    // /search?pcs  => Some("pcs")
+    // /search?     => Some("")
+    // /search      => None
+    let keyword = raw_query.unwrap_or_default();
+
+    // Search all instances without pagination (use large page_size)
+    // Empty keyword returns all instances
+    let result = state
+        .instance_manager
+        .search_instances(&keyword, None, 1, 1000)
+        .await;
+
+    match result {
+        Ok((_total, instances)) => Ok(Json(SuccessResponse::new(json!({
+            "list": instances
+        })))),
+        Err(e) => Err(ModSrvError::InternalError(format!(
+            "Failed to search instances: {}",
             e
         ))),
     }

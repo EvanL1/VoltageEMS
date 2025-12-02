@@ -47,38 +47,6 @@ struct ModbusMappingValidator {
     bit_position: Option<u8>,
 }
 
-/// CAN mapping validator - Type-safe CAN bus parameter validation
-///
-/// Validates CAN protocol-specific parameters including:
-/// - CAN identifier ranges (standard/extended frame)
-/// - Bit-level signal extraction parameters
-/// - Data type and byte order specifications
-#[derive(Debug, Deserialize)]
-#[allow(dead_code)] // Fields are read by serde during deserialization
-struct CanMappingValidator {
-    /// CAN message identifier
-    /// - Standard frame: 0x000-0x7FF (11-bit)
-    /// - Extended frame: 0x00000000-0x1FFFFFFF (29-bit)
-    can_id: u32,
-    /// Signal start bit position (0-63 for 8-byte CAN frame)
-    start_bit: u32,
-    /// Signal bit length (1-64)
-    bit_length: u32,
-    /// Byte order (ABCD, DCBA, BADC, CDAB, AB, BA)
-    byte_order: String,
-    /// Data type (uint8, int8, uint16, int16, uint32, int32, float32, float64)
-    data_type: String,
-    /// Whether the signal is signed
-    #[serde(default)]
-    signed: bool,
-    /// Scaling factor for physical value conversion
-    #[serde(default = "default_scale")]
-    scale: f64,
-    /// Offset for physical value conversion
-    #[serde(default)]
-    offset: f64,
-}
-
 /// Virtual mapping validator - Expression-based simulation validation
 #[derive(Debug, Deserialize)]
 struct VirtualMappingValidator {
@@ -88,9 +56,17 @@ struct VirtualMappingValidator {
     expression: String,
 }
 
-// Helper functions for serde defaults
-fn default_scale() -> f64 {
-    1.0
+/// GPIO mapping validator for DI/DO protocol
+///
+/// Validates GPIO pin configuration for digital I/O operations.
+/// Only supports Signal (S) and Control (C) point types:
+/// - Signal (S): GPIO input (DI)
+/// - Control (C): GPIO output (DO)
+#[derive(Debug, Deserialize)]
+#[allow(dead_code)] // Fields are read by serde during deserialization
+struct GpioMappingValidator {
+    /// GPIO pin number (e.g., 496, 504 for ECU-1170)
+    gpio_number: u32,
 }
 
 /// Get all mapping configurations for a channel
@@ -393,45 +369,6 @@ pub async fn get_channel_mappings_handler(
                     "mode": "replace"
                 })
             )),
-            ("CAN Bus - Telemetry Signals" = (
-                summary = "CAN bus signal mapping with bit extraction",
-                description = "Map CAN signals using bit-level extraction parameters",
-                value = json!({
-                    "mappings": [
-                        {
-                            "point_id": 101,
-                            "four_remote": "T",
-                            "protocol_data": {
-                                "can_id": 0x18FF50E5,
-                                "start_bit": 0,
-                                "bit_length": 16,
-                                "byte_order": "AB",
-                                "data_type": "uint16",
-                                "signed": false,
-                                "scale": 0.1,
-                                "offset": 0.0
-                            }
-                        },
-                        {
-                            "point_id": 102,
-                            "four_remote": "T",
-                            "protocol_data": {
-                                "can_id": 0x18FF50E5,
-                                "start_bit": 16,
-                                "bit_length": 16,
-                                "byte_order": "AB",
-                                "data_type": "int16",
-                                "signed": true,
-                                "scale": 0.01,
-                                "offset": -100.0
-                            }
-                        }
-                    ],
-                    "validate_only": false,
-                    "reload_channel": false,
-                    "mode": "replace"
-                })
-            )),
             ("Virtual - Expression Mapping" = (
                 summary = "Virtual protocol with expression-based calculations",
                 description = "Map virtual points using mathematical expressions",
@@ -456,6 +393,38 @@ pub async fn get_channel_mappings_handler(
                             "four_remote": "T",
                             "protocol_data": {
                                 "expression": "pow(P1, 2) + sqrt(P2)"
+                            }
+                        }
+                    ],
+                    "validate_only": false,
+                    "reload_channel": false,
+                    "mode": "replace"
+                })
+            )),
+            ("DI/DO GPIO - Digital I/O Mapping" = (
+                summary = "GPIO digital input/output mapping",
+                description = "Map GPIO pins for digital I/O on industrial controllers (e.g., ECU-1170). S=Digital Input, C=Digital Output",
+                value = json!({
+                    "mappings": [
+                        {
+                            "point_id": 401,
+                            "four_remote": "S",
+                            "protocol_data": {
+                                "gpio_number": 496
+                            }
+                        },
+                        {
+                            "point_id": 402,
+                            "four_remote": "S",
+                            "protocol_data": {
+                                "gpio_number": 497
+                            }
+                        },
+                        {
+                            "point_id": 501,
+                            "four_remote": "C",
+                            "protocol_data": {
+                                "gpio_number": 504
                             }
                         }
                     ],
@@ -895,79 +864,6 @@ fn validate_mappings(protocol: &str, mappings: &[crate::dto::PointMappingItem]) 
                     },
                 }
             },
-            "can" => {
-                // CAN protocol validation - full support (no longer "Unsupported")
-                match serde_json::from_value::<CanMappingValidator>(mapping.protocol_data.clone()) {
-                    Ok(validated) => {
-                        // ✅ Type validation passed, now check business rules
-
-                        // 1. CAN ID range validation
-                        //    Standard frame: 0x000-0x7FF (2047)
-                        //    Extended frame: 0x00000000-0x1FFFFFFF (536870911)
-                        if validated.can_id > 0x1FFFFFFF {
-                            errors.push(format!(
-                                "Point {}: can_id 0x{:X} exceeds maximum (0x1FFFFFFF for extended frame)",
-                                mapping.point_id, validated.can_id
-                            ));
-                        }
-
-                        // 2. Start bit range (CAN frame is max 8 bytes = 64 bits)
-                        if validated.start_bit >= 64 {
-                            errors.push(format!(
-                                "Point {}: start_bit {} exceeds max (0-63 for 8-byte CAN frame)",
-                                mapping.point_id, validated.start_bit
-                            ));
-                        }
-
-                        // 3. Bit length validation (1-64 bits)
-                        if validated.bit_length == 0 || validated.bit_length > 64 {
-                            errors.push(format!(
-                                "Point {}: bit_length {} invalid (must be 1-64)",
-                                mapping.point_id, validated.bit_length
-                            ));
-                        }
-
-                        // 4. Validate start_bit + bit_length doesn't exceed frame size
-                        if validated.start_bit + validated.bit_length > 64 {
-                            errors.push(format!(
-                                "Point {}: signal exceeds frame boundary (start_bit {} + bit_length {} > 64)",
-                                mapping.point_id, validated.start_bit, validated.bit_length
-                            ));
-                        }
-
-                        // 5. Data type enumeration
-                        let valid_types = [
-                            "uint8", "int8", "uint16", "int16", "uint32", "int32", "float32",
-                            "float64",
-                        ];
-                        if !valid_types.contains(&validated.data_type.as_str()) {
-                            errors.push(format!(
-                                "Point {}: data_type '{}' invalid (valid: {})",
-                                mapping.point_id,
-                                validated.data_type,
-                                valid_types.join(", ")
-                            ));
-                        }
-
-                        // 6. Byte order enumeration
-                        let valid_orders = ["ABCD", "DCBA", "BADC", "CDAB", "AB", "BA"];
-                        if !valid_orders.contains(&validated.byte_order.as_str()) {
-                            errors.push(format!(
-                                "Point {}: byte_order '{}' invalid (valid: {})",
-                                mapping.point_id,
-                                validated.byte_order,
-                                valid_orders.join(", ")
-                            ));
-                        }
-                    },
-                    Err(e) => {
-                        errors.push(format!(
-                            "Point {}: CAN mapping validation failed - {}",
-                            mapping.point_id, e
-                        ));
-                    },
-                }
-            },
             "virtual" => {
                 // Virtual protocol validation
                 match serde_json::from_value::<VirtualMappingValidator>(
@@ -985,6 +881,36 @@ fn validate_mappings(protocol: &str, mappings: &[crate::dto::PointMappingItem]) 
                     Err(e) => {
                         errors.push(format!(
                             "Point {}: Virtual mapping validation failed - {}",
+                            mapping.point_id, e
+                        ));
+                    },
+                }
+            },
+            "di_do" | "gpio" | "dido" => {
+                // GPIO/DI-DO protocol validation
+                match serde_json::from_value::<GpioMappingValidator>(mapping.protocol_data.clone())
+                {
+                    Ok(validated) => {
+                        // 1. GPIO number range validation (typical embedded Linux range)
+                        if validated.gpio_number > 1023 {
+                            errors.push(format!(
+                                "Point {}: gpio_number {} out of range (0-1023)",
+                                mapping.point_id, validated.gpio_number
+                            ));
+                        }
+
+                        // 2. GPIO only supports Signal (input) and Control (output)
+                        let four_remote = mapping.four_remote.to_uppercase();
+                        if four_remote != "S" && four_remote != "C" {
+                            errors.push(format!(
+                                "Point {}: GPIO only supports Signal (S) and Control (C) types, got: {}",
+                                mapping.point_id, four_remote
+                            ));
+                        }
+                    },
+                    Err(e) => {
+                        errors.push(format!(
+                            "Point {}: GPIO mapping validation failed - {}",
                             mapping.point_id, e
                         ));
                     },
@@ -1074,9 +1000,12 @@ fn normalize_protocol_data(protocol: &str, value: &serde_json::Value) -> serde_j
                 }
             }
         },
-        "can" => {
-            // Normalize CAN numeric fields
-            let numeric_fields = ["can_id", "start_bit", "bit_length", "scale", "offset"];
+        "virt" => {
+            // Virtual protocol: no numeric normalization needed
+        },
+        "di_do" | "gpio" | "dido" => {
+            // Normalize GPIO numeric fields
+            let numeric_fields = ["gpio_number"];
             for field in numeric_fields {
                 if let Some(v) = obj.get(field) {
                     if let Some(normalized_v) = to_number(v) {
@@ -1084,9 +1013,6 @@ fn normalize_protocol_data(protocol: &str, value: &serde_json::Value) -> serde_j
                     }
                 }
             }
-        },
-        "virt" => {
-            // Virtual protocol: no numeric normalization needed
         },
         _ => {
             // Unknown protocol: return as-is
