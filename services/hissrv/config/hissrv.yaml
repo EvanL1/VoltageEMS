@@ -1,0 +1,136 @@
+# 历史数据服务配置文件
+# 此文件会被挂载到Docker容器的 /extp/config 目录
+
+# 服务基本信息
+service:
+  name: "历史数据服务"
+  version: "1.0.0"
+  description: "历史数据存储和管理，将实时数据持久化到时序数据库并提供查询服务"
+
+# InfluxDB连接配置
+influxdb:
+  # InfluxDB 2.7配置
+  url: "http://localhost:8086"
+  token: "JtkcnkT7qKUCgsja5HFp9k4N2Pk2OHwQn_1HWQAwAzK1-pTX1OjuBktZS2-iHanChGCSDTlsAIGZ8PCJxZyPig=="
+  org: "voltage"
+  bucket: "history_data"
+  
+  # 连接设置
+  timeout: 30  # 秒
+  batch_size: 1000  # 批量写入大小
+  flush_interval: 60  # 秒，批量写入间隔
+  
+  # 数据保留策略
+  retention_policy:
+    default_retention: "30d"  # 默认保留30天
+    measurement_retention:
+      telemetry: "90d"  # 遥测数据保留90天
+      events: "365d"     # 事件数据保留1年
+
+# 定时任务配置
+scheduler:
+  # 数据收集任务
+  data_collection:
+    enabled: true
+    interval: 30  # 秒，从Redis收集数据的间隔
+    flush_interval: 60  # 秒，数据写入InfluxDB的间隔
+    batch_size: 1000  # 单次处理的数据量
+    
+  # 数据清理任务
+  data_cleanup:
+    enabled: true
+    cron: "0 2 * * *"  # 每天凌晨2点执行数据清理
+    cleanup_older_than: "30d"  # 清理30天前的数据
+  
+  # 统计任务
+  statistics:
+    enabled: true
+    cron: "0 1 * * *"  # 每天凌晨1点生成统计数据
+    
+  # 健康检查任务  
+  health_check:
+    enabled: true
+    interval: 60  # 秒，检查系统健康状态
+
+# API服务配置
+api:
+  # API前缀
+  prefix: "/hisApi"
+  
+  # 分页配置
+  pagination:
+    default_page_size: 100
+    max_page_size: 1000
+    
+  # 查询配置
+  query:
+    max_time_range_days: 365  # 最大查询时间范围（天）
+    default_time_range_hours: 24  # 默认查询时间范围（小时）
+    
+  # 缓存配置
+  cache:
+    enabled: true
+    ttl: 300  # 秒，缓存过期时间
+
+# Redis数据源配置
+redis_source:
+  # 数据订阅模式，支持通配符
+  subscribe_patterns:
+    - "inst:*:M"      
+    - "inst:*:A"  
+  
+  # 数据过滤规则
+  filters:
+    enabled: true
+    exclude_patterns:
+      - "*:products:*"
+      - "*:product:*"
+
+# 数据存储配置
+data_storage:
+  # 数据字段配置
+  fields:
+    common_tags:          # 公共标签
+      - "channel_id"      # 通道ID
+      - "data_type"       # 数据类型
+      - "source"          # 数据来源
+    common_fields:        # 公共字段
+      - "value"           # 数值
+      - "timestamp"       # 时间戳
+
+# 监控配置
+monitoring:
+  # 服务监控
+  service_monitor:
+    enabled: true
+    health_check_interval: 30  # 秒
+  
+  # 数据存储监控
+  storage_monitor:
+    enabled: true
+    success_rate_threshold: 95  # 成功率阈值(%)
+    latency_threshold: 1000     # 延迟阈值(毫秒)
+    storage_size_warning: 1000000000  # 存储大小警告阈值(字节)
+  
+  # 连接状态监控
+  connection_monitor:
+    enabled: true
+    check_interval: 10  # 秒
+    redis_timeout: 5    # Redis连接超时(秒)
+    influxdb_timeout: 10  # InfluxDB连接超时(秒)
+
+# 日志配置
+logging:
+  level: "INFO"
+  file_rotation: "100 MB"
+  file_retention: "30 days"
+  console_output: true
+  file_output: true
+  
+  # 特定模块日志级别
+  module_levels:
+    redis: "INFO"
+    influxdb: "INFO"
+    scheduler: "INFO"
+    api: "DEBUG"
+    storage: "INFO"
