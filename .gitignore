@@ -132,7 +132,7 @@ services/*/*.md
 *_old.*
 *_test.*
 # Python files (project is pure Rust)
-**/*.py
+# **/*.py
 **/*.pyc
 **/__pycache__/
 .python-version
