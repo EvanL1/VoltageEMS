@@ -32,18 +32,18 @@ COPY . .
 # Build release binaries (only services, no apps or tools)
 # Note: rules service has been merged into modsrv
 # Features:
-#   - comsrv: modbus, can
+#   - comsrv: modbus
 #   - modsrv: redis, sqlite, [swagger-ui optional]
 RUN if [ "$ENABLE_SWAGGER_UI" = "1" ]; then \
         echo "Building with Swagger UI enabled"; \
         cargo build --release -p comsrv -p modsrv \
             --no-default-features \
-            --features "modbus,can,redis,sqlite,swagger-ui"; \
+            --features "modbus,redis,sqlite,swagger-ui"; \
     else \
         echo "Building without Swagger UI (production)"; \
         cargo build --release -p comsrv -p modsrv \
             --no-default-features \
-            --features "modbus,can,redis,sqlite"; \
+            --features "modbus,redis,sqlite"; \
     fi
 
 # ============================================================================

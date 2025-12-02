@@ -279,22 +279,18 @@ async fn perform_hot_reload(
                     }
                 })
             )),
-            ("CAN Bus - Full" = (
-                summary = "CAN bus channel (complete configuration)",
-                description = "Battery Management System with all CAN parameters",
+            ("DI/DO GPIO" = (
+                summary = "DI/DO GPIO channel for digital I/O",
+                description = "Digital input/output channel using Linux sysfs GPIO interface (e.g., ECU-1170)",
                 value = json!({
-                    "name": "BMS CAN Channel",
-                    "description": "Battery Management System with full parameters",
-                    "protocol": "can",
+                    "name": "ECU1170 GPIO",
+                    "description": "Digital I/O for industrial controller",
+                    "protocol": "di_do",
                     "enabled": true,
                     "parameters": {
-                        "interface": "can0",
-                        "bitrate": 500000,
-                        "timeout_ms": 100,
-                        "loopback": false,
-                        "listen_only": false,
-                        "fd_mode": false,
-                        "data_bitrate": 2000000
+                        "driver": "sysfs",
+                        "gpio_base_path": "/sys/class/gpio",
+                        "di_poll_interval_ms": 200
                     }
                 })
             )),

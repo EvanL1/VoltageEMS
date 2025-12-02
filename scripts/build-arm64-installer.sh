@@ -171,13 +171,13 @@ ENABLE_SWAGGER_UI="${ENABLE_SWAGGER_UI:-0}"
 
 # Determine build features based on environment variable
 # Note: Features are combined for all services (comsrv, modsrv)
-# - comsrv needs: modbus, can, [swagger-ui]
+# - comsrv needs: modbus, [swagger-ui]
 # - modsrv needs: redis, sqlite, [swagger-ui]
 if [[ "$ENABLE_SWAGGER_UI" == "1" ]]; then
-    CARGO_FEATURES="modbus,can,redis,sqlite,swagger-ui"
+    CARGO_FEATURES="modbus,redis,sqlite,swagger-ui"
     echo -e "${GREEN}Building with Swagger UI ENABLED (set ENABLE_SWAGGER_UI=0 to disable)${NC}"
 else
-    CARGO_FEATURES="modbus,can,redis,sqlite"
+    CARGO_FEATURES="modbus,redis,sqlite"
     echo -e "${YELLOW}Building without Swagger UI (default for production)${NC}"
 fi
 

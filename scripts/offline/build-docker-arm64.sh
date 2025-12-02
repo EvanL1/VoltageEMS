@@ -152,7 +152,7 @@ COPY . .
 ENV CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc
 RUN cargo build --release --target aarch64-unknown-linux-gnu \
     --no-default-features \
-    --features "modbus,can,redis,sqlite" \
+    --features "modbus,redis,sqlite" \
     -p comsrv -p modsrv
 
 # Runtime stage
