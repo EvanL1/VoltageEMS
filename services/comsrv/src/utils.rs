@@ -33,9 +33,6 @@ pub fn normalize_protocol_name(name: &str) -> String {
         // Virtual protocol variations
         "virtual" | "virt" | "virtual_protocol" => "virtual".to_string(),
 
-        // CAN variations
-        "can" | "canbus" | "can_bus" => "can".to_string(),
-
         // IEC variations
         "iec104" | "iec_104" | "iec60870" | "iec_60870" | "iec60870_5_104" | "iec_60870_5_104" => {
             "iec104".to_string()
@@ -95,13 +92,6 @@ mod tests {
         assert_eq!(normalize_protocol_name("VIRTUAL"), "virtual");
         assert_eq!(normalize_protocol_name("virtual_protocol"), "virtual");
 
-        // Test CAN variations
-        assert_eq!(normalize_protocol_name("can"), "can");
-        assert_eq!(normalize_protocol_name("CAN"), "can");
-        assert_eq!(normalize_protocol_name("canbus"), "can");
-        assert_eq!(normalize_protocol_name("can_bus"), "can");
-        assert_eq!(normalize_protocol_name("can-bus"), "can");
-
         // Test IEC variations
         assert_eq!(normalize_protocol_name("iec104"), "iec104");
         assert_eq!(normalize_protocol_name("iec_104"), "iec104");
@@ -156,17 +146,13 @@ mod tests {
             Some(ProtocolType::ModbusRtu)
         );
 
-        assert_eq!(parse_protocol_type("can"), Some(ProtocolType::Can));
-        assert_eq!(parse_protocol_type("CAN"), Some(ProtocolType::Can));
-        assert_eq!(parse_protocol_type("canbus"), Some(ProtocolType::Can));
-        assert_eq!(parse_protocol_type("can-bus"), Some(ProtocolType::Can));
-
         assert_eq!(parse_protocol_type("virtual"), Some(ProtocolType::Virtual));
         assert_eq!(parse_protocol_type("virt"), Some(ProtocolType::Virtual));
         assert_eq!(parse_protocol_type("VIRTUAL"), Some(ProtocolType::Virtual));
 
         // Test invalid protocol types
         assert_eq!(parse_protocol_type("unknown"), None);
+        assert_eq!(parse_protocol_type("can"), None); // CAN protocol removed
         assert_eq!(parse_protocol_type("iec104"), None); // Not in ProtocolType enum
         assert_eq!(parse_protocol_type("mqtt"), None); // Not in ProtocolType enum
     }
@@ -181,7 +167,6 @@ mod tests {
             protocol_type_to_string(ProtocolType::ModbusRtu),
             "modbus_rtu"
         );
-        assert_eq!(protocol_type_to_string(ProtocolType::Can), "can");
         assert_eq!(protocol_type_to_string(ProtocolType::Virtual), "virtual");
     }
 }

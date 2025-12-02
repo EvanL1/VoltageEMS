@@ -33,35 +33,44 @@ use crate::dto::{
                 "list": [
                     {
                         "id": 1,
-                        "name": "PV Inverter 01",
+                        "name": "PCS#1",
                         "protocol": "modbus_tcp",
-                        "description": "Primary PV inverter communication",
+                        "description": "变流器 #1",
                         "enabled": true,
                         "connected": true,
                         "last_update": "2025-10-15T10:30:00Z"
                     },
                     {
                         "id": 2,
-                        "name": "Battery Pack RTU",
-                        "protocol": "modbus_rtu",
-                        "description": "Battery management system",
+                        "name": "BAMS#1",
+                        "protocol": "modbus_tcp",
+                        "description": "电池管理系统 #1",
                         "enabled": true,
-                        "connected": false,
+                        "connected": true,
                         "last_update": "2025-10-15T10:28:15Z"
                     },
                     {
-                        "id": 4,
-                        "name": "Virtual Test Channel",
-                        "protocol": "virtual",
-                        "description": "Virtual channel for testing",
+                        "id": 3,
+                        "name": "GENSET#1",
+                        "protocol": "modbus_rtu",
+                        "description": "柴油发电机组 #1",
                         "enabled": true,
-                        "connected": true,
+                        "connected": false,
+                        "last_update": "2025-10-15T10:25:00Z"
+                    },
+                    {
+                        "id": 4,
+                        "name": "ECU1170_GPIO",
+                        "protocol": "di_do",
+                        "description": "ECU-1170 本机 DI/DO",
+                        "enabled": false,
+                        "connected": false,
                         "last_update": "2025-10-15T10:30:05Z"
                     }
                 ],
                 "page": 1,
                 "page_size": 20,
-                "total": 7
+                "total": 4
             })
         )
     ),
@@ -177,7 +186,7 @@ pub async fn get_all_channels(
                 "success": true,
                 "data": {
                     "id": 1,
-                    "name": "PV Inverter 01",
+                    "name": "PCS#1",
                     "protocol": "modbus_tcp",
                     "connected": true,
                     "running": true,
@@ -252,16 +261,15 @@ pub async fn get_channel_status(
                 "success": true,
                 "data": {
                     "id": 1,
-                    "name": "PV Inverter 01",
-                    "description": "Primary PV inverter communication channel",
+                    "name": "PCS#1",
+                    "description": "变流器 #1",
                     "protocol": "modbus_tcp",
                     "enabled": true,
                     "parameters": {
-                        "host": "192.168.1.100",
+                        "host": "192.168.1.10",
                         "port": 502,
-                        "timeout_ms": 1000,
-                        "retry_count": 3,
-                        "poll_interval_ms": 500
+                        "connect_timeout_ms": 3000,
+                        "read_timeout_ms": 3000
                     },
                     "runtime_status": {
                         "connected": true,
@@ -432,9 +440,9 @@ pub async fn get_channel_detail_handler(
             example = json!({
                 "list": [
                     {
-                        "id": 1001,
-                        "name": "modbus_pcs_01",
-                        "description": "PCS Modbus 通道",
+                        "id": 1,
+                        "name": "PCS#1",
+                        "description": "变流器 #1",
                         "protocol": "modbus_tcp",
                         "enabled": true,
                         "connected": true
