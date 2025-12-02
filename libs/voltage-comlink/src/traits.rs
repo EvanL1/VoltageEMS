@@ -513,8 +513,9 @@ impl ChannelLogger {
             .collect::<Vec<_>>()
             .join(" ");
 
+        // TRACE level for parsed data details
         self.log_channel_only(
-            tracing::Level::DEBUG,
+            tracing::Level::TRACE,
             format!(
                 "[{}] Parsed point {}: regs=[{}] raw={} value={}",
                 telemetry_type, point_id, regs_str, raw_decimal, value
@@ -549,8 +550,8 @@ impl ChannelLogger {
             )
         };
 
-        // TRACE level for raw frames (hex dump)
-        self.log_channel_only(tracing::Level::TRACE, message);
+        // DEBUG level for raw frames - visible in normal debug mode
+        self.log_channel_only(tracing::Level::DEBUG, message);
     }
 
     /// Log raw frame in hex format (TRACE level)

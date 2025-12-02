@@ -15,11 +15,69 @@ use tracing::Level;
 use tracing_appender::non_blocking::WorkerGuard;
 use tracing_subscriber::{
     filter::FilterExt,
-    fmt::{self, format::FmtSpan, MakeWriter},
+    fmt::{
+        self,
+        format::{FmtSpan, Writer},
+        FmtContext, FormatEvent, FormatFields, MakeWriter,
+    },
     layer::SubscriberExt,
+    registry::LookupSpan,
     util::SubscriberInitExt,
     EnvFilter, Layer,
 };
+
+/// Custom format for log level with brackets: [INFO], [WARN], etc.
+fn format_level(level: &Level) -> &'static str {
+    match *level {
+        Level::TRACE => "[TRACE]",
+        Level::DEBUG => "[DEBUG]",
+        Level::INFO => "[INFO]",
+        Level::WARN => "[WARN]",
+        Level::ERROR => "[ERROR]",
+    }
+}
+
+/// Custom event formatter that outputs: `timestamp [LEVEL] message`
+///
+/// Example output: `2025-12-02T00:50:44.809Z [INFO] Service started`
+struct BracketedLevelFormat;
+
+impl<S, N> FormatEvent<S, N> for BracketedLevelFormat
+where
+    S: tracing::Subscriber + for<'a> LookupSpan<'a>,
+    N: for<'a> FormatFields<'a> + 'static,
+{
+    fn format_event(
+        &self,
+        ctx: &FmtContext<'_, S, N>,
+        mut writer: Writer<'_>,
+        event: &tracing::Event<'_>,
+    ) -> std::fmt::Result {
+        // Format timestamp
+        let now = chrono::Utc::now();
+        write!(writer, "{} ", now.format("%Y-%m-%dT%H:%M:%S%.6fZ"))?;
+
+        // Format level with brackets and color
+        let level = *event.metadata().level();
+        if writer.has_ansi_escapes() {
+            let color = match level {
+                Level::TRACE => "\x1b[35m", // magenta
+                Level::DEBUG => "\x1b[34m", // blue
+                Level::INFO => "\x1b[32m",  // green
+                Level::WARN => "\x1b[33m",  // yellow
+                Level::ERROR => "\x1b[31m", // red
+            };
+            write!(writer, "{}{}\x1b[0m ", color, format_level(&level))?;
+        } else {
+            write!(writer, "{} ", format_level(&level))?;
+        }
+
+        // Format the event message and fields
+        ctx.field_format().format_fields(writer.by_ref(), event)?;
+
+        writeln!(writer)
+    }
+}
 
 // Global guards for keeping loggers alive
 static GUARDS: OnceLock<Arc<Mutex<Vec<WorkerGuard>>>> = OnceLock::new();
@@ -526,17 +584,16 @@ pub fn init_with_config(config: LogConfig) -> Result<(), Box<dyn std::error::Err
     let registry = tracing_subscriber::registry().with(env_filter);
 
     // Console layer - simplified for INFO and above, detailed for DEBUG and below
+    // Custom format: 2025-12-02T00:50:44.809Z [INFO] message
     let console_layer = if config.console_level >= Level::INFO {
-        // Production mode: clean output for operations staff
+        // Production mode: clean output with bracketed level
         fmt::layer()
             .with_ansi(true)
-            .with_level(true)
-            .with_target(false)  // No module paths for INFO
-            .with_thread_ids(false)  // No ThreadId for INFO
-            .with_span_events(FmtSpan::NONE)
+            .event_format(BracketedLevelFormat)
             .with_filter(tracing_subscriber::filter::LevelFilter::from_level(
                 config.console_level,
             ))
+            .boxed()
     } else {
         // Debug mode: full details for developers
         fmt::layer()
@@ -550,6 +607,7 @@ pub fn init_with_config(config: LogConfig) -> Result<(), Box<dyn std::error::Err
             .with_filter(tracing_subscriber::filter::LevelFilter::from_level(
                 config.console_level,
             ))
+            .boxed()
     };
 
     // Create reloadable writer
