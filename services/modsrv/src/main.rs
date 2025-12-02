@@ -3,7 +3,7 @@
 //! Model management service supporting measurement/action separation architecture.
 //! Rule Engine API is integrated on the same port (6002).
 
-use std::{net::SocketAddr, sync::Arc};
+use std::{net::SocketAddr, path::PathBuf, sync::Arc};
 
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
@@ -69,12 +69,14 @@ async fn main() -> Result<()> {
 
     debug!("Rule scheduler tick_ms: {}", tick_ms);
 
-    // Create rule scheduler
+    // Create rule scheduler with independent rule log directory
+    let rule_log_root = PathBuf::from("logs/modsrv");
     let scheduler = Arc::new(RuleScheduler::new(
         rtdb,
         routing_cache,
         sqlite_pool.clone(),
         tick_ms,
+        rule_log_root,
     ));
 
     // Load rules into scheduler

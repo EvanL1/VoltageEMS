@@ -1,0 +1,343 @@
+//! Rule execution logger
+//!
+//! Provides independent log files for each rule, capturing execution details
+//! including variable values, matched conditions, and action results.
+
+use std::{
+    collections::HashMap,
+    fs::{self, File, OpenOptions},
+    io::Write,
+    path::{Path, PathBuf},
+    sync::{Arc, Mutex},
+};
+
+use chrono::{Local, Utc};
+use tracing::warn;
+use voltage_config::rules::FlowCondition;
+
+use crate::executor::{ActionResult, RuleExecutionResult};
+
+/// Logger for individual rule execution
+pub struct RuleLogger {
+    rule_id: String,
+    log_dir: PathBuf,
+    current_date: Mutex<String>,
+    current_file: Mutex<Option<File>>,
+}
+
+impl RuleLogger {
+    /// Create a new RuleLogger for a specific rule
+    ///
+    /// Log files will be created in: `{log_root}/rules/{rule_id}/`
+    /// with naming format: `{YYYYMMDD}_{rule_name}.log`
+    pub fn new(log_root: &Path, rule_id: &str, _rule_name: &str) -> Self {
+        let rule_dir = log_root.join("rules").join(rule_id);
+        if let Err(e) = fs::create_dir_all(&rule_dir) {
+            warn!("Failed to create rule log directory {:?}: {}", rule_dir, e);
+        }
+
+        Self {
+            rule_id: rule_id.to_string(),
+            log_dir: rule_dir,
+            current_date: Mutex::new(String::new()),
+            current_file: Mutex::new(None),
+        }
+    }
+
+    /// Log rule execution with matched condition only
+    ///
+    /// Format: `timestamp [RULE] rule_id vars | matched_condition | action_result`
+    pub fn log_execution(&self, result: &RuleExecutionResult, vars: &HashMap<String, f64>) {
+        // Format variable values: "X1=50.3 X2=25.0"
+        let vars_str = if vars.is_empty() {
+            "-".to_string()
+        } else {
+            vars.iter()
+                .map(|(k, v)| format!("{}={:.1}", k, v))
+                .collect::<Vec<_>>()
+                .join(" ")
+        };
+
+        // Matched condition or "-"
+        let cond_str = result.matched_condition.as_deref().unwrap_or("-");
+
+        // Action results: "diesel_gen_01:A:2=1 OK"
+        let actions_str = format_actions(&result.actions_executed, result.error.as_deref());
+
+        // Compose: "X1=50.3 | X1>=49 | diesel_gen_01:A:2=1 OK"
+        let message = format!("{} | {} | {}", vars_str, cond_str, actions_str);
+        self.write_line(&message);
+    }
+
+    fn write_line(&self, message: &str) {
+        let today = Local::now().format("%Y%m%d").to_string();
+        let timestamp = Utc::now().format("%Y-%m-%dT%H:%M:%S%.3fZ");
+
+        // Check if we need to rotate the file (new day)
+        let Ok(mut current_date) = self.current_date.lock() else {
+            warn!("Failed to acquire current_date lock");
+            return;
+        };
+        let Ok(mut file_guard) = self.current_file.lock() else {
+            warn!("Failed to acquire current_file lock");
+            return;
+        };
+
+        if *current_date != today {
+            // New day - open new file
+            *current_date = today.clone();
+            let file_path = self.log_dir.join(format!("{}_{}.log", today, self.rule_id));
+
+            match OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&file_path)
+            {
+                Ok(file) => *file_guard = Some(file),
+                Err(e) => {
+                    warn!("Failed to open rule log file {:?}: {}", file_path, e);
+                    return;
+                },
+            }
+        }
+
+        // Write the log line
+        if let Some(ref mut file) = *file_guard {
+            let line = format!("{} [RULE] {} {}\n", timestamp, self.rule_id, message);
+            if let Err(e) = file.write_all(line.as_bytes()) {
+                warn!("Failed to write rule log: {}", e);
+            }
+        }
+    }
+}
+
+/// Format action results for logging
+fn format_actions(actions: &[ActionResult], error: Option<&str>) -> String {
+    if let Some(err) = error {
+        return err.to_string();
+    }
+
+    if actions.is_empty() {
+        return "no action".to_string();
+    }
+
+    actions
+        .iter()
+        .map(|a| {
+            let status = if a.success { "OK" } else { "FAIL" };
+            // Format: "instance_id:point_type:point_id=value OK"
+            format!(
+                "{}:{}:{}={} {}",
+                a.target_id, a.point_type, a.point_id, a.value, status
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// Format conditions as expression string (e.g., "X1>=49" or "X1>10 && X2<50")
+pub fn format_conditions(conditions: &[FlowCondition]) -> String {
+    if conditions.is_empty() {
+        return String::new();
+    }
+
+    let mut parts = Vec::new();
+    let mut pending_relation: Option<&str> = None;
+
+    for cond in conditions {
+        if cond.cond_type == "relation" {
+            pending_relation = cond.value.as_ref().and_then(|v| v.as_str());
+            continue;
+        }
+
+        // Format: "X1>=49"
+        if let Some(var) = &cond.variables {
+            let op = cond.operator.as_deref().unwrap_or("==");
+            let val = cond
+                .value
+                .as_ref()
+                .map(|v| {
+                    // Remove quotes from string values
+                    let s = v.to_string();
+                    s.trim_matches('"').to_string()
+                })
+                .unwrap_or_default();
+
+            let expr = format!("{}{}{}", var, op, val);
+
+            // Add relation if pending
+            if let Some(rel) = pending_relation.take() {
+                let rel_str = match rel {
+                    "||" | "or" | "OR" => " || ",
+                    _ => " && ",
+                };
+                parts.push(rel_str.to_string());
+            }
+            parts.push(expr);
+        }
+    }
+
+    parts.concat()
+}
+
+/// Manager for multiple rule loggers
+pub struct RuleLoggerManager {
+    log_root: PathBuf,
+    loggers: Mutex<HashMap<String, Arc<RuleLogger>>>,
+}
+
+impl RuleLoggerManager {
+    /// Create a new logger manager
+    pub fn new(log_root: PathBuf) -> Self {
+        Self {
+            log_root,
+            loggers: Mutex::new(HashMap::new()),
+        }
+    }
+
+    /// Get or create a logger for a specific rule
+    pub fn get_logger(&self, rule_id: &str, rule_name: &str) -> Arc<RuleLogger> {
+        let Ok(mut loggers) = self.loggers.lock() else {
+            warn!("Failed to acquire loggers lock, creating temporary logger");
+            return Arc::new(RuleLogger::new(&self.log_root, rule_id, rule_name));
+        };
+
+        if let Some(logger) = loggers.get(rule_id) {
+            return Arc::clone(logger);
+        }
+
+        let logger = Arc::new(RuleLogger::new(&self.log_root, rule_id, rule_name));
+        loggers.insert(rule_id.to_string(), Arc::clone(&logger));
+        logger
+    }
+
+    /// Remove a logger (e.g., when rule is deleted)
+    pub fn remove_logger(&self, rule_id: &str) {
+        if let Ok(mut loggers) = self.loggers.lock() {
+            loggers.remove(rule_id);
+        }
+    }
+
+    /// Clear all loggers
+    pub fn clear(&self) {
+        if let Ok(mut loggers) = self.loggers.lock() {
+            loggers.clear();
+        }
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::disallowed_methods)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_format_conditions_simple() {
+        let conditions = vec![FlowCondition {
+            cond_type: "variable".to_string(),
+            variables: Some("X1".to_string()),
+            operator: Some(">=".to_string()),
+            value: Some(serde_json::json!(49)),
+        }];
+
+        assert_eq!(format_conditions(&conditions), "X1>=49");
+    }
+
+    #[test]
+    fn test_format_conditions_compound_and() {
+        let conditions = vec![
+            FlowCondition {
+                cond_type: "variable".to_string(),
+                variables: Some("X1".to_string()),
+                operator: Some(">".to_string()),
+                value: Some(serde_json::json!(10)),
+            },
+            FlowCondition {
+                cond_type: "relation".to_string(),
+                variables: None,
+                operator: None,
+                value: Some(serde_json::json!("&&")),
+            },
+            FlowCondition {
+                cond_type: "variable".to_string(),
+                variables: Some("X2".to_string()),
+                operator: Some("<".to_string()),
+                value: Some(serde_json::json!(50)),
+            },
+        ];
+
+        assert_eq!(format_conditions(&conditions), "X1>10 && X2<50");
+    }
+
+    #[test]
+    fn test_format_conditions_compound_or() {
+        let conditions = vec![
+            FlowCondition {
+                cond_type: "variable".to_string(),
+                variables: Some("X1".to_string()),
+                operator: Some("<=".to_string()),
+                value: Some(serde_json::json!(5)),
+            },
+            FlowCondition {
+                cond_type: "relation".to_string(),
+                variables: None,
+                operator: None,
+                value: Some(serde_json::json!("||")),
+            },
+            FlowCondition {
+                cond_type: "variable".to_string(),
+                variables: Some("X1".to_string()),
+                operator: Some(">=".to_string()),
+                value: Some(serde_json::json!(95)),
+            },
+        ];
+
+        assert_eq!(format_conditions(&conditions), "X1<=5 || X1>=95");
+    }
+
+    #[test]
+    fn test_format_conditions_empty() {
+        let conditions: Vec<FlowCondition> = vec![];
+        assert_eq!(format_conditions(&conditions), "");
+    }
+
+    #[test]
+    fn test_format_actions_success() {
+        let actions = vec![ActionResult {
+            target_type: "instance".to_string(),
+            target_id: 5,
+            point_type: "A".to_string(),
+            point_id: "2".to_string(),
+            value: "1".to_string(),
+            success: true,
+        }];
+
+        assert_eq!(format_actions(&actions, None), "5:A:2=1 OK");
+    }
+
+    #[test]
+    fn test_format_actions_failure() {
+        let actions = vec![ActionResult {
+            target_type: "instance".to_string(),
+            target_id: 5,
+            point_type: "A".to_string(),
+            point_id: "2".to_string(),
+            value: "1".to_string(),
+            success: false,
+        }];
+
+        assert_eq!(format_actions(&actions, None), "5:A:2=1 FAIL");
+    }
+
+    #[test]
+    fn test_format_actions_with_error() {
+        let actions = vec![];
+        assert_eq!(format_actions(&actions, Some("read failed")), "read failed");
+    }
+
+    #[test]
+    fn test_format_actions_empty() {
+        let actions: Vec<ActionResult> = vec![];
+        assert_eq!(format_actions(&actions, None), "no action");
+    }
+}

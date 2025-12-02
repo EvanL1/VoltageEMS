@@ -6,6 +6,7 @@
 //! 3. Executing actions and following wires
 
 use crate::error::Result;
+use crate::logger::format_conditions;
 use std::collections::HashMap;
 use std::sync::Arc;
 use voltage_config::rules::{
@@ -23,6 +24,10 @@ pub struct RuleExecutionResult {
     pub actions_executed: Vec<ActionResult>,
     pub error: Option<String>,
     pub execution_path: Vec<String>, // Node IDs visited
+    /// Matched condition expression (e.g., "X1>=49" or "X1>10 && X2<50")
+    pub matched_condition: Option<String>,
+    /// Variable values at execution time (for logging)
+    pub variable_values: HashMap<String, f64>,
 }
 
 /// Record of an executed action
@@ -64,6 +69,8 @@ impl<R: Rtdb + ?Sized> RuleExecutor<R> {
             actions_executed: vec![],
             error: None,
             execution_path: vec![],
+            matched_condition: None,
+            variable_values: HashMap::new(),
         };
 
         // Execute from start node, accumulating variable values along the path
@@ -112,11 +119,20 @@ impl<R: Rtdb + ?Sized> RuleExecutor<R> {
                     // Read node-local variables
                     if let Err(e) = self.read_rule_variables(variables, &mut values).await {
                         result.error = Some(format!("Failed to read variables: {}", e));
+                        // Save variable values even on error for logging
+                        result.variable_values = values.clone();
                         return Ok(result);
                     }
 
-                    // Evaluate switch rules to determine next node
-                    match self.evaluate_rule_switch(rules, wires, &values) {
+                    // Save variable values for logging
+                    result.variable_values = values.clone();
+
+                    // Evaluate switch rules to determine next node and capture matched condition
+                    let (next_node, matched_cond) =
+                        self.evaluate_rule_switch(rules, wires, &values);
+                    result.matched_condition = matched_cond;
+
+                    match next_node {
                         Some(next) => current_id = next,
                         None => {
                             result.error = Some("No matching switch rule".to_string());
@@ -252,24 +268,29 @@ impl<R: Rtdb + ?Sized> RuleExecutor<R> {
         Ok(())
     }
 
-    /// Evaluate compact switch rules and return the next node ID
+    /// Evaluate compact switch rules and return the next node ID with matched condition
+    ///
+    /// Returns: (next_node_id, matched_condition_expression)
     fn evaluate_rule_switch<'a>(
         &self,
         rules: &[RuleSwitchBranch],
         wires: &'a HashMap<String, Vec<String>>,
         values: &HashMap<String, f64>,
-    ) -> Option<&'a str> {
+    ) -> (Option<&'a str>, Option<String>) {
         for rule in rules {
             if self.evaluate_flow_conditions(&rule.rule, values) {
+                // Format the matched condition expression
+                let condition_str = format_conditions(&rule.rule);
+
                 // Find the wire target for this rule's output
                 if let Some(targets) = wires.get(&rule.name) {
                     if let Some(target) = targets.first() {
-                        return Some(target.as_str());
+                        return (Some(target.as_str()), Some(condition_str));
                     }
                 }
             }
         }
-        None
+        (None, None)
     }
 
     /// Evaluate compact conditions
@@ -537,8 +558,9 @@ mod tests {
         wires.insert("out002".to_string(), vec!["node-high".to_string()]);
 
         // X1=10 > 5, should match out002
-        let next = executor.evaluate_rule_switch(&rules, &wires, &values);
+        let (next, condition) = executor.evaluate_rule_switch(&rules, &wires, &values);
         assert_eq!(next, Some("node-high"));
+        assert_eq!(condition, Some("X1>5".to_string()));
     }
 
     // =========================================================================

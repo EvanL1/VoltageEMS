@@ -23,6 +23,7 @@
 
 mod error;
 mod executor;
+pub mod logger;
 mod parser;
 mod repository;
 mod scheduler;
@@ -30,6 +31,7 @@ mod scheduler;
 // Re-export public API
 pub use error::{Result, RuleError};
 pub use executor::{ActionResult, RuleExecutionResult, RuleExecutor};
+pub use logger::{format_conditions, RuleLogger, RuleLoggerManager};
 pub use parser::extract_rule_flow;
 pub use repository::{
     delete_rule, get_rule, get_rule_for_execution, list_rules, list_rules_paginated,

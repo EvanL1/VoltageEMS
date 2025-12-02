@@ -8,8 +8,10 @@
 
 use crate::error::Result;
 use crate::executor::{RuleExecutionResult, RuleExecutor};
+use crate::logger::RuleLoggerManager;
 use crate::repository;
 use sqlx::SqlitePool;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
@@ -70,15 +72,25 @@ pub struct RuleScheduler<R: Rtdb + ?Sized> {
     running: Arc<std::sync::atomic::AtomicBool>,
     /// Scheduler tick interval in milliseconds
     tick_ms: u64,
+    /// Rule logger manager for independent rule log files
+    logger_manager: RuleLoggerManager,
 }
 
 impl<R: Rtdb + ?Sized + 'static> RuleScheduler<R> {
     /// Create a new rule scheduler with configurable tick interval
+    ///
+    /// # Arguments
+    /// * `rtdb` - RTDB instance for reading/writing data
+    /// * `routing_cache` - Routing cache for M2C route lookups
+    /// * `pool` - SQLite pool for rule persistence
+    /// * `tick_ms` - Scheduler tick interval in milliseconds
+    /// * `log_root` - Root directory for rule log files (e.g., "logs/modsrv")
     pub fn new(
         rtdb: Arc<R>,
         routing_cache: Arc<RoutingCache>,
         pool: SqlitePool,
         tick_ms: u64,
+        log_root: PathBuf,
     ) -> Self {
         Self {
             executor: Arc::new(RuleExecutor::new(rtdb, routing_cache)),
@@ -87,6 +99,7 @@ impl<R: Rtdb + ?Sized + 'static> RuleScheduler<R> {
             shutdown: Arc::new(tokio::sync::Notify::new()),
             running: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             tick_ms,
+            logger_manager: RuleLoggerManager::new(log_root),
         }
     }
 
@@ -215,6 +228,12 @@ impl<R: Rtdb + ?Sized + 'static> RuleScheduler<R> {
 
                 match self.executor.execute(&scheduled.rule).await {
                     Ok(result) => {
+                        // Log rule execution to independent rule log file
+                        let logger = self
+                            .logger_manager
+                            .get_logger(&scheduled.rule.id, &scheduled.rule.name);
+                        logger.log_execution(&result, &result.variable_values);
+
                         scheduled.last_execution = Some(now);
                         if result.success {
                             debug!(
