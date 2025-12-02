@@ -608,6 +608,19 @@ pub struct ModbusMapping {
     pub bit_position: u8,
 }
 
+/// GPIO protocol mapping for DI/DO (corresponds to gpio_mappings table)
+/// Direction is implicit: Signal=input, Control=output
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
+pub struct GpioMapping {
+    #[serde(default)] // channel_id from directory context
+    pub channel_id: u16,
+    pub point_id: u32,
+    #[serde(default)] // telemetry_type from filename context
+    pub telemetry_type: String,
+    pub gpio_number: u32,
+}
+
 /// Virtual protocol mapping (corresponds to virtual_mappings table)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(JsonSchema))]
@@ -824,6 +837,9 @@ pub struct RuntimeChannelConfig {
 
     /// CAN protocol mappings (if CAN protocol)
     pub can_mappings: Vec<CanMapping>,
+
+    /// GPIO protocol mappings (if DI/DO protocol)
+    pub gpio_mappings: Vec<GpioMapping>,
 }
 
 impl RuntimeChannelConfig {
@@ -838,6 +854,7 @@ impl RuntimeChannelConfig {
             modbus_mappings: Vec::new(),
             virtual_mappings: Vec::new(),
             can_mappings: Vec::new(),
+            gpio_mappings: Vec::new(),
         }
     }
 

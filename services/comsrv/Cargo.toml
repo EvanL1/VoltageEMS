@@ -17,7 +17,7 @@ path = "src/main.rs"
 common = { path = "../../libs/common", default-features = false, features = ["redis", "sqlite"] }
 voltage-comlink = { path = "../../libs/voltage-comlink" }
 voltage-config = { path = "../../libs/voltage-config", features = ["axum-support", "openapi"] }
-voltage-protocols = { path = "../../libs/voltage-protocols", features = ["modbus", "modbus-rtu"] }
+voltage-protocols = { path = "../../libs/voltage-protocols", features = ["modbus", "modbus-rtu", "dido"] }
 voltage-rtdb = { path = "../../libs/voltage-rtdb" }
 
 # Modbus library (for error conversion)

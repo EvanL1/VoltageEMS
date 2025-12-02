@@ -5,8 +5,9 @@ edition = "2021"
 description = "Protocol implementations for VoltageEMS"
 
 [features]
-default = ["virt", "modbus"]
+default = ["virt", "modbus", "dido"]
 virt = []
+dido = []
 modbus = ["modbus-tcp", "dep:voltage_modbus"]
 modbus-tcp = ["dep:tokio-util", "dep:bytes"]
 modbus-rtu = ["modbus-tcp", "dep:tokio-serial"]

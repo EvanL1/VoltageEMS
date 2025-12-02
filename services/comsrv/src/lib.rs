@@ -33,8 +33,10 @@ pub mod core {
 }
 
 pub mod protocols {
+    pub mod dido;
     #[cfg(feature = "modbus")]
     pub mod modbus;
+    pub mod registry;
     pub mod virt;
 }
 

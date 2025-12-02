@@ -154,6 +154,21 @@ impl ProtocolFactory for VirtualFactory {
     }
 }
 
+/// DI/DO (GPIO) protocol factory (always available)
+pub struct DiDoFactory;
+
+#[async_trait]
+impl ProtocolFactory for DiDoFactory {
+    fn protocol_names(&self) -> &'static [&'static str] {
+        &["di_do", "dido", "gpio"]
+    }
+
+    async fn create(&self, config: &RuntimeChannelConfig) -> Result<Box<dyn ComClient>> {
+        use crate::protocols::dido::DiDoProtocol;
+        Ok(Box::new(DiDoProtocol::from_runtime_config(config)?))
+    }
+}
+
 // ============================================================================
 // Registry Initialization
 // ============================================================================
@@ -173,6 +188,9 @@ pub fn create_default_registry() -> ProtocolRegistry {
 
     // Register Virtual protocol (always available)
     registry.register(Arc::new(VirtualFactory));
+
+    // Register DI/DO protocol (always available)
+    registry.register(Arc::new(DiDoFactory));
 
     // Future protocols:
     // #[cfg(feature = "opcua")]
@@ -215,5 +233,8 @@ mod tests {
 
         assert!(protocols.contains(&"virtual".to_string()));
         assert!(protocols.contains(&"virt".to_string()));
+        assert!(protocols.contains(&"di_do".to_string()));
+        assert!(protocols.contains(&"dido".to_string()));
+        assert!(protocols.contains(&"gpio".to_string()));
     }
 }
