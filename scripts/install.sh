@@ -638,10 +638,68 @@ if [[ "$LOG_DIR" != "$INSTALL_DIR/logs" ]]; then
     echo "Linked $INSTALL_DIR/logs -> $LOG_DIR"
 fi
 
-# Initialize empty SQLite database
-echo "Creating placeholder database file..."
-$SUDO touch "$INSTALL_DIR"/data/voltage.db
-echo "Note: Database is empty. Run 'monarch init all && monarch sync all' after installation"
+# Database initialization with safety check
+echo "Checking database status..."
+DB_FILE="$INSTALL_DIR/data/voltage.db"
+
+if [[ -f "$DB_FILE" ]]; then
+    # Database exists - check if it has data
+    DB_SIZE=$(stat -c%s "$DB_FILE" 2>/dev/null || stat -f%z "$DB_FILE" 2>/dev/null || echo "0")
+
+    if [[ "$DB_SIZE" -gt 0 ]]; then
+        # Format size for display (handle both Linux and macOS)
+        if command -v numfmt &>/dev/null; then
+            DB_SIZE_DISPLAY=$(numfmt --to=iec $DB_SIZE 2>/dev/null)
+        else
+            DB_SIZE_DISPLAY="${DB_SIZE}B"
+        fi
+
+        echo -e "${BLUE}Existing database detected (${DB_SIZE_DISPLAY})${NC}"
+        echo ""
+        echo "Options:"
+        echo "  1. Keep existing data and add missing tables (safe upgrade)"
+        echo "  2. Reset database completely (WARNING: deletes all data)"
+        echo "  3. Skip database initialization"
+        echo ""
+        read -p "Choose option [1]: " DB_OPTION
+        DB_OPTION=${DB_OPTION:-1}
+
+        case $DB_OPTION in
+            1)
+                echo -e "${YELLOW}Running safe schema upgrade...${NC}"
+                monarch init  # IF NOT EXISTS ensures safety
+                echo -e "${GREEN}✓ Schema upgraded (existing data preserved)${NC}"
+                ;;
+            2)
+                echo -e "${RED}⚠ WARNING: This will DELETE all existing configuration!${NC}"
+                read -p "Type 'DELETE' to confirm: " CONFIRM
+                if [[ "$CONFIRM" == "DELETE" ]]; then
+                    monarch init --force
+                    echo -e "${GREEN}✓ Database reset${NC}"
+                else
+                    echo -e "${YELLOW}Cancelled. Keeping existing database.${NC}"
+                fi
+                ;;
+            3)
+                echo -e "${BLUE}Skipped database initialization${NC}"
+                ;;
+            *)
+                echo -e "${YELLOW}Invalid option. Using safe upgrade (option 1)...${NC}"
+                monarch init
+                ;;
+        esac
+    else
+        # Empty database file
+        echo "Empty database file detected, initializing..."
+        monarch init
+    fi
+else
+    # No database - first installation
+    echo "Creating new database..."
+    $SUDO touch "$DB_FILE"
+    $SUDO chown $ACTUAL_USER:docker "$DB_FILE" 2>/dev/null || true
+    monarch init
+fi
 
 # Set permissions using docker group for secure access
 echo "Setting up permissions..."
@@ -915,8 +973,13 @@ echo "  Before starting services, you must:"
 echo "  1. Copy configuration template:"
 echo "     cp -r $INSTALL_DIR/config.template $INSTALL_DIR/config"
 echo "  2. Customize configuration files in config/ directory"
-echo "  3. Initialize and sync configurations:"
-echo "     monarch init all && monarch sync all"
+echo "  3. Sync configurations to database:"
+echo "     monarch sync"
+echo ""
+echo -e "${BLUE}Database Management:${NC}"
+echo "  monarch init          - Add missing tables (safe, preserves data)"
+echo "  monarch init --force  - Reset database (WARNING: deletes all data)"
+echo "  monarch sync          - Sync configuration files to database"
 echo ""
 echo "Quick Start:"
 echo -e "  ${YELLOW}source /etc/profile.d/voltageems.sh${NC}  - Load environment variables (or re-login)"
@@ -928,8 +991,8 @@ echo ""
 echo "CLI Management (via monarch):"
 echo ""
 echo "  Configuration:"
-echo "    monarch sync all              - Sync all configurations"
-echo "    monarch validate all          - Validate configurations"
+echo "    monarch sync                  - Sync all configurations"
+echo "    monarch status                - Show sync status"
 echo "    monarch export modsrv         - Export configuration from database"
 echo ""
 echo "  Channels:"
