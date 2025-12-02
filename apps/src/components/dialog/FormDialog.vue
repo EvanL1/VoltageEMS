@@ -5,13 +5,17 @@
     :width="width"
     :modal="true"
     :close-on-click-modal="false"
-    :append-to-body="false"
-    :modal-append-to-body="false"
+    :append-to-body="appendToBody"
+    :before-close="beforeClose"
+    @close="handleClose"
   >
     <!-- dialog-head插槽，默认显示标题 -->
     <template #header>
       <slot name="dialog-head">
-        <span>{{ props.title }}</span>
+        <div class="dialog-head">
+          <img class="dialog-head-icon" src="../../assets/icons/card-icon.svg" />
+          <span class="dialog-head-title">{{ props.title }}</span>
+        </div>
       </slot>
     </template>
 
@@ -31,12 +35,57 @@
 const props = defineProps<{
   title: string
   width: number | string
+  appendToBody?: boolean
+  beforeClose?: (done: () => void) => void
 }>()
+
+const emit = defineEmits<{
+  (e: 'close'): void
+}>()
+
 const dialogVisible = ref(false)
+
+// 处理关闭事件
+const handleClose = () => {
+  emit('close')
+}
+
 // 暴露方法和属性
 defineExpose({
   dialogVisible,
 })
 </script>
 
-<style scoped lang="scss"></style>
+<style lang="scss" scoped>
+.dialog-head {
+  display: flex;
+  align-items: center;
+
+  .dialog-head-icon {
+    width: 0.2rem;
+    height: 0.2rem;
+    margin-right: 0.03rem;
+  }
+
+  .dialog-head-title {
+    font-weight: 700;
+    font-size: 0.18rem;
+    line-height: 0.2rem;
+    letter-spacing: 0%;
+    color: rgba(245, 247, 255, 1);
+  }
+}
+
+:deep(.el-dialog) {
+  position: absolute !important;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+}
+
+:deep(.el-overlay) {
+  position: absolute !important;
+  top: -0.2rem;
+  left: -0.2rem;
+}
+</style>

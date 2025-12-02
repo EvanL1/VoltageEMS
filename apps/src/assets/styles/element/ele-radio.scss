@@ -1,4 +1,4 @@
-/* Element Plus Radio 和 RadioGroup 组件样式 */
+/* Element Plus Radio �?RadioGroup 组件样式 */
 
 @use './theme-vars.scss' as *;
 
@@ -21,7 +21,7 @@
       margin-right: 0;
     }
 
-    // 禁用状态
+    // 禁用状�?
     &.is-disabled {
       color: $text-color-disabled;
       cursor: not-allowed;
@@ -36,7 +36,7 @@
       }
     }
 
-    // 选中状态
+    // 选中状�?
     &.is-checked {
       .el-radio__inner {
         background-color: $primary-color;
@@ -51,7 +51,7 @@
         color: rgba(255, 255, 255, 0.6);
       }
 
-      // 禁用且选中状态
+      // 禁用且选中状�?
       &.is-disabled {
         .el-radio__inner {
           background-color: $text-color-disabled;
@@ -64,15 +64,15 @@
       }
     }
 
-    // 聚焦状态
+    // 聚焦状�?
     &.is-focus {
       .el-radio__inner {
         border-color: $primary-color;
-        box-shadow: 0 0 0 2px rgba(255, 105, 0, 0.2);
+        box-shadow: 0 0 0 0.02rem rgba(255, 105, 0, 0.2);
       }
     }
 
-    // 悬停状态
+    // 悬停状�?
     &:hover:not(.is-disabled) {
       .el-radio__inner {
         border-color: none;
@@ -86,7 +86,7 @@
     }
   }
 
-  // Radio 输入框样式
+  // Radio 输入框样�?
   .el-radio__input {
     white-space: nowrap;
     cursor: pointer;
@@ -113,10 +113,10 @@
 
   // Radio 圆形按钮样式
   .el-radio__inner {
-    border: 1px solid rgba(148, 166, 197, 0.3);
+    border: 0.01rem solid rgba(148, 166, 197, 0.3);
     border-radius: 50%;
-    width: 12px;
-    height: 12px;
+    width: 0.12rem;
+    height: 0.12rem;
     background-color: transparent;
     position: relative;
     cursor: pointer;
@@ -126,8 +126,8 @@
 
     // 选中状态的内部圆点
     &::after {
-      width: 6px;
-      height: 6px;
+      width: 0.06rem;
+      height: 0.06rem;
       border-radius: 50%;
       background-color: #ffffff;
       content: '';
@@ -140,7 +140,7 @@
 
     // 悬停效果
     &:hover {
-      border: 1px solid rgba(148, 166, 197, 0.3);
+      border: 0.01rem solid rgba(148, 166, 197, 0.3);
     }
   }
 
@@ -176,14 +176,14 @@
       }
     }
 
-    // 按钮样式的 RadioGroup
+    // 按钮样式�?RadioGroup
     &--button {
       display: inline-flex;
       gap: 0;
 
       .el-radio {
         margin-right: 0;
-        border: 1px solid $border-color-base;
+        border: 0.01rem solid $border-color-base;
         background-color: transparent;
         padding: $spacing-xs $spacing-md;
         border-radius: 0;
@@ -213,14 +213,14 @@
           color: $text-color-primary;
         }
 
-        // 悬停状态
+        // 悬停状�?
         &:hover:not(.is-disabled) {
           background-color: rgba(255, 105, 0, 0.1);
           border-color: $primary-color;
           z-index: 1;
         }
 
-        // 选中状态
+        // 选中状�?
         &.is-checked {
           background-color: $primary-color;
           border-color: $primary-color;
@@ -232,7 +232,7 @@
           }
         }
 
-        // 禁用状态
+        // 禁用状�?
         &.is-disabled {
           background-color: rgba(84, 98, 140, 0.1);
           border-color: $border-color-base;

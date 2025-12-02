@@ -5,6 +5,54 @@
 
 import axios, { type AxiosRequestConfig } from 'axios'
 import { ElMessage } from 'element-plus'
+import { useUserStore } from '@/stores/user'
+
+// 存储所有pending的请求
+const pendingRequests = new Map()
+
+// 规范化用于生成请求唯一标识的负载（排除 _t，稳定排序）
+const normalizeForKey = (value: any): any => {
+  if (value === null || value === undefined) return ''
+  if (value instanceof Date) return value.toISOString()
+  if (Array.isArray(value)) return value.map((v) => normalizeForKey(v))
+  if (typeof value === 'object') {
+    // 处理 FormData
+    if (typeof FormData !== 'undefined' && value instanceof FormData) {
+      const obj: Record<string, any> = {}
+      ;(value as FormData).forEach((v, k) => {
+        // 文件对象不参与去重，只记录占位，避免巨大的序列化
+        obj[k] = typeof v === 'string' ? v : '[binary]'
+      })
+      return normalizeForKey(obj)
+    }
+    // 普通对象：去除 _t 并按 key 排序
+    const sorted: Record<string, any> = {}
+    Object.keys(value)
+      .filter((k) => k !== '_t')
+      .sort()
+      .forEach((k) => {
+        sorted[k] = normalizeForKey(value[k])
+      })
+    return sorted
+  }
+  return value
+}
+
+// 根据 axios config 生成稳定的请求标识，包含 method、url、参数/数据（排除 _t）
+const buildRequestKey = (config: any): string => {
+  const method = (config?.method || 'get').toLowerCase()
+  const url = config?.url || ''
+  // GET/DELETE 使用 params，其它使用 data
+  const source = method === 'get' || method === 'delete' ? config?.params : config?.data
+  const normalized = normalizeForKey(source)
+  const payload =
+    normalized === ''
+      ? ''
+      : typeof normalized === 'string'
+        ? normalized
+        : JSON.stringify(normalized)
+  return `${method}-${url}-${payload}`
+}
 
 // 定义响应数据的通用接口
 export interface ApiResponse<T = any> {
@@ -12,6 +60,7 @@ export interface ApiResponse<T = any> {
   message: string // 响应消息
   data: T // 响应数据
   success: boolean // 请求是否成功
+  [key: string]: any
 }
 
 // 定义请求配置的扩展接口
@@ -22,14 +71,14 @@ export interface RequestConfig extends AxiosRequestConfig {
 }
 
 /**
- * 创建axios实例
+ * 创建统一的axios实例
  * 设置基础配置项
  */
 const service = axios.create({
   // API的base_url，可以通过环境变量配置
-  baseURL: import.meta.env.VITE_API_BASE_URL || '/api',
+  baseURL: '',
   // 请求超时时间 (毫秒)
-  timeout: 15000,
+  timeout: 30000,
   // 默认请求头
   headers: {
     'Content-Type': 'application/json;charset=UTF-8',
@@ -37,57 +86,111 @@ const service = axios.create({
   // 跨域请求时是否需要使用凭证
   withCredentials: false,
 })
-
 /**
  * 请求拦截器
  * 在发送请求之前做一些统一处理
  */
-service.interceptors.request.use(
-  (config: any) => {
-    // 从localStorage获取token并添加到请求头
-    const token = localStorage.getItem('token')
-    if (token && config.headers) {
-      config.headers.Authorization = `Bearer ${token}`
-    }
+const requestInterceptor = (config: any) => {
+  // 生成请求的唯一标识
+  const requestKey = buildRequestKey(config)
 
-    // 如果是POST/PUT/PATCH请求且没有设置Content-Type，设置为json
-    if (['post', 'put', 'patch'].includes(config.method?.toLowerCase() || '')) {
-      if (!config.headers['Content-Type']) {
-        config.headers['Content-Type'] = 'application/json'
-      }
-    }
+  // 如果存在相同的pending请求，取消它
+  if (pendingRequests.has(requestKey)) {
+    const cancelToken = pendingRequests.get(requestKey)
+    cancelToken.cancel('请求被取消')
+    pendingRequests.delete(requestKey)
+  }
 
-    // 添加时间戳防止缓存 (GET请求)
-    if (config.method?.toLowerCase() === 'get') {
-      config.params = {
-        ...config.params,
-        _t: Date.now(),
-      }
-    }
+  // 创建新的cancelToken
+  const cancelToken = axios.CancelToken.source()
+  config.cancelToken = cancelToken.token
+  pendingRequests.set(requestKey, cancelToken)
 
-    console.log(`[请求] ${config.method?.toUpperCase()} ${config.url}`, config)
-    return config
-  },
-  (error: any) => {
-    console.error('[请求错误]', error)
-    ElMessage.error('请求配置错误')
-    return Promise.reject(error)
-  },
-)
+  // 从localStorage获取token并添加到请求头
+  const userStore = useUserStore()
+  const token = userStore.token
+  if (token && config.headers) {
+    config.headers.Authorization = `Bearer ${token}`
+  }
+
+  // 如果是POST/PUT/PATCH请求且没有设置Content-Type，设置为json
+  if (['post', 'put', 'patch'].includes(config.method?.toLowerCase() || '')) {
+    if (!config.headers['Content-Type']) {
+      config.headers['Content-Type'] = 'application/json'
+    }
+  }
+
+  // 添加时间戳防止缓存 (GET请求)
+  if (
+    config.method?.toLowerCase() === 'get' &&
+    config.url !== '/modApi/api/instances/search' &&
+    config.url !== '/comApi/api/channels/search'
+  ) {
+    config.params = {
+      ...config.params,
+      _t: Date.now(),
+    }
+  }
+
+  console.log(`[请求] ${config.method?.toUpperCase()} ${config.url}`, config)
+  return config
+}
+
+const requestErrorInterceptor = (error: any) => {
+  console.error('[请求错误]', error)
+  ElMessage.error('Request configuration error')
+  return Promise.reject(error)
+}
+
+service.interceptors.request.use(requestInterceptor, requestErrorInterceptor)
+
+// 用于防止重复刷新token的标志
+let isRefreshing = false
+// 存储等待token刷新的请求队列
+let failedQueue: Array<{
+  resolve: (value: any) => void
+  reject: (error: any) => void
+}> = []
+
+// 处理队列中的请求
+const processQueue = (error: any, token: string | null = null) => {
+  failedQueue.forEach(({ resolve, reject }) => {
+    if (error) {
+      reject(error)
+    } else {
+      resolve(token)
+    }
+  })
+
+  failedQueue = []
+}
 
 /**
- * 响应拦截器
- * 对响应数据进行统一处理
+ * 响应拦截器工厂函数
+ * 创建统一的响应拦截器，避免代码重复
  */
-service.interceptors.response.use(
-  (response: any) => {
-    console.log(`[响应] ${response.config.method?.toUpperCase()} ${response.config.url}`, response)
+const createResponseInterceptor = (serviceInstance: any, logPrefix: string = '') => {
+  // 响应成功时的处理
+  const responseSuccessHandler = (response: any) => {
+    // 请求完成后，从pendingRequests中移除
+    const requestKey = buildRequestKey(response.config)
+    pendingRequests.delete(requestKey)
+
+    console.log(
+      `${logPrefix}[响应] ${response.config.method?.toUpperCase()} ${response.config.url}`,
+      response,
+    )
 
     const { data } = response
     const customConfig = response.config as any
+    console.log(data)
 
     // 检查业务状态码
-    if (data.code === 200 || data.success) {
+    // 如果返回的是blob类型，直接认为请求成功，否则判断业务code或success
+    if (
+      response.request?.responseType === 'blob' ||
+      (data && (data.code === 200 || data.success || data.status === 'success'))
+    ) {
       // 请求成功
       if (customConfig.showSuccessMessage && data.message) {
         ElMessage.success(data.message)
@@ -95,39 +198,118 @@ service.interceptors.response.use(
       return response
     } else {
       // 业务逻辑错误
-      const errorMessage = data.message || '请求失败'
+      let errorMessage = data.message || 'Request failed'
 
       // 根据不同的业务状态码进行处理
       switch (data.code) {
         case 401:
           // 未授权，清除token并跳转到登录页
-          localStorage.removeItem('token')
-          ElMessage.error('登录已过期，请重新登录')
-          // 这里可以添加路由跳转到登录页的逻辑
-          // router.push('/login')
+          const userStore = useUserStore()
+          userStore.clearUserData()
+          errorMessage = 'Login expired, please log in again'
+          // 跳转到登录页
+          window.location.href = '/login'
           break
         case 403:
-          ElMessage.error('没有权限访问该资源')
+          errorMessage = 'No permission to access this resource'
           break
         case 404:
-          ElMessage.error('请求的资源不存在')
+          errorMessage = 'Requested resource not found'
           break
         case 500:
-          ElMessage.error('服务器内部错误')
+          errorMessage = 'Internal server error'
           break
         default:
-          if (customConfig.showErrorMessage !== false) {
-            ElMessage.error(errorMessage)
-          }
+          break
       }
-
+      ElMessage.error(response.data.message || errorMessage)
       return Promise.reject(new Error(errorMessage))
     }
-  },
-  (error: any) => {
-    console.error('[响应错误]', error)
+  }
 
-    let errorMessage = '网络请求失败'
+  // 响应失败时的处理
+  const responseErrorHandler = async (error: any) => {
+    // 如果是取消请求的错误，不显示错误信息
+    if (axios.isCancel(error)) {
+      console.log(`${logPrefix}[请求已取消] ${error.message}`)
+      return Promise.reject(error)
+    }
+
+    // 请求完成后，从pendingRequests中移除
+    const requestKey = buildRequestKey(error.config)
+    if (requestKey) {
+      pendingRequests.delete(requestKey)
+    }
+
+    console.error(`${logPrefix}[响应错误]`, error)
+
+    const originalRequest = error.config
+
+    // 处理401错误 - 自动刷新token
+    if (error.response?.status === 401 && !originalRequest._retry) {
+      if (isRefreshing) {
+        // 如果正在刷新token，将请求加入队列
+        return new Promise((resolve, reject) => {
+          failedQueue.push({ resolve, reject })
+        })
+          .then((token) => {
+            originalRequest.headers['Authorization'] = `Bearer ${token}`
+            return serviceInstance(originalRequest)
+          })
+          .catch((err) => {
+            return Promise.reject(err)
+          })
+      }
+
+      originalRequest._retry = true
+      isRefreshing = true
+      try {
+        const userStore = useUserStore()
+        const refreshToken = userStore.refreshToken
+
+        if (!refreshToken) {
+          throw new Error('No refresh token available')
+        }
+
+        // 调用刷新token的API
+        const response = await service.post('auth/refresh', {
+          refresh_token: refreshToken,
+        })
+        console.log('response', response)
+
+        if (response.data.success) {
+          // 更新store中的token
+          userStore.token = response.data.data.access_token
+          userStore.refreshToken = response.data.data.refresh_token
+
+          // 更新当前请求的Authorization头
+          originalRequest.headers['Authorization'] = `Bearer ${response.data.data.access_token}`
+
+          // 处理队列中的请求
+          processQueue(null, response.data.data.access_token)
+
+          // 重试原请求
+          return serviceInstance(originalRequest)
+        } else {
+          throw new Error('Token refresh failed')
+        }
+      } catch (refreshError) {
+        // 刷新token失败，清除用户数据并跳转到登录页
+        const userStore = useUserStore()
+        userStore.clearUserData()
+
+        // 处理队列中的请求
+        processQueue(refreshError, null)
+        ElMessage.error('Login expired, please log in again')
+        window.location.href = '/login'
+        return Promise.reject(refreshError)
+      } finally {
+        isRefreshing = false
+      }
+    }
+
+    // 处理其他错误
+    let errorMessage = 'Network request failed'
 
     if (error.response) {
       // 服务器返回错误状态码
@@ -135,65 +317,60 @@ service.interceptors.response.use(
 
       switch (status) {
         case 400:
-          errorMessage = '请求参数错误'
-          break
-        case 401:
-          errorMessage = '未授权访问'
-          localStorage.removeItem('token')
+          errorMessage = 'Bad request'
           break
         case 403:
-          errorMessage = '拒绝访问'
+          errorMessage = 'Access denied'
           break
         case 404:
-          errorMessage = '请求地址不存在'
+          errorMessage = 'Request URL not found'
           break
         case 408:
-          errorMessage = '请求超时'
+          errorMessage = 'Request timeout'
           break
         case 500:
-          errorMessage = '服务器内部错误'
+          errorMessage = 'Internal server error'
           break
         case 502:
-          errorMessage = '网关错误'
+          errorMessage = 'Bad gateway'
           break
         case 503:
-          errorMessage = '服务不可用'
+          errorMessage = 'Service unavailable'
           break
         case 504:
-          errorMessage = '网关超时'
+          errorMessage = 'Gateway timeout'
           break
         default:
-          errorMessage = `连接错误${status}: ${statusText}`
+          errorMessage = `Connection error ${status}: ${statusText}`
       }
     } else if (error.request) {
       // 请求已发出但没有收到响应
       if (error.code === 'ECONNABORTED') {
-        errorMessage = '请求超时'
+        errorMessage = 'Request timeout'
       } else {
-        errorMessage = '网络连接异常'
+        errorMessage = 'Network connection error'
       }
     } else {
       // 请求配置出错
-      errorMessage = error.message || '请求配置错误'
+      errorMessage = error.message || 'Request configuration error'
     }
-
-    // 显示错误消息
-    const config = error.config as any
-    if (config?.showErrorMessage !== false) {
-      ElMessage.error(errorMessage)
-    }
-
+    ElMessage.error(error.response?.data?.message || errorMessage)
     return Promise.reject(error)
-  },
-)
+  }
+
+  return [responseSuccessHandler, responseErrorHandler]
+}
+
+// 为服务实例添加响应拦截器
+service.interceptors.response.use(...createResponseInterceptor(service))
 
 /**
- * 封装的请求方法
+ * 封装的请求方法类
  */
 class Request {
   /**
    * GET请求
-   * @param url 请求地址
+   * @param url 请求地址（已包含完整路径，如 /api/v1/users 或 /alarmApi/alarms）
    * @param params 请求参数
    * @param config 请求配置
    */
@@ -208,7 +385,7 @@ class Request {
 
   /**
    * POST请求
-   * @param url 请求地址
+   * @param url 请求地址（已包含完整路径，如 /api/v1/users 或 /alarmApi/alarms）
    * @param data 请求数据
    * @param config 请求配置
    */
@@ -223,7 +400,7 @@ class Request {
 
   /**
    * PUT请求
-   * @param url 请求地址
+   * @param url 请求地址（已包含完整路径，如 /api/v1/users 或 /alarmApi/alarms）
    * @param data 请求数据
    * @param config 请求配置
    */
@@ -238,7 +415,7 @@ class Request {
 
   /**
    * DELETE请求
-   * @param url 请求地址
+   * @param url 请求地址（已包含完整路径，如 /api/v1/users 或 /alarmApi/alarms）
    * @param config 请求配置
    */
   static async delete<T = any>(url: string, config?: RequestConfig): Promise<ApiResponse<T>> {
@@ -248,7 +425,7 @@ class Request {
 
   /**
    * PATCH请求
-   * @param url 请求地址
+   * @param url 请求地址（已包含完整路径，如 /api/v1/users 或 /alarmApi/alarms）
    * @param data 请求数据
    * @param config 请求配置
    */
@@ -263,7 +440,7 @@ class Request {
 
   /**
    * 文件上传
-   * @param url 上传地址
+   * @param url 上传地址（已包含完整路径，如 /api/v1/upload 或 /alarmApi/upload）
    * @param file 文件对象
    * @param data 额外数据
    * @param config 请求配置
@@ -295,7 +472,7 @@ class Request {
 
   /**
    * 下载文件
-   * @param url 下载地址
+   * @param url 下载地址（已包含完整路径，如 /api/v1/export 或 /alarmApi/export）
    * @param params 请求参数
    * @param filename 文件名
    */
@@ -305,11 +482,11 @@ class Request {
         params,
         responseType: 'blob',
       })
-
+      console.log('response', response)
       // 创建blob链接
       const blob = new Blob([response.data])
       const downloadUrl = window.URL.createObjectURL(blob)
-
+      console.log('downloadUrl', downloadUrl)
       // 创建下载链接
       const link = document.createElement('a')
       link.href = downloadUrl
@@ -323,14 +500,22 @@ class Request {
       document.body.removeChild(link)
       window.URL.revokeObjectURL(downloadUrl)
 
-      ElMessage.success('文件下载成功')
+      ElMessage.success('File downloaded successfully')
     } catch (error) {
-      console.error('文件下载失败:', error)
-      ElMessage.error('文件下载失败')
+      console.error('File download failed:', error)
+      ElMessage.error('File download failed')
     }
   }
 }
 
-// 导出请求实例和封装的方法
-export { service }
+// 取消所有pending请求的方法
+export const cancelAllPendingRequests = () => {
+  pendingRequests.forEach((cancelToken) => {
+    cancelToken.cancel('路由切换，请求被取消')
+  })
+  pendingRequests.clear()
+}
+
+// 导出服务实例和Request类
+export { service, Request }
 export default Request

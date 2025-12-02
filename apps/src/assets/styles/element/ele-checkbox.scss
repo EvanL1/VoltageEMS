@@ -12,7 +12,7 @@
     margin-right: $spacing-md;
     margin-bottom: $spacing-sm;
     transition: all $transition-base;
-    height: 32px;
+    height: 0.32rem;
     &:hover {
       .el-checkbox__input {
         .el-checkbox__inner {
@@ -21,7 +21,7 @@
       }
     }
 
-    // 多选框输入框
+    // 多选框输入�?
     .el-checkbox__input {
       // 隐藏原生input
       .el-checkbox__original {
@@ -38,10 +38,10 @@
       .el-checkbox__inner {
         position: relative;
         display: inline-block;
-        width: 16px;
-        height: 16px;
+        width: 0.16rem;
+        height: 0.16rem;
         background-color: transparent;
-        border: 1px solid $border-color-base;
+        border: 0.01rem solid $border-color-base;
         border-radius: $border-radius-small;
         transition: all $transition-base;
         box-sizing: border-box;
@@ -50,15 +50,15 @@
           border-color: $primary-color;
         }
 
-        // 勾选图标
+        // 勾选图�?
         &::after {
           content: '';
           position: absolute;
-          top: 2px;
-          left: 5px;
-          width: 4px;
-          height: 8px;
-          border: 2px solid transparent;
+          top: 0.02rem;
+          left: 0.05rem;
+          width: 0.04rem;
+          height: 0.08rem;
+          border: 0.02rem solid transparent;
           border-left: 0;
           border-top: 0;
           transform: rotate(45deg) scale(0);
@@ -66,7 +66,7 @@
         }
       }
 
-      // 选中状态
+      // 选中状�?
       &.is-checked {
         .el-checkbox__inner {
           background-color: $primary-color;
@@ -83,7 +83,7 @@
         }
       }
 
-      // 半选状态
+      // 半选状�?
       &.is-indeterminate {
         .el-checkbox__inner {
           background-color: $primary-color;
@@ -94,8 +94,8 @@
             position: absolute;
             top: 50%;
             left: 50%;
-            width: 8px;
-            height: 2px;
+            width: 0.08rem;
+            height: 0.02rem;
             background-color: #fff;
             border: none;
             transform: translate(-50%, -50%) scale(1);
@@ -103,7 +103,7 @@
         }
       }
 
-      // 禁用状态
+      // 禁用状�?
       &.is-disabled {
         cursor: not-allowed;
 
@@ -138,11 +138,11 @@
         }
       }
 
-      // 焦点状态
+      // 焦点状�?
       &.is-focus {
         .el-checkbox__inner {
           border-color: $primary-color;
-          box-shadow: 0 0 0 2px rgba(255, 105, 0, 0.2);
+          box-shadow: 0 0 0 0.02rem rgba(255, 105, 0, 0.2);
         }
       }
     }
@@ -157,7 +157,7 @@
     }
   }
 
-  // 多选框组
+  // 多选框�?
   .el-checkbox-group {
     display: inline-block;
     line-height: 1;
@@ -186,7 +186,7 @@
       vertical-align: middle;
       cursor: pointer;
       background: transparent;
-      border: 1px solid $border-color-base;
+      border: 0.01rem solid $border-color-base;
       border-left: 0;
       color: $text-color-primary;
       text-align: center;
@@ -207,36 +207,36 @@
 
       &[aria-describedby]:not([aria-describedby='']) {
         border-color: $primary-color;
-        box-shadow: 0 0 0 2px rgba(255, 105, 0, 0.2);
+        box-shadow: 0 0 0 0.02rem rgba(255, 105, 0, 0.2);
       }
     }
 
-    // 第一个按钮
+    // 第一个按�?
     &:first-child {
       .el-checkbox-button__inner {
-        border-left: 1px solid $border-color-base;
+        border-left: 0.01rem solid $border-color-base;
         border-radius: $border-radius-small 0 0 $border-radius-small;
       }
     }
 
-    // 最后一个按钮
+    // 最后一个按�?
     &:last-child {
       .el-checkbox-button__inner {
         border-radius: 0 $border-radius-small $border-radius-small 0;
       }
     }
 
-    // 选中状态
+    // 选中状�?
     &.is-checked {
       .el-checkbox-button__inner {
         color: #fff;
         background-color: $primary-color;
         border-color: $primary-color;
-        box-shadow: -1px 0 0 0 $primary-color;
+        box-shadow: -0.01rem 0 0 0 $primary-color;
       }
     }
 
-    // 禁用状态
+    // 禁用状�?
     &.is-disabled {
       .el-checkbox-button__inner {
         color: $text-color-disabled;
@@ -252,7 +252,7 @@
           color: $text-color-disabled;
           background-color: $bg-color-input;
           border-color: $border-color-base;
-          box-shadow: -1px 0 0 0 $border-color-base;
+          box-shadow: -0.01rem 0 0 0 $border-color-base;
         }
       }
     }
@@ -266,7 +266,7 @@
     }
   }
 
-  // 按钮组
+  // 按钮�?
   .el-checkbox-button-group {
     display: inline-block;
     border-radius: $border-radius-small;
@@ -274,7 +274,7 @@
     .el-checkbox-button {
       &:first-child {
         .el-checkbox-button__inner {
-          border-left: 1px solid $border-color-base;
+          border-left: 0.01rem solid $border-color-base;
         }
       }
 
@@ -285,7 +285,7 @@
       }
 
       &:not(:first-child) {
-        margin-left: -1px;
+        margin-left: -0.01rem;
       }
     }
   }
@@ -294,14 +294,14 @@
   .el-checkbox--large {
     .el-checkbox__input {
       .el-checkbox__inner {
-        width: 18px;
-        height: 18px;
+        width: 0.18rem;
+        height: 0.18rem;
 
         &::after {
-          top: 2px;
-          left: 6px;
-          width: 5px;
-          height: 9px;
+          top: 0.02rem;
+          left: 0.06rem;
+          width: 0.05rem;
+          height: 0.09rem;
         }
       }
     }
@@ -315,21 +315,21 @@
   .el-checkbox--small {
     .el-checkbox__input {
       .el-checkbox__inner {
-        width: 14px;
-        height: 14px;
+        width: 0.14rem;
+        height: 0.14rem;
 
         &::after {
-          top: 1px;
-          left: 4px;
-          width: 3px;
-          height: 6px;
+          top: 0.01rem;
+          left: 0.04rem;
+          width: 0.03rem;
+          height: 0.06rem;
         }
       }
     }
 
     .el-checkbox__label {
       font-size: $font-size-small;
-      padding-left: 6px;
+      padding-left: 0.06rem;
     }
   }
 

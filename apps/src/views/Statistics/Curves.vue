@@ -2,13 +2,13 @@
   <div class="voltage-class curves">
     <!-- 表格区域 -->
     <div class="curves__content">
-      <!-- 表格工具栏 -->
+      <!-- 表格工具栏-->
       <div class="curves__toolbar">
         <div class="curves__toolbar-left" ref="toolbarLeftRef">
-          <!-- 选择框 -->
+          <!-- 选择框-->
           <el-select
             v-model="selectedFilter"
-            placeholder="请选择筛选条件"
+            placeholder="Select filter condition"
             @change="handleFilterChange"
             :append-to="toolbarLeftRef"
             clearable
@@ -37,6 +37,7 @@
 
       <!-- 表格 -->
       <div class="curves__charts">
+        <!-- 堆叠柱状图-->
         <div class="curves__chart-item">
           <ModuleCard title="Energy Chart">
             <StackedBarChart
@@ -46,66 +47,27 @@
             />
           </ModuleCard>
         </div>
+
+        <!-- 饼图 -->
         <div class="curves__chart-item">
-          <ModuleCard title="Energy Chart">
+          <ModuleCard title="Energy Distribution">
             <DoughnutChart :series="exampleDoughntSeries" />
           </ModuleCard>
         </div>
+
+        <!-- 折线图-->
         <div class="curves__chart-item">
-          <ModuleCard title="Energy Chart">
-            <StackedBarChart
-              :xAxiosOption="xAxiosOption"
-              :yAxiosOption="yAxiosOption"
-              :series="exampleSeries"
+          <ModuleCard title="Power Trend">
+            <lineChart
+              :xAxiosOption="powerTrendXAxis"
+              :yAxiosOption="powerTrendYAxis"
+              :series="powerTrendSeries"
             />
           </ModuleCard>
         </div>
-        <div class="curves__chart-item">
-          <ModuleCard title="Energy Chart">
-            <StackedBarChart
-              :xAxiosOption="xAxiosOption"
-              :yAxiosOption="yAxiosOption"
-              :series="exampleSeries"
-            />
-          </ModuleCard>
-        </div>
-        <div class="curves__chart-item">
-          <ModuleCard title="Energy Chart">
-            <StackedBarChart
-              :xAxiosOption="xAxiosOption"
-              :yAxiosOption="yAxiosOption"
-              :series="exampleSeries"
-            />
-          </ModuleCard>
-        </div>
-        <div class="curves__chart-item">
-          <ModuleCard title="Energy Chart">
-            <StackedBarChart
-              :xAxiosOption="xAxiosOption"
-              :yAxiosOption="yAxiosOption"
-              :series="exampleSeries"
-            />
-          </ModuleCard>
-        </div>
-        <div class="curves__chart-item">
-          <ModuleCard title="Energy Chart">
-            <StackedBarChart
-              :xAxiosOption="xAxiosOption"
-              :yAxiosOption="yAxiosOption"
-              :series="exampleSeries"
-            />
-          </ModuleCard>
-        </div>
-        <div class="curves__chart-item">
-          <ModuleCard title="Energy Chart">
-            <StackedBarChart
-              :xAxiosOption="xAxiosOption"
-              :yAxiosOption="yAxiosOption"
-              :series="exampleSeries"
-            />
-          </ModuleCard>
-        </div>
-        <div class="curves__chart-item">
+
+        <!-- 其余图表 -->
+        <div class="curves__chart-item" v-for="(item, idx) in 6" :key="idx">
           <ModuleCard title="Energy Chart">
             <StackedBarChart
               :xAxiosOption="xAxiosOption"
@@ -152,19 +114,40 @@ const handleFilterChange = () => {
 const handleExport = () => {
   console.log('handleExport')
 }
+
+// 功率趋势数据 - 用于折线图
+const powerTrendXAxis = {
+  xAxiosData: ['00:00', '04:00', '08:00', '12:00', '16:00', '20:00', '24:00'],
+}
+const powerTrendYAxis = {
+  yUnit: 'kW',
+}
+const powerTrendSeries = [
+  {
+    name: 'total power',
+    data: [120, 135, 140, 160, 180, 200, 210],
+    color: 'rgba(105, 203, 255, 1)',
+  },
+  {
+    name: 'load power',
+    data: [100, 110, 115, 130, 150, 170, 180],
+    color: 'rgba(29, 134, 255, 1)',
+  },
+]
+
 const exampleDoughntSeries = [
   {
-    name: '光伏发电',
+    name: 'pv',
     value: 45,
     color: '#4FADF7',
   },
   {
-    name: '柴油发电',
+    name: 'diesel generator',
     value: 30,
     color: '#F6C85F',
   },
   {
-    name: '储能放电',
+    name: 'ess',
     value: 25,
     color: '#6DD400',
   },
@@ -212,6 +195,7 @@ const exampleSeries = [
 .voltage-class.curves {
   height: 100%;
   width: 100%;
+
   .curves__content {
     display: flex;
     flex-direction: column;
@@ -220,52 +204,60 @@ const exampleSeries = [
     display: flex;
     flex-direction: column;
   }
+
   .curves__toolbar {
-    padding: 20px 0;
+    padding-bottom: 0.2rem;
     display: flex;
     align-items: center;
     justify-content: space-between;
 
     .curves__toolbar-left {
+      position: relative;
       display: flex;
       align-items: center;
-      gap: 16px;
+      gap: 0.16rem;
     }
 
     .curves__toolbar-time-btns {
-      height: 32px;
+      height: 0.32rem;
       display: flex;
       align-items: center;
       background-color: rgba(255, 255, 255, 0.04);
+
       .curves__toolbar-time-btn {
-        height: 28px;
-        line-height: 22px;
-        padding: 3px 10px;
-        font-size: 14px;
+        height: 0.28rem;
+        line-height: 0.22rem;
+        padding: 0.03rem 0.1rem;
+        font-size: 0.14rem;
         background: transparent;
-        border-right: 1px solid rgba(255, 255, 255, 0.2);
+        border-right: 0.01rem solid rgba(255, 255, 255, 0.2);
         cursor: pointer;
+
         &:last-child {
           border-right: none;
         }
+
         &.is-active {
           background: rgba(255, 255, 255, 0.2);
         }
       }
     }
   }
+
   .curves__charts {
     flex: 1;
     display: flex;
     flex-wrap: wrap;
-    gap: 20px;
+    gap: 0.2rem;
+
     .curves__chart-item {
-      width: calc((100% - 40px) / 3);
-      height: calc((100% - 40px) / 3);
+      width: calc((100% - 0.4rem) / 3);
+      height: calc((100% - 0.4rem) / 3);
     }
   }
-  :deep(.el-select__popper.el-popper) {
-    top: 222px !important;
-  }
+
+  // :deep(.el-select__popper.el-popper) {
+  //   top: 1.49rem !important;
+  // }
 }
 </style>

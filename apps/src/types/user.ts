@@ -1,64 +1,66 @@
-// 用户信息接口
+// 用户信息接口（根据后端实际返回结构调整）
+export interface UserRole {
+  id: number
+  name_en: string
+  name_zh: string
+  description: string
+}
+
 export interface UserInfo {
   id: number
   username: string
-  email: string
-  nickname: string
-  avatar?: string
-  role: string
-  status: 'active' | 'inactive'
-  createdAt: string
-  updatedAt: string
+  is_active: boolean
+  last_login?: string
+  created_at?: string
+  updated_at?: string
+  role: UserRole
 }
 
-// 用户管理表格用户信息接口
+// 用户管理表格用户信息接口（根据后端结构调整）
 export interface UserManagementInfo {
   id: number
-  userName: string
-  realName: string
-  role: string
-  email: string
-  phone: string
-  status: 'active' | 'inactive' | 'banned'
-  lastLogin: string
-  createdAt: string
+  username: string
+  is_active: boolean
+  last_login: string
+  created_at: string
+  role: UserRole
+}
+//用户新增
+export interface UserAddParams {
+  username: string
+  password?: string
+  role_id: number
 }
 
 // 登录请求参数
 export interface LoginParams {
   username: string
   password: string
-  role: string
+  // role 字段可选，后端如不需要可去掉
+  role?: string
   remember?: boolean
 }
 
 // 登录响应
 export interface LoginResponse {
-  token: string
-  refreshToken: string
-  expiresIn: number
-  user: UserInfo
+  access_token: string
+  refresh_token: string
+  expires_in: number
+  token_type: string
 }
 
 // 注册请求参数
 export interface RegisterParams {
   username: string
-  email: string
   password: string
-  nickname?: string
+  role: number
 }
 
 // 更新用户信息参数
 export interface UpdateUserParams {
-  nickname?: string
-  email?: string
-  avatar?: string
-}
-
-// 修改密码参数
-export interface ChangePasswordParams {
-  oldPassword: string
-  newPassword: string
+  username?: string
+  is_active?: boolean
+  role_id?: number
 }
 
 // API 响应格式

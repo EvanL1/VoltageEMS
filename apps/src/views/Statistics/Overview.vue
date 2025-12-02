@@ -8,7 +8,7 @@
           <!-- 选择框 -->
           <el-select
             v-model="selectedFilter"
-            placeholder="请选择筛选条件"
+            placeholder="Select filter condition"
             @change="handleFilterChange"
             :append-to="toolbarLeftRef"
           >
@@ -63,8 +63,38 @@
             </div>
           </div>
         </div>
+
+        <!-- 饼图卡片 -->
+        <div class="curves__chart-item">
+          <ModuleCard title="Energy Distribution">
+            <DoughnutChart :series="energyDistributionData" />
+          </ModuleCard>
+        </div>
+
+        <!-- 折线图卡片 -->
+        <div class="curves__chart-item">
+          <ModuleCard title="Power Trend">
+            <lineChart
+              :xAxiosOption="powerTrendXAxis"
+              :yAxiosOption="powerTrendYAxis"
+              :series="powerTrendSeries"
+            />
+          </ModuleCard>
+        </div>
+
+        <!-- 堆叠柱状图卡片 -->
+        <div class="curves__chart-item">
+          <ModuleCard title="Energy Chart">
+            <StackedBarChart
+              :xAxiosOption="xAxiosOption"
+              :yAxiosOption="yAxiosOption"
+              :series="exampleSeries"
+            />
+          </ModuleCard>
+        </div>
+
         <!-- 其余图表卡片 -->
-        <div class="curves__chart-item" v-for="(item, idx) in 5" :key="idx">
+        <div class="curves__chart-item" v-for="(item, idx) in 2" :key="idx">
           <ModuleCard title="Energy Chart">
             <StackedBarChart
               :xAxiosOption="xAxiosOption"
@@ -79,8 +109,26 @@
 </template>
 
 <script setup lang="ts">
+import PVEnergy from '@/assets/icons/PVEnergy.svg'
+import ESS from '@/assets/icons/ESSEnergy.svg'
+import DG from '@/assets/icons/DGEnergy.svg'
+import { queryPowerTrend } from '@/api/Statistic/overview'
+import dayjs from 'dayjs'
+import { getRecentHoursRange, getRecentWeekRange, getRecentDaysRange } from '@/utils/date.ts'
+import type { QueryPowerTrendParams } from '@/types/Statistics/OverView'
+
+interface TrendPoint {
+  timestamp: string
+  value: number
+}
+
+interface LineSeries {
+  name: string
+  data: number[]
+  color: string
+}
+
 const toolbarLeftRef = ref<HTMLElement | null>(null)
-const activeTab = ref<'current' | 'history'>('current')
 const selectedFilter = ref('all')
 
 // 时间按钮列表
@@ -93,22 +141,22 @@ const timeBtnList = [
 const stationInfoList = reactive([
   {
     title: 'PV',
-    icon: 'PVEnergy',
+    icon: PVEnergy,
     value: '150',
     unit: 'kWh',
   },
   {
     title: 'ESS',
-    icon: 'ESS',
+    icon: ESS,
     value: '150',
     unit: 'kWh',
   },
-  // {
-  //   title: 'DG',
-  //   icon: 'DG',
-  //   value: '145',
-  //   unit: 'kWh', // 修正单位大小写
-  // },
+  {
+    title: 'DG',
+    icon: DG,
+    value: '145',
+    unit: 'kWh', // 修正单位大小写
+  },
 ])
 // 当前选中的时间按钮
 const selectedTimeBtn = ref('6h')
@@ -120,16 +168,132 @@ const handleTimeBtnClick = (event: MouseEvent) => {
   const btn = target.closest('.curves__toolbar-time-btn') as HTMLElement | null
   if (btn && btn.dataset.value) {
     selectedTimeBtn.value = btn.dataset.value
-    console.log(selectedTimeBtn.value)
+    fetchPowerTrendData()
   }
 }
 
 const handleFilterChange = () => {
   console.log('handleFilterChange')
 }
-const handleExport = () => {
-  console.log('handleExport')
+
+// 能源分布数据 - 用于饼图
+const energyDistributionData = [
+  {
+    name: 'pv',
+    value: 45,
+    color: '#4FADF7',
+  },
+  {
+    name: 'diesel generator',
+    value: 30,
+    color: '#F6C85F',
+  },
+  {
+    name: 'ess',
+    value: 25,
+    color: '#6DD400',
+  },
+]
+
+// 功率趋势数据 - 用于折线图
+const powerTrendYAxis = {
+  yUnit: 'kW',
 }
+const powerTrendXAxis = reactive({
+  xAxiosData: [] as string[],
+})
+const powerTrendSeries = ref<LineSeries[]>([
+  {
+    name: 'Point 1',
+    data: [],
+    color: 'rgba(105, 203, 255, 1)',
+  },
+  {
+    name: 'Point 2',
+    data: [],
+    color: 'rgba(29, 134, 255, 1)',
+  },
+])
+
+const formatTimestampLabel = (timestamp: string) => dayjs(timestamp).format('YYYY-MM-DD\nHH:mm:ss')
+const formatValue = (value: number | string | undefined | null) =>
+  Number(Number(value ?? 0).toFixed(3))
+
+const fetchPowerTrendData = async () => {
+  try {
+    const requestPayload: QueryPowerTrendParams = {
+      redis_key: 'inst:1:M',
+      point_id: '',
+    }
+
+    switch (selectedTimeBtn.value) {
+      case '6h': {
+        const range = getRecentHoursRange(6)
+        requestPayload.interval = 720
+        requestPayload.start_time = range.start
+        requestPayload.end_time = range.end
+        break
+      }
+      case '1d': {
+        requestPayload.interval = 2880
+        break
+      }
+      case '1w': {
+        const range = getRecentWeekRange()
+        requestPayload.interval = 21600
+        requestPayload.start_time = range.start
+        requestPayload.end_time = range.end
+        break
+      }
+      case '1m': {
+        const range = getRecentDaysRange(7) // 按需求：最近一周
+        requestPayload.interval = 86400
+        requestPayload.start_time = range.start
+        requestPayload.end_time = range.end
+        break
+      }
+      default:
+        break
+    }
+    const [point1Res, point2Res] = await Promise.all([
+      queryPowerTrend({ ...requestPayload, point_id: '1' }),
+      queryPowerTrend({ ...requestPayload, point_id: '2' }),
+    ])
+
+    const point1Data: TrendPoint[] = [...(point1Res.data || [])].reverse()
+    const point2Data: TrendPoint[] = [...(point2Res.data || [])].reverse()
+
+    const orderedTimestamps = Array.from(
+      new Set(
+        [...point1Data, ...point2Data]
+          .map((item) => item.timestamp)
+          .filter((item): item is string => Boolean(item)),
+      ),
+    ).sort((a, b) => new Date(a).getTime() - new Date(b).getTime())
+    powerTrendXAxis.xAxiosData = orderedTimestamps.map((timestamp) =>
+      formatTimestampLabel(timestamp),
+    )
+
+    const point1Map = new Map(point1Data.map((item) => [item.timestamp, item.value]))
+    const point2Map = new Map(point2Data.map((item) => [item.timestamp, item.value]))
+
+    powerTrendSeries.value = [
+      {
+        name: 'Point 1',
+        data: orderedTimestamps.map((timestamp) => formatValue(point1Map.get(timestamp))),
+        color: 'rgba(105, 203, 255, 1)',
+      },
+      {
+        name: 'Point 2',
+        data: orderedTimestamps.map((timestamp) => formatValue(point2Map.get(timestamp))),
+        color: 'rgba(29, 134, 255, 1)',
+      },
+    ]
+  } catch (error) {
+    console.error('Failed to load power trend data:', error)
+  }
+}
+
 const exampleXAxisData = [
   '0:00',
   '2:00',
@@ -167,68 +331,81 @@ const exampleSeries = [
     color: 'rgb(105, 203, 255)',
   },
 ]
+
+onMounted(() => {
+  fetchPowerTrendData()
+})
 </script>
 
 <style scoped lang="scss">
 .voltage-class.curves {
   height: 100%;
   width: 100%;
+
   .curves__content {
     display: flex;
     flex-direction: column;
     width: 100%;
     height: 100%;
   }
+
   .curves__toolbar {
-    padding: 20px 0;
+    padding-bottom: 0.2rem;
     display: flex;
     align-items: center;
     justify-content: space-between;
 
     .curves__toolbar-left {
+      position: relative;
       display: flex;
       align-items: center;
-      gap: 16px;
+      gap: 0.16rem;
     }
 
     .curves__toolbar-time-btns {
-      height: 32px;
+      height: 0.32rem;
       display: flex;
       align-items: center;
       background-color: rgba(255, 255, 255, 0.04);
+
       .curves__toolbar-time-btn {
-        height: 28px;
-        line-height: 22px;
-        padding: 3px 10px;
-        font-size: 14px;
+        height: 0.28rem;
+        line-height: 0.22rem;
+        padding: 0.03rem 0.1rem;
+        font-size: 0.14rem;
         background: transparent;
-        border-right: 1px solid rgba(255, 255, 255, 0.2);
+        border-right: 0.01rem solid rgba(255, 255, 255, 0.2);
         cursor: pointer;
+
         &:last-child {
           border-right: none;
         }
+
         &.is-active {
           background: rgba(255, 255, 255, 0.2);
         }
       }
     }
   }
+
   .curves__charts {
-    height: calc(100% - 72px);
+    height: calc(100% - 0.52rem);
     display: flex;
     flex-wrap: wrap;
-    gap: 20px;
+    gap: 0.2rem;
+
     .curves__chart-item {
-      width: calc((100% - 40px) / 3);
-      height: calc((100% - 20px) / 2);
+      width: calc((100% - 0.4rem) / 3);
+      height: calc((100% - 0.2rem) / 2);
+
       .chart__review {
         width: 100%;
         height: 100%;
-        padding: 20px;
+        padding: 0.2rem;
         display: flex;
         flex-direction: column;
         background-color: rgba(84, 98, 140, 0.2);
-        border: 1px solid;
+        border: 0.01rem solid;
 
         border-image: linear-gradient(
             117.01deg,
@@ -238,12 +415,13 @@ const exampleSeries = [
             rgba(148, 166, 197, 0.3) 96.39%
           )
           1;
-        backdrop-filter: blur(10px);
+        backdrop-filter: blur(0.1rem);
+
         .chart__review-header {
-          height: 83px;
-          padding: 0 20px;
+          height: 0.83rem;
+          padding: 0 0.2rem;
           background-color: rgba(84, 98, 140, 0.2);
-          border: 1px solid;
+          border: 0.01rem solid;
 
           border-image: linear-gradient(
               117.01deg,
@@ -253,39 +431,46 @@ const exampleSeries = [
               rgba(148, 166, 197, 0.3) 96.39%
             )
             1;
-          backdrop-filter: blur(10px);
+          backdrop-filter: blur(0.1rem);
           display: flex;
           justify-content: space-between;
           align-items: center;
+
           .chart__review-header-title {
             font-weight: 700;
-            font-size: 26px;
+            font-size: 0.26rem;
             line-height: 100%;
             letter-spacing: 0%;
           }
+
           .chart__review-header-value {
             font-weight: 700;
-            font-size: 22px;
-            line-height: 30px;
+            font-size: 0.22rem;
+            line-height: 0.3rem;
             letter-spacing: 0%;
+
             .chart__review-header-unit {
-              font-size: 14px;
-              line-height: 30px;
+              font-size: 0.14rem;
+              line-height: 0.3rem;
               letter-spacing: 0%;
               color: rgba(255, 255, 255, 0.6);
             }
           }
         }
+
         .chart__review-content {
           flex: 1;
-          padding-top: 20px;
+          padding-top: 0.2rem;
+
           .chart__review-content-list {
             height: 100%;
-            overflow-y: auto;
+            overflow-y: hidden;
+
             .chart__review-content-item {
-              margin-bottom: 12px;
-              padding-bottom: 13px;
-              border-bottom: 1px dashed rgba(255, 255, 255, 0.2);
+              margin-bottom: 0.12rem;
+              padding-bottom: 0.13rem;
+              border-bottom: 0.01rem dashed rgba(255, 255, 255, 0.2);
+
               &:last-child {
                 border-bottom: none;
                 padding-bottom: 0;
@@ -297,8 +482,9 @@ const exampleSeries = [
       }
     }
   }
-  :deep(.el-select__popper.el-popper) {
-    top: 222px !important;
-  }
+
+  // :deep(.el-select__popper.el-popper) {
+  //   top: 1.49rem !important;
+  // }
 }
 </style>

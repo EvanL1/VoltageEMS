@@ -3,7 +3,7 @@
     <div class="card__container">
       <div class="card__left">
         <div class="card__left-icon">
-          <img :src="iconUrl" class="card__left-iconImg" />
+          <img :src="icon" class="card__left-iconImg" />
         </div>
       </div>
       <div class="card__right">
@@ -36,24 +36,13 @@ const props = defineProps({
     required: true,
   },
   value: {
-    type: String,
+    type: [String, Number],
     required: true,
   },
   unit: {
     type: String,
     default: '',
   },
-})
-
-// 使用import.meta.globEager批量导入图片资源
-const images = import.meta.glob('@/assets/images/*.png', { eager: true, import: 'default' })
-
-const iconUrl = computed(() => {
-  // 兼容@和/src两种写法
-  const key1 = `/src/assets/images/${props.icon}.png`
-  const key2 = `@/assets/images/${props.icon}.png`
-  const result = images[key1] || images[key2] || ''
-  return typeof result === 'string' ? result : ''
 })
 </script>
 
@@ -62,34 +51,34 @@ const iconUrl = computed(() => {
   width: 100%;
   height: 100%;
   background-color: rgba(84, 98, 140, 0.2);
-  padding: 20px;
+  padding: 0.2rem;
   display: flex;
   align-items: center;
-  border: 1px solid;
+  border: 0.01rem solid;
 
-  border-image: linear-gradient(
-      116.72deg,
+  border-image: linear-gradient(116.72deg,
       rgba(148, 166, 197, 0.3) 2.77%,
       rgba(148, 166, 197, 0) 32.16%,
       rgba(148, 166, 197, 0.103266) 72.59%,
-      rgba(148, 166, 197, 0.3) 98.99%
-    )
-    1;
-  backdrop-filter: blur(10px);
+      rgba(148, 166, 197, 0.3) 98.99%) 1;
+  backdrop-filter: blur(0.1rem);
+
   .card__container {
     display: flex;
-    height: 58.56px;
+    height: 0.5856rem;
+
     .card__left {
       display: flex;
       align-items: center;
-      margin-right: 23px;
+      margin-right: 0.23rem;
 
       .card__left-icon {
-        width: 53.6px;
+        width: 0.536rem;
         height: 100%;
         display: flex;
         align-items: center;
         justify-content: center;
+
         .card__left-iconImg {
           width: 100%;
           height: 100%;
@@ -97,6 +86,7 @@ const iconUrl = computed(() => {
         }
       }
     }
+
     .card__right {
       height: 100%;
       flex: 1;
@@ -104,31 +94,36 @@ const iconUrl = computed(() => {
       align-items: center;
 
       color: #fff;
+
       .card__right-contain {
         display: flex;
         flex-direction: column;
         justify-content: space-between;
       }
+
       .card__right-top {
         .card__right-title {
           font-weight: 700;
-          font-size: 18px;
-          line-height: 18px;
-          margin-bottom: 10px;
+          font-size: 0.18rem;
+          line-height: 0.18rem;
+          margin-bottom: 0.1rem;
         }
       }
+
       .card__right-bottom {
-        margin-top: 2px;
+        margin-top: 0.02rem;
         display: flex;
         align-items: flex-end;
+
         .card__right-value {
           font-weight: 700;
-          font-size: 20px;
-          line-height: 16px;
+          font-size: 0.2rem;
+          line-height: 0.16rem;
           color: #ffffff;
+
           .card__right-unit {
-            font-size: 12px;
-            line-height: 16px;
+            font-size: 0.12rem;
+            line-height: 0.16rem;
             color: rgba(255, 255, 255, 0.6);
           }
         }

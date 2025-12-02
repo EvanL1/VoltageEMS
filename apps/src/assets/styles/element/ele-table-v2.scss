@@ -1,0 +1,108 @@
+/**
+ * Element Plus Table-V2 虚拟表格样式
+ * 风格对齐 ele-table.scss：透明背景、冷色调表头、行 hover、高对比边框与文字
+ */
+
+.voltage-class {
+  .el-table-v2 {
+    background-color: transparent !important;
+
+    // 主容器滚动条（横向/纵向）
+    &::-webkit-scrollbar {
+      height: 0.06rem;
+      width: 0.06rem;
+    }
+    &::-webkit-scrollbar-thumb {
+      background: rgba(255, 255, 255, 0.18);
+      border-radius: 0.03rem;
+    }
+    &::-webkit-scrollbar-track {
+      background: transparent;
+    }
+
+    // 头部区域
+    .el-table-v2__header {
+      background: rgba(84, 98, 140, 0.2);
+
+      .el-table-v2__header-row {
+        background: transparent;
+      }
+
+      .el-table-v2__header-cell {
+        background: transparent;
+        color: rgba(255, 255, 255, 0.6);
+        font-weight: 400;
+        font-size: 0.14rem;
+        line-height: 0.22rem;
+        border: none;
+        border-bottom: 0.01rem solid rgba(255, 255, 255, 0.1);
+        padding: 0.09rem 0.2rem;
+
+        &.is-fixed-right {
+          background-color: #243b65;
+          box-shadow: 0.03rem 0 0.06rem rgba(0, 0, 0, 0.06);
+        }
+        &.is-fixed-left {
+          background-color: #243b65;
+          box-shadow: -0.03rem 0 0.06rem rgba(0, 0, 0, 0.06);
+        }
+      }
+    }
+
+    // 主体区域
+    .el-table-v2__body {
+      background: transparent;
+
+      .el-table-v2__row {
+        transition:
+          background 0.2s,
+          box-shadow 0.2s,
+          color 0.2s;
+
+        &:hover {
+          background: #283f69 !important;
+        }
+      }
+
+      .el-table-v2__cell {
+        background: transparent;
+        color: #fff;
+        font-size: 0.14rem;
+        line-height: 0.4rem;
+        padding: 0.09rem 0.2rem;
+        border-bottom: 0.01rem solid rgba(255, 255, 255, 0.1);
+
+        &.is-fixed-right {
+          background-color: #243b65;
+          box-shadow: 0.03rem 0 0.06rem rgba(0, 0, 0, 0.06);
+        }
+        &.is-fixed-left {
+          background-color: #243b65;
+          box-shadow: -0.03rem 0 0.06rem rgba(0, 0, 0, 0.06);
+        }
+      }
+
+      // 空数据态
+      .el-table-v2__empty {
+        background: transparent;
+
+        .el-table-v2__empty-text {
+          color: #9ca3af;
+          font-size: 0.14rem;
+        }
+      }
+    }
+
+    // 公共：透明化（兜底）
+    .el-table-v2__main,
+    .el-table-v2__header,
+    .el-table-v2__body,
+    .el-table-v2__row,
+    .el-table-v2__header-row,
+    .el-table-v2__cell,
+    .el-table-v2__header-cell {
+      background-color: transparent;
+    }
+  }
+}
+

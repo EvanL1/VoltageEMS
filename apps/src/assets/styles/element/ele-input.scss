@@ -5,181 +5,214 @@
   // Input 基础样式
 
   .el-input {
-    // 输入框容器
+    height: 0.32rem !important;
+    width: 2.4rem !important;
+    // 输入框容�?
+    &.is-disabled {
+      .el-input__wrapper {
+        box-shadow: none !important;
+      }
+    }
     .el-input__wrapper {
-      padding: 0;
-      height: $button-height-base;
-      display: flex;
-      align-items: center;
-      position: relative;
-      background-color: $bg-color-input;
-      box-shadow: none;
-      border: 1px solid $border-color-base;
-      border-radius: $border-radius-base;
-      // outline: none;
-      // 聚焦状态
+      padding: 0 !important;
+      height: 0.32rem !important;
+      display: flex !important;
+      align-items: center !important;
+      position: relative !important;
+      background-color: $bg-color-input !important;
+      box-shadow: none !important;
+      border: 0.01rem solid $border-color-base !important;
+      border-radius: $border-radius-base !important;
+      // outline: none !important;
+      // 聚焦状�?
       &.is-focus {
-        border-color: $border-color-base;
-        box-shadow: none;
-        //   outline: none;
+        border-color: $border-color-base !important;
+        box-shadow: none !important;
+        //   outline: none !important;
       }
 
-      // 错误状态
+      // 错误状�?
       &.is-error {
-        border-color: $danger-color;
+        border-color: $danger-color !important;
       }
 
-      // 禁用状态
+      // 禁用状�?
       &.is-disabled {
-        color: $text-color-disabled;
-        cursor: not-allowed;
+        background-color: transparent !important;
       }
 
-      // 只读状态
+      // 只读状�?
       &.is-readonly {
       }
     }
-
-    // 输入框
+    // 输入�?
     .el-input__inner {
-      border: none;
-      outline: none;
-      background: transparent;
-      color: $text-color-primary;
-      font-size: $font-size-base;
-      line-height: $line-height-normal;
-      width: 100%;
-      height: 100%;
-      padding: 0 12px;
-      border-radius: $border-radius-base;
-      border-color: $border-color-base;
+      border: none !important;
+      outline: none !important;
+      background: transparent !important;
+      color: $text-color-primary !important;
+      font-size: $font-size-base !important;
+      line-height: $line-height-normal !important;
+      width: 100% !important;
+      height: 100% !important;
+      padding: 0 0.12rem !important;
+      border-radius: $border-radius-base !important;
+      border-color: $border-color-base !important;
       &::placeholder {
-        color: $text-color-placeholder;
+        color: $text-color-placeholder !important;
       }
 
       &:disabled {
-        color: $text-color-disabled;
-        cursor: not-allowed;
+        color: #999 !important;
+        cursor: not-allowed !important;
       }
 
       &:read-only {
-        color: $text-color-secondary;
+        color: #fff !important ;
       }
     }
 
     // 前缀图标
-    .el-input__prefix {
-      color: $text-color-secondary;
-      font-size: $font-size-base;
-      margin-right: $spacing-xs;
-      display: flex;
-      align-items: center;
-    }
-
-    // 后缀图标
+    .el-input__prefix,
     .el-input__suffix {
-      color: $text-color-secondary;
-      font-size: $font-size-base;
-      margin-left: $spacing-xs;
-      display: flex;
-      align-items: center;
-    }
-
-    // 清除按钮
-    .el-input__clear {
-      color: $text-color-secondary;
-      cursor: pointer;
-      transition: color $transition-fast;
-
-      &:hover {
-        color: $text-color-regular;
+      color: $text-color-secondary !important;
+      font-size: $font-size-base !important;
+      margin: 0 !important;
+      display: flex !important;
+      align-items: center !important;
+      justify-content: center !important;
+      .el-input__prefix-inner,
+      .el-input__suffix-inner {
+        line-height: 0.16rem !important;
+        width: 100% !important;
+        height: 100% !important;
+        .el-input__icon {
+          width: 100% !important;
+          height: 100% !important;
+          font-size: 0.16rem !important;
+          margin: 0 !important;
+        }
       }
+    }
+    .el-input__prefix {
+      padding-left: 0.05rem !important;
+    }
+    .el-input__suffix {
+      padding-right: 0.05rem !important;
     }
 
     // 密码显示切换按钮
     .el-input__password {
-      color: $text-color-secondary;
-      cursor: pointer;
-      transition: color $transition-fast;
+      width: 0.16rem !important;
+      height: 0.16rem !important;
+      font-size: 0.16rem !important;
+      // color: rgb(168, 171, 178) !important;
+      cursor: pointer !important;
+      transition: color $transition-fast !important;
+      // margin-right: 0.1rem !important;
 
-      &:hover {
-        color: $text-color-regular;
-      }
+      // &:hover {
+      //   color: #fff !important;
+      // }
     }
 
     // 计数
     .el-input__count {
-      color: $text-color-secondary;
-      font-size: $font-size-small;
-      margin-left: $spacing-xs;
+      color: $text-color-secondary !important;
+      font-size: $font-size-small !important;
+      margin-left: $spacing-xs !important;
     }
   }
 
   // Input 尺寸变体
   .el-input {
-    // 小尺寸
     &.el-input--small {
+      width: 100% !important;
       .el-input__wrapper {
-        height: $button-height-small;
-        padding: 0 $spacing-xs;
+        height: $button-height-small !important;
+        padding: 0 $spacing-xs !important;
       }
 
       .el-input__inner {
-        font-size: $font-size-small;
+        font-size: $font-size-small !important;
       }
 
       .el-input__prefix,
       .el-input__suffix {
-        font-size: $font-size-small;
+        font-size: $font-size-small !important;
       }
     }
 
-    // 大尺寸
+    // 大尺�?
     &.el-input--large {
       .el-input__wrapper {
-        height: $button-height-large;
-        padding: 0 $spacing-md;
+        height: $button-height-large !important;
+        padding: 0 $spacing-md !important;
       }
 
       .el-input__inner {
-        font-size: $font-size-large;
+        font-size: $font-size-large !important;
       }
 
       .el-input__prefix,
       .el-input__suffix {
-        font-size: $font-size-large;
+        font-size: $font-size-large !important;
       }
     }
   }
 
   // Input 类型变体
-  .el-input {
-    // 文本域
-    &.el-textarea {
-      .el-textarea__inner {
-        border-radius: $border-radius-base;
-        background-color: $bg-color-overlay;
-        color: $text-color-primary;
-        font-size: $font-size-base;
-        line-height: $line-height-relaxed;
-        padding: $spacing-sm;
-        resize: vertical;
-        min-height: 80px;
-        transition: all $transition-base;
-
-        &:focus {
-          border-color: $primary-color;
-        }
-
-        &::placeholder {
-          color: $text-color-placeholder;
-        }
-
-        &:disabled {
-          color: $text-color-disabled;
-          cursor: not-allowed;
-        }
+  .el-textarea {
+    .el-textarea__inner {
+      border-radius: 0 !important;
+      border: 0.01rem solid rgba(148, 166, 197, 0.3) !important;
+      background-color: $bg-color-input !important;
+      color: $text-color-primary !important;
+      font-size: 0.14rem !important;
+      line-height: $line-height-relaxed !important;
+      padding: $spacing-sm !important;
+      resize: vertical !important;
+      min-height: 0.64rem !important;
+      transition: all $transition-base !important;
+      box-shadow: none !important;
+      &:focus {
+        box-shadow: none !important;
+        border-color: none !important;
       }
+
+      &::placeholder {
+        color: $text-color-placeholder !important;
+      }
+
+      &:disabled {
+        color: $text-color-disabled !important;
+        cursor: not-allowed !important;
+      }
+      &:hover {
+        border-color: none !important;
+      }
+    }
+  }
+
+  .el-input-number {
+    line-height: 0.32rem;
+    width: 2.4rem !important;
+    .el-input {
+      width: 100% !important;
+    }
+    .el-input-number__decrease,
+    .el-input-number__increase {
+      width: 0.32rem;
+      font-size: 0.13rem;
+      top: 0.01rem;
+      bottom: 0.01rem;
+      border-radius: 0;
+    }
+    .el-input-number__decrease {
+      border-right: 0.01rem solid $border-color-base;
+    }
+    .el-input-number__increase {
+      border-left: 0.01rem solid $border-color-base;
     }
   }
 }
