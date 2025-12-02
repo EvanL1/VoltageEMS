@@ -5,7 +5,7 @@
 #![allow(clippy::disallowed_methods)] // json! macro used in multiple functions
 
 use axum::{
-    extract::{Path, Query, State},
+    extract::{Path, Query, RawQuery, State},
     response::Json,
 };
 use chrono::{DateTime, Utc};
@@ -412,4 +412,102 @@ pub async fn get_channel_detail_handler(
     };
 
     Ok(Json(SuccessResponse::new(detail)))
+}
+
+/// Search channels by name with fuzzy matching (no pagination)
+///
+/// Returns all channels matching the search keyword. Use this for autocomplete
+/// or quick lookup scenarios where you need all matches without pagination.
+///
+/// URL format: `/api/channels/search?{keyword}`
+/// - The keyword is passed directly as the raw query string (no parameter name needed)
+/// - Empty keyword returns all channels
+///
+/// @route GET /api/channels/search?{keyword}
+#[utoipa::path(
+    get,
+    path = "/api/channels/search",
+    responses(
+        (status = 200, description = "Matching channels", body = serde_json::Value,
+            example = json!({
+                "list": [
+                    {
+                        "id": 1001,
+                        "name": "modbus_pcs_01",
+                        "description": "PCS Modbus 通道",
+                        "protocol": "modbus_tcp",
+                        "enabled": true,
+                        "connected": true
+                    }
+                ]
+            })
+        )
+    ),
+    tag = "comsrv"
+)]
+pub async fn search_channels(
+    State(state): State<AppState>,
+    RawQuery(raw_query): RawQuery,
+) -> Result<Json<SuccessResponse<serde_json::Value>>, AppError> {
+    // raw_query is Option<String>:
+    // /search?modbus => Some("modbus")
+    // /search?       => Some("")
+    // /search        => None
+    let keyword = raw_query.unwrap_or_default();
+    let like_pattern = format!("%{}%", keyword);
+
+    // Query from SQLite
+    let channels: Vec<(i64, String, String, bool, Option<String>)> = sqlx::query_as(
+        r#"SELECT channel_id, name, protocol, enabled, config
+           FROM channels
+           WHERE name LIKE ?
+           ORDER BY channel_id ASC"#,
+    )
+    .bind(&like_pattern)
+    .fetch_all(&state.sqlite_pool)
+    .await
+    .map_err(|e| {
+        tracing::error!("Failed to search channels: {}", e);
+        AppError::internal_error(format!("Failed to search channels: {}", e))
+    })?;
+
+    // Get runtime status for connected info
+    let manager = state.channel_manager.read().await;
+
+    // Build response
+    let list: Vec<serde_json::Value> = channels
+        .iter()
+        .map(|(id, name, protocol, enabled, config_str)| {
+            let channel_id = *id as u16;
+
+            // Extract description from config JSON
+            let description = config_str
+                .as_ref()
+                .and_then(|s| serde_json::from_str::<serde_json::Value>(s).ok())
+                .and_then(|v| {
+                    v.get("description")
+                        .and_then(|d| d.as_str())
+                        .map(String::from)
+                });
+
+            // Get runtime connected status
+            let connected = manager
+                .get_channel(channel_id)
+                .map(|_| true) // Channel exists in runtime = running
+                .unwrap_or(false);
+
+            serde_json::json!({
+                "id": id,
+                "name": name,
+                "description": description,
+                "protocol": protocol,
+                "enabled": enabled,
+                "connected": connected
+            })
+        })
+        .collect();
+
+    Ok(Json(SuccessResponse::new(
+        serde_json::json!({ "list": list }),
+    )))
 }
