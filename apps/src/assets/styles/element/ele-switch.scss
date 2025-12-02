@@ -11,47 +11,47 @@
     align-items: center;
     position: relative;
     font-size: $font-size-base;
-    line-height: 32px;
-    height: 32px;
+    line-height: 0.32rem;
+    height: 0.32rem;
     vertical-align: middle;
     outline: none;
     user-select: none;
     cursor: pointer;
 
-    // 开关核心容器
+    // 开关核心容�?
     .el-switch__core {
       position: relative;
       display: inline-block;
       box-sizing: border-box;
-      width: 40px;
-      height: 20px;
-      min-width: 40px;
+      width: 0.4rem;
+      height: 0.2rem;
+      min-width: 0.4rem;
       border: none;
       border-radius: $border-radius-round;
       background: rgba(209, 209, 214, 0.2);
       transition: all $transition-base;
       cursor: pointer;
 
-      // 开关滑块
+      // 开关滑�?
       .el-switch__action {
         position: absolute;
-        top: 2px;
-        left: 2px;
+        top: 0.02rem;
+        left: 0.02rem;
         border-radius: $border-radius-circle;
         transition: all $transition-base;
-        width: 16px;
-        height: 16px;
+        width: 0.16rem;
+        height: 0.16rem;
         background: $bg-color-overlay;
         display: flex;
         align-items: center;
         justify-content: center;
         color: $text-color-regular;
-        font-size: 12px;
-        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+        font-size: 0.12rem;
+        box-shadow: 0 0.01rem 0.03rem rgba(0, 0, 0, 0.3);
       }
     }
 
-    // 开关标签文字
+    // 开关标签文�?
     .el-switch__label {
       transition: color $transition-base;
       font-weight: $font-weight-medium;
@@ -71,7 +71,7 @@
       margin-left: $spacing-sm;
     }
 
-    // 开关内部文字
+    // 开关内部文�?
     .el-switch__inner {
       width: max-content;
       display: inline-block;
@@ -81,14 +81,14 @@
       transition: opacity $transition-base;
     }
 
-    // 激活状态
+    // 激活状�?
     &.is-checked {
       .el-switch__core {
         border-color: $primary-color;
         background: #ff6900;
 
         .el-switch__action {
-          left: calc(100% - 17px);
+          left: calc(100% - 0.17rem);
           color: $primary-color;
         }
       }
@@ -104,16 +104,16 @@
       }
     }
 
-    // 悬停状态
+    // 悬停状�?
     &:hover:not(.is-disabled) {
       .el-switch__core {
         &::after {
           content: '';
           position: absolute;
-          top: -4px;
-          left: -4px;
-          right: -4px;
-          bottom: -4px;
+          top: -0.04rem;
+          left: -0.04rem;
+          right: -0.04rem;
+          bottom: -0.04rem;
           border-radius: $border-radius-round;
           background: rgba($primary-color, 0.1);
           z-index: -1;
@@ -121,15 +121,15 @@
       }
     }
 
-    // 聚焦状态
+    // 聚焦状�?
     &:focus-visible {
       .el-switch__core {
-        outline: 2px solid rgba($primary-color, 0.2);
-        outline-offset: 1px;
+        outline: 0.02rem solid rgba($primary-color, 0.2);
+        outline-offset: 0.01rem;
       }
     }
 
-    // 禁用状态
+    // 禁用状�?
     &.is-disabled {
       cursor: not-allowed;
       opacity: 1;
@@ -157,7 +157,7 @@
         }
       }
     }
-    // 加载状态
+    // 加载状�?
     &.is-loading {
       .el-switch__action {
         .el-icon {
@@ -166,7 +166,7 @@
       }
     }
 
-    // 不同类型的开关样式
+    // 不同类型的开关样�?
     &.el-switch--success {
       &.is-checked {
         .el-switch__core {
@@ -192,7 +192,7 @@
     }
   }
 
-  // 开关加载动画
+  // 开关加载动�?
   @keyframes switch-loading {
     0% {
       transform: rotate(0deg);

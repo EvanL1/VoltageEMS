@@ -1,0 +1,237 @@
+.voltage-class {
+  .el-picker__popper.el-popper {
+    top: 0.44rem !important;
+    background: transparent !important;
+    border-radius: 0 !important;
+    border: 0.01rem solid !important;
+    border-image: linear-gradient(
+        117.64deg,
+        rgba(148, 166, 197, 0.3) 2.73%,
+        rgba(148, 166, 197, 0) 25.27%,
+        rgba(148, 166, 197, 0.3) 41.05%,
+        rgba(148, 166, 197, 0.103266) 61.63%,
+        rgba(148, 166, 197, 0.3) 97.67%
+      )
+      1 !important;
+    box-shadow: 0rem 0.04rem 0.1rem 0rem rgba(0, 0, 0, 0.25) !important;
+    backdrop-filter: blur(0.2rem) !important;
+    background-color: rgba(30, 47, 80, 0.3) !important;
+    .el-date-picker {
+      width: 3.32rem !important;
+    }
+    .el-picker-panel {
+      background: transparent !important;
+      line-height: 0.3rem;
+      .el-picker-panel__body {
+        color: #fff !important;
+        .el-date-picker__time-header {
+          border-bottom: 0.01rem solid rgb(128, 128, 128);
+          font-size: 0.12rem;
+          padding: 0.08rem 0.05rem 0.05rem;
+          .el-date-picker__editor-wrap {
+            padding: 0 0.05rem;
+            // 时间选择�?
+            .el-time-panel {
+              // 时间选择器头
+              width: 1.8rem;
+              border-radius: 0.02rem;
+              border: 0.01rem solid rgba(128, 128, 128, 0.5);
+              background-color: rgba(26, 48, 86, 1) !important;
+
+              margin: 0;
+              .el-time-panel__header {
+                padding: 0.16rem 0.2rem;
+                color: #fff;
+                border-bottom: 0.01rem solid rgb(128, 128, 128);
+                background: transparent;
+
+                .el-time-panel__title {
+                  font-size: 0.14rem;
+                  font-weight: 600;
+                  color: #fff;
+                }
+              }
+
+              // 时间选择器内�?
+              .el-time-panel__content {
+                // padding: 0.16rem 0.2rem;
+                max-height: 1.92rem;
+                &::before {
+                  border-bottom: 0.01rem solid rgb(128, 128, 128);
+                  border-top: 0.01rem solid rgb(128, 128, 128);
+                }
+                &:after {
+                  height: 0.32rem;
+                  margin-top: -0.16rem;
+                  padding-top: 0.06rem;
+                }
+                // 时间列表
+                .el-time-spinner__wrapper {
+                  max-height: 1.92rem;
+                }
+                .el-time-spinner__list {
+                  &::before {
+                    height: 0.8rem;
+                  }
+
+                  // 缩小滚动条滑块样式
+                  &::-webkit-scrollbar {
+                    width: 0.06rem;
+                  }
+                  &::-webkit-scrollbar-thumb {
+                    background: rgba(39, 68, 113, 0.7);
+                    border-radius: 0.03rem;
+                  }
+                  &::-webkit-scrollbar-track {
+                    background: transparent;
+                  }
+
+                  .el-time-spinner__item {
+                    height: 0.36rem;
+                    line-height: 0.36rem;
+                    font-size: 0.14rem;
+                    color: #fff;
+                    transition: all 0.3s ease;
+
+                    &:hover {
+                      background: rgba(39, 68, 113, 0.8);
+
+                      color: #fff;
+                    }
+
+                    &.is-active {
+                      background: rgba(39, 68, 113, 1);
+                      color: #ffffff;
+                      font-weight: 600;
+                      // box-shadow: 0 0.02rem 0.08rem rgba(64, 158, 255, 0.3);
+                    }
+
+                    &.is-disabled {
+                      color: #c0c4cc;
+                      cursor: not-allowed;
+                    }
+                  }
+                }
+                .el-scrollbar {
+                  .el-scrollbar__bar {
+                    border-radius: 0.04rem;
+                    right: 0.02rem;
+                    &.is-vertical {
+                      top: 0.02rem;
+                      width: 0.06rem;
+                      .el-scrollbar__thumb {
+                        height: 0.2rem !important;
+                      }
+                    }
+                  }
+                }
+              }
+
+              // 时间选择器底�?
+              .el-time-panel__footer {
+                // padding: 0.16rem 0.2rem;
+                height: 0.36rem;
+                line-height: 0.25rem;
+                padding: 0.04rem;
+                border-top: 0.01rem solid rgb(128, 128, 128);
+                background-color: rgba(26, 48, 86, 1) !important;
+                .el-time-panel__btn {
+                  font-size: 0.14rem;
+                  color: #fff;
+                  transition: all 0.3s ease;
+                  margin: 0.05rem;
+                  line-height: 0.16rem;
+                  padding: 0 0.05rem;
+                  &.confirm {
+                    font-weight: 400;
+                  }
+                }
+              }
+            }
+          }
+        }
+        .el-date-picker__header {
+          padding: 0.12rem 0.12rem 0;
+          .el-date-picker__header-label {
+            font-size: 0.14rem;
+            color: #fff;
+          }
+
+          .el-date-picker__prev-btn,
+          .el-date-picker__next-btn {
+            .el-picker-panel__icon-btn {
+              color: #fff;
+              font-size: 0.12rem;
+              margin-top: 0.08rem;
+              &:hover {
+                color: #fff;
+              }
+            }
+          }
+        }
+        .el-picker-panel__content {
+          width: 2.92rem !important;
+          margin: 0.15rem;
+          .el-date-table {
+            font-size: 0.12rem;
+            th {
+              color: #fff;
+              padding: 0.05rem;
+              border-bottom: 0.01rem solid rgb(128, 128, 128);
+            }
+            td {
+              height: 0.3rem;
+              width: 0.32rem;
+              padding: 0.04rem 0;
+              &.available:hover {
+                color: rgba(255, 105, 0, 1);
+              }
+            }
+          }
+        }
+      }
+      .el-picker-panel__footer {
+        background: transparent !important;
+        padding: 0.04rem 0.12rem;
+        border-top: 0.01rem solid rgb(128, 128, 128);
+        .el-picker-panel__link-btn {
+          color: #fff !important;
+          padding: 0.04rem 0.12rem;
+          &.is-disabled {
+            background: #3a5279 !important;
+            color: #fff !important;
+          }
+        }
+      }
+    }
+  }
+}
+.el-date-table td {
+  &.disabled {
+    background: transparent !important;
+    .el-date-table-cell {
+      background: rgba(255, 255, 255, 0.5) !important;
+    }
+  }
+}
+.el-date-table td .el-date-table-cell {
+  height: 0.3rem !important;
+  padding: 0.03rem 0 !important;
+  line-height: 0.3rem !important;
+}
+.el-date-table td.current:not(.disabled) .el-date-table-cell__text {
+  height: 0.24rem;
+  width: 0.24rem;
+  line-height: 0.24rem;
+  background-color: rgba(255, 105, 0, 1) !important;
+}
+
+.el-date-table td .el-date-table-cell .el-date-table-cell__text {
+  height: 0.24rem !important;
+  line-height: 0.24rem !important;
+  width: 0.24rem !important;
+  color: #fff !important;
+}
+.el-date-table td.today .el-date-table-cell__text {
+  color: rgba(255, 105, 0, 1);
+}

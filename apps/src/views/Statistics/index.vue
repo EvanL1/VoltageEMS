@@ -45,11 +45,11 @@
 </template>
 
 <script setup lang="ts">
-// 正确引入SVG图标，避免部署后图片加载不出来
+// 正确引入SVG图标，避免部署后图片加载不出�?
 import alarmCurrentIcon from '@/assets/icons/alarm-current.svg'
 import alarmHistoryIcon from '@/assets/icons/alarm-history.svg'
 
-// 响应式数据
+// 响应式数�?
 const route = useRoute()
 const router = useRouter()
 
@@ -86,20 +86,20 @@ const handleTabClick = (tab: 'overview' | 'curves' | 'operationLog' | 'runingLog
   display: flex;
   flex-direction: column;
   .devices-pv__header {
-    padding-bottom: 20px;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+    padding-bottom: 0.2rem;
+    border-bottom: 0.01rem solid rgba(255, 255, 255, 0.1);
     .devices-pv__tabs {
       display: flex;
       align-items: center;
-      gap: 16px;
+      gap: 0.16rem;
       .devices-pv__tab-btn {
         display: flex;
         align-items: center;
-        gap: 10px;
+        gap: 0.1rem;
         .devices-pv__tab-icon {
-          width: 16px;
-          height: 16px;
-          margin-right: 8px;
+          width: 0.16rem;
+          height: 0.16rem;
+          margin-right: 0.08rem;
         }
       }
     }
@@ -110,7 +110,7 @@ const handleTabClick = (tab: 'overview' | 'curves' | 'operationLog' | 'runingLog
     flex-direction: column;
 
     .devices-pv__toolbar {
-      padding: 20px 0;
+      padding: 0.2rem 0;
       display: flex;
       align-items: center;
       justify-content: space-between;
@@ -118,21 +118,21 @@ const handleTabClick = (tab: 'overview' | 'curves' | 'operationLog' | 'runingLog
       .devices-pv__toolbar-left {
         display: flex;
         align-items: center;
-        gap: 16px;
+        gap: 0.16rem;
       }
 
       .devices-pv__toolbar-right {
         display: flex;
         align-items: center;
-        gap: 16px;
+        gap: 0.16rem;
 
         .devices-pv__export-btn {
           display: flex;
           align-items: center;
-          gap: 10px;
+          gap: 0.1rem;
           .devices-pv__export-icon {
-            width: 16px;
-            height: 16px;
+            width: 0.16rem;
+            height: 0.16rem;
           }
         }
       }
@@ -142,16 +142,16 @@ const handleTabClick = (tab: 'overview' | 'curves' | 'operationLog' | 'runingLog
       flex: 1;
       display: flex;
       flex-direction: column;
-      // max-width: 1660px;
+      // max-width: 16.6rem;
 
       .devices-pv__table-content {
         flex: 1;
-        max-height: 728px;
+        max-height: 7.28rem;
         overflow-y: auto;
       }
 
       .devices-pv__pagination {
-        padding: 20px 0;
+        padding: 0.2rem 0;
         display: flex;
         justify-content: flex-end;
       }
@@ -159,3 +159,4 @@ const handleTabClick = (tab: 'overview' | 'curves' | 'operationLog' | 'runingLog
   }
 }
 </style>
+

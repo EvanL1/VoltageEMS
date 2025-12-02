@@ -1,6 +1,7 @@
 @import './styles/fonts/index.scss';
 @import './styles/element/index.scss';
-
+@import './styles/vueflow.scss';
+@import './styles/device-monitoring-scroller.scss';
 *,
 *::before,
 *::after {
@@ -14,7 +15,7 @@
   -ms-user-select: none;
   user-select: none;
 }
-/* 为需要文本选择的元素设置例外 */
+/* 为需要文本选择的元素设置例�?*/
 input,
 textarea,
 select,
@@ -35,44 +36,44 @@ body {
     color 0.5s,
     background-color 0.5s;
   font-family: Arimo sans-serif;
-  font-size: 0.14rem; /* 14px = 0.14rem */
+  font-size: 0.14rem; /* 0.14rem = 0.14rem */
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   overflow: hidden;
 }
 h1 {
-  font-size: 0.32rem; /* 32px */
+  font-size: 0.32rem; /* 0.32rem */
   font-weight: 700;
   margin-bottom: 0.24rem;
 }
 
 h2 {
-  font-size: 0.24rem; /* 24px */
+  font-size: 0.24rem; /* 0.24rem */
   font-weight: 600;
   margin-bottom: 0.18rem;
 }
 
 h3 {
-  font-size: 0.18rem; /* 18px */
+  font-size: 0.18rem; /* 0.18rem */
   font-weight: 500;
   margin-bottom: 0.12rem;
 }
 
 h4 {
-  font-size: 0.16rem; /* 16px */
+  font-size: 0.16rem; /* 0.16rem */
   font-weight: 500;
   margin-bottom: 0.08rem;
 }
 
 h5 {
-  font-size: 0.14rem; /* 14px */
+  font-size: 0.14rem; /* 0.14rem */
   font-weight: 500;
   margin-bottom: 0.06rem;
 }
 
 h6 {
-  font-size: 0.12rem; /* 12px */
+  font-size: 0.12rem; /* 0.12rem */
   font-weight: 500;
   margin-bottom: 0.04rem;
 }
@@ -98,8 +99,8 @@ ol {
 }
 
 ::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
+  width: 0.08rem;
+  height: 0.08rem;
   background: transparent;
 }
 
@@ -109,8 +110,8 @@ ol {
 
 ::-webkit-scrollbar-thumb {
   background: rgba(88, 114, 148, 0.4);
-  min-height: 8px;
-  min-width: 8px;
+  min-height: 0.08rem;
+  min-width: 0.08rem;
 }
 ::-webkit-scrollbar-button {
   display: none;

@@ -2,10 +2,10 @@
   <div class="voltage-class operationLog">
     <!-- 表格区域 -->
     <div class="operationLog__table">
-      <el-table :data="tableData" v-loading="loading" class="operationLog__table-content">
+      <el-table :data="tableData" class="operationLog__table-content">
         <el-table-column prop="user" label="User" min-width="120" />
         <el-table-column prop="role" label="Role" min-width="100" />
-        <el-table-column prop="action" label="Action" min-width="120" />
+        <el-table-column prop="action" label="action" min-width="120" />
         <el-table-column prop="device" label="Device" min-width="120" />
         <el-table-column prop="result" label="Result" min-width="100" />
         <el-table-column prop="time" label="Time" min-width="160" />
@@ -21,7 +21,7 @@
           :total="pagination.total"
           layout="total, sizes, prev, pager, next"
           @size-change="handlePageSizeChange"
-          @current-change="handleCurrentPageChange"
+          @current-change="handlePageChange"
         />
       </div>
     </div>
@@ -30,18 +30,7 @@
 
 <script setup lang="ts">
 import { useTableData, type TableConfig } from '@/composables/useTableData'
-
-// 操作日志数据类型
-interface OperationLogRecord {
-  id: string
-  user: string
-  role: string
-  action: string
-  device: string
-  result: string
-  time: string
-  ip: string
-}
+import type { OperationLogRecord } from '@/types/statistics'
 
 // 表格配置
 const tableConfig: TableConfig = {
@@ -54,6 +43,7 @@ const {
   loading,
   tableData,
   pagination: paginationData,
+  handlePageSizeChange,
   handlePageChange,
 } = useTableData<OperationLogRecord>(tableConfig)
 
@@ -90,7 +80,7 @@ const mockData: OperationLogRecord[] = [
   {
     id: '2',
     user: 'Bob',
-    role: 'Operator',
+    role: 'Viewer',
     action: 'Restart Device',
     device: 'Sensor-001',
     result: 'Success',
@@ -120,7 +110,7 @@ const mockData: OperationLogRecord[] = [
   {
     id: '5',
     user: 'Bob',
-    role: 'Operator',
+    role: 'Viewer',
     action: 'Logout',
     device: 'Web',
     result: 'Success',
@@ -140,7 +130,7 @@ const mockData: OperationLogRecord[] = [
   {
     id: '7',
     user: 'Eve',
-    role: 'Operator',
+    role: 'Viewer',
     action: 'Update Firmware',
     device: 'Device-002',
     result: 'Success',
@@ -170,7 +160,7 @@ const mockData: OperationLogRecord[] = [
   {
     id: '10',
     user: 'Heidi',
-    role: 'Operator',
+    role: 'Viewer',
     action: 'Acknowledge Alarm',
     device: 'Sensor-002',
     result: 'Success',
@@ -188,20 +178,12 @@ const loadMockData = () => {
   pagination.total = mockData.length
 }
 
-// 分页处理
-const handlePageSizeChange = (newPageSize: number) => {
-  handlePageChange(1, newPageSize)
-}
-const handleCurrentPageChange = (newPage: number) => {
-  handlePageChange(newPage)
-}
-
-// 组件挂载时加载数据
+// 组件挂载时加载数�?
 onMounted(() => {
   loadMockData()
 })
 
-// 监听分页变化，重新加载数据
+// 监听分页变化，重新加载数�?
 watch(
   () => [pagination.page, pagination.pageSize],
   () => {
@@ -214,7 +196,6 @@ watch(
 .voltage-class.operationLog {
   height: 100%;
   width: 100%;
-  padding-top: 20px;
   display: flex;
 
   .operationLog__table {
@@ -223,12 +204,12 @@ watch(
 
     .operationLog__table-content {
       width: 100%;
-      max-height: 810px;
+      height: calc(100% - 0.92rem);
       overflow-y: auto;
     }
 
     .operationLog__pagination {
-      padding: 20px 0;
+      padding: 0.2rem 0;
       display: flex;
       justify-content: flex-end;
     }

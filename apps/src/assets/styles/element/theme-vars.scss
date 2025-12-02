@@ -1,11 +1,11 @@
 /* Element Plus 主题变量定义 */
 
-// 主色调
+// 主色�?
 $primary-color: rgba(255, 105, 0, 1);
 $primary-color-hover: #5a6fd8;
 $primary-color-active: #4f5fc6;
 
-// 功能色
+// 功能�?
 $success-color: #52c41a;
 $success-color-hover: #49aa15;
 $success-color-active: #409611;
@@ -29,7 +29,7 @@ $text-color-secondary: #8c8c8c;
 $text-color-placeholder: #bfbfbf;
 $text-color-disabled: #c0c4cc;
 
-// 背景色
+// 背景�?
 $bg-color-page: #f5f5f5;
 $bg-color-overlay: #ffffff;
 $bg-color-input: rgba(84, 98, 140, 0.2);
@@ -37,23 +37,23 @@ $bg-color-input: rgba(84, 98, 140, 0.2);
 $border-color-base: rgba(148, 166, 197, 0.3);
 
 // 圆角
-$border-radius-base: 0px;
-$border-radius-small: 4px;
-$border-radius-round: 20px;
+$border-radius-base: 0rem;
+$border-radius-small: 0.04rem;
+$border-radius-round: 0.2rem;
 $border-radius-circle: 50%;
 
 // 阴影
 $box-shadow-base:
-  0 2px 4px rgba(0, 0, 0, 0.12),
-  0 0 6px rgba(0, 0, 0, 0.04);
+  0 0.02rem 0.04rem rgba(0, 0, 0, 0.12),
+  0 0 0.06rem rgba(0, 0, 0, 0.04);
 
 // 字体大小
-$font-size-extra-large: 20px;
-$font-size-large: 18px;
-$font-size-medium: 16px;
-$font-size-base: 14px;
-$font-size-small: 13px;
-$font-size-extra-small: 12px;
+$font-size-extra-large: 0.2rem;
+$font-size-large: 0.18rem;
+$font-size-medium: 0.16rem;
+$font-size-base: 0.14rem;
+$font-size-small: 0.13rem;
+$font-size-extra-small: 0.12rem;
 
 // 字体权重
 $font-weight-normal: 400;
@@ -68,36 +68,36 @@ $line-height-relaxed: 1.5;
 $line-height-loose: 1.6;
 
 // 间距
-$spacing-xs: 4px;
-$spacing-sm: 8px;
-$spacing-md: 16px;
-$spacing-lg: 24px;
-$spacing-xl: 32px;
-$spacing-xxl: 48px;
+$spacing-xs: 0.04rem;
+$spacing-sm: 0.08rem;
+$spacing-md: 0.16rem;
+$spacing-lg: 0.24rem;
+$spacing-xl: 0.32rem;
+$spacing-xxl: 0.48rem;
 
 // 过渡动画
 $transition-fast: 0.15s ease;
 $transition-base: 0.3s ease;
 $transition-slow: 0.5s ease;
 
-// 透明度
+// 透明�?
 $opacity-disabled: 0.6;
 $opacity-loading: 0.8;
 $opacity-hover: 0.9;
 
 // 按钮尺寸
-$button-height-small: 28px;
-$button-height-base: 32px;
-$button-height-large: 40px;
+$button-height-small: 0.28rem;
+$button-height-base: 0.32rem;
+$button-height-large: 0.4rem;
 
-$button-padding-small: 0 12px;
-$button-padding-base: 0 16px;
-$button-padding-large: 0 20px;
+$button-padding-small: 0 0.12rem;
+$button-padding-base: 0 0.16rem;
+$button-padding-large: 0 0.2rem;
 
 // 按钮字体大小
-$button-font-size-small: 13px;
-$button-font-size-base: 14px;
-$button-font-size-large: 16px;
+$button-font-size-small: 0.13rem;
+$button-font-size-base: 0.14rem;
+$button-font-size-large: 0.16rem;
 
 // 按钮行高
 $button-line-height-small: 1.4;

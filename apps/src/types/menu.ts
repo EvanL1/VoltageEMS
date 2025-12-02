@@ -1,6 +1,6 @@
 export interface RouteMeta {
   activeNav: string
-  iconName?: string
+  icon?: string
   roles: string[]
   title?: string
   isSubMenu?: boolean

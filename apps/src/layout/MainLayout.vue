@@ -38,20 +38,24 @@ const globalStore = useGlobalStore()
   background-repeat: no-repeat;
   // background: transparent;
   background-image: url('../assets/images/simple-bg.png');
+
   // z-index: -99;
   .main-layout__left {
     z-index: 99;
   }
+
   .main-layout__right {
     transition: width 0.3s ease-in-out;
     width: calc(100% - 2.2rem);
+
     // z-index: 99;
     &.collapse {
-      width: calc(100% - 85px);
+      width: calc(100% - 0.85rem);
     }
+
     .main-layout__content {
-      padding: 20px;
-      height: calc(100% - 85px);
+      padding: 0.2rem;
+      height: calc(100% - 0.85rem);
       width: 100%;
     }
   }
