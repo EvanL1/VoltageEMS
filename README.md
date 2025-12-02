@@ -92,18 +92,13 @@ git clone https://github.com/your-org/VoltageEMS.git
 cd VoltageEMS
 ```
 
-2. Start development environment:
-```bash
-./scripts/dev.sh
-```
-
-3. Initialize configuration:
+2. Initialize configuration:
 ```bash
 cargo build --release -p monarch
 ./target/release/monarch init all && ./target/release/monarch sync all
 ```
 
-4. Run a specific service:
+3. Run a specific service:
 ```bash
 RUST_LOG=debug cargo run --bin comsrv
 ```
@@ -318,20 +313,20 @@ cargo test -p comsrv
 # Run with output
 cargo test -- --nocapture
 
-# Integration testing
-./scripts/run-integration-tests.sh   # Run integration tests
+# Integration tests (requires Redis)
+cargo test --workspace --test '*' -- --test-threads=1
 ```
 
 ### Offline Build (ARM64)
 
-- CLI (tools/*) ARM64 MUSL binaries
+- CLI (monarch) ARM64 MUSL binary
   - Requirements: `zig`, `rustup target add aarch64-unknown-linux-musl`, `cargo install cargo-zigbuild`
-  - Build: `scripts/offline/build_cli_arm64.sh`
+  - Build: `scripts/offline/build-monarch-arm64.sh`
   - Output: `offline-bundle/cli/linux-aarch64/bin/`
 
 - Docker images (linux/arm64) via buildx
   - Requirements: Docker buildx and binfmt
-  - Build: `VERSION=arm64-v1 scripts/offline/build_images_arm64.sh`
+  - Build: `scripts/offline/build-docker-arm64.sh`
   - Output: `offline-bundle/docker/images/*.tar`
 
 ### Data Structures (ComSrv)

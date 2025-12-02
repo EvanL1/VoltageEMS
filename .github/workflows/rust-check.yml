@@ -273,13 +273,17 @@ jobs:
         docker compose logs voltage-redis
         exit 1
 
-    # Run integration tests (cleans state, sequential execution)
+    # Run integration tests (sequential execution to avoid race conditions)
     - name: Run Integration Tests
       env:
         REDIS_URL: redis://localhost:6379
         VOLTAGE_DB_PATH: /tmp/test_voltage.db
         RUST_LOG: debug  # More verbose for integration tests
-      run: bash ./scripts/run-integration-tests.sh
+      run: |
+        # Clean Redis test database
+        docker compose exec -T voltage-redis redis-cli FLUSHDB
+        # Run integration tests (single-threaded to avoid race conditions)
+        cargo test --workspace --test '*' -- --test-threads=1
 
     # Cleanup Docker resources
     - name: Stop Redis
