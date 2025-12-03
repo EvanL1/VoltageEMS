@@ -26,8 +26,8 @@ else
     echo "✅ 从config.py读取到版本号: $VERSION"
 fi
 
-IMAGE_NAME="voltageems-apigateway:${VERSION}"
-FILE_NAME="voltageems-apigateway-${VERSION}.tar.gz"
+IMAGE_NAME="voltage-apigateway:${VERSION}"
+FILE_NAME="voltage-apigateway-${VERSION}.tar.gz"
 
 echo "📋 构建信息:"
 echo "   镜像名称: ${IMAGE_NAME}"

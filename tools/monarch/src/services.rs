@@ -270,17 +270,51 @@ pub async fn handle_command(
                 // Check if voltage-redis image has changed
                 let redis_changed = check_container_image_changed("voltage-redis")?;
 
-                // Check if voltageems services have changed
-                let voltageems_changed = if target_services.is_empty() {
-                    // Check any voltageems container (rules merged into modsrv)
+                // Check if Rust services have changed (voltageems-comsrv, voltageems-modsrv)
+                let rust_services_changed = if target_services.is_empty() {
                     check_container_image_changed("voltageems-comsrv")?
                         || check_container_image_changed("voltageems-modsrv")?
                 } else {
-                    // Check only specified services
-                    target_services.iter().any(|svc| {
-                        let container_name = format!("voltageems-{}", svc);
-                        check_container_image_changed(&container_name).unwrap_or(false)
+                    target_services.iter().any(|svc| match svc.as_str() {
+                        "comsrv" | "modsrv" => {
+                            let container_name = format!("voltageems-{}", svc);
+                            check_container_image_changed(&container_name).unwrap_or(false)
+                        },
+                        _ => false,
                     })
+                };
+
+                // Check if Python services have changed
+                let python_services_changed = if target_services.is_empty() {
+                    check_container_image_changed("voltage-hissrv")?
+                        || check_container_image_changed("voltage-apigateway")?
+                        || check_container_image_changed("voltage-netsrv")?
+                        || check_container_image_changed("voltage-alarmsrv")?
+                } else {
+                    target_services.iter().any(|svc| match svc.as_str() {
+                        "hissrv" | "apigateway" | "netsrv" | "alarmsrv" => {
+                            let container_name = format!("voltage-{}", svc);
+                            check_container_image_changed(&container_name).unwrap_or(false)
+                        },
+                        _ => false,
+                    })
+                };
+
+                // Check if frontend has changed
+                let frontend_changed =
+                    if target_services.is_empty() || target_services.iter().any(|s| s == "apps") {
+                        check_container_image_changed("voltage-apps")?
+                    } else {
+                        false
+                    };
+
+                // Check if InfluxDB has changed
+                let infra_changed = if target_services.is_empty()
+                    || target_services.iter().any(|s| s == "influxdb")
+                {
+                    check_container_image_changed("voltage-influxdb")?
+                } else {
+                    false
                 };
 
                 if pull {
@@ -311,29 +345,61 @@ pub async fn handle_command(
                     println!("✓ Redis image unchanged (no recreation needed)");
                 }
 
-                // Handle VoltageEMS services
-                if voltageems_changed {
-                    println!("\nRecreating VoltageEMS services...");
-                    if target_services.is_empty() {
-                        execute_docker_compose(&[
-                            "up",
-                            "-d",
-                            "--force-recreate",
-                            "comsrv",
-                            "modsrv",
-                        ])?;
-                    } else {
-                        let mut up_args = vec![
-                            "up".to_string(),
-                            "-d".to_string(),
-                            "--force-recreate".to_string(),
-                        ];
-                        up_args.extend(target_services);
-                        execute_docker_compose_str(&up_args)?;
-                    }
-                    println!("✓ VoltageEMS services recreated");
+                // Handle Rust services (comsrv, modsrv)
+                if rust_services_changed {
+                    println!("\nRecreating Rust services...");
+                    execute_docker_compose(&["up", "-d", "--force-recreate", "comsrv", "modsrv"])?;
+                    println!("✓ Rust services recreated");
                 } else {
-                    println!("✓ VoltageEMS services unchanged (no recreation needed)");
+                    println!("✓ Rust services unchanged (no recreation needed)");
+                }
+
+                // Handle Python services (hissrv, apigateway, netsrv, alarmsrv)
+                if python_services_changed {
+                    println!("\nRecreating Python services...");
+                    execute_docker_compose(&[
+                        "up",
+                        "-d",
+                        "--force-recreate",
+                        "hissrv",
+                        "apigateway",
+                        "netsrv",
+                        "alarmsrv",
+                    ])?;
+                    println!("✓ Python services recreated");
+                } else {
+                    println!("✓ Python services unchanged (no recreation needed)");
+                }
+
+                // Handle frontend (apps)
+                if frontend_changed {
+                    println!("\nRecreating frontend...");
+                    execute_docker_compose(&["up", "-d", "--force-recreate", "apps"])?;
+                    println!("✓ Frontend recreated");
+                } else {
+                    println!("✓ Frontend unchanged (no recreation needed)");
+                }
+
+                // Handle InfluxDB
+                if infra_changed {
+                    println!("\n⚠️  InfluxDB image has changed");
+                    println!("   Recreating InfluxDB may affect historical data queries");
+                    println!("\nRecreate InfluxDB container? (yes/NO): ");
+
+                    use std::io::{stdin, stdout, Write};
+                    let mut input = String::new();
+                    stdout().flush()?;
+                    stdin().read_line(&mut input)?;
+
+                    if input.trim() == "yes" {
+                        println!("Recreating InfluxDB...");
+                        execute_docker_compose(&["up", "-d", "--force-recreate", "influxdb"])?;
+                        println!("✓ InfluxDB recreated");
+                    } else {
+                        println!("Skipped InfluxDB recreation");
+                    }
+                } else {
+                    println!("✓ InfluxDB unchanged (no recreation needed)");
                 }
 
                 println!("\nSmart refresh completed successfully");
@@ -646,17 +712,25 @@ fn check_container_image_changed(container_name: &str) -> Result<bool> {
     };
 
     // Determine the image name from container name
+    // Map container names to their corresponding image names
     let image_name = if container_name == "voltage-redis" {
-        "voltage-redis:latest"
+        "voltage-redis:latest".to_string()
+    } else if container_name == "voltage-influxdb" {
+        "influxdb:2-alpine".to_string()
     } else if container_name.starts_with("voltageems-") {
-        "voltageems:latest"
+        // Rust services: voltageems-comsrv, voltageems-modsrv
+        "voltageems:latest".to_string()
+    } else if container_name.starts_with("voltage-") {
+        // Python services and frontend: voltage-hissrv, voltage-apigateway,
+        // voltage-netsrv, voltage-alarmsrv, voltage-apps
+        format!("{}:latest", container_name)
     } else {
         return Ok(false); // Unknown container, assume no change
     };
 
     // Get the image ID of the local image
     let local_image_output = Command::new("docker")
-        .args(["images", image_name, "--format={{.ID}}"])
+        .args(["images", &image_name, "--format={{.ID}}"])
         .output()?;
 
     if !local_image_output.status.success() {

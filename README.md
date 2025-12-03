@@ -28,21 +28,27 @@ VoltageEMS is a high-performance industrial IoT energy management system built w
 ### System Architecture
 ```
                 ┌─────────────┐
-                │   Devices   │ (Modbus, Virtual, gRPC, CAN)
+                │   Devices   │ (Modbus, Virtual, gRPC)
                 └──────┬──────┘
                        │
        ┌───────────────┴───────────────────────────┐
        ▼                                           ▼
-┌──────────────────┐                      ┌──────────────────┐
-│   Microservices  │                      │   Frontend       │
-│                  │                      │   (Vue.js)       │
-│ comsrv(:6001)    │                      └──────────────────┘
-│ modsrv(:6002)    │ ← includes rule engine
-└──────────────────┘
-         │
-         ▼
+┌──────────────────────────┐              ┌──────────────────┐
+│   Rust Core Services     │              │  Frontend (8080) │
+│                          │              │   Vue.js + nginx │
+│ comsrv(:6001)            │              └────────┬─────────┘
+│ modsrv(:6002)            │                       │
+└──────────┬───────────────┘              ┌────────▼─────────┐
+           │                              │  Python Services │
+           │                              │                  │
+           ▼                              │ apigateway(6005) │
+┌───────────────────────────────┐         │ hissrv(6004)     │
+│ Redis(:6379)                  │◄────────│ netsrv(6006)     │
+└───────────────────────────────┘         │ alarmsrv(6007)   │
+           │                              └──────────────────┘
+           ▼
 ┌───────────────────────────────┐
-│ Redis(:6379)                  │
+│ InfluxDB(:8086)               │
 └───────────────────────────────┘
 ```
 
@@ -59,13 +65,36 @@ Downstream (Control → Device):
 
 ## 📦 Services
 
+### Rust Core Services (High Performance)
+
 | Service | Port | Description |
 |---------|------|-------------|
-| **comsrv** | 6001 | Communication service - handles industrial protocols |
+| **comsrv** | 6001 | Communication service - handles industrial protocols (Modbus TCP/RTU, Virtual) |
 | **modsrv** | 6002 | Model service - manages data models, calculations, and rule engine |
-| **redis** | 6379 | In-memory data store |
 
-Note: The provided docker-compose runs comsrv/modsrv plus Redis by default. Rule engine is integrated in modsrv (port 6002).
+### Python Auxiliary Services (Business Logic)
+
+| Service | Port | Description |
+|---------|------|-------------|
+| **hissrv** | 6004 | History service - stores historical data to InfluxDB |
+| **apigateway** | 6005 | API Gateway - WebSocket proxy, authentication |
+| **netsrv** | 6006 | Network service - MQTT, HTTP forwarding |
+| **alarmsrv** | 6007 | Alarm service - alert management and notifications |
+
+### Infrastructure
+
+| Service | Port | Description |
+|---------|------|-------------|
+| **voltage-redis** | 6379 | Redis in-memory data store |
+| **influxdb** | 8086 | InfluxDB time-series database |
+
+### Frontend
+
+| Service | Port | Description |
+|---------|------|-------------|
+| **apps** | 8080 | Vue.js web management interface (nginx hosted) |
+
+Note: All services are defined in docker-compose.yml and can be started with `docker-compose up -d`.
 
 ## 🛠️ Technology Stack
 

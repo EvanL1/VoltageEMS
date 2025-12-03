@@ -78,6 +78,146 @@ services:
       - redis-socket:/run/redis:ro # Read-only access to Unix socket
     restart: unless-stopped
 
+  # ============================================
+  # Python 辅助服务
+  # ============================================
+
+  # InfluxDB - 时序数据库 (hissrv 依赖)
+  influxdb:
+    image: influxdb:2-alpine
+    container_name: voltage-influxdb
+    network_mode: host
+    labels:
+      - "voltageems.role=infrastructure"
+      - "voltageems.protected=true"
+      - "voltageems.description=InfluxDB time-series database"
+    volumes:
+      - influxdb-data:/var/lib/influxdb2
+      - influxdb-config:/etc/influxdb2
+    environment:
+      - DOCKER_INFLUXDB_INIT_MODE=setup
+      - DOCKER_INFLUXDB_INIT_USERNAME=admin
+      - DOCKER_INFLUXDB_INIT_PASSWORD=voltage123
+      - DOCKER_INFLUXDB_INIT_ORG=voltage
+      - DOCKER_INFLUXDB_INIT_BUCKET=history
+      - NO_PROXY="*"
+      - no_proxy="*"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "influx", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # History Service - 历史数据存储 (端口 6004)
+  hissrv:
+    image: voltage-hissrv:latest
+    container_name: voltage-hissrv
+    network_mode: host
+    user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
+    environment:
+      - SERVICE_NAME=hissrv
+      - SERVICE_PORT=6004
+      - INFLUXDB_URL=http://localhost:8086
+      - INFLUXDB_ORG=voltage
+      - INFLUXDB_BUCKET=history
+      - REDIS_URL=redis://localhost:6379
+      - LOG_DIR=/app/logs
+      - NO_PROXY="*"
+      - no_proxy="*"
+    volumes:
+      - /opt/MonarchEdge/config/hissrv:/app/config:ro
+      - /opt/MonarchEdge/logs:/app/logs
+    depends_on:
+      voltage-redis:
+        condition: service_healthy
+      influxdb:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # API Gateway - API 网关、WebSocket、认证 (端口 6005)
+  apigateway:
+    image: voltage-apigateway:latest
+    container_name: voltage-apigateway
+    network_mode: host
+    user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
+    environment:
+      - SERVICE_NAME=apigateway
+      - SERVICE_PORT=6005
+      - REDIS_URL=redis://localhost:6379
+      - COMSRV_URL=http://localhost:6001
+      - MODSRV_URL=http://localhost:6002
+      - LOG_DIR=/app/logs
+      - NO_PROXY="*"
+      - no_proxy="*"
+    volumes:
+      - /opt/MonarchEdge/config/apigateway:/app/config:ro
+      - /opt/MonarchEdge/logs:/app/logs
+    depends_on:
+      voltage-redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # Network Service - 网络通讯服务 MQTT (端口 6006)
+  netsrv:
+    image: voltage-netsrv:latest
+    container_name: voltage-netsrv
+    network_mode: host
+    user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
+    environment:
+      - SERVICE_NAME=netsrv
+      - SERVICE_PORT=6006
+      - REDIS_URL=redis://localhost:6379
+      - LOG_DIR=/app/logs
+      - NO_PROXY="*"
+      - no_proxy="*"
+    volumes:
+      - /opt/MonarchEdge/config/netsrv:/app/config:ro
+      - /opt/MonarchEdge/logs:/app/logs
+    depends_on:
+      voltage-redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # Alarm Service - 告警管理服务 (端口 6007)
+  alarmsrv:
+    image: voltage-alarmsrv:latest
+    container_name: voltage-alarmsrv
+    network_mode: host
+    user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
+    environment:
+      - SERVICE_NAME=alarmsrv
+      - SERVICE_PORT=6007
+      - REDIS_URL=redis://localhost:6379
+      - LOG_DIR=/app/logs
+      - NO_PROXY="*"
+      - no_proxy="*"
+    volumes:
+      - /opt/MonarchEdge/config/alarmsrv:/app/config:ro
+      - /opt/MonarchEdge/logs:/app/logs
+    depends_on:
+      voltage-redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # ============================================
+  # 前端应用
+  # ============================================
+
+  # Vue.js Frontend - Web 管理界面 (端口 8080)
+  apps:
+    image: voltage-apps:latest
+    container_name: voltage-apps
+    network_mode: host
+    labels:
+      - "voltageems.role=frontend"
+      - "voltageems.description=Vue.js web management interface"
+    depends_on:
+      - apigateway
+    restart: unless-stopped
+
 volumes:
   redis-data:
   redis-socket: # Shared Unix socket volume for better performance
+  influxdb-data:
+  influxdb-config:

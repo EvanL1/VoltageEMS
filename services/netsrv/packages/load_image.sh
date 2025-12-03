@@ -6,9 +6,9 @@
 echo "📦 加载Docker镜像..."
 
 # 检查镜像文件是否存在
-IMAGE_FILES=$(ls voltageems-netsrv-*.tar.gz 2>/dev/null | wc -l)
+IMAGE_FILES=$(ls voltage-netsrv-*.tar.gz 2>/dev/null | wc -l)
 if [ "$IMAGE_FILES" -eq 0 ]; then
-    echo "❌ 镜像文件 voltageems-netsrv-*.tar.gz 不存在"
+    echo "❌ 镜像文件 voltage-netsrv-*.tar.gz 不存在"
     echo "请确保镜像文件在当前目录中"
     exit 1
 fi
@@ -21,17 +21,17 @@ fi
 
 # 停止并删除现有容器
 echo "🛑 停止并删除现有容器..."
-docker stop $(docker ps -q --filter "name=voltageems-netsrv") 2>/dev/null || true
-docker rm $(docker ps -aq --filter "name=voltageems-netsrv") 2>/dev/null || true
+docker stop $(docker ps -q --filter "name=voltage-netsrv") 2>/dev/null || true
+docker rm $(docker ps -aq --filter "name=voltage-netsrv") 2>/dev/null || true
 
 # 删除现有镜像
 echo "🗑️  删除现有镜像..."
-docker rmi $(docker images -q "voltageems-netsrv*") 2>/dev/null || true
+docker rmi $(docker images -q "voltage-netsrv*") 2>/dev/null || true
 
 # 查找镜像文件
-IMAGE_FILE=$(ls voltageems-netsrv-*.tar.gz | head -1)
+IMAGE_FILE=$(ls voltage-netsrv-*.tar.gz | head -1)
 if [ -z "$IMAGE_FILE" ]; then
-    echo "❌ 未找到voltageems-netsrv镜像文件"
+    echo "❌ 未找到voltage-netsrv镜像文件"
     exit 1
 fi
 
@@ -42,17 +42,17 @@ echo "🔄 正在加载镜像..."
 docker load < "$IMAGE_FILE"
 
 # 检查镜像是否加载成功
-if docker images | grep -q "voltageems-netsrv"; then
+if docker images | grep -q "voltage-netsrv"; then
     echo "✅ 镜像加载成功！"
     echo "📋 可用镜像:"
-    docker images | grep voltageems-netsrv
+    docker images | grep voltage-netsrv
     
     # 自动为最新加载的镜像创建latest标签，并删除原版本标签
     echo "🏷️  创建latest标签..."
-    LATEST_IMAGE=$(docker images --format "{{.Repository}}:{{.Tag}}" | grep "voltageems-netsrv" | grep -v latest | head -1)
+    LATEST_IMAGE=$(docker images --format "{{.Repository}}:{{.Tag}}" | grep "voltage-netsrv" | grep -v latest | head -1)
     if [ -n "$LATEST_IMAGE" ]; then
-        docker tag "$LATEST_IMAGE" "voltageems-netsrv:latest"
-        echo "✅ 已创建latest标签: $LATEST_IMAGE -> voltageems-netsrv:latest"
+        docker tag "$LATEST_IMAGE" "voltage-netsrv:latest"
+        echo "✅ 已创建latest标签: $LATEST_IMAGE -> voltage-netsrv:latest"
         
         # 删除原版本标签，只保留latest
         echo "🗑️  删除原版本标签: $LATEST_IMAGE"

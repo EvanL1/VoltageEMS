@@ -26,11 +26,11 @@ fi
 # 智能选择可用的镜像版本
 echo "🔍 查找可用的镜像版本..."
 
-# 查找所有voltageems-hissrv镜像
-AVAILABLE_IMAGES=$(docker images --format "table {{.Repository}}:{{.Tag}}" | grep "voltageems-hissrv" | grep -v "REPOSITORY" | head -10)
+# 查找所有voltage-hissrv镜像
+AVAILABLE_IMAGES=$(docker images --format "table {{.Repository}}:{{.Tag}}" | grep "voltage-hissrv" | grep -v "REPOSITORY" | head -10)
 
 if [ -z "$AVAILABLE_IMAGES" ]; then
-    echo "❌ 未找到voltageems-hissrv镜像"
+    echo "❌ 未找到voltage-hissrv镜像"
     echo "💡 请先运行 ./load_image.sh 加载镜像"
     exit 1
 fi
@@ -40,12 +40,12 @@ echo "$AVAILABLE_IMAGES"
 
 # 智能选择镜像优先级：latest > 最新版本号 > 第一个可用的
 IMAGE_NAME=""
-if echo "$AVAILABLE_IMAGES" | grep -q "voltageems-hissrv:latest"; then
-    IMAGE_NAME="voltageems-hissrv:latest"
+if echo "$AVAILABLE_IMAGES" | grep -q "voltage-hissrv:latest"; then
+    IMAGE_NAME="voltage-hissrv:latest"
     echo "✅ 使用latest版本"
 else
     # 尝试找到版本号最高的镜像
-    VERSIONED_IMAGES=$(echo "$AVAILABLE_IMAGES" | grep -E "voltageems-hissrv:[0-9]+\.[0-9]+\.[0-9]+")
+    VERSIONED_IMAGES=$(echo "$AVAILABLE_IMAGES" | grep -E "voltage-hissrv:[0-9]+\.[0-9]+\.[0-9]+")
     if [ -n "$VERSIONED_IMAGES" ]; then
         # 按版本号排序，选择最新的
         IMAGE_NAME=$(echo "$VERSIONED_IMAGES" | sort -V -r | head -1)
@@ -59,8 +59,8 @@ fi
 
 # 停止现有容器
 echo "🛑 停止现有容器..."
-docker stop voltageems-hissrv 2>/dev/null || true
-docker rm voltageems-hissrv 2>/dev/null || true
+docker stop voltage-hissrv 2>/dev/null || true
+docker rm voltage-hissrv 2>/dev/null || true
 
 # 创建配置目录
 echo "📁 创建配置目录..."
@@ -84,7 +84,7 @@ fi
 echo "🚀 启动历史数据服务..."
 echo "🏷️  使用镜像: $IMAGE_NAME"
 docker run -d \
-    --name voltageems-hissrv \
+    --name voltage-hissrv \
     --network=host \
     --restart=unless-stopped \
     -v /extp/logs:/app/logs \
@@ -115,7 +115,7 @@ for i in {1..6}; do
         if [ $i -eq 6 ]; then
             echo "❌ 服务启动失败，请检查日志"
             echo "💡 提示：服务可能仍在启动中，请稍后手动验证"
-            docker logs --tail 20 voltageems-hissrv
+            docker logs --tail 20 voltage-hissrv
             exit 1
         else
             echo "⏳ 等待服务响应... ($i/5)"
@@ -126,9 +126,9 @@ done
 
 echo "🎉 启动完成！"
 echo "🔧 管理命令:"
-echo "   查看日志: docker logs voltageems-hissrv"
-echo "   停止服务: docker stop voltageems-hissrv"
-echo "   重启服务: docker restart voltageems-hissrv"
+echo "   查看日志: docker logs voltage-hissrv"
+echo "   停止服务: docker stop voltage-hissrv"
+echo "   重启服务: docker restart voltage-hissrv"
 echo ""
 echo "📊 服务数据:"
 echo "   配置文件: /extp/config/hissrv.yaml"

@@ -26,8 +26,8 @@ else
     echo "✅ 从config.py读取到版本号: $VERSION"
 fi
 
-IMAGE_NAME="voltageems-netsrv:${VERSION}"
-FILE_NAME="voltageems-netsrv-${VERSION}.tar.gz"
+IMAGE_NAME="voltage-netsrv:${VERSION}"
+FILE_NAME="voltage-netsrv-${VERSION}.tar.gz"
 
 echo "📋 构建信息:"
 echo "   镜像名称: ${IMAGE_NAME}"

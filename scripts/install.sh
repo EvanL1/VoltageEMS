@@ -327,7 +327,7 @@ if command -v docker &> /dev/null; then
 
             # Backup existing images by tagging them
             echo "Creating backup tags for current images..."
-            for image in voltageems:latest redis:8-alpine; do
+            for image in voltageems:latest redis:8-alpine voltage-hissrv:latest voltage-apigateway:latest voltage-netsrv:latest voltage-alarmsrv:latest voltage-apps:latest influxdb:2-alpine; do
                 if docker image inspect "$image" >/dev/null 2>&1; then
                     backup_tag="${image/:latest/:backup-$(date +%s)}"
                     docker tag "$image" "$backup_tag" 2>/dev/null || true
@@ -540,7 +540,7 @@ if command -v docker &> /dev/null; then
 
         # Verify loaded images
         echo "Verifying loaded images..."
-        for image_name in voltageems:latest redis:8-alpine; do
+        for image_name in voltageems:latest redis:8-alpine influxdb:2-alpine voltage-hissrv:latest voltage-apigateway:latest voltage-netsrv:latest voltage-alarmsrv:latest voltage-apps:latest; do
             echo -n "  Checking $image_name... "
             if docker image inspect "$image_name" >/dev/null 2>&1; then
                 CREATED=$(docker image inspect "$image_name" --format='{{.Created}}' 2>/dev/null | cut -d'T' -f1)
@@ -587,7 +587,8 @@ $SUDO mkdir -p "$INSTALL_DIR"/data
 # Create log directories (permissions will be set after user detection)
 echo "Creating log directories..."
 $SUDO mkdir -p "$LOG_DIR"
-for service in comsrv modsrv; do
+# Create log directories for all services
+for service in comsrv modsrv hissrv apigateway netsrv alarmsrv; do
     $SUDO mkdir -p "$LOG_DIR/$service"
 done
 
@@ -772,7 +773,7 @@ if [[ -d "$LOG_DIR" ]]; then
         chmod 775 "$LOG_DIR" || echo "Warning: Could not set permissions for $LOG_DIR"
 
         # Fix each service subdirectory explicitly
-        for service in comsrv modsrv; do
+        for service in comsrv modsrv hissrv apigateway netsrv alarmsrv; do
             if [[ -d "$LOG_DIR/$service" ]]; then
                 chown -R ${ACTUAL_UID}:${ACTUAL_GID} "$LOG_DIR/$service" || echo "Warning: Could not set ownership for $LOG_DIR/$service"
                 chmod 775 "$LOG_DIR/$service" || echo "Warning: Could not set permissions for $LOG_DIR/$service"
@@ -787,7 +788,7 @@ if [[ -d "$LOG_DIR" ]]; then
         $SUDO chmod 775 "$LOG_DIR" || echo "Warning: Could not set permissions for $LOG_DIR"
 
         # Fix each service subdirectory explicitly
-        for service in comsrv modsrv; do
+        for service in comsrv modsrv hissrv apigateway netsrv alarmsrv; do
             if [[ -d "$LOG_DIR/$service" ]]; then
                 $SUDO chown -R ${ACTUAL_UID}:${ACTUAL_GID} "$LOG_DIR/$service" || echo "Warning: Could not set ownership for $LOG_DIR/$service"
                 $SUDO chmod 775 "$LOG_DIR/$service" || echo "Warning: Could not set permissions for $LOG_DIR/$service"
@@ -937,7 +938,7 @@ if [[ "$LOG_DIR" != "$INSTALL_DIR/logs" ]] && [[ -d "$LOG_DIR" ]]; then
     ls -ld "$LOG_DIR" 2>/dev/null | awk '{printf "%-25s %s %s:%s\n", $9":", $1, $3, $4}'
 
     # Show service subdirectories
-    for service in comsrv modsrv; do
+    for service in comsrv modsrv hissrv apigateway netsrv alarmsrv; do
         if [[ -d "$LOG_DIR/$service" ]]; then
             ls -ld "$LOG_DIR/$service" 2>/dev/null | awk -v svc="├── $service:" '{printf "%-25s %s %s:%s\n", svc, $1, $3, $4}'
         fi
@@ -964,9 +965,15 @@ echo ""
 echo "Network Configuration:"
 echo -e "${YELLOW}  • Using host network mode for optimal performance${NC}"
 echo "  • Services available on localhost:"
-echo "    - Redis: 6379"
-echo "    - ComSrv: 6001"
-echo "    - ModSrv: 6002 (includes rule engine)"
+echo "    - Redis: 6379          (data store)"
+echo "    - InfluxDB: 8086       (time-series database)"
+echo "    - ComSrv: 6001         (communication - Rust)"
+echo "    - ModSrv: 6002         (model + rules - Rust)"
+echo "    - HisSrv: 6004         (history - Python)"
+echo "    - APIGateway: 6005     (gateway - Python)"
+echo "    - NetSrv: 6006         (network - Python)"
+echo "    - AlarmSrv: 6007       (alarm - Python)"
+echo "    - Frontend: 8080       (Vue.js + nginx)"
 echo ""
 echo -e "${YELLOW}Important: Configuration Setup Required${NC}"
 echo "  Before starting services, you must:"
