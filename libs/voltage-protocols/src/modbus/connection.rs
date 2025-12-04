@@ -29,26 +29,26 @@ impl ModbusConnection {
     /// Create a TCP connection
     pub async fn connect_tcp(host: &str, port: u16, timeout_duration: Duration) -> Result<Self> {
         let addr = format!("{host}:{port}");
-        info!("Connecting to Modbus TCP endpoint: {}", addr);
+        debug!("TCP connecting: {}", addr);
 
         match timeout(timeout_duration, TcpStream::connect(&addr)).await {
             Ok(Ok(stream)) => {
                 // Configure socket for optimal performance
                 if let Err(e) = stream.set_nodelay(true) {
-                    warn!("Failed to set TCP_NODELAY: {}", e);
+                    debug!("TCP_NODELAY: {}", e);
                 }
 
-                info!("Successfully connected to Modbus TCP endpoint: {}", addr);
+                info!("TCP connected: {}", addr);
                 Ok(ModbusConnection::Tcp(stream))
             },
             Ok(Err(e)) => {
-                error!("Failed to connect to {}: {}", addr, e);
+                error!("TCP err: {} - {}", addr, e);
                 Err(ComLinkError::Connection(format!(
                     "Failed to connect to {addr}: {e}"
                 )))
             },
             Err(_) => {
-                warn!("Connection to {} timed out", addr);
+                warn!("TCP timeout: {}", addr);
                 Err(ComLinkError::Timeout(format!(
                     "Connection to {addr} timed out"
                 )))
@@ -66,7 +66,7 @@ impl ModbusConnection {
         parity: &str,
         timeout_duration: Duration,
     ) -> Result<Self> {
-        info!("Opening serial port: {} at {} baud", port, baud_rate);
+        debug!("RTU: {} @{}baud", port, baud_rate);
 
         let parity = match parity {
             "Even" => tokio_serial::Parity::Even,
@@ -94,11 +94,11 @@ impl ModbusConnection {
             .open_native_async()
         {
             Ok(serial_port) => {
-                info!("Successfully opened serial port: {}", port);
+                info!("RTU opened: {}", port);
                 Ok(ModbusConnection::Rtu(serial_port))
             },
             Err(e) => {
-                error!("Failed to open serial port {}: {}", port, e);
+                error!("RTU err: {} - {}", port, e);
                 Err(ComLinkError::Connection(format!(
                     "Failed to open serial port {port}: {e}"
                 )))
@@ -111,22 +111,22 @@ impl ModbusConnection {
         match self {
             ModbusConnection::Tcp(stream) => {
                 stream.write_all(data).await.map_err(|e| {
-                    error!("TCP send error: {}", e);
+                    error!("TCP TX: {}", e);
                     ComLinkError::Io(format!("TCP send error: {e}"))
                 })?;
-                debug!("Sent {} bytes via TCP", data.len());
+                debug!("TCP TX: {}B", data.len());
             },
             #[cfg(feature = "modbus-rtu")]
             ModbusConnection::Rtu(port) => {
                 port.write_all(data).await.map_err(|e| {
-                    error!("Serial send error: {}", e);
+                    error!("RTU TX: {}", e);
                     ComLinkError::Io(format!("Serial send error: {e}"))
                 })?;
                 port.flush().await.map_err(|e| {
-                    error!("Serial flush error: {}", e);
+                    error!("RTU flush: {}", e);
                     ComLinkError::Io(format!("Serial flush error: {e}"))
                 })?;
-                debug!("Sent {} bytes via serial", data.len());
+                debug!("RTU TX: {}B", data.len());
             },
         }
         Ok(())
@@ -150,7 +150,7 @@ impl ModbusConnection {
 
                         // Step 3: Validate length (1..=MAX allowed: 1 (unit_id) + 253 (PDU) = 254)
                         if length == 0 || length > constants::MAX_MBAP_LENGTH {
-                            error!("Invalid Modbus TCP length field: {}", length);
+                            error!("TCP invalid len: {}", length);
                             return Err(ComLinkError::Protocol(format!(
                                 "Invalid TCP frame length: {}",
                                 length
@@ -160,11 +160,7 @@ impl ModbusConnection {
                         // Step 4: Ensure buffer is large enough
                         let total_size = constants::MBAP_HEADER_LEN + length;
                         if buffer.len() < total_size {
-                            error!(
-                                "Buffer too small: need {}, have {}",
-                                total_size,
-                                buffer.len()
-                            );
+                            error!("Buffer small: need={} have={}", total_size, buffer.len());
                             return Err(ComLinkError::Protocol(
                                 "Buffer too small for complete frame".to_string(),
                             ));
@@ -181,25 +177,25 @@ impl ModbusConnection {
                         .await
                         {
                             Ok(Ok(_bytes_read)) => {
-                                debug!("Received complete TCP frame: {} bytes", total_size);
+                                debug!("TCP RX: {}B", total_size);
                                 Ok(total_size)
                             },
                             Ok(Err(e)) => {
-                                error!("TCP receive error while reading PDU: {}", e);
+                                error!("TCP PDU RX: {}", e);
                                 Err(ComLinkError::Io(format!("TCP PDU read error: {e}")))
                             },
                             Err(_) => {
-                                debug!("TCP receive timeout while reading PDU");
+                                debug!("TCP PDU timeout");
                                 Err(ComLinkError::Timeout("TCP PDU read timeout".to_string()))
                             },
                         }
                     },
                     Ok(Err(e)) => {
-                        error!("TCP receive error while reading header: {}", e);
+                        error!("TCP header RX: {}", e);
                         Err(ComLinkError::Io(format!("TCP header read error: {e}")))
                     },
                     Err(_) => {
-                        debug!("TCP receive timeout while reading header");
+                        debug!("TCP header timeout");
                         Err(ComLinkError::Timeout("TCP header read timeout".to_string()))
                     },
                 }
@@ -216,10 +212,7 @@ impl ModbusConnection {
                     // Check total timeout
                     if start_time.elapsed() >= timeout_duration {
                         if total_bytes < 4 {
-                            debug!(
-                                "Serial receive total timeout with insufficient data: {} bytes",
-                                total_bytes
-                            );
+                            debug!("RTU timeout: {}B", total_bytes);
                             return Err(ComLinkError::Timeout(
                                 "RTU frame incomplete: total timeout".to_string(),
                             ));
@@ -239,7 +232,7 @@ impl ModbusConnection {
                     {
                         Ok(Ok(bytes)) => {
                             if bytes == 0 {
-                                error!("Serial connection closed");
+                                error!("RTU closed");
                                 return Err(ComLinkError::Connection(
                                     "Serial connection closed".to_string(),
                                 ));
@@ -248,14 +241,14 @@ impl ModbusConnection {
 
                             // Check buffer overflow
                             if total_bytes >= buffer.len() {
-                                error!("RTU frame too large: {} bytes", total_bytes);
+                                error!("RTU overflow: {}B", total_bytes);
                                 return Err(ComLinkError::Protocol(
                                     "RTU frame exceeds buffer size".to_string(),
                                 ));
                             }
                         },
                         Ok(Err(e)) => {
-                            error!("Serial receive error: {}", e);
+                            error!("RTU RX: {}", e);
                             return Err(ComLinkError::Io(format!("Serial read error: {e}")));
                         },
                         Err(_) => {
@@ -263,10 +256,7 @@ impl ModbusConnection {
                             if total_bytes >= 4 {
                                 break; // Minimum RTU frame received
                             } else if total_bytes > 0 {
-                                debug!(
-                                    "Serial receive inter-byte timeout with partial data: {} bytes",
-                                    total_bytes
-                                );
+                                debug!("RTU partial: {}B", total_bytes);
                                 return Err(ComLinkError::Timeout(
                                     "RTU frame incomplete: inter-byte timeout".to_string(),
                                 ));
@@ -276,7 +266,7 @@ impl ModbusConnection {
                     }
                 }
 
-                debug!("Received complete RTU frame: {} bytes", total_bytes);
+                debug!("RTU RX: {}B", total_bytes);
                 Ok(total_bytes)
             },
         }
@@ -309,6 +299,10 @@ pub struct ModbusConnectionManager {
     reconnect_attempts: Mutex<u32>,
     /// Last reconnection attempt time
     last_reconnect: Mutex<Option<Instant>>,
+    /// Consecutive IO error counter
+    consecutive_errors: Mutex<u32>,
+    /// Error threshold for triggering reconnection
+    error_threshold: u32,
     /// Channel logger for unified TX/RX logging
     logger: ChannelLogger,
 }
@@ -346,7 +340,12 @@ pub struct ConnectionParams {
 
 impl ModbusConnectionManager {
     /// Create new connection manager with logger
-    pub fn new(mode: ModbusMode, params: ConnectionParams, logger: ChannelLogger) -> Self {
+    pub fn new(
+        mode: ModbusMode,
+        params: ConnectionParams,
+        logger: ChannelLogger,
+        error_threshold: u32,
+    ) -> Self {
         Self {
             connection: Mutex::new(None),
             mode,
@@ -354,6 +353,8 @@ impl ModbusConnectionManager {
             request_lock: Mutex::new(()),
             reconnect_attempts: Mutex::new(0),
             last_reconnect: Mutex::new(None),
+            consecutive_errors: Mutex::new(0),
+            error_threshold,
             logger,
         }
     }
@@ -415,7 +416,7 @@ impl ModbusConnectionManager {
     pub async fn disconnect(&self) -> Result<()> {
         let mut conn = self.connection.lock().await;
         *conn = None;
-        info!("Disconnected from Modbus device");
+        debug!("Disconnected");
         Ok(())
     }
 
@@ -429,10 +430,7 @@ impl ModbusConnectionManager {
             let elapsed = last_attempt.elapsed();
             if elapsed < Duration::from_millis(cooldown_ms) {
                 let remaining = Duration::from_millis(cooldown_ms) - elapsed;
-                debug!(
-                    "Still in cooldown period, waiting {} more seconds",
-                    remaining.as_secs()
-                );
+                debug!("Cooldown: {}s", remaining.as_secs());
                 return Ok(false); // Still in cooldown
             }
         }
@@ -443,7 +441,7 @@ impl ModbusConnectionManager {
                 Ok(()) => {
                     *self.reconnect_attempts.lock().await = 0;
                     *self.last_reconnect.lock().await = None; // Clear cooldown
-                    info!("Connected successfully after {} attempts", attempts + 1);
+                    info!("Connected (#{} attempts)", attempts + 1);
                     return Ok(true);
                 },
                 Err(e) => {
@@ -454,16 +452,16 @@ impl ModbusConnectionManager {
                         // Hit max consecutive attempts, enter cooldown
                         *self.last_reconnect.lock().await = Some(Instant::now());
                         warn!(
-                            "Max consecutive reconnect attempts ({}) reached, entering {}s cooldown: {}",
-                            max_consecutive,
+                            "Cooldown {}s ({}x failed): {}",
                             cooldown_ms / 1000,
+                            max_consecutive,
                             e
                         );
                         return Ok(false); // Need cooldown
                     }
 
                     warn!(
-                        "Connection attempt {}/{} failed: {}, retrying in {}ms",
+                        "Retry {}/{}: {} ({}ms)",
                         attempts, max_consecutive, e, delay_ms
                     );
 
@@ -523,6 +521,7 @@ impl ModbusConnectionManager {
 
     /// Send request and receive response atomically with automatic logging
     /// This ensures that only one request/response pair is in flight at a time
+    /// Automatically triggers reconnection after consecutive IO errors reach threshold
     pub async fn send_and_receive(
         &self,
         request: &[u8],
@@ -539,22 +538,71 @@ impl ModbusConnectionManager {
         // Acquire the request lock to ensure exclusive access
         let _lock = self.request_lock.lock().await;
 
+        // Try to send and receive
+        match self
+            .do_send_and_receive(request, response_buffer, timeout)
+            .await
+        {
+            Ok(bytes_read) => {
+                // Success - reset error counter
+                *self.consecutive_errors.lock().await = 0;
+
+                // Log RX (response)
+                self.logger.log_raw_message(
+                    "RX",
+                    transaction_id,
+                    slave_id,
+                    function_code,
+                    &response_buffer[..bytes_read],
+                );
+
+                Ok(bytes_read)
+            },
+            Err(e) => {
+                // Check if this is an IO error that should trigger reconnection
+                if matches!(e, ComLinkError::Io(_)) {
+                    let mut errors = self.consecutive_errors.lock().await;
+                    *errors += 1;
+
+                    if *errors >= self.error_threshold {
+                        error!("IO errors({}), reconnecting", self.error_threshold);
+                        *errors = 0;
+                        drop(errors); // Release lock before reconnecting
+
+                        // Clear connection and trigger reconnect
+                        self.disconnect().await?;
+
+                        // Note: Actual reconnection will happen on next request
+                        // The caller (polling loop) should handle this
+                    }
+                }
+                Err(e)
+            },
+        }
+    }
+
+    /// Internal send and receive without error counting
+    async fn do_send_and_receive(
+        &self,
+        request: &[u8],
+        response_buffer: &mut [u8],
+        timeout: Duration,
+    ) -> Result<usize> {
         // Send the request
         self.send(request).await?;
 
         // Receive the response
-        let bytes_read = self.receive(response_buffer, timeout).await?;
+        self.receive(response_buffer, timeout).await
+    }
 
-        // Log RX (response)
-        self.logger.log_raw_message(
-            "RX",
-            transaction_id,
-            slave_id,
-            function_code,
-            &response_buffer[..bytes_read],
-        );
+    /// Reset consecutive error counter (called after successful reconnection)
+    pub async fn reset_error_counter(&self) {
+        *self.consecutive_errors.lock().await = 0;
+    }
 
-        Ok(bytes_read)
+    /// Get current consecutive error count
+    pub async fn get_consecutive_errors(&self) -> u32 {
+        *self.consecutive_errors.lock().await
     }
 }
 
@@ -704,7 +752,7 @@ mod tests {
         };
 
         let logger = ChannelLogger::new(1, "test".to_string());
-        let manager = ModbusConnectionManager::new(ModbusMode::Tcp, params, logger);
+        let manager = ModbusConnectionManager::new(ModbusMode::Tcp, params, logger, 5);
 
         assert!(matches!(manager.mode(), ModbusMode::Tcp));
     }
@@ -724,7 +772,7 @@ mod tests {
         };
 
         let logger = ChannelLogger::new(1, "test".to_string());
-        let manager = ModbusConnectionManager::new(ModbusMode::Rtu, params, logger);
+        let manager = ModbusConnectionManager::new(ModbusMode::Rtu, params, logger, 5);
 
         assert!(matches!(manager.mode(), ModbusMode::Rtu));
     }
@@ -748,7 +796,7 @@ mod tests {
         };
 
         let logger = ChannelLogger::new(1, "test".to_string());
-        let manager = ModbusConnectionManager::new(ModbusMode::Tcp, params, logger);
+        let manager = ModbusConnectionManager::new(ModbusMode::Tcp, params, logger, 5);
 
         match manager.mode() {
             ModbusMode::Tcp => {}, // TCP mode is correct
@@ -776,7 +824,7 @@ mod tests {
         };
 
         let logger = ChannelLogger::new(1, "test".to_string());
-        let manager = ModbusConnectionManager::new(ModbusMode::Tcp, params, logger);
+        let manager = ModbusConnectionManager::new(ModbusMode::Tcp, params, logger, 5);
 
         // Initially should not be connected
         assert!(!manager.is_connected().await);
@@ -892,7 +940,7 @@ mod tests {
         };
 
         let logger = ChannelLogger::new(1, "test".to_string());
-        let manager = ModbusConnectionManager::new(ModbusMode::Tcp, params, logger);
+        let manager = ModbusConnectionManager::new(ModbusMode::Tcp, params, logger, 5);
 
         // TCP frame: [TID(2)][Proto(2)][Len(2)][Unit(1)][FC(1)]
         // TID=0x0001, Proto=0x0000, Len=0x0006, Unit=1, FC=3
@@ -923,7 +971,7 @@ mod tests {
         };
 
         let logger = ChannelLogger::new(1, "test".to_string());
-        let manager = ModbusConnectionManager::new(ModbusMode::Tcp, params, logger);
+        let manager = ModbusConnectionManager::new(ModbusMode::Tcp, params, logger, 5);
 
         // Frame too short (only 6 bytes, need 8)
         let frame = [0x00, 0x01, 0x00, 0x00, 0x00, 0x06];
@@ -953,7 +1001,7 @@ mod tests {
         };
 
         let logger = ChannelLogger::new(1, "test".to_string());
-        let manager = ModbusConnectionManager::new(ModbusMode::Tcp, params, logger);
+        let manager = ModbusConnectionManager::new(ModbusMode::Tcp, params, logger, 5);
 
         let frame: [u8; 0] = [];
         let (tid, slave, fc) = manager.extract_frame_info(&frame);
@@ -986,7 +1034,7 @@ mod tests {
         };
 
         let logger = ChannelLogger::new(1, "test".to_string());
-        let manager = ModbusConnectionManager::new(ModbusMode::Tcp, params, logger);
+        let manager = ModbusConnectionManager::new(ModbusMode::Tcp, params, logger, 5);
 
         let result = manager.send(&[0x01, 0x03, 0x00, 0x00]).await;
         assert!(result.is_err());
@@ -1017,7 +1065,7 @@ mod tests {
         };
 
         let logger = ChannelLogger::new(1, "test".to_string());
-        let manager = ModbusConnectionManager::new(ModbusMode::Tcp, params, logger);
+        let manager = ModbusConnectionManager::new(ModbusMode::Tcp, params, logger, 5);
 
         let mut buffer = [0u8; 256];
         let result = manager.receive(&mut buffer, Duration::from_secs(1)).await;
@@ -1049,7 +1097,7 @@ mod tests {
         };
 
         let logger = ChannelLogger::new(1, "test".to_string());
-        let manager = ModbusConnectionManager::new(ModbusMode::Tcp, params, logger);
+        let manager = ModbusConnectionManager::new(ModbusMode::Tcp, params, logger, 5);
 
         // Disconnect should succeed even when not connected
         let result = manager.disconnect().await;
@@ -1080,7 +1128,7 @@ mod tests {
         };
 
         let logger = ChannelLogger::new(1, "test".to_string());
-        let manager = ModbusConnectionManager::new(ModbusMode::Tcp, params, logger);
+        let manager = ModbusConnectionManager::new(ModbusMode::Tcp, params, logger, 5);
 
         let result = manager.connect().await;
         assert!(result.is_err());
@@ -1111,7 +1159,7 @@ mod tests {
         };
 
         let logger = ChannelLogger::new(1, "test".to_string());
-        let manager = ModbusConnectionManager::new(ModbusMode::Tcp, params, logger);
+        let manager = ModbusConnectionManager::new(ModbusMode::Tcp, params, logger, 5);
 
         let result = manager.connect().await;
         assert!(result.is_err());

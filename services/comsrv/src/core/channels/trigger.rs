@@ -138,19 +138,13 @@ impl CommandTrigger {
     pub async fn start(&mut self) -> Result<()> {
         // Use task_handle to check if it is already running.
         if self.task_handle.is_some() {
-            warn!(
-                "Command trigger already running for channel {}",
-                self.config.channel_id
-            );
+            warn!("Ch{} trigger running", self.config.channel_id);
             return Ok(());
         }
 
         let channel_id = self.config.channel_id;
 
-        info!(
-            "Starting command trigger for channel {} in ListQueue mode",
-            channel_id
-        );
+        debug!("Ch{} trigger starting", channel_id);
 
         // Clone necessary objects for task
         let command_tx = self.command_tx.clone();
@@ -166,7 +160,7 @@ impl CommandTrigger {
                     .await;
 
             if let Err(e) = result {
-                error!("Command trigger error for channel {}: {}", channel_id, e);
+                error!("Ch{} trigger err: {}", channel_id, e);
             }
         });
 
@@ -183,12 +177,9 @@ impl CommandTrigger {
         if let Some(handle) = self.task_handle.take() {
             // Give the task some time to exit gracefully
             match tokio::time::timeout(timeouts::SHUTDOWN_TIMEOUT, handle).await {
-                Ok(Ok(())) => info!(
-                    "Command trigger stopped for channel {}",
-                    self.config.channel_id
-                ),
-                Ok(Err(e)) => warn!("Command trigger task error: {}", e),
-                Err(_) => warn!("Command trigger task timeout, forcing stop"),
+                Ok(Ok(())) => debug!("Ch{} trigger stopped", self.config.channel_id),
+                Ok(Err(e)) => warn!("Trigger task err: {}", e),
+                Err(_) => warn!("Trigger timeout, force stop"),
             }
         }
 
@@ -210,10 +201,7 @@ impl CommandTrigger {
         let control_queue = RedisKeys::control_todo(channel_id);
         let adjustment_queue = RedisKeys::adjustment_todo(channel_id);
 
-        info!(
-            "Command trigger listening on queues: {} and {} (BLPOP with {}s timeout)",
-            control_queue, adjustment_queue, timeout
-        );
+        info!("Ch{} queues: C/A todo ({}s)", channel_id, timeout);
 
         // Reconnection loop with failure tracking.
         let mut reconnect_delay = timeouts::MIN_RECONNECT_DELAY;
@@ -223,7 +211,7 @@ impl CommandTrigger {
         loop {
             // Check the stop signal.
             if *shutdown_rx.borrow() {
-                info!("Stopping command trigger for channel {}", channel_id);
+                debug!("Ch{} trigger stopping", channel_id);
                 break;
             }
 
@@ -250,7 +238,6 @@ impl CommandTrigger {
                                     })?;
                                     // Determine the command type.
                                     let is_control = queue.contains(":C:");
-                                    let command_type = if is_control { "Control" } else { "Adjustment" };
                                     let point_type_str = if is_control { "C" } else { "A" };
 
                                     // ★ Try parsing as compact trigger (new format: point_id, value, timestamp)
@@ -263,13 +250,12 @@ impl CommandTrigger {
                                         }
                                         Err(compact_err) => {
                                             // Fallback: try parsing legacy format (only point_id)
-                                            debug!("Failed to parse compact trigger, trying legacy format: {}", compact_err);
+                                            debug!("Compact parse fail, trying legacy: {}", compact_err);
 
                                             let legacy_trigger: serde_json::Value = match serde_json::from_str(&data) {
                                                 Ok(v) => v,
                                                 Err(e) => {
-                                                    error!("Failed to parse any trigger format from queue {}: {}, raw data: {}",
-                                                          queue, e, data);
+                                                    error!("Parse err q={}: {}", queue, e);
                                                     continue;
                                                 }
                                             };
@@ -277,7 +263,7 @@ impl CommandTrigger {
                                             let point_id: u32 = match legacy_trigger.get("point_id").and_then(|v| v.as_u64()) {
                                                 Some(id) => id as u32,
                                                 None => {
-                                                    error!("No point_id found in trigger from queue {}, data: {}", queue, data);
+                                                    error!("No point_id q={}", queue);
                                                     continue;
                                                 }
                                             };
@@ -297,20 +283,16 @@ impl CommandTrigger {
                                                     match ts_str.parse() {
                                                         Ok(ts) => ts,
                                                         Err(e) => {
-                                                            error!("Failed to parse timestamp for channel {} point {}: {}",
-                                                                  channel_id, point_id, e);
+                                                            error!("Ch{} pt{} ts parse err: {}", channel_id, point_id, e);
                                                             continue;
                                                         }
                                                     }
                                                 }
                                                 Ok(None) => {
-                                                    debug!("No timestamp found for channel {} point {} (treating as new)",
-                                                          channel_id, point_id);
                                                     0  // Treat as new command if timestamp missing
                                                 }
                                                 Err(e) => {
-                                                    error!("Failed to read timestamp for channel {} point {}: {}",
-                                                          channel_id, point_id, e);
+                                                    error!("Ch{} pt{} ts read err: {}", channel_id, point_id, e);
                                                     continue;
                                                 }
                                             };
@@ -326,26 +308,22 @@ impl CommandTrigger {
                                                     match value_str.parse() {
                                                         Ok(v) => v,
                                                         Err(e) => {
-                                                            error!("Failed to parse value for channel {} point {}: {}",
-                                                                  channel_id, point_id, e);
+                                                            error!("Ch{} pt{} val parse err: {}", channel_id, point_id, e);
                                                             continue;
                                                         }
                                                     }
                                                 }
                                                 Ok(None) => {
-                                                    error!("No value found in Hash for channel {} point {}",
-                                                          channel_id, point_id);
+                                                    error!("Ch{} pt{} no value", channel_id, point_id);
                                                     continue;
                                                 }
                                                 Err(e) => {
-                                                    error!("Failed to read value for channel {} point {}: {}",
-                                                          channel_id, point_id, e);
+                                                    error!("Ch{} pt{} val read err: {}", channel_id, point_id, e);
                                                     continue;
                                                 }
                                             };
 
-                                            warn!("Using legacy trigger format for channel {} point {} (consider upgrading)",
-                                                  channel_id, point_id);
+                                            debug!("Legacy trigger Ch{} pt{}", channel_id, point_id);
 
                                             (point_id, value, current_ts)
                                         }
@@ -354,18 +332,12 @@ impl CommandTrigger {
                                     // ★ Timestamp deduplication check
                                     let last_ts = last_ts_map.get(&point_id).map(|v| *v).unwrap_or(0);
                                     if current_ts <= last_ts {
-                                        debug!(
-                                            "⏭️ Skipped: {} point {} on channel {} (ts unchanged: {})",
-                                            command_type, point_id, channel_id, current_ts
-                                        );
+                                        debug!("Skip pt{}: ts={} (same)", point_id, current_ts);
                                         continue;
                                     }
 
                                     // ★ Timestamp changed - execute command
-                                    info!(
-                                        "✅ Executing: {} point {} on channel {} (value={}, ts={}, was {})",
-                                        command_type, point_id, channel_id, value, current_ts, last_ts
-                                    );
+                                    debug!("Exec pt{}: val={} ts={}", point_id, value, current_ts);
 
                                     // Update last_ts
                                     last_ts_map.insert(point_id, current_ts);
@@ -389,7 +361,7 @@ impl CommandTrigger {
                                     // Convert to ChannelCommand and send
                                     let channel_command = Self::to_channel_command(command);
                                     if let Err(e) = command_tx.send(channel_command).await {
-                                        error!("Failed to send command to protocol handler: {}", e);
+                                        error!("Cmd send err: {}", e);
                                         return Err(crate::error::ComSrvError::InternalError(
                                             "Command channel closed".to_string()
                                         ));
@@ -402,11 +374,9 @@ impl CommandTrigger {
                                 Err(e) => {
                                     // Redis error; classify and trigger reconnection.
                                     let error_type = classify_redis_error(&e);
-                                    error!("BLPOP error on queues [{}] for channel {}: {} (type: {:?})",
-                                          queues.join(", "), channel_id, e, error_type);
+                                    error!("Ch{} BLPOP err: {} ({:?})", channel_id, e, error_type);
                                     return Err(crate::error::ComSrvError::InternalError(
-                                        format!("Redis {} error on channel {} queues [{}]: {}",
-                                                error_type, channel_id, queues.join(", "), e)
+                                        format!("Redis {:?} Ch{}: {}", error_type, channel_id, e)
                                     ));
                                 },
                             }
@@ -425,14 +395,14 @@ impl CommandTrigger {
                     // Error; attempt reconnection with failure tracking.
                     consecutive_failures += 1;
                     warn!(
-                        "List queue loop error for channel {} (failure #{} in this session): {}, attempting reconnect in {:?}",
+                        "Ch{} err #{}: {}, retry {:?}",
                         channel_id, consecutive_failures, e, reconnect_delay
                     );
 
                     // Log critical if too many consecutive failures
                     if consecutive_failures >= 10 {
                         error!(
-                            "Critical: Channel {} has failed {} consecutive times, may need manual intervention",
+                            "CRITICAL: Ch{} {}x failures",
                             channel_id, consecutive_failures
                         );
                     }
@@ -444,7 +414,7 @@ impl CommandTrigger {
                         }
                         _ = shutdown_rx.changed() => {
                             if *shutdown_rx.borrow() {
-                                info!("Stopping during backoff for channel {}", channel_id);
+                                debug!("Ch{} backoff stop", channel_id);
                                 break;
                             }
                         }

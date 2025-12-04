@@ -74,10 +74,7 @@ pub fn parse_modbus_pdu(
 
     // Minimum viable PDU check (allow partial data)
     if pdu_data.len() < 2 {
-        warn!(
-            "PDU too short ({} bytes), cannot extract byte_count field",
-            pdu_data.len()
-        );
+        warn!("PDU too short: {}B", pdu_data.len());
         return Ok(Vec::new()); // Return empty instead of failing
     }
 
@@ -97,7 +94,7 @@ pub fn parse_modbus_pdu(
 
     if byte_count > available_bytes {
         warn!(
-            "Incomplete PDU data: declared {} bytes, only {} available - parsing partial data",
+            "PDU incomplete: declared={}B actual={}B",
             byte_count, available_bytes
         );
     }
@@ -109,7 +106,7 @@ pub fn parse_modbus_pdu(
             let expected_bytes = expected_count.div_ceil(8) as usize;
             if byte_count != expected_bytes {
                 warn!(
-                    "Byte count mismatch for FC{:02}: expected {} bytes for {} coils, got {} - parsing available data",
+                    "FC{:02} mismatch: expect={}B({} coils) got={}B",
                     function_code, expected_bytes, expected_count, byte_count
                 );
             }
@@ -126,7 +123,7 @@ pub fn parse_modbus_pdu(
             let expected_bytes = (expected_count * 2) as usize;
             if byte_count != expected_bytes {
                 warn!(
-                    "Byte count mismatch for FC{:02}: expected {} bytes for {} registers, got {} - parsing available data",
+                    "FC{:02} mismatch: expect={}B({} regs) got={}B",
                     function_code, expected_bytes, expected_count, byte_count
                 );
             }
@@ -145,10 +142,7 @@ pub fn parse_modbus_pdu(
             }
 
             if !actual_byte_count.is_multiple_of(2) {
-                warn!(
-                    "Odd byte count ({}) - last incomplete byte ignored",
-                    actual_byte_count
-                );
+                warn!("Odd byte count: {}B", actual_byte_count);
             }
 
             Ok(registers)

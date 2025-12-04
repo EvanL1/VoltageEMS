@@ -172,7 +172,7 @@ pub async fn get_channel_points_handler(
             .fetch_optional(&state.sqlite_pool)
             .await
             .map_err(|e| {
-                tracing::error!("Database error checking channel existence: {}", e);
+                tracing::error!("Ch check: {}", e);
                 AppError::internal_error("Database operation failed")
             })?;
 
@@ -261,11 +261,7 @@ pub async fn get_channel_points_handler(
                                 Ok(value) if !value.is_null() => Some(value),
                                 Ok(_) => None, // null value
                                 Err(e) => {
-                                    tracing::warn!(
-                                        "Failed to parse protocol_mappings JSON for point {}: {}",
-                                        point_id,
-                                        e
-                                    );
+                                    tracing::warn!("Parse mapping {}: {}", point_id, e);
                                     None
                                 },
                             }
@@ -304,7 +300,7 @@ pub async fn get_channel_points_handler(
             )
             .await
             .map_err(|e| {
-                tracing::error!("Error fetching telemetry points: {}", e);
+                tracing::error!("Fetch T points: {}", e);
                 AppError::internal_error("Database operation failed")
             })?;
         },
@@ -313,7 +309,7 @@ pub async fn get_channel_points_handler(
                 fetch_points_from_table(&state.sqlite_pool, "signal_points", channel_id_i64, true)
                     .await
                     .map_err(|e| {
-                        tracing::error!("Error fetching signal points: {}", e);
+                        tracing::error!("Fetch S points: {}", e);
                         AppError::internal_error("Database operation failed")
                     })?;
         },
@@ -326,7 +322,7 @@ pub async fn get_channel_points_handler(
             )
             .await
             .map_err(|e| {
-                tracing::error!("Error fetching control points: {}", e);
+                tracing::error!("Fetch C points: {}", e);
                 AppError::internal_error("Database operation failed")
             })?;
         },
@@ -339,7 +335,7 @@ pub async fn get_channel_points_handler(
             )
             .await
             .map_err(|e| {
-                tracing::error!("Error fetching adjustment points: {}", e);
+                tracing::error!("Fetch A points: {}", e);
                 AppError::internal_error("Database operation failed")
             })?;
         },
@@ -358,14 +354,14 @@ pub async fn get_channel_points_handler(
             )
             .await
             .map_err(|e| {
-                tracing::error!("Error fetching telemetry points: {}", e);
+                tracing::error!("Fetch T points: {}", e);
                 AppError::internal_error("Database operation failed")
             })?;
             signal_points =
                 fetch_points_from_table(&state.sqlite_pool, "signal_points", channel_id_i64, true)
                     .await
                     .map_err(|e| {
-                        tracing::error!("Error fetching signal points: {}", e);
+                        tracing::error!("Fetch S points: {}", e);
                         AppError::internal_error("Database operation failed")
                     })?;
             control_points = fetch_points_from_table(
@@ -376,7 +372,7 @@ pub async fn get_channel_points_handler(
             )
             .await
             .map_err(|e| {
-                tracing::error!("Error fetching control points: {}", e);
+                tracing::error!("Fetch C points: {}", e);
                 AppError::internal_error("Database operation failed")
             })?;
             adjustment_points = fetch_points_from_table(
@@ -387,7 +383,7 @@ pub async fn get_channel_points_handler(
             )
             .await
             .map_err(|e| {
-                tracing::error!("Error fetching adjustment points: {}", e);
+                tracing::error!("Fetch A points: {}", e);
                 AppError::internal_error("Database operation failed")
             })?;
         },
@@ -455,7 +451,7 @@ pub async fn get_point_mapping_with_type_handler(
             .fetch_optional(&state.sqlite_pool)
             .await
             .map_err(|e| {
-                tracing::error!("Database error checking channel: {}", e);
+                tracing::error!("Ch check: {}", e);
                 AppError::internal_error("Database operation failed")
             })?;
 
@@ -478,7 +474,7 @@ pub async fn get_point_mapping_with_type_handler(
         .fetch_optional(&state.sqlite_pool)
         .await
         .map_err(|e| {
-            tracing::error!("Error querying {}: {}", table, e);
+            tracing::error!("Query {}: {}", table, e);
             AppError::internal_error("Database operation failed")
         })?;
 
@@ -749,15 +745,11 @@ pub async fn create_telemetry_point_handler(
     .execute(&state.sqlite_pool)
     .await
     .map_err(|e| {
-        tracing::error!("Database error creating telemetry point: {}", e);
+        tracing::error!("Create T point: {}", e);
         AppError::internal_error("Failed to create point")
     })?;
 
-    tracing::info!(
-        "Created telemetry point {} in channel {}",
-        point_id,
-        channel_id
-    );
+    tracing::debug!("Ch{}:T:{} created", channel_id, point_id);
 
     // Trigger auto-reload if enabled
     trigger_channel_reload_if_needed(channel_id, &state, reload_query.auto_reload).await;
@@ -865,15 +857,11 @@ pub async fn create_signal_point_handler(
     .execute(&state.sqlite_pool)
     .await
     .map_err(|e| {
-        tracing::error!("Database error creating signal point: {}", e);
+        tracing::error!("Create S point: {}", e);
         AppError::internal_error("Failed to create point")
     })?;
 
-    tracing::info!(
-        "Created signal point {} in channel {}",
-        point_id,
-        channel_id
-    );
+    tracing::debug!("Ch{}:S:{} created", channel_id, point_id);
 
     // Trigger auto-reload if enabled
     trigger_channel_reload_if_needed(channel_id, &state, reload_query.auto_reload).await;
@@ -976,15 +964,11 @@ pub async fn create_control_point_handler(
     .execute(&state.sqlite_pool)
     .await
     .map_err(|e| {
-        tracing::error!("Database error creating control point: {}", e);
+        tracing::error!("Create C point: {}", e);
         AppError::internal_error("Failed to create point")
     })?;
 
-    tracing::info!(
-        "Created control point {} in channel {}",
-        point_id,
-        channel_id
-    );
+    tracing::debug!("Ch{}:C:{} created", channel_id, point_id);
 
     // Trigger auto-reload if enabled
     trigger_channel_reload_if_needed(channel_id, &state, reload_query.auto_reload).await;
@@ -1093,15 +1077,11 @@ pub async fn create_adjustment_point_handler(
     .execute(&state.sqlite_pool)
     .await
     .map_err(|e| {
-        tracing::error!("Database error creating adjustment point: {}", e);
+        tracing::error!("Create A point: {}", e);
         AppError::internal_error("Failed to create point")
     })?;
 
-    tracing::info!(
-        "Created adjustment point {} in channel {}",
-        point_id,
-        channel_id
-    );
+    tracing::debug!("Ch{}:A:{} created", channel_id, point_id);
 
     // Trigger auto-reload if enabled
     trigger_channel_reload_if_needed(channel_id, &state, reload_query.auto_reload).await;
@@ -1127,7 +1107,7 @@ async fn validate_channel_exists(pool: &sqlx::SqlitePool, channel_id: u16) -> Re
             .fetch_optional(pool)
             .await
             .map_err(|e| {
-                tracing::error!("Database error checking channel existence: {}", e);
+                tracing::error!("Ch check: {}", e);
                 AppError::internal_error("Database operation failed")
             })?;
 
@@ -1159,7 +1139,7 @@ async fn validate_point_uniqueness(
         .fetch_optional(pool)
         .await
         .map_err(|e| {
-            tracing::error!("Database error checking point uniqueness: {}", e);
+            tracing::error!("Point uniqueness check: {}", e);
             AppError::internal_error("Database operation failed")
         })?;
 
@@ -1359,7 +1339,7 @@ pub async fn update_point_handler(
         .fetch_optional(&state.sqlite_pool)
         .await
         .map_err(|e| {
-            tracing::error!("Database error checking point existence: {}", e);
+            tracing::error!("Point check: {}", e);
             AppError::internal_error("Database operation failed")
         })?;
 
@@ -1439,19 +1419,14 @@ pub async fn update_point_handler(
         .execute(&state.sqlite_pool)
         .await
         .map_err(|e| {
-            tracing::error!("Database error updating point: {}", e);
+            tracing::error!("Update point: {}", e);
             AppError::internal_error("Failed to update point")
         })?;
 
     // Get updated signal_name for response
     let signal_name = update.signal_name.unwrap_or(existing.unwrap().0);
 
-    tracing::info!(
-        "Updated {} point {} in channel {}",
-        point_type_upper,
-        point_id,
-        channel_id
-    );
+    tracing::debug!("Ch{}:{}:{} updated", channel_id, point_type_upper, point_id);
 
     // Trigger auto-reload if enabled
     trigger_channel_reload_if_needed(channel_id, &state, reload_query.auto_reload).await;
@@ -1554,7 +1529,7 @@ pub async fn get_point_config_handler(
         .fetch_optional(&state.sqlite_pool)
         .await
         .map_err(|e| {
-            tracing::error!("Database error querying point config: {}", e);
+            tracing::error!("Query point config: {}", e);
             AppError::internal_error("Database operation failed")
         })?;
 
@@ -1712,7 +1687,7 @@ pub async fn delete_point_handler(
         .fetch_optional(&state.sqlite_pool)
         .await
         .map_err(|e| {
-            tracing::error!("Database error checking point existence: {}", e);
+            tracing::error!("Point check: {}", e);
             AppError::internal_error("Database operation failed")
         })?;
 
@@ -1736,16 +1711,11 @@ pub async fn delete_point_handler(
         .execute(&state.sqlite_pool)
         .await
         .map_err(|e| {
-            tracing::error!("Database error deleting point: {}", e);
+            tracing::error!("Delete point: {}", e);
             AppError::internal_error("Failed to delete point")
         })?;
 
-    tracing::info!(
-        "Deleted {} point {} from channel {}",
-        point_type_upper,
-        point_id,
-        channel_id
-    );
+    tracing::debug!("Ch{}:{}:{} deleted", channel_id, point_type_upper, point_id);
 
     // Clear Redis data for the deleted point
     // Redis structure: comsrv:{channel_id}:{point_type} (Hash) with fields:
@@ -1772,20 +1742,16 @@ pub async fn delete_point_handler(
                 }
             },
             Err(e) => {
-                tracing::warn!(
-                    "Failed to clear Redis field {} for point {}: {} (will be cleaned on reload)",
-                    field,
-                    point_id,
-                    e
-                );
+                tracing::warn!("Redis del {}:{}: {}", redis_key, field, e);
             },
         }
     }
 
-    tracing::info!(
-        "Cleared Redis data for point {} in channel {}",
-        point_id,
-        channel_id
+    tracing::debug!(
+        "Ch{}:{}:{} Redis cleared",
+        channel_id,
+        point_type_upper,
+        point_id
     );
 
     // Trigger auto-reload if enabled
@@ -2121,7 +2087,7 @@ pub async fn get_unmapped_points_handler(
             )
             .await
             .map_err(|e| {
-                tracing::error!("Error fetching unmapped telemetry points: {}", e);
+                tracing::error!("Fetch unmapped T: {}", e);
                 AppError::internal_error("Database operation failed")
             })?;
         },
@@ -2133,7 +2099,7 @@ pub async fn get_unmapped_points_handler(
             )
             .await
             .map_err(|e| {
-                tracing::error!("Error fetching unmapped signal points: {}", e);
+                tracing::error!("Fetch unmapped S: {}", e);
                 AppError::internal_error("Database operation failed")
             })?;
         },
@@ -2145,7 +2111,7 @@ pub async fn get_unmapped_points_handler(
             )
             .await
             .map_err(|e| {
-                tracing::error!("Error fetching unmapped control points: {}", e);
+                tracing::error!("Fetch unmapped C: {}", e);
                 AppError::internal_error("Database operation failed")
             })?;
         },
@@ -2157,7 +2123,7 @@ pub async fn get_unmapped_points_handler(
             )
             .await
             .map_err(|e| {
-                tracing::error!("Error fetching unmapped adjustment points: {}", e);
+                tracing::error!("Fetch unmapped A: {}", e);
                 AppError::internal_error("Database operation failed")
             })?;
         },
@@ -2176,7 +2142,7 @@ pub async fn get_unmapped_points_handler(
             )
             .await
             .map_err(|e| {
-                tracing::error!("Error fetching unmapped telemetry points: {}", e);
+                tracing::error!("Fetch unmapped T: {}", e);
                 AppError::internal_error("Database operation failed")
             })?;
             signal_points = fetch_unmapped_points_from_table(
@@ -2186,7 +2152,7 @@ pub async fn get_unmapped_points_handler(
             )
             .await
             .map_err(|e| {
-                tracing::error!("Error fetching unmapped signal points: {}", e);
+                tracing::error!("Fetch unmapped S: {}", e);
                 AppError::internal_error("Database operation failed")
             })?;
             control_points = fetch_unmapped_points_from_table(
@@ -2196,7 +2162,7 @@ pub async fn get_unmapped_points_handler(
             )
             .await
             .map_err(|e| {
-                tracing::error!("Error fetching unmapped control points: {}", e);
+                tracing::error!("Fetch unmapped C: {}", e);
                 AppError::internal_error("Database operation failed")
             })?;
             adjustment_points = fetch_unmapped_points_from_table(
@@ -2206,7 +2172,7 @@ pub async fn get_unmapped_points_handler(
             )
             .await
             .map_err(|e| {
-                tracing::error!("Error fetching unmapped adjustment points: {}", e);
+                tracing::error!("Fetch unmapped A: {}", e);
                 AppError::internal_error("Database operation failed")
             })?;
         },
@@ -2529,12 +2495,11 @@ pub async fn batch_point_operations_handler(
 
     let duration_ms = start_time.elapsed().as_millis() as u64;
 
-    tracing::info!(
-        "Batch operation completed for channel {}: {} total, {} succeeded, {} failed, {}ms",
+    tracing::debug!(
+        "Ch{} batch: {}/{} ok ({}ms)",
         channel_id,
-        total_operations,
         succeeded,
-        failed,
+        total_operations,
         duration_ms
     );
 
@@ -2794,20 +2759,14 @@ pub(crate) async fn trigger_channel_reload_if_needed(
         return;
     }
 
-    tracing::info!(
-        "Auto-reload enabled for channel {}, triggering hot reload",
-        channel_id
-    );
+    tracing::debug!("Ch{} auto-reload", channel_id);
 
     let state_clone = state.clone();
     tokio::spawn(async move {
         if let Err(e) = perform_channel_reload(channel_id, &state_clone).await {
-            tracing::error!("Auto-reload failed for channel {}: {}", channel_id, e);
+            tracing::error!("Ch{} reload: {}", channel_id, e);
         } else {
-            tracing::info!(
-                "Auto-reload completed successfully for channel {}",
-                channel_id
-            );
+            tracing::debug!("Ch{} reloaded", channel_id);
         }
     });
 }
@@ -2826,7 +2785,7 @@ async fn perform_channel_reload(channel_id: u16, state: &AppState) -> anyhow::Re
     // 2. Remove old channel
     let manager = state.channel_manager.write().await;
     if let Err(e) = manager.remove_channel(channel_id).await {
-        tracing::warn!("Failed to remove old channel {}: {}", channel_id, e);
+        tracing::warn!("Ch{} remove: {}", channel_id, e);
     }
     drop(manager);
 
@@ -2842,12 +2801,8 @@ async fn perform_channel_reload(channel_id: u16, state: &AppState) -> anyhow::Re
     tokio::spawn(async move {
         let mut channel = channel_arc.write().await;
         match channel.connect().await {
-            Ok(_) => tracing::info!("Channel {} connected successfully after reload", channel_id),
-            Err(e) => tracing::warn!(
-                "Channel {} connection failed after reload (will retry): {}",
-                channel_id,
-                e
-            ),
+            Ok(_) => tracing::debug!("Ch{} connected", channel_id),
+            Err(e) => tracing::warn!("Ch{} connect: {}", channel_id, e),
         }
     });
 

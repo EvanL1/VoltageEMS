@@ -12,7 +12,7 @@ use sqlx::SqlitePool;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 
 // Import shared calculation types from voltage-config
 use voltage_config::calculations::{
@@ -69,7 +69,7 @@ impl CalculationEngine {
     /// Register a calculation
     pub async fn register_calculation(&self, calc: CalculationDef) -> Result<()> {
         let mut calculations = self.calculations.write().await;
-        info!("Registering calculation: {} ({})", calc.id, calc.name);
+        debug!("Calc registered: {}", calc.id);
         calculations.insert(calc.id.clone(), calc);
         Ok(())
     }
@@ -90,7 +90,7 @@ impl CalculationEngine {
     pub async fn delete_calculation(&self, id: &str) -> Result<()> {
         let mut calculations = self.calculations.write().await;
         if calculations.remove(id).is_some() {
-            info!("Deleted calculation: {}", id);
+            debug!("Calc deleted: {}", id);
             Ok(())
         } else {
             Err(anyhow!("Calculation not found: {}", id))
@@ -139,7 +139,7 @@ impl CalculationEngine {
             },
             // Handle calculation types not yet implemented
             _ => {
-                warn!("Unsupported calculation type");
+                warn!("Unsupported calc type");
                 Err(anyhow!("Calculation type not yet implemented"))
             },
         };
@@ -168,7 +168,7 @@ impl CalculationEngine {
                 })
             },
             Err(e) => {
-                error!("Calculation failed: {}", e);
+                error!("Calc failed: {}", e);
                 Ok(CalculationResult {
                     calculation_id: calculation_id.to_string(),
                     timestamp: chrono::Utc::now(),
@@ -204,7 +204,7 @@ impl CalculationEngine {
                     .context(format!("Failed to parse value for {}", var_name))?;
                 values.insert(var_name.clone(), val);
             } else {
-                warn!("Variable {} not found in Redis", var_name);
+                warn!("Var {} not in Redis", var_name);
                 values.insert(var_name.clone(), 0.0);
             }
         }
@@ -419,7 +419,7 @@ impl CalculationEngine {
             let calc_type: CalculationType = match serde_json::from_str(&type_json) {
                 Ok(ct) => ct,
                 Err(e) => {
-                    error!("Failed to parse calculation_type for '{}': {}", name, e);
+                    error!("Parse calc_type '{}': {}", name, e);
                     continue;
                 },
             };
@@ -443,14 +443,14 @@ impl CalculationEngine {
 
             // Register with the engine
             if let Err(e) = self.register_calculation(calc).await {
-                warn!("Failed to register calculation '{}': {}", name, e);
+                warn!("Register calc '{}': {}", name, e);
                 continue;
             }
 
             count += 1;
         }
 
-        info!("Loaded {} calculation definitions from SQLite", count);
+        info!("{} calcs loaded", count);
         Ok(count)
     }
 }
@@ -538,7 +538,7 @@ impl StatisticsProcessor {
                 sorted.sort_by(|a, b| match a.partial_cmp(b) {
                     Some(ordering) => ordering,
                     None => {
-                        tracing::error!("Cannot compare values {} and {} (NaN detected)", a, b);
+                        tracing::error!("NaN compare: {} vs {}", a, b);
                         std::cmp::Ordering::Equal
                     },
                 });
@@ -557,7 +557,7 @@ impl StatisticsProcessor {
                 sorted.sort_by(|a, b| match a.partial_cmp(b) {
                     Some(ordering) => ordering,
                     None => {
-                        tracing::error!("Cannot compare values {} and {} (NaN detected)", a, b);
+                        tracing::error!("NaN compare: {} vs {}", a, b);
                         std::cmp::Ordering::Equal
                     },
                 });
@@ -577,7 +577,7 @@ impl StatisticsProcessor {
             },
             // Handle new aggregation types not yet implemented
             _ => {
-                warn!("Unsupported aggregation type: {:?}", operation);
+                warn!("Unsupported agg: {:?}", operation);
                 Err(anyhow!("Aggregation type not yet implemented"))
             },
         }
@@ -774,7 +774,7 @@ impl EnergyCalculator {
             },
             // Handle new energy calculation variants not yet implemented
             _ => {
-                warn!("Unsupported energy calculation type: {:?}", operation);
+                warn!("Unsupported energy calc: {:?}", operation);
                 Err(anyhow!("Energy calculation type not yet implemented"))
             },
         }

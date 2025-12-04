@@ -44,7 +44,7 @@ pub fn check_system_requirements_with(
     // Check CPU cores
     if info.cpu_cores < requirements.min_cpu_cores {
         warn!(
-            "System has only {} CPU core(s), minimum {} required",
+            "CPU: {} cores (min:{})",
             info.cpu_cores, requirements.min_cpu_cores
         );
         info.warnings.push(format!(
@@ -52,19 +52,19 @@ pub fn check_system_requirements_with(
             info.cpu_cores, requirements.min_cpu_cores
         ));
     } else if info.cpu_cores < requirements.recommended_cpu_cores {
-        info!(
-            "System has {} CPU cores (recommended: {})",
+        debug!(
+            "CPU: {} cores (rec:{})",
             info.cpu_cores, requirements.recommended_cpu_cores
         );
     } else {
-        debug!("System has {} CPU cores available", info.cpu_cores);
+        debug!("CPU: {} cores", info.cpu_cores);
     }
 
     // Check memory
     if let Some(memory_mb) = info.available_memory_mb {
         if memory_mb < requirements.min_memory_mb {
             warn!(
-                "Low available memory: {} MB (minimum: {} MB)",
+                "Memory: {} MB (min:{})",
                 memory_mb, requirements.min_memory_mb
             );
             info.warnings.push(format!(
@@ -72,15 +72,13 @@ pub fn check_system_requirements_with(
                 memory_mb, requirements.min_memory_mb
             ));
         } else if memory_mb < requirements.recommended_memory_mb {
-            info!(
-                "Available memory: {} MB (recommended: {} MB)",
+            debug!(
+                "Memory: {} MB (rec:{})",
                 memory_mb, requirements.recommended_memory_mb
             );
         } else {
-            debug!("Available memory: {} MB", memory_mb);
+            debug!("Memory: {} MB", memory_mb);
         }
-    } else {
-        debug!("Memory information not available on this platform");
     }
 
     Ok(info)
@@ -129,23 +127,21 @@ impl SystemInfo {
 
     /// Print system information summary
     pub fn print_summary(&self) {
-        info!("System Information:");
-        info!("  OS: {} ({})", self.os_name, self.arch);
-        info!("  CPU Cores: {}", self.cpu_cores);
+        // Build memory info string
+        let mem_info = match (self.available_memory_mb, self.total_memory_mb) {
+            (Some(avail), Some(total)) => format!(", Mem:{}/{}MB", avail, total),
+            (Some(avail), None) => format!(", Mem:{}MB", avail),
+            (None, Some(total)) => format!(", Mem:{}MB total", total),
+            (None, None) => String::new(),
+        };
 
-        if let Some(mem) = self.available_memory_mb {
-            info!("  Available Memory: {} MB", mem);
-        }
+        info!(
+            "System: {} ({}) CPU:{}{}",
+            self.os_name, self.arch, self.cpu_cores, mem_info
+        );
 
-        if let Some(total) = self.total_memory_mb {
-            info!("  Total Memory: {} MB", total);
-        }
-
-        if self.has_warnings() {
-            warn!("System warnings:");
-            for warning in &self.warnings {
-                warn!("  - {}", warning);
-            }
+        for warning in &self.warnings {
+            warn!("{}", warning);
         }
     }
 }

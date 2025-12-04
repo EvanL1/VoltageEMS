@@ -226,7 +226,7 @@ impl ModbusFrameProcessor {
 
         let function_code = pdu.function_code().unwrap_or(0);
         debug!(
-            "Building TCP frame: trans_id={:04X}, unit_id={}, FC={:02X}, PDU_len={}",
+            "TCP TX: tid={:04X} u={} FC{:02X} {}B",
             transaction_id,
             unit_id,
             function_code,
@@ -253,7 +253,7 @@ impl ModbusFrameProcessor {
 
         let function_code = pdu.function_code().unwrap_or(0);
         debug!(
-            "Building RTU frame: unit_id={}, FC={:02X}, PDU_len={}, CRC={:04X}",
+            "RTU TX: u={} FC{:02X} {}B CRC={:04X}",
             unit_id,
             function_code,
             pdu.len(),
@@ -265,7 +265,7 @@ impl ModbusFrameProcessor {
 
     /// Parse TCP frame
     fn parse_tcp_frame(&mut self, data: &[u8]) -> Result<(u8, ModbusPdu)> {
-        debug!("Parsing TCP frame: {} bytes", data.len());
+        debug!("TCP RX: {}B", data.len());
 
         if data.len() < constants::MBAP_HEADER_LEN + 2 {
             return Err(ComLinkError::Protocol("TCP frame too short".to_string()));
@@ -278,7 +278,7 @@ impl ModbusFrameProcessor {
         let unit_id = data[6];
 
         debug!(
-            "MBAP header: trans_id={:04X}, protocol_id={:04X}, length={}, unit_id={}",
+            "MBAP: tid={:04X} pid={:04X} len={} u={}",
             transaction_id, protocol_id, length, unit_id
         );
 
@@ -301,7 +301,7 @@ impl ModbusFrameProcessor {
 
         // Extract PDU (skip MBAP header + unit_id)
         let pdu = ModbusPdu::from_slice(&data[constants::MBAP_HEADER_LEN + 1..])?;
-        debug!("Extracted PDU: {} bytes", pdu.len());
+        debug!("PDU: {}B", pdu.len());
 
         // Find the request by transaction ID only (transaction ID is unique per channel)
         let matching_request = self
@@ -319,7 +319,7 @@ impl ModbusFrameProcessor {
             // Check if the response matches our request
             if key.function_code == response_fc && key.slave_id == unit_id {
                 debug!(
-                    "Validated TCP response: trans_id={:04X}, slave_id={}, func_code={:02X}",
+                    "TCP valid: tid={:04X} u={} FC{:02X}",
                     transaction_id, unit_id, response_fc
                 );
 
@@ -329,7 +329,7 @@ impl ModbusFrameProcessor {
             } else {
                 // Transaction ID matches but FC/slave doesn't - this response is not for us
                 debug!(
-                    "Ignoring response: trans_id={:04X} matches but FC/slave mismatch. Expected FC={:02X}/slave={}, Got FC={:02X}/slave={}",
+                    "Ignored: tid={:04X} FC/slave mismatch expect={:02X}/{} got={:02X}/{}",
                     transaction_id, key.function_code, key.slave_id, response_fc, unit_id
                 );
                 // Don't process this response - it might belong to another channel or be a delayed response
@@ -339,14 +339,7 @@ impl ModbusFrameProcessor {
             }
         } else {
             // No matching transaction ID - this response is not for us (might be from another channel)
-            debug!(
-                "Ignoring response with unknown transaction ID: {:04X}. Active transactions: {:?}",
-                transaction_id,
-                self.pending_requests
-                    .keys()
-                    .map(|k| k.transaction_id)
-                    .collect::<Vec<_>>()
-            );
+            debug!("Ignored: unknown tid={:04X}", transaction_id);
             // Don't process this response
             return Err(ComLinkError::Protocol(
                 "Response ignored - unknown transaction ID".to_string(),
@@ -359,7 +352,7 @@ impl ModbusFrameProcessor {
     /// Parse RTU frame
     #[cfg(feature = "modbus-rtu")]
     fn parse_rtu_frame(&mut self, data: &[u8]) -> Result<(u8, ModbusPdu)> {
-        debug!("Parsing RTU frame: {} bytes", data.len());
+        debug!("RTU RX: {}B", data.len());
 
         if data.len() < 4 {
             return Err(ComLinkError::Protocol("RTU frame too short".to_string()));
@@ -371,7 +364,7 @@ impl ModbusFrameProcessor {
         let received_crc = u16::from_le_bytes([data[frame_len - 2], data[frame_len - 1]]);
 
         debug!(
-            "RTU frame: unit_id={}, PDU_len={}, CRC={:04X}",
+            "RTU: u={} PDU={}B CRC={:04X}",
             unit_id,
             pdu_bytes.len(),
             received_crc
@@ -384,7 +377,7 @@ impl ModbusFrameProcessor {
                 "CRC mismatch: expected 0x{calculated_crc:04X}, got 0x{received_crc:04X}"
             )));
         }
-        debug!("CRC validation successful");
+        debug!("CRC ok");
 
         // Convert bytes to ModbusPdu
         let pdu = ModbusPdu::from_slice(pdu_bytes)?;
@@ -416,10 +409,7 @@ impl ModbusFrameProcessor {
                         ))
                     })?;
 
-                debug!(
-                    "Validated RTU response: slave_id={}, func_code={:02X}, removing request key: {:?}",
-                    unit_id, response_fc, most_recent_key
-                );
+                debug!("RTU valid: u={} FC{:02X}", unit_id, response_fc);
 
                 // Remove the fulfilled request
                 self.pending_requests.remove(most_recent_key);
@@ -432,24 +422,13 @@ impl ModbusFrameProcessor {
                     .collect();
 
                 if !slave_requests.is_empty() {
-                    error!(
-                        "RTU function code mismatch for slave {}: expected one of {:?}, got {:02X}",
-                        unit_id,
-                        slave_requests
-                            .iter()
-                            .map(|k| format!("{:02X}", k.function_code))
-                            .collect::<Vec<_>>(),
-                        response_fc
-                    );
+                    error!("RTU FC mismatch: u={} got={:02X}", unit_id, response_fc);
                     return Err(ComLinkError::Protocol(format!(
                         "Function code mismatch for slave {}: got {:02X}",
                         unit_id, response_fc
                     )));
                 } else {
-                    error!(
-                        "RTU response from unexpected slave: {} (no pending requests)",
-                        unit_id
-                    );
+                    error!("RTU unexpected slave: {}", unit_id);
                     return Err(ComLinkError::Protocol(format!(
                         "Unexpected response from slave {}",
                         unit_id

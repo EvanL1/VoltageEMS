@@ -49,8 +49,7 @@ pub fn init_environment(service_info: &ServiceInfo) -> Result<()> {
     // Enable SIGHUP-triggered log reopen for long-running processes
     common::logging::enable_sighup_log_reopen();
 
-    info!("Starting Model Service (ModSrv)...");
-    info!("Architecture: measurement/action separation");
+    info!("ModSrv starting");
 
     Ok(())
 }
@@ -64,15 +63,14 @@ pub async fn load_configuration(service_info: &ServiceInfo) -> Result<ModsrvConf
     };
 
     if !std::path::Path::new(&db_path).exists() {
-        error!("Configuration database not found at: {}", db_path);
-        error!("Please run: monarch init all && monarch sync all");
+        error!("DB not found: {}", db_path);
         return Err(ModSrvError::DatabaseError(format!(
             "Database not found: {}",
             db_path
         )));
     }
 
-    info!("Loading configuration from SQLite database: {}", db_path);
+    info!("Loading config: {}", db_path);
     let service_config = ServiceConfigLoader::new(&db_path, "modsrv")
         .await
         .map_err(|e| {
@@ -122,7 +120,7 @@ pub async fn load_configuration(service_info: &ServiceInfo) -> Result<ModsrvConf
             .unwrap_or(true),
     };
 
-    info!("Loaded configuration from SQLite database");
+    debug!("Config loaded");
 
     // Apply configuration priority: DB > ENV > Default
     config.api.port = get_service_port(config.api.port, service_info);
@@ -135,25 +133,25 @@ pub async fn load_configuration(service_info: &ServiceInfo) -> Result<ModsrvConf
 
 /// Validate configuration
 fn validate_configuration(config: &ModsrvConfig) -> Result<()> {
-    info!("Performing runtime validation...");
+    debug!("Validating config");
 
     let skip_full_check = std::env::var("SKIP_VALIDATION").is_ok();
     if !skip_full_check {
         // Basic runtime validation
         if config.api.port == 0 {
-            error!("Invalid port configuration: 0");
+            error!("Invalid port: 0");
             return Err(ModSrvError::InvalidConfig(
                 "api.port: Port cannot be 0".to_string(),
             ));
         }
         if config.redis.url.is_empty() {
-            error!("Redis URL not configured");
+            error!("Redis URL missing");
             return Err(ModSrvError::MissingConfig("redis.url".to_string()));
         }
-        info!("Basic configuration validation passed");
+        debug!("Config valid");
     }
 
-    info!("Runtime validation completed successfully");
+    debug!("Validation done");
     Ok(())
 }
 
@@ -176,7 +174,7 @@ async fn setup_redis_with_config(config: &ModsrvConfig) -> Result<(String, Arc<R
 async fn setup_sqlite() -> Result<SqlitePool> {
     let db_path =
         std::env::var("VOLTAGE_DB_PATH").unwrap_or_else(|_| "data/voltage.db".to_string());
-    info!("Connecting to unified SQLite database: {}", db_path);
+    info!("SQLite: {}", db_path);
     setup_sqlite_pool(&db_path).await.map_err(Into::into)
 }
 
@@ -212,22 +210,16 @@ where
             .to_lowercase()
             == "true";
         if allow_empty {
-            warn!("No products found in database. Continuing due to MODSRV_ALLOW_EMPTY=true");
+            warn!("No products (ALLOW_EMPTY)");
         } else {
-            error!("No products found in database");
-            error!(
-                "Please run: monarch sync modsrv (or set MODSRV_ALLOW_EMPTY=true to start anyway)"
-            );
+            error!("No products in DB");
             return Err(ModSrvError::DatabaseError(
                 "No products/instances found in voltage.db".to_string(),
             ));
         }
     }
 
-    info!("Found {} products in SQLite database", product_count);
-
-    // Products are managed only in SQLite (Redis = real-time data only)
-    info!("Product definitions loaded from SQLite (no Redis cache)");
+    info!("{} products loaded", product_count);
     Ok(Arc::new(product_loader))
 }
 
@@ -284,24 +276,21 @@ pub async fn setup_instance_manager(
             .to_lowercase()
             == "true";
         if allow_empty {
-            warn!("No instances found in database. Continuing due to MODSRV_ALLOW_EMPTY=true");
+            warn!("No instances (ALLOW_EMPTY)");
         } else {
-            error!("No instances found in database");
-            error!(
-                "Please run: monarch sync modsrv (or set MODSRV_ALLOW_EMPTY=true to start anyway)"
-            );
+            error!("No instances in DB");
             return Err(ModSrvError::DatabaseError(
                 "No products/instances found in voltage.db".to_string(),
             ));
         }
     }
 
-    info!("Found {} instances in SQLite database", instance_count);
+    info!("{} instances loaded", instance_count);
 
     // Initialize real-time data structures in Redis (M/A Hash + name mappings)
     // Note: This does NOT sync metadata - only creates empty Hash structures for real-time data
     if let Err(e) = instance_manager.sync_instances_to_redis().await {
-        error!("Failed to initialize Redis data structures: {}", e);
+        error!("Redis init failed: {}", e);
         // Service continues anyway (structures will be created on-demand)
     }
 
@@ -324,7 +313,7 @@ pub async fn load_routing_maps_from_sqlite(
 )> {
     use voltage_config::KeySpaceConfig;
 
-    info!("Loading routing maps from SQLite");
+    debug!("Loading routing maps");
 
     let keyspace = KeySpaceConfig::production();
     let mut c2m_map = std::collections::HashMap::new();
@@ -390,11 +379,7 @@ pub async fn load_routing_maps_from_sqlite(
         m2c_map.insert(from_key, to_key.to_string());
     }
 
-    info!(
-        "Loaded routing maps from SQLite: {} C2M routes, {} M2C routes",
-        c2m_map.len(),
-        m2c_map.len()
-    );
+    info!("Routes: {} C2M, {} M2C", c2m_map.len(), m2c_map.len());
 
     Ok((c2m_map, m2c_map))
 }
@@ -417,7 +402,7 @@ pub async fn load_routing_maps_from_sqlite(
 /// - Logs warnings but allows service to start
 /// - Suggests running migration script if orphans found
 pub async fn validate_routing_integrity(sqlite_pool: &SqlitePool) -> Result<()> {
-    info!("Validating routing table integrity...");
+    debug!("Validating routing");
 
     // Check measurement_routing for orphan T/S points
     let orphan_telemetry: i64 = sqlx::query_scalar(
@@ -488,29 +473,12 @@ pub async fn validate_routing_integrity(sqlite_pool: &SqlitePool) -> Result<()> 
     let total_orphans = orphan_telemetry + orphan_signal + orphan_control + orphan_adjustment;
 
     if total_orphans > 0 {
-        warn!("Found {} orphan routing records:", total_orphans);
-        if orphan_telemetry > 0 {
-            warn!(
-                "  - {} orphan telemetry (T) routing entries",
-                orphan_telemetry
-            );
-        }
-        if orphan_signal > 0 {
-            warn!("  - {} orphan signal (S) routing entries", orphan_signal);
-        }
-        if orphan_control > 0 {
-            warn!("  - {} orphan control (C) routing entries", orphan_control);
-        }
-        if orphan_adjustment > 0 {
-            warn!(
-                "  - {} orphan adjustment (A) routing entries",
-                orphan_adjustment
-            );
-        }
-        warn!("These orphan records will be skipped during routing operations.");
-        warn!("To clean them up, run: sqlite3 data/voltage.db < scripts/migrations/add_routing_cleanup_triggers.sql");
+        warn!(
+            "Orphan routes: T={}, S={}, C={}, A={}",
+            orphan_telemetry, orphan_signal, orphan_control, orphan_adjustment
+        );
     } else {
-        info!("Routing table integrity validation passed: no orphan records found");
+        debug!("Routing valid");
     }
 
     Ok(())
@@ -533,7 +501,7 @@ pub async fn refresh_routing_cache(
     sqlite_pool: &SqlitePool,
     routing_cache: &Arc<voltage_config::RoutingCache>,
 ) -> anyhow::Result<usize> {
-    info!("Refreshing routing cache from SQLite");
+    debug!("Refreshing routes");
 
     // Load fresh routing data from database
     let (c2m_map, m2c_map) = load_routing_maps_from_sqlite(sqlite_pool).await?;
@@ -544,10 +512,7 @@ pub async fn refresh_routing_cache(
     // Note: C2C routing is not yet implemented, passing empty HashMap
     routing_cache.update(c2m_map, m2c_map, std::collections::HashMap::new());
 
-    info!(
-        "Routing cache refreshed successfully: {} total routes",
-        total_routes
-    );
+    info!("Routes refreshed: {}", total_routes);
 
     Ok(total_routes)
 }
@@ -561,7 +526,7 @@ pub async fn load_routing_cache<R>(rtdb: &Arc<R>) -> Result<Arc<voltage_config::
 where
     R: voltage_rtdb::Rtdb + ?Sized,
 {
-    info!("Loading routing cache from Redis");
+    debug!("Loading routes from Redis");
 
     // Load C2M routing (Channel to Model)
     let c2m_data = redis_state::get_routing(
@@ -571,7 +536,7 @@ where
     )
     .await
     .unwrap_or_else(|e| {
-        warn!("Failed to load C2M routing: {}", e);
+        warn!("C2M load failed: {}", e);
         std::collections::HashMap::new()
     });
 
@@ -583,15 +548,11 @@ where
     )
     .await
     .unwrap_or_else(|e| {
-        warn!("Failed to load M2C routing: {}", e);
+        warn!("M2C load failed: {}", e);
         std::collections::HashMap::new()
     });
 
-    info!(
-        "Loaded routing cache: {} C2M routes, {} M2C routes",
-        c2m_data.len(),
-        m2c_data.len()
-    );
+    info!("Routes: {} C2M, {} M2C", c2m_data.len(), m2c_data.len());
 
     Ok(Arc::new(voltage_config::RoutingCache::from_maps(
         c2m_data,
@@ -627,7 +588,7 @@ pub async fn create_app_state(service_info: &ServiceInfo) -> Result<Arc<AppState
     let sqlite_client = Some(Arc::new(SqliteClient::from_pool(sqlite_pool.clone())));
 
     // ============ Phase 1: Load routing configuration from unified database ============
-    info!("Loading routing configuration from unified database...");
+    debug!("Loading routing config");
 
     // Validate routing integrity before loading (check for orphan records)
     validate_routing_integrity(&sqlite_pool).await?;
@@ -646,43 +607,35 @@ pub async fn create_app_state(service_info: &ServiceInfo) -> Result<Arc<AppState
             std::collections::HashMap::new(), // C2C routing not yet implemented
         ));
 
-        info!(
-            "Loaded routing cache: {} C2M routes, {} M2C routes",
-            c2m_len, m2c_len
-        );
+        info!("Routes: {} C2M, {} M2C", c2m_len, m2c_len);
 
         cache
     };
 
     // ============ Phase 2: Create rtdb and inject routing ============
-    info!("Creating RedisRtdb with routing support...");
+    debug!("Creating RedisRtdb");
     let mut rtdb = voltage_rtdb::RedisRtdb::from_client(redis_client.clone());
     rtdb.set_routing_cache(routing_cache.clone()).await;
     let rtdb = Arc::new(rtdb);
 
     // ============ Phase 3: Use the single rtdb for all operations ============
     // Perform Redis cleanup (uses basic methods, no routing triggered)
-    info!("Performing Redis cleanup based on database configuration...");
+    debug!("Redis cleanup");
     let cleanup_provider = crate::cleanup_provider::ModsrvCleanupProvider::new(sqlite_pool.clone());
     match voltage_rtdb::cleanup::cleanup_invalid_keys(&cleanup_provider, rtdb.as_ref()).await {
         Ok(deleted) => {
             if deleted > 0 {
-                info!("Redis cleanup completed: {} invalid keys removed", deleted);
-            } else {
-                info!("Redis cleanup completed: no invalid keys found");
+                info!("Redis cleanup: {} keys removed", deleted);
             }
         },
         Err(e) => {
-            error!("Redis cleanup failed (continuing anyway): {}", e);
+            warn!("Redis cleanup failed: {}", e);
         },
     }
 
     // Rebuild instance name index for O(1) name→ID lookups
     if let Err(e) = rebuild_instance_name_index(&sqlite_pool, rtdb.as_ref()).await {
-        warn!(
-            "Failed to rebuild instance name index (continuing anyway): {}",
-            e
-        );
+        warn!("Name index rebuild failed: {}", e);
     }
 
     // Load products (uses basic methods, no routing triggered)
@@ -704,13 +657,11 @@ pub async fn create_app_state(service_info: &ServiceInfo) -> Result<Arc<AppState
     match calculation_engine.load_from_sqlite(&sqlite_pool).await {
         Ok(count) => {
             if count > 0 {
-                info!("Loaded {} calculation definitions from SQLite", count);
-            } else {
-                debug!("No calculation definitions found in SQLite");
+                info!("{} calculations loaded", count);
             }
         },
         Err(e) => {
-            warn!("Failed to load calculation definitions: {}", e);
+            warn!("Calc load failed: {}", e);
         },
     }
 
@@ -740,7 +691,7 @@ async fn rebuild_instance_name_index(
 ) -> Result<usize> {
     use bytes::Bytes;
 
-    info!("Rebuilding instance name index from SQLite...");
+    debug!("Rebuilding name index");
 
     // Query all instances from SQLite
     let instances: Vec<(i32, String)> =
@@ -750,7 +701,7 @@ async fn rebuild_instance_name_index(
             .map_err(|e| ModSrvError::DatabaseError(format!("Failed to query instances: {}", e)))?;
 
     if instances.is_empty() {
-        info!("No instances found in database, index rebuild skipped");
+        debug!("No instances for index");
         return Ok(0);
     }
 
@@ -768,10 +719,7 @@ async fn rebuild_instance_name_index(
         })?;
 
     let count = instances.len();
-    info!(
-        "Instance name index rebuilt successfully: {} instances indexed",
-        count
-    );
+    info!("Name index: {} instances", count);
 
     Ok(count)
 }

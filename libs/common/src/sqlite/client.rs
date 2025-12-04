@@ -53,10 +53,7 @@ impl SqliteClient {
             .execute(&pool)
             .await?;
 
-        info!(
-            "SQLite database connected with foreign keys enabled: {}",
-            db_path_str
-        );
+        info!("SQLite: {} (FK=ON)", db_path_str);
 
         Ok(Self {
             pool: Arc::new(pool),
@@ -69,7 +66,7 @@ impl SqliteClient {
         let db_path_str = db_path.as_ref().to_string_lossy().to_string();
 
         if !db_path.as_ref().exists() {
-            warn!("Database file does not exist: {}", db_path_str);
+            warn!("SQLite not found: {}", db_path_str);
             return Err(anyhow::anyhow!("Database file not found"));
         }
 
@@ -88,10 +85,7 @@ impl SqliteClient {
             .execute(&pool)
             .await?;
 
-        info!(
-            "SQLite database connected (read-only) with foreign keys enabled: {}",
-            db_path_str
-        );
+        info!("SQLite: {} (RO,FK=ON)", db_path_str);
 
         Ok(Self {
             pool: Arc::new(pool),
@@ -132,7 +126,7 @@ impl SqliteClient {
     /// Vacuum database to reclaim space
     pub async fn vacuum(&self) -> Result<()> {
         sqlx::query("VACUUM").execute(&*self.pool).await?;
-        info!("Database vacuumed: {}", self.db_path);
+        info!("SQLite vacuumed: {}", self.db_path);
         Ok(())
     }
 }

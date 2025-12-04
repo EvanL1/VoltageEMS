@@ -77,13 +77,13 @@ pub fn extract_rule_flow(full_json: &Value) -> Result<RuleFlow> {
                     "function-switch" => extract_switch_rule_node(data)?,
                     "action-changeValue" => extract_change_value_rule_node(data)?,
                     _ => {
-                        tracing::warn!("Unknown custom node type: {}, skipping", inner_type);
+                        tracing::warn!("Unknown node: {}", inner_type);
                         continue;
                     },
                 }
             },
             _ => {
-                tracing::warn!("Unknown top-level node type: {}, skipping", node_type);
+                tracing::warn!("Unknown top node: {}", node_type);
                 continue;
             },
         };

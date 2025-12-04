@@ -134,8 +134,6 @@ pub struct SyncError {
     pub item: String,
     /// Error message
     pub error: String,
-    /// Whether the error was recoverable
-    pub recoverable: bool,
 }
 
 impl SyncError {
@@ -144,7 +142,6 @@ impl SyncError {
         Self {
             item: format!("{}:row-{}", context, csv_error.row_number),
             error: csv_error.error.clone(),
-            recoverable: true,
         }
     }
 }
@@ -182,7 +179,7 @@ impl ConfigSyncer {
     /// @throws anyhow::Error - Unknown service, database errors, file I/O errors
     /// @side-effects Clears and repopulates service database from YAML/CSV files
     pub async fn sync_service(&self, service: &str) -> Result<SyncResult> {
-        info!("Syncing configuration for service: {}", service);
+        info!("Sync: {}", service);
 
         match service {
             "comsrv" => self.sync_comsrv().await,
@@ -204,11 +201,11 @@ impl ConfigSyncer {
 
         // If global.yaml doesn't exist, skip (optional configuration)
         if !global_yaml_path.exists() {
-            info!("No global.yaml found, skipping global config sync");
+            debug!("No global.yaml, skip");
             return Ok(stats);
         }
 
-        info!("Syncing global configuration from {:?}", global_yaml_path);
+        debug!("Sync global: {:?}", global_yaml_path);
 
         // Read and parse YAML
         let yaml_content = std::fs::read_to_string(&global_yaml_path)
@@ -227,7 +224,7 @@ impl ConfigSyncer {
             .await?;
         stats.items_synced += config_count;
 
-        debug!("Inserted {} global configuration items", config_count);
+        debug!("Global: {} items", config_count);
 
         // Update sync timestamp
         self.update_sync_timestamp(&mut tx, "global").await?;
@@ -235,7 +232,7 @@ impl ConfigSyncer {
         // Commit transaction
         tx.commit().await?;
 
-        info!("Global sync completed: {} items synced", stats.items_synced);
+        info!("Global: {} synced", stats.items_synced);
 
         Ok(stats)
     }
@@ -252,7 +249,7 @@ impl ConfigSyncer {
         let db_file = self.db_path.join("voltage.db");
         let config_dir = self.config_path.join("comsrv");
 
-        debug!("Syncing comsrv from {:?} to {:?}", config_dir, db_file);
+        debug!("Sync comsrv: {:?}", config_dir);
 
         // Ensure database directory exists
         if let Some(parent) = db_file.parent() {
@@ -345,13 +342,13 @@ impl ConfigSyncer {
             .await?;
         stats.items_synced += config_count;
 
-        debug!("Inserted {} configuration items", config_count);
+        debug!("Config: {} items", config_count);
 
         // Insert channels first (before points, due to foreign key constraints)
         let channels_count = self.insert_channels(&mut tx, &channels).await?;
         stats.items_synced += channels_count;
 
-        debug!("Inserted {} channels", channels_count);
+        debug!("Channels: {}", channels_count);
 
         // No global point definitions to insert - all points are channel-specific
 
@@ -361,15 +358,13 @@ impl ConfigSyncer {
             .await?;
         stats.items_synced += channel_points_count;
 
-        debug!("Inserted {} channel-specific points", channel_points_count);
+        debug!("Points: {}", channel_points_count);
 
         // Note: Channel mappings are now embedded as JSON in the point tables
         // The insert_channel_mappings function is deprecated but kept for compatibility
         // It now returns 0 as mappings are handled in insert_channel_specific_points
         let mappings_count = 0;
         stats.items_synced += mappings_count;
-
-        debug!("Channel mappings embedded in point tables");
 
         // Update sync timestamp
         self.update_sync_timestamp(&mut tx, "comsrv").await?;
@@ -378,7 +373,7 @@ impl ConfigSyncer {
         tx.commit().await?;
 
         info!(
-            "Comsrv sync completed: {} items synced, {} deleted, {} errors",
+            "Comsrv: {} synced, {} del, {} err",
             stats.items_synced,
             stats.items_deleted,
             stats.errors.len()
@@ -398,7 +393,7 @@ impl ConfigSyncer {
         let db_file = self.db_path.join("voltage.db");
         let config_dir = self.config_path.join("modsrv");
 
-        debug!("Syncing modsrv from {:?} to {:?}", config_dir, db_file);
+        debug!("Sync modsrv: {:?}", config_dir);
 
         // Ensure database directory exists
         if let Some(parent) = db_file.parent() {
@@ -476,13 +471,13 @@ impl ConfigSyncer {
             .await?;
         stats.items_synced += config_count;
 
-        debug!("Inserted {} configuration items", config_count);
+        debug!("Config: {}", config_count);
 
         // Sync products from CSV files
         let products_count = self.sync_modsrv_products(&mut tx, &config_dir).await?;
         stats.items_synced += products_count;
 
-        debug!("Synced {} product items", products_count);
+        debug!("Products: {}", products_count);
 
         // Load and sync instances
         let instances_path = config_dir.join("instances.yaml");
@@ -491,7 +486,7 @@ impl ConfigSyncer {
                 .sync_instances(&mut tx, &instances_path, &config_dir, &mut stats.errors)
                 .await?;
             stats.items_synced += instances_count;
-            debug!("Synced {} instance items", instances_count);
+            debug!("Instances: {}", instances_count);
         }
 
         // Load and sync calculations
@@ -499,7 +494,7 @@ impl ConfigSyncer {
         if calculations_path.exists() {
             let calculations_count = self.sync_calculations(&mut tx, &calculations_path).await?;
             stats.items_synced += calculations_count;
-            debug!("Synced {} calculation definitions", calculations_count);
+            debug!("Calculations: {}", calculations_count);
         }
 
         // Load and sync rules (part of modsrv)
@@ -509,7 +504,7 @@ impl ConfigSyncer {
             sqlx::query("DELETE FROM rules").execute(&mut *tx).await?;
             let rules_count = self.sync_rules(&mut tx, &rules_dir).await?;
             stats.items_synced += rules_count;
-            debug!("Synced {} rules", rules_count);
+            debug!("Rules: {}", rules_count);
         }
 
         // Update sync timestamp
@@ -520,23 +515,14 @@ impl ConfigSyncer {
 
         // Report errors if any
         if !stats.errors.is_empty() {
-            warn!("Sync completed with {} errors:", stats.errors.len());
+            warn!("{} sync errors:", stats.errors.len());
             for error in &stats.errors {
-                warn!(
-                    "  - {}: {} {}",
-                    error.item,
-                    error.error,
-                    if error.recoverable {
-                        "(recoverable)"
-                    } else {
-                        "(fatal)"
-                    }
-                );
+                warn!("  {}: {}", error.item, error.error);
             }
         }
 
         info!(
-            "Modsrv sync completed: {} items synced, {} deleted, {} errors",
+            "Modsrv: {} synced, {} del, {} err",
             stats.items_synced,
             stats.items_deleted,
             stats.errors.len()
@@ -625,17 +611,11 @@ impl ConfigSyncer {
             let channel_id = match channel.get("id").and_then(|v| v.as_u64()) {
                 Some(id) if id > 0 && id <= u16::MAX as u64 => id as i32,
                 Some(id) => {
-                    warn!(
-                        "Channel ID out of valid u16 range (1-65535): {}. Skipping channel: {:?}",
-                        id, channel
-                    );
+                    warn!("Invalid channel ID {}: skip", id);
                     continue;
                 },
                 None => {
-                    warn!(
-                        "Channel missing valid 'id' field (must be unsigned number). Skipping channel: {:?}",
-                        channel
-                    );
+                    warn!("Channel missing id: skip");
                     continue;
                 },
             };
@@ -805,7 +785,7 @@ impl ConfigSyncer {
                         errors.push(SyncError {
                             item: format!("channel-{}/telemetry/point-{}", channel_id, point.base.point_id),
                             error: e.to_string(),
-                            recoverable: true,
+
                         });
                         continue;
                     }
@@ -884,7 +864,7 @@ impl ConfigSyncer {
                         errors.push(SyncError {
                             item: format!("channel-{}/signal/point-{}", channel_id, point.base.point_id),
                             error: e.to_string(),
-                            recoverable: true,
+
                         });
                         continue;
                     }
@@ -963,7 +943,7 @@ impl ConfigSyncer {
                         errors.push(SyncError {
                             item: format!("channel-{}/control/point-{}", channel_id, point.base.point_id),
                             error: e.to_string(),
-                            recoverable: true,
+
                         });
                         continue;
                     }
@@ -1042,7 +1022,7 @@ impl ConfigSyncer {
                         errors.push(SyncError {
                             item: format!("channel-{}/adjustment/point-{}", channel_id, point.base.point_id),
                             error: e.to_string(),
-                            recoverable: true,
+
                         });
                         continue;
                     }
@@ -1196,7 +1176,6 @@ impl ConfigSyncer {
                     errors.push(SyncError {
                         item: format!("Instance with id {}", instance_id),
                         error: "Missing instance_name".to_string(),
-                        recoverable: true,
                     });
                     continue;
                 }
@@ -1205,7 +1184,6 @@ impl ConfigSyncer {
                     errors.push(SyncError {
                         item: format!("Instance: {}", instance_name),
                         error: "Missing product_name".to_string(),
-                        recoverable: true,
                     });
                     continue;
                 }
@@ -1259,7 +1237,7 @@ impl ConfigSyncer {
                     errors.push(SyncError {
                         item: format!("Instance: {}", instance_name),
                         error: e.to_string(),
-                        recoverable: true,
+
                     });
                     continue; // Skip to next instance
                 }
@@ -1337,7 +1315,7 @@ impl ConfigSyncer {
                     errors.push(SyncError {
                         item: format!("Instance: {}", instance_name),
                         error: e.to_string(),
-                        recoverable: true,
+
                     });
                     continue; // Skip to next instance
                 }
@@ -1384,7 +1362,6 @@ impl ConfigSyncer {
 
         for row in properties_csv.iter() {
             if let (Some(point_index), Some(value)) = (row.get("point_index"), row.get("value")) {
-                info!("Property: {} = {}", point_index, value);
                 properties_map.insert(
                     point_index.clone(),
                     serde_json::Value::String(value.clone()),
@@ -1394,7 +1371,6 @@ impl ConfigSyncer {
 
         let properties_json = serde_json::Value::Object(properties_map);
         let json_string = serde_json::to_string(&properties_json)?;
-        info!("Generated properties JSON: {}", json_string);
         Ok(json_string)
     }
 
@@ -1412,7 +1388,6 @@ impl ConfigSyncer {
                 errors.push(SyncError {
                     item: format!("CSV file: {}", mappings_path.display()),
                     error: e.to_string(),
-                    recoverable: true,
                 });
                 return Ok(0);
             },
@@ -1491,7 +1466,6 @@ impl ConfigSyncer {
                         instance_name
                     ),
                     error: e.to_string(),
-                    recoverable: true,
                 });
                 continue; // Skip to next mapping
             }
@@ -1551,7 +1525,7 @@ impl ConfigSyncer {
             count += 1;
         }
 
-        info!("Synced {} calculations from {:?}", count, calculations_path);
+        debug!("Calculations: {}", count);
         Ok(count)
     }
 

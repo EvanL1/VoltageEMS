@@ -131,13 +131,13 @@ impl<R: Rtdb + ?Sized + 'static> RuleScheduler<R> {
         let mut rules = self.rules.write().await;
         *rules = scheduled;
 
-        info!("Loaded {} rules into scheduler", count);
+        info!("Rules: {} loaded", count);
         Ok(count)
     }
 
     /// Reload rules from database (hot reload)
     pub async fn reload_rules(&self) -> Result<usize> {
-        info!("Reloading rules...");
+        info!("Rules reloading");
         self.load_rules().await
     }
 
@@ -146,12 +146,12 @@ impl<R: Rtdb + ?Sized + 'static> RuleScheduler<R> {
         use std::sync::atomic::Ordering;
 
         if self.running.load(Ordering::Relaxed) {
-            warn!("Scheduler already running");
+            warn!("Scheduler running");
             return;
         }
 
         self.running.store(true, Ordering::Relaxed);
-        info!("Starting rule scheduler with {}ms tick", self.tick_ms);
+        info!("Scheduler start ({}ms)", self.tick_ms);
 
         let mut tick_interval = interval(Duration::from_millis(self.tick_ms));
 
@@ -159,23 +159,23 @@ impl<R: Rtdb + ?Sized + 'static> RuleScheduler<R> {
             tokio::select! {
                 _ = tick_interval.tick() => {
                     if let Err(e) = self.tick().await {
-                        error!("Scheduler tick error: {}", e);
+                        error!("Tick err: {}", e);
                     }
                 }
                 _ = self.shutdown.notified() => {
-                    info!("Scheduler received shutdown signal");
+                    info!("Scheduler shutdown");
                     break;
                 }
             }
         }
 
         self.running.store(false, Ordering::Relaxed);
-        info!("Rule scheduler stopped");
+        info!("Scheduler stopped");
     }
 
     /// Stop the scheduler
     pub fn stop(&self) {
-        info!("Stopping rule scheduler...");
+        info!("Scheduler stopping");
         self.shutdown.notify_one();
     }
 
@@ -246,14 +246,11 @@ impl<R: Rtdb + ?Sized + 'static> RuleScheduler<R> {
                                 scheduled.last_cooldown_start = Some(now);
                             }
                         } else {
-                            warn!(
-                                "Rule {} execution failed: {:?}",
-                                result.rule_id, result.error
-                            );
+                            warn!("Rule {} fail: {:?}", result.rule_id, result.error);
                         }
                     },
                     Err(e) => {
-                        error!("Rule {} execution error: {}", scheduled.rule.id, e);
+                        error!("Rule {} err: {}", scheduled.rule.id, e);
                         scheduled.last_execution = Some(now);
                     },
                 }

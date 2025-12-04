@@ -59,7 +59,7 @@ pub async fn start_warning_monitor(redis_url: String, token: CancellationToken) 
         ])
         .await?;
 
-    info!("Warning monitor started, listening for warnings...");
+    info!("WarnMonitor started");
 
     let stats = Arc::new(RwLock::new(WarningStats::default()));
 
@@ -76,7 +76,7 @@ pub async fn start_warning_monitor(redis_url: String, token: CancellationToken) 
                         match serde_json::from_str::<QueueOverflowWarning>(&payload) {
                             Ok(data) => {
                                 error!(
-                                    "CRITICAL: Queue overflow detected - service: {}, channel: {}, type: {}, queue length: {}",
+                                    "QUEUE OVERFLOW: {} Ch{}:{} len={}",
                                     data.service, data.channel_id, data.point_type, data.queue_length
                                 );
 
@@ -91,7 +91,7 @@ pub async fn start_warning_monitor(redis_url: String, token: CancellationToken) 
                                 // - Log to database for analysis
                             }
                             Err(e) => {
-                                error!("Failed to parse queue overflow warning: {}", e);
+                                error!("Queue overflow parse: {}", e);
                             }
                         }
                     }
@@ -99,7 +99,7 @@ pub async fn start_warning_monitor(redis_url: String, token: CancellationToken) 
                         match serde_json::from_str::<QueueOverflowWarning>(&payload) {
                             Ok(data) => {
                                 warn!(
-                                    "Queue approaching limit - service: {}, channel: {}, type: {}, queue length: {}",
+                                    "Queue high: {} Ch{}:{} len={}",
                                     data.service, data.channel_id, data.point_type, data.queue_length
                                 );
 
@@ -108,7 +108,7 @@ pub async fn start_warning_monitor(redis_url: String, token: CancellationToken) 
                                 s.queue_high_count += 1;
                             }
                             Err(e) => {
-                                error!("Failed to parse queue high warning: {}", e);
+                                error!("Queue high parse: {}", e);
                             }
                         }
                     }
@@ -117,12 +117,12 @@ pub async fn start_warning_monitor(redis_url: String, token: CancellationToken) 
                             Ok(data) => {
                                 if data.unmapped_count > 10 {
                                     warn!(
-                                        "Unmapped points detected - service: {}, channel: {}, type: {}, unmapped: {}, routed: {}",
+                                        "Unmapped: {} Ch{}:{} unmapped={} routed={}",
                                         data.service, data.channel_id, data.telemetry_type, data.unmapped_count, data.routed_count
                                     );
                                 } else {
-                                    info!(
-                                        "Unmapped points detected - service: {}, channel: {}, type: {}, unmapped: {}, routed: {}",
+                                    debug!(
+                                        "Unmapped: {} Ch{}:{} unmapped={} routed={}",
                                         data.service, data.channel_id, data.telemetry_type, data.unmapped_count, data.routed_count
                                     );
                                 }
@@ -135,17 +135,17 @@ pub async fn start_warning_monitor(redis_url: String, token: CancellationToken) 
                                 // Could trigger configuration validation or auto-mapping
                             }
                             Err(e) => {
-                                error!("Failed to parse unmapped points warning: {}", e);
+                                error!("Unmapped parse: {}", e);
                             }
                         }
                     }
                     _ => {
-                        debug!("Received message on unknown channel: {}", channel);
+                        debug!("Unknown channel: {}", channel);
                     }
                 }
             }
             _ = token.cancelled() => {
-                info!("Warning monitor received shutdown signal");
+                debug!("WarnMonitor stopping");
                 break;
             }
         }
@@ -154,7 +154,7 @@ pub async fn start_warning_monitor(redis_url: String, token: CancellationToken) 
     // Print final statistics
     let s = stats.read().await;
     info!(
-        "Warning monitor shutting down. Stats - Queue overflows: {}, Queue high: {}, Unmapped points: {}",
+        "WarnMonitor stats: overflow={} high={} unmapped={}",
         s.queue_overflow_count, s.queue_high_count, s.unmapped_points_count
     );
 
@@ -171,7 +171,7 @@ pub async fn start_stats_poller(
     let mut con = client.get_multiplexed_tokio_connection().await?;
     let mut interval = tokio::time::interval(tokio::time::Duration::from_millis(interval_ms));
 
-    info!("Stats poller started, checking every {}ms...", interval_ms);
+    info!("StatsPoller: {}ms interval", interval_ms);
 
     let mut last_values = std::collections::HashMap::new();
 
@@ -187,10 +187,7 @@ pub async fn start_stats_poller(
                     for (key, count) in warnings {
                         let last = last_values.get(&key).copied().unwrap_or(0);
                         if count > last {
-                            warn!(
-                                "ModSrv warning increased: {} (count: {} -> {})",
-                                key, last, count
-                            );
+                            warn!("ModSrv {}: {} -> {}", key, last, count);
                             last_values.insert(key, count);
                         }
                     }
@@ -208,10 +205,7 @@ pub async fn start_stats_poller(
                             let last = last_values.get(&last_key).copied().unwrap_or(0);
 
                             if count != last {
-                                info!(
-                                    "Unmapped points for {}: {} total",
-                                    key, count
-                                );
+                                debug!("Unmapped {}: {}", key, count);
                                 last_values.insert(last_key, count);
                             }
                         }
@@ -219,7 +213,7 @@ pub async fn start_stats_poller(
                 }
             }
             _ = token.cancelled() => {
-                info!("Stats poller received shutdown signal");
+                debug!("StatsPoller stopping");
                 break;
             }
         }

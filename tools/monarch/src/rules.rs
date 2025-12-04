@@ -121,21 +121,15 @@ pub async fn handle_command(
                     info!("Rule '{}' disabled", rule_id);
                 },
                 RuleCommands::Test { rule_id } => {
-                    warn!("Rule test not yet implemented in offline mode");
+                    warn!("Rule test: offline unsupported");
                     println!("Rule ID: {}", rule_id);
                 },
                 RuleCommands::Execute { rule_id, force: _ } => {
                     // Rule execution requires RTDB + routing_cache which monarch doesn't have
-                    // Use modsrv HTTP API (port 6002) for rule execution
-                    warn!(
-                        "Rule execution not available in offline mode. \
-                         Use online mode (--offline false) or call modsrv rule API directly: \
-                         POST http://localhost:6002/api/rules/{}/execute",
-                        rule_id
-                    );
+                    warn!("Rule exec: offline unavailable, use modsrv API: POST /api/rules/{}/execute", rule_id);
                 },
                 RuleCommands::Executions { rule_id, limit } => {
-                    warn!("Execution history not available in offline mode");
+                    warn!("Exec history: offline unavailable");
                     if let Some(id) = rule_id {
                         println!("Rule ID: {}", id);
                     }

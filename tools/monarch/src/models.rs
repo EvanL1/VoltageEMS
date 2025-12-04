@@ -178,9 +178,7 @@ async fn handle_product_command(
             if use_lib_api {
                 #[cfg(feature = "lib-mode")]
                 {
-                    // Offline mode: Not yet implemented
-                    warn!("Product import not yet supported in offline mode");
-                    warn!("Please use online mode or sync configuration via monarch");
+                    warn!("Product import: offline unsupported, use monarch sync");
                 }
             } else {
                 // Online mode: use HTTP API
@@ -191,7 +189,7 @@ async fn handle_product_command(
                 })?;
                 let client = client::ModelClient::new(url)?;
                 client.import_product(product).await?;
-                info!("Product '{}' imported successfully", name);
+                info!("Product '{}' imported", name);
             }
         },
 
@@ -263,7 +261,7 @@ async fn handle_product_command(
             if use_lib_api {
                 #[cfg(feature = "lib-mode")]
                 {
-                    warn!("Product delete not yet supported in offline mode");
+                    warn!("Product delete: offline unsupported");
                 }
             } else {
                 let url = base_url.ok_or_else(|| {

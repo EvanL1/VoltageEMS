@@ -249,11 +249,28 @@ impl DailyRollingWriter {
             .lock()
             .map_err(|e| std::io::Error::other(format!("Mutex poisoned: {}", e)))?;
 
-        if *current_date != today {
-            // Date changed, rotate to new file and reset rotation counter
+        // Build current file path
+        let current_file_path = self
+            .log_dir
+            .join(format!("{}_{}.log", *current_date, self.service_name));
+
+        // Check if date changed OR file was deleted
+        let file_deleted = !current_file_path.exists();
+
+        if *current_date != today || file_deleted {
+            // Date changed or file deleted, rotate to new file and reset rotation counter
+            let new_date = if *current_date != today {
+                today.clone()
+            } else {
+                current_date.clone()
+            };
             let new_file_path = self
                 .log_dir
-                .join(format!("{}_{}.log", today, self.service_name));
+                .join(format!("{}_{}.log", new_date, self.service_name));
+
+            // Ensure directory exists (in case it was also deleted)
+            fs::create_dir_all(&self.log_dir)?;
+
             let new_file = OpenOptions::new()
                 .create(true)
                 .append(true)
@@ -261,9 +278,11 @@ impl DailyRollingWriter {
             let initial_size = new_file.metadata().map(|m| m.len()).unwrap_or(0);
 
             // Update current date, file, and reset counters
-            *current_date = today;
+            if *current_date != today {
+                *current_date = today;
+                self.rotation_count.store(0, Ordering::SeqCst);
+            }
             self.current_size.store(initial_size, Ordering::SeqCst);
-            self.rotation_count.store(0, Ordering::SeqCst);
 
             let mut current_file = self
                 .current_file
@@ -703,19 +722,11 @@ pub fn init_with_config(config: LogConfig) -> Result<(), Box<dyn std::error::Err
         *slot = runtime;
     }
 
-    tracing::info!(
-        "Logging initialized for service: {} at {:?}",
-        config.service_name,
-        config.log_dir
-    );
+    tracing::info!("Logging: {} @ {:?}", config.service_name, config.log_dir);
 
     if config.enable_api_log {
         let current_date = chrono::Local::now().format("%Y%m%d");
-        tracing::info!(
-            "API logging enabled: {}_{}_api.log",
-            current_date,
-            config.service_name
-        );
+        tracing::debug!("API log: {}_{}_api.log", current_date, config.service_name);
     }
 
     // Start background compression task after logging the initialization
@@ -803,7 +814,7 @@ pub fn reopen_logs_now() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    tracing::info!("Log writer reopened successfully");
+    tracing::debug!("Log reopened");
     Ok(())
 }
 
@@ -817,10 +828,10 @@ pub fn enable_sighup_log_reopen() {
                 Ok(mut hup) => loop {
                     hup.recv().await;
                     if let Err(e) = reopen_logs_now() {
-                        tracing::warn!("Failed to reopen logs on SIGHUP: {}", e);
+                        tracing::warn!("SIGHUP reopen: {}", e);
                     }
                 },
-                Err(e) => tracing::warn!("Failed to install SIGHUP handler: {}", e),
+                Err(e) => tracing::warn!("SIGHUP handler: {}", e),
             }
         });
     }
@@ -971,7 +982,7 @@ pub fn init(level: &str) -> Result<(), Box<dyn std::error::Error>> {
 
 /// Set logging level (placeholder for dynamic level changes)
 pub fn set_level(level: &str) {
-    tracing::info!("Log level set to: {}", level);
+    tracing::debug!("Log level: {}", level);
     // Note: Dynamic level changes require more complex implementation
 }
 
@@ -985,7 +996,7 @@ macro_rules! log_to_channel {
 
         // Only write to channel-specific log file
         if let Err(e) = $crate::logging::write_to_channel_log(channel_id_val as u32, &channel_name_val, &message) {
-            tracing::warn!("Failed to write to channel {} log: {}", channel_id_val, e);
+            tracing::debug!("Ch{} log: {}", channel_id_val, e);
         }
     }};
 }
@@ -1142,13 +1153,13 @@ async fn compress_old_logs(
             if age > Duration::from_secs(7 * 86400) {
                 compress_file(&path).await?;
                 tokio::fs::remove_file(&path).await?; // Remove original file
-                tracing::info!("Compressed log file: {}", file_name);
+                tracing::debug!("Compressed: {}", file_name);
             }
         } else {
             // Delete compressed logs older than 365 days
             if age > Duration::from_secs(365 * 86400) {
                 tokio::fs::remove_file(&path).await?;
-                tracing::info!("Deleted old compressed log: {}", file_name);
+                tracing::debug!("Deleted: {}", file_name);
             }
         }
     }
@@ -1204,13 +1215,13 @@ async fn compress_subdirectory_logs(
             if age > Duration::from_secs(compress_after_days * 86400) {
                 compress_file(&path).await?;
                 tokio::fs::remove_file(&path).await?;
-                tracing::info!("Compressed log file: {}/{}", subdir, file_name);
+                tracing::debug!("Compressed: {}/{}", subdir, file_name);
             }
         } else {
             // Delete expired compressed logs
             if age > Duration::from_secs(delete_after_days * 86400) {
                 tokio::fs::remove_file(&path).await?;
-                tracing::info!("Deleted old compressed log: {}/{}", subdir, file_name);
+                tracing::debug!("Deleted: {}/{}", subdir, file_name);
             }
         }
     }
@@ -1271,21 +1282,13 @@ async fn compress_channels_logs(
                 if age > Duration::from_secs(compress_after_days * 86400) {
                     compress_file(&path).await?;
                     tokio::fs::remove_file(&path).await?;
-                    tracing::info!(
-                        "Compressed channel log file: channels/{}/{}",
-                        channel_name,
-                        file_name
-                    );
+                    tracing::debug!("Compressed: channels/{}/{}", channel_name, file_name);
                 }
             } else {
                 // Delete expired compressed logs
                 if age > Duration::from_secs(delete_after_days * 86400) {
                     tokio::fs::remove_file(&path).await?;
-                    tracing::info!(
-                        "Deleted old compressed channel log: channels/{}/{}",
-                        channel_name,
-                        file_name
-                    );
+                    tracing::debug!("Deleted: channels/{}/{}", channel_name, file_name);
                 }
             }
         }
@@ -1347,21 +1350,13 @@ async fn compress_instances_logs(
                 if age > Duration::from_secs(compress_after_days * 86400) {
                     compress_file(&path).await?;
                     tokio::fs::remove_file(&path).await?;
-                    tracing::info!(
-                        "Compressed instance log file: instances/{}/{}",
-                        instance_name,
-                        file_name
-                    );
+                    tracing::debug!("Compressed: instances/{}/{}", instance_name, file_name);
                 }
             } else {
                 // Delete expired compressed logs
                 if age > Duration::from_secs(delete_after_days * 86400) {
                     tokio::fs::remove_file(&path).await?;
-                    tracing::info!(
-                        "Deleted old compressed instance log: instances/{}/{}",
-                        instance_name,
-                        file_name
-                    );
+                    tracing::debug!("Deleted: instances/{}/{}", instance_name, file_name);
                 }
             }
         }
@@ -1423,17 +1418,13 @@ async fn compress_rules_logs(
                 if age > Duration::from_secs(compress_after_days * 86400) {
                     compress_file(&path).await?;
                     tokio::fs::remove_file(&path).await?;
-                    tracing::info!("Compressed rule log file: rules/{}/{}", rule_id, file_name);
+                    tracing::debug!("Compressed: rules/{}/{}", rule_id, file_name);
                 }
             } else {
                 // Delete expired compressed logs
                 if age > Duration::from_secs(delete_after_days * 86400) {
                     tokio::fs::remove_file(&path).await?;
-                    tracing::info!(
-                        "Deleted old compressed rule log: rules/{}/{}",
-                        rule_id,
-                        file_name
-                    );
+                    tracing::debug!("Deleted: rules/{}/{}", rule_id, file_name);
                 }
             }
         }

@@ -5,7 +5,7 @@
 
 use anyhow::Result;
 use std::sync::Arc;
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 use voltage_config::{InstanceReloadResult, ReloadableService};
 use voltage_rtdb::Rtdb;
 
@@ -34,7 +34,7 @@ impl<R: Rtdb + 'static> ReloadableService for InstanceManager<R> {
         _pool: &sqlx::SqlitePool,
     ) -> anyhow::Result<Self::ReloadResult> {
         let start_time = std::time::Instant::now();
-        info!("Starting incremental instance reload from SQLite");
+        debug!("Reloading instances");
 
         // 1. Load all instances from SQLite
         let db_instances = self.list_instances(None).await?;
@@ -70,11 +70,11 @@ impl<R: Rtdb + 'static> ReloadableService for InstanceManager<R> {
             match redis_state::unregister_instance(self.rtdb.as_ref(), *id, &instance_name).await {
                 Ok(_) => {
                     removed.push(*id);
-                    info!("Removed instance {} (id: {}) from Redis", instance_name, id);
+                    debug!("Removed: {} ({})", instance_name, id);
                 },
                 Err(e) => {
-                    errors.push(format!("Failed to remove instance {}: {}", id, e));
-                    error!("Failed to remove instance {}: {}", id, e);
+                    errors.push(format!("Remove {} err: {}", id, e));
+                    error!("Remove {} err: {}", id, e);
                 },
             }
         }
@@ -85,19 +85,11 @@ impl<R: Rtdb + 'static> ReloadableService for InstanceManager<R> {
                 match self.sync_single_instance_to_redis(instance).await {
                     Ok(_) => {
                         added.push(*id);
-                        info!(
-                            "Added instance {} (id: {}) to Redis",
-                            instance.instance_name(),
-                            id
-                        );
+                        debug!("Added: {} ({})", instance.instance_name(), id);
                     },
                     Err(e) => {
-                        errors.push(format!(
-                            "Failed to add instance {}: {}",
-                            instance.instance_name(),
-                            e
-                        ));
-                        error!("Failed to add instance {}: {}", instance.instance_name(), e);
+                        errors.push(format!("Add {} err: {}", instance.instance_name(), e));
+                        error!("Add {} err: {}", instance.instance_name(), e);
                     },
                 }
             }
@@ -109,23 +101,11 @@ impl<R: Rtdb + 'static> ReloadableService for InstanceManager<R> {
                 match self.sync_single_instance_to_redis(instance).await {
                     Ok(_) => {
                         updated.push(*id);
-                        info!(
-                            "Updated instance {} (id: {}) in Redis",
-                            instance.instance_name(),
-                            id
-                        );
+                        debug!("Updated: {} ({})", instance.instance_name(), id);
                     },
                     Err(e) => {
-                        errors.push(format!(
-                            "Failed to update instance {}: {}",
-                            instance.instance_name(),
-                            e
-                        ));
-                        error!(
-                            "Failed to update instance {}: {}",
-                            instance.instance_name(),
-                            e
-                        );
+                        errors.push(format!("Update {} err: {}", instance.instance_name(), e));
+                        error!("Update {} err: {}", instance.instance_name(), e);
                     },
                 }
             }
@@ -135,7 +115,7 @@ impl<R: Rtdb + 'static> ReloadableService for InstanceManager<R> {
         let total_count = db_instances.len();
 
         info!(
-            "Instance reload completed: {} added, {} updated, {} removed, {} errors ({}ms)",
+            "Reload: +{} ~{} -{} err:{} ({}ms)",
             added.len(),
             updated.len(),
             removed.len(),
@@ -165,8 +145,8 @@ impl<R: Rtdb + 'static> ReloadableService for InstanceManager<R> {
 
     /// Perform hot reload of an instance (sync to Redis)
     async fn perform_hot_reload(&self, config: Self::Config) -> anyhow::Result<String> {
-        info!(
-            "Performing hot reload for instance {} (id: {})",
+        debug!(
+            "Hot reload: {} ({})",
             config.instance_name(),
             config.instance_id()
         );
@@ -177,10 +157,7 @@ impl<R: Rtdb + 'static> ReloadableService for InstanceManager<R> {
 
     /// Rollback to previous configuration
     async fn rollback(&self, previous_config: Self::Config) -> anyhow::Result<String> {
-        warn!(
-            "Rolling back instance {} to previous configuration",
-            previous_config.instance_name()
-        );
+        warn!("Rollback: {}", previous_config.instance_name());
 
         self.sync_single_instance_to_redis(&previous_config).await?;
         Ok("restored".to_string())
@@ -205,12 +182,12 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
                 if let Ok(id) = id_str.parse::<u16>() {
                     instance_ids.insert(id);
                 } else {
-                    warn!("Invalid instance ID in Redis key: {}", key);
+                    warn!("Invalid ID in key: {}", key);
                 }
             }
         }
 
-        info!("Found {} instances in Redis", instance_ids.len());
+        debug!("{} instances in Redis", instance_ids.len());
         Ok(instance_ids)
     }
 }

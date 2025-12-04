@@ -7,7 +7,7 @@ use crate::core::config::RuntimeChannelConfig;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use tracing::{debug, info};
+use tracing::debug;
 use voltage_config::common::FourRemote;
 
 /// Runtime configuration provider
@@ -46,11 +46,6 @@ impl RuntimeConfigProvider {
                 Arc::new(PointTransformer::linear(point.scale, point.offset));
 
             transformers.insert(key, transformer);
-
-            debug!(
-                "Channel {} Telemetry point {} loaded: scale={}, offset={}",
-                channel_id, point.base.point_id, point.scale, point.offset
-            );
         }
 
         // Load Signal points (boolean transformation)
@@ -62,11 +57,6 @@ impl RuntimeConfigProvider {
                 Arc::new(PointTransformer::boolean(point.reverse));
 
             transformers.insert(key, transformer);
-
-            debug!(
-                "Channel {} Signal point {} loaded: reverse={}",
-                channel_id, point.base.point_id, point.reverse
-            );
         }
 
         // Load Control points (boolean transformation)
@@ -78,11 +68,6 @@ impl RuntimeConfigProvider {
             let transformer: Arc<PointTransformer> = Arc::new(PointTransformer::boolean(false));
 
             transformers.insert(key, transformer);
-
-            debug!(
-                "Channel {} Control point {} loaded",
-                channel_id, point.base.point_id
-            );
         }
 
         // Load Adjustment points (linear transformation, supports bidirectional)
@@ -94,15 +79,10 @@ impl RuntimeConfigProvider {
                 Arc::new(PointTransformer::linear(point.scale, point.offset));
 
             transformers.insert(key, transformer);
-
-            debug!(
-                "Channel {} Adjustment point {} loaded: scale={}, offset={}",
-                channel_id, point.base.point_id, point.scale, point.offset
-            );
         }
 
-        info!(
-            "Channel {} transformers loaded: {} total (T:{}, S:{}, C:{}, A:{})",
+        debug!(
+            "Ch{} trans: {} (T:{} S:{} C:{} A:{})",
             channel_id,
             runtime_config.telemetry_points.len()
                 + runtime_config.signal_points.len()
@@ -120,7 +100,7 @@ impl RuntimeConfigProvider {
         let mut transformers = self.transformers.write().await;
         transformers.retain(|(ch_id, _, _), _| *ch_id != channel_id);
 
-        info!("Channel {} transformers cleared", channel_id);
+        debug!("Ch{} transformers cleared", channel_id);
     }
 
     /// Get statistics

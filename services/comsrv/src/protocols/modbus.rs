@@ -120,6 +120,7 @@ impl ModbusProtocol {
             conn_mode,
             connection_params,
             logger.clone(),
+            polling_config.error_threshold,
         ));
 
         let frame_processor = Arc::new(Mutex::new(ModbusFrameProcessor::new(mode)));
@@ -272,7 +273,7 @@ impl ModbusProtocol {
                     ) {
                         Ok(values) => values,
                         Err(e) => {
-                            error!("Failed to encode value for point {}: {}", cmd.point_id, e);
+                            error!("Encode pt{}: {}", cmd.point_id, e);
                             results.push((cmd.point_id, false));
                             continue;
                         },
@@ -304,17 +305,14 @@ impl ModbusProtocol {
                                     results.push((cmd.point_id, success));
                                 }
                                 if success {
-                                    debug!(
-                                        "Batch write FC16 successful for {} registers",
-                                        all_values.len()
-                                    );
+                                    debug!("FC16 batch: {} regs ok", all_values.len());
                                 } else {
-                                    error!("Batch write FC16 failed with exception");
+                                    error!("FC16 batch exception");
                                 }
                             }
                         },
                         Err(e) => {
-                            error!("Batch write FC16 failed: {}", e);
+                            error!("FC16 batch: {}", e);
                             for cmd in commands {
                                 results.push((cmd.point_id, false));
                             }
@@ -331,7 +329,7 @@ impl ModbusProtocol {
                     ) {
                         Ok(values) => values,
                         Err(e) => {
-                            error!("Failed to encode value for point {}: {}", cmd.point_id, e);
+                            error!("Encode pt{}: {}", cmd.point_id, e);
                             results.push((cmd.point_id, false));
                             continue;
                         },
@@ -367,7 +365,7 @@ impl ModbusProtocol {
                             &register_values,
                         )?,
                         _ => {
-                            error!("Unsupported function code {} for control", function_code);
+                            error!("Unsupported FC{} for control", function_code);
                             results.push((cmd.point_id, false));
                             continue;
                         },
@@ -388,12 +386,12 @@ impl ModbusProtocol {
                                 let success = !parsed_pdu.is_exception();
                                 results.push((cmd.point_id, success));
                                 if !success {
-                                    error!("Write command failed for point {}", cmd.point_id);
+                                    error!("Write pt{} failed", cmd.point_id);
                                 }
                             }
                         },
                         Err(e) => {
-                            error!("Write command failed for point {}: {}", cmd.point_id, e);
+                            error!("Write pt{}: {}", cmd.point_id, e);
                             results.push((cmd.point_id, false));
                         },
                     }
@@ -417,10 +415,7 @@ impl ModbusProtocol {
                         timestamp,
                     } = command
                     {
-                        debug!(
-                            "Processing queued control command {} at timestamp {}",
-                            command_id, timestamp
-                        );
+                        debug!("Ctrl cmd{} @{}", command_id, timestamp);
                         drained.push((point_id, ProtocolValue::Float(value)));
                     }
                 }
@@ -443,10 +438,7 @@ impl ModbusProtocol {
                         timestamp,
                     } = command
                     {
-                        info!(
-                            "Processing queued adjustment command {} at timestamp {}",
-                            command_id, timestamp
-                        );
+                        debug!("Adj cmd{} @{}", command_id, timestamp);
                         drained.push((point_id, ProtocolValue::Float(value)));
                     }
                 }
@@ -469,16 +461,10 @@ impl ModbusProtocol {
         let mut batch_entries = Vec::new();
 
         for (point_id, value) in commands {
-            debug!(
-                "Adding {} command to batch: point {}, value {:?}",
-                context, point_id, value
-            );
+            debug!("{} pt{}={:?}", context, point_id, value);
 
             let Some(mapping) = self.get_point_mapping(telemetry_type, point_id).await else {
-                warn!(
-                    "{} point {} not found in Modbus configuration, skipping command",
-                    context, point_id
-                );
+                warn!("{} pt{} not found", context, point_id);
                 continue;
             };
 
@@ -1186,11 +1172,7 @@ impl ComClient for ModbusProtocol {
                 let mut grouped_guard = self.grouped_points.write().await;
                 *grouped_guard = groups;
 
-                info!(
-                    "Pre-grouped {} point groups for channel {} polling optimization",
-                    grouped_guard.len(),
-                    channel_id
-                );
+                debug!("Ch{} grouped: {} groups", channel_id, grouped_guard.len());
             }
 
             let grouped_points = Arc::clone(&self.grouped_points);
@@ -1200,10 +1182,7 @@ impl ComClient for ModbusProtocol {
                     tokio::time::interval(std::time::Duration::from_millis(polling_interval));
                 interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
-                info!(
-                    "Polling task started for channel {}, interval {}ms",
-                    channel_id, polling_interval
-                );
+                info!("Ch{} polling: {}ms", channel_id, polling_interval);
 
                 // Create reusable buffers outside loop to avoid per-cycle allocation
                 let mut telemetry_batch = Vec::with_capacity(1024);
@@ -1218,10 +1197,7 @@ impl ComClient for ModbusProtocol {
 
                     // Check connection and attempt reconnection if needed
                     if !is_connected.load(Ordering::Relaxed) {
-                        debug!(
-                            "Channel {} not connected, attempting reconnection...",
-                            channel_id
-                        );
+                        debug!("Ch{} reconnecting...", channel_id);
 
                         // Check if reconnection is enabled (default: true)
                         if polling_config.reconnect_enabled {
@@ -1236,25 +1212,22 @@ impl ComClient for ModbusProtocol {
                                 Ok(true) => {
                                     // Successfully connected
                                     is_connected.store(true, Ordering::Relaxed);
-                                    info!("Channel {} reconnected successfully", channel_id);
+                                    info!("Ch{} reconnected", channel_id);
                                     // Continue with polling after successful reconnection
                                 },
                                 Ok(false) => {
                                     // In cooldown period or max attempts reached
-                                    debug!("Channel {} reconnection in cooldown, will retry after cooldown", channel_id);
+                                    debug!("Ch{} in cooldown", channel_id);
                                     continue;
                                 },
                                 Err(e) => {
                                     // Unexpected error
-                                    error!("Channel {} reconnection error: {}", channel_id, e);
+                                    error!("Ch{} reconnect: {}", channel_id, e);
                                     continue;
                                 },
                             }
                         } else {
-                            debug!(
-                                "Channel {} reconnection disabled, skipping poll",
-                                channel_id
-                            );
+                            debug!("Ch{} reconnect disabled", channel_id);
                             continue;
                         }
                     }
@@ -1262,7 +1235,7 @@ impl ComClient for ModbusProtocol {
                     // Use pre-grouped points (computed at startup)
                     let grouped_guard = grouped_points.read().await;
                     if grouped_guard.is_empty() {
-                        debug!("No points configured for channel {}", channel_id);
+                        debug!("Ch{} no points", channel_id);
                         continue;
                     }
 
@@ -1371,10 +1344,7 @@ impl ComClient for ModbusProtocol {
                             },
                             Err(e) => {
                                 error_count += group_points.len();
-                                error!(
-                                    "Failed to read modbus group (slave={}, func={}): {}",
-                                    slave_id, function_code, e
-                                );
+                                error!("Group read err u={} FC{}: {}", slave_id, function_code, e);
 
                                 // Check if this is a connection error
                                 let error_str = e.to_string();
@@ -1384,7 +1354,7 @@ impl ComClient for ModbusProtocol {
                                     || error_str.contains("TCP send error")
                                     || error_str.contains("TCP receive error")
                                 {
-                                    warn!("Connection lost during polling: {}", e);
+                                    warn!("Conn lost: {}", e);
                                     is_connected.store(false, Ordering::Relaxed);
                                     // Next iteration will trigger reconnection
                                     break; // Exit the group processing loop
@@ -1411,23 +1381,20 @@ impl ComClient for ModbusProtocol {
                             match tx.send(batch).await {
                                 Ok(()) => {
                                     debug!(
-                                        "Sent telemetry batch: channel_id={}, total_points={}",
+                                        "Ch{} TX: {} pts",
                                         channel_id,
                                         telemetry_count + signal_count
                                     );
                                 },
                                 Err(e) => {
-                                    error!(
-                                        "Failed to send telemetry batch for channel {}: {}",
-                                        channel_id, e
-                                    );
+                                    error!("Ch{} TX batch err: {}", channel_id, e);
                                 },
                             }
                         }
                     }
 
                     debug!(
-                        "Poll completed for channel {}: {} success, {} errors",
+                        "Ch{} poll: {} ok/{} err",
                         channel_id, success_count, error_count
                     );
 
@@ -1443,15 +1410,12 @@ impl ComClient for ModbusProtocol {
     }
 
     async fn stop_periodic_tasks(&self) -> Result<()> {
-        info!(
-            "Stopping Modbus periodic tasks for channel {}",
-            self.channel_id
-        );
+        info!("Ch{} stopping tasks", self.channel_id);
 
         // Stop polling task
         if let Some(handle) = self.polling_handle.write().await.take() {
             handle.abort();
-            info!("Polling task stopped for channel {}", self.channel_id);
+            debug!("Ch{} polling stopped", self.channel_id);
         }
 
         Ok(())
@@ -1459,7 +1423,7 @@ impl ComClient for ModbusProtocol {
 
     fn set_data_channel(&mut self, tx: tokio::sync::mpsc::Sender<TelemetryBatch>) {
         self.data_channel = Some(tx);
-        debug!("Data channel set for channel {}", self.channel_id);
+        debug!("Ch{} data channel set", self.channel_id);
     }
 
     fn set_command_receiver(&mut self, mut rx: tokio::sync::mpsc::Receiver<ChannelCommand>) {
@@ -1481,23 +1445,23 @@ impl ComClient for ModbusProtocol {
 
         // Start command forwarding task
         tokio::spawn(async move {
-            info!("Starting command receiver for channel {}", channel_id);
+            debug!("Ch{} cmd receiver started", channel_id);
             while let Some(command) = rx.recv().await {
                 let (tx, _rx) = tokio::sync::oneshot::channel();
                 if let Err(e) = cmd_tx.send((command, tx)).await {
-                    error!("Failed to forward command: {}", e);
+                    error!("Cmd forward err: {}", e);
                 }
                 // We don't wait for the result here
             }
-            warn!("Command receiver stopped for channel {}", channel_id);
+            debug!("Ch{} cmd receiver stopped", channel_id);
         });
 
         // Start command processing task
         let handle = tokio::spawn(async move {
-            info!("Starting command processor for channel {}", channel_id);
+            debug!("Ch{} cmd processor started", channel_id);
             while let Some((command, result_tx)) = cmd_rx.recv().await {
                 if !is_connected.load(Ordering::Relaxed) {
-                    warn!("Received command while disconnected, ignoring");
+                    warn!("Cmd ignored: disconnected");
                     let _ = result_tx.send(Err(ComSrvError::NotConnected));
                     continue;
                 }
@@ -1510,10 +1474,7 @@ impl ComClient for ModbusProtocol {
                         value,
                         ..
                     } => {
-                        info!(
-                            "Processing control command {}: point {}, value {}",
-                            command_id, point_id, value
-                        );
+                        debug!("Control: cmd={} pt{} val={}", command_id, point_id, value);
 
                         // Find the mapping for this control point
                         let control_guard = control_points.read().await;
@@ -1540,10 +1501,7 @@ impl ComClient for ModbusProtocol {
                         value,
                         ..
                     } => {
-                        info!(
-                            "Processing adjustment command {}: point {}, value {}",
-                            command_id, point_id, value
-                        );
+                        debug!("Adjust: cmd={} pt{} val={}", command_id, point_id, value);
 
                         // Find the mapping for this adjustment point
                         let adjustment_guard = adjustment_points.read().await;
@@ -1568,7 +1526,7 @@ impl ComClient for ModbusProtocol {
 
                 let _ = result_tx.send(result);
             }
-            warn!("Command processor stopped for channel {}", channel_id);
+            debug!("Ch{} cmd processor stopped", channel_id);
         });
 
         // Store the command handle in a separate task to avoid blocking
@@ -1578,7 +1536,7 @@ impl ComClient for ModbusProtocol {
             *handle_guard = Some(handle);
         });
 
-        debug!("Command receiver set for channel {}", self.channel_id);
+        debug!("Ch{} cmd receiver set", self.channel_id);
     }
 }
 
@@ -1662,8 +1620,12 @@ async fn read_modbus_group_with_processor(
                 },
                 Err(e) => {
                     error!(
-                        "Batch failed (slave={}, func={}, addr={}, points={}): {} - continuing with next batch",
-                        slave_id, function_code, batch_start_address, current_batch_indices.len(), e
+                        "Batch err u={} FC{} @{} ({}pts): {}",
+                        slave_id,
+                        function_code,
+                        batch_start_address,
+                        current_batch_indices.len(),
+                        e
                     );
                     // Continue processing remaining batches instead of failing entire group
                 },
@@ -1698,8 +1660,12 @@ async fn read_modbus_group_with_processor(
             },
             Err(e) => {
                 error!(
-                    "Final batch failed (slave={}, func={}, addr={}, points={}): {} - returning partial results",
-                    slave_id, function_code, batch_start_address, current_batch_indices.len(), e
+                    "Final batch err u={} FC{} @{} ({}pts): {}",
+                    slave_id,
+                    function_code,
+                    batch_start_address,
+                    current_batch_indices.len(),
+                    e
                 );
                 // Return partial results from successful batches instead of failing entire group
             },
@@ -1766,21 +1732,15 @@ async fn read_modbus_batch_indexed(
         };
 
         debug!(
-            "Reading Modbus batch: slave={}, func={}, start={}, count={} {} (offset={}/{})",
-            slave_id,
-            function_code,
-            batch_start,
-            batch_size,
-            unit_name,
-            current_offset,
-            total_units
+            "Batch u={} FC{} @{}: {} {}",
+            slave_id, function_code, batch_start, batch_size, unit_name
         );
 
         // Build Modbus PDU for this batch
         let pdu = PduBuilder::build_read_request(function_code, batch_start, batch_size as u16)?;
 
         debug!(
-            "Built PDU for batch_start={}, batch_size={}, PDU bytes: {:02X?}",
+            "PDU @{} {}B: {:02X?}",
             batch_start,
             batch_size,
             pdu.as_slice()
@@ -1824,23 +1784,15 @@ async fn read_modbus_batch_indexed(
                         )));
                     }
 
-                    debug!(
-                        "Received PDU for FC{}: bytes={:02X?}",
-                        function_code,
-                        pdu.as_slice()
-                    );
+                    debug!("RX PDU FC{}: {:02X?}", function_code, pdu.as_slice());
 
                     match parse_modbus_pdu(&pdu, function_code, batch_size as u16) {
                         Ok(values) => {
-                            debug!(
-                                "Parsed {} register values from PDU: {:?}",
-                                values.len(),
-                                values
-                            );
+                            debug!("Parsed {} vals: {:?}", values.len(), values);
                             break values;
                         },
                         Err(e) => {
-                            error!("Failed to parse Modbus PDU: {}", e);
+                            error!("PDU parse err: {}", e);
                             retry_count += 1;
                             if retry_count >= MAX_RETRIES {
                                 return Err(e.into());
@@ -1850,7 +1802,7 @@ async fn read_modbus_batch_indexed(
                     }
                 },
                 Err(e) => {
-                    debug!("Ignoring mismatched response: {}", e);
+                    debug!("Mismatch response: {}", e);
                     retry_count += 1;
                     if retry_count >= MAX_RETRIES {
                         return Err(ComSrvError::TimeoutError(
@@ -1868,7 +1820,7 @@ async fn read_modbus_batch_indexed(
                 let expected_bytes = batch_size.div_ceil(8);
                 if batch_register_values.len() != expected_bytes {
                     warn!(
-                        "Received {} bytes, expected {} bytes for {} bits at address {}",
+                        "RX {}B expect {}B ({}bits @{})",
                         batch_register_values.len(),
                         expected_bytes,
                         batch_size,
@@ -1879,7 +1831,7 @@ async fn read_modbus_batch_indexed(
             _ => {
                 if batch_register_values.len() != batch_size {
                     warn!(
-                        "Received {} registers, expected {} for batch at address {}",
+                        "RX {} regs expect {} @{}",
                         batch_register_values.len(),
                         batch_size,
                         batch_start
@@ -1905,10 +1857,7 @@ async fn read_modbus_batch_indexed(
                 let bit_offset = bit_address % 8;
 
                 if byte_offset >= all_register_values.len() {
-                    warn!(
-                        "Point {} with bit address {} is out of range",
-                        point.point_id, point.register_address
-                    );
+                    warn!("pt{} bit @{} OOR", point.point_id, point.register_address);
                     continue;
                 }
 
@@ -1920,10 +1869,7 @@ async fn read_modbus_batch_indexed(
                 let register_count = point.register_count as usize;
 
                 if offset + register_count > all_register_values.len() {
-                    warn!(
-                        "Point {} at register {} is out of range",
-                        point.point_id, point.register_address
-                    );
+                    warn!("pt{} reg @{} OOR", point.point_id, point.register_address);
                     continue;
                 }
 
@@ -1950,8 +1896,8 @@ async fn read_modbus_batch_indexed(
             Ok(v) => v,
             Err(e) => {
                 error!(
-                    "Point {} decode failed: {} (data_type={}, registers={:?}, function_code={})",
-                    point.point_id, e, point.data_type, registers, function_code
+                    "pt{} decode err: {} (type={} FC{})",
+                    point.point_id, e, point.data_type, function_code
                 );
                 // ✅ 继续处理下一个点位，不中断批次 / Continue processing the next point without aborting the batch
                 continue;
@@ -1967,7 +1913,7 @@ async fn read_modbus_batch_indexed(
             ProtocolValue::Null => "null".to_string(),
         };
         debug!(
-            "Point {}: decoded={} (scale={}, offset={}, reverse={})",
+            "pt{}: {} (s={} o={} r={})",
             point.point_id, value_str, point.scale, point.offset, point.reverse
         );
 
@@ -2032,10 +1978,7 @@ async fn execute_modbus_write(
             )
         } else {
             // Fallback defaults for testing (should log warning in production)
-            warn!(
-            "No mapping found for point {}, using defaults. This should not happen in production!",
-            point_id
-        );
+            warn!("pt{}: no mapping, using defaults", point_id);
             let default_function_code = match telemetry_type {
                 FourRemote::Control => 5,    // Write Single Coil
                 FourRemote::Adjustment => 6, // Write Single Register
@@ -2069,8 +2012,8 @@ async fn execute_modbus_write(
                     let clamped_value = clamp_to_data_type(raw_value, &data_type);
 
                     debug!(
-                        "Point {} downlink transformation: engineering={} → raw={} → clamped={} (scale={}, offset={})",
-                        point_id, engineering_value, raw_value, clamped_value, mapping.scale, mapping.offset
+                        "pt{} TX: eng={} → raw={} → clamp={}",
+                        point_id, engineering_value, raw_value, clamped_value
                     );
 
                     // Return clamped value as ProtocolValue
@@ -2088,18 +2031,15 @@ async fn execute_modbus_write(
                     let clamped_value = clamp_to_data_type(raw_value, &data_type);
 
                     debug!(
-                        "Point {} downlink transformation: engineering={} → raw={} → clamped={} (scale={}, offset={})",
-                        point_id, engineering_value, raw_value, clamped_value, mapping.scale, mapping.offset
+                        "pt{} TX: eng={} → raw={} → clamp={}",
+                        point_id, engineering_value, raw_value, clamped_value
                     );
 
                     // Return clamped value as ProtocolValue
                     ProtocolValue::Float(clamped_value)
                 },
                 _ => {
-                    warn!(
-                        "Point {} has scale/offset but value is not numeric: {:?}",
-                        point_id, value
-                    );
+                    warn!("pt{}: scale/offset on non-numeric {:?}", point_id, value);
                     // Return original value without transformation
                     value
                 },
@@ -2114,7 +2054,7 @@ async fn execute_modbus_write(
     };
 
     debug!(
-        "Writing to Modbus: slave={}, func={}, addr={}, type={}, value={:?}",
+        "Modbus write: u={} FC{} @{} type={} val={:?}",
         slave_id, function_code, register_address, data_type, transformed_value
     );
 
@@ -2194,8 +2134,8 @@ async fn execute_modbus_write(
     ModbusCodec::parse_modbus_write_response(&response_pdu, function_code)?;
 
     info!(
-        "Successfully wrote value {:?} to point {} (addr={}, slave={})",
-        transformed_value, point_id, register_address, slave_id
+        "Write ok: pt{} @{} u={}",
+        point_id, register_address, slave_id
     );
 
     Ok(())
@@ -2376,6 +2316,7 @@ mod tests {
             reconnect_enabled: true,
             reconnect_max_consecutive: 5,
             reconnect_cooldown_ms: 60000,
+            error_threshold: 5,
         }
     }
 

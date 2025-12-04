@@ -41,7 +41,7 @@ impl ConfigValidator {
 
     /// Validate configuration for a specific service
     pub async fn validate_service(&self, service: &str) -> Result<ValidationResult> {
-        info!("Validating configuration for service: {}", service);
+        info!("Validate: {}", service);
 
         // Special handling for global configuration (no subdirectory)
         if service == "global" {
@@ -66,11 +66,11 @@ impl ConfigValidator {
         };
 
         if result.is_valid {
-            debug!("Validation passed for service: {}", service);
+            debug!("{}: valid", service);
         } else {
-            warn!("Validation failed for service: {}", service);
+            warn!("{}: invalid", service);
             for error in &result.errors {
-                warn!("  Error: {}", error);
+                warn!("  {}", error);
             }
         }
 

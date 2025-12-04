@@ -8,7 +8,7 @@ use dashmap::DashMap;
 use std::sync::Arc;
 use std::time::Instant;
 use tokio::sync::RwLock;
-use tracing::{error, info};
+use tracing::{debug, error, info};
 
 use crate::core::channels::point_config::RuntimeConfigProvider;
 use crate::core::channels::sync::TelemetrySync;
@@ -219,7 +219,7 @@ impl ChannelManager {
         let runtime_config = Arc::new(runtime_config);
 
         info!(
-            "Loaded configurations for channel {}: {} telemetry, {} signal, {} control, {} adjustment points",
+            "Ch{}: T={} S={} C={} A={} pts",
             channel_id,
             runtime_config.telemetry_points.len(),
             runtime_config.signal_points.len(),
@@ -231,10 +231,7 @@ impl ChannelManager {
         self.config_provider
             .load_channel_config(&runtime_config)
             .await;
-        info!(
-            "Channel {} transformers loaded into config provider",
-            channel_id
-        );
+        debug!("Ch{} transformers loaded", channel_id);
 
         // Get protocol using normalized name
         let protocol_name = crate::utils::normalize_protocol_name(runtime_config.protocol());
@@ -257,7 +254,7 @@ impl ChannelManager {
         // Start telemetry sync task (only once - protected by internal guard)
         if self.telemetry_sync.get_handle().read().await.is_none() {
             self.start_telemetry_sync_task().await?;
-            info!("Telemetry sync task started (will process data from all channels)");
+            info!("Telemetry sync started");
         }
 
         // Setup command trigger
@@ -275,10 +272,7 @@ impl ChannelManager {
 
         self.channels.insert(channel_id, entry);
 
-        info!(
-            "Created channel {} with protocol {}",
-            channel_id, protocol_name
-        );
+        info!("Ch{} created ({})", channel_id, protocol_name);
         Ok(channel_arc)
     }
 
@@ -319,7 +313,7 @@ impl ChannelManager {
                 let _ = trigger.stop().await;
             }
 
-            info!("Removed channel {}", channel_id);
+            info!("Ch{} removed", channel_id);
             Ok(())
         } else {
             Err(ComSrvError::ChannelNotFound(format!(
@@ -399,11 +393,11 @@ impl ChannelManager {
                 let mut channel = channel_arc.write().await;
                 match channel.connect().await {
                     Ok(_) => {
-                        info!("Connected channel {}", channel_id);
+                        info!("Ch{} connected", channel_id);
                         Ok(())
                     },
                     Err(e) => {
-                        error!("Failed to connect channel {}: {}", channel_id, e);
+                        error!("Ch{} connect err: {}", channel_id, e);
                         Err(e)
                     },
                 }
@@ -447,7 +441,7 @@ impl ChannelManager {
 
     /// Cleanup all resources
     pub async fn cleanup(&self) -> Result<()> {
-        info!("Cleaning up channel manager...");
+        info!("Cleanup started");
 
         // Stop telemetry sync task
         let _ = self.stop_telemetry_sync_task().await;
@@ -458,7 +452,7 @@ impl ChannelManager {
             let _ = self.remove_channel(channel_id).await;
         }
 
-        info!("Channel manager cleanup completed");
+        info!("Cleanup done");
         Ok(())
     }
 
@@ -474,10 +468,7 @@ impl ChannelManager {
         use tracing::{debug, warn};
 
         let channel_id = runtime_config.base.id();
-        info!(
-            "Initializing channel {} points to Redis with actual point IDs",
-            channel_id
-        );
+        debug!("Ch{} init Redis points", channel_id);
 
         // Use shared RTDB directly
         let rtdb = self.rtdb.clone();
@@ -521,15 +512,12 @@ impl ChannelManager {
 
         for (telemetry_name, four_remote, point_ids) in telemetry_types {
             if point_ids.is_empty() {
-                debug!(
-                    "No {} points configured for channel {}",
-                    telemetry_name, channel_id
-                );
+                debug!("Ch{} no {} pts", channel_id, telemetry_name);
                 continue;
             }
 
             debug!(
-                "Channel {} {}: {} points configured",
+                "Ch{} {}: {} pts",
                 channel_id,
                 telemetry_name,
                 point_ids.len()
@@ -551,21 +539,16 @@ impl ChannelManager {
 
             // Fetch existing fields in Redis Hash
             let existing_hash = rtdb.hash_get_all(&channel_key).await.unwrap_or_else(|e| {
-                warn!("Failed to fetch existing fields for {}: {}", channel_key, e);
+                warn!("Fetch err {}: {}", channel_key, e);
                 std::collections::HashMap::new()
             });
             let existing_fields: Vec<String> = existing_hash.keys().cloned().collect();
 
             debug!(
-                "Channel {} {} - Redis Hash has {} fields: {:?}",
+                "Ch{} {}: {} fields in Redis",
                 channel_id,
                 telemetry_name,
-                existing_fields.len(),
-                if existing_fields.len() <= 10 {
-                    existing_fields.clone()
-                } else {
-                    existing_fields.iter().take(10).cloned().collect::<Vec<_>>()
-                }
+                existing_fields.len()
             );
 
             // Filter out timestamp suffix fields (e.g., "10:ts") and convert to point IDs
@@ -576,19 +559,10 @@ impl ChannelManager {
                 .collect();
 
             debug!(
-                "Channel {} {} - {} existing point IDs after filtering: {:?}",
+                "Ch{} {}: {} existing pts",
                 channel_id,
                 telemetry_name,
-                existing_point_ids.len(),
-                if existing_point_ids.len() <= 10 {
-                    existing_point_ids.iter().copied().collect::<Vec<_>>()
-                } else {
-                    existing_point_ids
-                        .iter()
-                        .copied()
-                        .take(10)
-                        .collect::<Vec<_>>()
-                }
+                existing_point_ids.len()
             );
 
             // Calculate missing points that need initialization
@@ -599,38 +573,27 @@ impl ChannelManager {
                 .collect();
 
             debug!(
-                "Channel {} {} - {} missing point IDs to initialize: {:?}",
+                "Ch{} {}: {} missing pts",
                 channel_id,
                 telemetry_name,
-                missing_point_ids.len(),
-                if missing_point_ids.len() <= 10 {
-                    missing_point_ids.clone()
-                } else {
-                    missing_point_ids
-                        .iter()
-                        .take(10)
-                        .copied()
-                        .collect::<Vec<_>>()
-                }
+                missing_point_ids.len()
             );
 
             if missing_point_ids.is_empty() {
-                info!(
-                    "Channel {} {} - all {} points already exist in Redis (key_exists: {}), skipping initialization",
+                debug!(
+                    "Ch{} {}: {} pts exist, skip",
                     channel_id,
                     telemetry_name,
-                    point_ids.len(),
-                    key_exists
+                    point_ids.len()
                 );
                 continue;
             }
 
             info!(
-                "Initializing channel {} {} with {} new points (total configured: {}, already exist: {})",
+                "Ch{} {} init: {} new (+{} exist)",
                 channel_id,
                 telemetry_name,
                 missing_point_ids.len(),
-                point_ids.len(),
                 existing_point_ids.len()
             );
 
@@ -658,10 +621,10 @@ impl ChannelManager {
                 })?;
 
             debug!(
-                "Successfully initialized {} {} points for channel {}",
-                missing_point_ids.len(),
+                "Ch{} {} init: {} pts",
+                channel_id,
                 telemetry_name,
-                channel_id
+                missing_point_ids.len()
             );
         }
 
@@ -678,7 +641,7 @@ impl ChannelManager {
     )> {
         use crate::core::channels::trigger::{CommandTrigger, CommandTriggerConfig};
 
-        info!("Creating CommandTrigger for channel {}", channel_id);
+        debug!("Ch{} trigger creating", channel_id);
 
         let config = CommandTriggerConfig {
             channel_id,
@@ -691,7 +654,7 @@ impl ChannelManager {
         let mut trigger = CommandTrigger::new(config, tx, self.rtdb.clone()).await?;
         trigger.start().await?;
 
-        info!("CommandTrigger created for channel {}", channel_id);
+        debug!("Ch{} trigger created", channel_id);
 
         Ok((Some(Arc::new(RwLock::new(trigger))), rx))
     }

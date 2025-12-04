@@ -496,8 +496,8 @@ where
         )
         .await?;
 
-    tracing::info!(
-        "Instance {} renamed from '{}' to '{}' in Redis",
+    tracing::debug!(
+        "Instance {} renamed: {} -> {}",
         instance_id,
         old_name,
         new_name

@@ -141,7 +141,7 @@ fn analyze_parameter_changes(
     // Check for critical parameter changes
     for key in critical_params.iter() {
         if old_params.get(*key) != new_params.get(*key) {
-            tracing::info!("Critical parameter changed: {}", key);
+            tracing::debug!("Critical change: {}", key);
             return Critical;
         }
     }
@@ -149,7 +149,7 @@ fn analyze_parameter_changes(
     // Check for non-critical parameter changes
     for key in non_critical_params.iter() {
         if old_params.get(*key) != new_params.get(*key) {
-            tracing::info!("Non-critical parameter changed: {}", key);
+            tracing::debug!("Param change: {}", key);
             return NonCritical;
         }
     }
@@ -160,10 +160,7 @@ fn analyze_parameter_changes(
 
     for key in all_keys {
         if old_params.get(key.as_str()) != new_params.get(key.as_str()) {
-            tracing::info!(
-                "Unknown parameter changed: {}, treating as non-critical",
-                key
-            );
+            tracing::debug!("Unknown param: {}", key);
             return NonCritical;
         }
     }
@@ -186,7 +183,7 @@ async fn perform_hot_reload(
 
     // 1. Remove old channel (allow failure)
     if let Err(e) = manager.remove_channel(id).await {
-        tracing::warn!("Failed to remove old channel {}: {}", id, e);
+        tracing::warn!("Remove Ch{}: {}", id, e);
     }
 
     // 2. Create new channel
@@ -201,16 +198,12 @@ async fn perform_hot_reload(
     tokio::spawn(async move {
         let mut channel = channel_arc.write().await;
         match channel.connect().await {
-            Ok(_) => tracing::info!("Channel {} connected successfully", id),
-            Err(e) => tracing::warn!(
-                "Channel {} connection failed (background reconnection will retry): {}",
-                id,
-                e
-            ),
+            Ok(_) => tracing::debug!("Ch{} connected", id),
+            Err(e) => tracing::warn!("Ch{} connect: {}", id, e),
         }
     });
 
-    tracing::info!("Channel {} configuration reloaded", id);
+    tracing::debug!("Ch{} reloaded", id);
     Ok("reloaded".to_string())
 }
 
@@ -364,7 +357,7 @@ pub async fn create_channel_handler(
             )));
         }
 
-        tracing::info!("Using manually specified channel ID: {}", id);
+        tracing::debug!("Manual ID: {}", id);
         id
     } else {
         // Auto-assign ID: find MAX + 1
@@ -374,21 +367,11 @@ pub async fn create_channel_handler(
             .map_err(|e| AppError::internal_error(format!("Database error: {}", e)))?;
 
         let next_id = (max_id.unwrap_or(0) + 1) as u16;
-        tracing::info!("Auto-assigned channel ID: {}", next_id);
+        tracing::debug!("Auto ID: {}", next_id);
         next_id
     };
 
-    tracing::info!(
-        "Creating channel {} ({}): {} ({})",
-        channel_id,
-        req.name,
-        req.protocol,
-        if req.channel_id.is_some() {
-            "manual ID"
-        } else {
-            "auto ID"
-        }
-    );
+    tracing::debug!("Creating Ch{}: {} ({})", channel_id, req.name, req.protocol);
 
     let enabled = req.enabled.unwrap_or(true);
 
@@ -416,32 +399,21 @@ pub async fn create_channel_handler(
                 tokio::spawn(async move {
                     let mut channel = channel_arc.write().await;
                     if let Err(e) = channel.connect().await {
-                        tracing::warn!(
-                            "Channel {} initial connection failed: {} (background reconnection will retry)",
-                            channel_id_for_log,
-                            e
-                        );
+                        tracing::warn!("Ch{} connect: {}", channel_id_for_log, e);
                     } else {
-                        tracing::info!("Channel {} connected successfully", channel_id_for_log);
+                        tracing::debug!("Ch{} connected", channel_id_for_log);
                     }
                 });
                 "connecting".to_string()
             },
             Err(e) => {
-                tracing::warn!(
-                    "Failed to create runtime channel {} (continuing without runtime): {}",
-                    channel_id,
-                    e
-                );
+                tracing::warn!("Create Ch{} runtime: {}", channel_id, e);
                 "not_started".to_string()
             },
         }
     } else {
         // enabled = false: Skip runtime creation, just write to database
-        tracing::info!(
-            "Channel {} created in disabled state, skipping runtime startup",
-            channel_id
-        );
+        tracing::debug!("Ch{} created (disabled)", channel_id);
         "stopped".to_string()
     };
 
@@ -463,7 +435,7 @@ pub async fn create_channel_handler(
     .execute(&state.sqlite_pool)
     .await
     {
-        tracing::error!("Failed to insert channel into database: {}", e);
+        tracing::error!("Insert Ch{}: {}", channel_id, e);
         // Database write failed, remove the runtime channel
         let manager = state.channel_manager.write().await;
         let _ = manager.remove_channel(channel_id).await;
@@ -521,7 +493,7 @@ pub async fn update_channel_handler(
     State(state): State<AppState>,
     Json(req): Json<crate::dto::ChannelConfigUpdateRequest>,
 ) -> Result<Json<SuccessResponse<crate::dto::ChannelCrudResult>>, AppError> {
-    tracing::info!("Updating channel {} configuration", id);
+    tracing::debug!("Ch{} updating", id);
 
     // 1. Check if channel is currently running
     let is_running = {
@@ -536,7 +508,7 @@ pub async fn update_channel_handler(
             .fetch_optional(&state.sqlite_pool)
             .await
             .map_err(|e| {
-                tracing::error!("Database error: {}", e);
+                tracing::error!("DB err: {}", e);
                 AppError::internal_error("Database operation failed")
             })?;
 
@@ -614,7 +586,7 @@ pub async fn update_channel_handler(
         let logging = voltage_config::comsrv::ChannelLoggingConfig::default();
         let config_json = build_channel_config_json(description.as_ref(), &parameters, &logging)
             .map_err(|e| {
-                tracing::error!("Failed to serialize channel config for {}: {}", id, e);
+                tracing::error!("Serialize Ch{}: {}", id, e);
                 AppError::internal_error(format!("Failed to build config JSON: {}", e))
             })?;
 
@@ -644,10 +616,7 @@ pub async fn update_channel_handler(
         ParameterChangeType::MetadataOnly // Not running, no need to reload
     };
 
-    tracing::info!(
-        "Channel {} parameter change type: {:?} (name_changed={}, description_changed={}, protocol_changed={})",
-        id, change_type, name_changed, description_changed, protocol_changed
-    );
+    tracing::debug!("Ch{} change: {:?}", id, change_type);
 
     // 6. Hot reload if channel is running and changes require it
     let runtime_status = if is_running {
@@ -656,10 +625,7 @@ pub async fn update_channel_handler(
         match change_type {
             MetadataOnly => {
                 // Only name or description changed, no hot reload needed
-                tracing::info!(
-                    "Channel {} metadata-only change detected, skipping hot reload",
-                    id
-                );
+                tracing::debug!("Ch{} metadata only", id);
                 tx.commit().await.map_err(|e| {
                     AppError::internal_error(format!("Database operation failed: {}", e))
                 })?;
@@ -667,10 +633,7 @@ pub async fn update_channel_handler(
             },
             NonCritical => {
                 // Performance parameters changed, proceed with hot reload
-                tracing::warn!(
-                    "Channel {} non-critical parameter change detected, proceeding with hot reload",
-                    id
-                );
+                tracing::debug!("Ch{} non-critical change, hot reload", id);
 
                 // Commit database first
                 tx.commit().await.map_err(|e| {
@@ -694,7 +657,7 @@ pub async fn update_channel_handler(
                 let state_clone = state.clone();
                 tokio::spawn(async move {
                     if let Err(e) = perform_hot_reload(id, &state_clone, new_config).await {
-                        tracing::error!("Background hot reload failed for channel {}: {}", id, e);
+                        tracing::error!("Ch{} hot reload: {}", id, e);
                     }
                 });
 
@@ -702,10 +665,7 @@ pub async fn update_channel_handler(
             },
             Critical => {
                 // Critical parameters changed, proceed with hot reload
-                tracing::info!(
-                    "Channel {} critical parameter change detected, performing hot reload",
-                    id
-                );
+                tracing::debug!("Ch{} critical change, hot reload", id);
 
                 // Commit database first
                 tx.commit().await.map_err(|e| {
@@ -729,7 +689,7 @@ pub async fn update_channel_handler(
                 let state_clone = state.clone();
                 tokio::spawn(async move {
                     if let Err(e) = perform_hot_reload(id, &state_clone, new_config).await {
-                        tracing::error!("Background hot reload failed for channel {}: {}", id, e);
+                        tracing::error!("Ch{} hot reload: {}", id, e);
                     }
                 });
 
@@ -741,7 +701,7 @@ pub async fn update_channel_handler(
         tx.commit()
             .await
             .map_err(|e| AppError::internal_error(format!("Database operation failed: {}", e)))?;
-        tracing::info!("Channel {} configuration updated (not running)", id);
+        tracing::debug!("Ch{} updated (stopped)", id);
         "stopped".to_string()
     };
 
@@ -794,7 +754,7 @@ pub async fn set_channel_enabled_handler(
 ) -> Result<Json<SuccessResponse<crate::dto::ChannelCrudResult>>, AppError> {
     use crate::core::config::ChannelConfig;
 
-    tracing::info!("Setting channel {} enabled state to {}", id, req.enabled);
+    tracing::debug!("Ch{} enabled={}", id, req.enabled);
 
     // 1. Load current configuration from database
     let current: Option<(String, String, bool, Option<String>)> =
@@ -803,7 +763,7 @@ pub async fn set_channel_enabled_handler(
             .fetch_optional(&state.sqlite_pool)
             .await
             .map_err(|e| {
-                tracing::error!("Database error: {}", e);
+                tracing::error!("DB err: {}", e);
                 AppError::internal_error("Database operation failed")
             })?;
 
@@ -865,16 +825,8 @@ pub async fn set_channel_enabled_handler(
                 tokio::spawn(async move {
                     let mut channel = channel_clone.write().await;
                     match channel.connect().await {
-                        Ok(_) => {
-                            tracing::info!("Channel {} connected successfully", channel_id_for_log);
-                        },
-                        Err(e) => {
-                            tracing::warn!(
-                                "Channel {} initial connection failed: {} (background reconnection will retry)",
-                                channel_id_for_log,
-                                e
-                            );
-                        },
+                        Ok(_) => tracing::debug!("Ch{} connected", channel_id_for_log),
+                        Err(e) => tracing::warn!("Ch{} connect: {}", channel_id_for_log, e),
                     }
                 });
                 drop(manager);
@@ -886,7 +838,7 @@ pub async fn set_channel_enabled_handler(
                     .execute(&state.sqlite_pool)
                     .await
                 {
-                    tracing::error!("Failed to update database for channel {}: {}", id, e);
+                    tracing::error!("Ch{} DB update: {}", id, e);
                     // DB update failed - remove the runtime channel
                     let manager = state.channel_manager.write().await;
                     let _ = manager.remove_channel(id).await;
@@ -896,15 +848,11 @@ pub async fn set_channel_enabled_handler(
                     )));
                 }
 
-                tracing::info!("Channel {} enabled (connecting in background)", id);
+                tracing::debug!("Ch{} enabled (bg connect)", id);
                 "connecting".to_string()
             },
             Err(e) => {
-                tracing::warn!(
-                    "Failed to create runtime channel for {} (continuing with enabled state only): {}",
-                    id,
-                    e
-                );
+                tracing::warn!("Ch{} runtime create: {}", id, e);
                 drop(manager);
 
                 // Update database to enabled even if runtime creation failed
@@ -914,14 +862,14 @@ pub async fn set_channel_enabled_handler(
                     .execute(&state.sqlite_pool)
                     .await
                 {
-                    tracing::error!("Failed to update database for channel {}: {}", id, e);
+                    tracing::error!("Ch{} DB update: {}", id, e);
                     return Err(AppError::internal_error(format!(
                         "Database update failed: {}",
                         e
                     )));
                 }
 
-                tracing::info!("Channel {} marked enabled (runtime not started)", id);
+                tracing::debug!("Ch{} enabled (no runtime)", id);
                 "enabled".to_string()
             },
         }
@@ -929,7 +877,7 @@ pub async fn set_channel_enabled_handler(
         // Disable: stop and remove channel
         let manager = state.channel_manager.write().await;
         if let Err(e) = manager.remove_channel(id).await {
-            tracing::warn!("Failed to remove channel {} during disable: {}", id, e);
+            tracing::warn!("Ch{} remove: {}", id, e);
         }
         drop(manager);
 
@@ -940,14 +888,14 @@ pub async fn set_channel_enabled_handler(
             .execute(&state.sqlite_pool)
             .await
         {
-            tracing::error!("Failed to update database for channel {}: {}", id, e);
+            tracing::error!("Ch{} DB update: {}", id, e);
             return Err(AppError::internal_error(format!(
                 "Database update failed: {}",
                 e
             )));
         }
 
-        tracing::info!("Channel {} disabled successfully", id);
+        tracing::debug!("Ch{} disabled", id);
         "stopped".to_string()
     };
 
@@ -994,15 +942,11 @@ pub async fn delete_channel_handler(
     Path(id): Path<u16>,
     State(state): State<AppState>,
 ) -> Result<Json<SuccessResponse<String>>, AppError> {
-    tracing::info!("Deleting channel {}", id);
+    tracing::debug!("Deleting Ch{}", id);
 
     // 1. Begin transaction for atomic deletion
     let mut tx = state.sqlite_pool.begin().await.map_err(|e| {
-        tracing::error!(
-            "Failed to begin transaction for deleting channel {}: {}",
-            id,
-            e
-        );
+        tracing::error!("Ch{} delete tx begin: {}", id, e);
         AppError::internal_error(format!("Failed to begin transaction: {}", e))
     })?;
 
@@ -1012,7 +956,7 @@ pub async fn delete_channel_handler(
         .execute(&mut *tx)
         .await
         .map_err(|e| {
-            tracing::error!("Failed to delete channel {} from database: {}", id, e);
+            tracing::error!("Ch{} delete: {}", id, e);
             AppError::internal_error(format!("Failed to delete channel from database: {}", e))
         })?;
 
@@ -1027,11 +971,7 @@ pub async fn delete_channel_handler(
     // 3. Commit transaction BEFORE removing runtime channel
     // This ensures database consistency is preserved
     tx.commit().await.map_err(|e| {
-        tracing::error!(
-            "Failed to commit transaction for deleting channel {}: {}",
-            id,
-            e
-        );
+        tracing::error!("Ch{} delete tx commit: {}", id, e);
         AppError::internal_error(format!("Failed to commit transaction: {}", e))
     })?;
 
@@ -1040,15 +980,11 @@ pub async fn delete_channel_handler(
     {
         let manager = state.channel_manager.write().await;
         if let Err(e) = manager.remove_channel(id).await {
-            tracing::warn!(
-                "Channel {} deleted from database but failed to remove from runtime: {}",
-                id,
-                e
-            );
+            tracing::warn!("Ch{} runtime remove: {}", id, e);
         }
     }
 
-    tracing::info!("Channel {} deleted successfully", id);
+    tracing::info!("Ch{} deleted", id);
     Ok(Json(SuccessResponse::new(format!(
         "Channel {} deleted successfully",
         id
@@ -1075,7 +1011,7 @@ pub async fn reload_configuration_handler(
 ) -> Result<Json<SuccessResponse<crate::dto::ReloadConfigResult>>, AppError> {
     use crate::core::config::ChannelConfig;
 
-    tracing::info!("Reloading configuration from SQLite");
+    tracing::debug!("Reloading config");
 
     // 1. Load all channels from SQLite
     let db_channels: Vec<(i64, String, String, bool)> =
@@ -1083,7 +1019,7 @@ pub async fn reload_configuration_handler(
             .fetch_all(&state.sqlite_pool)
             .await
             .map_err(|e| {
-                tracing::error!("Failed to load channels from database: {}", e);
+                tracing::error!("Load channels: {}", e);
                 AppError::internal_error("Database operation failed")
             })?;
 
@@ -1113,7 +1049,7 @@ pub async fn reload_configuration_handler(
             match manager.remove_channel(*id).await {
                 Ok(_) => {
                     channels_removed.push(*id);
-                    tracing::info!("Removed channel {} (not in SQLite)", id);
+                    tracing::debug!("Ch{} removed (not in DB)", id);
                 },
                 Err(e) => {
                     errors.push(format!("Failed to remove channel {}: {}", id, e));
@@ -1164,10 +1100,10 @@ pub async fn reload_configuration_handler(
                         // Try to connect
                         let mut channel = channel_arc.write().await;
                         if let Err(e) = channel.connect().await {
-                            tracing::warn!("Channel {} added but failed to connect: {}", id, e);
+                            tracing::warn!("Ch{} connect: {}", id, e);
                         }
                         channels_added.push(*id);
-                        tracing::info!("Added and started channel {} from SQLite", id);
+                        tracing::debug!("Ch{} added", id);
                     },
                     Err(e) => {
                         errors.push(format!("Failed to add channel {}: {}", id, e));
@@ -1176,7 +1112,7 @@ pub async fn reload_configuration_handler(
             } else {
                 // Channel is disabled, don't create runtime instance
                 channels_added.push(*id);
-                tracing::info!("Added channel {} from SQLite (disabled, not started)", id);
+                tracing::debug!("Ch{} added (disabled)", id);
             }
         }
     }
@@ -1207,11 +1143,7 @@ pub async fn reload_configuration_handler(
 
             // Remove old channel (if exists)
             if let Err(e) = manager.remove_channel(*id).await {
-                tracing::debug!(
-                    "Channel {} not in runtime during update (may be disabled): {}",
-                    id,
-                    e
-                );
+                tracing::debug!("Ch{} not in runtime: {}", id, e);
             }
 
             // Only create and connect if enabled
@@ -1232,10 +1164,10 @@ pub async fn reload_configuration_handler(
                     Ok(channel_arc) => {
                         let mut channel = channel_arc.write().await;
                         if let Err(e) = channel.connect().await {
-                            tracing::warn!("Channel {} updated but failed to connect: {}", id, e);
+                            tracing::warn!("Ch{} connect: {}", id, e);
                         }
                         channels_updated.push(*id);
-                        tracing::info!("Updated and started channel {} from SQLite", id);
+                        tracing::debug!("Ch{} updated", id);
                     },
                     Err(e) => {
                         errors.push(format!("Failed to update channel {}: {}", id, e));
@@ -1244,7 +1176,7 @@ pub async fn reload_configuration_handler(
             } else {
                 // Channel is disabled, don't create runtime instance
                 channels_updated.push(*id);
-                tracing::info!("Updated channel {} from SQLite (disabled, not started)", id);
+                tracing::debug!("Ch{} updated (disabled)", id);
             }
         }
     }
@@ -1258,7 +1190,7 @@ pub async fn reload_configuration_handler(
     };
 
     tracing::info!(
-        "Configuration reload completed: added={}, updated={}, removed={}, errors={}",
+        "Reload: +{} ~{} -{} err:{}",
         result.channels_added.len(),
         result.channels_updated.len(),
         result.channels_removed.len(),
@@ -1290,7 +1222,7 @@ pub async fn reload_routing_handler(
 ) -> Result<Json<SuccessResponse<crate::dto::RoutingReloadResult>>, AppError> {
     use crate::core::channels::ChannelManager;
 
-    tracing::info!("Reloading routing cache from SQLite");
+    tracing::debug!("Reloading routing");
 
     let start_time = std::time::Instant::now();
     let mut errors = Vec::new();
@@ -1324,7 +1256,7 @@ pub async fn reload_routing_handler(
 
     if result.errors.is_empty() {
         tracing::info!(
-            "Routing cache reload completed successfully: {} C2M, {} M2C, {} C2C mappings ({}ms)",
+            "Routing: {} C2M, {} M2C, {} C2C ({}ms)",
             c2m_count,
             m2c_count,
             c2c_count,
@@ -1332,7 +1264,7 @@ pub async fn reload_routing_handler(
         );
     } else {
         tracing::warn!(
-            "Routing cache reload completed with errors: {} errors ({}ms)",
+            "Routing: {} errors ({}ms)",
             result.errors.len(),
             duration_ms
         );

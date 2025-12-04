@@ -4,7 +4,7 @@
 //! including startup banners, logging initialization, and environment setup.
 
 use crate::logging::{self, LogConfig};
-use tracing::{info, Level};
+use tracing::{debug, info, Level};
 
 /// Service metadata for startup
 pub struct ServiceInfo {
@@ -68,12 +68,12 @@ pub fn print_startup_banner(service: &ServiceInfo) {
     };
 
     info!("{}", banner);
-    info!("");
-    info!(" {} v{}", service.name.to_uppercase(), service.version);
-    info!(" {}", service.description);
-    info!(" Default Port: {}", service.default_port);
-    info!(" Built with Rust for High Performance");
-    info!("");
+    info!(
+        "{} v{} | Port: {}",
+        service.name.to_uppercase(),
+        service.version,
+        service.default_port
+    );
 }
 
 /// Initialize logging for a service with standard configuration
@@ -193,7 +193,7 @@ pub async fn bootstrap_service(service: ServiceInfo) -> anyhow::Result<String> {
         );
     }
 
-    info!("Loading configuration from: {}", config_path);
+    debug!("Config: {}", config_path);
 
     Ok(config_path)
 }

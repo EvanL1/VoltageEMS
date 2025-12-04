@@ -40,15 +40,14 @@ impl Default for DatabaseConfig {
 pub async fn setup_sqlite_pool(db_path: &str) -> VoltageResult<SqlitePool> {
     // Check if database file exists
     if !Path::new(db_path).exists() {
-        error!("Database not found at: {}", db_path);
-        error!("Please run: monarch sync [service_name]");
+        error!("DB not found: {}", db_path);
         return Err(VoltageError::DatabaseNotFound {
             path: db_path.to_string(),
             service: "unknown".to_string(),
         });
     }
 
-    info!("Connecting to SQLite database: {}", db_path);
+    info!("SQLite: {}", db_path);
 
     // Create connection pool with configuration
     let pool = SqlitePool::connect(&format!("sqlite:{}?mode=rwc", db_path))
@@ -63,7 +62,7 @@ pub async fn setup_sqlite_pool(db_path: &str) -> VoltageResult<SqlitePool> {
         .await
         .map_err(|e| VoltageError::Database(format!("Failed to test SQLite connection: {}", e)))?;
 
-    debug!("SQLite connection pool established");
+    debug!("SQLite pool ready");
     Ok(pool)
 }
 
@@ -75,14 +74,14 @@ pub async fn setup_sqlite_with_config(config: &DatabaseConfig) -> VoltageResult<
 
     // Check if database file exists
     if !Path::new(&config.sqlite_path).exists() {
-        error!("Database not found at: {}", config.sqlite_path);
+        error!("DB not found: {}", config.sqlite_path);
         return Err(VoltageError::DatabaseNotFound {
             path: config.sqlite_path.clone(),
             service: "unknown".to_string(),
         });
     }
 
-    info!("Connecting to SQLite: {}", config.sqlite_path);
+    info!("SQLite: {}", config.sqlite_path);
 
     let pool = pool_options
         .connect(&format!("sqlite:{}?mode=rwc", config.sqlite_path))
@@ -107,15 +106,12 @@ pub async fn setup_redis_with_timeout(
     // Build connection candidates with priority
     let candidates = build_redis_candidates(redis_url, "redis://127.0.0.1:6379");
 
-    info!(
-        "Attempting Redis connection with {} candidates",
-        candidates.len()
-    );
+    info!("Redis: {} candidates", candidates.len());
 
     // Connect with retry logic
     let (url, client) = connect_redis_with_retry(candidates, timeout).await;
 
-    info!("Connected to Redis at: {}", url);
+    info!("Redis connected: {}", url);
     Ok((url, Arc::new(client)))
 }
 
@@ -149,7 +145,7 @@ pub async fn setup_redis_with_config(
     let candidates = build_redis_candidates(redis_url, "redis://127.0.0.1:6379");
 
     info!(
-        "Attempting Redis connection with {} candidates (pool size: {})",
+        "Redis: {} candidates (pool:{})",
         candidates.len(),
         redis_config.max_connections
     );
@@ -167,7 +163,7 @@ pub async fn setup_redis_with_config(
         .await
         .map_err(|e| VoltageError::Internal(format!("Failed to create Redis client: {}", e)))?;
 
-    info!("Connected to Redis at: {} (pool size: {})", url, pool_size);
+    info!("Redis connected: {} (pool:{})", url, pool_size);
     Ok((url, Arc::new(client)))
 }
 
@@ -176,7 +172,7 @@ pub async fn validate_sqlite_schema(
     pool: &SqlitePool,
     required_tables: &[&str],
 ) -> VoltageResult<()> {
-    info!("Validating SQLite schema...");
+    debug!("Validating schema");
 
     for table in required_tables {
         let query = format!(
@@ -193,17 +189,17 @@ pub async fn validate_sqlite_schema(
                 })?;
 
         if result.is_none() {
-            error!("Required table '{}' not found in database", table);
+            error!("Missing table: {}", table);
             return Err(VoltageError::Configuration(format!(
                 "Missing required table: {}. Please run: monarch init",
                 table
             )));
         }
 
-        debug!("✓ Table '{}' exists", table);
+        debug!("Table ok: {}", table);
     }
 
-    info!("Schema validation completed successfully");
+    debug!("Schema valid");
     Ok(())
 }
 
@@ -234,7 +230,7 @@ pub fn check_database_permissions(db_path: &str) -> VoltageResult<()> {
         })?;
 
         if metadata.permissions().readonly() {
-            warn!("Database directory is read-only: {}", parent.display());
+            warn!("Read-only dir: {}", parent.display());
         }
     }
 
@@ -249,20 +245,19 @@ pub async fn initialize_database_with_retry(
     let mut last_error = None;
 
     for attempt in 1..=max_retries {
-        info!("Database connection attempt {}/{}", attempt, max_retries);
+        debug!("DB retry {}/{}", attempt, max_retries);
 
         match setup_sqlite_pool(db_path).await {
             Ok(pool) => {
-                info!("Database connection established on attempt {}", attempt);
+                debug!("DB connected");
                 return Ok(pool);
             },
             Err(e) => {
-                warn!("Connection attempt {} failed: {}", attempt, e);
+                warn!("DB retry {} failed: {}", attempt, e);
                 last_error = Some(e);
 
                 if attempt < max_retries {
                     let delay = std::time::Duration::from_secs(attempt as u64);
-                    info!("Retrying in {} seconds...", delay.as_secs());
                     tokio::time::sleep(delay).await;
                 }
             },
@@ -276,7 +271,7 @@ pub async fn initialize_database_with_retry(
 
 /// Test Redis connection and basic operations
 pub async fn test_redis_connection(client: &RedisClient) -> VoltageResult<()> {
-    debug!("Testing Redis connection...");
+    debug!("Testing Redis");
 
     // Test PING
     let pong: String = client
@@ -317,7 +312,7 @@ pub async fn test_redis_connection(client: &RedisClient) -> VoltageResult<()> {
         .await
         .map_err(|e| VoltageError::Communication(format!("Redis DEL failed: {}", e)))?;
 
-    debug!("Redis connection test successful");
+    debug!("Redis ok");
     Ok(())
 }
 

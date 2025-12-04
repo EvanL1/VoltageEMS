@@ -100,7 +100,7 @@ pub async fn get_channel_mappings_handler(
             .fetch_optional(&state.sqlite_pool)
             .await
             .map_err(|e| {
-                tracing::error!("Database error checking channel: {}", e);
+                tracing::error!("Ch check: {}", e);
                 AppError::internal_error("Database operation failed")
             })?;
 
@@ -134,7 +134,7 @@ pub async fn get_channel_mappings_handler(
             .fetch_all(&state.sqlite_pool)
             .await
             .map_err(|e| {
-                tracing::error!("Error querying {}: {}", table, e);
+                tracing::error!("Query {}: {}", table, e);
                 AppError::internal_error("Database operation failed")
             })?;
 
@@ -160,12 +160,7 @@ pub async fn get_channel_mappings_handler(
                         }
                     },
                     Err(e) => {
-                        tracing::error!(
-                            "Failed to parse protocol_mappings JSON for point {} in {}: {}",
-                            point_id,
-                            table,
-                            e
-                        );
+                        tracing::error!("Parse mapping {}:{}: {}", table, point_id, e);
                         serde_json::Value::Object(serde_json::Map::new())
                     },
                 }
@@ -505,7 +500,7 @@ pub async fn update_channel_mappings_handler(
             .fetch_optional(&state.sqlite_pool)
             .await
             .map_err(|e| {
-                tracing::error!("Database error checking channel: {}", e);
+                tracing::error!("Ch check: {}", e);
                 AppError::internal_error("Database operation failed")
             })?;
 
@@ -731,25 +726,17 @@ pub async fn update_channel_mappings_handler(
 
         if is_running {
             // Trigger channel reload by calling reload handler internally
-            tracing::info!("Auto-reloading channel {} after mapping update", channel_id);
+            tracing::debug!("Ch{} auto-reload", channel_id);
 
             // Simple reload: disconnect and reconnect
             let factory = state.factory.read().await;
             if let Some(channel_arc) = factory.get_channel(channel_id) {
                 let mut channel = channel_arc.write().await;
                 if let Err(e) = channel.disconnect().await {
-                    tracing::warn!(
-                        "Error disconnecting channel {} for reload: {}",
-                        channel_id,
-                        e
-                    );
+                    tracing::warn!("Ch{} disconnect: {}", channel_id, e);
                 }
                 if let Err(e) = channel.connect().await {
-                    tracing::error!(
-                        "Error reconnecting channel {} after mapping update: {}",
-                        channel_id,
-                        e
-                    );
+                    tracing::error!("Ch{} reconnect: {}", channel_id, e);
                     return Err(AppError::internal_error(format!(
                         "Mappings updated but channel reload failed: {}",
                         e

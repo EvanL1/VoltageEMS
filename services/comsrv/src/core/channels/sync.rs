@@ -97,9 +97,7 @@ impl PointTransformer {
                     (value - offset) / scale
                 } else {
                     // Avoid division by zero
-                    tracing::warn!(
-                        "PointTransformer::Linear: scale is zero, returning original value"
-                    );
+                    tracing::warn!("Linear: scale=0, passthrough");
                     value
                 }
             },
@@ -232,7 +230,7 @@ impl TelemetrySync {
 
     /// Start telemetry sync task
     pub async fn start_telemetry_sync_task(&self) -> Result<()> {
-        info!("Starting telemetry sync task...");
+        debug!("Sync starting");
 
         // Take the receiver from the manager
         let receiver = {
@@ -254,7 +252,7 @@ impl TelemetrySync {
 
         // Spawn the telemetry sync task
         let task_handle = tokio::spawn(async move {
-            info!("Telemetry sync task started with data transformation enabled");
+            debug!("Sync task running");
 
             // Create storage manager from existing rtdb and routing cache
             let storage = crate::storage::StorageManager::from_rtdb(rtdb, routing_cache);
@@ -268,19 +266,19 @@ impl TelemetrySync {
                 // Batch update if there are updates
                 if !updates.is_empty() {
                     if let Err(e) = storage.batch_update_and_publish(channel_id, updates).await {
-                        error!("Failed to sync data for channel {}: {}", channel_id, e);
+                        error!("Ch{} sync err: {}", channel_id, e);
                     }
                 }
             }
 
-            info!("Telemetry sync task stopped");
+            debug!("Sync task ended");
         });
 
         // Store the task handle
         let mut handle = sync_handle.write().await;
         *handle = Some(task_handle);
 
-        info!("Telemetry sync task started successfully");
+        info!("Sync started");
 
         Ok(())
     }
@@ -289,9 +287,9 @@ impl TelemetrySync {
     pub async fn stop_telemetry_sync_task(&self) -> Result<()> {
         let mut handle = self.sync_task_handle.write().await;
         if let Some(task_handle) = handle.take() {
-            info!("Stopping telemetry sync task...");
+            debug!("Sync stopping");
             task_handle.abort();
-            info!("Telemetry sync task stopped");
+            debug!("Sync stopped");
         }
         Ok(())
     }

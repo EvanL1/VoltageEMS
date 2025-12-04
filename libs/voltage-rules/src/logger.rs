@@ -33,7 +33,7 @@ impl RuleLogger {
     pub fn new(log_root: &Path, rule_id: &str, _rule_name: &str) -> Self {
         let rule_dir = log_root.join("rules").join(rule_id);
         if let Err(e) = fs::create_dir_all(&rule_dir) {
-            warn!("Failed to create rule log directory {:?}: {}", rule_dir, e);
+            warn!("Log dir err {:?}: {}", rule_dir, e);
         }
 
         Self {
@@ -75,11 +75,11 @@ impl RuleLogger {
 
         // Check if we need to rotate the file (new day)
         let Ok(mut current_date) = self.current_date.lock() else {
-            warn!("Failed to acquire current_date lock");
+            warn!("Date lock fail");
             return;
         };
         let Ok(mut file_guard) = self.current_file.lock() else {
-            warn!("Failed to acquire current_file lock");
+            warn!("File lock fail");
             return;
         };
 
@@ -95,7 +95,7 @@ impl RuleLogger {
             {
                 Ok(file) => *file_guard = Some(file),
                 Err(e) => {
-                    warn!("Failed to open rule log file {:?}: {}", file_path, e);
+                    warn!("Log open err {:?}: {}", file_path, e);
                     return;
                 },
             }
@@ -105,7 +105,7 @@ impl RuleLogger {
         if let Some(ref mut file) = *file_guard {
             let line = format!("{} [RULE] {} {}\n", timestamp, self.rule_id, message);
             if let Err(e) = file.write_all(line.as_bytes()) {
-                warn!("Failed to write rule log: {}", e);
+                warn!("Log write err: {}", e);
             }
         }
     }
@@ -198,7 +198,7 @@ impl RuleLoggerManager {
     /// Get or create a logger for a specific rule
     pub fn get_logger(&self, rule_id: &str, rule_name: &str) -> Arc<RuleLogger> {
         let Ok(mut loggers) = self.loggers.lock() else {
-            warn!("Failed to acquire loggers lock, creating temporary logger");
+            warn!("Loggers lock fail, temp logger");
             return Arc::new(RuleLogger::new(&self.log_root, rule_id, rule_name));
         };
 

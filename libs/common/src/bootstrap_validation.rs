@@ -5,7 +5,7 @@
 
 use std::collections::HashSet;
 use std::path::Path;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, warn};
 use voltage_config::error::{VoltageError, VoltageResult};
 
 /// Validation result with detailed information
@@ -68,31 +68,22 @@ impl ValidationResult {
 
     /// Print validation summary
     pub fn print_summary(&self) {
-        if !self.info.is_empty() {
-            info!("Validation information:");
-            for msg in &self.info {
-                info!("  ℹ {}", msg);
-            }
+        for msg in &self.info {
+            debug!("{}", msg);
         }
 
-        if !self.warnings.is_empty() {
-            warn!("Validation warnings:");
-            for msg in &self.warnings {
-                warn!("  ⚠ {}", msg);
-            }
+        for msg in &self.warnings {
+            warn!("{}", msg);
         }
 
-        if !self.errors.is_empty() {
-            error!("Validation errors:");
-            for msg in &self.errors {
-                error!("  ✗ {}", msg);
-            }
+        for msg in &self.errors {
+            error!("{}", msg);
         }
 
         if self.is_valid {
-            info!("✓ Configuration validation passed");
+            debug!("Config valid");
         } else {
-            error!("✗ Configuration validation failed");
+            error!("Config invalid");
         }
     }
 }
@@ -247,7 +238,7 @@ pub fn validate_config_completeness(
 
     for (field, present) in config_fields {
         if *present {
-            debug!("Config field '{}' is present", field);
+            debug!("Field ok: {}", field);
         } else {
             result.add_error(format!(
                 "Required configuration field '{}' is missing",
@@ -289,10 +280,7 @@ pub async fn run_basic_validations(
 ) -> VoltageResult<ValidationResult> {
     let mut result = ValidationResult::new();
 
-    info!(
-        "Running basic configuration validations for {}",
-        service_name
-    );
+    debug!("Validating {}", service_name);
 
     // Validate port
     result.merge(validate_port(port, service_name));

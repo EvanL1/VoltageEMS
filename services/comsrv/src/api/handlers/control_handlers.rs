@@ -62,7 +62,7 @@ pub async fn control_channel(
         "start" => {
             let mut channel_guard = channel.write().await;
             if let Err(e) = channel_guard.connect().await {
-                tracing::error!("Failed to connect channel {}: {}", id_u16, e);
+                tracing::error!("Ch{} connect: {}", id_u16, e);
                 return Err(AppError::internal_error(format!(
                     "Failed to connect channel {}: {}",
                     id_u16, e
@@ -75,7 +75,7 @@ pub async fn control_channel(
         "stop" => {
             let mut channel_guard = channel.write().await;
             if let Err(e) = channel_guard.disconnect().await {
-                tracing::error!("Failed to disconnect channel {}: {}", id_u16, e);
+                tracing::error!("Ch{} disconnect: {}", id_u16, e);
                 return Err(AppError::internal_error(format!(
                     "Failed to connect channel {}: {}",
                     id_u16, e
@@ -89,7 +89,7 @@ pub async fn control_channel(
             let mut channel_guard = channel.write().await;
             // First stop the channel
             if let Err(e) = channel_guard.disconnect().await {
-                tracing::error!("Failed to stop channel {} during restart: {}", id_u16, e);
+                tracing::error!("Ch{} stop: {}", id_u16, e);
                 return Err(AppError::internal_error(format!(
                     "Failed to connect channel {}: {}",
                     id_u16, e
@@ -101,7 +101,7 @@ pub async fn control_channel(
 
             // Then start it again
             if let Err(e) = channel_guard.connect().await {
-                tracing::error!("Failed to restart channel {}: {}", id_u16, e);
+                tracing::error!("Ch{} restart: {}", id_u16, e);
                 return Err(AppError::internal_error(format!(
                     "Failed to connect channel {}: {}",
                     id_u16, e
@@ -208,18 +208,12 @@ pub async fn write_channel_point(
             )
             .await
             .map_err(|e| {
-                tracing::error!(
-                    "Failed to write single point: channel={}, type={}, point={}, error={}",
-                    channel_id,
-                    point_type,
-                    id,
-                    e
-                );
+                tracing::error!("Write Ch{}:{}:{}: {}", channel_id, point_type, id, e);
                 AppError::internal_error(format!("Failed to write point value: {}", e))
             })?;
 
-            tracing::info!(
-                "Single point write completed: channel={}, type={}, point={}, value={}, ts={}",
+            tracing::debug!(
+                "Write Ch{}:{}:{} = {} @{}",
                 channel_id,
                 point_type,
                 id,
@@ -248,12 +242,7 @@ pub async fn write_channel_point(
                 let point_id = match point.id.parse::<u32>() {
                     Ok(id) => id,
                     Err(_) => {
-                        tracing::warn!(
-                            "Invalid point ID in batch: channel={}, type={}, point={}",
-                            channel_id,
-                            point_type,
-                            point.id
-                        );
+                        tracing::warn!("Invalid ID: Ch{}:{}:{}", channel_id, point_type, point.id);
                         errors.push(BatchCommandError {
                             point_id: 0,
                             error: format!("Invalid point ID: {}", point.id),
@@ -276,13 +265,7 @@ pub async fn write_channel_point(
                         succeeded += 1;
                     },
                     Err(e) => {
-                        tracing::warn!(
-                            "Failed to write point in batch: channel={}, type={}, point={}, error={}",
-                            channel_id,
-                            point_type,
-                            point.id,
-                            e
-                        );
+                        tracing::warn!("Write Ch{}:{}:{}: {}", channel_id, point_type, point.id, e);
                         errors.push(BatchCommandError {
                             point_id,
                             error: format!("Failed to write: {}", e),
@@ -291,13 +274,12 @@ pub async fn write_channel_point(
                 }
             }
 
-            tracing::info!(
-                "Batch write completed: channel={}, type={}, total={}, succeeded={}, failed={}",
+            tracing::debug!(
+                "Batch Ch{}:{}: {}/{} ok",
                 channel_id,
                 point_type,
-                total,
                 succeeded,
-                total - succeeded
+                total
             );
 
             let result = BatchCommandResult {

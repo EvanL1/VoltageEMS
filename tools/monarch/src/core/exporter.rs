@@ -39,7 +39,7 @@ impl ConfigExporter {
         service: &str,
         output_dir: impl AsRef<Path>,
     ) -> Result<ExportResult> {
-        info!("Exporting configuration for service: {}", service);
+        info!("Export: {}", service);
 
         let output_dir = output_dir.as_ref();
 
@@ -58,10 +58,10 @@ impl ConfigExporter {
         };
 
         info!(
-            "Successfully exported {} files with {} records for {}",
+            "{}: {} files, {} records",
+            service,
             result.files_exported.len(),
-            result.records_exported,
-            service
+            result.records_exported
         );
         Ok(result)
     }

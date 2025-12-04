@@ -143,32 +143,22 @@ where
         .map(|v| v == "true" || v == "1")
         .unwrap_or(false)
     {
-        info!(
-            "{}: Redis cleanup skipped (SKIP_REDIS_CLEANUP=true)",
-            provider.service_name()
-        );
+        info!("{}: Cleanup skip (env)", provider.service_name());
         return Ok(0);
     }
 
-    info!(
-        "{}: Starting Redis data cleanup based on database configuration",
-        provider.service_name()
-    );
+    info!("{}: Cleanup starting", provider.service_name());
 
     // 1. Get valid entity IDs from database
     let valid_ids = provider.get_valid_ids().await?;
-    info!(
-        "{}: Found {} valid entities in configuration",
-        provider.service_name(),
-        valid_ids.len()
-    );
+    info!("{}: {} valid IDs", provider.service_name(), valid_ids.len());
     debug!("{}: Valid IDs: {:?}", provider.service_name(), valid_ids);
 
     // 2. Scan Redis keys matching pattern
     let pattern = provider.key_pattern();
     let keys: Vec<String> = redis.scan_match(pattern).await?;
     info!(
-        "{}: Found {} keys matching pattern '{}'",
+        "{}: {} keys ({})",
         provider.service_name(),
         keys.len(),
         pattern
@@ -242,7 +232,7 @@ where
     }
 
     info!(
-        "{}: Redis cleanup completed - deleted keys: {}, deleted points: {}, preserved valid: {}, preserved system: {}",
+        "{}: Cleanup done (del:{}/{} keep:{}/{})",
         provider.service_name(),
         deleted_count,
         deleted_point_count,
@@ -259,9 +249,9 @@ where
             messages.push(format!("{} point fields", deleted_point_count));
         }
         warn!(
-            "{}: Removed {} no longer in configuration",
+            "{}: Removed {}",
             provider.service_name(),
-            messages.join(" and ")
+            messages.join(", ")
         );
     }
 

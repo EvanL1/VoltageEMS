@@ -3,7 +3,7 @@
 
 use std::fmt::Display;
 use std::str::FromStr;
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
 /// Get configuration value with priority: DB > ENV > Default
 ///
@@ -20,7 +20,7 @@ where
     // Priority 1: DB value (if not default)
     if let Some(val) = db_value {
         if !is_default {
-            info!("Using {} from database", env_var);
+            debug!("{} from DB", env_var);
             return val;
         }
     }
@@ -29,17 +29,17 @@ where
     if let Ok(env_str) = std::env::var(env_var) {
         match env_str.parse::<T>() {
             Ok(val) => {
-                info!("Using {} from environment: {}", env_var, env_str);
+                debug!("{} from env: {}", env_var, env_str);
                 return val;
             },
             Err(e) => {
-                warn!("Failed to parse {} from environment: {}", env_var, e);
+                warn!("Parse {} env: {}", env_var, e);
             },
         }
     }
 
     // Priority 3: Default value
-    info!("Using default value for {}", env_var);
+    debug!("{} default", env_var);
     default
 }
 
@@ -53,7 +53,7 @@ pub fn get_string_config(
     // Priority 1: DB value (if not empty and not default)
     if let Some(val) = db_value {
         if !val.is_empty() && !is_default {
-            info!("Using {} from database", env_var);
+            debug!("{} from DB", env_var);
             return val;
         }
     }
@@ -61,13 +61,13 @@ pub fn get_string_config(
     // Priority 2: Environment variable
     if let Ok(env_val) = std::env::var(env_var) {
         if !env_val.is_empty() {
-            info!("Using {} from environment", env_var);
+            debug!("{} from env", env_var);
             return env_val;
         }
     }
 
     // Priority 3: Default value
-    info!("Using default value for {}", env_var);
+    debug!("{} default", env_var);
     default
 }
 
@@ -94,34 +94,31 @@ pub async fn connect_redis_with_retry(
 
     loop {
         attempt += 1;
-        info!("Redis connection attempt #{}", attempt);
+        debug!("Redis try #{}", attempt);
 
         for (source, url) in &candidates {
-            info!("Trying Redis connection from {}: {}", source, url);
+            debug!("Redis {}: {}", source, url);
 
             match RedisClient::new(url).await {
                 Ok(client) => {
                     // Test the connection with a ping
                     match client.ping().await {
                         Ok(_) => {
-                            info!("[OK] Redis connected successfully (source: {})", source);
+                            info!("Redis connected ({})", source);
                             return (url.clone(), client);
                         },
                         Err(e) => {
-                            warn!("[FAIL] Redis ping failed for {}: {}", url, e);
+                            warn!("Redis ping {}: {}", url, e);
                         },
                     }
                 },
                 Err(e) => {
-                    warn!("[FAIL] Failed to create Redis client for {}: {}", url, e);
+                    warn!("Redis client {}: {}", url, e);
                 },
             }
         }
 
-        warn!(
-            "All Redis connection attempts failed, retrying in {:?}",
-            retry_interval
-        );
+        warn!("Redis retry in {:?}", retry_interval);
         tokio::time::sleep(retry_interval).await;
     }
 }

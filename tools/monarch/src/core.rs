@@ -60,7 +60,7 @@ impl MonarchCore {
             .await
             .context("Failed to connect to database in read-write mode")?;
 
-        info!("Connected to database in read-write mode: {:?}", db_file);
+        info!("DB: {:?}", db_file);
 
         Ok(Self {
             db_path: db_dir,

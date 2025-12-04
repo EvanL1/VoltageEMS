@@ -93,7 +93,7 @@ pub async fn init_database(db_path: impl AsRef<Path>) -> Result<()> {
     // === Triggers ===
     create_triggers(&pool).await?;
 
-    info!("Database initialized: {}", db_path.display());
+    info!("DB init: {}", db_path.display());
     Ok(())
 }
 

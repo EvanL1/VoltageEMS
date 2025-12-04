@@ -59,7 +59,7 @@ impl ProductLoader {
 
     /// Initialize database tables with separate tables for each point type
     pub async fn init_database(&self) -> Result<()> {
-        info!("Initializing product tables");
+        debug!("Init product tables");
 
         // Products table (just hierarchy)
         sqlx::query(
@@ -222,7 +222,7 @@ impl ProductLoader {
         .execute(&self.pool)
         .await?;
 
-        info!("Product tables initialized");
+        debug!("Product tables ready");
         Ok(())
     }
 
@@ -231,7 +231,7 @@ impl ProductLoader {
         // Log absolute path for debugging
         let abs_path =
             std::fs::canonicalize(&self.products_dir).unwrap_or_else(|_| self.products_dir.clone());
-        info!("Loading products from: {}", abs_path.display());
+        debug!("Loading products: {}", abs_path.display());
 
         // Check if force reload is enabled
         let force_reload = std::env::var("MODSRV_FORCE_RELOAD")
@@ -240,7 +240,7 @@ impl ProductLoader {
             == "true";
 
         if force_reload {
-            warn!("FORCE RELOAD enabled - clearing existing product data");
+            warn!("Force reload: clearing products");
 
             // Clear existing data in transaction
             let mut tx = self.pool.begin().await?;
@@ -258,21 +258,19 @@ impl ProductLoader {
                 .await?;
             tx.commit().await?;
 
-            info!("Existing product data cleared");
-        } else {
-            info!("Incremental loading mode - existing data will be preserved");
+            debug!("Products cleared");
         }
 
         // Check if products directory exists
         if !self.products_dir.exists() {
-            warn!("Products directory does not exist: {:?}", self.products_dir);
+            warn!("Products dir not found: {:?}", self.products_dir);
             return Ok(());
         }
 
         // Load product hierarchy from products.yaml
         let products_yaml_file = self.products_dir.join("products.yaml");
         if !products_yaml_file.exists() {
-            warn!("No products.yaml file found");
+            warn!("products.yaml not found");
             return Ok(());
         }
 
@@ -285,7 +283,7 @@ impl ProductLoader {
                 || product_name.contains("/")
                 || product_name.contains("\\")
             {
-                warn!("Skipping invalid product_name: {}", product_name);
+                warn!("Invalid product: {}", product_name);
                 continue;
             }
 
@@ -298,13 +296,13 @@ impl ProductLoader {
             }
         }
 
-        info!("Product loading completed");
+        info!("Products loaded");
         Ok(())
     }
 
     /// Load product hierarchy from products.yaml
     async fn load_hierarchy(&self, file_path: &Path) -> Result<ProductHierarchy> {
-        info!("Loading product hierarchy from {:?}", file_path);
+        debug!("Loading hierarchy: {:?}", file_path);
 
         let yaml_content = tokio::fs::read_to_string(file_path)
             .await
@@ -315,7 +313,7 @@ impl ProductLoader {
 
         let hierarchy: ProductHierarchy = products_yaml.products.into_iter().collect();
 
-        info!("Loaded {} product definitions", hierarchy.len());
+        debug!("{} product defs", hierarchy.len());
         Ok(hierarchy)
     }
 

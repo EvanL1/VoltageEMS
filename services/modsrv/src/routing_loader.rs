@@ -96,7 +96,7 @@ impl RoutingLoader {
 
     /// Load all instance routing from CSV files
     pub async fn load_all_routing(&self) -> Result<()> {
-        info!("Loading channel routing from {:?}", self.instances_dir);
+        debug!("Loading routing: {:?}", self.instances_dir);
 
         if !self.instances_dir.exists() {
             debug!("Instances directory does not exist, skipping routing load");
@@ -121,28 +121,19 @@ impl RoutingLoader {
                         .await
                     {
                         Ok((m, a)) => {
-                            info!(
-                                "Loaded {} measurement and {} action mappings for instance {}",
-                                m, a, instance_name
-                            );
+                            debug!("{}: {}M {}A", instance_name, m, a);
                             measurement_count += m;
                             action_count += a;
                         },
                         Err(e) => {
-                            warn!(
-                                "Failed to load channel_mappings for instance {}: {}",
-                                instance_name, e
-                            );
+                            warn!("{} mapping err: {}", instance_name, e);
                         },
                     }
                 }
             }
         }
 
-        info!(
-            "Total routing loaded - Measurements: {}, Actions: {}",
-            measurement_count, action_count
-        );
+        info!("Routing: {}M {}A", measurement_count, action_count);
         Ok(())
     }
 
@@ -169,7 +160,7 @@ impl RoutingLoader {
                 .await?;
 
         let Some(instance_id) = instance_id else {
-            warn!("Instance '{}' not found in database", instance_name);
+            warn!("Instance '{}' not found", instance_name);
             return Ok((0, 0));
         };
 
@@ -180,11 +171,7 @@ impl RoutingLoader {
             if inst_type == "M" || inst_type == "MEASUREMENT" {
                 // Validate channel_type
                 if !row.channel_type.is_input() {
-                    warn!(
-                        "Invalid channel_type for measurement mapping: {} in {}",
-                        row.channel_type,
-                        csv_path.display()
-                    );
+                    warn!("Invalid M channel_type: {}", row.channel_type);
                     continue;
                 }
 
@@ -214,11 +201,7 @@ impl RoutingLoader {
             } else if inst_type == "A" || inst_type == "ACTION" {
                 // Validate channel_type
                 if !row.channel_type.is_output() {
-                    warn!(
-                        "Invalid channel_type for action mapping: {} in {}",
-                        row.channel_type,
-                        csv_path.display()
-                    );
+                    warn!("Invalid A channel_type: {}", row.channel_type);
                     continue;
                 }
 
@@ -246,11 +229,7 @@ impl RoutingLoader {
                 .await?;
                 a_count += 1;
             } else {
-                warn!(
-                    "Unknown instance_type '{}', expected 'M'/'A' in {}",
-                    row.instance_type,
-                    csv_path.display()
-                );
+                warn!("Unknown type '{}' (expected M/A)", row.instance_type);
                 continue;
             }
         }
@@ -301,7 +280,7 @@ impl RoutingLoader {
     where
         R: Rtdb + ?Sized,
     {
-        info!("Syncing point routing to Redis");
+        debug!("Syncing routing to Redis");
 
         // Clear existing routing first
         redis_state::clear_routing(redis).await?;
@@ -334,7 +313,7 @@ impl RoutingLoader {
         .await?;
 
         if measurement_routing.is_empty() && action_routing.is_empty() {
-            info!("No routing to sync");
+            debug!("No routing to sync");
             return Ok(());
         }
 
@@ -402,7 +381,7 @@ impl RoutingLoader {
 
         redis_state::store_routing(redis, &batch).await?;
 
-        info!("Synced {} routing entries to Redis", batch.len());
+        info!("Synced {} routes", batch.len());
         Ok(())
     }
 

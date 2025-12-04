@@ -78,6 +78,11 @@ pub struct ModbusPollingConfig {
     #[serde(skip_serializing_if = "is_default_reconnect_cooldown")]
     #[serde(default = "default_reconnect_cooldown_ms")]
     pub reconnect_cooldown_ms: u64,
+    /// Number of consecutive IO errors before triggering reconnection (default: 5)
+    /// When this threshold is reached, the connection will be dropped and reconnect_with_retry will be called
+    #[serde(skip_serializing_if = "is_default_error_threshold")]
+    #[serde(default = "default_error_threshold")]
+    pub error_threshold: u32,
 }
 
 // Default value functions for serde
@@ -100,6 +105,12 @@ fn is_default_reconnect_retries(v: &u32) -> bool {
 }
 fn is_default_reconnect_cooldown(v: &u64) -> bool {
     *v == default_reconnect_cooldown_ms()
+}
+fn default_error_threshold() -> u32 {
+    5 // Trigger reconnection after 5 consecutive IO errors
+}
+fn is_default_error_threshold(v: &u32) -> bool {
+    *v == default_error_threshold()
 }
 
 /// Slave polling configuration
@@ -153,6 +164,7 @@ impl Default for ModbusPollingConfig {
             reconnect_enabled: default_reconnect_enabled(),
             reconnect_max_consecutive: default_reconnect_retries(),
             reconnect_cooldown_ms: timeouts::RECONNECT_COOLDOWN_MS,
+            error_threshold: default_error_threshold(),
         }
     }
 }

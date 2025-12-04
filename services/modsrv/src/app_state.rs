@@ -5,7 +5,7 @@
 use std::sync::Arc;
 
 use dashmap::DashMap;
-use tracing::info;
+use tracing::debug;
 
 use crate::calculation_engine::CalculationEngine;
 use crate::error::ModSrvError;
@@ -115,10 +115,7 @@ impl AppState {
             self.name_to_id_cache.insert(name, id);
         }
 
-        info!(
-            "Name→ID cache populated with {} entries",
-            self.name_to_id_cache.len()
-        );
+        debug!("Name->ID cache: {} entries", self.name_to_id_cache.len());
         Ok(())
     }
 

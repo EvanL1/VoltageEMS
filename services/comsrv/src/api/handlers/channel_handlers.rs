@@ -86,7 +86,7 @@ pub async fn get_all_channels(
             .fetch_all(&state.sqlite_pool)
             .await
             .map_err(|e| {
-                tracing::error!("Failed to load channels from database: {}", e);
+                tracing::error!("Load channels: {}", e);
                 AppError::internal_error(format!("Failed to load channels from database: {}", e))
             })?;
 
@@ -475,7 +475,7 @@ pub async fn search_channels(
     .fetch_all(&state.sqlite_pool)
     .await
     .map_err(|e| {
-        tracing::error!("Failed to search channels: {}", e);
+        tracing::error!("Search channels: {}", e);
         AppError::internal_error(format!("Failed to search channels: {}", e))
     })?;
 

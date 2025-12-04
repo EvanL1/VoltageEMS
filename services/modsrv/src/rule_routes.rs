@@ -15,7 +15,7 @@ use axum::{
 use serde_json::json;
 use sqlx::SqlitePool;
 use std::sync::Arc;
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 #[cfg(feature = "swagger-ui")]
 use utoipa::OpenApi;
 use voltage_config::api::{PaginatedResponse, SuccessResponse};
@@ -204,7 +204,7 @@ pub async fn list_rules<R: Rtdb + ?Sized + Send + Sync + 'static>(
             Ok(Json(SuccessResponse::new(paginated)))
         },
         Err(e) => {
-            error!("Failed to list rules: {}", e);
+            error!("List rules err: {}", e);
             Err(ModSrvError::InternalError(
                 "Failed to list rules".to_string(),
             ))
@@ -254,7 +254,7 @@ pub async fn create_rule<R: Rtdb + ?Sized + Send + Sync + 'static>(
     .execute(&state.pool)
     .await
     {
-        error!("Failed to create rule {}: {}", rule_id, e);
+        error!("Create rule {}: {}", rule_id, e);
         return Err(ModSrvError::InternalError(
             "Failed to create rule".to_string(),
         ));
@@ -262,10 +262,10 @@ pub async fn create_rule<R: Rtdb + ?Sized + Send + Sync + 'static>(
 
     // Reload scheduler to pick up new rule
     if let Err(e) = state.scheduler.reload_rules().await {
-        warn!("Failed to reload scheduler after rule create: {}", e);
+        warn!("Reload scheduler: {}", e);
     }
 
-    info!("Created rule: {} ({})", req.name, rule_id);
+    debug!("Rule created: {} ({})", req.name, rule_id);
     Ok(Json(SuccessResponse::new(json!({
         "id": rule_id,
         "name": req.name,
@@ -290,7 +290,7 @@ pub async fn get_rule<R: Rtdb + ?Sized + Send + Sync + 'static>(
     match rule_repository::get_rule(&state.pool, &id).await {
         Ok(rule) => Ok(Json(SuccessResponse::new(rule))),
         Err(e) => {
-            error!("Failed to get rule {}: {}", id, e);
+            error!("Get rule {}: {}", id, e);
             Err(ModSrvError::RuleNotFound(id))
         },
     }
@@ -392,7 +392,7 @@ pub async fn update_rule<R: Rtdb + ?Sized + Send + Sync + 'static>(
     query = query.bind(&id);
 
     if let Err(e) = query.execute(&state.pool).await {
-        error!("Failed to update rule {} in SQLite: {}", id, e);
+        error!("Update rule {}: {}", id, e);
         return Err(ModSrvError::InternalError(format!(
             "Failed to update rule in database: {}",
             e
@@ -401,10 +401,10 @@ pub async fn update_rule<R: Rtdb + ?Sized + Send + Sync + 'static>(
 
     // Reload scheduler to pick up changes
     if let Err(e) = state.scheduler.reload_rules().await {
-        warn!("Failed to reload scheduler after rule update: {}", e);
+        warn!("Reload scheduler: {}", e);
     }
 
-    info!("Rule {} updated successfully", id);
+    debug!("Rule {} updated", id);
     Ok(Json(SuccessResponse::new(json!({
         "id": id,
         "status": "updated"
@@ -426,7 +426,7 @@ pub async fn delete_rule<R: Rtdb + ?Sized + Send + Sync + 'static>(
     Path(id): Path<String>,
 ) -> Result<Json<SuccessResponse<serde_json::Value>>, ModSrvError> {
     if let Err(e) = rule_repository::delete_rule(&state.pool, &id).await {
-        error!("Failed to delete rule {}: {}", id, e);
+        error!("Delete rule {}: {}", id, e);
         return Err(ModSrvError::InternalError(
             "Failed to delete rule".to_string(),
         ));
@@ -434,10 +434,10 @@ pub async fn delete_rule<R: Rtdb + ?Sized + Send + Sync + 'static>(
 
     // Reload scheduler to remove the rule
     if let Err(e) = state.scheduler.reload_rules().await {
-        warn!("Failed to reload scheduler after rule delete: {}", e);
+        warn!("Reload scheduler: {}", e);
     }
 
-    info!("Deleted rule: {}", id);
+    debug!("Rule {} deleted", id);
     Ok(Json(SuccessResponse::new(
         json!({ "id": id, "status": "OK" }),
     )))

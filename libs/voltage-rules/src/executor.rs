@@ -200,21 +200,12 @@ impl<R: Rtdb + ?Sized> RuleExecutor<R> {
             let instance_id = match self.rtdb.hash_get("inst:name:index", instance_name).await {
                 Ok(Some(id_bytes)) => String::from_utf8_lossy(&id_bytes).to_string(),
                 Ok(None) => {
-                    tracing::warn!(
-                        "Variable {}: instance '{}' not found in name index, using 0.0",
-                        var.name,
-                        instance_name
-                    );
+                    tracing::warn!("Var {}: inst '{}' not found", var.name, instance_name);
                     values.insert(var.name.clone(), 0.0);
                     continue;
                 },
                 Err(e) => {
-                    tracing::error!(
-                        "Variable {}: failed to lookup instance '{}': {}",
-                        var.name,
-                        instance_name,
-                        e
-                    );
+                    tracing::error!("Var {}: inst '{}' err: {}", var.name, instance_name, e);
                     values.insert(var.name.clone(), 0.0);
                     continue;
                 },
@@ -240,7 +231,7 @@ impl<R: Rtdb + ?Sized> RuleExecutor<R> {
                         values.insert(var.name.clone(), val);
                     } else {
                         tracing::warn!(
-                            "Variable {}: value '{}' at {}:{} is not a number",
+                            "Var {}: '{}' not number at {}:{}",
                             var.name,
                             val_str,
                             key,
@@ -250,16 +241,11 @@ impl<R: Rtdb + ?Sized> RuleExecutor<R> {
                     }
                 },
                 Ok(None) => {
-                    tracing::warn!(
-                        "Variable {}: key {}:{} not found, using 0.0",
-                        var.name,
-                        key,
-                        field
-                    );
+                    tracing::warn!("Var {}: {}:{} not found", var.name, key, field);
                     values.insert(var.name.clone(), 0.0);
                 },
                 Err(e) => {
-                    tracing::error!("Variable {} read error: {}", var.name, e);
+                    tracing::error!("Var {} read err: {}", var.name, e);
                     values.insert(var.name.clone(), 0.0);
                 },
             }
