@@ -1,6 +1,6 @@
 [package]
 name = "voltage-comlink"
-version = "0.0.1"
+version = "0.1.0"
 edition = "2021"
 license.workspace = true
 description = "Communication link library for VoltageEMS - protocol abstractions, Modbus, and virtual protocols"

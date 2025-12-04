@@ -1,6 +1,6 @@
 [package]
 name = "voltage-rules"
-version = "0.0.1"
+version = "0.1.0"
 edition = "2021"
 license.workspace = true
 description = "Rule engine library for VoltageEMS - Vue Flow based rule parsing, execution and scheduling"
