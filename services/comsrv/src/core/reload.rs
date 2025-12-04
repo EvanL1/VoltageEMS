@@ -314,16 +314,20 @@ impl ChannelManager {
 
             config_str
                 .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
-                .and_then(|v| v.as_object().cloned())
-                .map(|mut obj| {
-                    // Extract description separately
-                    let desc = obj
-                        .remove("description")
-                        .and_then(|d| d.as_str().map(|s| s.to_string()));
+                .map(|config_value| {
+                    // Extract description
+                    let desc = config_value
+                        .get("description")
+                        .and_then(|d| d.as_str())
+                        .map(|s| s.to_string());
 
-                    // Remaining fields are parameters
-                    let params: std::collections::HashMap<String, serde_json::Value> =
-                        obj.into_iter().collect();
+                    // Extract from "parameters" field (consistent with sqlite_loader)
+                    let mut params = std::collections::HashMap::new();
+                    if let Some(serde_json::Value::Object(obj)) = config_value.get("parameters") {
+                        for (key, value) in obj {
+                            params.insert(key.clone(), value.clone());
+                        }
+                    }
 
                     (desc, params)
                 })

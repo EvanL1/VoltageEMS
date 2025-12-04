@@ -197,6 +197,15 @@ impl ModbusProtocol {
             ),
         };
 
+        // Log parsed connection parameters for diagnostics
+        debug!(
+            "Ch{} config: host={:?}, port={:?}, device={:?}",
+            channel_config.id(),
+            conn_params.host,
+            conn_params.port,
+            conn_params.device
+        );
+
         // Parse or use default polling config
         let polling_config = if let Some(polling_value) = params.get("polling") {
             serde_json::from_value(polling_value.clone())

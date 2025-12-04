@@ -266,12 +266,28 @@ impl ConfigExporter {
                 logging: Default::default(),
             };
 
-            // Parse protocol-specific parameters if available
+            // Parse config JSON (consistent with sqlite_loader)
             if let Some(config_json) = config_str {
-                if let Ok(config_value) =
-                    serde_json::from_str::<HashMap<String, serde_json::Value>>(&config_json)
-                {
-                    channel.parameters = config_value;
+                if let Ok(config_value) = serde_json::from_str::<serde_json::Value>(&config_json) {
+                    // Extract description
+                    channel.core.description = config_value
+                        .get("description")
+                        .and_then(|d| d.as_str())
+                        .map(|s| s.to_string());
+
+                    // Extract parameters from nested "parameters" field
+                    if let Some(serde_json::Value::Object(params)) = config_value.get("parameters")
+                    {
+                        channel.parameters =
+                            params.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+                    }
+
+                    // Extract logging config if present
+                    if let Some(logging_val) = config_value.get("logging") {
+                        if let Ok(logging) = serde_json::from_value(logging_val.clone()) {
+                            channel.logging = logging;
+                        }
+                    }
                 }
             }
 

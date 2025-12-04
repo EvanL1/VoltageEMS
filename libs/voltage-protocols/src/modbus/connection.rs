@@ -374,39 +374,48 @@ impl ModbusConnectionManager {
         }
 
         // Create new connection
-        let new_conn =
-            match &self.mode {
-                ModbusMode::Tcp => {
-                    let host = self.params.host.as_ref().ok_or_else(|| {
-                        ComLinkError::Config("TCP host not specified".to_string())
-                    })?;
-                    let port = self.params.port.ok_or_else(|| {
-                        ComLinkError::Config("TCP port not specified".to_string())
-                    })?;
+        let new_conn = match &self.mode {
+            ModbusMode::Tcp => {
+                debug!(
+                    "TCP connect: host={:?}, port={:?}",
+                    self.params.host, self.params.port
+                );
+                let host = self.params.host.as_ref().ok_or_else(|| {
+                    ComLinkError::Config(format!(
+                        "TCP host not specified (params: host={:?}, port={:?})",
+                        self.params.host, self.params.port
+                    ))
+                })?;
+                let port = self.params.port.ok_or_else(|| {
+                    ComLinkError::Config(format!(
+                        "TCP port not specified (params: host={:?}, port={:?})",
+                        self.params.host, self.params.port
+                    ))
+                })?;
 
-                    ModbusConnection::connect_tcp(host, port, self.params.timeout).await?
-                },
-                #[cfg(feature = "modbus-rtu")]
-                ModbusMode::Rtu => {
-                    let device = self.params.device.as_ref().ok_or_else(|| {
-                        ComLinkError::Config("Serial device not specified".to_string())
-                    })?;
-                    let baud_rate = self.params.baud_rate.unwrap_or(9600);
-                    let data_bits = self.params.data_bits.unwrap_or(8);
-                    let stop_bits = self.params.stop_bits.unwrap_or(1);
-                    let parity = self.params.parity.as_deref().unwrap_or("None");
+                ModbusConnection::connect_tcp(host, port, self.params.timeout).await?
+            },
+            #[cfg(feature = "modbus-rtu")]
+            ModbusMode::Rtu => {
+                let device = self.params.device.as_ref().ok_or_else(|| {
+                    ComLinkError::Config("Serial device not specified".to_string())
+                })?;
+                let baud_rate = self.params.baud_rate.unwrap_or(9600);
+                let data_bits = self.params.data_bits.unwrap_or(8);
+                let stop_bits = self.params.stop_bits.unwrap_or(1);
+                let parity = self.params.parity.as_deref().unwrap_or("None");
 
-                    ModbusConnection::connect_rtu(
-                        device,
-                        baud_rate,
-                        data_bits,
-                        stop_bits,
-                        parity,
-                        self.params.timeout,
-                    )
-                    .await?
-                },
-            };
+                ModbusConnection::connect_rtu(
+                    device,
+                    baud_rate,
+                    data_bits,
+                    stop_bits,
+                    parity,
+                    self.params.timeout,
+                )
+                .await?
+            },
+        };
 
         *conn = Some(new_conn);
         Ok(())
@@ -452,17 +461,24 @@ impl ModbusConnectionManager {
                         // Hit max consecutive attempts, enter cooldown
                         *self.last_reconnect.lock().await = Some(Instant::now());
                         warn!(
-                            "Cooldown {}s ({}x failed): {}",
+                            "Cooldown {}s ({}x failed) {}:{}: {}",
                             cooldown_ms / 1000,
                             max_consecutive,
+                            self.params.host.as_deref().unwrap_or("?"),
+                            self.params.port.unwrap_or(0),
                             e
                         );
                         return Ok(false); // Need cooldown
                     }
 
                     warn!(
-                        "Retry {}/{}: {} ({}ms)",
-                        attempts, max_consecutive, e, delay_ms
+                        "Retry {}/{} {}:{}: {} (wait {}ms)",
+                        attempts,
+                        max_consecutive,
+                        self.params.host.as_deref().unwrap_or("?"),
+                        self.params.port.unwrap_or(0),
+                        e,
+                        delay_ms
                     );
 
                     sleep(Duration::from_millis(delay_ms)).await;
