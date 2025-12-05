@@ -1,0 +1,91 @@
+# Calculation Definitions for VoltageEMS
+# Virtual/computed points that derive values from other measurements
+#
+# Each calculation defines:
+#   - name: Unique identifier
+#   - description: Human-readable explanation
+#   - type: Calculation method (expression, aggregation, time_series, energy, etc.)
+#   - output: Target point to write result {inst, type, id}
+#   - enabled: Whether this calculation is active
+
+calculations:
+  # ============================================
+  # System-level Aggregations
+  # ============================================
+
+  # Total system power: sum of all PCS active power
+  - name: system_total_power
+    description: "System total active power (all PCS combined)"
+    type:
+      type: expression
+      formula: "pcs1_power + pcs2_power"
+      variables:
+        pcs1_power: "inst:1:M:1"    # PCS #1 active_power
+        pcs2_power: "inst:2:M:1"    # PCS #2 active_power (if exists)
+    output:
+      inst: 100          # Virtual system instance
+      type: M            # Measurement point
+      id: 1              # system_power measurement
+
+  # Battery SOC weighted average (when multiple battery packs)
+  - name: battery_avg_soc
+    description: "Average SOC across all battery packs"
+    type:
+      type: aggregation
+      operation: average
+      source_keys:
+        - "inst:3:M:2"   # Battery #1 SOC
+        # - "inst:4:M:2" # Battery #2 SOC (when added)
+    output:
+      inst: 100
+      type: M
+      id: 2              # system_avg_soc measurement
+
+  # ============================================
+  # Energy Calculations
+  # ============================================
+
+  # System energy efficiency (output power / input power)
+  - name: system_energy_efficiency
+    description: "System round-trip energy efficiency"
+    type:
+      type: energy
+      operation: energy_efficiency
+      inputs:
+        input_power: "inst:1:M:1"   # PCS input power
+        output_power: "inst:1:M:2"  # PCS output power
+      parameters:
+        min_threshold: 0.1    # Minimum power threshold for calculation
+    output:
+      inst: 100
+      type: M
+      id: 10             # system_efficiency_pct
+
+  # ============================================
+  # Conditional Calculations
+  # ============================================
+
+  # System efficiency based on operating mode
+  - name: system_efficiency
+    description: "System efficiency calculation"
+    type:
+      type: conditional
+      condition:
+        type: comparison
+        left: "inst:1:M:1"        # PCS power
+        operator: gt
+        right: 0
+      if_true:
+        type: expression
+        formula: "output_power / input_power * 100"
+        variables:
+          output_power: "inst:1:M:1"
+          input_power: "inst:3:M:1"
+      if_false:
+        type: constant
+        value: 0.0
+    output:
+      inst: 100
+      type: M
+      id: 20             # system_efficiency
+    enabled: false       # Disabled by default - example only

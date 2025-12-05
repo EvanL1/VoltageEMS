@@ -49,7 +49,6 @@ tokio-util = { workspace = true }
 sqlx = { workspace = true }
 csv = { workspace = true }  # For loading product CSV files
 cron = { workspace = true }  # For time series scheduling
-sha2 = { workspace = true }  # For hash calculations
 evalexpr = { workspace = true }  # For expression evaluation
 dashmap = { workspace = true }  # For high-performance concurrent name→id cache
 

@@ -43,8 +43,6 @@ tracing-subscriber = { workspace = true }
 
 # File system
 tempfile = { workspace = true }
-walkdir = "2"
-path-clean = "1.0"
 
 # Output formatting
 colored = { workspace = true }

@@ -38,7 +38,7 @@ pub mod timeseries;
 pub mod validation;
 
 // Re-exports for convenience
-pub use calculation::{CalculationEngine, CalculationEngineConfig, CalculationValues};
+pub use calculation::{CalculationEngine, CalculationValues};
 pub use energy::EnergyCalculator;
 pub use error::{ModelError, Result};
 pub use expression::ExpressionEvaluator;

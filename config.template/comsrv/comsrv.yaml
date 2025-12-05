@@ -1,3 +1,6 @@
+# Communication Channels Configuration
+# Only channels - service params are hardcoded in the program
+
 channels:
   - id: 1
     name: "PCS#1"
@@ -45,3 +48,15 @@ channels:
       enabled: true
       level: "info"
 
+  - id: 4
+    name: "ECU1170_GPIO"
+    description: "ECU-1170 本机 DI/DO"
+    protocol: "di_do"
+    enabled: false  # 默认禁用，待硬件就绪后启用
+    parameters:
+      driver: "sysfs"
+      gpio_base_path: "/sys/class/gpio"
+      di_poll_interval_ms: 200
+    logging:
+      enabled: true
+      level: "info"

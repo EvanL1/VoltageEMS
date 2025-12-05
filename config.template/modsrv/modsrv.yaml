@@ -1,17 +1,6 @@
-# ============================================================================
-# ModSrv Service Configuration
-# 只包含服务特定配置，全局配置由 config/global.yaml 提供
-# ============================================================================
+# Model Service Configuration
+# Only business config - service params are hardcoded in the program
 
-service:
-  name: "modsrv"
-  description: "Model calculation service"
-
-# 服务端口（必须服务特定）
-api:
-  port: 6002
-
-# ModSrv 特定配置
 products_path: "config/modsrv/products"
 instances_path: "config/modsrv/instances"
 auto_load_instances: true

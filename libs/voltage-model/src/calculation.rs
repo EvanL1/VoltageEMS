@@ -16,15 +16,6 @@ use voltage_config::calculations::{
 };
 use voltage_config::protocols::QualityCode;
 
-/// Calculation Engine Configuration
-#[derive(Debug, Clone, Default)]
-pub struct CalculationEngineConfig {
-    /// Allow execution of custom Lua scripts (default: false for security)
-    pub allow_custom_scripts: bool,
-    /// List of pre-approved script hashes (SHA256)
-    pub script_whitelist: Vec<String>,
-}
-
 /// Calculation Engine - Core orchestrator for all calculation types
 ///
 /// This engine provides pure calculation logic without IO dependencies.
@@ -34,23 +25,16 @@ pub struct CalculationEngine {
     statistics_processor: Arc<StatisticsProcessor>,
     time_series_processor: Arc<TimeSeriesProcessor>,
     energy_calculator: Arc<EnergyCalculator>,
-    config: CalculationEngineConfig,
 }
 
 impl CalculationEngine {
-    /// Create new calculation engine with default config
+    /// Create new calculation engine
     pub fn new() -> Self {
-        Self::with_config(CalculationEngineConfig::default())
-    }
-
-    /// Create new calculation engine with custom config
-    pub fn with_config(config: CalculationEngineConfig) -> Self {
         Self {
             expression_evaluator: Arc::new(ExpressionEvaluator::new()),
             statistics_processor: Arc::new(StatisticsProcessor::new()),
             time_series_processor: Arc::new(TimeSeriesProcessor::new()),
             energy_calculator: Arc::new(EnergyCalculator::new()),
-            config,
         }
     }
 
@@ -84,9 +68,6 @@ impl CalculationEngine {
             } => self.execute_timeseries(operation, &values.time_series, parameters),
             CalculationType::Energy { operation, .. } => {
                 self.execute_energy(operation, &values.variables)
-            },
-            CalculationType::LuaScript { script, .. } => {
-                self.execute_lua_script(script, &values.array_string_values)
             },
             #[allow(unreachable_patterns)]
             _ => Err(ModelError::calculation("Calculation type not implemented")),
@@ -176,33 +157,6 @@ impl CalculationEngine {
         self.energy_calculator.calculate(operation, values)
     }
 
-    /// Execute custom Lua script (security-gated)
-    pub fn execute_lua_script(
-        &self,
-        script: &str,
-        _inputs: &[String],
-    ) -> Result<serde_json::Value> {
-        // Security check: Verify if custom scripts are allowed
-        if !self.config.allow_custom_scripts {
-            use sha2::{Digest, Sha256};
-            let mut hasher = Sha256::new();
-            hasher.update(script.as_bytes());
-            let script_hash = format!("{:x}", hasher.finalize());
-
-            if !self.config.script_whitelist.contains(&script_hash) {
-                return Err(ModelError::calculation(format!(
-                    "Custom Lua scripts are disabled. Script hash {} is not in whitelist.",
-                    script_hash
-                )));
-            }
-        }
-
-        // TODO: Implement Lua script execution
-        Err(ModelError::calculation(
-            "Lua script execution not yet implemented",
-        ))
-    }
-
     /// Get the expression evaluator for direct use
     pub fn expression_evaluator(&self) -> &ExpressionEvaluator {
         &self.expression_evaluator
@@ -242,8 +196,6 @@ pub struct CalculationValues {
     pub array_values: Vec<f64>,
     /// Time series data as (timestamp, value) pairs
     pub time_series: Vec<(f64, f64)>,
-    /// Array of string values (for Lua scripts)
-    pub array_string_values: Vec<String>,
 }
 
 impl CalculationValues {
@@ -349,14 +301,5 @@ mod tests {
         let result = engine.execute("test_calc", &calc_type, &values);
         assert_eq!(result.status, CalculationStatus::Success);
         assert_eq!(result.value.as_f64().unwrap(), 15.0);
-    }
-
-    #[test]
-    fn test_lua_script_security() {
-        let engine = CalculationEngine::new(); // allow_custom_scripts = false
-
-        let result = engine.execute_lua_script("return 1", &[]);
-        assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("disabled"));
     }
 }

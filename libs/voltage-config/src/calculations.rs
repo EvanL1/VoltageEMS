@@ -193,16 +193,6 @@ pub enum CalculationType {
         /// Calculation if false
         if_false: Box<CalculationType>,
     },
-    /// Custom Lua script execution
-    LuaScript {
-        /// Lua script content
-        script: String,
-        /// Input Redis keys
-        inputs: Vec<String>,
-        /// Script parameters
-        #[serde(default)]
-        parameters: HashMap<String, serde_json::Value>,
-    },
     /// Direct value assignment
     Constant {
         /// Constant value

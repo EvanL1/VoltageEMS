@@ -24,14 +24,9 @@ use voltage_config::protocols::QualityCode;
 // Type aliases for backward compatibility
 pub type CalculationDef = CalculationDefinition;
 
-/// Calculation Engine Configuration
+/// Calculation Engine Configuration (reserved for future use)
 #[derive(Debug, Clone, Default)]
-pub struct CalculationEngineConfig {
-    /// Allow execution of custom Lua scripts (default: false for security)
-    pub allow_custom_scripts: bool,
-    /// List of pre-approved script hashes (SHA256)
-    pub script_whitelist: Vec<String>,
-}
+pub struct CalculationEngineConfig;
 
 /// Calculation Engine
 pub struct CalculationEngine {
@@ -41,20 +36,16 @@ pub struct CalculationEngine {
     statistics_processor: Arc<StatisticsProcessor>,
     time_series_processor: Arc<TimeSeriesProcessor>,
     energy_calculator: Arc<EnergyCalculator>,
-    config: CalculationEngineConfig,
 }
 
 impl CalculationEngine {
     /// Create new calculation engine
     pub fn new(redis_client: Arc<RedisClient>) -> Self {
-        Self::with_config(Some(redis_client), CalculationEngineConfig::default())
+        Self::with_redis(Some(redis_client))
     }
 
-    /// Create new calculation engine with custom config
-    pub fn with_config(
-        redis_client: Option<Arc<RedisClient>>,
-        config: CalculationEngineConfig,
-    ) -> Self {
+    /// Create calculation engine with optional Redis client (for testing)
+    pub fn with_redis(redis_client: Option<Arc<RedisClient>>) -> Self {
         Self {
             redis_client,
             calculations: Arc::new(RwLock::new(HashMap::new())),
@@ -62,7 +53,6 @@ impl CalculationEngine {
             statistics_processor: Arc::new(StatisticsProcessor::new()),
             time_series_processor: Arc::new(TimeSeriesProcessor::new()),
             energy_calculator: Arc::new(EnergyCalculator::new()),
-            config,
         }
     }
 
@@ -134,9 +124,6 @@ impl CalculationEngine {
             CalculationType::Energy {
                 operation, inputs, ..
             } => self.execute_energy_calculation(operation, inputs).await,
-            CalculationType::LuaScript { script, inputs, .. } => {
-                self.execute_lua_script(script, inputs).await
-            },
             // Handle calculation types not yet implemented
             _ => {
                 warn!("Unsupported calc type");
@@ -304,48 +291,6 @@ impl CalculationEngine {
         }
 
         self.energy_calculator.calculate(operation, &values)
-    }
-
-    /// Execute custom Lua script
-    async fn execute_lua_script(
-        &self,
-        script: &str,
-        inputs: &[String],
-    ) -> Result<serde_json::Value> {
-        // Security check: Verify if custom scripts are allowed
-        if !self.config.allow_custom_scripts {
-            // Calculate script hash for whitelist check
-            use sha2::{Digest, Sha256};
-            let mut hasher = Sha256::new();
-            hasher.update(script.as_bytes());
-            let script_hash = format!("{:x}", hasher.finalize());
-
-            // Check if script is in whitelist
-            if !self.config.script_whitelist.contains(&script_hash) {
-                return Err(anyhow!(
-                    "Custom Lua scripts are disabled for security. Script hash {} is not in whitelist.",
-                    script_hash
-                ));
-            }
-        }
-
-        // Fetch input values
-        let mut values = Vec::new();
-        for key in inputs {
-            let redis = self
-                .redis_client
-                .as_ref()
-                .ok_or_else(|| anyhow!("RedisClient required for reading point data"))?;
-            let value: Option<String> = redis.get(key).await?;
-            values.push(value.unwrap_or_default());
-        }
-
-        // Execute Lua script via Redis (only after security check passes)
-        // TODO: Add EVAL to RedisClient if needed frequently
-        // For now, return error
-        Err(anyhow!(
-            "Lua script execution not yet implemented with RedisClient"
-        ))
     }
 
     /// Calculate moving average (delegates to TimeSeriesProcessor)
@@ -929,29 +874,15 @@ mod tests {
     #[tokio::test]
     async fn test_calculation_engine_new() {
         // Create engine without Redis for testing structure
-        let engine = CalculationEngine::with_config(None, CalculationEngineConfig::default());
+        let engine = CalculationEngine::with_redis(None);
 
-        // Verify engine was created with default config
-        assert!(!engine.config.allow_custom_scripts);
-        assert!(engine.config.script_whitelist.is_empty());
-    }
-
-    #[tokio::test]
-    async fn test_calculation_engine_with_custom_config() {
-        let config = CalculationEngineConfig {
-            allow_custom_scripts: true,
-            script_whitelist: vec!["hash1".to_string(), "hash2".to_string()],
-        };
-
-        let engine = CalculationEngine::with_config(None, config);
-
-        assert!(engine.config.allow_custom_scripts);
-        assert_eq!(engine.config.script_whitelist.len(), 2);
+        // Verify engine was created successfully
+        assert!(engine.redis_client.is_none());
     }
 
     #[tokio::test]
     async fn test_register_calculation_success() {
-        let engine = CalculationEngine::with_config(None, CalculationEngineConfig::default());
+        let engine = CalculationEngine::with_redis(None);
 
         let mut variables = HashMap::new();
         variables.insert("P1".to_string(), "modsrv:instance1:M:1".to_string());
@@ -989,7 +920,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_register_calculation_duplicate() {
-        let engine = CalculationEngine::with_config(None, CalculationEngineConfig::default());
+        let engine = CalculationEngine::with_redis(None);
 
         let mut variables = HashMap::new();
         variables.insert("P1".to_string(), "modsrv:instance1:M:1".to_string());
@@ -1208,7 +1139,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_execute_expression_values() {
-        let engine = CalculationEngine::with_config(None, CalculationEngineConfig::default());
+        let engine = CalculationEngine::with_redis(None);
 
         let mut values = HashMap::new();
         values.insert("x".to_string(), 10.0);
@@ -1223,7 +1154,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_execute_aggregation_values() {
-        let engine = CalculationEngine::with_config(None, CalculationEngineConfig::default());
+        let engine = CalculationEngine::with_redis(None);
 
         let values = vec![10.0, 20.0, 30.0, 40.0, 50.0];
 
@@ -1254,7 +1185,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_execute_energy_values() {
-        let engine = CalculationEngine::with_config(None, CalculationEngineConfig::default());
+        let engine = CalculationEngine::with_redis(None);
 
         let mut inputs = HashMap::new();
         inputs.insert("pv_power".to_string(), 1500.0);
@@ -1271,23 +1202,6 @@ mod tests {
         eprintln!("Balance: {}", balance);
         // pv + battery - load - grid = 1500 + 200 - 1200 - 100 = 400
         assert!((balance - 400.0).abs() < 0.01);
-    }
-
-    #[test]
-    fn test_calculation_engine_config_default() {
-        let config = CalculationEngineConfig::default();
-        assert!(!config.allow_custom_scripts);
-        assert!(config.script_whitelist.is_empty());
-    }
-
-    #[test]
-    fn test_calculation_engine_config_custom() {
-        let config = CalculationEngineConfig {
-            allow_custom_scripts: true,
-            script_whitelist: vec!["hash1".to_string(), "hash2".to_string()],
-        };
-        assert!(config.allow_custom_scripts);
-        assert_eq!(config.script_whitelist.len(), 2);
     }
 
     // ========================================================================
@@ -1979,7 +1893,7 @@ mod tests {
     #[tokio::test]
     async fn test_load_from_sqlite_empty_db() {
         let pool = create_test_sqlite_pool().await;
-        let engine = CalculationEngine::with_config(None, CalculationEngineConfig::default());
+        let engine = CalculationEngine::with_redis(None);
 
         let count = engine.load_from_sqlite(&pool).await.unwrap();
         assert_eq!(count, 0, "Empty database should load 0 calculations");
@@ -2014,7 +1928,7 @@ mod tests {
         .await
         .expect("Failed to insert test calculation");
 
-        let engine = CalculationEngine::with_config(None, CalculationEngineConfig::default());
+        let engine = CalculationEngine::with_redis(None);
         let count = engine.load_from_sqlite(&pool).await.unwrap();
 
         assert_eq!(count, 1, "Should load 1 calculation");
@@ -2054,7 +1968,7 @@ mod tests {
         .await
         .expect("Failed to insert disabled calculation");
 
-        let engine = CalculationEngine::with_config(None, CalculationEngineConfig::default());
+        let engine = CalculationEngine::with_redis(None);
         let count = engine.load_from_sqlite(&pool).await.unwrap();
 
         assert_eq!(count, 0, "Disabled calculations should not be loaded");
@@ -2092,7 +2006,7 @@ mod tests {
             .expect("Failed to insert calculation");
         }
 
-        let engine = CalculationEngine::with_config(None, CalculationEngineConfig::default());
+        let engine = CalculationEngine::with_redis(None);
         let count = engine.load_from_sqlite(&pool).await.unwrap();
 
         assert_eq!(count, 3, "Should load 3 calculations");
@@ -2136,7 +2050,7 @@ mod tests {
         .await
         .expect("Failed to insert valid calculation");
 
-        let engine = CalculationEngine::with_config(None, CalculationEngineConfig::default());
+        let engine = CalculationEngine::with_redis(None);
         let count = engine.load_from_sqlite(&pool).await.unwrap();
 
         // Invalid JSON should be skipped, valid one should be loaded
@@ -2180,7 +2094,7 @@ mod tests {
         .await
         .unwrap();
 
-        let engine = CalculationEngine::with_config(None, CalculationEngineConfig::default());
+        let engine = CalculationEngine::with_redis(None);
         engine.load_from_sqlite(&pool).await.unwrap();
 
         let calculations = engine.calculations.read().await;

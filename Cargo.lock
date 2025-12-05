@@ -1821,7 +1821,6 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_yaml",
- "sha2",
  "sqlx",
  "tempfile",
  "thiserror 1.0.69",
@@ -1852,7 +1851,6 @@ dependencies = [
  "csv",
  "indicatif",
  "modsrv",
- "path-clean",
  "reqwest",
  "serde",
  "serde_json",
@@ -1866,7 +1864,6 @@ dependencies = [
  "voltage-config",
  "voltage-routing",
  "voltage-rtdb",
- "walkdir",
 ]
 
 [[package]]
@@ -2037,12 +2034,6 @@ dependencies = [
  "smallvec",
  "windows-link",
 ]
-
-[[package]]
-name = "path-clean"
-version = "1.0.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "17359afc20d7ab31fdb42bb844c8b3bb1dabd7dcf7e68428492da7f16966fcef"
 
 [[package]]
 name = "pear"
@@ -3955,7 +3946,6 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_yaml",
- "sha2",
  "sqlx",
  "thiserror 1.0.69",
  "tokio",
