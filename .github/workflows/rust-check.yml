@@ -132,7 +132,7 @@ jobs:
     - name: Install Monarch
       run: |
         echo "Building and installing Monarch..."
-        cargo install --path tools/monarch --locked
+        cargo install --path tools/monarch --locked --force
         echo "Monarch installed successfully"
 
     # Create temporary directories for validation
