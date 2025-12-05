@@ -1697,7 +1697,7 @@ async fn read_modbus_batch_indexed(
     _channel_config: Option<&ChannelConfig>,
     max_batch_size: u16,
     logger: &crate::core::channels::traits::ChannelLogger, // Add logger parameter
-    group_telemetry_type: &str, // "telemetry", "signal", "control", "adjustment"
+    _group_telemetry_type: &str, // "telemetry", "signal", "control", "adjustment"
 ) -> Result<Vec<(String, ProtocolValue)>> {
     if indices.is_empty() {
         return Ok(Vec::new());
@@ -1924,36 +1924,6 @@ async fn read_modbus_batch_indexed(
         debug!(
             "pt{}: {} (s={} o={} r={})",
             point.point_id, value_str, point.scale, point.offset, point.reverse
-        );
-
-        // Convert raw register data to bytes for logging
-        let mut raw_bytes = Vec::new();
-        for reg in &registers {
-            raw_bytes.extend_from_slice(&reg.to_be_bytes());
-        }
-
-        // Convert telemetry type to short format
-        let telemetry_type_short = match group_telemetry_type {
-            "telemetry" => "T",
-            "signal" => "S",
-            "control" => "C",
-            "adjustment" => "A",
-            _ => "T", // Default to T
-        };
-
-        // Calculate raw decimal value from raw_bytes (big-endian interpretation)
-        let mut raw_decimal = 0u64;
-        for &byte in &raw_bytes {
-            raw_decimal = (raw_decimal << 8) | (byte as u64);
-        }
-
-        // Log parsed data with raw decoded value to channel log
-        logger.log_parsed_data(
-            telemetry_type_short,
-            &point.point_id,
-            &value_str, // Log the raw decoded value (before transformation)
-            raw_decimal,
-            &raw_bytes,
         );
 
         results.push((point.point_id.clone(), value));

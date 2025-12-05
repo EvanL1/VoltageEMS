@@ -6,6 +6,7 @@
 mod channels;
 mod context;
 mod core;
+mod logs;
 mod models;
 mod rtdb;
 mod rules;
@@ -113,6 +114,7 @@ Service Operations:
   models      Manage product templates and device instances
   rules       Manage and execute business rules
   services    Start, stop, and manage VoltageEMS services
+  logs        Dynamically adjust log levels for running services
 
 Examples:
   monarch sync                          # Sync all configurations
@@ -121,6 +123,8 @@ Examples:
   monarch models products list          # List products
   monarch rules enable R001             # Enable a rule
   monarch services status               # Check service status
+  monarch logs level all debug          # Switch all services to debug mode
+  monarch logs get all                  # Show current log levels
 
 Use 'monarch <command> --help' for more information on a specific command.")]
 #[command(version)]
@@ -234,6 +238,13 @@ enum Commands {
     Services {
         #[command(subcommand)]
         command: services::ServiceCommands,
+    },
+
+    /// Manage log levels
+    #[command(about = "Dynamically adjust log levels for running services")]
+    Logs {
+        #[command(subcommand)]
+        command: logs::LogCommands,
     },
 }
 
@@ -419,6 +430,9 @@ async fn main() -> Result<()> {
         },
         Commands::Services { command } => {
             services::handle_command(command, service_ctx.as_ref()).await?;
+        },
+        Commands::Logs { command } => {
+            logs::handle_command(command).await?;
         },
     }
 

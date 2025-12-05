@@ -45,6 +45,7 @@ use crate::api::single_point_handlers::{
     upsert_measurement_routing,
 };
 
+use crate::api::admin_handlers::{get_log_level, set_log_level};
 use crate::api::calculation_management_handlers::{
     compute_aggregation, compute_energy, compute_expression, compute_timeseries,
     create_calculation, delete_calculation, execute_batch_calculations, execute_calculation,
@@ -218,6 +219,11 @@ pub fn create_routes(state: Arc<AppState>) -> Router {
         .route("/api/compute/aggregate", post(compute_aggregation))
         .route("/api/compute/energy", post(compute_energy))
         .route("/api/compute/timeseries", post(compute_timeseries))
+        // Admin endpoints (log level management)
+        .route(
+            "/api/admin/logs/level",
+            get(get_log_level).post(set_log_level),
+        )
         // Apply HTTP request logging middleware
         .layer(axum::middleware::from_fn(common::logging::http_request_logger))
         .with_state(state)

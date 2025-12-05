@@ -181,14 +181,12 @@ struct MeasurementRoutingRecord {
     #[column(not_null)]
     instance_name: String,
 
-    #[column(not_null, references = "channels(channel_id)", on_delete = "CASCADE")]
-    channel_id: u16,
+    #[column(references = "channels(channel_id)", on_delete = "SET NULL")]
+    channel_id: Option<u16>,
 
-    #[column(not_null)]
-    channel_type: String,
+    channel_type: Option<String>,
 
-    #[column(not_null)]
-    channel_point_id: u32,
+    channel_point_id: Option<u32>,
 
     #[column(not_null)]
     measurement_id: u32,
@@ -226,14 +224,12 @@ struct ActionRoutingRecord {
     #[column(not_null)]
     action_id: u32,
 
-    #[column(not_null, references = "channels(channel_id)", on_delete = "CASCADE")]
-    channel_id: u16,
+    #[column(references = "channels(channel_id)", on_delete = "SET NULL")]
+    channel_id: Option<u16>,
 
-    #[column(not_null)]
-    channel_type: String,
+    channel_type: Option<String>,
 
-    #[column(not_null)]
-    channel_point_id: u32,
+    channel_point_id: Option<u32>,
 
     description: Option<String>,
 

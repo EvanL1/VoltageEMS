@@ -11,6 +11,7 @@ use axum::{
     response::Json,
 };
 use serde_json::json;
+use sqlx::SqlitePool;
 use std::sync::Arc;
 use voltage_config::api::SuccessResponse;
 
@@ -18,6 +19,64 @@ use crate::app_state::AppState;
 use crate::dto::RoutingRequest;
 use crate::error::ModSrvError;
 use crate::routing_loader::{ActionRoutingRow, MeasurementRoutingRow};
+
+/// Routing type determined by point_id lookup
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum RoutingType {
+    Measurement,
+    Action,
+}
+
+/// Determine routing type by querying database for point_id
+///
+/// Checks if point_id exists in measurement_points or action_points tables
+/// for the given instance's product.
+async fn determine_routing_type(
+    pool: &SqlitePool,
+    instance_id: u16,
+    point_id: u32,
+) -> Result<RoutingType, ModSrvError> {
+    // Get product_name for the instance
+    let product_name: String =
+        sqlx::query_scalar("SELECT product_name FROM instances WHERE instance_id = ?")
+            .bind(instance_id)
+            .fetch_one(pool)
+            .await
+            .map_err(|e| ModSrvError::InternalError(format!("Failed to get instance: {}", e)))?;
+
+    // Check if point_id exists in measurement_points
+    let is_measurement: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM measurement_points WHERE product_name = ? AND measurement_id = ?)",
+    )
+    .bind(&product_name)
+    .bind(point_id)
+    .fetch_one(pool)
+    .await
+    .map_err(|e| ModSrvError::InternalError(format!("Database error: {}", e)))?;
+
+    if is_measurement {
+        return Ok(RoutingType::Measurement);
+    }
+
+    // Check if point_id exists in action_points
+    let is_action: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM action_points WHERE product_name = ? AND action_id = ?)",
+    )
+    .bind(&product_name)
+    .bind(point_id)
+    .fetch_one(pool)
+    .await
+    .map_err(|e| ModSrvError::InternalError(format!("Database error: {}", e)))?;
+
+    if is_action {
+        return Ok(RoutingType::Action);
+    }
+
+    Err(ModSrvError::InvalidData(format!(
+        "point_id {} not found in measurement_points or action_points for product {}",
+        point_id, product_name
+    )))
+}
 
 /// Create a new routing for an instance
 ///
@@ -94,36 +153,36 @@ pub async fn create_instance_routing(
         .map_err(|e| ModSrvError::InternalError(format!("Failed to get instance: {}", e)))?;
     let instance_name = &instance.core.instance_name;
 
-    // Extract values before validation
-    let channel_type = routing.four_remote;
+    // Determine routing type by point_id (measurement or action)
+    let routing_type =
+        determine_routing_type(&state.instance_manager.pool, id, routing.point_id).await?;
 
-    // Validate based on channel type
-    let validation_result = if channel_type.is_input() {
-        // Measurement routing (T/S → M)
-        let routing_row = MeasurementRoutingRow {
-            channel_id: routing.channel_id,
-            channel_type: routing.four_remote,
-            channel_point_id: routing.channel_point_id,
-            measurement_id: routing.point_id,
-        };
-        state
-            .instance_manager
-            .validate_measurement_routing(&routing_row, instance_name)
-            .await
-    } else if channel_type.is_output() {
-        // Action routing (A → C/A)
-        let routing_row = ActionRoutingRow {
-            action_id: routing.point_id,
-            channel_id: routing.channel_id,
-            channel_type: routing.four_remote,
-            channel_point_id: routing.channel_point_id,
-        };
-        state
-            .instance_manager
-            .validate_action_routing(&routing_row, instance_name)
-            .await
-    } else {
-        Err(anyhow::anyhow!("Invalid channel type: {}", channel_type))
+    // Validate based on routing type (determined by point_id, not four_remote)
+    let validation_result = match routing_type {
+        RoutingType::Measurement => {
+            let routing_row = MeasurementRoutingRow {
+                channel_id: routing.channel_id,
+                channel_type: routing.four_remote,
+                channel_point_id: routing.channel_point_id,
+                measurement_id: routing.point_id,
+            };
+            state
+                .instance_manager
+                .validate_measurement_routing(&routing_row, instance_name)
+                .await
+        },
+        RoutingType::Action => {
+            let routing_row = ActionRoutingRow {
+                action_id: routing.point_id,
+                channel_id: routing.channel_id,
+                channel_type: routing.four_remote,
+                channel_point_id: routing.channel_point_id,
+            };
+            state
+                .instance_manager
+                .validate_action_routing(&routing_row, instance_name)
+                .await
+        },
     };
 
     match validation_result {
@@ -143,43 +202,44 @@ pub async fn create_instance_routing(
         },
     }
 
-    // Insert into database based on channel_type
-    let insert_result = if channel_type.is_input() {
-        // Insert into measurement_routing
-        sqlx::query(
-            r#"
-            INSERT INTO measurement_routing
-            (instance_id, instance_name, channel_id, channel_type, channel_point_id,
-             measurement_id, enabled)
-            VALUES (?, (SELECT instance_name FROM instances WHERE instance_id = ?), ?, ?, ?, ?, true)
-            "#,
-        )
-        .bind(id)
-        .bind(id)
-        .bind(routing.channel_id)
-        .bind(channel_type.as_str())
-        .bind(routing.channel_point_id)
-        .bind(routing.point_id)
-        .execute(&state.instance_manager.pool)
-        .await
-    } else {
-        // Insert into action_routing
-        sqlx::query(
-            r#"
-            INSERT INTO action_routing
-            (instance_id, instance_name, action_id, channel_id, channel_type,
-             channel_point_id, enabled)
-            VALUES (?, (SELECT instance_name FROM instances WHERE instance_id = ?), ?, ?, ?, ?, true)
-            "#,
-        )
-        .bind(id)
-        .bind(id)
-        .bind(routing.point_id)
-        .bind(routing.channel_id)
-        .bind(channel_type.as_str())
-        .bind(routing.channel_point_id)
-        .execute(&state.instance_manager.pool)
-        .await
+    // Insert into database based on routing type (M or A)
+    let insert_result = match routing_type {
+        RoutingType::Measurement => {
+            sqlx::query(
+                r#"
+                INSERT INTO measurement_routing
+                (instance_id, instance_name, channel_id, channel_type, channel_point_id,
+                 measurement_id, enabled)
+                VALUES (?, (SELECT instance_name FROM instances WHERE instance_id = ?), ?, ?, ?, ?, true)
+                "#,
+            )
+            .bind(id)
+            .bind(id)
+            .bind(routing.channel_id)
+            .bind(routing.four_remote.map(|fr| fr.as_str()))
+            .bind(routing.channel_point_id)
+            .bind(routing.point_id)
+            .execute(&state.instance_manager.pool)
+            .await
+        },
+        RoutingType::Action => {
+            sqlx::query(
+                r#"
+                INSERT INTO action_routing
+                (instance_id, instance_name, action_id, channel_id, channel_type,
+                 channel_point_id, enabled)
+                VALUES (?, (SELECT instance_name FROM instances WHERE instance_id = ?), ?, ?, ?, ?, true)
+                "#,
+            )
+            .bind(id)
+            .bind(id)
+            .bind(routing.point_id)
+            .bind(routing.channel_id)
+            .bind(routing.four_remote.map(|fr| fr.as_str()))
+            .bind(routing.channel_point_id)
+            .execute(&state.instance_manager.pool)
+            .await
+        },
     };
 
     // Check insert result
@@ -206,7 +266,7 @@ pub async fn create_instance_routing(
             "instance_id": id,
             "channel": {
                 "id": routing.channel_id,
-                "four_remote": channel_type,
+                "four_remote": routing.four_remote.map(|fr| fr.as_str()),
                 "point_id": routing.channel_point_id
             },
             "point_id": routing.point_id
@@ -279,36 +339,47 @@ pub async fn update_instance_routing(
     let mut errors = Vec::new();
 
     for routing in routings {
-        // Validate based on channel type
-        let validation_result = if routing.four_remote.is_input() {
-            // Measurement routing (T/S → M)
-            let routing_row = MeasurementRoutingRow {
-                channel_id: routing.channel_id,
-                channel_type: routing.four_remote,
-                channel_point_id: routing.channel_point_id,
-                measurement_id: routing.point_id,
-            };
-            state
-                .instance_manager
-                .validate_measurement_routing(&routing_row, instance_name)
-                .await
-        } else if routing.four_remote.is_output() {
-            // Action routing (A → C/A)
-            let routing_row = ActionRoutingRow {
-                action_id: routing.point_id,
-                channel_id: routing.channel_id,
-                channel_type: routing.four_remote,
-                channel_point_id: routing.channel_point_id,
-            };
-            state
-                .instance_manager
-                .validate_action_routing(&routing_row, instance_name)
-                .await
-        } else {
-            Err(anyhow::anyhow!(
-                "Invalid channel type: {}",
-                routing.four_remote
-            ))
+        // Determine routing type by point_id (measurement or action)
+        let routing_type = match determine_routing_type(
+            &state.instance_manager.pool,
+            id,
+            routing.point_id,
+        )
+        .await
+        {
+            Ok(rt) => rt,
+            Err(e) => {
+                errors.push(e.to_string());
+                continue;
+            },
+        };
+
+        // Validate based on routing type (determined by point_id, not four_remote)
+        let validation_result = match routing_type {
+            RoutingType::Measurement => {
+                let routing_row = MeasurementRoutingRow {
+                    channel_id: routing.channel_id,
+                    channel_type: routing.four_remote,
+                    channel_point_id: routing.channel_point_id,
+                    measurement_id: routing.point_id,
+                };
+                state
+                    .instance_manager
+                    .validate_measurement_routing(&routing_row, instance_name)
+                    .await
+            },
+            RoutingType::Action => {
+                let routing_row = ActionRoutingRow {
+                    action_id: routing.point_id,
+                    channel_id: routing.channel_id,
+                    channel_type: routing.four_remote,
+                    channel_point_id: routing.channel_point_id,
+                };
+                state
+                    .instance_manager
+                    .validate_action_routing(&routing_row, instance_name)
+                    .await
+            },
         };
 
         match validation_result {
@@ -324,55 +395,56 @@ pub async fn update_instance_routing(
             },
         }
 
-        // UPSERT into appropriate table based on channel type
-        let result = if routing.four_remote.is_input() {
-            // UPSERT into measurement_routing (ON CONFLICT updates existing routing)
-            sqlx::query(
-                r#"
-                INSERT INTO measurement_routing
-                (instance_id, instance_name, channel_id, channel_type, channel_point_id,
-                 measurement_id, enabled)
-                VALUES (?, (SELECT instance_name FROM instances WHERE instance_id = ?), ?, ?, ?, ?, true)
-                ON CONFLICT(instance_id, measurement_id) DO UPDATE SET
-                    channel_id = excluded.channel_id,
-                    channel_type = excluded.channel_type,
-                    channel_point_id = excluded.channel_point_id,
-                    instance_name = excluded.instance_name,
-                    enabled = true
-                "#,
-            )
-            .bind(id)
-            .bind(id)
-            .bind(routing.channel_id)
-            .bind(routing.four_remote.as_str())
-            .bind(routing.channel_point_id)
-            .bind(routing.point_id)
-            .execute(&mut *tx)
-            .await
-        } else {
-            // UPSERT into action_routing (ON CONFLICT updates existing routing)
-            sqlx::query(
-                r#"
-                INSERT INTO action_routing
-                (instance_id, instance_name, action_id, channel_id, channel_type,
-                 channel_point_id, enabled)
-                VALUES (?, (SELECT instance_name FROM instances WHERE instance_id = ?), ?, ?, ?, ?, true)
-                ON CONFLICT(instance_id, action_id) DO UPDATE SET
-                    channel_id = excluded.channel_id,
-                    channel_type = excluded.channel_type,
-                    channel_point_id = excluded.channel_point_id,
-                    instance_name = excluded.instance_name,
-                    enabled = true
-                "#,
-            )
-            .bind(id)
-            .bind(id)
-            .bind(routing.point_id)
-            .bind(routing.channel_id)
-            .bind(routing.four_remote.as_str())
-            .bind(routing.channel_point_id)
-            .execute(&mut *tx)
-            .await
+        // UPSERT into appropriate table based on routing type (M or A)
+        let result = match routing_type {
+            RoutingType::Measurement => {
+                sqlx::query(
+                    r#"
+                    INSERT INTO measurement_routing
+                    (instance_id, instance_name, channel_id, channel_type, channel_point_id,
+                     measurement_id, enabled)
+                    VALUES (?, (SELECT instance_name FROM instances WHERE instance_id = ?), ?, ?, ?, ?, true)
+                    ON CONFLICT(instance_id, measurement_id) DO UPDATE SET
+                        channel_id = excluded.channel_id,
+                        channel_type = excluded.channel_type,
+                        channel_point_id = excluded.channel_point_id,
+                        instance_name = excluded.instance_name,
+                        enabled = true
+                    "#,
+                )
+                .bind(id)
+                .bind(id)
+                .bind(routing.channel_id)
+                .bind(routing.four_remote.map(|fr| fr.as_str()))
+                .bind(routing.channel_point_id)
+                .bind(routing.point_id)
+                .execute(&mut *tx)
+                .await
+            },
+            RoutingType::Action => {
+                sqlx::query(
+                    r#"
+                    INSERT INTO action_routing
+                    (instance_id, instance_name, action_id, channel_id, channel_type,
+                     channel_point_id, enabled)
+                    VALUES (?, (SELECT instance_name FROM instances WHERE instance_id = ?), ?, ?, ?, ?, true)
+                    ON CONFLICT(instance_id, action_id) DO UPDATE SET
+                        channel_id = excluded.channel_id,
+                        channel_type = excluded.channel_type,
+                        channel_point_id = excluded.channel_point_id,
+                        instance_name = excluded.instance_name,
+                        enabled = true
+                    "#,
+                )
+                .bind(id)
+                .bind(id)
+                .bind(routing.point_id)
+                .bind(routing.channel_id)
+                .bind(routing.four_remote.map(|fr| fr.as_str()))
+                .bind(routing.channel_point_id)
+                .execute(&mut *tx)
+                .await
+            },
         };
 
         if result.is_ok() {
@@ -515,39 +587,78 @@ pub async fn validate_instance_routing(
         // Save channel info for response
         let channel_info = format!(
             "{}:{}:{}",
-            routing.channel_id, routing.four_remote, routing.channel_point_id
+            routing
+                .channel_id
+                .map_or("null".to_string(), |v| v.to_string()),
+            routing
+                .four_remote
+                .as_ref()
+                .map_or("null".to_string(), |fr| fr.to_string()),
+            routing
+                .channel_point_id
+                .map_or("null".to_string(), |v| v.to_string())
         );
 
-        // Validate based on channel type
-        let validation_result = if routing.four_remote.is_input() {
-            // Measurement routing (T/S → M)
-            let routing_row = MeasurementRoutingRow {
-                channel_id: routing.channel_id,
-                channel_type: routing.four_remote,
-                channel_point_id: routing.channel_point_id,
-                measurement_id: routing.point_id,
-            };
-            state
-                .instance_manager
-                .validate_measurement_routing(&routing_row, instance_name)
-                .await
-        } else if routing.four_remote.is_output() {
-            // Action routing (A → C/A)
-            let routing_row = ActionRoutingRow {
-                action_id: routing.point_id,
-                channel_id: routing.channel_id,
-                channel_type: routing.four_remote,
-                channel_point_id: routing.channel_point_id,
-            };
-            state
-                .instance_manager
-                .validate_action_routing(&routing_row, instance_name)
-                .await
-        } else {
-            Err(anyhow::anyhow!(
-                "Invalid channel type: {}",
-                routing.four_remote
-            ))
+        // If all three channel fields are null, skip validation (unbound routing)
+        if routing.channel_id.is_none()
+            && routing.four_remote.is_none()
+            && routing.channel_point_id.is_none()
+        {
+            results.push(json!({
+                "channel": &channel_info,
+                "valid": true,
+                "errors": Vec::<String>::new()
+            }));
+            continue;
+        }
+
+        // Determine routing type by point_id lookup
+        let routing_type = match determine_routing_type(
+            &state.instance_manager.pool,
+            id,
+            routing.point_id,
+        )
+        .await
+        {
+            Ok(rt) => rt,
+            Err(e) => {
+                results.push(json!({
+                    "channel": &channel_info,
+                    "valid": false,
+                    "errors": vec![e.to_string()]
+                }));
+                continue;
+            },
+        };
+
+        // Validate based on routing type
+        let validation_result = match routing_type {
+            RoutingType::Measurement => {
+                // Measurement routing (T/S → M)
+                let routing_row = MeasurementRoutingRow {
+                    channel_id: routing.channel_id,
+                    channel_type: routing.four_remote,
+                    channel_point_id: routing.channel_point_id,
+                    measurement_id: routing.point_id,
+                };
+                state
+                    .instance_manager
+                    .validate_measurement_routing(&routing_row, instance_name)
+                    .await
+            },
+            RoutingType::Action => {
+                // Action routing (A → C/A)
+                let routing_row = ActionRoutingRow {
+                    action_id: routing.point_id,
+                    channel_id: routing.channel_id,
+                    channel_type: routing.four_remote,
+                    channel_point_id: routing.channel_point_id,
+                };
+                state
+                    .instance_manager
+                    .validate_action_routing(&routing_row, instance_name)
+                    .await
+            },
         };
 
         match validation_result {

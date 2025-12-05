@@ -62,27 +62,32 @@ pub struct AddAssociationRequest {
 // === Routing Management ===
 
 /// Request to create or update a channel-to-instance point routing
+///
+/// `channel_id`, `four_remote`, and `channel_point_id` form a unit to identify a channel point.
+/// All three must be present for a valid routing, or all null to unbind the routing.
 #[derive(Debug, Clone, Deserialize, Serialize, ToSchema)]
 pub struct RoutingRequest {
     #[schema(example = 1)]
-    pub channel_id: i32,
-    #[schema(value_type = String, example = "T")]
-    pub four_remote: FourRemote,
+    pub channel_id: Option<i32>,
+    #[schema(value_type = Option<String>, example = "T")]
+    pub four_remote: Option<FourRemote>,
     #[schema(example = 101)]
-    pub channel_point_id: u32,
+    pub channel_point_id: Option<u32>,
     #[schema(example = 101)]
     pub point_id: u32, // Either measurement_id or action_id based on channel_type
 }
 
 /// Request to create or update routing for a single point
+///
+/// `channel_id`, `four_remote`, and `channel_point_id` can all be null to unbind the routing
 #[derive(Debug, Clone, Deserialize, Serialize, ToSchema)]
 pub struct SinglePointRoutingRequest {
     #[schema(example = 1)]
-    pub channel_id: i32,
-    #[schema(value_type = String, example = "T")]
-    pub four_remote: FourRemote,
+    pub channel_id: Option<i32>,
+    #[schema(value_type = Option<String>, example = "T")]
+    pub four_remote: Option<FourRemote>,
     #[schema(example = 101)]
-    pub channel_point_id: u32,
+    pub channel_point_id: Option<u32>,
     #[serde(default = "default_enabled")]
     #[schema(example = true)]
     pub enabled: bool,
@@ -232,19 +237,20 @@ pub struct InstanceDetail {
 ///
 /// This structure represents the routing configuration for an instance point.
 /// It defines how the point is mapped to a channel point.
+/// `channel_id`, `channel_type`, and `channel_point_id` form a unit - all null means unbound.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct PointRouting {
-    /// Channel ID
+    /// Channel ID (null if routing is unbound)
     #[schema(example = 1)]
-    pub channel_id: i32,
+    pub channel_id: Option<i32>,
 
-    /// Channel type (four-remote type)
+    /// Channel type (four-remote type, null if routing is unbound)
     #[schema(example = "T")]
-    pub channel_type: String,
+    pub channel_type: Option<String>,
 
-    /// Channel point ID
+    /// Channel point ID (null if routing is unbound)
     #[schema(example = 101)]
-    pub channel_point_id: u32,
+    pub channel_point_id: Option<u32>,
 
     /// Whether routing is enabled
     #[schema(example = true)]

@@ -35,21 +35,25 @@ fn four_remote_to_point_type(four_remote: &FourRemote) -> PointType {
 }
 
 /// CSV row structure for measurement routing (T/S → M)
+///
+/// `channel_id`, `channel_type`, and `channel_point_id` form a unit - all None means unbound
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MeasurementRoutingRow {
-    pub channel_id: i32,
-    pub channel_type: FourRemote, // T or S only
-    pub channel_point_id: u32,
+    pub channel_id: Option<i32>,
+    pub channel_type: Option<FourRemote>, // T or S only, None if unbound
+    pub channel_point_id: Option<u32>,
     pub measurement_id: u32,
 }
 
 /// CSV row structure for action routing (A → C/A)
+///
+/// `channel_id`, `channel_type`, and `channel_point_id` form a unit - all None means unbound
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ActionRoutingRow {
     pub action_id: u32,
-    pub channel_id: i32,
-    pub channel_type: FourRemote, // C or A only
-    pub channel_point_id: u32,
+    pub channel_id: Option<i32>,
+    pub channel_type: Option<FourRemote>, // C or A only, None if unbound
+    pub channel_point_id: Option<u32>,
 }
 
 /// Measurement routing record from database
@@ -58,9 +62,9 @@ pub struct MeasurementRouting {
     pub routing_id: i32,
     pub instance_id: u16,
     pub instance_name: String,
-    pub channel_id: i32,
-    pub channel_type: String,
-    pub channel_point_id: u32,
+    pub channel_id: Option<i32>,
+    pub channel_type: Option<String>,
+    pub channel_point_id: Option<u32>,
     pub measurement_id: u32,
     pub description: Option<String>,
     pub enabled: bool,
@@ -73,9 +77,9 @@ pub struct ActionRouting {
     pub instance_id: u16,
     pub instance_name: String,
     pub action_id: u32,
-    pub channel_id: i32,
-    pub channel_type: String,
-    pub channel_point_id: u32,
+    pub channel_id: Option<i32>,
+    pub channel_type: Option<String>,
+    pub channel_point_id: Option<u32>,
     pub description: Option<String>,
     pub enabled: bool,
 }
@@ -405,12 +409,14 @@ impl RoutingLoader {
             errors.push(format!("Instance {} does not exist", instance_name));
         }
 
-        // Validate channel_type
-        if !routing.channel_type.is_input() {
-            errors.push(format!(
-                "Invalid channel_type for measurement: {}. Must be T or S",
-                routing.channel_type
-            ));
+        // Validate channel_type (skip if None - unbound routing is valid)
+        if let Some(ref ct) = routing.channel_type {
+            if !ct.is_input() {
+                errors.push(format!(
+                    "Invalid channel_type for measurement: {}. Must be T or S",
+                    ct
+                ));
+            }
         }
 
         // Validate measurement point exists
@@ -462,12 +468,14 @@ impl RoutingLoader {
             errors.push(format!("Instance {} does not exist", instance_name));
         }
 
-        // Validate channel_type
-        if !routing.channel_type.is_output() {
-            errors.push(format!(
-                "Invalid channel_type for action: {}. Must be C or A",
-                routing.channel_type
-            ));
+        // Validate channel_type (skip if None - unbound routing is valid)
+        if let Some(ref ct) = routing.channel_type {
+            if !ct.is_output() {
+                errors.push(format!(
+                    "Invalid channel_type for action: {}. Must be C or A",
+                    ct
+                ));
+            }
         }
 
         // Validate action point exists

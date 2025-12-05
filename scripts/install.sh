@@ -162,6 +162,14 @@ check_image_changed() {
             # Check if any container is running
             container_name=$(docker ps --filter "ancestor=$image_name" --format "{{.Names}}" | head -1)
             ;;
+        voltage-hissrv:* | voltage-apigateway:* | voltage-netsrv:* | voltage-alarmsrv:* | voltage-apps:*)
+            # Python auxiliary services and frontend
+            # Extract container name from image name (e.g., voltage-hissrv:latest -> hissrv)
+            container_name=$(echo "$image_name" | sed 's/voltage-//' | cut -d: -f1)
+            ;;
+        influxdb:*)
+            container_name="influxdb"
+            ;;
         *)
             echo -e "${YELLOW}Unknown image: $image_name${NC}"
             return 0  # Assume changed for unknown images
@@ -379,6 +387,21 @@ if command -v docker &> /dev/null; then
                 echo -e "  ${GREEN}✓ voltageems unchanged${NC}"
             fi
 
+            # Check Python auxiliary services and frontend
+            PYTHON_SERVICES_CHANGED=()
+            PYTHON_SERVICES_UNCHANGED=()
+
+            for svc in hissrv apigateway netsrv alarmsrv apps; do
+                image_name="voltage-${svc}:latest"
+                if check_image_changed "$image_name"; then
+                    PYTHON_SERVICES_CHANGED+=("$svc")
+                    echo -e "  ${RED}⚠ $svc has changed${NC}"
+                else
+                    PYTHON_SERVICES_UNCHANGED+=("$svc")
+                    echo -e "  ${GREEN}✓ $svc unchanged${NC}"
+                fi
+            done
+
             # === PHASE 3: Selective update with Redis protection ===
             echo ""
             echo -e "${BLUE}Phase 3: Applying updates...${NC}"
@@ -469,6 +492,44 @@ if command -v docker &> /dev/null; then
                 echo -e "${GREEN}✓ VoltageEMS services: No update needed${NC}"
             fi
 
+            # Handle Python auxiliary services update (interactive, one by one)
+            PYTHON_SERVICES_UPDATED=()
+            PYTHON_SERVICES_SKIPPED=()
+
+            if [ ${#PYTHON_SERVICES_CHANGED[@]} -gt 0 ]; then
+                echo ""
+                echo -e "${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+                echo -e "${YELLOW}  Python Auxiliary Services Update${NC}"
+                echo -e "${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+                echo ""
+                echo "  ${#PYTHON_SERVICES_CHANGED[@]} service(s) have changed: ${PYTHON_SERVICES_CHANGED[*]}"
+                echo ""
+
+                for svc in "${PYTHON_SERVICES_CHANGED[@]}"; do
+                    read -p "  Update $svc? (Y/n): " svc_confirm
+
+                    if [[ -z "$svc_confirm" ]] || [[ "$svc_confirm" =~ ^[Yy]$ ]]; then
+                        echo -e "    ${YELLOW}Updating $svc...${NC}"
+                        docker stop "$svc" 2>/dev/null || true
+                        docker rm "$svc" 2>/dev/null || true
+
+                        if [[ -f "$INSTALL_DIR/docker-compose.yml" ]]; then
+                            run_docker_compose -f "$INSTALL_DIR/docker-compose.yml" up -d --force-recreate "$svc"
+                            echo -e "    ${GREEN}✓ $svc updated${NC}"
+                            PYTHON_SERVICES_UPDATED+=("$svc")
+                        else
+                            echo -e "    ${YELLOW}Note: docker-compose.yml not found${NC}"
+                        fi
+                    else
+                        echo -e "    ${BLUE}Skipped $svc${NC}"
+                        PYTHON_SERVICES_SKIPPED+=("$svc")
+                    fi
+                done
+                echo ""
+            else
+                echo -e "${GREEN}✓ Python services: No update needed${NC}"
+            fi
+
             # === PHASE 4: Cleanup ===
             echo ""
             echo -e "${BLUE}Phase 4: Cleaning up...${NC}"
@@ -510,6 +571,16 @@ if command -v docker &> /dev/null; then
                 echo "  • VoltageEMS services: Updated"
             else
                 echo "  • VoltageEMS services: Unchanged"
+            fi
+            if [ ${#PYTHON_SERVICES_CHANGED[@]} -gt 0 ]; then
+                if [ ${#PYTHON_SERVICES_UPDATED[@]} -gt 0 ]; then
+                    echo "  • Python services updated: ${PYTHON_SERVICES_UPDATED[*]}"
+                fi
+                if [ ${#PYTHON_SERVICES_SKIPPED[@]} -gt 0 ]; then
+                    echo "  • Python services skipped: ${PYTHON_SERVICES_SKIPPED[*]}"
+                fi
+            else
+                echo "  • Python services: Unchanged"
             fi
         else
             echo -e "${YELLOW}Skipping image update.${NC}"

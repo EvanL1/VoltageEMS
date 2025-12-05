@@ -16,6 +16,7 @@ use crate::core::channels::ChannelManager;
 
 // Import handler modules
 use crate::api::{
+    handlers::admin_handlers::*,
     handlers::health::*,
     handlers::{
         channel_handlers::*, channel_management_handlers::*, control_handlers::*,
@@ -226,6 +227,11 @@ pub fn create_api_routes(
         .route(
             "/api/channels/{channel_id}/{telemetry_type}/{point_id}",
             get(get_point_info_handler),
+        )
+        // Admin endpoints (log level management)
+        .route(
+            "/api/admin/logs/level",
+            get(get_log_level).post(set_log_level),
         )
         // CRITICAL: Apply middleware BEFORE .with_state() for it to work
         .layer(axum::middleware::from_fn(common::logging::http_request_logger))

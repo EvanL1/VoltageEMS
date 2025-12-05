@@ -22,6 +22,7 @@ use tracing_subscriber::{
     },
     layer::SubscriberExt,
     registry::LookupSpan,
+    reload,
     util::SubscriberInitExt,
     EnvFilter, Layer,
 };
@@ -511,6 +512,11 @@ static RELOADABLE_WRITER: OnceLock<Arc<ReloadableWriter>> = OnceLock::new();
 static API_LOG_RUNTIME: OnceLock<Arc<Mutex<LogRuntime>>> = OnceLock::new();
 static API_RELOADABLE_WRITER: OnceLock<Arc<ReloadableWriter>> = OnceLock::new();
 
+// Dynamic log level reload support
+type EnvFilterReloadHandle = reload::Handle<EnvFilter, tracing_subscriber::Registry>;
+static LOG_FILTER_HANDLE: OnceLock<EnvFilterReloadHandle> = OnceLock::new();
+static CURRENT_LOG_LEVEL: OnceLock<Mutex<String>> = OnceLock::new();
+
 /// Logger configuration
 #[derive(Debug, Clone)]
 pub struct LogConfig {
@@ -577,11 +583,11 @@ pub fn init_with_config(config: LogConfig) -> Result<(), Box<dyn std::error::Err
         "off"
     };
 
-    let env_filter = if let Ok(env_str) = std::env::var("RUST_LOG") {
+    let (env_filter, initial_level_str) = if let Ok(env_str) = std::env::var("RUST_LOG") {
         // RUST_LOG is set - only append api_access if not already specified
         if env_str.contains("api_access") {
             // User explicitly set api_access level in RUST_LOG, respect it
-            EnvFilter::new(env_str)
+            (EnvFilter::new(env_str.clone()), env_str)
         } else {
             // api_access not in RUST_LOG, use config default
             // IMPORTANT: If RUST_LOG contains "debug" or "trace", upgrade api_access to debug for full visibility
@@ -590,17 +596,24 @@ pub fn init_with_config(config: LogConfig) -> Result<(), Box<dyn std::error::Err
             } else {
                 api_level
             };
-            EnvFilter::new(format!("{},api_access={}", env_str, effective_api_level))
+            let filter_str = format!("{},api_access={}", env_str, effective_api_level);
+            (EnvFilter::new(filter_str.clone()), filter_str)
         }
     } else {
         // RUST_LOG not set - use default with api_access
-        EnvFilter::new(format!(
+        let filter_str = format!(
             "info,{}=debug,api_access={}",
             config.service_name, api_level
-        ))
+        );
+        (EnvFilter::new(filter_str.clone()), filter_str)
     };
 
-    let registry = tracing_subscriber::registry().with(env_filter);
+    // Wrap EnvFilter with reload::Layer for dynamic level changes
+    let (reload_filter, reload_handle) = reload::Layer::new(env_filter);
+    let _ = LOG_FILTER_HANDLE.set(reload_handle);
+    let _ = CURRENT_LOG_LEVEL.set(Mutex::new(initial_level_str));
+
+    let registry = tracing_subscriber::registry().with(reload_filter);
 
     // Console layer - simplified for INFO and above, detailed for DEBUG and below
     // Custom format: 2025-12-02T00:50:44.809Z [INFO] message
@@ -980,10 +993,54 @@ pub fn init(level: &str) -> Result<(), Box<dyn std::error::Error>> {
     init_with_config(config)
 }
 
-/// Set logging level (placeholder for dynamic level changes)
-pub fn set_level(level: &str) {
-    tracing::debug!("Log level: {}", level);
-    // Note: Dynamic level changes require more complex implementation
+/// Dynamically set log filter level at runtime
+///
+/// # Arguments
+/// * `level` - Log level string (e.g., "debug", "info", "warn", "error", "trace")
+///   or full filter spec (e.g., "info,comsrv=debug")
+///
+/// # Returns
+/// * `Ok(())` on success
+/// * `Err(String)` with error message on failure
+///
+/// # Example
+/// ```ignore
+/// common::logging::set_log_level("debug")?;
+/// common::logging::set_log_level("info,comsrv=debug")?;
+/// ```
+pub fn set_log_level(level: &str) -> Result<(), String> {
+    let handle = LOG_FILTER_HANDLE
+        .get()
+        .ok_or("Logging not initialized with reload support")?;
+
+    let new_filter =
+        EnvFilter::try_new(level).map_err(|e| format!("Invalid log level '{}': {}", level, e))?;
+
+    handle
+        .reload(new_filter)
+        .map_err(|e| format!("Failed to reload log filter: {}", e))?;
+
+    // Update stored level
+    if let Some(current) = CURRENT_LOG_LEVEL.get() {
+        if let Ok(mut guard) = current.lock() {
+            *guard = level.to_string();
+        }
+    }
+
+    tracing::info!("Log level changed to: {}", level);
+    Ok(())
+}
+
+/// Get current log filter level
+///
+/// # Returns
+/// Current log filter string
+pub fn get_log_level() -> String {
+    CURRENT_LOG_LEVEL
+        .get()
+        .and_then(|m| m.lock().ok())
+        .map(|guard| guard.clone())
+        .unwrap_or_else(|| "unknown".to_string())
 }
 
 /// Log to a specific channel file only (for comsrv)

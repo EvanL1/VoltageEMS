@@ -1176,11 +1176,11 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
                     name,
                     unit,
                     description: desc,
-                    routing: match (cid, ctype, cpid, enabled) {
-                        (Some(c), Some(t), Some(p), Some(e)) => Some(PointRouting {
-                            channel_id: c,
-                            channel_type: t,
-                            channel_point_id: p,
+                    routing: match (ctype, enabled) {
+                        (Some(t), Some(e)) => Some(PointRouting {
+                            channel_id: cid,
+                            channel_type: Some(t),
+                            channel_point_id: cpid,
                             enabled: e,
                             channel_name: cname,
                             channel_point_name: cpname,
@@ -1249,11 +1249,11 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
                     name,
                     unit,
                     description: desc,
-                    routing: match (cid, ctype, cpid, enabled) {
-                        (Some(c), Some(t), Some(p), Some(e)) => Some(PointRouting {
-                            channel_id: c,
-                            channel_type: t,
-                            channel_point_id: p,
+                    routing: match (ctype, enabled) {
+                        (Some(t), Some(e)) => Some(PointRouting {
+                            channel_id: cid,
+                            channel_type: Some(t),
+                            channel_point_id: cpid,
                             enabled: e,
                             channel_name: cname,
                             channel_point_name: cpname,
@@ -1547,11 +1547,11 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
             name,
             unit,
             description: desc,
-            routing: match (cid, ctype, cpid, enabled) {
-                (Some(c), Some(t), Some(p), Some(e)) => Some(PointRouting {
-                    channel_id: c,
-                    channel_type: t,
-                    channel_point_id: p,
+            routing: match (ctype, enabled) {
+                (Some(t), Some(e)) => Some(PointRouting {
+                    channel_id: cid,
+                    channel_type: Some(t),
+                    channel_point_id: cpid,
                     enabled: e,
                     channel_name: cname,
                     channel_point_name: cpname,
@@ -1642,11 +1642,11 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
             name,
             unit,
             description: desc,
-            routing: match (cid, ctype, cpid, enabled) {
-                (Some(c), Some(t), Some(p), Some(e)) => Some(PointRouting {
-                    channel_id: c,
-                    channel_type: t,
-                    channel_point_id: p,
+            routing: match (ctype, enabled) {
+                (Some(t), Some(e)) => Some(PointRouting {
+                    channel_id: cid,
+                    channel_type: Some(t),
+                    channel_point_id: cpid,
                     enabled: e,
                     channel_name: cname,
                     channel_point_name: cpname,
@@ -1663,12 +1663,14 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
         point_id: u32,
         request: crate::dto::SinglePointRoutingRequest,
     ) -> Result<()> {
-        // Validate channel_type (must be T or S for measurement)
-        if !request.four_remote.is_input() {
-            return Err(anyhow!(
-                "Invalid channel_type '{}' for measurement routing (must be T or S)",
-                request.four_remote
-            ));
+        // Validate channel_type (must be T or S for measurement, skip if None - unbound)
+        if let Some(ref fr) = request.four_remote {
+            if !fr.is_input() {
+                return Err(anyhow!(
+                    "Invalid channel_type '{}' for measurement routing (must be T or S)",
+                    fr
+                ));
+            }
         }
 
         // Get instance_name for routing table denormalization
@@ -1699,7 +1701,7 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
         .bind(instance_id as i32)
         .bind(instance_name)
         .bind(request.channel_id)
-        .bind(request.four_remote.as_str())
+        .bind(request.four_remote.map(|fr| fr.as_str()))
         .bind(request.channel_point_id)
         .bind(point_id)
         .bind(request.enabled)
@@ -1716,12 +1718,14 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
         point_id: u32,
         request: crate::dto::SinglePointRoutingRequest,
     ) -> Result<()> {
-        // Validate channel_type (must be C or A for action)
-        if !request.four_remote.is_output() {
-            return Err(anyhow!(
-                "Invalid channel_type '{}' for action routing (must be C or A)",
-                request.four_remote
-            ));
+        // Validate channel_type (must be C or A for action, skip if None - unbound)
+        if let Some(ref fr) = request.four_remote {
+            if !fr.is_output() {
+                return Err(anyhow!(
+                    "Invalid channel_type '{}' for action routing (must be C or A)",
+                    fr
+                ));
+            }
         }
 
         // Get instance_name for routing table denormalization
@@ -1753,7 +1757,7 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
         .bind(instance_name)
         .bind(point_id)
         .bind(request.channel_id)
-        .bind(request.four_remote.as_str())
+        .bind(request.four_remote.map(|fr| fr.as_str()))
         .bind(request.channel_point_id)
         .bind(request.enabled)
         .execute(&self.pool)
@@ -1914,12 +1918,14 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
             errors.push(format!("Instance {} does not exist", instance_name));
         }
 
-        // Validate channel_type
-        if !routing.channel_type.is_input() {
-            errors.push(format!(
-                "Invalid channel_type for measurement: {}. Must be T or S",
-                routing.channel_type
-            ));
+        // Validate channel_type (skip if None - unbound routing is valid)
+        if let Some(ref ct) = routing.channel_type {
+            if !ct.is_input() {
+                errors.push(format!(
+                    "Invalid channel_type for measurement: {}. Must be T or S",
+                    ct
+                ));
+            }
         }
 
         // Validate measurement point exists
@@ -1981,12 +1987,14 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
             errors.push(format!("Instance {} does not exist", instance_name));
         }
 
-        // Validate channel_type
-        if !routing.channel_type.is_output() {
-            errors.push(format!(
-                "Invalid channel_type for action: {}. Must be C or A",
-                routing.channel_type
-            ));
+        // Validate channel_type (skip if None - unbound routing is valid)
+        if let Some(ref ct) = routing.channel_type {
+            if !ct.is_output() {
+                errors.push(format!(
+                    "Invalid channel_type for action: {}. Must be C or A",
+                    ct
+                ));
+            }
         }
 
         // Validate action point exists
