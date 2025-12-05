@@ -5,6 +5,7 @@
 #![allow(clippy::disallowed_methods)] // json! macro used in multiple functions
 
 use axum::{extract::State, response::Json};
+use common::system_metrics::SystemMetrics;
 use serde_json::json;
 use std::sync::Arc;
 use voltage_config::api::{AppError, SuccessResponse};
@@ -44,6 +45,9 @@ pub async fn health_check(
         .unwrap_or_default();
     let product_count = products.len();
 
+    // Collect system metrics (CPU, memory)
+    let metrics = SystemMetrics::collect();
+
     Ok(Json(SuccessResponse::new(json!({
         "status": "healthy",
         "service": "modsrv",
@@ -51,6 +55,12 @@ pub async fn health_check(
         "sqlite": sqlite_status,
         "products_loaded": product_count,
         "instances_active": instance_count,
+        "system": {
+            "cpu_count": metrics.cpu_count,
+            "process_cpu_percent": metrics.process_cpu_percent,
+            "process_memory_mb": metrics.process_memory_mb,
+            "memory_total_mb": metrics.memory_total_mb
+        },
         "timestamp": chrono::Utc::now().to_rfc3339()
     }))))
 }

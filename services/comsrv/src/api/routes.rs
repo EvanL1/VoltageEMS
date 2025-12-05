@@ -118,7 +118,11 @@ impl AppState {
 
         // Mapping management
         crate::api::handlers::mapping_handlers::get_channel_mappings_handler,
-        crate::api::handlers::mapping_handlers::update_channel_mappings_handler
+        crate::api::handlers::mapping_handlers::update_channel_mappings_handler,
+
+        // Admin endpoints
+        crate::api::handlers::admin_handlers::set_log_level,
+        crate::api::handlers::admin_handlers::get_log_level
     ),
     components(
         schemas(
@@ -164,11 +168,15 @@ impl AppState {
             crate::api::handlers::point_handlers::PointBatchDeleteItem,
             crate::api::handlers::point_handlers::OperationStats,
             crate::api::handlers::point_handlers::OperationStat,
-            crate::api::handlers::point_handlers::PointBatchError
+            crate::api::handlers::point_handlers::PointBatchError,
+            // Admin schemas
+            crate::api::handlers::admin_handlers::SetLogLevelRequest,
+            crate::api::handlers::admin_handlers::LogLevelResponse
         )
     ),
     tags(
-        (name = "comsrv", description = "Communication Service API")
+        (name = "comsrv", description = "Communication Service API"),
+        (name = "admin", description = "Administration and service management")
     )
 )]
 pub struct ComsrvApiDoc;

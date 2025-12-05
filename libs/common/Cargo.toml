@@ -32,6 +32,7 @@ flate2 = { workspace = true }
 csv = { workspace = true }
 futures = { workspace = true }
 axum = { workspace = true }
+sysinfo = "0.32"
 
 # CLI dependencies  
 clap = { workspace = true, features = ["derive", "env", "cargo"], optional = true }

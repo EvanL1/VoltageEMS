@@ -97,7 +97,10 @@ use crate::api::calculation_management_handlers::{
         crate::api::calculation_management_handlers::execute_calculation,
         crate::api::product_handlers::list_products,
         crate::api::product_handlers::get_product_points,
-        crate::api::product_handlers::create_product
+        crate::api::product_handlers::create_product,
+        // Admin endpoints
+        crate::api::admin_handlers::set_log_level,
+        crate::api::admin_handlers::get_log_level
     ),
     components(
         schemas(
@@ -118,12 +121,16 @@ use crate::api::calculation_management_handlers::{
             voltage_config::modsrv::Product,
             voltage_config::modsrv::MeasurementPoint,
             voltage_config::modsrv::ActionPoint,
-            voltage_config::modsrv::PropertyTemplate
+            voltage_config::modsrv::PropertyTemplate,
+            // Admin schemas
+            crate::api::admin_handlers::SetLogLevelRequest,
+            crate::api::admin_handlers::LogLevelResponse
         )
     ),
     tags(
         (name = "modsrv", description = "Model Service API"),
-        (name = "products", description = "Product template management")
+        (name = "products", description = "Product template management"),
+        (name = "admin", description = "Administration and service management")
     )
 )]
 pub struct ModsrvApiDoc;

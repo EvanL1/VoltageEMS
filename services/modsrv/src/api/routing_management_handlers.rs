@@ -354,6 +354,48 @@ pub async fn update_instance_routing(
             },
         };
 
+        // Handle unbind routing: when channel_id is None, DELETE instead of UPSERT
+        // This supports: null, "", or omitted field → None → DELETE
+        if routing.channel_id.is_none() {
+            let result = match routing_type {
+                RoutingType::Measurement => sqlx::query(
+                    "DELETE FROM measurement_routing WHERE instance_id = ? AND measurement_id = ?",
+                )
+                .bind(id)
+                .bind(routing.point_id)
+                .execute(&mut *tx)
+                .await,
+                RoutingType::Action => {
+                    sqlx::query(
+                        "DELETE FROM action_routing WHERE instance_id = ? AND action_id = ?",
+                    )
+                    .bind(id)
+                    .bind(routing.point_id)
+                    .execute(&mut *tx)
+                    .await
+                },
+            };
+
+            match result {
+                Ok(_) => {
+                    success_count += 1;
+                    tracing::debug!(
+                        instance_id = id,
+                        point_id = routing.point_id,
+                        routing_type = ?routing_type,
+                        "Routing deleted (unbind)"
+                    );
+                },
+                Err(e) => {
+                    errors.push(format!(
+                        "Failed to delete routing for point {}: {}",
+                        routing.point_id, e
+                    ));
+                },
+            }
+            continue;
+        }
+
         // Validate based on routing type (determined by point_id, not four_remote)
         let validation_result = match routing_type {
             RoutingType::Measurement => {

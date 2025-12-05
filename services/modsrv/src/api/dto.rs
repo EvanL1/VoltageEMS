@@ -4,13 +4,90 @@
 
 #![allow(clippy::disallowed_methods)] // json! macro used in multiple functions
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use std::collections::HashMap;
 use utoipa::ToSchema;
 use voltage_config::FourRemote;
 
 // Import Core types for zero-duplication architecture
 use voltage_config::modsrv::{Instance, InstanceCore};
+
+// === Custom Deserializers for Empty String Handling ===
+
+/// Deserialize Option<i32> from null, empty string, or integer value
+/// - `null` → None
+/// - `""` → None
+/// - `123` or `"123"` → Some(123)
+fn deserialize_optional_i32<'de, D>(deserializer: D) -> Result<Option<i32>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    use serde::de::Error;
+
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum StringOrInt {
+        String(String),
+        Int(i32),
+        Null,
+    }
+
+    match Option::<StringOrInt>::deserialize(deserializer)? {
+        None => Ok(None),
+        Some(StringOrInt::Null) => Ok(None),
+        Some(StringOrInt::String(s)) if s.is_empty() => Ok(None),
+        Some(StringOrInt::String(s)) => s
+            .parse::<i32>()
+            .map(Some)
+            .map_err(|_| D::Error::custom(format!("invalid integer: {}", s))),
+        Some(StringOrInt::Int(i)) => Ok(Some(i)),
+    }
+}
+
+/// Deserialize Option<u32> from null, empty string, or integer value
+fn deserialize_optional_u32<'de, D>(deserializer: D) -> Result<Option<u32>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    use serde::de::Error;
+
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum StringOrInt {
+        String(String),
+        Int(u32),
+        Null,
+    }
+
+    match Option::<StringOrInt>::deserialize(deserializer)? {
+        None => Ok(None),
+        Some(StringOrInt::Null) => Ok(None),
+        Some(StringOrInt::String(s)) if s.is_empty() => Ok(None),
+        Some(StringOrInt::String(s)) => s
+            .parse::<u32>()
+            .map(Some)
+            .map_err(|_| D::Error::custom(format!("invalid integer: {}", s))),
+        Some(StringOrInt::Int(i)) => Ok(Some(i)),
+    }
+}
+
+/// Deserialize Option<FourRemote> from null, empty string, or valid enum value
+fn deserialize_optional_four_remote<'de, D>(deserializer: D) -> Result<Option<FourRemote>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let opt: Option<String> = Option::deserialize(deserializer)?;
+    match opt {
+        None => Ok(None),
+        Some(s) if s.is_empty() => Ok(None),
+        Some(s) => {
+            // Try parsing as FourRemote - serde will handle the enum variants
+            serde_json::from_value::<FourRemote>(serde_json::Value::String(s.clone()))
+                .map(Some)
+                .map_err(serde::de::Error::custom)
+        },
+    }
+}
 
 // === Query Parameters ===
 
@@ -64,14 +141,19 @@ pub struct AddAssociationRequest {
 /// Request to create or update a channel-to-instance point routing
 ///
 /// `channel_id`, `four_remote`, and `channel_point_id` form a unit to identify a channel point.
-/// All three must be present for a valid routing, or all null to unbind the routing.
+/// All three must be present for a valid routing, or all null/empty to unbind the routing.
+///
+/// Supports null, empty string "", or omitted fields to indicate "unbind routing".
 #[derive(Debug, Clone, Deserialize, Serialize, ToSchema)]
 pub struct RoutingRequest {
     #[schema(example = 1)]
+    #[serde(default, deserialize_with = "deserialize_optional_i32")]
     pub channel_id: Option<i32>,
     #[schema(value_type = Option<String>, example = "T")]
+    #[serde(default, deserialize_with = "deserialize_optional_four_remote")]
     pub four_remote: Option<FourRemote>,
     #[schema(example = 101)]
+    #[serde(default, deserialize_with = "deserialize_optional_u32")]
     pub channel_point_id: Option<u32>,
     #[schema(example = 101)]
     pub point_id: u32, // Either measurement_id or action_id based on channel_type
@@ -336,4 +418,105 @@ pub struct InstancePointsResponse {
 
     /// Action points with routing
     pub actions: Vec<InstanceActionPoint>,
+}
+
+// === Unit Tests ===
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Test null values are deserialized as None
+    #[test]
+    fn test_routing_request_with_null_values() {
+        let json =
+            r#"{"channel_id": null, "channel_point_id": null, "four_remote": null, "point_id": 3}"#;
+        let req: RoutingRequest = serde_json::from_str(json).unwrap();
+        assert!(req.channel_id.is_none());
+        assert!(req.four_remote.is_none());
+        assert!(req.channel_point_id.is_none());
+        assert_eq!(req.point_id, 3);
+    }
+
+    /// Test empty strings are deserialized as None
+    #[test]
+    fn test_routing_request_with_empty_strings() {
+        let json =
+            r#"{"channel_id": "", "channel_point_id": "", "four_remote": "", "point_id": 3}"#;
+        let req: RoutingRequest = serde_json::from_str(json).unwrap();
+        assert!(req.channel_id.is_none());
+        assert!(req.four_remote.is_none());
+        assert!(req.channel_point_id.is_none());
+        assert_eq!(req.point_id, 3);
+    }
+
+    /// Test omitted fields default to None (requires #[serde(default)])
+    #[test]
+    fn test_routing_request_with_omitted_fields() {
+        let json = r#"{"point_id": 3}"#;
+        let req: RoutingRequest = serde_json::from_str(json).unwrap();
+        assert!(req.channel_id.is_none());
+        assert!(req.four_remote.is_none());
+        assert!(req.channel_point_id.is_none());
+        assert_eq!(req.point_id, 3);
+    }
+
+    /// Test valid values are deserialized correctly
+    #[test]
+    fn test_routing_request_with_valid_values() {
+        let json =
+            r#"{"channel_id": 1, "channel_point_id": 101, "four_remote": "T", "point_id": 3}"#;
+        let req: RoutingRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(req.channel_id, Some(1));
+        assert_eq!(req.four_remote, Some(FourRemote::Telemetry));
+        assert_eq!(req.channel_point_id, Some(101));
+        assert_eq!(req.point_id, 3);
+    }
+
+    /// Test mixed null and empty string (original failing scenario)
+    #[test]
+    fn test_routing_request_mixed_null_and_empty() {
+        let json =
+            r#"{"channel_id": null, "channel_point_id": null, "four_remote": "", "point_id": 3}"#;
+        let req: RoutingRequest = serde_json::from_str(json).unwrap();
+        assert!(req.channel_id.is_none());
+        assert!(req.four_remote.is_none());
+        assert!(req.channel_point_id.is_none());
+        assert_eq!(req.point_id, 3);
+    }
+
+    /// Test string numbers are parsed correctly ("123" → 123)
+    #[test]
+    fn test_routing_request_string_numbers() {
+        let json =
+            r#"{"channel_id": "1", "channel_point_id": "101", "four_remote": "T", "point_id": 3}"#;
+        let req: RoutingRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(req.channel_id, Some(1));
+        assert_eq!(req.channel_point_id, Some(101));
+        assert_eq!(req.four_remote, Some(FourRemote::Telemetry));
+    }
+
+    /// Test all FourRemote variants with standard aliases
+    #[test]
+    fn test_routing_request_four_remote_variants() {
+        // Telemetry (T, YC, telemetry, yc)
+        let json = r#"{"four_remote": "T", "point_id": 1}"#;
+        let req: RoutingRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(req.four_remote, Some(FourRemote::Telemetry));
+
+        // Signal (S, YX, signal, yx)
+        let json = r#"{"four_remote": "S", "point_id": 1}"#;
+        let req: RoutingRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(req.four_remote, Some(FourRemote::Signal));
+
+        // Control (C, YK, control, yk)
+        let json = r#"{"four_remote": "C", "point_id": 1}"#;
+        let req: RoutingRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(req.four_remote, Some(FourRemote::Control));
+
+        // Adjustment (A, YT, adjustment, setpoint, yt)
+        let json = r#"{"four_remote": "A", "point_id": 1}"#;
+        let req: RoutingRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(req.four_remote, Some(FourRemote::Adjustment));
+    }
 }

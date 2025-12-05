@@ -17,6 +17,7 @@ pub mod config_loader;
 pub mod error;
 pub mod logging;
 pub mod service_bootstrap;
+pub mod system_metrics;
 pub mod warning_monitor;
 
 // Re-export commonly used csv types (previously in csv.rs module)

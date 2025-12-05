@@ -353,6 +353,9 @@ pub struct HealthStatus {
     /// Individual component checks
     #[serde(default)]
     pub checks: HashMap<String, ComponentHealth>,
+    /// System resource metrics (CPU, memory)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub system: Option<serde_json::Value>,
 }
 
 /// Service status enum

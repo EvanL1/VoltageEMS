@@ -309,6 +309,10 @@ pub fn create_health_status(
         uptime_seconds: uptime,
         timestamp: chrono::Utc::now(),
         checks,
+        system: Some(serde_json::json!({
+            "process_cpu_percent": cpu_usage,
+            "process_memory_mb": memory_usage / 1024 / 1024
+        })),
     }
 }
 
