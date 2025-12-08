@@ -7,7 +7,7 @@ use tracing::debug;
 
 /// Database status information
 #[derive(Debug)]
-#[allow(dead_code)]
+#[allow(dead_code)] // Fields accessed via Debug trait for logging
 pub struct DatabaseStatus {
     pub exists: bool,
     pub initialized: bool,

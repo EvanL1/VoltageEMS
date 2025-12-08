@@ -654,7 +654,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_memory_rtdb_todo_queues() {
-        use voltage_config::comsrv::RedisKeys;
+        use voltage_config::comsrv::ChannelRedisKeys;
 
         let rtdb = MemoryRtdb::new();
 
@@ -665,8 +665,8 @@ mod tests {
             .unwrap();
 
         // Verify queue contents by popping from keys
-        let c_key = RedisKeys::control_todo(1001);
-        let a_key = RedisKeys::adjustment_todo(1001);
+        let c_key = ChannelRedisKeys::control_todo(1001);
+        let a_key = ChannelRedisKeys::adjustment_todo(1001);
 
         let c1 = rtdb.list_lpop(&c_key).await.unwrap();
         assert_eq!(c1, Some(Bytes::from(r#"{"cmd":"c1"}"#)));

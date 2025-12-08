@@ -7,7 +7,7 @@ use std::sync::Arc;
 use tracing::{debug, error, info, warn};
 use voltage_config::{
     common::{ValidationLevel, ValidationResult},
-    modsrv::{ModsrvQueries, RedisKeys},
+    modsrv::{InstanceRedisKeys, ModsrvQueries},
 };
 use voltage_model::validate_instance_name;
 use voltage_rtdb::Rtdb;
@@ -131,12 +131,12 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
         // Build point routing maps for Redis registration (generate Redis keys)
         // Note: Routing configuration is managed by routing_loader.rs, not stored here
         for point in &product.measurements {
-            let redis_key = RedisKeys::measurement(instance_id, point.measurement_id);
+            let redis_key = InstanceRedisKeys::measurement(instance_id, point.measurement_id);
             measurement_point_routings.insert(point.measurement_id, redis_key);
         }
 
         for point in &product.actions {
-            let redis_key = RedisKeys::action(instance_id, point.action_id);
+            let redis_key = InstanceRedisKeys::action(instance_id, point.action_id);
             action_point_routings.insert(point.action_id, redis_key);
         }
 
@@ -582,7 +582,7 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
         .await?;
 
         for (point_id,) in measurement_points {
-            let redis_key = RedisKeys::measurement(instance_id, point_id as u32);
+            let redis_key = InstanceRedisKeys::measurement(instance_id, point_id as u32);
             measurement_point_routings.insert(point_id as u32, redis_key);
         }
 
@@ -599,7 +599,7 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
         .await?;
 
         for (point_id,) in action_points {
-            let redis_key = RedisKeys::action(instance_id, point_id as u32);
+            let redis_key = InstanceRedisKeys::action(instance_id, point_id as u32);
             action_point_routings.insert(point_id as u32, redis_key);
         }
 
@@ -908,7 +908,7 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
         })?;
 
         for (point_id,) in measurement_points {
-            let redis_key = RedisKeys::measurement(instance_id as u16, point_id as u32);
+            let redis_key = InstanceRedisKeys::measurement(instance_id as u16, point_id as u32);
             measurement_point_routings.insert(point_id as u32, redis_key);
         }
 
@@ -926,7 +926,7 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
         .map_err(|e| anyhow!("Failed to load action routing for {}: {}", instance_name, e))?;
 
         for (point_id,) in action_points {
-            let redis_key = RedisKeys::action(instance_id as u16, point_id as u32);
+            let redis_key = InstanceRedisKeys::action(instance_id as u16, point_id as u32);
             action_point_routings.insert(point_id as u32, redis_key);
         }
 
@@ -998,7 +998,7 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
         })?;
 
         for (point_id,) in measurement_points {
-            let redis_key = RedisKeys::measurement(instance_id as u16, point_id as u32);
+            let redis_key = InstanceRedisKeys::measurement(instance_id as u16, point_id as u32);
             measurement_point_routings.insert(point_id as u32, redis_key);
         }
 
@@ -1016,7 +1016,7 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
         .map_err(|e| anyhow!("Failed to load action routing for {}: {}", instance_name, e))?;
 
         for (point_id,) in action_points {
-            let redis_key = RedisKeys::action(instance_id as u16, point_id as u32);
+            let redis_key = InstanceRedisKeys::action(instance_id as u16, point_id as u32);
             action_point_routings.insert(point_id as u32, redis_key);
         }
 

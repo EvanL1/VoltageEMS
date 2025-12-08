@@ -203,16 +203,16 @@ async fn main() -> VoltageResult<()> {
     // Note: HTTP request logging middleware is applied in create_api_routes()
 
     let socket = tokio::net::TcpSocket::new_v4()
-        .map_err(|e| ComSrvError::NetworkError(format!("Failed to create socket: {}", e)))?;
+        .map_err(|e| ComSrvError::ConnectionError(format!("Failed to create socket: {}", e)))?;
     socket
         .set_reuseaddr(true)
-        .map_err(|e| ComSrvError::NetworkError(format!("Failed to set SO_REUSEADDR: {}", e)))?;
+        .map_err(|e| ComSrvError::ConnectionError(format!("Failed to set SO_REUSEADDR: {}", e)))?;
     socket
         .bind(addr)
-        .map_err(|e| ComSrvError::NetworkError(format!("Failed to bind to {}: {}", addr, e)))?;
+        .map_err(|e| ComSrvError::ConnectionError(format!("Failed to bind to {}: {}", addr, e)))?;
     let listener = socket
         .listen(1024)
-        .map_err(|e| ComSrvError::NetworkError(format!("Failed to listen: {}", e)))?;
+        .map_err(|e| ComSrvError::ConnectionError(format!("Failed to listen: {}", e)))?;
 
     info!("API server listening on http://{}", addr);
     info!("Health check: http://{}/health", addr);

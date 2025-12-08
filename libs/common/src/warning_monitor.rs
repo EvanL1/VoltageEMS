@@ -10,7 +10,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
-use voltage_config::modsrv::RedisKeys;
+use voltage_config::modsrv::InstanceRedisKeys;
 
 /// Queue overflow warning data
 #[derive(Debug, Serialize, Deserialize)]
@@ -179,7 +179,7 @@ pub async fn start_stats_poller(
         tokio::select! {
             _ = interval.tick() => {
                 // Check modsrv warnings
-                let modsrv_warnings: RedisResult<Vec<(String, i64)>> = Cmd::hgetall(RedisKeys::STATS_WARNINGS)
+                let modsrv_warnings: RedisResult<Vec<(String, i64)>> = Cmd::hgetall(InstanceRedisKeys::STATS_WARNINGS)
                     .query_async(&mut con)
                     .await;
 

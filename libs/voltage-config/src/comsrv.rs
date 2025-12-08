@@ -1194,9 +1194,9 @@ impl ConfigValidator for ComsrvValidator {
 /// let todo_key = RedisKeys::control_todo(1001);
 /// assert_eq!(todo_key, "comsrv:1001:C:TODO");
 /// ```
-pub struct RedisKeys;
+pub struct ChannelRedisKeys;
 
-impl RedisKeys {
+impl ChannelRedisKeys {
     /// Channel data storage key pattern: "comsrv:{channel_id}:{point_type}"
     /// point_type: T (telemetry), S (signal), C (control), A (adjustment)
     pub const CHANNEL_DATA: &'static str = "comsrv:{}:{}";

@@ -12,64 +12,10 @@ use voltage_config::FourRemote;
 // Import Core types for zero-duplication architecture
 use voltage_config::modsrv::{Instance, InstanceCore};
 
-// === Custom Deserializers for Empty String Handling ===
+// Import shared serde helpers
+use common::serde_helpers::{deserialize_optional_i32, deserialize_optional_u32};
 
-/// Deserialize Option<i32> from null, empty string, or integer value
-/// - `null` → None
-/// - `""` → None
-/// - `123` or `"123"` → Some(123)
-fn deserialize_optional_i32<'de, D>(deserializer: D) -> Result<Option<i32>, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    use serde::de::Error;
-
-    #[derive(Deserialize)]
-    #[serde(untagged)]
-    enum StringOrInt {
-        String(String),
-        Int(i32),
-        Null,
-    }
-
-    match Option::<StringOrInt>::deserialize(deserializer)? {
-        None => Ok(None),
-        Some(StringOrInt::Null) => Ok(None),
-        Some(StringOrInt::String(s)) if s.is_empty() => Ok(None),
-        Some(StringOrInt::String(s)) => s
-            .parse::<i32>()
-            .map(Some)
-            .map_err(|_| D::Error::custom(format!("invalid integer: {}", s))),
-        Some(StringOrInt::Int(i)) => Ok(Some(i)),
-    }
-}
-
-/// Deserialize Option<u32> from null, empty string, or integer value
-fn deserialize_optional_u32<'de, D>(deserializer: D) -> Result<Option<u32>, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    use serde::de::Error;
-
-    #[derive(Deserialize)]
-    #[serde(untagged)]
-    enum StringOrInt {
-        String(String),
-        Int(u32),
-        Null,
-    }
-
-    match Option::<StringOrInt>::deserialize(deserializer)? {
-        None => Ok(None),
-        Some(StringOrInt::Null) => Ok(None),
-        Some(StringOrInt::String(s)) if s.is_empty() => Ok(None),
-        Some(StringOrInt::String(s)) => s
-            .parse::<u32>()
-            .map(Some)
-            .map_err(|_| D::Error::custom(format!("invalid integer: {}", s))),
-        Some(StringOrInt::Int(i)) => Ok(Some(i)),
-    }
-}
+// === Custom Deserializer for FourRemote (depends on voltage-config type) ===
 
 /// Deserialize Option<FourRemote> from null, empty string, or valid enum value
 fn deserialize_optional_four_remote<'de, D>(deserializer: D) -> Result<Option<FourRemote>, D::Error>

@@ -9,7 +9,7 @@ use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 use tracing::{debug, error, info, warn};
 use voltage_config::common::timeouts;
-use voltage_config::comsrv::RedisKeys;
+use voltage_config::comsrv::ChannelRedisKeys;
 use voltage_rtdb::Rtdb;
 
 use super::traits::ChannelCommand;
@@ -198,8 +198,8 @@ impl CommandTrigger {
         let timeout = config.timeout_seconds;
 
         // Define the queues to listen to.
-        let control_queue = RedisKeys::control_todo(channel_id);
-        let adjustment_queue = RedisKeys::adjustment_todo(channel_id);
+        let control_queue = ChannelRedisKeys::control_todo(channel_id);
+        let adjustment_queue = ChannelRedisKeys::adjustment_todo(channel_id);
 
         info!("Ch{} queues: C/A todo ({}s)", channel_id, timeout);
 

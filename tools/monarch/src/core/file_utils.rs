@@ -262,42 +262,6 @@ pub fn flatten_json(value: &JsonValue, prefix: Option<String>) -> HashMap<String
 
     result
 }
-/// Create parent directories for a path if they don't exist
-#[allow(dead_code)]
-pub fn ensure_parent_dir<P: AsRef<Path>>(path: P) -> Result<()> {
-    if let Some(parent) = path.as_ref().parent() {
-        std::fs::create_dir_all(parent)
-            .with_context(|| format!("Failed to create parent directory: {:?}", parent))?;
-    }
-    Ok(())
-}
-
-/// Check if a path exists and is a directory
-#[allow(dead_code)]
-pub fn dir_exists<P: AsRef<Path>>(path: P) -> bool {
-    path.as_ref().exists() && path.as_ref().is_dir()
-}
-
-/// Parse boolean from string (handles various formats)
-#[allow(dead_code)]
-pub fn parse_bool(s: &str) -> bool {
-    matches!(
-        s.to_lowercase().as_str(),
-        "true" | "yes" | "1" | "on" | "enabled"
-    )
-}
-
-/// Parse optional integer from string
-#[allow(dead_code)]
-pub fn parse_optional_int(s: Option<&str>) -> Option<i32> {
-    s.and_then(|v| v.parse::<i32>().ok())
-}
-
-/// Parse optional float from string
-#[allow(dead_code)]
-pub fn parse_optional_float(s: Option<&str>) -> Option<f64> {
-    s.and_then(|v| v.parse::<f64>().ok())
-}
 
 /// Set database file permissions for Docker compatibility
 /// Sets permissions to 664 (rw-rw-r--) to allow owner and group access

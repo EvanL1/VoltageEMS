@@ -16,6 +16,7 @@ pub mod sqlite;
 pub mod config_loader;
 pub mod error;
 pub mod logging;
+pub mod serde_helpers;
 pub mod service_bootstrap;
 pub mod system_metrics;
 pub mod warning_monitor;

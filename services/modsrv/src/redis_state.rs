@@ -10,7 +10,7 @@ use serde_json::{Map, Value};
 use std::collections::HashMap;
 use std::fmt;
 use voltage_config::common::RedisRoutingKeys;
-use voltage_config::modsrv::RedisKeys;
+use voltage_config::modsrv::InstanceRedisKeys;
 use voltage_rtdb::Rtdb;
 
 use crate::product_loader::{ActionPoint, MeasurementPoint, Product};
@@ -254,7 +254,7 @@ pub async fn upsert_product<R>(redis: &R, product: &Product) -> Result<()>
 where
     R: Rtdb + ?Sized,
 {
-    let product_key = RedisKeys::product(&product.product_name);
+    let product_key = InstanceRedisKeys::product(&product.product_name);
     let now_ms = redis.time_millis().await?;
     let product_json = serde_json::to_string(product)?;
 
@@ -265,31 +265,31 @@ where
     redis.hash_mset(&product_key, fields).await?;
 
     redis
-        .sadd(RedisKeys::PRODUCT_INDEX, &product.product_name)
+        .sadd(InstanceRedisKeys::PRODUCT_INDEX, &product.product_name)
         .await?;
 
     if let Some(parent) = &product.parent_name {
-        let parent_key = RedisKeys::product_children(parent);
+        let parent_key = InstanceRedisKeys::product_children(parent);
         redis.sadd(&parent_key, &product.product_name).await?;
     }
 
     write_point_definitions(
         redis,
-        &RedisKeys::product_measurements(&product.product_name),
+        &InstanceRedisKeys::product_measurements(&product.product_name),
         &product.measurements,
     )
     .await?;
 
     write_action_definitions(
         redis,
-        &RedisKeys::product_actions(&product.product_name),
+        &InstanceRedisKeys::product_actions(&product.product_name),
         &product.actions,
     )
     .await?;
 
     write_property_definitions(
         redis,
-        &RedisKeys::product_properties(&product.product_name),
+        &InstanceRedisKeys::product_properties(&product.product_name),
         &product.properties,
     )
     .await?;
@@ -397,7 +397,7 @@ where
     // ========================================================================
 
     // 1. Initialize inst:{id}:M Hash with all measurement points set to 0
-    let m_key = RedisKeys::measurement_hash(instance_id);
+    let m_key = InstanceRedisKeys::measurement_hash(instance_id);
     for point in measurements {
         redis
             .hash_set(&m_key, &point.measurement_id.to_string(), Bytes::from("0"))
@@ -407,7 +407,7 @@ where
     // 2. Set inst:{id}:name for bidirectional lookup and aggregation queries
     redis
         .set(
-            &RedisKeys::instance_name(instance_id),
+            &InstanceRedisKeys::instance_name(instance_id),
             Bytes::from(instance_name.to_string()),
         )
         .await?;
@@ -432,9 +432,9 @@ where
 {
     // Delete real-time data keys (Redis = real-time data only)
     let keys_to_delete = vec![
-        RedisKeys::measurement_hash(instance_id), // inst:{id}:M
-        RedisKeys::action_hash(instance_id),      // inst:{id}:A
-        RedisKeys::instance_name(instance_id),    // inst:{id}:name
+        InstanceRedisKeys::measurement_hash(instance_id), // inst:{id}:M
+        InstanceRedisKeys::action_hash(instance_id),      // inst:{id}:A
+        InstanceRedisKeys::instance_name(instance_id),    // inst:{id}:name
     ];
 
     for key in &keys_to_delete {
@@ -491,7 +491,7 @@ where
     // 3. Update inst:{id}:name
     redis
         .set(
-            &RedisKeys::instance_name(instance_id),
+            &InstanceRedisKeys::instance_name(instance_id),
             Bytes::from(new_name.to_string()),
         )
         .await?;
@@ -558,7 +558,7 @@ pub async fn sync_measurement<R>(
 where
     R: Rtdb + ?Sized,
 {
-    let key = RedisKeys::measurement_hash(instance_id);
+    let key = InstanceRedisKeys::measurement_hash(instance_id);
     let now_ms = redis.time_millis().await?;
     let mut fields: Vec<(String, Bytes)> = measurement
         .iter()
@@ -582,7 +582,7 @@ where
     match data_type {
         Some("measurement") => {
             // Return measurement data only
-            let key = RedisKeys::measurement_hash(instance_id);
+            let key = InstanceRedisKeys::measurement_hash(instance_id);
             let data_bytes = redis.hash_get_all(&key).await?;
             let data: HashMap<String, String> = data_bytes
                 .into_iter()
@@ -598,7 +598,7 @@ where
         },
         Some("action") => {
             // Return control data only
-            let key = RedisKeys::action_hash(instance_id);
+            let key = InstanceRedisKeys::action_hash(instance_id);
             let data_bytes = redis.hash_get_all(&key).await?;
             let data: HashMap<String, String> = data_bytes
                 .into_iter()
@@ -614,8 +614,8 @@ where
         },
         None => {
             // Return both as structured data
-            let m_key = RedisKeys::measurement_hash(instance_id);
-            let a_key = RedisKeys::action_hash(instance_id);
+            let m_key = InstanceRedisKeys::measurement_hash(instance_id);
+            let a_key = InstanceRedisKeys::action_hash(instance_id);
 
             let m_data_bytes = redis.hash_get_all(&m_key).await?;
             let m_data: HashMap<String, String> = m_data_bytes

@@ -90,25 +90,13 @@ pub enum ComSrvError {
     #[error("Invalid operation: {0}")]
     InvalidOperation(String),
 
-    /// Protocol not supported
-    #[error("Protocol not supported: {0}")]
-    ProtocolNotSupported(String),
-
     /// Channel already exists
     #[error("Channel already exists: {0}")]
     ChannelExists(u16),
 
-    /// Invalid protocol
-    #[error("Invalid protocol: {0}")]
-    InvalidProtocol(String),
-
     /// Batch operation failed
     #[error("Batch operation failed: {0}")]
     BatchOperationFailed(String),
-
-    /// Not implemented error
-    #[error("Not implemented: {0}")]
-    NotImplemented(String),
 
     /// Synchronization error
     #[error("Sync error: {0}")]
@@ -122,18 +110,6 @@ pub enum ComSrvError {
     #[error("Permission denied: {0}")]
     PermissionDenied(String),
 
-    /// Not found
-    #[error("Not found: {0}")]
-    NotFound(String),
-
-    /// Communication errors
-    #[error("Communication error: {0}")]
-    CommunicationError(String),
-
-    /// Network errors
-    #[error("Network error: {0}")]
-    NetworkError(String),
-
     /// State errors
     #[error("State error: {0}")]
     StateError(String),
@@ -146,10 +122,6 @@ pub enum ComSrvError {
     #[error("Resource exhausted: {0}")]
     ResourceExhausted(String),
 
-    /// Configuration errors (duplicate but for compatibility)
-    #[error("Configuration error: {0}")]
-    ConfigurationError(String),
-
     /// Unknown errors
     #[error("Unknown error: {0}")]
     UnknownError(String),
@@ -157,10 +129,6 @@ pub enum ComSrvError {
     /// API errors
     #[error("API error: {0}")]
     ApiError(String),
-
-    /// Storage errors (for Redis, file storage, etc.)
-    #[error("Storage error: {0}")]
-    Storage(String),
 }
 
 /// Result type alias for Communication Service
@@ -339,9 +307,7 @@ impl From<ComSrvError> for VoltageError {
     fn from(err: ComSrvError) -> Self {
         match err {
             // Configuration errors
-            ComSrvError::ConfigError(msg) | ComSrvError::ConfigurationError(msg) => {
-                VoltageError::Configuration(msg)
-            },
+            ComSrvError::ConfigError(msg) => VoltageError::Configuration(msg),
 
             // I/O errors
             ComSrvError::IoError(msg) => VoltageError::Io(std::io::Error::other(msg)),
@@ -354,9 +320,7 @@ impl From<ComSrvError> for VoltageError {
                 }
             },
 
-            ComSrvError::ConnectionError(msg)
-            | ComSrvError::CommunicationError(msg)
-            | ComSrvError::NetworkError(msg) => VoltageError::Communication(msg),
+            ComSrvError::ConnectionError(msg) => VoltageError::Communication(msg),
 
             ComSrvError::NotConnected => VoltageError::Communication("Not connected".to_string()),
 
@@ -377,7 +341,6 @@ impl From<ComSrvError> for VoltageError {
             ComSrvError::PointNotFound(msg) => VoltageError::NotFound {
                 resource: format!("Point: {}", msg),
             },
-            ComSrvError::NotFound(msg) => VoltageError::NotFound { resource: msg },
             ComSrvError::ChannelExists(id) => {
                 VoltageError::AlreadyExists(format!("Channel {}", id))
             },
@@ -387,11 +350,9 @@ impl From<ComSrvError> for VoltageError {
                 param: "unknown".to_string(),
                 reason: msg,
             },
-            ComSrvError::InvalidOperation(msg)
-            | ComSrvError::NotImplemented(msg)
-            | ComSrvError::NotSupported(msg)
-            | ComSrvError::ProtocolNotSupported(msg)
-            | ComSrvError::InvalidProtocol(msg) => VoltageError::Validation(msg),
+            ComSrvError::InvalidOperation(msg) | ComSrvError::NotSupported(msg) => {
+                VoltageError::Validation(msg)
+            },
 
             // Permission and state errors
             ComSrvError::PermissionDenied(msg) => VoltageError::Forbidden(msg),
@@ -408,9 +369,8 @@ impl From<ComSrvError> for VoltageError {
             | ComSrvError::SyncError(msg)
             | ComSrvError::BatchOperationFailed(msg) => VoltageError::Internal(msg),
 
-            // API and storage errors
+            // API errors
             ComSrvError::ApiError(msg) => VoltageError::Api(msg),
-            ComSrvError::Storage(msg) => VoltageError::Database(msg),
 
             // Point table and channel errors
             ComSrvError::PointTableError(msg)
@@ -430,18 +390,14 @@ impl VoltageErrorTrait for ComSrvError {
     fn error_code(&self) -> &'static str {
         match self {
             // Configuration
-            Self::ConfigError(_) | Self::ConfigurationError(_) => "COMSRV_CONFIG_ERROR",
+            Self::ConfigError(_) => "COMSRV_CONFIG_ERROR",
 
-            // IO and Network
+            // IO
             Self::IoError(_) => "COMSRV_IO_ERROR",
-            Self::NetworkError(_) => "COMSRV_NETWORK_ERROR",
-            Self::CommunicationError(_) => "COMSRV_COMMUNICATION_ERROR",
 
             // Protocol
             Self::ProtocolError(_) => "COMSRV_PROTOCOL_ERROR",
             Self::ModbusError(_) => "COMSRV_MODBUS_ERROR",
-            Self::InvalidProtocol(_) => "COMSRV_INVALID_PROTOCOL",
-            Self::ProtocolNotSupported(_) => "COMSRV_PROTOCOL_NOT_SUPPORTED",
 
             // Connection
             Self::ConnectionError(_) => "COMSRV_CONNECTION_ERROR",
@@ -462,7 +418,6 @@ impl VoltageErrorTrait for ComSrvError {
             Self::ChannelError(_) => "COMSRV_CHANNEL_ERROR",
             Self::PointNotFound(_) => "COMSRV_POINT_NOT_FOUND",
             Self::PointTableError(_) => "COMSRV_POINT_TABLE_ERROR",
-            Self::NotFound(_) => "COMSRV_NOT_FOUND",
             Self::ResourceError(_) => "COMSRV_RESOURCE_ERROR",
             Self::ResourceExhausted(_) => "COMSRV_RESOURCE_EXHAUSTED",
 
@@ -470,11 +425,9 @@ impl VoltageErrorTrait for ComSrvError {
             Self::InvalidParameter(_) => "COMSRV_INVALID_PARAMETER",
             Self::InvalidOperation(_) => "COMSRV_INVALID_OPERATION",
             Self::NotSupported(_) => "COMSRV_NOT_SUPPORTED",
-            Self::NotImplemented(_) => "COMSRV_NOT_IMPLEMENTED",
 
-            // Redis/Storage
+            // Redis
             Self::RedisError(_) => "COMSRV_REDIS_ERROR",
-            Self::Storage(_) => "COMSRV_STORAGE_ERROR",
 
             // Sync and Batch Operations
             Self::SyncError(_) => "COMSRV_SYNC_ERROR",
@@ -499,37 +452,28 @@ impl VoltageErrorTrait for ComSrvError {
     fn category(&self) -> ErrorCategory {
         match self {
             // Configuration → Configuration
-            Self::ConfigError(_) | Self::ConfigurationError(_) => ErrorCategory::Configuration,
+            Self::ConfigError(_) => ErrorCategory::Configuration,
 
             // Protocol → Protocol
-            Self::ProtocolError(_)
-            | Self::ModbusError(_)
-            | Self::InvalidProtocol(_)
-            | Self::ProtocolNotSupported(_) => ErrorCategory::Protocol,
+            Self::ProtocolError(_) | Self::ModbusError(_) => ErrorCategory::Protocol,
 
             // Connection → Connection
             Self::ConnectionError(_) | Self::NotConnected => ErrorCategory::Connection,
-
-            // Network → Network
-            Self::NetworkError(_) | Self::CommunicationError(_) => ErrorCategory::Network,
 
             // Timeout → Timeout
             Self::TimeoutError(_) => ErrorCategory::Timeout,
 
             // Database → Database
-            Self::RedisError(_) | Self::Storage(_) => ErrorCategory::Database,
+            Self::RedisError(_) => ErrorCategory::Database,
 
             // Validation → Validation
             Self::InvalidParameter(_)
             | Self::InvalidOperation(_)
             | Self::InvalidData(_)
-            | Self::NotSupported(_)
-            | Self::NotImplemented(_) => ErrorCategory::Validation,
+            | Self::NotSupported(_) => ErrorCategory::Validation,
 
             // NotFound → NotFound
-            Self::ChannelNotFound(_) | Self::PointNotFound(_) | Self::NotFound(_) => {
-                ErrorCategory::NotFound
-            },
+            Self::ChannelNotFound(_) | Self::PointNotFound(_) => ErrorCategory::NotFound,
 
             // Conflict → Conflict
             Self::ChannelExists(_) => ErrorCategory::Conflict,

@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use tracing::{debug, warn};
-use voltage_config::comsrv::RedisKeys;
+use voltage_config::comsrv::ChannelRedisKeys;
 use voltage_config::FourRemote;
 use voltage_rtdb::Rtdb;
 
@@ -186,13 +186,13 @@ pub async fn write_point(
     point_id: u32,
     value: f64,
 ) -> Result<()> {
-    let hash_key = RedisKeys::channel_data(channel_id, point_type);
+    let hash_key = ChannelRedisKeys::channel_data(channel_id, point_type);
     let field = point_id.to_string();
     let value_bytes = bytes::Bytes::from(format!("{:.6}", value));
 
     rtdb.hash_set(&hash_key, &field, value_bytes)
         .await
-        .map_err(|e| ComSrvError::Storage(format!("Failed to write point: {e}")))?;
+        .map_err(|e| ComSrvError::RedisError(format!("Failed to write point: {e}")))?;
 
     Ok(())
 }
@@ -224,7 +224,7 @@ pub async fn write_point_with_trigger(
 
     // Parse point type
     let point_type_enum = PointType::from_str(point_type)
-        .ok_or_else(|| ComSrvError::Storage(format!("Invalid point type: {}", point_type)))?;
+        .ok_or_else(|| ComSrvError::RedisError(format!("Invalid point type: {}", point_type)))?;
 
     let config = voltage_config::KeySpaceConfig::production();
     let channel_key = config.channel_key(channel_id, point_type_enum);
@@ -232,7 +232,7 @@ pub async fn write_point_with_trigger(
     // Get current timestamp (milliseconds since epoch)
     let timestamp_ms = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .map_err(|e| ComSrvError::Storage(format!("Failed to get timestamp: {e}")))?
+        .map_err(|e| ComSrvError::RedisError(format!("Failed to get timestamp: {e}")))?
         .as_millis() as i64;
 
     // Step 1: Atomically write value + timestamp to Hash
@@ -249,7 +249,7 @@ pub async fn write_point_with_trigger(
         ],
     )
     .await
-    .map_err(|e| ComSrvError::Storage(format!("Failed to write point with timestamp: {e}")))?;
+    .map_err(|e| ComSrvError::RedisError(format!("Failed to write point with timestamp: {e}")))?;
 
     // Also update the channel timestamp hash so read endpoints see fresh timestamps
     let channel_ts_key = format!("{}:ts", channel_key);
@@ -259,7 +259,9 @@ pub async fn write_point_with_trigger(
         bytes::Bytes::from(timestamp_ms.to_string()),
     )
     .await
-    .map_err(|e| ComSrvError::Storage(format!("Failed to update channel timestamp hash: {e}")))?;
+    .map_err(|e| {
+        ComSrvError::RedisError(format!("Failed to update channel timestamp hash: {e}"))
+    })?;
 
     // Step 2: Conditionally write TODO queue trigger (only for Control/Adjustment types)
     if matches!(point_type_enum, PointType::Control | PointType::Adjustment) {
@@ -275,7 +277,7 @@ pub async fn write_point_with_trigger(
         rtdb.list_rpush(&todo_key, bytes::Bytes::from(trigger.to_string()))
             .await
             .map_err(|e| {
-                ComSrvError::Storage(format!("Failed to write TODO queue trigger: {e}"))
+                ComSrvError::RedisError(format!("Failed to write TODO queue trigger: {e}"))
             })?;
     }
 
@@ -318,7 +320,7 @@ pub async fn write_batch(
     // Get current timestamp (milliseconds since epoch)
     let timestamp_ms = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .map_err(|e| ComSrvError::Storage(format!("Failed to get timestamp: {e}")))?
+        .map_err(|e| ComSrvError::RedisError(format!("Failed to get timestamp: {e}")))?
         .as_millis() as i64;
 
     let config = voltage_config::KeySpaceConfig::production();
@@ -416,18 +418,18 @@ pub async fn write_batch(
 
         rtdb.hash_mset(&channel_key, channel_values)
             .await
-            .map_err(|e| ComSrvError::Storage(format!("Failed to write channel values: {e}")))?;
+            .map_err(|e| ComSrvError::RedisError(format!("Failed to write channel values: {e}")))?;
 
         rtdb.hash_mset(&channel_ts_key, channel_ts)
             .await
             .map_err(|e| {
-                ComSrvError::Storage(format!("Failed to write channel timestamps: {e}"))
+                ComSrvError::RedisError(format!("Failed to write channel timestamps: {e}"))
             })?;
 
         rtdb.hash_mset(&channel_raw_key, channel_raw)
             .await
             .map_err(|e| {
-                ComSrvError::Storage(format!("Failed to write channel raw values: {e}"))
+                ComSrvError::RedisError(format!("Failed to write channel raw values: {e}"))
             })?;
 
         // Write instance data (C2M routing results) - parallelized for better performance
@@ -439,7 +441,7 @@ pub async fn write_batch(
                     let instance_key = config.instance_measurement_key(instance_id.into());
                     async move {
                         rtdb.hash_mset(&instance_key, values).await.map_err(|e| {
-                            ComSrvError::Storage(format!("Failed to write instance values: {e}"))
+                            ComSrvError::RedisError(format!("Failed to write instance values: {e}"))
                         })
                     }
                 })
@@ -470,13 +472,13 @@ pub async fn read_point(
     point_type: &str,
     point_id: u32,
 ) -> Result<Option<f64>> {
-    let hash_key = RedisKeys::channel_data(channel_id, point_type);
+    let hash_key = ChannelRedisKeys::channel_data(channel_id, point_type);
     let field = point_id.to_string();
 
     let value_bytes = rtdb
         .hash_get(&hash_key, &field)
         .await
-        .map_err(|e| ComSrvError::Storage(format!("Failed to read point: {e}")))?;
+        .map_err(|e| ComSrvError::RedisError(format!("Failed to read point: {e}")))?;
 
     Ok(value_bytes.and_then(|bytes| {
         String::from_utf8(bytes.to_vec())
@@ -512,12 +514,12 @@ pub async fn get_channel_points(
     channel_id: u16,
     point_type: &str,
 ) -> Result<HashMap<u32, f64>> {
-    let hash_key = RedisKeys::channel_data(channel_id, point_type);
+    let hash_key = ChannelRedisKeys::channel_data(channel_id, point_type);
 
     let all = rtdb
         .hash_get_all(&hash_key)
         .await
-        .map_err(|e| ComSrvError::Storage(format!("Failed to get all points: {e}")))?;
+        .map_err(|e| ComSrvError::RedisError(format!("Failed to get all points: {e}")))?;
 
     let mut result = HashMap::new();
     for (field, value_bytes) in all {
@@ -539,7 +541,7 @@ pub async fn get_channel_points(
 pub async fn create_rtdb(redis_url: &str) -> Result<Arc<dyn Rtdb>> {
     let rtdb = voltage_rtdb::RedisRtdb::new(redis_url)
         .await
-        .map_err(|e| ComSrvError::Storage(format!("Failed to connect to Redis: {e}")))?;
+        .map_err(|e| ComSrvError::RedisError(format!("Failed to connect to Redis: {e}")))?;
 
     Ok(Arc::new(rtdb))
 }

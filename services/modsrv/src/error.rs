@@ -97,9 +97,6 @@ pub enum ModSrvError {
     #[error("Invalid calculation: {0}")]
     InvalidCalculation(String),
 
-    #[error("Computation error: {0}")]
-    ComputationError(String),
-
     // ============================================================================
     // Rule Engine Errors
     // ============================================================================
@@ -214,7 +211,6 @@ impl voltage_config::error::VoltageErrorTrait for ModSrvError {
             Self::CalculationNotFound(_) => "MODSRV_CALCULATION_NOT_FOUND",
             Self::ExpressionError(_) => "MODSRV_EXPRESSION_ERROR",
             Self::InvalidCalculation(_) => "MODSRV_INVALID_CALCULATION",
-            Self::ComputationError(_) => "MODSRV_COMPUTATION_ERROR",
 
             // Rule Engine
             Self::RuleNotFound(_) => "MODSRV_RULE_NOT_FOUND",
@@ -284,10 +280,9 @@ impl voltage_config::error::VoltageErrorTrait for ModSrvError {
             | Self::ParseError(_) => ErrorCategory::Validation,
 
             // Calculation → Calculation
-            Self::CalculationError(_)
-            | Self::ExpressionError(_)
-            | Self::ComputationError(_)
-            | Self::EvaluationError(_) => ErrorCategory::Calculation,
+            Self::CalculationError(_) | Self::ExpressionError(_) | Self::EvaluationError(_) => {
+                ErrorCategory::Calculation
+            },
 
             // Rule Engine → Internal (execution/scheduling errors)
             Self::RuleError(_)

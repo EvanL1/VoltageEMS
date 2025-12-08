@@ -6,7 +6,7 @@ use bytes::Bytes;
 use std::any::Any;
 use std::collections::HashMap;
 use voltage_config::common::RedisRoutingKeys;
-use voltage_config::comsrv::RedisKeys;
+use voltage_config::comsrv::ChannelRedisKeys;
 
 /// Unified RTDB Storage Trait
 ///
@@ -346,14 +346,14 @@ pub trait Rtdb: Send + Sync + 'static {
 
     /// Enqueue control command to per-channel TODO queue: comsrv:{channel}:C:TODO
     async fn enqueue_control(&self, channel_id: u16, payload_json: &str) -> Result<()> {
-        let key = RedisKeys::control_todo(channel_id);
+        let key = ChannelRedisKeys::control_todo(channel_id);
         self.list_rpush(&key, Bytes::from(payload_json.to_string()))
             .await
     }
 
     /// Enqueue adjustment command to per-channel TODO queue: comsrv:{channel}:A:TODO
     async fn enqueue_adjustment(&self, channel_id: u16, payload_json: &str) -> Result<()> {
-        let key = RedisKeys::adjustment_todo(channel_id);
+        let key = ChannelRedisKeys::adjustment_todo(channel_id);
         self.list_rpush(&key, Bytes::from(payload_json.to_string()))
             .await
     }

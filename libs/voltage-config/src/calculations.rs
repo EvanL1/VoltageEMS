@@ -4,7 +4,7 @@
 //! used primarily by modsrv but available to all services.
 
 use crate::common::ComparisonOperator;
-use crate::modsrv::RedisKeys;
+use crate::modsrv::InstanceRedisKeys;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -98,8 +98,8 @@ impl PointRef {
     /// Convert to Redis key: inst:{inst}:{type}:{id}
     pub fn to_redis_key(&self) -> String {
         match self.type_ {
-            ModelPointType::M => RedisKeys::measurement(self.inst, self.id),
-            ModelPointType::A => RedisKeys::action(self.inst, self.id),
+            ModelPointType::M => InstanceRedisKeys::measurement(self.inst, self.id),
+            ModelPointType::A => InstanceRedisKeys::action(self.inst, self.id),
         }
     }
 }

@@ -98,10 +98,9 @@ impl ProtocolRegistry {
     ) -> Result<Box<dyn ComClient>> {
         let normalized = normalize_protocol_name(protocol_name);
 
-        let factory = self
-            .factories
-            .get(&normalized)
-            .ok_or_else(|| ComSrvError::InvalidProtocol(protocol_name.to_string()))?;
+        let factory = self.factories.get(&normalized).ok_or_else(|| {
+            ComSrvError::ProtocolError(format!("Unknown protocol: {}", protocol_name))
+        })?;
 
         factory.create(config).await
     }

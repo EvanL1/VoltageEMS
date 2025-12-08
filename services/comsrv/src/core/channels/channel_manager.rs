@@ -126,7 +126,10 @@ async fn create_protocol_client(
                 runtime_config,
             )?))
         },
-        _ => Err(ComSrvError::InvalidProtocol(protocol_name.to_string())),
+        _ => Err(ComSrvError::ProtocolError(format!(
+            "Unknown protocol: {}",
+            protocol_name
+        ))),
     }
 }
 

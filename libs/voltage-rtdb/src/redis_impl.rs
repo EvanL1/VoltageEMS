@@ -540,9 +540,9 @@ mod tests {
             .unwrap();
 
         // Pop using list operations and RedisKeys helper
-        use voltage_config::comsrv::RedisKeys;
-        let c_key = RedisKeys::control_todo(1001);
-        let a_key = RedisKeys::adjustment_todo(1001);
+        use voltage_config::comsrv::ChannelRedisKeys;
+        let c_key = ChannelRedisKeys::control_todo(1001);
+        let a_key = ChannelRedisKeys::adjustment_todo(1001);
 
         let action1 = rtdb.list_lpop(&c_key).await.unwrap();
         assert!(action1.is_some());

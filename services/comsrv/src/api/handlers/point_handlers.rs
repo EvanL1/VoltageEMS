@@ -13,7 +13,7 @@ use axum::{
     extract::{Path, Query, State},
     response::Json,
 };
-use voltage_config::comsrv::RedisKeys;
+use voltage_config::comsrv::ChannelRedisKeys;
 
 /// Get point information including value, timestamp and raw value
 ///
@@ -62,7 +62,7 @@ pub async fn get_point_info_handler(
     }
 
     let field = point_id.to_string();
-    let data_key = RedisKeys::channel_data(channel_id, &telemetry_type_upper);
+    let data_key = ChannelRedisKeys::channel_data(channel_id, &telemetry_type_upper);
     let ts_key = format!("{}:ts", data_key);
     let raw_key = format!("{}:raw", data_key);
 

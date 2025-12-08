@@ -756,9 +756,9 @@ impl ConfigValidator for ModsrvValidator {
 /// assert_eq!(RedisKeys::measurement_hash(instance_id), "inst:100:M");
 /// assert_eq!(RedisKeys::action_hash(instance_id), "inst:100:A");
 /// ```
-pub struct RedisKeys;
+pub struct InstanceRedisKeys;
 
-impl RedisKeys {
+impl InstanceRedisKeys {
     /// Address: `inst:{instance_id}:M:{point_id}`
     ///
     /// Used in routing tables as destination address strings.
