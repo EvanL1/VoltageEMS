@@ -24,17 +24,13 @@ use axum::{
 #[cfg_attr(feature = "schema", derive(JsonSchema))]
 pub struct SuccessResponse<T> {
     /// Success indicator (always true)
-    #[serde(default = "default_true")]
+    #[serde(default = "crate::serde_defaults::bool_true")]
     pub success: bool,
     /// Response data
     pub data: T,
     /// Additional metadata
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub metadata: HashMap<String, serde_json::Value>,
-}
-
-fn default_true() -> bool {
-    true
 }
 
 impl<T> SuccessResponse<T> {
@@ -59,14 +55,10 @@ impl<T> SuccessResponse<T> {
 #[cfg_attr(feature = "schema", derive(JsonSchema))]
 pub struct ErrorResponse {
     /// Success indicator (always false for errors)
-    #[serde(default = "default_false")]
+    #[serde(default = "crate::serde_defaults::bool_false")]
     pub success: bool,
     /// Error information
     pub error: ErrorInfo,
-}
-
-fn default_false() -> bool {
-    false
 }
 
 /// Standard error information
@@ -268,7 +260,7 @@ pub struct PaginationParams {
     #[serde(default)]
     pub page: usize,
     /// Items per page
-    #[serde(default = "default_page_size")]
+    #[serde(default = "crate::serde_defaults::page_size")]
     pub page_size: usize,
     /// Sort field
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -276,10 +268,6 @@ pub struct PaginationParams {
     /// Sort order
     #[serde(default)]
     pub sort_order: SortOrder,
-}
-
-fn default_page_size() -> usize {
-    20
 }
 
 /// Sort order

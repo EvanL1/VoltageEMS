@@ -7,10 +7,10 @@ pub mod common;
 pub mod comsrv;
 pub mod modsrv;
 pub mod rules;
+pub mod serde_defaults;
 
 // New shared type modules
 pub mod api;
-pub mod calculations;
 pub mod error;
 pub mod keyspace;
 pub mod protocols;
@@ -48,8 +48,7 @@ pub use comsrv::{
 
 pub use modsrv::{
     ACTION_POINTS_TABLE as MODSRV_ACTION_POINTS_TABLE,
-    ACTION_ROUTING_TABLE as MODSRV_ACTION_ROUTING_TABLE,
-    CALCULATIONS_TABLE as MODSRV_CALCULATIONS_TABLE, INSTANCES_TABLE as MODSRV_INSTANCES_TABLE,
+    ACTION_ROUTING_TABLE as MODSRV_ACTION_ROUTING_TABLE, INSTANCES_TABLE as MODSRV_INSTANCES_TABLE,
     MEASUREMENT_POINTS_TABLE as MODSRV_MEASUREMENT_POINTS_TABLE,
     MEASUREMENT_ROUTING_TABLE as MODSRV_MEASUREMENT_ROUTING_TABLE,
     PRODUCTS_TABLE as MODSRV_PRODUCTS_TABLE,
@@ -64,7 +63,7 @@ pub use rules::{
 };
 
 // Re-export validation framework from common
-pub use common::{ConfigValidator, ValidationLevel, ValidationResult};
+pub use common::{ConfigValidator, GenericValidator, ValidationLevel, ValidationResult};
 
 // Re-export CSV validation
 pub use validation::{CsvFields, CsvHeaderValidator};
@@ -88,13 +87,6 @@ pub enum ConfigError {
 pub use protocols::{
     ByteOrder, CommunicationMode, ParameterType, PointType, ProtocolType, QualityCode,
     SignalDataType,
-};
-
-// Re-export calculation types
-pub use calculations::{
-    AggregationType, CalculationConfig, CalculationDefinition, CalculationResult,
-    CalculationStatus, CalculationTrigger, CalculationType, CalculationsFile, EnergyCalculation,
-    ModelPointType, PointRef, TimeSeriesOperation, TimeWindow,
 };
 
 // Re-export API types

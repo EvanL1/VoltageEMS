@@ -63,25 +63,6 @@ pub enum RoutingType {
     Action,
 }
 
-// === Association Management ===
-
-/// Model association between two instances
-#[derive(Debug, Clone, Deserialize, Serialize, ToSchema)]
-pub struct ModelAssociation {
-    pub source_id: String,
-    pub target_id: String,
-    pub association_type: String,
-    pub metadata: Option<serde_json::Value>,
-}
-
-/// Request to add a new association
-#[derive(Debug, Clone, Deserialize, Serialize, ToSchema)]
-pub struct AddAssociationRequest {
-    pub target_id: String,
-    pub association_type: String,
-    pub metadata: Option<serde_json::Value>,
-}
-
 // === Routing Management ===
 
 /// Request to create or update a channel-to-instance point routing

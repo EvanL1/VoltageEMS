@@ -30,14 +30,15 @@ impl RuleLogger {
     ///
     /// Log files will be created in: `{log_root}/rules/{rule_id}/`
     /// with naming format: `{YYYYMMDD}_{rule_name}.log`
-    pub fn new(log_root: &Path, rule_id: &str, _rule_name: &str) -> Self {
-        let rule_dir = log_root.join("rules").join(rule_id);
+    pub fn new(log_root: &Path, rule_id: i64, _rule_name: &str) -> Self {
+        let rule_id_str = rule_id.to_string();
+        let rule_dir = log_root.join("rules").join(&rule_id_str);
         if let Err(e) = fs::create_dir_all(&rule_dir) {
             warn!("Log dir err {:?}: {}", rule_dir, e);
         }
 
         Self {
-            rule_id: rule_id.to_string(),
+            rule_id: rule_id_str,
             log_dir: rule_dir,
             current_date: Mutex::new(String::new()),
             current_file: Mutex::new(None),
@@ -196,25 +197,26 @@ impl RuleLoggerManager {
     }
 
     /// Get or create a logger for a specific rule
-    pub fn get_logger(&self, rule_id: &str, rule_name: &str) -> Arc<RuleLogger> {
+    pub fn get_logger(&self, rule_id: i64, rule_name: &str) -> Arc<RuleLogger> {
+        let rule_id_str = rule_id.to_string();
         let Ok(mut loggers) = self.loggers.lock() else {
             warn!("Loggers lock fail, temp logger");
             return Arc::new(RuleLogger::new(&self.log_root, rule_id, rule_name));
         };
 
-        if let Some(logger) = loggers.get(rule_id) {
+        if let Some(logger) = loggers.get(&rule_id_str) {
             return Arc::clone(logger);
         }
 
         let logger = Arc::new(RuleLogger::new(&self.log_root, rule_id, rule_name));
-        loggers.insert(rule_id.to_string(), Arc::clone(&logger));
+        loggers.insert(rule_id_str, Arc::clone(&logger));
         logger
     }
 
     /// Remove a logger (e.g., when rule is deleted)
-    pub fn remove_logger(&self, rule_id: &str) {
+    pub fn remove_logger(&self, rule_id: i64) {
         if let Ok(mut loggers) = self.loggers.lock() {
-            loggers.remove(rule_id);
+            loggers.remove(&rule_id.to_string());
         }
     }
 
@@ -307,7 +309,7 @@ mod tests {
             target_type: "instance".to_string(),
             target_id: 5,
             point_type: "A".to_string(),
-            point_id: "2".to_string(),
+            point_id: 2,
             value: "1".to_string(),
             success: true,
         }];
@@ -321,7 +323,7 @@ mod tests {
             target_type: "instance".to_string(),
             target_id: 5,
             point_type: "A".to_string(),
-            point_id: "2".to_string(),
+            point_id: 2,
             value: "1".to_string(),
             success: false,
         }];

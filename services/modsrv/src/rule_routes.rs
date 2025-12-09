@@ -19,6 +19,7 @@ use tracing::{debug, error, info, warn};
 #[cfg(feature = "swagger-ui")]
 use utoipa::OpenApi;
 use voltage_config::api::{PaginatedResponse, SuccessResponse};
+use voltage_config::rules::{RuleNode, RuleVariable};
 use voltage_rtdb::traits::Rtdb;
 use voltage_rules::{self as rule_repository, RuleScheduler};
 
@@ -52,6 +53,7 @@ pub fn create_rule_routes<R: Rtdb + ?Sized + Send + Sync + 'static>(
         .route("/api/rules/{id}/enable", post(enable_rule::<R>))
         .route("/api/rules/{id}/disable", post(disable_rule::<R>))
         .route("/api/rules/{id}/execute", post(execute_rule_now::<R>))
+        .route("/api/rules/{id}/variables", get(get_rule_variables::<R>))
         // Scheduler control
         .route("/api/scheduler/status", get(scheduler_status::<R>))
         .route("/api/scheduler/reload", post(scheduler_reload::<R>))
@@ -277,7 +279,7 @@ pub async fn create_rule<R: Rtdb + ?Sized + Send + Sync + 'static>(
 #[cfg_attr(feature = "swagger-ui", utoipa::path(
     get,
     path = "/api/rules/{id}",
-    params(("id" = String, Path, description = "Rule identifier")),
+    params(("id" = i64, Path, description = "Rule identifier")),
     responses(
         (status = 200, description = "Rule details", body = serde_json::Value)
     ),
@@ -285,13 +287,13 @@ pub async fn create_rule<R: Rtdb + ?Sized + Send + Sync + 'static>(
 ))]
 pub async fn get_rule<R: Rtdb + ?Sized + Send + Sync + 'static>(
     State(state): State<Arc<RuleEngineState<R>>>,
-    Path(id): Path<String>,
+    Path(id): Path<i64>,
 ) -> Result<Json<SuccessResponse<serde_json::Value>>, ModSrvError> {
-    match rule_repository::get_rule(&state.pool, &id).await {
+    match rule_repository::get_rule(&state.pool, id).await {
         Ok(rule) => Ok(Json(SuccessResponse::new(rule))),
         Err(e) => {
             error!("Get rule {}: {}", id, e);
-            Err(ModSrvError::RuleNotFound(id))
+            Err(ModSrvError::RuleNotFound(id.to_string()))
         },
     }
 }
@@ -302,7 +304,7 @@ pub async fn get_rule<R: Rtdb + ?Sized + Send + Sync + 'static>(
 #[cfg_attr(feature = "swagger-ui", utoipa::path(
     put,
     path = "/api/rules/{id}",
-    params(("id" = String, Path, description = "规则 ID")),
+    params(("id" = i64, Path, description = "规则 ID")),
     request_body(
         content = UpdateRuleRequest,
         description = "要更新的字段（只有提供的字段会被更新）"
@@ -316,18 +318,18 @@ pub async fn get_rule<R: Rtdb + ?Sized + Send + Sync + 'static>(
 ))]
 pub async fn update_rule<R: Rtdb + ?Sized + Send + Sync + 'static>(
     State(state): State<Arc<RuleEngineState<R>>>,
-    Path(id): Path<String>,
+    Path(id): Path<i64>,
     Json(req): Json<UpdateRuleRequest>,
 ) -> Result<Json<SuccessResponse<serde_json::Value>>, ModSrvError> {
     // Check rule exists
     let exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM rules WHERE id = ?)")
-        .bind(&id)
+        .bind(id)
         .fetch_one(&state.pool)
         .await
         .unwrap_or(false);
 
     if !exists {
-        return Err(ModSrvError::RuleNotFound(id.clone()));
+        return Err(ModSrvError::RuleNotFound(id.to_string()));
     }
 
     // Build dynamic UPDATE query for provided fields only (partial update)
@@ -389,7 +391,7 @@ pub async fn update_rule<R: Rtdb + ?Sized + Send + Sync + 'static>(
             .map_err(|e| ModSrvError::SerializationError(e.to_string()))?;
         query = query.bind(nodes_str);
     }
-    query = query.bind(&id);
+    query = query.bind(id);
 
     if let Err(e) = query.execute(&state.pool).await {
         error!("Update rule {}: {}", id, e);
@@ -415,7 +417,7 @@ pub async fn update_rule<R: Rtdb + ?Sized + Send + Sync + 'static>(
 #[cfg_attr(feature = "swagger-ui", utoipa::path(
     delete,
     path = "/api/rules/{id}",
-    params(("id" = String, Path, description = "Rule identifier")),
+    params(("id" = i64, Path, description = "Rule identifier")),
     responses(
         (status = 200, description = "Rule deleted", body = serde_json::Value)
     ),
@@ -423,9 +425,9 @@ pub async fn update_rule<R: Rtdb + ?Sized + Send + Sync + 'static>(
 ))]
 pub async fn delete_rule<R: Rtdb + ?Sized + Send + Sync + 'static>(
     State(state): State<Arc<RuleEngineState<R>>>,
-    Path(id): Path<String>,
+    Path(id): Path<i64>,
 ) -> Result<Json<SuccessResponse<serde_json::Value>>, ModSrvError> {
-    if let Err(e) = rule_repository::delete_rule(&state.pool, &id).await {
+    if let Err(e) = rule_repository::delete_rule(&state.pool, id).await {
         error!("Delete rule {}: {}", id, e);
         return Err(ModSrvError::InternalError(
             "Failed to delete rule".to_string(),
@@ -447,7 +449,7 @@ pub async fn delete_rule<R: Rtdb + ?Sized + Send + Sync + 'static>(
 #[cfg_attr(feature = "swagger-ui", utoipa::path(
     post,
     path = "/api/rules/{id}/enable",
-    params(("id" = String, Path, description = "Rule identifier")),
+    params(("id" = i64, Path, description = "Rule identifier")),
     responses(
         (status = 200, description = "Rule enabled", body = serde_json::Value)
     ),
@@ -455,9 +457,9 @@ pub async fn delete_rule<R: Rtdb + ?Sized + Send + Sync + 'static>(
 ))]
 pub async fn enable_rule<R: Rtdb + ?Sized + Send + Sync + 'static>(
     State(state): State<Arc<RuleEngineState<R>>>,
-    Path(id): Path<String>,
+    Path(id): Path<i64>,
 ) -> Result<Json<SuccessResponse<serde_json::Value>>, ModSrvError> {
-    if let Err(e) = rule_repository::set_rule_enabled(&state.pool, &id, true).await {
+    if let Err(e) = rule_repository::set_rule_enabled(&state.pool, id, true).await {
         error!("Failed to enable rule {}: {}", id, e);
         return Err(ModSrvError::InternalError(
             "Failed to enable rule".to_string(),
@@ -479,7 +481,7 @@ pub async fn enable_rule<R: Rtdb + ?Sized + Send + Sync + 'static>(
 #[cfg_attr(feature = "swagger-ui", utoipa::path(
     post,
     path = "/api/rules/{id}/disable",
-    params(("id" = String, Path, description = "Rule identifier")),
+    params(("id" = i64, Path, description = "Rule identifier")),
     responses(
         (status = 200, description = "Rule disabled", body = serde_json::Value)
     ),
@@ -487,9 +489,9 @@ pub async fn enable_rule<R: Rtdb + ?Sized + Send + Sync + 'static>(
 ))]
 pub async fn disable_rule<R: Rtdb + ?Sized + Send + Sync + 'static>(
     State(state): State<Arc<RuleEngineState<R>>>,
-    Path(id): Path<String>,
+    Path(id): Path<i64>,
 ) -> Result<Json<SuccessResponse<serde_json::Value>>, ModSrvError> {
-    if let Err(e) = rule_repository::set_rule_enabled(&state.pool, &id, false).await {
+    if let Err(e) = rule_repository::set_rule_enabled(&state.pool, id, false).await {
         error!("Failed to disable rule {}: {}", id, e);
         return Err(ModSrvError::InternalError(
             "Failed to disable rule".to_string(),
@@ -513,7 +515,7 @@ pub async fn disable_rule<R: Rtdb + ?Sized + Send + Sync + 'static>(
 #[cfg_attr(feature = "swagger-ui", utoipa::path(
     post,
     path = "/api/rules/{id}/execute",
-    params(("id" = String, Path, description = "规则标识符")),
+    params(("id" = i64, Path, description = "规则标识符")),
     responses(
         (status = 200, description = "规则执行结果", body = serde_json::Value,
          example = json!({
@@ -534,14 +536,14 @@ pub async fn disable_rule<R: Rtdb + ?Sized + Send + Sync + 'static>(
     tag = "rules"
 ))]
 pub async fn execute_rule_now<R: Rtdb + ?Sized + Send + Sync + 'static>(
-    Path(id): Path<String>,
+    Path(id): Path<i64>,
     State(state): State<Arc<RuleEngineState<R>>>,
 ) -> Result<Json<SuccessResponse<serde_json::Value>>, ModSrvError> {
     let execution_id = format!("manual-{}", uuid::Uuid::new_v4());
     let timestamp = chrono::Utc::now();
 
     // Execute through scheduler (which handles rule loading)
-    let result = state.scheduler.execute_rule(&id).await?;
+    let result = state.scheduler.execute_rule(id).await?;
 
     // Format action results for response
     let action_results: Vec<serde_json::Value> = result
@@ -634,4 +636,60 @@ pub async fn scheduler_reload<R: Rtdb + ?Sized + Send + Sync + 'static>(
             )))
         },
     }
+}
+
+/// Get rule variables for monitoring
+///
+/// Returns all variable definitions from a rule's nodes, which can be used
+/// for WebSocket monitoring to display real-time variable values.
+#[cfg_attr(feature = "swagger-ui", utoipa::path(
+    get,
+    path = "/api/rules/{id}/variables",
+    params(("id" = i64, Path, description = "Rule identifier")),
+    responses(
+        (status = 200, description = "Rule variables", body = serde_json::Value)
+    ),
+    tag = "rules"
+))]
+pub async fn get_rule_variables<R: Rtdb + ?Sized + Send + Sync + 'static>(
+    State(state): State<Arc<RuleEngineState<R>>>,
+    Path(id): Path<i64>,
+) -> Result<Json<SuccessResponse<serde_json::Value>>, ModSrvError> {
+    // Get the rule from database
+    let rule = rule_repository::get_rule_for_execution(&state.pool, id).await?;
+
+    // Extract all variables from nodes
+    let mut variables: Vec<RuleVariable> = Vec::new();
+
+    for node in rule.flow.nodes.values() {
+        match node {
+            RuleNode::Switch {
+                variables: vars, ..
+            } => {
+                variables.extend(vars.iter().cloned());
+            },
+            RuleNode::ChangeValue {
+                variables: vars, ..
+            } => {
+                variables.extend(vars.iter().cloned());
+            },
+            _ => {},
+        }
+    }
+
+    // Deduplicate by variable name
+    let mut seen = std::collections::HashSet::new();
+    variables.retain(|v| seen.insert(v.name.clone()));
+
+    debug!(
+        "Rule {} has {} unique variables: {:?}",
+        id,
+        variables.len(),
+        variables.iter().map(|v| &v.name).collect::<Vec<_>>()
+    );
+
+    Ok(Json(SuccessResponse::new(json!({
+        "rule_id": id,
+        "variables": variables
+    }))))
 }

@@ -77,9 +77,6 @@ pub async fn init_database(db_path: impl AsRef<Path>) -> Result<()> {
     sqlx::query(modsrv::ACTION_ROUTING_TABLE)
         .execute(&pool)
         .await?;
-    sqlx::query(modsrv::CALCULATIONS_TABLE)
-        .execute(&pool)
-        .await?;
 
     // === Rule tables (rules engine) ===
     sqlx::query(rules::RULE_CHAINS_TABLE).execute(&pool).await?;

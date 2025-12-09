@@ -20,7 +20,6 @@ use voltage_config::{
 use super::error::{ModSrvError, Result};
 
 use crate::app_state::AppState;
-use crate::calculation_engine::CalculationEngine;
 use crate::instance_manager::InstanceManager;
 use crate::product_loader::ProductLoader;
 use crate::redis_state;
@@ -29,7 +28,7 @@ use crate::redis_state;
 pub fn create_service_info() -> ServiceInfo {
     ServiceInfo::new(
         "modsrv",
-        "Model Calculation Service - Virtual Points & Energy Calculations",
+        "Model Service - Instance & Routing Management",
         6002,
     )
 }
@@ -650,28 +649,12 @@ pub async fn create_app_state(service_info: &ServiceInfo) -> Result<Arc<AppState
     )
     .await?;
 
-    // Create calculation engine
-    let calculation_engine = Arc::new(CalculationEngine::new(Arc::clone(&redis_client)));
-
-    // Load calculation definitions from SQLite (populated by Monarch from YAML)
-    match calculation_engine.load_from_sqlite(&sqlite_pool).await {
-        Ok(count) => {
-            if count > 0 {
-                info!("{} calculations loaded", count);
-            }
-        },
-        Err(e) => {
-            warn!("Calc load failed: {}", e);
-        },
-    }
-
     // Create application state
     Ok(Arc::new(AppState::new(
         config,
         sqlite_client,
         product_loader,
         instance_manager,
-        calculation_engine,
     )))
 }
 

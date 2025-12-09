@@ -728,7 +728,7 @@ impl ConfigExporter {
                 .await?;
 
         for row in rows {
-            let id: String = row.try_get("id")?;
+            let id: i64 = row.try_get("id")?;
             let name: String = row.try_get("name")?;
             let description: Option<String> = row.try_get("description")?;
             let flow_json_str: String = row.try_get("flow_json")?;

@@ -446,7 +446,7 @@ async fn sync_command(
     db_path: &Path,
     check: bool,
 ) -> Result<()> {
-    // Sync order: global config → channels/points → products/instances/calculations/rules
+    // Sync order: global config → channels/points → products/instances/rules
     let configs = ["global", "comsrv", "modsrv"];
 
     println!();

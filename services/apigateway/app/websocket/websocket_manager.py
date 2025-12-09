@@ -259,13 +259,20 @@ class WebSocketManager:
         """处理订阅请求"""
         try:
             source = data.get("data", {}).get("source", "inst")  # 获取数据源，默认inst
+
+            # 规则监控订阅
+            if source == "rule":
+                await self._handle_rule_subscribe(client_id, data)
+                return
+
+            # 常规数据订阅
             channels = data.get("data", {}).get("channels", [])
             data_types = data.get("data", {}).get("data_types", ["T"])
             interval = data.get("data", {}).get("interval", 1000)
-            
+
             # 前端完全控制订阅的source/channels/data_types，不做额外验证
             # 数据源可以是任意字符串（如 inst/comsrv/aaasrv 等）
-            
+
             # 更新订阅信息
             self.connection_manager.subscriptions[client_id] = {
                 "source": source,
@@ -273,7 +280,7 @@ class WebSocketManager:
                 "data_types": data_types,
                 "interval": interval
             }
-            
+
             # 发送订阅确认
             ack_message = create_subscribe_ack_message(
                 data.get("id", "sub"),
@@ -281,16 +288,16 @@ class WebSocketManager:
                 []
             )
             await self.send_message(client_id, ack_message)
-            
+
             # 立即推送一次数据
             await self._push_initial_data_to_client(client_id, source, channels, data_types)
-            
+
             # 重置数据调度器的推送时间，避免立即再次推送
             if hasattr(self, 'data_scheduler') and self.data_scheduler:
                 self.data_scheduler.reset_client_push_time(client_id)
-            
+
             logger.info(f"客户端 {client_id} 订阅了数据源 {source}, 通道 {channels}, 数据类型 {data_types}")
-            
+
         except Exception as e:
             logger.error(f"处理订阅请求失败: {e}")
             error_msg = create_error_message(
@@ -300,6 +307,115 @@ class WebSocketManager:
                 data.get("id")
             )
             await self.send_message(client_id, error_msg)
+
+    async def _handle_rule_subscribe(self, client_id: str, data: Dict[str, Any]):
+        """处理规则监控订阅请求"""
+        try:
+            rule_id = data.get("data", {}).get("rule_id")
+            interval = data.get("data", {}).get("interval", 1000)
+
+            if not rule_id:
+                raise ValueError("缺少必要的 rule_id 参数")
+
+            # 存储订阅信息
+            self.connection_manager.subscriptions[client_id] = {
+                "source": "rule",
+                "rule_id": rule_id,
+                "interval": interval,
+                "variables_cache": None  # 首次获取时填充
+            }
+
+            # 发送订阅确认
+            ack_message = {
+                "type": "subscribe_ack",
+                "id": data.get("id", "sub"),
+                "timestamp": int(time.time()),
+                "data": {
+                    "source": "rule",
+                    "rule_id": rule_id,
+                    "status": "subscribed"
+                }
+            }
+            await self.send_message(client_id, ack_message)
+
+            # 立即推送一次规则监控数据
+            await self._push_rule_data_to_client(client_id, rule_id)
+
+            # 重置数据调度器的推送时间
+            if hasattr(self, 'data_scheduler') and self.data_scheduler:
+                self.data_scheduler.reset_client_push_time(client_id)
+
+            logger.info(f"客户端 {client_id} 订阅了规则监控: {rule_id}, 间隔: {interval}ms")
+
+        except Exception as e:
+            logger.error(f"处理规则订阅请求失败: {e}")
+            error_msg = create_error_message(
+                "SUBSCRIPTION_ERROR",
+                "规则订阅失败",
+                str(e),
+                data.get("id")
+            )
+            await self.send_message(client_id, error_msg)
+
+    async def _push_rule_data_to_client(self, client_id: str, rule_id: str):
+        """推送规则监控数据到客户端"""
+        try:
+            redis = self.redis_client.redis_client
+
+            # 读取变量当前值: rule:{rule_id}:vars
+            vars_key = f"rule:{rule_id}:vars"
+            vars_data = await redis.hgetall(vars_key)
+
+            # 转换变量值
+            variables = {}
+            vars_ts = None
+            for key, value in vars_data.items():
+                if key == "_ts":
+                    vars_ts = value
+                else:
+                    try:
+                        variables[key] = float(value)
+                    except (ValueError, TypeError):
+                        variables[key] = value
+
+            # 读取执行结果: rule:{rule_id}:exec
+            exec_key = f"rule:{rule_id}:exec"
+            exec_data = await redis.hgetall(exec_key)
+
+            # 解析执行结果
+            last_execution = None
+            if exec_data:
+                last_execution = {
+                    "success": exec_data.get("success", "false") == "true",
+                    "timestamp": int(exec_data.get("timestamp", 0)),
+                    "error": exec_data.get("error") or None
+                }
+
+                # 解析 JSON 字段
+                for field in ["execution_path", "variable_values", "node_details"]:
+                    if field in exec_data and exec_data[field]:
+                        try:
+                            last_execution[field] = json.loads(exec_data[field])
+                        except json.JSONDecodeError:
+                            last_execution[field] = None
+
+            # 构建 rule_monitor 消息
+            monitor_message = {
+                "type": "rule_monitor",
+                "id": f"rule_{rule_id}_{int(time.time())}",
+                "timestamp": int(time.time()),
+                "data": {
+                    "rule_id": rule_id,
+                    "variables": variables,
+                    "last_execution": last_execution
+                }
+            }
+
+            await self.send_message(client_id, monitor_message)
+            logger.debug(f"已向客户端 {client_id} 推送规则 {rule_id} 的监控数据")
+
+        except Exception as e:
+            logger.error(f"推送规则监控数据失败: {e}")
     
     async def _push_initial_data_to_client(self, client_id: str, source: str, channels: List[int], data_types: List[str]):
         """订阅成功后立即推送一次数据"""

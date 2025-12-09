@@ -7,7 +7,6 @@ use std::sync::Arc;
 use dashmap::DashMap;
 use tracing::debug;
 
-use crate::calculation_engine::CalculationEngine;
 use crate::error::ModSrvError;
 use crate::instance_manager::InstanceManager;
 use crate::product_loader::ProductLoader;
@@ -32,9 +31,6 @@ pub struct AppState {
     /// Instance lifecycle manager (uses Redis RTDB in production)
     pub instance_manager: Arc<InstanceManager<TestRtdb>>,
 
-    /// Calculation execution engine
-    pub calculation_engine: Arc<CalculationEngine>,
-
     /// Instance name → instance_id cache (for fast API lookups)
     /// Updated on: create, delete, rename operations
     pub name_to_id_cache: Arc<DashMap<String, u16>>,
@@ -47,14 +43,12 @@ impl AppState {
         sqlite_client: Option<Arc<SqliteClient>>,
         product_loader: Arc<ProductLoader>,
         instance_manager: Arc<InstanceManager<TestRtdb>>,
-        calculation_engine: Arc<CalculationEngine>,
     ) -> Self {
         Self {
             config,
             sqlite_client,
             product_loader,
             instance_manager,
-            calculation_engine,
             name_to_id_cache: Arc::new(DashMap::new()),
         }
     }

@@ -9,8 +9,8 @@
 use serde_json::Value;
 use std::collections::HashMap;
 use voltage_config::rules::{
-    FlowCondition, RuleFlow, RuleNode, RuleSwitchBranch, RuleValueAssignment, RuleVariable,
-    RuleWires,
+    CalculationRule, FlowCondition, RuleFlow, RuleNode, RuleSwitchBranch, RuleValueAssignment,
+    RuleVariable, RuleWires,
 };
 
 use crate::error::{Result, RuleError};
@@ -76,6 +76,7 @@ pub fn extract_rule_flow(full_json: &Value) -> Result<RuleFlow> {
                 match inner_type {
                     "function-switch" => extract_switch_rule_node(data)?,
                     "action-changeValue" => extract_change_value_rule_node(data)?,
+                    "action-calculation" => extract_calculation_rule_node(data)?,
                     _ => {
                         tracing::warn!("Unknown node: {}", inner_type);
                         continue;
@@ -162,6 +163,32 @@ fn extract_change_value_rule_node(data: Option<&Value>) -> Result<RuleNode> {
     let wires = extract_rule_wires_default(config)?;
 
     Ok(RuleNode::ChangeValue {
+        variables,
+        rule,
+        wires,
+    })
+}
+
+/// Extract action-calculation node as RuleNode::Calculation
+fn extract_calculation_rule_node(data: Option<&Value>) -> Result<RuleNode> {
+    let config = data.and_then(|d| d.get("config"));
+
+    // Extract variables (input sources and output targets)
+    let variables = config
+        .map(extract_rule_variables)
+        .transpose()?
+        .unwrap_or_default();
+
+    // Extract calculation rules with formulas
+    let rule = config
+        .map(extract_calculation_rules)
+        .transpose()?
+        .unwrap_or_default();
+
+    // Extract wires (default output)
+    let wires = extract_rule_wires_default(config)?;
+
+    Ok(RuleNode::Calculation {
         variables,
         rule,
         wires,
@@ -313,6 +340,33 @@ fn extract_rule_value_assignments(config: &Value) -> Result<Vec<RuleValueAssignm
     }
 
     Ok(assignments)
+}
+
+/// Extract calculation rules from config
+fn extract_calculation_rules(config: &Value) -> Result<Vec<CalculationRule>> {
+    let rules_arr = match config.get("rule").and_then(|v| v.as_array()) {
+        Some(arr) => arr,
+        None => return Ok(vec![]),
+    };
+
+    let mut rules = Vec::new();
+    for rule in rules_arr {
+        let output = rule
+            .get("output")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| RuleError::ParseError("Calculation rule missing 'output'".to_string()))?
+            .to_string();
+
+        let formula = rule
+            .get("formula")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| RuleError::ParseError("Calculation rule missing 'formula'".to_string()))?
+            .to_string();
+
+        rules.push(CalculationRule { output, formula });
+    }
+
+    Ok(rules)
 }
 
 /// Extract wires as HashMap for multiple outputs (used by switch nodes)

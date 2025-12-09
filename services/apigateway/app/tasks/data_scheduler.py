@@ -79,26 +79,32 @@ class DataScheduler:
         """处理所有订阅的数据推送"""
         try:
             current_time = time.time()
-            
+
             for client_id, subscription in subscriptions.items():
                 # 检查客户端是否仍然连接
                 if client_id not in self.websocket_manager.connection_manager.active_connections:
                     continue
-                
+
+                # 获取数据源类型
+                source = subscription.get("source", "inst")
+
                 # 获取客户端的推送间隔设置
                 interval = subscription.get("interval", 5000)  # 默认5秒
                 interval_seconds = interval / 1000.0  # 转换为秒
-                
+
                 # 检查是否到了推送时间
                 last_push_key = f"last_push_{client_id}"
                 last_push_time = getattr(self, last_push_key, 0)
-                
+
                 if current_time - last_push_time >= interval_seconds:
-                    # 推送数据
-                    await self._push_data_to_client(client_id, subscription)
+                    # 根据数据源类型选择推送方法
+                    if source == "rule":
+                        await self._push_rule_data_to_client(client_id, subscription)
+                    else:
+                        await self._push_data_to_client(client_id, subscription)
                     # 更新最后推送时间
                     setattr(self, last_push_key, current_time)
-                    
+
         except Exception as e:
             logger.error(f"处理订阅数据推送失败: {e}")
     
@@ -154,9 +160,72 @@ class DataScheduler:
                     await self.websocket_manager.send_message(client_id, batch_message)
                     
                     logger.debug(f"已向客户端 {client_id} 推送数据源 {source} 通道 {channel_id} 的数据，更新数量: {len(updates)}")
-                    
+
         except Exception as e:
             logger.error(f"向客户端 {client_id} 推送数据失败: {e}")
+
+    async def _push_rule_data_to_client(self, client_id: str, subscription: dict):
+        """推送规则监控数据到客户端"""
+        try:
+            rule_id = subscription.get("rule_id")
+            if not rule_id:
+                logger.warning(f"客户端 {client_id} 订阅了规则但未指定 rule_id")
+                return
+
+            redis = self.redis_client.redis_client
+
+            # 读取变量当前值: rule:{rule_id}:vars
+            vars_key = f"rule:{rule_id}:vars"
+            vars_data = await redis.hgetall(vars_key)
+
+            # 转换变量值
+            variables = {}
+            for key, value in vars_data.items():
+                if key == "_ts":
+                    continue
+                try:
+                    variables[key] = float(value)
+                except (ValueError, TypeError):
+                    variables[key] = value
+
+            # 读取执行结果: rule:{rule_id}:exec
+            exec_key = f"rule:{rule_id}:exec"
+            exec_data = await redis.hgetall(exec_key)
+
+            # 解析执行结果
+            last_execution = None
+            if exec_data:
+                last_execution = {
+                    "success": exec_data.get("success", "false") == "true",
+                    "timestamp": int(exec_data.get("timestamp", 0)),
+                    "error": exec_data.get("error") or None
+                }
+
+                # 解析 JSON 字段
+                for field in ["execution_path", "variable_values", "node_details"]:
+                    if field in exec_data and exec_data[field]:
+                        try:
+                            last_execution[field] = json.loads(exec_data[field])
+                        except json.JSONDecodeError:
+                            last_execution[field] = None
+
+            # 构建 rule_monitor 消息
+            monitor_message = {
+                "type": "rule_monitor",
+                "id": f"rule_{rule_id}_{int(time.time())}",
+                "timestamp": int(time.time()),
+                "data": {
+                    "rule_id": rule_id,
+                    "variables": variables,
+                    "last_execution": last_execution
+                }
+            }
+
+            await self.websocket_manager.send_message(client_id, monitor_message)
+            logger.debug(f"已向客户端 {client_id} 推送规则 {rule_id} 的监控数据")
+
+        except Exception as e:
+            logger.error(f"推送规则监控数据失败: {e}")
     
     async def _fetch_and_broadcast_edge_data(self):
         """获取并广播Edge数据"""

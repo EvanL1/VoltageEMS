@@ -66,7 +66,7 @@ pub async fn list_rules_paginated(
 }
 
 /// Get a single rule by ID (returns metadata and flow_json for frontend editing)
-pub async fn get_rule(pool: &SqlitePool, id: &str) -> Result<Value> {
+pub async fn get_rule(pool: &SqlitePool, id: i64) -> Result<Value> {
     let row = sqlx::query(
         r#"
         SELECT id, name, description, nodes_json, flow_json, format, enabled, priority, cooldown_ms
@@ -85,7 +85,7 @@ pub async fn get_rule(pool: &SqlitePool, id: &str) -> Result<Value> {
 }
 
 /// Get a rule for execution (returns parsed Rule struct)
-pub async fn get_rule_for_execution(pool: &SqlitePool, id: &str) -> Result<Rule> {
+pub async fn get_rule_for_execution(pool: &SqlitePool, id: i64) -> Result<Rule> {
     let row = sqlx::query(
         r#"
         SELECT id, name, description, enabled, priority, cooldown_ms, nodes_json
@@ -143,12 +143,12 @@ pub async fn load_all_rules(pool: &SqlitePool) -> Result<Vec<Rule>> {
 }
 
 /// Upsert a rule - extracts compact flow and stores both original and parsed data
-pub async fn upsert_rule(pool: &SqlitePool, rule_id: &str, rule: &Value) -> Result<()> {
+pub async fn upsert_rule(pool: &SqlitePool, rule_id: i64, rule: &Value) -> Result<()> {
     // Extract metadata from the incoming JSON
     let name = rule
         .get("name")
         .and_then(Value::as_str)
-        .unwrap_or(rule_id)
+        .unwrap_or(&rule_id.to_string())
         .to_string();
 
     let description = rule
@@ -217,7 +217,7 @@ pub async fn upsert_rule(pool: &SqlitePool, rule_id: &str, rule: &Value) -> Resu
 }
 
 /// Delete a rule
-pub async fn delete_rule(pool: &SqlitePool, id: &str) -> Result<()> {
+pub async fn delete_rule(pool: &SqlitePool, id: i64) -> Result<()> {
     let result = sqlx::query("DELETE FROM rules WHERE id = ?")
         .bind(id)
         .execute(pool)
@@ -231,7 +231,7 @@ pub async fn delete_rule(pool: &SqlitePool, id: &str) -> Result<()> {
 }
 
 /// Enable or disable a rule
-pub async fn set_rule_enabled(pool: &SqlitePool, id: &str, enabled: bool) -> Result<()> {
+pub async fn set_rule_enabled(pool: &SqlitePool, id: i64, enabled: bool) -> Result<()> {
     let result = sqlx::query(
         r#"
         UPDATE rules
@@ -254,7 +254,7 @@ pub async fn set_rule_enabled(pool: &SqlitePool, id: &str, enabled: bool) -> Res
 /// Hydrate a row into JSON Value (for API response)
 #[allow(clippy::disallowed_methods)] // json! macro internal unwrap is safe for static structure
 fn hydrate_rule_json(row: SqliteRow) -> Result<Value> {
-    let id: String = row.try_get("id")?;
+    let id: i64 = row.try_get("id")?;
     let name: String = row.try_get("name")?;
     let description: Option<String> = row.try_get("description")?;
     let nodes_json_str: String = row.try_get("nodes_json")?;
@@ -290,7 +290,7 @@ fn hydrate_rule_json(row: SqliteRow) -> Result<Value> {
 
 /// Hydrate a row into Rule struct (for execution)
 fn hydrate_rule(row: SqliteRow) -> Result<Rule> {
-    let id: String = row.try_get("id")?;
+    let id: i64 = row.try_get("id")?;
     let name: String = row.try_get("name")?;
     let description: Option<String> = row.try_get("description")?;
     let enabled: i64 = row.try_get("enabled")?;

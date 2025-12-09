@@ -14,7 +14,7 @@ pub use redis::Msg;
 
 /// Redis connection pool configuration
 #[derive(Debug, Clone)]
-pub struct RedisConfig {
+pub struct RedisPoolConfig {
     /// Redis URL (e.g., "redis://localhost:6379")
     pub url: String,
     /// Maximum number of connections in the pool
@@ -29,7 +29,7 @@ pub struct RedisConfig {
     pub idle_timeout: Option<u64>,
 }
 
-impl Default for RedisConfig {
+impl Default for RedisPoolConfig {
     fn default() -> Self {
         Self {
             url: "redis://localhost:6379".to_string(),
@@ -42,7 +42,7 @@ impl Default for RedisConfig {
     }
 }
 
-impl RedisConfig {
+impl RedisPoolConfig {
     /// Create config from URL with default pool settings
     pub fn from_url(url: impl Into<String>) -> Self {
         Self {
@@ -70,11 +70,11 @@ impl std::fmt::Debug for RedisClient {
 impl RedisClient {
     /// Create a new client with default configuration
     pub async fn new(url: &str) -> Result<Self> {
-        Self::with_config(RedisConfig::from_url(url)).await
+        Self::with_config(RedisPoolConfig::from_url(url)).await
     }
 
     /// Create a new client with custom configuration
-    pub async fn with_config(config: RedisConfig) -> Result<Self> {
+    pub async fn with_config(config: RedisPoolConfig) -> Result<Self> {
         // Create Redis connection manager
         let manager = RedisConnectionManager::new(config.url.as_str())
             .context("Failed to create Redis connection manager")?;
@@ -123,7 +123,7 @@ impl RedisClient {
 
     /// Create a client without performing a PING test (for tests or special cases)
     /// This avoids requiring a live Redis server when the client won't be used.
-    pub async fn with_config_no_ping(config: RedisConfig) -> Result<Self> {
+    pub async fn with_config_no_ping(config: RedisPoolConfig) -> Result<Self> {
         // Create Redis connection manager
         let manager = RedisConnectionManager::new(config.url.as_str())
             .context("Failed to create Redis connection manager")?;
@@ -158,7 +158,7 @@ impl RedisClient {
 
     /// Convenience helper to create client without ping from URL
     pub async fn new_unchecked(url: &str) -> Result<Self> {
-        Self::with_config_no_ping(RedisConfig::from_url(url)).await
+        Self::with_config_no_ping(RedisPoolConfig::from_url(url)).await
     }
 
     /// Get a connection from the pool
@@ -619,7 +619,7 @@ mod tests {
     #[tokio::test]
     #[ignore] // Requires Redis server
     async fn test_connection_pool() {
-        let config = RedisConfig {
+        let config = RedisPoolConfig {
             url: "redis://localhost:6379".to_string(),
             max_connections: 10,
             min_idle: Some(2),

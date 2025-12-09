@@ -7,19 +7,23 @@
 
 use crate::error::Result;
 use crate::logger::format_conditions;
+use bytes::Bytes;
+use serde::Serialize;
 use std::collections::HashMap;
 use std::sync::Arc;
+use voltage_calc::{CalcEngine, MemoryStateStore, SharedStateStore};
 use voltage_config::rules::{
-    FlowCondition, Rule, RuleNode, RuleSwitchBranch, RuleValueAssignment, RuleVariable,
+    CalculationRule, FlowCondition, Rule, RuleNode, RuleSwitchBranch, RuleValueAssignment,
+    RuleVariable,
 };
-use voltage_config::RoutingCache;
+use voltage_config::{KeySpaceConfig, RoutingCache};
 use voltage_routing::set_action_point;
 use voltage_rtdb::traits::Rtdb;
 
 /// Result of executing a rule
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct RuleExecutionResult {
-    pub rule_id: String,
+    pub rule_id: i64,
     pub success: bool,
     pub actions_executed: Vec<ActionResult>,
     pub error: Option<String>,
@@ -28,10 +32,12 @@ pub struct RuleExecutionResult {
     pub matched_condition: Option<String>,
     /// Variable values at execution time (for logging)
     pub variable_values: HashMap<String, f64>,
+    /// Node execution details for debugging/visualization
+    pub node_details: HashMap<String, NodeExecutionDetail>,
 }
 
 /// Record of an executed action
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct ActionResult {
     /// Target type: "instance" or "channel"
     pub target_type: String,
@@ -40,17 +46,48 @@ pub struct ActionResult {
     /// Point type (M/A for instance, T/S/C/A for channel)
     pub point_type: String,
     /// Point ID
-    pub point_id: String,
+    pub point_id: u16,
     /// Value written
     pub value: String,
     /// Whether the action succeeded
     pub success: bool,
 }
 
+/// Execution details for a single node (for debugging/visualization)
+#[derive(Debug, Clone, Serialize)]
+pub struct NodeExecutionDetail {
+    /// Node type: "start", "switch", "change", "end"
+    pub node_type: String,
+    /// Variable values when entering this node
+    pub input_values: HashMap<String, f64>,
+    /// Condition evaluation results (for Switch nodes)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub condition_results: Option<Vec<ConditionResult>>,
+    /// The matched output port (for Switch nodes)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub matched_port: Option<String>,
+    /// Actions executed (for ChangeValue nodes)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub actions: Option<Vec<ActionResult>>,
+}
+
+/// Result of evaluating a single condition branch
+#[derive(Debug, Clone, Serialize)]
+pub struct ConditionResult {
+    /// The condition expression (e.g., "X1>=49")
+    pub expression: String,
+    /// Whether this condition evaluated to true
+    pub result: bool,
+    /// The output port name for this condition
+    pub port: String,
+}
+
 /// Rule executor
 pub struct RuleExecutor<R: Rtdb + ?Sized> {
     rtdb: Arc<R>,
     routing_cache: Arc<RoutingCache>,
+    /// State store for stateful calculation functions (integrate, moving_avg, etc.)
+    state_store: SharedStateStore,
 }
 
 impl<R: Rtdb + ?Sized> RuleExecutor<R> {
@@ -58,19 +95,34 @@ impl<R: Rtdb + ?Sized> RuleExecutor<R> {
         Self {
             rtdb,
             routing_cache,
+            state_store: Arc::new(MemoryStateStore::new()),
+        }
+    }
+
+    /// Create with custom state store
+    pub fn with_state_store(
+        rtdb: Arc<R>,
+        routing_cache: Arc<RoutingCache>,
+        state_store: SharedStateStore,
+    ) -> Self {
+        Self {
+            rtdb,
+            routing_cache,
+            state_store,
         }
     }
 
     /// Execute a rule with RuleFlow
     pub async fn execute(&self, rule: &Rule) -> Result<RuleExecutionResult> {
         let mut result = RuleExecutionResult {
-            rule_id: rule.id.clone(),
+            rule_id: rule.id,
             success: false,
             actions_executed: vec![],
             error: None,
             execution_path: vec![],
             matched_condition: None,
             variable_values: HashMap::new(),
+            node_details: HashMap::new(),
         };
 
         // Execute from start node, accumulating variable values along the path
@@ -127,10 +179,25 @@ impl<R: Rtdb + ?Sized> RuleExecutor<R> {
                     // Save variable values for logging
                     result.variable_values = values.clone();
 
+                    // Evaluate all conditions for debugging/visualization
+                    let condition_results = self.evaluate_all_conditions(rules, &values);
+
                     // Evaluate switch rules to determine next node and capture matched condition
-                    let (next_node, matched_cond) =
-                        self.evaluate_rule_switch(rules, wires, &values);
+                    let (next_node, matched_port, matched_cond) =
+                        self.evaluate_rule_switch_with_details(rules, wires, &values);
                     result.matched_condition = matched_cond;
+
+                    // Record node execution detail
+                    result.node_details.insert(
+                        current_id.to_string(),
+                        NodeExecutionDetail {
+                            node_type: "switch".to_string(),
+                            input_values: values.clone(),
+                            condition_results: Some(condition_results),
+                            matched_port,
+                            actions: None,
+                        },
+                    );
 
                     match next_node {
                         Some(next) => current_id = next,
@@ -151,19 +218,92 @@ impl<R: Rtdb + ?Sized> RuleExecutor<R> {
                         return Ok(result);
                     }
 
-                    // Execute value assignments
+                    // Execute value assignments and collect actions for this node
+                    let mut node_actions = Vec::new();
                     for assignment in assignments {
                         let variable = variables.iter().find(|v| v.name == assignment.variables);
                         if let Some(var) = variable {
                             let executed = self.execute_rule_change(var, assignment, &values).await;
+                            node_actions.push(executed.clone());
                             result.actions_executed.push(executed);
                         }
                     }
+
+                    // Record node execution detail
+                    result.node_details.insert(
+                        current_id.to_string(),
+                        NodeExecutionDetail {
+                            node_type: "change".to_string(),
+                            input_values: values.clone(),
+                            condition_results: None,
+                            matched_port: None,
+                            actions: Some(node_actions),
+                        },
+                    );
 
                     current_id = match wires.default.first() {
                         Some(next) => next.as_str(),
                         None => {
                             result.error = Some("ChangeValue node has no output wire".to_string());
+                            return Ok(result);
+                        },
+                    };
+                },
+                RuleNode::Calculation {
+                    variables,
+                    rule: calculations,
+                    wires,
+                } => {
+                    // Read input variables
+                    if let Err(e) = self.read_rule_variables(variables, &mut values).await {
+                        result.error = Some(format!("Failed to read variables: {}", e));
+                        return Ok(result);
+                    }
+
+                    // Create CalcEngine with rule_id as context (for stateful functions)
+                    let calc_engine =
+                        CalcEngine::new(Arc::clone(&self.state_store), format!("rule_{}", rule.id));
+                    let mut node_actions = Vec::new();
+
+                    for calc in calculations {
+                        // Evaluate formula (supports stateful functions like integrate)
+                        let calc_result = match calc_engine.evaluate(&calc.formula, &values).await {
+                            Ok(v) => v,
+                            Err(e) => {
+                                result.error =
+                                    Some(format!("Calc '{}' error: {}", calc.formula, e));
+                                return Ok(result);
+                            },
+                        };
+
+                        // Find output variable and write result
+                        if let Some(var) = variables.iter().find(|v| v.name == calc.output) {
+                            let action =
+                                self.write_calculation_result(var, calc_result, calc).await;
+                            node_actions.push(action.clone());
+                            result.actions_executed.push(action);
+                        }
+
+                        // Update local values for chained calculations
+                        values.insert(calc.output.clone(), calc_result);
+                    }
+
+                    // Record node execution detail
+                    result.node_details.insert(
+                        current_id.to_string(),
+                        NodeExecutionDetail {
+                            node_type: "calculation".to_string(),
+                            input_values: values.clone(),
+                            condition_results: None,
+                            matched_port: None,
+                            actions: Some(node_actions),
+                        },
+                    );
+
+                    current_id = match wires.default.first() {
+                        Some(next) => next.as_str(),
+                        None => {
+                            result.error = Some("Calculation node has no output wire".to_string());
                             return Ok(result);
                         },
                     };
@@ -254,15 +394,15 @@ impl<R: Rtdb + ?Sized> RuleExecutor<R> {
         Ok(())
     }
 
-    /// Evaluate compact switch rules and return the next node ID with matched condition
+    /// Evaluate compact switch rules and return the next node ID with matched condition and port
     ///
-    /// Returns: (next_node_id, matched_condition_expression)
-    fn evaluate_rule_switch<'a>(
+    /// Returns: (next_node_id, matched_port, matched_condition_expression)
+    fn evaluate_rule_switch_with_details<'a>(
         &self,
         rules: &[RuleSwitchBranch],
         wires: &'a HashMap<String, Vec<String>>,
         values: &HashMap<String, f64>,
-    ) -> (Option<&'a str>, Option<String>) {
+    ) -> (Option<&'a str>, Option<String>, Option<String>) {
         for rule in rules {
             if self.evaluate_flow_conditions(&rule.rule, values) {
                 // Format the matched condition expression
@@ -271,12 +411,38 @@ impl<R: Rtdb + ?Sized> RuleExecutor<R> {
                 // Find the wire target for this rule's output
                 if let Some(targets) = wires.get(&rule.name) {
                     if let Some(target) = targets.first() {
-                        return (Some(target.as_str()), Some(condition_str));
+                        return (
+                            Some(target.as_str()),
+                            Some(rule.name.clone()),
+                            Some(condition_str),
+                        );
                     }
                 }
             }
         }
-        (None, None)
+        (None, None, None)
+    }
+
+    /// Evaluate all switch conditions and return results for each branch
+    ///
+    /// This is used for debugging/visualization to show which conditions matched/failed
+    fn evaluate_all_conditions(
+        &self,
+        rules: &[RuleSwitchBranch],
+        values: &HashMap<String, f64>,
+    ) -> Vec<ConditionResult> {
+        rules
+            .iter()
+            .map(|rule| {
+                let result = self.evaluate_flow_conditions(&rule.rule, values);
+                let expression = format_conditions(&rule.rule);
+                ConditionResult {
+                    expression,
+                    result,
+                    port: rule.name.clone(),
+                }
+            })
+            .collect()
     }
 
     /// Evaluate compact conditions
@@ -395,10 +561,111 @@ impl<R: Rtdb + ?Sized> RuleExecutor<R> {
                 .as_deref()
                 .unwrap_or("action")
                 .to_string(),
-            point_id: point.to_string(),
+            point_id: point,
             value: resolved_value.to_string(),
             success: result.is_ok(),
         }
+    }
+
+    /// Write calculation result to instance point
+    ///
+    /// Supports both measurement (M) and action (A) point types:
+    /// - Measurement: Direct write to inst:{id}:M Hash
+    /// - Action: Use M2C routing (triggers comsrv TODO queue)
+    async fn write_calculation_result(
+        &self,
+        variable: &RuleVariable,
+        value: f64,
+        calc: &CalculationRule,
+    ) -> ActionResult {
+        let instance_name = variable.instance.as_deref().unwrap_or("unknown");
+        let point = variable.point.unwrap_or(0);
+        let point_type = variable.point_type.as_deref().unwrap_or("M");
+
+        let success = match point_type {
+            "M" | "measurement" => {
+                // Direct write to measurement hash (no routing)
+                self.write_measurement_point(instance_name, point, value)
+                    .await
+                    .is_ok()
+            },
+            "A" | "action" => {
+                // Use M2C routing for action points
+                set_action_point(
+                    self.rtdb.as_ref(),
+                    &self.routing_cache,
+                    instance_name,
+                    &point.to_string(),
+                    value,
+                )
+                .await
+                .is_ok()
+            },
+            _ => {
+                tracing::warn!(
+                    "Unknown point type '{}' for calc output '{}'",
+                    point_type,
+                    calc.output
+                );
+                false
+            },
+        };
+
+        ActionResult {
+            target_type: "instance".to_string(),
+            target_id: 0,
+            point_type: point_type.to_string(),
+            point_id: point,
+            value: value.to_string(),
+            success,
+        }
+    }
+
+    /// Write directly to measurement point (no routing)
+    ///
+    /// Used by calculation nodes to write computed values back to measurement points.
+    /// This enables use cases like energy accumulation (kWh from power readings).
+    async fn write_measurement_point(
+        &self,
+        instance_name: &str,
+        point: u16,
+        value: f64,
+    ) -> Result<()> {
+        let config = KeySpaceConfig::production();
+
+        // Resolve instance name to ID
+        let instance_id_bytes = self
+            .rtdb
+            .hash_get("inst:name:index", instance_name)
+            .await
+            .map_err(|e| crate::error::RuleError::ExecutionError(e.to_string()))?
+            .ok_or_else(|| {
+                crate::error::RuleError::ExecutionError(format!(
+                    "Instance '{}' not found",
+                    instance_name
+                ))
+            })?;
+
+        let instance_id = String::from_utf8_lossy(&instance_id_bytes)
+            .parse::<u32>()
+            .map_err(|e| crate::error::RuleError::ExecutionError(e.to_string()))?;
+
+        // Write to inst:{id}:M Hash
+        let key = config.instance_measurement_key(instance_id);
+        self.rtdb
+            .hash_set(&key, &point.to_string(), Bytes::from(value.to_string()))
+            .await
+            .map_err(|e| crate::error::RuleError::ExecutionError(e.to_string()))?;
+
+        tracing::debug!(
+            "Calc write: {}:{} = {} (inst:{}:M)",
+            instance_name,
+            point,
+            value,
+            instance_id
+        );
+
+        Ok(())
     }
 }
 
@@ -544,8 +811,10 @@ mod tests {
         wires.insert("out002".to_string(), vec!["node-high".to_string()]);
 
         // X1=10 > 5, should match out002
-        let (next, condition) = executor.evaluate_rule_switch(&rules, &wires, &values);
+        let (next, port, condition) =
+            executor.evaluate_rule_switch_with_details(&rules, &wires, &values);
         assert_eq!(next, Some("node-high"));
+        assert_eq!(port, Some("out002".to_string()));
         assert_eq!(condition, Some("X1>5".to_string()));
     }
 
@@ -704,7 +973,7 @@ mod tests {
         let flow_json = soc_strategy_json();
         let rule_flow = extract_rule_flow(&flow_json).unwrap();
         Rule {
-            id: "soc-strategy-001".to_string(),
+            id: 1,
             name: "SOC Strategy".to_string(),
             description: None,
             enabled: true,

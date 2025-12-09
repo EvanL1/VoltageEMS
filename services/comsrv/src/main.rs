@@ -88,7 +88,7 @@ async fn main() -> VoltageResult<()> {
     );
 
     // Setup Redis connection with custom pool configuration
-    let mut redis_config = common::redis::RedisConfig::from_url(&app_config.redis.url);
+    let mut redis_config = common::redis::RedisPoolConfig::from_url(&app_config.redis.url);
     redis_config.max_connections = max_connections as u32;
 
     let (redis_url, redis_client) = common::bootstrap_database::setup_redis_with_config(

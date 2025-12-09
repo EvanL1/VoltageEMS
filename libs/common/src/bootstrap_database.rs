@@ -139,7 +139,7 @@ pub async fn setup_redis_with_timeout(
 /// ```
 pub async fn setup_redis_with_config(
     redis_url: Option<String>,
-    redis_config: crate::redis::RedisConfig,
+    redis_config: crate::redis::RedisPoolConfig,
 ) -> VoltageResult<(String, Arc<RedisClient>)> {
     // Build connection candidates with priority
     let candidates = build_redis_candidates(redis_url, "redis://127.0.0.1:6379");

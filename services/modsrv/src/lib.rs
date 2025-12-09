@@ -6,7 +6,6 @@ pub mod api {
     //! Organizes API handlers by functional domain under the `api/` directory.
     //!
     //! Handler groups:
-    //! - calculation management / computation
     //! - routing (management + query)
     //! - instance (management + query + action)
     //! - product
@@ -14,7 +13,6 @@ pub mod api {
     //! - single point APIs
     //! - admin (log level management)
     pub mod admin_handlers;
-    pub mod calculation_management_handlers;
     pub mod global_routing_handlers;
     pub mod health_handlers;
     pub mod instance_management_handlers;
@@ -30,7 +28,6 @@ pub mod api {
 // Map dto module to api/dto.rs while keeping crate::dto path stable
 pub mod app_state;
 pub mod bootstrap;
-pub mod calculation_engine;
 pub mod cleanup_provider;
 #[path = "api/dto.rs"]
 pub mod dto;
@@ -57,7 +54,6 @@ pub use voltage_rules::{
 pub use voltage_routing::{set_action_point, ActionRouteOutcome, RouteContext};
 
 // Re-export commonly used types
-pub use calculation_engine::CalculationEngine;
 pub use error::{ModSrvError, Result};
 pub use instance_manager::InstanceManager;
 pub use product_loader::{

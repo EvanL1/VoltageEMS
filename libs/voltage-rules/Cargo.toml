@@ -6,6 +6,7 @@ license.workspace = true
 description = "Rule engine library for VoltageEMS - Vue Flow based rule parsing, execution and scheduling"
 
 [dependencies]
+voltage-calc = { path = "../voltage-calc" }
 voltage-config = { path = "../voltage-config" }
 voltage-rtdb = { path = "../voltage-rtdb" }
 voltage-routing = { path = "../voltage-routing" }
@@ -19,6 +20,7 @@ sqlx = { workspace = true }
 # Serialization
 serde = { workspace = true }
 serde_json = { workspace = true }
+bytes = { workspace = true }
 
 # Error handling
 thiserror = { workspace = true }

@@ -13,6 +13,7 @@ pub mod redis;
 pub mod sqlite;
 
 // Common modules
+pub mod admin_api;
 pub mod config_loader;
 pub mod error;
 pub mod logging;

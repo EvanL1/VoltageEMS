@@ -25,35 +25,35 @@ pub enum RuleCommands {
     #[command(about = "Show detailed information about a rule")]
     Get {
         /// Rule ID
-        rule_id: String,
+        rule_id: i64,
     },
 
     /// Enable a rule
     #[command(about = "Enable a business rule")]
     Enable {
         /// Rule ID
-        rule_id: String,
+        rule_id: i64,
     },
 
     /// Disable a rule
     #[command(about = "Disable a business rule")]
     Disable {
         /// Rule ID
-        rule_id: String,
+        rule_id: i64,
     },
 
     /// Test a rule
     #[command(about = "Test rule conditions without executing actions")]
     Test {
         /// Rule ID
-        rule_id: String,
+        rule_id: i64,
     },
 
     /// Execute a rule
     #[command(about = "Execute a rule (evaluate and execute if conditions met)")]
     Execute {
         /// Rule ID
-        rule_id: String,
+        rule_id: i64,
         /// Force execution even if conditions not met
         #[arg(short, long)]
         force: bool,
@@ -63,7 +63,7 @@ pub enum RuleCommands {
     #[command(about = "Display recent rule execution history")]
     Executions {
         /// Rule ID (optional, shows all if not specified)
-        rule_id: Option<String>,
+        rule_id: Option<i64>,
         /// Limit number of results
         #[arg(long, default_value = "10")]
         limit: usize,
@@ -105,7 +105,7 @@ pub async fn handle_command(
                     println!("Rules: {}", serde_json::to_string_pretty(&rules_filtered)?);
                 },
                 RuleCommands::Get { rule_id } => {
-                    let rule = service.get(&rule_id).await?;
+                    let rule = service.get(rule_id).await?;
                     println!(
                         "Rule '{}': {}",
                         rule_id,
@@ -113,11 +113,11 @@ pub async fn handle_command(
                     );
                 },
                 RuleCommands::Enable { rule_id } => {
-                    service.enable(&rule_id).await?;
+                    service.enable(rule_id).await?;
                     info!("Rule '{}' enabled", rule_id);
                 },
                 RuleCommands::Disable { rule_id } => {
-                    service.disable(&rule_id).await?;
+                    service.disable(rule_id).await?;
                     info!("Rule '{}' disabled", rule_id);
                 },
                 RuleCommands::Test { rule_id } => {
@@ -171,7 +171,7 @@ pub async fn handle_command(
                 println!("Rules: {}", serde_json::to_string_pretty(&rules)?);
             },
             RuleCommands::Get { rule_id } => {
-                let rule = client.get_rule(&rule_id).await?;
+                let rule = client.get_rule(rule_id).await?;
                 println!(
                     "Rule '{}': {}",
                     rule_id,
@@ -179,15 +179,15 @@ pub async fn handle_command(
                 );
             },
             RuleCommands::Enable { rule_id } => {
-                client.enable_rule(&rule_id).await?;
+                client.enable_rule(rule_id).await?;
                 info!("Rule '{}' enabled", rule_id);
             },
             RuleCommands::Disable { rule_id } => {
-                client.disable_rule(&rule_id).await?;
+                client.disable_rule(rule_id).await?;
                 info!("Rule '{}' disabled", rule_id);
             },
             RuleCommands::Test { rule_id } => {
-                let result = client.test_rule(&rule_id).await?;
+                let result = client.test_rule(rule_id).await?;
                 println!(
                     "Test result for rule '{}': {}",
                     rule_id,
@@ -195,7 +195,7 @@ pub async fn handle_command(
                 );
             },
             RuleCommands::Execute { rule_id, force } => {
-                let result = client.execute_rule(&rule_id, force).await?;
+                let result = client.execute_rule(rule_id, force).await?;
                 println!(
                     "Execution result for rule '{}': {}",
                     rule_id,
@@ -203,7 +203,7 @@ pub async fn handle_command(
                 );
             },
             RuleCommands::Executions { rule_id, limit } => {
-                let executions = client.list_executions(rule_id.as_deref(), limit).await?;
+                let executions = client.list_executions(rule_id, limit).await?;
                 println!("Executions: {}", serde_json::to_string_pretty(&executions)?);
             },
         }
@@ -243,7 +243,7 @@ impl RuleClient {
         }
     }
 
-    async fn get_rule(&self, rule_id: &str) -> Result<Value> {
+    async fn get_rule(&self, rule_id: i64) -> Result<Value> {
         let response = self
             .client
             .get(format!("{}/api/rules/{}", self.base_url, rule_id))
@@ -257,7 +257,7 @@ impl RuleClient {
         }
     }
 
-    async fn enable_rule(&self, rule_id: &str) -> Result<()> {
+    async fn enable_rule(&self, rule_id: i64) -> Result<()> {
         let response = self
             .client
             .post(format!("{}/api/rules/{}/enable", self.base_url, rule_id))
@@ -274,7 +274,7 @@ impl RuleClient {
         }
     }
 
-    async fn disable_rule(&self, rule_id: &str) -> Result<()> {
+    async fn disable_rule(&self, rule_id: i64) -> Result<()> {
         let response = self
             .client
             .post(format!("{}/api/rules/{}/disable", self.base_url, rule_id))
@@ -291,7 +291,7 @@ impl RuleClient {
         }
     }
 
-    async fn test_rule(&self, rule_id: &str) -> Result<Value> {
+    async fn test_rule(&self, rule_id: i64) -> Result<Value> {
         let response = self
             .client
             .post(format!("{}/api/rules/{}/test", self.base_url, rule_id))
@@ -309,7 +309,7 @@ impl RuleClient {
     }
 
     #[allow(clippy::disallowed_methods)] // json! macro internally uses unwrap (safe for known valid JSON)
-    async fn execute_rule(&self, rule_id: &str, force: bool) -> Result<Value> {
+    async fn execute_rule(&self, rule_id: i64, force: bool) -> Result<Value> {
         let response = self
             .client
             .post(format!("{}/api/rules/{}/execute", self.base_url, rule_id))
@@ -327,7 +327,7 @@ impl RuleClient {
         }
     }
 
-    async fn list_executions(&self, rule_id: Option<&str>, limit: usize) -> Result<Value> {
+    async fn list_executions(&self, rule_id: Option<i64>, limit: usize) -> Result<Value> {
         let url = if let Some(id) = rule_id {
             format!(
                 "{}/api/rules/{}/executions?limit={}",

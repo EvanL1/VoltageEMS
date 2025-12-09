@@ -196,8 +196,8 @@ pub struct WritePointResponse {
     pub point_type: String,
 
     /// Point ID that was written
-    #[schema(example = "1")]
-    pub point_id: String,
+    #[schema(example = 1)]
+    pub point_id: u32,
 
     /// Value that was written
     #[schema(example = 50.0)]

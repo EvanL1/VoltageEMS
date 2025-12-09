@@ -7,12 +7,10 @@
 
 use crate::common::{ApiConfig, BaseServiceConfig, RedisConfig};
 use serde::{Deserialize, Serialize};
+use voltage_schema_macro::Schema;
 
 #[cfg(feature = "schema")]
 use schemars::JsonSchema;
-
-#[cfg(feature = "schema-macro")]
-use voltage_schema_macro::Schema;
 
 /// Default API configuration for rules (port 6002, merged into modsrv)
 fn default_rules_api() -> ApiConfig {
@@ -44,77 +42,14 @@ pub struct RulesConfig {
 }
 
 // ============================================================================
-// Database Schema Definitions
+// Database Schema Definitions (re-exported from common)
 // ============================================================================
 
-/// Service configuration table record
-/// Maps to RulesConfig for service-level settings
-/// Supports both global and service-specific configuration with composite primary key
-#[cfg_attr(feature = "schema-macro", derive(Schema))]
-#[cfg_attr(feature = "schema-macro", table(name = "service_config"))]
-#[allow(dead_code)]
-struct ServiceConfigRecord {
-    #[cfg_attr(feature = "schema-macro", column(not_null, primary_key))]
-    service_name: String,
+/// Service configuration table SQL (from common)
+pub use crate::common::SERVICE_CONFIG_TABLE;
 
-    #[cfg_attr(feature = "schema-macro", column(not_null, primary_key))]
-    key: String,
-
-    #[cfg_attr(feature = "schema-macro", column(not_null))]
-    value: String,
-
-    #[cfg_attr(feature = "schema-macro", column(default = "string"))]
-    r#type: String,
-
-    description: Option<String>,
-
-    #[cfg_attr(feature = "schema-macro", column(default = "CURRENT_TIMESTAMP"))]
-    updated_at: String, // TIMESTAMP
-}
-
-/// Sync metadata table record
-/// Tracks configuration synchronization status
-#[cfg_attr(feature = "schema-macro", derive(Schema))]
-#[cfg_attr(feature = "schema-macro", table(name = "sync_metadata"))]
-#[allow(dead_code)]
-struct SyncMetadataRecord {
-    #[cfg_attr(feature = "schema-macro", column(primary_key))]
-    service: String,
-
-    #[cfg_attr(feature = "schema-macro", column(not_null))]
-    last_sync: String, // TIMESTAMP
-
-    version: Option<String>,
-}
-
-// Generate table SQL from Schema structs
-#[cfg(feature = "schema-macro")]
-pub const SERVICE_CONFIG_TABLE: &str = ServiceConfigRecord::CREATE_TABLE_SQL;
-#[cfg(feature = "schema-macro")]
-pub const SYNC_METADATA_TABLE: &str = SyncMetadataRecord::CREATE_TABLE_SQL;
-
-// Fallback for non-schema-macro builds
-#[cfg(not(feature = "schema-macro"))]
-pub const SERVICE_CONFIG_TABLE: &str = r#"
-    CREATE TABLE IF NOT EXISTS service_config (
-        service_name TEXT NOT NULL,
-        key TEXT NOT NULL,
-        value TEXT NOT NULL,
-        type TEXT DEFAULT 'string',
-        description TEXT,
-        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        PRIMARY KEY (service_name, key)
-    )
-"#;
-
-#[cfg(not(feature = "schema-macro"))]
-pub const SYNC_METADATA_TABLE: &str = r#"
-    CREATE TABLE IF NOT EXISTS sync_metadata (
-        service TEXT PRIMARY KEY,
-        last_sync TIMESTAMP NOT NULL,
-        version TEXT
-    )
-"#;
+/// Sync metadata table SQL (from common)
+pub use crate::common::SYNC_METADATA_TABLE;
 
 /// Default port for rules service (merged into modsrv)
 pub const DEFAULT_PORT: u16 = 6002;
@@ -130,7 +65,7 @@ pub struct ExecutionConfig {}
 #[cfg_attr(feature = "schema", derive(JsonSchema))]
 pub struct RuleCore {
     /// Rule ID
-    pub id: String,
+    pub id: i64,
 
     /// Rule name
     pub name: String,
@@ -139,7 +74,7 @@ pub struct RuleCore {
     pub description: Option<String>,
 
     /// Whether the rule is enabled
-    #[serde(default = "default_true")]
+    #[serde(default = "crate::serde_defaults::bool_true")]
     pub enabled: bool,
 
     /// Priority (higher number = higher priority)
@@ -161,8 +96,8 @@ pub struct RuleConfig {
 
 impl RuleConfig {
     /// Convenient accessor for rule ID
-    pub fn id(&self) -> &str {
-        &self.core.id
+    pub fn id(&self) -> i64 {
+        self.core.id
     }
 
     /// Convenient accessor for rule name
@@ -189,7 +124,7 @@ impl RuleConfig {
 #[allow(dead_code)]
 struct RuleRecord {
     #[cfg_attr(feature = "schema-macro", column(primary_key))]
-    id: String,
+    id: i64,
 
     #[cfg_attr(feature = "schema-macro", column(not_null))]
     name: String,
@@ -225,7 +160,7 @@ struct RuleHistoryRecord {
     id: i64,
 
     #[cfg_attr(feature = "schema-macro", column(not_null, references = "rules(id)"))]
-    rule_id: String,
+    rule_id: i64,
 
     #[cfg_attr(feature = "schema-macro", column(not_null))]
     triggered_at: String, // TIMESTAMP
@@ -245,7 +180,7 @@ pub const RULE_HISTORY_TABLE: &str = RuleHistoryRecord::CREATE_TABLE_SQL;
 #[cfg(not(feature = "schema-macro"))]
 pub const RULES_TABLE: &str = r#"
     CREATE TABLE IF NOT EXISTS rules (
-        id TEXT PRIMARY KEY,
+        id INTEGER PRIMARY KEY,
         name TEXT NOT NULL,
         description TEXT,
         nodes_json TEXT NOT NULL,
@@ -261,18 +196,13 @@ pub const RULES_TABLE: &str = r#"
 pub const RULE_HISTORY_TABLE: &str = r#"
     CREATE TABLE IF NOT EXISTS rule_history (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
-        rule_id TEXT NOT NULL,
+        rule_id INTEGER NOT NULL,
         triggered_at TIMESTAMP NOT NULL,
         execution_result TEXT,
         error TEXT,
         FOREIGN KEY (rule_id) REFERENCES rules(id)
     )
 "#;
-
-// Default value functions
-fn default_true() -> bool {
-    true
-}
 
 impl Default for RulesConfig {
     fn default() -> Self {
@@ -300,7 +230,7 @@ impl Default for RulesConfig {
 // ============================================================================
 
 use crate::common::{ConfigValidator, ValidationLevel, ValidationResult};
-use anyhow::{Context, Result};
+use anyhow::Result;
 
 impl ConfigValidator for RulesConfig {
     fn validate_syntax(&self) -> Result<ValidationResult> {
@@ -336,8 +266,8 @@ impl ConfigValidator for RulesConfig {
 impl RuleConfig {
     /// Validate individual rule configuration
     pub fn validate(&self, result: &mut ValidationResult) {
-        if self.core.id.is_empty() {
-            result.add_error("Rule ID cannot be empty".to_string());
+        if self.core.id <= 0 {
+            result.add_error("Rule ID must be positive".to_string());
         }
 
         if self.core.name.is_empty() {
@@ -359,112 +289,8 @@ impl RuleConfig {
     }
 }
 
-/// Helper validator for backward compatibility
-pub struct RulesValidator {
-    config: Option<RulesConfig>,
-    raw_yaml: Option<serde_yaml::Value>,
-}
-
-impl RulesValidator {
-    pub fn from_yaml(yaml: serde_yaml::Value) -> Self {
-        let config = serde_yaml::from_value(yaml.clone()).ok();
-        Self {
-            config,
-            raw_yaml: Some(yaml),
-        }
-    }
-
-    pub fn from_config(config: RulesConfig) -> Self {
-        Self {
-            config: Some(config),
-            raw_yaml: None,
-        }
-    }
-
-    pub fn from_file(path: &std::path::Path) -> Result<Self> {
-        let content = std::fs::read_to_string(path)
-            .with_context(|| format!("Failed to read file: {}", path.display()))?;
-
-        // Deserialize directly from string to capture line/column information
-        let config = serde_yaml::from_str::<RulesConfig>(&content).map_err(|e| {
-            if let Some(location) = e.location() {
-                anyhow::anyhow!(
-                    "Configuration error in {}:{}:{}\n  {}",
-                    path.display(),
-                    location.line(),
-                    location.column(),
-                    e
-                )
-            } else {
-                anyhow::anyhow!("Configuration error in {}\n  {}", path.display(), e)
-            }
-        })?;
-
-        // Also parse as YAML Value for raw_yaml field
-        let yaml: serde_yaml::Value = serde_yaml::from_str(&content)?;
-
-        Ok(Self {
-            config: Some(config),
-            raw_yaml: Some(yaml),
-        })
-    }
-}
-
-impl ConfigValidator for RulesValidator {
-    fn validate_syntax(&self) -> Result<ValidationResult> {
-        let mut result = ValidationResult::new(ValidationLevel::Syntax);
-
-        if self.config.is_none() {
-            if let Some(yaml) = &self.raw_yaml {
-                match serde_yaml::from_value::<RulesConfig>(yaml.clone()) {
-                    Ok(_) => {
-                        result.add_warning("Configuration parsed but not stored".to_string());
-                    },
-                    Err(e) => {
-                        result.add_error(format!("Invalid YAML syntax: {}", e));
-                    },
-                }
-            } else {
-                result.add_error("No configuration data available".to_string());
-            }
-        }
-
-        Ok(result)
-    }
-
-    fn validate_schema(&self) -> Result<ValidationResult> {
-        match &self.config {
-            Some(config) => config.validate_schema(),
-            None => {
-                let mut result = ValidationResult::new(ValidationLevel::Schema);
-                result.add_error("Configuration parsing failed".to_string());
-                Ok(result)
-            },
-        }
-    }
-
-    fn validate_business(&self) -> Result<ValidationResult> {
-        match &self.config {
-            Some(config) => config.validate_business(),
-            None => {
-                let mut result = ValidationResult::new(ValidationLevel::Business);
-                result.add_error("Configuration not available".to_string());
-                Ok(result)
-            },
-        }
-    }
-
-    fn validate_runtime(&self) -> Result<ValidationResult> {
-        match &self.config {
-            Some(config) => config.validate_runtime(),
-            None => {
-                let mut result = ValidationResult::new(ValidationLevel::Runtime);
-                result.add_error("Configuration not available".to_string());
-                Ok(result)
-            },
-        }
-    }
-}
+/// Type alias for backward compatibility - use GenericValidator directly for new code
+pub type RulesValidator = crate::common::GenericValidator<RulesConfig>;
 
 // ============================================================================
 // Vue Flow Rule Structures (Parsed/Flattened)
@@ -476,7 +302,7 @@ impl ConfigValidator for RulesValidator {
 #[cfg_attr(feature = "schema", derive(JsonSchema))]
 pub struct Rule {
     /// Unique identifier
-    pub id: String,
+    pub id: i64,
 
     /// Rule name
     pub name: String,
@@ -485,7 +311,7 @@ pub struct Rule {
     pub description: Option<String>,
 
     /// Whether the rule is enabled
-    #[serde(default = "default_true")]
+    #[serde(default = "crate::serde_defaults::bool_true")]
     pub enabled: bool,
 
     /// Execution priority (higher = earlier)
@@ -511,7 +337,7 @@ pub struct Rule {
 #[allow(dead_code)]
 struct RuleChainRecord {
     #[cfg_attr(feature = "schema-macro", column(primary_key))]
-    id: String,
+    id: i64,
 
     #[cfg_attr(feature = "schema-macro", column(not_null))]
     name: String,
@@ -551,7 +377,7 @@ pub const RULE_CHAINS_TABLE: &str = RuleChainRecord::CREATE_TABLE_SQL;
 #[cfg(not(feature = "schema-macro"))]
 pub const RULE_CHAINS_TABLE: &str = r#"
     CREATE TABLE IF NOT EXISTS rules (
-        id TEXT PRIMARY KEY,
+        id INTEGER PRIMARY KEY,
         name TEXT NOT NULL,
         description TEXT,
         enabled BOOLEAN DEFAULT TRUE,
@@ -617,6 +443,17 @@ pub enum RuleNode {
         variables: Vec<RuleVariable>,
         /// Value assignments
         rule: Vec<RuleValueAssignment>,
+        /// Output wires
+        wires: RuleWires,
+    },
+
+    /// Calculation action node - formula evaluation
+    #[serde(rename = "action-calculation")]
+    Calculation {
+        /// Input variables (also serve as output targets)
+        variables: Vec<RuleVariable>,
+        /// Calculation rules with formulas
+        rule: Vec<CalculationRule>,
         /// Output wires
         wires: RuleWires,
     },
@@ -705,4 +542,19 @@ pub struct RuleValueAssignment {
 
     /// Value to assign (number or variable name)
     pub value: serde_json::Value,
+}
+
+/// Calculation rule for formula evaluation
+///
+/// Used by `action-calculation` nodes to compute values using evalexpr expressions.
+/// Supports arithmetic (+, -, *, /), comparison (>, <, >=, <=, ==), logical (&&, ||),
+/// and conditional expressions (if(cond, then, else)).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
+pub struct CalculationRule {
+    /// Output variable name (must reference a variable in the node)
+    pub output: String,
+
+    /// Formula expression (evalexpr syntax, e.g., "a + b * 2")
+    pub formula: String,
 }

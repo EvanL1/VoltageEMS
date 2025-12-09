@@ -18,7 +18,7 @@ async fn setup_test_db() -> SqlitePool {
     sqlx::query(
         r#"
         CREATE TABLE IF NOT EXISTS rules (
-            id TEXT PRIMARY KEY,
+            id INTEGER PRIMARY KEY,
             name TEXT NOT NULL,
             description TEXT,
             enabled INTEGER NOT NULL DEFAULT 1,
@@ -119,7 +119,7 @@ fn sample_flow_json() -> serde_json::Value {
 
 /// Create a complete rule JSON with all required fields
 fn create_rule_json(
-    id: &str,
+    id: i64,
     name: &str,
     description: &str,
     enabled: bool,
@@ -160,7 +160,7 @@ async fn test_extract_rule_flow() {
 async fn test_rule_crud_operations() -> Result<()> {
     let pool = setup_test_db().await;
 
-    let rule_id = "test-rule-001";
+    let rule_id: i64 = 1;
 
     // CREATE
     let rule_json = create_rule_json(rule_id, "Test Rule", "Test description", true, 100, 5000);
@@ -168,7 +168,7 @@ async fn test_rule_crud_operations() -> Result<()> {
 
     // READ
     let rule = get_rule(&pool, rule_id).await?;
-    assert_eq!(rule["id"].as_str().unwrap(), rule_id);
+    assert_eq!(rule["id"].as_i64().unwrap(), rule_id);
     assert_eq!(rule["name"].as_str().unwrap(), "Test Rule");
     assert_eq!(rule["description"].as_str().unwrap(), "Test description");
     assert!(rule["enabled"].as_bool().unwrap());
@@ -178,7 +178,7 @@ async fn test_rule_crud_operations() -> Result<()> {
     // LIST
     let rules = list_rules(&pool).await?;
     assert_eq!(rules.len(), 1);
-    assert_eq!(rules[0]["id"].as_str().unwrap(), rule_id);
+    assert_eq!(rules[0]["id"].as_i64().unwrap(), rule_id);
 
     // UPDATE
     let updated_rule = create_rule_json(

@@ -45,12 +45,7 @@ use crate::api::single_point_handlers::{
     upsert_measurement_routing,
 };
 
-use crate::api::admin_handlers::{get_log_level, set_log_level};
-use crate::api::calculation_management_handlers::{
-    compute_aggregation, compute_energy, compute_expression, compute_timeseries,
-    create_calculation, delete_calculation, execute_batch_calculations, execute_calculation,
-    get_calculation, list_calculations, update_calculation,
-};
+use common::admin_api::{get_log_level, set_log_level};
 
 // OpenAPI documentation - only compiled when swagger-ui feature is enabled
 #[cfg(feature = "swagger-ui")]
@@ -89,18 +84,12 @@ use crate::api::calculation_management_handlers::{
         crate::api::global_routing_handlers::get_routing_by_channel_handler,
         crate::api::global_routing_handlers::delete_instance_routing_handler,
         crate::api::global_routing_handlers::delete_channel_routing_handler,
-        crate::api::calculation_management_handlers::list_calculations,
-        crate::api::calculation_management_handlers::create_calculation,
-        crate::api::calculation_management_handlers::get_calculation,
-        crate::api::calculation_management_handlers::update_calculation,
-        crate::api::calculation_management_handlers::delete_calculation,
-        crate::api::calculation_management_handlers::execute_calculation,
         crate::api::product_handlers::list_products,
         crate::api::product_handlers::get_product_points,
         crate::api::product_handlers::create_product,
         // Admin endpoints
-        crate::api::admin_handlers::set_log_level,
-        crate::api::admin_handlers::get_log_level
+        common::admin_api::set_log_level,
+        common::admin_api::get_log_level
     ),
     components(
         schemas(
@@ -123,8 +112,8 @@ use crate::api::calculation_management_handlers::{
             voltage_config::modsrv::ActionPoint,
             voltage_config::modsrv::PropertyTemplate,
             // Admin schemas
-            crate::api::admin_handlers::SetLogLevelRequest,
-            crate::api::admin_handlers::LogLevelResponse
+            common::admin_api::SetLogLevelRequest,
+            common::admin_api::LogLevelResponse
         )
     ),
     tags(
@@ -208,24 +197,6 @@ pub fn create_routes(state: Arc<AppState>) -> Router {
         // Product management endpoints
         .route("/api/products", get(list_products).post(create_product))
         .route("/api/products/{product_name}/points", get(get_product_points))
-        // Calculation endpoints
-        .route(
-            "/api/calculations",
-            get(list_calculations).post(create_calculation),
-        )
-        .route(
-            "/api/calculations/{id}",
-            get(get_calculation)
-                .put(update_calculation)
-                .delete(delete_calculation),
-        )
-        .route("/api/calculations/{id}/execute", post(execute_calculation))
-        .route("/api/calculations/batch", post(execute_batch_calculations))
-        // Complex computation endpoints
-        .route("/api/compute/expression", post(compute_expression))
-        .route("/api/compute/aggregate", post(compute_aggregation))
-        .route("/api/compute/energy", post(compute_energy))
-        .route("/api/compute/timeseries", post(compute_timeseries))
         // Admin endpoints (log level management)
         .route(
             "/api/admin/logs/level",

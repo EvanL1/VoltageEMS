@@ -38,7 +38,7 @@ fn test_rules_table_generation() {
     println!("{}\n", RULES_TABLE);
 
     assert!(RULES_TABLE.contains("CREATE TABLE IF NOT EXISTS rules"));
-    assert!(RULES_TABLE.contains("id TEXT PRIMARY KEY"));
+    assert!(RULES_TABLE.contains("id INTEGER PRIMARY KEY"));
     assert!(RULES_TABLE.contains("name TEXT NOT NULL"));
     assert!(RULES_TABLE.contains("description TEXT"));
     assert!(RULES_TABLE.contains("nodes_json TEXT NOT NULL"));
@@ -67,7 +67,7 @@ fn test_rule_history_table_generation() {
 
     assert!(RULE_HISTORY_TABLE.contains("CREATE TABLE IF NOT EXISTS rule_history"));
     assert!(RULE_HISTORY_TABLE.contains("id INTEGER PRIMARY KEY AUTOINCREMENT"));
-    assert!(RULE_HISTORY_TABLE.contains("rule_id TEXT NOT NULL REFERENCES rules(id)"));
+    assert!(RULE_HISTORY_TABLE.contains("rule_id INTEGER NOT NULL REFERENCES rules(id)"));
     assert!(RULE_HISTORY_TABLE.contains("triggered_at TEXT NOT NULL"));
     assert!(RULE_HISTORY_TABLE.contains("execution_result TEXT"));
     assert!(RULE_HISTORY_TABLE.contains("error TEXT"));

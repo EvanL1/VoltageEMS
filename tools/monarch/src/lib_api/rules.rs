@@ -11,7 +11,7 @@ use voltage_config::rules::{Rule, RuleFlow};
 /// Rule summary for list operations
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RuleSummary {
-    pub id: String,
+    pub id: i64,
     pub name: String,
     pub enabled: bool,
     pub priority: u32,
@@ -19,7 +19,7 @@ pub struct RuleSummary {
 
 /// Type alias for rule database row to avoid clippy::type_complexity warning
 /// Fields: (id, name, description, enabled, priority, cooldown_ms, nodes_json)
-type RuleDbRow = (String, String, Option<String>, i64, i64, i64, String);
+type RuleDbRow = (i64, String, Option<String>, i64, i64, i64, String);
 
 /// Rules service - provides rule management and execution operations
 /// Uses ModsrvContext since rules have been merged into modsrv
@@ -39,7 +39,7 @@ impl<'a> RulesService<'a> {
     /// Returns a list of all configured rules.
     pub async fn list(&self) -> Result<Vec<RuleSummary>> {
         // Query database for rules
-        let db_rules: Vec<(String, String, i64, i64)> = sqlx::query_as(
+        let db_rules: Vec<(i64, String, i64, i64)> = sqlx::query_as(
             "SELECT id, name, enabled, priority FROM rules ORDER BY priority DESC, id",
         )
         .fetch_all(&self.ctx.sqlite_pool)
@@ -61,7 +61,7 @@ impl<'a> RulesService<'a> {
     /// Get rule by ID
     ///
     /// Returns detailed information about a specific rule.
-    pub async fn get(&self, rule_id: &str) -> Result<Rule> {
+    pub async fn get(&self, rule_id: i64) -> Result<Rule> {
         // Query database for rule
         let row: Option<RuleDbRow> = sqlx::query_as(
             "SELECT id, name, description, enabled, priority, cooldown_ms, nodes_json
@@ -103,7 +103,7 @@ impl<'a> RulesService<'a> {
             "INSERT INTO rules (id, name, description, enabled, priority, cooldown_ms, nodes_json)
              VALUES (?, ?, ?, ?, ?, ?, ?)",
         )
-        .bind(&rule.id)
+        .bind(rule.id)
         .bind(&rule.name)
         .bind(&rule.description)
         .bind(rule.enabled)
@@ -121,7 +121,7 @@ impl<'a> RulesService<'a> {
     /// Updates a rule's configuration in the database.
     /// Public API - use monarch sync for CLI operations.
     #[allow(dead_code)]
-    pub async fn update(&self, rule_id: &str, rule: Rule) -> Result<()> {
+    pub async fn update(&self, rule_id: i64, rule: Rule) -> Result<()> {
         let nodes_json = serde_json::to_string(&rule.flow)
             .map_err(|e| LibApiError::config(format!("Failed to serialize flow: {}", e)))?;
 
@@ -152,7 +152,7 @@ impl<'a> RulesService<'a> {
     /// Removes a rule from the database.
     /// Public API - use monarch sync for CLI operations.
     #[allow(dead_code)]
-    pub async fn delete(&self, rule_id: &str) -> Result<()> {
+    pub async fn delete(&self, rule_id: i64) -> Result<()> {
         let result = sqlx::query("DELETE FROM rules WHERE id = ?")
             .bind(rule_id)
             .execute(&self.ctx.sqlite_pool)
@@ -168,7 +168,7 @@ impl<'a> RulesService<'a> {
     /// Enable a rule
     ///
     /// Sets a rule's enabled flag to true.
-    pub async fn enable(&self, rule_id: &str) -> Result<()> {
+    pub async fn enable(&self, rule_id: i64) -> Result<()> {
         let result = sqlx::query(
             "UPDATE rules SET enabled = 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
         )
@@ -186,7 +186,7 @@ impl<'a> RulesService<'a> {
     /// Disable a rule
     ///
     /// Sets a rule's enabled flag to false.
-    pub async fn disable(&self, rule_id: &str) -> Result<()> {
+    pub async fn disable(&self, rule_id: i64) -> Result<()> {
         let result = sqlx::query(
             "UPDATE rules SET enabled = 0, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
         )

@@ -16,13 +16,13 @@ use crate::core::channels::ChannelManager;
 
 // Import handler modules
 use crate::api::{
-    handlers::admin_handlers::*,
     handlers::health::*,
     handlers::{
         channel_handlers::*, channel_management_handlers::*, control_handlers::*,
         mapping_handlers::*, point_handlers::*,
     },
 };
+use common::admin_api::{get_log_level, set_log_level};
 
 /// Global service start time storage
 static SERVICE_START_TIME: OnceLock<DateTime<Utc>> = OnceLock::new();
@@ -121,8 +121,8 @@ impl AppState {
         crate::api::handlers::mapping_handlers::update_channel_mappings_handler,
 
         // Admin endpoints
-        crate::api::handlers::admin_handlers::set_log_level,
-        crate::api::handlers::admin_handlers::get_log_level
+        common::admin_api::set_log_level,
+        common::admin_api::get_log_level
     ),
     components(
         schemas(
@@ -170,8 +170,8 @@ impl AppState {
             crate::api::handlers::point_handlers::OperationStat,
             crate::api::handlers::point_handlers::PointBatchError,
             // Admin schemas
-            crate::api::handlers::admin_handlers::SetLogLevelRequest,
-            crate::api::handlers::admin_handlers::LogLevelResponse
+            common::admin_api::SetLogLevelRequest,
+            common::admin_api::LogLevelResponse
         )
     ),
     tags(
@@ -2800,7 +2800,7 @@ mod tests {
         assert!(json["success"].as_bool().unwrap(), "success must be true");
         assert_eq!(json["data"]["channel_id"], 1005);
         assert_eq!(json["data"]["point_type"], "C");
-        assert_eq!(json["data"]["point_id"], "10");
+        assert_eq!(json["data"]["point_id"], 10);
         assert_eq!(json["data"]["value"], 1.0);
         assert!(json["data"]["timestamp_ms"].is_number());
 
@@ -2836,7 +2836,7 @@ mod tests {
         let json = extract_write_response_json(resp).await;
         assert!(json["success"].as_bool().unwrap());
         assert_eq!(json["data"]["point_type"], "A");
-        assert_eq!(json["data"]["point_id"], "200");
+        assert_eq!(json["data"]["point_id"], 200);
         assert_eq!(json["data"]["value"], 4500.0);
 
         // Verify Redis (MemoryRtdb hardcodes key format: comsrv:channel_id:type)
@@ -3220,7 +3220,7 @@ mod tests {
         assert!(json["data"].is_object());
         assert!(json["data"]["channel_id"].is_number());
         assert!(json["data"]["point_type"].is_string());
-        assert!(json["data"]["point_id"].is_string());
+        assert!(json["data"]["point_id"].is_number());
         assert!(json["data"]["value"].is_number());
         assert!(json["data"]["timestamp_ms"].is_number());
     }

@@ -224,7 +224,7 @@ pub async fn write_channel_point(
             let response = crate::dto::WritePointResponse {
                 channel_id,
                 point_type: point_type.to_string(),
-                point_id: id.clone(),
+                point_id,
                 value: *value,
                 timestamp_ms,
             };

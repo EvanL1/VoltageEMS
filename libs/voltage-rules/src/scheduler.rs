@@ -10,10 +10,11 @@ use crate::error::Result;
 use crate::executor::{RuleExecutionResult, RuleExecutor};
 use crate::logger::RuleLoggerManager;
 use crate::repository;
+use bytes::Bytes;
 use sqlx::SqlitePool;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::sync::RwLock;
 use tokio::time::interval;
 use tracing::{debug, error, info, warn};
@@ -60,6 +61,8 @@ struct ScheduledRule {
 
 /// Rule Scheduler - manages periodic rule execution
 pub struct RuleScheduler<R: Rtdb + ?Sized> {
+    /// RTDB instance for reading/writing data
+    rtdb: Arc<R>,
     /// Rule executor instance
     executor: Arc<RuleExecutor<R>>,
     /// SQLite pool for rule persistence
@@ -93,6 +96,7 @@ impl<R: Rtdb + ?Sized + 'static> RuleScheduler<R> {
         log_root: PathBuf,
     ) -> Self {
         Self {
+            rtdb: Arc::clone(&rtdb),
             executor: Arc::new(RuleExecutor::new(rtdb, routing_cache)),
             pool,
             rules: Arc::new(RwLock::new(Vec::new())),
@@ -231,8 +235,14 @@ impl<R: Rtdb + ?Sized + 'static> RuleScheduler<R> {
                         // Log rule execution to independent rule log file
                         let logger = self
                             .logger_manager
-                            .get_logger(&scheduled.rule.id, &scheduled.rule.name);
+                            .get_logger(scheduled.rule.id, &scheduled.rule.name);
                         logger.log_execution(&result, &result.variable_values);
+
+                        // Write rule state to Redis for WebSocket monitoring
+                        self.write_rule_vars_to_redis(scheduled.rule.id, &result.variable_values)
+                            .await;
+                        self.write_rule_exec_to_redis(scheduled.rule.id, &result)
+                            .await;
 
                         scheduled.last_execution = Some(now);
                         if result.success {
@@ -279,7 +289,7 @@ impl<R: Rtdb + ?Sized + 'static> RuleScheduler<R> {
     }
 
     /// Execute a specific rule by ID (manual trigger)
-    pub async fn execute_rule(&self, rule_id: &str) -> Result<RuleExecutionResult> {
+    pub async fn execute_rule(&self, rule_id: i64) -> Result<RuleExecutionResult> {
         // Load the rule from database
         let rule = repository::get_rule_for_execution(&self.pool, rule_id).await?;
 
@@ -289,9 +299,113 @@ impl<R: Rtdb + ?Sized + 'static> RuleScheduler<R> {
 
     /// Get execution results for a rule (if cached)
     /// Note: This is a placeholder for future implementation
-    pub async fn get_last_results(&self, _rule_id: &str) -> Option<RuleExecutionResult> {
+    pub async fn get_last_results(&self, _rule_id: i64) -> Option<RuleExecutionResult> {
         // TODO: Implement result caching if needed
         None
+    }
+
+    /// Write rule variable current values to Redis
+    ///
+    /// Stores values in `rule:{rule_id}:vars` Hash with format:
+    /// - `X1` → "50.3"
+    /// - `X2` → "25.0"
+    /// - `_ts` → "1702000000"
+    async fn write_rule_vars_to_redis(
+        &self,
+        rule_id: i64,
+        variable_values: &std::collections::HashMap<String, f64>,
+    ) {
+        let vars_key = format!("rule:{}:vars", rule_id);
+        let ts = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+
+        // Write each variable's current value
+        for (var_name, value) in variable_values {
+            if let Err(e) = self
+                .rtdb
+                .hash_set(&vars_key, var_name, Bytes::from(value.to_string()))
+                .await
+            {
+                warn!("Failed to write rule var {}/{}: {}", rule_id, var_name, e);
+            }
+        }
+
+        // Write timestamp
+        if let Err(e) = self
+            .rtdb
+            .hash_set(&vars_key, "_ts", Bytes::from(ts.to_string()))
+            .await
+        {
+            warn!("Failed to write rule vars timestamp for {}: {}", rule_id, e);
+        }
+    }
+
+    /// Write rule execution result to Redis
+    ///
+    /// Stores result in `rule:{rule_id}:exec` Hash with fields:
+    /// - `timestamp` → execution timestamp
+    /// - `success` → "true" or "false"
+    /// - `execution_path` → JSON array of node IDs
+    /// - `variable_values` → JSON object of variable values
+    /// - `node_details` → JSON object of node execution details
+    /// - `error` → error message if any
+    async fn write_rule_exec_to_redis(&self, rule_id: i64, result: &RuleExecutionResult) {
+        let exec_key = format!("rule:{}:exec", rule_id);
+        let ts = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+
+        // Write timestamp
+        let _ = self
+            .rtdb
+            .hash_set(&exec_key, "timestamp", Bytes::from(ts.to_string()))
+            .await;
+
+        // Write success flag
+        let _ = self
+            .rtdb
+            .hash_set(
+                &exec_key,
+                "success",
+                Bytes::from(result.success.to_string()),
+            )
+            .await;
+
+        // Write execution path as JSON
+        if let Ok(path_json) = serde_json::to_string(&result.execution_path) {
+            let _ = self
+                .rtdb
+                .hash_set(&exec_key, "execution_path", Bytes::from(path_json))
+                .await;
+        }
+
+        // Write variable values as JSON
+        if let Ok(vars_json) = serde_json::to_string(&result.variable_values) {
+            let _ = self
+                .rtdb
+                .hash_set(&exec_key, "variable_values", Bytes::from(vars_json))
+                .await;
+        }
+
+        // Write node details as JSON
+        if let Ok(details_json) = serde_json::to_string(&result.node_details) {
+            let _ = self
+                .rtdb
+                .hash_set(&exec_key, "node_details", Bytes::from(details_json))
+                .await;
+        }
+
+        // Write error if present
+        let error_str = result.error.clone().unwrap_or_default();
+        let _ = self
+            .rtdb
+            .hash_set(&exec_key, "error", Bytes::from(error_str))
+            .await;
+
+        debug!("Written rule execution result to Redis: {}", rule_id);
     }
 }
 
