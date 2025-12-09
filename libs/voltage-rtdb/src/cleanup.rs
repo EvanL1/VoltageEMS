@@ -262,10 +262,9 @@ where
 #[allow(clippy::disallowed_methods)] // Test code - unwrap is acceptable
 mod tests {
     use super::*;
-    use crate::traits::Rtdb;
+    use crate::memory_impl::MemoryRtdb;
+    use bytes::Bytes;
     use serial_test::serial;
-    use std::sync::Arc;
-    use tokio::sync::Mutex;
 
     // Mock provider for testing
     struct MockProvider {
@@ -301,159 +300,14 @@ mod tests {
         }
     }
 
-    // Mock Redis for testing
-    struct MockRedis {
-        keys: Arc<Mutex<HashSet<String>>>,
-    }
-
-    #[async_trait]
-    impl Rtdb for MockRedis {
-        // ========== Introspection ==========
-
-        fn as_any(&self) -> &dyn std::any::Any {
-            self
+    /// Helper to create MemoryRtdb with initial keys populated
+    async fn create_rtdb_with_keys(keys: &[&str]) -> MemoryRtdb {
+        let rtdb = MemoryRtdb::new();
+        for key in keys {
+            // Set a dummy value to mark the key as existing
+            rtdb.set(key, Bytes::from("test_value")).await.unwrap();
         }
-
-        // ========== Basic Key-Value Operations ==========
-
-        async fn get(&self, _key: &str) -> Result<Option<bytes::Bytes>> {
-            unimplemented!()
-        }
-
-        async fn set(&self, _key: &str, _value: bytes::Bytes) -> Result<()> {
-            unimplemented!()
-        }
-
-        async fn del(&self, key: &str) -> Result<bool> {
-            Ok(self.keys.lock().await.remove(key))
-        }
-
-        async fn exists(&self, key: &str) -> Result<bool> {
-            Ok(self.keys.lock().await.contains(key))
-        }
-
-        // ========== Structured Data Operations ==========
-
-        async fn hash_set(&self, _key: &str, _field: &str, _value: bytes::Bytes) -> Result<()> {
-            unimplemented!()
-        }
-
-        async fn hash_get(&self, _key: &str, _field: &str) -> Result<Option<bytes::Bytes>> {
-            unimplemented!()
-        }
-
-        async fn hash_mset(&self, _key: &str, _fields: Vec<(String, bytes::Bytes)>) -> Result<()> {
-            unimplemented!()
-        }
-
-        async fn hash_get_all(
-            &self,
-            _key: &str,
-        ) -> Result<std::collections::HashMap<String, bytes::Bytes>> {
-            unimplemented!()
-        }
-
-        async fn hash_del(&self, _key: &str, _field: &str) -> Result<bool> {
-            unimplemented!()
-        }
-
-        async fn list_lpush(&self, _key: &str, _value: bytes::Bytes) -> Result<()> {
-            unimplemented!()
-        }
-
-        async fn list_rpush(&self, _key: &str, _value: bytes::Bytes) -> Result<()> {
-            unimplemented!()
-        }
-
-        async fn list_lpop(&self, _key: &str) -> Result<Option<bytes::Bytes>> {
-            unimplemented!()
-        }
-
-        async fn list_range(
-            &self,
-            _key: &str,
-            _start: isize,
-            _stop: isize,
-        ) -> Result<Vec<bytes::Bytes>> {
-            unimplemented!()
-        }
-
-        async fn list_trim(&self, _key: &str, _start: isize, _stop: isize) -> Result<()> {
-            unimplemented!()
-        }
-
-        async fn publish(&self, _channel: &str, _message: &str) -> Result<u32> {
-            Ok(0)
-        }
-
-        async fn fcall(&self, _function: &str, _keys: &[&str], _args: &[&str]) -> Result<String> {
-            Ok(String::new())
-        }
-
-        async fn scan_match(&self, _pattern: &str) -> Result<Vec<String>> {
-            Ok(self.keys.lock().await.iter().cloned().collect())
-        }
-
-        async fn sadd(&self, _key: &str, _member: &str) -> Result<bool> {
-            unimplemented!()
-        }
-
-        async fn srem(&self, _key: &str, _member: &str) -> Result<bool> {
-            unimplemented!()
-        }
-
-        async fn smembers(&self, _key: &str) -> Result<Vec<String>> {
-            unimplemented!()
-        }
-
-        async fn hincrby(&self, _key: &str, _field: &str, _increment: i64) -> Result<i64> {
-            unimplemented!()
-        }
-
-        async fn time_millis(&self) -> Result<i64> {
-            use std::time::{SystemTime, UNIX_EPOCH};
-            Ok(SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_millis() as i64)
-        }
-
-        // ========== Missing Methods (Phase 1-4 extensions) ==========
-
-        async fn incrbyfloat(&self, _key: &str, _increment: f64) -> Result<f64> {
-            unimplemented!()
-        }
-
-        async fn hash_mget(
-            &self,
-            _key: &str,
-            _fields: &[&str],
-        ) -> Result<Vec<Option<bytes::Bytes>>> {
-            unimplemented!()
-        }
-
-        async fn list_rpop(&self, _key: &str) -> Result<Option<bytes::Bytes>> {
-            unimplemented!()
-        }
-
-        async fn list_blpop(
-            &self,
-            _keys: &[&str],
-            _timeout_seconds: u64,
-        ) -> Result<Option<(String, bytes::Bytes)>> {
-            unimplemented!()
-        }
-
-        async fn hash_del_many(&self, _key: &str, _fields: &[String]) -> Result<usize> {
-            unimplemented!()
-        }
-
-        async fn pipeline_hash_mset(
-            &self,
-            _operations: Vec<(String, Vec<(String, bytes::Bytes)>)>,
-        ) -> Result<()> {
-            unimplemented!()
-        }
+        rtdb
     }
 
     #[tokio::test]
@@ -471,23 +325,21 @@ mod tests {
             system_keys: vec!["test:stats:count".to_string()],
         };
 
-        let mut initial_keys = HashSet::new();
-        initial_keys.insert("test:1:data".to_string());
-        initial_keys.insert("test:2:data".to_string());
-        initial_keys.insert("test:999:data".to_string()); // Invalid
-        initial_keys.insert("test:stats:count".to_string()); // System key
+        let rtdb = create_rtdb_with_keys(&[
+            "test:1:data",
+            "test:2:data",
+            "test:999:data",    // Invalid - should be deleted
+            "test:stats:count", // System key - should be preserved
+        ])
+        .await;
 
-        let redis = MockRedis {
-            keys: Arc::new(Mutex::new(initial_keys)),
-        };
-
-        let deleted = cleanup_invalid_keys(&provider, &redis).await.unwrap();
+        let deleted = cleanup_invalid_keys(&provider, &rtdb).await.unwrap();
 
         assert_eq!(deleted, 1); // Only test:999:data should be deleted
-        assert!(redis.exists("test:1:data").await.unwrap());
-        assert!(redis.exists("test:2:data").await.unwrap());
-        assert!(!redis.exists("test:999:data").await.unwrap());
-        assert!(redis.exists("test:stats:count").await.unwrap());
+        assert!(rtdb.exists("test:1:data").await.unwrap());
+        assert!(rtdb.exists("test:2:data").await.unwrap());
+        assert!(!rtdb.exists("test:999:data").await.unwrap());
+        assert!(rtdb.exists("test:stats:count").await.unwrap());
     }
 
     #[tokio::test]
@@ -502,11 +354,9 @@ mod tests {
             system_keys: vec![],
         };
 
-        let redis = MockRedis {
-            keys: Arc::new(Mutex::new(HashSet::new())),
-        };
+        let rtdb = MemoryRtdb::new();
 
-        let deleted = cleanup_invalid_keys(&provider, &redis).await.unwrap();
+        let deleted = cleanup_invalid_keys(&provider, &rtdb).await.unwrap();
         assert_eq!(deleted, 0);
 
         // Clean up after test

@@ -119,6 +119,7 @@ impl TryFrom<RawRouteContext> for RouteContext {
 /// # Returns
 /// * `Ok(ActionRouteOutcome)` - Routing outcome with metadata
 /// * `Err(anyhow::Error)` - Routing error
+#[allow(deprecated)] // Uses time_millis internally until TimeProvider migration is complete
 pub async fn set_action_point<R>(
     redis: &R,
     routing_cache: &voltage_config::RoutingCache,

@@ -668,10 +668,7 @@ impl ChannelManager {
 mod tests {
     use super::*;
 
-    /// Create test RTDB for unit tests (no external dependencies)
-    fn create_test_rtdb() -> Arc<dyn voltage_rtdb::Rtdb> {
-        Arc::new(voltage_rtdb::MemoryRtdb::new())
-    }
+    use voltage_rtdb::helpers::create_test_rtdb;
 
     /// Create test routing cache for unit tests
     fn create_test_routing_cache() -> Arc<voltage_config::RoutingCache> {

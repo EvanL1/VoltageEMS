@@ -9,15 +9,8 @@ use voltage_rtdb::Rtdb;
 
 // ==================== Basic Test Infrastructure ====================
 
-/// Create an in-memory RTDB for unit testing
-///
-/// This creates a MemoryRtdb that doesn't require any external services.
-/// Suitable for unit tests that should not depend on Redis.
-///
-/// Returns Arc<dyn Rtdb> which can be used anywhere Redis would be used.
-pub fn create_test_rtdb() -> Arc<dyn Rtdb> {
-    Arc::new(voltage_rtdb::MemoryRtdb::new())
-}
+// Re-exported from voltage_rtdb::helpers for backward compatibility
+pub use voltage_rtdb::helpers::{create_test_memory_rtdb, create_test_rtdb};
 
 /// Create a test routing cache for unit testing
 ///

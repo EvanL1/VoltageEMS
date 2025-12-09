@@ -98,7 +98,7 @@ async fn main() -> VoltageResult<()> {
     .await?;
 
     // ============ Phase 1: Create initial rtdb for cleanup ============
-    let mut redis_rtdb = voltage_rtdb::RedisRtdb::new(&redis_url).await?;
+    let redis_rtdb = voltage_rtdb::RedisRtdb::new(&redis_url).await?;
 
     // Perform Redis cleanup first (before loading routing)
     info!("Performing Redis cleanup based on database configuration...");
@@ -139,8 +139,8 @@ async fn main() -> VoltageResult<()> {
         cache
     };
 
-    // ============ Phase 3: Inject routing into rtdb ============
-    redis_rtdb.set_routing_cache(routing_cache.clone()).await;
+    // RTDB is a pure storage abstraction
+    // Routing is handled by ChannelManager using routing_cache
 
     // Initialize services
     let shutdown_token = CancellationToken::new();

@@ -2126,10 +2126,7 @@ mod tests {
         ))
     }
 
-    // Helper: Create in-memory RTDB for testing (no Redis dependency)
-    fn create_test_rtdb() -> Arc<voltage_rtdb::MemoryRtdb> {
-        Arc::new(voltage_rtdb::MemoryRtdb::new())
-    }
+    use voltage_rtdb::helpers::create_test_memory_rtdb as create_test_rtdb;
 
     // ==================== Phase 1: CRUD Core Tests ====================
 

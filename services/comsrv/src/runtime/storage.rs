@@ -11,7 +11,7 @@ use std::sync::Arc;
 use tracing::{debug, warn};
 use voltage_config::comsrv::ChannelRedisKeys;
 use voltage_config::FourRemote;
-use voltage_rtdb::Rtdb;
+use voltage_rtdb::{Rtdb, WriteBuffer, WriteBufferConfig};
 
 /// Plugin point update for batch operations
 ///
@@ -78,21 +78,30 @@ impl StorageStats {
     }
 }
 
-/// Unified storage manager with statistics
+/// Unified storage manager with statistics and write buffering
+///
+/// Uses WriteBuffer to aggregate multiple Redis writes in memory,
+/// flushing periodically (default: 20ms) for improved throughput.
 pub struct StorageManager {
     rtdb: Arc<dyn Rtdb>,
     routing_cache: Arc<voltage_config::RoutingCache>,
     stats: Arc<StorageStats>,
+    /// Write buffer for aggregating hash writes
+    write_buffer: Arc<WriteBuffer>,
 }
 
 impl StorageManager {
-    /// Create new storage manager
+    /// Create new storage manager with default write buffer config
     pub async fn new(
         redis_url: &str,
         routing_cache: Arc<voltage_config::RoutingCache>,
     ) -> Result<Self> {
         let rtdb = create_rtdb(redis_url).await?;
-        Ok(Self::from_rtdb(rtdb, routing_cache))
+        Ok(Self::from_rtdb_with_config(
+            rtdb,
+            routing_cache,
+            WriteBufferConfig::default(),
+        ))
     }
 
     /// Create storage manager from injected RTDB and routing cache
@@ -100,10 +109,20 @@ impl StorageManager {
         rtdb: Arc<dyn Rtdb>,
         routing_cache: Arc<voltage_config::RoutingCache>,
     ) -> Self {
+        Self::from_rtdb_with_config(rtdb, routing_cache, WriteBufferConfig::default())
+    }
+
+    /// Create storage manager with custom write buffer config
+    pub fn from_rtdb_with_config(
+        rtdb: Arc<dyn Rtdb>,
+        routing_cache: Arc<voltage_config::RoutingCache>,
+        buffer_config: WriteBufferConfig,
+    ) -> Self {
         Self {
             rtdb,
             routing_cache,
             stats: Arc::new(StorageStats::default()),
+            write_buffer: Arc::new(WriteBuffer::new(buffer_config)),
         }
     }
 
@@ -112,7 +131,37 @@ impl StorageManager {
         Arc::clone(&self.stats)
     }
 
-    /// Batch update with statistics and sync
+    /// Get write buffer statistics
+    pub fn get_write_buffer_stats(&self) -> voltage_rtdb::WriteBufferStatsSnapshot {
+        self.write_buffer.stats().snapshot()
+    }
+
+    /// Start background flush task
+    ///
+    /// This spawns a tokio task that periodically flushes buffered writes to Redis.
+    /// Returns the task handle for lifecycle management.
+    pub fn start_flush_task(&self) -> tokio::task::JoinHandle<()> {
+        let buffer = Arc::clone(&self.write_buffer);
+        let rtdb = Arc::clone(&self.rtdb);
+        tokio::spawn(async move {
+            buffer.flush_loop(&*rtdb).await;
+        })
+    }
+
+    /// Graceful shutdown: flush all pending writes
+    pub async fn shutdown(&self) -> anyhow::Result<usize> {
+        self.write_buffer.flush_now(&*self.rtdb).await
+    }
+
+    /// Get reference to write buffer
+    pub fn write_buffer(&self) -> &Arc<WriteBuffer> {
+        &self.write_buffer
+    }
+
+    /// Batch update with statistics and buffered writes
+    ///
+    /// Uses WriteBuffer to aggregate writes in memory, reducing Redis round-trips.
+    /// Writes are flushed periodically by the background flush task.
     pub async fn batch_update_and_publish(
         &self,
         channel_id: u16,
@@ -138,16 +187,19 @@ impl StorageManager {
             })
             .collect();
 
-        // Batch write to Redis with routing cache
-        if let Err(e) = write_batch(self.rtdb.as_ref(), &self.routing_cache, storage_updates).await
+        // Buffered batch write (for Telemetry/Signal data)
+        if let Err(e) = write_batch_buffered(
+            &self.write_buffer,
+            self.rtdb.as_ref(),
+            &self.routing_cache,
+            storage_updates,
+        )
+        .await
         {
-            warn!("Failed to batch write to Redis: {}", e);
+            warn!("Failed to buffer batch write: {}", e);
             self.stats.increment_errors();
             return Err(e);
         }
-
-        // Note: Removed pub/sub publishing and individual sync calls for performance
-        // Synchronization will be handled by Redis Functions if configured
 
         Ok(())
     }
@@ -459,6 +511,160 @@ pub async fn write_batch(
             );
             // Recursive call to write_batch for C2C forwarding
             Box::pin(write_batch(rtdb, routing_cache, c2c_forwards)).await?;
+        }
+    }
+
+    Ok(())
+}
+
+/// Batch write points using WriteBuffer for aggregation
+///
+/// This function is similar to `write_batch` but uses WriteBuffer to aggregate
+/// writes in memory instead of sending them directly to Redis. This reduces
+/// network round-trips and improves throughput for high-frequency updates.
+///
+/// # Design Rationale
+/// - Channel data (T/S): Buffered - high frequency, benefits from aggregation
+/// - Instance data (C2M): Buffered - derived from channel data
+/// - C2C forwards: Buffered recursively
+///
+/// # Arguments
+/// * `write_buffer` - WriteBuffer for aggregating writes
+/// * `rtdb` - RTDB trait object (needed for C2C recursive calls)
+/// * `routing_cache` - C2M/C2C routing cache
+/// * `updates` - Vector of point updates
+pub async fn write_batch_buffered(
+    write_buffer: &WriteBuffer,
+    rtdb: &dyn Rtdb,
+    routing_cache: &voltage_config::RoutingCache,
+    updates: Vec<PointUpdate>,
+) -> Result<()> {
+    if updates.is_empty() {
+        return Ok(());
+    }
+
+    // Group updates by channel_id and point_type for efficient batch processing
+    let mut grouped: HashMap<(u16, FourRemote), Vec<PointUpdate>> = HashMap::new();
+
+    for update in updates {
+        let key = (update.channel_id, update.point_type);
+        grouped.entry(key).or_default().push(update);
+    }
+
+    // Get current timestamp (milliseconds since epoch)
+    let timestamp_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|e| ComSrvError::RedisError(format!("Failed to get timestamp: {e}")))?
+        .as_millis() as i64;
+
+    let config = voltage_config::KeySpaceConfig::production();
+
+    for ((channel_id, four_remote), updates) in grouped {
+        use voltage_config::protocols::PointType;
+        let point_type_str = four_remote.as_str();
+        let point_type_enum = PointType::from_str(point_type_str)
+            .expect("FourRemote and PointType have matching string representations");
+
+        // Prepare data for channel Hash writes (3-layer architecture)
+        let mut channel_values = Vec::new();
+        let mut channel_ts = Vec::new();
+        let mut channel_raw = Vec::new();
+
+        // Prepare data for instance Hash writes (grouped by instance_id)
+        let mut instance_writes: HashMap<u16, Vec<(String, bytes::Bytes)>> = HashMap::new();
+
+        // Prepare data for C2C forwarding
+        let mut c2c_forwards: Vec<PointUpdate> = Vec::new();
+
+        let timestamp_bytes = bytes::Bytes::from(timestamp_ms.to_string());
+
+        for update in updates {
+            let point_id_str = update.point_id.to_string();
+            let value_str = update.value.to_string();
+            let raw_value = update.raw_value.unwrap_or(update.value);
+            let raw_value_str = raw_value.to_string();
+
+            // Layer 1: Engineering values
+            channel_values.push((point_id_str.clone(), bytes::Bytes::from(value_str)));
+
+            // Layer 2: Timestamps
+            channel_ts.push((point_id_str.clone(), timestamp_bytes.clone()));
+
+            // Layer 3: Raw values
+            channel_raw.push((point_id_str, bytes::Bytes::from(raw_value_str)));
+
+            // Check for C2M routing (Channel to Model)
+            let route_key = format!("{}:{}:{}", channel_id, point_type_str, update.point_id);
+            if let Some(target) = routing_cache.lookup_c2m(&route_key) {
+                let parts: Vec<&str> = target.split(':').collect();
+                if parts.len() == 3 {
+                    if let (Ok(instance_id), Ok(target_point_id)) =
+                        (parts[0].parse::<u16>(), parts[2].parse::<u32>())
+                    {
+                        instance_writes.entry(instance_id).or_default().push((
+                            target_point_id.to_string(),
+                            bytes::Bytes::from(update.value.to_string()),
+                        ));
+                    }
+                }
+            }
+
+            // Check for C2C routing (Channel to Channel)
+            const MAX_C2C_DEPTH: u8 = 2;
+            if update.cascade_depth < MAX_C2C_DEPTH {
+                if let Some(target) = routing_cache.lookup_c2c(&route_key) {
+                    let parts: Vec<&str> = target.split(':').collect();
+                    if parts.len() == 3 {
+                        use std::str::FromStr;
+                        if let Ok(target_point_type) = FourRemote::from_str(parts[1]) {
+                            if let (Ok(target_channel_id), Ok(target_point_id)) =
+                                (parts[0].parse::<u16>(), parts[2].parse::<u32>())
+                            {
+                                c2c_forwards.push(PointUpdate {
+                                    channel_id: target_channel_id,
+                                    point_type: target_point_type,
+                                    point_id: target_point_id,
+                                    value: update.value,
+                                    raw_value: update.raw_value,
+                                    cascade_depth: update.cascade_depth + 1,
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Buffer channel data (3-layer architecture) - uses WriteBuffer instead of direct Redis
+        let channel_key = config.channel_key(channel_id, point_type_enum);
+        let channel_ts_key = format!("{}:ts", channel_key);
+        let channel_raw_key = format!("{}:raw", channel_key);
+
+        // Buffer writes (returns immediately, no network I/O)
+        write_buffer.buffer_hash_mset(&channel_key, channel_values);
+        write_buffer.buffer_hash_mset(&channel_ts_key, channel_ts);
+        write_buffer.buffer_hash_mset(&channel_raw_key, channel_raw);
+
+        // Buffer instance data (C2M routing results)
+        for (instance_id, values) in instance_writes {
+            let instance_key = config.instance_measurement_key(instance_id.into());
+            write_buffer.buffer_hash_mset(&instance_key, values);
+        }
+
+        // Process C2C forwards recursively (also buffered)
+        if !c2c_forwards.is_empty() {
+            debug!(
+                "Processing {} C2C forwards for channel {}",
+                c2c_forwards.len(),
+                channel_id
+            );
+            Box::pin(write_batch_buffered(
+                write_buffer,
+                rtdb,
+                routing_cache,
+                c2c_forwards,
+            ))
+            .await?;
         }
     }
 

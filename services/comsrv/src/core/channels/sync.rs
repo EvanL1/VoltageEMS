@@ -257,18 +257,38 @@ impl TelemetrySync {
             // Create storage manager from existing rtdb and routing cache
             let storage = crate::storage::StorageManager::from_rtdb(rtdb, routing_cache);
 
+            // Start the WriteBuffer flush task (runs in background)
+            let _flush_handle = storage.start_flush_task();
+            info!(
+                "WriteBuffer flush task started (interval: {}ms)",
+                storage.write_buffer().config().flush_interval_ms
+            );
+
             while let Some(telemetry_batch) = receiver.recv().await {
                 let channel_id = telemetry_batch.channel_id;
 
                 // Transform batch using shared logic
                 let updates = transform_telemetry_batch(&config_provider, telemetry_batch);
 
-                // Batch update if there are updates
+                // Batch update if there are updates (now buffered, not direct to Redis)
                 if !updates.is_empty() {
                     if let Err(e) = storage.batch_update_and_publish(channel_id, updates).await {
                         error!("Ch{} sync err: {}", channel_id, e);
                     }
                 }
+            }
+
+            // Graceful shutdown: flush any remaining buffered writes
+            debug!("Sync task ending, flushing remaining writes...");
+            match storage.shutdown().await {
+                Ok(flushed) => {
+                    if flushed > 0 {
+                        info!("WriteBuffer final flush: {} fields", flushed);
+                    }
+                },
+                Err(e) => {
+                    error!("WriteBuffer final flush failed: {}", e);
+                },
             }
 
             debug!("Sync task ended");
@@ -305,10 +325,7 @@ mod tests {
     use std::collections::HashMap;
     use voltage_config::comsrv::ChannelConfig;
 
-    /// Create test RTDB for unit tests (no external dependencies)
-    fn create_test_rtdb() -> Arc<dyn voltage_rtdb::Rtdb> {
-        Arc::new(voltage_rtdb::MemoryRtdb::new())
-    }
+    use voltage_rtdb::helpers::create_test_rtdb;
 
     fn create_test_runtime_config() -> RuntimeChannelConfig {
         let base_config = ChannelConfig {

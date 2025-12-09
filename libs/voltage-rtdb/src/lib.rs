@@ -14,6 +14,10 @@ pub mod error;
 
 pub mod cleanup;
 
+pub mod time;
+
+pub mod write_buffer;
+
 // Re-exports
 pub use bytes::Bytes;
 pub use traits::Rtdb;
@@ -25,11 +29,46 @@ pub use memory_impl::{MemoryRtdb, MemoryStats};
 
 pub use cleanup::{cleanup_invalid_keys, CleanupProvider};
 
+pub use time::{FixedTimeProvider, SystemTimeProvider, TimeProvider};
+
+pub use write_buffer::{
+    WriteBuffer, WriteBufferConfig, WriteBufferStats, WriteBufferStatsSnapshot,
+};
+
 /// Helper functions for common operations
 pub mod helpers {
-    use super::Rtdb;
+    use super::{MemoryRtdb, Rtdb};
     use anyhow::{Context, Result};
     use bytes::Bytes;
+    use std::sync::Arc;
+
+    // ==================== Test Support ====================
+
+    /// Create an in-memory RTDB for unit testing
+    ///
+    /// This creates a MemoryRtdb that doesn't require any external services.
+    /// Suitable for unit tests that should not depend on Redis.
+    ///
+    /// # Example
+    /// ```
+    /// use voltage_rtdb::helpers::create_test_rtdb;
+    ///
+    /// let rtdb = create_test_rtdb();
+    /// // Use rtdb in tests...
+    /// ```
+    pub fn create_test_rtdb() -> Arc<dyn Rtdb> {
+        Arc::new(MemoryRtdb::new())
+    }
+
+    /// Create a concrete MemoryRtdb for unit testing
+    ///
+    /// Use this when you need direct access to MemoryRtdb methods
+    /// (e.g., for inspecting internal state in tests).
+    pub fn create_test_memory_rtdb() -> Arc<MemoryRtdb> {
+        Arc::new(MemoryRtdb::new())
+    }
+
+    // ==================== Production Helpers ====================
 
     /// Set channel point with automatic TODO queue trigger
     ///

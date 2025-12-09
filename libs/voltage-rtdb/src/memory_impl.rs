@@ -12,47 +12,27 @@ use parking_lot::RwLock;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
-use voltage_config::RoutingCache;
 
 /// In-memory RTDB implementation with concurrent access support
+///
+/// This is a pure storage abstraction. For routing logic, use the
+/// `voltage-routing` library which handles M2C routing externally.
 pub struct MemoryRtdb {
     kv_store: Arc<DashMap<String, Bytes>>,
     hash_store: Arc<DashMap<String, DashMap<String, Bytes>>>,
     list_store: Arc<DashMap<String, RwLock<Vec<Bytes>>>>,
     set_store: Arc<DashMap<String, DashSet<String>>>,
-    routing_cache: Option<Arc<RoutingCache>>,
 }
 
 impl MemoryRtdb {
-    /// Create new in-memory RTDB instance (without routing)
+    /// Create new in-memory RTDB instance
     pub fn new() -> Self {
         Self {
             kv_store: Arc::new(DashMap::new()),
             hash_store: Arc::new(DashMap::new()),
             list_store: Arc::new(DashMap::new()),
             set_store: Arc::new(DashMap::new()),
-            routing_cache: None,
         }
-    }
-
-    /// Create in-memory RTDB with routing cache support
-    ///
-    /// This enables automatic routing trigger in `write_point_runtime()` method.
-    pub fn with_routing(routing_cache: Arc<RoutingCache>) -> Self {
-        Self {
-            kv_store: Arc::new(DashMap::new()),
-            hash_store: Arc::new(DashMap::new()),
-            list_store: Arc::new(DashMap::new()),
-            set_store: Arc::new(DashMap::new()),
-            routing_cache: Some(routing_cache),
-        }
-    }
-
-    /// Set routing cache (can be called after construction)
-    ///
-    /// Useful for injecting routing cache after RTDB creation.
-    pub async fn set_routing_cache(&mut self, routing_cache: Arc<RoutingCache>) {
-        self.routing_cache = Some(routing_cache);
     }
 
     /// Clear all data (useful for testing)
@@ -324,27 +304,6 @@ impl Rtdb for MemoryRtdb {
         Ok(())
     }
 
-    async fn publish(&self, channel: &str, message: &str) -> Result<u32> {
-        // Test stub: log the publish operation but don't actually send
-        tracing::trace!(
-            "MemoryRtdb: PUBLISH to channel '{}' with message: {}",
-            channel,
-            message
-        );
-        Ok(0) // Return 0 subscribers in test mode
-    }
-
-    async fn fcall(&self, function: &str, keys: &[&str], args: &[&str]) -> Result<String> {
-        // Test stub: log the function call but don't execute
-        tracing::trace!(
-            "MemoryRtdb: FCALL function '{}' with keys={:?} args={:?}",
-            function,
-            keys,
-            args
-        );
-        Ok("OK".to_string()) // Return placeholder success result
-    }
-
     async fn scan_match(&self, pattern: &str) -> Result<Vec<String>> {
         // Test stub: simple pattern matching on in-memory keys
         tracing::trace!("MemoryRtdb: SCAN MATCH pattern '{}'", pattern);
@@ -446,77 +405,6 @@ impl Rtdb for MemoryRtdb {
         }
         Ok(())
     }
-
-    // ========== Override Domain-Specific Methods with Routing Logic ==========
-
-    async fn write_point_runtime(&self, key: &str, point_id: u32, value: f64) -> Result<()> {
-        // 1. Write value and timestamp to Hash
-        let field = point_id.to_string();
-        let ts_field = format!("ts:{}", point_id);
-        let value_bytes = Bytes::from(value.to_string());
-        let ts = self.time_millis().await?;
-        let ts_bytes = Bytes::from(ts.to_string());
-
-        self.hash_set(key, &field, value_bytes.clone()).await?;
-        self.hash_set(key, &ts_field, ts_bytes).await?;
-
-        // 2. Trigger routing if routing_cache exists
-        if let Some(ref routing_cache) = self.routing_cache {
-            if let Some(todo_key) = self.resolve_todo_queue(key, point_id, routing_cache) {
-                // Build trigger message: {"point_id": X, "value": Y, "timestamp": Z}
-                let trigger_msg = format!(
-                    r#"{{"point_id":{},"value":{},"timestamp":{}}}"#,
-                    point_id, value, ts
-                );
-                self.list_rpush(&todo_key, Bytes::from(trigger_msg)).await?;
-            }
-        }
-
-        Ok(())
-    }
-}
-
-impl MemoryRtdb {
-    /// Resolve TODO queue key based on point key and routing cache
-    ///
-    /// # Logic
-    /// - "inst:X:A:point" → lookup M2C routing → "comsrv:Y:{A|C}:TODO"
-    /// - "comsrv:X:A" or "comsrv:X:C" → "comsrv:X:{A|C}:TODO"
-    /// - Other keys → None (no trigger)
-    fn resolve_todo_queue(
-        &self,
-        key: &str,
-        point_id: u32,
-        routing_cache: &voltage_config::RoutingCache,
-    ) -> Option<String> {
-        let parts: Vec<&str> = key.split(':').collect();
-
-        // Case 1: Instance action point "inst:X:A"
-        if parts.len() >= 3 && parts[0] == "inst" && parts[2] == "A" {
-            let instance_id = parts[1];
-            let routing_key = format!("{}:A:{}", instance_id, point_id);
-
-            if let Some(target) = routing_cache.lookup_m2c(&routing_key) {
-                // target format: "channel_id:A:point_id" or "channel_id:C:point_id"
-                let target_parts: Vec<&str> = target.split(':').collect();
-                if target_parts.len() >= 2 {
-                    let channel_id = target_parts[0];
-                    let point_type = target_parts[1]; // "A" or "C"
-                    return Some(format!("comsrv:{}:{}:TODO", channel_id, point_type));
-                }
-            }
-        }
-
-        // Case 2: Channel action/control point "comsrv:X:A" or "comsrv:X:C"
-        if parts.len() >= 3 && parts[0] == "comsrv" && (parts[2] == "A" || parts[2] == "C") {
-            let channel_id = parts[1];
-            let point_type = parts[2];
-            return Some(format!("comsrv:{}:{}:TODO", channel_id, point_type));
-        }
-
-        // Case 3: Other keys - no trigger
-        None
-    }
 }
 
 #[cfg(test)]
@@ -612,44 +500,6 @@ mod tests {
         rtdb.list_trim("test:list", 0, 0).await.unwrap();
         let range = rtdb.list_range("test:list", 0, -1).await.unwrap();
         assert_eq!(range.len(), 1);
-    }
-
-    #[tokio::test]
-    async fn test_memory_rtdb_point_operations() {
-        let rtdb = MemoryRtdb::new();
-
-        // Test write_point and read_point
-        rtdb.write_point("instance1", "M", 1, 100.5).await.unwrap();
-        rtdb.write_point("instance1", "M", 2, 200.3).await.unwrap();
-
-        let value = rtdb.read_point("instance1", "M", 1).await.unwrap();
-        assert_eq!(value, Some(100.5));
-
-        // Test write_points_batch
-        rtdb.write_points_batch("instance2", "A", vec![(1, 50.0), (2, 75.5)])
-            .await
-            .unwrap();
-
-        let points = rtdb.get_instance_points("instance2", "A").await.unwrap();
-        assert_eq!(points.len(), 2);
-        assert_eq!(points.get(&1), Some(&50.0));
-        assert_eq!(points.get(&2), Some(&75.5));
-    }
-
-    #[tokio::test]
-    async fn test_memory_rtdb_mapping_operations() {
-        let rtdb = MemoryRtdb::new();
-
-        // Test write_mapping and read_mapping
-        rtdb.write_mapping("channel:1:T:1", "modsrv:inst1:M:1")
-            .await
-            .unwrap();
-
-        let mapping = rtdb.read_mapping("channel:1:T:1").await.unwrap();
-        assert_eq!(mapping, Some("modsrv:inst1:M:1".to_string()));
-
-        let missing = rtdb.read_mapping("nonexistent").await.unwrap();
-        assert_eq!(missing, None);
     }
 
     #[tokio::test]
@@ -780,20 +630,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_point_parse_failure() {
-        let rtdb = MemoryRtdb::new();
-
-        // Write invalid float string
-        rtdb.hash_set("modsrv:inst1:M", "1", Bytes::from("not_a_number"))
-            .await
-            .unwrap();
-
-        // read_point should fail to parse
-        let result = rtdb.read_point("inst1", "M", 1).await;
-        assert!(result.is_err(), "Should fail to parse invalid float");
-    }
-
-    #[tokio::test]
     async fn test_list_range_boundaries() {
         let rtdb = MemoryRtdb::new();
 
@@ -842,50 +678,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_special_float_values() {
+    async fn test_empty_hash_mset() {
         let rtdb = MemoryRtdb::new();
 
-        // Test NaN
-        rtdb.write_point("inst1", "M", 1, f64::NAN).await.unwrap();
-        let value = rtdb.read_point("inst1", "M", 1).await.unwrap().unwrap();
-        assert!(value.is_nan());
-
-        // Test Infinity
-        rtdb.write_point("inst1", "M", 2, f64::INFINITY)
-            .await
-            .unwrap();
-        let value = rtdb.read_point("inst1", "M", 2).await.unwrap().unwrap();
-        assert_eq!(value, f64::INFINITY);
-
-        // Test negative infinity
-        rtdb.write_point("inst1", "M", 3, f64::NEG_INFINITY)
-            .await
-            .unwrap();
-        let value = rtdb.read_point("inst1", "M", 3).await.unwrap().unwrap();
-        assert_eq!(value, f64::NEG_INFINITY);
-
-        // Test zero
-        rtdb.write_point("inst1", "M", 4, 0.0).await.unwrap();
-        let value = rtdb.read_point("inst1", "M", 4).await.unwrap().unwrap();
-        assert_eq!(value, 0.0);
-
-        // Test negative zero
-        rtdb.write_point("inst1", "M", 5, -0.0).await.unwrap();
-        let value = rtdb.read_point("inst1", "M", 5).await.unwrap().unwrap();
-        assert_eq!(value, -0.0);
-    }
-
-    #[tokio::test]
-    async fn test_empty_batch_operations() {
-        let rtdb = MemoryRtdb::new();
-
-        // Empty batch write
-        rtdb.write_points_batch("inst1", "M", vec![]).await.unwrap();
-
-        let points = rtdb.get_instance_points("inst1", "M").await.unwrap();
-        assert_eq!(points.len(), 0);
-
-        // Empty hash_mset
+        // Empty hash_mset should work
         rtdb.hash_mset("hash", vec![]).await.unwrap();
         let all = rtdb.hash_get_all("hash").await.unwrap();
         assert_eq!(all.len(), 0);
@@ -1005,6 +801,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[allow(deprecated)]
     async fn test_time_millis_operation() {
         let rtdb = MemoryRtdb::new();
 
@@ -1225,255 +1022,5 @@ mod tests {
                 "No TODO queue should be triggered in init mode"
             );
         }
-    }
-
-    #[tokio::test]
-    async fn test_write_point_runtime_without_routing() {
-        // Runtime mode without routing_cache (using new())
-        let rtdb = MemoryRtdb::new();
-
-        // Write Instance Action point (Runtime mode, no cache)
-        rtdb.write_point_runtime("inst:1:A", 10, 100.0)
-            .await
-            .unwrap();
-
-        // Verify: value is written (100.0 may be stored as "100" or "100.0")
-        let value = rtdb.hash_get("inst:1:A", "10").await.unwrap();
-        let value_str = String::from_utf8(value.unwrap().to_vec()).unwrap();
-        let value_f64: f64 = value_str.parse().unwrap();
-        assert_eq!(value_f64, 100.0);
-
-        // Verify: timestamp is non-zero (current time)
-        let ts_bytes = rtdb.hash_get("inst:1:A", "ts:10").await.unwrap().unwrap();
-        let ts_str = String::from_utf8(ts_bytes.to_vec()).unwrap();
-        let ts: i64 = ts_str.parse().unwrap();
-        assert!(ts > 0, "Timestamp should be current time in runtime mode");
-
-        // Verify: no TODO queue triggered (no routing_cache)
-        let scan_result = rtdb.scan_match("*:TODO").await.unwrap();
-        assert_eq!(scan_result.len(), 0, "No TODO queues without routing_cache");
-    }
-
-    #[tokio::test]
-    async fn test_write_point_runtime_instance_action_with_routing() {
-        use std::collections::HashMap;
-
-        // Build routing cache: inst 1's A point 10 → channel 1001's A point 5
-        let mut m2c_data = HashMap::new();
-        m2c_data.insert("1:A:10".to_string(), "1001:A:5".to_string());
-        let cache = Arc::new(voltage_config::RoutingCache::from_maps(
-            HashMap::new(), // C2M routing
-            m2c_data,
-            HashMap::new(), // C2C routing (not used in this test)
-        ));
-
-        let rtdb = MemoryRtdb::with_routing(cache);
-
-        // Write Instance Action point (Runtime mode with routing)
-        rtdb.write_point_runtime("inst:1:A", 10, 100.0)
-            .await
-            .unwrap();
-
-        // Verify: value is written (100.0 may be stored as "100" or "100.0")
-        let value = rtdb.hash_get("inst:1:A", "10").await.unwrap();
-        let value_str = String::from_utf8(value.unwrap().to_vec()).unwrap();
-        let value_f64: f64 = value_str.parse().unwrap();
-        assert_eq!(value_f64, 100.0);
-
-        // Verify: timestamp is non-zero
-        let ts_bytes = rtdb.hash_get("inst:1:A", "ts:10").await.unwrap().unwrap();
-        let ts_str = String::from_utf8(ts_bytes.to_vec()).unwrap();
-        let ts: i64 = ts_str.parse().unwrap();
-        assert!(ts > 0, "Timestamp should be current time");
-
-        // Verify: TODO queue has trigger message
-        let todo_key = "comsrv:1001:A:TODO";
-        let todo_msgs = rtdb.list_range(todo_key, 0, -1).await.unwrap();
-        assert_eq!(
-            todo_msgs.len(),
-            1,
-            "Should have 1 trigger message in TODO queue"
-        );
-
-        // Verify: TODO message format (JSON with point_id, value, timestamp)
-        let msg = String::from_utf8(todo_msgs[0].to_vec()).unwrap();
-        assert!(
-            msg.contains(r#""point_id":10"#),
-            "Message should contain point_id"
-        );
-        assert!(
-            msg.contains(r#""value":100"#),
-            "Message should contain value"
-        );
-        assert!(
-            msg.contains(r#""timestamp":"#),
-            "Message should contain timestamp"
-        );
-    }
-
-    #[tokio::test]
-    async fn test_write_point_runtime_channel_action_direct_trigger() {
-        // Channel A/C points don't need routing lookup, directly write to TODO queue
-        let rtdb = MemoryRtdb::with_routing(Arc::new(voltage_config::RoutingCache::new()));
-
-        // Test Channel Adjustment point
-        rtdb.write_point_runtime("comsrv:1001:A", 5, 12.3)
-            .await
-            .unwrap();
-
-        // Verify: value is written
-        let value = rtdb.hash_get("comsrv:1001:A", "5").await.unwrap();
-        assert_eq!(value, Some(Bytes::from("12.3")));
-
-        // Verify: TODO queue is written
-        let todo_msgs = rtdb.list_range("comsrv:1001:A:TODO", 0, -1).await.unwrap();
-        assert_eq!(todo_msgs.len(), 1, "Channel A should trigger TODO queue");
-
-        // Test Channel Control point
-        rtdb.write_point_runtime("comsrv:1002:C", 3, 1.0)
-            .await
-            .unwrap();
-
-        // Verify: TODO queue is written
-        let todo_msgs = rtdb.list_range("comsrv:1002:C:TODO", 0, -1).await.unwrap();
-        assert_eq!(todo_msgs.len(), 1, "Channel C should trigger TODO queue");
-    }
-
-    #[tokio::test]
-    async fn test_write_point_runtime_no_trigger_cases() {
-        let rtdb = MemoryRtdb::with_routing(Arc::new(voltage_config::RoutingCache::new()));
-
-        // Case 1: Instance Measurement point (M doesn't trigger)
-        rtdb.write_point_runtime("inst:1:M", 10, 230.5)
-            .await
-            .unwrap();
-
-        // Case 2: Channel Telemetry point (T doesn't trigger)
-        rtdb.write_point_runtime("comsrv:1001:T", 5, 50.0)
-            .await
-            .unwrap();
-
-        // Case 3: Channel Signal point (S doesn't trigger)
-        rtdb.write_point_runtime("comsrv:1001:S", 3, 1.0)
-            .await
-            .unwrap();
-
-        // Case 4: Other key formats
-        rtdb.write_point_runtime("other:key:format", 1, 42.0)
-            .await
-            .unwrap();
-
-        // Verify: all values are written (check first one as representative)
-        let value = rtdb.hash_get("inst:1:M", "10").await.unwrap();
-        assert!(value.is_some(), "Value should be written for M points");
-
-        // Verify: no TODO queues created
-        let scan_result = rtdb.scan_match("*:TODO").await.unwrap();
-        assert_eq!(
-            scan_result.len(),
-            0,
-            "No TODO queues should be created for M/T/S points"
-        );
-    }
-
-    #[tokio::test]
-    async fn test_routing_boundary_cases() {
-        use std::collections::HashMap;
-
-        // Case 1: Routing doesn't exist
-        let mut m2c_data = HashMap::new();
-        m2c_data.insert("1:A:10".to_string(), "1001:A:5".to_string());
-        let cache = Arc::new(voltage_config::RoutingCache::from_maps(
-            HashMap::new(),
-            m2c_data,
-            HashMap::new(), // C2C routing (not used in this test)
-        ));
-        let rtdb = MemoryRtdb::with_routing(cache);
-
-        // Write Instance A point without configured routing
-        rtdb.write_point_runtime("inst:999:A", 10, 100.0)
-            .await
-            .unwrap();
-
-        // Verify: value is written but no TODO triggered
-        let value = rtdb.hash_get("inst:999:A", "10").await.unwrap();
-        assert!(
-            value.is_some(),
-            "Value should be written even without routing"
-        );
-        let scan_result = rtdb.scan_match("*:TODO").await.unwrap();
-        assert_eq!(scan_result.len(), 0, "No TODO queue when routing not found");
-
-        // Case 2: No routing_cache (using new())
-        let rtdb_no_cache = MemoryRtdb::new();
-        rtdb_no_cache
-            .write_point_runtime("inst:1:A", 10, 100.0)
-            .await
-            .unwrap();
-
-        // Verify: value is written but no TODO triggered
-        let value = rtdb_no_cache.hash_get("inst:1:A", "10").await.unwrap();
-        assert!(value.is_some(), "Value should be written without cache");
-        let scan_result = rtdb_no_cache.scan_match("*:TODO").await.unwrap();
-        assert_eq!(scan_result.len(), 0, "No TODO queue without cache");
-
-        // Case 3: M2C routing target format incomplete
-        let mut m2c_invalid = HashMap::new();
-        m2c_invalid.insert("2:A:10".to_string(), "1001".to_string()); // Missing ":A" part
-        let cache_invalid = Arc::new(voltage_config::RoutingCache::from_maps(
-            HashMap::new(),
-            m2c_invalid,
-            HashMap::new(), // C2C routing (not used in this test)
-        ));
-        let rtdb_invalid = MemoryRtdb::with_routing(cache_invalid);
-
-        rtdb_invalid
-            .write_point_runtime("inst:2:A", 10, 100.0)
-            .await
-            .unwrap();
-
-        // Verify: value is written but no TODO triggered (invalid format ignored)
-        let value = rtdb_invalid.hash_get("inst:2:A", "10").await.unwrap();
-        assert!(value.is_some(), "Value should be written");
-        let scan_result = rtdb_invalid.scan_match("*:TODO").await.unwrap();
-        assert_eq!(
-            scan_result.len(),
-            0,
-            "No TODO queue when route format is invalid"
-        );
-    }
-
-    #[tokio::test]
-    async fn test_action_to_control_routing() {
-        use std::collections::HashMap;
-
-        // Build M2C routing: Instance A point → Channel C point (Action maps to Control)
-        let mut m2c_data = HashMap::new();
-        m2c_data.insert("1:A:10".to_string(), "1001:C:5".to_string());
-        let cache = Arc::new(voltage_config::RoutingCache::from_maps(
-            HashMap::new(), // C2M routing
-            m2c_data,
-            HashMap::new(), // C2C routing (not used in this test)
-        ));
-
-        let rtdb = MemoryRtdb::with_routing(cache);
-
-        // Write Instance A point
-        rtdb.write_point_runtime("inst:1:A", 10, 100.0)
-            .await
-            .unwrap();
-
-        // Verify: TODO queue written to Control type
-        let todo_key = "comsrv:1001:C:TODO";
-        let todo_msgs = rtdb.list_range(todo_key, 0, -1).await.unwrap();
-        assert_eq!(todo_msgs.len(), 1, "Should trigger Control TODO queue");
-
-        // Verify: Adjustment TODO queue doesn't exist
-        let adj_todo = rtdb.list_range("comsrv:1001:A:TODO", 0, -1).await.unwrap();
-        assert_eq!(
-            adj_todo.len(),
-            0,
-            "Should not trigger Adjustment TODO queue"
-        );
     }
 }

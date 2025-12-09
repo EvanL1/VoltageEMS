@@ -252,8 +252,8 @@ pub async fn setup_instance_manager(
     routing_cache: Arc<voltage_config::RoutingCache>,
     product_loader: Arc<ProductLoader>,
 ) -> Result<Arc<InstanceManager<voltage_rtdb::RedisRtdb>>> {
-    // Use the injected rtdb with routing cache support
-    // This enables automatic M2C routing trigger in write_point_runtime()
+    // RTDB is a pure storage abstraction
+    // M2C routing is handled externally by voltage-routing library
 
     // Create instance manager with RTDB and routing cache
     let instance_manager = Arc::new(InstanceManager::new(
@@ -611,11 +611,9 @@ pub async fn create_app_state(service_info: &ServiceInfo) -> Result<Arc<AppState
         cache
     };
 
-    // ============ Phase 2: Create rtdb and inject routing ============
+    // ============ Phase 2: Create RTDB ============
     debug!("Creating RedisRtdb");
-    let mut rtdb = voltage_rtdb::RedisRtdb::from_client(redis_client.clone());
-    rtdb.set_routing_cache(routing_cache.clone()).await;
-    let rtdb = Arc::new(rtdb);
+    let rtdb = Arc::new(voltage_rtdb::RedisRtdb::from_client(redis_client.clone()));
 
     // ============ Phase 3: Use the single rtdb for all operations ============
     // Perform Redis cleanup (uses basic methods, no routing triggered)
@@ -640,7 +638,7 @@ pub async fn create_app_state(service_info: &ServiceInfo) -> Result<Arc<AppState
     // Load products (uses basic methods, no routing triggered)
     let product_loader = load_products(&config, &sqlite_pool, &rtdb).await?;
 
-    // Setup instance manager (runtime will use write_point_runtime with routing)
+    // Setup instance manager (routing handled externally by voltage-routing library)
     let instance_manager = setup_instance_manager(
         &sqlite_pool,
         rtdb,

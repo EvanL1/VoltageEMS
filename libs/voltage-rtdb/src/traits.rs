@@ -5,7 +5,6 @@ use async_trait::async_trait;
 use bytes::Bytes;
 use std::any::Any;
 use std::collections::HashMap;
-use voltage_config::common::RedisRoutingKeys;
 use voltage_config::comsrv::ChannelRedisKeys;
 
 /// Unified RTDB Storage Trait
@@ -13,7 +12,7 @@ use voltage_config::comsrv::ChannelRedisKeys;
 /// Provides complete storage interface for VoltageEMS, combining:
 /// - Basic key-value operations
 /// - Structured data (Hash, List, Set)
-/// - Domain-specific operations (points, mappings, commands)
+/// - Convenience operations (point initialization, command queuing)
 ///
 /// Implementations:
 /// - `RedisRtdb`: Production Redis backend
@@ -140,23 +139,6 @@ pub trait Rtdb: Send + Sync + 'static {
     /// Returns a vector of all members in the set.
     async fn smembers(&self, key: &str) -> Result<Vec<String>>;
 
-    // ========== Messaging Operations ==========
-
-    /// Publish message to channel (Redis Pub/Sub)
-    ///
-    /// Returns the number of subscribers that received the message.
-    /// In test implementations (MemoryRtdb), this may return 0.
-    async fn publish(&self, channel: &str, message: &str) -> Result<u32>;
-
-    // ========== Function Operations ==========
-
-    /// Call Redis function (FCALL)
-    ///
-    /// Executes a Lua function loaded in Redis with the given keys and arguments.
-    /// Returns the function result as a String.
-    /// In test implementations (MemoryRtdb), this may return a placeholder result.
-    async fn fcall(&self, function: &str, keys: &[&str], args: &[&str]) -> Result<String>;
-
     // ========== Key Scanning Operations ==========
 
     /// Scan keys matching a pattern (Redis SCAN with MATCH)
@@ -171,6 +153,14 @@ pub trait Rtdb: Send + Sync + 'static {
     ///
     /// Returns Unix timestamp in milliseconds.
     /// In test implementations (MemoryRtdb), this returns system time.
+    ///
+    /// # Deprecation
+    /// This method mixes time acquisition with storage operations.
+    /// Use `voltage_rtdb::TimeProvider` trait instead for better separation of concerns.
+    #[deprecated(
+        since = "0.2.0",
+        note = "Use voltage_rtdb::TimeProvider trait instead for better separation of concerns"
+    )]
     async fn time_millis(&self) -> Result<i64>;
 
     // ========== Pipeline Operations ==========
@@ -191,24 +181,7 @@ pub trait Rtdb: Send + Sync + 'static {
         operations: Vec<(String, Vec<(String, Bytes)>)>,
     ) -> Result<()>;
 
-    // ========== Domain-Specific Operations (with default implementations) ==========
-
-    /// Write point data to instance
-    ///
-    /// Stores data in format: `modsrv:{instance_name}:{point_role}`
-    /// where point_role is "M" (measurement) or "A" (action)
-    async fn write_point(
-        &self,
-        instance: &str,
-        point_role: &str,
-        point_id: u32,
-        value: f64,
-    ) -> Result<()> {
-        let key = format!("modsrv:{}:{}", instance, point_role);
-        let field = point_id.to_string();
-        let value_bytes = Bytes::from(value.to_string());
-        self.hash_set(&key, &field, value_bytes).await
-    }
+    // ========== Convenience Operations (with default implementations) ==========
 
     /// Write point data in initialization mode (no routing trigger)
     ///
@@ -244,106 +217,6 @@ pub trait Rtdb: Send + Sync + 'static {
         Ok(())
     }
 
-    /// Write point data in runtime mode (with routing trigger)
-    ///
-    /// This method writes point value with current timestamp, AND automatically triggers
-    /// routing via TODO queue based on the routing_cache.
-    ///
-    /// # Operations
-    /// 1. HSET {key}:{point_id} → {value}
-    /// 2. HSET {key}:ts:{point_id} → {current_time_millis}
-    /// 3. RPUSH {todo_queue} → {trigger_message} (if routing exists)
-    ///
-    /// # Routing Logic
-    /// - "inst:X:A" → lookup M2C routing → write to "comsrv:Y:{A|C}:TODO"
-    /// - "comsrv:X:A" or "comsrv:X:C" → direct write to "comsrv:X:{A|C}:TODO"
-    /// - Other keys → no trigger
-    ///
-    /// # Arguments
-    /// * `key` - Full point key (e.g., "inst:1:A" or "comsrv:1001:A")
-    /// * `point_id` - Point identifier
-    /// * `value` - Point value
-    ///
-    /// # Examples
-    /// ```ignore
-    /// // Write instance action point with trigger
-    /// rtdb.write_point_runtime("inst:1:A", 10, 100.0).await?;
-    /// // → Automatically writes to comsrv TODO queue if routing exists
-    ///
-    /// // Write channel adjustment point with trigger
-    /// rtdb.write_point_runtime("comsrv:1001:A", 5, 12.3).await?;
-    /// // → Automatically writes to comsrv:1001:A:TODO
-    /// ```
-    async fn write_point_runtime(&self, key: &str, point_id: u32, value: f64) -> Result<()> {
-        // Default implementation: write value + current timestamp, no routing
-        // Concrete implementations (RedisRtdb, MemoryRtdb) should override this
-        // to add routing logic based on self.routing_cache
-        let field = point_id.to_string();
-        let ts_field = format!("ts:{}", point_id);
-        let value_bytes = Bytes::from(value.to_string());
-        let ts = self.time_millis().await?;
-        let ts_bytes = Bytes::from(ts.to_string());
-
-        self.hash_set(key, &field, value_bytes).await?;
-        self.hash_set(key, &ts_field, ts_bytes).await?;
-        Ok(())
-    }
-
-    /// Read point data from instance
-    async fn read_point(
-        &self,
-        instance: &str,
-        point_role: &str,
-        point_id: u32,
-    ) -> Result<Option<f64>> {
-        let key = format!("modsrv:{}:{}", instance, point_role);
-        let field = point_id.to_string();
-
-        if let Some(bytes) = self.hash_get(&key, &field).await? {
-            let s = String::from_utf8(bytes.to_vec())?;
-            Ok(Some(s.parse()?))
-        } else {
-            Ok(None)
-        }
-    }
-
-    /// Write multiple points in batch
-    async fn write_points_batch(
-        &self,
-        instance: &str,
-        point_role: &str,
-        points: Vec<(u32, f64)>,
-    ) -> Result<()> {
-        let key = format!("modsrv:{}:{}", instance, point_role);
-        let fields: Vec<(String, Bytes)> = points
-            .into_iter()
-            .map(|(id, val)| (id.to_string(), Bytes::from(val.to_string())))
-            .collect();
-        self.hash_mset(&key, fields).await
-    }
-
-    /// Write channel-to-model mapping
-    async fn write_mapping(&self, from_key: &str, to_key: &str) -> Result<()> {
-        self.hash_set(
-            RedisRoutingKeys::CHANNEL_TO_MODEL,
-            from_key,
-            Bytes::from(to_key.to_string()),
-        )
-        .await
-    }
-
-    /// Read channel-to-model mapping
-    async fn read_mapping(&self, from_key: &str) -> Result<Option<String>> {
-        if let Some(bytes) = self
-            .hash_get(RedisRoutingKeys::CHANNEL_TO_MODEL, from_key)
-            .await?
-        {
-            Ok(Some(String::from_utf8(bytes.to_vec())?))
-        } else {
-            Ok(None)
-        }
-    }
-
     /// Enqueue control command to per-channel TODO queue: comsrv:{channel}:C:TODO
     async fn enqueue_control(&self, channel_id: u16, payload_json: &str) -> Result<()> {
         let key = ChannelRedisKeys::control_todo(channel_id);
@@ -356,28 +229,5 @@ pub trait Rtdb: Send + Sync + 'static {
         let key = ChannelRedisKeys::adjustment_todo(channel_id);
         self.list_rpush(&key, Bytes::from(payload_json.to_string()))
             .await
-    }
-
-    /// Get all points for an instance
-    async fn get_instance_points(
-        &self,
-        instance: &str,
-        point_role: &str,
-    ) -> Result<HashMap<u32, f64>> {
-        let key = format!("modsrv:{}:{}", instance, point_role);
-        let data = self.hash_get_all(&key).await?;
-
-        let mut points = HashMap::new();
-        for (field, value_bytes) in data {
-            if let Ok(point_id) = field.parse::<u32>() {
-                if let Ok(s) = String::from_utf8(value_bytes.to_vec()) {
-                    if let Ok(value) = s.parse::<f64>() {
-                        points.insert(point_id, value);
-                    }
-                }
-            }
-        }
-
-        Ok(points)
     }
 }

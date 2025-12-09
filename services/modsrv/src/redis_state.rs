@@ -250,6 +250,7 @@ where
 
 /// Write product metadata to Redis, replacing the previous
 /// Lua `modsrv_upsert_product` implementation.
+#[allow(deprecated)] // Uses time_millis internally until TimeProvider migration is complete
 pub async fn upsert_product<R>(redis: &R, product: &Product) -> Result<()>
 where
     R: Rtdb + ?Sized,
@@ -550,6 +551,7 @@ where
 
 /// Write measurement data (replaces `modsrv_sync_measurement`).
 /// EN: Write measurement data (replaces `modsrv_sync_measurement`).
+#[allow(deprecated)] // Uses time_millis internally until TimeProvider migration is complete
 pub async fn sync_measurement<R>(
     redis: &R,
     instance_id: u16,

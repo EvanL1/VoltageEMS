@@ -154,21 +154,9 @@ pub async fn get_all_channels(
     }
     drop(manager);
 
-    // Calculate pagination
-    let total = all_channels.len();
-    let page = query.page.max(1);
-    let page_size = query.page_size.clamp(1, 100);
-
-    let start_index = (page - 1) * page_size;
-    let end_index = start_index + page_size;
-
-    let list = if start_index < all_channels.len() {
-        all_channels[start_index..end_index.min(all_channels.len())].to_vec()
-    } else {
-        Vec::new()
-    };
-
-    let paginated_response = PaginatedResponse::new(list, total, page, page_size);
+    // Use shared pagination utility
+    let paginated_response =
+        PaginatedResponse::from_slice(all_channels, query.page, query.page_size);
 
     Ok(Json(SuccessResponse::new(paginated_response)))
 }

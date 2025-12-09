@@ -188,11 +188,17 @@ pub struct TelemetryPoint {
     pub base: Point,
 
     /// Scale factor for value conversion
-    #[serde(default = "default_scale", deserialize_with = "deserialize_scale")]
+    #[serde(
+        default = "crate::serde_defaults::scale_one",
+        deserialize_with = "crate::serde_defaults::deserialize_scale"
+    )]
     pub scale: f64,
 
     /// Offset for value conversion
-    #[serde(default, deserialize_with = "deserialize_offset")]
+    #[serde(
+        default,
+        deserialize_with = "crate::serde_defaults::deserialize_offset"
+    )]
     pub offset: f64,
 
     /// Data type (float32, float64, int16, int32, etc.)
@@ -263,7 +269,7 @@ pub struct AdjustmentPoint {
     pub max_value: Option<f64>,
 
     /// Step size for adjustments
-    #[serde(default = "default_step")]
+    #[serde(default = "crate::serde_defaults::step_one")]
     pub step: f64,
 
     /// Data type (float32, float64, int16, int32, etc.)
@@ -271,11 +277,17 @@ pub struct AdjustmentPoint {
     pub data_type: String,
 
     /// Scale factor for value conversion
-    #[serde(default = "default_scale", deserialize_with = "deserialize_scale")]
+    #[serde(
+        default = "crate::serde_defaults::scale_one",
+        deserialize_with = "crate::serde_defaults::deserialize_scale"
+    )]
     pub scale: f64,
 
     /// Offset for value conversion
-    #[serde(default, deserialize_with = "deserialize_offset")]
+    #[serde(
+        default,
+        deserialize_with = "crate::serde_defaults::deserialize_offset"
+    )]
     pub offset: f64,
 }
 
@@ -599,7 +611,7 @@ pub struct CanMapping {
     pub data_type: String,
     #[serde(default)]
     pub signed: bool,
-    #[serde(default = "default_scale")]
+    #[serde(default = "crate::serde_defaults::scale_one")]
     pub scale: f64,
     #[serde(default)]
     pub offset: f64,
@@ -618,53 +630,6 @@ fn default_byte_order() -> String {
 
 fn default_data_type() -> String {
     "uint32".to_string()
-}
-
-fn default_scale() -> f64 {
-    1.0
-}
-
-/// Custom deserializer for f64 that treats empty strings as default value
-/// Used for scale and offset fields in CSV files
-fn deserialize_f64_or_default<'de, D>(deserializer: D) -> Result<f64, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    use serde::Deserialize;
-
-    #[derive(Deserialize)]
-    #[serde(untagged)]
-    enum StringOrFloat {
-        String(String),
-        Float(f64),
-    }
-
-    match StringOrFloat::deserialize(deserializer)? {
-        StringOrFloat::Float(f) => Ok(f),
-        StringOrFloat::String(s) => {
-            if s.trim().is_empty() {
-                Ok(0.0) // Empty string => 0.0 (offset default)
-            } else {
-                s.trim().parse::<f64>().map_err(serde::de::Error::custom)
-            }
-        },
-    }
-}
-
-/// Deserialize scale with default 1.0 for empty strings
-fn deserialize_scale<'de, D>(deserializer: D) -> Result<f64, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    deserialize_f64_or_default(deserializer).map(|v| if v == 0.0 { 1.0 } else { v })
-}
-
-/// Deserialize offset with default 0.0 for empty strings
-fn deserialize_offset<'de, D>(deserializer: D) -> Result<f64, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    deserialize_f64_or_default(deserializer)
 }
 
 // ============================================================================
@@ -784,10 +749,6 @@ fn default_control_type() -> String {
 
 fn default_on_value() -> u16 {
     1
-}
-
-fn default_step() -> f64 {
-    1.0
 }
 
 // Default implementations

@@ -34,6 +34,20 @@ pub fn page_size() -> usize {
     20
 }
 
+/// Default scale factor: 1.0
+///
+/// Used for measurement point scaling (no transformation).
+pub fn scale_one() -> f64 {
+    1.0
+}
+
+/// Default step value: 1.0
+///
+/// Used for adjustment point step increments.
+pub fn step_one() -> f64 {
+    1.0
+}
+
 // ============================================================================
 // Custom Deserializers
 // ============================================================================
@@ -92,4 +106,52 @@ where
     } else {
         trimmed.parse::<u8>().map_err(de::Error::custom)
     }
+}
+
+/// Custom deserializer for f64 that treats empty strings as default value (0.0)
+///
+/// Used for scale and offset fields in CSV files where empty cells should
+/// be interpreted as a default numeric value.
+pub fn deserialize_f64_or_default<'de, D>(deserializer: D) -> Result<f64, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum StringOrFloat {
+        String(String),
+        Float(f64),
+    }
+
+    match StringOrFloat::deserialize(deserializer)? {
+        StringOrFloat::Float(f) => Ok(f),
+        StringOrFloat::String(s) => {
+            if s.trim().is_empty() {
+                Ok(0.0) // Empty string => 0.0 (offset default)
+            } else {
+                s.trim().parse::<f64>().map_err(de::Error::custom)
+            }
+        },
+    }
+}
+
+/// Deserialize scale with default 1.0 for empty strings
+///
+/// Wraps `deserialize_f64_or_default` to convert 0.0 results to 1.0,
+/// since a scale factor of 0 is typically unintended.
+pub fn deserialize_scale<'de, D>(deserializer: D) -> Result<f64, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    deserialize_f64_or_default(deserializer).map(|v| if v == 0.0 { 1.0 } else { v })
+}
+
+/// Deserialize offset with default 0.0 for empty strings
+///
+/// Alias for `deserialize_f64_or_default` - offset naturally defaults to 0.0.
+pub fn deserialize_offset<'de, D>(deserializer: D) -> Result<f64, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    deserialize_f64_or_default(deserializer)
 }

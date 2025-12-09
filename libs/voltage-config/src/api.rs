@@ -232,7 +232,7 @@ pub struct PaginatedResponse<T> {
     pub has_previous: bool,
 }
 
-impl<T> PaginatedResponse<T> {
+impl<T: Clone> PaginatedResponse<T> {
     /// Create a new paginated response
     pub fn new(items: Vec<T>, total: usize, page: usize, page_size: usize) -> Self {
         let total_pages = total.div_ceil(page_size);
@@ -245,6 +245,44 @@ impl<T> PaginatedResponse<T> {
             has_next: page + 1 < total_pages,
             has_previous: page > 0,
         }
+    }
+
+    /// Create paginated response from a slice with 1-indexed page number
+    ///
+    /// This is a convenience method that handles the common pagination pattern:
+    /// - Normalizes page to be at least 1
+    /// - Clamps page_size between 1 and 100
+    /// - Calculates correct slice boundaries
+    /// - Returns empty list if page is out of bounds
+    ///
+    /// # Arguments
+    /// * `all_items` - The complete list of items to paginate
+    /// * `page` - Page number (1-indexed, will be clamped to minimum of 1)
+    /// * `page_size` - Items per page (will be clamped between 1 and 100)
+    ///
+    /// # Example
+    /// ```ignore
+    /// let items = vec![1, 2, 3, 4, 5];
+    /// let response = PaginatedResponse::from_slice(items, 1, 2);
+    /// assert_eq!(response.items, vec![1, 2]);
+    /// assert_eq!(response.total, 5);
+    /// ```
+    pub fn from_slice(all_items: Vec<T>, page: usize, page_size: usize) -> Self {
+        let total = all_items.len();
+        let page = page.max(1);
+        let page_size = page_size.clamp(1, 100);
+
+        let start_index = (page - 1) * page_size;
+        let end_index = start_index + page_size;
+
+        let items = if start_index < all_items.len() {
+            all_items[start_index..end_index.min(all_items.len())].to_vec()
+        } else {
+            Vec::new()
+        };
+
+        // Convert to 0-indexed for internal storage
+        Self::new(items, total, page - 1, page_size)
     }
 }
 
