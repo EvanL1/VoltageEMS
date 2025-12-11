@@ -358,66 +358,67 @@ class WebSocketManager:
             await self.send_message(client_id, error_msg)
 
     async def _push_rule_data_to_client(self, client_id: str, rule_id: str):
-        """推送规则监控数据到客户端"""
+        """推送规则监控数据到客户端（简化版）
+
+        从 rule:{rule_id}:exec 的 node_details 中提取每个节点的变量值。
+        消息格式：
+        {
+            "type": "data_batch",
+            "data": {
+                "source": "rule",
+                "rule_id": 1,
+                "execution_path": ["start", "node-xxx", "end"],
+                "node_variables": {
+                    "node-xxx": {"X1": 0.0},
+                    "node-yyy": {"X1": 999, "X2": 42290}
+                }
+            }
+        }
+        """
         try:
             redis = self.redis_client.redis_client
 
-            # 读取变量当前值: rule:{rule_id}:vars
-            vars_key = f"rule:{rule_id}:vars"
-            vars_data = await redis.hgetall(vars_key)
-
-            # 转换变量值
-            variables = {}
-            vars_ts = None
-            for key, value in vars_data.items():
-                if key == "_ts":
-                    vars_ts = value
-                else:
-                    try:
-                        variables[key] = float(value)
-                    except (ValueError, TypeError):
-                        variables[key] = value
-
-            # 读取执行结果: rule:{rule_id}:exec
+            # 只读取执行结果: rule:{rule_id}:exec
             exec_key = f"rule:{rule_id}:exec"
             exec_data = await redis.hgetall(exec_key)
 
-            # 解析执行结果
-            last_execution = None
-            if exec_data:
-                last_execution = {
-                    "success": exec_data.get("success", "false") == "true",
-                    "timestamp": int(exec_data.get("timestamp", 0)),
-                    "error": exec_data.get("error") or None
-                }
+            if not exec_data:
+                return
 
-                # 解析 JSON 字段
-                for field in ["execution_path", "variable_values", "node_details"]:
-                    if field in exec_data and exec_data[field]:
-                        try:
-                            last_execution[field] = json.loads(exec_data[field])
-                        except json.JSONDecodeError:
-                            last_execution[field] = None
+            # 提取执行路径和节点变量
+            raw_path = []
+            if "execution_path" in exec_data:
+                try:
+                    raw_path = json.loads(exec_data["execution_path"])
+                except json.JSONDecodeError:
+                    pass
 
-            # 构建 data_batch 消息（简化结构，去掉 node_details）
-            simplified_execution = None
-            if last_execution:
-                simplified_execution = {
-                    "success": last_execution.get("success"),
-                    "timestamp": last_execution.get("timestamp"),
-                    "error": last_execution.get("error"),
-                    "execution_path": last_execution.get("execution_path")
-                }
+            node_vars = {}
+            if "node_details" in exec_data:
+                try:
+                    details = json.loads(exec_data["node_details"])
+                    for node_id, detail in details.items():
+                        if "input_values" in detail:
+                            node_vars[node_id] = detail["input_values"]
+                except json.JSONDecodeError:
+                    pass
 
+            # 构建带变量的执行路径
+            execution_path = []
+            for node_id in raw_path:
+                node = {"id": node_id}
+                if node_id in node_vars:
+                    node["variables"] = node_vars[node_id]
+                execution_path.append(node)
+
+            # 简化后的消息
             monitor_message = {
                 "type": "data_batch",
-                "id": f"rule_{rule_id}",
                 "timestamp": int(time.time()),
                 "data": {
                     "source": "rule",
                     "rule_id": rule_id,
-                    "variables": variables,
-                    "last_execution": simplified_execution
+                    "execution_path": execution_path
                 }
             }
 

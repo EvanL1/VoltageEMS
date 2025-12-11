@@ -238,9 +238,8 @@ impl<R: Rtdb + ?Sized + 'static> RuleScheduler<R> {
                             .get_logger(scheduled.rule.id, &scheduled.rule.name);
                         logger.log_execution(&result, &result.variable_values);
 
-                        // Write rule state to Redis for WebSocket monitoring
-                        self.write_rule_vars_to_redis(scheduled.rule.id, &result.variable_values)
-                            .await;
+                        // Write rule execution result to Redis for WebSocket monitoring
+                        // Note: node_details already contains input_values for each node
                         self.write_rule_exec_to_redis(scheduled.rule.id, &result)
                             .await;
 
@@ -302,44 +301,6 @@ impl<R: Rtdb + ?Sized + 'static> RuleScheduler<R> {
     pub async fn get_last_results(&self, _rule_id: i64) -> Option<RuleExecutionResult> {
         // TODO: Implement result caching if needed
         None
-    }
-
-    /// Write rule variable current values to Redis
-    ///
-    /// Stores values in `rule:{rule_id}:vars` Hash with format:
-    /// - `X1` → "50.3"
-    /// - `X2` → "25.0"
-    /// - `_ts` → "1702000000"
-    async fn write_rule_vars_to_redis(
-        &self,
-        rule_id: i64,
-        variable_values: &std::collections::HashMap<String, f64>,
-    ) {
-        let vars_key = format!("rule:{}:vars", rule_id);
-        let ts = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs();
-
-        // Write each variable's current value
-        for (var_name, value) in variable_values {
-            if let Err(e) = self
-                .rtdb
-                .hash_set(&vars_key, var_name, Bytes::from(value.to_string()))
-                .await
-            {
-                warn!("Failed to write rule var {}/{}: {}", rule_id, var_name, e);
-            }
-        }
-
-        // Write timestamp
-        if let Err(e) = self
-            .rtdb
-            .hash_set(&vars_key, "_ts", Bytes::from(ts.to_string()))
-            .await
-        {
-            warn!("Failed to write rule vars timestamp for {}: {}", rule_id, e);
-        }
     }
 
     /// Write rule execution result to Redis
