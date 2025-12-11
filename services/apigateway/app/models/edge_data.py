@@ -187,29 +187,31 @@ def create_alarm_message(alarm_id: str, channel_id: int, point_id: int, status: 
         }
     )
 
-def create_subscribe_ack_message(request_id: str, subscribed: List[int], failed: List[int]) -> SubscribeAckMessage:
-    """创建订阅确认消息"""
-    return SubscribeAckMessage(
-        id=f"{request_id}_ack",
-        data={
+def create_subscribe_ack_message(request_id: str, subscribed: List[int], failed: List[int]) -> dict:
+    """创建订阅确认消息（简化格式）"""
+    return {
+        "type": "subscribe_ack",
+        "timestamp": int(time.time()),
+        "data": {
             "request_id": request_id,
             "subscribed": subscribed,
             "failed": failed,
             "total": len(subscribed)
         }
-    )
+    }
 
-def create_unsubscribe_ack_message(request_id: str, unsubscribed: List[int], failed: List[int]) -> UnsubscribeAckMessage:
-    """创建取消订阅确认消息"""
-    return UnsubscribeAckMessage(
-        id=f"{request_id}_ack",
-        data={
+def create_unsubscribe_ack_message(request_id: str, unsubscribed: List[int], failed: List[int]) -> dict:
+    """创建取消订阅确认消息（简化格式）"""
+    return {
+        "type": "unsubscribe_ack",
+        "timestamp": int(time.time()),
+        "data": {
             "request_id": request_id,
             "unsubscribed": unsubscribed,
             "failed": failed,
             "total": len(unsubscribed)
         }
-    )
+    }
 
 def create_control_ack_message(request_id: str, command_id: str, status: str, success: bool, actual_value: Optional[float] = None) -> ControlAckMessage:
     """创建控制命令确认消息"""

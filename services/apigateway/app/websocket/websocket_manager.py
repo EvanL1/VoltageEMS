@@ -309,31 +309,37 @@ class WebSocketManager:
             await self.send_message(client_id, error_msg)
 
     async def _handle_rule_subscribe(self, client_id: str, data: Dict[str, Any]):
-        """处理规则监控订阅请求"""
+        """处理规则监控订阅请求
+
+        统一格式: channels 存放规则ID列表（当前只支持单规则订阅）
+        """
         try:
-            rule_id = data.get("data", {}).get("rule_id")
+            channels = data.get("data", {}).get("channels", [])
             interval = data.get("data", {}).get("interval", 1000)
 
-            if not rule_id:
-                raise ValueError("缺少必要的 rule_id 参数")
+            if not channels:
+                raise ValueError("缺少必要的 channels 参数")
 
-            # 存储订阅信息
+            # 当前只支持单规则订阅，取第一个
+            rule_id = channels[0]
+
+            # 存储订阅信息（使用统一的 channels 格式）
             self.connection_manager.subscriptions[client_id] = {
                 "source": "rule",
-                "rule_id": rule_id,
-                "interval": interval,
-                "variables_cache": None  # 首次获取时填充
+                "channels": channels,  # 存储为 channels 格式
+                "rule_id": rule_id,    # 保留 rule_id 便于内部使用
+                "interval": interval
             }
 
-            # 发送订阅确认
+            # 发送订阅确认（统一格式）
             ack_message = {
                 "type": "subscribe_ack",
-                "id": data.get("id", "sub"),
                 "timestamp": int(time.time()),
                 "data": {
-                    "source": "rule",
-                    "rule_id": rule_id,
-                    "status": "subscribed"
+                    "request_id": data.get("id", "sub"),
+                    "subscribed": channels,
+                    "failed": [],
+                    "total": len(channels)
                 }
             }
             await self.send_message(client_id, ack_message)
@@ -345,7 +351,7 @@ class WebSocketManager:
             if hasattr(self, 'data_scheduler') and self.data_scheduler:
                 self.data_scheduler.reset_client_push_time(client_id)
 
-            logger.info(f"客户端 {client_id} 订阅了规则监控: {rule_id}, 间隔: {interval}ms")
+            logger.info(f"客户端 {client_id} 订阅了规则监控: {channels}, 间隔: {interval}ms")
 
         except Exception as e:
             logger.error(f"处理规则订阅请求失败: {e}")
