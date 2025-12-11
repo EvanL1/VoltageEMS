@@ -60,7 +60,7 @@ async fn setup_c2c_routing(c2c_routes: Vec<(&str, &str)>) -> (Arc<dyn Rtdb>, Arc
 /// - `expected_value`: 期望的值
 async fn assert_channel_value(
     rtdb: &dyn Rtdb,
-    channel_id: u16,
+    channel_id: u32,
     point_type: &str,
     point_id: u32,
     expected_value: f64,
@@ -93,7 +93,7 @@ async fn assert_channel_value(
 /// - `point_id`: 点位 ID
 async fn assert_channel_value_missing(
     rtdb: &dyn Rtdb,
-    channel_id: u16,
+    channel_id: u32,
     point_type: &str,
     point_id: u32,
 ) {
@@ -125,7 +125,7 @@ async fn assert_channel_value_missing(
 /// - `expected_raw_value`: 期望的原始值
 async fn assert_raw_value(
     rtdb: &dyn Rtdb,
-    channel_id: u16,
+    channel_id: u32,
     point_type: &str,
     point_id: u32,
     expected_raw_value: f64,

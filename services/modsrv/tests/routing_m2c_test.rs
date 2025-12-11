@@ -107,9 +107,9 @@ async fn test_m2c_basic_routing() -> Result<()> {
     let outcome = set_action_point(
         rtdb.as_ref(),
         &routing_cache,
-        "inverter_01", // 实例名称
-        "1",           // 动作点ID
-        12.3,          // 值
+        23,   // 实例 ID
+        "1",  // 动作点ID
+        12.3, // 值
     )
     .await?;
 
@@ -169,8 +169,7 @@ async fn test_m2c_instance_name_resolution() -> Result<()> {
     .await;
 
     // When & Then: 测试第一个实例
-    let outcome =
-        set_action_point(rtdb.as_ref(), &routing_cache, "pv_inverter", "1", 100.0).await?;
+    let outcome = set_action_point(rtdb.as_ref(), &routing_cache, 10, "1", 100.0).await?;
     assert!(outcome.routed);
     assert_eq!(outcome.route_result, Some("1001".to_string()));
 
@@ -179,20 +178,20 @@ async fn test_m2c_instance_name_resolution() -> Result<()> {
     assert_eq!(String::from_utf8(value.to_vec())?, "100");
 
     // When & Then: 测试第二个实例
-    let outcome =
-        set_action_point(rtdb.as_ref(), &routing_cache, "battery_pack", "1", 50.0).await?;
+    let outcome = set_action_point(rtdb.as_ref(), &routing_cache, 20, "1", 50.0).await?;
     assert!(outcome.routed);
     assert_eq!(outcome.route_result, Some("1002".to_string()));
 
     let value = rtdb.hash_get("inst:20:A", "1").await?.unwrap();
     assert_eq!(String::from_utf8(value.to_vec())?, "50");
 
-    // 测试不存在的实例名称
-    let result = set_action_point(rtdb.as_ref(), &routing_cache, "unknown_device", "1", 0.0).await;
-    assert!(result.is_err(), "Should fail for unknown instance");
-    assert!(
-        result.unwrap_err().to_string().contains("not found"),
-        "Error should mention instance not found"
+    // 测试没有路由配置的实例 ID - 应该成功但返回 no_route
+    let outcome = set_action_point(rtdb.as_ref(), &routing_cache, 9999, "1", 0.0).await?;
+    assert!(!outcome.routed, "Should not be routed");
+    assert_eq!(
+        outcome.route_result,
+        Some("no_route".to_string()),
+        "Should indicate no route"
     );
 
     Ok(())
@@ -216,7 +215,7 @@ async fn test_m2c_no_routing() -> Result<()> {
     .await;
 
     // When: 设置动作点
-    let outcome = set_action_point(rtdb.as_ref(), &routing_cache, "inverter_01", "1", 15.5).await?;
+    let outcome = set_action_point(rtdb.as_ref(), &routing_cache, 23, "1", 15.5).await?;
 
     // Then: 验证路由结果
     assert!(outcome.is_success(), "Operation should succeed");
@@ -263,14 +262,7 @@ async fn test_m2c_batch_actions() -> Result<()> {
     let actions = vec![("1", 10.0), ("2", 20.0), ("3", 30.0)];
 
     for (point_id, value) in actions {
-        let outcome = set_action_point(
-            rtdb.as_ref(),
-            &routing_cache,
-            "inverter_01",
-            point_id,
-            value,
-        )
-        .await?;
+        let outcome = set_action_point(rtdb.as_ref(), &routing_cache, 23, point_id, value).await?;
         assert!(outcome.routed, "Point {} should be routed", point_id);
     }
 
@@ -310,7 +302,7 @@ async fn test_m2c_different_channel_types() -> Result<()> {
     .await;
 
     // When: 设置控制类型动作点
-    let outcome = set_action_point(rtdb.as_ref(), &routing_cache, "inverter_01", "1", 1.0).await?;
+    let outcome = set_action_point(rtdb.as_ref(), &routing_cache, 23, "1", 1.0).await?;
 
     // Then: 验证路由到 C(控制) TODO 队列
     assert!(outcome.routed);
@@ -323,7 +315,7 @@ async fn test_m2c_different_channel_types() -> Result<()> {
     assert_todo_queue_triggered(&rtdb, "comsrv:1001:C:TODO").await;
 
     // When: 设置调节类型动作点
-    let outcome = set_action_point(rtdb.as_ref(), &routing_cache, "inverter_01", "2", 2.0).await?;
+    let outcome = set_action_point(rtdb.as_ref(), &routing_cache, 23, "2", 2.0).await?;
 
     // Then: 验证路由到 A(调节) TODO 队列
     assert!(outcome.routed);
@@ -353,7 +345,7 @@ async fn test_m2c_trigger_message_format() -> Result<()> {
     .await;
 
     // When: 设置动作点
-    let outcome = set_action_point(rtdb.as_ref(), &routing_cache, "inverter_01", "1", 42.5).await?;
+    let outcome = set_action_point(rtdb.as_ref(), &routing_cache, 23, "1", 42.5).await?;
     assert!(outcome.routed);
 
     // Then: 解析 TODO 队列消息
@@ -412,7 +404,7 @@ async fn test_m2c_write_triggers_routing_order() -> Result<()> {
         setup_m2c_routing(vec![("23:A:1", "1001:A:1")], vec![("inverter_01", 23)]).await;
 
     // When: 设置动作点
-    set_action_point(rtdb.as_ref(), &routing_cache, "inverter_01", "1", 99.9).await?;
+    set_action_point(rtdb.as_ref(), &routing_cache, 23, "1", 99.9).await?;
 
     // Then: 验证执行顺序 - Hash 先写入
     let hash_value = rtdb.hash_get("inst:23:A", "1").await?;
@@ -458,7 +450,7 @@ async fn test_m2c_invalid_route_target() -> Result<()> {
     ));
 
     // When: 设置动作点
-    let outcome = set_action_point(rtdb.as_ref(), &routing_cache, "inverter_01", "1", 50.0).await?;
+    let outcome = set_action_point(rtdb.as_ref(), &routing_cache, 23, "1", 50.0).await?;
 
     // Then: 操作成功但路由失败
     assert!(outcome.is_success(), "Operation should succeed");
@@ -500,19 +492,19 @@ async fn test_m2c_multiple_instances_multiple_channels() -> Result<()> {
     .await;
 
     // When & Then: 测试实例 A → 通道 1001
-    let outcome = set_action_point(rtdb.as_ref(), &routing_cache, "inverter_a", "1", 111.1).await?;
+    let outcome = set_action_point(rtdb.as_ref(), &routing_cache, 10, "1", 111.1).await?;
     assert!(outcome.routed);
     assert_eq!(outcome.route_result, Some("1001".to_string()));
     assert_todo_queue_triggered(&rtdb, "comsrv:1001:A:TODO").await;
 
     // When & Then: 测试实例 B → 通道 1002
-    let outcome = set_action_point(rtdb.as_ref(), &routing_cache, "inverter_b", "1", 222.2).await?;
+    let outcome = set_action_point(rtdb.as_ref(), &routing_cache, 20, "1", 222.2).await?;
     assert!(outcome.routed);
     assert_eq!(outcome.route_result, Some("1002".to_string()));
     assert_todo_queue_triggered(&rtdb, "comsrv:1002:A:TODO").await;
 
     // When & Then: 测试实例 C → 通道 1003
-    let outcome = set_action_point(rtdb.as_ref(), &routing_cache, "inverter_c", "1", 333.3).await?;
+    let outcome = set_action_point(rtdb.as_ref(), &routing_cache, 30, "1", 333.3).await?;
     assert!(outcome.routed);
     assert_eq!(outcome.route_result, Some("1003".to_string()));
     assert_todo_queue_triggered(&rtdb, "comsrv:1003:A:TODO").await;

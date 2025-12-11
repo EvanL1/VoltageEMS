@@ -44,7 +44,7 @@ pub struct ControlCommand {
     pub command_id: String,
     /// Channel ID (will be inferred from topic if not provided)
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub channel_id: Option<u16>,
+    pub channel_id: Option<u32>,
     /// Command type (required - use "C" for control, "A" for adjustment)
     pub command_type: CommandType,
     /// Point ID
@@ -82,7 +82,7 @@ pub struct CommandStatus {
 /// Command trigger configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CommandTriggerConfig {
-    pub channel_id: u16,
+    pub channel_id: u32,
     /// BLPOP timeout in seconds; 0 means block forever.
     #[serde(default = "default_timeout")]
     pub timeout_seconds: u64,
@@ -431,7 +431,7 @@ impl CommandTrigger {
     #[allow(dead_code)] // Used in tests, reserved for future queue format migration
     fn parse_command_data(
         data: &str,
-        channel_id: Option<u16>,
+        channel_id: Option<u32>,
         fallback_type: Option<CommandType>,
     ) -> Result<ControlCommand> {
         // First, try strict deserialization

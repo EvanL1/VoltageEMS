@@ -175,7 +175,7 @@ fn analyze_parameter_changes(
 /// Connection is attempted in background (non-blocking).
 /// Returns Ok("reloaded") immediately after channel creation.
 async fn perform_hot_reload(
-    id: u16,
+    id: u32,
     state: &AppState,
     new_config: crate::core::config::ChannelConfig,
 ) -> Result<String, String> {
@@ -366,7 +366,7 @@ pub async fn create_channel_handler(
             .await
             .map_err(|e| AppError::internal_error(format!("Database error: {}", e)))?;
 
-        let next_id = (max_id.unwrap_or(0) + 1) as u16;
+        let next_id = (max_id.unwrap_or(0) + 1) as u32;
         tracing::debug!("Auto ID: {}", next_id);
         next_id
     };
@@ -480,7 +480,7 @@ pub async fn create_channel_handler(
     put,
     path = "/api/channels/{id}",
     params(
-        ("id" = u16, Path, description = "Channel identifier")
+        ("id" = u32, Path, description = "Channel identifier")
     ),
     request_body = crate::dto::ChannelConfigUpdateRequest,
     responses(
@@ -489,7 +489,7 @@ pub async fn create_channel_handler(
     tag = "comsrv"
 )]
 pub async fn update_channel_handler(
-    Path(id): Path<u16>,
+    Path(id): Path<u32>,
     State(state): State<AppState>,
     Json(req): Json<crate::dto::ChannelConfigUpdateRequest>,
 ) -> Result<Json<SuccessResponse<crate::dto::ChannelCrudResult>>, AppError> {
@@ -739,7 +739,7 @@ pub async fn update_channel_handler(
     put,
     path = "/api/channels/{id}/enabled",
     params(
-        ("id" = u16, Path, description = "Channel identifier")
+        ("id" = u32, Path, description = "Channel identifier")
     ),
     request_body = crate::dto::ChannelEnabledRequest,
     responses(
@@ -748,7 +748,7 @@ pub async fn update_channel_handler(
     tag = "comsrv"
 )]
 pub async fn set_channel_enabled_handler(
-    Path(id): Path<u16>,
+    Path(id): Path<u32>,
     State(state): State<AppState>,
     Json(req): Json<crate::dto::ChannelEnabledRequest>,
 ) -> Result<Json<SuccessResponse<crate::dto::ChannelCrudResult>>, AppError> {
@@ -931,7 +931,7 @@ pub async fn set_channel_enabled_handler(
     delete,
     path = "/api/channels/{id}",
     params(
-        ("id" = u16, Path, description = "Channel identifier")
+        ("id" = u32, Path, description = "Channel identifier")
     ),
     responses(
         (status = 200, description = "Channel deleted", body = String)
@@ -939,7 +939,7 @@ pub async fn set_channel_enabled_handler(
     tag = "comsrv"
 )]
 pub async fn delete_channel_handler(
-    Path(id): Path<u16>,
+    Path(id): Path<u32>,
     State(state): State<AppState>,
 ) -> Result<Json<SuccessResponse<String>>, AppError> {
     tracing::debug!("Deleting Ch{}", id);
@@ -1024,18 +1024,18 @@ pub async fn reload_configuration_handler(
             })?;
 
     // 2. Get runtime channel IDs
-    let runtime_ids: std::collections::HashSet<u16> = {
+    let runtime_ids: std::collections::HashSet<u32> = {
         let manager = state.channel_manager.read().await;
         manager.get_channel_ids().into_iter().collect()
     };
 
-    let db_ids: std::collections::HashSet<u16> =
-        db_channels.iter().map(|(id, _, _, _)| *id as u16).collect();
+    let db_ids: std::collections::HashSet<u32> =
+        db_channels.iter().map(|(id, _, _, _)| *id as u32).collect();
 
     // 3. Determine changes
-    let to_add: Vec<u16> = db_ids.difference(&runtime_ids).copied().collect();
-    let to_remove: Vec<u16> = runtime_ids.difference(&db_ids).copied().collect();
-    let to_update: Vec<u16> = db_ids.intersection(&runtime_ids).copied().collect();
+    let to_add: Vec<u32> = db_ids.difference(&runtime_ids).copied().collect();
+    let to_remove: Vec<u32> = runtime_ids.difference(&db_ids).copied().collect();
+    let to_update: Vec<u32> = db_ids.intersection(&runtime_ids).copied().collect();
 
     let mut channels_added = Vec::new();
     let mut channels_updated = Vec::new();
@@ -1061,7 +1061,7 @@ pub async fn reload_configuration_handler(
     // 5. Add new channels from SQLite
     for id in &to_add {
         if let Some((_, name, protocol, enabled)) =
-            db_channels.iter().find(|(cid, _, _, _)| *cid as u16 == *id)
+            db_channels.iter().find(|(cid, _, _, _)| *cid as u32 == *id)
         {
             // Load description and parameters from config JSON
             let (description, parameters): (
@@ -1120,7 +1120,7 @@ pub async fn reload_configuration_handler(
     // 6. Update existing channels (reload them)
     for id in &to_update {
         if let Some((_, name, protocol, enabled)) =
-            db_channels.iter().find(|(cid, _, _, _)| *cid as u16 == *id)
+            db_channels.iter().find(|(cid, _, _, _)| *cid as u32 == *id)
         {
             // Load description and parameters from config JSON
             let (description, parameters): (

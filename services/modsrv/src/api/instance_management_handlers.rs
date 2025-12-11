@@ -162,7 +162,7 @@ pub async fn create_instance(
 )]
 pub async fn update_instance(
     State(state): State<Arc<AppState>>,
-    Path(id): Path<u16>,
+    Path(id): Path<u32>,
     Json(dto): Json<UpdateInstanceDto>,
 ) -> Result<Json<SuccessResponse<serde_json::Value>>, ModSrvError> {
     // Validate: at least one field must be provided
@@ -317,7 +317,7 @@ pub async fn update_instance(
 )]
 pub async fn delete_instance(
     State(state): State<Arc<AppState>>,
-    Path(id): Path<u16>,
+    Path(id): Path<u32>,
 ) -> Result<Json<SuccessResponse<serde_json::Value>>, ModSrvError> {
     match state.instance_manager.delete_instance(id).await {
         Ok(_) => Ok(Json(SuccessResponse::new(json!({
@@ -367,7 +367,7 @@ pub async fn delete_instance(
 )]
 pub async fn sync_instance_measurement(
     State(state): State<Arc<AppState>>,
-    Path(id): Path<u16>,
+    Path(id): Path<u32>,
     Json(data): Json<HashMap<String, serde_json::Value>>,
 ) -> Result<Json<SuccessResponse<serde_json::Value>>, ModSrvError> {
     match state.instance_manager.sync_measurement(id, data).await {
@@ -488,7 +488,7 @@ pub async fn reload_instances_from_db(
 )]
 pub async fn execute_instance_action(
     State(state): State<Arc<AppState>>,
-    Path(id): Path<u16>,
+    Path(id): Path<u32>,
     Json(req): Json<ActionRequest>,
 ) -> Result<Json<SuccessResponse<serde_json::Value>>, ModSrvError> {
     match state

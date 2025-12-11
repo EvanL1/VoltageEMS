@@ -22,7 +22,7 @@ use voltage_protocols::dido::{DiDoController, GpioPoint};
 /// DI/DO protocol client - service layer wrapper
 pub struct DiDoProtocol {
     name: Arc<str>,
-    channel_id: u16,
+    channel_id: u32,
     connection_state: Arc<RwLock<ConnectionState>>,
     logger: ChannelLogger,
 
@@ -43,7 +43,7 @@ impl DiDoProtocol {
         let channel_id = runtime_config.id();
         let name = runtime_config.name().to_string();
 
-        let logger = ChannelLogger::new(channel_id as u32, name.clone());
+        let logger = ChannelLogger::new(channel_id, name.clone());
 
         // Parse parameters from base.parameters
         let gpio_base_path = runtime_config
@@ -139,7 +139,7 @@ impl ComBase for DiDoProtocol {
         &self.name
     }
 
-    fn get_channel_id(&self) -> u16 {
+    fn get_channel_id(&self) -> u32 {
         self.channel_id
     }
 
@@ -382,7 +382,7 @@ mod tests {
     use std::collections::HashMap;
     use voltage_config::comsrv::{ChannelConfig, ChannelCore};
 
-    fn create_test_runtime_config(id: u16) -> RuntimeChannelConfig {
+    fn create_test_runtime_config(id: u32) -> RuntimeChannelConfig {
         let mut parameters = HashMap::new();
         parameters.insert(
             "gpio_base_path".to_string(),
@@ -442,7 +442,7 @@ mod tests {
     }
 
     /// Create test config with GPIO mappings
-    fn create_test_config_with_mappings(id: u16) -> RuntimeChannelConfig {
+    fn create_test_config_with_mappings(id: u32) -> RuntimeChannelConfig {
         use voltage_config::comsrv::{ControlPoint, GpioMapping, Point, SignalPoint};
 
         let mut config = create_test_runtime_config(id);

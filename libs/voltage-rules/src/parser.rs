@@ -210,23 +210,19 @@ fn extract_rule_variables(config: &Value) -> Result<Vec<RuleVariable>> {
             .ok_or_else(|| RuleError::ParseError("Variable missing 'name'".to_string()))?
             .to_string();
 
-        let var_type = var
-            .get("type")
-            .and_then(|v| v.as_str())
-            .unwrap_or("single")
-            .to_string();
-
+        // Support both "instance" and "instance_id" as numeric ID
         let instance = var
             .get("instance")
-            .and_then(|v| v.as_str())
-            .map(String::from);
+            .or_else(|| var.get("instance_id"))
+            .and_then(|v| v.as_u64())
+            .and_then(|n| u32::try_from(n).ok());
 
         let point_type = var
             .get("pointType")
             .and_then(|v| v.as_str())
             .map(String::from);
 
-        let point = var.get("point").and_then(|v| v.as_u64()).map(|n| n as u16);
+        let point = var.get("point").and_then(|v| v.as_u64()).map(|n| n as u32);
 
         let formula = var
             .get("formula")
@@ -236,7 +232,6 @@ fn extract_rule_variables(config: &Value) -> Result<Vec<RuleVariable>> {
 
         variables.push(RuleVariable {
             name,
-            var_type,
             instance,
             point_type,
             point,
@@ -427,7 +422,7 @@ mod tests {
                                 {
                                     "name": "X1",
                                     "type": "single",
-                                    "instance": "battery_01",
+                                    "instance": 1,
                                     "pointType": "measurement",
                                     "point": 3
                                 }
@@ -464,7 +459,7 @@ mod tests {
                                 {
                                     "name": "Y1",
                                     "type": "single",
-                                    "instance": "pv_01",
+                                    "instance": 2,
                                     "pointType": "action",
                                     "point": 5
                                 }
@@ -511,8 +506,8 @@ mod tests {
             } => {
                 assert_eq!(variables.len(), 1);
                 assert_eq!(variables[0].name, "X1");
-                assert_eq!(variables[0].var_type, "single");
-                assert_eq!(variables[0].instance, Some("battery_01".to_string()));
+                // Note: instance is now Option<u32>, parsed from JSON
+                assert_eq!(variables[0].instance, Some(1));
                 assert_eq!(variables[0].point_type, Some("measurement".to_string()));
                 assert_eq!(variables[0].point, Some(3));
 

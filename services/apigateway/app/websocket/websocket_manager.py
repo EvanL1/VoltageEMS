@@ -399,15 +399,25 @@ class WebSocketManager:
                         except json.JSONDecodeError:
                             last_execution[field] = None
 
-            # 构建 rule_monitor 消息
+            # 构建 data_batch 消息（简化结构，去掉 node_details）
+            simplified_execution = None
+            if last_execution:
+                simplified_execution = {
+                    "success": last_execution.get("success"),
+                    "timestamp": last_execution.get("timestamp"),
+                    "error": last_execution.get("error"),
+                    "execution_path": last_execution.get("execution_path")
+                }
+
             monitor_message = {
-                "type": "rule_monitor",
-                "id": f"rule_{rule_id}_{int(time.time())}",
+                "type": "data_batch",
+                "id": f"rule_{rule_id}",
                 "timestamp": int(time.time()),
                 "data": {
+                    "source": "rule",
                     "rule_id": rule_id,
                     "variables": variables,
-                    "last_execution": last_execution
+                    "last_execution": simplified_execution
                 }
             }
 

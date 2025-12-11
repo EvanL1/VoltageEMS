@@ -47,14 +47,17 @@ pub async fn control_channel(
     Path(id): Path<String>,
     Json(operation): Json<ChannelOperation>,
 ) -> Result<Json<SuccessResponse<String>>, AppError> {
-    let id_u16 = id
-        .parse::<u16>()
+    let channel_id = id
+        .parse::<u32>()
         .map_err(|_| AppError::bad_request(format!("Invalid channel ID format: {}", id)))?;
     let manager = state.channel_manager.read().await;
 
     // Check if channel exists and get the channel
-    let Some(channel) = manager.get_channel(id_u16) else {
-        return Err(AppError::not_found(format!("Channel {} not found", id_u16)));
+    let Some(channel) = manager.get_channel(channel_id) else {
+        return Err(AppError::not_found(format!(
+            "Channel {} not found",
+            channel_id
+        )));
     };
 
     // Execute operation based on type
@@ -62,37 +65,37 @@ pub async fn control_channel(
         "start" => {
             let mut channel_guard = channel.write().await;
             if let Err(e) = channel_guard.connect().await {
-                tracing::error!("Ch{} connect: {}", id_u16, e);
+                tracing::error!("Ch{} connect: {}", channel_id, e);
                 return Err(AppError::internal_error(format!(
                     "Failed to connect channel {}: {}",
-                    id_u16, e
+                    channel_id, e
                 )));
             }
             Ok(Json(SuccessResponse::new(format!(
-                "Channel {id_u16} connected successfully"
+                "Channel {channel_id} connected successfully"
             ))))
         },
         "stop" => {
             let mut channel_guard = channel.write().await;
             if let Err(e) = channel_guard.disconnect().await {
-                tracing::error!("Ch{} disconnect: {}", id_u16, e);
+                tracing::error!("Ch{} disconnect: {}", channel_id, e);
                 return Err(AppError::internal_error(format!(
                     "Failed to connect channel {}: {}",
-                    id_u16, e
+                    channel_id, e
                 )));
             }
             Ok(Json(SuccessResponse::new(format!(
-                "Channel {id_u16} disconnected successfully"
+                "Channel {channel_id} disconnected successfully"
             ))))
         },
         "restart" => {
             let mut channel_guard = channel.write().await;
             // First stop the channel
             if let Err(e) = channel_guard.disconnect().await {
-                tracing::error!("Ch{} stop: {}", id_u16, e);
+                tracing::error!("Ch{} stop: {}", channel_id, e);
                 return Err(AppError::internal_error(format!(
                     "Failed to connect channel {}: {}",
-                    id_u16, e
+                    channel_id, e
                 )));
             }
 
@@ -101,14 +104,14 @@ pub async fn control_channel(
 
             // Then start it again
             if let Err(e) = channel_guard.connect().await {
-                tracing::error!("Ch{} restart: {}", id_u16, e);
+                tracing::error!("Ch{} restart: {}", channel_id, e);
                 return Err(AppError::internal_error(format!(
                     "Failed to connect channel {}: {}",
-                    id_u16, e
+                    channel_id, e
                 )));
             }
             Ok(Json(SuccessResponse::new(format!(
-                "Channel {id_u16} restarted successfully"
+                "Channel {channel_id} restarted successfully"
             ))))
         },
         _ => Err(AppError::bad_request(format!(
@@ -181,7 +184,7 @@ pub async fn control_channel(
 )]
 pub async fn write_channel_point(
     State(state): State<AppState>,
-    Path(channel_id): Path<u16>,
+    Path(channel_id): Path<u32>,
     Json(request): Json<WritePointRequest>,
 ) -> Result<Json<SuccessResponse<crate::dto::WriteResponse>>, AppError> {
     use crate::dto::{BatchCommandError, BatchCommandResult, WritePointData, WriteResponse};

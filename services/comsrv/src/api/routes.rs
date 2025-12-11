@@ -2761,7 +2761,7 @@ mod tests {
     /// Helper: Send write request to unified endpoint
     async fn send_write_request(
         app: Router,
-        channel_id: u16,
+        channel_id: u32,
         body: serde_json::Value,
     ) -> Response<Body> {
         let req = Request::builder()

@@ -475,13 +475,9 @@ pub struct RuleVariable {
     /// Variable name (e.g., "X1")
     pub name: String,
 
-    /// Variable type: "single" or "combined"
-    #[serde(rename = "type")]
-    pub var_type: String,
-
-    /// Instance name (for single type)
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub instance: Option<String>,
+    /// Instance ID (numeric), supports both "instance" and "instance_id" in JSON
+    #[serde(alias = "instance_id", skip_serializing_if = "Option::is_none")]
+    pub instance: Option<u32>,
 
     /// Point type: "measurement" or "action"
     #[serde(rename = "pointType", skip_serializing_if = "Option::is_none")]
@@ -489,9 +485,9 @@ pub struct RuleVariable {
 
     /// Point ID (numeric)
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub point: Option<u16>,
+    pub point: Option<u32>,
 
-    /// Formula tokens (for combined type)
+    /// Formula tokens (for combined type, if non-empty this is a calculated variable)
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub formula: Vec<serde_json::Value>,
 }

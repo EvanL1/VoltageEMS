@@ -291,7 +291,7 @@ impl RoutingLoader {
         debug!("Cleared existing routing tables");
 
         // Fetch all enabled measurement routing
-        let measurement_routing = sqlx::query_as::<_, (u16, String, i32, String, u32, u32)>(
+        let measurement_routing = sqlx::query_as::<_, (u32, String, u32, String, u32, u32)>(
             r#"
             SELECT
                 instance_id, instance_name, channel_id, channel_type, channel_point_id,
@@ -304,7 +304,7 @@ impl RoutingLoader {
         .await?;
 
         // Fetch all enabled action routing
-        let action_routing = sqlx::query_as::<_, (u16, String, u32, i32, String, u32)>(
+        let action_routing = sqlx::query_as::<_, (u32, String, u32, u32, String, u32)>(
             r#"
             SELECT
                 instance_id, instance_name, action_id, channel_id, channel_type,
@@ -340,16 +340,14 @@ impl RoutingLoader {
                 serde_json::from_value(serde_json::Value::String(channel_type))
                     .with_context(|| "Invalid channel_type")?;
             let point_type = four_remote_to_point_type(&four_remote);
-            let channel_id_u16 = channel_id as u16;
-            let instance_id_u32 = instance_id as u32;
 
             batch.push(RoutingEntry {
                 // C2M route key: {channel_id}:{type}:{point_id}
                 comsrv_key: keyspace
-                    .c2m_route_key(channel_id_u16, point_type, &channel_point_id.to_string())
+                    .c2m_route_key(channel_id, point_type, &channel_point_id.to_string())
                     .to_string(),
                 // Target: {instance_id}:M:{point_id} (M is PointRole, not PointType)
-                modsrv_key: format!("{}:M:{}", instance_id_u32, measurement_id),
+                modsrv_key: format!("{}:M:{}", instance_id, measurement_id),
                 is_action: false,
             });
         }
@@ -363,21 +361,15 @@ impl RoutingLoader {
                 serde_json::from_value(serde_json::Value::String(channel_type))
                     .with_context(|| "Invalid channel_type")?;
             let point_type = four_remote_to_point_type(&four_remote);
-            let channel_id_u16 = channel_id as u16;
-            let instance_id_u32 = instance_id as u32;
 
             batch.push(RoutingEntry {
                 // M2C route key: {instance_id}:A:{point_id}
                 modsrv_key: keyspace
-                    .m2c_route_key(
-                        instance_id_u32,
-                        PointType::Adjustment,
-                        &action_id.to_string(),
-                    )
+                    .m2c_route_key(instance_id, PointType::Adjustment, &action_id.to_string())
                     .to_string(),
                 // Target: {channel_id}:{type}:{point_id}
                 comsrv_key: keyspace
-                    .c2m_route_key(channel_id_u16, point_type, &channel_point_id.to_string())
+                    .c2m_route_key(channel_id, point_type, &channel_point_id.to_string())
                     .to_string(),
                 is_action: true,
             });

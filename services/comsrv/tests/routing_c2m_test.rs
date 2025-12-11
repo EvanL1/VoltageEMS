@@ -43,7 +43,7 @@ async fn setup_c2m_routing(c2m_routes: Vec<(&str, &str)>) -> (Arc<dyn Rtdb>, Arc
 /// 辅助函数：验证通道数据（工程值层）
 async fn assert_channel_value(
     rtdb: &dyn Rtdb,
-    channel_id: u16,
+    channel_id: u32,
     point_type: &str,
     point_id: u32,
     expected_value: f64,
@@ -67,7 +67,7 @@ async fn assert_channel_value(
 /// 辅助函数：验证通道时间戳
 async fn assert_channel_timestamp_exists(
     rtdb: &dyn Rtdb,
-    channel_id: u16,
+    channel_id: u32,
     point_type: &str,
     point_id: u32,
 ) {
@@ -91,7 +91,7 @@ async fn assert_channel_timestamp_exists(
 /// 辅助函数：验证通道原始值
 async fn assert_channel_raw_value(
     rtdb: &dyn Rtdb,
-    channel_id: u16,
+    channel_id: u32,
     point_type: &str,
     point_id: u32,
     expected_raw: f64,

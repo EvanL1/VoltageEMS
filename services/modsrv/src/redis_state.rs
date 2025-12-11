@@ -375,7 +375,7 @@ where
 #[allow(clippy::too_many_arguments)]
 pub async fn register_instance<R>(
     redis: &R,
-    instance_id: u16,
+    instance_id: u32,
     instance_name: &str,
     _product_name: &str,
     _properties: &HashMap<String, Value>,
@@ -427,7 +427,7 @@ where
 
 /// Delete instance-related Redis data and clean up routing mappings.
 /// EN: Remove Redis data related to an instance and clean up routing mappings.
-pub async fn unregister_instance<R>(redis: &R, instance_id: u16, instance_name: &str) -> Result<()>
+pub async fn unregister_instance<R>(redis: &R, instance_id: u32, instance_name: &str) -> Result<()>
 where
     R: Rtdb + ?Sized,
 {
@@ -464,13 +464,13 @@ where
 /// Routing keys (route:c2m, route:m2c) use instance_id, so they don't need updates.
 ///
 /// @input redis: &R - Redis client
-/// @input instance_id: u16 - Instance ID
+/// @input instance_id: u32 - Instance ID
 /// @input old_name: &str - Old instance name
 /// @input new_name: &str - New instance name
 /// @output Result<()> - Success or error
 pub async fn rename_instance_in_redis<R>(
     redis: &R,
-    instance_id: u16,
+    instance_id: u32,
     old_name: &str,
     new_name: &str,
 ) -> Result<()>
@@ -509,7 +509,7 @@ where
 /// Clean up routing mappings for an instance.
 ///
 /// Optimized with batch deletion using `hash_del_many` to reduce Redis round-trips.
-async fn cleanup_routing<R>(redis: &R, instance_id: u16, _instance_name: &str) -> Result<()>
+async fn cleanup_routing<R>(redis: &R, instance_id: u32, _instance_name: &str) -> Result<()>
 where
     R: Rtdb + ?Sized,
 {
@@ -554,7 +554,7 @@ where
 #[allow(deprecated)] // Uses time_millis internally until TimeProvider migration is complete
 pub async fn sync_measurement<R>(
     redis: &R,
-    instance_id: u16,
+    instance_id: u32,
     measurement: &HashMap<String, Value>,
 ) -> Result<()>
 where
@@ -575,7 +575,7 @@ where
 /// EN: Read real-time instance data (replaces `modsrv_get_instance_data`).
 pub async fn get_instance_data<R>(
     redis: &R,
-    instance_id: u16,
+    instance_id: u32,
     data_type: Option<&str>,
 ) -> Result<Value>
 where

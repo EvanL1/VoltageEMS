@@ -219,7 +219,7 @@ pub async fn load_routing_maps_from_sqlite(
     let mut c2c_map = std::collections::HashMap::new();
 
     // Fetch all enabled measurement routing (C2M - uplink)
-    let measurement_routing = sqlx::query_as::<_, (u16, String, i32, String, u32, u32)>(
+    let measurement_routing = sqlx::query_as::<_, (u32, String, u32, String, u32, u32)>(
         r#"
         SELECT instance_id, instance_name, channel_id, channel_type, channel_point_id,
                measurement_id
@@ -240,7 +240,7 @@ pub async fn load_routing_maps_from_sqlite(
         // Build routing keys (no prefix for hash fields)
         // From: channel_id:type:point_id → To: instance_id:M:point_id
         let from_key =
-            keyspace.c2m_route_key(channel_id as u16, point_type, &channel_point_id.to_string());
+            keyspace.c2m_route_key(channel_id, point_type, &channel_point_id.to_string());
         // Note: Target uses "M" (Measurement role), not a PointType enum
         let to_key = format!("{}:M:{}", instance_id, measurement_id);
 
@@ -248,7 +248,7 @@ pub async fn load_routing_maps_from_sqlite(
     }
 
     // Fetch all enabled action routing (M2C - downlink)
-    let action_routing = sqlx::query_as::<_, (u16, String, u32, i32, String, u32)>(
+    let action_routing = sqlx::query_as::<_, (u32, String, u32, u32, String, u32)>(
         r#"
         SELECT instance_id, instance_name, action_id, channel_id, channel_type,
                channel_point_id
@@ -268,14 +268,13 @@ pub async fn load_routing_maps_from_sqlite(
         // From: instance_id:A:point_id → To: channel_id:type:point_id
         // Note: Source uses "A" (Action role), not a PointType enum
         let from_key = format!("{}:A:{}", instance_id, action_id);
-        let to_key =
-            keyspace.c2m_route_key(channel_id as u16, point_type, &channel_point_id.to_string());
+        let to_key = keyspace.c2m_route_key(channel_id, point_type, &channel_point_id.to_string());
 
         m2c_map.insert(from_key, to_key.to_string());
     }
 
     // Fetch all enabled C2C routing (Channel to Channel)
-    let c2c_routing = sqlx::query_as::<_, (u16, String, u32, u16, String, u32, f64, f64)>(
+    let c2c_routing = sqlx::query_as::<_, (u32, String, u32, u32, String, u32, f64, f64)>(
         r#"
         SELECT source_channel_id, source_type, source_point_id,
                target_channel_id, target_type, target_point_id,

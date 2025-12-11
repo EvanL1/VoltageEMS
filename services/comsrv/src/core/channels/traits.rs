@@ -37,7 +37,7 @@ pub trait ComBase: Send + Sync {
     fn name(&self) -> &str;
 
     /// Get channel ID
-    fn get_channel_id(&self) -> u16;
+    fn get_channel_id(&self) -> u32;
 
     /// Get channel status
     async fn get_status(&self) -> ChannelStatus;

@@ -11,7 +11,7 @@ use voltage_rtdb::Rtdb;
 /// Instance summary for list operations
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct InstanceSummary {
-    pub id: u16,
+    pub id: u32,
     pub name: String,
     pub product_name: String,
     pub enabled: bool,
@@ -33,7 +33,7 @@ impl<'a> ModelsService<'a> {
     /// Returns a list of all configured model instances.
     pub async fn list_instances(&self) -> Result<Vec<InstanceSummary>> {
         // Query database for instances
-        let db_instances: Vec<(i64, String, String, bool)> = sqlx::query_as(
+        let db_instances: Vec<(u32, String, String, bool)> = sqlx::query_as(
             "SELECT instance_id, name, product_name, enabled FROM instances ORDER BY instance_id",
         )
         .fetch_all(&self.ctx.sqlite_pool)
@@ -42,7 +42,7 @@ impl<'a> ModelsService<'a> {
         let summaries: Vec<InstanceSummary> = db_instances
             .into_iter()
             .map(|(id, name, product_name, enabled)| InstanceSummary {
-                id: id as u16,
+                id,
                 name,
                 product_name,
                 enabled,
@@ -57,7 +57,7 @@ impl<'a> ModelsService<'a> {
     /// Returns detailed information about a specific instance.
     pub async fn get_instance(&self, name: &str) -> Result<Instance> {
         // First, get instance ID from database
-        let instance: Option<(i64,)> =
+        let instance: Option<(u32,)> =
             sqlx::query_as("SELECT instance_id FROM instances WHERE instance_name = ?")
                 .bind(name)
                 .fetch_optional(&self.ctx.sqlite_pool)
@@ -69,7 +69,7 @@ impl<'a> ModelsService<'a> {
         // Use instance manager to get instance by ID
         self.ctx
             .instance_manager
-            .get_instance(instance_id as u16)
+            .get_instance(instance_id)
             .await
             .map_err(|e| {
                 if e.to_string().contains("not found") {
@@ -92,7 +92,7 @@ impl<'a> ModelsService<'a> {
     /// Removes an instance and cleans up its data from Redis.
     pub async fn delete_instance(&self, name: &str) -> Result<()> {
         // First, get instance ID from database
-        let instance: Option<(i64,)> =
+        let instance: Option<(u32,)> =
             sqlx::query_as("SELECT instance_id FROM instances WHERE instance_name = ?")
                 .bind(name)
                 .fetch_optional(&self.ctx.sqlite_pool)
@@ -102,10 +102,7 @@ impl<'a> ModelsService<'a> {
             .ok_or_else(|| LibApiError::not_found(format!("Instance '{}' not found", name)))?;
 
         // Delete instance by ID
-        self.ctx
-            .instance_manager
-            .delete_instance(instance_id as u16)
-            .await
+        self.ctx.instance_manager.delete_instance(instance_id).await
     }
 
     /// List all product templates

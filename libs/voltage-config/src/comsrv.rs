@@ -62,7 +62,7 @@ pub const DEFAULT_PORT: u16 = 6001;
 #[cfg_attr(feature = "schema", derive(JsonSchema))]
 pub struct ChannelCore {
     /// Channel ID
-    pub id: u16,
+    pub id: u32,
 
     /// Channel name
     pub name: String,
@@ -97,7 +97,7 @@ pub struct ChannelConfig {
 
 impl ChannelConfig {
     /// Convenient accessor for channel ID
-    pub fn id(&self) -> u16 {
+    pub fn id(&self) -> u32 {
         self.core.id
     }
 
@@ -124,7 +124,7 @@ impl ChannelConfig {
 #[table(name = "channels")]
 struct ChannelRecord {
     #[column(primary_key)]
-    channel_id: u16,
+    channel_id: u32,
 
     #[column(not_null, unique)]
     name: String,
@@ -304,7 +304,7 @@ struct TelemetryPointRecord {
     point_id: u32,
 
     #[column(not_null, references = "channels(channel_id)")]
-    channel_id: u16,
+    channel_id: u32,
 
     #[column(not_null)]
     signal_name: String,
@@ -337,7 +337,7 @@ struct SignalPointRecord {
     point_id: u32,
 
     #[column(not_null, references = "channels(channel_id)")]
-    channel_id: u16,
+    channel_id: u32,
 
     #[column(not_null)]
     signal_name: String,
@@ -373,7 +373,7 @@ struct ControlPointRecord {
     point_id: u32,
 
     #[column(not_null, references = "channels(channel_id)")]
-    channel_id: u16,
+    channel_id: u32,
 
     #[column(not_null)]
     signal_name: String,
@@ -409,7 +409,7 @@ struct AdjustmentPointRecord {
     point_id: u32,
 
     #[column(not_null, references = "channels(channel_id)")]
-    channel_id: u16,
+    channel_id: u32,
 
     #[column(not_null)]
     signal_name: String,
@@ -455,7 +455,7 @@ pub const ADJUSTMENT_POINTS_TABLE: &str = AdjustmentPointRecord::CREATE_TABLE_SQ
 )]
 struct ChannelRoutingRecord {
     #[column(not_null, references = "channels(channel_id)")]
-    source_channel_id: u16,
+    source_channel_id: u32,
 
     #[column(not_null)]
     source_type: String, // T/S/C/A
@@ -464,7 +464,7 @@ struct ChannelRoutingRecord {
     source_point_id: u32,
 
     #[column(not_null, references = "channels(channel_id)")]
-    target_channel_id: u16,
+    target_channel_id: u32,
 
     #[column(not_null)]
     target_type: String, // T/S/C/A
@@ -505,7 +505,7 @@ pub const CHANNEL_ROUTING_TABLE: &str = ChannelRoutingRecord::CREATE_TABLE_SQL;
 #[cfg_attr(feature = "schema", derive(JsonSchema))]
 pub struct ModbusMapping {
     #[serde(default)] // channel_id from directory context
-    pub channel_id: u16,
+    pub channel_id: u32,
     pub point_id: u32,
     #[serde(default)] // telemetry_type from filename context
     pub telemetry_type: String,
@@ -524,7 +524,7 @@ pub struct ModbusMapping {
 #[cfg_attr(feature = "schema", derive(JsonSchema))]
 pub struct GpioMapping {
     #[serde(default)] // channel_id from directory context
-    pub channel_id: u16,
+    pub channel_id: u32,
     pub point_id: u32,
     #[serde(default)] // telemetry_type from filename context
     pub telemetry_type: String,
@@ -536,7 +536,7 @@ pub struct GpioMapping {
 #[cfg_attr(feature = "schema", derive(JsonSchema))]
 pub struct VirtualMapping {
     #[serde(default)] // channel_id from directory context
-    pub channel_id: u16,
+    pub channel_id: u32,
     pub point_id: u32,
     #[serde(default)] // telemetry_type from filename context
     pub telemetry_type: String,
@@ -558,7 +558,7 @@ fn default_update_interval() -> Option<u32> {
 #[cfg_attr(feature = "schema", derive(JsonSchema))]
 pub struct IecMapping {
     #[serde(default)] // channel_id from directory context
-    pub channel_id: u16,
+    pub channel_id: u32,
     pub point_id: u32,
     #[serde(default)] // telemetry_type from filename context
     pub telemetry_type: String,
@@ -580,7 +580,7 @@ fn default_cot() -> i32 {
 #[cfg_attr(feature = "schema", derive(JsonSchema))]
 pub struct GrpcMapping {
     #[serde(default)] // channel_id from directory context
-    pub channel_id: u16,
+    pub channel_id: u32,
     pub point_id: u32,
     #[serde(default)] // telemetry_type from filename context
     pub telemetry_type: String,
@@ -594,7 +594,7 @@ pub struct GrpcMapping {
 #[cfg_attr(feature = "schema", derive(JsonSchema))]
 pub struct CanMapping {
     #[serde(default)] // channel_id comes from directory context
-    pub channel_id: u16,
+    pub channel_id: u32,
     pub point_id: u32,
     #[serde(default)] // telemetry_type comes from filename context
     pub telemetry_type: String,
@@ -648,7 +648,7 @@ pub trait SqlInsertablePoint {
     /// Execute insertion with automatic parameter binding for points
     ///
     /// @input executor: E - Database executor (connection or transaction)
-    /// @input channel_id: u16 - Channel ID this point belongs to
+    /// @input channel_id: u32 - Channel ID this point belongs to
     /// @output Result<SqliteQueryResult, sqlx::Error> - Rows affected and last insert ID
     /// @throws sqlx::Error - Foreign key constraints, duplicate keys
     /// @side-effects Inserts into points table with telemetry_type from implementor
@@ -660,7 +660,7 @@ pub trait SqlInsertablePoint {
     async fn insert_with<'e, E>(
         &self,
         executor: E,
-        channel_id: u16,
+        channel_id: u32,
     ) -> Result<SqliteQueryResult, sqlx::Error>
     where
         E: Executor<'e, Database = Sqlite>;
@@ -722,7 +722,7 @@ impl RuntimeChannelConfig {
     }
 
     /// Get channel ID
-    pub fn id(&self) -> u16 {
+    pub fn id(&self) -> u32 {
         self.base.core.id
     }
 
@@ -959,35 +959,35 @@ impl ChannelRedisKeys {
     pub const ADJUSTMENT_TODO: &'static str = "comsrv:{}:A:TODO";
 
     /// Helper method to format channel data key
-    pub fn channel_data(channel_id: u16, point_type: &str) -> String {
+    pub fn channel_data(channel_id: u32, point_type: &str) -> String {
         format!("comsrv:{}:{}", channel_id, point_type)
     }
 
     /// Helper method to format control TODO key
-    pub fn control_todo(channel_id: u16) -> String {
+    pub fn control_todo(channel_id: u32) -> String {
         format!("comsrv:{}:C:TODO", channel_id)
     }
 
     /// Helper method to format adjustment TODO key
-    pub fn adjustment_todo(channel_id: u16) -> String {
+    pub fn adjustment_todo(channel_id: u32) -> String {
         format!("comsrv:{}:A:TODO", channel_id)
     }
 
     /// Helper method to format channel point data key: "comsrv:{channel_id}:{type}:{point_id}"
     /// Used for storing individual point values within a channel
-    pub fn channel_point_data(channel_id: u16, point_type: &str, point_id: u32) -> String {
+    pub fn channel_point_data(channel_id: u32, point_type: &str, point_id: u32) -> String {
         format!("comsrv:{}:{}:{}", channel_id, point_type, point_id)
     }
 
     /// Helper method to format channel timestamp key: "comsrv:{channel_id}:{type}:ts"
     /// Used for storing timestamp of last update for a channel data type
-    pub fn channel_timestamp(channel_id: u16, point_type: &str) -> String {
+    pub fn channel_timestamp(channel_id: u32, point_type: &str) -> String {
         format!("comsrv:{}:{}:ts", channel_id, point_type)
     }
 
     /// Helper method to format channel raw data key: "comsrv:{channel_id}:{type}:raw"
     /// Used for storing raw/unprocessed data before transformation
-    pub fn channel_raw_data(channel_id: u16, point_type: &str) -> String {
+    pub fn channel_raw_data(channel_id: u32, point_type: &str) -> String {
         format!("comsrv:{}:{}:raw", channel_id, point_type)
     }
 }
@@ -1078,7 +1078,7 @@ impl ConfigKeys {
 /// use sqlx::SqlitePool;
 /// use anyhow::Result;
 ///
-/// async fn load_modbus_points(pool: &SqlitePool, channel_id: u16) -> Result<()> {
+/// async fn load_modbus_points(pool: &SqlitePool, channel_id: u32) -> Result<()> {
 ///     let points = sqlx::query(ProtocolQueries::MODBUS_TCP_POINTS)
 ///         .bind(channel_id)
 ///         .fetch_all(pool)
@@ -1152,7 +1152,7 @@ impl SqlInsertablePoint for TelemetryPoint {
     async fn insert_with<'e, E>(
         &self,
         executor: E,
-        channel_id: u16,
+        channel_id: u32,
     ) -> Result<SqliteQueryResult, sqlx::Error>
     where
         E: Executor<'e, Database = Sqlite>,
@@ -1185,7 +1185,7 @@ impl SqlInsertablePoint for SignalPoint {
     async fn insert_with<'e, E>(
         &self,
         executor: E,
-        channel_id: u16,
+        channel_id: u32,
     ) -> Result<SqliteQueryResult, sqlx::Error>
     where
         E: Executor<'e, Database = Sqlite>,
@@ -1217,7 +1217,7 @@ impl SqlInsertablePoint for ControlPoint {
     async fn insert_with<'e, E>(
         &self,
         executor: E,
-        channel_id: u16,
+        channel_id: u32,
     ) -> Result<SqliteQueryResult, sqlx::Error>
     where
         E: Executor<'e, Database = Sqlite>,
@@ -1249,7 +1249,7 @@ impl SqlInsertablePoint for AdjustmentPoint {
     async fn insert_with<'e, E>(
         &self,
         executor: E,
-        channel_id: u16,
+        channel_id: u32,
     ) -> Result<SqliteQueryResult, sqlx::Error>
     where
         E: Executor<'e, Database = Sqlite>,

@@ -102,7 +102,7 @@ struct ProductRecord {
 #[table(name = "instances")]
 struct InstanceRecord {
     #[column(primary_key)]
-    instance_id: u16,
+    instance_id: u32,
 
     #[column(unique, not_null)]
     instance_name: String,
@@ -138,13 +138,13 @@ struct MeasurementRoutingRecord {
     routing_id: i64,
 
     #[column(not_null, references = "instances(instance_id)", on_delete = "CASCADE")]
-    instance_id: u16,
+    instance_id: u32,
 
     #[column(not_null)]
     instance_name: String,
 
     #[column(references = "channels(channel_id)", on_delete = "SET NULL")]
-    channel_id: Option<u16>,
+    channel_id: Option<u32>,
 
     channel_type: Option<String>,
 
@@ -178,7 +178,7 @@ struct ActionRoutingRecord {
     routing_id: i64,
 
     #[column(not_null, references = "instances(instance_id)", on_delete = "CASCADE")]
-    instance_id: u16,
+    instance_id: u32,
 
     #[column(not_null)]
     instance_name: String,
@@ -187,7 +187,7 @@ struct ActionRoutingRecord {
     action_id: u32,
 
     #[column(references = "channels(channel_id)", on_delete = "SET NULL")]
-    channel_id: Option<u16>,
+    channel_id: Option<u32>,
 
     channel_type: Option<String>,
 
@@ -352,7 +352,7 @@ pub const ACTION_POINTS_TABLE: &str = ActionPointRecord::CREATE_TABLE_SQL;
 #[cfg_attr(feature = "schema", derive(JsonSchema))]
 pub struct InstanceCore {
     /// Unique instance identifier (numeric)
-    pub instance_id: u16,
+    pub instance_id: u32,
 
     /// Instance name for Redis keys and API paths
     pub instance_name: String,
@@ -389,7 +389,7 @@ pub struct Instance {
 
 impl Instance {
     /// Convenient accessor for instance ID
-    pub fn instance_id(&self) -> u16 {
+    pub fn instance_id(&self) -> u32 {
         self.core.instance_id
     }
 
@@ -409,7 +409,7 @@ impl Instance {
 #[cfg_attr(feature = "schema", derive(JsonSchema))]
 pub struct CreateInstanceRequest {
     /// Required unique identifier (numeric)
-    pub instance_id: u16,
+    pub instance_id: u32,
 
     /// Instance name for Redis keys
     pub instance_name: String,
@@ -601,32 +601,32 @@ impl InstanceRedisKeys {
     pub const INSTANCE_CONFIG: &'static str = "inst:{}:config";
 
     /// Helper: address string for measurement
-    pub fn measurement(instance_id: u16, point_id: u32) -> String {
+    pub fn measurement(instance_id: u32, point_id: u32) -> String {
         format!("inst:{}:M:{}", instance_id, point_id)
     }
 
     /// Helper: address string for action
-    pub fn action(instance_id: u16, point_id: u32) -> String {
+    pub fn action(instance_id: u32, point_id: u32) -> String {
         format!("inst:{}:A:{}", instance_id, point_id)
     }
 
     /// Helper method to format status key
-    pub fn status(instance_id: u16) -> String {
+    pub fn status(instance_id: u32) -> String {
         format!("inst:{}:status", instance_id)
     }
 
     /// Helper method to format config key
-    pub fn config(instance_id: u16) -> String {
+    pub fn config(instance_id: u32) -> String {
         format!("inst:{}:config", instance_id)
     }
 
     /// Helper: runtime measurement hash key `inst:{instance_id}:M`
-    pub fn measurement_hash(instance_id: u16) -> String {
+    pub fn measurement_hash(instance_id: u32) -> String {
         format!("inst:{}:M", instance_id)
     }
 
     /// Helper: runtime action hash key `inst:{instance_id}:A`
-    pub fn action_hash(instance_id: u16) -> String {
+    pub fn action_hash(instance_id: u32) -> String {
         format!("inst:{}:A", instance_id)
     }
 
@@ -634,22 +634,22 @@ impl InstanceRedisKeys {
     ///
     /// Stores the instance name as a separate string key.
     /// This enables efficient SCAN-based aggregation queries while maintaining ID-based keys.
-    pub fn instance_name(instance_id: u16) -> String {
+    pub fn instance_name(instance_id: u32) -> String {
         format!("inst:{}:name", instance_id)
     }
 
     /// Helper: instance info key `instance:{instance_id}:info`
-    pub fn instance_info(instance_id: u16) -> String {
+    pub fn instance_info(instance_id: u32) -> String {
         format!("instance:{}:info", instance_id)
     }
 
     /// Helper: instance attributes key `instance:{instance_id}:attributes`
-    pub fn instance_attributes(instance_id: u16) -> String {
+    pub fn instance_attributes(instance_id: u32) -> String {
         format!("instance:{}:attributes", instance_id)
     }
 
     /// Helper: instance parameters key `instance:{instance_id}:parameters`
-    pub fn instance_parameters(instance_id: u16) -> String {
+    pub fn instance_parameters(instance_id: u32) -> String {
         format!("instance:{}:parameters", instance_id)
     }
 
@@ -687,12 +687,12 @@ impl InstanceRedisKeys {
     // ============================================================================
 
     /// Helper: instance measurement points definition key `inst:{instance_id}:measurement_points`
-    pub fn instance_measurement_points(instance_id: u16) -> String {
+    pub fn instance_measurement_points(instance_id: u32) -> String {
         format!("inst:{}:measurement_points", instance_id)
     }
 
     /// Helper: instance action points definition key `inst:{instance_id}:action_points`
-    pub fn instance_action_points(instance_id: u16) -> String {
+    pub fn instance_action_points(instance_id: u32) -> String {
         format!("inst:{}:action_points", instance_id)
     }
 

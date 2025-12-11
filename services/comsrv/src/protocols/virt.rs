@@ -18,7 +18,7 @@ use crate::error::Result;
 /// Virtual protocol client for testing
 pub struct VirtualProtocol {
     name: Arc<str>,
-    channel_id: u16,
+    channel_id: u32,
     running: Arc<RwLock<bool>>,
     connection_state: Arc<RwLock<ConnectionState>>,
 
@@ -32,10 +32,7 @@ pub struct VirtualProtocol {
 
 impl VirtualProtocol {
     pub fn new(channel_config: crate::core::config::ChannelConfig) -> Result<Self> {
-        let logger = ChannelLogger::new(
-            channel_config.id() as u32,
-            channel_config.name().to_string(),
-        );
+        let logger = ChannelLogger::new(channel_config.id(), channel_config.name().to_string());
 
         logger.log_init(
             "Virtual",
@@ -83,7 +80,7 @@ impl ComBase for VirtualProtocol {
         &self.name
     }
 
-    fn get_channel_id(&self) -> u16 {
+    fn get_channel_id(&self) -> u32 {
         self.channel_id
     }
 
@@ -293,7 +290,7 @@ mod tests {
     use std::borrow::Cow;
     use std::collections::HashMap;
 
-    fn create_test_channel_config(id: u16) -> ChannelConfig {
+    fn create_test_channel_config(id: u32) -> ChannelConfig {
         ChannelConfig {
             core: voltage_config::comsrv::ChannelCore {
                 id,

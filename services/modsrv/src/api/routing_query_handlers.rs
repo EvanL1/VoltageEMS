@@ -74,7 +74,7 @@ fn parse_direction(direction: Option<String>) -> Result<RoutingDirection, String
 )]
 pub async fn get_instance_routing_handler(
     State(state): State<Arc<AppState>>,
-    Path(id): Path<u16>,
+    Path(id): Path<u32>,
 ) -> Result<Json<SuccessResponse<serde_json::Value>>, ModSrvError> {
     // Get both measurement and action routing
     let measurement_result = state.instance_manager.get_measurement_routing(id).await;

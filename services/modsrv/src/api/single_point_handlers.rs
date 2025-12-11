@@ -38,7 +38,7 @@ use crate::error::ModSrvError;
 )]
 pub async fn get_measurement_point(
     State(state): State<Arc<AppState>>,
-    Path((id, point_id)): Path<(u16, u32)>,
+    Path((id, point_id)): Path<(u32, u32)>,
 ) -> Result<Json<SuccessResponse<crate::dto::InstanceMeasurementPoint>>, ModSrvError> {
     match state
         .instance_manager
@@ -74,7 +74,7 @@ pub async fn get_measurement_point(
 )]
 pub async fn upsert_measurement_routing(
     State(state): State<Arc<AppState>>,
-    Path((id, point_id)): Path<(u16, u32)>,
+    Path((id, point_id)): Path<(u32, u32)>,
     Json(request): Json<SinglePointRoutingRequest>,
 ) -> Result<Json<SuccessResponse<serde_json::Value>>, ModSrvError> {
     // Upsert routing in database
@@ -121,7 +121,7 @@ pub async fn upsert_measurement_routing(
 )]
 pub async fn delete_measurement_routing(
     State(state): State<Arc<AppState>>,
-    Path((id, point_id)): Path<(u16, u32)>,
+    Path((id, point_id)): Path<(u32, u32)>,
 ) -> Result<Json<SuccessResponse<serde_json::Value>>, ModSrvError> {
     // Delete routing from database
     let rows_affected = state
@@ -176,7 +176,7 @@ pub async fn delete_measurement_routing(
 )]
 pub async fn toggle_measurement_routing(
     State(state): State<Arc<AppState>>,
-    Path((id, point_id)): Path<(u16, u32)>,
+    Path((id, point_id)): Path<(u32, u32)>,
     Json(request): Json<ToggleRoutingRequest>,
 ) -> Result<Json<SuccessResponse<serde_json::Value>>, ModSrvError> {
     // Toggle routing in database
@@ -238,7 +238,7 @@ pub async fn toggle_measurement_routing(
 )]
 pub async fn get_action_point(
     State(state): State<Arc<AppState>>,
-    Path((id, point_id)): Path<(u16, u32)>,
+    Path((id, point_id)): Path<(u32, u32)>,
 ) -> Result<Json<SuccessResponse<crate::dto::InstanceActionPoint>>, ModSrvError> {
     match state
         .instance_manager
@@ -274,7 +274,7 @@ pub async fn get_action_point(
 )]
 pub async fn upsert_action_routing(
     State(state): State<Arc<AppState>>,
-    Path((id, point_id)): Path<(u16, u32)>,
+    Path((id, point_id)): Path<(u32, u32)>,
     Json(request): Json<SinglePointRoutingRequest>,
 ) -> Result<Json<SuccessResponse<serde_json::Value>>, ModSrvError> {
     // Upsert routing in database
@@ -321,7 +321,7 @@ pub async fn upsert_action_routing(
 )]
 pub async fn delete_action_routing(
     State(state): State<Arc<AppState>>,
-    Path((id, point_id)): Path<(u16, u32)>,
+    Path((id, point_id)): Path<(u32, u32)>,
 ) -> Result<Json<SuccessResponse<serde_json::Value>>, ModSrvError> {
     // Delete routing from database
     let rows_affected = state
@@ -376,7 +376,7 @@ pub async fn delete_action_routing(
 )]
 pub async fn toggle_action_routing(
     State(state): State<Arc<AppState>>,
-    Path((id, point_id)): Path<(u16, u32)>,
+    Path((id, point_id)): Path<(u32, u32)>,
     Json(request): Json<ToggleRoutingRequest>,
 ) -> Result<Json<SuccessResponse<serde_json::Value>>, ModSrvError> {
     // Toggle routing in database

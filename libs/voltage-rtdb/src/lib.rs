@@ -94,7 +94,7 @@ pub mod helpers {
     pub async fn set_channel_point_with_trigger<R>(
         rtdb: &R,
         config: &voltage_config::KeySpaceConfig,
-        channel_id: u16,
+        channel_id: u32,
         point_type: voltage_config::protocols::PointType,
         point_id: u32,
         value: f64,

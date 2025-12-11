@@ -32,7 +32,7 @@ pub struct PluginPointUpdate {
 /// Point update data
 #[derive(Debug, Clone)]
 pub struct PointUpdate {
-    pub channel_id: u16,
+    pub channel_id: u32,
     /// Point type (T/S/C/A) - using FourRemote enum to avoid string clones
     pub point_type: FourRemote,
     pub point_id: u32,
@@ -164,7 +164,7 @@ impl StorageManager {
     /// Writes are flushed periodically by the background flush task.
     pub async fn batch_update_and_publish(
         &self,
-        channel_id: u16,
+        channel_id: u32,
         updates: Vec<PluginPointUpdate>,
     ) -> Result<()> {
         if updates.is_empty() {
@@ -207,7 +207,7 @@ impl StorageManager {
     /// Single point update with statistics and sync
     pub async fn update_and_publish(
         &self,
-        channel_id: u16,
+        channel_id: u32,
         point_id: u32,
         value: f64,
         telemetry_type: &str,
@@ -233,7 +233,7 @@ impl StorageManager {
 /// Write a single point to Redis (legacy version, without timestamp)
 pub async fn write_point(
     rtdb: &dyn Rtdb,
-    channel_id: u16,
+    channel_id: u32,
     point_type: &str,
     point_id: u32,
     value: f64,
@@ -267,7 +267,7 @@ pub async fn write_point(
 /// * `Err(ComSrvError)` - Storage error
 pub async fn write_point_with_trigger(
     rtdb: &dyn Rtdb,
-    channel_id: u16,
+    channel_id: u32,
     point_type: &str,
     point_id: u32,
     value: f64,
@@ -362,7 +362,7 @@ pub async fn write_batch(
 
     // Group updates by channel_id and point_type for efficient batch processing
     // Using FourRemote enum (Copy) as key avoids string clones
-    let mut grouped: HashMap<(u16, FourRemote), Vec<PointUpdate>> = HashMap::new();
+    let mut grouped: HashMap<(u32, FourRemote), Vec<PointUpdate>> = HashMap::new();
 
     for update in updates {
         let key = (update.channel_id, update.point_type);
@@ -390,7 +390,7 @@ pub async fn write_batch(
         let mut channel_raw = Vec::new(); // Layer 3: Raw values
 
         // Prepare data for instance Hash writes (grouped by instance_id)
-        let mut instance_writes: HashMap<u16, Vec<(String, bytes::Bytes)>> = HashMap::new();
+        let mut instance_writes: HashMap<u32, Vec<(String, bytes::Bytes)>> = HashMap::new();
 
         // Prepare data for C2C forwarding (grouped by target channel)
         let mut c2c_forwards: Vec<PointUpdate> = Vec::new();
@@ -423,7 +423,7 @@ pub async fn write_batch(
                 let parts: Vec<&str> = target.split(':').collect();
                 if parts.len() == 3 {
                     if let (Ok(instance_id), Ok(target_point_id)) =
-                        (parts[0].parse::<u16>(), parts[2].parse::<u32>())
+                        (parts[0].parse::<u32>(), parts[2].parse::<u32>())
                     {
                         instance_writes.entry(instance_id).or_default().push((
                             target_point_id.to_string(),
@@ -445,7 +445,7 @@ pub async fn write_batch(
                         use std::str::FromStr;
                         if let Ok(target_point_type) = FourRemote::from_str(parts[1]) {
                             if let (Ok(target_channel_id), Ok(target_point_id)) =
-                                (parts[0].parse::<u16>(), parts[2].parse::<u32>())
+                                (parts[0].parse::<u32>(), parts[2].parse::<u32>())
                             {
                                 // Create a forwarded update with incremented cascade depth
                                 c2c_forwards.push(PointUpdate {
@@ -490,7 +490,7 @@ pub async fn write_batch(
             let futures: Vec<_> = instance_writes
                 .into_iter()
                 .map(|(instance_id, values)| {
-                    let instance_key = config.instance_measurement_key(instance_id.into());
+                    let instance_key = config.instance_measurement_key(instance_id);
                     async move {
                         rtdb.hash_mset(&instance_key, values).await.map_err(|e| {
                             ComSrvError::RedisError(format!("Failed to write instance values: {e}"))
@@ -544,7 +544,7 @@ pub async fn write_batch_buffered(
     }
 
     // Group updates by channel_id and point_type for efficient batch processing
-    let mut grouped: HashMap<(u16, FourRemote), Vec<PointUpdate>> = HashMap::new();
+    let mut grouped: HashMap<(u32, FourRemote), Vec<PointUpdate>> = HashMap::new();
 
     for update in updates {
         let key = (update.channel_id, update.point_type);
@@ -571,7 +571,7 @@ pub async fn write_batch_buffered(
         let mut channel_raw = Vec::new();
 
         // Prepare data for instance Hash writes (grouped by instance_id)
-        let mut instance_writes: HashMap<u16, Vec<(String, bytes::Bytes)>> = HashMap::new();
+        let mut instance_writes: HashMap<u32, Vec<(String, bytes::Bytes)>> = HashMap::new();
 
         // Prepare data for C2C forwarding
         let mut c2c_forwards: Vec<PointUpdate> = Vec::new();
@@ -599,7 +599,7 @@ pub async fn write_batch_buffered(
                 let parts: Vec<&str> = target.split(':').collect();
                 if parts.len() == 3 {
                     if let (Ok(instance_id), Ok(target_point_id)) =
-                        (parts[0].parse::<u16>(), parts[2].parse::<u32>())
+                        (parts[0].parse::<u32>(), parts[2].parse::<u32>())
                     {
                         instance_writes.entry(instance_id).or_default().push((
                             target_point_id.to_string(),
@@ -618,7 +618,7 @@ pub async fn write_batch_buffered(
                         use std::str::FromStr;
                         if let Ok(target_point_type) = FourRemote::from_str(parts[1]) {
                             if let (Ok(target_channel_id), Ok(target_point_id)) =
-                                (parts[0].parse::<u16>(), parts[2].parse::<u32>())
+                                (parts[0].parse::<u32>(), parts[2].parse::<u32>())
                             {
                                 c2c_forwards.push(PointUpdate {
                                     channel_id: target_channel_id,
@@ -647,7 +647,7 @@ pub async fn write_batch_buffered(
 
         // Buffer instance data (C2M routing results)
         for (instance_id, values) in instance_writes {
-            let instance_key = config.instance_measurement_key(instance_id.into());
+            let instance_key = config.instance_measurement_key(instance_id);
             write_buffer.buffer_hash_mset(&instance_key, values);
         }
 
@@ -674,7 +674,7 @@ pub async fn write_batch_buffered(
 /// Read a single point
 pub async fn read_point(
     rtdb: &dyn Rtdb,
-    channel_id: u16,
+    channel_id: u32,
     point_type: &str,
     point_id: u32,
 ) -> Result<Option<f64>> {
@@ -696,7 +696,7 @@ pub async fn read_point(
 /// Read multiple points
 pub async fn read_points(
     rtdb: &dyn Rtdb,
-    channel_id: u16,
+    channel_id: u32,
     point_type: &str,
     point_ids: &[u32],
 ) -> Result<Vec<Option<f64>>> {
@@ -717,7 +717,7 @@ pub async fn read_points(
 /// Get all points for a channel
 pub async fn get_channel_points(
     rtdb: &dyn Rtdb,
-    channel_id: u16,
+    channel_id: u32,
     point_type: &str,
 ) -> Result<HashMap<u32, f64>> {
     let hash_key = ChannelRedisKeys::channel_data(channel_id, point_type);
@@ -912,7 +912,7 @@ mod tests {
         ];
 
         // Group updates by channel_id and point_type (using FourRemote enum - Copy, no clone needed)
-        let mut grouped: HashMap<(u16, FourRemote), Vec<PointUpdate>> = HashMap::new();
+        let mut grouped: HashMap<(u32, FourRemote), Vec<PointUpdate>> = HashMap::new();
         for update in updates {
             let key = (update.channel_id, update.point_type);
             grouped.entry(key).or_default().push(update);

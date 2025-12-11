@@ -42,11 +42,11 @@ pub struct ActionResult {
     /// Target type: "instance" or "channel"
     pub target_type: String,
     /// Target ID (instance_id or channel_id)
-    pub target_id: u16,
+    pub target_id: u32,
     /// Point type (M/A for instance, T/S/C/A for channel)
     pub point_type: String,
     /// Point ID
-    pub point_id: u16,
+    pub point_id: u32,
     /// Value written
     pub value: String,
     /// Whether the action succeeded
@@ -150,7 +150,8 @@ impl<R: Rtdb + ?Sized> RuleExecutor<R> {
 
             match node {
                 RuleNode::End => {
-                    // Reached end - execution successful
+                    // Save final variable values and mark success
+                    result.variable_values = values.clone();
                     result.success = true;
                     break;
                 },
@@ -314,39 +315,26 @@ impl<R: Rtdb + ?Sized> RuleExecutor<R> {
         Ok(result)
     }
 
-    /// Read compact variables from RTDB (node-local variables)
+    /// Read variables from RTDB
     ///
-    /// Resolves instance_name to instance_id via `inst:name:index` hash,
-    /// then reads from `inst:{instance_id}:M` or `inst:{instance_id}:A`.
+    /// Reads variable values from Redis Hash `inst:{id}:M` or `inst:{id}:A`
     async fn read_rule_variables(
         &self,
         variables: &[RuleVariable],
         values: &mut HashMap<String, f64>,
     ) -> Result<()> {
         for var in variables {
-            // Skip combined variables - they need to be calculated separately
-            if var.var_type == "combined" {
+            // Skip combined variables (formula-based) - they need separate calculation
+            if !var.formula.is_empty() {
                 // TODO: Calculate combined variables from formula
                 continue;
             }
 
-            // For "single" type, read from instance
-            let instance_name = match &var.instance {
-                Some(name) => name,
-                None => continue, // Skip if no instance specified
-            };
-
-            // Resolve instance_name to instance_id via name index
-            let instance_id = match self.rtdb.hash_get("inst:name:index", instance_name).await {
-                Ok(Some(id_bytes)) => String::from_utf8_lossy(&id_bytes).to_string(),
-                Ok(None) => {
-                    tracing::warn!("Var {}: inst '{}' not found", var.name, instance_name);
-                    values.insert(var.name.clone(), 0.0);
-                    continue;
-                },
-                Err(e) => {
-                    tracing::error!("Var {}: inst '{}' err: {}", var.name, instance_name, e);
-                    values.insert(var.name.clone(), 0.0);
+            // Get instance ID (supports both "instance" and "instance_id" via serde alias)
+            let instance_id = match var.instance {
+                Some(id) => id,
+                None => {
+                    tracing::warn!("Var {}: no instance specified", var.name);
                     continue;
                 },
             };
@@ -354,8 +342,7 @@ impl<R: Rtdb + ?Sized> RuleExecutor<R> {
             let point_type = var.point_type.as_deref().unwrap_or("measurement");
             let point = var.point.unwrap_or(0);
 
-            // Construct key using instance_id (numeric)
-            // Format: "inst:{instance_id}:M" or "inst:{instance_id}:A"
+            // Construct key: "inst:{id}:M" or "inst:{id}:A"
             let key = if point_type == "action" {
                 format!("inst:{}:A", instance_id)
             } else {
@@ -540,14 +527,14 @@ impl<R: Rtdb + ?Sized> RuleExecutor<R> {
             0.0
         };
 
-        let instance_name = variable.instance.as_deref().unwrap_or("unknown");
+        let instance_id = variable.instance.unwrap_or(0);
         let point = variable.point.unwrap_or(0);
 
         // Use voltage_routing to set the action point
         let result = set_action_point(
             self.rtdb.as_ref(),
             &self.routing_cache,
-            instance_name,
+            instance_id,
             &point.to_string(),
             resolved_value,
         )
@@ -555,7 +542,7 @@ impl<R: Rtdb + ?Sized> RuleExecutor<R> {
 
         ActionResult {
             target_type: "instance".to_string(),
-            target_id: 0, // Instance ID not available in compact format
+            target_id: instance_id,
             point_type: variable
                 .point_type
                 .as_deref()
@@ -578,14 +565,14 @@ impl<R: Rtdb + ?Sized> RuleExecutor<R> {
         value: f64,
         calc: &CalculationRule,
     ) -> ActionResult {
-        let instance_name = variable.instance.as_deref().unwrap_or("unknown");
+        let instance_id = variable.instance.unwrap_or(0);
         let point = variable.point.unwrap_or(0);
         let point_type = variable.point_type.as_deref().unwrap_or("M");
 
         let success = match point_type {
             "M" | "measurement" => {
                 // Direct write to measurement hash (no routing)
-                self.write_measurement_point(instance_name, point, value)
+                self.write_measurement_point(instance_id, point, value)
                     .await
                     .is_ok()
             },
@@ -594,7 +581,7 @@ impl<R: Rtdb + ?Sized> RuleExecutor<R> {
                 set_action_point(
                     self.rtdb.as_ref(),
                     &self.routing_cache,
-                    instance_name,
+                    instance_id,
                     &point.to_string(),
                     value,
                 )
@@ -613,7 +600,7 @@ impl<R: Rtdb + ?Sized> RuleExecutor<R> {
 
         ActionResult {
             target_type: "instance".to_string(),
-            target_id: 0,
+            target_id: instance_id,
             point_type: point_type.to_string(),
             point_id: point,
             value: value.to_string(),
@@ -627,28 +614,11 @@ impl<R: Rtdb + ?Sized> RuleExecutor<R> {
     /// This enables use cases like energy accumulation (kWh from power readings).
     async fn write_measurement_point(
         &self,
-        instance_name: &str,
-        point: u16,
+        instance_id: u32,
+        point: u32,
         value: f64,
     ) -> Result<()> {
         let config = KeySpaceConfig::production();
-
-        // Resolve instance name to ID
-        let instance_id_bytes = self
-            .rtdb
-            .hash_get("inst:name:index", instance_name)
-            .await
-            .map_err(|e| crate::error::RuleError::ExecutionError(e.to_string()))?
-            .ok_or_else(|| {
-                crate::error::RuleError::ExecutionError(format!(
-                    "Instance '{}' not found",
-                    instance_name
-                ))
-            })?;
-
-        let instance_id = String::from_utf8_lossy(&instance_id_bytes)
-            .parse::<u32>()
-            .map_err(|e| crate::error::RuleError::ExecutionError(e.to_string()))?;
 
         // Write to inst:{id}:M Hash
         let key = config.instance_measurement_key(instance_id);
@@ -657,13 +627,7 @@ impl<R: Rtdb + ?Sized> RuleExecutor<R> {
             .await
             .map_err(|e| crate::error::RuleError::ExecutionError(e.to_string()))?;
 
-        tracing::debug!(
-            "Calc write: {}:{} = {} (inst:{}:M)",
-            instance_name,
-            point,
-            value,
-            instance_id
-        );
+        tracing::debug!("Calc write: inst:{}:M:{} = {}", instance_id, point, value);
 
         Ok(())
     }
@@ -862,7 +826,7 @@ mod tests {
                             "variables": [{
                                 "name": "X1",
                                 "type": "single",
-                                "instance": "battery_01",
+                                "instance": 5,
                                 "pointType": "measurement",
                                 "point": 3
                             }],
@@ -915,7 +879,7 @@ mod tests {
                             "variables": [{
                                 "name": "Y1",
                                 "type": "single",
-                                "instance": "pv_01",
+                                "instance": 6,
                                 "pointType": "action",
                                 "point": 5
                             }],
@@ -933,7 +897,7 @@ mod tests {
                             "variables": [{
                                 "name": "Y2",
                                 "type": "single",
-                                "instance": "diesel_gen_01",
+                                "instance": 7,
                                 "pointType": "action",
                                 "point": 2
                             }],
@@ -951,7 +915,7 @@ mod tests {
                             "variables": [{
                                 "name": "Y3",
                                 "type": "single",
-                                "instance": "pv_01",
+                                "instance": 6,
                                 "pointType": "action",
                                 "point": 5
                             }],
@@ -1119,8 +1083,7 @@ mod tests {
 
         let variables = vec![RuleVariable {
             name: "X1".to_string(),
-            var_type: "single".to_string(),
-            instance: Some("test_device".to_string()),
+            instance: Some(100), // Use numeric instance ID
             point_type: Some("measurement".to_string()),
             point: Some(1),
             formula: vec![],

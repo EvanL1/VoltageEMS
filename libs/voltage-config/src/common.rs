@@ -678,10 +678,10 @@ impl<I> Default for ReloadResult<I> {
 }
 
 /// Type alias for channel reload result (comsrv)
-pub type ChannelReloadResult = ReloadResult<u16>;
+pub type ChannelReloadResult = ReloadResult<u32>;
 
 /// Type alias for instance reload result (modsrv)
-pub type InstanceReloadResult = ReloadResult<u16>;
+pub type InstanceReloadResult = ReloadResult<u32>;
 
 /// Type alias for rule reload result (rules)
 pub type RuleReloadResult = ReloadResult<String>;

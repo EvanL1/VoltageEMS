@@ -189,7 +189,7 @@ pub struct PointValue {
 pub struct WritePointResponse {
     /// Channel ID
     #[schema(example = 1001)]
-    pub channel_id: u16,
+    pub channel_id: u32,
 
     /// Point type that was written (T/S/C/A)
     #[schema(example = "A")]
@@ -223,7 +223,7 @@ pub struct ServiceStatus {
 /// channel status response for list endpoint
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct ChannelStatusResponse {
-    pub id: u16,
+    pub id: u32,
     pub name: String,
     pub description: Option<String>, // Channel description
     pub protocol: String,
@@ -236,7 +236,7 @@ pub struct ChannelStatusResponse {
 /// channel status response - Enhanced version combining API and `ComBase` requirements
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct ChannelStatus {
-    pub id: u16,
+    pub id: u32,
     pub name: String,
     pub protocol: String,
     pub connected: bool,
@@ -385,7 +385,7 @@ pub struct ChannelCreateRequest {
         example = json!(null),
         nullable = true
     )]
-    pub channel_id: Option<u16>,
+    pub channel_id: Option<u32>,
 
     /// Channel name (must be unique across all channels)
     ///
@@ -503,11 +503,11 @@ pub struct ReloadConfigResult {
     #[schema(example = 3)]
     pub total_channels: usize,
     #[schema(example = json!([1, 2]))]
-    pub channels_added: Vec<u16>,
+    pub channels_added: Vec<u32>,
     #[schema(example = json!([3]))]
-    pub channels_updated: Vec<u16>,
+    pub channels_updated: Vec<u32>,
     #[schema(example = json!([]))]
-    pub channels_removed: Vec<u16>,
+    pub channels_removed: Vec<u32>,
     #[schema(example = json!([]))]
     pub errors: Vec<String>,
 }
@@ -692,7 +692,7 @@ pub struct GroupedPoints {
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct PointListResponse {
     #[schema(example = 1)]
-    pub channel_id: u16,
+    pub channel_id: u32,
     #[schema(example = "T")]
     pub point_type: String, // "T", "S", "C", "A"
     pub total_points: usize,
@@ -865,7 +865,7 @@ impl Default for MappingUpdateMode {
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct MappingListResponse {
     #[schema(example = 1)]
-    pub channel_id: u16,
+    pub channel_id: u32,
     #[schema(example = "modbus_tcp")]
     pub protocol: String,
     #[schema(example = "T")]

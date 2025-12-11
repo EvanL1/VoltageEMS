@@ -5,6 +5,7 @@
 use anyhow::Result;
 use clap::Subcommand;
 use std::process::Command;
+use voltage_rtdb::Rtdb;
 
 #[derive(Subcommand)]
 pub enum ServiceCommands {
@@ -474,11 +475,21 @@ pub async fn handle_command(
                 .ok_or_else(|| anyhow::anyhow!("Service context required for set-action command"))?
                 .modsrv()?;
 
+            // Resolve instance name to ID
+            let instance_id_bytes = ctx
+                .rtdb
+                .hash_get("inst:name:index", &instance_name)
+                .await?
+                .ok_or_else(|| anyhow::anyhow!("Instance '{}' not found", instance_name))?;
+            let instance_id = String::from_utf8_lossy(&instance_id_bytes)
+                .parse::<u32>()
+                .map_err(|e| anyhow::anyhow!("Invalid instance ID: {}", e))?;
+
             // Execute action routing using shared library (direct call)
             let outcome = voltage_routing::set_action_point(
                 ctx.rtdb.as_ref(),
                 ctx.instance_manager.routing_cache(),
-                &instance_name,
+                instance_id,
                 &point_id,
                 value,
             )

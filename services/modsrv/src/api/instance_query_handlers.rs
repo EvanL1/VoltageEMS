@@ -218,7 +218,7 @@ pub async fn search_instances(
 )]
 pub async fn get_instance(
     State(state): State<Arc<AppState>>,
-    Path(id): Path<u16>,
+    Path(id): Path<u32>,
 ) -> Result<Json<SuccessResponse<serde_json::Value>>, ModSrvError> {
     match state.instance_manager.get_instance(id).await {
         Ok(instance) => Ok(Json(SuccessResponse::new(json!({
@@ -277,7 +277,7 @@ pub async fn get_instance(
 )]
 pub async fn get_instance_data(
     State(state): State<Arc<AppState>>,
-    Path(id): Path<u16>,
+    Path(id): Path<u32>,
     Query(query): Query<DataTypeQuery>,
 ) -> Result<Json<SuccessResponse<serde_json::Value>>, ModSrvError> {
     match state
@@ -366,7 +366,7 @@ pub async fn get_instance_data(
 )]
 pub async fn get_instance_points(
     State(state): State<Arc<AppState>>,
-    Path(id): Path<u16>,
+    Path(id): Path<u32>,
 ) -> Result<Json<SuccessResponse<InstancePointsResponse>>, ModSrvError> {
     // Query instance_name for response (InstancePointsResponse still needs it for now)
     let instance = state.instance_manager.get_instance(id).await.map_err(|e| {
@@ -449,7 +449,7 @@ pub struct SetMeasurementRequest {
 )]
 pub async fn set_instance_measurement(
     State(state): State<Arc<AppState>>,
-    Path(id): Path<u16>,
+    Path(id): Path<u32>,
     Json(req): Json<SetMeasurementRequest>,
 ) -> Result<Json<SuccessResponse<serde_json::Value>>, ModSrvError> {
     // Get RTDB reference from instance manager

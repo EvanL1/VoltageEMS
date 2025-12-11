@@ -346,7 +346,7 @@ async fn handle_instance_command(
                         .duration_since(std::time::UNIX_EPOCH)
                         .expect("System time should be after UNIX epoch")
                         .as_secs()
-                        % 65535) as u16;
+                        % 65535) as u32;
 
                     // Create request struct
                     let request = modsrv::CreateInstanceRequest {
@@ -462,7 +462,7 @@ async fn handle_instance_command(
                     let modsrv = ctx.modsrv()?;
 
                     // Query instance from SQLite to get instance_id
-                    let instance_row: Option<(u16, String)> = sqlx::query_as(
+                    let instance_row: Option<(u32, String)> = sqlx::query_as(
                         "SELECT instance_id, instance_name FROM instances WHERE instance_name = ?",
                     )
                     .bind(&name)
@@ -486,7 +486,7 @@ async fn handle_instance_command(
 
                     // Fetch measurement data
                     if fetch_measurements {
-                        let m_key = keyspace.instance_measurement_key(instance_id as u32);
+                        let m_key = keyspace.instance_measurement_key(instance_id);
                         let m_data = rtdb.hash_get_all(m_key.as_ref()).await?;
 
                         // Filter out timestamp fields (ts:*)
@@ -517,7 +517,7 @@ async fn handle_instance_command(
 
                     // Fetch action data
                     if fetch_actions {
-                        let a_key = keyspace.instance_action_key(instance_id as u32);
+                        let a_key = keyspace.instance_action_key(instance_id);
                         let a_data = rtdb.hash_get_all(a_key.as_ref()).await?;
 
                         // Filter out timestamp fields (ts:*)

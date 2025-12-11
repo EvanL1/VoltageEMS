@@ -1146,7 +1146,7 @@ impl ConfigSyncer {
                 let instance_id = instance_data
                     .get("instance_id")
                     .and_then(|v| v.as_u64())
-                    .unwrap_or(0) as u16;
+                    .unwrap_or(0) as u32;
 
                 let instance_name = instance_data
                     .get("instance_name")
@@ -1325,12 +1325,12 @@ impl ConfigSyncer {
     }
 
     /// Get next available instance_id
-    async fn get_next_instance_id(&self, tx: &mut Transaction<'_, Sqlite>) -> Result<u16> {
-        let max_id: Option<i64> = sqlx::query_scalar("SELECT MAX(instance_id) FROM instances")
+    async fn get_next_instance_id(&self, tx: &mut Transaction<'_, Sqlite>) -> Result<u32> {
+        let max_id: Option<u32> = sqlx::query_scalar("SELECT MAX(instance_id) FROM instances")
             .fetch_optional(&mut **tx)
             .await?;
 
-        Ok((max_id.unwrap_or(0) + 1) as u16)
+        Ok(max_id.unwrap_or(0) + 1)
     }
 
     /// Load instance properties from properties.csv

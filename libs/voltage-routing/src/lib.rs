@@ -16,8 +16,8 @@ use voltage_rtdb::Rtdb;
 pub struct ActionRouteOutcome {
     /// Status field (normally `"success"`).
     pub status: String,
-    /// Instance name associated with the action.
-    pub instance_name: String,
+    /// Instance ID associated with the action.
+    pub instance_id: u32,
     /// Action point ID.
     pub point_id: String,
     /// Value written to the action point.
@@ -49,7 +49,8 @@ pub struct RouteContext {
 #[derive(Debug, Deserialize)]
 struct RawActionRouteOutcome {
     status: String,
-    instance: String,
+    #[serde(deserialize_with = "deserialize_instance_id")]
+    instance: u32,
     point: String,
     value: serde_json::Value,
     #[serde(default)]
@@ -58,6 +59,24 @@ struct RawActionRouteOutcome {
     route_result: Option<serde_json::Value>,
     #[serde(default, rename = "route_context")]
     route_context: Option<RawRouteContext>,
+}
+
+fn deserialize_instance_id<'de, D>(deserializer: D) -> std::result::Result<u32, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::de::Error;
+    let value = serde_json::Value::deserialize(deserializer)?;
+    match value {
+        serde_json::Value::Number(n) => n
+            .as_u64()
+            .and_then(|v| u32::try_from(v).ok())
+            .ok_or_else(|| D::Error::custom("invalid instance id")),
+        serde_json::Value::String(s) => s
+            .parse::<u32>()
+            .map_err(|_| D::Error::custom("invalid instance id string")),
+        _ => Err(D::Error::custom("expected number or string for instance")),
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -75,7 +94,7 @@ impl TryFrom<RawActionRouteOutcome> for ActionRouteOutcome {
     fn try_from(raw: RawActionRouteOutcome) -> Result<Self, Self::Error> {
         Ok(Self {
             status: raw.status,
-            instance_name: raw.instance,
+            instance_id: raw.instance,
             point_id: raw.point,
             value: value_to_string(raw.value),
             routed: raw.routed,
@@ -104,15 +123,14 @@ impl TryFrom<RawRouteContext> for RouteContext {
 /// Execute action routing with application-layer cache
 ///
 /// This function implements the unified M2C routing logic:
-/// 1. Resolves instance_name to instance_id
-/// 2. Looks up M2C routing in cache
-/// 3. Writes to instance Action Hash (state storage)
-/// 4. Writes to channel Hash + triggers TODO queue (Write-Triggers-Routing pattern)
+/// 1. Looks up M2C routing in cache
+/// 2. Writes to instance Action Hash (state storage)
+/// 3. Writes to channel Hash + triggers TODO queue (Write-Triggers-Routing pattern)
 ///
 /// # Arguments
 /// * `redis` - RTDB trait object
 /// * `routing_cache` - M2C routing cache
-/// * `instance_name` - Instance name (e.g., "pv_inverter_01")
+/// * `instance_id` - Instance ID (numeric)
 /// * `point_id` - Action point ID
 /// * `value` - Point value
 ///
@@ -123,7 +141,7 @@ impl TryFrom<RawRouteContext> for RouteContext {
 pub async fn set_action_point<R>(
     redis: &R,
     routing_cache: &voltage_config::RoutingCache,
-    instance_name: &str,
+    instance_id: u32,
     point_id: &str,
     value: f64,
 ) -> Result<ActionRouteOutcome>
@@ -132,19 +150,7 @@ where
 {
     let config = voltage_config::KeySpaceConfig::production();
 
-    // Step 1: Resolve instance name to instance ID using reverse index (O(1) lookup)
-    let instance_id_bytes = redis
-        .hash_get("inst:name:index", instance_name)
-        .await
-        .context("Failed to query instance name index")?
-        .ok_or_else(|| anyhow!("Instance '{}' not found", instance_name))?;
-
-    let instance_id = String::from_utf8(instance_id_bytes.to_vec())
-        .context("Invalid instance ID in index")?
-        .parse::<u32>()
-        .context("Failed to parse instance ID")?;
-
-    // Step 2: Build M2C routing key and lookup target
+    // Build M2C routing key and lookup target
     let route_key = format!("{}:A:{}", instance_id, point_id);
     let routed = if let Some(target) = routing_cache.lookup_m2c(&route_key) {
         // Parse target: "2:A:1" -> channel_id=2, point_type=A, point_id=1
@@ -152,7 +158,7 @@ where
         if parts.len() != 3 {
             return Ok(ActionRouteOutcome {
                 status: "success".to_string(),
-                instance_name: instance_name.to_string(),
+                instance_id,
                 point_id: point_id.to_string(),
                 value: value.to_string(),
                 routed: false,
@@ -162,7 +168,7 @@ where
         }
 
         let channel_id = parts[0]
-            .parse::<u16>()
+            .parse::<u32>()
             .context("Failed to parse channel_id from route target")?;
         let point_type = parts[1];
         let comsrv_point_id = parts[2];
@@ -220,7 +226,7 @@ where
 
         Ok(ActionRouteOutcome {
             status: "success".to_string(),
-            instance_name: instance_name.to_string(),
+            instance_id,
             point_id: point_id.to_string(),
             value: value.to_string(),
             routed: true,
@@ -241,7 +247,7 @@ where
 
         Ok(ActionRouteOutcome {
             status: "success".to_string(),
-            instance_name: instance_name.to_string(),
+            instance_id,
             point_id: point_id.to_string(),
             value: value.to_string(),
             routed: false,

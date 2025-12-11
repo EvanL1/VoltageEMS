@@ -268,7 +268,7 @@ pub enum ChannelCommand {
 /// Batch telemetry data for channel transmission
 #[derive(Debug, Clone)]
 pub struct TelemetryBatch {
-    pub channel_id: u16,
+    pub channel_id: u32,
     pub telemetry: Vec<(u32, f64, i64)>, // (point_id, raw_value, timestamp)
     pub signal: Vec<(u32, f64, i64)>,    // (point_id, raw_value, timestamp)
 }
@@ -283,7 +283,7 @@ pub struct ExtendedPointData {
     pub unit: String,
     pub description: String,
     pub telemetry_type: Option<FourRemote>,
-    pub channel_id: Option<u16>,
+    pub channel_id: Option<u32>,
 }
 
 /// Test channel parameters
@@ -322,7 +322,7 @@ pub trait ComBase: Send + Sync {
     fn name(&self) -> &str;
 
     /// Get channel ID
-    fn get_channel_id(&self) -> u16;
+    fn get_channel_id(&self) -> u32;
 
     /// Get channel status
     async fn get_status(&self) -> ChannelStatus;

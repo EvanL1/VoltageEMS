@@ -36,7 +36,7 @@ pub struct ModbusProtocol {
     /// Protocol name
     name: Arc<str>,
     /// Channel ID
-    channel_id: u16,
+    channel_id: u32,
 
     /// Connection manager
     connection_manager: Arc<ModbusConnectionManager>,
@@ -110,10 +110,7 @@ impl ModbusProtocol {
         let polling_config = Arc::new(polling_config); // Wrap in Arc once
 
         // Create logger first
-        let logger = ChannelLogger::new(
-            channel_config.id() as u32,
-            channel_config.name().to_string(),
-        );
+        let logger = ChannelLogger::new(channel_config.id(), channel_config.name().to_string());
 
         // Create connection manager with logger
         let connection_manager = Arc::new(ModbusConnectionManager::new(
@@ -514,7 +511,7 @@ impl ComBase for ModbusProtocol {
         &self.name
     }
 
-    fn get_channel_id(&self) -> u16 {
+    fn get_channel_id(&self) -> u32 {
         self.channel_id
     }
 
@@ -1265,7 +1262,7 @@ impl ComClient for ModbusProtocol {
 
                         // Create channel logger for protocol messages
                         let logger = crate::core::channels::traits::ChannelLogger::new(
-                            channel_id.into(),
+                            channel_id,
                             channel_name.to_string(),
                         );
 

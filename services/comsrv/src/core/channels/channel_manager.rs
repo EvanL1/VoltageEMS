@@ -50,7 +50,7 @@ impl std::fmt::Debug for ChannelEntry {
 /// Channel statistics
 #[derive(Debug, Clone)]
 pub struct ChannelStats {
-    pub channel_id: u16,
+    pub channel_id: u32,
     pub name: String,
     pub protocol_type: String,
     pub is_connected: bool,
@@ -82,7 +82,7 @@ impl ChannelEntry {
     }
 
     /// Get channel statistics
-    pub async fn get_stats(&self, channel_id: u16) -> ChannelStats {
+    pub async fn get_stats(&self, channel_id: u32) -> ChannelStats {
         let channel = self.channel.read().await;
         let last_accessed = *self.metadata.last_accessed.read().await;
 
@@ -139,7 +139,7 @@ pub type DynComClient = Arc<RwLock<Box<dyn ComClient>>>;
 /// Channel manager - responsible for channel lifecycle management
 pub struct ChannelManager {
     /// Store created channels
-    channels: DashMap<u16, ChannelEntry, ahash::RandomState>,
+    channels: DashMap<u32, ChannelEntry, ahash::RandomState>,
     /// Shared RTDB (Redis or Memory for testing)
     rtdb: Arc<dyn voltage_rtdb::Rtdb>,
     /// Routing cache for C2M/M2C routing (public for reload operations)
@@ -302,7 +302,7 @@ impl ChannelManager {
     }
 
     /// Remove channel
-    pub async fn remove_channel(&self, channel_id: u16) -> Result<()> {
+    pub async fn remove_channel(&self, channel_id: u32) -> Result<()> {
         if let Some((_, entry)) = self.channels.remove(&channel_id) {
             // Disconnect channel
             {
@@ -327,14 +327,14 @@ impl ChannelManager {
     }
 
     /// Get channel
-    pub fn get_channel(&self, channel_id: u16) -> Option<Arc<RwLock<Box<dyn ComClient>>>> {
+    pub fn get_channel(&self, channel_id: u32) -> Option<Arc<RwLock<Box<dyn ComClient>>>> {
         self.channels
             .get(&channel_id)
             .map(|entry| entry.channel.clone())
     }
 
     /// Get channel IDs
-    pub fn get_channel_ids(&self) -> Vec<u16> {
+    pub fn get_channel_ids(&self) -> Vec<u32> {
         self.channels.iter().map(|entry| *entry.key()).collect()
     }
 
@@ -356,7 +356,7 @@ impl ChannelManager {
     }
 
     /// Get channel metadata
-    pub fn get_channel_metadata(&self, channel_id: u16) -> Option<(String, String)> {
+    pub fn get_channel_metadata(&self, channel_id: u32) -> Option<(String, String)> {
         self.channels.get(&channel_id).map(|entry| {
             (
                 entry.metadata.name.to_string(),
@@ -366,7 +366,7 @@ impl ChannelManager {
     }
 
     /// Get channel stats
-    pub async fn get_channel_stats(&self, channel_id: u16) -> Option<ChannelStats> {
+    pub async fn get_channel_stats(&self, channel_id: u32) -> Option<ChannelStats> {
         if let Some(entry) = self.channels.get(&channel_id) {
             Some(entry.get_stats(channel_id).await)
         } else {
@@ -450,7 +450,7 @@ impl ChannelManager {
         let _ = self.stop_telemetry_sync_task().await;
 
         // Remove all channels
-        let channel_ids: Vec<u16> = self.get_channel_ids();
+        let channel_ids: Vec<u32> = self.get_channel_ids();
         for channel_id in channel_ids {
             let _ = self.remove_channel(channel_id).await;
         }
@@ -637,7 +637,7 @@ impl ChannelManager {
     /// Create and start CommandTrigger (replaces storage_manager.setup_command_trigger)
     async fn create_command_trigger(
         &self,
-        channel_id: u16,
+        channel_id: u32,
     ) -> Result<(
         Option<Arc<RwLock<crate::core::channels::trigger::CommandTrigger>>>,
         tokio::sync::mpsc::Receiver<crate::core::channels::traits::ChannelCommand>,

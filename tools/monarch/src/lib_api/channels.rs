@@ -12,7 +12,7 @@ use sqlx::types::chrono::Utc;
 /// Channel summary for list operations
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChannelSummary {
-    pub id: u16,
+    pub id: u32,
     pub name: String,
     pub protocol: String,
     pub enabled: bool,
@@ -22,7 +22,7 @@ pub struct ChannelSummary {
 /// Channel detailed status
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChannelStatus {
-    pub id: u16,
+    pub id: u32,
     pub name: String,
     pub protocol: String,
     pub enabled: bool,
@@ -49,7 +49,7 @@ impl<'a> ChannelsService<'a> {
     /// manager for runtime status.
     pub async fn list(&self) -> Result<Vec<ChannelSummary>> {
         // Query database for channel configurations
-        let db_channels: Vec<(i64, String, String, bool)> = sqlx::query_as(
+        let db_channels: Vec<(u32, String, String, bool)> = sqlx::query_as(
             "SELECT channel_id, name, protocol, enabled FROM channels ORDER BY channel_id",
         )
         .fetch_all(&self.ctx.sqlite_pool)
@@ -59,9 +59,7 @@ impl<'a> ChannelsService<'a> {
         let manager = self.ctx.channel_manager.read().await;
         let mut summaries = Vec::new();
 
-        for (id, name, protocol, enabled) in db_channels {
-            let channel_id = id as u16;
-
+        for (channel_id, name, protocol, enabled) in db_channels {
             // Check if channel is connected at runtime
             let connected = manager
                 .get_channel(channel_id)
@@ -89,12 +87,12 @@ impl<'a> ChannelsService<'a> {
     ///
     /// Returns detailed status information for a specific channel including
     /// configuration, connection status, and any error information.
-    pub async fn get_status(&self, channel_id: u16) -> Result<ChannelStatus> {
+    pub async fn get_status(&self, channel_id: u32) -> Result<ChannelStatus> {
         // Query database for channel configuration
-        let db_channel: Option<(i64, String, String, bool)> = sqlx::query_as(
+        let db_channel: Option<(u32, String, String, bool)> = sqlx::query_as(
             "SELECT channel_id, name, protocol, enabled FROM channels WHERE channel_id = ?",
         )
-        .bind(channel_id as i64)
+        .bind(channel_id)
         .fetch_optional(&self.ctx.sqlite_pool)
         .await?;
 
@@ -127,7 +125,7 @@ impl<'a> ChannelsService<'a> {
     /// Sends a control command to a specific point on a channel.
     /// Value should be 0 or 1 for digital control.
     #[allow(clippy::disallowed_methods)] // serde_json::json! macro uses unwrap internally
-    pub async fn send_control(&self, channel_id: u16, point_id: u32, value: u8) -> Result<()> {
+    pub async fn send_control(&self, channel_id: u32, point_id: u32, value: u8) -> Result<()> {
         if value > 1 {
             return Err(
                 LibApiError::invalid_input("Control value must be 0 or 1".to_string()).into(),
@@ -162,7 +160,7 @@ impl<'a> ChannelsService<'a> {
     ///
     /// Sends an analog adjustment value to a specific point on a channel.
     #[allow(clippy::disallowed_methods)] // serde_json::json! macro uses unwrap internally
-    pub async fn send_adjustment(&self, channel_id: u16, point_id: u32, value: f64) -> Result<()> {
+    pub async fn send_adjustment(&self, channel_id: u32, point_id: u32, value: f64) -> Result<()> {
         // Write to Redis TODO queue via channel manager
         let key = format!("comsrv:{}:A", channel_id);
         let todo_key = format!("comsrv:{}:A:TODO", channel_id);

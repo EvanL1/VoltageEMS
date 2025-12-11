@@ -21,14 +21,14 @@ pub enum ChannelCommands {
     #[command(about = "Get status of a specific channel")]
     Status {
         /// Channel ID
-        channel_id: u16,
+        channel_id: u32,
     },
 
     /// Send control command
     #[command(about = "Send control command to a channel")]
     Control {
         /// Channel ID
-        channel_id: u16,
+        channel_id: u32,
         /// Point ID
         point_id: u32,
         /// Value (0 or 1)
@@ -39,7 +39,7 @@ pub enum ChannelCommands {
     #[command(about = "Send adjustment value to a channel")]
     Adjust {
         /// Channel ID
-        channel_id: u16,
+        channel_id: u32,
         /// Point ID
         point_id: u32,
         /// Value
@@ -207,7 +207,7 @@ impl ChannelClient {
         }
     }
 
-    async fn get_channel_status(&self, channel_id: u16) -> Result<Value> {
+    async fn get_channel_status(&self, channel_id: u32) -> Result<Value> {
         let response = self
             .client
             .get(format!(
@@ -228,7 +228,7 @@ impl ChannelClient {
     }
 
     #[allow(clippy::disallowed_methods)] // json! macro internally uses unwrap (safe for known valid JSON)
-    async fn send_control(&self, channel_id: u16, point_id: u32, value: u8) -> Result<()> {
+    async fn send_control(&self, channel_id: u32, point_id: u32, value: u8) -> Result<()> {
         let response = self
             .client
             .post(format!(
@@ -253,7 +253,7 @@ impl ChannelClient {
     }
 
     #[allow(clippy::disallowed_methods)] // json! macro internally uses unwrap (safe for known valid JSON)
-    async fn send_adjustment(&self, channel_id: u16, point_id: u32, value: f64) -> Result<()> {
+    async fn send_adjustment(&self, channel_id: u32, point_id: u32, value: f64) -> Result<()> {
         // Align with service route: /api/channels/{channel_id}/points/{point_id}/adjustment
         let response = self
             .client

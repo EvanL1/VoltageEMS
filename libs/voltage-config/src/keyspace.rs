@@ -180,7 +180,7 @@ impl KeySpaceConfig {
     /// let config = KeySpaceConfig::production();
     /// assert_eq!(config.channel_key(1001, PointType::Telemetry).as_ref(), "comsrv:1001:T");
     /// ```
-    pub fn channel_key(&self, channel_id: u16, point_type: PointType) -> Cow<'static, str> {
+    pub fn channel_key(&self, channel_id: u32, point_type: PointType) -> Cow<'static, str> {
         Cow::Owned(format!(
             "{}:{}:{}",
             self.data_prefix,
@@ -190,7 +190,7 @@ impl KeySpaceConfig {
     }
 
     /// Build channel timestamp key: comsrv:{channel_id}:{type}:ts
-    pub fn channel_ts_key(&self, channel_id: u16, point_type: PointType) -> Cow<'static, str> {
+    pub fn channel_ts_key(&self, channel_id: u32, point_type: PointType) -> Cow<'static, str> {
         Cow::Owned(format!(
             "{}:{}:{}:ts",
             self.data_prefix,
@@ -200,7 +200,7 @@ impl KeySpaceConfig {
     }
 
     /// Build channel raw value key: comsrv:{channel_id}:{type}:raw
-    pub fn channel_raw_key(&self, channel_id: u16, point_type: PointType) -> Cow<'static, str> {
+    pub fn channel_raw_key(&self, channel_id: u32, point_type: PointType) -> Cow<'static, str> {
         Cow::Owned(format!(
             "{}:{}:{}:raw",
             self.data_prefix,
@@ -210,7 +210,7 @@ impl KeySpaceConfig {
     }
 
     /// Build TODO queue key: comsrv:{channel_id}:{type}:TODO
-    pub fn todo_queue_key(&self, channel_id: u16, point_type: PointType) -> Cow<'static, str> {
+    pub fn todo_queue_key(&self, channel_id: u32, point_type: PointType) -> Cow<'static, str> {
         let target = self.target_prefix.as_ref().unwrap_or(&self.data_prefix);
         Cow::Owned(format!(
             "{}:{}:{}:TODO",
@@ -252,7 +252,7 @@ impl KeySpaceConfig {
     /// Used as hash field in route:c2m routing table
     pub fn c2m_route_key(
         &self,
-        channel_id: u16,
+        channel_id: u32,
         point_type: PointType,
         point_id: &str,
     ) -> Cow<'static, str> {

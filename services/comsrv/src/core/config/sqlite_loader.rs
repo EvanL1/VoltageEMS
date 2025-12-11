@@ -134,7 +134,7 @@ impl ComsrvSqliteLoader {
         let mut channels = Vec::new();
 
         for row in rows {
-            let channel_id: i64 = row.try_get("channel_id").map_err(|e| {
+            let channel_id: u32 = row.try_get("channel_id").map_err(|e| {
                 ComSrvError::ConfigError(format!("Failed to get channel_id: {}", e))
             })?;
             let name: String = row
@@ -165,7 +165,7 @@ impl ComsrvSqliteLoader {
             // Create channel config (without runtime fields)
             let channel = ChannelConfig {
                 core: voltage_config::comsrv::ChannelCore {
-                    id: channel_id as u16,
+                    id: channel_id,
                     name: name.clone(),
                     description: extra_config
                         .get("description")

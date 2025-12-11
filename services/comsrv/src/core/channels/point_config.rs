@@ -16,7 +16,7 @@ use voltage_config::common::FourRemote;
 pub struct RuntimeConfigProvider {
     /// Transformer cache: (channel_id, telemetry_type, point_id) → transformer
     #[allow(clippy::type_complexity)]
-    transformers: Arc<RwLock<HashMap<(u16, String, u32), Arc<PointTransformer>>>>,
+    transformers: Arc<RwLock<HashMap<(u32, String, u32), Arc<PointTransformer>>>>,
     /// Fallback passthrough transformer
     passthrough: Arc<PointTransformer>,
 }
@@ -96,7 +96,7 @@ impl RuntimeConfigProvider {
     }
 
     /// Clear all transformers for a specific channel (for hot reload)
-    pub async fn clear_channel_config(&self, channel_id: u16) {
+    pub async fn clear_channel_config(&self, channel_id: u32) {
         let mut transformers = self.transformers.write().await;
         transformers.retain(|(ch_id, _, _), _| *ch_id != channel_id);
 
@@ -151,7 +151,7 @@ impl RuntimeConfigProvider {
     /// Arc to point transformer (returns PassthroughTransformer if not found)
     pub fn get_transformer(
         &self,
-        channel_id: u16,
+        channel_id: u32,
         telemetry_type: &FourRemote,
         point_id: u32,
     ) -> Arc<PointTransformer> {

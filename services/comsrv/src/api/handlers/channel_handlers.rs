@@ -94,7 +94,7 @@ pub async fn get_all_channels(
     let mut all_channels = Vec::new();
 
     for (channel_id_i64, name, protocol, enabled, config_str) in db_channels {
-        let channel_id = channel_id_i64 as u16;
+        let channel_id = channel_id_i64 as u32;
 
         // Extract description from config JSON
         let description = config_str
@@ -200,7 +200,7 @@ pub async fn get_channel_status(
     Path(id): Path<String>,
 ) -> Result<Json<SuccessResponse<ChannelStatus>>, AppError> {
     let id_u16 = id
-        .parse::<u16>()
+        .parse::<u32>()
         .map_err(|_| AppError::bad_request(format!("Invalid channel ID format: {}", id)))?;
     let manager = state.channel_manager.read().await;
 
@@ -287,7 +287,7 @@ pub async fn get_channel_detail_handler(
     Path(id): Path<String>,
 ) -> Result<Json<SuccessResponse<ChannelDetail>>, AppError> {
     let id_u16 = id
-        .parse::<u16>()
+        .parse::<u32>()
         .map_err(|_| AppError::bad_request(format!("Invalid channel ID format: {}", id)))?;
 
     let (name, protocol, enabled, description, parameters, logging_config) = if let Ok(row) =
@@ -474,7 +474,7 @@ pub async fn search_channels(
     let list: Vec<serde_json::Value> = channels
         .iter()
         .map(|(id, name, protocol, enabled, config_str)| {
-            let channel_id = *id as u16;
+            let channel_id = *id as u32;
 
             // Extract description from config JSON
             let description = config_str

@@ -115,7 +115,7 @@ impl ConfigManager {
     }
 
     /// Get channel configuration by ID
-    pub fn get_channel(&self, channel_id: u16) -> Option<&ChannelConfig> {
+    pub fn get_channel(&self, channel_id: u32) -> Option<&ChannelConfig> {
         self.config.channels.iter().find(|c| c.id() == channel_id)
     }
 
@@ -370,7 +370,7 @@ mod tests {
         assert_eq!(manager.channel_count(), 3);
 
         // Verify channel details
-        let channel_ids: Vec<u16> = manager.channels().iter().map(|c| c.id()).collect();
+        let channel_ids: Vec<u32> = manager.channels().iter().map(|c| c.id()).collect();
         assert!(channel_ids.contains(&1001));
         assert!(channel_ids.contains(&1002));
         assert!(channel_ids.contains(&1003));

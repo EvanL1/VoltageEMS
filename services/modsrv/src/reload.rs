@@ -39,16 +39,16 @@ impl<R: Rtdb + 'static> ReloadableService for InstanceManager<R> {
         // 1. Load all instances from SQLite
         let db_instances = self.list_instances(None).await?;
 
-        let db_ids: std::collections::HashSet<u16> =
+        let db_ids: std::collections::HashSet<u32> =
             db_instances.iter().map(|inst| inst.instance_id()).collect();
 
         // 2. Get all instance IDs from Redis by scanning inst:*:name keys
         let redis_ids = Self::get_redis_instance_ids(&self.rtdb).await?;
 
         // 3. Determine changes
-        let to_add: Vec<u16> = db_ids.difference(&redis_ids).copied().collect();
-        let to_remove: Vec<u16> = redis_ids.difference(&db_ids).copied().collect();
-        let to_update: Vec<u16> = db_ids.intersection(&redis_ids).copied().collect();
+        let to_add: Vec<u32> = db_ids.difference(&redis_ids).copied().collect();
+        let to_remove: Vec<u32> = redis_ids.difference(&db_ids).copied().collect();
+        let to_update: Vec<u32> = db_ids.intersection(&redis_ids).copied().collect();
 
         let mut added = Vec::new();
         let mut updated = Vec::new();
@@ -166,7 +166,7 @@ impl<R: Rtdb + 'static> ReloadableService for InstanceManager<R> {
 
 impl<R: Rtdb + 'static> InstanceManager<R> {
     /// Get all instance IDs from Redis by scanning inst:*:name keys
-    async fn get_redis_instance_ids(rtdb: &Arc<R>) -> Result<std::collections::HashSet<u16>> {
+    async fn get_redis_instance_ids(rtdb: &Arc<R>) -> Result<std::collections::HashSet<u32>> {
         // Scan for all inst:*:name keys
         let pattern = "inst:*:name";
         let keys = rtdb.scan_match(pattern).await?;
@@ -179,7 +179,7 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
                 .strip_prefix("inst:")
                 .and_then(|s| s.strip_suffix(":name"))
             {
-                if let Ok(id) = id_str.parse::<u16>() {
+                if let Ok(id) = id_str.parse::<u32>() {
                     instance_ids.insert(id);
                 } else {
                     warn!("Invalid ID in key: {}", key);
@@ -216,7 +216,7 @@ mod tests {
         assert_eq!(instance.product_name(), "pv_inverter");
     }
 
-    fn create_test_instance(id: u16, name: &str, product: &str) -> Instance {
+    fn create_test_instance(id: u32, name: &str, product: &str) -> Instance {
         Instance {
             core: voltage_config::modsrv::InstanceCore {
                 instance_id: id,

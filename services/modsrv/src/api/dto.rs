@@ -120,7 +120,7 @@ fn default_enabled() -> bool {
 #[derive(Debug, Clone, Deserialize, Serialize, ToSchema)]
 pub struct CreateInstanceDto {
     #[schema(example = 1)]
-    pub instance_id: Option<u16>, // Optional - auto-generated if not provided
+    pub instance_id: Option<u32>, // Optional - auto-generated if not provided
     #[schema(example = "pv_inverter_01")]
     pub instance_name: String, // Instance name for Redis keys
     #[schema(example = "pv_inverter")]

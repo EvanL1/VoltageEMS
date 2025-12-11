@@ -116,7 +116,7 @@ impl ConfigExporter {
 
         // Export protocol mappings for each channel
         for channel in &channels {
-            let channel_mappings = self.export_channel_mappings(channel.id() as u32).await?;
+            let channel_mappings = self.export_channel_mappings(channel.id()).await?;
             if !channel_mappings.is_empty() {
                 for (mapping_type, mappings) in channel_mappings {
                     let mapping_dir = output_dir.join(format!("{}/mapping", channel.id()));
@@ -248,7 +248,7 @@ impl ConfigExporter {
             .await?;
 
         for row in rows {
-            let channel_id: i64 = row.try_get("channel_id")?;
+            let channel_id: u32 = row.try_get("channel_id")?;
             let name: String = row.try_get("name")?;
             let protocol: Option<String> = row.try_get("protocol")?;
             let enabled: bool = row.try_get("enabled")?;
@@ -256,7 +256,7 @@ impl ConfigExporter {
 
             let mut channel = ChannelConfig {
                 core: voltage_config::comsrv::ChannelCore {
-                    id: channel_id as u16,
+                    id: channel_id,
                     name,
                     description: None,
                     protocol: protocol.unwrap_or_else(|| "virtual".to_string()),

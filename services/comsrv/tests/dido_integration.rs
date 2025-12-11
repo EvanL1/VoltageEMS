@@ -130,7 +130,7 @@ impl Default for TempGpioFs {
 }
 
 /// Create RuntimeChannelConfig for testing
-fn create_test_config(id: u16, gpio_base_path: &str) -> RuntimeChannelConfig {
+fn create_test_config(id: u32, gpio_base_path: &str) -> RuntimeChannelConfig {
     let mut parameters = HashMap::new();
     parameters.insert(
         "gpio_base_path".to_string(),

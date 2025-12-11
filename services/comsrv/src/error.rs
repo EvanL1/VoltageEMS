@@ -92,7 +92,7 @@ pub enum ComSrvError {
 
     /// Channel already exists
     #[error("Channel already exists: {0}")]
-    ChannelExists(u16),
+    ChannelExists(u32),
 
     /// Batch operation failed
     #[error("Batch operation failed: {0}")]

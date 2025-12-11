@@ -28,7 +28,7 @@ use voltage_config::comsrv::ChannelRedisKeys;
     get,
     path = "/api/channels/{channel_id}/{telemetry_type}/{point_id}",
     params(
-        ("channel_id" = u16, Path, description = "Channel identifier"),
+        ("channel_id" = u32, Path, description = "Channel identifier"),
         ("telemetry_type" = String, Path, description = "Point type: T, S, C, or A"),
         ("point_id" = u32, Path, description = "Point identifier")
     ),
@@ -51,7 +51,7 @@ use voltage_config::comsrv::ChannelRedisKeys;
 )]
 pub async fn get_point_info_handler(
     State(state): State<AppState>,
-    Path((channel_id, telemetry_type, point_id)): Path<(u16, String, u32)>,
+    Path((channel_id, telemetry_type, point_id)): Path<(u32, String, u32)>,
 ) -> Result<Json<SuccessResponse<serde_json::Value>>, AppError> {
     let telemetry_type_upper = telemetry_type.to_ascii_uppercase();
     if !matches!(telemetry_type_upper.as_str(), "T" | "S" | "C" | "A") {
@@ -123,7 +123,7 @@ pub async fn get_point_info_handler(
     get,
     path = "/api/channels/{id}/points",
     params(
-        ("id" = u16, Path, description = "Channel identifier"),
+        ("id" = u32, Path, description = "Channel identifier"),
         ("type" = Option<String>, Query, description = "Point type filter: T (telemetry), S (signal), C (control), A (adjustment)")
     ),
     responses(
@@ -161,7 +161,7 @@ pub async fn get_point_info_handler(
     tag = "comsrv"
 )]
 pub async fn get_channel_points_handler(
-    Path(channel_id): Path<u16>,
+    Path(channel_id): Path<u32>,
     Query(params): Query<std::collections::HashMap<String, String>>,
     State(state): State<AppState>,
 ) -> Result<Json<SuccessResponse<crate::dto::GroupedPoints>>, AppError> {
@@ -415,7 +415,7 @@ pub async fn get_channel_points_handler(
     get,
     path = "/api/channels/{channel_id}/{type}/points/{point_id}/mapping",
     params(
-        ("channel_id" = u16, Path, description = "Channel identifier"),
+        ("channel_id" = u32, Path, description = "Channel identifier"),
         ("type" = String, Path, description = "Four-remote type: T(Telemetry), S(Signal), C(Control), A(Adjustment)"),
         ("point_id" = u32, Path, description = "Point identifier")
     ),
@@ -427,7 +427,7 @@ pub async fn get_channel_points_handler(
     tag = "comsrv"
 )]
 pub async fn get_point_mapping_with_type_handler(
-    Path((channel_id, point_type, point_id)): Path<(u16, String, u32)>,
+    Path((channel_id, point_type, point_id)): Path<(u32, String, u32)>,
     State(state): State<AppState>,
 ) -> Result<Json<SuccessResponse<crate::dto::PointMappingDetail>>, AppError> {
     // 1. Validate and map four-remote type to table name
@@ -522,7 +522,7 @@ use voltage_config::comsrv::TelemetryPoint;
 #[derive(Debug, Clone, serde::Serialize, utoipa::ToSchema)]
 pub struct PointCrudResult {
     #[schema(example = 1)]
-    pub channel_id: u16,
+    pub channel_id: u32,
 
     /// Point type: T (Telemetry), S (Signal), C (Control), A (Adjustment)
     #[schema(example = "T")]
@@ -692,7 +692,7 @@ pub struct PointBatchError {
     post,
     path = "/api/channels/{channel_id}/T/points/{point_id}",
     params(
-        ("channel_id" = u16, Path, description = "Channel identifier"),
+        ("channel_id" = u32, Path, description = "Channel identifier"),
         ("point_id" = u32, Path, description = "Point identifier"),
         ("auto_reload" = bool, Query, description = "Auto-reload channel after creation (default: true)")
     ),
@@ -705,7 +705,7 @@ pub struct PointBatchError {
     tag = "comsrv"
 )]
 pub async fn create_telemetry_point_handler(
-    Path((channel_id, point_id)): Path<(u16, u32)>,
+    Path((channel_id, point_id)): Path<(u32, u32)>,
     State(state): State<AppState>,
     Query(reload_query): Query<crate::dto::AutoReloadQuery>,
     Json(payload): Json<serde_json::Value>,
@@ -770,7 +770,7 @@ pub async fn create_telemetry_point_handler(
     post,
     path = "/api/channels/{channel_id}/S/points/{point_id}",
     params(
-        ("channel_id" = u16, Path, description = "Channel identifier"),
+        ("channel_id" = u32, Path, description = "Channel identifier"),
         ("point_id" = u32, Path, description = "Point identifier"),
         ("auto_reload" = bool, Query, description = "Auto-reload channel after creation (default: true)")
     ),
@@ -783,7 +783,7 @@ pub async fn create_telemetry_point_handler(
     tag = "comsrv"
 )]
 pub async fn create_signal_point_handler(
-    Path((channel_id, point_id)): Path<(u16, u32)>,
+    Path((channel_id, point_id)): Path<(u32, u32)>,
     State(state): State<AppState>,
     Query(reload_query): Query<crate::dto::AutoReloadQuery>,
     Json(payload): Json<serde_json::Value>,
@@ -882,7 +882,7 @@ pub async fn create_signal_point_handler(
     post,
     path = "/api/channels/{channel_id}/C/points/{point_id}",
     params(
-        ("channel_id" = u16, Path, description = "Channel identifier"),
+        ("channel_id" = u32, Path, description = "Channel identifier"),
         ("point_id" = u32, Path, description = "Point identifier"),
         ("auto_reload" = bool, Query, description = "Auto-reload channel after creation (default: true)")
     ),
@@ -895,7 +895,7 @@ pub async fn create_signal_point_handler(
     tag = "comsrv"
 )]
 pub async fn create_control_point_handler(
-    Path((channel_id, point_id)): Path<(u16, u32)>,
+    Path((channel_id, point_id)): Path<(u32, u32)>,
     State(state): State<AppState>,
     Query(reload_query): Query<crate::dto::AutoReloadQuery>,
     Json(payload): Json<serde_json::Value>,
@@ -989,7 +989,7 @@ pub async fn create_control_point_handler(
     post,
     path = "/api/channels/{channel_id}/A/points/{point_id}",
     params(
-        ("channel_id" = u16, Path, description = "Channel identifier"),
+        ("channel_id" = u32, Path, description = "Channel identifier"),
         ("point_id" = u32, Path, description = "Point identifier"),
         ("auto_reload" = bool, Query, description = "Auto-reload channel after creation (default: true)")
     ),
@@ -1002,7 +1002,7 @@ pub async fn create_control_point_handler(
     tag = "comsrv"
 )]
 pub async fn create_adjustment_point_handler(
-    Path((channel_id, point_id)): Path<(u16, u32)>,
+    Path((channel_id, point_id)): Path<(u32, u32)>,
     State(state): State<AppState>,
     Query(reload_query): Query<crate::dto::AutoReloadQuery>,
     Json(payload): Json<serde_json::Value>,
@@ -1100,7 +1100,7 @@ pub async fn create_adjustment_point_handler(
 // ----------------------------------------------------------------------------
 
 /// Validate that a channel exists
-async fn validate_channel_exists(pool: &sqlx::SqlitePool, channel_id: u16) -> Result<(), AppError> {
+async fn validate_channel_exists(pool: &sqlx::SqlitePool, channel_id: u32) -> Result<(), AppError> {
     let exists: Option<(i64,)> =
         sqlx::query_as("SELECT channel_id FROM channels WHERE channel_id = ?")
             .bind(channel_id as i64)
@@ -1124,7 +1124,7 @@ async fn validate_channel_exists(pool: &sqlx::SqlitePool, channel_id: u16) -> Re
 /// Validate that a point ID is unique within a channel
 async fn validate_point_uniqueness(
     pool: &sqlx::SqlitePool,
-    channel_id: u16,
+    channel_id: u32,
     table: &str,
     point_id: u32,
 ) -> Result<(), AppError> {
@@ -1237,7 +1237,7 @@ pub struct PointUpdateRequest {
     put,
     path = "/api/channels/{channel_id}/{type}/points/{point_id}",
     params(
-        ("channel_id" = u16, Path, description = "Channel identifier"),
+        ("channel_id" = u32, Path, description = "Channel identifier"),
         ("type" = String, Path, description = "Point type: T, S, C, or A"),
         ("point_id" = u32, Path, description = "Point identifier"),
         ("auto_reload" = bool, Query, description = "Auto-reload channel after update (default: true)")
@@ -1304,7 +1304,7 @@ pub struct PointUpdateRequest {
     tag = "comsrv"
 )]
 pub async fn update_point_handler(
-    Path((channel_id, point_type, point_id)): Path<(u16, String, u32)>,
+    Path((channel_id, point_type, point_id)): Path<(u32, String, u32)>,
     State(state): State<AppState>,
     Query(reload_query): Query<crate::dto::AutoReloadQuery>,
     Json(update): Json<PointUpdateRequest>,
@@ -1456,7 +1456,7 @@ pub async fn update_point_handler(
     get,
     path = "/api/channels/{channel_id}/{type}/points/{point_id}/config",
     params(
-        ("channel_id" = u16, Path, description = "Channel identifier"),
+        ("channel_id" = u32, Path, description = "Channel identifier"),
         ("type" = String, Path, description = "Point type: T, S, C, or A"),
         ("point_id" = u32, Path, description = "Point identifier")
     ),
@@ -1468,7 +1468,7 @@ pub async fn update_point_handler(
     tag = "comsrv"
 )]
 pub async fn get_point_config_handler(
-    Path((channel_id, point_type, point_id)): Path<(u16, String, u32)>,
+    Path((channel_id, point_type, point_id)): Path<(u32, String, u32)>,
     State(state): State<AppState>,
 ) -> Result<Json<SuccessResponse<crate::dto::PointDefinition>>, AppError> {
     let point_type_upper = point_type.to_ascii_uppercase();
@@ -1594,7 +1594,7 @@ pub async fn get_point_config_handler(
 
 /// Get telemetry point configuration (wrapper for literal /T/ route)
 pub async fn get_telemetry_point_config_handler(
-    Path((channel_id, point_id)): Path<(u16, u32)>,
+    Path((channel_id, point_id)): Path<(u32, u32)>,
     State(state): State<AppState>,
 ) -> Result<Json<SuccessResponse<crate::dto::PointDefinition>>, AppError> {
     get_point_config_handler(Path((channel_id, "T".to_string(), point_id)), State(state)).await
@@ -1602,7 +1602,7 @@ pub async fn get_telemetry_point_config_handler(
 
 /// Get signal point configuration (wrapper for literal /S/ route)
 pub async fn get_signal_point_config_handler(
-    Path((channel_id, point_id)): Path<(u16, u32)>,
+    Path((channel_id, point_id)): Path<(u32, u32)>,
     State(state): State<AppState>,
 ) -> Result<Json<SuccessResponse<crate::dto::PointDefinition>>, AppError> {
     get_point_config_handler(Path((channel_id, "S".to_string(), point_id)), State(state)).await
@@ -1610,7 +1610,7 @@ pub async fn get_signal_point_config_handler(
 
 /// Get control point configuration (wrapper for literal /C/ route)
 pub async fn get_control_point_config_handler(
-    Path((channel_id, point_id)): Path<(u16, u32)>,
+    Path((channel_id, point_id)): Path<(u32, u32)>,
     State(state): State<AppState>,
 ) -> Result<Json<SuccessResponse<crate::dto::PointDefinition>>, AppError> {
     get_point_config_handler(Path((channel_id, "C".to_string(), point_id)), State(state)).await
@@ -1618,7 +1618,7 @@ pub async fn get_control_point_config_handler(
 
 /// Get adjustment point configuration (wrapper for literal /A/ route)
 pub async fn get_adjustment_point_config_handler(
-    Path((channel_id, point_id)): Path<(u16, u32)>,
+    Path((channel_id, point_id)): Path<(u32, u32)>,
     State(state): State<AppState>,
 ) -> Result<Json<SuccessResponse<crate::dto::PointDefinition>>, AppError> {
     get_point_config_handler(Path((channel_id, "A".to_string(), point_id)), State(state)).await
@@ -1640,7 +1640,7 @@ pub async fn get_adjustment_point_config_handler(
     delete,
     path = "/api/channels/{channel_id}/{type}/points/{point_id}",
     params(
-        ("channel_id" = u16, Path, description = "Channel identifier"),
+        ("channel_id" = u32, Path, description = "Channel identifier"),
         ("type" = String, Path, description = "Point type: T, S, C, or A"),
         ("point_id" = u32, Path, description = "Point identifier"),
         ("auto_reload" = bool, Query, description = "Auto-reload channel after deletion (default: true)")
@@ -1653,7 +1653,7 @@ pub async fn get_adjustment_point_config_handler(
     tag = "comsrv"
 )]
 pub async fn delete_point_handler(
-    Path((channel_id, point_type, point_id)): Path<(u16, String, u32)>,
+    Path((channel_id, point_type, point_id)): Path<(u32, String, u32)>,
     State(state): State<AppState>,
     Query(reload_query): Query<crate::dto::AutoReloadQuery>,
 ) -> Result<Json<SuccessResponse<PointCrudResult>>, AppError> {
@@ -1772,7 +1772,7 @@ pub async fn delete_point_handler(
 
 /// Update telemetry point (wrapper for literal /T/ route)
 pub async fn update_telemetry_point_handler(
-    Path((channel_id, point_id)): Path<(u16, u32)>,
+    Path((channel_id, point_id)): Path<(u32, u32)>,
     State(state): State<AppState>,
     Query(reload_query): Query<crate::dto::AutoReloadQuery>,
     Json(update): Json<PointUpdateRequest>,
@@ -1788,7 +1788,7 @@ pub async fn update_telemetry_point_handler(
 
 /// Update signal point (wrapper for literal /S/ route)
 pub async fn update_signal_point_handler(
-    Path((channel_id, point_id)): Path<(u16, u32)>,
+    Path((channel_id, point_id)): Path<(u32, u32)>,
     State(state): State<AppState>,
     Query(reload_query): Query<crate::dto::AutoReloadQuery>,
     Json(update): Json<PointUpdateRequest>,
@@ -1804,7 +1804,7 @@ pub async fn update_signal_point_handler(
 
 /// Update control point (wrapper for literal /C/ route)
 pub async fn update_control_point_handler(
-    Path((channel_id, point_id)): Path<(u16, u32)>,
+    Path((channel_id, point_id)): Path<(u32, u32)>,
     State(state): State<AppState>,
     Query(reload_query): Query<crate::dto::AutoReloadQuery>,
     Json(update): Json<PointUpdateRequest>,
@@ -1820,7 +1820,7 @@ pub async fn update_control_point_handler(
 
 /// Update adjustment point (wrapper for literal /A/ route)
 pub async fn update_adjustment_point_handler(
-    Path((channel_id, point_id)): Path<(u16, u32)>,
+    Path((channel_id, point_id)): Path<(u32, u32)>,
     State(state): State<AppState>,
     Query(reload_query): Query<crate::dto::AutoReloadQuery>,
     Json(update): Json<PointUpdateRequest>,
@@ -1840,7 +1840,7 @@ pub async fn update_adjustment_point_handler(
 
 /// Delete telemetry point (wrapper for literal /T/ route)
 pub async fn delete_telemetry_point_handler(
-    Path((channel_id, point_id)): Path<(u16, u32)>,
+    Path((channel_id, point_id)): Path<(u32, u32)>,
     State(state): State<AppState>,
     Query(reload_query): Query<crate::dto::AutoReloadQuery>,
 ) -> Result<Json<SuccessResponse<PointCrudResult>>, AppError> {
@@ -1854,7 +1854,7 @@ pub async fn delete_telemetry_point_handler(
 
 /// Delete signal point (wrapper for literal /S/ route)
 pub async fn delete_signal_point_handler(
-    Path((channel_id, point_id)): Path<(u16, u32)>,
+    Path((channel_id, point_id)): Path<(u32, u32)>,
     State(state): State<AppState>,
     Query(reload_query): Query<crate::dto::AutoReloadQuery>,
 ) -> Result<Json<SuccessResponse<PointCrudResult>>, AppError> {
@@ -1868,7 +1868,7 @@ pub async fn delete_signal_point_handler(
 
 /// Delete control point (wrapper for literal /C/ route)
 pub async fn delete_control_point_handler(
-    Path((channel_id, point_id)): Path<(u16, u32)>,
+    Path((channel_id, point_id)): Path<(u32, u32)>,
     State(state): State<AppState>,
     Query(reload_query): Query<crate::dto::AutoReloadQuery>,
 ) -> Result<Json<SuccessResponse<PointCrudResult>>, AppError> {
@@ -1882,7 +1882,7 @@ pub async fn delete_control_point_handler(
 
 /// Delete adjustment point (wrapper for literal /A/ route)
 pub async fn delete_adjustment_point_handler(
-    Path((channel_id, point_id)): Path<(u16, u32)>,
+    Path((channel_id, point_id)): Path<(u32, u32)>,
     State(state): State<AppState>,
     Query(reload_query): Query<crate::dto::AutoReloadQuery>,
 ) -> Result<Json<SuccessResponse<PointCrudResult>>, AppError> {
@@ -1916,7 +1916,7 @@ pub async fn delete_adjustment_point_handler(
     get,
     path = "/api/channels/{id}/unmapped-points",
     params(
-        ("id" = u16, Path, description = "Channel identifier"),
+        ("id" = u32, Path, description = "Channel identifier"),
         ("type" = Option<String>, Query, description = "Point type filter: T (telemetry), S (signal), C (control), A (adjustment)")
     ),
     responses(
@@ -1947,7 +1947,7 @@ pub async fn delete_adjustment_point_handler(
     tag = "comsrv"
 )]
 pub async fn get_unmapped_points_handler(
-    Path(channel_id): Path<u16>,
+    Path(channel_id): Path<u32>,
     Query(params): Query<std::collections::HashMap<String, String>>,
     State(state): State<AppState>,
 ) -> Result<Json<SuccessResponse<crate::dto::GroupedPoints>>, AppError> {
@@ -2209,7 +2209,7 @@ pub async fn get_unmapped_points_handler(
     post,
     path = "/api/channels/{channel_id}/points/batch",
     params(
-        ("channel_id" = u16, Path, description = "Channel identifier"),
+        ("channel_id" = u32, Path, description = "Channel identifier"),
         ("auto_reload" = bool, Query, description = "Auto-reload channel after batch operations (default: true)")
     ),
     request_body(
@@ -2414,7 +2414,7 @@ pub async fn get_unmapped_points_handler(
     tag = "comsrv"
 )]
 pub async fn batch_point_operations_handler(
-    Path(channel_id): Path<u16>,
+    Path(channel_id): Path<u32>,
     State(state): State<AppState>,
     Query(reload_query): Query<crate::dto::AutoReloadQuery>,
     Json(request): Json<PointBatchRequest>,
@@ -2526,7 +2526,7 @@ pub async fn batch_point_operations_handler(
 
 /// Process single create operation
 async fn process_create_operation(
-    channel_id: u16,
+    channel_id: u32,
     item: &PointBatchCreateItem,
     state: &AppState,
 ) -> Result<(), String> {
@@ -2689,7 +2689,7 @@ async fn process_create_operation(
 
 /// Process single update operation (reuse existing handler logic)
 async fn process_update_operation(
-    channel_id: u16,
+    channel_id: u32,
     item: &PointBatchUpdateItem,
     state: &AppState,
 ) -> Result<(), String> {
@@ -2709,7 +2709,7 @@ async fn process_update_operation(
 
 /// Process single delete operation (reuse existing handler logic)
 async fn process_delete_operation(
-    channel_id: u16,
+    channel_id: u32,
     item: &PointBatchDeleteItem,
     state: &AppState,
 ) -> Result<(), String> {
@@ -2747,7 +2747,7 @@ async fn process_delete_operation(
 /// ## Implementation
 /// Uses `tokio::spawn` for async execution to avoid blocking the API response.
 pub(crate) async fn trigger_channel_reload_if_needed(
-    channel_id: u16,
+    channel_id: u32,
     state: &AppState,
     auto_reload: bool,
 ) {
@@ -2774,7 +2774,7 @@ pub(crate) async fn trigger_channel_reload_if_needed(
 /// Perform channel reload (load config from SQLite and hot-reload)
 ///
 /// This is an internal helper function that performs the actual reload logic.
-async fn perform_channel_reload(channel_id: u16, state: &AppState) -> anyhow::Result<()> {
+async fn perform_channel_reload(channel_id: u32, state: &AppState) -> anyhow::Result<()> {
     use crate::core::channels::channel_manager::ChannelManager;
 
     // 1. Load channel configuration from SQLite

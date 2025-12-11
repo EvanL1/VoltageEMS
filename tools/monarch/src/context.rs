@@ -311,7 +311,7 @@ async fn load_routing_maps_from_sqlite(
     let mut m2c_map = std::collections::HashMap::new();
 
     // Fetch all enabled measurement routing (C2M - uplink)
-    let measurement_routing = sqlx::query_as::<_, (u16, String, i32, String, u32, u32)>(
+    let measurement_routing = sqlx::query_as::<_, (u32, String, u32, String, u32, u32)>(
         r#"
         SELECT
             instance_id, instance_name, channel_id, channel_type, channel_point_id,
@@ -333,7 +333,7 @@ async fn load_routing_maps_from_sqlite(
         // Build routing keys (no prefix for hash fields)
         // From: channel_id:type:point_id → To: instance_id:M:point_id
         let from_key =
-            keyspace.c2m_route_key(channel_id as u16, point_type, &channel_point_id.to_string());
+            keyspace.c2m_route_key(channel_id, point_type, &channel_point_id.to_string());
         // Note: Target uses "M" (Measurement role), not a PointType enum
         let to_key = format!("{}:M:{}", instance_id, measurement_id);
 
@@ -341,7 +341,7 @@ async fn load_routing_maps_from_sqlite(
     }
 
     // Fetch all enabled action routing (M2C - downlink)
-    let action_routing = sqlx::query_as::<_, (u16, String, u32, i32, String, u32)>(
+    let action_routing = sqlx::query_as::<_, (u32, String, u32, u32, String, u32)>(
         r#"
         SELECT
             instance_id, instance_name, action_id, channel_id, channel_type,
@@ -363,8 +363,7 @@ async fn load_routing_maps_from_sqlite(
         // Build routing keys
         // From: instance_id:A:point_id → To: channel_id:type:point_id
         let from_key = format!("{}:A:{}", instance_id, action_id);
-        let to_key =
-            keyspace.m2c_route_key(channel_id as u32, point_type, &channel_point_id.to_string());
+        let to_key = keyspace.m2c_route_key(channel_id, point_type, &channel_point_id.to_string());
 
         m2c_map.insert(from_key, to_key.to_string());
     }

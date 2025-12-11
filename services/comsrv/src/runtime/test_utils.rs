@@ -102,7 +102,7 @@ pub async fn setup_c2m_routing(
 #[allow(clippy::disallowed_methods)] // Test utility - unwrap is acceptable for test data conversion
 pub async fn assert_channel_value(
     rtdb: &dyn Rtdb,
-    channel_id: u16,
+    channel_id: u32,
     point_type: &str,
     point_id: u32,
     expected_value: f64,

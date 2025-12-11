@@ -26,7 +26,7 @@ impl ComsrvCleanupProvider {
 impl CleanupProvider for ComsrvCleanupProvider {
     async fn get_valid_ids(&self) -> Result<HashSet<String>> {
         let channels =
-            sqlx::query_as::<_, (u16,)>("SELECT channel_id FROM channels WHERE enabled = 1")
+            sqlx::query_as::<_, (u32,)>("SELECT channel_id FROM channels WHERE enabled = 1")
                 .fetch_all(&self.db)
                 .await?;
 
@@ -86,7 +86,7 @@ impl CleanupProvider for ComsrvCleanupProvider {
         };
 
         // Query database for valid point IDs for this channel
-        let channel_id: u16 = entity_id
+        let channel_id: u32 = entity_id
             .parse()
             .map_err(|e| anyhow::anyhow!("Invalid channel_id: {}", e))?;
 

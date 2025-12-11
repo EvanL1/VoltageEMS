@@ -90,7 +90,7 @@ struct GpioMappingValidator {
     tag = "comsrv"
 )]
 pub async fn get_channel_mappings_handler(
-    Path(channel_id): Path<u16>,
+    Path(channel_id): Path<u32>,
     State(state): State<AppState>,
 ) -> Result<Json<SuccessResponse<crate::dto::GroupedMappings>>, AppError> {
     // 1. Verify channel exists
@@ -488,7 +488,7 @@ pub async fn get_channel_mappings_handler(
     tag = "comsrv"
 )]
 pub async fn update_channel_mappings_handler(
-    Path(channel_id): Path<u16>,
+    Path(channel_id): Path<u32>,
     State(state): State<AppState>,
     Query(reload_query): Query<crate::dto::AutoReloadQuery>,
     Json(mut req): Json<crate::dto::MappingBatchUpdateRequest>,

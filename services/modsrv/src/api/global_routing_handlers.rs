@@ -25,9 +25,9 @@ pub struct ConfirmQuery {
 #[derive(Debug, Serialize)]
 struct RoutingEntry {
     routing_id: i64,
-    instance_id: u16,
+    instance_id: u32,
     instance_name: String,
-    channel_id: u16,
+    channel_id: u32,
     channel_type: String,
     channel_point_id: u32,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -64,7 +64,7 @@ pub async fn get_all_routing_handler(
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<SuccessResponse<Value>>, ModSrvError> {
     // Query measurement routing
-    let measurement_routing = sqlx::query_as::<_, (i64, u16, String, u16, String, u32, u32, bool)>(
+    let measurement_routing = sqlx::query_as::<_, (i64, u32, String, u32, String, u32, u32, bool)>(
         r#"
         SELECT routing_id, instance_id, instance_name, channel_id, channel_type,
                channel_point_id, measurement_point_id, enabled
@@ -79,7 +79,7 @@ pub async fn get_all_routing_handler(
     })?;
 
     // Query action routing
-    let action_routing = sqlx::query_as::<_, (i64, u16, String, u32, u16, String, u32, bool)>(
+    let action_routing = sqlx::query_as::<_, (i64, u32, String, u32, u32, String, u32, bool)>(
         r#"
         SELECT routing_id, instance_id, instance_name, action_point_id, channel_id, channel_type,
                channel_point_id, enabled
@@ -266,7 +266,7 @@ pub async fn delete_all_routing_handler(
 )]
 pub async fn get_routing_by_channel_handler(
     State(state): State<Arc<AppState>>,
-    Path(channel_id): Path<u16>,
+    Path(channel_id): Path<u32>,
 ) -> Result<Json<SuccessResponse<Value>>, ModSrvError> {
     // Query uplink routing (C2M)
     let uplink = sqlx::query_as::<_, (i64, u16, String, String, u32, u32, bool)>(
@@ -426,7 +426,7 @@ pub async fn delete_instance_routing_handler(
 )]
 pub async fn delete_channel_routing_handler(
     State(state): State<Arc<AppState>>,
-    Path(channel_id): Path<u16>,
+    Path(channel_id): Path<u32>,
 ) -> Result<Json<SuccessResponse<Value>>, ModSrvError> {
     let mut tx =
         state.instance_manager.pool.begin().await.map_err(|e| {

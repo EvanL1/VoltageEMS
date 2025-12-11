@@ -93,16 +93,16 @@ impl ReloadableService for ChannelManager {
                 .await?;
 
         // 2. Get runtime channel IDs
-        let runtime_ids: std::collections::HashSet<u16> =
+        let runtime_ids: std::collections::HashSet<u32> =
             self.get_channel_ids().into_iter().collect();
 
-        let db_ids: std::collections::HashSet<u16> =
-            db_channels.iter().map(|(id, _, _, _)| *id as u16).collect();
+        let db_ids: std::collections::HashSet<u32> =
+            db_channels.iter().map(|(id, _, _, _)| *id as u32).collect();
 
         // 3. Determine changes
-        let to_add: Vec<u16> = db_ids.difference(&runtime_ids).copied().collect();
-        let to_remove: Vec<u16> = runtime_ids.difference(&db_ids).copied().collect();
-        let to_update: Vec<u16> = db_ids.intersection(&runtime_ids).copied().collect();
+        let to_add: Vec<u32> = db_ids.difference(&runtime_ids).copied().collect();
+        let to_remove: Vec<u32> = runtime_ids.difference(&db_ids).copied().collect();
+        let to_update: Vec<u32> = db_ids.intersection(&runtime_ids).copied().collect();
 
         let mut added = Vec::new();
         let mut updated = Vec::new();
@@ -292,7 +292,7 @@ impl ChannelManager {
     /// Load channel configuration from SQLite database
     pub async fn load_channel_from_db(
         pool: &sqlx::SqlitePool,
-        channel_id: u16,
+        channel_id: u32,
     ) -> anyhow::Result<ChannelConfig> {
         // Load basic channel info
         let (name, protocol, enabled): (String, String, bool) =
@@ -424,7 +424,7 @@ mod tests {
     }
 
     fn create_test_config(
-        id: u16,
+        id: u32,
         name: &str,
         protocol: &str,
         host: &str,

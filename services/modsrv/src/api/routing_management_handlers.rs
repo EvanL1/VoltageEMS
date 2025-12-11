@@ -33,7 +33,7 @@ enum RoutingType {
 /// for the given instance's product.
 async fn determine_routing_type(
     pool: &SqlitePool,
-    instance_id: u16,
+    instance_id: u32,
     point_id: u32,
 ) -> Result<RoutingType, ModSrvError> {
     // Get product_name for the instance
@@ -121,7 +121,7 @@ async fn determine_routing_type(
 )]
 pub async fn create_instance_routing(
     State(state): State<Arc<AppState>>,
-    Path(id): Path<u16>,
+    Path(id): Path<u32>,
     Json(routing): Json<RoutingRequest>,
 ) -> Result<Json<SuccessResponse<serde_json::Value>>, ModSrvError> {
     // Validate instance exists
@@ -307,7 +307,7 @@ pub async fn create_instance_routing(
 )]
 pub async fn update_instance_routing(
     State(state): State<Arc<AppState>>,
-    Path(id): Path<u16>,
+    Path(id): Path<u32>,
     Json(routings): Json<Vec<RoutingRequest>>,
 ) -> Result<Json<SuccessResponse<serde_json::Value>>, ModSrvError> {
     // Begin transaction
@@ -529,7 +529,7 @@ pub async fn update_instance_routing(
 /// Delete all routings for an instance
 ///
 /// @route DELETE /api/instances/{id}/routing
-/// @input id: Path<u16> - Instance ID
+/// @input id: Path<u32> - Instance ID
 /// @output Json<SuccessResponse<serde_json::Value>> - Success status with deleted count
 /// @throws sqlx::Error - Database deletion error
 /// @redis-delete route:c2m - Removes all routings for instance
@@ -551,7 +551,7 @@ pub async fn update_instance_routing(
 )]
 pub async fn delete_instance_routing(
     State(state): State<Arc<AppState>>,
-    Path(id): Path<u16>,
+    Path(id): Path<u32>,
 ) -> Result<Json<SuccessResponse<serde_json::Value>>, ModSrvError> {
     match state.instance_manager.delete_all_routing(id).await {
         Ok((measurement_count, action_count)) => {
@@ -584,7 +584,7 @@ pub async fn delete_instance_routing(
 /// Validate routing for an instance
 ///
 /// @route POST /api/instances/{id}/routing/validate
-/// @input id: Path<u16> - Instance ID
+/// @input id: Path<u32> - Instance ID
 /// @input routings: Json<Vec<RoutingRequest>> - Routings to validate
 /// @output Json<SuccessResponse<serde_json::Value>> - Validation results for each routing
 /// @throws None - Validation errors are returned in response
@@ -612,7 +612,7 @@ pub async fn delete_instance_routing(
 )]
 pub async fn validate_instance_routing(
     State(state): State<Arc<AppState>>,
-    Path(id): Path<u16>,
+    Path(id): Path<u32>,
     Json(routings): Json<Vec<RoutingRequest>>,
 ) -> Result<Json<SuccessResponse<serde_json::Value>>, ModSrvError> {
     // Get instance name for validation
