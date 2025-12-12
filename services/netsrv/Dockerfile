@@ -1,5 +1,5 @@
-# 使用Python 3.10.12 slim镜像，支持aarch64
-FROM python:3.10.12-slim
+# 使用Python 3.11 slim镜像，支持aarch64
+FROM python:3.11-slim
 
 # 设置工作目录
 WORKDIR /app

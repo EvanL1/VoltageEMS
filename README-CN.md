@@ -1,7 +1,7 @@
 # VoltageEMS - 工业物联网能源管理系统
 
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![Rust](https://img.shields.io/badge/rust-1.75%2B-orange.svg)](https://www.rust-lang.org/)
+[![Rust](https://img.shields.io/badge/rust-1.90%2B-orange.svg)](https://www.rust-lang.org/)
 [![Docker](https://img.shields.io/badge/docker-ready-blue.svg)](https://www.docker.com/)
 
 [English Version](README.md)
@@ -68,7 +68,7 @@ VoltageEMS 是一个基于 Rust 微服务架构构建的高性能工业物联网
 
 ## 🛠️ 技术栈
 
-- **编程语言**: Rust 1.75+
+- **编程语言**: Rust 1.90+
 - **Web 框架**: Axum 0.8
 - **数据库**: Redis 8+, InfluxDB 2.x
 - **容器技术**: Docker, Docker Compose
@@ -79,7 +79,7 @@ VoltageEMS 是一个基于 Rust 微服务架构构建的高性能工业物联网
 
 ### 环境要求
 
-- Rust 1.75+ ([安装 Rust](https://rustup.rs/))
+- Rust 1.90+ ([安装 Rust](https://rustup.rs/))
 - Docker & Docker Compose
 - Redis 8+ (开发环境)
 
@@ -91,18 +91,13 @@ git clone https://github.com/your-org/VoltageEMS.git
 cd VoltageEMS
 ```
 
-2. 启动开发环境:
-```bash
-./scripts/dev.sh
-```
-
-3. 初始化配置:
+2. 初始化配置:
 ```bash
 cargo build --release -p monarch
 ./target/release/monarch init all && ./target/release/monarch sync all
 ```
 
-4. 运行特定服务:
+3. 运行特定服务:
 ```bash
 RUST_LOG=debug cargo run --bin comsrv
 ```

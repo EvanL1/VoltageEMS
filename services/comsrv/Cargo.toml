@@ -58,7 +58,6 @@ tower-http = { workspace = true }
 dashmap = { workspace = true }
 ahash = { workspace = true }
 bytes = { workspace = true }
-# prometheus = { workspace = true }  # Temporarily disabled for MUSL cross-compilation
 
 # Utils
 chrono = { workspace = true }

@@ -1,7 +1,7 @@
 # VoltageEMS - Industrial IoT Energy Management System
 
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![Rust](https://img.shields.io/badge/rust-1.85%2B-orange.svg)](https://www.rust-lang.org/)
+[![Rust](https://img.shields.io/badge/rust-1.90%2B-orange.svg)](https://www.rust-lang.org/)
 [![Docker](https://img.shields.io/badge/docker-ready-blue.svg)](https://www.docker.com/)
 
 [中文版本](README-CN.md)
@@ -98,7 +98,7 @@ Note: All services are defined in docker-compose.yml and can be started with `do
 
 ## 🛠️ Technology Stack
 
-- **Language**: Rust 1.85+
+- **Language**: Rust 1.90+
 - **Web Framework**: Axum
 - **Database**: Redis 8+, InfluxDB 2.x
 - **Container**: Docker, Docker Compose
@@ -109,7 +109,7 @@ Note: All services are defined in docker-compose.yml and can be started with `do
 
 ### Prerequisites
 
-- Rust 1.85+ ([Install Rust](https://rustup.rs/))
+- Rust 1.90+ ([Install Rust](https://rustup.rs/))
 - Docker & Docker Compose
 - Redis 8+ (for development)
 

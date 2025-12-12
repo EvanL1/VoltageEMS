@@ -16,7 +16,7 @@ httpx==0.25.2
 requests==2.31.0
 
 # 数据验证
-pydantic==2.5.0
+pydantic==2.5.3
 pydantic-settings==2.1.0
 
 # 安全认证
