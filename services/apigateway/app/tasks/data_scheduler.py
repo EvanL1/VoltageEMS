@@ -182,10 +182,11 @@ class DataScheduler:
         }
         """
         try:
-            rule_id = subscription.get("rule_id")
-            if not rule_id:
-                logger.warning(f"客户端 {client_id} 订阅了规则但未指定 rule_id")
+            # 从 channels 获取 rule_id（取消订阅时会清空 channels）
+            channels = subscription.get("channels", [])
+            if not channels:
                 return
+            rule_id = channels[0]
 
             redis = self.redis_client.redis_client
 
