@@ -84,9 +84,11 @@ impl AppState {
 
         // Channel queries and status
         crate::api::handlers::channel_handlers::get_all_channels,
+        crate::api::handlers::channel_handlers::list_channels,
         crate::api::handlers::channel_handlers::search_channels,
         crate::api::handlers::channel_handlers::get_channel_detail_handler,
         crate::api::handlers::channel_handlers::get_channel_status,
+        crate::api::handlers::channel_handlers::list_all_points,
 
         // Control operations
         crate::api::handlers::control_handlers::control_channel,
@@ -196,7 +198,9 @@ pub fn create_api_routes(
         .route("/api/status", get(get_service_status))
         // Channel management (CRUD)
         .route("/api/channels", get(get_all_channels).post(create_channel_handler))
+        .route("/api/channels/list", get(list_channels))
         .route("/api/channels/search", get(search_channels))
+        .route("/api/points", get(list_all_points))
         .route("/api/channels/{id}", get(get_channel_detail_handler).put(update_channel_handler).delete(delete_channel_handler))
         .route("/api/channels/{id}/status", get(get_channel_status))
         .route("/api/channels/{id}/control", post(control_channel))

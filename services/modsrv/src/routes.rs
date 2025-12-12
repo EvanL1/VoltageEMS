@@ -22,8 +22,8 @@ use crate::api::instance_management_handlers::{
     sync_all_instances, sync_instance_measurement, update_instance,
 };
 use crate::api::instance_query_handlers::{
-    get_instance, get_instance_data, get_instance_points, list_instances, search_instances,
-    set_instance_measurement,
+    get_instance, get_instance_data, get_instance_points, list_instances, list_instances_slim,
+    search_instances, set_instance_measurement,
 };
 
 // New global routing handlers (work with unified database)
@@ -53,6 +53,7 @@ use common::admin_api::{get_log_level, set_log_level};
 #[openapi(
     paths(
         crate::api::instance_query_handlers::list_instances,
+        crate::api::instance_query_handlers::list_instances_slim,
         crate::api::instance_query_handlers::search_instances,
         crate::api::instance_management_handlers::create_instance,
         crate::api::instance_query_handlers::get_instance,
@@ -131,6 +132,7 @@ pub fn create_routes(state: Arc<AppState>) -> Router {
         .route("/health", get(health_check))
         // Instance management API
         .route("/api/instances", get(list_instances).post(create_instance))
+        .route("/api/instances/list", get(list_instances_slim))
         .route("/api/instances/search", get(search_instances))
         .route(
             "/api/instances/{id}",

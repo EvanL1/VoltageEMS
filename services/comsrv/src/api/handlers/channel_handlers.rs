@@ -423,6 +423,10 @@ pub async fn get_channel_detail_handler(
 #[utoipa::path(
     get,
     path = "/api/channels/search",
+    params(
+        ("keyword" = Option<String>, Query, description = "Optional fuzzy keyword (legacy raw query also supported)"),
+        ("ids" = Option<String>, Query, description = "Optional channel id filter, comma-separated (e.g., ids=1,2,3)")
+    ),
     responses(
         (status = 200, description = "Matching channels", body = serde_json::Value,
             example = json!({
@@ -446,64 +450,313 @@ pub async fn search_channels(
     RawQuery(raw_query): RawQuery,
 ) -> Result<Json<SuccessResponse<serde_json::Value>>, AppError> {
     // raw_query is Option<String>:
-    // /search?modbus => Some("modbus")
-    // /search?       => Some("")
-    // /search        => None
-    let keyword = raw_query.unwrap_or_default();
+    // /search?modbus                 => Some("modbus")                (legacy keyword-only)
+    // /search?ids=1,2,3              => Some("ids=1,2,3")             (filter by ids)
+    // /search?keyword=modbus&ids=1,2 => Some("keyword=modbus&ids=1,2") (named params)
+    // /search?modbus&ids=1,2         => Some("modbus&ids=1,2")        (mixed legacy + ids)
+    // /search?                       => Some("")
+    // /search                        => None
+
+    fn parse_ids_param(value: &str) -> Vec<u32> {
+        value
+            .split(',')
+            .filter_map(|s| s.trim().parse::<u32>().ok())
+            .collect()
+    }
+
+    let raw = raw_query.unwrap_or_default();
+    let mut keyword = String::new();
+    let mut ids: Vec<u32> = Vec::new();
+
+    if raw.contains('=') || raw.contains('&') {
+        for part in raw.split('&') {
+            if let Some((k, v)) = part.split_once('=') {
+                match k {
+                    "ids" | "id" => ids.extend(parse_ids_param(v)),
+                    "keyword" | "q" => {
+                        if keyword.is_empty() {
+                            keyword = v.to_string();
+                        }
+                    },
+                    _ => {},
+                }
+            } else if keyword.is_empty() && !part.trim().is_empty() {
+                // Legacy keyword in mixed query
+                keyword = part.to_string();
+            }
+        }
+    } else {
+        keyword = raw;
+    }
+
     let like_pattern = format!("%{}%", keyword);
 
     // Query from SQLite
-    let channels: Vec<(i64, String, String, bool, Option<String>)> = sqlx::query_as(
+    let mut sql = String::from(
         r#"SELECT channel_id, name, protocol, enabled, config
            FROM channels
-           WHERE name LIKE ?
-           ORDER BY channel_id ASC"#,
-    )
-    .bind(&like_pattern)
-    .fetch_all(&state.sqlite_pool)
-    .await
-    .map_err(|e| {
-        tracing::error!("Search channels: {}", e);
-        AppError::internal_error(format!("Failed to search channels: {}", e))
-    })?;
+           WHERE name LIKE ?"#,
+    );
+    if !ids.is_empty() {
+        let placeholders = std::iter::repeat_n("?", ids.len())
+            .collect::<Vec<_>>()
+            .join(", ");
+        sql.push_str(&format!(" AND channel_id IN ({})", placeholders));
+    }
+    sql.push_str(" ORDER BY channel_id ASC");
+
+    let mut query =
+        sqlx::query_as::<_, (i64, String, String, bool, Option<String>)>(&sql).bind(&like_pattern);
+    for id in &ids {
+        query = query.bind(*id as i64);
+    }
+
+    let channels: Vec<(i64, String, String, bool, Option<String>)> =
+        query.fetch_all(&state.sqlite_pool).await.map_err(|e| {
+            tracing::error!("Search channels: {}", e);
+            AppError::internal_error(format!("Failed to search channels: {}", e))
+        })?;
 
     // Get runtime status for connected info
     let manager = state.channel_manager.read().await;
 
-    // Build response
-    let list: Vec<serde_json::Value> = channels
-        .iter()
-        .map(|(id, name, protocol, enabled, config_str)| {
-            let channel_id = *id as u32;
+    // Helper: fetch simplified point list (point_id + signal_name only)
+    async fn fetch_point_names(
+        pool: &sqlx::SqlitePool,
+        table: &str,
+        channel_id: i64,
+    ) -> Result<Vec<serde_json::Value>, sqlx::Error> {
+        let query = format!(
+            "SELECT point_id, signal_name FROM {} WHERE channel_id = ? ORDER BY point_id",
+            table
+        );
+        let rows: Vec<(u32, String)> = sqlx::query_as(&query)
+            .bind(channel_id)
+            .fetch_all(pool)
+            .await?;
 
-            // Extract description from config JSON
-            let description = config_str
-                .as_ref()
-                .and_then(|s| serde_json::from_str::<serde_json::Value>(s).ok())
-                .and_then(|v| {
-                    v.get("description")
-                        .and_then(|d| d.as_str())
-                        .map(String::from)
-                });
-
-            // Get runtime connected status
-            let connected = manager
-                .get_channel(channel_id)
-                .map(|_| true) // Channel exists in runtime = running
-                .unwrap_or(false);
-
-            serde_json::json!({
-                "id": id,
-                "name": name,
-                "description": description,
-                "protocol": protocol,
-                "enabled": enabled,
-                "connected": connected
+        Ok(rows
+            .into_iter()
+            .map(|(point_id, signal_name)| {
+                serde_json::json!({
+                    "point_id": point_id,
+                    "signal_name": signal_name
+                })
             })
-        })
+            .collect())
+    }
+
+    // Build response (with embedded point definitions)
+    let mut list: Vec<serde_json::Value> = Vec::with_capacity(channels.len());
+    for (id, name, protocol, enabled, config_str) in channels {
+        let channel_id = id as u32;
+
+        // Extract description from config JSON
+        let description = config_str
+            .as_ref()
+            .and_then(|s| serde_json::from_str::<serde_json::Value>(s).ok())
+            .and_then(|v| {
+                v.get("description")
+                    .and_then(|d| d.as_str())
+                    .map(String::from)
+            });
+
+        // Get runtime connected status
+        let connected = manager
+            .get_channel(channel_id)
+            .map(|_| true) // Channel exists in runtime = running
+            .unwrap_or(false);
+
+        let channel_id_i64 = id;
+        let telemetry_points =
+            fetch_point_names(&state.sqlite_pool, "telemetry_points", channel_id_i64)
+                .await
+                .map_err(|e| {
+                    tracing::error!("Fetch T points for channel {}: {}", channel_id, e);
+                    AppError::internal_error("Database operation failed")
+                })?;
+        let signal_points = fetch_point_names(&state.sqlite_pool, "signal_points", channel_id_i64)
+            .await
+            .map_err(|e| {
+                tracing::error!("Fetch S points for channel {}: {}", channel_id, e);
+                AppError::internal_error("Database operation failed")
+            })?;
+        let control_points =
+            fetch_point_names(&state.sqlite_pool, "control_points", channel_id_i64)
+                .await
+                .map_err(|e| {
+                    tracing::error!("Fetch C points for channel {}: {}", channel_id, e);
+                    AppError::internal_error("Database operation failed")
+                })?;
+        let adjustment_points =
+            fetch_point_names(&state.sqlite_pool, "adjustment_points", channel_id_i64)
+                .await
+                .map_err(|e| {
+                    tracing::error!("Fetch A points for channel {}: {}", channel_id, e);
+                    AppError::internal_error("Database operation failed")
+                })?;
+
+        list.push(serde_json::json!({
+            "id": id,
+            "name": name,
+            "description": description,
+            "protocol": protocol,
+            "enabled": enabled,
+            "connected": connected,
+            "points": {
+                "telemetry": telemetry_points,
+                "signal": signal_points,
+                "control": control_points,
+                "adjustment": adjustment_points
+            }
+        }));
+    }
+
+    Ok(Json(SuccessResponse::new(
+        serde_json::json!({ "list": list }),
+    )))
+}
+
+/// List all channels (lightweight: id + name only)
+///
+/// @route GET /api/channels/list
+#[utoipa::path(
+    get,
+    path = "/api/channels/list",
+    responses(
+        (status = 200, description = "Channel list", body = serde_json::Value,
+            example = json!({
+                "list": [
+                    {"id": 1, "name": "PCS#1"},
+                    {"id": 2, "name": "BAMS#1"}
+                ]
+            })
+        )
+    ),
+    tag = "comsrv"
+)]
+pub async fn list_channels(
+    State(state): State<AppState>,
+) -> Result<Json<SuccessResponse<serde_json::Value>>, AppError> {
+    let channels: Vec<(i64, String)> =
+        sqlx::query_as("SELECT channel_id, name FROM channels ORDER BY channel_id")
+            .fetch_all(&state.sqlite_pool)
+            .await
+            .map_err(|e| {
+                tracing::error!("List channels: {}", e);
+                AppError::internal_error(format!("Failed to list channels: {}", e))
+            })?;
+
+    let list: Vec<serde_json::Value> = channels
+        .into_iter()
+        .map(|(id, name)| serde_json::json!({"id": id, "name": name}))
         .collect();
 
     Ok(Json(SuccessResponse::new(
         serde_json::json!({ "list": list }),
+    )))
+}
+
+/// Query parameters for global points search
+#[derive(Debug, serde::Deserialize)]
+pub struct PointsQuery {
+    /// Filter by channel ID
+    pub channel_id: Option<u32>,
+    /// Filter by point type (T/S/C/A)
+    #[serde(rename = "type")]
+    pub point_type: Option<String>,
+    /// Filter by point ID
+    pub point_id: Option<u32>,
+    /// Fuzzy search by signal name
+    pub keyword: Option<String>,
+}
+
+/// List all points across channels (global search)
+///
+/// @route GET /api/points
+#[utoipa::path(
+    get,
+    path = "/api/points",
+    params(
+        ("channel_id" = Option<u32>, Query, description = "Filter by channel ID"),
+        ("type" = Option<String>, Query, description = "Filter by point type (T/S/C/A)"),
+        ("point_id" = Option<u32>, Query, description = "Filter by point ID"),
+        ("keyword" = Option<String>, Query, description = "Fuzzy search by signal name")
+    ),
+    responses(
+        (status = 200, description = "Points list", body = serde_json::Value,
+            example = json!({
+                "list": [
+                    {"channel_id": 1, "type": "T", "point_id": 1, "signal_name": "System_Fault_status"},
+                    {"channel_id": 1, "type": "T", "point_id": 2, "signal_name": "System_ON/OFF_status"}
+                ]
+            })
+        )
+    ),
+    tag = "comsrv"
+)]
+pub async fn list_all_points(
+    State(state): State<AppState>,
+    Query(query): Query<PointsQuery>,
+) -> Result<Json<SuccessResponse<serde_json::Value>>, AppError> {
+    // Determine which tables to query based on type filter
+    let tables: Vec<(&str, &str)> = match query.point_type.as_deref() {
+        Some("T") => vec![("telemetry_points", "T")],
+        Some("S") => vec![("signal_points", "S")],
+        Some("C") => vec![("control_points", "C")],
+        Some("A") => vec![("adjustment_points", "A")],
+        _ => vec![
+            ("telemetry_points", "T"),
+            ("signal_points", "S"),
+            ("control_points", "C"),
+            ("adjustment_points", "A"),
+        ],
+    };
+
+    let mut all_points: Vec<serde_json::Value> = Vec::new();
+
+    for (table, type_code) in tables {
+        let mut sql = format!(
+            "SELECT channel_id, point_id, signal_name FROM {} WHERE 1=1",
+            table
+        );
+        let mut bindings: Vec<String> = Vec::new();
+
+        if let Some(cid) = query.channel_id {
+            sql.push_str(" AND channel_id = ?");
+            bindings.push(cid.to_string());
+        }
+        if let Some(pid) = query.point_id {
+            sql.push_str(" AND point_id = ?");
+            bindings.push(pid.to_string());
+        }
+        if let Some(ref kw) = query.keyword {
+            sql.push_str(" AND signal_name LIKE ?");
+            bindings.push(format!("%{}%", kw));
+        }
+        sql.push_str(" ORDER BY channel_id, point_id");
+
+        let mut q = sqlx::query_as::<_, (i64, u32, String)>(&sql);
+        for b in &bindings {
+            q = q.bind(b);
+        }
+
+        let rows = q.fetch_all(&state.sqlite_pool).await.map_err(|e| {
+            tracing::error!("Query {} failed: {}", table, e);
+            AppError::internal_error("Database query failed")
+        })?;
+
+        for (channel_id, point_id, signal_name) in rows {
+            all_points.push(serde_json::json!({
+                "channel_id": channel_id,
+                "type": type_code,
+                "point_id": point_id,
+                "signal_name": signal_name
+            }));
+        }
+    }
+
+    Ok(Json(SuccessResponse::new(
+        serde_json::json!({ "list": all_points }),
     )))
 }

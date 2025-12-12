@@ -11,6 +11,7 @@ use axum::{
 use bytes::Bytes;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use std::collections::HashMap;
 use std::sync::Arc;
 use tracing::info;
 use utoipa::ToSchema;
@@ -132,6 +133,10 @@ pub async fn list_instances(
 #[utoipa::path(
     get,
     path = "/api/instances/search",
+    params(
+        ("keyword" = Option<String>, Query, description = "Optional fuzzy keyword (legacy raw query also supported)"),
+        ("ids" = Option<String>, Query, description = "Optional instance id filter, comma-separated (e.g., ids=1,2,3)")
+    ),
     responses(
         (status = 200, description = "Matching instances", body = serde_json::Value,
             example = json!({
@@ -159,27 +164,161 @@ pub async fn search_instances(
     RawQuery(raw_query): RawQuery,
 ) -> Result<Json<SuccessResponse<serde_json::Value>>, ModSrvError> {
     // raw_query is Option<String>:
-    // /search?pcs  => Some("pcs")
-    // /search?     => Some("")
-    // /search      => None
-    let keyword = raw_query.unwrap_or_default();
+    // /search?pcs                   => Some("pcs")                 (legacy keyword-only)
+    // /search?ids=1,2,3             => Some("ids=1,2,3")           (filter by ids)
+    // /search?keyword=pcs&ids=1,2   => Some("keyword=pcs&ids=1,2") (named params)
+    // /search?pcs&ids=1,2           => Some("pcs&ids=1,2")         (mixed legacy + ids)
+    // /search?                      => Some("")
+    // /search                       => None
 
-    // Search all instances without pagination (use large page_size)
-    // Empty keyword returns all instances
-    let result = state
-        .instance_manager
-        .search_instances(&keyword, None, 1, 1000)
-        .await;
-
-    match result {
-        Ok((_total, instances)) => Ok(Json(SuccessResponse::new(json!({
-            "list": instances
-        })))),
-        Err(e) => Err(ModSrvError::InternalError(format!(
-            "Failed to search instances: {}",
-            e
-        ))),
+    fn parse_ids_param(value: &str) -> Vec<u32> {
+        value
+            .split(',')
+            .filter_map(|s| s.trim().parse::<u32>().ok())
+            .collect()
     }
+
+    let raw = raw_query.unwrap_or_default();
+    let mut keyword = String::new();
+    let mut ids: Vec<u32> = Vec::new();
+
+    if raw.contains('=') || raw.contains('&') {
+        for part in raw.split('&') {
+            if let Some((k, v)) = part.split_once('=') {
+                match k {
+                    "ids" | "id" => ids.extend(parse_ids_param(v)),
+                    "keyword" | "q" => {
+                        if keyword.is_empty() {
+                            keyword = v.to_string();
+                        }
+                    },
+                    _ => {},
+                }
+            } else if keyword.is_empty() && !part.trim().is_empty() {
+                keyword = part.to_string();
+            }
+        }
+    } else {
+        keyword = raw;
+    }
+
+    // Load base instances (by keyword and optional ids filter)
+    let instances: Vec<crate::product_loader::Instance> = if ids.is_empty() {
+        // Search all instances without pagination (use large page_size)
+        // Empty keyword returns all instances
+        match state
+            .instance_manager
+            .search_instances(&keyword, None, 1, 1000)
+            .await
+        {
+            Ok((_total, instances)) => instances,
+            Err(e) => {
+                return Err(ModSrvError::InternalError(format!(
+                    "Failed to search instances: {}",
+                    e
+                )))
+            },
+        }
+    } else {
+        let mut selected = Vec::new();
+        for id in &ids {
+            match state.instance_manager.get_instance(*id).await {
+                Ok(inst) => {
+                    if !keyword.is_empty() && !inst.instance_name().contains(&keyword) {
+                        continue;
+                    }
+                    selected.push(inst);
+                },
+                Err(e) if e.to_string().contains("not found") => {
+                    // Search semantics: missing ids are ignored
+                    continue;
+                },
+                Err(e) => {
+                    return Err(ModSrvError::InternalError(format!(
+                        "Failed to load instance {}: {}",
+                        id, e
+                    )))
+                },
+            }
+        }
+        selected.sort_by_key(|i| i.instance_id());
+        selected
+    };
+
+    // Cache product templates by product_name to avoid repeated queries
+    let mut product_cache: HashMap<String, crate::product_loader::Product> = HashMap::new();
+
+    let mut list: Vec<serde_json::Value> = Vec::with_capacity(instances.len());
+    for inst in instances {
+        let product_name = inst.product_name().to_string();
+
+        // Load product template (cached) - includes properties, measurements, actions
+        let product = if let Some(cached) = product_cache.get(&product_name) {
+            cached.clone()
+        } else {
+            let p = state
+                .product_loader
+                .get_product(&product_name)
+                .await
+                .map_err(|e| {
+                    ModSrvError::InternalError(format!(
+                        "Failed to load product {}: {}",
+                        product_name, e
+                    ))
+                })?;
+            product_cache.insert(product_name.clone(), p.clone());
+            p
+        };
+
+        list.push(json!({
+            "instance_id": inst.core.instance_id,
+            "instance_name": inst.core.instance_name,
+            "product_name": inst.core.product_name,
+            "properties": inst.core.properties,
+            "points": {
+                "properties": product.properties,
+                "measurements": product.measurements,
+                "actions": product.actions
+            }
+        }));
+    }
+
+    Ok(Json(SuccessResponse::new(json!({ "list": list }))))
+}
+
+/// List all instances (lightweight: id + name only)
+///
+/// @route GET /api/instances/list
+#[utoipa::path(
+    get,
+    path = "/api/instances/list",
+    responses(
+        (status = 200, description = "Instance list", body = serde_json::Value,
+            example = json!({
+                "list": [
+                    {"id": 1, "name": "battery_01"},
+                    {"id": 2, "name": "pcs_01"}
+                ]
+            })
+        )
+    ),
+    tag = "modsrv"
+)]
+pub async fn list_instances_slim(
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<SuccessResponse<serde_json::Value>>, ModSrvError> {
+    let instances: Vec<(u32, String)> =
+        sqlx::query_as("SELECT instance_id, instance_name FROM instances ORDER BY instance_id")
+            .fetch_all(&state.instance_manager.pool)
+            .await
+            .map_err(|e| ModSrvError::InternalError(format!("Failed to list instances: {}", e)))?;
+
+    let list: Vec<serde_json::Value> = instances
+        .into_iter()
+        .map(|(id, name)| json!({"id": id, "name": name}))
+        .collect();
+
+    Ok(Json(SuccessResponse::new(json!({ "list": list }))))
 }
 
 /// Get a specific instance by ID
