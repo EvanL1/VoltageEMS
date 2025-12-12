@@ -8,8 +8,7 @@
 //! - Protocol name normalization
 //! - Bytes utilities (re-exported from voltage_comlink)
 
-use std::str::FromStr;
-use voltage_config::common::ProtocolType;
+use voltage_config::ProtocolType;
 
 // Re-export bytes utilities from voltage_comlink
 pub use voltage_comlink::bytes::*;
@@ -58,13 +57,13 @@ pub fn parse_protocol_type(name: &str) -> Option<ProtocolType> {
     // Use normalize_protocol_name to handle variations
     let normalized = normalize_protocol_name(name);
 
-    // Try to parse using FromStr implementation
-    ProtocolType::from_str(&normalized).ok()
+    // Try to parse using ProtocolType::parse
+    ProtocolType::parse(&normalized)
 }
 
 /// Get protocol type string from enum
 pub fn protocol_type_to_string(protocol: ProtocolType) -> String {
-    protocol.as_str().to_string()
+    protocol.to_string()
 }
 
 #[cfg(test)]
@@ -150,11 +149,23 @@ mod tests {
         assert_eq!(parse_protocol_type("virt"), Some(ProtocolType::Virtual));
         assert_eq!(parse_protocol_type("VIRTUAL"), Some(ProtocolType::Virtual));
 
+        // Test additional valid protocol types (now supported in full ProtocolType)
+        assert_eq!(
+            parse_protocol_type("iec104"),
+            Some(ProtocolType::Iec60870_5_104)
+        );
+        assert_eq!(
+            parse_protocol_type("IEC-60870-5-104"),
+            Some(ProtocolType::Iec60870_5_104)
+        );
+        assert_eq!(parse_protocol_type("mqtt"), Some(ProtocolType::Mqtt));
+        assert_eq!(parse_protocol_type("grpc"), Some(ProtocolType::Grpc));
+        assert_eq!(parse_protocol_type("opcua"), Some(ProtocolType::Opcua));
+        assert_eq!(parse_protocol_type("OPC-UA"), Some(ProtocolType::Opcua));
+
         // Test invalid protocol types
         assert_eq!(parse_protocol_type("unknown"), None);
         assert_eq!(parse_protocol_type("can"), None); // CAN protocol removed
-        assert_eq!(parse_protocol_type("iec104"), None); // Not in ProtocolType enum
-        assert_eq!(parse_protocol_type("mqtt"), None); // Not in ProtocolType enum
     }
 
     #[test]

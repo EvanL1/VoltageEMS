@@ -3948,6 +3948,7 @@ dependencies = [
  "tokio",
  "tracing",
  "utoipa",
+ "voltage-model",
  "voltage-schema-macro",
 ]
 
@@ -3955,20 +3956,14 @@ dependencies = [
 name = "voltage-model"
 version = "0.1.0"
 dependencies = [
- "anyhow",
- "async-trait",
- "chrono",
  "csv",
- "evalexpr",
+ "schemars",
  "serde",
  "serde_json",
- "serde_yaml",
  "sqlx",
  "thiserror 1.0.69",
  "tokio",
- "tracing",
- "voltage-config",
- "voltage-rtdb",
+ "utoipa",
 ]
 
 [[package]]

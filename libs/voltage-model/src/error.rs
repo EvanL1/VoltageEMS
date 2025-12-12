@@ -105,12 +105,6 @@ impl From<csv::Error> for ModelError {
     }
 }
 
-impl From<voltage_rtdb::error::RtdbError> for ModelError {
-    fn from(err: voltage_rtdb::error::RtdbError) -> Self {
-        ModelError::Rtdb(err.to_string())
-    }
-}
-
 // Helper methods
 impl ModelError {
     pub fn expression(msg: impl Into<String>) -> Self {

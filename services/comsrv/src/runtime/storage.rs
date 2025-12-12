@@ -441,9 +441,8 @@ pub async fn write_batch(
                     // Parse target: "1002:T:5" -> channel_id=1002, type=T, point_id=5
                     let parts: Vec<&str> = target.split(':').collect();
                     if parts.len() == 3 {
-                        // Parse target point type using FromStr trait
-                        use std::str::FromStr;
-                        if let Ok(target_point_type) = FourRemote::from_str(parts[1]) {
+                        // Parse target point type
+                        if let Some(target_point_type) = FourRemote::from_str(parts[1]) {
                             if let (Ok(target_channel_id), Ok(target_point_id)) =
                                 (parts[0].parse::<u32>(), parts[2].parse::<u32>())
                             {
@@ -615,8 +614,7 @@ pub async fn write_batch_buffered(
                 if let Some(target) = routing_cache.lookup_c2c(&route_key) {
                     let parts: Vec<&str> = target.split(':').collect();
                     if parts.len() == 3 {
-                        use std::str::FromStr;
-                        if let Ok(target_point_type) = FourRemote::from_str(parts[1]) {
+                        if let Some(target_point_type) = FourRemote::from_str(parts[1]) {
                             if let (Ok(target_channel_id), Ok(target_point_id)) =
                                 (parts[0].parse::<u32>(), parts[2].parse::<u32>())
                             {

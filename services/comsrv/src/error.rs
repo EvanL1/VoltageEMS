@@ -1,9 +1,7 @@
 //! Error handling for Communication Service
 //!
-//! This module provides error type definitions and conversions for the Communication Service,
-//! adapting voltage-common error types to maintain backward compatibility.
+//! This module provides error type definitions and conversions for the Communication Service.
 
-use common::error::Error as CommonError;
 use thiserror::Error;
 use voltage_config::error::VoltageError;
 
@@ -133,24 +131,6 @@ pub enum ComSrvError {
 
 /// Result type alias for Communication Service
 pub type Result<T> = std::result::Result<T, ComSrvError>;
-
-// Conversion from common::Error to ComSrvError
-impl From<CommonError> for ComSrvError {
-    #[allow(unreachable_patterns)]
-    fn from(err: CommonError) -> Self {
-        match err {
-            CommonError::Config(msg) => ComSrvError::ConfigError(msg),
-            CommonError::Io(e) => ComSrvError::IoError(e.to_string()),
-            CommonError::Serialization(msg) => ComSrvError::SerializationError(msg),
-            CommonError::Parse(msg) => ComSrvError::InvalidData(msg),
-            CommonError::Timeout(msg) => ComSrvError::TimeoutError(msg),
-            CommonError::Generic(msg) => ComSrvError::InternalError(msg),
-            CommonError::Redis(msg) => ComSrvError::RedisError(msg),
-            CommonError::Http(msg) => ComSrvError::ConnectionError(msg),
-            _ => ComSrvError::InternalError("Unknown error".to_string()),
-        }
-    }
-}
 
 // Conversion from std::io::Error
 impl From<std::io::Error> for ComSrvError {

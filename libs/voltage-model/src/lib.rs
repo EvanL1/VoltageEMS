@@ -1,38 +1,26 @@
 //! Voltage Model Library
 //!
-//! Core model logic for VoltageEMS.
-//! This library provides pure business logic without service dependencies.
-
-#![allow(clippy::disallowed_methods)] // json! macro internally uses unwrap
-
+//! Core domain model for VoltageEMS.
+//! This library provides fundamental types and business logic.
+//!
 //! # Modules
 //!
-//! - `expression`: Mathematical expression evaluation using evalexpr
-//! - `timeseries`: Time series analysis (moving average, rate of change)
-//! - `validation`: Input validation utilities
+//! - `types`: Core domain types (PointType, etc.)
+//! - `products`: Product type definitions (ProductType, ProductDef, PointDef)
+//! - `validation`: Input validation utilities for instance names, product names, etc.
 //!
-//! # Example
+//! # Note
 //!
-//! ```
-//! use voltage_model::ExpressionEvaluator;
-//! use std::collections::HashMap;
-//!
-//! // Direct expression evaluation
-//! let evaluator = ExpressionEvaluator::new();
-//! let mut vars = HashMap::new();
-//! vars.insert("a".to_string(), 10.0);
-//! vars.insert("b".to_string(), 5.0);
-//! let result = evaluator.evaluate("a + b * 2", &vars).unwrap();
-//! assert_eq!(result, 20.0);
-//! ```
+//! For expression evaluation, use `voltage-calc` crate which provides
+//! a more powerful calculation engine with stateful functions.
 
 pub mod error;
-pub mod expression;
-pub mod timeseries;
+pub mod products;
+pub mod types;
 pub mod validation;
 
 // Re-exports for convenience
 pub use error::{ModelError, Result};
-pub use expression::ExpressionEvaluator;
-pub use timeseries::TimeSeriesProcessor;
+pub use products::{PointDef, ProductDef, ProductType};
+pub use types::PointType;
 pub use validation::{validate_calculation_id, validate_instance_name, validate_product_name};

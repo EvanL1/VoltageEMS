@@ -10,6 +10,9 @@ use std::fmt;
 #[cfg(feature = "schema")]
 use schemars::JsonSchema;
 
+// Re-export PointType from voltage-model for backward compatibility
+pub use voltage_model::PointType;
+
 // ============================================================================
 // Data Type Definitions
 // ============================================================================
@@ -382,11 +385,10 @@ impl ProtocolType {
     pub fn supports_client(&self) -> bool {
         !matches!(self, Self::Virtual) // Virtual is special case
     }
-}
 
-impl fmt::Display for ProtocolType {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let s = match self {
+    /// Convert to string representation
+    pub fn as_str(&self) -> &'static str {
+        match self {
             Self::ModbusTcp => "modbus_tcp",
             Self::ModbusRtu => "modbus_rtu",
             Self::ModbusAscii => "modbus_ascii",
@@ -398,8 +400,21 @@ impl fmt::Display for ProtocolType {
             Self::Dnp3 => "dnp3",
             Self::Virtual => "virtual",
             Self::Grpc => "grpc",
-        };
-        write!(f, "{}", s)
+        }
+    }
+}
+
+impl fmt::Display for ProtocolType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.as_str())
+    }
+}
+
+impl std::str::FromStr for ProtocolType {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Self::parse(s).ok_or_else(|| format!("Unknown protocol type: {}", s))
     }
 }
 
@@ -489,112 +504,6 @@ impl QualityCode {
 impl Default for QualityCode {
     fn default() -> Self {
         Self::WaitingForInitialData
-    }
-}
-
-// ============================================================================
-// Four Remote Point Types (四遥点类型)
-// ============================================================================
-
-/// Four Remote Point Types used in industrial SCADA systems
-///
-/// These types correspond to the standard "Four Remote" (四遥) classification:
-/// - T (Telemetry/遥测): Analog measurements
-/// - S (Signal/遥信): Digital status
-/// - C (Control/遥控): Digital commands
-/// - A (Adjustment/遥调): Analog setpoints
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(JsonSchema))]
-pub enum PointType {
-    /// T - Telemetry (遥测) - Analog measurements
-    #[serde(rename = "T")]
-    Telemetry,
-
-    /// S - Signal (遥信) - Digital status
-    #[serde(rename = "S")]
-    Signal,
-
-    /// C - Control (遥控) - Digital commands
-    #[serde(rename = "C")]
-    Control,
-
-    /// A - Adjustment (遥调) - Analog setpoints
-    #[serde(rename = "A")]
-    Adjustment,
-}
-
-impl PointType {
-    /// Convert to Redis key suffix
-    ///
-    /// # Examples
-    /// ```
-    /// # use voltage_config::PointType;
-    /// assert_eq!(PointType::Telemetry.as_str(), "T");
-    /// assert_eq!(PointType::Signal.as_str(), "S");
-    /// ```
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            PointType::Telemetry => "T",
-            PointType::Signal => "S",
-            PointType::Control => "C",
-            PointType::Adjustment => "A",
-        }
-    }
-
-    /// Parse from string (convenience method, returns Option)
-    ///
-    /// This is a convenience wrapper around `str::parse()` that returns `Option`
-    /// instead of `Result`. For full error information, use `str::parse()` directly.
-    ///
-    /// # Examples
-    /// ```
-    /// # use voltage_config::PointType;
-    /// assert_eq!(PointType::from_str("T"), Some(PointType::Telemetry));
-    /// assert_eq!(PointType::from_str("invalid"), None);
-    /// ```
-    #[allow(clippy::should_implement_trait)]
-    pub fn from_str(s: &str) -> Option<Self> {
-        s.parse().ok()
-    }
-
-    /// Check if this is a measurement type (T or S)
-    pub fn is_measurement(&self) -> bool {
-        matches!(self, PointType::Telemetry | PointType::Signal)
-    }
-
-    /// Check if this is an action type (C or A)
-    pub fn is_action(&self) -> bool {
-        matches!(self, PointType::Control | PointType::Adjustment)
-    }
-
-    /// Check if this is an analog type (T or A)
-    pub fn is_analog(&self) -> bool {
-        matches!(self, PointType::Telemetry | PointType::Adjustment)
-    }
-
-    /// Check if this is a digital type (S or C)
-    pub fn is_digital(&self) -> bool {
-        matches!(self, PointType::Signal | PointType::Control)
-    }
-}
-
-impl fmt::Display for PointType {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.as_str())
-    }
-}
-
-impl std::str::FromStr for PointType {
-    type Err = String;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
-            "T" => Ok(PointType::Telemetry),
-            "S" => Ok(PointType::Signal),
-            "C" => Ok(PointType::Control),
-            "A" => Ok(PointType::Adjustment),
-            _ => Err(format!("Invalid PointType: {}", s)),
-        }
     }
 }
 

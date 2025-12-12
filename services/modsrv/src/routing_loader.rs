@@ -24,16 +24,6 @@ use voltage_rtdb::Rtdb;
 
 use crate::redis_state::{self, RoutingEntry};
 
-/// Convert FourRemote to PointType for KeySpaceConfig API
-fn four_remote_to_point_type(four_remote: &FourRemote) -> PointType {
-    match four_remote {
-        FourRemote::Telemetry => PointType::Telemetry,
-        FourRemote::Signal => PointType::Signal,
-        FourRemote::Control => PointType::Control,
-        FourRemote::Adjustment => PointType::Adjustment,
-    }
-}
-
 /// CSV row structure for measurement routing (T/S → M)
 ///
 /// `channel_id`, `channel_type`, and `channel_point_id` form a unit - all None means unbound
@@ -335,11 +325,10 @@ impl RoutingLoader {
             measurement_id,
         ) in measurement_routing
         {
-            // Parse channel_type string to FourRemote, then to PointType
-            let four_remote: FourRemote =
+            // Parse channel_type string to PointType (FourRemote is an alias)
+            let point_type: PointType =
                 serde_json::from_value(serde_json::Value::String(channel_type))
                     .with_context(|| "Invalid channel_type")?;
-            let point_type = four_remote_to_point_type(&four_remote);
 
             batch.push(RoutingEntry {
                 // C2M route key: {channel_id}:{type}:{point_id}
@@ -356,11 +345,10 @@ impl RoutingLoader {
         for (instance_id, _instance_name, action_id, channel_id, channel_type, channel_point_id) in
             action_routing
         {
-            // Parse channel_type string to FourRemote, then to PointType
-            let four_remote: FourRemote =
+            // Parse channel_type string to PointType (FourRemote is an alias)
+            let point_type: PointType =
                 serde_json::from_value(serde_json::Value::String(channel_type))
                     .with_context(|| "Invalid channel_type")?;
-            let point_type = four_remote_to_point_type(&four_remote);
 
             batch.push(RoutingEntry {
                 // M2C route key: {instance_id}:A:{point_id}

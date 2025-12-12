@@ -5,36 +5,30 @@ edition = "2021"
 license.workspace = true
 description = "Model layer library for VoltageEMS - calculations, products, and instance management"
 
-[dependencies]
-# Local dependencies
-voltage-config = { path = "../voltage-config" }
-voltage-rtdb = { path = "../voltage-rtdb" }
+[features]
+default = []
+schema = ["dep:schemars"]
+openapi = ["dep:utoipa"]
 
-# Calculation
-evalexpr = { workspace = true }
+[dependencies]
+# Serialization
 serde = { workspace = true }
 serde_json = { workspace = true }
 
-# Async
-tokio = { workspace = true }
-async-trait = { workspace = true }
+# Schema generation (optional)
+schemars = { version = "0.8", optional = true }
+
+# OpenAPI (optional)
+utoipa = { workspace = true, optional = true }
 
 # Error handling
 thiserror = { workspace = true }
-anyhow = { workspace = true }
 
-# Parsing
+# Parsing (for error conversion compatibility)
 csv = { workspace = true }
-serde_yaml = { workspace = true }
 
 # Database
 sqlx = { workspace = true }
-
-# Logging
-tracing = { workspace = true }
-
-# Time
-chrono = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }

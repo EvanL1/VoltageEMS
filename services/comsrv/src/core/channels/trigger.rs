@@ -745,35 +745,36 @@ mod tests {
 
     #[test]
     fn test_classify_redis_error_connection_refused() {
-        let err = common::error::Error::Generic("connection refused".to_string());
+        // classify_redis_error accepts &dyn Display, so we can use simple strings
+        let err = "connection refused";
         let classification = classify_redis_error(&err);
         assert_eq!(classification, "connection");
     }
 
     #[test]
     fn test_classify_redis_error_timeout() {
-        let err = common::error::Error::Timeout("operation timeout".to_string());
+        let err = "operation timeout";
         let classification = classify_redis_error(&err);
         assert_eq!(classification, "timeout");
     }
 
     #[test]
     fn test_classify_redis_error_network() {
-        let err = common::error::Error::Generic("network error".to_string());
+        let err = "network error";
         let classification = classify_redis_error(&err);
         assert_eq!(classification, "network");
     }
 
     #[test]
     fn test_classify_redis_error_parse() {
-        let err = common::error::Error::Parse("parse error".to_string());
+        let err = "parse error";
         let classification = classify_redis_error(&err);
         assert_eq!(classification, "serialization");
     }
 
     #[test]
     fn test_classify_redis_error_unknown() {
-        let err = common::error::Error::Generic("some error".to_string());
+        let err = "some error";
         let classification = classify_redis_error(&err);
         assert_eq!(classification, "unknown");
     }

@@ -8,6 +8,9 @@ use std::path::Path;
 use std::str::FromStr;
 use voltage_schema_macro::Schema;
 
+// Re-export PointType from voltage-model and alias as FourRemote for compatibility
+pub use voltage_model::PointType;
+
 #[cfg(feature = "schema")]
 use schemars::JsonSchema;
 
@@ -999,59 +1002,8 @@ impl LogRotationConfig {
 // Shared enum types
 // ============================================================================
 
-/// Protocol types for communication
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Hash)]
-#[serde(rename_all = "snake_case")]
-#[cfg_attr(feature = "schema", derive(JsonSchema))]
-pub enum ProtocolType {
-    /// Modbus TCP protocol
-    ModbusTcp,
-    /// Modbus RTU protocol
-    ModbusRtu,
-    /// Virtual/simulated protocol
-    Virtual,
-}
-
-impl ProtocolType {
-    /// Convert to string representation
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Self::ModbusTcp => "modbus_tcp",
-            Self::ModbusRtu => "modbus_rtu",
-            Self::Virtual => "virtual",
-        }
-    }
-
-    /// Check if this is a Modbus protocol variant
-    pub fn is_modbus(&self) -> bool {
-        matches!(self, Self::ModbusTcp | Self::ModbusRtu)
-    }
-}
-
-impl FromStr for ProtocolType {
-    type Err = String;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.to_lowercase().as_str() {
-            "modbus_tcp" | "modbus-tcp" | "modbustcp" => Ok(Self::ModbusTcp),
-            "modbus_rtu" | "modbus-rtu" | "modbusrtu" => Ok(Self::ModbusRtu),
-            "virtual" | "virt" => Ok(Self::Virtual),
-            _ => Err(format!("Unknown protocol type: {}", s)),
-        }
-    }
-}
-
-impl fmt::Display for ProtocolType {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.as_str())
-    }
-}
-
-impl Default for ProtocolType {
-    fn default() -> Self {
-        Self::Virtual
-    }
-}
+// Note: ProtocolType is defined in protocols.rs and re-exported from lib.rs
+// Use voltage_config::ProtocolType for the full protocol type enum
 
 /// Point role types (Measurement/Action)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Hash)]
@@ -1356,92 +1308,16 @@ impl Default for ComparisonOperator {
     }
 }
 
-/// Four-Remote enumeration
+/// FourRemote is an alias for PointType for backward compatibility
 ///
-/// T - Telemetry
-/// S - Signal
-/// C - Control
-/// A - Adjustment
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
-#[cfg_attr(feature = "schema", derive(JsonSchema))]
-pub enum FourRemote {
-    /// Telemetry - measurements like voltage, current, power
-    #[serde(rename = "T", alias = "YC", alias = "yc", alias = "telemetry")]
-    Telemetry,
+/// Both represent the same concept: the four remote point types (T/S/C/A)
+/// in industrial SCADA systems.
+///
+/// **Prefer using `PointType` for new code.**
+pub type FourRemote = PointType;
 
-    /// Signal - status indicators like on/off, open/closed
-    #[serde(rename = "S", alias = "YX", alias = "yx", alias = "signal")]
-    Signal,
-
-    /// Control - commands to control devices
-    #[serde(rename = "C", alias = "YK", alias = "yk", alias = "control")]
-    Control,
-
-    /// Adjustment - setpoint values for remote adjustment
-    #[serde(
-        rename = "A",
-        alias = "YT",
-        alias = "yt",
-        alias = "adjustment",
-        alias = "setpoint"
-    )]
-    Adjustment,
-}
-
-impl FourRemote {
-    /// Get the single-character code for database storage
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Self::Telemetry => "T",
-            Self::Signal => "S",
-            Self::Control => "C",
-            Self::Adjustment => "A",
-        }
-    }
-
-    /// Check if this is an input type (T or S)
-    pub fn is_input(&self) -> bool {
-        matches!(self, Self::Telemetry | Self::Signal)
-    }
-
-    /// Check if this is an output type (C or A)
-    pub fn is_output(&self) -> bool {
-        matches!(self, Self::Control | Self::Adjustment)
-    }
-}
-
-impl fmt::Display for FourRemote {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.as_str())
-    }
-}
-
-impl Default for FourRemote {
-    fn default() -> Self {
-        Self::Telemetry
-    }
-}
-
-impl FromStr for FourRemote {
-    type Err = String;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let u = s.to_uppercase();
-        match u.as_str() {
-            "T" | "YC" => Ok(Self::Telemetry),
-            "S" | "YX" => Ok(Self::Signal),
-            "C" | "YK" => Ok(Self::Control),
-            "A" | "YT" => Ok(Self::Adjustment),
-            _ => Err(format!(
-                "Invalid four-remote type: {}. Must be one of T/S/C/A or YC/YX/YK/YT",
-                s
-            )),
-        }
-    }
-}
-
-/// Helper to convert database string to FourRemote
-pub fn parse_four_remote(s: &str) -> Result<FourRemote, String> {
+/// Helper to convert database string to FourRemote/PointType
+pub fn parse_four_remote(s: &str) -> Result<PointType, String> {
     s.parse()
 }
 
@@ -1450,73 +1326,7 @@ pub fn parse_four_remote(s: &str) -> Result<FourRemote, String> {
 mod tests {
     use super::*;
 
-    // ============ ProtocolType Tests ============
-    #[test]
-    fn test_protocol_type_serialization() {
-        // Test JSON serialization
-        let protocol = ProtocolType::ModbusTcp;
-        let json = serde_json::to_string(&protocol).unwrap();
-        assert_eq!(json, "\"modbus_tcp\"");
-
-        // Test deserialization
-        let protocol: ProtocolType = serde_json::from_str("\"modbus_rtu\"").unwrap();
-        assert_eq!(protocol, ProtocolType::ModbusRtu);
-
-        // Test all variants
-        assert_eq!(
-            serde_json::to_string(&ProtocolType::Virtual).unwrap(),
-            "\"virtual\""
-        );
-    }
-
-    #[test]
-    fn test_protocol_type_from_str() {
-        // Test standard names
-        assert_eq!(
-            ProtocolType::from_str("modbus_tcp").unwrap(),
-            ProtocolType::ModbusTcp
-        );
-        assert_eq!(
-            ProtocolType::from_str("modbus_rtu").unwrap(),
-            ProtocolType::ModbusRtu
-        );
-        assert_eq!(
-            ProtocolType::from_str("virtual").unwrap(),
-            ProtocolType::Virtual
-        );
-
-        // Test invalid (including removed CAN protocol)
-        assert!(ProtocolType::from_str("can").is_err());
-
-        // Test variations
-        assert_eq!(
-            ProtocolType::from_str("modbus-tcp").unwrap(),
-            ProtocolType::ModbusTcp
-        );
-        assert_eq!(
-            ProtocolType::from_str("modbustcp").unwrap(),
-            ProtocolType::ModbusTcp
-        );
-
-        // Test invalid
-        assert!(ProtocolType::from_str("unknown").is_err());
-    }
-
-    #[test]
-    fn test_protocol_type_methods() {
-        let modbus_tcp = ProtocolType::ModbusTcp;
-        assert_eq!(modbus_tcp.as_str(), "modbus_tcp");
-        assert!(modbus_tcp.is_modbus());
-
-        let virtual_proto = ProtocolType::Virtual;
-        assert!(!virtual_proto.is_modbus());
-
-        // Test Display
-        assert_eq!(modbus_tcp.to_string(), "modbus_tcp");
-
-        // Test Default
-        assert_eq!(ProtocolType::default(), ProtocolType::Virtual);
-    }
+    // Note: ProtocolType tests are in protocols.rs
 
     // ============ PointRole Tests ============
     #[test]
@@ -1779,6 +1589,9 @@ mod tests {
     }
 
     // ============ FourRemote Tests ============
+    // Note: FourRemote is now a type alias for PointType
+    // These tests verify backward compatibility
+
     #[test]
     fn test_four_remote_serialization() {
         // Test serde rename to single letters
@@ -1799,18 +1612,19 @@ mod tests {
 
     #[test]
     fn test_four_remote_from_str() {
-        assert_eq!(FourRemote::from_str("T").unwrap(), FourRemote::Telemetry);
-        assert_eq!(FourRemote::from_str("S").unwrap(), FourRemote::Signal);
-        assert_eq!(FourRemote::from_str("C").unwrap(), FourRemote::Control);
-        assert_eq!(FourRemote::from_str("A").unwrap(), FourRemote::Adjustment);
+        // Use parse() to invoke FromStr trait
+        assert_eq!("T".parse::<FourRemote>().unwrap(), FourRemote::Telemetry);
+        assert_eq!("S".parse::<FourRemote>().unwrap(), FourRemote::Signal);
+        assert_eq!("C".parse::<FourRemote>().unwrap(), FourRemote::Control);
+        assert_eq!("A".parse::<FourRemote>().unwrap(), FourRemote::Adjustment);
         // IEC synonyms
-        assert_eq!(FourRemote::from_str("YC").unwrap(), FourRemote::Telemetry);
-        assert_eq!(FourRemote::from_str("YX").unwrap(), FourRemote::Signal);
-        assert_eq!(FourRemote::from_str("YK").unwrap(), FourRemote::Control);
-        assert_eq!(FourRemote::from_str("YT").unwrap(), FourRemote::Adjustment);
+        assert_eq!("YC".parse::<FourRemote>().unwrap(), FourRemote::Telemetry);
+        assert_eq!("YX".parse::<FourRemote>().unwrap(), FourRemote::Signal);
+        assert_eq!("YK".parse::<FourRemote>().unwrap(), FourRemote::Control);
+        assert_eq!("YT".parse::<FourRemote>().unwrap(), FourRemote::Adjustment);
 
         // Test invalid
-        assert!(FourRemote::from_str("X").is_err());
+        assert!("X".parse::<FourRemote>().is_err());
     }
 
     #[test]
@@ -1835,5 +1649,13 @@ mod tests {
         assert_eq!(parse_four_remote("T").unwrap(), FourRemote::Telemetry);
         assert_eq!(parse_four_remote("yc").unwrap(), FourRemote::Telemetry);
         assert!(parse_four_remote("invalid").is_err());
+    }
+
+    #[test]
+    fn test_four_remote_is_point_type() {
+        // Verify FourRemote and PointType are the same type
+        let fr: FourRemote = FourRemote::Telemetry;
+        let pt: PointType = fr; // Should compile because they're the same type
+        assert_eq!(pt, PointType::Telemetry);
     }
 }

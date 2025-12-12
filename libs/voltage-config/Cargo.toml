@@ -6,6 +6,9 @@ license.workspace = true
 description = "Shared configuration structures for VoltageEMS services"
 
 [dependencies]
+# Local dependencies
+voltage-model = { path = "../voltage-model" }
+
 # Serialization
 serde = { workspace = true }
 serde_json = { workspace = true }

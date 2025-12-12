@@ -3,7 +3,6 @@
 //! Provides basic functions shared by all services, including:
 //! - Redis client
 //! - monitoring and health checking
-//! - error processing
 //! - logging functions
 
 #[cfg(feature = "redis")]
@@ -15,7 +14,6 @@ pub mod sqlite;
 // Common modules
 pub mod admin_api;
 pub mod config_loader;
-pub mod error;
 pub mod logging;
 pub mod serde_helpers;
 pub mod service_bootstrap;
@@ -54,8 +52,6 @@ pub use reqwest;
 
 // Pre-import common types
 pub mod prelude {
-    pub use crate::error::{Error, Result};
-
     #[cfg(feature = "redis")]
     pub use crate::redis::RedisClient;
 }
