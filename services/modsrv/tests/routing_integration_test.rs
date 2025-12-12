@@ -23,8 +23,8 @@ async fn test_measurement_routing_load_from_db() -> Result<()> {
     fixtures::create_test_product(env.pool(), product_id).await?;
     fixtures::create_test_product_points(env.pool(), product_id).await?;
 
-    let products_dir = env.temp_dir().join("products");
-    let product_loader = Arc::new(ProductLoader::new(products_dir, env.pool().clone()));
+    // products_dir no longer needed - loaded from code
+    let product_loader = Arc::new(ProductLoader::new(env.pool().clone()));
 
     let redis_client = env.redis().clone();
     let rtdb = Arc::new(voltage_rtdb::RedisRtdb::from_client(redis_client.clone()));
@@ -98,8 +98,8 @@ async fn test_action_routing_load_from_db() -> Result<()> {
     fixtures::create_test_product(env.pool(), product_id).await?;
     fixtures::create_test_product_points(env.pool(), product_id).await?;
 
-    let products_dir = env.temp_dir().join("products");
-    let product_loader = Arc::new(ProductLoader::new(products_dir, env.pool().clone()));
+    // products_dir no longer needed - loaded from code
+    let product_loader = Arc::new(ProductLoader::new(env.pool().clone()));
 
     let redis_client = env.redis().clone();
     let rtdb = Arc::new(voltage_rtdb::RedisRtdb::from_client(redis_client.clone()));
@@ -171,8 +171,8 @@ async fn test_multiple_routing_for_instance() -> Result<()> {
     fixtures::create_test_product(env.pool(), product_id).await?;
     fixtures::create_test_product_points(env.pool(), product_id).await?;
 
-    let products_dir = env.temp_dir().join("products");
-    let product_loader = Arc::new(ProductLoader::new(products_dir, env.pool().clone()));
+    // products_dir no longer needed - loaded from code
+    let product_loader = Arc::new(ProductLoader::new(env.pool().clone()));
 
     let redis_client = env.redis().clone();
     let rtdb = Arc::new(voltage_rtdb::RedisRtdb::from_client(redis_client.clone()));

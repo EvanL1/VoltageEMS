@@ -1,60 +1,38 @@
 //! Product Configuration Loader for ModSrv
-//! Loads product templates from CSV files with nested structure
+//! Loads product templates from code definitions (ProductType::definition())
 
 #![allow(dead_code)]
 
 use anyhow::{Context, Result};
-use csv::ReaderBuilder;
-use serde::Deserialize;
 use sqlx::SqlitePool;
-use std::collections::HashMap;
-use std::path::{Path, PathBuf};
-use tokio::fs;
 use tracing::{debug, info, warn};
 
-// Import all types from voltage-config instead of defining locally
-// Re-export them as public so other modules can access them
+// Import product types from voltage-config
+use voltage_config::products::{ProductDef, ProductType};
+
+// Re-export types from voltage-config for other modules
 pub use voltage_config::modsrv::{
     ActionPoint, CreateInstanceRequest, Instance, MeasurementPoint, PointType, Product,
     ProductHierarchy, PropertyTemplate,
 };
 
-/// Product hierarchy from products.yaml (local helper type for YAML parsing)
-#[derive(Debug, Deserialize)]
-struct ProductsYaml {
-    products: HashMap<String, Option<String>>,
-}
-
+/// Product loader that populates database from code-defined product types
 #[derive(Clone)]
 pub struct ProductLoader {
-    products_dir: PathBuf,
     pool: SqlitePool,
 }
 
 impl ProductLoader {
-    pub fn new(products_dir: impl Into<PathBuf>, pool: SqlitePool) -> Self {
-        Self {
-            products_dir: products_dir.into(),
-            pool,
-        }
+    /// Create a new ProductLoader with database connection
+    pub fn new(pool: SqlitePool) -> Self {
+        Self { pool }
     }
 
-    /// Helper function to load CSV file
-    async fn load_csv<T>(&self, path: &Path) -> Result<Vec<T>>
-    where
-        T: for<'de> Deserialize<'de>,
-    {
-        let content = fs::read_to_string(path).await?;
-        let mut rdr = ReaderBuilder::new()
-            .has_headers(true)
-            .from_reader(content.as_bytes());
-
-        let mut records = Vec::new();
-        for result in rdr.deserialize() {
-            let record: T = result?;
-            records.push(record);
-        }
-        Ok(records)
+    /// Legacy constructor for backward compatibility
+    /// The products_dir parameter is ignored since we load from code
+    #[deprecated(note = "Use new(pool) instead - products are now loaded from code definitions")]
+    pub fn with_dir(_products_dir: impl Into<std::path::PathBuf>, pool: SqlitePool) -> Self {
+        Self { pool }
     }
 
     /// Initialize database tables with separate tables for each point type
@@ -226,12 +204,15 @@ impl ProductLoader {
         Ok(())
     }
 
-    /// Load all products from the products directory
+    /// Load all products from code definitions
+    ///
+    /// This replaces the previous CSV-based loading with compile-time constant definitions
+    /// from `ProductType::definition()`. Benefits:
+    /// - Compile-time type checking for point definitions
+    /// - Zero runtime parsing overhead
+    /// - No configuration files to manage
     pub async fn load_all(&self) -> Result<()> {
-        // Log absolute path for debugging
-        let abs_path =
-            std::fs::canonicalize(&self.products_dir).unwrap_or_else(|_| self.products_dir.clone());
-        debug!("Loading products: {}", abs_path.display());
+        debug!("Loading products from code definitions");
 
         // Check if force reload is enabled
         let force_reload = std::env::var("MODSRV_FORCE_RELOAD")
@@ -241,98 +222,53 @@ impl ProductLoader {
 
         if force_reload {
             warn!("Force reload: clearing products");
-
-            // Clear existing data in transaction
-            let mut tx = self.pool.begin().await?;
-            sqlx::query("DELETE FROM property_templates")
-                .execute(&mut *tx)
-                .await?;
-            sqlx::query("DELETE FROM action_points")
-                .execute(&mut *tx)
-                .await?;
-            sqlx::query("DELETE FROM measurement_points")
-                .execute(&mut *tx)
-                .await?;
-            sqlx::query("DELETE FROM products")
-                .execute(&mut *tx)
-                .await?;
-            tx.commit().await?;
-
+            self.clear_all_products().await?;
             debug!("Products cleared");
         }
 
-        // Check if products directory exists
-        if !self.products_dir.exists() {
-            warn!("Products dir not found: {:?}", self.products_dir);
-            return Ok(());
+        // Load all products from code definitions
+        for product_type in ProductType::all() {
+            self.load_product_from_code(*product_type).await?;
         }
 
-        // Load product hierarchy from products.yaml
-        let products_yaml_file = self.products_dir.join("products.yaml");
-        if !products_yaml_file.exists() {
-            warn!("products.yaml not found");
-            return Ok(());
-        }
-
-        let hierarchy = self.load_hierarchy(&products_yaml_file).await?;
-
-        // Load each product's CSV files
-        for (product_name, parent_name) in &hierarchy {
-            // Prevent path traversal
-            if product_name.contains("..")
-                || product_name.contains("/")
-                || product_name.contains("\\")
-            {
-                warn!("Invalid product: {}", product_name);
-                continue;
-            }
-
-            let product_dir = self.products_dir.join(product_name);
-            if product_dir.exists() && product_dir.is_dir() {
-                self.load_product_from_csv(product_name, parent_name.as_deref(), &product_dir)
-                    .await?;
-            } else {
-                debug!("Product directory not found: {:?}", product_dir);
-            }
-        }
-
-        info!("Products loaded");
+        info!(
+            "Loaded {} products from code definitions",
+            ProductType::all().len()
+        );
         Ok(())
     }
 
-    /// Load product hierarchy from products.yaml
-    async fn load_hierarchy(&self, file_path: &Path) -> Result<ProductHierarchy> {
-        debug!("Loading hierarchy: {:?}", file_path);
-
-        let yaml_content = tokio::fs::read_to_string(file_path)
-            .await
-            .context("Failed to read products.yaml")?;
-
-        let products_yaml: ProductsYaml =
-            serde_yaml::from_str(&yaml_content).context("Failed to parse products.yaml")?;
-
-        let hierarchy: ProductHierarchy = products_yaml.products.into_iter().collect();
-
-        debug!("{} product defs", hierarchy.len());
-        Ok(hierarchy)
+    /// Clear all product data from database
+    async fn clear_all_products(&self) -> Result<()> {
+        let mut tx = self.pool.begin().await?;
+        sqlx::query("DELETE FROM property_templates")
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query("DELETE FROM action_points")
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query("DELETE FROM measurement_points")
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query("DELETE FROM products")
+            .execute(&mut *tx)
+            .await?;
+        tx.commit().await?;
+        Ok(())
     }
 
-    /// Load a single product from CSV files
-    async fn load_product_from_csv(
-        &self,
-        product_name: &str,
-        parent_name: Option<&str>,
-        product_dir: &Path,
-    ) -> Result<()> {
-        // Prevent path traversal (additional safeguard)
-        if product_name.contains("..") || product_name.contains("/") || product_name.contains("\\")
-        {
-            return Err(anyhow::anyhow!(
-                "Invalid product_name: contains path traversal characters"
-            ));
-        }
+    /// Load a single product from code definition
+    async fn load_product_from_code(&self, product_type: ProductType) -> Result<()> {
+        let def = product_type.definition();
+        let product_name = product_type.as_str();
 
-        debug!("Loading product {} from {:?}", product_name, product_dir);
+        // Get parent name from valid_parents (first parent if exists)
+        let parent_name = product_type.valid_parents().first().map(|p| p.as_str());
+
+        debug!(
+            "Loading product {} (parent: {:?})",
+            product_name, parent_name
+        );
 
         // Insert product into database
         sqlx::query(
@@ -348,105 +284,101 @@ impl ProductLoader {
         .execute(&self.pool)
         .await?;
 
-        // Load measurements.csv (physical measurement points)
-        let measurements_file = product_dir.join("measurements.csv");
-        if measurements_file.exists() {
-            let measurements: Vec<MeasurementPoint> = self
-                .load_csv(&measurements_file)
-                .await
-                .context(format!("Failed to load measurements for {}", product_name))?;
+        // Load measurements from code definition
+        self.load_measurements_from_def(product_name, def).await?;
 
-            let measurement_count = measurements.len();
-            for m in measurements {
-                sqlx::query(
-                    r#"
-                    INSERT INTO measurement_points
-                    (product_name, measurement_id, name, unit, description)
-                    VALUES (?, ?, ?, ?, ?)
-                    ON CONFLICT(product_name, measurement_id) DO UPDATE SET
-                        name = excluded.name,
-                        unit = excluded.unit,
-                        description = excluded.description
-                    "#,
-                )
-                .bind(product_name)
-                .bind(m.measurement_id)
-                .bind(&m.name)
-                .bind(&m.unit)
-                .bind(&m.description)
-                .execute(&self.pool)
-                .await?;
-            }
-            debug!(
-                "Loaded {} measurements for {}",
-                measurement_count, product_name
-            );
+        // Load actions from code definition
+        self.load_actions_from_def(product_name, def).await?;
+
+        // Load properties from code definition
+        self.load_properties_from_def(product_name, def).await?;
+
+        Ok(())
+    }
+
+    /// Load measurement points from product definition
+    async fn load_measurements_from_def(&self, product_name: &str, def: &ProductDef) -> Result<()> {
+        for m in def.measurements {
+            sqlx::query(
+                r#"
+                INSERT INTO measurement_points
+                (product_name, measurement_id, name, unit, description)
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(product_name, measurement_id) DO UPDATE SET
+                    name = excluded.name,
+                    unit = excluded.unit,
+                    description = excluded.description
+                "#,
+            )
+            .bind(product_name)
+            .bind(m.id as i32)
+            .bind(m.name)
+            .bind(m.unit)
+            .bind(m.description)
+            .execute(&self.pool)
+            .await?;
         }
+        debug!(
+            "Loaded {} measurements for {}",
+            def.measurements.len(),
+            product_name
+        );
+        Ok(())
+    }
 
-        // Load actions.csv
-        let actions_file = product_dir.join("actions.csv");
-        if actions_file.exists() {
-            let actions: Vec<ActionPoint> = self
-                .load_csv(&actions_file)
-                .await
-                .context(format!("Failed to load actions for {}", product_name))?;
-
-            let action_count = actions.len();
-            for a in actions {
-                sqlx::query(
-                    r#"
-                    INSERT INTO action_points
-                    (product_name, action_id, name, unit, description)
-                    VALUES (?, ?, ?, ?, ?)
-                    ON CONFLICT(product_name, action_id) DO UPDATE SET
-                        name = excluded.name,
-                        unit = excluded.unit,
-                        description = excluded.description
-                    "#,
-                )
-                .bind(product_name)
-                .bind(a.action_id)
-                .bind(&a.name)
-                .bind(&a.unit)
-                .bind(&a.description)
-                .execute(&self.pool)
-                .await?;
-            }
-            debug!("Loaded {} actions for {}", action_count, product_name);
+    /// Load action points from product definition
+    async fn load_actions_from_def(&self, product_name: &str, def: &ProductDef) -> Result<()> {
+        for a in def.actions {
+            sqlx::query(
+                r#"
+                INSERT INTO action_points
+                (product_name, action_id, name, unit, description)
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(product_name, action_id) DO UPDATE SET
+                    name = excluded.name,
+                    unit = excluded.unit,
+                    description = excluded.description
+                "#,
+            )
+            .bind(product_name)
+            .bind(a.id as i32)
+            .bind(a.name)
+            .bind(a.unit)
+            .bind(a.description)
+            .execute(&self.pool)
+            .await?;
         }
+        debug!("Loaded {} actions for {}", def.actions.len(), product_name);
+        Ok(())
+    }
 
-        // Load properties.csv
-        let properties_file = product_dir.join("properties.csv");
-        if properties_file.exists() {
-            let properties: Vec<PropertyTemplate> = self
-                .load_csv(&properties_file)
-                .await
-                .context(format!("Failed to load properties for {}", product_name))?;
-
-            let property_count = properties.len();
-            for p in properties {
-                sqlx::query(
-                    r#"
-                    INSERT INTO property_templates
-                    (product_name, property_id, name, unit, description)
-                    VALUES (?, ?, ?, ?, ?)
-                    ON CONFLICT(product_name, property_id) DO UPDATE SET
-                        name = excluded.name,
-                        unit = excluded.unit,
-                        description = excluded.description
-                    "#,
-                )
-                .bind(product_name)
-                .bind(p.property_id)
-                .bind(&p.name)
-                .bind(&p.unit)
-                .bind(&p.description)
-                .execute(&self.pool)
-                .await?;
-            }
-            debug!("Loaded {} properties for {}", property_count, product_name);
+    /// Load property templates from product definition
+    async fn load_properties_from_def(&self, product_name: &str, def: &ProductDef) -> Result<()> {
+        for p in def.properties {
+            sqlx::query(
+                r#"
+                INSERT INTO property_templates
+                (product_name, property_id, name, unit, description)
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(product_name, property_id) DO UPDATE SET
+                    name = excluded.name,
+                    unit = excluded.unit,
+                    description = excluded.description
+                "#,
+            )
+            .bind(product_name)
+            .bind(p.id as i32)
+            .bind(p.name)
+            .bind(p.unit)
+            .bind(p.description)
+            .execute(&self.pool)
+            .await?;
         }
-
+        debug!(
+            "Loaded {} properties for {}",
+            def.properties.len(),
+            product_name
+        );
         Ok(())
     }
 
@@ -642,66 +574,22 @@ impl ProductLoader {
 mod tests {
     use super::*;
     use sqlx::Row;
-    use std::fs;
-    use tempfile::TempDir;
 
-    async fn setup_test_env() -> Result<(ProductLoader, TempDir)> {
-        let temp_dir = TempDir::new()?;
-        let db_path = temp_dir.path().join("test.db");
-        let sqlite_url = format!("sqlite:{}?mode=rwc", db_path.display());
+    async fn setup_test_env() -> Result<ProductLoader> {
+        let db_path = ":memory:";
+        let sqlite_url = format!("sqlite:{db_path}?mode=memory&cache=shared");
         let pool = SqlitePool::connect(&sqlite_url).await?;
 
         // Use standard modsrv schema from common test utils
         common::test_utils::schema::init_modsrv_schema(&pool).await?;
 
-        let products_dir = temp_dir.path().join("products");
-        fs::create_dir_all(&products_dir)?;
-
-        let loader = ProductLoader::new(&products_dir, pool);
-
-        Ok((loader, temp_dir))
-    }
-
-    fn create_test_products_yaml(dir: &Path) -> Result<()> {
-        let yaml_content = r#"products:
-  pv_inverter:
-  battery_system: pv_inverter
-"#;
-        fs::write(dir.join("products.yaml"), yaml_content)?;
-        Ok(())
-    }
-
-    fn create_test_measurements_csv(dir: &Path) -> Result<()> {
-        let csv_content = r#"measurement_id,name,unit,description
-1,DC Voltage,V,DC input voltage
-2,DC Current,A,DC input current
-3,AC Power,kW,AC output power
-"#;
-        fs::write(dir.join("measurements.csv"), csv_content)?;
-        Ok(())
-    }
-
-    fn create_test_actions_csv(dir: &Path) -> Result<()> {
-        let csv_content = r#"action_id,name,unit,description
-1,Power Switch,,On/Off control
-2,Set Power,kW,Power setpoint
-"#;
-        fs::write(dir.join("actions.csv"), csv_content)?;
-        Ok(())
-    }
-
-    fn create_test_properties_csv(dir: &Path) -> Result<()> {
-        let csv_content = r#"property_id,name,unit,description
-1,rated_power,kW,Rated Power
-2,max_voltage,V,Max Voltage
-"#;
-        fs::write(dir.join("properties.csv"), csv_content)?;
-        Ok(())
+        let loader = ProductLoader::new(pool);
+        Ok(loader)
     }
 
     #[tokio::test]
     async fn test_init_database() {
-        let (loader, _temp_dir) = setup_test_env().await.expect("Failed to setup test env");
+        let loader = setup_test_env().await.expect("Failed to setup test env");
 
         // Verify tables were created
         let result = sqlx::query("SELECT name FROM sqlite_master WHERE type='table'")
@@ -722,22 +610,12 @@ mod tests {
 
     #[tokio::test]
     async fn test_load_and_get_product() -> Result<()> {
-        let (loader, temp_dir) = setup_test_env().await.expect("Failed to setup test env");
-        let products_dir = temp_dir.path().join("products");
+        let loader = setup_test_env().await.expect("Failed to setup test env");
 
-        create_test_products_yaml(&products_dir).expect("Failed to create test YAML");
-
-        // Create product directory with CSV files
-        let pv_dir = products_dir.join("pv_inverter");
-        fs::create_dir_all(&pv_dir)?;
-        create_test_measurements_csv(&pv_dir)?;
-        create_test_actions_csv(&pv_dir)?;
-        create_test_properties_csv(&pv_dir)?;
-
-        // Load all products
+        // Load all products from code definitions
         loader.load_all().await.expect("Failed to load products");
 
-        // Get the product with nested structure
+        // Get a specific product
         let product = loader
             .get_product("pv_inverter")
             .await
@@ -745,58 +623,30 @@ mod tests {
 
         // Verify product structure
         assert_eq!(product.product_name, "pv_inverter");
-        assert_eq!(product.parent_name, None);
+        assert_eq!(product.parent_name, Some("station".to_string())); // From valid_parents()
 
-        // Check measurements
-        assert_eq!(product.measurements.len(), 3);
-        assert_eq!(product.measurements[0].measurement_id, 1);
-        assert_eq!(product.measurements[0].name, "DC Voltage");
-        assert_eq!(product.measurements[0].unit, Some("V".to_string()));
-        assert_eq!(
-            product.measurements[0].description,
-            Some("DC input voltage".to_string())
-        );
+        // Check measurements exist (from code definition)
+        assert!(!product.measurements.is_empty());
 
-        // Check actions
-        assert_eq!(product.actions.len(), 2);
-        assert_eq!(product.actions[0].action_id, 1);
-        assert_eq!(product.actions[0].name, "Power Switch");
-        assert_eq!(
-            product.actions[0].description,
-            Some("On/Off control".to_string())
-        );
-
-        // Check properties
-        assert_eq!(product.properties.len(), 2);
-        assert_eq!(product.properties[0].property_id, 1);
-        assert_eq!(product.properties[0].name, "rated_power");
-        assert_eq!(
-            product.properties[0].description,
-            Some("Rated Power".to_string())
-        );
+        // Check properties exist
+        assert!(!product.properties.is_empty());
 
         Ok(())
     }
 
     #[tokio::test]
     async fn test_add_measurement() -> Result<()> {
-        let (loader, temp_dir) = setup_test_env().await.expect("Failed to setup test env");
-        let products_dir = temp_dir.path().join("products");
+        let loader = setup_test_env().await.expect("Failed to setup test env");
 
-        // Create and load basic product
-        create_test_products_yaml(&products_dir)?;
-        let pv_dir = products_dir.join("pv_inverter");
-        fs::create_dir_all(&pv_dir)?;
-        create_test_measurements_csv(&pv_dir)?;
-
+        // Load products
         loader.load_all().await?;
 
         // Add additional measurement
         let new_point = MeasurementPoint {
-            measurement_id: 101,
-            name: "Total Power".to_string(),
+            measurement_id: 999,
+            name: "Custom Measurement".to_string(),
             unit: Some("kW".to_string()),
-            description: Some("Total calculated power".to_string()),
+            description: Some("Custom calculated power".to_string()),
         };
 
         loader.add_measurement("pv_inverter", &new_point).await?;
@@ -807,12 +657,12 @@ mod tests {
         let added_point = product
             .measurements
             .iter()
-            .find(|m| m.measurement_id == 101);
+            .find(|m| m.measurement_id == 999);
         assert!(added_point.is_some());
 
         let ap = added_point.unwrap();
-        assert_eq!(ap.name, "Total Power");
-        assert_eq!(ap.description, Some("Total calculated power".to_string()));
+        assert_eq!(ap.name, "Custom Measurement");
+        assert_eq!(ap.description, Some("Custom calculated power".to_string()));
 
         Ok(())
     }
@@ -824,5 +674,54 @@ mod tests {
 
         let key = ProductLoader::get_redis_key("pv_inv_001", PointType::Action, 1);
         assert_eq!(key, "modsrv:pv_inv_001:A:1");
+    }
+
+    #[tokio::test]
+    async fn test_all_products_loaded() -> Result<()> {
+        let loader = setup_test_env().await.expect("Failed to setup test env");
+
+        // Load products
+        loader.load_all().await?;
+
+        // Get all products
+        let products = loader.get_all_products().await?;
+
+        // Should have all product types
+        assert_eq!(products.len(), ProductType::all().len());
+
+        // Verify specific products exist
+        let product_names: Vec<&str> = products.iter().map(|p| p.product_name.as_str()).collect();
+        assert!(product_names.contains(&"station"));
+        assert!(product_names.contains(&"pv_inverter"));
+        assert!(product_names.contains(&"battery_stack"));
+        assert!(product_names.contains(&"battery_cell"));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_bms_hierarchy_loaded() -> Result<()> {
+        let loader = setup_test_env().await.expect("Failed to setup test env");
+
+        // Load products
+        loader.load_all().await?;
+
+        // Verify BMS hierarchy
+        let stack = loader.get_product("battery_stack").await?;
+        assert_eq!(stack.parent_name, Some("station".to_string()));
+
+        let cluster = loader.get_product("battery_cluster").await?;
+        assert_eq!(cluster.parent_name, Some("battery_stack".to_string()));
+
+        let pack = loader.get_product("battery_pack").await?;
+        assert_eq!(pack.parent_name, Some("battery_cluster".to_string()));
+
+        let module = loader.get_product("battery_module").await?;
+        assert_eq!(module.parent_name, Some("battery_pack".to_string()));
+
+        let cell = loader.get_product("battery_cell").await?;
+        assert_eq!(cell.parent_name, Some("battery_module".to_string()));
+
+        Ok(())
     }
 }

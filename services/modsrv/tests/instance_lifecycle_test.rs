@@ -24,8 +24,8 @@ async fn test_create_instance_full_flow() -> Result<()> {
     fixtures::create_test_product_points(env.pool(), product_id).await?;
 
     // 3. Create ProductLoader and InstanceManager
-    let products_dir = env.temp_dir().join("products");
-    let product_loader = Arc::new(ProductLoader::new(products_dir, env.pool().clone()));
+    // products_dir no longer needed
+    let product_loader = Arc::new(ProductLoader::new(env.pool().clone()));
 
     let redis_client = env.redis().clone();
     let rtdb = Arc::new(voltage_rtdb::RedisRtdb::from_client(redis_client.clone()));
@@ -69,8 +69,8 @@ async fn test_create_instance_duplicate_error() -> Result<()> {
     fixtures::create_test_product(env.pool(), product_id).await?;
     fixtures::create_test_product_points(env.pool(), product_id).await?;
 
-    let products_dir = env.temp_dir().join("products");
-    let product_loader = Arc::new(ProductLoader::new(products_dir, env.pool().clone()));
+    // products_dir no longer needed
+    let product_loader = Arc::new(ProductLoader::new(env.pool().clone()));
 
     let redis_client = env.redis().clone();
     let rtdb = Arc::new(voltage_rtdb::RedisRtdb::from_client(redis_client.clone()));
@@ -108,8 +108,8 @@ async fn test_get_instance_data() -> Result<()> {
     fixtures::create_test_product(env.pool(), product_id).await?;
     fixtures::create_test_product_points(env.pool(), product_id).await?;
 
-    let products_dir = env.temp_dir().join("products");
-    let product_loader = Arc::new(ProductLoader::new(products_dir, env.pool().clone()));
+    // products_dir no longer needed
+    let product_loader = Arc::new(ProductLoader::new(env.pool().clone()));
 
     let redis_client = env.redis().clone();
     let rtdb = Arc::new(voltage_rtdb::RedisRtdb::from_client(redis_client.clone()));

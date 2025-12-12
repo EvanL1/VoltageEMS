@@ -39,6 +39,7 @@ impl ServiceConfig {
     }
 
     /// Get configuration path for a specific service
+    #[allow(dead_code)]
     pub fn service_config_path(&self, service: &str) -> PathBuf {
         self.config_path.join(service)
     }
@@ -253,11 +254,8 @@ impl ModsrvContext {
 
         let rtdb = Arc::new(RedisRtdb::from_client(redis_client.clone()));
 
-        // Get products directory from config
-        let products_dir = config.service_config_path("modsrv").join("products");
-
-        // Create product loader
-        let product_loader = Arc::new(ProductLoader::new(products_dir, sqlite_pool.clone()));
+        // Create product loader (products are now loaded from code definitions)
+        let product_loader = Arc::new(ProductLoader::new(sqlite_pool.clone()));
 
         // Load routing cache from SQLite (enables direct library calls)
         let (c2m_map, m2c_map) = load_routing_maps_from_sqlite(&sqlite_pool).await?;

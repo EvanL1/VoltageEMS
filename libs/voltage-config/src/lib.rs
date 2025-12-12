@@ -6,6 +6,7 @@
 pub mod common;
 pub mod comsrv;
 pub mod modsrv;
+pub mod products;
 pub mod rules;
 pub mod serde_defaults;
 
@@ -108,3 +109,6 @@ pub use keyspace::KeySpaceConfig;
 
 // Re-export routing cache
 pub use routing_cache::{RoutingCache, RoutingCacheStats};
+
+// Re-export product types
+pub use products::{PointDef, ProductDef, ProductType};

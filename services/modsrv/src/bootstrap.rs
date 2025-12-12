@@ -179,20 +179,15 @@ async fn setup_sqlite() -> Result<SqlitePool> {
 
 /// Load and sync products to Redis
 pub async fn load_products<R>(
-    config: &ModsrvConfig,
+    _config: &ModsrvConfig,
     sqlite_pool: &SqlitePool,
     _rtdb: &Arc<R>,
 ) -> Result<Arc<ProductLoader>>
 where
     R: voltage_rtdb::Rtdb + ?Sized,
 {
-    let products_dir = config
-        .products_path
-        .clone()
-        .or_else(|| std::env::var("MODSRV_PRODUCTS_DIR").ok())
-        .unwrap_or_else(|| "config/modsrv/products".to_string());
-
-    let product_loader = ProductLoader::new(&products_dir, sqlite_pool.clone());
+    // Products are now loaded from code definitions (no config directory needed)
+    let product_loader = ProductLoader::new(sqlite_pool.clone());
 
     // Initialize product database tables
     product_loader.init_database().await?;

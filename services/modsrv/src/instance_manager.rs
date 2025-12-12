@@ -544,7 +544,7 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
         let mut action_point_routings = HashMap::new();
 
         // Query measurement routing
-        let measurement_points = sqlx::query_as::<_, (i32,)>(
+        let measurement_points = sqlx::query_as::<_, (u32,)>(
             r#"
             SELECT measurement_id
             FROM measurement_routing
@@ -556,12 +556,12 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
         .await?;
 
         for (point_id,) in measurement_points {
-            let redis_key = InstanceRedisKeys::measurement(instance_id, point_id as u32);
-            measurement_point_routings.insert(point_id as u32, redis_key);
+            let redis_key = InstanceRedisKeys::measurement(instance_id, point_id);
+            measurement_point_routings.insert(point_id, redis_key);
         }
 
         // Query action routing
-        let action_points = sqlx::query_as::<_, (i32,)>(
+        let action_points = sqlx::query_as::<_, (u32,)>(
             r#"
             SELECT action_id
             FROM action_routing
@@ -573,8 +573,8 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
         .await?;
 
         for (point_id,) in action_points {
-            let redis_key = InstanceRedisKeys::action(instance_id, point_id as u32);
-            action_point_routings.insert(point_id as u32, redis_key);
+            let redis_key = InstanceRedisKeys::action(instance_id, point_id);
+            action_point_routings.insert(point_id, redis_key);
         }
 
         Ok(Instance {
@@ -863,7 +863,7 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
         let mut action_point_routings: HashMap<u32, String> = HashMap::new();
 
         // Query measurement routing within transaction
-        let measurement_points: Vec<(i32,)> = sqlx::query_as(
+        let measurement_points: Vec<(u32,)> = sqlx::query_as(
             r#"
             SELECT measurement_id
             FROM measurement_routing
@@ -882,12 +882,12 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
         })?;
 
         for (point_id,) in measurement_points {
-            let redis_key = InstanceRedisKeys::measurement(instance_id, point_id as u32);
-            measurement_point_routings.insert(point_id as u32, redis_key);
+            let redis_key = InstanceRedisKeys::measurement(instance_id, point_id);
+            measurement_point_routings.insert(point_id, redis_key);
         }
 
         // Query action routing within transaction
-        let action_points: Vec<(i32,)> = sqlx::query_as(
+        let action_points: Vec<(u32,)> = sqlx::query_as(
             r#"
             SELECT action_id
             FROM action_routing
@@ -900,8 +900,8 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
         .map_err(|e| anyhow!("Failed to load action routing for {}: {}", instance_name, e))?;
 
         for (point_id,) in action_points {
-            let redis_key = InstanceRedisKeys::action(instance_id, point_id as u32);
-            action_point_routings.insert(point_id as u32, redis_key);
+            let redis_key = InstanceRedisKeys::action(instance_id, point_id);
+            action_point_routings.insert(point_id, redis_key);
         }
 
         // Load product definition (cached) to include point metadata
@@ -953,7 +953,7 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
         let mut action_point_routings: HashMap<u32, String> = HashMap::new();
 
         // Query measurement routing (no transaction)
-        let measurement_points: Vec<(i32,)> = sqlx::query_as(
+        let measurement_points: Vec<(u32,)> = sqlx::query_as(
             r#"
             SELECT measurement_id
             FROM measurement_routing
@@ -972,12 +972,12 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
         })?;
 
         for (point_id,) in measurement_points {
-            let redis_key = InstanceRedisKeys::measurement(instance_id, point_id as u32);
-            measurement_point_routings.insert(point_id as u32, redis_key);
+            let redis_key = InstanceRedisKeys::measurement(instance_id, point_id);
+            measurement_point_routings.insert(point_id, redis_key);
         }
 
         // Query action routing (no transaction)
-        let action_points: Vec<(i32,)> = sqlx::query_as(
+        let action_points: Vec<(u32,)> = sqlx::query_as(
             r#"
             SELECT action_id
             FROM action_routing
@@ -990,8 +990,8 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
         .map_err(|e| anyhow!("Failed to load action routing for {}: {}", instance_name, e))?;
 
         for (point_id,) in action_points {
-            let redis_key = InstanceRedisKeys::action(instance_id, point_id as u32);
-            action_point_routings.insert(point_id as u32, redis_key);
+            let redis_key = InstanceRedisKeys::action(instance_id, point_id);
+            action_point_routings.insert(point_id, redis_key);
         }
 
         // Load product definition (cached) to include point metadata
@@ -2083,10 +2083,7 @@ mod tests {
 
     // Helper: Create test ProductLoader
     fn create_test_product_loader(pool: SqlitePool) -> Arc<ProductLoader> {
-        Arc::new(crate::product_loader::ProductLoader::new(
-            "config/modsrv/products",
-            pool,
-        ))
+        Arc::new(crate::product_loader::ProductLoader::new(pool))
     }
 
     use voltage_rtdb::helpers::create_test_memory_rtdb as create_test_rtdb;

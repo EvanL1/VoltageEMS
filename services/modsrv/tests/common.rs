@@ -18,6 +18,7 @@ pub struct TestEnv {
     pub pool: SqlitePool,
     #[allow(dead_code)]
     pub redis_client: Arc<RedisClient>,
+    #[allow(dead_code)]
     pub temp_dir: TempDir,
     #[allow(dead_code)]
     pub config: ModsrvConfig,
@@ -85,6 +86,7 @@ impl TestEnv {
     }
 
     /// Return the temporary directory path
+    #[allow(dead_code)]
     pub fn temp_dir(&self) -> PathBuf {
         self.temp_dir.path().to_path_buf()
     }
